@@ -205,7 +205,9 @@ class ImportMixin:
         # Name unique assembly signatures before building symbols. A reimport
         # preserves existing names because saved caller C can reference them.
         assembly_original_names = {}
-        assembly_sizes = set(console.known_assembly_sizes) | set(console.sdk_assembly_sizes)
+        from ..sdk_assembly import known_identity, known_proof
+        sdk_sizes = set(console.sdk_assembly_sizes) | set(console.sdk_runtime_sizes)
+        assembly_sizes = set(console.known_assembly_sizes) | sdk_sizes
         if reimport is None and assembly_sizes:
             from ..function_names import generated
             leads = []
@@ -218,8 +220,8 @@ class ImportMixin:
                 name = console.known_assembly_name(code)
                 if name:
                     leads.append((fn, name, 'assembly_exact_digest'))
-                elif fn.size in console.sdk_assembly_sizes:
-                    hint = console.sdk_assembly_identity(code, picked.big_endian)
+                elif fn.size in sdk_sizes:
+                    hint = known_identity(console, cfg, code)
                     if hint:
                         leads.append((fn, hint['name'], 'sdk_exact_digest'))
             counts = Counter(name for _, name, _ in leads)
@@ -346,8 +348,7 @@ class ImportMixin:
                         # Classify before the target reaches the claim queue; keep its bytes and symbols.
                         meta_data["asm_code"] = why
                         status = "asm"
-                    if status in ('open','asm') and fn.size in console.sdk_assembly_sizes and not meta_data.get('reopened'):
-                        from ..sdk_assembly import known_proof
+                    if status in ('open','asm') and fn.size in sdk_sizes and not meta_data.get('reopened'):
                         proof=known_proof(console,{'config':json.dumps(cfg)},
                             {'name':fn.name,'vram':fn.vram,'rom_offset':fn.rom,'size':fn.size,
                              'target':target.code,'relocs':relocs})
@@ -356,7 +357,8 @@ class ImportMixin:
                             status='asm'
                             meta_data['verified_assembly']=proof
                             meta_data['sdk_display']={'name':proof['name'],'names':proof['names'],'corpora':[proof['corpus']]}
-                            meta_data['asm_code']='Verified handwritten SDK assembly; no C matching required.'
+                            meta_data['asm_code'] = (proof['evidence'] if proof.get('from_c') else
+                                                     'Verified handwritten SDK assembly; no C matching required.')
                     if status == 'asm' and fn.name in assembly_original_names:
                         original_name, method = assembly_original_names[fn.name]
                         meta_data['naming'] = {'original_name': original_name, 'name': fn.name,
@@ -470,7 +472,7 @@ class ImportMixin:
             except OSError as e:
                 log(f"the old project files could not be removed; they remain at {backup}: {e}")
             log(f"reimport kept {preserved} matched functions whose targets were unchanged")
-        if sdk_classified:log(f"Identified {sdk_classified} known SDK assembly functions; excluded from C agents.")
+        if sdk_classified:log(f"Identified {sdk_classified} known SDK library functions; excluded from C agents.")
         log(f"ready: {len(res.functions)} functions to decompile")
         if reimport is not None and rejudge:
             self._reimport_rejudge = rejudge

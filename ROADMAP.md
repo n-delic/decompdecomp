@@ -482,6 +482,10 @@ source/header/profile for one entry without neighbour confirmation. Disabled aut
 for review; legacy single-function range suggestions with saved C recheck on Apply. Broader
 ranges and imported file/build settings retain their existing verification workflows.
 
+Implemented: N64 ROM imports and Deep Permuter identify known linked C runtime routines by the
+complete function and analysis-image digests. The library setting controls whether they are set aside.
+Known relocation-free `guMtxCatF` assembly variants use the libultra SDK assembly path.
+
 Implemented: N64 ROM imports name and set aside exact libultra matrix conversion, cache maintenance,
 and scheduler queue-pop assembly variants as SDK code before agents can claim them. The Deep Permuter also
 checks existing local ROM projects for these signatures before searching C candidates.

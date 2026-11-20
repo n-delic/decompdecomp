@@ -97,7 +97,7 @@ def test_builtin_pack_metadata_has_complete_body_sizes():
         'guMtxF2L', 'guMtxL2F', '__osPopThread',
         'osInvalDCache', 'osInvalICache', 'osWritebackDCache',
     }
-    assert {entry[1] for entry in pack.KNOWN.values()}==set(pack.SIZES)
+    assert {entry[1] for entry in pack.KNOWN.values()} | {size for size, _ in pack._MTX_CAT_ASM} == set(pack.SIZES)
     assert all(len(digest)==64 and int(digest,16)>=0 and row[1]%4==0 for digest,row in pack.KNOWN.items())
 
 
@@ -143,7 +143,7 @@ def test_deep_permuter_sets_aside_sdk_in_existing_project(tmp_path, monkeypatch,
     monkeypatch.setattr(deep_permuter, '_run', unexpected_search)
     if single:
         result = deep_permuter.run(net, slug, 'func_80001000', 1, 10, log)
-        assert result['reason'] == 'Identified and set aside as SDK assembly'
+        assert result['reason'] == 'Identified and set aside as SDK library code'
     else:
         sweeps = Sweeps(net, Jobs())
         monkeypatch.setattr(sweeps, 'search_one', unexpected_search)
@@ -154,3 +154,40 @@ def test_deep_permuter_sets_aside_sdk_in_existing_project(tmp_path, monkeypatch,
     assert row['status'] == 'asm' and detail(proj, row)['verified']
     assert net.function_detail(slug, row['name'], include_hints=False)['display_name'] == 'sdkToy'
     assert net.claim_row(net.local_agent('worker')[0], slug) is None
+
+
+def test_exact_runtime_backfill_requires_the_linked_image_and_library_setting(monkeypatch, tmp_path):
+    from decompnet.app.sdk_assembly import choose_c, known_proof
+    from decompnet.consoles.n64 import sdk_runtime
+
+    image = hashlib.sha1(BODY * 2).hexdigest()
+    monkeypatch.setattr(sdk_runtime, '_KNOWN', {image: {hashlib.sha256(BODY).hexdigest(): ('runtimeToy', 8)}})
+    monkeypatch.setattr(sdk_runtime, 'SIZES', (8,))
+    monkeypatch.setattr(N64, 'sdk_runtime_sizes', (8,))
+    net, slug = import_toy(tmp_path, monkeypatch)
+    proj = net.project_row(slug)
+    fn = net._function('runtimeToy', slug)
+    assert fn['status'] == 'asm'
+    assert detail(proj, fn)['from_c'] and detail(proj, fn)['verified']
+    assert known_proof(N64, proj, dict(fn, relocs='[[0,4,2147487744]]'))
+    wrong_image = net.cfg(proj)
+    wrong_image['rom']['analysis_sha1'] = '0' * 40
+    assert known_proof(N64, dict(proj, config=json.dumps(wrong_image)), fn) is None
+    assert choose_c(net, slug, False) == 1
+    assert discover_known(net, net.project_row(slug)) == 0
+    assert net._function('runtimeToy', slug)['status'] == 'open'
+    choose_c(net, slug, True)
+    assert discover_known(net, net.project_row(slug)) == 1
+
+
+def test_sdk_matrix_rebuild_variant_checks_full_reference_free_body(monkeypatch):
+    from decompnet.app.sdk_assembly import known_proof
+
+    body = b'\x01' * 240
+    key = hashlib.sha1(body + b'[]').hexdigest()
+    monkeypatch.setattr(pack, '_MTX_CAT_ASM', {(240, key): 'fixture'})
+    proj = {'config': json.dumps({'kind': 'rom', 'compiler': {'toolchain': 'gcc-2.7.2-kmc'}})}
+    fn = {'vram': 0x80001000, 'size': len(body), 'target': body, 'relocs': '[]'}
+    assert known_proof(N64, proj, fn)['name'] == 'guMtxCatF'
+    assert known_proof(N64, proj, dict(fn, target=b'\0' + body[1:])) is None
+    assert known_proof(N64, proj, dict(fn, relocs='[[0,4,2147487744]]')) is None

@@ -1208,7 +1208,7 @@ def run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, thread
         with looking(net):
             found = discover_known(net, net.project_row(slug), function_id=fn['id'], check_cancel=log.check_cancel)
         if found:
-            reason = 'Identified and set aside as SDK assembly'
+            reason = 'Identified and set aside as SDK library code'
             log(reason)
             return {'matched': False, 'tested': 0, 'reason': reason}
     lock = net.__dict__.setdefault('_deep_run_locks', {}).setdefault(fn['id'], threading.Lock())

@@ -16,6 +16,8 @@ KNOWN = {
         ('bcmp', 272, 'modern GNU assembler: move -> or', 'libc/bcmp.s'),
     '1c6198ec810303f71baaf1c5fa044a8e0eea9446ac383854d910c4fee4fffcf3':
         ('bzero', 160, 'period and modern GNU assemblers', 'libc/bzero.s'),
+    '67997834f0ff8e984db1d02069d6be1d0ef693a45f5f1a88dde6d1b6360237a6':
+        ('guMtxCatF', 240, 'scheduled MGU float matrix product', 'mgu/mtxcatf.s'),
     '0ec1c8e451e2aa4e77599d0aea02d5b338957ffa874d03a3ff434d6f4ea226c3':
         ('guMtxF2L', 100, 'scheduled MGU fixed-point packer', 'mgu/mtxf2l.s'),
     'e706afe4b72d296062571ca9918036a07197bdf713976810f05d26e67be6a9e3':
@@ -31,13 +33,24 @@ KNOWN = {
     'b868489aa115fdc2f51ebae88065f21a34d22bfd3e4c0f14ab431fe181859810':
         ('osInvalICache', 116, 'scheduled instruction cache invalidation', 'os/invalicache.s'),
 }
-SIZES = tuple(sorted({size for _, size, _, _ in KNOWN.values()}))
+# The rebuild corpus hashes relocation-free functions as SHA-1(body + b"[]").
+# The SDK's libultra builds use MGU assembly; libgultra builds use C and keep
+# their existing library detection and port source path.
+_MTX_CAT_ASM = {
+    (240, '3e0621ac1ef55cdf00a2e71debe31eb35e285628'): 'libultra 2.0K–2.0L',
+    (360, 'c08cde806b54a974c79759eddf10ab042ba2de05'): 'libultra 2.0I–2.0J',
+}
+SIZES = tuple(sorted({size for _, size, _, _ in KNOWN.values()} | {size for size, _ in _MTX_CAT_ASM}))
 
 
 def identify(code,big_endian=True):
     if not big_endian or len(code) not in SIZES:return None
     digest=hashlib.sha256(code).hexdigest()
     found=KNOWN.get(digest)
+    if found is None and len(code) in (240, 360):
+        variant = _MTX_CAT_ASM.get((len(code), hashlib.sha1(code + b'[]').hexdigest()))
+        if variant:
+            found = ('guMtxCatF', len(code), variant, 'mgu/mtxcatf.s')
     if not found or len(code)!=found[1]:return None
     name,size,variant,reference=found
     return {'name':name,'names':[name],'corpus':CORPUS,'bytes':size,'target_sha256':digest,

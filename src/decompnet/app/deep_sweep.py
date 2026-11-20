@@ -438,7 +438,7 @@ class Sweeps:
         with looking(self.net):
             sdk_set_aside = discover_known(self.net, self.net.project_row(slug), check_cancel=log.check_cancel)
         if sdk_set_aside:
-            log(f'Identified {sdk_set_aside} SDK assembly functions before preparing C candidates.')
+            log(f'Identified {sdk_set_aside} SDK library functions before preparing C candidates.')
         maximum = getattr(log.compile_pool, 'maximum', False)
         count = deep_throughput.width(True,0) if maximum and not threads else workers.clamp(threads) if threads != 1 else 1
         stats = {'visited': 0, 'tested': 0, 'matched': 0, 'rotated':0, 'activity': Activity(log)}
