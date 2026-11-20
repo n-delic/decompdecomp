@@ -8007,3 +8007,31 @@ a slot cleanup (366; a typed struct fixes the frame but not three copies), a mat
 and scheduling off, so not a settings difference), and a prologue that loads a global before the stack adjustment
 (410 → 360 with `const` reads). The empty-`while` fold blocker from round 16 was not released as a repair family:
 it fits one function, and inserting it after every copy would add many variants for no evidence.
+
+### Round 18: a game's second passes (KMC GCC 2.7.2 `-O2`, controlled matches)
+
+Two new matches and three large improvements, all under the game's default `-O2`.
+
+- **A shared exit reached by a goto, not a fall-through.** A clamp function had two paths ending in `return 0`:
+  one stores a clamped byte and jumps to the end of the other branch, one calls a helper. Writing the helper path as
+  `func(...); var = 0;` let gcc thread the first path's jump to the helper path's copy of the exit; writing it as
+  `func(...); goto block;` (the same label the store path jumps to) put both jumps on the label at the end of the
+  long branch, as the game has them (30 → 0). The `andi` the game repeats in each clamp's test and sum came from
+  testing `(u8)v != 0` and then computing `(v & 0xFF) - k`: the two forms aren't merged by CSE, while two `& 0xFF`
+  were. The third clamp's result register (`$v0`, not `$v1`) needed the sum assigned to the result variable and
+  overwritten in each arm (`r = (v & 0xFF) + 8; if (r >= 0) { if (r >= 0x31) r = 0x30; else r = v + 8; } else r = 0;`).
+- **A counter set before the `if` that guards its loop.** A menu builder's loop counter is zeroed in the delay slot
+  of the `beqz` that skips the loop; `var = 0;` written before `if (count) { do { ... } while (...); }`, instead of
+  inside the `if`, filled it (490 → 0). Its two identical switch arms stay separate (`case 1:` and `case 2:` each
+  `p = T; n = 6; break;`); merging them as `case 1: case 2:` scored 1905.
+- **A signed 15-bit delta cast at its use.** A sound-envelope stepper decodes a one- or two-byte delta and adds it to
+  a time (`sll 16; sra 16` right before the add): `t = time + (s16)delta;` with `delta` an `s32` holding the raw
+  value matched the shape (505 → 30); `s16 delta` or the cast at the assignment did not. The struct offsets of its
+  64-entry table were wrong in the earlier adapted C (the pointer at 0x14, the pitch at 0x1A).
+- **Loop invariants hoisted after the loop's own setup.** A proximity test loads a `double` threshold and a table
+  pointer before three hoisted constants. Writing the table entry as `p = &T + i` inside a `for (; i < 4; i++)`, with
+  `i = 0` set before the threshold, moved the pointer after the constants (510 → 120); the threshold still loads
+  before them in ours and after them in the game.
+
+Tried without a match: the product register of round 17's sequencer loop (now 40: the pointer bump written
+`next = next + 1; if (next->time != end)`), where operand order, `*=`, a `scale` local and casts all keep `mflo $v1`.
