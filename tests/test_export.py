@@ -259,6 +259,32 @@ def test_generated_address_references_link_across_objects(tmp_path):
     assert linked.returncode != 0 and "unknown_data" in linked.stderr
 
 
+def test_export_split_uses_bss_boundaries_when_a_sized_symbol_crosses_them(tmp_path):
+    from decompnet.rom.export import _export_segments
+
+    config = {
+        'options': {'platform': 'n64', 'basename': 'demo', 'target_path': 'demo.z64',
+                    'base_path': '.', 'create_bss_pads': True},
+        'segments': [
+            {'name': 'code', 'type': 'code', 'start': 0, 'vram': 0x80000000, 'bss_size': 0x10,
+             'subsegments': [[0, 'asm', 'text'], {'type': 'bss', 'vram': 0x80000008}]},
+            [8],
+        ],
+    }
+    (tmp_path/'demo.z64').write_bytes(bytes.fromhex('03e0000800000000'))  # jr $ra, nop
+    (tmp_path/'symbol_addrs.txt').write_text(
+        'entry = 0x80000000; // type:func size:0x8\n'
+        'overlapping = 0x80000010; // type:func size:0x10\n', encoding='utf-8')
+    exported = _export_segments(config, [{'vram': 0x80000000, 'size': 8}])
+    (tmp_path/'splat.yaml').write_text(yaml.safe_dump(exported), encoding='utf-8')
+
+    result = subprocess.run([sys.executable, '-m', 'splat', 'split', 'splat.yaml'], cwd=tmp_path,
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert config['options']['create_bss_pads'] is True
+    assert exported['segments'] == config['segments']
+
+
 def test_export_moves_data_boundary_past_known_function_tail():
     from decompnet.rom.export import _export_segments
 
@@ -268,7 +294,7 @@ def test_export_moves_data_boundary_past_known_function_tail():
     result = _export_segments(config, [{'vram': 0x80000010, 'size': 12}])
     assert result['segments'][0]['subsegments'][1][0] == 0x11c
     assert config['segments'][0]['subsegments'][1][0] == 0x118  # the project's config stays unchanged
-    assert _export_segments(config, [{'vram': 0x80000010, 'size': 8}]) == config
+    assert _export_segments(config, [{'vram': 0x80000010, 'size': 8}])['segments'] == config['segments']
 
 
 def test_export_refuses_to_consume_an_entire_data_segment():
