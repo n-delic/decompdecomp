@@ -3,6 +3,8 @@ import json
 import subprocess
 import sys
 import threading
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -160,6 +162,32 @@ def test_jobs_persist_progress_and_reattach_without_starting_twice(net, tmp_path
     assert variants.job_status(net, jobs, 'pal')[0]['result'] == {'verified':2}
     with net.store.tx() as db:db.execute("UPDATE variant_jobs SET state='running'")
     assert variants.job_status(net, Jobs(), 'pal')[0]['state'] == 'interrupted'
+
+
+def test_variant_reservation_can_wait_for_database_without_holding_job_registry(net, monkeypatch):
+    from decompnet.app.support import Jobs
+
+    attached(net)
+    jobs = Jobs()
+    entered, release = threading.Event(), threading.Event()
+    original_tx = net.store.tx
+
+    @contextmanager
+    def delayed_tx():
+        entered.set()
+        assert release.wait(5)
+        with original_tx() as db:
+            yield db
+
+    monkeypatch.setattr(net.store, 'tx', delayed_tx)
+    with ThreadPoolExecutor(2) as pool:
+        start = pool.submit(variants.start_job, net, jobs, 'pal', 'shared-test', lambda log: {'verified': 0})
+        try:
+            assert entered.wait(2)
+            assert pool.submit(jobs.active, ('shared-test',)).result(timeout=1) is None
+        finally:
+            release.set()
+        assert start.result(timeout=3) in jobs.jobs
 
 
 def test_export_dispatcher_builds_all_targets_even_when_one_fails_and_isolates_caches(tmp_path):

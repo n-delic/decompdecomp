@@ -40,9 +40,13 @@ class Activity:
             if state.get('state') == 'running' and foreground is not None and foreground.is_set():return True
             twins = getattr(getattr(self.net, 'twins', None), 'jobs', {}).get(slug)
             if twins and twins.state == 'running' and twins.foreground.is_set():return True
-        with self.jobs._lock:
-            return any(j['state'] == 'running' and (j.get('activity_project') == slug or j.get('scope', {}).get('project', j.get('scope', {}).get('slug')) == slug)
-                       for j in self.jobs.jobs.values())
+        # Match publication can ask this while holding a project lock. Activity is
+        # advisory, so snapshot the registry without taking its reservation lock.
+        for job in self.jobs.jobs.copy().values():
+            scope = job.get('scope', {})
+            if job['state'] == 'running' and (job.get('activity_project') == slug or scope.get('project', scope.get('slug')) == slug):
+                return True
+        return False
 
     def maintain(self, startup, tasks):
         """Queue each project's upgrades on demand, never preload every project store."""

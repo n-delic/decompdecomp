@@ -92,3 +92,35 @@ def test_the_diagnostics_middleware_names_the_api_path_without_its_query():
     asyncio.run(serve('/api/map'))
     asyncio.run(serve('/index.html'))
     assert seen == ['/api/map', '']
+
+
+def test_stalled_lane_reports_registry_owner_outside_the_lane(tmp_path):
+    from decompnet.app.support import Jobs
+
+    jobs = Jobs()
+    clock = Clock()
+    path = tmp_path / 'stacks.log'
+    watch = lane_watch.Watch(path, threshold=1, clock=clock, job_lock_owner=lambda: jobs._lock.owner)
+    entered, release = threading.Event(), threading.Event()
+
+    def background_owner():
+        with jobs._lock:
+            with jobs._lock:
+                pass
+            entered.set()
+            assert release.wait(5)
+
+    owner = threading.Thread(target=background_owner, name='background-owner')
+    owner.start()
+    try:
+        assert entered.wait(2)
+        with watch.queued('live', '/api/live'):
+            clock.now += 2
+            assert watch.check() == ['live']
+        report = path.read_text()
+        assert f'Jobs._lock held by thread {owner.ident} background-owner' in report
+        assert 'in background_owner' in report
+    finally:
+        release.set()
+        owner.join(2)
+    assert jobs._lock.owner is None

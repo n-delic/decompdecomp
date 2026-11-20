@@ -25,8 +25,9 @@ STACK_DEPTH = 40
 
 
 class Watch:
-    def __init__(self, path, *, threshold=10., interval=1., cooldown=60., clock=time.monotonic):
+    def __init__(self, path, *, threshold=10., interval=1., cooldown=60., clock=time.monotonic, job_lock_owner=None):
         self.path = Path(path)
+        self.job_lock_owner = job_lock_owner
         self.threshold, self.interval, self.cooldown, self.clock = threshold, interval, cooldown, clock
         self.requests: dict[int, dict] = {}  # id -> {lane, route, queued, started, thread}
         self.ids = itertools.count()
@@ -64,6 +65,7 @@ class Watch:
         return stuck
 
     def _report(self, lane, entries, now):
+        owner = self.job_lock_owner() if self.job_lock_owner else None
         frames = sys._current_frames()
         names = {t.ident: t.name for t in threading.enumerate()}
         running = sorted((e for e in entries if e['thread'] is not None), key=lambda e: e['started'])
@@ -75,13 +77,22 @@ class Watch:
         for e in running:
             lines.append(f'\nRunning {now - e["started"]:.1f}s (queued {e["started"] - e["queued"]:.1f}s) '
                          f'{e["route"]} on thread {e["thread"]} {names.get(e["thread"], "")}\n')
-            frame = frames.get(e['thread'])
-            stack = []
-            while frame is not None and len(stack) < STACK_DEPTH:
-                stack.append(f'  {frame.f_code.co_filename}:{frame.f_lineno} in {frame.f_code.co_name}\n')
-                frame = frame.f_back
-            lines.extend(stack or ['  (thread finished)\n'])
+            lines.extend(self._stack(frames.get(e['thread'])))
+        if owner is not None:
+            lines.append(f'\nJobs._lock held by thread {owner} {names.get(owner, "")}\n')
+            lines.extend(self._stack(frames.get(owner)))
         report = ''.join(lines) + '\n'
+        self._write_report(lane, running, waiting, report)
+
+    @staticmethod
+    def _stack(frame):
+        stack = []
+        while frame is not None and len(stack) < STACK_DEPTH:
+            stack.append(f'  {frame.f_code.co_filename}:{frame.f_lineno} in {frame.f_code.co_name}\n')
+            frame = frame.f_back
+        return stack or ['  (thread finished)\n']
+
+    def _write_report(self, lane, running, waiting, report):
         try:
             previous = self.path.read_text(encoding='utf-8', errors='replace')
         except OSError:

@@ -104,6 +104,26 @@ def job_error(e: BaseException, log_path: Path | None = None) -> str:
             f"the log{where}")
 
 
+class JobLock:
+    """Track the registry owner so a stalled request can report its stack."""
+
+    def __init__(self):
+        self._lock = threading.RLock()
+        self.owner = None
+        self._depth = 0
+
+    def __enter__(self):
+        self._lock.acquire()
+        self.owner = threading.get_ident()
+        self._depth += 1
+
+    def __exit__(self, *exc):
+        self._depth -= 1
+        if not self._depth:
+            self.owner = None
+        self._lock.release()
+
+
 class Jobs:
     """Background work the GUI can follow: imports and installs. A job always ends: done, or an error that says why
     (never `running` forever because of an error nobody caught). Everything goes to the log file too."""
@@ -112,7 +132,7 @@ class Jobs:
         self.jobs: dict[str, dict] = {}
         self.cancel_events: dict[str, threading.Event] = {}
         self.foreground_events: dict[str, threading.Event] = {}
-        self._lock = threading.RLock()  # Some routes reserve a job under this lock before start().
+        self._lock = JobLock()  # Reservations may reenter through start(). Keep this lock free of I/O.
         self.log_path = log_path
         self.logger = file_log(log_path) if log_path else logging.getLogger("decompdecomp")
 
@@ -154,7 +174,6 @@ class Jobs:
             self.jobs[jid] = job
             if getattr(self, "closing", False):cancel.set()  # admission may have closed during reservation
         logger = self.logger
-        logger.info("job %s %s started", kind, jid)
 
         def log(line: str) -> None:
             check_cancel()
@@ -182,6 +201,7 @@ class Jobs:
         def run():
             job["thread_id"] = threading.get_native_id()
             try:
+                logger.info("job %s %s started", kind, jid)
                 check_cancel()
                 from ..compiler import background_thread
                 if not interactive.is_set():background_thread()
