@@ -14,9 +14,10 @@ MARKER = 'decompdecomp-repository.json'
 # as written when it's upgraded: an N64 save tracking NOTICE.md was refused ("Untrack game/private files"), and its
 # hand-written AGENTS.md would then have collided with the export's own.
 KEPT_DOCS = ('AGENTS.md', 'NOTICE.md', 'CONTRIBUTING.md', 'LICENSE', 'LICENSE.md', 'LICENSE.txt')
-ROOT_FILES = frozenset({'build.py', 'build.json', 'splat.yaml', 'symbol_addrs.txt', 'reloc_addrs.txt',
-                        'objdiff.json', 'functions.cfg', 'README.md', 'AGENTS.md', 'requirements.txt',
-                        'decompdecomp-sync.json', MARKER, '.gitignore', *KEPT_DOCS})
+BUILD_FILES = frozenset({'build.py', 'build.json', 'export_entry.py', 'splat.yaml', 'symbol_addrs.txt',
+                         'reloc_addrs.txt', 'objdiff.json', 'functions.cfg', 'README.md', 'requirements.txt',
+                         repository_sync.STATE, MARKER})
+ROOT_FILES = BUILD_FILES | frozenset({'.gitignore', *KEPT_DOCS})
 
 
 def full(root):
@@ -188,7 +189,7 @@ def prepare(net, slug, path, root, log):
             target = repository_sync.inside(destination, name)
             previous = repository_sync.digest(target)
             if target.exists() and name not in old and name != '.gitignore' and previous != repository_sync.digest(stage/name):
-                if name == 'README.md':
+                if name in BUILD_FILES:
                     backup_folder = '.decomp-repository-backups'
                 elif Path(name).parts[0] in ('asm', 'assets'):
                     backup_folder = '.decomp-extraction-backups'
