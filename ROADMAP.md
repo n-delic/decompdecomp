@@ -3026,6 +3026,14 @@ use the current input scope and ordinary compile budget. Imported builds still
 need reliable per-unit compiler and linked table evidence. Other processors
 need their own diff signatures before the corresponding source rules can run.
 
+Measured KMC conversion and scheduling diffs can also coalesce an inequality around
+a conditional call, reuse dead argument registers for packed float-to-int results,
+swap independent float products, and keep a modulo switch selector in one local.
+Additional gates select reciprocal reuse, earlier conversion indices, one explicit
+strided table offset, signed high-word bounds, and an image-verified double bias.
+The corresponding IDO gate reorders independent stores around a final argument
+reload. These use the ROM-mode measured MIPS lane and the same byte-exact judge.
+
 ## Register-only local lifetime search
 
 Shared draft, agent-local and deep searches offer bounded branch-tail locals, scalar call staging

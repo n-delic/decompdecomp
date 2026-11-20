@@ -569,11 +569,22 @@ class Search(Permuter):
                 settings = compiler_for(self.net.cfg(proj), fn['vram'], fn)
                 def resolve_symbol(symbol, project_id=proj["id"]):
                     return self.net.symbols(project_id).resolve(symbol)
+                def read_data(symbol, width, project=proj, function=fn):
+                    address = resolve_symbol(symbol)
+                    if address is None:
+                        return None
+                    try:
+                        return self.net.reader(project,function)(address,width)
+                    except (NetworkError, OSError):
+                        # A heuristic can skip missing optional data in this overlay.
+                        return None
+
                 observed_choices = [(family, child) for family, child in diff_gated_repairs.proposals(
                     source, fn['name'], header, proj['arch'], settings.get('toolchain',''),
                     self.winner_diff[0], fn['asm'], self.winner_jump_tables,
                     flags=settings.get('flags',()), big_endian=bool(proj['big_endian']),
-                    resolve=resolve_symbol if hasattr(self.net,'symbols') else None) if child not in self.local_seen]
+                    resolve=resolve_symbol if hasattr(self.net,'symbols') else None,
+                    read_data=read_data if hasattr(self.net,'reader') and hasattr(self.net,'symbols') else None) if child not in self.local_seen]
             observed_order = {child:index for index,(_,child) in enumerate(observed_choices)}
             focused_choices = observed_choices + buffer_choices + store_choices + frame_choices
             focused_pass = bool(focused_choices)
