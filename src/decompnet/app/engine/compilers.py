@@ -864,7 +864,8 @@ class CompilerMixin:
         all of them: the import's test could only try what was installed, and a guess from the program alone can
         miss (a game linked by CodeWarrior was GCC's code). Returns what was installed, left out, and the test's
         counts."""
-        proj = self._project(slug)
+        # Saved code may need the very compiler that Setup is about to install.
+        proj = self.project_row(slug, sync=False)
         console = self.console(proj)
         installed, left_out = [], []
         for tid in console.installable_compilers():
