@@ -5,7 +5,7 @@ import re
 from ..arch.mips_runtime import helper
 
 
-def kmc_variants(toolchain, flags):
+def kmc_variants(toolchain, flags, *, single_pass=False):
     """Bounded KMC trials that change scheduling or induction-variable reduction."""
     if toolchain != 'gcc-2.7.2-kmc':
         return []
@@ -15,6 +15,8 @@ def kmc_variants(toolchain, flags):
     variants = []
     if '-O1' in base:
         variants.append([*base, '-fschedule-insns', '-fschedule-insns2'])
+        if single_pass:
+            variants.append([*base, '-fschedule-insns2'])
     if base != flags:
         variants.append(base)
     if '-fno-strength-reduce' in flags:
@@ -33,7 +35,10 @@ def kmc_priorities(own, assembly, rows):
     variants = []
     if diagnosis['delay_slot'] and any(right.strip() == 'nop' for right in changed):
         variants.append([flag for flag in flags if not re.fullmatch(r'-g[0-3]?', flag)])
-    for variant in kmc_variants(own['toolchain'], flags):
+    scheduling = kmc_variants(own['toolchain'], flags, single_pass=prologue)
+    if prologue and not diagnosis['delay_slot']:
+        scheduling.sort(key=lambda variant: '-fschedule-insns2' not in variant or '-fschedule-insns' in variant)
+    for variant in scheduling:
         restores_induction = '-fno-strength-reduce' in flags and '-fno-strength-reduce' not in variant
         if restores_induction:
             if re.search(r'\bmultu?\b', ' '.join(changed)) and re.search(r'\baddiu?\b', assembly):
@@ -41,6 +46,19 @@ def kmc_priorities(own, assembly, rows):
         elif prologue or diagnosis['scheduling'] or diagnosis['delay_slot']:
             variants.append(variant)
     return list(dict.fromkeys(tuple(variant) for variant in variants if variant != flags))
+
+
+def kmc_sqrt_probe(own, assembly, rows):
+    """Test the missing GCC square-root fallback only when the target uses hardware sqrt."""
+    if (own['toolchain'] != 'gcc-2.7.2-kmc' or '-ffast-math' in own['flags']
+            or not re.search(r'\bsqrt\.[sd]\b', assembly)
+            or re.search(r'\bjalr?\b.*\bsqrtf?\b', assembly)):
+        return None
+    extra = [right for marker, _, right in rows if marker != ' ']
+    if (any(re.match(r'c\.eq\.[sd]\b', op.strip()) for op in extra)
+            and any(re.match(r'jal\b.*\bsqrtf?\b', op.strip()) for op in extra)):
+        return [*own['flags'], '-ffast-math']
+    return None
 
 
 def prioritized(proj, fn, own):

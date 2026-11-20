@@ -1,7 +1,29 @@
 """Rank applicable hypotheses by observed mismatches without excluding other families."""
 
+import re
+
 STRUCTURAL = ('scratch_role_reuse','scalar_storage_reuse','row_number_staging','explicit_loop_backedge','integer_array_pointer_phase','inferred_record_layout','scalar_normalization_scope')
-GUARDED = ('matched_zero_argument_call', 'zero_argument_parameter_alias', 'matched_integer_prototype', 'mips_debug_break','live_return_address','live_return_address_initializers')
+GUARDED = ('matched_zero_argument_call', 'zero_argument_parameter_alias', 'matched_integer_prototype', 'mips_debug_break','live_return_address','live_return_address_initializers', 'kmc_address_operand_order', 'kmc_float_comparison_order',
+           'callee_array_extent', 'callee_buffer_extent')
+
+
+def four_word_transfer(instructions):
+    # Require a contiguous sequence on each base and the same values in the stores.
+    decoded = [re.fullmatch(r'\w+\s+(\$\w+),\s*(-?(?:0x[0-9a-fA-F]+|[0-9]+))\((\$\w+)\)', op.strip())
+               for op in instructions]
+    if not all(decoded):
+        return False
+    for block in (decoded[:4], decoded[4:]):
+        offsets = [int(entry[2], 16 if '0x' in entry[2] else 10) for entry in block]
+        if len({entry[3] for entry in block}) != 1 or offsets != list(range(offsets[0], offsets[0]+16, 4)):
+            return False
+    values = [entry[1] for entry in decoded[:4]]
+    return len(set(values)) == 4 and values == [entry[1] for entry in decoded[4:]]
+
+
+def instruction_rows(rows):
+    return [row for row in rows if isinstance(row, (list, tuple)) and len(row) == 3
+            and all(isinstance(cell, str) for cell in row)]
 
 
 def matching_topics(rows):
@@ -10,17 +32,29 @@ def matching_topics(rows):
         parts = cell.split(None, 1)
         return parts[0] if parts else ''
 
-    target = [(opcode(left), marker) for marker, left, _ in rows if left]
+    rows = instruction_rows(rows)
+    target_rows = [(left, marker) for marker, left, _ in rows if left]
+    target = [(opcode(left), marker) for left, marker in target_rows]
     changed = [(opcode(left), opcode(right)) for marker, left, right in rows if marker != ' ']
     topics = []
     for load, store in (('lw', 'sw'), ('lwc1', 'swc1')):
         for i in range(len(target)-5):
             ops, markers = zip(*target[i:i+6])
-            if ops == (load,)*3 + (store,)*3 and any(marker != ' ' for marker in markers):
+            if (ops == (load,)*3 + (store,)*3 and any(marker != ' ' for marker in markers)
+                    and (i == 0 or target[i-1][0] != load)
+                    and (i+6 == len(target) or target[i+6][0] != store)):
                 topics.append('Grouped copies')
                 break
         if topics:
             break
+    if not topics:
+        for i in range(len(target)-7):
+            ops, markers = zip(*target[i:i+8])
+            if (ops in (('lw',)*4 + ('sw',)*4, ('lwc1',)*4 + ('swc1',)*4)
+                    and any(marker != ' ' for marker in markers)
+                    and four_word_transfer([text for text, _ in target_rows[i:i+8]])):
+                topics.append('Grouped copies')
+                break
     widths = {'lb', 'lbu', 'lh', 'lhu', 'lw', 'lwc1', 'ldc1'}
     if any(a in widths and b in widths and a != b for a, b in changed):
         topics.append('Load width and indexing')
@@ -34,7 +68,7 @@ def matching_topics(rows):
 TOPIC_REPAIRS = {
     'Grouped copies': ('global_record_copy', 'word_block_copy', 'float_record_copy'),
     'Load width and indexing': ('field_width', 'symbol_access_width', 'pointer_byte_step', 'pointer_walk_index'),
-    'Call signatures': ('float_prototype', 'matched_integer_prototype', 'passthrough_argument'),
+    'Call signatures': ('float_argument_bits', 'float_prototype', 'matched_integer_prototype', 'passthrough_argument'),
     'Unsigned conversions': ('float_unsigned_conversion',),
 }
 
@@ -69,7 +103,7 @@ def order(families, rows):
             'split_scalar_lifetime', 'array_index_width', 'local_width', 'declaration_order')
     from . import frame_plateau
     if diagnosis['frame_only_gap'] or frame_plateau.gap(rows,'mips'):
-        preferred = ('halfword_store_normalization','spill_normalization','split_narrow_lifetime','call_return_normalization')
+        preferred = ('callee_buffer_extent','callee_array_extent','halfword_store_normalization','spill_normalization','split_narrow_lifetime','call_return_normalization')
     elif diagnosis['return_copy_rotation']:
         preferred = ('prepared_return_scope','prepared_call_scope','assigned_call_scope','call_one_shot_scope')
     elif diagnosis['register_cycles']:

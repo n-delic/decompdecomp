@@ -690,7 +690,7 @@ class CompilerMixin:
         return ["", "### Compiler"] + lines if lines else []
 
     def suggest(self, agent: Agent, slug: str, text: str, compiler: str = "", flags: str = "",
-                function: str | None = None, ranges: str = "", source: str = "") -> str:
+                function: str | None = None, ranges: str = "", source: str = "", *, review_only: bool = False) -> str:
         """A change to the project's setup an agent can't make itself (the compiler, its flags, anything), for the user
         to apply or dismiss. With a compiler and a function whose C is ready, it's checked first: that C, built with the
         suggested compiler, matches the game or doesn't (GTA San Andreas: agents said EE-GCC 2.96, then 2.95.3). The
@@ -744,6 +744,8 @@ class CompilerMixin:
         s = found[0]
         note = f" ({check})" if check else ""
         if bundle:
+            if review_only:
+                return f"Suggested function-only compiler bundle for {function}. Review and apply it to recheck the match.{note}"
             if not self.auto_adjusts(self._project(slug)):
                 return f"Suggested function-only compiler bundle for {function}; automatic compiler changes are off. Apply it to recheck and save the source/header/profile together.{note}"
             try:
