@@ -687,15 +687,19 @@ def test_repository_upgrade_preserves_previous_extraction_locally(project, monke
     export = console.export_project
     asm = 'asm/nonmatchings/code/function.s'
     asset = 'assets/extracted.bin'
+    symbols = ('undefined_funcs_auto.txt', 'undefined_syms_auto.txt')
 
     def verified_export(net, slug, out, log):
         result = export(net, slug, out, log)
         (out/asm).parent.mkdir(parents=True)
         (out/asm).write_bytes(b'verified assembly')
+        for name in symbols:
+            (out/name).write_bytes(b'verified symbols')
         return result
 
     monkeypatch.setattr(console, 'export_project', verified_export)
     originals = {asm: b'previous assembly', asset: b'previous extraction'}
+    originals.update(dict.fromkeys(symbols, b'previous symbols'))
     for name, data in originals.items():
         (root/name).parent.mkdir(parents=True, exist_ok=True)
         (root/name).write_bytes(data)
@@ -704,6 +708,9 @@ def test_repository_upgrade_preserves_previous_extraction_locally(project, monke
     assert state['rebuildable']
     assert (root/asm).read_bytes() == b'verified assembly'
     assert (root/asset).read_bytes() == b'PRIVATE DATA'
+    for name in symbols:
+        assert (root/name).read_bytes() == b'verified symbols'
+        assert git(root, 'check-ignore', name) == name
     backup, = (root/'.decomp-extraction-backups').iterdir()
     for name, data in originals.items():
         saved = backup/name
@@ -716,6 +723,8 @@ def test_repository_upgrade_preserves_previous_extraction_locally(project, monke
     repository_setup.run(net, 'game', 'checkpoint', '', lambda _: None)
     tracked = git(root, 'ls-files').splitlines()
     assert all(not name.startswith(('asm/', 'assets/', '.decomp-extraction-backups/')) for name in tracked)
+
+    assert set(symbols).isdisjoint(tracked)
 
 
 def test_repository_creation_backs_up_a_readme_found_after_export(project, monkeypatch):
