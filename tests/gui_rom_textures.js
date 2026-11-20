@@ -88,7 +88,7 @@ const row=(n=0)=>({id:'r'+n,kind:'image',start:128+n*200,detected_asset:{...asse
   get('romAssetIcons').onclick();
   assert.match(get('romModelItems').innerHTML,/rom-model-card-open/);
   get('romModelItems').onclick({target:{closest:key=>key==='[data-model-region]'?{dataset:{modelRegion:'0'}}:null}});
-  assert.deepEqual(t.opened,[['model',true]]);
+  assert.deepEqual(t.opened,[['model']]);
   assert.equal(t.calls.length,1,'The model list delegates preview to the drawer');
   t.state.report.regions.push(...Array.from({length:24},(_,i)=>({
    id:'sample'+i,detected_asset:{media:'audio',label:'Sample '+i,

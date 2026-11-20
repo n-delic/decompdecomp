@@ -69,6 +69,8 @@ function dialog(title, html, kind = "") {
   if(typeof stopRomAssetAudio=== "function")stopRomAssetAudio();
   $("dialogBody").classList.remove("rom-region-body");
   $("dialogTitle").textContent = title;
+  $("dialogSubtitle").hidden = true;
+  $("dialogSubtitle").textContent = "";
   $("dialogBody").innerHTML = html;
   $("dialogBody")._html = null;  // (setHtml's memory of what another panel showed here)
   S.dialogKind = kind;

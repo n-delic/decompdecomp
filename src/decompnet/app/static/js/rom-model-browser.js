@@ -29,7 +29,7 @@ function renderRomModelBrowser(view=romView()) {
     host.onclick=event=>{
       const model=event.target.closest('[data-model-region]');
       const reference=event.target.closest('[data-model-function]');
-      if(model)openRomRegion(rows[Number(model.dataset.modelRegion)].region,true);
+      if(model)openRomRegion(rows[Number(model.dataset.modelRegion)].region);
       if(reference)openFn(reference.dataset.modelFunction);
     };
     streamRomAssets('Model',rows,(batch,start)=>{

@@ -44,7 +44,7 @@ function setup(){
     const html=t.run('romAssetHTML(scriptRegion)');
     assert.match(html,/value="1" selected>START · Opening · 3 cues/);
     assert.match(html,/value="A" selected>Führer/);
-    assert.match(html,/Browse dialogue/);
+    assert.match(html,/Update preview/);
     assert.equal(t.run("romRows({query:'german dialogue',report:{regions:[scriptRegion]}}).length"),1);
   }
 
@@ -135,6 +135,32 @@ function setup(){
     assert.equal(t.run("romRows(romView()).map(r=>r.id).join(',')"),'large,small,missing');
     t.run("romView().function='reader'");assert.equal(t.run('romRows(romView())[0].id'),'large');
   }
+  // A recognized, non-playable audio directory still has an inspectable preview.
+  {
+    const t=setup(),pending=deferred();
+    const asset={media:'audio',audio_kind:'indexed sample directory',label:'MusyX sample directory 9',
+      offset:128,samples:[{preview_available:false}]};
+    const row={id:'80-90',start:128,end:144,size:16,kind:'audio',confidence:'validated',detected_asset:asset,
+      mappings:[],evidence:[],sampled_bytes:16,entropy:0,references:[],pointers:[],strings:[],preview:'',annotation:{}};
+    t.context.row=row;t.run("romView().report={image_hash:'hash',regions:[row]}");
+    const body=t.context.$('body');
+    for(const [key,value] of Object.entries({source:'rom',format:'auto',offset:'128'})){
+      body.querySelector(`[data-asset-${key}]`).value=value;
+    }
+    t.context.reply=(url,options)=>options?.method==='POST'?pending.promise:Promise.resolve(row);
+    await t.run("openRomRegion('80-90')");
+    assert.equal(t.context.$('dialogTitle').textContent,asset.label);
+    assert.equal(t.context.$('dialogSubtitle').textContent,'128–144 · 16 bytes');
+    assert.equal(t.context.$('dialogSubtitle').hidden,false);
+    assert.ok(body.innerHTML.indexOf('data-asset-result')<body.innerHTML.indexOf('<h3>Evidence'));
+    assert.doesNotMatch(body.innerHTML,/Zoom map to/);
+    assert.equal(t.calls.length,2);
+    assert.equal(t.calls[1].options.body.region,row.id);
+    assert.match(body.querySelector('[data-asset-work]')._workStatus.textContent,/Preparing asset preview/);
+    pending.resolve({media:'metadata',title:asset.label,fields:{entries:9}});
+    await tick();
+    assert.equal(body.querySelector('[data-asset-result]').children[1].textContent,'entries: 9');
+  }
   // Note saves disable conflicting edits before the request and retain failures.
   {
     const t=setup(),saving=deferred();
@@ -142,6 +168,7 @@ function setup(){
     t.context.row=row;t.run("romView().report={image_hash:'hash',regions:[row]}");
     t.context.reply=(url,options)=>options?.method==='POST' ? saving.promise : Promise.resolve(row);
     await t.run("openRomRegion('0-10')");
+    assert.equal(t.calls.length,1,'Unknown data should not trigger a guessed decode');
     const body=t.context.$('body'),button=body.querySelector('[data-rom-save]');body.querySelector('[data-rom-label]').value='Textures';
     const promise=button.onclick();await tick();assert.equal(button.disabled,true);assert.equal(body.querySelector('[data-rom-notes]').disabled,true);
     await button.onclick();assert.equal(t.calls.filter(c=>c.options?.method==='POST').length,1);
@@ -287,7 +314,7 @@ function setup(){
   {
     const t=setup(),body=element(),pending=deferred();t.context.body=body;
     t.context.region={id:'anim',start:128,size:100,detected_asset:{media:'metadata',resource_type:'animation',resource_path:'directory/objects/object[9]/animations/animation[2]',compression:{codec:'RNC method 1',packed_bytes:100,expanded_bytes:400}}};
-    const html=t.run('romAssetHTML(region)');assert.match(html,/Inspect resource/);assert.match(html,/animation\[2\]/);assert.ok(!html.includes('texture bank ·'));
+    const html=t.run('romAssetHTML(region)');assert.match(html,/Update preview/);assert.match(html,/animation\[2\]/);assert.ok(!html.includes('texture bank ·'));
     vm.runInContext(fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/js/rom-textures.js'),'utf8'),t.context);
     assert.equal(t.run('romTextureControlsHTML(region)'),'');assert.equal(t.run('romTextureBanks({regions:[region]}).length'),0);
     for(const [key,value] of Object.entries({source:'rom',format:'auto',offset:'128'}))body.querySelector(`[data-asset-${key}]`).value=value;
