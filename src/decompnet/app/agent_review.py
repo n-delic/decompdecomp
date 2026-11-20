@@ -144,34 +144,108 @@ def brief(net, proj, fn):
     return text
 
 
-def save_experiment(net, agent, slug, name, proposal):
-    store = net.project_store(slug)
+def prepare_experiment(net, agent, slug, fn, proposal, progress):
+    """Capture the agent's evidence before the release or its background repairs change inputs."""
     from .agent_tokens import candidate
-    if not isinstance(proposal, dict) or set(proposal) - {'revision','old','new','title'}:
-        raise NetworkError('Next experiment needs revision, old, new and optional title only.')
-    if not all(isinstance(proposal.get(k),str) and len(proposal[k])<=8000 for k in ('revision','old','new')):
-        raise NetworkError('Next experiment needs bounded text revision, old and new fields.')
-    source, revision = candidate(net,agent,slug,name)
-    if proposal['revision'] != revision or not proposal['old'] or source.count(proposal['old']) != 1 or proposal['old'] == proposal['new']:
-        raise NetworkError('Next experiment is stale, ambiguous or makes no edit. Use the current revision and one exact old anchor.')
-    fn = net._function(name,slug)
-    if not store.one('SELECT 1 FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id):
-        raise NetworkError('Hold the function before saving a next experiment.')
-    state = dict(proposal, title=str(proposal.get('title') or 'Next experiment')[:160], source_sha256=digest(source),
-                 facts=facts(net,net.project_row(slug),fn), agent=agent.name)
-    with store.tx() as db:
-        db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',(EXPERIMENT+str(fn['id']),json.dumps(state)))
-    return 'Next experiment saved as an untested patch; it will be revalidated for the next candidate.'
+
+    fields = {'revision', 'old', 'new', 'title', 'tried', 'changed'}
+    if not isinstance(proposal, dict) or set(proposal) - fields:
+        raise NetworkError('Use revision, tried, changed and title for a handoff, with optional old and new patch text.')
+    limits = {'revision': 64, 'old': 8000, 'new': 8000, 'title': 240, 'tried': 320, 'changed': 320}
+    if any(not isinstance(value, str) or len(value) > limits[key] for key, value in proposal.items()):
+        raise NetworkError('Keep the handoff fields short and use text for each field.')
+    source, revision = candidate(net, agent, slug, fn['name'])
+    if not source or proposal.get('revision') != revision:
+        raise NetworkError('The handoff needs the current candidate revision. Read get_candidate before retrying.')
+    if source != (fn['best_source'] or fn['seed']):
+        raise NetworkError('The next agent inherits the saved candidate. Use get_candidate(base="saved_best") before proposing its next step, or release with notes.')
+
+    patch = 'old' in proposal or 'new' in proposal
+    old, new = proposal.get('old', ''), proposal.get('new', '')
+    if patch and ('new' not in proposal or not old or source.count(old) != 1 or old == new):
+        raise NetworkError('The handoff patch is ambiguous or makes no edit. Supply one exact old anchor and its replacement.')
+    if not patch or 'tried' in proposal or 'changed' in proposal:
+        if not all(proposal.get(field, '').strip() for field in ('tried', 'changed', 'title')):
+            raise NetworkError('Describe what you tried, what changed, and one untested next step in title.')
+    store = net.project_store(fn['project_id'])
+    at = progress['claimed_at']
+    state = dict(proposal, title=proposal.get('title', '').strip() or 'Test the proposed patch',
+                 source_sha256=digest(source), facts=facts(net, net.project_row(slug), fn),
+                 extent=digest((fn['unit'], fn['size'], fn['n_insns'], fn['asm'])),
+                 agent=agent.name, claimed_at=at)
+    if patch and patch_tried(net, fn, state, source):
+        raise NetworkError('That patch has already been tried. Name a different untested next step.')
+    # Check now and on read. The release transaction owns publication of this snapshot.
+    if not store.one('SELECT 1 FROM claims WHERE function_id=? AND agent_id=? AND expires_at>?',
+                     fn['id'], agent.id, time.time()):
+        raise NetworkError('Hold a current claim before handing off an experiment.')
+    return state
+
+
+def patch_tried(net, fn, state, source):
+    from .agent_tokens import compiled_before
+
+    edited = source.replace(state['old'], state['new'], 1)
+    if compiled_before(net, fn, edited):
+        return True
+    if 'claimed_at' not in state:
+        return False
+    return net.project_store(fn['project_id']).one(
+        'SELECT 1 FROM main.attempts WHERE function_id=? AND created_at>=? '
+        'AND COALESCE(source_digest,source_hash)=? LIMIT 1',
+        fn['id'], state['claimed_at'], hashlib.sha256(edited.encode()).hexdigest()) is not None
+
+
+def applicable(net, fn, slug, source, state):
+    if fn['status'] != 'open' or not source or state.get('source_sha256') != digest(source):
+        return False
+    if 'extent' in state and state['extent'] != digest((fn['unit'], fn['size'], fn['n_insns'], fn['asm'])):
+        return False
+    if state['facts'] != facts(net, net.project_row(slug), fn):
+        return False
+    if 'old' in state:
+        return source.count(state['old']) == 1 and not patch_tried(net, fn, state, source)
+    # An advisory step has no exact candidate identity. Fresh work supersedes it.
+    return not net.project_store(fn['project_id']).one(
+        'SELECT 1 FROM main.attempts WHERE function_id=? AND created_at>? LIMIT 1', fn['id'], state['released_at'])
+
+
+def summary(state):
+    lines = ['Previous agent handoff (current candidate/build):']
+    if state.get('tried'):
+        lines.append('Tried: ' + state['tried'].strip())
+    if state.get('changed'):
+        lines.append('Observed: ' + state['changed'].strip())
+    lines.append('Untested next step: ' + state['title'])
+    return '\n'.join(lines)
+
+
+def handoff_brief(net, slug, fn, source):
+    state = load(net, EXPERIMENT + str(fn['id']), project_id=fn['project_id'])
+    if not state or not applicable(net, fn, slug, source, state):
+        return ''
+    text = summary(state)
+    if 'old' in state:
+        text += '\nRead get_function(section="experiment") for the validated patch and judge it with compile_patch.'
+    return text
 
 
 def experiment(net, agent, slug, name):
     from .agent_tokens import candidate
-    fn = net._function(name,slug)
-    state = load(net,EXPERIMENT+str(fn['id']),project_id=fn['project_id'])
+
+    fn = net._function(name, slug)
+    store = net.project_store(fn['project_id'])
+    state = load(net, EXPERIMENT + str(fn['id']), project_id=fn['project_id'])
     if not state:
         return 'No structured next experiment is saved.'
-    source, revision = candidate(net,agent,slug,name)
-    if state['facts'] != facts(net,net.project_row(slug),fn) or state['source_sha256'] != digest(source) or source.count(state['old']) != 1:
-        return 'Saved next experiment is outdated for this candidate/build; do not apply it. Read the notes and prepare a fresh experiment.'
-    return 'Untested historical proposal; exact anchor validated. Use compile_patch through the ordinary judge:\n'+json.dumps(
-        {'function':name,'revision':revision,'old':state['old'],'new':state['new'],'repair_note':state['title']})
+    if not store.one('SELECT 1 FROM claims WHERE function_id=? AND agent_id=? AND expires_at>?',
+                     fn['id'], agent.id, time.time()):
+        return 'Hold the function to check whether a structured next experiment applies.'
+    source, revision = candidate(net, agent, slug, name)
+    if not applicable(net, fn, slug, source, state):
+        return 'Saved next experiment is outdated for this candidate/build or has since been tried. Prepare a fresh experiment.'
+    text = summary(state)
+    if 'old' in state:
+        text += '\nUntested historical proposal; exact anchor validated. Use compile_patch through the ordinary judge:\n' + json.dumps(
+            {'function': name, 'revision': revision, 'old': state['old'], 'new': state['new'], 'repair_note': state['title']})
+    return text

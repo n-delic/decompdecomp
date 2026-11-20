@@ -51,14 +51,15 @@ def test_structured_next_experiment_validates_anchor_revision_and_build(tmp_path
     source, revision=agent_tokens.candidate(net,agent,'game','f')
     proposal={'revision':revision,'old':'return 1','new':'return 2','title':'Try a different constant'}
     before=dict(net._function('f','game'))
-    agent_review.save_experiment(net,agent,'game','f',proposal)
+    net.release_function(agent, 'f', 'Handoff test.', 'game', move_on=True, next_experiment=proposal)
+    net.claim_row(agent, 'game', 'f')
     text=agent_tokens._function_view(net,agent,'game','f','experiment')
-    patch=json.loads(text.split('\n',1)[1])
+    patch=json.loads(text.splitlines()[-1])
     assert patch['revision']==revision and source.replace(patch['old'],patch['new'])=='int f(){return 2;}'
-    assert dict(net._function('f','game'))==before
+    assert net._function('f', 'game')['best_source'] == before['best_source']
     for bad in [dict(proposal,revision='old'),dict(proposal,old='missing'),dict(proposal,new='return 1')]:
         with pytest.raises(NetworkError):
-            agent_review.save_experiment(net,agent,'game','f',bad)
+            agent_review.prepare_experiment(net, agent, 'game', fn, bad, net.claim_progress(agent, fn))
     with net.store.tx() as db:
         db.execute("UPDATE functions SET best_source='int f(){return 3;}' WHERE id=?",(fn['id'],))
     assert 'outdated' in agent_review.experiment(net,agent,'game','f')
@@ -101,7 +102,8 @@ def test_api_and_mcp_expose_structured_experiment_handoffs(tmp_path):
     from decompnet.app import tools
     api=next(t['function'] for t in api_tool_schemas() if t['function']['name']=='release_function')
     schema=api['parameters']['properties']['next_experiment']
-    assert set(schema['required'])=={'revision','old','new'}
+    assert schema['required'] == ['revision']
+    assert {'tried', 'changed', 'title', 'old', 'new'} <= schema['properties'].keys()
     net,agent,_=game(tmp_path)
     server=tools.build_mcp(net,lambda ctx:(agent,'game'))
     definitions=anyio.run(server.list_tools)
@@ -133,20 +135,79 @@ def test_cli_limit_publishes_account_cooldown_before_session_exit(tmp_path,monke
     assert not any('exited with code' in row['text'] for row in s.feed)
 
 
-def test_release_tool_keeps_a_validated_next_experiment_for_the_next_worker(tmp_path):
+@pytest.mark.parametrize('change', ['none', 'source', 'target', 'header', 'tried'])
+def test_next_worker_sees_handoff_only_while_it_applies(tmp_path, change):
     from decompnet.app import tools
-    net, agent, fn=game(tmp_path)
-    net.claim_row(agent,'game','f')
-    source,revision=agent_tokens.candidate(net,agent,'game','f')
-    result=tools.call(net,agent,'game','release_function',{'function':'f','notes':'Untried constant change; candidate retained.',
-        'move_on':True,'next_experiment':{'revision':revision,'old':'return 1','new':'return 2'}})
+
+    net, agent, fn = game(tmp_path)
+    net.claim_row(agent, 'game', 'f')
+    source, revision = agent_tokens.candidate(net, agent, 'game', 'f')
+    result = tools.call(net, agent, 'game', 'release_function', {
+        'function': 'f', 'notes': 'Stalled on the immediate.', 'move_on': True,
+        'next_experiment': {'revision': revision, 'tried': 'Changed local signedness',
+                            'changed': 'The differing immediate stayed the same',
+                            'title': 'Check the target constant', 'old': 'return 1', 'new': 'return 2'},
+    })
     assert 'Next experiment saved' in result
-    assert not net.store.one('SELECT 1 FROM claims WHERE function_id=?',fn['id'])
-    other,_=net.local_agent('next-worker')
-    net.claim_row(other,'game','f')
-    result=tools.call(net,other,'game','get_function',{'function':'f','section':'experiment'})
-    assert 'Untested historical proposal' in result and 'return 2' in result
-    assert net._function('f','game')['best_source']==source
+    assert not net.store.one('SELECT 1 FROM claims WHERE function_id=?', fn['id'])
+
+    if change == 'tried':
+        net._record(fn, agent, 30, source.replace('return 1', 'return 2'), 1)
+    elif change == 'header':
+        with net.store.tx() as db:
+            db.execute("INSERT INTO context_versions(project_id,unit,version,header,created_at) "
+                       "VALUES(?,'',1,'typedef int word;',0)", (fn['project_id'],))
+    else:
+        with net.store.tx() as db:
+            if change == 'source':
+                db.execute("UPDATE functions SET best_source='int f(){return 3;}' WHERE id=?", (fn['id'],))
+            elif change == 'target':
+                db.execute("UPDATE functions SET target=X'01020304' WHERE id=?", (fn['id'],))
+
+    other, _ = net.local_agent('next-worker')
+    claim = tools.call(net, other, 'game', 'claim_function', {'function': 'f', 'strategy': ''})
+    detail = tools.call(net, other, 'game', 'get_function', {'function': 'f', 'section': 'experiment'})
+    for text in ('Changed local signedness', 'The differing immediate stayed the same', 'Check the target constant'):
+        assert (text in claim) == (change == 'none')
+        assert (text in detail) == (change == 'none')
+    assert ('Untested historical proposal' in detail) == (change == 'none')
+    assert ('return 2' in detail) == (change == 'none')
+    if change == 'none':
+        assert net._function('f', 'game')['best_source'] == source
+
+
+def test_pushed_back_release_does_not_publish_handoff(tmp_path):
+    from decompnet.app import tools
+
+    net, agent, fn = game(tmp_path)
+    net.claim_row(agent, 'game', 'f')
+    _, revision = agent_tokens.candidate(net, agent, 'game', 'f')
+    result = tools.call(net, agent, 'game', 'release_function', {
+        'function': 'f', 'notes': 'Stalled.', 'next_experiment': {
+            'revision': revision, 'tried': 'Reviewed the original', 'changed': 'No new output',
+            'title': 'Check the caller contract'},
+    })
+    assert 'Not released yet' in result
+    assert not agent_review.load(net, agent_review.EXPERIMENT + str(fn['id']))
+
+
+def test_advisory_handoff_is_superseded_by_fresh_work(tmp_path):
+    from decompnet.app import tools
+
+    net, agent, fn = game(tmp_path)
+    net.claim_row(agent, 'game', 'f')
+    source, revision = agent_tokens.candidate(net, agent, 'game', 'f')
+    result = tools.call(net, agent, 'game', 'release_function', {
+        'function': 'f', 'notes': 'Stalled.', 'move_on': True, 'next_experiment': {
+            'revision': revision, 'tried': 'Reviewed the original', 'changed': 'No new output',
+            'title': 'Check the caller contract'},
+    })
+    assert 'Next experiment saved' in result
+    other, _ = net.local_agent('next-worker')
+    claim = tools.call(net, other, 'game', 'claim_function', {'function': 'f', 'strategy': ''})
+    assert 'Untested next step: Check the caller contract' in claim
+    net._record(fn, other, 25, source, 1)
+    assert 'Check the caller contract' not in agent_review.experiment(net, other, 'game', 'f')
 
 
 def test_release_evidence_does_not_follow_a_concurrent_source_edit(tmp_path):

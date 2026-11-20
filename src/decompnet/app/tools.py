@@ -240,8 +240,17 @@ REPAIR_GUIDANCE = (
     "send just the category. Categories: " + ", ".join(AGENT_CATEGORIES) +
     ". For other, optionally give a short suggested_category. No explanation or extra compile required.\n"
 )
-WORK_PROMPT += "\n" + REPAIR_GUIDANCE + 'Prefer compile_patch for small edits and compile_and_diff for substantial rewrites. Keep the returned candidate revision. Do not fetch get_candidate after a successful patch unless the source is lost or stale. Same-function edits must be sequential. When handing off a precise untested edit, release_function with next_experiment fields revision, old, new, title saves a validated exact-anchor proposal. Retrieve it with get_function(section="experiment"); it remains untested until the normal judge runs. compile_variants runs up to six independent supplied alternatives against one revision and returns the chosen continuation; keep the baseline on ties. Automatic repairs are explicit via try_local_repairs, never a substitute for submitted variants. A saved historical score can differ from the current verified baseline; compare current trials to the rechecked baseline. Release with precise function notes when the move-on budget is exhausted, then take eligible work. Global share_knowledge is only for reusable game/compiler matching tips; function-specific findings belong in release notes. Optional tools may be disabled: use the available schema. guide(topic="agent-experiments") explains repair families, selectors, recovery, compiler trials and paging. Detailed tool help is guide(topic="tool:NAME").'
-FORK_PROMPT += "\n" + REPAIR_GUIDANCE + 'Prefer compile_patch for small edits and compile_and_diff for substantial rewrites. Keep the returned candidate revision. When handing off a precise untested edit, release_function with next_experiment fields revision, old, new, title saves an exact-anchor proposal. Retrieve it with get_function(section="experiment") and test through the normal judge. Do not fetch get_candidate after a successful patch unless the source is lost or stale. Same-function edits must be sequential. When handing off a precise untested edit, release_function with next_experiment fields revision, old, new, title saves a validated exact-anchor proposal. Retrieve it with get_function(section="experiment"); it remains untested until the normal judge runs. compile_variants runs up to six independent supplied alternatives against one revision and returns the chosen continuation; keep the baseline on ties. Automatic repairs are explicit via try_local_repairs, never a substitute for submitted variants. A saved historical score can differ from the current verified baseline; compare current trials to the rechecked baseline. Release with precise function notes when the move-on budget is exhausted, then take eligible work. Global share_knowledge is only for reusable game/compiler matching tips; function-specific findings belong in release notes. Optional tools may be disabled: use the available schema. guide(topic="agent-experiments") explains repair families, selectors, recovery, compiler trials and paging. Detailed tool help is guide(topic="tool:NAME").'
+HANDOFF_GUIDANCE = """
+When releasing a stalled function, give the next agent a structured handoff in next_experiment.
+Use revision for the candidate they will inherit, tried for the approach you tested, changed for the
+observed result (including unchanged output), and title for one untested next step. Include old and new
+only for a precise patch with a unique anchor. If you explored a worse candidate, recover saved_best
+before proposing its next step. If there is no usable candidate, leave those findings in notes.
+A handoff is advisory. The next agent sees it on the claim while it applies.
+"""
+MATCHING_WORKFLOW = 'Prefer compile_patch for small edits and compile_and_diff for substantial rewrites. Keep the returned candidate revision. Do not fetch get_candidate after a successful patch unless the source is lost or stale. Same-function edits must be sequential. compile_variants runs up to six independent supplied alternatives against one revision and returns the chosen continuation; keep the baseline on ties. Automatic repairs are explicit via try_local_repairs, never a substitute for submitted variants. A saved historical score can differ from the current verified baseline; compare current trials to the rechecked baseline. Global share_knowledge is only for reusable game/compiler matching tips; function-specific findings belong in release notes. Optional tools may be disabled: use the available schema. guide(topic="agent-experiments") explains repair families, selectors, recovery, compiler trials and paging. Detailed tool help is guide(topic="tool:NAME").'
+WORK_PROMPT += "\n" + REPAIR_GUIDANCE + HANDOFF_GUIDANCE + MATCHING_WORKFLOW
+FORK_PROMPT += "\n" + REPAIR_GUIDANCE + HANDOFF_GUIDANCE + MATCHING_WORKFLOW
 
 
 def _console_guides() -> dict:
@@ -441,9 +450,9 @@ def _project_info(net: RomNetwork, slug: str, detail: bool = True) -> str:
 # name -> handler(net, agent, slug, **args); every handler returns text for the model
 @release_operation("tool", protect_new=True)
 def _release_with_experiment(net, agent, slug, function, notes, needs, not_c, move_on, next_experiment, claim_token=""):
-    from . import agent_review
-    saved = agent_review.save_experiment(net,agent,slug,function,next_experiment) if next_experiment is not None else ''
-    return agent_tokens.brief(net,net.release_function(agent,function,notes,slug,needs or '',bool(not_c),bool(move_on),claim_token=claim_token),slug,agent) + ('\n'+saved if saved else '')
+    result = net.release_function(agent, function, notes, slug, needs or '', bool(not_c), bool(move_on),
+                                  claim_token=claim_token, next_experiment=next_experiment)
+    return agent_tokens.brief(net, result, slug, agent)
 
 
 @claim_state.quick
@@ -1293,7 +1302,9 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
             function: the function you hold
             notes: what you tried, what is left
             claim_token: always pass the token from the current claim, continuation state or get_candidate, including the first release and retries. A stale token cannot release a new claim.
-            next_experiment: optional untested exact patch with revision, old, new and title. Validated against your current candidate; rejected if stale or ambiguous. The next agent can retrieve it with get_function(section="experiment") and test through compile_patch.
+            next_experiment: stalled-claim handoff with revision, tried, changed and title (one untested next step).
+                Optionally include old and new together for a precise untested patch. Use the candidate the next
+                agent will inherit. Current handoffs appear in their claim and get_function(section="experiment").
             needs: optional: a direct callee recorded in the original assembly that blocks this function. Paused
                 candidates cannot be selected this way. Explain indirect/inline/header concerns in notes instead.
             move_on: explicitly release now with precise notes explaining why further exploration is unproductive. Skips the one-time release pushback; does not mark a match or no-C verdict.
