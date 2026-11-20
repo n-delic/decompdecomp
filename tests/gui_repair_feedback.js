@@ -52,7 +52,7 @@ const context = { S: {slug: 'demo'}, document: {body, createElement: (tag) => ne
     if (votePaging && query.get('sort') === 'upvotes') {
       const more = query.get('before') === '0';
       const examples = more ? [{...row(), id: 46, upvotes: 5, review_group: 'build'}, row()] : [{...row(), id: 81, upvotes: 0}];
-      return {examples, categories: ['unclassified', 'types'], states: ['new', 'reviewed'], total: 3, more, groups: []};
+      return {examples, categories: ['unclassified', 'types', 'memory_access_order'], states: ['new', 'reviewed'], total: 3, more, groups: []};
     }
     return {examples: triage ? ['source','first','context','build'].map((review_group,index) => ({...row(),id:42+index,review_group})) : [row()], categories: ['unclassified', 'types'], states: ['new', 'reviewed'],
       total: 100, groups: [{category: 'types', status: state, count: 1}], more: false};
@@ -166,6 +166,7 @@ vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/decompnet/app/stati
   assert(requests.at(-1).url.includes('sort=upvotes&before=42&before_votes=1'));
   assert(textOf(list.children[2]).includes('0 upvotes'));
   const category = dialog.querySelector('[data-category]');
+  assert(category.options.some(option => option.value === 'memory_access_order' && option.textContent === 'Memory access order'));
   category.value = 'types'; await category.onchange();
   assert(requests.some(r => r.url.includes('category=types') && r.url.includes('sort=upvotes&before=0')));
   assert.equal(list.children.length, 2);

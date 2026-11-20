@@ -52,7 +52,8 @@ $("repairExamples").onclick = async () => {
   comparable.checked = true; status.value = 'new'; sort.value = 'recent';
   let before = 0, beforeVotes = 0, shown = 0, investigation;
   const baselineCategory = 'no_failed_baseline';
-  const formatCategory = value => value === baselineCategory ? 'No saved failed baseline' : value.replaceAll('_', ' ');
+  const categoryNames = {[baselineCategory]: 'No saved failed baseline', memory_access_order: 'Memory access order'};
+  const formatCategory = value => categoryNames[value] || value.replaceAll('_', ' ');
   const reviewLabel = value => ({new:'Needs review', reviewed:'Reviewed', implemented:'Added to app', dismissed:'Dismissed'}[value] || value.replaceAll('_', ' '));
   const investigationConfig = () => investigation ||= api('/api/repair-examples/investigate');
   const scope = () => `slug=${encodeURIComponent(slug)}&all=${all.checked ? 1 : 0}`;

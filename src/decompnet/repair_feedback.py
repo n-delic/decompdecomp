@@ -20,7 +20,7 @@ from .repair_changes import NO_FAILED_BASELINE
 from .repair_comparison import differences as settings_differences
 
 AGENT_CATEGORIES = ('types', 'casts', 'constants', 'addresses', 'signatures', 'layout',
-                    'temporaries', 'expression_order', 'control_flow', 'compiler_settings', 'other')
+                    'temporaries', 'expression_order', 'memory_access_order', 'control_flow', 'compiler_settings', 'other')
 CATEGORIES = ('unclassified', *AGENT_CATEGORIES, NO_FAILED_BASELINE)
 BASELINE_MIGRATION = 'repair-baseline-category-v1'
 STATES = ('new', 'reviewed', 'implemented', 'dismissed')
