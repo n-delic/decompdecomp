@@ -632,8 +632,17 @@ class ForkEngine:
         return builds.build(unit, lambda units: self._build_units(proj, fp, units))
 
     def _build_units(self, proj, fp: ForkProject, units: list) -> list[tuple[bool, str]]:
+        from . import attempt_workers
+
         with self._build_locks[proj["id"]]:  # (and nothing changes the build's files meanwhile)
-            return fp.build_units(units)
+            return attempt_workers.run("project-build", (fp.root, units), lambda: fp.build_units(units),
+                                       build=fp._execute)
+
+    @staticmethod
+    def _attempt_diff(fp, unit, symbol):
+        from . import attempt_workers
+
+        return attempt_workers.run("project-diff", (fp.root, unit, symbol), lambda: fp.diff(unit, symbol))
 
     def _build_all(self, proj, fp: ForkProject, failed: list[str] | None = None) -> tuple[bool, str]:
         with self._build_locks[proj["id"]]:
@@ -685,7 +694,7 @@ class ForkEngine:
         if not ok or unit.base is None or not unit.base.exists():
             return None, False
         try:
-            d = fp.diff(unit, None)
+            d = self._attempt_diff(fp, unit, None)
         except (ObjdiffError, ForkError):
             return None, True
         self._keep_scores(proj, unit, text, d.unit_scores)
@@ -1363,8 +1372,10 @@ class ForkEngine:
         return {"linked": linked, "failed": failed}
 
     def _verify(self, proj, fp: ForkProject) -> tuple[bool, str]:
+        from . import attempt_workers
+
         with self._build_locks[proj["id"]]:
-            return fp.verify()
+            return attempt_workers.run("project-verify", (fp.root,), fp.verify, build=fp._execute)
 
     def _file_done(self, slug: str, proj, fp: ForkProject, unit, scores: dict, agent: Agent | None) -> str:
         """When every function of a file matches: link it (in the background), or say what its data still needs."""
@@ -3115,7 +3126,9 @@ class ForkEngine:
                 quiet: int | None = None, comment: bool = False, *, background: bool = False) -> dict:
         if background and (keep or slug in self.net.links):
             raise NetworkError("Concurrent trials must restore unfinished source and run on the host project.")
-        with self.net.attempt_turn(agent, self._fn(slug, function)):
+        from . import attempt_workers
+
+        with self.net.attempt_turn(agent, self._fn(slug, function)), attempt_workers.attempt(self.net):
             result = self._attempt_and_share(agent, slug, function, source, keep, prelude, quiet, comment,
                                            **({"background": True} if background else {}))
             for key in ('exact','new_match','adopted'):result.setdefault(key,False)
@@ -3393,7 +3406,7 @@ class ForkEngine:
                 return {"text": f"❌ BUILD ERROR (your change was undone){why}\n{log[-3000:]}", "score": None,
                         "matched": False}
             try:
-                d = fp.diff(unit, symbol)
+                d = self._attempt_diff(fp, unit, symbol)
             except (ObjdiffError, ForkError) as e:
                 undo()
                 return {"text": f"❌ objdiff couldn't compare (your change was undone): {e}", "score": None, "matched": False}

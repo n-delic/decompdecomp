@@ -103,6 +103,8 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
         bounded('Stopping deep searches and queued repairs',lambda _:net.deep_sweeps.shutdown(),5)
         bounded('Stopping the permuter process',lambda _:net.permuter.close(),5)
         stopped=bounded('Saving agent recovery and releasing claims',lambda notify:manager.shutdown(notify=notify),30)
+        if net.attempt_workers is not None:
+            bounded('Stopping compile and judge workers',lambda _:net.attempt_workers.close(),5)
         if stopped:
             bounded('Saving remaining project progress',lambda notify:flush_progress(status,notify),max(0,deadline-time.monotonic()))
         else:
@@ -212,7 +214,8 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
     startup.start()
     from .database_cleanup import Retention
     net.database_retention = Retention(net,jobs)
-    from . import render_worker
+    from . import attempt_workers, render_worker
+    net.attempt_workers = attempt_workers.start(home)
     net.progress.renderers = render_worker.start(net, home)  # progress-folder renders off this process's lock
     net.autosave = saves.Autosave(net, settings)
     net.autosave.start()

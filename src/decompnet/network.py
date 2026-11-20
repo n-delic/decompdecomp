@@ -454,6 +454,13 @@ def _ago(ts: float | None) -> str:
     return f"{s}s ago" if s < 120 else f"{s // 60}m ago" if s < 7200 else f"{s // 3600}h ago"
 
 
+def score_candidate(target, candidate, verdict):
+    diff = scoring.diff(target, candidate)
+    if verdict is not None:
+        return scoring.DiffResult(0 if verdict else max(1, diff.score), diff.max_score, diff.rows, verdict)
+    return diff
+
+
 class Network:
     def __init__(self, db_path: str | Path, claim_ttl: int = CLAIM_TTL, *, repair_archive=None, project_databases=False):
         self._project_files = None
@@ -1988,10 +1995,10 @@ class Network:
         return False, None, getattr(result, "effective_settings", None)
 
     def _score_candidate(self, fn, proj, cand, verdict):
-        diff = scoring.diff(self._target_obj(fn, proj), cand)
-        if verdict is not None:
-            return scoring.DiffResult(0 if verdict else max(1, diff.score), diff.max_score, diff.rows, verdict)
-        return diff
+        from .app import attempt_workers
+
+        args = (self._target_obj(fn, proj), cand, verdict)
+        return attempt_workers.run("score", args, lambda: score_candidate(*args))
 
     def _attempt_unlimited(self, agent: Agent, function: str, source: str, project: str | None = None) -> dict:
         """Compile, score and record one attempt. Returns {"text", "score", "matched"} (score None: didn't compile)."""

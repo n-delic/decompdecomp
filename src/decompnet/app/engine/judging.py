@@ -19,6 +19,7 @@ from ...request_timing import build as timed_build
 from ...request_timing import timed_lock
 from ...rom import match
 from ...rom.symbols import SymbolTable
+from .. import attempt_workers
 from ..function_names import canonical_source
 from .common import _AUTO_TOKEN, BATCH_INSNS
 
@@ -99,7 +100,13 @@ class JudgeMixin:
         with compile_timing.phase('link'):
             target = self._rom_target(fn)
             # the console links it (GBA: ARM/Thumb, PS3: PPC64; the rest: rom.match), against the caller's overlay (#230)
-            res = self.console(proj).link_function(obj, fn["name"], target, self.symbols(proj["id"]), self.reader(proj, fn))
+            symbols = self.symbols(proj["id"])
+
+            def link():
+                return self.console(proj).link_function(obj, fn["name"], target, symbols, self.reader(proj, fn))
+
+            res = (attempt_workers.run("rom-link", (dict(proj), dict(fn), obj, target, symbols), link)
+                   if attempt_workers.active() and "rom_offset" in fn.keys() else link())
         if diagnose is None:
             return res.candidate, res.exact if res.candidate is not None else None, res.problems
         if _search_evaluation.get():
@@ -335,7 +342,7 @@ class JudgeMixin:
         with self.progress.foreground(), (nullcontext() if publish else self.progress.view()):
             fn = self._function(function, project)
             slug = self.project_store(fn['project_id']).one("SELECT slug FROM projects WHERE id=?", fn["project_id"])["slug"]
-            with self.progress.judging(slug, publish=publish):
+            with self.progress.judging(slug, publish=publish), attempt_workers.attempt(self):
                 from ...attempt_status import update
                 update('compiling', fn['name'])
                 try:
