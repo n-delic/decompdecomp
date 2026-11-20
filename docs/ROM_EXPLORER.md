@@ -595,3 +595,6 @@ The sample preview rate is adjustable. Stored EAD sequences also appear under
 Audio when the loader tables resolve the sequence, instrument and wave data.
 Prepare a sequence and press Play for up to 30 seconds of stereo audio rendered
 from the cartridge samples. Runtime effects, branches and envelopes can differ.
+
+Packed UVMD models with validated vertex loads and triangle indices appear under
+Models. The preview shows the first level of detail in local coordinates.
