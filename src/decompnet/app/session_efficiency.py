@@ -16,7 +16,7 @@ def context(net,slug,options):
     data['prompt_profile']=hashlib.sha256(json.dumps([templates[key],templates['instructions']]).encode()).hexdigest()[:16]
     stamp=hashlib.sha256(json.dumps(data,sort_keys=True,default=str).encode()).hexdigest()[:16]
     return {'cohort':stamp,'prompt_profile':data['prompt_profile'],'platform':cfg.get('platform'),'mode':cfg.get('kind','rom'),
-            'compiler':(cfg.get('compiler') or {}).get('toolchain','project build'),
+            'compiler':(cfg.get('compiler') or {}).get('toolchain','project build') if isinstance(cfg.get('compiler'), dict) else (cfg.get('compiler') or 'project build'),
             'scope':'Session-start build, work-selection and prompt-profile snapshot; ranges can contain several function profiles.'}
 
 

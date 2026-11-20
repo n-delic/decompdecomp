@@ -345,6 +345,8 @@ def compact_info_head(net, proj):
     itself from these parts and the database's totals (gateway/src/native.rs)."""
     cfg=net.cfg(proj)
     profile=cfg.get('compiler') or {}
+    if isinstance(profile, str):
+        profile = {'toolchain': profile}
     platform=consoles.get(cfg.get('platform'))
     compiler=profile.get('toolchain') or 'set by the project build'
     known=', '.join(c.id for c in platform.compilers)
