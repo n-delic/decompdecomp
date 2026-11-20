@@ -622,6 +622,29 @@ def included_headers(files) -> set[str]:
     return names
 
 
+def _verification_causes(paths, pending, full, previous, current):
+    causes = []
+    if pending:
+        causes.append('pending-match')
+    for prefix, label in (('include/', 'header'), ('src/', 'matched-source'), ('best/', 'candidate-source')):
+        if any(path.startswith(prefix) for path in paths):
+            causes.append(label)
+    if saves.MANIFEST in paths:
+        fields = {
+            'compiler': ('compiler', 'compiler_ranges', 'function_compilers'),
+            'symbols': ('symbols',),
+            'layout': ('layout',),
+            'header-selection': ('headers',),
+            'assembly-selection': ('set_aside',),
+        }
+        changed_fields = [label for label, keys in fields.items()
+                          if any(previous.get(key) != current.get(key) for key in keys)]
+        causes.extend(changed_fields or ['manifest'])
+    if full:
+        causes.append('shared-or-initial-inputs')
+    return causes or ['deferred-recheck']
+
+
 def affected_functions(old, new, changed, rows, included=None):
     """Scope known per-function build inputs; unknown shared linking/layout changes require a full check.
 
@@ -709,6 +732,7 @@ class _Recheck:
     functions: set[str] = field(default_factory=set)
     foreground: bool = False
     ready: bool = False
+    acknowledged: tuple | None = None
 
 
 @dataclass(eq=False)
@@ -1435,6 +1459,7 @@ class Progress:
         ok, result = outcome[0]
         if not ok:
             raise result
+        self.local.finished_recheck = active
         return result, active
 
     @contextmanager
@@ -1902,7 +1927,9 @@ class Progress:
                 return False  # the check holding the lock reads the folder for this call too (_sync_lock)
             if asked is not None and self._checked_since.get(slug, -1) > asked and slug not in self.rechecking:
                 return False  # a full check that took the lock after this was asked has just finished
+            joined = None
             while slug in self.rechecking:
+                joined = self.rechecking[slug]
                 if getattr(self.local, 'foreground', False) and self.rechecking[slug].ready:
                     self._check_rechecking_files(slug)
                     return False
@@ -1911,6 +1938,8 @@ class Progress:
                 # Public Condition.wait also releases an outer batch's recursive lock.
                 with span('progress_recheck_wait'):
                     threading.Condition(self._project_lock(slug)).wait(timeout=0.1)
+            if joined is not None and logger is None and self._joined_recheck(slug, store, joined):
+                return False
             if self._batching(slug):
                 return False
             observed_preparation = None
@@ -1938,6 +1967,7 @@ class Progress:
                 self.local.began = (slug, next(self._asks))
             self._activity(slug, phase="Reading saved files", done=0, total=None, function=None, full_recheck=False)
             self.local.busy = True
+            self.local.finished_recheck = None
             try:
                 proj = self.net._project(slug)
                 rom = self.net.is_rom(proj) and bool(self.net.cfg(proj).get("rom", {}).get("sha1"))
@@ -2070,6 +2100,9 @@ class Progress:
                     stable = signature == self._signature(folder)
                     if acknowledged and stable:
                         self.signatures[slug] = signature
+                        finished = self.local.finished_recheck
+                        if finished is not None:
+                            finished.acknowledged = (signature, _config_key(proj, self.net.cfg(proj)))
                         self.stamps[slug] = self._stamp(folder)
                         if mark is not None:
                             self.signature_marks[slug] = mark
@@ -2104,9 +2137,29 @@ class Progress:
                 raise
             finally:
                 self.local.busy = False
+                self.local.finished_recheck = None
                 with self.activity_lock:
                     if slug not in self.paused and slug not in self.rechecking:
                         self.activity.pop(slug, None)
+
+    def _joined_recheck(self, slug, store, joined):
+        """Reuse the completed saved revision only while its inputs still match."""
+        if joined.acknowledged is None:
+            return False
+        signature, config_key = joined.acknowledged
+        proj = self.net.project_row(slug, sync=False)
+        cfg = self.net.cfg(proj)
+        pid = proj['id']
+        state = self._state(pid)
+        dirty = self._dirty(pid)
+        if (state is None or dirty.token != state.dirty_token or dirty.functions or dirty.headers or dirty.metadata
+                or self._pending_match_checks(store, pid)
+                or _config_key(proj, cfg) != config_key
+                or saves.default_folder(self.net, slug) != joined.folder
+                or self._folder_signature(slug, joined.folder) != signature):
+            return False
+        saves.log.debug('Joined saved verification project=%s revision=%s', slug, self.revisions.get(slug, 0))
+        return True
 
     def _failed(self, slug: str) -> None:
         """Remember what a failed sync read (after its own writes), so the next one waits for a change."""
@@ -2446,6 +2499,8 @@ class Progress:
             # loading the pull; the contributor wins if both changed the same file.
             all_code = False
             affected = None
+            input_changes = changed
+            compared_manifest = {}
             deferred, recheck_due = set(), False
             judging_change = True  # Unknown import shapes conservatively invalidate in-flight results.
             pending = {}
@@ -2505,7 +2560,8 @@ class Progress:
                 input_changes = {name for name in set(candidate) | set(rendered)
                                  if input_text(candidate, name) != input_text(rendered, name)}
                 included = included_headers(rendered | candidate)
-                affected = affected_functions(json.loads(rendered[saves.MANIFEST]), merged_manifest,
+                compared_manifest = json.loads(rendered[saves.MANIFEST])
+                affected = affected_functions(compared_manifest, merged_manifest,
                                               input_changes, function_rows, included)
                 if before is None:
                     applied_changed = {name for name in set(candidate) | set(comparison)
@@ -2528,7 +2584,7 @@ class Progress:
                     applied_changed = {path for path in applied_changed
                                        if path in input_changes or path in external_code or not path.startswith(('src/', 'best/'))
                                        or source_name(path, matched_names | known_names) not in matched_names}
-                    shared = affected_functions(json.loads(rendered[saves.MANIFEST]), merged_manifest,
+                    shared = affected_functions(compared_manifest, merged_manifest,
                                                 {path for path in input_changes if not path.startswith(('src/', 'best/'))},
                                                 function_rows, included)
                     deferred, recheck_due, pending_rechecks = self._deferred_rechecks(store, pid, affected, candidate, shared)
@@ -2562,6 +2618,10 @@ class Progress:
                 if needs_judging:
                     reason = ("Shared linking inputs or function layout changed. Saved functions must be rebuilt to confirm their original bytes."
                               if all_code else f"Build inputs changed for {len(affected or [])} functions. Only their saved sources are being rechecked; other matches are retained.")
+                    causes = _verification_causes(input_changes, bool(pending_matches), all_code,
+                                                  compared_manifest, merged_manifest)
+                    saves.log.info('Saved verification planned project=%s causes=%s functions=%s',
+                                   slug, ','.join(causes), 'all' if all_code else len(affected or ()))
                     self._activity(slug, reason=reason, full_recheck=all_code or bool(function_rows) and
                                    all(row["name"] in (affected or set()) for row in function_rows))
                 if toolchain and needs_judging:

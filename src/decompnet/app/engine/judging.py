@@ -13,7 +13,7 @@ from pathlib import Path
 
 from ... import compile_sessions, compile_timing, consoles, scoring
 from ...candidate_work import trial
-from ...network import MACHINE_AGENTS, Agent, Network, NetworkError, stall_line
+from ...network import MACHINE_AGENTS, Agent, Network, NetworkError, large_plateau, stall_line
 from ...release_receipts import operation as release_operation
 from ...request_timing import build as timed_build
 from ...request_timing import timed_lock
@@ -465,18 +465,29 @@ class JudgeMixin:
             # A small model released a function it never compiled, with move_on and notes saying "no better score
             # in 6 compiles", and those notes are what the next agent starts from. Say what the app knows.
             notes = '[Released without compiling it once; notes not checked by a compile.] ' + notes
+        handoff = None
+        stale_handoff = False
         if next_experiment is not None and not not_c and progress is not None:
-            from ..agent_review import prepare_experiment
+            from ..agent_review import StaleHandoff, prepare_experiment
+
             slug = self.project_store(fn['project_id']).one('SELECT slug FROM projects WHERE id=?', fn['project_id'])['slug']
-            handoff = prepare_experiment(self, agent, slug, fn, next_experiment, progress)
-            said = self.release(agent, function, notes, project, not_c, claim_token=claim_token, handoff=handoff)
+            try:
+                handoff = prepare_experiment(self, agent, slug, fn, next_experiment, progress)
+            except StaleHandoff:
+                stale_handoff = True
+                findings = [next_experiment.get(field, '').strip() for field in ('tried', 'changed')]
+                notes = '\n'.join(dict.fromkeys(filter(None, [notes.strip(), *findings])))
+                notes = notes or 'Released after the proposed experiment became stale.'
+        said = self.release(agent, function, notes, project, not_c, claim_token=claim_token, handoff=handoff)
+        if handoff is not None:
             said += '\nNext experiment saved with the handoff. The next claim will show it while applicable.'
-        else:
-            said = self.release(agent, function, notes, project, not_c, claim_token=claim_token)
+        elif stale_handoff:
+            said += '\nFindings saved as notes. The proposed experiment referred to a different candidate revision.'
         if not not_c and need is None and progress is not None and progress['compiles']:
             from .. import release_repairs
             slug = self.project_store(fn['project_id']).one('SELECT slug FROM projects WHERE id=?',fn['project_id'])['slug']
-            said += release_repairs.handoff(self,slug,self._function(fn['name'],slug))
+            plateau = large_plateau(fn) and progress['no_better'] >= progress['after']
+            said += release_repairs.handoff(self, slug, self._function(fn['name'], slug), plateau=plateau)
         if need is not None:
             self.wait_for(agent, fn, need)
             said += (f"\n{fn['name']} now waits for {need['name']}: it's claimed after everything else until "

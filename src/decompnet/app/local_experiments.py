@@ -1,4 +1,5 @@
 """Applicable local families share one source snapshot, batch budget and ordinary judge."""
+import functools
 import hashlib
 import json
 import re
@@ -206,6 +207,14 @@ def _available(net, agent, slug, fn, source, revision, requested):
     flags=compiler_for(cfg,fn['vram'], fn).get('flags',[]) if not net.fork_slug(slug) else []
     debug=any(re.fullmatch(r'-g[1-3]?',flag) for flag in flags)
     pools={family:[] for family in requested}
+
+    @functools.cache
+    def unit_header():
+        if net.fork_slug(slug):
+            return net.forks.permuter_header(slug, fn['name'])
+        ctx = net._context(proj['id'], fn['unit'])
+        return ctx['header'] if ctx else ''
+
     if independent_address_repairs.FAMILIES[0] in pools and net.is_rom(proj):
         header=(net._context(proj['id'],fn['unit']) or {'header':''})['header']
         for family,candidate in _generated(independent_address_repairs.variants, source,fn['name'],proj['arch'],repair_ranking.evidence(net,fn['id'],agent.id),header):
@@ -237,7 +246,7 @@ def _available(net, agent, slug, fn, source, revision, requested):
                 pools[family].append(edited)
     if any(f in pools for f in ('table_slot_lifetime','unsigned_assignment_reuse','guard_forward_jump')):
         ctx = net._context(proj['id'],fn['unit'])
-        header = net.forks.permuter_header(slug,fn['name']) if net.fork_slug(slug) else (ctx['header'] if ctx else '')
+        header = unit_header()
         for family,candidate in _generated(evidence_repairs.variants, source,fn['name'],header):
             if family in pools:
                 pools[family].append(candidate)
@@ -255,12 +264,12 @@ def _available(net, agent, slug, fn, source, revision, requested):
             pools[family].append(candidate)
     if debug_boundary_repairs.FAMILY in pools:
         ctx = net._context(proj['id'],fn['unit'])
-        boundary_header = net.forks.permuter_header(slug,fn['name']) if net.fork_slug(slug) else (ctx['header'] if ctx else '')
+        boundary_header = unit_header()
         for family, candidate in _generated(debug_boundary_repairs.variants, source, fn['name'], flags, boundary_header, limit=None):
             pools[family].append(candidate)
     if any(family in pools for family in copy_lifetime_repairs.FAMILIES):
         ctx = net._context(proj['id'],fn['unit'])
-        copy_header = net.forks.permuter_header(slug,fn['name']) if net.fork_slug(slug) else (ctx['header'] if ctx else '')
+        copy_header = unit_header()
         for family, candidate in _generated(copy_lifetime_repairs.variants, source, fn['name'], copy_header):
             if family in pools:
                 pools[family].append(candidate)
@@ -290,34 +299,31 @@ def _available(net, agent, slug, fn, source, revision, requested):
         from . import targeted_storage_repairs
         measured=getattr(net,'_agent_outcomes',{}).get((agent.id,fn['id']))
         if measured and measured.get('source')==source and measured.get('input_scope')==agent_evidence.build_key(net,fn)[0]:
-            ctx=net._context(proj['id'],fn['unit'])
-            header=net.forks.permuter_header(slug,fn['name']) if net.fork_slug(slug) else (ctx['header'] if ctx else '')
+            header=unit_header()
             for family,text in targeted_storage_repairs.variants(source,fn['name'],header,proj['arch'],measured.get('rows') or [],measured.get('repair_locations')):
                 if family in pools:pools[family].append(text)
     from . import narrow_load_subtraction, parameter_carriers
     for generator in (parameter_carriers,narrow_load_subtraction):
         if generator.FAMILY in pools:
-            pools[generator.FAMILY]=[s for _,s in generator.variants(source,fn['name'],header,proj['arch'])]
+            pools[generator.FAMILY]=[s for _,s in _generated(generator.variants, source, fn['name'], unit_header(), proj['arch'])]
     if 'floating_initializer_order' in pools:
         from .allocation_search import floating_proposals
         measured = getattr(net, '_agent_outcomes', {}).get((agent.id, fn['id']))
         if (measured and measured.get('source') == source
                 and measured.get('input_scope') == agent_evidence.build_key(net,fn)[0]):
             pools['floating_initializer_order'] = [text for _,text in floating_proposals(
-                source, fn['name'], header, measured.get('rows') or [], proj['arch'])]
+                source, fn['name'], unit_header(), measured.get('rows') or [], proj['arch'])]
     if 'scalar_storage_reuse' in pools:
         from decomprepair import scalar_storage_reuse
         measured=getattr(net,'_agent_outcomes',{}).get((agent.id,fn['id']))
         if measured and measured.get('source')==source and measured.get('input_scope')==agent_evidence.build_key(net,fn)[0]:
-            ctx=net._context(proj['id'],fn['unit'])
-            header=net.forks.permuter_header(slug,fn['name']) if net.fork_slug(slug) else (ctx['header'] if ctx else '')
+            header=unit_header()
             pools['scalar_storage_reuse']=[s for _,s in scalar_storage_reuse.variants(source,fn['name'],header,proj['arch'],measured.get('repair_locations'))]
     if any(family in pools for family in ('explicit_loop_backedge','row_number_staging')):
         from . import loop_storage_shapes
         measured=getattr(net,'_agent_outcomes',{}).get((agent.id,fn['id']))
         if measured and measured.get('source')==source and measured.get('input_scope')==agent_evidence.build_key(net,fn)[0]:
-            ctx=net._context(proj['id'],fn['unit'])
-            header=net.forks.permuter_header(slug,fn['name']) if net.fork_slug(slug) else (ctx['header'] if ctx else '')
+            header=unit_header()
             for family in loop_storage_shapes.FAMILIES:
                 if family in pools:
                     pools[family]=[s for tag,s in loop_storage_shapes.variants(source,fn['name'],header,proj['arch'],measured.get('repair_locations')) if tag==family]
@@ -325,8 +331,7 @@ def _available(net, agent, slug, fn, source, revision, requested):
         from . import hazard_line_repairs
         measured=getattr(net,'_agent_outcomes',{}).get((agent.id,fn['id']))
         if measured and measured.get('source')==source:
-            ctx=net._context(proj['id'],fn['unit'])
-            header=net.forks.permuter_header(slug,fn['name']) if net.fork_slug(slug) else (ctx['header'] if ctx else '')
+            header=unit_header()
             pools['hazard_statement_lines']=[s for _,s in hazard_line_repairs.variants(source,fn['name'],header,proj['arch'],measured.get('rows') or [])]
     if 'store_address_lifetime' in pools:
         pools['store_address_lifetime'] = _generated(store_address_repairs.variants, source,fn['name'],proj['arch'])
@@ -341,13 +346,12 @@ def _available(net, agent, slug, fn, source, revision, requested):
         measured=getattr(net,'_agent_outcomes',{}).get((agent.id,fn['id']))
         if measured and measured.get('source')==source:
             from . import branch_frame_recovery
-            ctx=net._context(proj['id'],fn['unit'])
-            header=net.forks.permuter_header(slug,fn['name']) if net.fork_slug(slug) else (ctx['header'] if ctx else '')
+            header=unit_header()
             for family,candidate in branch_frame_recovery.variants(source,fn['name'],header,proj['arch'],measured.get('rows') or []):
                 if family in pools:pools[family].append(candidate)
-    if any(family in pools for family in draft_repairs.AGENT_FAMILIES):
-        ctx=net._context(proj['id'],fn['unit'])
-        header=net.forks.permuter_header(slug,fn['name']) if net.fork_slug(slug) else (ctx['header'] if ctx else '')
+    directly_generated = {parameter_carriers.FAMILY, narrow_load_subtraction.FAMILY}
+    if set(pools).intersection(draft_repairs.AGENT_FAMILIES) - directly_generated:
+        header=unit_header()
         labels={}
         for candidate in draft_repairs.variants(source,fn['name'],proj['arch'],fn['asm'] or '',flags,labels,limit=None,header=header,tables=switch_tables.read(net,proj,fn),callees=draft_repairs.capture_followup_repairs.callee_evidence(net,proj,fn,source),entry_scope=draft_repairs.promoted_entry_repairs.scope(net,proj,fn)):
             family=labels[candidate]

@@ -4182,3 +4182,49 @@ def test_editor_attempt_checks_inputs_once_and_leaves_publication_to_autosave(pr
 
     saves.Autosave(net).run_once(force=False)
     assert source in (folder / "src" / "f.c").read_text()
+
+
+@pytest.mark.parametrize('edited', [False, True])
+def test_waiter_coalesces_only_an_acknowledged_unchanged_recheck(project, monkeypatch, edited):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Condition, Event
+
+    from decompnet.app.progress import _config_key, _Recheck
+
+    net, folder, _ = project
+    worker = net.progress
+    row = net.project_row('game', sync=False)
+    signature = worker._signature(folder)
+    active = _Recheck(folder, signature)
+    worker.rechecking['game'] = active
+    entered = Event()
+    real_wait = Condition.wait
+
+    def on_wait(condition, timeout=None):
+        if condition._lock is worker._project_lock('game'):
+            entered.set()
+        return real_wait(condition, timeout=timeout)
+
+    monkeypatch.setattr(Condition, 'wait', on_wait)
+    decisions = []
+    checked = worker._joined_recheck
+
+    def joined(*args):
+        value = checked(*args)
+        decisions.append(value)
+        return value
+
+    monkeypatch.setattr(worker, '_joined_recheck', joined)
+    with ThreadPoolExecutor(1) as pool:
+        future = pool.submit(worker.sync, 'game', force=True)
+        try:
+            assert entered.wait(3)
+        finally:
+            with worker._project_lock('game'):
+                active.acknowledged = signature, _config_key(row, net.cfg(row))
+                if edited:
+                    manifest = folder / saves.MANIFEST
+                    manifest.write_text(manifest.read_text() + '\n')
+                worker.rechecking.pop('game', None)
+        future.result(timeout=5)
+    assert decisions == [not edited]

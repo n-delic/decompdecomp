@@ -329,3 +329,25 @@ def test_recently_released_work_never_starts_a_new_provider_conversation(tmp_pat
         AssertionError('Cooling work must not launch a provider')))
     assert manager._run_cli(session, 'synthetic-token', tmp_path)
     assert session.rotated and session.context_budget.waiting
+
+
+def test_large_stalled_claim_uses_shorter_budget_and_deep_handoff(tmp_path, monkeypatch):
+    net, agent, fn = game(tmp_path)
+    with net.store.tx() as db:
+        db.execute('UPDATE functions SET n_insns=300, abandons=3 WHERE id=?', (fn['id'],))
+    fn = net.claim_row(agent, 'game', 'f')
+    for value in (15, 16, 17, 18):
+        net._record(fn, agent, value, f'int f(){{return {value};}}', 1)
+    assert net.claim_progress(agent, fn)['after'] == 4
+    net.set_selection('game', agent.name, {'stall_compiles': 7})
+    assert net.claim_progress(agent, fn)['after'] == 7
+    net.set_selection('game', agent.name, {})
+    escalated = []
+
+    def handoff(net, slug, current, *, plateau=False):
+        escalated.append(plateau)
+        return ''
+
+    monkeypatch.setattr(release_repairs, 'handoff', handoff)
+    net.release_function(agent, 'f', 'Different lifetimes still produce worse code.', 'game')
+    assert escalated == [True]

@@ -1,9 +1,12 @@
 """Optional CPU-only repairs after a real agent submission, before returning another model turn."""
 import difflib
+import logging
 import re
 
 from ..network import NetworkError
 from . import agent_tokens, local_experiments
+
+log = logging.getLogger("decompdecomp")
 
 
 def configure(net,data):
@@ -19,15 +22,15 @@ def after_tool(net,agent,slug,name,args,text):
     if not config.get('enabled') or name not in {'compile_and_diff','compile_patch'} or not function or ',' in function:
         return text
     if 'COMPILE ERROR' in text or text.startswith(('error:','❌', '🔁 REPEAT:')):return text
-    fn=net._function(function,slug)
-    if fn['status']!='open' or net.attempt_limit_note(agent,function,slug):return text
-    measured=getattr(net,'_agent_outcomes',{}).get((agent.id,fn['id']))
-    if not measured or measured.get('score') is None or not 0 < measured['score'] <= max(100, 6 * (fn['n_insns'] or 0)):
-        return text
-    if config.get('targeted_only') and not local_experiments.near_match_priority(measured.get('rows'), measured.get('score'), fn['n_insns'],
-                                                  net._project(slug)['arch']):
-        return text
     try:
+        fn=net._function(function,slug)
+        if fn['status']!='open' or net.attempt_limit_note(agent,function,slug):return text
+        measured=getattr(net,'_agent_outcomes',{}).get((agent.id,fn['id']))
+        if not measured or measured.get('score') is None or not 0 < measured['score'] <= max(100, 6 * (fn['n_insns'] or 0)):
+            return text
+        if config.get('targeted_only') and not local_experiments.near_match_priority(measured.get('rows'), measured.get('score'), fn['n_insns'],
+                                                      net._project(slug)['arch']):
+            return text
         with net.attempt_turn(agent,fn):
             source,revision=agent_tokens.candidate(net,agent,slug,function)
             if measured['source']!=source:return text
@@ -57,3 +60,6 @@ def after_tool(net,agent,slug,name,args,text):
             return text+message+f'\nCandidate revision {current}.'
     except NetworkError:
         return text+'\nAutomatic local pass skipped because the claim or work budget changed.'
+    except Exception:
+        log.exception('Optional local repair failed for %s/%s', slug, function)
+        return text + '\nAutomatic local repair stopped. Your submission was judged. Read get_candidate for the latest saved revision.'

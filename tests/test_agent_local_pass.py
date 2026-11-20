@@ -91,3 +91,23 @@ def test_real_compile_submission_can_match_in_the_local_pass(tmp_path,monkeypatc
 
     capture=net.store.one('SELECT status FROM repair_examples ORDER BY id DESC LIMIT 1')
     assert capture['status']=='implemented'
+
+
+def test_optional_repair_failure_preserves_compile_reply(tmp_path, monkeypatch, caplog):
+    net, _ = _game(tmp_path, [('f', 10, 'open')])
+    agent, _ = net.local_agent('solver')
+    source = 'int f(void){return 1;}'
+    fn = net.claim_row(agent, 'game', 'f')
+    net._record(fn, agent, 10, source, 0)
+    net._agent_outcomes = {(agent.id, fn['id']): {'source': source, 'score': 10}}
+    agent_local_pass.configure(net, {'agent_local_enabled': True})
+
+    def fail(*args, **kwargs):
+        raise UnboundLocalError('test generator error')
+
+    monkeypatch.setattr(agent_local_pass.local_experiments, 'run', fail)
+    reply = agent_local_pass.after_tool(net, agent, 'game', 'compile_patch', {'function': 'f'}, 'score 10')
+    assert reply.startswith('score 10\n')
+    assert 'Your submission was judged' in reply
+    assert 'test generator error' in caplog.text
+    assert net._function('f', 'game')['best_score'] == 10

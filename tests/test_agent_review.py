@@ -234,3 +234,29 @@ def test_completed_diagnostic_builds_do_not_count_as_no_compile_blocker_releases
     assert agent_review.listing(net,'game')['items']==[]
     state=agent_review.load(net,agent_review.PREFIX+str(fn['id']))
     assert all(row['compiled'] for row in state['releases'])
+
+
+@pytest.mark.parametrize('stale', ['revision', 'working_candidate'])
+def test_stale_optional_handoff_releases_the_current_claim_with_notes(tmp_path, stale):
+    from decompnet.release_receipts import current
+
+    net, agent, fn = game(tmp_path)
+    net.claim_row(agent, 'game', 'f')
+    if stale == 'working_candidate':
+        net._record(fn, agent, 50, 'int f(){return 9;}', 0, best=False)
+    _, revision = agent_tokens.candidate(net, agent, 'game', 'f')
+    proposal = {'revision': 'old' if stale == 'revision' else revision, 'tried': 'Tested a declaration',
+                'changed': 'Register moves stayed the same', 'title': 'Try a different lifetime',
+                'old': 'return 1', 'new': 'return 2'}
+    lease = current(net, fn, agent)
+    with pytest.raises(NetworkError, match='claim_token is stale'):
+        net.release_function(agent, 'f', 'Release note.', 'game', move_on=True,
+                             claim_token='old-lease', next_experiment=proposal)
+    reply = net.release_function(agent, 'f', 'Release note.', 'game', move_on=True,
+                                 claim_token=lease, next_experiment=proposal)
+    assert 'Findings saved as notes' in reply
+    assert not current(net, fn, agent)
+    assert not agent_review.load(net, agent_review.EXPERIMENT + str(fn['id']))
+    note = net.store.one('SELECT text FROM notes WHERE function_id=? ORDER BY id DESC LIMIT 1', fn['id'])['text']
+    assert 'Release note.' in note and 'Register moves stayed the same' in note
+    assert 'return 2' not in note

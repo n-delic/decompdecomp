@@ -175,3 +175,29 @@ def test_near_match_generates_focused_families_before_generic_discovery(tmp_path
     monkeypatch.setattr(agent_tokens, 'variants', lambda *a, **kw: 'judged')
     assert '1: split_integer_lifetime' in local_experiments.run(net, agent, 'game', 'f', revision, max_trials=1)
     assert discovery == [['split_integer_lifetime']]
+
+
+@pytest.mark.parametrize('module_name', ['parameter_carriers', 'narrow_load_subtraction'])
+def test_individual_header_using_family_gets_unit_context(tmp_path, monkeypatch, module_name):
+    from importlib import import_module
+
+    net, _ = _game(tmp_path, [('f', 10, 'open')])
+    agent, _ = net.local_agent('agent')
+    fn = net._function('f', 'game')
+    header = 'typedef unsigned long word;'
+    monkeypatch.setattr(net, '_context', lambda *a: {'version': 0, 'header': header})
+    monkeypatch.setattr(net, 'is_rom', lambda *a: True)
+    generator = import_module('decompnet.app.' + module_name)
+    received = []
+
+    def variants(source, name, current_header, arch):
+        received.append(current_header)
+        return [(generator.FAMILY, 'int f(void){return 2;}')]
+
+    monkeypatch.setattr(generator, 'variants', variants)
+    with net.store.tx() as db:
+        cfg = {'kind': 'rom', 'compiler': {'toolchain': 'example', 'flags': []}}
+        db.execute('UPDATE projects SET config=?', (json.dumps(cfg),))
+    pools = local_experiments.available(net, agent, 'game', fn, 'int f(void){return 1;}', 'rev', [generator.FAMILY])
+    assert received == [header]
+    assert pools[generator.FAMILY] == ['int f(void){return 2;}']

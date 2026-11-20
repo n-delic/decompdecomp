@@ -144,6 +144,10 @@ def brief(net, proj, fn):
     return text
 
 
+class StaleHandoff(NetworkError):
+    """The optional experiment no longer describes the candidate the next helper inherits."""
+
+
 def prepare_experiment(net, agent, slug, fn, proposal, progress):
     """Capture the agent's evidence before the release or its background repairs change inputs."""
     from .agent_tokens import candidate
@@ -156,9 +160,9 @@ def prepare_experiment(net, agent, slug, fn, proposal, progress):
         raise NetworkError('Keep the handoff fields short and use text for each field.')
     source, revision = candidate(net, agent, slug, fn['name'])
     if not source or proposal.get('revision') != revision:
-        raise NetworkError('The handoff needs the current candidate revision. Read get_candidate before retrying.')
+        raise StaleHandoff('The handoff needs the current candidate revision. Read get_candidate before retrying.')
     if source != (fn['best_source'] or fn['seed']):
-        raise NetworkError('The next agent inherits the saved candidate. Use get_candidate(base="saved_best") before proposing its next step, or release with notes.')
+        raise StaleHandoff('The next agent inherits the saved candidate. Use get_candidate(base="saved_best") before proposing its next step, or release with notes.')
 
     patch = 'old' in proposal or 'new' in proposal
     old, new = proposal.get('old', ''), proposal.get('new', '')

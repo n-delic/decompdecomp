@@ -47,6 +47,7 @@ MODEL_FAMILIES = {"opus": "claude", "sonnet": "claude", "haiku": "claude", "fabl
 # ones get few; big ones get more, as long as the score keeps falling.
 STALL_BUDGET = ((32, 3), (64, 4), (128, 6), (256, 8))
 STALL_BUDGET_BIGGEST = 10
+LARGE_PLATEAU_BUDGET = 4
 STALL_LOOKBACK = 16  # compiles stall_note reads back: more than the biggest budget
 # The game's own code (an SQL condition on `functions`): not what the project sets aside as library code, middleware
 # or the C runtime (config/<version>/set_aside.json, objdiff.game_measures; while its scope is the game's own code).
@@ -367,6 +368,11 @@ def stall_budget(n_insns: int) -> int:
     return next((after for under, after in STALL_BUDGET if n_insns < under), STALL_BUDGET_BIGGEST)
 
 
+def large_plateau(fn):
+    """Restrict the shorter lease budget to large functions with a saved score and repeated releases."""
+    return (fn['n_insns'] or 0) >= 128 and fn['abandons'] >= ESCALATE_AFTER and (fn['best_score'] or 0) > 0
+
+
 def stall_budget_text() -> str:
     """The budget in words: the prompt and the guides say exactly this. Each function has one number (its brief
     names it, every compile_and_diff result shows where you stand against it, release_function goes by it): the
@@ -379,7 +385,7 @@ def move_on_brief(fn, after=None) -> str:
     """The brief's line naming the function's own move-on number (the one compile_and_diff counts against)."""
     custom = after is not None
     after = after if custom else stall_budget(fn["n_insns"] or 0)
-    basis = "your worker setting" if custom else "this function’s size"
+    basis = "your current claim policy" if custom else "this function’s size"
     return (f"move on after {after} compiles in a row without a better score ({basis}; "
             f"each compile_and_diff result shows the count). Recovery above the inherited best does not reset it. "
             'To leave earlier with a reason, use release_function(move_on=true, claim_token="the current claim_token", notes="what you tried and why").')
@@ -1226,7 +1232,12 @@ class Network:
             return None
         name = agent.name if isinstance(agent, Agent) else agent['name']
         project = self.project_store(fn['project_id']).one("SELECT slug FROM projects WHERE id=?", fn['project_id'])
-        return self.selection(project['slug'], name).get('stall_compiles')
+        configured = self.selection(project['slug'], name).get('stall_compiles')
+        if configured is not None:
+            return configured
+        if name not in NON_MODEL_AGENTS and large_plateau(fn):
+            return LARGE_PLATEAU_BUDGET
+        return None
 
     def attempt_limit(self, agent: Agent, fn) -> tuple[int | None, int]:
         store = self.project_store(fn["project_id"])
@@ -2135,7 +2146,7 @@ class Network:
         release was refused with the last 4 of 7 no better, then let through after exactly one more compile, so
         agents spent a compile to get past the check (446 push-backs, 36 of them improved after it)."""
         store = self.project_store(project_id) if project_id is not None else self.store
-        row = store.one("SELECT n_insns, project_id FROM functions WHERE id=?", function_id)
+        row = store.one("SELECT n_insns, project_id, abandons, best_score FROM functions WHERE id=?", function_id)
         custom = self.agent_stall_budget(row, agent_id=agent_id) if row else None
         after = custom if custom is not None else stall_budget((row["n_insns"] if row else 0) or 0)
         claim = store.one("SELECT claimed_at FROM claims WHERE function_id=? AND agent_id=?", function_id, agent_id)

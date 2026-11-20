@@ -9,14 +9,14 @@ from .permute import Permuter, State
 log = logging.getLogger('decompdecomp')
 
 
-def run(net, slug, fn, *, stop=None):
+def run(net, slug, fn, *, stop=None, budget=6, seconds=8):
     if slug in net.links or fn['status'] != 'open' or not fn['best_source'] or not fn['best_score']:
         return ''
     state = State(stop=stop if stop is not None else threading.Event())
     agent, _ = net.local_agent('permuter')
     try:
         # _hold rechecks the lease; another agent winning the race simply skips this pass.
-        Permuter(net)._repair_round(agent,net.project_row(slug),state,function_id=fn['id'],budget=6,seconds=8)
+        Permuter(net)._repair_round(agent,net.project_row(slug),state,function_id=fn['id'],budget=budget,seconds=seconds)
     except Exception:
         log.exception('Local repair after release failed for %s',fn['name'])
         return '\nLocal repair could not finish; your saved candidate and release are retained.'
@@ -27,11 +27,12 @@ def run(net, slug, fn, *, stop=None):
     return f'\nAutomatic local repair: {state.repairs} trials without an agent turn; {outcome}. Next claim starts from the best saved source.'
 
 
-def handoff(net, slug, fn):
+def handoff(net, slug, fn, *, plateau=False):
     """Queue the existing bounded CPU repair lane after release; one worker and one job per function."""
+    budget, seconds = (12, 15) if plateau else (6, 8)
     sweeps=getattr(net,'deep_sweeps',None)
     if sweeps is None:
-        return run(net,slug,fn)  # Coordination/test engines without background jobs retain the synchronous lane.
+        return run(net, slug, fn, **({"budget": budget, "seconds": seconds} if plateau else {}))
     if slug in net.links or fn['status']!='open' or not fn['best_source'] or not fn['best_score']:
         return ''
     jobs=sweeps.jobs
@@ -65,23 +66,24 @@ def handoff(net, slug, fn):
                 fresh_scope=(candidate_scope.key(net,net.project_row(slug),current),hashlib.sha256((current['best_source'] or '').encode()).hexdigest(),repr(claim_stalls.repair_rules()))
                 if fresh_scope!=scope:
                     return {'skipped':'Inputs changed; the next deep pass uses the new saved C.'}
-                log.progress({'phase':'local repairs; up to 6 trials / 8 seconds','function':fn['name']})
+                strategy = 'deep repair for a large stalled function' if plateau else 'local repairs'
+                log.progress({'phase': f'{strategy}; up to {budget} trials / {seconds} seconds', 'function': fn['name']})
                 from . import deep_permuter
-                log.maximum_seconds=8
+                log.maximum_seconds=seconds
                 log.parallel_claims=False  # Background handoffs never search alongside a newly acquired paid claim.
                 from ..network import NetworkError
                 try:
                     from . import maintenance_tasks
                     try:  # in the permuter worker's process, away from the app's interpreter lock
-                        result=maintenance_tasks.deep_run(net,slug,current['name'],1,6,log,maximum_seconds=8,parallel_claims=False)
+                        result=maintenance_tasks.deep_run(net,slug,current['name'],1,budget,log,maximum_seconds=seconds,parallel_claims=False)
                     except maintenance_tasks.Unavailable:
-                        result=deep_permuter.run(net,slug,current['name'],1,6,log)
+                        result=deep_permuter.run(net,slug,current['name'],1,budget,log)
                 except NetworkError:
                     if net.project_store(fn['project_id']).one('SELECT 1 FROM claims WHERE function_id=? AND expires_at>?',fn['id'],time.time()):
                         return {'skipped':'Another worker claimed this function; its lease is unchanged.'}
                     raise
                 log.check_cancel()
-                return {'function':fn['name'],'search':result,'compile_limit':6,'seconds':8}
+                return {'function':fn['name'],'search':result,'compile_limit':budget,'seconds':seconds}
             finally:
                 if entered:
                     gate.release()
@@ -89,7 +91,7 @@ def handoff(net, slug, fn):
                     pending.pop(fn['id'],None)
                     getattr(net,'_repair_handoff_jobs',{}).pop(fn['id'],None)
         try:
-            jid=jobs.start('CPU repair handoff',work,foreground=False,cancel_message='CPU repair handoff cancelled. Saved improvements are retained.')
+            jid=jobs.start('CPU repair handoff',work,foreground=False,project=slug,cancel_message='CPU repair handoff cancelled. Saved improvements are retained.')
             net.__dict__.setdefault('_repair_handoff_jobs',{})[fn['id']]=jid
         except ValueError:
             pending.pop(fn['id'],None)
@@ -97,7 +99,7 @@ def handoff(net, slug, fn):
         except BaseException:
             pending.pop(fn['id'],None)
             raise
-    return f'\nCPU handoff queued: job {jid}. Up to 6 repair trials / 8 seconds, no AI tokens. Further proposals remain for the deep pass.'
+    return f'\nCPU handoff queued: job {jid}. Up to {budget} repair trials / {seconds} seconds, no AI tokens. Further proposals remain for the deep pass.'
 
 
 def shutdown(net, jobs):
