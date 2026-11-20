@@ -8182,3 +8182,13 @@ where the game rematerialises a symbol after a subtraction (515); an inline chec
 (640; nested ifs and gotos 850); a DMA call whose last stack argument is reloaded through the counter pointer after
 the previous stack store (615; `*p` gets CSE'd, 1370); and a switch whose `j` delay slots the game fills with the
 loads before them (600).
+
+### Repeated call-result lifetimes in a fresh machine draft
+
+Controlled ROM replay with gcc-2.7.2-kmc and
+`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`. The refined m2c source scored 23,075.
+Reusing a previous scalar result slot for a later call to the same callee
+produced a 22,930-point candidate. Repeating the pass on that saved winner
+reached 22,600. Splitting another call result into its own local reached
+22,500. Independent two-worker searches from freshly generated drafts
+reproduced the same source and linked score. This is a partial improvement.

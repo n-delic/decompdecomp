@@ -95,11 +95,17 @@ def climb(search, agent, proj, fn, source, profile, score, seed=0):
     while spent < budget:
         improved = False
         labels = {}
-        try:
-            proposals = draft_repairs.variants(best_source, fn['name'], proj['arch'], fn['asm'] or '', profile['flags'],
-                                               labels, limit=None, header=header)
-        except Exception:  # noqa: BLE001 - a proposal generator's failure leaves the random rewrites
-            proposals = []
+        args = (best_source, fn['name'], proj['arch'], fn['asm'] or '', profile['flags'])
+        pool = getattr(search, 'compile_pool', None)
+        if pool is not None:
+            # A broad generation on a worker thread can run past the shared
+            # deadline. The proposal pool can interrupt its child process.
+            proposals, labels, _ = pool.proposal_pool().generate(args, dict(limit=None, header=header), search.check)
+        else:
+            try:
+                proposals = draft_repairs.variants(*args, labels, limit=None, header=header)
+            except Exception:  # noqa: BLE001 - standalone probes can still try random rewrites
+                proposals = []
         for _ in range(RANDOM_PER_ROUND):
             text = mutate(best_source, rng, header=header)
             if text:

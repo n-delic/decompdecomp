@@ -169,3 +169,65 @@ def test_maximum_mode_uses_detected_cores_without_multiplying_budget(monkeypatch
     assert len({id(pool) for _,_,pool in paths})==1
     assert paths[0][2].count==4 and paths[0][2].maximum
     assert compiler._SLOTS.limit==initial and log.compile_pool is None
+
+
+def test_stale_candidate_is_discarded_without_caching_and_can_be_rejudged(monkeypatch):
+    from decompnet.app.permute import Permuter, StaleProjectGeneration
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    search = deep_permuter.Search(net, 1, 10, Log())
+    search.parallel_lane = SimpleNamespace(index=1)
+    proj, fn = net.project_row('game'), net.function()
+    outcomes = [StaleProjectGeneration('stale symbols'), 42]
+    def judge(*args):
+        result = outcomes.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
+    monkeypatch.setattr(Permuter, '_score', judge)
+    assert search._score_current(AGENT, proj, fn, 'child', 40, None) is None
+    assert not net.store.one('SELECT 1 FROM reuse_trials')
+    assert search._score_current(AGENT, proj, fn, 'child', 40, None) == 42
+    assert search.tested == 2
+
+
+def test_call_result_pass_regenerates_from_saved_best_and_obeys_budget(monkeypatch):
+    from decompnet.app.permute import Permuter
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    proj, fn = net.project_row('game'), net.function()
+    first = fn['best_source']
+    monkeypatch.setattr('decomprepair.target_local_repairs.call_result_pass',
+                        lambda source, name: [('call_result_reuse', source + 'x')])
+    def judge(self, agent, proj, fn, source, best, fork):
+        with net.store.tx() as db:
+            db.execute('UPDATE functions SET best_score=?,best_source=?', (best-1, source))
+        return best-1
+    monkeypatch.setattr(Permuter, '_score', judge)
+    search = deep_permuter.Search(net, 1, 6, Log())
+    assert search.call_result_pass(AGENT, proj, fn, 40, None) == 37
+    assert search.tested == 3 and net.function()['best_source'] == first + 'xxx'
+
+
+def test_parallel_baseline_refreshes_after_generation_change(monkeypatch):
+    from decompnet.app.permute import StaleProjectGeneration
+    from tests.test_permute import AGENT
+
+    baseline = deep_permuter.Search._baseline
+    net = setup(monkeypatch)
+    search = deep_permuter.Search(net, 1, 10, Log())
+    search.parallel_lane = SimpleNamespace(index=0)
+    seen = []
+    def compile_baseline(self, agent, proj, fn, state, fork):
+        seen.append(fn['best_source'])
+        if len(seen) == 1:
+            with net.store.tx() as db:
+                db.execute("UPDATE functions SET best_source='new'")
+            raise StaleProjectGeneration('stale baseline')
+        return 39, 1
+    monkeypatch.setattr(deep_permuter.Search, '_baseline_work', compile_baseline)
+    original = net.function()
+    assert baseline(search, AGENT, net.project_row('game'), original, None, None) == (39, 1)
+    assert seen == [original['best_source'], 'new']

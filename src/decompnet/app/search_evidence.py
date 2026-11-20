@@ -1,5 +1,6 @@
 """Bounded build-scoped search notes for agents: useful differences without full assembly replay."""
 import hashlib
+import threading
 
 from . import (
     agent_tokens,
@@ -12,6 +13,7 @@ from . import (
 )
 
 LIMIT = 64
+_POOL_LOCK = threading.Lock()
 
 
 def remember(net, agent, proj, fn, source, score, *, output=None):
@@ -20,28 +22,36 @@ def remember(net, agent, proj, fn, source, score, *, output=None):
     cache = net.__dict__.setdefault('_search_evidence',{})
     current = net.project_store(fn['project_id']).one('SELECT * FROM functions WHERE id=?',fn['id']) or fn
     key = (fn['id'],experiment_evidence.build_scope(net,proj,current))
-    pool = cache.setdefault(key,{})
     rows = permuter_focus.normalized(repair_ranking.evidence(net,fn['id'],agent.id))
     from ..repair_feedback import current_trial
     parent_hash = (current_trial() or {}).get('base_source_sha256')
-    parent = pool.get(parent_hash)
-    regional = region_repairs.progress(parent['rows'],rows,proj['arch']) if parent else ''
-    pool[hashlib.sha256(source.encode()).hexdigest()] = {'score':score,'rows':rows,'frame_source':source if frame_plateau.gap(rows,proj['arch']) and len(source)<=65536 else None,'kind':permuter_focus.classify(rows),'allocation':allocation_evidence.diagnose(rows,proj['arch']),'regional_progress':regional,'output':output,'family':(current_trial() or {}).get('family','manual')}
-    while len(pool)>8:
-        frames=[key for key,value in pool.items() if frame_plateau.gap(value['rows'],proj['arch'])]
-        protected=min(frames,key=lambda key:(frame_plateau.gap(pool[key]['rows'],proj['arch']),pool[key]['score'])) if frames else None
-        best_hash=hashlib.sha256((current['best_source'] or '').encode()).hexdigest()
-        oldest=next(key for key in pool if key not in {protected,best_hash})
-        del pool[oldest]
-    while len(cache)>LIMIT:
-        del cache[next(iter(cache))]
+    digest = hashlib.sha256(source.encode()).hexdigest()
+    gap = frame_plateau.gap(rows, proj['arch'])
+    entry = {'score': score, 'rows': rows, 'gap': gap,
+             'frame_source': source if gap and len(source) <= 65536 else None,
+             'kind': permuter_focus.classify(rows), 'allocation': allocation_evidence.diagnose(rows, proj['arch']),
+             'output': output, 'family': (current_trial() or {}).get('family', 'manual')}
+    with _POOL_LOCK:
+        pool = cache.setdefault(key,{})
+        parent = pool.get(parent_hash)
+        entry['regional_progress'] = region_repairs.progress(parent['rows'], rows, proj['arch']) if parent else ''
+        pool[digest] = entry
+        while len(pool)>8:
+            frames=[key for key,value in pool.items() if value['gap']]
+            protected=min(frames,key=lambda key:(pool[key]['gap'],pool[key]['score'])) if frames else None
+            best_hash=hashlib.sha256((current['best_source'] or '').encode()).hexdigest()
+            oldest=next(key for key in pool if key not in {protected,best_hash})
+            del pool[oldest]
+        while len(cache)>LIMIT:
+            del cache[next(iter(cache))]
 
 
 def brief(net, proj, fn):
     """Only current-input evidence is shown. Retained alternatives are hints, not saved winners."""
     source = fn['best_source'] or ''
     key = (fn['id'],experiment_evidence.build_scope(net,proj,fn))
-    pool = getattr(net,'_search_evidence',{}).get(key,{})
+    with _POOL_LOCK:
+        pool = getattr(net,'_search_evidence',{}).get(key,{}).copy()
     current = pool.get(hashlib.sha256(source.encode()).hexdigest())
     lines = []
     scratch_hint = ''
