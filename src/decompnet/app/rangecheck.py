@@ -49,7 +49,7 @@ RECHECK_DEBOUNCE_SECONDS = 2.0
 VERDICTS_KEPT = 4096  # judge verdicts remembered: the same C with the same compiler gives the same answer
 # What a check reads of every function, once per run. Never the assembly: GTA San Andreas's is 73 MB, and reading
 # every column (`SELECT *`) for each of the 62 checks was 14 of the 17 seconds.
-ROW_COLUMNS = "id, name, vram, size, n_insns, status"
+ROW_COLUMNS = "id, name, vram, size, n_insns, status, rom_offset"
 # what the judge needs, read only for the few neighbours a check gives a verdict
 JUDGE_COLUMNS = "id, project_id, name, unit, vram, rom_offset, size, n_insns, status, target, relocs, matched_source, best_source"
 # why checks were dismissed when the suggested compiler's flags didn't count (RangeChecks.reopen)

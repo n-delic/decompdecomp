@@ -91,6 +91,30 @@ def test_the_compiler_answer_checks_by_itself(tmp_path, monkeypatch):
     assert surveys == ["game"]  # (one survey at a time)
 
 
+def test_compiler_answer_includes_function_profiles(tmp_path):
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    tiny_game(net)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET rom_offset=16 WHERE name='func_0'")
+    override = {"vram": 0x100000, "function": "old_name", "toolchain": "ee-gcc-2.96", "flags": ["-O0"]}
+    net._update_cfg("game", lambda cfg: cfg.update(function_compilers={"16:1048576": override}))
+
+    answer = net.compiler_answer("game", display_only=True)
+    assert answer["parts"] == []
+    assert answer["default_functions"] == 3
+    (assignment,) = answer["function_parts"]
+    assert assignment["function_only"]
+    assert assignment["flag_list"] == ["-O0"]
+    assert [fn["name"] for fn in assignment["function_list"]] == ["func_0"]
+
+    part = {"start": 0x100000, "end": 0x100020, "toolchain": "ee-gcc-2.96", "flags": ["-O1"]}
+    net._update_cfg("game", lambda cfg: cfg.update(compiler_ranges=[part]))
+    answer = net.compiler_answer("game", display_only=True)
+    assert answer["function_parts"] == [assignment]
+    assert answer["parts"][0]["functions"] == 1
+    assert [fn["name"] for fn in answer["parts"][0]["function_list"]] == ["func_1"]
+
+
 def test_recent_history_limits_each_kind_and_ignores_routine_events(tmp_path):
     net=RomNetwork(tmp_path/'events.db',tmp_path)
     tiny_game(net,'a')

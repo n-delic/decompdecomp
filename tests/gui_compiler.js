@@ -91,5 +91,20 @@ async function main() {
   assert.doesNotMatch(parts.innerHTML, /data-revert/);
   assert.match(notes[1], /built with EE-GCC 2.96 again/);
   assert.match(notes[1], /function it had reopened stays open/);
+
+  const assignment = {start: 0x1000, end: 0x1000, function_only: true, compiler: "EE-GCC 2.96",
+    family: "gcc", flags: "-O0", functions: 1, function_list: [{name: "func_a"}]};
+  ctx.renderCompilerAnswer({...answer(), parts: [], function_parts: [assignment]});
+  assert.equal(get("compilerViewControls").hidden, false);
+  assert.match(parts.innerHTML, /-O0/);
+  assert.match(parts.innerHTML, /1 function/);
+  assert.doesNotMatch(parts.innerHTML, /data-unrange/);
+  get("compilerGroup").value = "family";
+  get("compilerGroup").onchange();
+  assert.match(parts.innerHTML, /<b>GCC<\/b>/);
+  get("compilerGroup").value = "range";
+  get("compilerGroup").onchange();
+  assert.match(parts.innerHTML, /data-compiler-function="func_a"/);
+
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });

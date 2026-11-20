@@ -1737,7 +1737,7 @@ async function compareProfileWithDefault(button) {
   const item = {running:true, message:"Comparing matched functions against the default…"};
   compilerProfileJobs.set(key, item); renderCompilerParts(compilerPartsAnswer);
   try {
-    const {job} = await api("/api/compiler/cleanup", {method:"POST", body:{slug,profile,action}});
+    const {job} = await api("/api/compiler/cleanup", {method:"POST", body:{slug,profile}});
     const out = await followJob(job, null, lines => {
       item.message = lines[lines.length - 1] || "Comparing against default…";
       if (S.slug === slug) renderCompilerParts(compilerPartsAnswer);
@@ -1912,9 +1912,12 @@ const compilerReasonsOpen = new Set();
 function renderCompilerParts(a) {
   if (compilerPartsSlug !== S.slug) { compilerPartsSlug = S.slug; compilerGroupsOpen.clear(); compilerReasonsOpen.clear(); }
   compilerPartsAnswer = a;
-  const parts = a.parts || [], mode = $("compilerGroup").value, sort = $("compilerSort").value;
+  const ranges = a.parts || [], parts = [...ranges, ...(a.function_parts || [])], mode = $("compilerGroup").value, sort = $("compilerSort").value;
   $("compilerViewControls").hidden = !parts.length;
   const row = (p, showProfile) => {
+    if (p.function_only) return `<li class="compiler-range"><div class="compiler-range-heading"><code>${hexShort(p.start)}</code>
+      ${compilerFunctionLinks(p.function_list)}</div>
+      ${showProfile ? `<div class="small"><b>${esc(p.compiler)}</b><code class="compiler-arguments">${esc(p.flags)}</code></div>` : ""}</li>`;
     const [word, why] = PART_STATE[p.check] || PART_STATE[""];
     return `<li class="compiler-range"><div class="compiler-range-heading"><code>${hexShort(p.start)}–${hexShort(p.end)}</code>
       <span class="part-state ${esc(p.check || "none")}">${esc(word)}</span>
@@ -1927,7 +1930,7 @@ function renderCompilerParts(a) {
   };
   // #259: a part a Remove took out stays greyed with a Revert that puts back the same range, compiler and flags
   const removed = (S.removedParts || []).map((p, at) => ({ ...p, at })).filter((p) => p.slug === S.slug
-    && !parts.some((q) => q.start === p.start && q.end === p.end && (q.file || "") === (p.file || "")));
+    && !ranges.some((q) => q.start === p.start && q.end === p.end && (q.file || "") === (p.file || "")));
   const removedHtml = removed.length ? `<ol class="parts">${removed.map((p) => `<li class="removed"><code>${hexShort(p.start)}–${hexShort(p.end)}</code><span class="grow">${esc(p.compiler)} <span class="flags mono">${esc(Array.isArray(p.flags) ? p.flags.join(" ") : p.flags)}</span></span>
       ${p.file ? `<span class="muted small mono">${esc(p.file)}</span>` : ""}<span class="muted small">removed</span>
       <button class="ghost small-btn" type="button" data-revert="${p.at}" aria-label="Build ${hexShort(p.start)} to ${hexShort(p.end)} with ${esc(p.compiler)} again" title="Build this part with ${esc(p.compiler)} again">Revert</button></li>`).join("")}</ol>` : "";
@@ -1935,7 +1938,7 @@ function renderCompilerParts(a) {
   compilerDisplayedGroups = groups;
   setHtml($("compilerParts"), removedHtml + (mode === "range" ? `<ol class="compiler-range-list">${groups.flatMap(g => g.parts).map(p => row(p, true)).join("")}</ol>`
     : groups.map((g, index) => `<details class="compiler-profile" data-compiler-group="${esc(g.id)}"${compilerGroupsOpen.has(g.id) ? " open" : ""}>
-      <summary><span><b>${esc(mode === "family" ? g.family.toUpperCase() : g.compiler)}</b>${g.default ? ` <span class="chip-s">${mode === "family" && g.profiles > 1 ? "Includes default" : "Default"}</span>` : ""}${mode === "settings" ? `<code class="compiler-arguments">${esc(g.flags || "No arguments")}</code>` : ""}<span class="compiler-profile-count">${plural(g.parts.length, "range")}${g.functions != null ? ` · ${plural(g.functions, "function")}` : ""}${mode === "family" ? ` · ${plural(g.profiles, "argument profile")}` : ""}</span></span></summary>
+      <summary><span><b>${esc(mode === "family" ? g.family.toUpperCase() : g.compiler)}</b>${g.default ? ` <span class="chip-s">${mode === "family" && g.profiles > 1 ? "Includes default" : "Default"}</span>` : ""}${mode === "settings" ? `<code class="compiler-arguments">${esc(g.flags || "No arguments")}</code>` : ""}<span class="compiler-profile-count">${[g.ranges ? plural(g.ranges, "range") : "", g.functions != null ? plural(g.functions, "function") : ""].filter(Boolean).join(" · ")}${mode === "family" ? ` · ${plural(g.profiles, "argument profile")}` : ""}</span></span></summary>
       ${mode === "settings" && !g.default && S.ov.kind !== "fork" ? `<div class="compiler-profile-action"><div class="compiler-profile-tools"><span class="small muted">Profile actions</span><details class="agent-menu compiler-profile-menu"><summary aria-label="Actions for ${esc(g.compiler)} profile" title="Compiler profile actions">⋮</summary><div class="agent-menu-items"><button type="button" data-profile-default="${index}"${compilerProfileJobs.get(`${S.slug}:${g.id}`)?.running ? " disabled" : ""}>Compare all matches with default</button><button type="button" data-profile-test-default="${index}">Test this profile as default</button><button type="button" data-profile-test-default="${index}" data-profile-action="replace">Replace default with this profile</button><button type="button" data-profile-test-default="${index}" data-profile-action="nonmatches">Test all non-matches</button></div></details></div><p class="small muted">Only exact byte matches move to the project default. Drafts and non-matches keep their settings.</p><p class="small" role="status">${esc(compilerProfileJobs.get(`${S.slug}:${g.id}`)?.message || "")}</p></div>` : ""}
       <ol class="compiler-range-list">${g.parts.map(p => row(p, mode === "family")).join("")}</ol></details>`).join("")));
   $("compilerParts").querySelectorAll("details[data-range-reason]").forEach(d => d.ontoggle = () => {
