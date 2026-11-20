@@ -18,7 +18,7 @@ BODY=bytes.fromhex('03e0000800000000')  # homemade return stub, not a real pack 
 @pytest.fixture
 def toy_pack(monkeypatch):
     digest=hashlib.sha256(BODY).hexdigest()
-    monkeypatch.setattr(pack,'KNOWN',{digest:('sdkToy',8,'test fixture')})
+    monkeypatch.setattr(pack,'KNOWN',{digest:('sdkToy',8,'test fixture','toy.s')})
     monkeypatch.setattr(pack,'SIZES',(8,))
     monkeypatch.setattr(N64,'sdk_assembly_sizes',(8,))
 
@@ -92,7 +92,11 @@ def test_full_bytes_endianness_size_and_no_relocation_requirement(tmp_path,monke
 
 
 def test_builtin_pack_metadata_has_complete_body_sizes():
-    assert N64.sdk_assembly_sizes==pack.SIZES
+    assert N64.sdk_assembly_sizes == pack.SIZES
+    assert {entry[0] for entry in pack.KNOWN.values()} >= {
+        'guMtxF2L', 'guMtxL2F', '__osPopThread',
+        'osInvalDCache', 'osInvalICache', 'osWritebackDCache',
+    }
     assert {entry[1] for entry in pack.KNOWN.values()}==set(pack.SIZES)
     assert all(len(digest)==64 and int(digest,16)>=0 and row[1]%4==0 for digest,row in pack.KNOWN.items())
 

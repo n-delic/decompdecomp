@@ -30,15 +30,29 @@ def test_switch_call_distribution_rejects_side_effects_and_fallthrough():
     assert not any(f=='switch_call' for f,_ in captured_repairs.variants(source.replace('finish();','finish(x);'),'f'))
 
 
-def test_ineffective_families_are_demoted_not_removed():
-    class Net:pass
-    net=Net();base={'score':1,'rows':[('r','a','b')]}
-    repair_ranking.remember(net,'scope','slow',base,base)
-    repair_ranking.remember(net,'scope','slow',base,base)
-    assert repair_ranking.demote(net,'scope',['slow','new'])==['new','slow']
-    assert repair_ranking.demote(net,'other',['slow','new'])==['slow','new']
-    repair_ranking.remember(net,'scope','slow',base,{'score':1,'rows':[('r','a','c')]})
-    assert repair_ranking.demote(net,'scope',['slow','new'])==['slow','new']
+def test_ineffective_families_shared_by_workers_and_distinct_trials(tmp_path):
+    from decompnet.app.engine import RomNetwork
+    from tests.test_claims import _game
+
+    net, _ = _game(tmp_path, [('f', 10, 'open')])
+    fn = net._function('f', 'game')
+    base = {'score': 1, 'source': 'parent', 'rows': [('r', 'a', 'b')]}
+    scope = repair_ranking.effect_scope(net, fn, base['source'])
+    families = ['slow', 'new']
+    repair_ranking.remember(net, fn, scope, base, [('slow', 'first', base), ('slow', 'first', base),
+                                                   ('slow', 'cached', base | {'cached': True})])
+    assert repair_ranking.demote(net, fn, scope, families) == families
+    peer = RomNetwork(tmp_path / 'app.db', tmp_path)
+    repair_ranking.remember(peer, fn, scope, base, [('slow', 'second', base)])
+    assert repair_ranking.demote(net, fn, scope, families) == ['new', 'slow']
+    new_parent = repair_ranking.effect_scope(net, fn, 'new parent')
+    assert repair_ranking.demote(peer, fn, new_parent, families) == families
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET target=X'01020304' WHERE id=?", (fn['id'],))
+    new_build = repair_ranking.effect_scope(net, net._function('f', 'game'), base['source'])
+    assert repair_ranking.demote(peer, fn, new_build, families) == families
+    repair_ranking.remember(peer, fn, scope, base, [('slow', 'third', base | {'rows': [('r', 'a', 'c')]})])
+    assert repair_ranking.demote(net, fn, scope, families) == families
 
 
 def test_compiler_trial_schema_excludes_family_payloads():

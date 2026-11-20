@@ -482,6 +482,9 @@ source/header/profile for one entry without neighbour confirmation. Disabled aut
 for review; legacy single-function range suggestions with saved C recheck on Apply. Broader
 ranges and imported file/build settings retain their existing verification workflows.
 
+Implemented: N64 ROM imports name and set aside exact libultra matrix conversion, cache maintenance,
+and scheduler queue-pop assembly variants as SDK code before agents can claim them.
+
 Implemented: N64 ROM imports recognise an exact low-word-first 64-bit multiply helper and set it aside
 before agents can claim it. Fresh imports name a unique unnamed copy `mul64_low_first`.
 

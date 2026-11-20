@@ -189,6 +189,7 @@ def test_optional_phase_disabled_and_independent_of_exhausted_normal_budget(pair
     search.optional_phase(pair.twins, 'destination', parent)
     assert len(called) == 1 and parent.reuse_attempts == 1
     assert pair.store.one('SELECT attempts FROM iterative_runs')['attempts'] == 2
+    assert not pair.store.one('SELECT 1 FROM notes')
     parent.stop.set()
     search.optional_phase(pair.twins, 'destination', parent)
     assert len(called) == 1

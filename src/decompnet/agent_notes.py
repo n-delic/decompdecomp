@@ -47,6 +47,13 @@ def note_scores(db, function, agent, at):
 
 
 def save(db, project, function, agent, text, at=None, measured=None, *, agent_name=None):
+    # An unmatched function needs one copy of the finding even when another helper repeats it.
+    if function and db.execute(
+        "SELECT 1 FROM functions f JOIN notes n ON n.function_id=f.id AND n.project_id=f.project_id "
+        "WHERE f.id=? AND f.project_id=? AND f.status<>'matched' AND n.text=?",
+        (function, project, text),
+    ).fetchone():
+        return
     at = time.time() if at is None else at
     session = session_for(db, project, agent, at, agent_name=agent_name) if function else None
     if measured is not None:

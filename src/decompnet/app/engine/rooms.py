@@ -11,6 +11,7 @@ import time
 
 from ...network import Network, NetworkError
 from ...rom.symbols import Symbol
+from ...search_notes import boilerplate
 
 
 class RoomMixin:
@@ -145,6 +146,8 @@ class RoomMixin:
             self._release_matched_claim(db,row["id"],aid)
 
     def apply_remote_note_named(self, slug: str, function: str | None, text: str, agent_name: str, created_at: float, score_before=None, score_after=None) -> None:
+        if boilerplate(text):
+            return
         store = self.project_store(slug)
         proj = self._project(slug)
         row = store.one("SELECT id FROM functions WHERE project_id=? AND name=?", proj["id"], function) if function else None
@@ -171,6 +174,8 @@ class RoomMixin:
                            "AND (best_score IS NULL OR best_score > ?)",(score,source,score,time.time(),row['id'],score))
 
     def apply_remote_note(self, slug: str, host_id: int, vram: int | None, text: str, agent_name: str, created_at: float, score_before=None, score_after=None) -> None:
+        if boilerplate(text):
+            return
         store = self.project_store(slug)
         proj = self._project(slug)
         fid = None

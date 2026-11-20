@@ -295,7 +295,7 @@ def test_briefs_leave_out_infrastructure_notes_show_duplicates_once_and_mark_bea
     lines = net.notes_for_brief(net.store.one("SELECT * FROM functions WHERE id=?", fid))
     section = "\n".join(lines)
     assert "didn't build" not in section and "OAuth" not in section and "agent stopped" not in section
-    assert lines[-1].startswith("- (4 notes about builds that broke or agents that stopped left out")
+    assert lines[-1].startswith("- (3 notes about builds that broke or agents that stopped left out")
     assert sum("do-while" in ln for ln in lines) == 1 and "[noted 2 times]" in section
     assert "95% try" in lines[0]  # newest first
     assert lines[-2].startswith("- (a, ") and "(superseded: best is now 490) plain C plateaus" in lines[-2]

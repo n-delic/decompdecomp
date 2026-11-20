@@ -1,5 +1,6 @@
 """Rank applicable hypotheses by observed mismatches without excluding other families."""
 
+import hashlib
 import re
 
 STRUCTURAL = ('scratch_role_reuse','scalar_storage_reuse','row_number_staging','explicit_loop_backedge','integer_array_pointer_phase','inferred_record_layout','scalar_normalization_scope')
@@ -192,33 +193,57 @@ def evidence(net, function_id, agent_id):
     return []
 
 
-def remember(net, scope, family, baseline, measured):
-    # Displayed instruction identity is only advisory evidence of ineffectiveness, never proof
-    # of identical linked bytes. Errors/missing evidence do not count. Source text stays exact.
-    if not baseline or not measured or baseline.get('rows') is None or measured.get('rows') is None:
+def remember(net, fn, scope, baseline, observations):
+    """Keep distinct scored trials for this exact parent and build, across workers."""
+    if not baseline or not baseline.get('rows') or baseline.get('score') is None or not scope:
         return
-    if baseline.get('score') is None or measured.get('score') is None:
-        return
-    history=getattr(net,'_repair_effects',{})
-    net._repair_effects=history
-    key=(scope,family)
-    unchanged=(baseline['score']==measured['score'] and baseline['rows']==measured['rows'])
-    history[key]=history.get(key,0)+1 if unchanged else 0
-    while len(history)>256:
-        del history[next(iter(history))]
+    evidence = []
+    for family, source, measured in observations:
+        if (source == baseline.get('source') or not measured or measured.get('cached')
+                or not measured.get('rows') or measured.get('score') is None):
+            continue
+        if baseline.get('input_scope') and measured.get('input_scope') and baseline['input_scope'] != measured['input_scope']:
+            continue
+        same = baseline['score'] == measured['score'] and baseline['rows'] == measured['rows']
+        before = baseline.get('output_fingerprint')
+        after = measured.get('output_fingerprint')
+        if before and after:
+            same = same and before == after
+        outcome = 'same:' if same else 'changed:'
+        evidence.append((fn['id'], scope, family, outcome + hashlib.sha256(source.encode()).hexdigest(),
+                         fn['id'], scope, family, outcome + '%', 2 if same else 1))
+    if evidence:
+        from . import trial_bookkeeping
+        sql = """INSERT OR IGNORE INTO agent_family_targets (function_id,scope,family,target_hash)
+                 SELECT ?,?,?,? WHERE (SELECT COUNT(*) FROM agent_family_targets
+                   WHERE function_id=? AND scope=? AND family=? AND target_hash LIKE ?) < ?"""
+        trial_bookkeeping.submit(net.project_store(fn['project_id']), [(sql, row) for row in evidence])
 
 
-def demote(net, scope, families):
-    history=getattr(net,'_repair_effects',{})
-    return sorted(families,key=lambda family:history.get((scope,family),0)>=2)
+def no_effect(net, fn, scope):
+    """Two different measured edits with no changed output are enough to lower priority."""
+    if not scope:
+        return set()
+    from . import trial_bookkeeping
+
+    store = net.project_store(fn['project_id'])
+    trial_bookkeeping.flush(store)
+    return {row['family'] for row in store.all(
+        """SELECT family FROM agent_family_targets WHERE function_id=? AND scope=? GROUP BY family
+           HAVING SUM(target_hash LIKE 'same:%') >= 2 AND SUM(target_hash LIKE 'changed:%') = 0""",
+        fn['id'], scope)}
+
+
+def demote(net, fn, scope, families):
+    ineffective = no_effect(net, fn, scope)
+    return sorted(families, key=lambda family: family in ineffective)
 
 
 def effect_scope(net, fn, source):
     """Family demotion belongs to this exact parent, not all future source shapes."""
-    import hashlib
-
     from .agent_tokens import target_scope
-    return hashlib.sha256((target_scope(net,fn,'')+source).encode()).hexdigest()
+    key = hashlib.sha256((target_scope(net, fn, '') + source).encode()).hexdigest()
+    return 'repair-effect:' + key
 
 
 def private_abi_order(families, arch, asm, rows):
