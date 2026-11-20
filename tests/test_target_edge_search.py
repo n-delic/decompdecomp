@@ -224,3 +224,30 @@ def test_measured_sign_test_reaches_kmc_proposals():
     family = 'measured_sign_test'
     assert (family,source.replace('& 0x80000000U','>> 31')) in route(source,rows,'')
     assert family not in dict(route(source,rows,'',compiler='ido-5.3'))
+
+
+def test_measured_memory_order_reaches_kmc_proposals():
+    source = 'void f(void *p) { f32 x,y; (x=M2C_FIELD(p,f32 *,4), y=M2C_FIELD(p,f32 *,8), use(x,y)); }'
+    rows = [('r', 'lwc1 $f2, 8($s0)', 'lwc1 $f0, 4($s0)'),
+            ('r', 'lwc1 $f0, 4($s0)', 'lwc1 $f2, 8($s0)')]
+    family = 'measured_comma_load_order'
+    assert family in dict(route(source, rows, ''))
+    assert family not in dict(route(source, rows, '', compiler='ido-5.3'))
+
+
+def test_measured_shared_exit_flag_reaches_kmc_proposals():
+    source = '''
+void f(void *p) {
+    int flag;
+    int work = 0;
+    if (p) { flag = 0; goto out; }
+    flag = work;
+out:
+    if (flag == 0) finish(p);
+}
+'''
+    rows = [(' ', 'bne $v1, $v0, out', 'bne $v1, $v0, out'),
+            ('r', 'move $v0, $a1', 'move $v0, $zero')]
+    family = 'measured_shared_exit_flag'
+    assert (family, source.replace('int flag;', 'int flag = 0;')) in route(source, rows, '')
+    assert family not in dict(route(source, rows, '', compiler='ido-5.3'))

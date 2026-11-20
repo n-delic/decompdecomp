@@ -87,6 +87,7 @@ def test_annotations_reviews_and_exports_are_separate_from_judge(setup):
         net.repair_feedback.review('demo', case, 'enable_rule')
 
 
+@pytest.mark.parametrize('setup', [lambda path: RomNetwork(path / 'app.db', path)], indirect=True)
 def test_inline_note_only_survives_a_new_verified_match(setup, monkeypatch):
     net, winner, _, pid, fid = setup
     def attempt(agent, name, source, slug):
@@ -397,6 +398,7 @@ def test_autopilot_retains_judge_settings_and_attempts_without_capturing_drafts(
     assert not net.store.all('SELECT * FROM claims')
 
 
+@pytest.mark.parametrize('setup', [lambda path: RomNetwork(path / 'app.db', path)], indirect=True)
 def test_unknown_inline_category_preserves_patch_and_original_annotation(setup,monkeypatch):
     net,winner,_,_,fid=setup
     def attempt(agent,name,source,slug):

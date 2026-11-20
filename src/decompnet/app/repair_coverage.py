@@ -103,8 +103,10 @@ def verify(feedback, example):
             kmc_type_repairs,
             measured_address_repairs,
             measured_callback_repairs,
+            measured_control_flow,
             measured_expression_repairs,
             measured_immediate_repairs,
+            measured_memory_order,
             measured_temporary_repairs,
         )
 
@@ -113,6 +115,8 @@ def verify(feedback, example):
         symbols = net.symbols(proj['id']) if hasattr(net,'symbols') else None
         focused = stack_padding_repairs.layout_candidates(source, fn['name'], header, proj['arch'],
                                                          rows, symbols, profile['flags'])
+        focused += measured_control_flow.variants(source, fn['name'], rows)
+        focused += measured_memory_order.variants(source, fn['name'], rows)
         focused += measured_expression_repairs.variants(source, fn['name'], header, rows)
         focused += measured_temporary_repairs.variants(source, fn['name'], rows)
         focused += measured_callback_repairs.variants(source, fn['name'], rows)

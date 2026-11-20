@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import random
+from collections import Counter
 
 PROFILES_MEASURED = 6  # profiles measured on the current C before choosing one to climb under
 CLIMB_SHARE = 4  # at most this fraction of the remaining compile allowance (1/4) goes to the climb
@@ -39,22 +40,58 @@ def lead(search, agent, proj, fn, source, own_score):
     own = compiler_for(cfg, fn['vram'], fn)
     floor = compiler_fingerprints.own_agreement(proj, fn, own)
     best = closer = None
-    for agree, profile in compiler_fingerprints.ranked(search.net, proj, cfg, fn, own, limit=PROFILES_MEASURED):
+    ranked = compiler_fingerprints.ranked(search.net, proj, cfg, fn, own, limit=PROFILES_MEASURED)
+    for agree, profile in ranked:
         search.check()
         if search.tested >= search.limit:
             break
         score = _judge(search, proj, fn, profile, source)
         if score is None:
             continue
+        if score == 0:
+            return profile, score
         search.log(f"Profile {profile['toolchain']} {' '.join(profile['flags'])} on the current C: score {score}")
         if score < own_score and (best is None or score < best[1]):
             best = (profile, score)
         if floor is not None and agree > floor and (closer is None or score < closer[1]):
             closer = (profile, score)
+    if search.tested < search.limit:
+        search.check()
+        profile = neighbour_profile(search.net, proj, cfg, fn, [own, *(p for _, p in ranked)])
+        if profile is not None:
+            score = _judge(search, proj, fn, profile, source)
+            if score == 0:
+                search.log(f"Nearby matches suggested an exact {profile['toolchain']} profile.")
+                return profile, score
     if best is None and closer is not None:
         search.log(f"Its code looks built with {closer[0]['toolchain']} {' '.join(closer[0]['flags'])} rather than its "
                    'own settings: climbing under it too, though the current C scores worse there.')
     return best or closer
+
+
+def neighbour_profile(net, proj, cfg, fn, tested):
+    """Try one other profile backed by two exact matches near this function in its unit."""
+    from ..project import compiler_for
+
+    if not hasattr(net, 'project_store') or fn['vram'] is None or 'cmd' in cfg['compiler']:
+        return None
+    vram = fn['vram']
+    neighbours = net.project_store(proj['id']).all(
+        "SELECT name,rom_offset,vram FROM functions WHERE project_id=? AND unit=? AND status='matched' "
+        "AND best_score=0 AND id<>? AND vram BETWEEN ? AND ? ORDER BY ABS(vram - ?), id LIMIT 8",
+        proj['id'], fn['unit'], fn['id'], vram-16384, vram+16384, vram,
+    )
+
+    def key(profile):
+        flags = profile['flags']
+        return profile['toolchain'], tuple(flags.split() if isinstance(flags, str) else flags)
+
+    excluded = {key(profile) for profile in tested}
+    counts = Counter(key(compiler_for(cfg, row['vram'], row)) for row in neighbours)
+    for (toolchain, flags), votes in counts.most_common():
+        if votes >= 2 and (toolchain, flags) not in excluded:
+            return {'toolchain': toolchain, 'flags': list(flags)}
+    return None
 
 
 def _judge(search, proj, fn, profile, source):
