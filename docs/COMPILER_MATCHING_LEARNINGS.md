@@ -8552,3 +8552,13 @@ match goes through the existing profile confirmation path.
 Most matches used `sn-n64-281 -G0 -mips3 -O2 -mgas -meb -mcpu=VR4300
 -mhard-float -mfp64`. The other exact profiles were `sn-n64-272-0004 -G0
 -mips3 -O1 -mgas -meb -mhard-float` and KMC with the flags recorded above.
+
+### Guarded pointer walks with generated frame padding
+
+In an N64 leaf built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, a saved pointer walk
+scored 35. The draft guarded a `do` loop with a nonzero test of the same unsigned global the
+loop used as its bound. Replacing the walk and guard with a single indexed `for` loop reduced the
+score to 2. The remaining differences were the 16-byte stack frame adjustments where the target
+used 8 bytes. Removing the unused generated `u8 __repair_frame[8]` declaration from the indexed
+variant matched all 164 linked bytes in a scratch project. The library tests cover when the
+rewrite is offered. The linked result is evidence from an actual function.
