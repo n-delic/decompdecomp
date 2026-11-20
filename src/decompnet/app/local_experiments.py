@@ -349,8 +349,8 @@ def _available(net, agent, slug, fn, source, revision, requested):
     return pools
 
 
-def summary(net, agent, slug, fn, source, revision):
-    """Exact counts from the runner's remaining proposal pool; no compiler/provider calls."""
+def summary(net, agent, slug, fn, source, revision, *, discover=True):
+    """Report a current repair count. Candidate reads can use saved counts without generating proposals."""
     from ..forks.project import ForkError
     try:
         scope = agent_tokens.target_scope(net,fn,'')
@@ -360,26 +360,35 @@ def summary(net, agent, slug, fn, source, revision):
             latest=net.project_store(fn['project_id']).one('SELECT MAX(id) AS id FROM attempts WHERE function_id=?',fn['id'])['id'] or 0
             if latest <= failure.get('after_attempt',0):
                 return f'Remaining local repairs [{revision}]: baseline blocked. Fix C/build inputs or redraft before variants.'
+        cache = getattr(net, '_remaining_repairs', {})
+        prefix = (fn['id'], agent.id, revision, scope)
+        unchecked = f'Use try_local_repairs to look for applicable repairs for revision {revision}.'
+        # Reading C and its revision must stay cheap even if a single repair stage overruns its budget.
+        if not discover and not any(key[:len(prefix)] == prefix for key in tuple(cache)):
+            return unchecked
         count = net.project_store(fn['project_id']).one('SELECT COUNT(*) AS n FROM agent_family_targets WHERE function_id=?',fn['id'])['n']
         measured = getattr(net,'_agent_outcomes',{}).get((agent.id,fn['id']))
         evidence = hashlib.sha256(repr((measured.get('score'),measured.get('rows')) if measured and measured.get('source')==source else None).encode()).hexdigest()
         from . import rtl_value_trace, verified_unit_context
         proj=net._project(slug);ctx=net._context(proj['id'],fn['unit'])
         trace_scope=hashlib.sha256(repr(rtl_value_trace.saved(net,proj,fn,source,ctx['header'] if ctx else '')).encode()).hexdigest()
-        key = (fn['id'],agent.id,revision,scope,count,evidence,generation_signature(prototype_reuse.signature,net,proj,source),
+        key = (*prefix, count, evidence, generation_signature(prototype_reuse.signature,net,proj,source),
                generation_signature(verified_unit_context.signature,net,proj,fn,source),trace_scope)
-        cache = getattr(net,'_remaining_repairs',{})
-        net._remaining_repairs = cache
-        if key not in cache:
+        cached = cache.get(key)
+        if cached is None:
+            if not discover:
+                return unchecked
+            net._remaining_repairs = cache
             pools = available(net,agent,slug,fn,source,revision,list(FAMILIES),deadline=time.monotonic()+1)
             counts = [(family,len(set(pool))) for family,pool in pools.items() if pool]
             total = len(set(candidate for pool in pools.values() for candidate in pool))
-            cache[key] = (total,counts,getattr(pools,"incomplete",False))
-            while len(cache)>32:
-                del cache[next(iter(cache))]
-        total,counts,incomplete = cache[key]
+            cached = (total,counts,getattr(pools,"incomplete",False))
+            if not cached[2]:
+                cache[key] = cached
+                while len(cache)>32:
+                    del cache[next(iter(cache))]
+        total,counts,incomplete = cached
         if incomplete:
-            cache.pop(key,None)
             return f'Remaining local repairs [{revision}]: at least {total} known proposals; discovery paused at its generation budget. Cached stages resume on the next pass; this is not exhaustion.'
         if not total:
             return f'Remaining local repairs [{revision}]: 0. Do not retry unchanged families; inspect the diff or release with notes.'

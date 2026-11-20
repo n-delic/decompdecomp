@@ -5,7 +5,7 @@ import json
 import pytest
 
 from decompnet import candidate_quality, claim_stalls
-from decompnet.app import dependency_guard, local_experiments, tools
+from decompnet.app import agent_tokens, dependency_guard, local_experiments, tools
 from decompnet.arch.call_evidence import direct
 from decompnet.network import NetworkError
 from decomprepair import register_reuse_repairs
@@ -107,6 +107,33 @@ def test_remaining_counts_use_the_runner_pool_cache_and_compile_history(tmp_path
     local_experiments.summary(net,a,'game',fn,source,'revision');assert len(seen)==2
     monkeypatch.setattr(local_experiments,'available',lambda *args,**kwargs:{})
     assert 'Do not retry' in local_experiments.summary(net,a,'game',fn,source,'changed')
+
+
+def test_get_candidate_reads_cached_repair_counts_without_discovering_proposals(tmp_path, monkeypatch):
+    net, agent = dependency_game(tmp_path)
+    net.claim_row(agent, 'game', 'caller')
+    fn = net._function('caller', 'game')
+    source, revision = agent_tokens.candidate(net, agent, 'game', 'caller')
+    seen = []
+
+    def pool(*args, **kwargs):
+        seen.append(1)
+        return {'signedness': ['new candidate']}
+
+    monkeypatch.setattr(local_experiments, 'available', pool)
+    text = agent_tokens.get_candidate(net, agent, 'game', 'caller')
+    assert f'Candidate revision {revision}' in text and source in text
+    assert 'Use try_local_repairs to look for applicable repairs' in text
+    assert not seen
+
+    local_experiments.summary(net, agent, 'game', fn, source, revision)
+    assert '1 distinct proposals' in agent_tokens.get_candidate(net, agent, 'game', 'caller')
+    assert len(seen) == 1
+
+    with net.store.tx() as db:
+        db.execute('INSERT INTO agent_family_targets VALUES(?,?,?,?)', (fn['id'], 'scope', 'compiled-miss', 'hash'))
+    assert '1 distinct proposals' not in agent_tokens.get_candidate(net, agent, 'game', 'caller')
+    assert len(seen) == 1
 
 
 @pytest.mark.parametrize('loop',[

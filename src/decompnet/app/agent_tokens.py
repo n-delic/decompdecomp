@@ -86,10 +86,9 @@ def get_candidate(net, agent, slug, function, base='current'):
             del net._agent_selected[next(iter(net._agent_selected))]
         note = f'Selected {base} for continuation; historical score is not reverified. No compile, file write or match was performed.\n'
     source, revision = candidate(net, agent, slug, function)
-    from . import local_experiments
-    remaining = local_experiments.summary(net,agent,slug,net._function(function,slug),source,revision)
-    from . import agent_evidence
+    from . import agent_evidence, local_experiments
     fn = net._function(function, slug)
+    remaining = local_experiments.summary(net, agent, slug, fn, source, revision, discover=False)
     measured = agent_evidence.baseline(net, agent, slug, fn, source) if base == 'current' else None
     line_note = measured.get('line_note', '') if measured and measured.get('source') == source else ''
     mapping = (line_note or '\nC-line mapping unavailable for this candidate/build; no line locations inferred.') if base == 'current' else '\nC-line mapping will refresh after this candidate is compiled; no historical line locations inferred.'
