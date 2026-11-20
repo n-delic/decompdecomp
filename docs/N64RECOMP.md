@@ -93,6 +93,12 @@ On a racing game, with the backwards race start's `$v0` bug put back in the port
 start-heading helper report `$v0: recompiled 00000800, decompiled 00000000`. With the fix, they're the same. A first
 run takes about a minute and a half (recording, Recompile, the port's build); later ones only record and run.
 
+For a compiling open function, `compare_candidate_behaviour(function, revision)`
+checks the current agent C in a disposable WebAssembly port build. It compares
+return and memory observations for up to three recorded calls and reports the
+first difference per call. Calls reaching a recompiler runtime stub are
+inconclusive. The existing exact compiler judge still decides matches.
+
 **Check behaviour** (Porting) does the same for every matched function at once (`behaviour.batch`):
 - **One run:** the game runs once with a breakpoint on each function. RetroReversing/mupen64plus-core#3 takes
   16,384 execution breakpoints and checks them in constant time; each is removed once its first call is recorded.

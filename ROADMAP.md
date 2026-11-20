@@ -843,6 +843,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Code the game loads, found by running it (import and Reimport, consoles/n64/loaded_code.py) | ✓ when mupenRE is installed | — no emulator pinned yet | — no emulator pinned yet | — | — | — no emulator pinned yet | — | — no emulator pinned yet | — no emulator pinned yet | — | — no emulator pinned yet | — no ROM to run |
 | Static recompile (Recompile with N64Recomp, docs/N64RECOMP.md phase 0) | ✓ N64Recomp (Linux, macOS; bounded native-crash isolation, explicit stubs) | — no recompiler pinned | — no recompiler pinned | — | — | — no recompiler pinned | — | — no recompiler pinned | — no recompiler pinned | — | — no recompiler pinned | — no ROM to recompile |
 | Behaviour checked against the original (`compare_behaviour`, docs/N64RECOMP.md phase 1) | ✓ (recorded in mupenRE, run through N64Recomp's C and the WebAssembly port's) | — no emulator or recompiler yet | — no emulator or recompiler yet | — | — | — no emulator or recompiler yet | — | — no emulator or recompiler yet | — no emulator or recompiler yet | — | — no emulator or recompiler yet | — no ROM to run |
+| Open-candidate behavior checks (`compare_candidate_behaviour`) | ✓ (sampled emulator calls against a disposable candidate port) | — no recorded-call harness | — no recorded-call harness | — | — | — no recorded-call harness | — | — no recorded-call harness | — no recorded-call harness | — no recorded-call harness | — no ROM to run |
 | Port readiness report (docs/PORTING.md, phase 0) | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available |
 | Data in C, judged by bytes (`compile_data`, docs/PORTING.md phase 1) | ✓ (data after the last code segment, `.bss`; Start agents → Write data as C) | — no `bss_start` reader | — no `bss_start` reader | — | — | — no `bss_start` reader | — | — project mode: data is in the project's sources | — project mode | — | — project mode | — |
 | The game's C compiled for a PC (Porting → Compile for PC, docs/PORTING.md phase 3) | ✓ (pinned Zig's clang, 64-bit x86 Linux target; nothing linked yet) | — no port kit yet | — no port kit yet | — | — | — no port kit yet | — | — project mode not read yet | — project mode not read yet | — | — project mode not read yet | — |
@@ -4570,3 +4571,9 @@ probes are cancellable and bounded. Synthetic compiler/recompiler regressions co
 ROM port placement also preserves compiler-declared call targets with data-style names. Repeated helper context
 gets a private identity per module, retaining the caller's own helper body and original pointer addresses while
 leaving the public owner function authoritative. The linker still rejects unresolved duplicate ownership.
+
+### Recorded-call checks for additional consoles and imported projects
+
+Extend the open-candidate behavior check to consoles and imported builds as
+they gain compatible record/replay and isolated candidate runners. Sampled
+behavior remains advisory for the exact judge.

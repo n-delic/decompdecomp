@@ -85,7 +85,43 @@ def candidate_band(fn):
     return size_band + ':' + starting
 
 
-def start(db, fn, agent, claimed_at, profile):
+def remember_focus(db, fn, arch, rows, inputs, context_version):
+    if not inputs or not rows:
+        return
+    from .app import permuter_focus, repair_ranking
+
+    topics = repair_ranking.matching_topics(rows) if arch == 'mips' else []
+    category = topics[0] if topics else permuter_focus.classify(rows, arch)
+    if category:
+        db.execute('INSERT OR REPLACE INTO matching_focus VALUES(?,?,?,?)', (fn['id'], category, inputs, context_version))
+
+
+def current_focus(read, proj, fn, record):
+    if not record or not record['focus']:
+        return None
+    from . import agent_notes
+
+    if json.loads(proj['config']).get('kind') == 'fork':
+        from .forks.project import ForkError, ForkProject
+
+        try:
+            tree = ForkProject(Path(proj['root']), create_state=False)
+            observed = agent_notes.project_inputs(tree, tree.unit(fn['unit']), fn)
+        except (ForkError, OSError, ValueError):
+            return None
+    else:
+        unit = fn['unit'] or ''
+        latest = read("SELECT MAX(version) AS version FROM context_versions WHERE project_id=? AND unit=?",
+                      proj['id'], unit)
+        if unit and (latest is None or latest['version'] is None):
+            latest = read("SELECT MAX(version) AS version FROM context_versions WHERE project_id=? AND unit=''", proj['id'])
+        if latest is None or latest['version'] != record['context_version']:
+            return None
+        observed = agent_notes.rom_inputs(read, proj, fn, latest['version'])
+    return record['focus'] if observed == record['inputs'] else None
+
+
+def start(db, fn, agent, claimed_at, profile, proj=None):
     if profile is None:
         return
     band = candidate_band(dict(fn) | {'has_draft': bool(fn['seed'] or fn['best_source'])})
@@ -93,6 +129,10 @@ def start(db, fn, agent, claimed_at, profile):
                'VALUES(?,?,?,?,?,?)', (fn['project_id'], fn['id'], agent.id, claimed_at, profile, band))
     db.execute('DELETE FROM claim_routing_samples WHERE project_id=? AND claimed_at<?',
                (fn['project_id'], claimed_at - HISTORY_SECONDS))
+    record = db.execute('SELECT focus,inputs,context_version FROM matching_focus WHERE function_id=?', (fn['id'],)).fetchone()
+    if proj is not None and (focus := current_focus(lambda sql, *params: db.execute(sql, params).fetchone(), proj, fn, record)):
+        db.execute('INSERT OR REPLACE INTO claim_routing_focus VALUES(?,?,?,?,?,?)',
+                   (fn['id'], agent.id, claimed_at, focus, record['inputs'], record['context_version']))
 
 
 def tested(db, proj, fn, agent, won):
@@ -100,14 +140,21 @@ def tested(db, proj, fn, agent, won):
         'SELECT r.claimed_at,r.profile,r.tested FROM claim_routing_samples r JOIN claims c '
         'ON c.function_id=r.function_id AND c.agent_id=r.agent_id AND c.claimed_at=r.claimed_at '
         'WHERE r.function_id=? AND r.agent_id=?', (fn['id'], agent.id)).fetchone()
-    if sample is None or (sample['tested'] and not won):
+    if sample is None:
+        return
+    sample_key = (fn['id'], agent.id, sample['claimed_at'])
+    record = db.execute('SELECT focus,inputs,context_version FROM claim_routing_focus WHERE '
+                        'function_id=? AND agent_id=? AND claimed_at=?', sample_key).fetchone()
+    if record and not current_focus(lambda sql, *params: db.execute(sql, params).fetchone(), proj, fn, record):
+        db.execute('DELETE FROM claim_routing_focus WHERE function_id=? AND agent_id=? AND claimed_at=?', sample_key)
+    if sample['tested'] and not won:
         return
     if sample['profile'] == build_profiles(proj)(fn):
         db.execute('UPDATE claim_routing_samples SET tested=1,won=? WHERE function_id=? AND agent_id=? AND claimed_at=?',
                    (int(won), fn['id'], agent.id, sample['claimed_at']))
 
 
-def preferences(rows, active, model):
+def preferences(rows, active, model, *, specialize=False):
     """Compare only active models with enough completed claims in the same cohort."""
     attempts, wins = defaultdict(Counter), defaultdict(Counter)
     seen = set()
@@ -115,6 +162,10 @@ def preferences(rows, active, model):
         if (name := active.get(row['agent_id'])) is None:
             continue
         cohort = row['profile'], row['band']
+        if specialize:
+            if not row['focus']:
+                continue
+            cohort += (row['focus'],)
         key = cohort, name, row['function_id']
         if key in seen:
             continue
@@ -171,7 +222,8 @@ def routes(store, proj, agent, now, names):
     if agent.name in NON_MODEL_AGENTS:
         return [], []
     rows = store.all(
-        'SELECT r.function_id,r.agent_id,r.profile,r.band,r.won FROM claim_routing_samples r '
+        'SELECT r.function_id,r.agent_id,r.profile,r.band,r.won,f.focus FROM claim_routing_samples r '
+        'LEFT JOIN claim_routing_focus f ON f.function_id=r.function_id AND f.agent_id=r.agent_id AND f.claimed_at=r.claimed_at '
         'WHERE r.project_id=? AND r.claimed_at>=? AND r.tested=1 AND NOT EXISTS ('
         'SELECT 1 FROM claims c WHERE c.function_id=r.function_id AND c.agent_id=r.agent_id '
         'AND c.claimed_at=r.claimed_at) ORDER BY r.claimed_at DESC LIMIT ?',
@@ -185,7 +237,9 @@ def routes(store, proj, agent, now, names):
     busy.add(model)
     active = {i: model_of(name) for i, name in names.items() if name not in NON_MODEL_AGENTS and model_of(name) in busy}
     preferred, deferred = preferences(rows, active, model)
-    if not preferred and not deferred:
+    focused_picks, focused_waits = preferences(rows, active, model, specialize=True)
+    specific = focused_picks | focused_waits
+    if not preferred and not deferred and not specific:
         return [], []
     # When the entire queue has stalled, reserve only its more-released half.
     floor = ESCALATE_AFTER
@@ -199,16 +253,25 @@ def routes(store, proj, agent, now, names):
             floor = median['abandons'] + 1
     profile = build_profiles(proj)
     picks, waits = [], []
-    matching_bands = {band for _, band in preferred | deferred}
+    matching_bands = {cohort[1] for cohort in preferred | deferred | specific}
     for row in store.all(
-            'SELECT id,name,unit,rom_offset,vram,n_insns,best_score,'
-            "(NULLIF(seed,'') IS NOT NULL OR NULLIF(best_source,'') IS NOT NULL) AS has_draft "
-            "FROM functions WHERE project_id=? AND status='open' AND abandons>=?",
+            'SELECT f.id,f.name,f.unit,f.rom_offset,f.vram,f.n_insns,f.best_score,m.focus,m.inputs,m.context_version,'
+            "(NULLIF(f.seed,'') IS NOT NULL OR NULLIF(f.best_source,'') IS NOT NULL) AS has_draft "
+            "FROM functions f LEFT JOIN matching_focus m ON m.function_id=f.id "
+            "WHERE f.project_id=? AND f.status='open' AND f.abandons>=?",
             proj['id'], floor):
         band = candidate_band(row)
         if band not in matching_bands:
             continue
         cohort = profile(row), band
+        if row['focus'] and cohort + (row['focus'],) in specific:
+            fn = store.one('SELECT * FROM functions WHERE id=?', row['id'])
+            if fn is not None and current_focus(store.one, proj, fn, row):
+                if cohort + (row['focus'],) in focused_picks:
+                    picks.append(row['id'])
+                else:
+                    waits.append(row['id'])
+                continue
         if cohort in preferred:
             picks.append(row['id'])
         elif cohort in deferred:

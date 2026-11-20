@@ -63,6 +63,14 @@ def brief(net, fn, agent, header):
     from .agent_review import handoff_brief
     if handoff := handoff_brief(net, proj['slug'], fn, source):
         lines.append(handoff)
+    from ..claim_routing import current_focus
+    from .guided_matching import GOALS
+
+    focus_record = store.one('SELECT focus,inputs,context_version FROM matching_focus WHERE function_id=?', fn['id'])
+    focus = current_focus(store.one, proj, fn, focus_record)
+    if focus:
+        lines.append('Claim objective. ' + GOALS.get(focus, 'Resolve one ' + focus.lower() + ' mismatch.'))
+    lines.append('For a compact working packet with the current C, use get_function(section="work").')
     lines.extend(history(net, fn))
     if source:
         from .search_evidence import repeated_hint

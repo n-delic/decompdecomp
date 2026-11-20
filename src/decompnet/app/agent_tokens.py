@@ -58,9 +58,9 @@ def candidate_line_note(net, agent, slug, fn, source):
     return note or '\nC-line mapping unavailable for this candidate/build; no line locations inferred.'
 
 
-def get_candidate(net, agent, slug, function, base='current'):
-    if base not in ('current', 'saved_best', 'last_compiling', 'reported_corrected', 'regional_alternative'):
-        raise NetworkError('Choose base=current, saved_best, last_compiling, reported_corrected or regional_alternative.')
+def get_candidate(net, agent, slug, function, base='current', option=0):
+    if base not in ('current', 'saved_best', 'last_compiling', 'reported_corrected', 'regional_alternative', 'measured_option'):
+        raise NetworkError('Choose base=current, saved_best, last_compiling, reported_corrected, regional_alternative or measured_option.')
     note = ''
     if base != 'current':
         fn = net._function(function,slug)
@@ -72,7 +72,12 @@ def get_candidate(net, agent, slug, function, base='current'):
         measurement = None
         stamp = (latest['id'] if latest and latest['created_at'] >= claim['claimed_at'] else None,
                  claim['claimed_at'],target_scope(net,fn,''))
-        if base == 'regional_alternative':
+        if base == 'measured_option':
+            batch = getattr(net, '_measured_agent_options', {}).get((agent.id, fn['id']))
+            if not batch or batch['stamp'] != stamp or type(option) is not int or option not in batch['choices']:
+                raise NetworkError('That measured option expired or is unavailable. Compare fresh options for the current revision.')
+            selected, measurement = batch['choices'][option]
+        elif base == 'regional_alternative':
             alternative = getattr(net, '_agent_alternatives', {}).get((agent.id, fn['id']))
             if not alternative or alternative['stamp'] != stamp:
                 raise NetworkError('There is no current regional alternative. Continue from the active candidate.')
@@ -595,6 +600,9 @@ def feedback(net, agent, slug, function, text, previous):
 
 
 def function_view(net, agent, slug, function, section='summary', start=0, limit=6000):
+    if section == 'work':
+        from .guided_matching import packet
+        return packet(net, agent, slug, function)
     if section=='summary':
         fn=net._function(function,slug)
         return (f"{fn['name']}: {fn['status']}; {fn['n_insns']} instructions; saved historical score {fn['best_score'] if fn['best_score'] is not None else 'unavailable'}.\n"
@@ -875,7 +883,7 @@ def local_family(net, agent, slug, function, revision, family, old='', declarati
         return (f'Selected declaration {declaration}.\n' if declaration else '') + result
 
 
-def variants(net, agent, slug, function, revision, patches, family="explicit patches", *, seconds=60, deadline=None, provenance_kind='agent batch', variant_families=None, combine=False):
+def variants(net, agent, slug, function, revision, patches, family="explicit patches", *, seconds=60, deadline=None, provenance_kind='agent batch', variant_families=None, combine=False, present_options=False):
     """Independent alternatives against one snapshot, with one deadline across preparation and trials."""
     if deadline is None:
         deadline = time.monotonic() + seconds
@@ -1055,6 +1063,22 @@ def variants(net, agent, slug, function, revision, patches, family="explicit pat
             claim = net.project_store(fn['project_id']).one('SELECT claimed_at FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id)
             stamp = (latest['id'] if latest and claim and latest['created_at']>=claim['claimed_at'] else None,
                      claim['claimed_at'] if claim else None,target_scope(net,fn,''))
+            if present_options:
+                options = net.__dict__.setdefault('_measured_agent_options', {})
+                build_scope = agent_evidence.build_key(net, net._function(function, slug))[0]
+                eligible = {index: (src, evidence) for _, src, evidence, index in choices
+                            if index and evidence.get('rows') is not None and evidence.get('input_scope') == build_scope}
+                options[agent.id, fn['id']] = {'stamp': stamp, 'choices': eligible}
+                while len(options) > 64:
+                    options.pop(next(iter(options)))
+                if eligible:
+                    results.append('Choose a measured option with get_candidate(base="measured_option", option=NUMBER), '
+                                   'or keep the current continuation. Choosing one uses no compile.')
+                    from .region_repairs import resolution_text
+                    for index, (_, evidence) in eligible.items():
+                        effect = resolution_text((baseline or {}).get('rows'), evidence['rows'])
+                        if effect:
+                            results.append(f'Option {index}. {effect}')
             from .region_repairs import gain, snapshot
             arch = net.project_row(slug)['arch']
             winner = snapshot(measurement.get('rows') or (), arch)
