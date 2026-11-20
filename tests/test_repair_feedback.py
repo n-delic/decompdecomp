@@ -337,7 +337,7 @@ def test_autopilot_retains_judge_settings_and_attempts_without_capturing_drafts(
         db.execute('UPDATE projects SET config=? WHERE id=?',(json.dumps(cfg),pid))
 
     scheduled = []
-    monkeypatch.setattr(repair_outcomes, 'schedule', lambda _, example, digest: scheduled.append(example))
+    monkeypatch.setattr(repair_outcomes, 'schedule', lambda _, example, digest, verify_coverage: scheduled.append(example))
     monkeypatch.setattr(net, '_jtbl_asm', lambda *args: [], raising=False)
     result=SimpleNamespace(ok=True,obj=b'object',effective_settings=effective)
     monkeypatch.setattr(net,'_compile',lambda *args:result)

@@ -1,4 +1,4 @@
-"""Bounded post-match analysis of frozen captures; never adopt source or change review state."""
+"""Bounded post-match analysis and installed-rule verification of frozen captures."""
 import json
 import logging
 import os
@@ -20,6 +20,12 @@ def prepare(feedback):
         from ..large_text_storage import install
         install(db, ('repair_outcome_analysis',))
         db.execute(QUEUE)
+        if 'verify_coverage' not in {row['name'] for row in db.execute('PRAGMA table_info(repair_analysis_queue)')}:
+            db.execute('ALTER TABLE repair_analysis_queue ADD COLUMN verify_coverage INTEGER NOT NULL DEFAULT 0')
+        db.execute('''CREATE TABLE IF NOT EXISTS repair_coverage_verdicts(
+            attempt_id INTEGER PRIMARY KEY REFERENCES attempts(id) ON DELETE CASCADE,
+            failed_attempt_id INTEGER NOT NULL, failed_source_sha256 TEXT NOT NULL,
+            family TEXT NOT NULL, verified_at REAL NOT NULL)''')
         db.execute('CREATE INDEX IF NOT EXISTS idx_repair_analysis_queue_order ON repair_analysis_queue(created_at,example_id)')
         pending=tuple(feedback.net.__dict__.get('_repair_analysis_pending',()))
         placeholders=','.join('?' for _ in pending) or '-1'
@@ -64,7 +70,32 @@ def analyze(example):
 
 QUEUE = """CREATE TABLE IF NOT EXISTS repair_analysis_queue(
  example_id INTEGER PRIMARY KEY REFERENCES repair_examples(id) ON DELETE CASCADE,
- expected_hash TEXT, created_at REAL NOT NULL)"""
+ expected_hash TEXT, created_at REAL NOT NULL, verify_coverage INTEGER NOT NULL DEFAULT 0)"""
+
+
+def _covered(feedback, example):
+    from .repair_coverage import verify
+    evidence = example['evidence']
+    attempt_id = evidence['after']['attempt_id']
+    if not attempt_id or example['status'] != 'new' or evidence['via'] != 'agent':
+        return False
+    family = verify(feedback, example)
+    if not family:
+        return False
+    with feedback.store.tx() as db:
+        before = evidence['before']
+        # Preserve a capture if someone has reviewed or voted for it while verification ran.
+        deleted = db.execute(
+            "DELETE FROM repair_examples WHERE id=? AND attempt_id=? AND before_attempt_id=? "
+            "AND status='new' AND review_note='' "
+            "AND NOT EXISTS (SELECT 1 FROM repair_example_votes WHERE example_id=?)",
+            (example['id'], attempt_id, before['attempt_id'], example['id'])).rowcount
+        if deleted:
+            db.execute('INSERT OR REPLACE INTO repair_coverage_verdicts VALUES(?,?,?,?,?)',
+                       (attempt_id, before['attempt_id'], before['source_sha256'], family, time.time()))
+            db.execute('DELETE FROM repair_analysis_queue WHERE example_id=?', (example['id'],))
+            db.execute('DELETE FROM repair_outcome_analysis WHERE example_id=?', (example['id'],))
+    return bool(deleted)
 
 
 def backlog(feedback):
@@ -103,6 +134,13 @@ def resume(feedback):
                         raise ValueError('Captured source changed; analysis skipped.')
                     with feedback.store.tx() as db:
                         db.execute('UPDATE repair_outcome_analysis SET state=?,updated_at=? WHERE example_id=?',('running',time.time(),case_id))
+                    if row['verify_coverage']:
+                        try:
+                            if _covered(feedback, example):
+                                with lock:pending.discard(case_id)
+                                continue
+                        except Exception:
+                            logging.getLogger('decompdecomp').exception('Repair rule verification #%s', case_id)
                     report=analyze(example)
                     state='skipped' if report.get('skipped') else 'done'
                 except Exception as error:
@@ -126,7 +164,7 @@ def resume(feedback):
         logging.getLogger('decompdecomp').warning('Unable to schedule repair analysis: %s',error)
 
 
-def schedule(feedback,case_id,expected_hash=None):
+def schedule(feedback,case_id,expected_hash=None,verify_coverage=False):
     if os.environ.get('DECOMP_REPAIR_ANALYSIS')=='off' or not hasattr(feedback.net,'forks'):return
     feedback = feedback.owner(case_id)
     prepare(feedback)
@@ -134,6 +172,7 @@ def schedule(feedback,case_id,expected_hash=None):
         # Enqueue inside the capture transaction: rollback removes the queue row too.
         old=db.execute('SELECT state FROM repair_outcome_analysis WHERE example_id=?',(case_id,)).fetchone()
         if not old:
-            db.execute('INSERT OR IGNORE INTO repair_analysis_queue VALUES(?,?,?)',(case_id,expected_hash,time.time()))
+            db.execute('INSERT OR IGNORE INTO repair_analysis_queue VALUES(?,?,?,?)',
+                       (case_id,expected_hash,time.time(),int(verify_coverage)))
             db.execute('INSERT OR IGNORE INTO repair_outcome_analysis VALUES(?,?,?,?)',(case_id,'pending','{}',time.time()))
     feedback.store.after_commit(lambda:resume(feedback.root))

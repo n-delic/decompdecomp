@@ -8358,3 +8358,20 @@ ordinary ROM linker. Only the generated C changes differed.
   entries and moving the displaced final initializer to the second group
   took 75 to linked exact. This was the first bounded proposal and retained
   both declaration boundaries and all output expressions.
+
+### Byte counters and forwarded float parameters (KMC GCC 2.7.2)
+
+Two archived N64 repairs were reproduced with the recorded compiler and
+`-G0 -mips3 -mgp32 -mfp32 -O2`. Each generated candidate passed the normal
+ROM linker against the original target using the saved failed source and header.
+
+- Changing a local counter from `s32` to `u8` replaced `sltu` plus a register
+  add with a branch-likely instruction and its increment delay slot. The
+  counter was already masked to a byte at every read. The rule requires the
+  observed branch/add mismatch before proposing the declaration change.
+- Changing the caller's first parameter from `s32` to `f32` alone left the
+  unprototyped callee's default argument promotion in place. Giving the
+  candidate-local callee declaration a single `f32` parameter at the same
+  time removed the unwanted `cvt.d.s` instructions. The rule requires a
+  float move versus promotion mismatch adjacent to a direct call to that
+  callee and leaves existing header declarations alone.
