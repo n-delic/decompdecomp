@@ -30,6 +30,7 @@ WATCHED = ("read_cache.py", "metadata_rows.py", "function_rows.py", "candidate_s
            "app/wrapper_families.py", "app/view_snapshots.py", "app/code_coverage.py", "app/progress.py", "app/saves.py", "app/permuter_worker.py", "permuter_claims.py", "app/permute.py", "app/local_claims.py", "app/permuter_initialization.py", "app/permuter_local.py",
            "app/snapshot_branch_repairs.py", "app/dispatch_specialization.py", "app/layout_frontiers.py", "app/targeted_debug_layout.py", "app/compiler_phase_repairs.py", "app/carrier_sequence_repairs.py", "app/record_layout_search.py", "app/compiler_phase_routing.py",
            "app/permuter_macro_effects.py", "app/inline_scheduling_repairs.py", "app/call_preparation_repairs.py", "app/repair_cleanup.py", "inline_helpers.py", "object_emission.py", "app/argument_mask_repairs.py", "app/store_result_repairs.py", "app/loop_weight_repairs.py", "app/local_flow.py",
+           "app/target_inline_storage_diff_repairs.py", "app/target_inline_storage_repairs.py",
            "app/target_guard_width_diff_repairs.py", "app/target_guard_width_repairs.py",
            "app/target_edge_diff_repairs.py", "app/target_edge_repairs.py",
            "app/target_schedule_diff_repairs.py", "app/target_schedule_repairs.py",

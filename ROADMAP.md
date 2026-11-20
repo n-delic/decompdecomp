@@ -3063,6 +3063,11 @@ booleans, cursor bias, byte-flag lifetimes, guard delay-slot immediates,
 separate loop entry seeds, ordinary stack halfword reads, and signed-byte
 adjustment lifetimes.
 
+Measured inline and storage gates also cover shared halfword returns, split
+indexed byte addresses, reuse of dead float locals across calls, unsigned-byte
+entry guards, coordinate schedules, pointer-object qualifiers, narrowed call
+arguments, explicit no-op cases, shared multipliers, and typed float stores.
+
 ## Register-only local lifetime search
 
 Shared draft, agent-local and deep searches offer bounded branch-tail locals, scalar call staging
