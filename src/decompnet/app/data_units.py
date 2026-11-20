@@ -10,6 +10,10 @@ from __future__ import annotations
 
 import json
 import time
+from functools import lru_cache
+from pathlib import Path
+
+import yaml
 
 from ..network import NetworkError
 from ..rom.data_match import DataResult, link_data
@@ -63,15 +67,66 @@ def references(net, proj) -> dict[int, list[str]]:
     return out
 
 
+@lru_cache(maxsize=32)
+def _split_config(path: Path, mtime_ns: int, size: int):
+    """Reuse the parsed split while drafting units, and reload it when the file changes."""
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def _split_data(root: Path, segments: list[dict], image_size: int, bss: int | None) -> list[dict]:
+    """Map explicit data subsegments through their saved ROM parent."""
+    parents = {(s["rom_start"], s["vram"]): s["rom_end"] for s in segments}
+    for path in sorted(root.glob("*.yaml")):
+        try:
+            stat = path.stat()
+            config = _split_config(path, stat.st_mtime_ns, stat.st_size)
+        except (OSError, ValueError, yaml.YAMLError):
+            continue
+        if not isinstance(config, dict) or not isinstance(config.get("segments"), list):
+            continue
+        regions = []
+        for parent in config["segments"]:
+            if not isinstance(parent, dict) or parent.get("type") != "code":
+                continue
+            start, vram = parent.get("start"), parent.get("vram")
+            if not isinstance(start, int) or not isinstance(vram, int):
+                continue
+            end = parents.get((start, vram))
+            subs = parent.get("subsegments") or []
+            if end is None or not isinstance(subs, list):
+                continue
+            boundaries = {}
+            for sub in subs:
+                if isinstance(sub, list) and len(sub) >= 2:
+                    offset, kind = sub[:2]
+                elif isinstance(sub, dict):
+                    offset, kind = sub.get("start"), sub.get("type")
+                    if kind == "bss" and isinstance(sub.get("vram"), int):
+                        offset = start + sub["vram"] - vram
+                else:
+                    continue
+                if isinstance(offset, int) and start <= offset <= end:
+                    boundaries[offset] = kind
+            end = min(end, image_size)
+            if bss is not None and vram <= bss <= vram + end - start:
+                end = start + bss - vram
+            offsets = sorted(offset for offset in boundaries if offset < end)
+            for offset, stop in zip(offsets, offsets[1:] + [end]):
+                if boundaries[offset] in ("data", "rodata", "rdata", "sdata", ".data", ".rodata", ".sdata"):
+                    regions.append({"rom_start": offset, "vram": vram + offset - start, "size": stop - offset})
+        if regions:
+            return regions
+    return []
+
+
 def initialised_data(net, proj) -> list[dict]:
-    """Where the program's initialised data is: [{"rom_start", "vram", "size"}]. Splits record code segments' text;
-    the data the compiler put after it (.data, .rodata) follows in the ROM and in RAM, up to where .bss starts. The
-    console reads that from the program's own code (`Console.bss_start`): the code segment whose text ends nearest
-    below it owns the data, if those ROM bytes are no other code segment's."""
+    """Locate ROM-backed data from the split, or infer the gap between text and the boot stub's .bss."""
     cfg = net.cfg(proj)
     image = net._rom(proj)[0]
     start = net.console(proj).bss_start(bytes(image[:0x2000]))
     segments = [s for s in cfg.get("segments", []) if s.get("rom_end") is not None]
+    if regions := _split_data(Path(proj["root"]), segments, len(image), start):
+        return regions
     if start is None or not segments:
         return []
     ends = [(s["vram"] + s["rom_end"] - s["rom_start"], s) for s in segments]
