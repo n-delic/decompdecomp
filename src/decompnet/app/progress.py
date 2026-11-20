@@ -213,10 +213,13 @@ def _saved_files(folder: Path):
             entries = os.scandir(parent)
         except (FileNotFoundError, NotADirectoryError):
             continue
-        with entries:
-            for entry in entries:
+        with entries as children:
+            for entry in children:
                 if os.path.normcase(entry.name).endswith(suffix):
-                    yield f"{directory}/{entry.name}", parent / entry.name, entry.stat(follow_symlinks=False)
+                    path = parent / entry.name
+                    # Windows directory entries omit the device and inode needed by the file cache.
+                    info = path.lstat() if os.name == "nt" else entry.stat(follow_symlinks=False)
+                    yield f"{directory}/{entry.name}", path, info
 
 
 def _read_once(folder: Path, *, cache=None) -> dict[str, str]:
