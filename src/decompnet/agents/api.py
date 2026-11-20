@@ -631,11 +631,11 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                             automation=st("How a deterministic rule could make it"))),
         "last_diff": ("A page of rows from your last compile diff; start is zero-based and limit is at most 200. "
                       "Costs no compile.", s(function=st("function", True), context=it("equal rows around each difference"), start=it("zero-based row"), limit=it("up to 200 rows"))),
-        "release_function": ("Give up a function with notes for the next agent, once compile_and_diff says to move "
+        "release_function": ("Give up a function once compile_and_diff says to move "
                              "on (before that it answers once with what to try; call again to release anyway). A "
                              "release with no compile since you claimed it is pushed back: compile first, pass move_on "
                              "with your reasons, or end your session.",
-                             s(claim_token=st("Always pass the current claim token from the claim, continuation state or get_candidate on the first release and retries; stale tokens cannot release a newer claim"), function=st("function", True), notes=st("what you tried, what is left", True),
+                             s(claim_token=st("Always pass the current claim token from the claim, continuation state or get_candidate on the first release and retries; stale tokens cannot release a newer claim"), function=st("function", True), notes=st("Optional findings: remaining assembly difference, tried approach and judged result (including failures), and one untested Next step: if available. Required for move_on and not_c."),
                                not_c=bo("True only with evidence of handwritten assembly or non-function code. Unsupported compiler extensions, asm-register restrictions, return-address builtins or build flags are blockers, not no-C proof; release normally with notes."),
                                move_on=bo("Explicitly release now with precise notes explaining why; bypasses the one-time pushback"),
                                next_experiment={"type": "object", "description": "Stalled-claim handoff: tried, observed change, and one untested next step on the saved candidate. Include both old and new for an exact patch.",
@@ -785,7 +785,7 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                          new_name=st("new file path (optional)"), data=st("e.g. .rodata:0x88 .data:0x28 (optional)"))),
     }
     defs["release_and_continue"] = (
-        "Release your current function with notes and receive the next assignment when eligible. "
+        "Release your current function with optional findings and receive the next assignment when eligible. "
         + defs["release_function"][0], defs["release_function"][1])
     if fork:
         defs["compile_and_diff"] = ("Write one complete function definition into its source file, build it and diff "

@@ -123,7 +123,9 @@ one claim; one function back is normal.)
    Right C that can't match because the project's compiler or flags look wrong? search_flags(function) tries
    its compiler's flags at once, try_compiler(...) other compilers; then suggest(...) what matches to the user.
 5. compile_and_diff says when to move on ({budget}): then
-   release_function with precise notes (what you tried, what is left) and claim the next one. Before
+   release_function and claim the next one. If you learned something, leave a short handoff: what still
+   differs, what you tried and its judged result (including failed approaches), and one untested
+   "Next step: ..." for the next agent. Omit notes if there is nothing useful to pass on. Before
    that, compile the next step instead of releasing. A direct callee blocks work?
    release_function(needs=that one) allows one pivot per unchanged input, respecting pauses. Sure that
    no C makes its code at all (hand-written assembly): not_c=true, saying why.
@@ -213,7 +215,9 @@ neighbours may come along in one claim; one function back is normal.)
    functions, you're shown its data next to the original's: fix what differs (order, const, statics,
    values) with edit_file until file_status says it matches; decompdecomp then links the file.
 6. compile_and_diff says when to move on ({budget}): then
-   release_function with precise notes (what you tried, what is left) and claim the next. Before that,
+   release_function and claim the next. If you learned something, leave a short handoff: what still
+   differs, what you tried and its judged result (including failed approaches), and one untested
+   "Next step: ..." for the next agent. Omit notes if there is nothing useful to pass on. Before that,
    compile the next step instead of releasing; sure that no C makes its code at all (hand-written
    assembly): not_c=true, saying why. Very large functions: get the structure right first; a near miss
    is worth the extra compiles. A direct callee blocks work?
@@ -453,7 +457,7 @@ def _project_info(net: RomNetwork, slug: str, detail: bool = True) -> str:
 
 # name -> handler(net, agent, slug, **args); every handler returns text for the model
 @release_operation("tool", protect_new=True)
-def _release_with_experiment(net, agent, slug, function, notes, needs="", not_c=False, move_on=False,
+def _release_with_experiment(net, agent, slug, function, notes="", needs="", not_c=False, move_on=False,
                              next_experiment=None, claim_token="", *, automatic=False):
     from . import session_budget
 
@@ -1375,15 +1379,17 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
                          reason=reason, alternative_revision=alternative_revision)
 
     @tool
-    async def release_function(ctx: Context, function: str, notes: str, needs: str = "", not_c: bool = False, move_on: bool = False, next_experiment: dict | None = None, claim_token: str = "") -> str:
-        """Give up a function you're stuck on, once compile_and_diff says to move on. Notes are required: what you
-        tried, what is left. Your best attempt is kept for the next agent. Released before that (fewer compiles than
+    async def release_function(ctx: Context, function: str, notes: str = "", needs: str = "", not_c: bool = False, move_on: bool = False, next_experiment: dict | None = None, claim_token: str = "") -> str:
+        """Give up a function you're stuck on, once compile_and_diff says to move on. Your best attempt is kept.
+        Leave a brief handoff only if you learned something. Released before that (fewer compiles than
         the move-on rule), it answers once with what to try instead; call it again to release anyway. A release with
         no compile since you claimed it is not taken, however often you ask: compile first, or end your session.
 
         Args:
             function: the function you hold
-            notes: what you tried, what is left
+            notes: optional. Describe the remaining assembly difference, what you tried and the judged result
+                (especially failed approaches worth avoiding), and one untested "Next step: ..." if you have one.
+                Required for move_on and not_c, which need evidence.
             claim_token: always pass the token from the current claim, continuation state or get_candidate, including the first release and retries. A stale token cannot release a new claim.
             next_experiment: stalled-claim handoff with revision, tried, changed and title (one untested next step).
                 Optionally include old and new together for a precise untested patch. Use the candidate the next
@@ -1397,9 +1403,9 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         return await run(ctx, "release_function", function=function, notes=notes, needs=needs, not_c=not_c, move_on=move_on, next_experiment=next_experiment, claim_token=claim_token)
 
     @tool
-    async def release_and_continue(ctx: Context, function: str, notes: str, needs: str = "", not_c: bool = False,
+    async def release_and_continue(ctx: Context, function: str, notes: str = "", needs: str = "", not_c: bool = False,
                                    move_on: bool = False, next_experiment: dict | None = None, claim_token: str = "") -> str:
-        """Release your current function with notes and receive your next assignment when eligible. Remember to
+        """Release your current function with optional findings and receive your next assignment when eligible. Remember to
         pass the current claim_token. All other arguments and release rules are the same as release_function."""
         # The gateway can acknowledge release_function before it finishes. This
         # tool needs the real response, which also contains the next brief.

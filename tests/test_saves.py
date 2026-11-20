@@ -28,7 +28,7 @@ def test_restore_notes_preserves_measurements_without_scanning_history(tmp_path,
     statements = []
     net.store.conn.set_trace_callback(statements.append)
     notes = [{"by": "worker", "function": "f", "text": f"note {i}", "created_at": 123,
-              "score_before": 120, "score_after": 120} for i in range(100)]
+              "score_before": 120, "score_after": 120, "handoff_inputs": "a" * 64} for i in range(100)]
     notes += [{"by": "worker", "text": "legacy"},
               {"by": "worker", "function": "gone", "text": "removed function"}]
     saves._apply_context(net, "game", tmp_path, {"notes": notes}, lambda *_: None)
@@ -43,6 +43,8 @@ def test_restore_notes_preserves_measurements_without_scanning_history(tmp_path,
     saved = json.loads(manifest[saves.MANIFEST])["notes"]
     assert saved[0]["score_before"] == saved[0]["score_after"] == 120
     assert saved[0]["created_at"] == 123
+    assert rows[0]["handoff_inputs"] == saved[0]["handoff_inputs"] == "a" * 64
+    assert "handoff_inputs" not in saved[-1]
     assert proj["id"] == pid
 
 

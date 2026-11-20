@@ -26,7 +26,7 @@ from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from .. import arch, classes, coffobj, consoles, similarity, structs, toolchains
+from .. import agent_notes, arch, classes, coffobj, consoles, similarity, structs, toolchains
 from ..forks import (
     compiler_info,
     convention,
@@ -3386,6 +3386,7 @@ class ForkEngine:
                     if linked:
                         self._verify(proj, fp)
 
+            handoff_inputs = agent_notes.project_inputs(fp, unit, fn) if quiet is None and not diagnostic else None
             ok, log = self._build_unit(proj, fp, unit)
             if not ok and (broken := fp.build_problem()) is not None:
                 # the build itself is broken, not the agent's code: nothing recorded or counted, and the project
@@ -3424,7 +3425,7 @@ class ForkEngine:
                 if d.match_percent is not None:
                     own = max(1, len(d.literals)) if d.literals else scaled(d.match_percent, fn["n_insns"])
                 if quiet is None:  # an attempt, never the best: release puts the best back in the file
-                    self.net._record(fn, agent, own, code, 0, compiled=True, best=False, mismatch_rows=d.rows)
+                    self.net._record(fn, agent, own, code, 0, compiled=True, best=False, mismatch_rows=d.rows, handoff_inputs=handoff_inputs)
                 listed = ", ".join(broken[:8])
                 if own is None:
                     text = (f"❌ REJECTED and undone: your change breaks matched function(s) {listed}. Check you "
@@ -3472,7 +3473,7 @@ class ForkEngine:
             if not matched and not keep and not was_matched:  # tried, not kept: the file stays as it was
                 undo()
                 if quiet is None or score < quiet:
-                    self.net._record(fn, agent, score, code, 0, compiled=True, mismatch_rows=d.rows)
+                    self.net._record(fn, agent, score, code, 0, compiled=True, mismatch_rows=d.rows, handoff_inputs=handoff_inputs)
                 return {**evidence,"text": f"{percent_text(pct)} match (score {score}); not kept in {unit.source}", "score": score,
                         "matched": False, "percent": pct}
             best = fn["best_score"]
@@ -3482,7 +3483,7 @@ class ForkEngine:
                 # the one the notes and the brief call the best (an agent found its 91.8% try there, not its 92.3%)
                 undo()
                 if quiet is None:
-                    self.net._record(fn, agent, score, code, 0, compiled=True, mismatch_rows=d.rows)
+                    self.net._record(fn, agent, score, code, 0, compiled=True, mismatch_rows=d.rows, handoff_inputs=handoff_inputs)
                 stall = self.net.stall_note(fn["id"], agent.id)
                 text = remembered(f"{percent_text(pct)} match (score {score}), worse than the best so far (score "
                                   f"{best}), so {unit.source} keeps what it had; your attempt is recorded.\n"
@@ -3503,7 +3504,7 @@ class ForkEngine:
                                                         f"Edited by {agent.name} with decompdecomp.")
                 return {**evidence,"text": f"✅ {fn['name']} still matches; your tidier version is committed.{_renamed_note(d)}",
                         "score": 0, "matched": True, "adopted": True}
-            self.net._record(fn, agent, score, code, 0, matched=matched, mismatch_rows=d.rows)
+            self.net._record(fn, agent, score, code, 0, matched=matched, mismatch_rows=d.rows, handoff_inputs=handoff_inputs)
             self._apply_scores(proj, fn["unit"], d.unit_scores, skip=fn["id"], agent=agent, text=after,
                                via=f"unit diff after a compile of {fn['name']}")
             self._remember(proj, fp, unit, d)
@@ -4055,10 +4056,12 @@ class ForkEngine:
         return f"With yours, {len(said)} agents of {len(models)} models agree: {done}. The game still builds byte for byte."
 
     @release_operation("release")
-    def release(self, agent: Agent, slug: str, function: str, notes: str, not_c: bool = False, claim_token: str = "", *, handoff=None) -> str:
+    def release(self, agent: Agent, slug: str, function: str, notes: str, not_c: bool = False, claim_token: str = "", *, handoff=None, room_evidence=None) -> str:
         fn = self._fn(slug, function)
         if (link := self.net.links.get(slug)) is not None:
-            link.call("/collab/release", agent, function=fn["name"], notes=notes, not_c=not_c)
+            evidence = agent_notes.room_handoff(self.net.project_store(slug), fn, agent, notes)
+            link.call("/collab/release", agent, function=fn["name"], notes=notes, not_c=not_c,
+                      note_evidence=evidence)
         latest = self.net.project_store(slug).one("SELECT score FROM attempts WHERE function_id=? AND agent_id=? ORDER BY id DESC LIMIT 1",
                                     fn["id"], agent.id)
         if (fn["best_source"] and fn["status"] != "matched" and latest and latest["score"] is not None
@@ -4067,7 +4070,8 @@ class ForkEngine:
                 self.attempt(agent, slug, function, fn["best_source"])
             except NetworkError:
                 pass
-        return Network.release(self.net, agent, function, notes, slug, not_c, claim_token=claim_token, handoff=handoff)
+        return Network.release(self.net, agent, function, notes, slug, not_c, claim_token=claim_token, handoff=handoff,
+                               room_evidence=room_evidence)
 
     def release_exempt(self, slug: str, fn) -> str | None:
         """Why compiling can't help with this function (release_function lets such a release through at once), or

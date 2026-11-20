@@ -34,18 +34,13 @@ def quick(function):
 
 
 def history(net, fn):
-    from ..search_notes import useful
     from .agent_tokens import tried_summary
 
     lines = []
     if summary := tried_summary(net, fn, compact=True):
         lines.append(summary.strip())
-    store = net.project_store(fn['project_id'])
-    notes = useful(store.all(
-        'SELECT text,agent_id AS agent FROM notes WHERE function_id=? ORDER BY created_at DESC,id DESC LIMIT 12',
-        fn['id']))
-    if notes:
-        lines.extend(['Recent handoff notes:', *('- ' + row['text'][:450] for row in notes[:2])])
+    if notes := net.notes_for_brief(fn, show=2, when=False):
+        return ['Handoff notes:', *(note[:450] for note in notes), *lines]
     return lines
 
 

@@ -12,7 +12,7 @@ HANDOFF_TOOLS = frozenset({RELEASE, 'compile_and_diff', 'compile_patch', 'compil
 INSTRUCTIONS = (
     'Automatic assignment is enabled. Work on the single function the app assigns. The app returns your next '
     'brief after a verified match or an accepted release. Use release_and_continue with the current claim token '
-    'and precise notes when you need to release. If a release is declined, keep working on the current function. '
+    'and optional findings when you release. If a release is declined, keep working on the current function. '
     'Recover your current assignment with get_claims if you lose its brief. Follow the app’s handoff or '
     'end-of-session message whenever older workflow guidance tells you to claim another function.'
 )

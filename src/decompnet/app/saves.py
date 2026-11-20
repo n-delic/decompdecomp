@@ -689,7 +689,7 @@ def _knowledge_store(net, project):
 # a few projects, valid while the notes' own revision (`read_progress_notes`, a Store read-revision trigger installed
 # on first use) and the function-name revision (`read_naming`: a note shows its function's name) are unchanged.
 NOTE_CACHE_PROJECTS = 4
-NOTE_COLUMNS = "project_id,function_id,agent_id,text,created_at,score_before,score_after"
+NOTE_COLUMNS = "project_id,function_id,agent_id,text,created_at,score_before,score_after,handoff_inputs"
 _note_cache: dict = {}
 _note_lock = threading.Lock()
 
@@ -698,13 +698,14 @@ def _notes_revision(store, pid):
     """What the project's note rows depend on, read before the rows (so a write in between is seen next time), or
     None when it can't be known yet: the triggers aren't installed and the writer isn't free to install them."""
     from ..store import in_transaction
-    trigger = store.one("SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='read_progress_notes_notes_update'")
-    if trigger is None:
+    trigger = store.one("SELECT sql FROM sqlite_master WHERE type='trigger' AND name='read_progress_notes_notes_update'")
+    if trigger is None or 'handoff_inputs' not in trigger['sql']:
         if in_transaction():
             return None
         with store.try_tx() as db:
             if db is None:
                 return None
+            db.execute("DROP TRIGGER IF EXISTS read_progress_notes_notes_update")
             store._track_reads("notes", "progress_notes", NOTE_COLUMNS)
     # The count and newest ID guard against a database replaced underneath (its counters start again).
     shape = store.one("SELECT count(*) AS n,max(id) AS newest FROM notes WHERE project_id=?", pid)
@@ -737,14 +738,14 @@ def _note_rows(store, pid):
 def _read_note_rows(store, pid):
     """Transport note metadata in bounded pages without per-row SQLite/GIL handoffs."""
     batches = store.all("""WITH numbered AS (
-        SELECT n.id,n.text,n.created_at,n.score_before,n.score_after,n.agent_id,f.name AS fn,
+        SELECT n.id,n.text,n.created_at,n.score_before,n.score_after,n.handoff_inputs,n.agent_id,f.name AS fn,
                row_number() OVER (ORDER BY n.id) AS ordinal
         FROM notes n LEFT JOIN functions f ON f.id=n.function_id WHERE n.project_id=?)
         SELECT json_group_array(json_object(
             'id',id,'text',text,'created_at',CASE WHEN typeof(created_at)='real'
                 THEN printf('%!.17g',created_at) ELSE created_at END,
             'real_time',typeof(created_at)='real','score_before',score_before,
-            'score_after',score_after,'agent_id',agent_id,'fn',fn)) AS batch
+            'score_after',score_after,'handoff_inputs',handoff_inputs,'agent_id',agent_id,'fn',fn)) AS batch
         FROM numbered GROUP BY (ordinal-1)/128 ORDER BY min(ordinal)""", pid)
     rows = []
     while batches:
@@ -781,7 +782,8 @@ def _manifest_from_rows(net, proj, cfg: dict, rows, folder: Path) -> tuple[dict,
     units = {""} | net._unit_contexts(pid)
     notes = [{"function": r["fn"], "text": r["text"], "by": names.get(r['agent_id'], ''),
               "created_at": r["created_at"], "score_before": r["score_before"],
-              "score_after": r["score_after"]} for r in note_rows]
+              "score_after": r["score_after"], **({"handoff_inputs": r["handoff_inputs"]} if r["handoff_inputs"] else {})}
+             for r in note_rows]
     knowledge = [r["text"] for r in store.all("SELECT text FROM knowledge WHERE project_id=? AND status='accepted' "
                                                   "ORDER BY id", pid)]
     from .knowledge import saved_evidence
@@ -1361,6 +1363,8 @@ def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
     # Resolve the small identity/function sets once; old saves without measurements stay unknown.
     functions = {r["name"]: r["id"] for r in store.all(
         "SELECT id,name FROM functions WHERE project_id=?", pid)}
+    from ..agent_notes import valid_inputs
+
     with store.tx() as db:
         for note in (manifest.get("notes") or []) if restore_notes else []:
             check_cancel()
@@ -1374,9 +1378,9 @@ def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
             at = note.get("created_at")
             if type(at) not in (int, float):
                 at = time.time()
-            db.execute("INSERT INTO notes(project_id,function_id,agent_id,text,created_at,score_before,score_after) "
-                       "VALUES(?,?,?,?,?,?,?)", (pid, functions.get(name), agents[author], note["text"],
-                                               at, before, after))
+            db.execute("INSERT INTO notes(project_id,function_id,agent_id,text,created_at,score_before,score_after,handoff_inputs) "
+                       "VALUES(?,?,?,?,?,?,?,?)", (pid, functions.get(name), agents[author], note["text"],
+                                               at, before, after, valid_inputs(note.get('handoff_inputs'))))
     by_name = {r["name"]: r for r in store.all("SELECT name,vram FROM functions WHERE project_id=?", pid)}
     return by_name, manifest.get("functions") or {}
 

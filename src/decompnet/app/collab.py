@@ -404,7 +404,7 @@ class Room:
             out["context"] = {"version": ctx["version"], "header": ctx["header"]}
         if first or kinds & {"note"}:
             out["notes"] = self._credited(
-                "SELECT n.id,n.text,n.score_before,n.score_after,n.created_at,f.vram,n.agent_id "
+                "SELECT n.id,n.text,n.score_before,n.score_after,n.handoff_inputs,n.created_at,f.vram,n.agent_id "
                 "FROM notes n LEFT JOIN functions f ON f.id=n.function_id WHERE n.project_id=? ORDER BY n.id", pid)
         out["claims"] = self._credited(
             "SELECT f.name,f.vram,c.agent_id FROM claims c JOIN functions f ON f.id=c.function_id "
@@ -426,7 +426,7 @@ class Room:
             out["matched"] = [dict(r) for r in rows if e == 0 or fresh or r["name"] in names]
         if e == 0 or any(ev["kind"] == "note" for ev in events):
             out["notes"] = self._credited(
-                "SELECT n.id,n.text,n.score_before,n.score_after,n.created_at,f.name AS function,n.agent_id "
+                "SELECT n.id,n.text,n.score_before,n.score_after,n.handoff_inputs,n.created_at,f.name AS function,n.agent_id "
                 "FROM notes n LEFT JOIN functions f ON f.id=n.function_id WHERE n.project_id=? ORDER BY n.id", pid)
         out["claims"] = self._credited(
             "SELECT f.name,f.vram,c.agent_id FROM claims c JOIN functions f ON f.id=c.function_id "
@@ -564,9 +564,11 @@ def host_app(net, rooms: dict[str, Room]) -> Starlette:
         if nonexclusive(agent):
             with room.store.tx() as db:clear(db)
             return {'text':'Permutation workers do not reserve functions.'}
+        from ..agent_notes import validate_room_handoff
         from ..release_receipts import transport_release
         return {"text": transport_release(net, agent, str(d.get("function", "")), str(d.get("notes", "")), room.slug,
-                                     bool(d.get("not_c")), claim_token=str(d.get("claim_token") or ""))}
+                                     bool(d.get("not_c")), claim_token=str(d.get("claim_token") or ""),
+                                     room_evidence=validate_room_handoff(d.get("note_evidence")))}
 
     def context(room, member, d):
         agent = room.agent_for(member, d.get("agent"))
@@ -994,7 +996,7 @@ class Link:
             slug, m["vram"], m["matched_source"], m["agent"] or "host",rom_offset=m.get('rom_offset')), project=slug)
         _in_batches(net, st.get("best") or [], lambda b: net.apply_remote_best(slug, b["vram"], b["score"], b["source"],rom_offset=b.get('rom_offset')), project=slug)
         _in_batches(net, st.get("notes") or [], lambda n: net.apply_remote_note(
-            slug, n["id"], n["vram"], n["text"], n["agent"] or "host", n["created_at"], n.get("score_before"), n.get("score_after")), project=slug)
+            slug, n["id"], n["vram"], n["text"], n["agent"] or "host", n["created_at"], n.get("score_before"), n.get("score_after"), n.get("handoff_inputs")), project=slug)
         for ev in st.get("events") or []:
             if ev["kind"] in ("match", "claim", "release", "context", "rename", "split", "collab", "polish", "readable") and not (ev["agent"] or "").startswith(mine):
                 net.remote_event(pid, ev["kind"], ev["detail"], ev["agent"] or "host", ev["created_at"])
@@ -1012,7 +1014,7 @@ class Link:
         for m in st.get("matched") or []:
             net.apply_remote_match_named(slug, m["name"], m["agent"] or "host")
         for n in st.get("notes") or []:
-            net.apply_remote_note_named(slug, n["function"], n["text"], n["agent"] or "host", n["created_at"], n.get("score_before"), n.get("score_after"))
+            net.apply_remote_note_named(slug, n["function"], n["text"], n["agent"] or "host", n["created_at"], n.get("score_before"), n.get("score_after"), n.get("handoff_inputs"))
         for ev in st.get("events") or []:
             if ev["kind"] in ("match", "claim", "release", "context", "source", "split", "collab", "link", "polish",
                               "readable") \

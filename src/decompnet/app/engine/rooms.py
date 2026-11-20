@@ -9,6 +9,7 @@ import re
 import secrets
 import time
 
+from ...agent_notes import valid_inputs
 from ...network import Network, NetworkError
 from ...rom.symbols import Symbol
 from ...search_notes import boilerplate
@@ -145,23 +146,25 @@ class RoomMixin:
                 db.execute("UPDATE functions SET matched_agent_id=? WHERE id=?", (aid, row["id"]))
             self._release_matched_claim(db,row["id"],aid)
 
-    def apply_remote_note_named(self, slug: str, function: str | None, text: str, agent_name: str, created_at: float, score_before=None, score_after=None) -> None:
+    def apply_remote_note_named(self, slug: str, function: str | None, text: str, agent_name: str, created_at: float, score_before=None, score_after=None, handoff_inputs=None) -> None:
         if boilerplate(text):
             return
         store = self.project_store(slug)
         proj = self._project(slug)
         row = store.one("SELECT id FROM functions WHERE project_id=? AND name=?", proj["id"], function) if function else None
         fid = row["id"] if row else None
+        inputs = valid_inputs(handoff_inputs)
         existing = store.one("SELECT id FROM notes WHERE project_id=? AND text=? AND function_id IS ?", proj["id"], text, fid)
         if existing:
             if score_before is not None and score_after is not None:
                 with store.tx() as db:
-                    db.execute('UPDATE notes SET score_before=?,score_after=? WHERE id=?', (score_before, score_after, existing['id']))
+                    db.execute('UPDATE notes SET score_before=?,score_after=?,handoff_inputs=COALESCE(?,handoff_inputs) WHERE id=?',
+                               (score_before, score_after, inputs, existing['id']))
             return
         aid = self._remote_agent(agent_name)
         with store.tx() as db:
-            db.execute("INSERT INTO notes(project_id,function_id,agent_id,text,created_at,score_before,score_after) VALUES(?,?,?,?,?,?,?)",
-                       (proj["id"], fid, aid, text, created_at, score_before, score_after))
+            db.execute("INSERT INTO notes(project_id,function_id,agent_id,text,created_at,score_before,score_after,handoff_inputs) VALUES(?,?,?,?,?,?,?,?)",
+                       (proj["id"], fid, aid, text, created_at, score_before, score_after, inputs))
 
     def apply_remote_best(self, slug: str, vram: int, score: int, source: str, *, rom_offset=None) -> None:
         store = self.project_store(slug)
@@ -173,7 +176,7 @@ class RoomMixin:
                 db.execute("UPDATE functions SET best_score=?,best_source=?,last_improved=CASE WHEN ? < COALESCE(n_insns,0)*100 THEN ? ELSE last_improved END WHERE id=? AND status='open' "
                            "AND (best_score IS NULL OR best_score > ?)",(score,source,score,time.time(),row['id'],score))
 
-    def apply_remote_note(self, slug: str, host_id: int, vram: int | None, text: str, agent_name: str, created_at: float, score_before=None, score_after=None) -> None:
+    def apply_remote_note(self, slug: str, host_id: int, vram: int | None, text: str, agent_name: str, created_at: float, score_before=None, score_after=None, handoff_inputs=None) -> None:
         if boilerplate(text):
             return
         store = self.project_store(slug)
@@ -182,16 +185,18 @@ class RoomMixin:
         if vram is not None:
             row = store.one("SELECT id FROM functions WHERE project_id=? AND vram=?", proj["id"], vram)
             fid = row["id"] if row else None
+        inputs = valid_inputs(handoff_inputs)
         existing = store.one("SELECT id FROM notes WHERE project_id=? AND text=? AND function_id IS ?", proj["id"], text, fid)
         if existing:
             if score_before is not None and score_after is not None:
                 with store.tx() as db:
-                    db.execute('UPDATE notes SET score_before=?,score_after=? WHERE id=?', (score_before, score_after, existing['id']))
+                    db.execute('UPDATE notes SET score_before=?,score_after=?,handoff_inputs=COALESCE(?,handoff_inputs) WHERE id=?',
+                               (score_before, score_after, inputs, existing['id']))
             return
         aid = self._remote_agent(agent_name)
         with store.tx() as db:
-            db.execute("INSERT INTO notes(project_id,function_id,agent_id,text,created_at,score_before,score_after) VALUES(?,?,?,?,?,?,?)",
-                       (proj["id"], fid, aid, text, created_at, score_before, score_after))
+            db.execute("INSERT INTO notes(project_id,function_id,agent_id,text,created_at,score_before,score_after,handoff_inputs) VALUES(?,?,?,?,?,?,?,?)",
+                       (proj["id"], fid, aid, text, created_at, score_before, score_after, inputs))
 
     def apply_remote_context(self, slug: str, header: str, host_version: int) -> None:
         store = self.project_store(slug)

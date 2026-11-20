@@ -343,3 +343,114 @@ def test_a_brief_leaves_out_notes_that_only_say_an_open_function_matches(tmp_pat
     section = "\n".join(net.notes_for_brief(net.store.one("SELECT * FROM functions WHERE id=?", fid)))
     assert "no work needed" not in section and "1 note saying it already matches left out" in section
     assert "[out of date" in section and "func_0206d4f8" in section
+
+
+@pytest.mark.parametrize('changed', ['header', 'compiler', 'boundary'])
+def test_handoff_briefs_use_measured_scores_and_flag_older_inputs(tmp_path, changed):
+    from decompnet.app.claim_state import history
+
+    net, pid = _game(tmp_path, [('f', 10, 'open')])
+    first, _ = net.local_agent('first')
+    second, _ = net.local_agent('second')
+    cfg = {'kind': 'rom', 'compiler': {'toolchain': 'example', 'flags': ['-O2']}}
+    with net.store.tx() as db:
+        db.execute('UPDATE projects SET config=? WHERE id=?', (json.dumps(cfg), pid))
+        db.execute("INSERT INTO context_versions(project_id,version,header,unit) VALUES(?,1,'typedef int Integer;', '')",
+                   (pid,))
+    fn = net.claim_row(first, 'game', 'f')
+    net._record(fn, first, 90, 'int f(void) { return 90; }', 1)
+    net._record(fn, first, 40, 'int f(void) { return 40; }', 1)
+    text = ('Difference: target uses an unsigned comparison.\n'
+            'Tried volatile, which added two loads.\n'
+            'Next step: test the unsigned comparison.')
+    assert net.release_function(first, 'f', text, 'game', move_on=True).startswith('Released f')
+    net.add_note(second, 'game', 'The final store uses a halfword.', 'f')
+    fn = net._function('f', 'game')
+    notes = net.notes_for_brief(fn, when=False)
+    assert notes[0].startswith('- (first; saved score 90 → 40) Next step: test the unsigned comparison.')
+    assert 'Tried volatile' in notes[0]
+    assert 'saved score 90 → 40' in '\n'.join(history(net, fn))
+    assert net.store.one('SELECT text FROM notes WHERE agent_id=?', first.id)['text'] == text
+    with net.store.tx() as db:
+        if changed == 'header':
+            db.execute("INSERT INTO context_versions(project_id,version,header,unit) VALUES(?,2,'typedef unsigned Integer;', '')",
+                       (pid,))
+        elif changed == 'compiler':
+            cfg['compiler']['flags'] = ['-O1']
+            db.execute('UPDATE projects SET config=? WHERE id=?', (json.dumps(cfg), pid))
+        else:
+            db.execute('UPDATE functions SET size=size+4 WHERE id=?', (fn['id'],))
+    fn = net._function('f', 'game')
+    notes = net.notes_for_brief(fn, when=False)
+    assert 'The final store' in notes[0]
+    expected = {'header': 'headers', 'compiler': 'compiler or build settings', 'boundary': 'function target or boundaries'}
+    assert f'[Inputs changed since testing ({expected[changed]});' in notes[1]
+    assert 'recheck before relying on it' in '\n'.join(history(net, fn))
+
+
+def test_release_tool_may_omit_notes_and_preserves_attempts(tmp_path):
+    import anyio
+
+    from decompnet.agents.api import api_tool_schemas
+    from decompnet.app.tools import _release_with_experiment, build_mcp
+
+    net, _ = _game(tmp_path, [('f', 10, 'open')])
+    agent, _ = net.local_agent('worker')
+    names = ['release_function', 'release_and_continue']
+    for schema in api_tool_schemas(names=names):
+        assert 'notes' not in schema['function']['parameters']['required']
+    definitions = anyio.run(build_mcp(net, lambda ctx: (agent, 'game')).list_tools)
+    for tool in definitions:
+        if tool.name in names:
+            assert 'notes' not in tool.input_schema.get('required', [])
+    assert net.claim_row(agent, 'game', 'f')
+    _attempts(net, agent, 'f', [40])
+    result = _release_with_experiment(net, agent, 'game', 'f')
+    if _held(net, agent):
+        assert result.startswith('Not released yet')
+        result = _release_with_experiment(net, agent, 'game', 'f')
+    assert result.startswith('Released f')
+    assert not net.store.one('SELECT 1 FROM notes')
+    assert net.store.one('SELECT score FROM attempts')['score'] == 40
+
+
+def test_room_handoff_scores_are_advisory_and_can_come_from_guest_attempts(tmp_path):
+    from decompnet import agent_notes
+    from decompnet.release_receipts import transport_release
+
+    net, _ = _game(tmp_path, [('f', 10, 'open')])
+    agent, _ = net.local_agent('guest')
+    fn = net.claim_row(agent, 'game', 'f')
+    raw = [60, 40, 'a' * 64]
+    assert agent_notes.validate_room_handoff([60, 2**64, 'a' * 64]) is None
+    assert agent_notes.validate_room_handoff([60, 40, 'bad key']) is None
+    assert transport_release(net, agent, 'f', 'Next step: try an unsigned comparison.', 'game',
+                             room_evidence=agent_notes.validate_room_handoff(raw)).startswith('Released f')
+    row = net.store.one('SELECT score_before,score_after,handoff_inputs FROM notes')
+    assert list(row) == raw
+    assert not net.store.one('SELECT 1 FROM attempts')
+    assert net._function(fn['name'], 'game')['best_score'] is None
+
+
+def test_project_handoff_inputs_follow_headers_and_flags_but_ignore_candidate_body(tmp_path):
+    from decompnet.agent_notes import project_inputs
+    from decompnet.forks.project import ForkProject, Unit
+
+    net, _ = _game(tmp_path, [('f', 10, 'open')])
+    fn = net._function('f', 'game')
+    project = ForkProject(tmp_path, create_state=False)
+    source = tmp_path / 'f.c'
+    source.write_text('#include "types.h"\nint f(void) { return 0; }')
+    header = tmp_path / 'types.h'
+    header.write_text('typedef int Value;')
+    makefile = tmp_path / 'Makefile'
+    makefile.write_text('CFLAGS := -O2')
+    unit = Unit('f', None, None, 'f.c', False, None)
+    original = project_inputs(project, unit, fn)
+    source.write_text('#include "types.h"\nint f(void) { return 1; }')
+    assert project_inputs(project, unit, fn) == original
+    header.write_text('typedef unsigned Value;')
+    with_new_header = project_inputs(project, unit, fn)
+    assert with_new_header != original
+    makefile.write_text('CFLAGS := -O1')
+    assert project_inputs(project, unit, fn) != with_new_header

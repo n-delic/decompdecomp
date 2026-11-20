@@ -254,6 +254,7 @@ _INFRA_NOTE = re.compile(
 # notes in one project: "plain C plateaus here" at 68.3% on a function another agent took to 95.1%)
 _CEILING = re.compile(r"plateau|ceiling|not reachable|unreachable|can'?t (?:get|reach|go|be matched|match)|cannot|"
                       r"impossible|dead[- ]end|capped|stuck at|won'?t match|best possible|no way to|maxed", re.I)
+_NOTE_NEXT_STEP = re.compile(r'^\s*(?:untested )?next step:[^\n]*\S', re.I | re.M)
 _PERCENT = re.compile(r"(?<![\d.])(\d{1,3}(?:\.\d+)?)\s*%")
 _SCORE = re.compile(r"\bscore\s*(?:of\s*|=\s*|:\s*)?(\d+)\b", re.I)
 
@@ -271,7 +272,7 @@ def _superseded(text: str, best_score: int | None, best_percent: float | None) -
 
 
 def brief_notes(rows, fn, best_at: float | None = None, best_text: str = "", show: int | None = None,
-                when: bool = True) -> list[str]:
+                when: bool = True, *, current_inputs: str | None = None) -> list[str]:
     """A function's notes as its brief lists them (rows newest first: text, created_at, name). Notes about the
     setup (_INFRA_NOTE) are left out, with a line saying how many; a note given word for word more than once is
     shown once; an older note that said it can't get closer, or described less than the best now (`best_text`,
@@ -296,9 +297,10 @@ def brief_notes(rows, fn, best_at: float | None = None, best_text: str = "", sho
         if key in seen:
             seen[key][1] += 1
             continue
-        item = [n, 1, False]
+        changed_inputs = agent_notes.changed_inputs(current_inputs, n.get('handoff_inputs'))
+        item = [n, 1, False, changed_inputs]
         seen[key] = item
-        if fn["status"] != "matched" and says_matched(text):
+        if changed_inputs or (fn["status"] != "matched" and says_matched(text)):
             stale.append(item)  # stale_note marks it below
         elif (best_at is not None and best_score is not None and (n["created_at"] or 0) < best_at
                 and _superseded(text, best_score, best_percent)):
@@ -307,13 +309,23 @@ def brief_notes(rows, fn, best_at: float | None = None, best_text: str = "", sho
         else:
             fresh.append(item)
     lines = []
-    for n, count, old in (fresh + stale)[:show]:
+    # Put actionable handoffs ahead of other notes tested against the same inputs.
+    fresh.sort(key=lambda item: not _NOTE_NEXT_STEP.search(item[0]['text'] or ''))
+    for n, count, old, changed_inputs in (fresh + stale)[:show]:
         text = stale_note((n["text"] or "").strip(), fn["status"])
+        if not changed_inputs and (step := _NOTE_NEXT_STEP.search(text)):
+            finding = (text[:step.start()] + text[step.end():]).strip()
+            text = step[0].strip() + ('\n' + finding if finding else '')
         if old:
             text = f"(superseded: best is now {best_text or fn['best_score']}) {text}"
         if count > 1:
             text += f" [noted {count} times]"
         who = f"{n['name']}, {_ago(n['created_at'])}" if when else f"{n['name']}"
+        before, after = n.get('score_before'), n.get('score_after')
+        if after is not None:
+            who += f"; saved score {before} → {after}" if before is not None and before != after else f"; saved score {after}"
+        if changed_inputs:
+            text = f"[Inputs changed since testing ({changed_inputs}); recheck before relying on it.] {text}"
         lines.append(f"- ({who}) {text}")
     if infra:
         lines.append(f"- ({infra} note{'s' * (infra != 1)} about builds that broke or agents that stopped left out: "
@@ -1636,7 +1648,7 @@ class Network:
         return fn
 
     @release_operation("release")
-    def release(self, agent: Agent, function: str, notes: str, project: str | None = None, not_c: bool = False, claim_token: str = "", *, handoff=None) -> str:
+    def release(self, agent: Agent, function: str, notes: str, project: str | None = None, not_c: bool = False, claim_token: str = "", *, handoff=None, room_evidence=None) -> str:
         """An agent gives a function back: its claim ends, its notes stay for the next agent, and the function
         counts one more give-up (the claim order puts those later). `not_c`: the agent found no C makes its code
         (NOT_C_AGENTS)."""
@@ -1659,8 +1671,9 @@ class Network:
                            (agent_review.EXPERIMENT + str(fn['id']), json.dumps(dict(handoff, released_at=time.time()))))
             db.execute("DELETE FROM claims WHERE function_id=?", (fn["id"],))
             db.execute("UPDATE functions SET abandons=abandons+1 WHERE id=?", (fn["id"],))
-            if notes.strip():
-                agent_notes.save(db, fn["project_id"], fn["id"], agent.id, notes.strip(), agent_name=agent.name)
+            if notes.strip() and agent_notes.save(db, fn["project_id"], fn["id"], agent.id, notes.strip(), agent_name=agent.name,
+                                                room_evidence=room_evidence):
+                self._event(db, fn["project_id"], agent.id, "note", fn["name"])
             self._event(db, fn["project_id"], agent.id, "release", fn["name"])
             said = self._not_c(db, fn, agent, notes.strip()) if not_c else ""
         from . import claim_stalls
@@ -1669,8 +1682,10 @@ class Network:
         candidate_quality.capture(self,fn,agent,notes,progress)
         from .app import agent_review
         agent_review.observe(self,fn,agent,notes,progress,snapshot=review_facts)
-        return (f"Released {fn['name']}. Your best attempt and notes are saved so the next agent starts "
-                f"where you left off.{said} Call claim_function for a new one.")
+        saved = 'Your best attempt is kept.'
+        if notes.strip():
+            saved += ' Your findings are saved for the next agent.'
+        return f"Released {fn['name']}. {saved}{said} Call claim_function for a new one."
 
     def _not_c(self, db, fn, agent: Agent, why: str) -> str:
         """An agent's verdict that no C makes fn's code; with NOT_C_AGENTS agents of NOT_C_MODELS models agreeing, fn
@@ -1901,10 +1916,12 @@ class Network:
     def notes_for_brief(self, fn, best_text: str = "", show: int | None = None, when: bool = True) -> list[str]:
         """A function's notes for its brief (brief_notes), with when its best score was first reached."""
         store = self.project_store(fn["project_id"])
-        rows = store.all("SELECT n.text,n.created_at,n.agent_id FROM notes n "
+        rows = store.all("SELECT n.text,n.created_at,n.agent_id,n.score_before,n.score_after,n.handoff_inputs FROM notes n "
                               f"WHERE n.function_id=? AND n.text != 'Deep permutation turn ended; improvements shared.' "
                               f"ORDER BY n.created_at DESC,n.id DESC LIMIT {BRIEF_NOTES * 8}", fn["id"])
         from .app.project_labels import label
+        if not rows:
+            return []
         rows = label(self, rows, {'name':'agent_id'})
         best_at = None
         if fn["status"] != "matched" and fn["best_score"] is not None:
@@ -1912,7 +1929,8 @@ class Network:
                                  fn["id"], fn["best_score"])
             best_at = row["t"] if row else None
         from .search_notes import useful
-        return brief_notes(useful(rows), fn, best_at, best_text, show, when)
+        inputs = agent_notes.current_inputs(self, store, fn) if any(row['handoff_inputs'] for row in rows) else None
+        return brief_notes(useful(rows), fn, best_at, best_text, show, when, current_inputs=inputs)
 
     def _next_step(self, proj, ctx) -> str:
         """The brief's last line for the agent that claimed the function."""
@@ -2260,7 +2278,7 @@ class Network:
     def _record(self, fn, agent: Agent, score: int | None, source: str, ctx_version: int, matched: bool = False,
                 compiled: bool | None = None, via: str = "agent", effective_settings=None,
                 prepared_header=None, prepared_inputs=None, prepared_compiler=None, before_record=None, restoring_exact=False, prepared_assembly=False, write_wait=None, exact_inputs=None,
-                best: bool = True, retain_match_credit: bool = False, mismatch_rows=()):
+                best: bool = True, retain_match_credit: bool = False, mismatch_rows=(), handoff_inputs=None):
         """An attempt. `best`: False for one whose code can't stay in the source (it breaks matched neighbours), so
         it never becomes the best that briefs offer and a release puts back."""
         store = self.project_store(fn["project_id"])
@@ -2312,8 +2330,12 @@ class Network:
                     raise NetworkError("The prepared candidate no longer improves this function. Run the pass again.")
                 ctx_version = promote_context(self, db, current, prepared_inputs, prepared_header, agent)
                 current = db.execute("SELECT * FROM functions WHERE id=?", (fn['id'],)).fetchone()
-            attempt = db.execute("INSERT INTO attempts(function_id,agent_id,score,compiled,context_version,source,created_at,via) "
-                       "VALUES(?,?,?,?,?,?,?,?)", (fn["id"], agent.id, score, compiled, ctx_version, source, now, via)).lastrowid
+            if via == 'agent' and score is not None and config.get('kind') != 'fork':
+                tested = current if prepared_header is not None else fn
+                handoff_inputs = agent_notes.rom_inputs(store.one, proj, tested, ctx_version, used)
+            attempt = db.execute("INSERT INTO attempts(function_id,agent_id,score,compiled,context_version,source,created_at,via,handoff_inputs) "
+                       "VALUES(?,?,?,?,?,?,?,?,?)",
+                       (fn["id"], agent.id, score, compiled, ctx_version, source, now, via, handoff_inputs)).lastrowid
             self.repair_feedback.attempt(db, current, attempt, ctx_version, effective_settings,
                                          mismatch_rows if score and score > 0 else ())
             if matched and not stale:
@@ -2565,8 +2587,11 @@ class Network:
                 if row:
                     db.execute('UPDATE notes SET text=?,created_at=?,score_before=?,score_after=? WHERE id=?',
                                (text.strip()[:NOTE_CHARS], time.time(), *(measured or agent_notes.current_scores(db, fn['id'], time.time())), row['id']))
+                    self._event(db, proj['id'], agent.id, 'note', fn['name'])
                     return 'Updated the deep permuter summary.'
-            agent_notes.save(db, proj["id"], fn["id"] if fn else None, agent.id, text.strip()[:NOTE_CHARS], measured=measured, agent_name=agent.name)
+            if agent_notes.save(db, proj["id"], fn["id"] if fn else None, agent.id, text.strip()[:NOTE_CHARS],
+                                measured=measured, agent_name=agent.name):
+                self._event(db, proj['id'], agent.id, 'note', fn['name'] if fn else '')
         return "Noted. Other agents will see it" + (f" when they open {fn['name']}." if fn else " in their briefings.")
 
     def search_notes(self, project: str | None, query: str) -> str:

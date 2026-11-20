@@ -245,13 +245,12 @@ def applicable(net, fn, slug, source, state):
 
 
 def summary(state):
-    lines = ['Previous agent handoff (current candidate/build):']
+    label = 'Next check: ' if state.get('automatic') and 'old' not in state else 'Untested next step: '
+    lines = ['Previous agent handoff (current candidate/build):', label + state['title']]
     if state.get('tried'):
         lines.append('Tried: ' + state['tried'].strip())
     if state.get('changed'):
         lines.append('Observed: ' + state['changed'].strip())
-    label = 'Next check: ' if state.get('automatic') and 'old' not in state else 'Untested next step: '
-    lines.append(label + state['title'])
     return '\n'.join(lines)
 
 

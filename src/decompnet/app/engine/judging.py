@@ -430,14 +430,20 @@ class JudgeMixin:
         self._record(fn, agent, score, source, self._context(fn["project_id"], fn["unit"])["version"], via="room", before_record=before_record)
 
     @release_operation("release")
-    def release(self, agent: Agent, function: str, notes: str, project: str | None = None, not_c: bool = False, claim_token: str = "", *, handoff=None) -> str:
+    def release(self, agent: Agent, function: str, notes: str, project: str | None = None, not_c: bool = False, claim_token: str = "", *, handoff=None, room_evidence=None) -> str:
         if (fork := self.fork_slug(project)):
-            return self.forks.release(agent, fork, function, notes, not_c, claim_token=claim_token, handoff=handoff)
+            return self.forks.release(agent, fork, function, notes, not_c, claim_token=claim_token, handoff=handoff,
+                                      room_evidence=room_evidence)
         link = self._link(project)
         if link is not None:
-            link.call("/collab/release", agent, function=self._function(function, project)["name"], notes=notes,
-                      not_c=not_c)
-        said = super().release(agent, function, notes, project, not_c, claim_token=claim_token, handoff=handoff)
+            from ...agent_notes import room_handoff
+
+            fn = self._function(function, project)
+            evidence = room_handoff(self.project_store(fn['project_id']), fn, agent, notes)
+            link.call("/collab/release", agent, function=fn["name"], notes=notes, not_c=not_c,
+                      note_evidence=evidence)
+        said = super().release(agent, function, notes, project, not_c, claim_token=claim_token, handoff=handoff,
+                               room_evidence=room_evidence)
         fn = self._function(function, project)
         self.rangechecks.gave_up(self.project_store(fn['project_id']).one("SELECT * FROM projects WHERE id=?", fn["project_id"]), fn)
         return said
@@ -455,6 +461,10 @@ class JudgeMixin:
         A release without a compile doesn't count against the session's claims, and says so. `not_c`: the agent's
         verdict that no C makes it (Network.release), which isn't pushed back: it's a finding, not giving up, and
         it counts only once agents of two models agree."""
+        from ...search_notes import boilerplate
+
+        if boilerplate(notes):
+            notes = ''
         if move_on and not notes.strip():
             raise NetworkError("Explain what you tried and why you need to move on.")
         fn = self._function(function, project)
@@ -487,12 +497,14 @@ class JudgeMixin:
                 stale_handoff = True
                 findings = [next_experiment.get(field, '').strip() for field in ('tried', 'changed')]
                 notes = '\n'.join(dict.fromkeys(filter(None, [notes.strip(), *findings])))
-                notes = notes or 'Released after the proposed experiment became stale.'
         said = self.release(agent, function, notes, project, not_c, claim_token=claim_token, handoff=handoff)
         if handoff is not None:
             said += '\nNext experiment saved with the handoff. The next claim will show it while applicable.'
         elif stale_handoff:
-            said += '\nFindings saved as notes. The proposed experiment referred to a different candidate revision.'
+            said += '\n'
+            if notes.strip():
+                said += 'Findings saved as notes. '
+            said += 'The proposed experiment referred to a different candidate revision.'
         if not not_c and need is None and progress is not None and progress['compiles']:
             from .. import release_repairs
             slug = self.project_store(fn['project_id']).one('SELECT slug FROM projects WHERE id=?',fn['project_id'])['slug']

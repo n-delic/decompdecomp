@@ -266,6 +266,8 @@ MIGRATIONS = [
     ("attempts", "score_before", "INTEGER"),
     ("attempts", "score_improved", "INTEGER"),
     ("notes", "session_id", "INTEGER"),
+    ("attempts", "handoff_inputs", "TEXT"),
+    ("notes", "handoff_inputs", "TEXT"),
     ("notes", "score_before", "INTEGER"),
     ("notes", "score_after", "INTEGER"),
     ("reuse_trials", "feedback", "TEXT NOT NULL DEFAULT '{}'"),

@@ -45,10 +45,12 @@ def test_room_sync_skips_boilerplate_but_keeps_findings(tmp_path, by_name):
     ]
     for text in texts:
         if by_name:
-            net.apply_remote_note_named('game', 'f', text, 'worker', 1)
+            net.apply_remote_note_named('game', 'f', text, 'worker', 1, 20, 10, 'a' * 64)
         else:
-            net.apply_remote_note('game', 1, 123, text, 'worker', 1)
-    assert [row['text'] for row in net.store.all('SELECT text FROM notes')] == [texts[-1]]
+            net.apply_remote_note('game', 1, 123, text, 'worker', 1, 20, 10, 'a' * 64)
+    assert [tuple(row) for row in net.store.all('SELECT text,score_before,score_after,handoff_inputs FROM notes')] == [
+        (texts[-1], 20, 10, 'a' * 64),
+    ]
 
 
 def test_repeat_findings_are_saved_once_on_unmatched_functions(tmp_path):
