@@ -5,6 +5,12 @@ checks the current image and mappings. Unchanged inputs reuse the saved map, kee
 entry quick. **Refresh** repeats the input check; **Stop** retains the last complete map.
 No compiler, agent, external service or game code is run by this analysis.
 
+Each scan runs in its own process. The app checks that the image and layout still match
+before it publishes the map and merges any notes saved during the scan. In a Git checkout,
+edits or a worker-only update to `rom_scan_worker.py` take effect on the next scan. Any scan
+already in progress finishes with the code it started with. The completed map stays visible
+until a new scan publishes its replacement.
+
 ## Loader source groups
 
 The MIPS reader follows constants, incoming arguments, saved registers, stack arguments

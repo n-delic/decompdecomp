@@ -243,7 +243,7 @@ def test_current_maps_use_cache_and_changed_roles_force_new_analysis(project,mon
     net,pid,root=project
     rom_explorer.run(net,'game',Log())
     def no_analysis(*args,**kwargs):pytest.fail('unchanged map was rescanned')
-    monkeypatch.setattr(rom_explorer,'analyse',no_analysis)
+    monkeypatch.setattr(rom_explorer.rom_scan,'run',no_analysis)
     assert rom_explorer.run(net,'game',Log())['cached']
 
 
