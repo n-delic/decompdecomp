@@ -360,6 +360,23 @@ class Search(Permuter):
                 return score
         return best
 
+    def indexed_loop_frame_pass(self, agent, proj, fn, best, fork):
+        """Measure the indexed loop and padding cleanup together under the current settings."""
+        from decomprepair.pointer_walk_index_repairs import frame_variants
+
+        source = _candidate_source(fn, best)
+        for family, child in frame_variants(source, fn['name']):
+            if self.tested >= self.limit:
+                break
+            self.check()
+            with repair_trial({'kind': 'deep local repair', 'family': family}):
+                score = self._score(agent, proj, fn, child, best, fork)
+            if score == 0:
+                return 0
+            if score is not None:
+                best = min(best, score)
+        return best
+
     def call_result_pass(self, agent, proj, fn, best, fork):
         """Judge a small source-only pass before exploring alternate compiler profiles."""
         from decomprepair.target_local_repairs import call_result_pass
@@ -1415,6 +1432,9 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
                         log('Checking the saved tail dispatcher with the installed GCC sibling-call profile.')
                         if deep_profiles.probe(search, agent, proj, fn, _candidate_source(fn, baseline), profile) == 0:
                             baseline = search.best = 0
+                if baseline and not relabel and (lane is None or lane.index == 0):
+                    baseline = search.indexed_loop_frame_pass(agent, proj, fn, baseline, fork)
+                    fn = net._function(name, slug)
                 if (baseline and compiler_profiles == 1 and not relabel
                         and (lane is None or lane.index == 0)):
                     baseline = search.call_result_pass(agent, proj, fn, baseline, fork)

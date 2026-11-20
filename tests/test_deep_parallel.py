@@ -241,3 +241,43 @@ def test_empty_call_result_pass_keeps_remeasured_baseline(monkeypatch):
     fn = net.function()
     assert search.call_result_pass(AGENT, net.project_row('game'), fn, 115, None) == 115
     assert search.tested == 0
+
+
+def test_indexed_loop_frame_pass_tries_combined_source_first(monkeypatch):
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    source = '''extern u32 count;
+extern void *items[];
+void consume(void *);
+
+void f(void) {
+    u8 __repair_frame[8];
+    u32 i;
+    void **cursor;
+
+    i = 0;
+    if (count != 0) {
+        cursor = items;
+        do {
+            consume(*cursor);
+            i++;
+            cursor++;
+        } while (i < count);
+    }
+}
+'''
+    fn = {**net.function(), 'name': 'f', 'best_source': source}
+    search = deep_permuter.Search(net, 1, 1, Log())
+    tried = []
+
+    def judge(agent, proj, fn, candidate, best, fork):
+        tried.append(candidate)
+        search.tested += 1
+        return 0
+
+    monkeypatch.setattr(search, '_score', judge)
+    assert search.indexed_loop_frame_pass(AGENT, net.project_row('game'), fn, 35, None) == 0
+    assert len(tried) == 1
+    assert 'consume(items[i]);' in tried[0]
+    assert '__repair_frame' not in tried[0]
