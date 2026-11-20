@@ -3013,6 +3013,10 @@ conversion, division and allocation differences to bounded C candidates.
 Follow-up gates cover selectors across calls, the first field guard, loop-tail
 bounds, grouped stores, stack records and strided field relocations. Signed
 halfword uses and floating lifetimes also have bounded source candidates.
+The same lane handles measured float argument order, divide-and-square reuse,
+indexed store lifetimes, loop edges, clamps, paired byte decoders and guarded
+store constants. Wide clears require an aligned resolved address and one typed
+64-bit object.
 EGCS square staging requires floating-register-only differences. These lanes
 use the current input scope and ordinary compile budget. Imported builds still
 need reliable per-unit compiler and linked table evidence. Other processors
