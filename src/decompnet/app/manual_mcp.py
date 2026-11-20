@@ -47,7 +47,7 @@ def revoke(net, settings, agent_id):
     # finishes first; already-authenticated queued submissions fail the revocation gate.
     with ExitStack() as pending:
         for lock in locks:pending.enter_context(lock)
-        net.release_stopped([agent_id], 'its manual MCP connection was revoked')
+        net.release_stopped([agent_id])
     with net.store.tx() as db:
         # The token stays invalid after a restart too. Retain the identity so its notes,
         # attempts and matches cannot be attributed to a later agent if SQLite reuses the row ID.

@@ -711,7 +711,7 @@ class Manager:
         _end_groups(crashed | self._strays())
         # helpers, and the runners from before records (named like helpers): with a note on each function, and a
         # 'stopped' event that ends their run (what they released in it no longer keeps them off it)
-        self.net.release_local_claims("the app restarted")
+        self.net.release_local_claims()
 
     def _save(self, s: Session, *, db=None) -> None:
         if self._down and db is None:return  # shutdown owns the single batched recovery write
@@ -1858,7 +1858,7 @@ class Manager:
             except Exception:  # the host lets the claim expire
                 pass
         # its claims go now, with a note, rather than when their lease runs out; and its next run starts afresh
-        self.net.release_stopped([agent_id], (s.why or "it stopped")[:200], project=s.slug)
+        self.net.release_stopped([agent_id], project=s.slug)
 
     def _session_begin(self, s: Session) -> int:
         from .prompt_settings import effective

@@ -15,7 +15,6 @@ def persist(manager, deadline, notify):
     names = json.dumps([s.agent_name for s in sessions])
     actors = {r['name']:r['id'] for r in net.store.all('SELECT id,name FROM agents WHERE name IN (SELECT value FROM json_each(?))', names)}
     identities = json.dumps(list(actors.values()))
-    actor_names = {aid:name for name,aid in actors.items()}
     scopes = net.project_stores()
     affected_stores=set()
     project_ids={r['slug']:r['id'] for r in net.store.all('SELECT id,slug FROM projects')}
@@ -44,7 +43,6 @@ def persist(manager, deadline, notify):
                 session.state,session.stopped_by,session.until,session.todo='stopped',BY_QUIT,None,''
                 session.why='decompdecomp closed while it worked'
                 manager._save(session, db=db)
-    own = net._machine_agent_ids()
     for store, projects in scopes:
         if store not in affected_stores:continue
         check()
@@ -55,12 +53,6 @@ def persist(manager, deadline, notify):
                               (identities,json.dumps(projects))).fetchall()
             for row in rows:
                 check()
-                if row['agent_id'] not in own:
-                    from .. import agent_notes
-                    name = actor_names.get(row['agent_id'], '')
-                    agent_notes.save(db,row['project_id'],row['id'],row['agent_id'],
-                                     'Released because its agent stopped (decompdecomp closed); its attempts are kept.',
-                                     time.time(),agent_name=name)
                 net._event(db,row['project_id'],row['agent_id'],'freed',row['name'])
             db.executemany('DELETE FROM claims WHERE function_id=? AND agent_id=?',[(r['id'],r['agent_id']) for r in rows])
             # A run boundary belongs to the helper's own project, not every unrelated project.

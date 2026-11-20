@@ -64,7 +64,7 @@ def test_recovery_is_saved_before_claim_release_and_other_workers_keep_claims(ma
     options=json.loads(saved['options'])
     assert options['resume_functions']==['func_0'] and 'api_key' not in options
     assert [r['agent_id'] for r in net.store.all('SELECT agent_id FROM claims')]==[other.id]
-    assert net.store.one("SELECT COUNT(*) n FROM notes WHERE agent_id=? AND text LIKE 'Released because%'",actor.id)['n']==1
+    assert not net.store.one("SELECT 1 FROM notes WHERE agent_id=?",actor.id)
     assert net.store.one("SELECT COUNT(*) n FROM events WHERE kind='freed' AND agent_id=?",actor.id)['n']==1
     assert calls[0]=='rooms'
     assert next(i for i,c in enumerate(calls) if c.startswith('Saving recovery')) < next(i for i,c in enumerate(calls) if c.startswith('Releasing'))
@@ -124,7 +124,7 @@ def test_room_admission_stops_before_authentication_or_database_work(manager,mon
     assert response.status_code==400 and 'shutting down' in response.json()['error']
 
 
-def test_batched_shutdown_uses_the_project_owner_for_claims_and_notes(tmp_path):
+def test_batched_shutdown_uses_the_project_owner_for_claims(tmp_path):
     # Reuse the independent-file fixture without enabling a runtime storage switch.
     from tests.test_project_storage import scoped
     fixture=scoped.__wrapped__(tmp_path)
@@ -142,7 +142,7 @@ def test_batched_shutdown_uses_the_project_owner_for_claims_and_notes(tmp_path):
         for pid in (1,2):
             assert not stores[pid].one('SELECT 1 FROM claims')
             assert stores[pid].one("SELECT COUNT(*) n FROM events WHERE kind='freed'")['n']==1
-            assert stores[pid].one('SELECT COUNT(*) n FROM notes')['n']==1
+            assert not stores[pid].one('SELECT 1 FROM notes')
     finally:
         with pytest.raises(StopIteration):next(fixture)
 

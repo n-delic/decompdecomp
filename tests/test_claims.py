@@ -496,10 +496,10 @@ def test_helpers_reused_by_name_claim_again_after_the_app_restarts(tmp_path):
     assert net.claim_row(haiku2, "game", "f3")["name"] == "f3"  # then the app stopped with haiku-2 on f3
     assert net.claim_row(chat, "game", "f2")["name"] == "f2"  # the user's own agent, which runs on its own
 
-    assert net.release_local_claims("the app restarted") == ["f3"]  # the app starting again
+    assert net.release_local_claims() == ["f3"]  # the app starting again
     assert _held(net, haiku2) is None and _held(net, chat) == "f2"  # an agent elsewhere keeps its lease
     note = net.store.one("SELECT text FROM notes WHERE function_id=(SELECT id FROM functions WHERE name='f3')")
-    assert "its agent stopped (the app restarted)" in note["text"]
+    assert note is None
     assert net.store.one("SELECT abandons FROM functions WHERE name='f3'")["abandons"] == 0  # nobody gave up on it
 
     assert net.claim_row(haiku1, "game", None)["name"] == "f3"  # the function it hasn't tried first
@@ -515,7 +515,7 @@ def test_an_agent_doesnt_get_back_what_it_just_released_until_its_run_ends(tmp_p
     assert net.claim_row(a, "game", None)["name"] == "x"
     net.release(a, "x", "", "game")
     assert net.claim_row(a, "game", None) is None
-    net.release_stopped([a.id], "it was stopped")  # its helper stopped: the next run starts afresh
+    net.release_stopped([a.id])  # its helper stopped: the next run starts afresh
     assert net.claim_row(a, "game", None)["name"] == "x"
 
 

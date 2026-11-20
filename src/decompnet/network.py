@@ -1770,18 +1770,15 @@ class Network:
                        (json.dumps({**meta, "reopened": True}), fn["id"]))
             self._event(db, fn["project_id"], None, "reopen", f"{fn['name']}: open again (you gave it back to the agents)")
 
-    def release_stopped(self, agent_ids, why: str, *, project: str | None = None) -> list[str]:
-        """The claims of agents whose process is gone, released at once with a note (`why`), instead of holding their
+    def release_stopped(self, agent_ids, *, project: str | None = None) -> list[str]:
+        """The claims of agents whose process is gone, released at once instead of holding their
         functions until CLAIM_TTL runs out: after an update or a restart of the app, every open function looked held
         by helpers that had died with it. Not counted as giving up. Each function freed gets a 'freed' event (one
         without a function when the agent held none), which ends the agent's run: what it released before no longer
         keeps it off those functions (SELF_RELEASE_WINDOW). Returns the functions released."""
-        now, freed = time.time(), []
+        freed = []
         agent_ids = list(agent_ids)
         if not agent_ids:return freed
-        own = self._machine_agent_ids()
-        names = {r['id']:r['name'] for r in self.store.all(
-            'SELECT id,name FROM agents WHERE id IN (SELECT value FROM json_each(?))', json.dumps(agent_ids))}
         # A single helper belongs to one project. Stopping it must not open or
         # write every idle project's operational database. Shutdown keeps the full sweep.
         if project is not None:
@@ -1798,10 +1795,6 @@ class Network:
                                       "WHERE c.agent_id=?" + scope, args).fetchall()
                     for r in rows:
                         db.execute('DELETE FROM claims WHERE function_id=? AND agent_id=?', (r['id'], aid))
-                        if aid not in own:
-                            agent_notes.save(db, r['project_id'], r['id'], aid,
-                                             f"Released because its agent stopped ({why}); its attempts are kept.",
-                                             now, agent_name=names.get(aid))
                         self._event(db, r['project_id'], aid, 'freed', r['name'])
                         freed.append(r['name'])
                     if not rows:
@@ -1811,14 +1804,14 @@ class Network:
                             self._event(db, pid, aid, 'freed', '')
         return freed
 
-    def release_local_claims(self, why: str) -> list[str]:
+    def release_local_claims(self) -> list[str]:
         """When the app starts: none of its own helpers (origin 'local') is running yet, so whatever they hold is left
         over from the last run. Agents that run elsewhere (a room's members, an agent using the MCP server) may still
         be working: theirs keep the CLAIM_TTL rule; so do the user's own claims and decompdecomp's workers'."""
         ids = [r["id"] for r in self.store.all("SELECT id FROM agents WHERE origin='local' AND name NOT IN "
                                                f"({', '.join('?' * (1 + len(MACHINE_AGENTS)))})",
                                                "you", *MACHINE_AGENTS)]
-        return self.release_stopped(ids, why)
+        return self.release_stopped(ids)
 
     def get_function(self, function: str, project: str | None = None, agent: Agent | None = None) -> str:
         return self._brief(self._function(function, project), agent, header="VIEW")

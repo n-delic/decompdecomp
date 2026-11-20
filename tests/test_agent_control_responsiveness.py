@@ -29,7 +29,7 @@ def test_stop_releases_only_its_project(tmp_path, monkeypatch):
     agent, _ = net.local_agent('worker')
     net.claim_row(agent, 'game', 'f')
     monkeypatch.setattr(net, 'project_stores', lambda: pytest.fail('Stop must not visit idle projects'))
-    assert net.release_stopped([agent.id], 'user stopped', project='game') == ['f']
+    assert net.release_stopped([agent.id], project='game') == ['f']
     assert not net.project_store('game').one('SELECT 1 FROM claims WHERE agent_id=?', agent.id)
 
 

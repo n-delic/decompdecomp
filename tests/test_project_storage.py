@@ -978,10 +978,10 @@ def test_unscoped_lookup_and_stopped_claim_recovery_discover_project_stores(scop
         db.execute('INSERT INTO claims VALUES(10,1,1,9999999999)')
     with stores[2].tx() as db:db.execute('INSERT INTO claims VALUES(20,1,1,9999999999)')
     assert net._function('unique_name', None)['project_id'] == 1
-    assert sorted(net.release_stopped([1], 'test stop')) == ['same_name', 'unique_name']
+    assert sorted(net.release_stopped([1])) == ['same_name', 'unique_name']
     for pid in (1, 2):
         assert not stores[pid].one('SELECT 1 FROM claims')
-        assert stores[pid].one("SELECT COUNT(*) n FROM notes WHERE text LIKE 'Released because%'")['n'] == 1
+        assert not stores[pid].one('SELECT 1 FROM notes')
         assert stores[pid].one("SELECT COUNT(*) n FROM events WHERE kind='freed'")['n'] == 1
     assert not net.store.one('SELECT 1 FROM notes')
 
@@ -1041,8 +1041,9 @@ def test_stopping_one_project_preserves_other_claims_and_idle_stores(scoped, mon
     monkeypatch.setattr(net, 'project_stores', lambda: pytest.fail('Single-project stop must not enumerate stores'))
     with stores[1].tx() as db:db.execute('INSERT INTO claims VALUES(10,1,1,9999999999)')
     with stores[2].tx() as db:db.execute('INSERT INTO claims VALUES(20,1,1,9999999999)')
-    assert net.release_stopped([1], 'user stopped', project='first') == ['same_name']
+    assert net.release_stopped([1], project='first') == ['same_name']
     assert not stores[1].one('SELECT 1 FROM claims')
+    assert not stores[1].one('SELECT 1 FROM notes')
     assert stores[2].one('SELECT 1 FROM claims WHERE agent_id=1')
     assert not stores[2].one("SELECT 1 FROM events WHERE kind='freed'")
 
