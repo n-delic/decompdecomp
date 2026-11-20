@@ -336,6 +336,11 @@ linting). In short:
 
 Always submit decompdecomp changes on a feature or fix branch through a pull request; do not commit directly to main.
 
+Keep the primary checkout on `main`. Start each change in its own Git worktree based on the latest
+`origin/main`, and make edits and run tests from that worktree. After the PR is merged and any local
+work you still need is safely saved, remove the task worktree. In Codex, archive managed worktrees to
+preserve a recoverable snapshot. Leave other tasks' worktrees alone.
+
 The user has asked that completed PRs be merged to main right after creation, once any required checks pass,
 until they revoke this preference. The user updates their running app themselves: merging a PR does not authorize
 pulling into its checkout, stopping, updating or restarting it. Leave the running app alone unless the user
