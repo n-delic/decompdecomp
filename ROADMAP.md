@@ -749,6 +749,8 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Targeted scalar scheduling repairs and experiment costs | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ | ✓ | — | ✓ | ✓ |
 | Portable last-exact evidence | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ | ✓ | — | ✓ | ✓ historical, own build |
 | Stack slot layout diagnostics | ✓ | ✓ | ✓ | — | — | ✓ | — | — reader planned | — reader planned | — | — reader planned | — GUI adapter planned |
+| Linked switch case diff and caller-backed matched return review | ✓ bounded MIPS ROM | ✓ shared MIPS conditions | ✓ shared MIPS conditions | — | — | ✓ shared MIPS conditions | — | — | — | — | — | — owned-build adapter planned |
+| Callee stack-write diagnostics and floating-point initializer search | ✓ MIPS | ✓ shared MIPS conditions | ✓ shared MIPS conditions | — | — | ✓ shared MIPS conditions | — | — | — | — | — | ✓ MIPS floating-register diff only; caller stack-write adapter planned |
 | Learned repair sequences, scoped brief evidence and sweep rotation | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ | ✓ | — | ✓ | ✓ build-scoped |
 | Last-exact failed-recheck alerts | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ | ✓ | — | ✓ | ✓ local judgments only |
 | Public dtk SDK binary identification | — own corpus planned; local archives supported | — own corpus planned; local archives supported | — own corpus planned; local archives supported | — | — | — own corpus planned; local archives supported | — | ✓ built targets; direct evidence, advisory references | — own corpus planned; local archives supported | — | — own corpus planned; local archives supported | ✓ GameCube/Wii targets; other corpora planned |
@@ -2994,6 +2996,16 @@ is a regression result, not a new game match. Mixed/context-dependent examples r
   call-only diagnostics, entry-context/NOP/record advisories, and rejected-preflight-suggestion recovery share
   ordinary judges and budgets. Other processors' address/entry evidence adapters: **—**, planned work; imported
   projects retain build-owned compiler profiles and ROM-only entry diagnostics do not alter their setup.
+## More complete linked comparison and call evidence
+
+MIPS ROM comparisons show differing destinations for recognized guarded jump tables.
+Other dispatch formats need their own extent and relocation readers. Matched signature
+review requires a direct caller and processor proof of the consumed return register.
+Callee stack-write diagnostics need a trustworthy caller frame and a bounded pointer
+write footprint. Imported builds need an adapter that provides the same cross-function
+evidence before those checks can run. The floating initializer lane requires a
+register-only MIPS comparison and independent ordinary C field loads.
+
 ## Register-only local lifetime search
 
 Shared draft, agent-local and deep searches offer bounded branch-tail locals, scalar call staging

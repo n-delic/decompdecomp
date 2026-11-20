@@ -1,6 +1,7 @@
 """Bounded hypotheses from captured successes, using existing types and known callee bodies only."""
 import re
 
+from decomprepair import callee_layout
 from decomprepair.integer_repair_support import IDENT, INTEGER, edit, locals_for, split_args, view
 from decomprepair.pattern_repairs import close
 
@@ -151,25 +152,25 @@ def variants(source, name, header='', callees='', _masked=False):
         for index,arg in enumerate(args):
             if index>=len(params) or not re.fullmatch(r'&\s*'+IDENT,arg):
                 continue
-            var=arg.lstrip('&').strip();matches=list(re.finditer(rf'\b({INTEGER})\s+{var}\s*;',part.body))
+            var=arg.lstrip('&').strip();matches=list(re.finditer(rf'\b({callee_layout.SCALAR})\s+{var}\s*;',part.body))
             if len(matches)!=1 or re.search(rf'\b(?:sizeof|typeof)\s*\(?\s*{var}\b',part.body):
                 continue
             typ,param=params[index]
-            if re.sub(r'\s+','',typ)!=re.sub(r'\s+','',matches[0][1]+'*'):
-                continue
-            writes=list(re.finditer(rf'\b{re.escape(param)}\s*\[\s*(\d+)\s*\]\s*=(?!=)',body))
-            indices={int(w[1]) for w in writes}
-            # No aliases, dynamic indexes, nested calls, casts, loops or pointer arithmetic in the known callee.
-            if not indices or indices != set(range(max(indices)+1)) or not 2<=max(indices)+1<=32:
-                continue
-            if len(re.findall(rf'\b{param}\b',body))!=len(writes) or re.search(r'\b(?:for|while|goto)\b|\b'+IDENT+r'\s*\(',body):
+            aliases = {'f32':'float', 'f64':'double'}
+            pointee = re.sub(r'\s+', '', typ)
+            source_type = matches[0][1]
+            if not pointee.endswith('*') or aliases.get(pointee[:-1], pointee[:-1]) != aliases.get(source_type, source_type):
+                if pointee != re.sub(r'\s+', '', source_type+'*'):
+                    continue
+            extent = callee_layout.extent(body, param)
+            if extent is None:
                 continue
             if re.search(rf'(?:\.|->)\s*{var}\b|\bgoto\s+{var}\b|\b{var}\s*:',part.body):continue
             occurrences=list(re.finditer(rf'\b{var}\b',part.body));address_uses=list(re.finditer(rf'&\s*\(*\s*{var}\b',part.body))
             if len(address_uses)!=1 or re.search(rf'\b(?:volatile|register)\s+[^;]*\b{var}\b',part.body):
                 continue
             decl=matches[0];base=part.opening+1
-            edits=[(base+decl.start(),base+decl.end(),f'{decl[1]} {var}[{max(indices)+1}];')]
+            edits=[(base+decl.start(),base+decl.end(),f'{decl[1]} {var}[{extent}];')]
             for use in occurrences:
                 if decl.start()<=use.start()<decl.end():continue
                 pos=base+use.start()

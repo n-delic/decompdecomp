@@ -28,7 +28,7 @@ def _guard(image,at,order,scheduled):
     return at-28,bound,branch,delay,scale,hi,add,load,jump,slot
 
 
-def jump_table(image,start,end,vram,at,order,ranges=(),mappings=()):
+def jump_table(image,start,end,vram,at,order,ranges=(),mappings=(),*,reader=None):
     """Recognize one exact guard/scale/LUI/add/load/JR idiom (its scale in the guard's delay slot or after it),
     with no interior entry."""
     if at+8>end:return None
@@ -59,12 +59,25 @@ def jump_table(image,start,end,vram,at,order,ranges=(),mappings=()):
         elif op in (2,3):target=start+((((vram+p-start+4)&0xf0000000)|((w&0x3ffffff)<<2))-vram)
         else:continue
         if guard<target<=at and not guard<=p<=at:return {**result,'reason':'an incoming edge bypasses the guard'}
+    def destinations(data):
+        targets=[int.from_bytes(data[p:p+4],order) for p in range(0,len(data),4)]
+        if all(t%4==0 and vram<=t<vram+end-start and not vram+guard-start<t<=vram+at-start+4 for t in targets):
+            return targets
+        return None
+
+    # The ROM judge already has an overlay-aware reader for the current
+    # function. Its read is independent of the coverage scanner's mappings.
+    if reader is not None:
+        data = reader(address,count*4)
+        targets = destinations(data) if data is not None and len(data)==count*4 else None
+        return {**result,'state':'validated','targets':targets} if targets else result
+
     choices,error=locations(address,count*4,image,ranges,mappings)
     if error:return {**result,'reason':error}
     valid=[]
     for offset,verified in choices:
-        targets=[int.from_bytes(image[p:p+4],order) for p in range(offset,offset+count*4,4)]
-        if all(t%4==0 and vram<=t<vram+end-start and not vram+guard-start<t<=vram+at-start+4 for t in targets):valid.append((offset,verified,targets))
+        if targets := destinations(image[offset:offset+count*4]):
+            valid.append((offset,verified,targets))
     if len(valid)!=1:return {**result,'reason':'no unique mapped table with all targets inside the candidate'}
     offset,verified,targets=valid[0]
     return {**result,'rom_offset':offset,'mapping_verified':verified,'targets':targets,

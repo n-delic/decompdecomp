@@ -60,7 +60,7 @@ def test_loaded_result_requires_a_real_caller_and_never_enables_unbacked_rewrite
     fn=dict(name='f',vram=123);proj=dict(id=1,arch='mips')
     net=SimpleNamespace(xrefs=lambda p:dict(called_by={123:{10}}),
         _asm_text=lambda row,p:target if row is fn else CALLER,
-        store=SimpleNamespace(one=lambda *a:dict(name='caller')))
+        store=SimpleNamespace(all=lambda *a:[dict(name='caller')]))
     net.project_store = lambda project:net.store
     context=return_contract_evidence.m2c_context(net,proj,fn,'original','')
     assert 'int f();' in context
@@ -137,7 +137,7 @@ def test_m2c_context_hint_is_caller_backed_and_never_changes_shared_prototypes()
     fn=dict(name='f',vram=123);proj=dict(id=1,arch='mips')
     net=SimpleNamespace(xrefs=lambda p:dict(called_by={123:{10}}),
         _asm_text=lambda row,p:TARGET if row is fn else CALLER,
-        store=SimpleNamespace(one=lambda *a:dict(name='caller')))
+        store=SimpleNamespace(all=lambda *a:[dict(name='caller')]))
     net.project_store = lambda project:net.store
     context=return_contract_evidence.m2c_context(net,proj,fn,'int allocate();','')
     assert 'int f();' in context
@@ -256,3 +256,24 @@ def test_deep_pipeline_connects_storage_return_and_expression_repairs(monkeypatc
     best,_=search.local_repairs(AGENT,net.project_row('game'),net.function(),40,'fork' if imported else None,max_trials=16)
     assert best==0 and len(tested)<=16
     assert '((unsigned char)((word+2)*2))' in net.function()['best_source']
+
+
+def test_matched_signature_review_has_the_actual_call_and_consumption():
+    fn = dict(name='f',vram=123,status='matched',matched_source=SOURCE)
+    proj = dict(id=1,arch='mips')
+    reference = {'name':'caller', 'asm':CALLER}
+    net = SimpleNamespace(xrefs=lambda p:dict(called_by={123:{10}}),
+                          _asm_text=lambda row,p:TARGET if row is fn else row['asm'],
+                          project_store=lambda p:SimpleNamespace(all=lambda *args:[reference]))
+    result = return_contract_evidence.matched_review(net,proj,fn)
+    assert result['caller'] == 'caller'
+    assert result['instructions'] == ['jal f','nop','move $s1, $v0']
+    reference['asm'] = asm('jal f','nop','multu $v0, $v1','mfhi $s1','jr $ra','nop')
+    assert return_contract_evidence.matched_review(net,proj,fn)['instructions'][-1] == 'multu $v0, $v1'
+    stored = asm('lw $v0, 0($a0)','addu $v0, $v0, $a1','sw $v0, 0($a0)','jr $ra','nop')
+    net._asm_text = lambda row,p: stored if row is fn else row['asm']
+    assert return_contract_evidence.matched_review(net,proj,fn)['instructions'][-1] == 'multu $v0, $v1'
+
+
+    reference['asm'] = asm('jal f','nop','li $v0, 0','move $s1, $v0','jr $ra','nop')
+    assert return_contract_evidence.matched_review(net,proj,fn) is None

@@ -86,7 +86,11 @@ $("repairExamples").onclick = async () => {
       try {
         const data = await api(`/api/repair-examples?${scope()}&id=${row.id}`);
         const explanation = document.createElement('p');
-        explanation.textContent = `${data.explanation || 'No agent explanation supplied.'}${data.automation ? ' Suggested automation: ' + data.automation : ''}`;
+        explanation.textContent = [
+          data.explanation,
+          data.suggested_category && `Suggested category: ${data.suggested_category}.`,
+          data.automation && `Suggested automation: ${data.automation}`,
+        ].filter(Boolean).join(' ');
         const pre = document.createElement('pre'); pre.className = 'repair-diff'; pre.setAttribute('tabindex', '0'); pre.setAttribute('aria-label', 'Source changes');
         const change = document.createElement('p'); change.className = 'muted small';
         change.textContent = data.evidence.source_change_label || '';
@@ -206,7 +210,8 @@ $("repairExamples").onclick = async () => {
           finally { providersLoading = false; done(); }
         });
         test.className = 'repair-example-test';
-        body.append(explanation, evidence, advanced, test, investigate); details.loaded = true;
+        if (explanation.textContent) body.append(explanation);
+        body.append(evidence, advanced, test, investigate); details.loaded = true;
       } catch (error) { toast(esc(error.message), 'err'); }
       finally { finish(); }
     });

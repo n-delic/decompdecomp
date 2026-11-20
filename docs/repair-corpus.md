@@ -28,3 +28,11 @@ limit accepts 0–1000; zero retains counts only for comparable patterns. Turnin
 identical-recheck suppression. Incomplete evidence still bypasses sampling. Changing
 limits does not delete historical examples or reset counters; raising a limit allows
 more examples to be retained until the new limit is reached.
+
+## Classifying new matches
+
+Agents can include a single category on a candidate submission. The app saves it on the
+verified repair example. If a repair matches after a failed attempt and the category is
+missing, the matching tool asks the agent to classify the captured example before claiming
+more work in the current app session. A category alone is sufficient. Under `other`, agents can suggest a short new category
+for review in **Agents → Repair examples**. Suggested categories are included in exports.

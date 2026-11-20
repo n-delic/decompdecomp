@@ -20,6 +20,7 @@ from .repair_comparison import differences as settings_differences
 
 CATEGORIES = ('unclassified', 'types', 'casts', 'constants', 'addresses', 'signatures', 'layout',
               'temporaries', 'expression_order', 'control_flow', 'compiler_settings', 'other')
+AGENT_CATEGORIES = CATEGORIES[1:]
 STATES = ('new', 'reviewed', 'implemented', 'dismissed')
 SCHEMA = (
     '''CREATE TABLE IF NOT EXISTS repair_attempt_settings(
@@ -40,6 +41,41 @@ SCHEMA = (
 
 
 _TRIAL = contextvars.ContextVar('repair_trial', default=None)
+_ANNOTATION = contextvars.ContextVar('repair_annotation', default=None)
+_MATCHES = contextvars.ContextVar('repair_matches', default=None)
+
+
+@contextmanager
+def submission(fn, agent_id, category, change, automation, suggested_category):
+    """Attach advisory metadata to the explicitly submitted function, including in project builds."""
+    label = (category or ('other' if change or suggested_category else '')).strip()
+    if label and label not in CATEGORIES:
+        suggested_category = suggested_category or label
+        change = f'[Original category: {label[:80]}] {change}' if change else ''
+        label = 'other'
+    proposal = _suggestion(label, suggested_category)
+    saved = []
+    token = _ANNOTATION.set(((fn['project_id'], fn['id'], agent_id),
+                             (label or 'unclassified', change.strip()[:3000], automation.strip()[:3000], proposal), saved))
+    try:
+        yield saved
+    finally:
+        _ANNOTATION.reset(token)
+
+
+@contextmanager
+def track_matches(slug, agent_id):
+    matches = []
+    token = _MATCHES.set((slug, agent_id, matches))
+    try:
+        yield matches
+    finally:
+        _MATCHES.reset(token)
+
+
+def _suggestion(category, text):
+    return ' '.join((text or '').split())[:80] if category == 'other' else ''
+
 
 
 @contextmanager
@@ -102,6 +138,9 @@ class RepairFeedback:
         with self.store.tx() as db:
             for statement in SCHEMA:
                 db.execute(statement)
+            columns = {row['name'] for row in db.execute('PRAGMA table_info(repair_examples)')}
+            if 'suggested_category' not in columns:
+                db.execute("ALTER TABLE repair_examples ADD COLUMN suggested_category TEXT NOT NULL DEFAULT ''")
             from .repair_corpus import SCHEMA as corpus_schema
             db.execute(corpus_schema)
             from .payload_storage import install as install_payloads
@@ -247,31 +286,52 @@ class RepairFeedback:
         # rule as new work. Agent explanations still cannot mark their own hypotheses implemented.
         attribution=evidence.get('provenance') or {}
         automated = attribution.get('kind') in AUTOMATIC and bool(attribution.get('family'))
-        captured = db.execute('INSERT INTO repair_examples(project_id,function_id,attempt_id,before_attempt_id,agent_id,created_at,evidence,status,review_note) '
-                   'VALUES(?,?,?,?,?,?,?,?,?)', (fn['project_id'], fn['id'], attempt_id, before['id'] if before else None,
-                                             agent_id, time.time(), json.dumps(evidence), 'implemented' if automated else 'new',
-                                             'Installed deterministic repair, verified by the normal judge.' if automated else ''))
+        category, explanation, automation, suggestion = 'unclassified', '', '', ''
+        annotation = _ANNOTATION.get()
+        if not automated and via == 'agent' and attempt_id and annotation and annotation[0] == (fn['project_id'], fn['id'], agent_id):
+            category, explanation, automation, suggestion = annotation[1]
+        captured = db.execute(
+            'INSERT INTO repair_examples(project_id,function_id,attempt_id,before_attempt_id,agent_id,created_at,'
+            'evidence,status,review_note,category,explanation,automation,suggested_category) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            (fn['project_id'], fn['id'], attempt_id, before['id'] if before else None,
+             agent_id, time.time(), json.dumps(evidence), 'implemented' if automated else 'new',
+             'Installed deterministic repair, verified by the normal judge.' if automated else '',
+             category, explanation, automation, suggestion))
+        if category != 'unclassified':
+            annotation[2].append(captured.lastrowid)
+        tracking = _MATCHES.get()
+        if (tracking and tracking[:2] == (proj['slug'], agent_id) and not automated and via != 'saved_recheck'
+                and category == 'unclassified' and (before or previous)):
+            tracking[2].append((captured.lastrowid, fn['name']))
 
         from .app.repair_outcomes import schedule
         try:schedule(self,captured.lastrowid,evidence['after']['source_sha256'])
         except Exception as error:
             logging.getLogger('decompdecomp').warning('Repair analysis scheduling failed: %s',error)
 
-    def report(self, agent, slug, function, change, category='other', automation='', case_id=0):
+    def report(self, agent, slug, function, change='', category='other', automation='', case_id=0, suggested_category=''):
         fn = self.net._function(function, slug)
-        if category not in CATEGORIES or not change.strip():
-            raise NetworkError('Give a short change explanation and a valid repair category: ' + ', '.join(CATEGORIES))
+        if category not in AGENT_CATEGORIES:
+            raise NetworkError('Choose a repair category: ' + ', '.join(AGENT_CATEGORIES))
+        if suggested_category.strip() and category != 'other':
+            raise NetworkError('Use category="other" to suggest a new repair category.')
         owner = self.for_project(fn['project_id'])
-        if owner is not self:return owner.report(agent,slug,function,change,category,automation,case_id)
+        if owner is not self:
+            return owner.report(agent, slug, function, change, category, automation, case_id, suggested_category)
         with self.store.tx() as db:
-            row = db.execute('SELECT id FROM repair_examples WHERE project_id=? AND function_id=? AND agent_id=? '
+            row = db.execute('SELECT id FROM main.repair_examples WHERE project_id=? AND function_id=? AND agent_id=? '
                              'AND (?=0 OR id=?) ORDER BY id DESC LIMIT 1',
                              (fn['project_id'], fn['id'], agent.id, case_id, case_id)).fetchone()
             if not row:
                 raise NetworkError('No captured matching repair by you exists for this function. Match it first.')
-            db.execute("UPDATE repair_examples SET explanation=?,category=?,automation=?,status='new' WHERE id=?",
-                       (change.strip()[:3000], category, automation.strip()[:3000], row['id']))
-        return f"Repair example #{row['id']} annotated for review. This does not add or enable an automatic rule."
+            db.execute("UPDATE repair_examples SET explanation=COALESCE(NULLIF(?,''),explanation),category=?,"
+                       "automation=COALESCE(NULLIF(?,''),automation),suggested_category=CASE WHEN ?!='other' THEN '' "
+                       "ELSE COALESCE(NULLIF(?,''),suggested_category) END,status='new' WHERE id=? AND (?=0 OR status='new')",
+                       (change.strip()[:3000], category, automation.strip()[:3000], category,
+                        _suggestion(category, suggested_category), row['id'], case_id))
+            if not db.execute('SELECT changes()').fetchone()[0]:
+                raise NetworkError('This repair example has already been reviewed.')
+        return f"Repair example #{row['id']} classified as {category} for review."
 
     def _where(self, slug='', category='', status='', comparable=False):
         clauses, args = ['1=1'], []
@@ -324,7 +384,7 @@ class RepairFeedback:
             ordering = 'e.created_at DESC,e.id DESC'
         else:
             pagination,page_args,ordering = ' AND (?=0 OR e.id<?)',(before,before),'e.id DESC'
-        rows = self.store.all(prefix + 'SELECT e.id,e.created_at,e.category,e.explanation,e.automation,e.status,e.repetitions,'
+        rows = self.store.all(prefix + 'SELECT e.id,e.created_at,e.category,e.explanation,e.automation,e.suggested_category,e.status,e.repetitions,'
                               "CASE WHEN json_extract(e.evidence,'$.via')='unit diff' THEN 'build report' WHEN e.before_attempt_id IS NULL THEN 'no failed baseline' WHEN json_extract(e.evidence,'$.before.source_sha256')=json_extract(e.evidence,'$.after.source_sha256') THEN 'same source / settings' WHEN json_extract(e.evidence,'$.comparable_settings')=1 THEN 'source repair' ELSE 'settings also changed' END AS evidence_kind,"
                               "(json_extract(e.evidence,'$.provenance.kind') IN ('deterministic draft repair','automatic agent local pass') AND "
                               "(json_extract(e.evidence,'$.provenance.source_sha256') IS NULL OR "

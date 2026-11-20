@@ -427,7 +427,8 @@ class Search(Permuter):
     def allocation_choices(self, proj, fn, source, rows, choices, labels, header, fork):
         """One bounded lane before broad mutation, charged to the same global limit/deadline."""
         diagnosis = allocation_evidence.diagnose(rows,proj['arch'])
-        allowance=allocation_search.allowance(diagnosis)
+        floating = allocation_search.floating_only(rows, proj['arch'])
+        allowance=max(allocation_search.allowance(diagnosis), allocation_search.CHAIN_LIMIT if floating else 0)
         if not allowance or self.allocation_trials >= allowance:
             return choices,set()
         self.log(allocation_evidence.text(rows,proj['arch']))
@@ -437,7 +438,7 @@ class Search(Permuter):
             candidate not in self.local_seen for _,candidate in prepared_call_repairs.variants(source,fn['name'],header,proj['arch'])))
         if not fork and proj['slug'] not in self.net.links and getattr(self.net,'is_rom',lambda _:False)(proj):
             evidence = allocation_search.saved(self.net,proj,fn,source)
-            if ((diagnosis['register_only'] or diagnosis['scheduling'] or diagnosis['allocation_schedule'] or diagnosis['return_copy_rotation']) and evidence is None and self.allocation_captures < 2 and self.tested+2 < self.limit
+            if (not floating and (diagnosis['register_only'] or diagnosis['scheduling'] or diagnosis['allocation_schedule'] or diagnosis['return_copy_rotation']) and evidence is None and self.allocation_captures < 2 and self.tested+2 < self.limit
                     and (not diagnosis['return_copy_rotation'] or (self.allocation_trials > 0 and not pending_call))
                     and time.monotonic()+40 < self.deadline):
                 self.allocation_captures += 1
@@ -540,7 +541,13 @@ class Search(Permuter):
             store_choices = [(family, child) for family, child in
                              combined_store_repairs.variants(source, fn['name'])
                              if child not in self.local_seen]
-            focused_choices = store_choices + frame_choices
+            from . import callee_frame_evidence
+            buffer_choices = []
+            if callee_frame_evidence.observe(self.net, proj, fn, rows):
+                buffer_choices = [(family, child) for family, child in draft_repairs.capture_followup_repairs.variants(
+                    source, fn['name'], header, options['callees'])
+                    if family == 'callee_buffer_extent' and child not in self.local_seen]
+            focused_choices = buffer_choices + store_choices + frame_choices
             focused_pass = bool(focused_choices)
             from decomprepair import bit_predicate_repairs
             shape=allocation_evidence.diagnose(rows,proj['arch'])

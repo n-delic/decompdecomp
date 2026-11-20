@@ -66,7 +66,10 @@ def text(checks):
     parts = [checks['link']['message']] if checks.get('link') else []
     for row in checks.get('address_mismatches', [])[:4]:
         parts.append(f"Raw MIPS address at diff row {row['row']+1}: target 0x{row['target']:08X}, yours 0x{row['candidate']:08X}. Verify this expression before scheduling permutations; symbolic labels may obscure the address.")
-    if checks.get('instructions', {}).get('exact') and checks.get('data'):
+    if checks.get('jump_tables'):
+        from .switch_tables import difference_text
+        parts.append(difference_text(checks['jump_tables']))
+    elif checks.get('instructions', {}).get('exact') and checks.get('data'):
         parts.append('Instructions match; constant data differs. Check initializer values, object sizes and anonymous-array padding before changing control flow.\n'+'\n'.join(checks['data']))
     emission = checks.get('object_emission') or {}
     if emission.get('available') and (emission.get('extra_function_count') or emission.get('allocated_data_bytes')):

@@ -2077,8 +2077,11 @@ class Network:
                             ": an encoding the listing doesn't show (branch form, an immediate, a relocation)."))
         if checks.get("link"):
             head += "\n" + checks["link"]["message"]
-        if checks.get("address_mismatches"):
+        if checks.get("address_mismatches") or checks.get("jump_tables"):
             head += "\n" + checks["message"]
+        from .app.callee_frame_evidence import messages as callee_writes
+        if getattr(self, "is_rom", lambda _:False)(proj):
+            head += ''.join('\n'+message for message in callee_writes(self, proj, fn, d.rows))
         warn = f"\ncompiler output:\n{result.log.strip()}" if result.log.strip() else ""
         if problems:
             warn += "\nwhen linking your code at the function's address:\n" + "\n".join(f"- {p}" for p in problems)
