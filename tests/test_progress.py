@@ -48,7 +48,13 @@ def project(tmp_path, monkeypatch):
                         0 if matched else 10, pid, name))
         return {"matched": matched}
 
+    def recheck(proj, header, fn, source):
+        judged.append((fn["name"], source))
+        matched = "good" in source and "broken" not in header
+        return matched, None if source == "compile error" else 0 if matched else 10, None
+
     monkeypatch.setattr(net, "attempt", attempt)
+    monkeypatch.setattr(net, "_saved_match_verdict", recheck)
     net.progress.sync("game", force=True)
     return net, saves.default_folder(net, "game"), judged
 
@@ -352,11 +358,11 @@ def test_a_header_change_keeps_the_last_match_until_rejudging_can_run(project, m
     def unavailable(*_args, **_kwargs):
         raise NetworkError("the compiler was cancelled")
 
-    monkeypatch.setattr(net, "attempt", unavailable)
+    monkeypatch.setattr(net, "_saved_match_verdict", unavailable)
     with pytest.raises(NetworkError, match="Saved files are retained"):
         net.progress.sync("game", force=True)
     fn = net.store.one("SELECT * FROM functions WHERE name='f'")
-    assert fn["status"] == "open" and fn["best_source"] == "known match"
+    assert fn["status"] == "matched" and fn["matched_source"] == "known match"
     assert (folder / "src/f.c").read_text() == "known match\n"
 
 
@@ -1787,11 +1793,11 @@ def test_progress_resource_failure_reports_the_actual_host_problem(project,monke
 def test_background_checks_are_quiet_until_a_full_recheck_is_known(project, monkeypatch):
     net, folder, _ = project
     observed = []
-    original = net.attempt
-    def attempt(*args, **kwargs):
+    recheck = net._saved_match_verdict
+    def observe_recheck(*args, **kwargs):
         observed.append(net.progress.status('game'))
-        return original(*args, **kwargs)
-    monkeypatch.setattr(net, 'attempt', attempt)
+        return recheck(*args, **kwargs)
+    monkeypatch.setattr(net, '_saved_match_verdict', observe_recheck)
     (folder/'src').mkdir(exist_ok=True)
     for name in ('f', 'g'):
         (folder/f'src/{name}.c').write_text('good original')
@@ -2262,7 +2268,7 @@ def test_foreground_judge_finishes_while_saved_compile_is_waiting(project, monke
     monkeypatch.setattr(net, 'attempt', MethodType(RomNetwork.attempt, net))
     monkeypatch.setattr(net, '_attempt', ordinary_attempt)
     waiting, compilation = threading.Event(), Future()
-    def checks(net, proj, folder, files, by_name, by_vram, saved, judge_code, check_cancel):
+    def checks(net, proj, folder, files, by_name, by_vram, saved, judge_code, check_cancel, verifying=()):
         for name in saved:
             prepared = ('synthetic saved compile', compilation) if name == 'f' else None
             waiting.set()
@@ -3293,7 +3299,7 @@ def test_stale_saved_compile_retries_without_holding_project_lock(project,monkey
         assert result.snapshot==net._compile_snapshot(proj,fn,ctx['header'],text), 'Stale compiler result reached the judge'
         return original(agent,name,text,slug)
     monkeypatch.setattr(net,'attempt',attempt)
-    def checks(net,proj,folder,files,by_name,by_vram,saved,judge_code,check_cancel):
+    def checks(net,proj,folder,files,by_name,by_vram,saved,judge_code,check_cancel,verifying=()):
         ready=Future();ready.set_result(None)
         for name in saved:
             yield name,saved[name],'src',files['src/'+name+'.c'],name,('stale snapshot',ready) if prefetched else None
@@ -3798,48 +3804,99 @@ def test_quitting_never_starts_a_saved_code_check(project):
     assert net._function("f", "game")["status"] == "open" and len(judged) == before + 1
 
 
-def test_an_interrupted_check_lists_the_matches_it_reopened_until_they_are_judged(project, monkeypatch):
-    from decompnet.app import match_reconciliation, progress
+def test_interrupted_recheck_keeps_the_match_and_retries_after_restart(project, monkeypatch):
     net, folder, _ = project
-    pid = net._project("game")["id"]
     (folder / "src").mkdir()
-    (folder / "src/f.c").write_text("good", encoding="utf-8")
+    source = folder / "src/f.c"
+    source.write_text("good", encoding="utf-8")
     net.progress.sync("game", force=True)
-    (folder / "include/common.h").write_text("still good", encoding="utf-8")
-    attempt = net.attempt
+    header = folder / "include/common.h"
+    header.write_text("changed header", encoding="utf-8")
+    recheck = net._saved_match_verdict
 
     def unavailable(*_args, **_kwargs):
         raise NetworkError("the compiler was cancelled")
 
-    monkeypatch.setattr(net, "attempt", unavailable)
-    queued = []
-    monkeypatch.setattr(net.progress, "_resume_reverify", lambda slug: queued.append(slug))
+    monkeypatch.setattr(net, "_saved_match_verdict", unavailable)
     with pytest.raises(NetworkError, match="Saved files are retained"):
         net.progress.sync("game", force=True)
-    store = net.project_store(pid)
-    assert progress.reopened(store, pid) == {"f"}
-    fn = store.one("SELECT * FROM functions WHERE name='f'")
-    assert fn["status"] == "open" and fn["best_source"] == "good"  # the match survives as the best attempt
+    store = net.project_store("game")
+    fn = store.one("SELECT status,matched_source FROM functions WHERE name='f'")
+    assert (fn["status"], fn["matched_source"]) == ("matched", "good")
+    assert source.read_text() == "good"
 
-    runs = []
-    def run(net_, slug, seconds, attempts, log, names=None):
-        runs.append(set(names))
-        with store.tx() as db:
-            db.execute("UPDATE functions SET status='matched',matched_source=best_source WHERE name='f'")
-        return {"matched": 1, "attempts": 1, "finished": True}
-    monkeypatch.setattr(match_reconciliation, "run", run)
-    assert progress.resume_reopened(net, "game", lambda line: None)["matched"] == 1
-    assert runs == [{"f"}] and progress.reopened(store, pid) == set()
-
-    # A check that finishes gives every function it judged its verdict: none stays listed.
-    monkeypatch.setattr(net, "attempt", attempt)
-    (folder / "include/common.h").write_text("good again", encoding="utf-8")
+    # Revert the folder to the last successful snapshot. The header already
+    # changed in the DB, so a restart must still revisit the pending verdict.
+    header.write_text("", encoding="utf-8")
+    monkeypatch.setattr(net, "_saved_match_verdict", recheck)
+    net.progress = Progress(net)
     net.progress.sync("game", force=True)
-    assert progress.reopened(store, pid) == set() and net._function("f", "game")["status"] == "matched"
+    assert net._function("f", "game")["status"] == "matched"
+    assert not net.progress._pending_match_checks(store, net.project_row("game")["id"])
+
+
+@pytest.mark.parametrize("outcome", ["exact", "mismatch", "timeout", "disk edit"])
+def test_verified_function_stays_matched_and_unclaimable_until_saved_verdict(project, monkeypatch, outcome):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from decompnet.compiler import CompileResult
+    from decompnet.elfobj import FunctionObj
+    from decompnet.network import Network
+
+    net, folder, _ = project
+    (folder / "src").mkdir()
+    source = folder / "src/f.c"
+    source.write_text("good original")
+    net.progress.sync("game", force=True)
+    source.write_text("saved edit")
+    started, release = threading.Event(), threading.Event()
+    target = FunctionObj("f", "mips", True, b"\x24\x02\x00\x01")
+    candidate = FunctionObj("f", "mips", True, b"\x24\x02\x00\x02")
+
+    def compile(*_args):
+        started.set()
+        assert release.wait(5)
+        if outcome == "timeout":
+            return CompileResult(False, None, "compiler timed out after 20s")
+        return CompileResult(True, b"", "")
+
+    monkeypatch.setattr(net, "_compile", compile)
+    monkeypatch.setattr(net, "_saved_match_verdict", Network._saved_match_verdict.__get__(net))
+    monkeypatch.setattr(net, "_evaluate", lambda *_: (target if outcome == "exact" else candidate, outcome == "exact", []))
+    monkeypatch.setattr(net, "_target_obj", lambda *_: target)
+    agent, _ = net.local_agent("other helper")
+    store = net.project_store("game")
+    with ThreadPoolExecutor(1) as pool:
+        sync = pool.submit(net.progress.sync, "game", force=True)
+        try:
+            assert started.wait(5)
+            with net.progress.view():
+                assert net._function("f", "game")["matched_source"] == "good original"
+                with pytest.raises(NetworkError, match="already matched"):
+                    net.claim_row(agent, "game", "f")
+                assert net.claim_row(agent, "game")["name"] == "g"
+            if outcome == "disk edit":
+                source.write_text("a later edit")
+        finally:
+            release.set()
+
+        if outcome in ("disk edit", "timeout"):
+            with pytest.raises(NetworkError, match="Saved files are retained"):
+                sync.result(timeout=5)
+        else:
+            assert sync.result(timeout=5)
+
+    fn = store.one("SELECT status,matched_source,best_source FROM functions WHERE name='f'")
+    if outcome == "mismatch":
+        assert (fn["status"], fn["matched_source"], fn["best_source"]) == ("open", None, "saved edit")
+        assert (folder / "best/f.c").read_text() == "saved edit\n"
+    elif outcome == "exact":
+        assert (fn["status"], fn["matched_source"]) == ("matched", "saved edit")
+    else:
+        assert (fn["status"], fn["matched_source"]) == ("matched", "good original")
 
 
 def test_a_sync_resumes_an_interrupted_check_in_the_background_but_not_while_quitting(project):
-    from decompnet.app import progress
     net, _, _ = project
     pid = net._project("game")["id"]
     tasks = []
@@ -3847,7 +3904,7 @@ def test_a_sync_resumes_an_interrupted_check_in_the_background_but_not_while_qui
     net.progress._resume_reverify("game")
     assert tasks == []  # nothing reopened: nothing to do
     with net.project_store("game").tx() as db:
-        progress._remember_reopened(db, pid, ["f"])
+        db.execute("INSERT INTO settings VALUES(?,?)", (f"saved_reverify:{pid}", '["f"]'))
     net.shutting_down = True
     net.progress._resume_reverify("game")
     assert tasks == []
