@@ -7820,3 +7820,45 @@ Improved, adopted, not exact:
 Tried without a match: a voice-slot loop that the game writes with a `goto` back-edge and a shared saved register
 for two disjoint values (1320, the rewrite scored worse), and a command-stream parser whose `switch` reads the byte
 before advancing the pointer (1355, the rewrite scored worse).
+
+### Round 13: an N64 game built with KMC gcc 2.7.2 (`-G0 -mips3 -mgp32 -mfp32 -O2`)
+
+Controlled hand rewrites against the judge's linked verdict on a scratch copy; each match was then accepted by the
+running app. Ten new matches:
+
+- **A small switch on a parameter** (830 → 0): with four cases 0..3 the game's tests run `== 1`, `== 0`, `== 2`,
+  `== 3` with no `slti` split. Declaring the parameter `u32` removes the signed range split gcc adds for an `s32`
+  operand; the ORed flag is a second variable (`w = v | 0x10` per case) stored once after the switch, with
+  `default: return;`.
+- **A switch whose `case 0` shares the default body** (1130 → 0): `case 0: default: f = 240.0f; break;` written
+  *first*, then `case 1:` and `case 2:` as separate bodies with the same constant, gives the game's `== 1`, `< 2`,
+  `== 2` tree and its block order. Merging `case 1: case 2:` or putting the default last scored 440–1130.
+- **Two range checks** (1069 → 0): `if (i < n) { if (i >= 0 && (tbl[i].flags & 0x200)) ... }` keeps the game's
+  `slt`/`beqz` then `bltz`; `if (i < n && i >= 0)` becomes a branch-free `nor`/`srl`/`and`.
+- **A key/count table walk** (1895 → 0): `s16 *base = TBL; s16 *np = base + 1; s16 *kp = base;` gives the game's
+  `addiu $t1, $v0, 2` and `move $t0, $v0`; the increments go `np += 2, i += 2, kp += 2`, the key is read once per
+  row into a local, and `-1` is held in a local before the loop.
+- **A nearest-object search** (1157 → 0): plain typed C, `s16 i` loop over a 6-pointer array.
+- **A particle spawner** (1185 → 0): the position copied as a `Vec3` struct assignment, a 12/16/4 bitfield for the
+  packed word at 0x1C, and the allocator called as `f(0x2C, arg1, 0)`: the function takes a second parameter it
+  only passes through (`$a1` is never set before the call).
+- **A linked-list initialiser** (1225 → 0): the allocator is a function-pointer global called through a local
+  `void *(**alloc)(s32, s32) = &D;` (the game keeps `&D` in `$s0`), and in the loop the statements go
+  `prev`, `next`, then `buf`; the other five orders scored 20–650.
+- **A view-frustum test** (826 → 0): early `return 0`s, and the dot product kept in a stack array element `d[2]` of
+  an `f32 d[3]`; gcc 2.7.2 keeps both dead stores to it (`swc1 $f2, 0x28($sp)` twice), which also gives the 0x50
+  frame.
+- **A mesh-vertex comparison** (1592 → 120 → 0): plain nested loops; the last 120 was assigning the second mesh
+  pointer after `hits = 0` so `lhu n` comes before `lw`.
+- **A refcount release** (881 → 0): plain typed C over `{ s32 data; u16 id; u16 ref; }` entries, shifting the tail
+  down with a struct assignment.
+
+Improved, adopted, not exact: a slot registry (1183 → 190, the loop counter passed to the callee is masked),
+a message flush (1100 → 300, the game reloads the count byte for the loop guard after testing it), a dialogue switch
+(850 → 330, the shared argument load is duplicated into both paths), an inventory transfer (1055 → 410, register
+choice), a string-table loader (1090 → 670, gcc splits the entry pointer into two givs).
+
+Tried without a match: two swapped-register near misses (a float scale, 40; a saved-register pair, 40) with
+declaration order, `register`, and separate result variables; a vector transform whose base `lui`/`addiu` pair gcc
+folds into each access however the base is written (`f32 *p = D`, a struct type, casts); a libm tangent whose
+divide is scheduled before the sign test (750, rewrites 765–940).
