@@ -27,6 +27,7 @@ from . import (
     boundary_investigations,
     claim_state,
     compiler_experiments,
+    focused_agents,
     local_experiments,
     polish_automation,
     reviewed_search_seeds,
@@ -484,6 +485,8 @@ def _compile(net: RomNetwork, agent: Agent, slug: str, function: str, source: st
              suggested_category: str = '') -> str:
     """A category can ride along with a candidate, saving a separate model turn."""
     names = [n.strip() for n in function.split(",") if n.strip()]
+    if focused_agents.scope(net, agent) and len(names) != 1:
+        raise NetworkError('Submit one definition for your assigned function.')
     if repair_note and len(names) != 1:
         # A small model put the function's callees and data in `function` ("func_A, func_B, D_8010...") with a
         # note, and the old "Repair notes require one function" read as being about the note: it gave up on the
@@ -519,7 +522,9 @@ def _compile(net: RomNetwork, agent: Agent, slug: str, function: str, source: st
         _, revision = agent_tokens.candidate(net, agent, slug, names[0])
         open_function = net._function(names[0],slug)['status']=='open'
         held = net.project_store(slug).one('SELECT 1 FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id)
-        if open_function and held:
+        if focused_agents.scope(net, agent):
+            result += f"\nCandidate revision {revision}."
+        elif open_function and held:
             state = net.stall_status(fn['id'],agent.id)
             remaining = max(0,state['after']-state['no_better'])
             result += f"\nBudget: {remaining}/{state['after']} without improvement remaining; Candidate revision {revision}."
@@ -968,6 +973,9 @@ def _dispatch(net,agent,slug,name,args, *, count_usage=True):
             if handshake:pending.discard((agent.id,slug))
             return 'Asset discovery connection ready. Call claim_asset_region; do not claim or compile functions.'
         named=_named(net,agent,slug,args,name)
+        focused = focused_agents.scope(net, agent)
+        if focused and name in focused_agents.TARGET_TOOLS and named.get('function'):
+            net.focus_target(agent, slug, named['function'])
         automatic = budget is not None and automatic_assignment.enabled(net, agent, slug)
         before = automatic_assignment.held(net, agent, slug) if automatic and name in automatic_assignment.HANDOFF_TOOLS else None
         # A real CLI handshake confirms authenticated access, not a saved-code
@@ -998,6 +1006,10 @@ def _dispatch(net,agent,slug,name,args, *, count_usage=True):
             cases = dict(matches)
             net.__dict__.setdefault('_pending_repair_classifications', {}).setdefault(repair_key, {}).update(cases)
             result += '\n' + _repair_request(cases, automatic=automatic)
+        if focused and name in focused_agents.CANDIDATE_TOOLS and named.get('function'):
+            fn = net._function(named['function'], slug)
+            limit, used = net.attempt_limit(agent, fn)
+            result += f'\nFocused tries used: {used}/{limit}.'
         if automatic:
             result = automatic_assignment.after_tool(net, agent, slug, budget, before, name, handshake, result)
         return result

@@ -1222,6 +1222,9 @@ class Network:
 
     def attempt_limit(self, agent: Agent, fn) -> tuple[int | None, int]:
         store = self.project_store(fn["project_id"])
+        from .app.focused_agents import limits
+        if (focused := limits(self, agent, fn, store)) is not None:
+            return focused
         slug = store.one("SELECT slug FROM projects WHERE id=?", fn["project_id"])["slug"]
         limit = self.selection(slug, agent.name).get("max_tries")
         used = store.one("SELECT COUNT(*) AS n FROM attempts WHERE function_id=? AND agent_id=?",
@@ -1246,7 +1249,9 @@ class Network:
         with timed_lock(store.lock,'write_lock_wait'):
             lock = self._attempt_locks.setdefault((agent.id, fn["id"]), threading.RLock())
         with timed_lock(lock,'candidate_lock_wait'):
+            from .app.focused_agents import check_target
             self.ensure_agent_active(agent)
+            check_target(self, agent, fn)
             self.check_attempt_limit(agent, fn)
             yield
 
@@ -1258,6 +1263,9 @@ class Network:
         limit, used = self.attempt_limit(agent, fn)
         if limit is None or used < limit:
             return
+        from .app.focused_agents import scope
+        if scope(self, agent):
+            raise NetworkError(f"Focused try limit reached ({used}/{limit}). Your best attempt is saved.")
         held = store.one("SELECT 1 FROM claims WHERE function_id=? AND agent_id=?", fn["id"], agent.id)
         if held:
             Network.release(self, agent, fn["name"], f"User's max tries reached ({used}/{limit}); best attempt retained.",
@@ -1913,6 +1921,9 @@ class Network:
         fn = self._function(function, project)
         limit, used = self.attempt_limit(agent, fn)
         if fn["status"] == "open" and limit is not None and used >= limit:
+            from .app.focused_agents import scope
+            if scope(self, agent):
+                return f"\nFocused try limit reached ({used}/{limit}). Your best attempt is saved. End this session."
             return (f"\nMax tries reached ({used}/{limit}); this function is released and your best attempt is saved. "
                     "Call claim_function for the next function.")
         return ""
