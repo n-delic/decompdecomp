@@ -105,8 +105,13 @@ def verify(feedback, example):
             measured_callback_repairs,
             measured_immediate_repairs,
         )
+
+        from . import stack_padding_repairs
+
         symbols = net.symbols(proj['id']) if hasattr(net,'symbols') else None
-        focused = measured_callback_repairs.variants(source, fn['name'], rows)
+        focused = stack_padding_repairs.layout_candidates(source, fn['name'], header, proj['arch'],
+                                                         rows, symbols, profile['flags'])
+        focused += measured_callback_repairs.variants(source, fn['name'], rows)
         focused += measured_address_repairs.variants(source, fn['name'], header, rows, symbols)
         focused += measured_immediate_repairs.variants(source, fn['name'], rows)
         focused += kmc_cast_repairs.variants(source, fn['name'], header, rows, profile['flags'])

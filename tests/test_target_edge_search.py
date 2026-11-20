@@ -192,3 +192,17 @@ void f(void *owner) {
     expected = source.replace('(void *)','(void)').replace('callback(record)','callback()')
     assert (family,expected) in route(source,rows,'')
     assert family not in {kind for kind,_ in route(source,rows,'',compiler='ido-5.3')}
+
+
+def test_measured_stack_reservation_ignores_volatile_in_neighboring_source():
+    source = "extern volatile int status; int f(void) { int result = 1; return result; }"
+    prior = 'addiu $sp, $sp, -0x20|sw $ra, 0x18($sp)|jal work|nop|lw $ra, 0x18($sp)|jr $ra|addiu $sp, $sp, 0x20'
+    target = 'addiu $sp, $sp, -0x28|sw $ra, 0x20($sp)|jal work|nop|lw $ra, 0x20($sp)|jr $ra|addiu $sp, $sp, 0x28'
+    rows = [(' ' if a==b else 's',a,b) for a,b in zip(target.split('|'),prior.split('|'))]
+    choices = dict(route(source,rows,''))
+    assert '__repair_stack_padding[8]' in choices['inferred_frame_reservation']
+    assert 'inferred_frame_reservation' not in dict(route(source.replace('return result;','return *(volatile int *)&result;'),rows,''))
+
+    shrinking = [(mark,b,a) for mark,a,b in rows]
+    excess = source.replace('int result','char frame[8]; int result')
+    assert dict(route(excess,shrinking,''))['measured_unused_frame_array'] == excess.replace('char frame[8];','')
