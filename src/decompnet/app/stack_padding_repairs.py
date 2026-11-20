@@ -59,7 +59,7 @@ def grow(source, name, arch, rows):
             for count in (delta, delta//2)]
 
 
-def measured(source, name, arch, rows):
+def measured(source, name, arch, rows, *, evidence=None):
     """Place one explicitly inferred reservation after existing outer declarations.
 
     A consistent frame/save delta is evidence for storage, not its original purpose.
@@ -69,9 +69,12 @@ def measured(source, name, arch, rows):
     from decomprepair.pattern_repairs import close
     part=view(source,name)
     fresh='__repair_stack_padding'
-    if not part or re.search(r'\b(?:volatile|asm|__asm__|'+fresh+r')\b',part.clean):return []
-    reader=arches.get(arch).stack_layout
-    evidence=reader(rows) if reader else {}
+    if (not part or re.search(r'\b(?:volatile|asm|__asm__)\b',part.body)
+            or re.search(r'\b'+fresh+r'\b', part.clean)):
+        return []
+    if evidence is None:
+        from .stack_layout import diagnose
+        evidence = diagnose(arch,rows) or {}
     delta=evidence.get('inferred_growth')
     if delta is None:return []
     # Keep all existing declaration order and physical lines. In particular, do
@@ -90,3 +93,15 @@ def measured(source, name, arch, rows):
         last=pos=end+1
     note='\n/* Inferred frame reservation; original purpose unknown. */\nchar '+fresh+'['+str(delta)+'];'
     return [('inferred_frame_reservation',source[:last]+note+source[last:])]
+
+
+def layout_candidates(source, name, header, arch, rows, symbols=None, flags=()):
+    """Share the measured KMC layout pass with exact replay."""
+    from decomprepair import measured_layout_repairs
+
+    from .stack_layout import diagnose
+
+    report = diagnose(arch,rows) or {}
+    result = measured_layout_repairs.unused_frame_array(source,name,rows,report)
+    result += measured(source,name,arch,rows,evidence=report)
+    return result + measured_layout_repairs.paired_word_copy(source,name,header,rows,symbols,flags)

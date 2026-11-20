@@ -27,6 +27,7 @@ from . import (
     operand_and_edge_search,
     permuter_focus,
     stack_layout,
+    stack_padding_repairs,
     target_conversion_diff_repairs,
     target_edge_diff_repairs,
     target_guard_width_diff_repairs,
@@ -161,6 +162,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     if toolchain.startswith('gcc-2.7.2-kmc'):
         result += target_inline_storage_diff_repairs.proposals(source,name,header,rows,target,candidate,asm,
                                                              read_data=read_data,big_endian=big_endian)
+        result += stack_padding_repairs.layout_candidates(source,name,header,arch,rows,symbols,flags)
         result += measured_callback_repairs.variants(source,name,rows)
         result += measured_address_repairs.variants(source,name,header,rows,symbols)
         result += measured_immediate_repairs.variants(source,name,rows)

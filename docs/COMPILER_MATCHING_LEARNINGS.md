@@ -8452,3 +8452,21 @@ callback whose pointer doesn't escape. A separate return-width replay
 matched with an altered declaration in the caller while the selected
 matching callee used a different declaration. That conflicting case
 still needs independent signature evidence.
+
+### Measured frame reservations and two-word copies (KMC GCC 2.7.2)
+
+Six archived N64 cases reproduced at the exact linked ROM judge with
+`-G0 -mips3 -mgp32 -mfp32 -O2` and the saved failed source and header.
+
+- The existing inferred-reservation rewrite accounted for three frame
+  increases. One required treating an unrelated volatile declaration in
+  the translation unit as outside the function being changed.
+- Removing an unused eight-byte array accounted for a uniform eight-byte
+  reduction in both frame size and saved-register offsets. Restrict the
+  rewrite to an outer-scope unused array with the full measured size;
+  escaped arrays require separate extent evidence.
+- Two spellings of consecutive scalar assignments became one two-word
+  record copy. The target loaded consecutive resolved globals, then
+  stored both words through one destination base at offsets zero and
+  four. The copy requires known data addresses and is withheld with
+  strict aliasing enabled.
