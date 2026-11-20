@@ -8224,3 +8224,7 @@ produced a 22,930-point candidate. Repeating the pass on that saved winner
 reached 22,600. Splitting another call result into its own local reached
 22,500. Independent two-worker searches from freshly generated drafts
 reproduced the same source and linked score. This is a partial improvement.
+With two workers, a one-minute run finished at 22,500 after 41 candidate
+checks. A four-minute run tested 81 candidates and reached 22,410 with a
+built-in random rewrite. Both saved results were independently recompiled and
+linked. The 22,410 result has one observed run.
