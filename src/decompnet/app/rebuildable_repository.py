@@ -17,6 +17,8 @@ KEPT_DOCS = ('AGENTS.md', 'NOTICE.md', 'CONTRIBUTING.md', 'LICENSE', 'LICENSE.md
 BUILD_FILES = frozenset({'build.py', 'build.json', 'export_entry.py', 'splat.yaml', 'symbol_addrs.txt',
                          'reloc_addrs.txt', 'objdiff.json', 'functions.cfg', 'README.md', 'requirements.txt',
                          repository_sync.STATE, MARKER})
+# Splat writes these alongside the extraction, outside the Git allowlist.
+EXTRACTED_SYMBOLS = frozenset({'undefined_funcs_auto.txt', 'undefined_syms_auto.txt'})
 ROOT_FILES = BUILD_FILES | frozenset({'.gitignore', *KEPT_DOCS})
 
 
@@ -191,7 +193,7 @@ def prepare(net, slug, path, root, log):
             if target.exists() and name not in old and name != '.gitignore' and previous != repository_sync.digest(stage/name):
                 if name in BUILD_FILES:
                     backup_folder = '.decomp-repository-backups'
-                elif Path(name).parts[0] in ('asm', 'assets'):
+                elif name in EXTRACTED_SYMBOLS or Path(name).parts[0] in ('asm', 'assets'):
                     backup_folder = '.decomp-extraction-backups'
                 else:
                     backup_folder = None
