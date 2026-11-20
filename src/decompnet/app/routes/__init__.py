@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any, Callable
 if TYPE_CHECKING:
     from mcp.server.mcpserver import MCPServer
 
-    from .. import agents, updates
+    from .. import agents, tool_reader, updates
     from ..engine import RomNetwork
     from ..support import Jobs, Settings
 
@@ -58,6 +58,7 @@ class App:
     # what one part of the app lends another (set by the module that defines it)
     web_login: Any = None  # optional localhost cookie sessions, separate from window/agent auth
     headless: bool = False
+    reader: tool_reader.Reader | None = None
     autopilot: Callable[[str], None] | None = None  # state: start autopilot on a project
     with_project: Callable[..., Any] | None = None  # projects: a project route from fn(slug, request, data)
 

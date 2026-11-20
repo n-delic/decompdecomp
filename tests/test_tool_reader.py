@@ -5,7 +5,7 @@ import time
 import httpx
 import pytest
 
-from decompnet.app import tool_reader, tools
+from decompnet.app import tool_reader, tool_reader_worker, tools
 from tests.test_agent_workflow_efficiency import game
 
 HEADERS = {"Accept": "application/json, text/event-stream"}
@@ -148,7 +148,7 @@ def test_routes_name_helpers_with_app_only_state(tmp_path):
 
 def test_a_rename_in_the_app_drops_the_readers_symbol_caches(tmp_path):
     net, worker, fn = game(tmp_path)
-    service = tool_reader.Service(net, lambda message: None)
+    service = tool_reader_worker.Service(net, lambda message: None)
     pid = net._project("game")["id"]
     service.fresh("game")
     net._syms[pid] = net._xrefs[pid] = "built before"

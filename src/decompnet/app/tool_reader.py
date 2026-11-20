@@ -24,6 +24,7 @@ runtime update, or for a project the app is rechecking or sharing.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -32,12 +33,12 @@ import subprocess
 import sys
 import threading
 import time
-import uuid
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
 from ..hostenv import NO_WINDOW
+from . import frontend_reload
 
 log = logging.getLogger("decompdecomp")
 
@@ -57,7 +58,9 @@ START_SECONDS = 60.0
 CACHE_REVISIONS = ("scope_symbols", "naming", "fingerprints", "targets")
 WINDOW_ENV = "DECOMP_READER_WINDOW"  # the window's secret and the app's port, for the child
 WINDOW_ANSWERED = "x-decomp-reader"  # on a window read the reader answered (gateway/src/window.rs ANSWERED)
-WINDOW_THREADS = 4
+DRAIN_SECONDS = 5.0
+SOURCE_CHECK_SECONDS = 0.5
+WORKER_SOURCE = Path(__file__).with_name("tool_reader_worker.py")
 
 
 def enabled() -> bool:
@@ -92,6 +95,9 @@ class Reader:
         self.report = None  # (message) -> None
         self.restarts = 0
         self.served = 0
+        self.watch_source = frontend_reload.enabled()
+        self.requested_revision = None
+        self.loaded_revision = None
 
     @property
     def url(self) -> str:
@@ -111,7 +117,7 @@ class Reader:
             env[WINDOW_ENV] = json.dumps(self.window)
         with log_path.open("ab") as errors:
             process = subprocess.Popen(
-                [sys.executable, "-m", "decompnet.app.tool_reader", "--child", str(self.net.store.path),
+                [sys.executable, str(WORKER_SOURCE), str(self.net.store.path),
                  str(self.net.workspace), str(port)],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=errors, bufsize=0, creationflags=NO_WINDOW,
                 env=env)
@@ -156,7 +162,7 @@ class Reader:
             return
         with self.pipe:
             process = self.process
-            if process is None or process.poll() is not None or process.stdin is None:
+            if process is None or process.poll() is not None or not process.stdin or process.stdin.closed:
                 return
             try:
                 process.stdin.write((json.dumps({"routes": snapshot}) + "\n").encode())
@@ -181,6 +187,41 @@ class Reader:
                 except Exception:
                     log.exception("Tool reader report failed")
 
+    @staticmethod
+    def _source_revision() -> bytes:
+        return hashlib.sha256(WORKER_SOURCE.read_bytes()).digest()
+
+    def reload_code(self) -> bool:
+        """Wait for the updated worker on the existing port, even with local watching disabled."""
+        revision = self._source_revision()
+        self.requested_revision = revision
+        deadline = time.monotonic() + START_SECONDS + DRAIN_SECONDS + 10
+        while time.monotonic() < deadline:
+            process = self.process
+            if process is not None and process.poll() is None and self.loaded_revision == revision:
+                return True
+            if self.stopping.wait(0.1):
+                break
+        return False
+
+    def _code_changed(self, revision: bytes) -> bool:
+        if self.watch_source:
+            try:
+                return self._source_revision() != revision
+            except OSError:  # an editor may briefly remove the file while replacing it
+                return False
+        return self.requested_revision is not None and self.requested_revision != revision
+
+    def _drain(self, process: subprocess.Popen) -> None:
+        try:
+            with self.pipe:
+                process.stdin.write(b'{"drain":true}\n')
+                process.stdin.flush()
+            process.wait(timeout=DRAIN_SECONDS + 2)
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            process.kill()
+            process.wait()
+
     def _watch(self) -> None:
         """Start the process, and again on the same port whenever it ends while the app runs."""
         pause, first = 0.5, True
@@ -189,7 +230,12 @@ class Reader:
                 with self.lock:
                     if self.stopping.is_set():
                         return
+                    revision = self._source_revision()
+                    self.loaded_revision = None
                     self._launch(self.port)
+                    self.loaded_revision = revision
+                    if self.requested_revision == revision:
+                        self.requested_revision = None
             except (OSError, RuntimeError, ValueError) as error:
                 log.warning("Tool reader didn't start: %s", error)
                 if self.stopping.wait(pause):
@@ -201,14 +247,24 @@ class Reader:
             else:
                 self.restarts += 1
             first, began = False, time.monotonic()
-            code = self.process.wait()
-            if self.stopping.is_set():
-                return
-            # One that keeps ending soon after it starts is started less and less often.
-            pause = 0.5 if time.monotonic() - began > 60 else min(pause * 2, 60.0)
-            log.warning("Tool reader ended (exit %s); starting it again on port %s", code, self.port)
-            if self.stopping.wait(pause):
-                return
+            process = self.process
+            self._send_routes()
+            while not self.stopping.is_set():
+                try:
+                    code = process.wait(timeout=SOURCE_CHECK_SECONDS)
+                except subprocess.TimeoutExpired:
+                    if self.stopping.is_set() or not self._code_changed(revision):
+                        continue
+                    log.info("Tool reader source changed; restarting it on port %s", self.port)
+                    self._drain(process)
+                    break
+                if self.stopping.is_set():
+                    return
+                # Back off when a worker repeatedly exits shortly after startup.
+                pause = 0.5 if time.monotonic() - began > 60 else min(pause * 2, 60.0)
+                log.warning("Tool reader ended (exit %s); starting it again on port %s", code, self.port)
+                self.stopping.wait(pause)
+                break
 
     def stop(self) -> None:
         self.stopping.set()
@@ -217,8 +273,9 @@ class Reader:
         if process is None:
             return
         try:
-            if process.stdin:
-                process.stdin.close()  # the reader ends on end-of-file
+            with self.pipe:
+                if process.stdin:
+                    process.stdin.close()  # the reader ends on end-of-file
             process.wait(timeout=3)
         except (OSError, subprocess.TimeoutExpired):
             process.kill()
@@ -437,116 +494,6 @@ def apply_report(net, manager, message: dict) -> None:
     manager.record_agent(agent, slug, "tool_response", payload)
 
 
-# -------------------------------------------------------------------------------------------------- the child's side
-class Declined(Exception):
-    pass
-
-
-class Service:
-    """The child's engine and what the app last said about its helpers."""
-
-    def __init__(self, net, emit):
-        self.net, self.emit = net, emit
-        self.routes: dict = {}
-        self.window_auth: dict | None = None  # {"secret", "port"}: the app window's (Reader.window)
-        self.revisions: dict[int, tuple] = {}
-        self.revisions_lock = threading.Lock()
-
-    def project_for(self, agent_id: int) -> str:
-        routes = self.routes
-        if not routes or time.time() - float(routes.get("at", 0)) > STALE_SECONDS:
-            raise Declined("no current routes from the app")
-        if agent_id in set(routes.get("app_only", ())):
-            raise Declined("the app keeps state for this helper")
-        key = str(agent_id)
-        slug = (routes.get("assignments", {}).get(key) or self.net.pairing_project(agent_id)
-                or routes.get("manual", {}).get(key))
-        if not slug:
-            raise Declined("no project: the app explains")
-        if slug in set(routes.get("busy", ())):
-            raise Declined("the app is rechecking, importing or sharing this project")
-        return slug
-
-    def fresh(self, slug: str) -> None:
-        drop_stale_caches(self.net, slug, self.revisions, self.revisions_lock)
-
-    def window(self, method: str, path: str, query, headers) -> object:
-        """The app's answer to one of the window's reads (window_reads.py), or Declined. The checks are the app's
-        guard (server.build) for a GET: the host, the window's secret, and nothing it would refuse."""
-        import secrets as secrets_module
-
-        from . import window as app_window
-        from . import window_reads
-        given = self.window_auth
-        if not given:
-            raise Declined("not answering the window")
-        if method != "GET":
-            raise Declined("only reads")
-        routes = self.routes
-        if not routes or time.time() - float(routes.get("at", 0)) > STALE_SECONDS:
-            raise Declined("no current routes from the app")
-        port = int(given["port"])
-        if headers.get("host") not in (f"127.0.0.1:{port}", f"localhost:{port}"):
-            raise Declined("not the app's host: the app refuses it")
-        token = app_window.token_of(headers.get("user-agent", ""))
-        if not token or not secrets_module.compare_digest(token, str(given["secret"])):
-            raise Declined("not the window: the app checks browser sign-ins")
-        if headers.get("origin"):
-            raise Declined("an Origin: the app checks it")
-        if routes.get("preparing"):
-            raise Declined("the app is preparing an update")
-        if path == "/api/projects":
-            if query.get("brief") != "1":
-                raise Declined("the full project list is the app's")
-            with self.net.progress.view():
-                return window_reads.projects_brief(self.net)
-        fn = window_reads.PROJECT_ROUTES.get(path)
-        if fn is None:
-            raise Declined(f"{path} is answered by the app")
-        slug = query.get("slug", "")
-        if not slug or slug in set(routes.get("busy", ())):
-            raise Declined("the app is rechecking, importing or sharing this project")
-        self.fresh(slug)
-        with self.net.progress.view():
-            result = fn(self.net, slug, query)
-        self.emit({"viewed": slug})
-        return result
-
-    def call(self, headers: dict, name: str, args: dict) -> str:
-        from ..network import NetworkError
-        from ..read_cache import ReadPending
-        from . import tools
-        from .tool_policy import visible
-        if not allowed(name, args):
-            raise Declined(f"{name} is answered by the app")
-        auth = headers.get("authorization") or headers.get("Authorization") or ""
-        try:
-            agent = self.net.authenticate(auth.removeprefix("Bearer ").strip() or None)
-        except NetworkError:
-            raise Declined("not a helper this process knows") from None
-        slug = self.project_for(agent.id)
-        started = time.monotonic()
-        call_id = uuid.uuid4().hex
-        report = {"agent_id": agent.id, "agent_name": agent.name, "slug": slug, "name": name, "arguments": args,
-                  "call_id": call_id}
-        try:
-            self.fresh(slug)
-            if name not in visible(self.net, slug, list(tools.HANDLERS), agent):
-                raise Declined("disabled for this helper: the app explains")
-            named = tools._named(self.net, agent, slug, args, name)
-            result = tools.HANDLERS[name](self.net, agent, slug, **named)
-            if name == "get_function" and args.get("function") != named.get("function"):
-                result = (f"Resolved read {str(args.get('function'))[:200]!r} to {named['function']}. This does not "
-                          "rename or create a function.\n" + result)
-        except (NetworkError, ReadPending) as error:
-            report.update(error=str(error), timings={"dispatch_ms": round((time.monotonic() - started) * 1000, 2)})
-            self.emit({"call": report})
-            raise
-        report.update(content=result, timings={"dispatch_ms": round((time.monotonic() - started) * 1000, 2)})
-        self.emit({"call": report})
-        return result
-
-
 def drop_stale_caches(net, slug: str, seen: dict, lock: threading.Lock) -> None:
     """In a process beside the app (this reader, render_worker.py): drop the engine's per-project caches the app's
     own edits would have dropped (renames, splits, imports), as the database's revisions show them."""
@@ -581,115 +528,3 @@ def reader_progress(net):
             return nullcontext()
 
     net.progress.__class__ = ReaderProgress
-
-
-def window_routes(mcp, service: Service) -> None:
-    """The window's reads (window_reads.py) at their own paths, encoded as the app encodes them (JSONResponse).
-    Anything this process doesn't answer is a 421 without WINDOW_ANSWERED, and the gateway asks the app."""
-    import anyio
-    from starlette.responses import JSONResponse, Response
-
-    from . import window_reads
-    limiter = anyio.CapacityLimiter(WINDOW_THREADS)
-
-    async def read(request):
-        def answer():
-            return service.window(request.method, request.url.path, request.query_params, request.headers)
-        try:
-            result = await anyio.to_thread.run_sync(answer, limiter=limiter)
-            return JSONResponse(result, headers={WINDOW_ANSWERED: "answered"})
-        except Declined as why:
-            log.info("declined %s: %s", request.url.path, why)
-        except Exception:  # the app answers, with its own error if it has one
-            log.exception("declined %s after an error", request.url.path)
-        return Response(status_code=421)
-
-    for path in {*window_reads.PROJECT_ROUTES, "/api/projects"}:
-        mcp.custom_route(path, methods=["GET"])(read)
-
-
-def child(db_path: str, workspace: str, port: int) -> None:
-    import uvicorn
-
-    from .. import store as storage
-    logging.basicConfig(level=logging.INFO, stream=sys.stderr,
-                        format="%(asctime)s %(levelname)s [tool-reader pid=%(process)d %(threadName)s] %(message)s")
-    for chatty in ("mcp", "httpx", "uvicorn"):  # a line per request otherwise
-        logging.getLogger(chatty).setLevel(logging.WARNING)
-    storage.ATTACH_ONLY = True
-    os.environ.setdefault("DECOMP_REPAIR_ANALYSIS", "off")
-    from ..network import NetworkError
-    from ..read_cache import ReadPending
-    from . import tools
-    from .engine import RomNetwork
-    from .workers import lower_priority
-    lower_priority()  # the app's own work comes first
-    net = RomNetwork(db_path, Path(workspace))
-    reader_progress(net)
-    output = threading.Lock()
-
-    def emit(message):
-        with output:
-            sys.stdout.write(json.dumps(message, default=str) + "\n")
-            sys.stdout.flush()
-
-    service = Service(net, emit)
-    window_auth = os.environ.pop(WINDOW_ENV, "")
-    service.window_auth = json.loads(window_auth) if window_auth else None
-
-    def listen():
-        for line in sys.stdin:
-            try:
-                message = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(message.get("routes"), dict):
-                routes = message["routes"]
-                routes["app_only"] = {int(a) for a in routes.get("app_only", ())}
-                net._agent_tool_tasks = {int(a): t for a, t in routes.get("tasks", {}).items()}
-                service.routes = routes
-        os._exit(0)  # the app closed our standard input: it ended
-
-    from mcp.server.mcpserver.exceptions import ToolError
-
-    def run(ctx, name, args):
-        headers = dict(ctx.headers or {})
-        try:
-            return service.call(headers, name, args)
-        except Declined as why:
-            log.info("declined %s: %s", name, why)
-            raise ToolError(DECLINED) from None
-        except (NetworkError, ReadPending) as error:
-            raise ToolError(str(error)) from None
-        except Exception:
-            log.exception("declined %s after an error", name)
-            raise ToolError(DECLINED) from None
-
-    def no_agent(ctx):
-        raise ToolError(DECLINED)  # (unused: `reader` answers every call)
-
-    mcp = tools.build_mcp(net, no_agent, reader=run)
-    if service.window_auth:
-        window_routes(mcp, service)
-    from mcp.server.transport_security import TransportSecuritySettings
-    security = TransportSecuritySettings(enable_dns_rebinding_protection=True,
-                                         allowed_hosts=[f"127.0.0.1:{port}", f"localhost:{port}"],
-                                         allowed_origins=[])
-    app = mcp.streamable_http_app(transport_security=security, stateless_http=True, json_response=True,
-                                  host="127.0.0.1")
-    sock = socket.socket()
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.bind(("127.0.0.1", port))
-    sock.listen(128)
-    threading.Thread(target=listen, daemon=True, name="tool-reader-routes").start()
-    # Keep-alive outlasts the gateway's 30 s connection pool (cli.KEEP_ALIVE).
-    server = uvicorn.Server(uvicorn.Config(app, log_config=None, access_log=False, lifespan="on",
-                                           timeout_keep_alive=75))
-    with output:
-        sys.stdout.write(f"LISTENING {port}\n")
-        sys.stdout.flush()
-    server.run(sockets=[sock])
-
-
-if __name__ == "__main__" and len(sys.argv) == 5 and sys.argv[1] == "--child":
-    child(sys.argv[2], sys.argv[3], int(sys.argv[4]))

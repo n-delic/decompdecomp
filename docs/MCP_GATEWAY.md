@@ -83,7 +83,7 @@ Each reply is exactly what the app's handler gives: the same SQL, Python's numbe
 
 ## Read-only tools in their own process
 
-`src/decompnet/app/tool_reader.py` runs a second, small Python process (about 90 MB) that opens the same databases
+`src/decompnet/app/tool_reader.py` supervises `tool_reader_worker.py`, a small Python process (about 90 MB) that opens the same databases
 and answers a few read-only tools with the app's own handlers (`READER_TOOLS`: get_claims, list_functions,
 project_info, get_function's database sections, ...). It has its own interpreter lock, so these calls don't wait
 for the app's saves, sweeps and other helpers' compiles, and they answer while the app is stalled. On a copy of a
@@ -108,6 +108,10 @@ from the reader and 357 ms in the app, and its answers to 155 real calls were id
   project activity as for its own calls.
 - Its log is `.decomp/logs/tool-reader.log`. It starts in the background with the app and again if it ends.
   `DECOMP_TOOL_READER=0` turns it off; it never runs without the gateway.
+- In a source checkout, edits to `tool_reader_worker.py` give in-flight reads up to five seconds to finish and
+  then start the replacement on the same port. The gateway can fall back to the app during the handoff.
+  Source updates confined to worker code take this path even with local file watching disabled. The app keeps
+  agent sessions, claims and transcript state throughout the update.
 
 ## The window's pages
 
