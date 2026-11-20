@@ -2165,6 +2165,33 @@ def test_set_aside_verdict_updates_preserve_unrelated_matches(project):
     assert judged==[]
 
 
+def test_restore_batches_set_aside_rows_and_keeps_same_address_overlays_separate(project):
+    net, _, _ = project
+    store = net.project_store('game')
+    pid = net.project_row('game', sync=False)['id']
+    with store.tx() as db:
+        db.execute("INSERT INTO functions(project_id,name,vram) VALUES(?,'overlay',4096)", (pid,))
+        db.execute('CREATE TABLE restored_updates(name TEXT)')
+        db.execute("CREATE TRIGGER record_restore AFTER UPDATE OF status,meta ON functions "
+                   "BEGIN INSERT INTO restored_updates VALUES(NEW.name); END")
+    items = [
+        {'name': 'f', 'vram': 4096, 'asm_code': 'first overlay'},
+        {'name': 'unknown overlay', 'vram': 4096, 'asm_code': 'ambiguous'},
+        {'name': 'former g', 'vram': 4100, 'asm_code': 'unique address'},
+        {'name': 'g', 'vram': 4100, 'not_c': {'model': {'why': 'second record'}}},
+    ]
+    saves._restore_set_aside(store, pid, items)
+    rows = {row['name']: row for row in store.all('SELECT name,status,meta FROM functions')}
+    assert json.loads(rows['f']['meta'])['asm_code'] == 'first overlay'
+    assert rows['overlay']['status'] == 'open'
+    assert rows['g']['status'] == 'asm'
+    assert json.loads(rows['g']['meta']) == {
+        'asm_code': 'unique address', 'not_c': {'model': {'why': 'second record'}},
+    }
+    saves._restore_set_aside(store, pid, items)
+    assert [row['name'] for row in store.all('SELECT name FROM restored_updates ORDER BY rowid')] == ['f', 'g']
+
+
 def test_saved_verdict_notes_and_list_order_are_not_shared_linking_inputs():
     from copy import deepcopy
 
