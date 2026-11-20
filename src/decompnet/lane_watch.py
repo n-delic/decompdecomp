@@ -28,7 +28,6 @@ class Watch:
     def __init__(self, path, *, threshold=10., interval=1., cooldown=60., clock=time.monotonic):
         self.path = Path(path)
         self.threshold, self.interval, self.cooldown, self.clock = threshold, interval, cooldown, clock
-        self.lock = threading.Lock()
         self.requests: dict[int, dict] = {}  # id -> {lane, route, queued, started, thread}
         self.ids = itertools.count()
         self.last_report: dict[str, float] = {}
@@ -38,28 +37,25 @@ class Watch:
     @contextmanager
     def queued(self, lane: str, route: str):
         """Around the whole lane request, from before it waits for a worker until it ends."""
+        # This runs on the event loop, which must never wait for a lock: one dict store and one pop are atomic
+        # under the GIL, so the watcher thread's snapshot (dict.copy, also atomic) needs no lock either.
         key = next(self.ids)
-        with self.lock:
-            self.requests[key] = {'lane': lane, 'route': route or 'request', 'queued': self.clock(),
-                                  'started': None, 'thread': None}
+        self.requests[key] = {'lane': lane, 'route': route or 'request', 'queued': self.clock(),
+                              'started': None, 'thread': None}
         try:
             yield key
         finally:
-            with self.lock:
-                self.requests.pop(key, None)
+            self.requests.pop(key, None)
 
     def running(self, key: int) -> None:
         """Called in the worker thread once the request has its worker."""
-        with self.lock:
-            entry = self.requests.get(key)
-            if entry is not None:
-                entry['started'], entry['thread'] = self.clock(), threading.get_ident()
+        if (entry := self.requests.get(key)) is not None:
+            entry.update(started=self.clock(), thread=threading.get_ident())
 
     def check(self) -> list[str]:
         """Write a report for each lane with a request stuck past the threshold; returns those lanes."""
         now = self.clock()
-        with self.lock:
-            entries = [dict(e) for e in self.requests.values()]
+        entries = [dict(e) for e in self.requests.copy().values()]
         stuck = sorted({e['lane'] for e in entries if now - e['queued'] >= self.threshold
                         and now - self.last_report.get(e['lane'], float('-inf')) >= self.cooldown})
         for lane in stuck:
