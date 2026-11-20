@@ -225,7 +225,8 @@ class Api(Agent):
                         s.record('tool_request', {'name': name, 'arguments': args, 'call_id': c['id']})
                     result = tools.call(net, agent, s.slug, name, args)
                     if s.record:
-                        s.record('tool_response', {'name': name, 'content': result, 'call_id': c['id']})
+                        manager.record_agent(agent, s.slug, 'tool_response',
+                                             {'name': name, 'content': result, 'call_id': c['id']})
                     messages.append({"role": "tool", "tool_call_id": c["id"], "content": result})
                     if s.options.get('task') == 'boundary' and name == 'suggest_boundary' and not result.startswith('error:'):
                         return True
