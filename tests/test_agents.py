@@ -2310,3 +2310,51 @@ def test_opencode_free_limit_marker_in_other_request_diagnostics_is_not_terminal
     from decompnet.agents.opencode import OPENCODE
     assert not OPENCODE.fatal('Title request failed: provider.free-limit: Free usage limit reached.')
     assert not OPENCODE.fatal('Upstream request failed: Model is unavailable.')
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+def test_slow_function_ordering_does_not_block_agent_start_or_stop(tmp_path, quiet, monkeypatch, cancel):
+    from concurrent.futures import ThreadPoolExecutor
+    from types import SimpleNamespace
+
+    net = _game(tmp_path)
+    manager = agents.Manager(net, tmp_path, URL)
+    sid, = manager.start("codex", "game")
+    session = manager.sessions[sid]
+    ordered = threading.Event()
+    monkeypatch.setattr(net.twins, 'jobs', {'game': SimpleNamespace(ordered=ordered)})
+    if cancel:
+        monkeypatch.setattr(agents, "ORDER_WAIT", 120)
+    entered = threading.Event()
+    original_set = manager._set
+
+    def set_state(session, state, why="", *args):
+        original_set(session, state, why, *args)
+        if session.startup_stage == "Waiting for function ordering":
+            entered.set()
+
+    claims = []
+
+    def launch(session, token, workdir):
+        manager.prepare_session(session, token=token)
+        claims.append(session.startup_context)
+        session.stop.set()
+        return True
+
+    monkeypatch.setattr(manager, "_set", set_state)
+    monkeypatch.setattr(manager, "_run_cli", launch)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        run = pool.submit(manager._run_work, session)
+        try:
+            assert entered.wait(2)
+            if cancel:
+                session.stop.set()
+            run.result(timeout=1 if cancel else 4)
+            assert not ordered.is_set()
+            if cancel:
+                assert not claims
+            else:
+                assert "CLAIMED: game/f0" in claims[0]
+        finally:
+            ordered.set()
+            session.stop.set()

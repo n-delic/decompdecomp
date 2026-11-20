@@ -73,10 +73,11 @@ def test_connection_backoff_caps_outage_retries_and_spreads_workers():
     assert connection_retry_delay(1,1)!=connection_retry_delay(1,2)
 
 
-def test_reuse_full_passes_share_one_global_lane():
+def test_reuse_full_passes_share_one_global_lane(monkeypatch):
     from decompnet.app.twins import Twins
     first=threading.Event();release=threading.Event();second=threading.Event()
-    twin=Twins.__new__(Twins)
+    twin=Twins(SimpleNamespace())
+    monkeypatch.setattr(twin, "order", lambda slug, job: job.ordered.set())
     def full(slug,job):
         if slug=='first':
             first.set();assert release.wait(2)
@@ -361,3 +362,56 @@ def test_claim_order_does_not_wait_for_saved_progress_sync(monkeypatch):
     job=Job()
     twin.order('game',job)
     assert job.ordered.is_set() and asked==[{'sync':False}]
+
+
+def test_existing_autopilot_pass_orders_before_waiting_for_the_lane(monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from decompnet.app.twins import Twins
+
+    twins = Twins.__new__(Twins)
+    twins._lock = threading.Lock()
+    twins.jobs = {}
+    twins.net = SimpleNamespace(links={}, project_row=lambda slug, **kwargs: {"slug": slug})
+    ordering = threading.Event()
+    monkeypatch.setattr(twins, "set_aside_asm", lambda proj: 0)
+    monkeypatch.setattr(twins, "update_boosts", lambda proj, pending: ordering.set())
+    monkeypatch.setenv("DECOMP_MAINTENANCE_WORKER", "0")
+    passed = []
+
+    def execute(slug, job):
+        passed.append(slug)
+        job.state = "done"
+        return job
+
+    monkeypatch.setattr(twins, "_execute_full_pass", execute)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with maintenance.slot():
+            future = pool.submit(twins.full_pass, "game")
+            assert ordering.wait(2)
+            job = twins.refresh("game")
+            assert job.ordered.wait(2)
+            assert not passed
+        assert future.result(timeout=2) is job
+    assert passed == ["game"]
+
+
+def test_unchanged_twin_priorities_need_no_database_writer(tmp_path, monkeypatch):
+    from decompnet.app.engine import RomNetwork
+    from decompnet.app.twins import Print
+    from tests.test_loading import tiny_game
+
+    net = RomNetwork(tmp_path / "order.db", tmp_path)
+    tiny_game(net, functions=2)
+    proj = net.project_row("game", sync=False)
+    store = net.project_store(proj["id"])
+    ids = [row["id"] for row in store.all("SELECT id FROM functions ORDER BY id")]
+    monkeypatch.setattr(net.twins, "prints", lambda proj: {fid: Print("same", [], 8) for fid in ids})
+    assert net.twins.update_boosts(proj, pending=True) == 1
+    assert [row["boost"] for row in store.all("SELECT boost FROM functions ORDER BY id")] == [1, -1]
+
+    def unexpected_write():
+        pytest.fail("Unchanged priorities queued for the database writer")
+
+    monkeypatch.setattr(store, "tx", unexpected_write)
+    assert net.twins.update_boosts(proj, pending=True) == 1
