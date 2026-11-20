@@ -747,3 +747,37 @@ def test_repository_creation_backs_up_a_readme_found_after_export(project, monke
     repository_setup.run(net, 'game', 'checkpoint', '', lambda _: None)
     tracked = git(root, 'ls-files').splitlines()
     assert 'README.md' in tracked and relative not in tracked
+
+def test_repository_creation_backs_up_conflicting_build_files_together(project, monkeypatch):
+    net, root, _ = project
+    console = net.console(net.project_row('game'))
+    export = console.export_project
+    previous = {
+        'build.json': b'{"previous": true}\n',
+        'build.py': b'# previous builder\n',
+        'export_entry.py': b'# previous entry extraction\n',
+        'splat.yaml': b'# previous layout\n',
+        'symbol_addrs.txt': b'# previous symbol names\n',
+        'objdiff.json': b'{"units": []}\n',
+    }
+    for name, data in previous.items():
+        (root/name).write_bytes(data)
+
+    def verified_export(net, slug, out, log):
+        result = export(net, slug, out, log)
+        for name in previous.keys() - {'build.py', 'build.json'}:
+            (out/name).write_bytes(b'verified replacement\n')
+        return result
+
+    monkeypatch.setattr(console, 'export_project', verified_export)
+    assert repository_setup.run(net, 'game', 'init', '', lambda _: None)['rebuildable']
+    backup, = (root/'.decomp-repository-backups').iterdir()
+    for name, data in previous.items():
+        assert (backup/name).read_bytes() == data
+        assert (root/name).read_bytes() != data
+    git(root, 'config', 'user.name', 'Test')
+    git(root, 'config', 'user.email', 'test@example.invalid')
+    repository_setup.run(net, 'game', 'checkpoint', '', lambda _: None)
+    tracked = set(git(root, 'ls-files').splitlines())
+    assert previous.keys() <= tracked
+    assert not any(name.startswith('.decomp-repository-backups/') for name in tracked)
