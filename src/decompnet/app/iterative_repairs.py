@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import logging
 import threading
 import time
 from collections import Counter
@@ -737,9 +738,12 @@ def _run(twins, slug, job):
         from ..repair_feedback import inherit_capture_policy
         list(pool.map(inherit_capture_policy(visit), rows))
     if reasons:
-        net.add_note(agent, slug, 'Iterative search function outcomes: '+', '.join(f'{k}: {v}' for k,v in sorted(reasons.items()))+
-                     f". {diagnostics['compile_failed']} failed/unscored reports; {diagnostics['equivalent_output']} equivalent-output branches pruned. "
-                     'Pending paths resume on the next run; these are bounded supported repairs, not all possible C.')
+        logging.getLogger('decompdecomp').info(
+            'Iterative search function outcomes for %s: %s. %d failed/unscored reports; '
+            '%d equivalent-output branches pruned.',
+            slug, ', '.join(f'{key}: {value}' for key, value in sorted(reasons.items())),
+            diagnostics['compile_failed'], diagnostics['equivalent_output'],
+        )
     return matched[0]
 
 
@@ -761,7 +765,4 @@ def optional_phase(twins, slug, parent):
         db.execute('INSERT INTO iterative_runs(project_id,attempts,matched,bytes,seconds,created_at) VALUES(?,?,?,?,?,?)',
                    (proj['id'], phase.reuse_attempts, phase.reuse_matched, phase.reuse_bytes,
                     time.monotonic() - started, time.time()))
-    agent, _ = net.local_agent('autopilot')
-    net.add_note(agent, slug, f'Iterative search: {matched} matches, {phase.reuse_bytes} bytes, '
-                 f'{phase.reuse_attempts} attempts (separate budget).')
     return matched
