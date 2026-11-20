@@ -3010,6 +3010,9 @@ register-only MIPS comparison and independent ordinary C field loads.
 Deep search can use a single linked table's closed case permutation to propose
 explicit source labels. It also routes observed KMC frame, reload, loop,
 conversion, division and allocation differences to bounded C candidates.
+Follow-up gates cover selectors across calls, the first field guard, loop-tail
+bounds, grouped stores, stack records and strided field relocations. Signed
+halfword uses and floating lifetimes also have bounded source candidates.
 EGCS square staging requires floating-register-only differences. These lanes
 use the current input scope and ordinary compile budget. Imported builds still
 need reliable per-unit compiler and linked table evidence. Other processors
