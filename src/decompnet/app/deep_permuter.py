@@ -1265,6 +1265,11 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
                 if baseline is None:
                     raise NetworkError('The saved C does not compile in the current context; fix its declarations before deep search.')
                 measured_baseline = baseline
+                if baseline and not fork and (lane is None or lane.index == 0):
+                    if profile := deep_profiles.tail_dispatch(net, proj, fn):
+                        log('Checking the saved tail dispatcher with the installed GCC sibling-call profile.')
+                        if deep_profiles.probe(search, agent, proj, fn, _candidate_source(fn, baseline), profile) == 0:
+                            baseline = search.best = 0
                 if baseline and compiler_profiles == 1 and (lane is None or lane.index == 0):
                     baseline = search.call_result_pass(agent, proj, fn, baseline, fork)
                     fn = net._function(name, slug)

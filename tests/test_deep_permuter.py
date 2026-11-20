@@ -867,3 +867,23 @@ def test_combined_store_reaches_judge_with_one_trial(monkeypatch):
     deep_permuter.run(net, 'game', 'f', 30, 1, Log())
     assert len(seen) == 1
     assert '*out = *p + ((s32)(x * 8) / 2);' in seen[0]
+
+
+def test_deep_local_generator_includes_targeted_mips_repairs():
+    from decompnet.app import draft_repairs
+
+    source = """void f(int flag) {
+    if (flag) { state = 0; goto clean; }
+    if (flag == 2) { send(91, 2); }
+    else { send(91, 3); }
+clean:
+    pending = 0;
+}
+"""
+    asm = 'jal send\naddiu $a0, $zero, 64\njal send\naddiu $a0, $zero, 64\n'
+    labels = {}
+    candidates = draft_repairs.variants(source, 'f', 'mips', asm, labels=labels)
+    assert any(labels[text] == 'target_call_constant' and text.count('send(64,') == 2
+               for text in candidates)
+    assert any(labels[text] == 'out_of_line_guard_failure' and 'decomp_failure:' in text
+               for text in candidates)

@@ -8301,3 +8301,22 @@ linked. The 22,410 result has one observed run.
   instruction stream with those two operands reversed.
   `tests/test_exit_returns_and_operand_temporaries.py` checks the entire stream
   and the deep permuter still judges candidates through its normal match path.
+
+### Call constants in a merged MIPS call and failure-block placement
+
+- An archived N64 repair under KMC GCC 2.7.2
+  `-G0 -mips3 -mgp32 -mfp32 -O2` went from 10 to exact by changing the
+  first argument at two source calls from 91 to 64. The target placed
+  `addiu $a0, $zero, 64` in the common branch delay slot and both paths
+  reached a single call. The bounded repair regenerated the archived winner
+  from the archived draft and target instructions. This checks source parity
+  with a previously verified match, without a new compile verdict.
+- Another N64 repair went from 140 to exact by outlining a failure path
+  and adding a missing store. The layout generator only relocates an existing
+  failure assignment that already jumps to shared cleanup. A synthetic
+  regression checks that the normal path jumps past the outlined block.
+  The archived match is evidence for the combined edit, not for layout alone.
+- The narrow frameless sibling-jump detector now selects one installed
+  GCC 4.4.0 non-PIC o32 trial for the saved C in deep search. The evidence
+  is the previously linked 24-byte exact replay described above. The ordinary
+  deep profile verifier still decides whether to offer or save a match.
