@@ -72,6 +72,8 @@ async function prepareRomAudio(row,view=romView()) {
     if(!active())return;if(!/^data:audio\/wav;base64,/.test(result.data_url))throw Error('This entry did not produce a supported WAV. Open its region to inspect the evidence.');
     const media=document.createElement('audio');media.controls=true;media.preload='none';media.className='rom-preview-media';media.src=result.data_url;
     media.onerror=()=>{if(active())showJobError(log,'The browser could not play this WAV. Try another sample or preview rate.');};
-    const text=document.createElement('p');text.className='small muted';text.textContent=`${row.name} · ${result.details.rate} Hz · ${result.details.seconds} seconds${result.details.truncated?' · truncated preview':''}. ${row.asset.reason}`;host.append(media,text);
+    const skipped=result.details.skipped_notes;
+    const skippedText=skipped ? ` ${skipped} note event${skipped===1?'':'s'} had no playable voice.` : '';
+    const text=document.createElement('p');text.className='small muted';text.textContent=`${row.name} · ${result.details.rate} Hz · ${result.details.seconds} seconds${result.details.truncated?' · truncated preview':''}. ${result.details.note||row.asset.reason}${skippedText}`;host.append(media,text);
   }catch(error){if(active())showJobError(log,error.message);}finally{if(host._audioRun===run){host._audioBusy=false;host._audioAbort=null;host._audioFinish=null;$('romAudioStop').hidden=true;finish();}}
 }
