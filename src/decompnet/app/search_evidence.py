@@ -113,7 +113,20 @@ def brief(net, proj, fn, source=None):
                      'argument-preparation/scheduling repairs before broad type or ABI changes.')
     if current:
         rows = [r for r in current['rows'] if len(r)==3 and r[0]!=' ']
+        from ..candidate_scope import callees
         from ..diff_summary import advice
+        from .model_replay_evidence import contract, matched_callers, probe, target_trace
+
+        header = (net._context(proj['id'], fn['unit']) or {'header': ''})['header']
+        if rows:
+            if clue := target_trace(current['rows'], proj['arch']):
+                lines.append(clue)
+            nearby = callees(net, proj, fn, source, max_source_chars=8000)
+            if clue := contract(source, header, current['rows'], nearby, name=fn['name'],
+                                callers=matched_callers(net, proj, fn)):
+                lines.append(clue)
+            if clue := probe(current['rows'], proj['arch']):
+                lines.append(clue)
         if hint := advice(current['rows']):lines.append(hint)
         clues = allocation_evidence.text(current['rows'],proj['arch'])
         if clues:lines.append(clues)

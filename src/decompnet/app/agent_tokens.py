@@ -875,7 +875,7 @@ def local_family(net, agent, slug, function, revision, family, old='', declarati
         return (f'Selected declaration {declaration}.\n' if declaration else '') + result
 
 
-def variants(net, agent, slug, function, revision, patches, family="explicit patches", *, seconds=60, deadline=None, provenance_kind='agent batch', variant_families=None):
+def variants(net, agent, slug, function, revision, patches, family="explicit patches", *, seconds=60, deadline=None, provenance_kind='agent batch', variant_families=None, combine=False):
     """Independent alternatives against one snapshot, with one deadline across preparation and trials."""
     if deadline is None:
         deadline = time.monotonic() + seconds
@@ -884,6 +884,8 @@ def variants(net, agent, slug, function, revision, patches, family="explicit pat
     from .tools import _compile
     if not isinstance(patches, list) or not 1 <= len(patches) <= 6:
         raise NetworkError('Send 1 to 6 independent patches with old and new text.')
+    if combine and (family != 'explicit patches' or not 2 <= len(patches) <= 5):
+        raise NetworkError('Send 2 to 5 independent patches to reserve one trial for a combination.')
     fn = net._function(function, slug)
     with net.attempt_turn(agent, fn):
         source, actual = candidate(net, agent, slug, function)
@@ -948,6 +950,7 @@ def variants(net, agent, slug, function, revision, patches, family="explicit pat
                 f"{i}: "+'\n'.join(list(difflib.unified_diff(source.splitlines(),text.splitlines(),n=0,lineterm=''))[2:14])[:600]
                 for i,text in enumerate(candidates,1)))
         durable_scope=target_scope(net,fn,'')
+        combined_source = None
         for i, src in enumerate(candidates, 1):
             if time.monotonic() >= deadline:
                 if last is None:
@@ -1013,6 +1016,22 @@ def variants(net, agent, slug, function, revision, patches, family="explicit pat
                 results.append(('Unchanged-output limit reached' if 'Unchanged-output limit reached' in result else 'Max tries reached')+'; no further variants submitted.')
             if net._function(function, slug)['status'] != 'open' or 'Max tries reached' in result or 'Unchanged-output limit reached' in result:
                 break
+            if combine and combined_source is None and i == len(candidates) and (baseline or {}).get('input_scope'):
+                from .model_replay_evidence import complementary_edits
+
+                siblings = [(source, baseline, candidate, evidence) for _, candidate, evidence, index in choices
+                            if index and evidence.get('input_scope') == baseline['input_scope']]
+                for composed, parent, left, right in complementary_edits(siblings):
+                    if composed in candidates or composed == source:
+                        continue
+                    combined_source = composed
+                    candidates.append(composed)
+                    results.append(f'Variant {i+1} combines nonoverlapping edits that recovered different target '
+                                   f'instructions. Starting score {parent["score"]}, individual scores '
+                                   f'{left["score"]} and {right["score"]}.')
+                    break
+        if combine and combined_source is None:
+            results.append('No measured complementary pair qualified for an extra compile.')
         for indices, summary in groups.values():
             results.append('Variants '+','.join(map(str,indices))+': '+summary)
         if baseline:

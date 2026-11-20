@@ -655,8 +655,8 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "get_compiler_trial": compiler_experiments.retrieve,
     "review_search_seed": reviewed_search_seeds.review,
     "get_search_brief": search_brief.read,
-    "try_local_repairs": lambda net,agent,slug,function,revision,families=None,max_trials=6:
-        local_experiments.run(net,agent,slug,function,revision,families,max_trials),
+    "try_local_repairs": lambda net,agent,slug,function,revision,families=None,max_trials=6,anchor='':
+        local_experiments.run(net,agent,slug,function,revision,families,max_trials,anchor=anchor),
     "compile_family": agent_tokens.local_family,
     "family_targets": agent_tokens.family_targets,
     "get_assembly": lambda net, agent, slug, function, start=0, limit=60, focus="": agent_tokens.assembly(net, slug, function, start, limit, focus, agent),
@@ -1290,11 +1290,12 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
                          suggested_category=suggested_category)
 
     @tool
-    async def compile_variants(ctx: Context, function: str, revision: str, patches: list[dict]) -> str:
+    async def compile_variants(ctx: Context, function: str, revision: str, patches: list[dict], combine: bool = False) -> str:
         """Try 1–6 independent old/new replacements against one candidate revision. Each patch can specify occurrence=1-based index for repeated old text. Normal judge and limits.
         Stops on match or claim error; returns a compact table and current revision. Cached or rejected
-        trials may retain earlier C. Each patch starts from the original snapshot, not the previous patch."""
-        return await run(ctx, 'compile_variants', function=function, revision=revision, patches=patches)
+        trials may retain earlier C. Each patch starts from the original snapshot. With combine=true, send
+        2–5 patches and reserve one trial for nonoverlapping edits that improve different target instructions."""
+        return await run(ctx, 'compile_variants', function=function, revision=revision, patches=patches, combine=combine)
 
     @tool
     async def compiler_experiments(ctx: Context, function: str, revision: str, trials: list[CompilerTrial]) -> str:
@@ -1317,9 +1318,9 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         return await run(ctx,'get_search_brief',function=function,base=base)
 
     @tool
-    async def try_local_repairs(ctx: Context, function: str, revision: str, families: list[str] | None = None, max_trials: int = 6) -> str:
-        """Try applicable local repairs against one revision; at most six normal compiles and 60 seconds. Omit families to discover repairs. Includes local_widening, callee_parameter_width, callee_return_width, split_integer_lifetime, merge_integer_lifetimes, branch_call, goto_leaf and switch_layout. Retain best continuation; use instead of parallel family probes."""
-        return await run(ctx,'try_local_repairs',function=function,revision=revision,families=families,max_trials=max_trials)
+    async def try_local_repairs(ctx: Context, function: str, revision: str, families: list[str] | None = None, max_trials: int = 6, anchor: str = '') -> str:
+        """Try applicable local repairs against one revision; at most six normal compiles and 60 seconds. Omit families to discover repairs. Give an exact unique C anchor to restrict edits to that span. Includes local_widening, callee_parameter_width, callee_return_width, split_integer_lifetime, merge_integer_lifetimes, branch_call, goto_leaf and switch_layout. Retain best continuation; use instead of parallel family probes."""
+        return await run(ctx,'try_local_repairs',function=function,revision=revision,families=families,max_trials=max_trials,anchor=anchor)
 
     @tool
     async def compile_family(ctx: Context, function: str, revision: str, family: str,
