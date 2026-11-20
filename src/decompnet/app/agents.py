@@ -1024,6 +1024,25 @@ class Manager:
                 self._prepare(s.slug)
             self._launch(s)
 
+    def restart_project(self, slug: str) -> dict:
+        """Restart stopped helpers on this project and report any that need attention."""
+        with self._lock:
+            stopped = [s for s in self.sessions.values() if s.slug == slug and s.state == "stopped"
+                       and not s.configuration_error]
+        restarted = []
+        errors = []
+        for session in stopped:
+            with self._lock:
+                if self.sessions.get(session.id) is not session or session.state != "stopped":
+                    continue
+                try:
+                    self.restart(session.id)
+                except (ValueError, NetworkError) as error:
+                    errors.append({"label": session.label, "message": str(error)})
+                else:
+                    restarted.append(session.id)
+        return {"restarted": restarted, "errors": errors}
+
     def resume(self) -> list[str]:
         """Resume saved helpers without holding the UI's agent-state lock during project synchronization."""
         ids = []

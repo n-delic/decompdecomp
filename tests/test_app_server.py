@@ -3740,3 +3740,38 @@ def test_function_settings_recheck_is_one_job_a_returning_panel_finds(app, monke
         time.sleep(.01)
     assert client.get('/api/job', params={'id':job}).json()['state'] == 'cancelled'
     assert client.post('/api/compiler/unverified', json={'slug':slug, 'action':'other'}, headers=headers).status_code == 400
+
+
+def test_restart_all_restarts_only_stopped_agents_on_the_project(app, monkeypatch):
+    client, _, manager = app
+    monkeypatch.setattr(manager, "sessions", {})
+    agents_to_restart = [
+        ("stopped", "game", "stopped", False),
+        ("blocked", "game", "stopped", False),
+        ("second", "game", "stopped", False),
+        ("invalid-model", "game", "stopped", True),
+        ("paused", "game", "paused", False),
+        ("working", "game", "working", False),
+        ("other-project", "other", "stopped", False),
+    ]
+    for name, slug, state, rejected in agents_to_restart:
+        session = agents.Session(name, "codex", name, slug, name, {}, state=state)
+        session.configuration_error = rejected
+        manager.sessions[name] = session
+
+    def launch(session):
+        session.state = "starting"
+
+    monkeypatch.setattr(manager, "_prepare", lambda _: None)
+    monkeypatch.setattr(manager, "_launch", launch)
+    manager.sessions["blocked"].thread = type("StoppingThread", (), {"is_alive": lambda self: True})()
+    response = client.post("/api/agents/restart", json={"slug": "game"}, headers={"X-Decomp": "1"})
+    assert response.status_code == 200
+    assert response.json() == {
+        "restarted": ["stopped", "second"],
+        "errors": [{"label": "blocked", "message": "blocked is still stopping: try again in a moment"}],
+    }
+    assert {sid: s.state for sid, s in manager.sessions.items()} == {
+        name: "starting" if name in {"stopped", "second"} else state
+        for name, _, state, _ in agents_to_restart
+    }
