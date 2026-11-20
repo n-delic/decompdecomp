@@ -8072,3 +8072,41 @@ the first deep-permuter trial (4,304 linked bytes). Reversing the operands score
 730. Replacing the shift alone left the score unchanged. Newly generated m2c
 output in both syntax modes failed to compile, including after draft refinement
 and macro expansion. Neither draft exposed the four-statement pattern.
+
+### Round 20: loop preheader order, a getter twin and unsigned conversion (TWINE, gcc-2.7.2-kmc `-O2`)
+
+Twelve open functions of a 4,000-function N64 game were worked by hand with the game's own KMC
+`-G0 -mips3 -mgp32 -mfp32 -O2`. Three became exact and two improved; all were adopted through Try.
+
+- **A pointer walk whose start comes after the hoisted constants is an indexed loop** (470 → 0, 250 → 0): when the
+  target loads a loop's walking pointer or byte offset *after* the loop invariants gcc hoisted (constants such as `2`,
+  `2.5f` or `0xFFFF`), the pointer is a reduced induction variable of the counter, not a variable the C set before the
+  loop: loop.c emits a reduced giv's start value after the moved invariants. m2c's `p = &table; do { ... p++; }` put the
+  start first. Indexing the array by the counter (`D[i]`) or writing the byte offset from it (`*(T **)((i << 2) + D)`)
+  matched. In the second case `D + i * 4` (and `D[i]` on a typed array) still scored 415: only the shift-left form kept
+  the `lui; addu; lw %lo(D)` address shape.
+- **A sentinel constant reloaded for an inner loop comes from a `while` loop** (250 → 60 on the way to the match
+  above): when the target compares against `0xFFFF` with one register before an inner loop and loads `0xFFFF` again for
+  the inner loop's own test, the inner loop was `while ((v = *p) != 0xFFFF)`, not m2c's `if (v != 0xFFFF) do { }
+  while (...)`, whose two tests share one register.
+- **A getter twin of a matched setter** (635 → 0): a draft adapted from a setter in the same family was a different
+  function. The target ended in `lhu` of a field at 0xFC6 and returned it; the matched family's inline find helper plus
+  `return table[i].field;` matched at once. Read the target's last loads before trusting an adapted draft.
+- **`u32` from `f64` explains the "frame with no stores"** (1480 → 200): a leaf that allocates 8 bytes of stack it never
+  uses, with a `c.le.d` against a rodata constant and `| 0x80000000` on one arm, is gcc's expansion of a double-to-
+  unsigned conversion (`field = (u32)time;`). Writing the conversion out with the game's constant symbol scored worse
+  (1130–1220: no frame, the `0x80000000` in another register). The remaining 200 is where the table pointer is
+  loaded relative to the hoisted constants; the global pointer (not an array) can't be a reduced giv, since stores
+  through it may alias it.
+- **Two divisions kept apart** (1470 → 100): `rate * D / 1000 / 192` folds into one `/192000`; the game divides by
+  1000 into a `u32` local and then by 192 (`size = size / 192 * 192 + 192`). A signed local gives `sra` rounding fixes
+  (955). The last 100 is the size and the allocated record swapping `$s1`/`$s2`; declaration order, `register` and
+  moving the stores didn't change it.
+
+Tried without gain: an offset register copied at a loop's join (`move $a1, $v1`, 215; arrays, `s32`, scalings and
+goto forms); a leaf with an unused 0x18-byte frame computing a spherical vector (875; struct/array locals, operand
+orders: 1255–2805); a loop whose stored-through pointer splits into two induction variables (670); an RSP task setup
+where the game rematerialises a symbol after a subtraction (515); an inline check whose return value lives in `$a1`
+(640; nested ifs and gotos 850); a DMA call whose last stack argument is reloaded through the counter pointer after
+the previous stack store (615; `*p` gets CSE'd, 1370); and a switch whose `j` delay slots the game fills with the
+loads before them (600).
