@@ -73,11 +73,15 @@ def prepare_source(net, proj, fn):
     return {**dict(fn), **dict(net._function(fn['name'], proj['slug']))}
 
 
-def validate(net, slug, name, minutes, max_variants):
+def validate_limits(minutes, max_variants):
     if isinstance(minutes, bool) or not isinstance(minutes, int) or not 1 <= minutes <= 120:
         raise NetworkError('Choose a time limit from 1 to 120 minutes.')
     if isinstance(max_variants, bool) or not isinstance(max_variants, int) or not 1 <= max_variants <= 1000000:
         raise NetworkError('Choose a variant limit from 1 to 1,000,000.')
+
+
+def validate(net, slug, name, minutes, max_variants):
+    validate_limits(minutes, max_variants)
     proj = net.project_row(slug)
     fn = net._function(name, slug)
     from .boundary_repairs import blocked
@@ -567,10 +571,10 @@ class Search(Permuter):
             observed_choices = []
             if not fork and proj['arch'] == 'mips' and self.measured_winner(fn, source):
                 settings = compiler_for(self.net.cfg(proj), fn['vram'], fn)
-                def resolve_symbol(symbol, project_id=proj["id"]):
-                    return self.net.symbols(project_id).resolve(symbol)
-                def read_data(symbol, width, project=proj, function=fn):
-                    address = resolve_symbol(symbol)
+                symbol_table = self.net.symbols(proj['id']) if hasattr(self.net,'symbols') else None
+                resolve_symbol = symbol_table.resolve if symbol_table is not None else None
+                def read_data(symbol, width, project=proj, function=fn, resolve=resolve_symbol):
+                    address = resolve(symbol) if resolve else None
                     if address is None:
                         return None
                     try:
@@ -583,8 +587,8 @@ class Search(Permuter):
                     source, fn['name'], header, proj['arch'], settings.get('toolchain',''),
                     self.winner_diff[0], fn['asm'], self.winner_jump_tables,
                     flags=settings.get('flags',()), big_endian=bool(proj['big_endian']),
-                    resolve=resolve_symbol if hasattr(self.net,'symbols') else None,
-                    read_data=read_data if hasattr(self.net,'reader') and hasattr(self.net,'symbols') else None) if child not in self.local_seen]
+                    resolve=resolve_symbol, symbols=symbol_table,
+                    read_data=read_data if hasattr(self.net,'reader') and resolve_symbol else None) if child not in self.local_seen]
             observed_order = {child:index for index,(_,child) in enumerate(observed_choices)}
             focused_choices = observed_choices + buffer_choices + store_choices + frame_choices
             focused_pass = bool(focused_choices)

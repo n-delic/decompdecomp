@@ -8393,3 +8393,44 @@ Two archived N64 failed sources were rebuilt and tested with KMC GCC 2.7.2,
   between a load and store to the same address and an upper immediate
   feeding its flag register. The constant can also exist in the failed
   assembly for another use, so a missing literal alone is not the signal.
+
+### One or two changed immediates (KMC GCC 2.7.2)
+
+Using the captured headers and compiler flags
+`-G0 -mips3 -mgp32 -mfp32 -O2`, the normal ROM linker recovered 15 archived
+matches from their saved failed attempts with the exact immediate edit:
+
+- Ten cases changed register-passed literals on direct calls. One needed
+  both argument literals in the same candidate (20 points to exact). A
+  single named call and its argument register identify which occurrence
+  to edit even when the same literal appears elsewhere in the function.
+- Two cases changed the mask in a bit test (10 points to exact). The
+  unchanged branch consumes the `andi` destination and identifies the test.
+- Three cases changed explicit field byte offsets (10 points to exact),
+  including zero in both directions. Access width, direction, and base
+  register matched. Frame and global-pointer offsets are excluded.
+
+The measured rule needs a diff restricted to immediate operands and uses
+the actual literal from each paired instruction. The broader target-literal
+heuristic remains useful for borrowed source with many changed constants.
+
+### Measured address binding and operand order (KMC GCC 2.7.2)
+
+Six archived N64 failed attempts reproduced exact linked matches at
+`-G0 -mips3 -mgp32 -mfp32 -O2` with their captured headers.
+
+- Two 20-point misses changed a local external object's binding. The
+  matching %hi/%lo pair identified a different known data or BSS symbol.
+  The failed address sometimes rendered as a nearby label plus an offset,
+  so resolving the full expression was necessary to find the source name.
+  Reuse the captured declaration's type and require all affected uses
+  to belong to the target function. A conditional-compilation example
+  with the same relocation shape still needs preprocessing evidence.
+- Three 5-point misses swapped the source operands of one MIPS `addu`.
+  Swapping a scaled index and scalar base, exposing a byte-pointer add
+  as integer arithmetic, or expressing a pointer-table index with its
+  original cast and `sizeof(*base)` recovered the corresponding match.
+- One 20-point miss reversed two stores that update reciprocal links
+  between adjacent array entries. Swapping the two source assignments
+  recovered the exact store order; indices, member names, and values
+  stayed the same.

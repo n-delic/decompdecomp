@@ -368,7 +368,8 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
     # threads holding its lane (lane_watch.py), which named nothing before when the fast lane jammed for minutes.
     from ..lane_watch import Watch
     from ..ui_diagnostics import current_route
-    lanes = Watch(home / "logs" / "request-lane-stacks.log")
+    lanes = Watch(home / "logs" / "request-lane-stacks.log",
+                  job_lock_owner=lambda: getattr(jobs._lock, "owner", None))
 
     def laned(lane, limiter, view=True):
         async def run(fn, *args):

@@ -135,3 +135,37 @@ void f(u8 *base, int select) {
     rows = [(' ', 'lui $s2, 0x2000', 'lui $s2, 0x2000'), (' ', 'lw $v0, ($a0)', 'lw $v0, ($a0)'),
             ('<', 'or $v0, $v0, $s2', ''), (' ', 'sw $v0, ($a0)', 'sw $v0, ($a0)')]
     assert ('kmc_truncated_literal',source.replace('(u16)','')) in route(source,rows,'')
+
+
+@pytest.mark.parametrize(('family','source','before','after','following','expected'), [
+    ('measured_call_literal','int f(void) { return pick(3); }',
+     'addiu $a0, $zero, 3','addiu $a0, $zero, 7','jal pick','pick(7)'),
+    ('measured_branch_mask','int f(int x) { if (!(x & 0x10)) return 0; return x; }',
+     'andi $v0, $v1, 0x10','andi $v0, $v1, 4','bnez $v0, next','(x & 0x4)'),
+    ('measured_byte_offset','void f(char *p) { M2C_FIELD(p,s8 *,1) = 0; }',
+     'sb $zero, 1($v0)','sb $zero, ($v0)','jr $ra','M2C_FIELD(p,s8 *,0)'),
+])
+def test_measured_literals_reach_kmc_proposals(family,source,before,after,following,expected):
+    rows = [('i',after,before),(' ',following,following)]
+    assert any(kind == family and expected in candidate for kind,candidate in route(source,rows,''))
+    assert family not in {kind for kind,_ in route(source,rows,'',compiler='ido-5.3')}
+
+
+def test_measured_address_binding_uses_the_project_data_symbol_table():
+    from decomprepair.symbols import Symbol, SymbolTable
+
+    source = 'extern char D_80001000[]; void f(void) { send(D_80001000); }'
+    rows = [('i','lui $a0, %hi(D_80022000)','lui $a0, %hi(D_80001000)'),
+            ('i','addiu $a0, $a0, %lo(D_80022000)','addiu $a0, $a0, %lo(D_80001000)')]
+    symbols = SymbolTable([Symbol('D_80022000',0x80022000,kind='bss')])
+    family='measured_relocation_binding'
+    assert (family,source.replace('D_80001000','D_80022000')) in proposals(
+        source,'f','','mips','gcc-2.7.2-kmc',rows,'',symbols=symbols)
+    assert family not in {kind for kind,_ in proposals(source,'f','','mips','gcc-2.7.2-kmc',rows,'')}
+    assert family not in {kind for kind,_ in proposals(source,'f','','mips','ido-5.3',rows,'',symbols=symbols)}
+
+
+def test_measured_address_add_reaches_the_deep_proposal_path():
+    source = 'extern s32 D_800BFF04; u16 *f(int a) { s32 i; i = a; return (u16 *)(D_800BFF04+i*8); }'
+    rows = [('r','addu $a1, $v0, $v1','addu $a1, $v1, $v0')]
+    assert ('measured_address_add',source.replace('D_800BFF04+i*8','i * 8 + D_800BFF04')) in route(source,rows,'')

@@ -79,8 +79,10 @@ class AppRepair:
             raise NetworkError("Install and sign in to Codex CLI to repair app source.")
         if not isinstance(diagnostics, str) or not diagnostics.strip() or len(diagnostics) > LOG_LIMIT:
             raise NetworkError("Enter a diagnostic excerpt of up to 16,000 characters.")
+        self.preview(source)  # Validate the failed job and check the checkout before reserving work.
         with self.jobs._lock:
-            existing = self.preview(source)["repair"]
+            existing = next((job["id"] for job in reversed(self.jobs.jobs.values())
+                             if job.get("repair_source") == source), None)
             if existing and self.jobs.jobs[existing]["state"] in {"running", "done"}:
                 return existing
             jid = self.jobs.start(KIND, lambda log: propose(root, connector, exe, diagnostics, log),

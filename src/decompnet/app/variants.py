@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import re
+import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -276,12 +277,17 @@ def shared_sources(net, slug):
     return result
 
 
+_job_admission = threading.Lock()
+
+
 def start_job(net, jobs, slug, kind, work):
     """Persist progress and terminal results; a new window follows the server-owned job ID."""
     own = member(net, slug)
     if not own:raise NetworkError('Attach a variant before starting shared work.')
-    with jobs._lock:
-        active = next((j for j in jobs.jobs.values() if j['kind'] == kind and j['state'] == 'running'
+    # Keep the durable reservation atomic among variant starts. The database can
+    # wait for a writer, so this must never hold the app-wide job registry lock.
+    with _job_admission:
+        active = next((j for j in jobs.jobs.copy().values() if j['kind'] == kind and j['state'] == 'running'
                        and member(net, j.get('activity_project') or '') and
                        member(net, j['activity_project'])['game'] == own['game']), None)
         if active:raise NetworkError('This variant task is already running. Follow its existing progress before starting another edit.')
