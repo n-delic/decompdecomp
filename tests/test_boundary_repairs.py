@@ -600,3 +600,19 @@ def test_safe_fix_apply_and_undo_use_each_mips_consoles_byte_order(tmp_path,monk
     assert net._function('head','game')['target']==image[:8]
     repair.undo(net,'game',result['fixed'][0]['key'])
     assert net._function('head','game')['size']==4 and net._function('tail','game')['gone_mark'] is None
+
+
+def test_byte_exact_builtin_sdk_evidence_resolves_nonreturning_assembly_extent():
+    import hashlib
+
+    from decompnet import consoles
+
+    target = raw(0x00002021, 0x0c000100, 0)
+    proof = {'verified': True, 'kind': 'sdk', 'verification_method': 'builtin-sdk-digest',
+             'bytes': len(target), 'target_sha256': hashlib.sha256(target).hexdigest()}
+    row = {'status': 'asm', 'target': target, 'meta': json.dumps({'verified_assembly': proof})}
+    console = consoles.get('n64')
+    assert repair.reason(console, row) is None
+    assert repair.reason(console, {**row, 'target': raw(0x00002021, 0x0c000104, 0)})
+    row['meta'] = json.dumps({'verified_assembly': proof, 'boundary_tail_review': 'Independent end evidence'})
+    assert repair.reason(console, row) == 'Independent end evidence'

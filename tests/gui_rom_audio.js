@@ -25,4 +25,7 @@ assert.ok(!vm.runInContext('romAudioHTML(region)',context).includes('data-audio-
 context.region.detected_asset={media:'audio',audio_kind:'indexed speech',label:'Speech bank',
  samples:[{offset:64,size:20,codec:'Speech',preview_available:false}]};
 assert.match(vm.runInContext('romAudioHTML(region)',context),/Speech bank.*Playback is unavailable/);
+context.region.detected_asset={media:'audio',audio_kind:'indexed sample directory',label:'Sample bank',
+ samples:[{offset:64,size:20,codec:'MusyX ADPCM',preview_available:true}]};
+assert.match(vm.runInContext('romAudioHTML(region)',context),/Sample bank.*Audio tab in Asset Browser/);
 console.log('Native audio selection, evidence labels and no-autoplay guards passed');

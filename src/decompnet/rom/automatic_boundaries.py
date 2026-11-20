@@ -45,7 +45,7 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
     for dest,offset,segment in shared:
         references[dest].discard((offset,segment))
         if not references[dest]:del references[dest]
-    functions = recover_inline_halfwords(functions, data, image, order, explicit | pointers, references, segments, log)
+    functions = recover_inline_tables(functions, data, image, order, explicit | pointers, references, segments, log)
     destinations=sorted(references)
     tables=[dict(rom_start=s.rom_start,rom_end=s.rom_end,vram=s.vram) for s in segments
             if 0<=s.rom_start<s.rom_end<=len(image) and not s.rom_start%4 and not s.rom_end%4]
@@ -181,8 +181,8 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
     return result
 
 
-def recover_inline_halfwords(functions, data, image, order, protected, references, segments, log):
-    """Recognize a short table reached through a never-taken link branch.
+def recover_inline_tables(functions, data, image, order, protected, references, segments, log):
+    """Recognize a short byte or halfword table reached through a never-taken link branch.
 
     Handwritten MIPS can use bltzal $zero to set $ra without transferring
     control, then load a table after the return using that PC-relative base.
@@ -217,21 +217,21 @@ def recover_inline_halfwords(functions, data, image, order, protected, reference
         if segment != previous.segment or not previous.rom <= offset < table.rom - 32:
             continue
         index = (offset - previous.rom) // 4
-        branch, delay, address, restore, add_first, add_second, load = previous.lines[index:index+7]
+        branch, delay, address, restore, first, second, third = previous.lines[index:index+7]
         register = (address.word >> 16) & 31
         delta = table.vram - (branch.vram + 8)
         if (branch.word != 0x04100000 | ((delta + 4) // 4 & 0xffff) or delay.word
                 or not 0 < delta <= 0x7fff or register in (0, 31)
                 or address.word != 0x27e00000 | register << 16 | delta
                 or restore.word & 0xfc1fffff != 0x0000f821
-                or add_first.word != add_second.word
-                or add_first.word & 0xffe0ffff != register << 21 | register << 11 | 0x21
-                or load.word & 0xffe0ffff != 0x94000000 | register << 21):
+                or first.word & 0xffe0ffff != register << 21 | register << 11 | 0x21
+                or not (second.word & 0xffe0ffff == 0x80000000 | register << 21
+                        or first.word == second.word and third.word & 0xffe0ffff == 0x94000000 | register << 21)):
             continue
         data.append(DataSymbol(table.name, table.vram, table.rom, size, 'data'))
         removed.add(id(table))
     if removed:
-        log(f'Recovered {len(removed)} PC-relative halfword tables from false function entries.')
+        log(f'Recovered {len(removed)} PC-relative tables from false function entries.')
         return [fn for fn in functions if id(fn) not in removed]
     return functions
 

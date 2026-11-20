@@ -23,6 +23,12 @@ def reason(console, row):
     if console.arch=='mips' and raw==bytes(4):
         return 'Single nop: possible padding, not a complete standalone function.'
     meta=json.loads(row['meta'] or '{}') if 'meta' in row.keys() else {}
+    proof = meta.get('verified_assembly') or {}
+    if (row['status'] == 'asm' and proof.get('verified') is True and proof.get('kind') == 'sdk'
+            and proof.get('verification_method') == 'builtin-sdk-digest'
+            and proof.get('bytes') == len(raw) and proof.get('target_sha256') == hashlib.sha256(raw).hexdigest()):
+        # A known assembly entry can end with a call to a non-returning SDK routine.
+        return meta.get('boundary_tail_review')
     return console.boundary_reason(raw) or meta.get('boundary_tail_review')
 
 

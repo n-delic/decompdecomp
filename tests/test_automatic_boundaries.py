@@ -261,3 +261,18 @@ def test_pc_relative_halfword_table_is_data_unless_called(independent_call):
     assert [(symbol.vram, symbol.rom, symbol.size) for symbol in data] == (
         [] if independent_call else [(BASE + 40, 40, 8)]
     )
+
+
+def test_pc_relative_byte_table_is_data():
+    words = [
+        0x03e00821, 0x04100008, 0, 0x27ef001c, 0x0020f821,
+        0x01e47821, 0x81e10000, 0, 0x03e00008, 0,
+        0x12345678, 0x8abcdef0,
+        0x03e00008, 0,
+        0x0c000000 | ((BASE + 48) >> 2 & 0x3ffffff), 0, 0x03e00008, 0,
+    ]
+    image, functions, segments = fixture(words, (0, 40, 48, 56, 72))
+    data = []
+    result = repair(functions, data, image, consoles.get('n64'), segments)
+    assert BASE + 40 not in {fn.vram for fn in result}
+    assert [(symbol.vram, symbol.size) for symbol in data] == [(BASE + 40, 8)]

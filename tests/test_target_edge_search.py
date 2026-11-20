@@ -206,3 +206,21 @@ def test_measured_stack_reservation_ignores_volatile_in_neighboring_source():
     shrinking = [(mark,b,a) for mark,a,b in rows]
     excess = source.replace('int result','char frame[8]; int result')
     assert dict(route(excess,shrinking,''))['measured_unused_frame_array'] == excess.replace('char frame[8];','')
+
+
+def test_measured_direct_return_reaches_kmc_proposals():
+    source = 's32 f(void *p) { s32 result = 0; if (p) result = *(s32 *)((char *)p + 0x10); return result; }'
+    rows = [('r','lw $v0, 0x10($v1)','lw $v1, 0x10($v0)'),
+            (' ','jr $ra','jr $ra'),('|','nop','move $v0, $v1')]
+    family = 'measured_direct_load_return'
+    expected = source.replace('result = *(s32','return *(s32').replace('return result;','return 0;')
+    assert (family,expected) in route(source,rows,'')
+    assert family not in dict(route(source,rows,'',compiler='ido-5.3'))
+
+
+def test_measured_sign_test_reaches_kmc_proposals():
+    source = 'int f(void) { s32 status = *(volatile s32 *)0x8000; return (status & 0x80000000U) != 0; }'
+    rows = [(' ','jr $ra','jr $ra'),('|','slti $v0, $v0, 0','srl $v0, $v0, 0x1f')]
+    family = 'measured_sign_test'
+    assert (family,source.replace('& 0x80000000U','>> 31')) in route(source,rows,'')
+    assert family not in dict(route(source,rows,'',compiler='ido-5.3'))

@@ -60,7 +60,8 @@ are listed separately; music sequencing, pitch, mixing and loops are not rendere
 region to choose a sample and prepare a local WAV preview; playback starts only with Play.
 Play supported Acclaim DEAN streams using codebooks verified in the ROM. Voice links from dialogue prepare the WAV preview.
 ROM Explorer also reads indexed Eurocom EDL archives, with separate texture and local-mesh previews.
-It lists the associated animation, scene, multilingual dialogue, MusyX and MORT speech indices.
+It lists the associated animation, scene, and multilingual dialogue indices.
+The Audio tab prepares WAV previews for MusyX samples and MORT dialogue clips.
 Find supported dialogue scripts in ROM Explorer and browse their cues by scene and speaker.
 Verified voice links open the audio inspector from individual cues. Related cutscene scripts open
 their command tables from the dialogue browser.

@@ -577,5 +577,6 @@ ROM Explorer recognizes the relative model and level index and exposes its textu
 model and companion resource tables. The Texture browser previews indexed images
 with their stored palettes. The Model browser previews local meshes from supported
 commands. Animation and scene indices expose record locations and metadata. The
-dialogue tables expose localized strings. MusyX samples and MORT speech clips are
-listed in Audio browser. These audio records can be inspected while playback is unavailable.
+dialogue tables expose localized strings. Prepare and play MusyX ADPCM samples in the
+Audio tab using the sample rate and predictor book stored in the ROM. Prepare MORT dialogue clips as WAV in the same tab.
+MusyX song records support index inspection.
