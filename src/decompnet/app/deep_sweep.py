@@ -586,7 +586,7 @@ class Sweeps:
         """One function's bounded turn, on whichever thread is free."""
         log.check_cancel()
         activity = stats["activity"]
-        activity.update(fn["name"])
+        activity.update(fn["name"], {"n_insns": fn["n_insns"]})
         with looking(self.net):
             build_scope = candidate_scope.key(self.net, proj, fn)
         self.record(fn, scope, 'running', minutes, variants)

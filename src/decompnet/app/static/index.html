@@ -653,13 +653,10 @@
         </div>
         <div class="small" id="deepSweepStatus" role="status" hidden></div>
         <details id="deepSweepAttention" hidden><summary id="deepSweepAttentionTitle"></summary><p class="deep-issue-intro">Grouped by reason. Select a function to inspect its saved C and settings.</p><div id="deepSweepAttentionList"></div><p class="deep-issue-footer">After fixing an issue, start the pass again. To retry unchanged inputs, enable <b>Repeat completed passes</b>. This list covers errors for the current inputs; matched and set-aside functions are excluded.</p></details>
-        <div id="deepSweepRecipes"></div>
-        <details class="deep-activity-section" id="deepActivitySection" hidden>
+        <details class="deep-activity-section" id="deepActivitySection" open hidden>
         <summary>Function activity <span class="muted small" id="deepActivityCount"></span></summary>
         <p class="deep-activity-empty small muted" id="deepActivityEmpty" hidden></p>
-        <button id="deepActivityShowRecent" class="ghost small-btn" type="button" hidden>Show recent results</button>
         <div class="deep-activity-controls">
-          <label><input id="deepActivityOnlyActive" type="checkbox" checked> Active only</label>
           <label>Sort by <select id="deepActivitySort">
             <option value="function">Function</option>
             <option value="improvements">Most improvements</option>
@@ -670,6 +667,7 @@
         </div>
         <div id="deepActivity" class="deep-activity"></div>
         </details>
+        <div id="deepSweepRecipes"></div>
         <details id="deepSweepLogSection" hidden><summary>Combined technical log</summary><div id="deepSweepLog"></div></details>
 
         <div class="deep-sweep-tools">

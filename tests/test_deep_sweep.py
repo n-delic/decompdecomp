@@ -43,8 +43,14 @@ def test_persists_bounded_completion_and_resumes_after_restart(sweep, monkeypatc
     if imported:
         monkeypatch.setattr(net, 'fork_slug', lambda _: 'game')
         net.forks = SimpleNamespace(get=lambda _: (None,SimpleNamespace(root=path,unit=lambda _:SimpleNamespace(source=None,target=None)),{}))
-    result = obj.run('game', 1, 10, Log())
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET n_insns=3 WHERE name='f0'")
+    log = Log()
+    result = obj.run('game', 1, 10, log)
     assert result['functions_tested'] == 2 and calls == ['f0','f1']
+    for group in ('workers', 'recent_workers'):
+        counts = {worker['function']: worker['n_insns'] for update in log.updates for worker in update.get(group, [])}
+        assert counts == {'f0': 3, 'f1': None}
     assert obj.history('game', net._function('f0','game'))['completed']
     # The pass's own improvements must not make it immediately eligible again.
     assert obj.run('game', 1, 10, Log())['functions_tested'] == 0

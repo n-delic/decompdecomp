@@ -8,8 +8,8 @@ function renderDeepActivity(progress = {}) {
     throughput.hidden = !progress.throughput;
     throughput.textContent = deepThroughputText(progress.throughput);
   }
-  const activeOnly = $("deepActivityOnlyActive"), sort = $("deepActivitySort");
-  activeOnly.onchange = sort.onchange = () => renderDeepActivity(deepActivitySnapshot);
+  const sort = $("deepActivitySort");
+  sort.onchange = () => renderDeepActivity(deepActivitySnapshot);
   const host = $("deepActivity"), slug = S.slug;
   if (host.dataset.slug !== slug) { host.replaceChildren(); host.dataset.slug = slug; }
   const rows = [...(progress.workers || []).map(w => ({...w, active:true})), ...(progress.recent_workers || [])];
@@ -31,7 +31,6 @@ function renderDeepActivity(progress = {}) {
     // Move existing cards into order, preserving expanded output and node identity.
     const position = rows.indexOf(worker);
     if (host.children[position] !== card) host.insertBefore(card, host.children[position] || null);
-    card.hidden = activeOnly.checked && !worker.active;
     card.dataset.active = String(!!worker.active);
     card.querySelector("[data-state]").textContent = worker.active ? "Working" : ({finished:"Turn complete",error:"Needs attention",waiting:"Waiting for claim",matched:"Matched",interrupted:"Stopped"}[worker.phase] || worker.phase);
     card.querySelector("[data-phase]").textContent = worker.active ? [worker.phase, worker.current_family].filter(Boolean).join(" · ") : "";
@@ -42,7 +41,10 @@ function renderDeepActivity(progress = {}) {
        worker.reason || "This turn has ended. This card is recent history, not an active worker.");
     result.hidden = !result.textContent;
     const percent = n => n == null ? "—" : `${Number(n) === 100 ? "100.0" : (Math.floor(Math.min(99.9, Number(n)) * 10 + 1e-8) / 10).toFixed(1)}%`;
-    card.querySelector("[data-metrics]").textContent = `${percent(worker.starting_percent)} → ${percent(worker.best_percent)} · ${worker.improvements || 0} improvements · ${worker.tested || 0} / ${worker.variant_limit || "—"} tested`;
+    const count = worker.n_insns;
+    const instructions = count == null ? "Instruction count unavailable" :
+      `${count.toLocaleString()} ${count === 1 ? "instruction" : "instructions"}`;
+    card.querySelector("[data-metrics]").textContent = `${instructions} · ${percent(worker.starting_percent)} → ${percent(worker.best_percent)} · ${worker.improvements || 0} improvements · ${worker.tested || 0} / ${worker.variant_limit || "—"} tested`;
     const bar = card.querySelector("progress");
     bar.max = worker.variant_limit || 1; bar.value = Math.min(bar.max, worker.tested || 0);
     const duration = seconds => {
@@ -55,10 +57,7 @@ function renderDeepActivity(progress = {}) {
       (worker.active && worker.seconds_left != null ? ` · ${duration(worker.seconds_left)} left` : "");
     card.querySelector("[data-output]").textContent = (worker.lines || []).join("\n");
   }
-  const hiddenHistory = activeOnly.checked && !(progress.workers || []).length && (progress.recent_workers || []).length;
-  $("deepActivityEmpty").hidden = !!(progress.workers || []).length || (!activeOnly.checked && !!rows.length);
-  $("deepActivityEmpty").textContent = hiddenHistory ? "No searches are active. Your filter is hiding the recent results." : "No function searches are active.";
-  $("deepActivityShowRecent").hidden = !hiddenHistory;
-  $("deepActivityShowRecent").onclick = () => { activeOnly.checked = false; renderDeepActivity(deepActivitySnapshot); };
+  $("deepActivityEmpty").hidden = rows.length > 0;
+  $("deepActivityEmpty").textContent = "No function activity yet.";
   $("deepActivityCount").textContent = `${(progress.workers || []).length} active · ${(progress.recent_workers || []).length} recent results`;
 }
