@@ -518,14 +518,66 @@ def test_batch_continuation_keeps_baseline_or_best_without_extra_attempt(tmp_pat
     assert 'return 7' in agent_tokens.candidate(net,a,'game','f')[0]
 
 
-def test_no_effect_streak_suggests_applicable_untried_family(tmp_path):
-    net,_=_game(tmp_path,[('f',10,'open')]);a,_=net.local_agent('a');fn=net._function('f','game')
+@pytest.mark.parametrize('mode', ['rom', 'fork'])
+@pytest.mark.parametrize('row, expected', [
+    (('i', 'addiu $v0, $a0, 1', 'addiu $v0, $a0, 2'), 'differing immediate'),
+    (('r', 'addu $v0, $a0, $s0', 'addu $v0, $a0, $s1'), 'definition to last use'),
+    (('s', 'sw $ra, 20($sp)', 'sw $ra, 24($sp)'), 'frame size'),
+    (('i', 'jal target_fn', 'jal candidate_fn'), 'target callee and its argument setup'),
+    (('>', '', 'nop'), 'condition, branches and side effects'),
+    (('i', 'lui $v0, %hi(D_80001000)', 'lui $v0, 0x8000'), 'no specific mismatch is visible'),
+])
+def test_no_effect_streak_recommends_measured_mismatch(tmp_path, mode, row, expected):
+    net, _ = _game(tmp_path, [('f', 10, 'open')])
+    agent, _ = net.local_agent('a')
     with net.store.tx() as db:
-        db.execute('UPDATE functions SET best_source=?',('int f(){\nint x;\nreturn x;}',))
-    net.claim_row(a,'game','f');rows=[('i','one','two')];net.keep_diff(a.id,fn['id'],rows)
-    for _ in range(3):
-        text=agent_tokens.feedback(net,a,'game','f','score 10\nmarkers: i=operand',rows)
-    assert 'Next valid local experiment' in text and 'family="signedness"' in text and 'target="next"' in text
+        db.execute("UPDATE projects SET arch='mips', config=?", (json.dumps({'kind': mode}),))
+        db.execute('UPDATE functions SET best_source=?', ('int f(int n){\nint x = n;\nreturn x;}',))
+    net.claim_row(agent, 'game', 'f')
+    fn = net._function('f', 'game')
+    rows = [row]
+    net.keep_diff(agent.id, fn['id'], rows)
+    reply = 'score 10\nmarkers: i=operand'
+    assert expected not in agent_tokens.feedback(net, agent, 'game', 'f', reply, rows)
+    text = agent_tokens.feedback(net, agent, 'game', 'f', reply, rows)
+    assert expected in text and 'compile_family' not in text
+    assert net._last_diffs[agent.id, fn['id']][0] == rows
+    assert net.store.one('SELECT COUNT(*) AS n FROM attempts')['n'] == 0
+
+
+def test_link_diagnostics_take_priority_over_an_unchanged_instruction_diff(tmp_path):
+    net, _ = _game(tmp_path, [('f', 10, 'open')])
+    agent, _ = net.local_agent('a')
+    net.claim_row(agent, 'game', 'f')
+    fn = net._function('f', 'game')
+    rows = [('i', 'addi r3, r3, 1', 'addi r3, r3, 2')]
+    net.keep_diff(agent.id, fn['id'], rows)
+    reply = 'score 10\nmarkers: i=operand\nwhen linking your code at the function\'s address:\n- undefined missing'
+    for _ in range(2):
+        text = agent_tokens.feedback(net, agent, 'game', 'f', reply, rows)
+    assert 'resolve the linker diagnostics' in text and 'undefined missing' in text
+    assert 'Next experiment:' not in text
+
+
+def test_retry_advice_discards_evidence_for_a_different_source_or_build(tmp_path):
+    net, _ = _game(tmp_path, [('f', 10, 'open')])
+    agent, _ = net.local_agent('a')
+    net.claim_row(agent, 'game', 'f')
+    fn = net._function('f', 'game')
+    source = 'int f(void) { return 2; }'
+    net._record(fn, agent, 10, source, 1)
+    net.keep_diff(agent.id, fn['id'], [('i', 'li r3, 1', 'li r3, 2')])
+    agent_tokens.outcome(net, agent, fn, source, 'score 10')
+    assert 'differing immediate' in agent_tokens.next_action(net, agent, fn, source=source)
+    assert 'judge this revision' in agent_tokens.next_action(net, agent, fn, source=source.replace('2', '3'))
+
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET target=X'01020304' WHERE id=?", (fn['id'],))
+    fn = net._function('f', 'game')
+    assert 'judge this revision' in agent_tokens.next_action(net, agent, fn, source=source)
+
+    agent_tokens.outcome(net, agent, fn, source, '❌ BUILD ERROR')
+    assert 'reported compiler or build error' in agent_tokens.next_action(net, agent, fn, source=source)
 
 
 @pytest.mark.parametrize('mode', ['rom','fork'])

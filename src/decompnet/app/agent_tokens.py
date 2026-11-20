@@ -14,6 +14,8 @@ from ..project import compiler_for
 from ..repair_feedback import trial
 from . import agent_targets
 
+LINK_NEXT = ('Next: resolve the linker diagnostics before testing changes to the instruction sequence. '
+             'Check the named symbol or data definition in the current function context.')
 
 def candidate(net, agent, slug, function):
     fn = net._function(function, slug)
@@ -163,7 +165,7 @@ def stale(net, agent, fn, submitted, source, actual, anchor=""):
                         'Apply your next patch to the current revision; get_candidate only if these changes are insufficient.\n'+origin+change)
 
 
-def next_action(net, agent, fn, source, revision):
+def next_action(net, agent, fn, *, rows=None, source=None):
     store = net.project_store(fn['project_id'])
     held = store.one('SELECT 1 FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id)
     if not held:
@@ -171,15 +173,23 @@ def next_action(net, agent, fn, source, revision):
     state = net.stall_status(fn['id'],agent.id,project_id=fn['project_id'])
     if state['compiles'] and state['no_better'] >= state['after']:
         return 'Next: move-on budget exhausted. Release with concise findings, then claim another function; no further tuning is recommended.'
-    for family in ('signedness','declaration_order'):
-        targets = agent_targets.valid_targets(source,family)
-        if any(available_target(net,fn,source,revision,family,t['old']) for t in targets):
-            return f'Next valid local experiment: compile_family(function="{fn["name"]}", revision="{revision}", family="{family}", target="next").'
-    for family,proposal in pattern_repairs.variants(source,fn['name']):
-        used = store.one('SELECT 1 FROM agent_variant_runs WHERE function_id=? AND revision=? AND family=?',fn['id'],revision,family)
-        if not used and not target_tried(net,fn,revision,'local:'+family,proposal) and not compiled_before(net,fn,proposal):
-            return f'Next applicable repair: compile_family(function="{fn["name"]}", revision="{revision}", family="{family}").'
-    return 'Next: inspect the first differing region with last_diff; fix structure, calls or types rather than repeating ineffective edits.'
+    if rows is None:
+        if not state['compiles']:
+            return 'Next: compile the current candidate to obtain a measured mismatch.'
+        measured = getattr(net, '_agent_outcomes', {}).get((agent.id, fn['id']))
+        if measured and measured['source'] == source:
+            from .agent_evidence import build_key
+            if measured.get('input_scope') == build_key(net, fn)[0]:
+                if measured.get('build_failed'):
+                    return 'Next: resolve the reported compiler or build error before tuning instructions.'
+                if '\nwhen linking your code' in measured.get('warnings', ''):
+                    return LINK_NEXT
+                rows = measured.get('rows')
+        if rows is None:
+            return 'Next: judge this revision to obtain a current instruction diff before choosing an edit.'
+    from .efficiency_feedback import next_experiment
+    project = store.one('SELECT arch FROM projects WHERE id=?', fn['project_id'])
+    return next_experiment(rows, arch=project['arch'])
 
 
 def patch(net, agent, slug, function, revision, old, new, repair_note='', repair_category='', repair_automation='', occurrence=0, suggested_category=''):
@@ -530,6 +540,7 @@ def feedback(net, agent, slug, function, text, previous):
         remember_log(net,agent,fn,warn)
         warn = concise_warnings(warn)
         warn = ('\n'+warn) if warn else ''
+    link_blocked = '\nwhen linking your code' in text
     if previous == rows:
         key = (agent.id, fn['id'])
         streaks = getattr(net, '_agent_unchanged', None)
@@ -537,15 +548,14 @@ def feedback(net, agent, slug, function, text, previous):
             streaks = net._agent_unchanged = {}
         streaks[key] = streaks.get(key, 0) + 1
         detail = 'Instruction diff unchanged from your previous compile (not merely an equal score).'
-        if streaks[key] >= 2:
-            detail += (' Multiple edits produced identical instructions. Change approach: inspect the differing '
-                       'region, try a local permutation search, or test independent alternatives with compile_variants; '
-                       'avoid repeating edits the compiler optimizes away.')
-            current_source, revision = candidate(net,agent,slug,function)
-            history = net.project_store(fn['project_id']).all('SELECT h.summary FROM attempt_hints h JOIN attempts a ON a.id=h.attempt_id '
-                                    'WHERE h.function_id=? AND a.agent_id=? ORDER BY h.attempt_id DESC LIMIT 3',fn['id'],agent.id)
-            detail += '\nRecent change history: ' + '; '.join(r['summary'][:180] for r in history if r['summary'])
-            detail += '\n'+next_action(net,agent,fn,current_source,revision)
+        if streaks[key] >= 2 and not link_blocked:
+            detail += ' Multiple edits produced identical instructions.'
+            detail += '\n' + next_action(net, agent, fn, rows=diagnostic)
+            history = net.project_store(fn['project_id']).all(
+                'SELECT h.summary FROM attempt_hints h JOIN attempts a ON a.id=h.attempt_id '
+                'WHERE h.function_id=? AND a.agent_id=? ORDER BY h.attempt_id DESC LIMIT 3', fn['id'], agent.id)
+            if history:
+                detail += '\nRecent change history: ' + '; '.join(row['summary'][:180] for row in history)
     else:
         getattr(net, '_agent_unchanged', {}).pop((agent.id, fn['id']), None)
         # Show newly changed differing rows first, with ordinary first-region fallback.
@@ -555,6 +565,8 @@ def feedback(net, agent, slug, function, text, previous):
     from ..source_lines import feedback_note
     mapping = ('\nInstruction differences unchanged; repeated C-line table omitted. Source line numbers may have shifted; get_candidate supplies current C.'
                if previous == rows else feedback_note(text, rendering_rows=[a for a,b in zip(rows,diagnostic) if a[0]!=' ' and b[0]==' ']))
+    if link_blocked:
+        warn = '\n' + LINK_NEXT + warn
     return head + detail + mapping + warn + '\nFull/paged instructions: last_diff(function, start=0, limit=40).'
 
 
@@ -635,7 +647,9 @@ def outcome(net, agent, fn, source, text):
     kept = net._last_diffs.get((agent.id, fn['id'])) if score is not None else None
     offsets = [text.index(mark) for mark in ('\ncompiler output:', '\nwhen linking your code') if mark in text]
     warnings = text[min(offsets):] if offsets else ''
-    value = {'source': source, 'score': score, 'rows': list(kept[0]) if kept else None, 'legend': kept[1] if kept else scoring.LEGEND, 'warnings': warnings}
+    value = {'source': source, 'score': score, 'rows': list(kept[0]) if kept else None,
+             'legend': kept[1] if kept else scoring.LEGEND, 'warnings': warnings,
+             'build_failed': 'COMPILE ERROR' in text or 'BUILD ERROR' in text}
     from .agent_evidence import build_key
     current=net.project_store(fn['project_id']).one('SELECT * FROM functions WHERE id=?',fn['id'])
     if current is not None:

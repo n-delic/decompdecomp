@@ -52,10 +52,10 @@ def test_stale_patch_supplies_exact_current_lines_and_exhaustion_stops_suggestio
     net,agent,fn,source = setup_candidate(tmp_path)
     error = agent_tokens.stale(net,agent,fn,'missing',source,'current')
     assert '1: int f(){' in str(error) and 'not part of the patch anchor' in str(error)
-    assert 'claim ended' in agent_tokens.next_action(net,agent,fn,source,'rev')
+    assert 'claim ended' in agent_tokens.next_action(net, agent, fn)
     net.claim_row(agent,'game','f')
     monkeypatch.setattr(net,'stall_status',lambda *a,**kwargs:{'compiles':8,'no_better':8,'after':8})
-    assert 'budget exhausted' in agent_tokens.next_action(net,agent,fn,source,'rev')
+    assert 'budget exhausted' in agent_tokens.next_action(net, agent, fn)
 
 
 def test_compiler_guidance_is_advisory_and_does_not_guess_types():
