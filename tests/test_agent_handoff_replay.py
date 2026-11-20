@@ -1,4 +1,7 @@
-"""Replay a stalled checksum and hand it off through the real ROM and project judges."""
+"""Replay a stalled checksum and hand it off through the real ROM and project judges.
+
+The standard ROM fixture runs the console's build.py in the shared demo build directory.
+"""
 from pathlib import Path
 
 import pytest
