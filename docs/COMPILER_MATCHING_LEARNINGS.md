@@ -8198,3 +8198,19 @@ loads before them (600).
   the constants the loop hoists. Indexed forms (`&D[i]`, `D + i`, a local base, a `const` global, a local count) all
   scored 1300-2025, because gcc 2.7.2 keeps the `* 0x68` multiply when the base is a global it can't prove invariant.
   The m2c cursor walk at 200 stays the best.
+
+### Keep an address live across a call while leaving the load in place
+
+- **Evidence:** Exact ROM-mode replay on one 875-instruction N64 function with
+  `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`. The saved draft scored 25
+  with five register-only differences, two acyclic local register chains, and
+  a 360-byte frame on both sides.
+- **Source change:** Capture the fixed byte-array address in a dead pointer local
+  before the renderer reads its global camera pointer. Read through that local
+  at the subsequent call, preserving the position and type of the original
+  pointer load. The same local takes a different address in a later phase.
+- **Result:** The deep permuter's allocation search found and saved the linked
+  byte match at score 0 within 24 candidates. The frame and compiler profile
+  stayed the same. Testing alternate flags on the saved draft did not improve
+  its score. Stripping its one-iteration `do … while (0)` scopes raised the
+  score to 850, so startup recovery now preserves those scopes.

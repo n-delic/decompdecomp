@@ -88,3 +88,30 @@ def test_chain_lane_rotates_families_instead_of_filling_all_slots_with_one_famil
     labels={s:'pointer_local_reuse' for s in choices};labels['declarations']='spill_declaration_order'
     lane=allocation_search.proposals('void f(void){}','f','mips',CHAIN,choices,labels)
     assert len(lane)==8 and lane[:2]==[('pointer_local_reuse','p0'),('spill_declaration_order','declarations')]
+
+
+def test_chain_lane_prioritizes_staging_an_address_across_a_call():
+    source = """extern char state[];
+extern unsigned *camera;
+extern unsigned records[];
+void render(unsigned *);
+void consume(void *);
+void f(void) {
+    unsigned *slot;
+    unsigned *view;
+    view = camera;
+    render(view);
+    consume(*(void **)(state + 16));
+    slot = &records[0];
+    render(slot);
+}
+"""
+    choices = [str(i) for i in range(20)]
+    labels = {c: 'pointer_local_reuse' for c in choices}
+    lane = allocation_search.proposals(source, 'f', 'mips', CHAIN, choices, labels)
+    family, candidate = lane[0]
+    assert family == labels[candidate] == 'pointer_address_lifetime'
+    assert candidate == source.replace('    view = camera;', '    slot = (void *)(state + 16);\n    view = camera;'
+                                      ).replace('*(void **)(state + 16)', '*(void **)slot')
+    assert len(lane) == 8
+    assert not allocation_search.proposals(source, 'f', 'mips', CONTROL, [], {})

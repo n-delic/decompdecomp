@@ -16,7 +16,7 @@ UNTYPED = re.compile(r'(?<![\w.])register\s+[A-Za-z_]\w*\s*=(?!=)')
 
 def damaged(source: str | None) -> bool:
     from decomprepair import debris
-    return bool(source) and (bool(UNTYPED.search(source)) or debris.clean(source) is not None)
+    return bool(source) and (bool(UNTYPED.search(source)) or debris.clean(source, unwrap_do_zero=False) is not None)
 
 
 def restore(net, proj, fn):
@@ -35,7 +35,7 @@ def restore(net, proj, fn):
         # (most such bests have no clean attempt left: the C with the stray `register` taken out, judged as an attempt
         # would be; a lower stored score than the C's real one would make the search reject every true improvement)
         from decomprepair import debris
-        source = debris.clean(fn['best_source']) or fn['best_source']
+        source = debris.clean(fn['best_source'], unwrap_do_zero=False) or fn['best_source']
         from ..project import compiler_for
         own = compiler_for(net.cfg(proj), fn['vram'], fn)
         flags = own['flags'].split() if isinstance(own['flags'], str) else list(own['flags'])
