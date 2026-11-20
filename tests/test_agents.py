@@ -613,6 +613,27 @@ def quiet(monkeypatch):
     monkeypatch.setattr(agents.Manager, "_run", lambda self, s: None)
 
 
+@pytest.mark.parametrize("field", ["error", "content"])
+def test_missing_assigned_compiler_pauses_only_the_affected_helper(tmp_path, quiet, field):
+    net = _game(tmp_path)
+    manager = agents.Manager(net, tmp_path, URL)
+    sid, other_sid = manager.start("codex", "game", 2, {})
+    helper, other = manager.sessions[sid], manager.sessions[other_sid]
+    actor, _ = net.local_agent(helper.agent_name)
+    helper.record = lambda *_: None
+    helper.state = other.state = "working"
+    message = "toolchain 'gcc-2.7.2-kmc' is not installed: install it in decompdecomp, under Compilers & tools"
+    response = {field: ("error: " if field == "content" else "") + message}
+    manager.record_agent(actor, "game", "tool_response", {"name": "try_compiler", **response})
+    assert helper.state == "working"
+    manager.record_agent(actor, "game", "tool_response", {"name": "compile_and_diff", **response})
+    assert helper.state == "paused"
+    assert helper.stop.is_set()
+    assert helper.why == message
+    assert other.state == "working"
+    assert not other.stop.is_set()
+
+
 def test_helpers_are_records_that_outlive_the_app(tmp_path, quiet):
     """After a restart the Agents view showed opencode-20 with only "agents running": helpers lived in the app's memory
     and their claims in the database, so a dead helper's claim showed as a "connected agent" with no stop button, and

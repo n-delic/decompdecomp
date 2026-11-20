@@ -1672,6 +1672,9 @@ class Manager:
                 s.error = f"{type(e).__name__}: {e}"
                 s.push("error", s.error)
                 ok = False
+            if s.state == "paused" and s.stop.is_set():
+                self._session_end(s, row, agent, began, "paused")
+                break
             from .tool_connections import failure as connection_failure_report
             if ok and not s.stop.is_set() and (transport := connection_failure_report(s,self.net)):
                 connection_failures += 1
@@ -1858,7 +1861,32 @@ class Manager:
         for session in list(self.sessions.values()):
             if session.agent_name == agent.name and session.slug == slug and session.record:
                 session.record(kind, value)
+                if kind == "tool_response":
+                    self._pause_for_missing_compiler(session, value)
                 break
+
+    def _pause_for_missing_compiler(self, session, response):
+        # These tools use the assigned compiler. A diagnostic tool may deliberately
+        # probe an uninstalled alternative while the ordinary judge is usable.
+        if response.get("name") not in {
+            "compile_and_diff", "compile_patch", "compile_variants",
+            "compile_family", "try_local_repairs", "make_readable", "polish_function",
+        }:
+            return
+        error = response.get("error") or (response.get("content") or "").removeprefix("error: ")
+        if not re.fullmatch(
+            r"toolchain '[\w.+-]+' is not installed: install it in decompdecomp, under Compilers & tools",
+            error.strip(),
+        ):
+            return
+        with self._lock:
+            if session.state != "working" or session.stop.is_set():
+                return
+            session.stop.set()
+            session.error = error
+            self._pause(session, error, "Install the compiler, then press Start on this helper.")
+            if session.proc is not None:
+                _terminate(session.proc)
 
     def transcript(self, slug, helper, session=0, after=0, before=0, whole=False):
         result = self.transcripts.read(slug, helper, session, after, before, whole=whole)
