@@ -2655,7 +2655,8 @@ def test_saved_import_reports_request_phases_without_changing_verdict(project):
 
 
 @pytest.mark.parametrize('transport', ['direct','mcp'])
-@pytest.mark.parametrize('tool', ['compile_and_diff','compile_patch','compile_variants','add_note','release_function',
+@pytest.mark.parametrize('tool', ['compile_and_diff','compile_patch','compile_variants','compile_family','try_local_repairs',
+                                  'add_note','release_function',
                                   'claim_readable','polish_function','make_readable'])
 def test_tool_entry_uses_foreground_lane_during_saved_verification(project,monkeypatch,tool,transport):
     from concurrent.futures import Future, ThreadPoolExecutor
@@ -2686,6 +2687,8 @@ def test_tool_entry_uses_foreground_lane_during_saved_verification(project,monke
         'compile_and_diff':{'source':'good foreground'},
         'compile_patch':{'revision':'synthetic','old':'saved','new':'foreground'},
         'compile_variants':{'revision':'synthetic','patches':[]},
+        'compile_family':{'revision':'synthetic','family':'signedness'},
+        'try_local_repairs':{'revision':'synthetic','families':['signedness']},
         'add_note':{'text':'fresh foreground findings'},
         'release_function':{'notes':'fresh foreground findings'},
         'claim_readable':{}, 'polish_function':{'comment':'Describe the function.'},
@@ -2732,7 +2735,8 @@ def test_tool_foreground_scope_resets_on_dispatch_error_and_keeps_sync_outside_r
     assert not getattr(net.progress.local,'foreground',False)
 
 
-@pytest.mark.parametrize('tool,args', [('compile_and_diff',{}),('release_function',{'needs':'g'}),
+@pytest.mark.parametrize('tool,args', [('compile_and_diff',{}),('compile_family',{}),('try_local_repairs',{}),
+                                     ('release_function',{'needs':'g'}),
                                      ('release_function',{'not_c':True}),('edit_context',{})])
 def test_tool_entry_waits_for_unready_evidence_and_keeps_other_mutations_serialized(project,monkeypatch,tool,args):
     from concurrent.futures import ThreadPoolExecutor, TimeoutError
@@ -2741,7 +2745,7 @@ def test_tool_entry_waits_for_unready_evidence_and_keeps_other_mutations_seriali
     from decompnet.app.progress import _Recheck
     net,folder,_=project;worker=net.progress
     agent,_=net.local_agent('you')
-    active=_Recheck(folder,worker._signature(folder),ready=tool!='compile_and_diff')
+    active=_Recheck(folder,worker._signature(folder),ready=tool not in {'compile_and_diff', 'compile_family', 'try_local_repairs'})
     worker.rechecking['game']=active
     dispatched=[]
     monkeypatch.setattr(tools,'_dispatch',lambda *a:dispatched.append(1) or 'finished')
@@ -2755,7 +2759,8 @@ def test_tool_entry_waits_for_unready_evidence_and_keeps_other_mutations_seriali
         assert future.result(timeout=3)=='finished'
 
 
-def test_tool_entry_rejects_saved_file_edit_during_recheck_before_dispatch(project,monkeypatch):
+@pytest.mark.parametrize('tool', ['compile_and_diff', 'compile_family', 'try_local_repairs'])
+def test_tool_entry_rejects_saved_file_edit_during_recheck_before_dispatch(project,monkeypatch,tool):
     from decompnet.app import tools
     from decompnet.app.progress import _Recheck
     net,folder,_=project;worker=net.progress
@@ -2765,7 +2770,7 @@ def test_tool_entry_rejects_saved_file_edit_during_recheck_before_dispatch(proje
     monkeypatch.setattr(tools,'_dispatch',lambda *a:pytest.fail('stale imported context reached tool'))
     try:
         with pytest.raises(NetworkError,match='Saved files changed during the recheck'):
-            tools._invoke(net,agent,'game','compile_and_diff',{'function':'f'})
+            tools._invoke(net,agent,'game',tool,{'function':'f'})
     finally:worker.rechecking.pop('game',None)
     assert not getattr(worker.local,'foreground',False)
 
