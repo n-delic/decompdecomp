@@ -90,6 +90,15 @@ CREATE TABLE IF NOT EXISTS agent_selection(
   project TEXT NOT NULL, agent TEXT NOT NULL, policy TEXT NOT NULL, PRIMARY KEY(project, agent));
 CREATE TABLE IF NOT EXISTS claims(
   function_id INTEGER PRIMARY KEY, agent_id INTEGER NOT NULL, claimed_at REAL, expires_at REAL);
+CREATE TABLE IF NOT EXISTS claim_routing_samples(
+  project_id INTEGER NOT NULL, function_id INTEGER NOT NULL, agent_id INTEGER NOT NULL,
+  claimed_at REAL NOT NULL, profile TEXT NOT NULL, band TEXT NOT NULL,
+  tested INTEGER NOT NULL DEFAULT 0, won INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(function_id,agent_id,claimed_at));
+CREATE INDEX IF NOT EXISTS idx_claim_routing_recent ON claim_routing_samples(project_id,claimed_at DESC);
+CREATE TRIGGER IF NOT EXISTS claim_routing_function_delete AFTER DELETE ON functions BEGIN
+  DELETE FROM claim_routing_samples WHERE function_id=OLD.id;
+END;
 CREATE TABLE IF NOT EXISTS attempts(
   id INTEGER PRIMARY KEY, function_id INTEGER, agent_id INTEGER, score INTEGER, compiled INTEGER,
   context_version INTEGER, source TEXT, created_at REAL);

@@ -481,3 +481,30 @@ The real ROM and imported-project demo replay compiles three equivalent incorrec
 initializers, releases the stalled claim, and verifies the next worker's claim
 and patch view. It then edits the ROM context or the imported include file
 and verifies that the claim, brief and patch view withhold the handoff.
+
+## Model routing on comparable hard claims
+
+Automatic routing compares completed, tested claims that had already been released at
+least three times when the model took them. Each comparison uses the starting function
+size, saved score band or presence of a draft, and effective compiler profile. ROMs
+use the selected profile, including flags, ranges and per-function overrides. Imported
+builds compare within a unit and a build-control snapshot, including a declared
+per-file compiler where the console exposes one. Imported projects can also obtain
+flags from files outside these recorded build controls.
+
+A routing preference needs at least 20 distinct completed functions per model in the
+same group, with a substantial gap after smoothing. Only recent history counts, and
+the current function must fall in that group. A retry on the same function does
+not become another independent sample. Exact outcomes are credited to the claim
+that did the work under its starting profile. Unfinished, untried and legacy claims
+without a starting snapshot do not train the comparison.
+
+Per-agent and project queue overrides still choose the order explicitly. A deferred
+function can still be claimed when no other eligible work is available.
+
+A fixed-outcome comparison used three held-out hard queues in each of ROM and imported
+mode. The project-wide policy assigned 4 of 6 cases to the model with the better
+record for that case. The comparable policy assigned 6 of 6. The fixtures reverse
+which model is better across compiler profiles and starting score bands. Separate
+demo tests drive both real judges to verify what constitutes a recorded miss and
+an exact win. The fixed outcomes measure assignment behavior without model calls.

@@ -3299,8 +3299,7 @@ class ForkEngine:
                 now = time.time()
                 if not background:
                     if claim is None and fn["status"] != "matched":
-                        db.execute("INSERT INTO claims VALUES(?,?,?,?)",
-                                   (fn["id"], agent.id, now, now + self.net.claim_ttl))
+                        self.net._open_claim(db, fn, agent, now, proj)
                     elif claim is not None:
                         db.execute("UPDATE claims SET expires_at=? WHERE function_id=?",
                                    (now + self.net.claim_ttl, fn["id"]))

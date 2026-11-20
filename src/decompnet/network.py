@@ -21,7 +21,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import agent_notes, agents, scoring
+from . import agent_notes, agents, claim_routing, scoring
 from .candidate_work import trial
 from .compiler import compile_source
 from .elfobj import FunctionObj, Reloc, extract_function
@@ -79,6 +79,7 @@ NOTES_FOUND = 20  # search_notes' answer at most
 # Opus helper claimed at once. After that the function still comes to it last.
 SELF_RELEASE_WINDOW = RELEASE_COOLDOWN
 MACHINE_AGENTS = ("autopilot", "permuter", "deep-permuter")  # decompdecomp's own workers: their claims never mean "given up on"
+NON_MODEL_AGENTS = (*MACHINE_AGENTS, "you")
 # (the deep permuter, the user's long search of one function, is a worker of its own, not "permuter": sharing that
 # identity let it renew or let go of the automatic permuter's claim on the same function, and a claim by one looked
 # like its own to the other, #244)
@@ -118,16 +119,8 @@ def assembly_blocker(why):
     return None
 
 
-# Routing between models (claim_row): on an N64 game free models matched 14-25% of the functions they claimed and
-# spent 17-31 compiles a match, stronger ones 42-77% and 3-6, and every model was handed the functions the others
-# gave up on. A model well behind the strongest one at work leaves functions given up on ESCALATE_AFTER times to it;
-# the strongest takes those first. A model's share: its matches over its claims in the project, pulled towards the
-# game's overall share while it has made few.
+# Reserve difficult claims where comparable starting candidates support a preference (claim_routing.py).
 ESCALATE_AFTER = 3
-WEAK_SHARE = 0.6  # of the strongest model's share: below it, a model is the weaker one
-ROUTE_PRIOR = 10  # claims' worth of the overall share
-ROUTE_ACTIVE_SECONDS = 3600  # the models at work: claimed something this recently
-ROUTE_MIN_CLAIMS = 20  # claims a model has made in the project before it's judged
 # Twins first (see app/twins.py): a function whose code the game has more than once (boost: how many more times)
 # and isn't too big or given up on, best value per instruction first; its twins (boost -1) last, as they match for
 # free once it does.
@@ -417,7 +410,7 @@ def claim_query(strategy: str) -> str:
     # functions waiting for another to match come last (WAITING); the ones they wait for, and those whose
     # wait is over, first (after what the release rules put back, before model routing's escalations)
     return (f"""SELECT f.* FROM functions f LEFT JOIN {_REGION} r ON r.region = f.vram / {REGION_BYTES}
-            WHERE f.project_id=:pid AND f.status='open' AND (:weak = 0 OR f.abandons < :escalate)
+            WHERE f.project_id=:pid AND f.status='open' AND f.id NOT IN (SELECT value FROM json_each(:route_deferred))
             AND (:batch_unit IS NULL OR (f.unit=:batch_unit AND f.n_insns<=:batch_limit AND f.boost>=0
                  AND f.id NOT IN ({WAITING})))
             AND f.id NOT IN (SELECT value FROM json_each(:batch_sdk))
@@ -445,7 +438,7 @@ def claim_query(strategy: str) -> str:
                                 AND created_at > :cooled) END,
                      CASE WHEN :custom THEN 0 ELSE f.id IN ({READY}) END DESC, CASE WHEN :custom THEN 0 ELSE f.id IN ({WANTED}) END DESC,
                      CASE WHEN :custom THEN 0 ELSE f.id IN (SELECT value FROM json_each(:machine_pending)) END,
-                     :strong AND f.abandons >= :escalate DESC, {STRATEGIES[strategy]} LIMIT 1""")
+                     f.id IN (SELECT value FROM json_each(:route_preferred)) DESC, {STRATEGIES[strategy]} LIMIT 1""")
 
 
 def _ago(ts: float | None) -> str:
@@ -1492,8 +1485,7 @@ class Network:
                         raise NetworkError(f"{fn['name']} is claimed by the user in the C editor. The user can select Let agents work on this; choose another eligible function meanwhile")
                     raise NetworkError(f"{fn['name']} is claimed by {owner} "
                                        f"for another {int(other['expires_at'] - now) // 60} min")
-                db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + self.claim_ttl))
-                self._event(db, fn["project_id"], agent.id, "claim", fn["name"])
+                self._open_claim(db, fn, agent, now, proj)
             else:
                 if plan is None:  # its claim ran out (or a batch started) since the look before the transaction
                     plan = self._claim_plan(store, proj, agent, strategy, now, blocked=blocked,
@@ -1512,17 +1504,23 @@ class Network:
                     return None
                 if fn['id'] in retry_grants and fn['id'] not in claim_stalls.grants(self,proj,agent):
                     return None  # a same-model worker consumed this grant before our claim transaction
-                db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + self.claim_ttl))
-                self._event(db, fn["project_id"], agent.id, "claim", fn["name"])
+                self._open_claim(db, fn, agent, now, proj)
             if proj is not None and fn['id'] in retry_grants:claim_stalls.consume(self,proj,fn,agent,db)
             # a wait that's over has had its turn at the front once it's claimed
             db.execute("DELETE FROM waits WHERE function_id=? AND needs_id IN (SELECT id FROM functions "
                        "WHERE status='matched')", (fn["id"],))
         return fn
 
+    def _open_claim(self, db, fn, agent, now, proj):
+        db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + self.claim_ttl))
+        self._event(db, fn["project_id"], agent.id, "claim", fn["name"])
+        if fn['abandons'] >= ESCALATE_AFTER and agent.name not in NON_MODEL_AGENTS:
+            proj = proj or db.execute("SELECT * FROM projects WHERE id=?", (fn['project_id'],)).fetchone()
+            claim_routing.start(db, fn, agent, now, claim_routing.build_profiles(proj)(fn))
+
     def _claim_plan(self, store, proj, agent: Agent, strategy: str, now: float, *, blocked, retry_grants, sdk,
                     batch_from):
-        """The automatic claim's query and its named arguments, and the agent's model route. Only reads, through
+        """The automatic claim's query and its named arguments. Only reads, through
         `store` (a snapshot outside the transaction, or the writer's own connection inside it): what it reads orders
         and filters the queue, and the claim transaction re-checks the function it takes."""
         policy = self.selection(proj["slug"], agent.name)
@@ -1535,13 +1533,14 @@ class Network:
         names = {r["id"]: r["name"] for r in self.store.all("SELECT id, name FROM agents")}
         # Explicit user ordering wins over adaptive routing and release penalties. Leases and the
         # agent's recent-release exclusion still prevent two workers or a tight retry loop.
-        route = None if custom else self._route(store, proj["id"], agent, now, names)
+        preferred, deferred = [], []
+        if not custom and json.loads(proj['config']).get('claim_order') not in CLAIM_ORDERS:
+            preferred, deferred = claim_routing.routes(store, proj, agent, now, names)
         family = model_family(agent.name)
         kin = [agent_id for agent_id, name in names.items() if model_family(name) == family]
         tried = store.one("SELECT SUM(status = 'matched') AS won, SUM(status = 'matched' OR attempts > 0) "
                           "AS tried FROM functions WHERE project_id=? AND status != 'asm'", proj["id"])
         overall = (tried["won"] or 0) / tried["tried"] if tried["tried"] else 0.5
-        escalate = self._escalation(store, proj["id"]) if route else ESCALATE_AFTER
         args = {"retry_grants": json.dumps(retry_grants),
                 "batch_sdk": json.dumps(batch_from.get("deferred", []) if batch_from is not None else []),
                 "batch_unit": batch_from["unit"] if batch_from is not None else None,
@@ -1549,11 +1548,11 @@ class Network:
                 "model_tried": json.dumps(list(excluded)), "stalled": json.dumps(blocked), "sdk": json.dumps(list(sdk)),
                 "pid": proj["id"], "agent": agent.id, "name": agent.name, "kin": json.dumps(kin),
                 "cooled": now - RELEASE_COOLDOWN,
-                "overall": overall, "escalate": escalate, "weak": route == "weak", "strong": route == "strong",
+                "overall": overall, "route_preferred": json.dumps(preferred), "route_deferred": json.dumps(deferred),
                 "mine": self._own_release_cutoff(store, agent.id, now, proj), "custom": custom,
                 "below": policy.get("match_below"), "tries": policy.get("max_tries"),
                 "machine_pending": json.dumps(self._machine_pending(proj, agent))}
-        return claim_query(strategy), args, route
+        return claim_query(strategy), args
 
     def _machine_pending(self, proj, agent: Agent) -> list[int]:
         """The functions autopilot's running pass will still try (a machine draft through the judge, or a
@@ -1571,54 +1570,13 @@ class Network:
         return sorted(pending.copy()) if pending else []  # (a copy in one step: autopilot's lanes take from it)
 
     @staticmethod
-    def _claim_pick(read, query: str, args: dict, route: str | None):
+    def _claim_pick(read, query: str, args: dict):
         """The function the claim query puts first, through `read(sql, named_args)`; a weak model that finds only
         what stronger models are for takes it anyway: better tried than idle."""
         fn = read(query, args)
-        if fn is None and route == "weak":
-            fn = read(query, args | {"weak": False})
+        if fn is None and args["route_deferred"] != "[]":
+            fn = read(query, args | {"route_deferred": "[]"})
         return fn
-
-    @staticmethod
-    def _escalation(store, project_id: int) -> int:
-        """How many give-ups make an open function the strongest model's (model routing): ESCALATE_AFTER, until every
-        open function has had that many; then more than the median open function has, so a weak model keeps the
-        less tried half. On an Xbox game whose 1,146 open functions had all been given up on 5 or more times, the
-        weak model fell back to the whole queue: 3,183 claims and $138 for 10 matches in a night, while the strong
-        model matched 27 of its 138."""
-        given_up = sorted(r[0] for r in store.all("SELECT abandons FROM functions WHERE project_id=? AND "
-                                                  "status='open'", project_id))
-        if not given_up or given_up[0] < ESCALATE_AFTER:
-            return ESCALATE_AFTER
-        return given_up[(len(given_up) - 1) // 2] + 1
-
-    def _route(self, store, project_id: int, agent: Agent, now: float, names: dict[int, str]) -> str | None:
-        """"weak" for a model at work in the project well behind the strongest one at work, "strong" for that one
-        while a weak one works too (see ESCALATE_AFTER), None otherwise: no routing until both are told apart by
-        ROUTE_MIN_CLAIMS claims each. `names`: agent ID -> name, from the catalog."""
-        claims, won, busy = collections.Counter(), collections.Counter(), {model_of(agent.name)}
-        # idx_events_agent_kind_time answers this from the index, in agent order (no sort of every claim event)
-        for r in store.all("SELECT agent_id, COUNT(*) AS n, MAX(created_at) AS last FROM events WHERE project_id=? "
-                           "AND kind='claim' GROUP BY agent_id", project_id):
-            if names.get(r["agent_id"], MACHINE_AGENTS[0]) not in MACHINE_AGENTS:
-                claims[model_of(names[r["agent_id"]])] += r["n"]
-                if r["last"] > now - ROUTE_ACTIVE_SECONDS:
-                    busy.add(model_of(names[r["agent_id"]]))
-        for r in store.all("SELECT matched_agent_id AS id, COUNT(*) AS n FROM functions WHERE project_id=? "
-                           "AND status='matched' GROUP BY matched_agent_id", project_id):
-            if names.get(r["id"], MACHINE_AGENTS[0]) not in MACHINE_AGENTS:
-                won[model_of(names[r["id"]])] += r["n"]
-        overall = sum(won.values()) / sum(claims.values()) if sum(claims.values()) else 0.5
-        share = {m: (won[m] + ROUTE_PRIOR * overall) / (claims[m] + ROUTE_PRIOR) for m in busy
-                 if claims[m] >= ROUTE_MIN_CLAIMS}
-        mine = model_of(agent.name)
-        if mine not in share or len(share) < 2:
-            return None
-        best = max(share.values())
-        if share[mine] < WEAK_SHARE * best:
-            return "weak"
-        weak = any(s < WEAK_SHARE * best for s in share.values())
-        return "strong" if share[mine] == best and weak else None
 
     @release_operation("release")
     def release(self, agent: Agent, function: str, notes: str, project: str | None = None, not_c: bool = False, claim_token: str = "", *, handoff=None) -> str:
@@ -2020,8 +1978,7 @@ class Network:
                     if held:
                         from .app.claim_state import ownership_hint
                         raise NetworkError(ownership_hint(self,agent,fn["project_id"]))
-                    db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + self.claim_ttl))
-                    self._event(db, fn["project_id"], agent.id, "claim", fn["name"])
+                    self._open_claim(db, fn, agent, now, proj)
                 elif claim["agent_id"] != agent.id:
                     owner = self._agent_name(claim['agent_id'])
                     hint = ('the user in the C editor. The user can select Let agents work on this to release it; choose another eligible function meanwhile.' if owner == 'you' else owner)
@@ -2287,7 +2244,8 @@ class Network:
                 prepared_inputs = publish_profile(self, db, current, prepared_inputs, prepared_compiler, agent)
             # A compiler check can finish while this candidate is still compiling with the old flags.
             # Keep that attempt as evidence, but never turn its old-profile verdict into a new green status.
-            config = json.loads(db.execute("SELECT config FROM projects WHERE id=?", (fn["project_id"],)).fetchone()["config"])
+            proj = db.execute("SELECT * FROM projects WHERE id=?", (fn["project_id"],)).fetchone()
+            config = json.loads(proj["config"])
             used = (effective_settings or {}).get("compiler")
             own = compiler_for(config, current["vram"], current) if used else None
             stale = bool(score is not None and used and any(used.get(k) != own.get(k) for k in ("toolchain", "flags")))
@@ -2321,6 +2279,9 @@ class Network:
                 if improved:
                     from .app.permuter_inputs import external_seed
                     external_seed(db, current, source, agent.name)
+            if (via == "agent" and not stale and current['status'] == 'open'
+                    and current['abandons'] >= ESCALATE_AFTER and agent.name not in NON_MODEL_AGENTS):
+                claim_routing.tested(db, proj, current, agent, matched and score == 0 and not retain_match_credit)
             if matched and not stale and not retain_match_credit:
                 db.execute("UPDATE functions SET status='matched', matched_source=?, matched_agent_id=?, "
                            "matched_at=?, best_score=0, best_source=? WHERE id=?",
