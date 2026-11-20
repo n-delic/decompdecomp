@@ -23,6 +23,7 @@ from . import (
     operand_and_edge_search,
     permuter_focus,
     stack_layout,
+    target_conversion_diff_repairs,
     target_memory_diff_repairs,
 )
 
@@ -130,7 +131,7 @@ def _division_pairs(code):
                               for second,b in divisors[i+1:i+17] if a or b))
 
 
-def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), *, flags=(), resolve=None, big_endian=False):
+def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), *, flags=(), resolve=None, big_endian=False, read_data=None):
     if arch != 'mips':
         return []
     result = targeted_switch_labels.variants(source,name,jump_tables) if jump_tables else []
@@ -146,6 +147,8 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
             result += arithmetic.squared_terms(source,name,header)
         return result
 
+    result += target_conversion_diff_repairs.proposals(source,name,header,toolchain,rows,target,candidate,asm,
+                                               read_data=read_data,big_endian=big_endian)
     result += target_memory_diff_repairs.proposals(source,name,header,rows,asm,target,candidate,toolchain,
                                              big_endian=big_endian)
     if toolchain.startswith('ido-5.3'):
