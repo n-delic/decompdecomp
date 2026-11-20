@@ -88,7 +88,7 @@ def _run(net, proj, fn, log, check, max_profiles):
     candidates = [(own['toolchain'], tuple(flags)) for flags, _ in probes]
     input_digest = net._comparison_digest(proj, fn, fn['best_source'], candidates)
     from .baseline_status import revision
-    key = 'matching-preflight-v4:'+revision()+':'+input_digest+':'+hashlib.sha256(repr(probes).encode()).hexdigest()
+    key = 'matching-preflight-v5:'+revision()+':'+input_digest+':'+hashlib.sha256(repr(probes).encode()).hexdigest()
     result = {'tested': 0, 'best': None, 'pending': 0}
     best_key = None
     allowance = min(MAX_PROFILES, max_profiles)
@@ -97,7 +97,7 @@ def _run(net, proj, fn, log, check, max_profiles):
             raise PreflightStopped()
     try:
         with compiler.cancellable(ensure):
-            for flags, source in probes:
+            for index, (flags, source) in enumerate(probes):
                 probe_key = key+':probe:'+hashlib.sha256(repr((flags,source)).encode()).hexdigest()
                 old = net.project_store(proj['id']).one('SELECT feedback FROM reuse_trials WHERE function_id=? AND signature=?', fn['id'], probe_key)
                 if old:
@@ -113,19 +113,34 @@ def _run(net, proj, fn, log, check, max_profiles):
                     item = {'toolchain': own['toolchain'], 'flags': list(flags), 'source': source,
                             'score': None if diff is None else 0 if exact else max(1,diff.score),
                             'exact': bool(exact), 'link': unresolved([problems]), 'notified': False}
+                    if index == 0 and not exact and own['toolchain'] == 'gcc-2.7.2-kmc':
+                        rows = instruction_rows(getattr(diff, 'rows', []))
+                        inferred = [list(flags) for flags in kmc_priorities(own, assembly, rows)]
+                        if sqrt := kmc_sqrt_probe(own, assembly, rows):
+                            inferred.insert(0, sqrt)
+                            item['sqrt_probe'] = sqrt
+                        item['inferred'] = inferred
                     if item['link']:
                         from .helper_call_diagnostics import suggestions
                         for hint in suggestions(getattr(diff, 'rows', [])):log(hint)
                     with net.project_store(proj['id']).tx() as db:
                         db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(?,?,?,?,?)',
                                    (fn['id'],probe_key,'profile','completed bounded profile',json.dumps(item)))
+                if index == 0 and item.get('inferred'):
+                    # Keep these trials when resuming a small budget, even if no live diff survives.
+                    inferred = [(variant, source) for variant in item['inferred']]
+                    probes[1:] = inferred + [probe for probe in probes[1:] if probe not in inferred]
                 if item.get('link'):
                     result['link'] = item['link']
+                    if index == 0 and item.get('sqrt_probe') and set(item['link']['symbols']) <= {'sqrt', 'sqrtf'}:
+                        # This probe may remove the compiler-generated reference itself.
+                        continue
                     break
                 if item['score'] is not None and (result['best'] is None or item['score'] < result['best']['score']):
                     result['best'] = item
                     best_key = probe_key
                 if item['exact']:
+                    result.pop('link', None)
                     result['pending'] = 0
                     break
     except PreflightStopped:
