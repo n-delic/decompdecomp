@@ -3833,3 +3833,23 @@ def test_knowledge_edits_work_without_synchronizing_saved_code(app, tmp_path, mo
     moved = client.post('/api/knowledge/profile', headers=headers, json={'slug': slug, 'ids': [ids[2]]})
     assert moved.status_code == 200, moved.text
     assert [item['id'] for item in client.get('/api/knowledge/profile', params={'slug': slug}).json()['items']] == ids[2:]
+
+
+def test_repair_examples_route_accepts_vote_sort(app, tmp_path):
+    client, net, *_ = app
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,root,config) VALUES('repair-vote-sort',?,'{}')",
+                         (str(tmp_path),)).lastrowid
+        fid = db.execute("INSERT INTO functions(project_id,name) VALUES(?,'example')", (pid,)).lastrowid
+        ids = [db.execute('INSERT INTO repair_examples(project_id,function_id,created_at,evidence) VALUES(?,?,?,?)',
+                          (pid, fid, index, json.dumps({'after': {'source_sha256': str(index)}}))).lastrowid
+               for index in range(2)]
+        db.execute('INSERT INTO repair_example_votes(example_id,agent_id) VALUES(?,99)', (ids[0],))
+    route = '/api/repair-examples?slug=repair-vote-sort'
+    assert [row['id'] for row in client.get(route).json()['examples']] == ids[::-1]
+    ranked = client.get(route + '&sort=upvotes')
+    assert ranked.status_code == 200
+    assert [(row['id'],row['upvotes']) for row in ranked.json()['examples']] == [(ids[0],1), (ids[1],0)]
+    second = client.get(route + f'&sort=upvotes&before={ids[0]}&before_votes=1')
+    assert [row['id'] for row in second.json()['examples']] == [ids[1]]
+    assert client.get(route + '&sort=invalid').status_code == 400

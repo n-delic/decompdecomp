@@ -141,7 +141,7 @@
 .repair-header { padding:20px 24px; }
 .repair-header h2 { margin:0 0 6px; font-size:24px; }
 .repair-header p { font-size:13px; }
-.repair-filter-selects { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto; align-items:end; }
+.repair-filter-selects { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)) auto; align-items:end; }
 .repair-filter-checks { justify-content:space-between; gap:12px 20px; }
 .repair-filter-checks label { flex-wrap:wrap; }
 .repair-list-heading { display:flex; align-items:baseline; justify-content:space-between; gap:16px; margin:20px 0 10px; }
@@ -181,7 +181,7 @@
 .repair-dialog summary:focus-visible { outline:2px solid var(--hl); outline-offset:3px; }
 @media (max-width:640px) {
   .repair-filter-selects { grid-template-columns:1fr 1fr; }
-  .repair-filter-selects > button { grid-column:1 / -1; justify-self:start; }
+  .repair-filter-selects > button { justify-self:end; }
   .repair-form-grid { grid-template-columns:1fr; }
   .repair-header, .repair-footer { padding:16px; }
   .repair-card > summary { grid-template-columns:1fr; }

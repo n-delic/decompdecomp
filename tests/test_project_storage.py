@@ -1045,3 +1045,33 @@ def test_stopping_one_project_preserves_other_claims_and_idle_stores(scoped, mon
     assert not stores[1].one('SELECT 1 FROM claims')
     assert stores[2].one('SELECT 1 FROM claims WHERE agent_id=1')
     assert not stores[2].one("SELECT 1 FROM events WHERE kind='freed'")
+
+
+def test_repair_votes_page_in_rank_order_across_project_stores(scoped):
+    import json
+
+    net, stores = scoped
+    expected = []
+    for pid in (1, 2):
+        with stores[pid].tx() as db:
+            for index in range(15):
+                case = pid * 100 + index
+                votes = index % 3
+                expected.append((votes, index, case))
+                db.execute('INSERT INTO repair_examples(id,project_id,function_id,created_at,evidence,category) '
+                           "VALUES(?,?,?,?,?,'types')", (case, pid, pid * 10, index,
+                                                        json.dumps({'after': {'source_sha256': str(case)}})))
+                db.executemany('INSERT INTO repair_example_votes(example_id,agent_id) VALUES(?,?)',
+                               [(case, agent) for agent in range(1, votes + 1)])
+    opts = dict(category='types', sort='upvotes', _metrics=False)
+    page = net.repair_feedback.listing(**opts)
+    assert page['more'] and page['total'] == 30 and len(page['examples']) == 25
+    boundary = page['examples'][-1]
+    store = stores[1 if boundary['id'] < 200 else 2]
+    with store.tx() as db:
+        db.execute('INSERT INTO repair_example_votes(example_id,agent_id) VALUES(?,99)', (boundary['id'],))
+    remaining = net.repair_feedback.listing(**opts, before=boundary['id'], before_votes=boundary['upvotes'])
+    assert not remaining['more'] and remaining['total'] == 30
+    assert [row['id'] for row in page['examples'] + remaining['examples']] == [
+        case for _, _, case in sorted(expected, reverse=True)]
+    assert {row['slug'] for row in net.repair_feedback.listing('second', **opts)['examples']} == {'second'}
