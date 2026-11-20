@@ -8434,3 +8434,21 @@ Six archived N64 failed attempts reproduced exact linked matches at
   between adjacent array entries. Swapping the two source assignments
   recovered the exact store order; indices, member names, and values
   stayed the same.
+
+### Candidate-local callback arity (KMC GCC 2.7.2)
+
+At `-G0 -mips3 -mgp32 -mfp32 -O2`, one archived N64 attempt passed a
+record pointer to a callback loaded from that record. The failed code
+kept the record in `$a0`. The target uses a temporary register for the
+same record load, its null guard, and the callback field load. A
+preceding direct call clobbers argument registers, and the target has
+no argument setup before the indirect call or in its delay slot.
+
+Changing the local pointer declaration and the field cast to
+`void (*)(void)`, then dropping the record argument, took a 15-point
+mismatch to exact linked bytes with the captured header. The rule
+requires the same field offsets and null tests and a single local
+callback whose pointer doesn't escape. A separate return-width replay
+matched with an altered declaration in the caller while the selected
+matching callee used a different declaration. That conflicting case
+still needs independent signature evidence.

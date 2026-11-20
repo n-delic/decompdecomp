@@ -102,10 +102,12 @@ def verify(feedback, example):
             kmc_operand_repairs,
             kmc_type_repairs,
             measured_address_repairs,
+            measured_callback_repairs,
             measured_immediate_repairs,
         )
         symbols = net.symbols(proj['id']) if hasattr(net,'symbols') else None
-        focused = measured_address_repairs.variants(source, fn['name'], header, rows, symbols)
+        focused = measured_callback_repairs.variants(source, fn['name'], rows)
+        focused += measured_address_repairs.variants(source, fn['name'], header, rows, symbols)
         focused += measured_immediate_repairs.variants(source, fn['name'], rows)
         focused += kmc_cast_repairs.variants(source, fn['name'], header, rows, profile['flags'])
         focused += kmc_type_repairs.variants(source, fn['name'], header, rows)
