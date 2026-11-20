@@ -499,6 +499,7 @@ class Session:
                 "focus_function":self.options.get("focus_function"), "focus_until":self.options.get("focus_until"),
                 "focus_id":self.options.get("focus_id"), "focus_minutes":self.options.get("focus_minutes"),
                 "per_session": self.options.get("per_session", PER_SESSION),
+                "automatic_assignment": self.options.get("automatic_assignment", False),
                 "task": self.options.get("task") or "",  # "readable": it polishes matched code
                 "slug": self.slug, "agent": self.agent_name, "model": self.model, "state": self.state, "why": self.why,
                 "provider_waiting": self.provider_waiting, "provider_retry_requested": self.provider_retry_requested,
@@ -807,7 +808,7 @@ class Manager:
         report_start("Validating worker selection…")
         options = dict(options or {})
         options["selection"] = self.net.validate_selection(options.get("selection"))
-        from . import focused_agents
+        from . import automatic_assignment, focused_agents
         options = focused_agents.configure(self.net,slug,options,count)
         from . import boundary_investigations
         options = boundary_investigations.configure(self.net,slug,options,count)
@@ -817,6 +818,10 @@ class Manager:
         options = data_agents.configure(self.net,slug,options,count)
         from . import port_agents
         options = port_agents.configure(self.net,slug,options,count)
+        if type(options.get('automatic_assignment', False)) is not bool:
+            raise ValueError('Automatic assignment must be true or false.')
+        if not automatic_assignment.configured(options):
+            options.pop('automatic_assignment', None)
         agent = agents.get(kind)  # (an unknown kind is a ValueError that says which there are)
         if agent.id != kind:
             kind = agent.id
@@ -942,8 +947,12 @@ class Manager:
         if session.options.get('task') == 'boundary':
             from .boundary_investigations import INSTRUCTIONS
             return INSTRUCTIONS
+        from . import automatic_assignment
         from .prompt_settings import for_session
-        return for_session(self.net, session)['instructions']
+        instructions = for_session(self.net, session)['instructions']
+        if automatic_assignment.configured(session.options):
+            return automatic_assignment.INSTRUCTIONS + '\n\n' + instructions
+        return instructions
 
     def instructions_for(self, agent, slug):
         for session in list(self.sessions.values()):
@@ -1509,12 +1518,13 @@ class Manager:
 
     @agent_startup.current_projects
     def _run_work(self, s: Session) -> None:
-        from . import focused_agents
+        from . import automatic_assignment, focused_agents
         agent_startup.stage(s, "Reading project and worker settings")
         agent, token = self.net.local_agent(s.agent_name)
         self.net.set_selection(s.slug, agent.name, s.options.get("selection"))
         self.assignments[agent.id] = s.slug
         focused_agents.bind(self.net,s,agent)
+        automatic_assignment.bind(self.net, agent, s)
         from . import asset_agents, boundary_investigations
         boundary_investigations.bind(self.net,s,agent)
         asset_agents.bind(self.net,s,agent)
@@ -1946,7 +1956,12 @@ class Manager:
             return
         if agent is None:
             agent = self.net.authenticate(token)
+        from . import automatic_assignment
+        automatic = automatic_assignment.configured(s.options)
         if (agent.id, s.slug) in getattr(self.net, '_pending_tool_handshakes', set()):
+            if automatic:
+                s.startup_context = 'First call project_info(detail=false) to confirm the tool connection and get your assigned function.'
+                return
             s.startup_context = 'Connection check required: first call project_info(detail=false). Then claim_function to receive your function. No new claim has been handed over by this startup.'
             return
         facts = tools._project_info(self.net, s.slug, detail=False).split('Next:')[0][:STARTUP_FACTS_CHARS]
@@ -1959,13 +1974,16 @@ class Manager:
             packet = tools._claim(self.net, agent, s.slug, '', '', count=1)
             if len(packet) > STARTUP_BRIEF_CHARS:
                 packet = packet[:STARTUP_BRIEF_CHARS].rsplit('\n', 1)[0] + '\n[Startup brief abbreviated. Read get_function(section=brief) or get_candidate for omitted evidence before editing.]'
-            parts += ['The app already called claim_function(count=1) for you. Start with the brief below. '
-                      'Do not claim again before working on or releasing this function. '
-                      'If no function was available, do not invent one; end the session.', packet]
+            if automatic:
+                parts += ['Start with the assigned function below.', packet]
+            else:
+                parts += ['The app already called claim_function(count=1) for you. Start with the brief below. '
+                          'Do not claim again before working on or releasing this function. '
+                          'If no function was available, do not invent one; end the session.', packet]
         s.startup_context = '\n\n'.join(parts)
 
     def prompt(self, s: Session) -> str:
-        from . import focused_agents
+        from . import automatic_assignment, focused_agents
         from .session_handoffs import previous
         if s.options.get("task")=="assets":
             from .asset_agents import prompt
@@ -1988,7 +2006,9 @@ class Manager:
         ov = agent_startup.project_facts(self.net, s.slug)
         text += "\nGuides to load when needed:\n\n" + tools.up_front(
             ov.get("platform") or "", ov.get("kind") or "", (ov.get("compiler") or {}).get("toolchain", ""))
-        if (order := self.net.claim_order(s.slug)):
+        if automatic_assignment.configured(s.options):
+            text = automatic_assignment.INSTRUCTIONS + "\n\n" + text.replace("release_function", automatic_assignment.RELEASE)
+        elif (order := self.net.claim_order(s.slug)):
             text += (f"\nThe project's owner chose the order helpers take functions in: {network.CLAIM_ORDERS[order]}. "
                      "claim_function without a function follows it; one you name still comes.\n")
         if (wish := self.net.instructions(s.slug)):

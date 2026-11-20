@@ -10,12 +10,16 @@ def context(net,slug,options):
     data={key:cfg.get(key) for key in ('kind','platform','compiler','compiler_ranges')}
     data['selection']=options.get('selection',{})
     data['task']=options.get('task','')
+    automatic = options.get('automatic_assignment') is True
+    if automatic:
+        data['automatic_assignment'] = True
     from .prompt_settings import effective
     templates=effective(net,options)
     key='initial_readable' if options.get('task')=='readable' else 'initial_project' if net.fork_slug(slug) else 'initial_rom'
     data['prompt_profile']=hashlib.sha256(json.dumps([templates[key],templates['instructions']]).encode()).hexdigest()[:16]
     stamp=hashlib.sha256(json.dumps(data,sort_keys=True,default=str).encode()).hexdigest()[:16]
     return {'cohort':stamp,'prompt_profile':data['prompt_profile'],'platform':cfg.get('platform'),'mode':cfg.get('kind','rom'),
+            'automatic_assignment':automatic,
             'compiler':(cfg.get('compiler') or {}).get('toolchain','project build') if isinstance(cfg.get('compiler'), dict) else (cfg.get('compiler') or 'project build'),
             'scope':'Session-start build, work-selection and prompt-profile snapshot; ranges can contain several function profiles.'}
 

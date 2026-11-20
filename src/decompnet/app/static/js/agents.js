@@ -220,7 +220,7 @@ function agentEfficiency(s) {
     const per = e.tokens_per_match;
     const ratios = e.matches ? `${e.compiles_per_match.toFixed(1)} compiles / match · ${Math.round(e.seconds_per_match)} helper seconds / match` : 'No matches in this cohort yet';
     const usage = per ? `${Math.round(per.input_tokens).toLocaleString()} uncached input · ${Math.round(per.cache_read_tokens).toLocaleString()} cache reads · ${Math.round(per.cache_write_tokens).toLocaleString()} cache writes · ${Math.round(per.output_tokens).toLocaleString()} output tokens / match` : 'Token averages unavailable: no matches or incomplete usage reporting';
-    return `<div class="small muted" title="${esc(e.note)}"><b>Completed sessions · ${esc(e.model || e.kind)} · ${esc(e.compiler)} · cohort ${esc(e.cohort)}</b><br>${e.sessions} sessions · ${e.matches} matches · ${ratios}<br>${usage}${e.average_function_instructions != null ? `<br>${Math.round(e.average_function_instructions)} instructions / attempted function` : ''}<br>Averages include unsuccessful work; compare the same cohort, model and similar function sizes.</div>`;
+    return `<div class="small muted" title="${esc(e.note)}"><b>Completed sessions · ${esc(e.model || e.kind)} · ${esc(e.compiler)}${e.automatic_assignment ? " · automatic assignment" : ""} · cohort ${esc(e.cohort)}</b><br>${e.sessions} sessions · ${e.matches} matches · ${ratios}<br>${usage}${e.average_function_instructions != null ? `<br>${Math.round(e.average_function_instructions)} instructions / attempted function` : ''}<br>Averages include unsuccessful work; compare the same cohort, model and similar function sizes.</div>`;
   }).join('');
 }
 
@@ -373,7 +373,7 @@ function renderSessions(sessions, refreshCosts = true) {
       ${rate == null ? '' : `<span class="small muted">${compactAgentNumber(rate)} reported tokens / match${s.estimated_cost != null && b?.matched ? ` · ≈ ${money(s.estimated_cost / b.matched)} / match` : ''}</span>`}
       ${agentEfficiency(s)}
       ${s.metrics_since ? `<span class="small muted">Metrics since reset · ${new Date(s.metrics_since * 1000).toLocaleString()}</span>` : ''}
-      <span class="small muted">Work settings · ${s.per_session || 8} ${s.task==='assets'?'regions':s.task==='data'?'data units':'functions'}/session${["readable","assets","boundary","data","port"].includes(s.task) ? "" : ` · ${esc(QUEUE_STRATEGIES.find(([v]) => v === (s.selection?.strategy || ""))?.[1] || "Automatic")}${s.selection?.model_untried ? " · never checked by this model" : ""}${s.selection?.match_below != null ? ` · below ${esc(s.selection.match_below)}%` : ""}${s.selection?.stall_compiles ? ` · move on after ${esc(s.selection.stall_compiles)} without improvement` : ""}${s.selection?.max_tries ? ` · max ${esc(s.selection.max_tries)} tries` : ""}`}</span>
+      <span class="small muted">Work settings · ${s.per_session || 8} ${s.task==='assets'?'regions':s.task==='data'?'data units':'functions'}/session${["readable","assets","boundary","data","port"].includes(s.task) ? "" : ` · ${esc(QUEUE_STRATEGIES.find(([v]) => v === (s.selection?.strategy || ""))?.[1] || "Automatic")}${s.automatic_assignment ? " · automatic assignment" : ""}${s.selection?.model_untried ? " · never checked by this model" : ""}${s.selection?.match_below != null ? ` · below ${esc(s.selection.match_below)}%` : ""}${s.selection?.stall_compiles ? ` · move on after ${esc(s.selection.stall_compiles)} without improvement` : ""}${s.selection?.max_tries ? ` · max ${esc(s.selection.max_tries)} tries` : ""}`}</span>
       ${s.last_message ? `<div class="agent-message"><b class="small">Latest agent reply${["starting", "working", "waiting"].includes(s.state) ? " · helper continues" : ""}</b><q class="said">${esc(s.last_message)}</q></div>` : ''}
       </div></details></div>`;
   }).join("");
@@ -494,7 +494,7 @@ $("removePaused").onclick = async () => {
 
 /* ------------------------------------------------------------------ the launcher: agent, model, how many */
 const LZ = { kind: null, model: "", customModel: false, apiSingleModel: null, apiCustomModel: "", models: [],
-  multiple: false, endpointModels: {}, byKind: {}, count: 1, per: null, effort: "", task: "", selection: {} };
+  multiple: false, endpointModels: {}, byKind: {}, count: 1, per: null, effort: "", task: "", selection: {}, automaticAssignment: false };
 const QUEUE_STRATEGIES = [
   ["", "Automatic (recommended)", "Uses default/adaptive routing: easiest for ROM projects, finish source files for imported projects."],
   ["easiest", "Easiest first", "Favours reusable matches and smaller functions; deprioritises abandoned functions and poorly performing regions."],
@@ -699,6 +699,7 @@ async function startAgents(a, model, count, btn, extra = {}, models = []) {
       if(!run){const prepared=await api('/api/rom-explorer/discovery',{method:'POST',body:{slug,action:'prepare',scope}});run=prepared.run;}
       options.asset_run=run;options.asset_scope=scope;
     }
+    if (!LZ.task && LZ.automaticAssignment) options.automatic_assignment = true;
     if (!LZ.task) options.selection = btn?.closest(".lz-body")?.querySelector("[data-selection-strategy]")
       ? readSelection(btn.closest(".lz-body")) : LZ.selection;
     if (replacement && replacement.slug !== slug) throw new Error("Reopen Change model in the agent's project.");
@@ -724,6 +725,7 @@ async function startAgents(a, model, count, btn, extra = {}, models = []) {
     const total = LZ.multiple ? models.length * count : count;
     toast(replacement ? "Agent replaced. The original history and saved work are kept." : `${esc(a.uses_endpoints ? "Your API model" : a.name)}: ${total} ${total === 1 ? "agent is" : "agents are"} starting. ${LZ.task === "readable" ? "Matched functions get real names, types and a comment, one by one" : LZ.task==="assets" ? "Review discoveries in ROM Explorer" : LZ.task==="data" ? "Port readiness counts the data in C" : LZ.task==="port" ? "Port readiness counts what still doesn't build for a PC" : "Watch the map fill in"}; Agents says what each one does.`, "match");
     if(LZ.task==='assets'&&S.slug===slug&&S.tab==='rom')loadAssetAgents();
+    LZ.automaticAssignment = false;
     poll(false);
     loadNav();
   } catch (e) {
@@ -827,6 +829,7 @@ function renderLauncher(box, compact = true) {
   if (!tasks && !LZ.replacement) LZ.task = "";
   box.innerHTML = `${LZ.replacement ? `<p>Replace <b>${esc(LZ.replacement.label)}</b> with the chosen model. Its task, account and work settings are kept. The original stops after the replacement is created; its history stays in Agents.</p>` : `${tasks}<div class="lz-kinds">${kinds}</div>`}
     <div class="lz-body">${body}
+      ${ready && !LZ.task && !LZ.replacement ? `<label class="check"><input data-automatic-assignment type="checkbox" ${LZ.automaticAssignment ? "checked" : ""}><span>Automatically assign the next function after a match or release</span></label>` : ""}
       ${ready && !LZ.task && !LZ.replacement ? `<details data-launch-selection><summary>Work selection (for these agents)</summary>${selectionFields(LZ.selection)}</details>` : ""}
       ${ready ? `<div class="lz-row">
         ${LZ.replacement ? "" : `<div class="field"><span>How many</span><span class="stepper"><button type="button" data-step="-1">−</button><output>${LZ.count}</output><button type="button" data-step="1">+</button></span></div>
@@ -836,6 +839,8 @@ function renderLauncher(box, compact = true) {
         <pre class="joblog" data-start-log hidden></pre>
         <p class="muted small">${a.uses_endpoints ? "A built-in agent loop drives the model through the decomp tools." : esc(a.signin)} Each agent takes a different function; a fresh session every few functions keeps its context small.</p>` : ""}
     </div>`;
+  const assignment = box.querySelector("[data-automatic-assignment]");
+  if (assignment) assignment.onchange = () => { LZ.automaticAssignment = assignment.checked; };
   const selectionBox = box.querySelector("[data-launch-selection]");
   if (selectionBox) selectionBox.onchange = () => {
     updateSelectionDescription(selectionBox);
@@ -1025,6 +1030,7 @@ function showLaunch() {
 function hideLaunch(back = false) {
   if ($("launchPop").hidden) return;
   $("launchPop").hidden = true;
+  LZ.automaticAssignment = false;
   LZ.replacement = null;
   $("phStart").setAttribute("aria-expanded", "false");
   if (back) $("phStart").focus();

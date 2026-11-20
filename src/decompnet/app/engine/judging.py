@@ -433,7 +433,7 @@ class JudgeMixin:
 
     @release_operation("function", protect_new=True)
     def release_function(self, agent: Agent, function: str, notes: str, project: str | None = None,
-                         needs: str = "", not_c: bool = False, move_on: bool = False, claim_token: str = "") -> str:
+                         needs: str = "", not_c: bool = False, move_on: bool = False, claim_token: str = "", *, automatic_pivot: bool | None = None) -> str:
         """release_function as agents call it (the app's own releases and a room host's go straight to release).
         On a demo fork and a large x86 game, agents released functions seconds after claiming them, untried,
         for reasons a compile would have shown were none (12,565 releases, median 5 s after the claim): so a release
@@ -472,7 +472,10 @@ class JudgeMixin:
             self.wait_for(agent, fn, need)
             said += (f"\n{fn['name']} now waits for {need['name']}: it's claimed after everything else until "
                      f"{need['name']} matches, and {need['name']} goes first meanwhile.")
-            said += self._pivot(agent, project, need, fn)
+            if automatic_pivot is not False:
+                said += self._pivot(agent, project, need, fn)
+        if automatic_pivot is not None:
+            return said  # The assignment response says what comes after this release.
         if progress is not None and not progress["compiles"]:
             said += ("\nYou didn't compile it, so this release doesn't count against your session's claims: claim "
                      "another one.")

@@ -241,7 +241,8 @@ def register(app: App) -> None:
         requested_models = unique_models
         if given.get("multiple_models") and not requested_models:
             return fail(ValueError("choose at least one model"))
-        options = {k: v for k, v in given.items() if k in ("model", "per_session", "task", "selection", "focus_function", "focus_minutes", "boundary_function", "asset_scope", "asset_run")}  # task: "readable" polishes
+        options = {k: v for k, v in given.items() if k in ("model", "per_session", "task", "selection", "automatic_assignment",
+                                                            "focus_function", "focus_minutes", "boundary_function", "asset_scope", "asset_run")}  # task: "readable" polishes
         options.setdefault("per_session", settings.data.get("per_session", agents.PER_SESSION))
         count = max(1, min(int(data.get("count", 1)), agents.MAX_AT_ONCE))
         total = (len(requested_models) if requested_models else 1) * count
