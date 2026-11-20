@@ -58,6 +58,7 @@ Banks without a stored rate use a labelled, editable preview rate. Archived sequ
 are listed separately; music sequencing, pitch, mixing and loops are not rendered. Open an audio
 region to choose a sample and prepare a local WAV preview; playback starts only with Play.
 Verified Acclaim DEAN streams can be browsed and inspected. DEAN playback is unavailable.
+Find supported dialogue scripts in ROM Explorer and browse their cues by scene and speaker.
 Supported indexed N64 geometry is detected automatically, including EMsh meshes in byte-sum RNC and chained RNX streams. RNX can also contain descriptor banks
 and directly stored CI4 tiles in a shared-palette archive.
 Open **Model browser** to rotate a local mesh or a supported assembled model, switch

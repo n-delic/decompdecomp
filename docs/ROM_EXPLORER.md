@@ -359,6 +359,12 @@ stream terminator. Complete streams can contain descriptor texture banks, EMsh m
 ELv9 level metadata and shared-palette graphics. The graphics browser previews the
 directly stored CI4 tiles whose dimensions, palette and record size agree.
 
+Dialogue scripts are listed by language in the region table. Search for **dialogue**, open a
+script region, and choose **Browse dialogue**. The scene and speaker filters apply to all
+cue records before paging. Cues include dialogue and production notes, and the other
+language links to its own script. Detection checks the archive length and byte sum,
+scene headings and speaker key, then reads the script as Windows-1252.
+
 Audio browser lists directory-verified Acclaim DEAN streams and their encoded sizes and
 sample rates. DEAN waveform playback is unavailable.
 
