@@ -252,10 +252,12 @@ A completed single-function check is labelled separately from a confirmed broade
 ## Review and push existing commits
 
 In project Settings, the Git repository card shows an unpushed count based on local
-origin refs. Open the count to review commit messages, including the agent/method
-credited by automatic match commits and compact repair-example summaries when available.
-Repair-example numbers refer to local records; source, assembly and full archives
-are not copied into commit messages.
+origin refs. Open the count to review commit messages. Automatic match commits identify
+the model or local worker and the path that accepted the match. They include the recorded
+compiler profile, flags and language when available. Repair evidence may include the
+failed baseline score, differences between recorded build inputs, the rewrite strategy
+and a short C or C++ diff. The app labels the diff as the final rewrite only when it
+can identify the immediate parent. Assembly and full evidence archives stay local.
 
 **Push commits to origin** refreshes origin, checks for divergence, then sends the
 existing commits from the current branch. It does not commit or stage working files.
