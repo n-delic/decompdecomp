@@ -867,8 +867,9 @@ app and leaves this one running. Neither copies/migrates data nor alters the ins
 New managed agent sessions and jobs are held until existing work finishes. Continuous background
 passes may need to be stopped from their own panels. You can cancel while waiting. Once idle, the
 app fast-forwards main, runs locked dependency sync, checks imports, then restarts with the chosen
-home. For changes confined to the permuter or tool reader worker, the source app fast-forwards
-the checkout and replaces the affected worker while agents, their claims and other jobs continue.
+home. For changes confined to the permuter, tool reader or saved-progress render workers, the
+source app fast-forwards the checkout and updates those workers while agents, their claims and
+other jobs continue.
 Local changes, another branch, a different origin or failed preparation stop the handoff.
 The checkout and selected data remain separate from packaged code: to return to the packaged app,
 quit the source app before opening the installed app using the same data. External AI clients do
@@ -883,8 +884,9 @@ using it. Set `DECOMP_LIVE_RELOAD=0` before launching to disable this behavior.
 Packaged apps do not watch files. In a checkout, edits to the watched permuter files restart the
 permuter worker, and edits to `tool_reader_worker.py` replace the tool reader on the same port.
 A permuter turn may be retried. The app can serve the tool reader's requests during the handoff.
-Changes shared with the main Python backend require an app restart. Running copies need an initial
-restart to pick up the tool reader's reload support.
+After an edit to `render_worker_child.py`, each render worker finishes its current save and picks
+up the new code on its next save. Changes shared with the main Python backend require an app
+restart. Running copies need an initial restart to pick up worker reload support.
 
 On a Mac desktop, `DECOMP_TEST_COCOA=1 uv run pytest -q tests/test_macos.py` also exercises a hidden
 WKWebView against a fresh app, including authentication, external links and close confirmation.

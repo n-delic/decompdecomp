@@ -25,6 +25,9 @@ caches when the database's revisions show the app changed something:
     in C).
   - Two render processes (`DECOMP_RENDER_WORKERS`, 0 turns them off) render, while the app's thread only waits.
   - The app still checks that a render is current and writes the files.
+  - In a source checkout, each process picks up changes to `render_worker_child.py` on its next
+    save. An in-flight render finishes and the app publishes it through the same checks. Worker-only
+    Git updates do this even with file watching disabled.
   - When no worker answers, or one hits an error the app doesn't expect from a render, the app renders on its own
     thread as before.
   - On a copy of v-rally, worker renders were identical to the app's (2,118 files full, 39 partial). With two
