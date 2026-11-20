@@ -185,8 +185,7 @@ class Codex(Agent):
 
     def repair_source(self, exe, worktree, home, diagnostics, cancel):
         """Run a coding session without game tools, using an isolated test home."""
-        from ..hostenv import stop_process_tree
-        from ..limits import capped
+        from ..limits import attach_job, capped, stop_group
         from ..network import NetworkError
 
         report = home / "summary.txt"
@@ -194,8 +193,11 @@ class Codex(Agent):
                    "-c", 'approval_policy="never"', "-c", 'web_search="disabled"',
                    "-c", "sandbox_workspace_write.writable_roots=[]",
                    "-c", "sandbox_workspace_write.network_access=false",
+                   "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true",
+                   "-c", "sandbox_workspace_write.exclude_slash_tmp=true",
                    "-c", 'shell_environment_policy.inherit="core"']
         for key, value in {"HOME": str(home), "USERPROFILE": str(home), "DECOMP_HOME": str(home / "data"),
+                           "TMPDIR": str(home), "TEMP": str(home), "TMP": str(home),
                            "DECOMP_WINDOW": "0", "DECOMP_TRAY": "0", "DECOMPNET_TOOLCHAINS": str(home / "tools"),
                            "DECOMP_DETECT_AGENTS": "off", "UV_PROJECT_ENVIRONMENT": str(worktree / ".venv")}.items():
             command += ["-c", f"shell_environment_policy.set.{key}={json.dumps(value)}"]
@@ -217,7 +219,9 @@ class Codex(Agent):
             request.write(prompt.encode())
             request.seek(0)
             with subprocess.Popen(capped(cli_argv(command)), cwd=worktree, env=env, stdin=request,
-                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=NO_WINDOW) as proc:
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=NO_WINDOW,
+                                  start_new_session=os.name != "nt") as proc:
+                attach_job(proc)
                 try:
                     deadline = time.monotonic() + 1200
                     while proc.poll() is None:
@@ -226,7 +230,7 @@ class Codex(Agent):
                         if time.monotonic() >= deadline:
                             raise NetworkError("Codex exceeded 20 minutes. Try a shorter diagnostic excerpt.")
                 finally:
-                    stop_process_tree(proc)
+                    stop_group(proc)
         if proc.returncode or not report.is_file() or report.resolve() != report:
             raise NetworkError("Codex could not complete the repair. Check its sign-in and sandbox setup, then retry.")
         with report.open(encoding="utf-8", errors="replace") as output:

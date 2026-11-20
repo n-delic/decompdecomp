@@ -138,7 +138,6 @@ def propose(root, connector, exe, diagnostics, log):
         return {"base": base, "patch": patch, "summary": summary}
 
 
-
 def prepare_tests(worktree, log):
     """Reuse cached dependencies from the trusted base before the agent edits any code."""
     uv = find_uv()
