@@ -841,3 +841,29 @@ def test_both_throughput_modes_generate_outside_the_search_lane(monkeypatch, imp
     assert search.local_repairs(AGENT, net.project_row('game'), net.function(), 40,
                                 'fork' if imported else None) == (0, 'worker candidate')
     assert calls == ['streamed' if maximum else 'ordered']
+
+
+def test_combined_store_reaches_judge_with_one_trial(monkeypatch):
+    net = setup(monkeypatch)
+    source = """void f(void) {
+    s32 x;
+    s32 *p;
+    s32 *out;
+    u32 bits;
+    s32 base;
+    s32 half;
+    bits = x * 8;
+    base = *p;
+    half = (s32) (bits + (bits >> 31)) >> 1;
+    *out = (s32) (base + half);
+}"""
+    with net.store.tx() as db:
+        db.execute('UPDATE functions SET best_source=?', (source,))
+    seen = []
+    def judge(self, agent, proj, fn, candidate, best, fork):
+        seen.append(candidate)
+        return best
+    monkeypatch.setattr(Permuter, '_score', judge)
+    deep_permuter.run(net, 'game', 'f', 30, 1, Log())
+    assert len(seen) == 1
+    assert '*out = *p + ((s32)(x * 8) / 2);' in seen[0]

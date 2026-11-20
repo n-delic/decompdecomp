@@ -8061,3 +8061,14 @@ helper returning the flag is propagated, 230); a 16-bit stack argument the game 
 (`u16`, `u32`, `s32` parameter with a `(u16)` cast: 200–855); load order of a global after a read-modify-write
 (locals, pointer, adjacent-element forms: 135–330); and a per-function `-O1` override that scores worse than the
 default (420 against 300), left for the user to decide.
+
+### A staged signed half-offset in a store
+
+Controlled replay with gcc-2.7.2-kmc and `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
+A saved near match computed an unsigned product, loaded a base, applied the sign
+bias and arithmetic shift, then stored the sum. Folding the base load and signed
+division by two into the store, with the base on the left, took 1,745 to zero on
+the first deep-permuter trial (4,304 linked bytes). Reversing the operands scored
+730. Replacing the shift alone left the score unchanged. Newly generated m2c
+output in both syntax modes failed to compile, including after draft refinement
+and macro expansion. Neither draft exposed the four-statement pattern.
