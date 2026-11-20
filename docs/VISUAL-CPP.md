@@ -93,7 +93,7 @@ builds decompdecomp has.
 | 2012 Update 4 | 17.00.61030 | The first SSE2 default. | None found yet. A 2012 release candidate (17.00.50522) exists, but it is unknown if games used. |
 
 If you know a public archive of Visual C++ 2012 (RTM or an update), please
-[open an issue](https://github.com/n-delic/decompdecomp/issues).
+[open an issue](https://github.com/RetroReversing/decompdecomp/issues).
 
 ## Sources
 

@@ -61,13 +61,13 @@ cat > "$DEB/DEBIAN/control" <<CONTROL
 Package: decompdecomp
 Version: $PACKAGE_VERSION
 Architecture: amd64
-Maintainer: decompdecomp <https://github.com/n-delic/decompdecomp>
+Maintainer: decompdecomp <https://github.com/RetroReversing/decompdecomp>
 Installed-Size: $(du -sk "$DEB" | cut -f1)
 Depends: libc6 (>= 2.31), python3-gi, gir1.2-gtk-3.0, gir1.2-webkit2-4.1
 Recommends: git
 Section: devel
 Priority: optional
-Homepage: https://github.com/n-delic/decompdecomp
+Homepage: https://github.com/RetroReversing/decompdecomp
 Description: AI agents decompile the games you own, byte for byte
  decompdecomp lets AI agents turn a game you own into C and C++ that the game's
  own compiler builds to the exact same bytes.
@@ -87,7 +87,7 @@ Version: $PACKAGE_VERSION
 Release: 1
 Summary: AI agents decompile the games you own, byte for byte
 License: AGPL-3.0-only
-URL: https://github.com/n-delic/decompdecomp
+URL: https://github.com/RetroReversing/decompdecomp
 BuildArch: x86_64
 AutoReqProv: no
 Requires: python3-gobject, gtk3, webkit2gtk4.1

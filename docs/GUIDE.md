@@ -293,7 +293,7 @@ different build, which is planned.
   are left out, and the import's log says which and why. [VISUAL-CPP.md](VISUAL-CPP.md) lists the Visual C++ builds
   decompdecomp has, how it picks one, and where their code changes.
 
-Please [report problems](https://github.com/n-delic/decompdecomp/issues). The status of a public decomp is the status of its own project.
+Please [report problems](https://github.com/RetroReversing/decompdecomp/issues). The status of a public decomp is the status of its own project.
 
 **Tools for a start from scratch:**
 
@@ -323,7 +323,7 @@ On Linux, the installer installs [uv](https://docs.astral.sh/uv/), the app, the 
 decompiler. On Windows, the release MSI bundles Python and the app. All compilers are pinned and have
 checksums. To start the app, use your apps menu or type `decomp` in a terminal.
 
-**The .deb, the .rpm and the AppImage.** Each [release](https://github.com/n-delic/decompdecomp/releases) also has a
+**The .deb, the .rpm and the AppImage.** Each [release](https://github.com/RetroReversing/decompdecomp/releases) also has a
 `.deb` (`sudo apt install ./decompdecomp_*.deb`), an `.rpm` (`sudo dnf install ./decompdecomp-*.rpm`) and an AppImage
 for x86_64 Linux. They contain their own Python and uv. The app's Setup gets the compilers. These copies do not
 update themselves: the app tells you when a new version is available, and you download it from the releases.
@@ -380,7 +380,7 @@ matches, helpers that stopped, what waits for you.
 
 ## Problems
 
-If an import fails, the app shows the reason. **Copy for a bug report** copies the version, the error and the log for an [issue](https://github.com/n-delic/decompdecomp/issues).
+If an import fails, the app shows the reason. **Copy for a bug report** copies the version, the error and the log for an [issue](https://github.com/RetroReversing/decompdecomp/issues).
 **Report a problem**, at the bottom of the sidebar, opens a new issue in your browser with your version and system, and
 copies a report with the log to paste into it. The full log is `~/Decomp/.decomp/logs/decomp.log`. Read
 [CONTRIBUTING.md](../CONTRIBUTING.md) before you attach a log. Not sure it's a bug, or just stuck? Ask on [Discord](https://discord.gg/hhEm3zZagB).
@@ -421,12 +421,12 @@ touches the decompdecomp you have installed. For an experiment, give it a scratc
 each new commit shows as an update. A checkout of `main` updates on releases only, like a normal install.
 
 ```
-git clone -b <branch> https://github.com/n-delic/decompdecomp && cd decompdecomp
+git clone -b <branch> https://github.com/RetroReversing/decompdecomp && cd decompdecomp
 bash site/public/install.sh
 ```
 
 Without a checkout, set `DECOMP_BRANCH=<branch>` and run the installer from
-`https://raw.githubusercontent.com/n-delic/decompdecomp/<branch>/site/public/`. `decomp update` installs the newest
+`https://raw.githubusercontent.com/RetroReversing/decompdecomp/<branch>/site/public/`. `decomp update` installs the newest
 commit.
 
 ## Built on
