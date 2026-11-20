@@ -25,6 +25,7 @@ from .. import toolchains
 from ..candidate_work import elf as candidate_elf
 from ..hostenv import console_python
 from ..project import compiler_for
+from ..readme_links import DECOMPDECOMP, START_YOUR_OWN
 from . import export_workers, match, split
 from .symbols import AUTO_NAME
 
@@ -613,9 +614,11 @@ def _write_docs(out: Path, title: str, console_name: str, base: str, matched: in
     notes = "".join(f"\n- `{n}`: kept as assembly, {why}" for n, why in fallback)
     (out / "README.md").write_text(f"""# {title} (decompilation)
 
-A matching decompilation of {title} for the {console_name}, started with [decompdecomp](https://github.com/RetroReversing/decompdecomp).
+A matching decompilation of {title} for the {console_name}, started with {DECOMPDECOMP}.
 {matched} of {total} functions are C that compiles to exactly the original code; the rest are still assembly.
 `build.py` rebuilds the game from this tree and checks it against your original, byte for byte.
+
+{START_YOUR_OWN}
 
 ## Build
 

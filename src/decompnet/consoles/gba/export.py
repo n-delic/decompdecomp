@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 from ...arch import arm
+from ...readme_links import DECOMPDECOMP, START_YOUR_OWN
 from ...rom import export_workers
 from ...rom.export_process import progress_step
 from ...rom.export_process import verify as verify_build
@@ -136,9 +137,11 @@ def _docs(out: Path, title: str, matched: int, total: int, fallback) -> None:
     notes = "".join(f"\n- `{n}`: kept as assembly, {why}" for n, why in fallback)
     (out / "README.md").write_text(f"""# {title} (decompilation)
 
-A matching decompilation of {title} for the Game Boy Advance, started with [decompdecomp](https://github.com/RetroReversing/decompdecomp).
+A matching decompilation of {title} for the Game Boy Advance, started with {DECOMPDECOMP}.
 {matched} of {total} functions are C that agbcc compiles to exactly the original code; the rest is still assembly.
 `build.py` rebuilds the ROM from this tree and checks it against your original, byte for byte.
+
+{START_YOUR_OWN}
 
 ## Build
 

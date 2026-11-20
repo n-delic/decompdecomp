@@ -40,6 +40,7 @@ from ... import toolchains
 from ...forks import dtksplits
 from ...forks.project import ForkError, ForkProject
 from ...limits import capped
+from ...readme_links import DECOMPDECOMP, START_YOUR_OWN
 from . import GAMECUBE, WII
 
 GC_DEFAULT, WII_DEFAULT = GAMECUBE.usual, WII.usual
@@ -924,8 +925,10 @@ write_asm: true
         f.write("\n# decompdecomp\n.decomp-wtf/\n")
     (root / "README.md").write_text(f"""# {info['title']} ({gid}) decompilation
 
-Started from scratch with [decompdecomp](https://github.com/RetroReversing/decompdecomp) on [dtk-template](https://github.com/encounter/dtk-template),
+Started from scratch with {DECOMPDECOMP} on [dtk-template](https://github.com/encounter/dtk-template),
 the layout GameCube and Wii decomps use. Every build rebuilds `main.dol` and checks it against your copy, byte for byte.
+
+{START_YOUR_OWN}
 
 1. Put your own copy of the game in `orig/{gid}/` (never commit it).
 2. `python configure.py` (downloads the tools it needs), then `ninja`.

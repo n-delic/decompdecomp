@@ -29,6 +29,7 @@ from pathlib import Path
 from ... import toolchains
 from ...forks.project import ForkError, ForkProject
 from ...hostenv import NO_WINDOW
+from ...readme_links import DECOMPDECOMP, START_YOUR_OWN
 
 DS_DEFAULT = "2.0/sp1p5"
 UNIT_BYTES = 0x1000
@@ -356,8 +357,10 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
                                      ".ninja_*\nobjdiff.json\n__pycache__/\n.decomp-wtf/\n", encoding="utf-8")
     (root / "README.md").write_text(f"""# {info['title']} ({info['id']}) decompilation
 
-Started from scratch with [decompdecomp](https://github.com/RetroReversing/decompdecomp) on [ds-decomp](https://github.com/AetiasHax/ds-decomp),
+Started from scratch with {DECOMPDECOMP} on [ds-decomp](https://github.com/AetiasHax/ds-decomp),
 the toolkit DS decomps use. Every build rebuilds the ROM and checks it against your copy, byte for byte.
+
+{START_YOUR_OWN}
 
 1. Put your own copy of the game here as `extract/baserom.nds` (never commit it).
 2. `python tools/configure.py {version} --dsd <dsd> --compilers <CodeWarrior for DS> [--wibo <wibo>]`, then `ninja`.

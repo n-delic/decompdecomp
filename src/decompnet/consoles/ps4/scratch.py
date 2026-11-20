@@ -34,6 +34,7 @@ from capstone import x86
 from decompnet.hostenv import NO_WINDOW
 
 from ...forks.project import ForkError
+from ...readme_links import DECOMPDECOMP, START_YOUR_OWN
 
 PT_LOAD = 1
 PT_SCE_RELRO = 0x61000010  # loader-mapped, file-backed read-only data (including GOT slots)
@@ -573,8 +574,10 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
                                      ".ninja_*\nbuild.ninja.lock\nobjdiff.json\n__pycache__/\n.decomp-wtf/\n", encoding="utf-8")
     (root / "README.md").write_text(f"""# {info['title']} decompilation
 
-Started from scratch with [decompdecomp](https://github.com/n-delic/decompdecomp): the game's functions are cut out of
+Started from scratch with {DECOMPDECOMP}: the game's functions are cut out of
 your own `eboot.elf` into ELF64 objects and compared, function by function, with what `src/` compiles to, with objdiff.
+
+{START_YOUR_OWN}
 
 1. Your copy of the game's program is here as `orig/{version}.elf` (never commit it).
 2. `python tools/configure.py {version} --clang <clang 5.0.2>`, then `ninja`.
