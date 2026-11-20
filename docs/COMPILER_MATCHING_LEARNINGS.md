@@ -8521,3 +8521,34 @@ compiler settings (`-G0 -mips3 -mgp32 -mfp32 -O2`) and headers.
   operand orders both remained at score 5. Swapping and staging a floating-point
   field update reached 30 versus the saved score 10. Keep the existing C when a
   targeted trial fails to improve it.
+
+### KMC 2.7.2: measured memory order and shared exit flags
+
+For `-G0 -mips3 -mgp32 -mfp32 -O2`, the normal ROM judge reproduced three
+archived matches from their failed source and unchanged headers:
+
+- Adjacent independent `f32` field assignments in a comma expression exchanged
+  the order of two `lwc1` instructions while retaining their registers and offsets.
+- Moving an unescaped integer local's reset across an independent direct call
+  exchanged the instructions before the call and in its delay slot.
+- A zero initializer on a flag feeding a shared labeled exit changed the source
+  register of a single branch-delay-slot move. Removing the single-statement
+  `do { ... } while (0)` wrapper at that exit by itself left the same mismatch.
+
+Reusing an earlier floating product matched another archived example, but the
+source stages an aggregate through a cast between the original loads and the
+call. The evidence does not establish a general rewrite across those stores.
+
+### One verified neighbouring compiler profile
+
+Replayed 283 saved compiler-settings examples. On the unchanged C and saved
+header, the existing fingerprint-ranked compiler search reproduced 21 exact
+matches. One additional profile, chosen from at least two other exact matches
+in the same unit within 16 KiB, reproduced 72 exact matches, including 71
+that the ranked profiles missed. The new probe skips profiles
+already ranked and stops after one additional compile. Only a linked-byte
+match goes through the existing profile confirmation path.
+
+Most matches used `sn-n64-281 -G0 -mips3 -O2 -mgas -meb -mcpu=VR4300
+-mhard-float -mfp64`. The other exact profiles were `sn-n64-272-0004 -G0
+-mips3 -O1 -mgas -meb -mhard-float` and KMC with the flags recorded above.

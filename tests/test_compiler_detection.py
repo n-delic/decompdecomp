@@ -181,3 +181,43 @@ def test_profile_proposal_generation_observes_the_search_deadline():
     with pytest.raises(SearchLimit, match='Time limit reached'):
         profile_climb.climb(search, None, PROJ, FN, FN['best_source'], LATE, 10)
     assert search.tested == 0
+
+
+def test_nearby_exact_profiles_supply_one_exact_only_trial(monkeypatch):
+    own = {'toolchain': 'own-cc', 'flags': ['-O2']}
+    alternate = {'toolchain': 'neighbor-cc', 'flags': ['-O1']}
+    neighbours = [
+        {'name': 'first', 'rom_offset': 10, 'vram': 20},
+        {'name': 'second', 'rom_offset': 12, 'vram': 22},
+    ]
+    cfg = {'compiler': own, 'function_compilers': {
+        f"{row['rom_offset']}:{row['vram']}": {**alternate, 'vram': row['vram']}
+        for row in neighbours
+    }}
+    monkeypatch.setattr(cf, 'ranked', lambda *a, **k: [(0, LATE)])
+    tried = []
+
+    def search_with_score(value, limit=100):
+        search = Search({}, limit)
+        search.net.cfg = lambda p: cfg
+        search.net.project_store = lambda ident: SimpleNamespace(all=lambda *a: neighbours)
+        def judge(proj, fn, toolchain, flags, source):
+            tried.append(toolchain)
+            score = value if toolchain == 'neighbor-cc' else 500
+            return score == 0, SimpleNamespace(score=score), ''
+
+        search.net._judge_with = judge
+        return search
+
+    assert profile_climb.lead(search_with_score(0), None, PROJ, FN, FN['best_source'], 155) == (alternate, 0)
+    assert tried == ['late-cc', 'neighbor-cc']
+    tried.clear()
+    assert profile_climb.lead(search_with_score(5), None, PROJ, FN, FN['best_source'], 155) is None
+    assert tried == ['late-cc', 'neighbor-cc']
+    tried.clear()
+    assert profile_climb.lead(search_with_score(0, limit=1), None, PROJ, FN, FN['best_source'], 155) is None
+    assert tried == ['late-cc']
+    tried.clear()
+    neighbours.pop()
+    assert profile_climb.lead(search_with_score(0), None, PROJ, FN, FN['best_source'], 155) is None
+    assert tried == ['late-cc']
