@@ -7,6 +7,7 @@ import logging
 import re
 import time
 import uuid
+from contextlib import ExitStack, contextmanager
 
 from ..network import NetworkError
 from ..project import function_compiler_key
@@ -221,8 +222,7 @@ def scoped_snapshot(net, proj, root, job, output, cache=None):
     bundle = captured['details']
     info = captured['info']
     # Checked before capturing the save, which takes minutes on a large game.
-    if captured['name'] != name or bundle['vram'] != fn['vram'] or hashlib.sha256(fn['target'] or b'').hexdigest() != bundle['target_sha256']:
-        raise NetworkError('The queued match target changed. Review the function before committing it.')
+    _check_target(fn, captured)
     if not bundle.get('header_sha256') or hashlib.sha256(captured['source'].encode()).hexdigest() != bundle['source_sha256'] or hashlib.sha256(captured['header'].encode()).hexdigest() != bundle['header_sha256']:
         raise NetworkError('The queued match needs complete saved verification evidence before it can be committed.')
     head = repository_git.git(root, 'rev-parse', 'HEAD')
@@ -276,6 +276,37 @@ def scoped_snapshot(net, proj, root, job, output, cache=None):
     return chosen, paths, head
 
 
+@contextmanager
+def _publication(net, slug, store, project_id, job, cfg, setting, root):
+    """Recheck the queued verdict after Git prepares its private index with the project lock free."""
+    with net.progress._project_lock(slug):
+        fresh = store.one('SELECT * FROM projects WHERE id=?', project_id)
+        fresh_cfg = net.cfg(fresh) if fresh else {}
+        pending = store.one("SELECT 1 FROM auto_match_commits WHERE id=? AND state='pending'", job['id'])
+        if (not pending or not fresh_cfg.get(setting) or any(fresh_cfg.get(key) != cfg.get(key)
+                for key in ('auto_commit_folder', 'auto_commit_branch', 'progress_folder'))
+                or not repository_progress.linked_checkout(net, slug, root)):
+            yield False
+            return
+        fn = store.one('SELECT name,vram,target,status FROM functions WHERE id=? AND project_id=?',
+                       job['function_id'], project_id)
+        if fn is None or fn['status'] != 'matched':
+            with store.tx() as db:
+                db.execute("UPDATE auto_match_commits SET state='cancelled',error=NULL WHERE id=? AND state='pending'",
+                           (job['id'],))
+            yield False
+            return
+        _check_target(fn, json.loads(job['snapshot']))
+        yield True
+
+
+def _check_target(fn, captured):
+    bundle = captured['details']
+    if (captured['name'] != fn['name'] or bundle['vram'] != fn['vram']
+            or hashlib.sha256(fn['target'] or b'').hexdigest() != bundle['target_sha256']):
+        raise NetworkError('The queued match target changed. Review the function before committing it.')
+
+
 def process(net, slug, output=log.info):
     """Retry durable pending commits from the autosave worker; never push or block a compiler caller."""
     store = net.project_store(slug)
@@ -296,6 +327,8 @@ def process(net, slug, output=log.info):
         if not cfg.get(setting):continue
         project_lock = net.progress._project_lock(slug)
         if not project_lock.acquire(blocking=False):return
+        capture_lock = ExitStack()
+        capture_lock.callback(project_lock.release)
         try:
             root = repository_sync.checkout(cfg['auto_commit_folder'], clean=False)
             with repository_operations.operation(root, slug, 'Committing a polished function' if kind == 'polished' else 'Committing a verified match', output) as log:
@@ -345,20 +378,20 @@ def process(net, slug, output=log.info):
                         repository_setup.checkpoint(net, slug, root, saves.default_folder(net, slug).resolve(), log,
                                                     message=f'Save {count:,} renamed function{"s" * (count != 1)}')
                         files, paths, head = scoped_snapshot(net, proj, root, job, log, cache)
-                    # Disabling or moving the checkout cancels publication too.
-                    fresh = store.one('SELECT * FROM projects WHERE id=?', proj['id'])
-                    fresh_cfg = net.cfg(fresh) if fresh else {}
-                    if not fresh_cfg.get(setting) or any(fresh_cfg.get(key) != cfg.get(key)
-                            for key in ('auto_commit_folder', 'auto_commit_branch')):
+                    # The captured bytes are private. Let judges record results while Git builds its index.
+                    capture_lock.close()
+                    commit = repository_progress.commit_snapshot(
+                        root, files, paths, log, expected_head=head, expected_branch=branch,
+                        message=message, allow_empty=True,
+                        publication=_publication(net, slug, store, proj['id'], job, cfg, setting, root))
+                    if commit is None:
                         return
-                    commit = repository_progress.commit_snapshot(root, files, paths, log, expected_head=head,
-                             expected_branch=branch, message=message, allow_empty=True)
                 with store.tx() as db:
                     db.execute("UPDATE auto_match_commits SET state='done',commit_sha=?,error=NULL WHERE id=?", (commit, job['id']))
         except (NetworkError, OSError, ValueError, KeyError) as error:
             with store.tx() as db:
                 # A repeated failure waits longer, so the queue keeps moving instead of re-reading the save for it.
                 delay = 300 if job['error'] else 15
-                db.execute('UPDATE auto_match_commits SET error=?,retry_at=? WHERE id=?', (str(error) if isinstance(error, NetworkError) else 'Could not read the progress checkpoint. Check its files and Git setup, then retry.', time.time()+delay, job['id']))
+                db.execute("UPDATE auto_match_commits SET error=?,retry_at=? WHERE id=? AND state='pending'", (str(error) if isinstance(error, NetworkError) else 'Could not read the progress checkpoint. Check its files and Git setup, then retry.', time.time()+delay, job['id']))
         finally:
-            project_lock.release()
+            capture_lock.close()

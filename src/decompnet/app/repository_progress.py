@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import tempfile
+from contextlib import nullcontext
 from pathlib import Path
 
 from ..network import NetworkError
@@ -200,8 +201,10 @@ _ANY_HEAD = object()
 
 
 
-def commit_snapshot(root, files, paths, log, *, expected_head=_ANY_HEAD, expected_branch=None, message='Save matches and all decompilation progress', allow_empty=False):
-    """Use a private index; helper writes after capture remain uncommitted in the working tree."""
+def commit_snapshot(root, files, paths, log, *, expected_head=_ANY_HEAD, expected_branch=None, message='Save matches and all decompilation progress', allow_empty=False,
+                    publication=None):
+    """Use a private index so later helper writes stay uncommitted. A publication context can veto the commit
+    or protect project state while Git publishes the prepared tree."""
     git = repository_git.git
     head = git(root, 'rev-parse', '--verify', '--quiet', 'HEAD', missing=True)
     if expected_head is not _ANY_HEAD and head != expected_head:
@@ -235,26 +238,29 @@ def commit_snapshot(root, files, paths, log, *, expected_head=_ANY_HEAD, expecte
         tree = git(root, 'write-tree', env=env)
         if head and not allow_empty and tree == git(root, 'rev-parse', head+'^{tree}'):
             return head
-        check = getattr(log, 'check_cancel', None)
-        if check:check()
-        # Hold Git's actual index lock only for publication, never during compilation or networking.
-        index_path = Path(git(root, 'rev-parse', '--path-format=absolute', '--git-path', 'index'))
-        lock = Path(str(index_path)+'.lock')
-        try:
-            fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        except FileExistsError:
-            raise NetworkError('Another Git operation is running. Wait for it to finish, then commit progress again.') from None
-        try:
-            with os.fdopen(fd, 'wb') as output, index.open('rb') as source:
-                shutil.copyfileobj(source, output)
-            if git(root, 'symbolic-ref', '--quiet', 'HEAD') != branch or git(root, 'diff', '--cached', '--name-only'):
-                raise NetworkError('The branch or staged files changed. Review Git before committing progress again.')
-            commit = git(root, 'commit-tree', tree, *(['-p', head] if head else []), '-m', message)
-            git(root, 'update-ref', '-m', 'Save decompilation progress', branch, commit, head or zero)
-            os.replace(lock, index_path)
-            return commit
-        finally:
-            lock.unlink(missing_ok=True)
+        with publication if publication is not None else nullcontext(True) as allowed:
+            if not allowed:
+                return None
+            check = getattr(log, 'check_cancel', None)
+            if check:check()
+            # Hold Git's actual index lock only for publication, never during compilation or networking.
+            index_path = Path(git(root, 'rev-parse', '--path-format=absolute', '--git-path', 'index'))
+            lock = Path(str(index_path)+'.lock')
+            try:
+                fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                raise NetworkError('Another Git operation is running. Wait for it to finish, then commit progress again.') from None
+            try:
+                with os.fdopen(fd, 'wb') as output, index.open('rb') as source:
+                    shutil.copyfileobj(source, output)
+                if git(root, 'symbolic-ref', '--quiet', 'HEAD') != branch or git(root, 'diff', '--cached', '--name-only'):
+                    raise NetworkError('The branch or staged files changed. Review Git before committing progress again.')
+                commit = git(root, 'commit-tree', tree, *(['-p', head] if head else []), '-m', message)
+                git(root, 'update-ref', '-m', 'Save decompilation progress', branch, commit, head or zero)
+                os.replace(lock, index_path)
+                return commit
+            finally:
+                lock.unlink(missing_ok=True)
 
 
 def run(net, slug, root, log, *, commit_push):
