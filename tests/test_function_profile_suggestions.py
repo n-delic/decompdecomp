@@ -7,6 +7,7 @@ from decompnet.app import compiler_context
 from decompnet.app import function_profile_suggestions as profiles
 from decompnet.app.engine.compilers import CompilerMixin
 from decompnet.app.permute import Permuter
+from decompnet.app.support import Settings
 from decompnet.network import Agent, NetworkError
 from decompnet.project import compiler_for
 from tests.test_prepared_evidence import prepared_net
@@ -42,6 +43,18 @@ def fixture(monkeypatch, auto=True):
     net._evaluate=lambda *a:(object(),True,[])
     monkeypatch.setattr(compiler_context,'acceptable',lambda *a:True)
     return net,Agent(1,'autopilot',None)
+
+
+def test_automatic_compiler_changes_default_on_and_respect_opt_out(tmp_path):
+    settings = Settings(tmp_path / "settings.json")
+    engine = CompilerMixin()
+    engine.cfg = lambda project: project
+    assert settings.public()["auto_compiler"] is True
+    assert engine.auto_adjusts({}) is True
+    assert engine.auto_adjusts({"auto_compiler": False}) is False
+    settings.data["auto_compiler"] = False
+    settings.save()
+    assert Settings(settings.path).public()["auto_compiler"] is False
 
 
 @pytest.mark.parametrize('ranges',['','0x01000-0x01004'])

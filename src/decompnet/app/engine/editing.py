@@ -579,6 +579,19 @@ class EditMixin:
             if cfg.get('function_compilers'):
                 for profile in cfg['function_compilers'].values():
                     profile['function']=new_of.get(profile.get('function'),profile.get('function'))
+            from ..function_names import rename_identifiers
+            bundles_changed = False
+            for suggestion in cfg.get("suggestions", []):
+                bundle = suggestion.get("function_match")
+                if suggestion["status"] != "open" or not bundle:
+                    continue
+                updated = dict(bundle, function=new_of.get(bundle["function"], bundle["function"]),
+                               source=rename_identifiers(bundle["source"], new_of),
+                               header=rename_identifiers(bundle["header"], new_of))
+                if updated != bundle:
+                    suggestion["function_match"] = updated
+                    bundles_changed = True
+            if cfg.get('function_compilers') or bundles_changed:
                 db.execute('UPDATE projects SET config=? WHERE id=?',(json.dumps(cfg),proj['id']))
 
             for u, header in changed.items():

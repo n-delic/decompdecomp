@@ -282,7 +282,8 @@ def _replace_text(path: Path, text: str) -> None:
 
 
 def _publish(folder: Path, files: dict[str, str], previous: dict[str, str] | None = None,
-             expected: dict[str, str] | None = None, *, chosen: bool = False, guarded=()) -> bool:
+             expected: dict[str, str] | None = None, *, chosen: bool = False, guarded=(),
+             write_before_remove: bool = False) -> bool:
     """Only change owned files whose contents changed; keep git and contributors' other files intact.
 
     `chosen`: the progress folder is the one the user saved to or configured, so a link at its own path is theirs to
@@ -322,20 +323,32 @@ def _publish(folder: Path, files: dict[str, str], previous: dict[str, str] | Non
     written = {}
     removed = set()
     complete = False
+    obsolete = (previous or {}).keys() - files.keys()
+
+    def remove_obsolete():
+        for name in obsolete:
+            (folder / name).unlink(missing_ok=True)
+            removed.add(name)
+
     try:
         for watcher in list(publish_watchers):
             receipt = watcher.publish_begin(folder)
             if receipt is not None:receipts.append((watcher, receipt))
-        for name in (previous or {}).keys() - files.keys():
-            (folder / name).unlink(missing_ok=True)
-            removed.add(name)
-        for name, text in files.items():
+        if not write_before_remove:
+            remove_obsolete()
+        # A rename must copy any edits before removing the file they came from.
+        # Publish its layout after writing the replacement C, so a retry can
+        # still recognize the old filename if writing a new source fails.
+        entries = sorted(files.items(), key=lambda entry: entry[0] == MANIFEST) if write_before_remove else files.items()
+        for name, text in entries:
             path = folder / name
             if path.exists() and path.read_text(encoding="utf-8") == text:
                 continue
             path.parent.mkdir(parents=True, exist_ok=True)
             _replace_text(path, text)
             written[name] = text
+        if write_before_remove:
+            remove_obsolete()
         complete = True
     finally:
         for watcher, receipt in receipts:

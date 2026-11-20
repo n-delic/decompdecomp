@@ -46,7 +46,7 @@ FLAGS_SHOWN = 6
 class CompilerMixin:
     # Settings: auto-adjust compiler. A suggested compiler is applied without asking once it's proven (a function's
     # C matches with it) or three agents agree on it (see suggest)
-    auto_compiler = False
+    auto_compiler = True
 
     AGREE = 3
 

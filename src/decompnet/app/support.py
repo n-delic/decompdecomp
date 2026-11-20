@@ -368,6 +368,10 @@ class Settings:
     def remove_endpoint(self, eid: str) -> None:
         self.data["endpoints"] = [e for e in self.endpoints() if e["id"] != eid]
 
+    @property
+    def auto_compiler(self) -> bool:
+        return bool(self.data.get("auto_compiler", True))
+
     def public(self) -> dict:
         def masked(e: dict) -> dict:
             out = {k: v for k, v in e.items() if k != "api_key"}
@@ -397,7 +401,7 @@ class Settings:
                 "iterative_threads": self.data.get("iterative_threads", 0),
                 "autopilot": self.data.get("autopilot", True), "budget_usd": self.data.get("budget_usd") or 0,
                 "auto_update": bool(self.data.get("auto_update")), "check_updates": self.data.get("check_updates", True) is not False,
-                "auto_compiler": bool(self.data.get("auto_compiler")),
+                "auto_compiler": self.auto_compiler,
                 "rom_library": str(self.data.get("rom_library") or ""),
                 "bridges_removed_seen": bool(self.data.get("bridges_removed_seen")),
                 "launcher": _launcher(self.data.get("launcher") or {}), "recent_models": self.data.get("recent_models") or {}}
