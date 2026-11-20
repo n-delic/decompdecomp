@@ -128,6 +128,10 @@ def _export_segments(config: dict, functions) -> dict:
     """
     from .reviewed import extend_config
     config = extend_config(config, functions)
+    # Splat uses the function sizes we supply to keep switch tails in text. Its BSS scan
+    # also uses those sizes to insert padding, which can assert when a sized symbol
+    # overlaps the end of a BSS subsection. Let the configured BSS boundaries size it.
+    config.setdefault('options', {})['create_bss_pads'] = False
     for segment in _segments(config):
         if segment.get('type') != 'code' or 'vram' not in segment:
             continue
