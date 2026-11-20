@@ -430,6 +430,18 @@ async function refreshFn(first) {
         `${report.compiled ? 'C compiled' : 'No compiling draft'}${report.scored ? ' · judged' : ''}${report.matched ? ' · exact match' : ''}\n` +
         (report.failures || []).map(f => `${f.phase} (${f.family}): ${f.reason}`).join('\n\n');
     }
+    const signature = d.signature_review;
+    const signaturePanel = $("fnSignatureReview");
+    if (signaturePanel) {
+      signaturePanel.hidden = !signature;
+      if (signature) {
+        $("fnSignatureMessage").textContent = signature.message;
+        $("fnSignatureInstructions").textContent = signature.instructions.join("\n");
+        const caller = $("fnSignatureCaller");
+        caller.textContent = signature.caller;
+        caller.onclick = () => openFn(signature.caller);
+      }
+    }
     const verificationPanel = $("fnVerification");
     if (verificationPanel) {
       const bundle = d.verification;
@@ -781,6 +793,23 @@ function insnHtml(text, other, cls) {
   return `<span class="op">${esc(m[1])}</span>${m[2] ? " " : ""}${ops}`;
 }
 // Repeated missing-symbol messages share guidance, but keep every original message inspectable.
+function jumpTableDiagnostic(rows) {
+  const scope = JSON.stringify([S.slug, S.fn]);
+  const sort = S.jumpTableSort?.scope === scope ? S.jumpTableSort : {scope, key:"case", direction:1};
+  const columns = [["table","Table"],["case","Case"],["target","Target destination"],["candidate","Compiled destination"]];
+  const address = value => "0x" + Number(value).toString(16).toUpperCase().padStart(8, "0");
+  const ordered = [...rows].sort((a,b) => sort.direction * (a[sort.key] - b[sort.key]) || a.table - b.table || a.case - b.case);
+  return `<li class="diagnostic-card diagnostic-issue" data-jump-table-diagnostic>
+    <header class="diagnostic-head"><h3>Jump-table differences</h3></header>
+    <details open><summary>${rows.length} differing case destinations</summary>
+      <div class="compiler-table"><table><thead><tr>${columns.map(([key,label]) => {
+        const direction = key !== sort.key ? "none" : sort.direction === 1 ? "ascending" : "descending";
+        return `<th scope="col" aria-sort="${direction}"><button type="button" class="table-sort" data-jump-table-sort="${key}">${label}<span aria-hidden="true">${direction === "none" ? " ↕" : direction === "ascending" ? " ↑" : " ↓"}</span></button></th>`;
+      }).join("")}</tr></thead>
+      <tbody>${ordered.map(row => `<tr><td><code>${address(row.table)}</code></td><td>${esc(row.case)}</td><td><code>${address(row.target)}</code></td><td><code>${address(row.candidate)}</code></td></tr>`).join("")}</tbody></table></div>
+    </details></li>`;
+}
+
 function diffProblemsHTML(detail) {
   const cards = [], symbols = new Set(), guidance = new Set(), originals = new Set();
   const card = (title, message, kind = "issue") => `<li class="diagnostic-card diagnostic-${kind}">
@@ -809,6 +838,8 @@ function diffProblemsHTML(detail) {
       <details class="diagnostic-details"><summary>Original messages</summary><ul tabindex="0" aria-label="Original diagnostic messages">${[...originals].map(message => `<li>${esc(message)}</li>`).join("")}</ul></details>
     </li>`);
   }
+  const jumpTables = detail.checks?.jump_tables;
+  if (jumpTables?.length) cards.unshift(jumpTableDiagnostic(jumpTables));
   const layout = detail.checks?.export;
   if (layout?.message && layout.state !== "unmatched") {
     cards.push(card("Export layout", layout.message, layout.ready === false ? "issue" : "note"));
@@ -865,6 +896,15 @@ function renderDiff(d) {
   box.innerHTML = `<div class="dh"><span></span><span>Target (your game)</span><span></span><span>${esc(label)}</span></div>` + html.join("");
   box.querySelectorAll(".dfold").forEach((b) => { b.onclick = () => { b.nextElementSibling.hidden = false; b.remove(); }; });
   probs.innerHTML = diffProblemsHTML(d);
+  probs.onclick = event => {
+    const control = event.target.closest("[data-jump-table-sort]");
+    if (!control || !d.checks?.jump_tables?.length) return;
+    const scope = JSON.stringify([S.slug, S.fn]), key = control.dataset.jumpTableSort;
+    const before = S.jumpTableSort?.scope === scope ? S.jumpTableSort : {key:"case", direction:1};
+    S.jumpTableSort = {scope, key, direction:before.key === key ? -before.direction : 1};
+    control.closest("[data-jump-table-diagnostic]").outerHTML = jumpTableDiagnostic(d.checks.jump_tables);
+    probs.querySelector(`[data-jump-table-sort="${key}"]`)?.focus();
+  };
 }
 async function loadDiff() {
   const d0 = S.fnDetail, slug = S.slug, gen = S.gen, which = S.which || "latest", nav = S.fnNav;

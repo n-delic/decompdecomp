@@ -302,12 +302,16 @@ class BriefMixin:
         from ..sdk_evidence import brief as sdk_brief
         text += '\n'.join(sdk_brief(self, proj, fn))
         from ..return_contract_evidence import brief as return_hint
-        advice=return_hint(self,proj,fn,fn['best_source'] or fn['seed'] or '')
+        from ..return_contract_evidence import matched_review, review_text
+        advice = (review_text(matched_review(self, proj, fn)) if fn['status'] == 'matched'
+                  else return_hint(self, proj, fn, fn['best_source'] or fn['seed'] or ''))
         if advice:text+='\n\n'+advice
         if fn['status'] == 'open' and fn['best_source']:
             from .. import compiler_preflight, repair_ranking, source_diagnostics
-            suggestions = source_diagnostics.hints(fn['best_source'], fn['name'], fn['asm'], proj['arch'],
-                                                   repair_ranking.evidence(self, fn['id'], agent.id))
+            from ..callee_frame_evidence import messages as callee_writes
+            rows = repair_ranking.evidence(self, fn['id'], agent.id if agent else None)
+            suggestions = callee_writes(self, proj, fn, rows) + source_diagnostics.hints(
+                fn['best_source'], fn['name'], fn['asm'], proj['arch'], rows)
             if advice:suggestions=[s for s in suggestions if not s.startswith('Return-contract hypothesis:')]
             if suggestions:
                 text += '\n\nSource checks (advisory):\n' + '\n'.join(suggestions)

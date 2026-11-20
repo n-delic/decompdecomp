@@ -108,3 +108,10 @@ def test_generated_representative_candidates_compile_as_c89(tmp_path):
         assert generated
         path=tmp_path/f'case{index}.c';path.write_text(header+generated[0])
         subprocess.run([cc,'-std=c89','-Werror=declaration-after-statement','-fsyntax-only',str(path)],check=True,capture_output=True)
+
+
+def test_known_float_callee_writes_grow_the_buffer_without_changing_its_type():
+    source = 'void fill(float *p); void f(void) { float result; fill(&result); use(result); }'
+    helper = 'void fill(float *p) { p[0]=1.0f; p[1]=2.0f; p[2]=3.0f; }'
+    [candidate] = family(source, 'f', 'callee_buffer_extent', callees=helper)
+    assert 'float result[3]; fill(result); use(result[0]);' in candidate

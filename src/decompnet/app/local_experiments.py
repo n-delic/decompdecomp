@@ -53,7 +53,7 @@ EXPERIMENTAL = ('experimental_bitfield_frame',)
 FAMILIES = ('inferred_frame_reservation','frame_branch_tail_sequence','value_trace_bundle','verified_unit_helpers') + independent_address_repairs.FAMILIES + focused_lifetime_repairs.FAMILIES + (prototype_reuse.FAMILY, 'learned_expression', 'address_association', 'call_initialization', *EXPERIMENTAL, 'masked_value_reuse', 'cfg_integer_lifetimes', 'table_slot_lifetime', 'unsigned_assignment_reuse', 'guard_forward_jump', 'constant_register_reuse', 'copy_register_reuse', 'last_shift_reuse', 'signedness','declaration_order','typed_temporary','branch_orientation','narrowing','source_lines',
             'address_temporary','operand_temporary','constant_local','comparison_load','stack_array','loop_induction',
             'parameter_width','value_lifetime','sum_shape','call_result_inline','comparison_reuse','integer_address_order','mmio_address','call_arity','struct_byte_offset','switch_call','paired_load_order','array_index_width','split_scalar_lifetime','pointer_before_store','store_address_lifetime','stack_padding','local_width','pointer_cast_inline',
-            'local_widening','callee_parameter_width','callee_return_width','split_integer_lifetime','merge_integer_lifetimes','branch_call','goto_leaf','switch_layout') + ('mapped_spill_storage','mapped_register_lifetime','hazard_statement_lines',) + draft_repairs.AGENT_FAMILIES
+            'local_widening','callee_parameter_width','callee_return_width','split_integer_lifetime','merge_integer_lifetimes','branch_call','goto_leaf','switch_layout') + ('mapped_spill_storage','mapped_register_lifetime','hazard_statement_lines','floating_initializer_order') + draft_repairs.AGENT_FAMILIES
 
 
 def run(net, agent, slug, function, revision, families=None, max_trials=6, *, seconds=60, provenance_kind='agent batch'):
@@ -275,6 +275,13 @@ def _available(net, agent, slug, fn, source, revision, requested):
     for generator in (parameter_carriers,narrow_load_subtraction):
         if generator.FAMILY in pools:
             pools[generator.FAMILY]=[s for _,s in generator.variants(source,fn['name'],header,proj['arch'])]
+    if 'floating_initializer_order' in pools:
+        from .allocation_search import floating_proposals
+        measured = getattr(net, '_agent_outcomes', {}).get((agent.id, fn['id']))
+        if (measured and measured.get('source') == source
+                and measured.get('input_scope') == agent_evidence.build_key(net,fn)[0]):
+            pools['floating_initializer_order'] = [text for _,text in floating_proposals(
+                source, fn['name'], header, measured.get('rows') or [], proj['arch'])]
     if 'scalar_storage_reuse' in pools:
         from decomprepair import scalar_storage_reuse
         measured=getattr(net,'_agent_outcomes',{}).get((agent.id,fn['id']))
@@ -342,6 +349,8 @@ def _available(net, agent, slug, fn, source, revision, requested):
                 filtered[family].append(candidate)
     pools=filtered
     ranked = repair_ranking.order(pools,repair_ranking.evidence(net,fn['id'],agent.id))
+    if pools.get('floating_initializer_order'):
+        ranked = ['floating_initializer_order', *(family for family in ranked if family != 'floating_initializer_order')]
     effect_scope=repair_ranking.effect_scope(net,fn,source)
     ranked=repair_ranking.demote(net,effect_scope,ranked)
     ranked=adaptive_repairs.order(net,proj,fn,repair_ranking.evidence(net,fn['id'],agent.id),ranked)

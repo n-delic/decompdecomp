@@ -11,6 +11,14 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 
+@dataclass(frozen=True)
+class DataMismatch:
+    address: int
+    target: bytes
+    candidate: bytes
+    code_pointer_offsets: frozenset[int]
+
+
 @dataclass
 class LinkResult:
     candidate: Any | None  # canonical form, for the diff
@@ -20,6 +28,7 @@ class LinkResult:
     placements: dict[str, dict[int, int]] = field(default_factory=dict)
     instructions_exact: bool | None = None
     linked_code: bytes | None = None  # fully relocated compiler instructions; diagnostics and rejudged matching-only entry exports
+    data_mismatches: list[DataMismatch] = field(default_factory=list)
 
 
 def _text(data: bytes) -> bool:

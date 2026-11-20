@@ -8217,6 +8217,19 @@ where the game rematerialises a symbol after a subtraction (515); an inline chec
 the previous stack store (615; `*p` gets CSE'd, 1370); and a switch whose `j` delay slots the game fills with the
 loads before them (600).
 
+### Linked switch data and a matched result consumed by a caller
+
+An archived N64 candidate rebuilt with KMC GCC 2.7.2 and its recorded header had
+identical linked instructions. Its seven-entry guarded jump table differed in
+five case destinations. An indexed word load made the relocation look like a
+scalar read, so the judge now checks the full extent when the target guard and
+relocated pointers establish it. The diff shows the mismatched entries.
+
+A second already-matched N64 routine had a C `void` definition. The target
+computed a word in `$v0`, stored it and returned with that word still in
+`$v0`. A direct caller used it as an operand of `multu`. The signature review
+shows that call and read alongside the existing byte match.
+
 ### Same-source replay of KMC scheduling and induction settings
 
 Replayed three saved source/header pairs from one N64 project with the pinned
