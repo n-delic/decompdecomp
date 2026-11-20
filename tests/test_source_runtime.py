@@ -18,6 +18,8 @@ def test_only_child_owned_python_can_update_without_a_server_restart():
     assert runtime.changed_workers(['src/decompnet/permuter_formatting.py'])
     assert runtime.changed_workers(['src/decompnet/app/tool_reader_worker.py']) == {'reader'}
     assert runtime.changed_workers(['src/decompnet/app/render_worker_child.py']) == {'renderers'}
+    assert runtime.changed_workers(['src/decompnet/app/rom_scan_worker.py']) == {'rom-scan'}
+    assert not runtime.changed_workers(['src/decompnet/app/rom_scan_worker.py', 'src/decompnet/app/rom_explorer.py'])
     assert not runtime.changed_workers(['src/decompnet/app/render_worker_child.py', 'src/decompnet/app/saves.py'])
     assert runtime.changed_workers(['src/decompnet/app/tool_reader_worker.py',
                                     'src/decompnet/app/permute.py']) == {'permuter', 'reader'}
@@ -395,6 +397,7 @@ def test_prepare_uses_separate_checkout_and_environment_without_holding_workers(
             reader_source.parent.mkdir(parents=True)
             reader_source.touch()
             (reader_source.parent / 'render_worker_child.py').touch()
+            (reader_source.parent / 'rom_scan_worker.py').touch()
     monkeypatch.setattr(runtime, 'command', command)
     staged = r.prepare(tmp_path, 'git', 'uv', 'example/repo')
     assert staged != tmp_path and staged.parent == app.home / 'source-runtimes'
@@ -405,6 +408,7 @@ def test_prepare_uses_separate_checkout_and_environment_without_holding_workers(
     assert 'import decompnet.app.cli' in calls[2][0]
     assert 'import decompnet.app.tool_reader_worker' in calls[3][0]
     assert 'import decompnet.app.render_worker_child' in calls[4][0]
+    assert 'import decompnet.app.rom_scan_worker' in calls[5][0]
 
 
 def test_long_running_job_never_holds_new_work_and_retries(tmp_path, monkeypatch):

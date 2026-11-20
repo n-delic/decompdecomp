@@ -85,7 +85,7 @@ def test_api_selections_persist_and_usage_keeps_recorded_references_separate(pro
         db.execute('UPDATE projects SET config=? WHERE id=?',(json.dumps(cfg),pid))
         db.execute('UPDATE functions SET relocs=? WHERE project_id=?',(json.dumps([[4,5,0x80000080]]),pid))
     rom_explorer.run(net,'game',Log());report=rom_explorer.listing(net,'game')
-    row=next(r for r in report['regions'] if r['detected_asset'])
+    row=next(r for r in report['regions'] if r['start']==128 and (r['detected_asset'] or {}).get('kind')=='image')
     assert row['direct_function_refs']==['reader'] and not row['traced_function_refs']
     request=dict(region=row['id'],image_hash=report['image_hash'],options=dict(format='auto',frame=1,palette=0,mip=0))
     result=rom_explorer.asset_preview(net,'game',request)

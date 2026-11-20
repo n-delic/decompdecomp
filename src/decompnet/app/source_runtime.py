@@ -107,6 +107,8 @@ def changed_workers(paths) -> set[str]:
             workers.add("reader")
         elif path == "src/decompnet/app/render_worker_child.py":
             workers.add("renderers")
+        elif path == "src/decompnet/app/rom_scan_worker.py":
+            workers.add("rom-scan")
         elif path not in ("README.md", "ROADMAP.md") and not path.startswith(("docs/", "tests/")):
             return set()
     return workers
@@ -189,7 +191,7 @@ class Runtime:
                 if self.cancel.is_set():
                     break
                 command(argv, cwd)
-            for module in ('tool_reader_worker', 'render_worker_child'):
+            for module in ('tool_reader_worker', 'render_worker_child', 'rom_scan_worker'):
                 if self.cancel.is_set():
                     break
                 if (staged / f'src/decompnet/app/{module}.py').is_file():
@@ -228,11 +230,14 @@ class Runtime:
         if reader is not None and not reader.reload_code():
             raise ValueError("The source update was applied, but the tool reader hasn't started. "
                              "The app is answering its requests. See logs/tool-reader.log for details.")
-        labels = {"permuter": "permuter", "reader": "tool reader", "renderers": "saved-progress render workers"}
+        labels = {"permuter": "permuter", "reader": "tool reader", "renderers": "saved-progress render workers",
+                  "rom-scan": "ROM Explorer scan worker"}
         names = ", ".join(label for key, label in labels.items() if key in workers)
         message = f"Updated the {names}. The app, agents and other jobs kept running."
         if "renderers" in workers:
             message += " Each render worker picks up the change on its next save."
+        if "rom-scan" in workers:
+            message += " In-progress scans finish with their original code. New scans use the update."
         self.job.update(state="done", message=message)
         return True
 

@@ -15,9 +15,8 @@ import re
 import time
 from pathlib import Path
 
-from .. import arch
 from ..network import IN_BUILD, NetworkError
-from ..rom.explorer import analyse
+from . import rom_scan
 
 PREFIX = 'rom-explorer:'
 CONTRACT_PREFIX='rom-explorer-contracts:'
@@ -134,8 +133,11 @@ def _run(net, slug, log):
     proj = _project(net,slug)
     cfg = net.cfg(proj)
     revision = _revision(net,proj)
+    worker_source = rom_scan.WORKER_SOURCE.read_bytes()
+    worker_revision = hashlib.sha256(worker_source).hexdigest()
     previous=_read(net,proj)['report']
-    if previous and previous.get('revision')==revision and 'loader_flow' in previous:
+    if (previous and previous.get('revision')==revision and 'loader_flow' in previous
+            and previous.get('worker_revision') == worker_revision):
         log.check_cancel();log('ROM image and analysis inputs are unchanged; using the current saved map.')
         log.progress(dict(phase='ROM map is current',done=1,total=1))
         return dict(regions=len(previous['regions']),size=previous['size'],cached=True)
@@ -147,29 +149,16 @@ def _run(net, slug, log):
     functions = [] if source['fork'] else [dict(r) for r in store.all(f'SELECT name,vram,rom_offset,size,unit,relocs FROM functions WHERE project_id=? AND {IN_BUILD}',proj['id'])]
     for f in functions:f['relocs'] = json.loads(f['relocs'] or '[]')
     symbols = [dict(r) for r in store.all('SELECT name,address,size,kind FROM symbols WHERE project_id=?',proj['id'])]
-    if not path.stat().st_size:raise NetworkError('The analysis image is empty. Restore it or reimport before exploring.')
-    with path.open('rb') as stream, mmap.mmap(stream.fileno(),0,access=mmap.ACCESS_READ) as image:
-        if source['fork']:log("Reading your copy of the game in this forked project, "+path.name+": its SHA-1 is the one recorded at import.")
-        else:
-            from .analysis_image import verify
-            verify(image,proj,cfg,check=log.check_cancel)
-        from ..rom import asset_flow, config_images, resource_catalog
-        console=net.console(proj)
-        segments,gp=source['segments'],source['gp']
-        flow=asset_flow.trace(image,segments,functions,arch.get(source['arch']).asset_flow,
-                              contracts=console.asset_calls | _contracts(net,proj),argument_count=console.asset_argument_count,
-                              big_endian=source['big_endian'],gp=gp,cpu=console.cpu_variant,ram=console.ram,
-                              check=log.check_cancel,progress=log.progress)
-        report = analyse(image,segments,functions,symbols,big_endian=source['big_endian'],
-                         progress=log.progress,check=log.check_cancel,ranges=[c['source'] for c in flow['chains']],
-                         assets=resource_catalog.regions(image,check=log.check_cancel)+
-                                config_images.regions(image,source.get('images',[]),'splat config')+
-                                config_images.sheet_regions(image,source.get('sheets',[]),'splat config')+console.asset_regions(image,context=dict(functions=functions,symbols=symbols,segments=segments,gp=gp),check=log.check_cancel,progress=log.progress))
-        resource_catalog.attach(report)
-        asset_flow.attach(report,flow)
+    report = rom_scan.run(worker_source, {
+        'source': source | {'path': str(path)}, 'root': proj['root'], 'rom': cfg.get('rom'),
+        'console': net.console(proj).id, 'functions': functions, 'symbols': symbols,
+        'contracts': _contracts(net,proj),
+    }, log)
     log.check_cancel()
-    if revision!=_revision(net,proj):raise NetworkError('The project layout changed during the scan. Scan again to use the current mappings.')
-    report.update(revision=revision,scanned_at=time.time(),image_name=path.name,
+    current = net.project_row(slug)
+    if current['id'] != proj['id'] or revision != _revision(net,current):
+        raise NetworkError('The project layout changed during the scan. Scan again to use the current mappings.')
+    report.update(revision=revision,worker_revision=worker_revision,scanned_at=time.time(),image_name=path.name,
                   derived=bool(not source['fork'] and cfg['rom'].get('program') and cfg['rom']['program']!=cfg['rom']['file']))
     if report['derived']:report['note']='This is a derived analysis image (for example a flattened executable or expanded code), not physical-media offsets. Its hash freezes this scan; it does not certify a reconstruction of the original file. '+report['note']
     # Merge notes only at publication, so edits made during a rescan survive.
