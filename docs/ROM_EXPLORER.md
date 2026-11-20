@@ -586,3 +586,6 @@ arrangement. Runtime effects and macro timing can differ.
 USO texture banks with validated Yay0 sections and paired texel and palette
 relocations appear under Textures. Square preview dimensions are inferred from
 the stored extents.
+Relocated USO polygon shapes appear under Models. Local previews apply the
+stored vertex remap when present. Material textures and scene transforms are
+separate from these previews.
