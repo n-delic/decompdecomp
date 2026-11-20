@@ -3068,6 +3068,11 @@ indexed byte addresses, reuse of dead float locals across calls, unsigned-byte
 entry guards, coordinate schedules, pointer-object qualifiers, narrowed call
 arguments, explicit no-op cases, shared multipliers, and typed float stores.
 
+Additional measured memory gates cover volatile pointer lifetimes, IDO mixed-width
+zero chains, stack mask scheduling, paired float loads, split output store scopes,
+narrowing after a guarded copy, default-case scaling, isolated unaligned word copies,
+loop invariant argument order, and a shared null/success epilogue.
+
 ## Register-only local lifetime search
 
 Shared draft, agent-local and deep searches offer bounded branch-tail locals, scalar call staging
