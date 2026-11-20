@@ -45,7 +45,8 @@ def generate(net, proj, fn, fork):
         return net.forks.background_draft(proj, net.project_store(proj['id']).one('SELECT * FROM functions WHERE id=?',fn['id']))
     key, toolchain, context = net._draft_plan(fn, proj)
     draft = seeds.generate_from_asm(net._asm_text(fn,proj), fn['name'], toolchain, context,
-                                    '\n'.join(net._jtbl_asm(proj,fn)), valid=True, strict=True, timeout=20)
+                                    '\n'.join(net._jtbl_asm(proj,fn)), valid=True, strict=True, timeout=20,
+                                    resolve=lambda symbol: net.symbols(proj['id']).resolve(symbol))
     from .engine.briefs import DRAFT_NOTE
     source = DRAFT_NOTE+'\n'+seeds.M2C_MACROS+'\n'+draft if draft else ''
     with net.project_store(proj['id']).tx() as db:

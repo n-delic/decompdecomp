@@ -476,3 +476,25 @@ def test_kmc_places_the_narrow_object_where_the_game_has_it(tmp_path):
     (_, narrow), = repairs.frame_variants(WIDE, 'f', CALL_ASM, 'mips')
     # the whole frame as one object grew the frame to 0x50; spanning its views it is the game's 0x38
     assert first(WIDE) == 'addiu $sp, $sp, -0x50' and first(narrow) == 'addiu $sp, $sp, -0x38'
+
+
+def test_valid_kmc_draft_recovers_the_witnessed_copy(monkeypatch):
+    raw = 'void f(void) { M2C_UNALIGNED32(input); }'
+    monkeypatch.setattr(seeds, 'run_m2c', lambda *args: raw)
+    monkeypatch.setattr(seeds, 'intrinsic_leaf', lambda *args: None)
+    monkeypatch.setattr(seeds, 'm2c_target', lambda *args: 'mips-gcc-c')
+    from decomprepair import unaligned_stack_drafts
+
+    calls = []
+
+    def repair(*args):
+        calls.append(args)
+        return 'void f(void) { }'
+
+    monkeypatch.setattr(unaligned_stack_drafts, 'rewrite', repair)
+    resolve = {'global': 0x80000000}.get
+    opts = dict(resolve=resolve)
+    assert seeds.generate_from_asm('asm', 'f', 'gcc-2.7.2-kmc', 'header', valid=True, **opts) == 'void f(void) { }'
+    assert seeds.generate_from_asm('asm', 'f', 'gcc-2.7.2-kmc', 'header', **opts) == raw
+    assert seeds.generate_from_asm('asm', 'f', 'ido-5.3', 'header', valid=True, **opts) == raw
+    assert calls == [(raw, 'f', 'asm', 'header', resolve)]

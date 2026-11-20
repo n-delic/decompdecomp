@@ -138,6 +138,12 @@ class BriefMixin:
         bindings = [(name,self.symbols(proj['id']).resolve(name)) for name in sorted(roots)]
         from ..draft_reports import generation
         inputs = [DRAFT_REVISION, self.cfg(proj).get("draft_generation", 0), hashlib.sha256((fn["asm"] or "").encode()).hexdigest(), fn["name"], target, own["toolchain"], own.get("flags", []), sorted(roots), bindings, context]
+        if own["toolchain"] == 'gcc-2.7.2-kmc' and 'swl' in (fn['asm'] or ''):
+            from decomprepair.unaligned_stack_drafts import stack_copy
+
+            # Regenerate older drafts only for functions that can use this recovery.
+            if stack_copy(fn['asm']):
+                inputs.append('unaligned stack copy')
         if refresh := generation(self,fn['id'],project_id=proj['id']):
             inputs.append(('regeneration',refresh))
         key = hashlib.sha1(json.dumps(inputs).encode()).hexdigest()[:16]
@@ -168,14 +174,16 @@ class BriefMixin:
             report = {'seed_key':key, 'compiled':False, 'failures':[]}
             try:
                 draft = seeds.generate_from_asm(target_asm, fn['name'], toolchain, context, data_asm,
-                                                valid=True, strict=True, timeout=20)
+                                                valid=True, strict=True, timeout=20,
+                                                resolve=lambda symbol: self.symbols(proj['id']).resolve(symbol))
             except seeds.DraftError as error:
                 draft_reports.failure(report, 'generation', 'raw_m2c', error)
                 draft = None
                 if context.strip():
                     try:
                         draft = seeds.generate_from_asm(target_asm, fn['name'], toolchain, '', data_asm,
-                                                        valid=True, strict=True, timeout=20)
+                                                        valid=True, strict=True, timeout=20,
+                                                        resolve=lambda symbol: self.symbols(proj['id']).resolve(symbol))
                     except seeds.DraftError as fallback_error:
                         draft_reports.failure(report, 'generation', 'without_context', fallback_error)
             if report['failures']:
