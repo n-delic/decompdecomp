@@ -469,6 +469,8 @@ def register(app: App) -> None:
             if "saved_recheck_minutes" in data and (type(data["saved_recheck_minutes"]) is not int
                     or not 0 <= data["saved_recheck_minutes"] <= 10080):
                 return fail(ValueError("Enter whole minutes from 0 to 10,080 (a week); 0 checks unchanged saved matches on every change."))
+            if "saved_match_rechecks_paused" in data and not isinstance(data["saved_match_rechecks_paused"], bool):
+                return fail(ValueError("Pause automatic rechecks of matched functions must be true or false."))
             if any(key in data for key in ('agent_local_enabled','agent_local_trials','agent_local_seconds')):
                 from ..agent_local_pass import configure
                 if 'agent_local_enabled' in data and not isinstance(data['agent_local_enabled'],bool):
@@ -534,6 +536,17 @@ def register(app: App) -> None:
                 settings.data["bridges_removed_seen"] = bool(data["bridges_removed_seen"])
             if "rom_library" in data:
                 settings.data["rom_library"] = str(data["rom_library"] or "").strip()
-            settings.save()
+            pause_key = "saved_match_rechecks_paused"
+            if pause_key in data:
+                settings.data[pause_key] = data[pause_key]
+            try:
+                settings.save()
+            except OSError:
+                if pause_key not in data:
+                    raise
+                settings.data[pause_key] = net.progress.matched_rechecks_paused
+                return fail(ValueError("Could not save the recheck setting. Check the app data folder's permissions and try again."))
+            if pause_key in data:
+                net.progress.matched_rechecks_paused = settings.data[pause_key]
             return JSONResponse(settings.public())
         return await app.call(save_settings)

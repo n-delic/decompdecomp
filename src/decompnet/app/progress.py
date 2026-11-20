@@ -735,6 +735,7 @@ class Progress:
         self.sync_changes: dict[str, int] = {}  # kept for restore, which drops every in-memory trace of a project
         self.adopting: set[str] = set()
         self.recheck_minutes = RECHECK_MINUTES  # (server.py and Settings set it from settings.json)
+        self.matched_rechecks_paused = False
         self.blocked: dict[str, tuple] = {}  # slug -> (folder, dirty token, settings) while a compiler waits
         self.reverifying: set[str] = set()  # projects whose interrupted rechecks are being resumed (_resume_reverify)
         self.case_checked: dict[str, tuple] = {}  # slug -> (dirty token, why saving waits for a rename, or None)
@@ -1035,7 +1036,7 @@ class Progress:
 
     def _remember(self, project_id: int, disk: dict[str, str], projected: dict[str, str],
                   config_key: str, dirty_token: str | None, dirty_tokens: list[str], *,
-                  rechecks: tuple[set[str], bool] | None = None) -> None:
+                  rechecks: tuple[set[str], bool] | None = None, keep_match_checks: bool = False) -> None:
         """Record a full sync as per-file hashes, writing only the hashes that changed."""
         store = self.net.project_store(project_id)
         baseline = _Baseline(_Snapshot.of(disk), _Snapshot.of(projected), dirty_token, config_key)
@@ -1050,7 +1051,8 @@ class Progress:
             self._ack_dirty(db, project_id, dirty_token, dirty_tokens)
             if rechecks is not None:
                 self._record_rechecks(db, project_id, *rechecks)
-                db.execute("DELETE FROM settings WHERE key=?", (f"saved_match_checks:{project_id}",))
+                if not keep_match_checks:
+                    db.execute("DELETE FROM settings WHERE key=?", (f"saved_match_checks:{project_id}",))
         baseline.stored = True
         self.baselines[project_id] = baseline
         self.states[project_id] = _State(dirty_token, config_key)
@@ -1895,7 +1897,7 @@ class Progress:
                     changed_db = state is not None and (
                         dirty.token != state.dirty_token or dirty.functions or dirty.headers or dirty.metadata
                         or state.config_key is None or config_key != state.config_key)
-                    pending_matches = self._pending_match_checks(store, pid)
+                    pending_matches = not self.matched_rechecks_paused and self._pending_match_checks(store, pid)
                     if state is not None and not changed_db and not pending_matches:
                         if not force and time.monotonic() - self.checked.get(slug, 0) < CHECK_SECONDS:
                             return False
@@ -2289,7 +2291,9 @@ class Progress:
         db_changed = (dirty.token != stored_token or dirty.functions or dirty.headers or dirty.metadata)
         config_changed = state is not None and (state.config_key is None or config_key != state.config_key)
         baseline = self._baseline(pid)
-        pending_matches = self._pending_match_checks(store, pid)
+        match_checks_paused = self.matched_rechecks_paused
+        queued_matches = self._pending_match_checks(store, pid)
+        pending_matches = {} if match_checks_paused else queued_matches
         signature = self._folder_signature(slug, folder)
         if baseline is not None and not pending_matches and self.signatures.get(slug) == signature:
             if not db_changed and not config_changed:
@@ -2536,7 +2540,7 @@ class Progress:
                 with store.tx() as db:
                     rows = db.execute("SELECT id,name,vram,status FROM functions WHERE project_id=?",
                                       (pid,)).fetchall()
-                    checks = dict(pending_matches)
+                    checks = dict(queued_matches)
                     impacted_names = affected or set()
                     for row in rows:
                         if row["name"] in deferred and row["id"] not in checks:
@@ -2609,7 +2613,14 @@ class Progress:
             if affected is not None and needs_judging:
                 saved = {name: info for name, info in saved.items() if name in affected}
             verifying = {}
-            if checks:
+            if checks and match_checks_paused:
+                # Keep the old verdict and the disk inputs for resumption, including
+                # removal requests. New work still goes through the ordinary judge.
+                queued_names = {row["name"] for row in store.all(
+                    "SELECT name FROM functions WHERE status='matched' AND id IN (SELECT key FROM json_each(?))",
+                    json.dumps(checks))}
+                saved = {name: info for name, info in saved.items() if name not in queued_names}
+            elif checks:
                 rows = store.all("SELECT id,name,vram,matched_source,readable FROM functions "
                                  "WHERE status='matched' AND id IN (SELECT key FROM json_each(?))",
                                  json.dumps(checks))
@@ -2689,7 +2700,8 @@ class Progress:
                     "matched": sum(name.startswith("src/") for name in rendered),
                     "best": sum(name.startswith("best/") for name in rendered)}
             self._remember(pid, disk, rendered, _config_key(proj, net.cfg(proj)),
-                           applied_dirty.token, applied_tokens, rechecks=(deferred, recheck_due))
+                           applied_dirty.token, applied_tokens, rechecks=(deferred, recheck_due),
+                           keep_match_checks=match_checks_paused)
             if baseline is not None and net.cfg(proj).get('auto_commit_matches'):
                 # Queue promotions after attribution is restored to the contributing agent.
                 from . import match_commits
