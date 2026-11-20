@@ -22,6 +22,9 @@ from ...forks.project import SCOPES
 from ...network import NetworkError
 from ...read_cache import ReadPending
 from .. import build_info, cleanup, edition, picker, saves, updates, window
+from ..app_repair import KIND as APP_REPAIR_KIND
+from ..app_repair import available as repair_available
+from ..app_repair import desktop
 from ..engine import COMPILERS, TOOLS
 from ..support import MAX_DISC, job_error, static_file
 from . import App
@@ -208,7 +211,11 @@ def register(app: App) -> None:
 
     @mcp.custom_route("/api/state", methods=["GET"])
     async def api_state(request: Request) -> Response:
-        return guard(request) or JSONResponse(await (app.ui_call or call)(state))
+        if bad := guard(request):
+            return bad
+        data = await (app.ui_call or call)(state)
+        data["app_repair"] = repair_available() and desktop(request, app)
+        return JSONResponse(data)
 
     @mcp.custom_route('/api/agent-prompts', methods=['GET', 'POST'])
     async def agent_prompts(request: Request) -> Response:
@@ -581,6 +588,8 @@ def register(app: App) -> None:
         if (bad := guard(request)):
             return bad
         job = jobs.jobs.get(request.query_params.get("id", ""))
+        if job and job["kind"] == APP_REPAIR_KIND and not desktop(request, app):
+            return fail(NetworkError("Open the desktop window to review app repairs."), 403)
         return await app.control(lambda: JSONResponse(job)) if job else fail(ValueError("no such job"), 404)
 
     @mcp.custom_route("/api/job/cancel", methods=["POST"])
@@ -588,6 +597,10 @@ def register(app: App) -> None:
         if (bad := guard(request, write=True)):
             return bad
         data = await body(request)
-        return JSONResponse({"cancelled": await app.control(lambda: jobs.cancel(str(data.get("id") or "")))})
+        jid = str(data.get("id") or "")
+        job = jobs.jobs.get(jid)
+        if job and job["kind"] == APP_REPAIR_KIND and not desktop(request, app):
+            return fail(NetworkError("Open the desktop window to stop app repairs."), 403)
+        return JSONResponse({"cancelled": await app.control(lambda: jobs.cancel(jid))})
 
     app.autopilot = autopilot

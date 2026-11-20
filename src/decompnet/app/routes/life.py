@@ -12,7 +12,9 @@ import time
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from ...network import NetworkError
 from .. import updates, window
+from ..app_repair import AppRepair, desktop
 from . import App
 
 page_log = logging.getLogger("decompdecomp.page")
@@ -82,6 +84,28 @@ def register(app: App) -> None:
                 return JSONResponse(await call(runtime.start, str(data.get('path') or ''), str(data.get('data_mode') or '')))
             return JSONResponse(await call(runtime.status))
         except (ValueError,OSError) as error:
+            return fail(error)
+
+    repair = AppRepair(app.jobs)
+
+    @mcp.custom_route("/api/app-repair", methods=["GET", "POST"])
+    async def api_app_repair(request: Request) -> Response:
+        if (bad := guard(request, write=request.method == "POST")):
+            return bad
+        if not desktop(request, app):
+            return fail(NetworkError("Open the desktop window to repair app source."), 403)
+        try:
+            if request.method == "GET":
+                return JSONResponse(await call(repair.preview, request.query_params.get("id", "")))
+            data = await body(request)
+            jid = str(data.get("id") or "")
+            if data.get("action") == "start":
+                return JSONResponse({"job": await call(repair.start, jid, data.get("log"))})
+            if data.get("action") == "apply":
+                await call(repair.apply, jid)
+                return JSONResponse({"applied": True})
+            raise NetworkError("Choose Start repair or Apply patch.")
+        except (NetworkError, ValueError, OSError, subprocess.SubprocessError) as error:
             return fail(error)
 
     def checking() -> bool:

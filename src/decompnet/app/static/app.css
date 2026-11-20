@@ -236,6 +236,8 @@ a.ghost, a.primary { text-decoration: none; }
 .joblog-frame > .joblog { padding-right: 64px; }
 .joblog-copy { position: absolute; top: 6px; right: 6px; z-index: 1; padding: 2px 8px; font: inherit; font-size: 11px; line-height: 18px; color: var(--ink-2); background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); cursor: pointer; opacity: .85; }
 .joblog-copy:hover, .joblog-copy:focus-visible { opacity: 1; color: var(--ink); background: var(--bg-alt); }
+.joblog-repair { right: 58px; }
+.joblog-frame:has(> .joblog-repair) > .joblog { padding-top: 36px; }
 .joblog-copy[data-state="done"] { color: var(--match-ink); }
 /* Terminal-like colours for log lines (base.js, joblogHtml), from the theme's status tokens. */
 .joblog .jl-err { color: var(--miss); }
