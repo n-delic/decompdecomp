@@ -36,6 +36,18 @@ function setup(){
     assert.match(html,/Detect asset \/ bank/);
   }
 
+  {
+    const t=setup();
+    const asset={kind:'strings',media:'metadata',label:'German dialogue script',dialogue:{
+      scenes:[{name:'START',caption:'Opening',lines:3}],speakers:{A:'Führer'}}};
+    t.context.scriptRegion={start:128,size:96,detected_asset:asset,annotation:{preview_settings:{dialogue_scene:1,dialogue_speaker:'A'}},mappings:[],symbols:[]};
+    const html=t.run('romAssetHTML(scriptRegion)');
+    assert.match(html,/value="1" selected>START · Opening · 3 cues/);
+    assert.match(html,/value="A" selected>Führer/);
+    assert.match(html,/Browse dialogue/);
+    assert.equal(t.run("romRows({query:'german dialogue',report:{regions:[scriptRegion]}}).length"),1);
+  }
+
   // A start acknowledges before the network returns, prevents duplicate starts,
   // and preserves a measured follow through completion.
   {

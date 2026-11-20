@@ -21,7 +21,7 @@ from ..rom.explorer import analyse
 
 PREFIX = 'rom-explorer:'
 CONTRACT_PREFIX='rom-explorer-contracts:'
-ANALYSIS_REVISION=20
+ANALYSIS_REVISION=21
 KINDS=('', 'unknown', 'code', 'data', 'strings', 'pointer table', 'compressed', 'image', '3d model', 'palette', 'audio', 'animation', 'collision', 'object placements', 'world grid', 'music sequence', 'demo', 'font', 'container', 'repeated bytes')
 
 
@@ -271,7 +271,7 @@ def loader_contracts(net,slug,data=None):
 def _preview_settings(options):
     from ..rom.asset_formats import FORMATS, PALETTES
     if not isinstance(options,dict):raise NetworkError('Preview settings must be named fields.')
-    allowed={'format','offset','source','block_offset','width','height','palette_offset','palette_format','channels','rate','length','frame','palette','mip','sample','mesh','texture','record_page','record_component','assembly','animation'}
+    allowed={'format','offset','source','block_offset','width','height','palette_offset','palette_format','channels','rate','length','frame','palette','mip','sample','mesh','texture','record_page','record_component','assembly','animation','dialogue_scene','dialogue_speaker'}
     if set(options)-allowed:raise NetworkError('Use only the listed preview controls.')
     if options.get('format','auto') not in FORMATS or options.get('palette_format','rgba5551-be') not in PALETTES:
         raise NetworkError('Choose a listed preview format and palette format.')
@@ -368,6 +368,9 @@ def _resource_links(result,asset,report):
     root=asset.get('directory_offset');objects={};textures={};related=[]
     for candidate in assets.values():
         if root is None or candidate.get('directory_offset')!=root:continue
+        if (asset.get('resource_type')=='dialogue' and candidate.get('resource_type')=='dialogue'
+                and candidate['offset']!=asset['offset']):
+            related.append(dict(label=candidate['label'],offset=candidate['offset']))
         info=candidate.get('resource_fields',{})
         if candidate.get('resource_type')=='object' and info.get('object_id') is not None:objects[info['object_id']]=candidate['offset']
         path=candidate.get('resource_path','')

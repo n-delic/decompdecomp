@@ -99,7 +99,7 @@ async function stopRomExplorer() {
 }
 function romRows(view) {
   const query=view.query.toLowerCase();
-  const rows=(view.report?.regions || []).filter(r=>!query || [r.kind,r.annotation?.kind,r.id,r.annotation?.name,r.detected_asset?.resource_type,r.detected_asset?.resource_path,r.archive_path,...r.symbols.map(s=>s.name),...r.mappings.map(m=>m.segment)].some(v=>String(v||'').toLowerCase().includes(query)));
+  const rows=(view.report?.regions || []).filter(r=>!query || [r.kind,r.annotation?.kind,r.id,r.annotation?.name,r.detected_asset?.resource_type,r.detected_asset?.resource_path,r.detected_asset?.label,r.archive_path,...r.symbols.map(s=>s.name),...r.mappings.map(m=>m.segment)].some(v=>String(v||'').toLowerCase().includes(query)));
   if(view.function)rows.splice(0,rows.length,...rows.filter(r=>r.function_refs?.includes(view.function) || r.functions.includes(view.function)));
   return rows.sort((a,b)=>{
     const key=view.sort,value=r=>key==='name' ? r.annotation?.name || r.symbols[0]?.name || r.detected_asset?.resource_path || r.archive_path || r.detected_asset?.label || '' : key==='kind' ? r.annotation?.kind || r.kind : key==='confidence' && r.annotation?.kind ? 'Your annotation' : r[key],av=value(a),bv=value(b);
