@@ -194,6 +194,53 @@ def test_disabling_during_snapshot_cancels_publication(automatic, monkeypatch):
     assert git(root, 'rev-parse', 'HEAD') == before
 
 
+@pytest.mark.parametrize('during_prepare', ['other_match', 'revoke', 'disable'])
+def test_git_preparation_leaves_judges_unblocked_and_rechecks_before_publication(
+        automatic, monkeypatch, during_prepare):
+    from concurrent.futures import ThreadPoolExecutor
+
+    net, root, _, _ = automatic
+    enable(automatic)
+    match(automatic)
+    before = git(root, 'rev-parse', 'HEAD')
+    lock = net.progress._project_lock('game')
+    store = net.project_store('game')
+
+    def concurrent_change():
+        assert lock.acquire(blocking=False)
+        try:
+            if during_prepare == 'revoke':
+                with store.tx() as db:
+                    db.execute("UPDATE functions SET status='open',matched_source=NULL WHERE name='f'")
+            elif during_prepare == 'disable':
+                match_commits.configure(net, 'game', False)
+            else:
+                match(automatic, 'g')
+        finally:
+            lock.release()
+
+    original = repository_progress.repository_git.git
+    with ThreadPoolExecutor(1) as pool:
+        def observe(path, *args, **kwargs):
+            if args[0] == 'write-tree':
+                pool.submit(concurrent_change).result(timeout=10)
+            if args[0] == 'update-ref':
+                assert lock._is_owned()
+            return original(path, *args, **kwargs)
+        monkeypatch.setattr(repository_progress.repository_git, 'git', observe)
+        match_commits.process(net, 'game')
+
+    if during_prepare == 'other_match':
+        manifest = json.loads(git(root, 'show', 'HEAD:decompdecomp.json'))
+        assert 'matched_by' in manifest['functions']['f']
+        assert 'matched_by' not in manifest['functions']['g']
+        assert match_commits.status(net, net.project_row('game'))['pending'] == 1
+    else:
+        assert git(root, 'rev-parse', 'HEAD') == before
+        assert match_commits.status(net, net.project_row('game'))['pending'] == 0
+        assert not (root/'.git/index.lock').exists()
+
+
 def test_layout_changes_require_a_manual_checkpoint(automatic):
     net, root, _, _ = automatic
     with net.store.tx() as db:db.execute("UPDATE functions SET size=8 WHERE name='g'")
