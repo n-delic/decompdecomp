@@ -8588,3 +8588,22 @@ constant materialization and in-place `sllv` and matched (score 175 to exact).
 Two other distinct variable-shift targets at this profile and size did not yield the
 same draft pattern. The isolated edit is evidence for this one case. The repeated
 stack problem occurs before ordinary source permutation can start.
+
+### Recovering undeclared stack bytes from an unaligned copy
+
+Both archived SDK builds from the pilot above now regenerate a draft that compiles
+and matches byte for byte with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` and each
+build's captured header. Their raw m2c drafts failed compilation on `sp2`, `sp6`
+and `sp7`. The original paired left/right word loads and stores show an eight-byte
+copy. The following stack loads establish byte views at offsets 2, 6 and 7 and a
+halfword at offset 4. A typed record assignment preserves that copy and lets the
+draft use fields instead of inventing independent stack locals.
+
+Keeping m2c's separate output cursors and guarded `do` loop compiled but missed
+(score 702 and 527 with corrected byte strides). A record `for` loop reproduced
+one build exactly. Its second build still scored 230 because GCC folded a loop
+bound and the copy cursor into a common base address. Giving the bound a separate
+symbol at the address proved by the original relocations reproduced the reload
+and matched exactly. Tests reject incomplete copies, conflicting stack offsets
+and changed input strides. These results use regenerated drafts and the normal
+linked ROM judge.

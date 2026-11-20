@@ -354,16 +354,23 @@ def intrinsic_leaf(asm_text: str, name: str, toolchain_id: str | None) -> str | 
 
 def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, context_header: str = "",
                       data_asm: str | None = None, timeout: float = 20, valid: bool = False,
-                      strict: bool = False, options: tuple[str, ...] = ()) -> str | None:
+                      strict: bool = False, options: tuple[str, ...] = (), *, resolve=None) -> str | None:
     """C draft from GNU/splat-style assembly text (plus optional data, for jump tables and strings). `valid`:
     m2c's compilable form (unknown types and expressions as M2C_ macros, see M2C_MACROS), for trying drafts as is.
-    `strict`: a context m2c can't read raises DraftError instead of drafting without it."""
+    `strict`: a context m2c can't read raises DraftError instead of drafting without it.
+    `resolve` looks up project addresses for repairs that need to keep a relocated object separate.
+    """
     if source := intrinsic_leaf(asm_text, name, toolchain_id):
         return source
     target = m2c_target(toolchain_id or "")
     if not target:
         return None
-    return run_m2c(asm_text, name, target, context_header, data_asm, timeout, valid, strict, options)
+    source = run_m2c(asm_text, name, target, context_header, data_asm, timeout, valid, strict, options)
+    if valid and source and toolchain_id == 'gcc-2.7.2-kmc' and 'M2C_UNALIGNED32' in source:
+        from decomprepair.unaligned_stack_drafts import rewrite
+
+        return rewrite(source, name, asm_text, context_header, resolve) or source
+    return source
 
 
 def drop_saved_register_reads(source: str) -> str:

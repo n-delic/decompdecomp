@@ -572,7 +572,8 @@ class ImportMixin:
         drafts = []
         for fn in rows:
             data_asm = "\n".join(self._jtbl_asm(proj, fn)) if "jtbl_" in (fn["asm"] or "") else None
-            draft = seeds.generate_from_asm(self._asm_text(fn, proj), fn["name"], current, header, data_asm, valid=True)
+            draft = seeds.generate_from_asm(self._asm_text(fn, proj), fn["name"], current, header, data_asm, valid=True,
+                                            resolve=lambda symbol: self.symbols(proj['id']).resolve(symbol))
             if draft:
                 drafts.append((fn, f"{seeds.M2C_MACROS}\n{draft}\n"))
         log(f"testing {len(tcs)} compilers on {len(drafts)} small functions")

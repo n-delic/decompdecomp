@@ -384,7 +384,9 @@ class AutopilotMixin:
                 draft = None
             else:
                 try:
-                    draft = seeds.generate_from_asm(target_asm, fn['name'], toolchain, context, data_asm, valid=True, strict=True, timeout=20)
+                    draft = seeds.generate_from_asm(target_asm, fn['name'], toolchain, context, data_asm,
+                                                    valid=True, strict=True, timeout=20,
+                                                    resolve=lambda symbol: self.symbols(proj['id']).resolve(symbol))
                 except seeds.DraftError as error:
                     draft_reports.failure(report, 'generation', 'raw_m2c', error)
                     draft = None
@@ -428,7 +430,8 @@ class AutopilotMixin:
                     return
                 try:
                     local = seeds.generate_from_asm(self._asm_text(fn, proj), fn['name'], toolchain,
-                                                   alternative, data_asm, valid=True, strict=True)
+                                                   alternative, data_asm, valid=True, strict=True,
+                                                   resolve=lambda symbol: self.symbols(proj['id']).resolve(symbol))
                 except seeds.DraftError:
                     return
                 if not local:
