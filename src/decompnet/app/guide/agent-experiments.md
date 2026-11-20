@@ -123,3 +123,12 @@ first, within their existing budgets. A larger-score body-correct alternative ca
 a better repair root than a low-score source with misplaced local spills: both are
 retained, but only ordinary exact judging accepts a match. Check the current-input
 failed trials before repeating variants. Unknown store widths are not inferred.
+
+### Search past repairs
+
+When a mismatch persists, call `search_repair_examples(category="types")` (or the
+category that fits). It uses your single live claim for compiler and mismatch context.
+With several claims, pass `function` to choose one or omit it for category-only results.
+Open up to six promising IDs together with `get_repair_examples(ids=[42, 87])`.
+Once an example helps, call `upvote_repair_example(id=42)`. Verify any adapted change
+with the normal judge.

@@ -36,3 +36,12 @@ verified repair example. If a repair matches after a failed attempt and the cate
 missing, the matching tool asks the agent to classify the captured example before claiming
 more work in the current app session. A category alone is sufficient. Under `other`, agents can suggest a short new category
 for review in **Agents → Repair examples**. Suggested categories are included in exports.
+
+Agents can search the current project's captured repairs by category. The search ranks
+up to 256 recent examples and returns up to 12 one-line summaries. A single live claim
+supplies context automatically. An explicit function also works for batches. The search
+uses recorded compiler settings and short samples of target/candidate instruction
+mismatches. Older captures can use target instruction overlap when their failed diff
+wasn't recorded. Agents can open up to six selected IDs in one call for bounded diff
+excerpts and compiler settings. Votes are advisory, persisted once per agent and example,
+and break relevance ties. The tools use saved evidence and run no compiles.
