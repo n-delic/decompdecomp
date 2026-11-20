@@ -315,3 +315,79 @@ def test_http_failure_diagnostics_record_fast_status_without_secrets(status, cap
     if status>=500:assert f'status={status}' in caplog.text and 'route=API request' in caplog.text
     for secret in ('private-token','private-query','private-auth','private source','secret-header'):
         assert secret not in caplog.text
+
+
+def test_deep_search_preparation_leaves_function_drawer_and_stop_responsive(app, monkeypatch):
+    from decompnet.app import deep_permuter
+
+    client, net, _ = app
+    entered, release = threading.Event(), threading.Event()
+
+    def validate(*args):
+        entered.set()
+        assert release.wait(10)
+
+    monkeypatch.setattr(deep_permuter, 'validate', validate)
+    monkeypatch.setattr(deep_permuter, 'run', lambda *args, **kwargs: pytest.fail('Cancelled before search'))
+    monkeypatch.setattr(net, 'function_detail', lambda slug, name, **kwargs: {'name': name})
+    headers = {'X-Decomp': '1'}
+    params = {'slug': 'slow-preparation', 'name': 'f'}
+    with client, ThreadPoolExecutor(2) as pool:
+        def submit():
+            return client.post('/api/deep-permuter', headers=headers, json=params)
+
+        first = pool.submit(submit)
+        try:
+            assert entered.wait(3)
+            jid = first.result(timeout=2).json()['job']
+            detail = pool.submit(client.get, '/api/function', params=params).result(timeout=2)
+            assert detail.json()['deep_job'] == jid
+            assert pool.submit(submit).result(timeout=2).json()['job'] == jid
+            stop = pool.submit(client.post, '/api/job/cancel', headers=headers, json={'id': jid})
+            assert stop.result(timeout=2).json() == {'cancelled': True}
+        finally:
+            release.set()
+        for _ in range(100):
+            job = client.get('/api/job', params={'id': jid}).json()
+            if job['state'] != 'running':
+                break
+            time.sleep(.01)
+        assert job['state'] == 'cancelled'
+
+
+def test_rom_scan_start_does_not_read_source_status(app, monkeypatch):
+    from decompnet.app import rom_explorer
+
+    client, _, _ = app
+    entered, release = threading.Event(), threading.Event()
+
+    def run(*args):
+        entered.set()
+        assert release.wait(5)
+
+    monkeypatch.setattr(rom_explorer, 'status', lambda *args: pytest.fail('Scan start read source status'))
+    monkeypatch.setattr(rom_explorer, 'run', run)
+    def start():
+        return client.post('/api/rom-explorer', headers={'X-Decomp': '1'}, json={'slug': 'scan-game'})
+
+    try:
+        response = start()
+        assert response.status_code == 200
+        assert entered.wait(2)
+        assert start().json() == response.json()
+    finally:
+        release.set()
+
+
+def test_project_activity_can_be_read_while_job_registry_is_reserved():
+    from types import SimpleNamespace
+
+    from decompnet.app.project_activity import Activity
+
+    jobs = support.Jobs()
+    jobs.jobs['job'] = {'state': 'running', 'activity_project': 'game'}
+    activity = Activity(SimpleNamespace(sessions={}), jobs)
+    with ThreadPoolExecutor(1) as pool:
+        with jobs._lock:
+            assert pool.submit(activity.active, 'game').result(timeout=1)
+            assert not pool.submit(activity.active, 'idle').result(timeout=1)

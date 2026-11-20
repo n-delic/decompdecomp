@@ -73,11 +73,15 @@ def prepare_source(net, proj, fn):
     return {**dict(fn), **dict(net._function(fn['name'], proj['slug']))}
 
 
-def validate(net, slug, name, minutes, max_variants):
+def validate_limits(minutes, max_variants):
     if isinstance(minutes, bool) or not isinstance(minutes, int) or not 1 <= minutes <= 120:
         raise NetworkError('Choose a time limit from 1 to 120 minutes.')
     if isinstance(max_variants, bool) or not isinstance(max_variants, int) or not 1 <= max_variants <= 1000000:
         raise NetworkError('Choose a variant limit from 1 to 1,000,000.')
+
+
+def validate(net, slug, name, minutes, max_variants):
+    validate_limits(minutes, max_variants)
     proj = net.project_row(slug)
     fn = net._function(name, slug)
     from .boundary_repairs import blocked

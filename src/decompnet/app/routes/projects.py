@@ -59,7 +59,10 @@ def register(app: App) -> None:
                             return fn(slug, request, data)
                     if request.url.path in ('/api/priority', '/api/variants'):
                         return fn(slug, request, data)  # Metadata is published by autosave, without another recheck here.
-                    if request.url.path in ('/api/try', '/api/cross-game/run', '/api/reconcile-matches') or (request.method=='POST' and request.url.path=='/api/reimport'):
+                    if request.method == "POST" and request.url.path in (
+                        '/api/try', '/api/cross-game/run', '/api/reconcile-matches', '/api/reimport',
+                        '/api/permuter/function', '/api/deep-permuter',
+                    ):
                         return fn(slug, request, data)  # The worker synchronizes; return its job without waiting.
                     if request.method == "GET" or request.url.path == "/api/permuter/pass":
                         # Deep-pass controls schedule local workers; the workers synchronize before judging.
@@ -409,8 +412,8 @@ def register(app: App) -> None:
         # Reserve discovery and start atomically: double clicks and two windows
         # must attach to the same project job rather than launch duplicate scans.
         with jobs._lock:
-            active = rom_explorer.status(net,slug,jobs)['job']
-            if active and active['state']=='running':return {'job':active['id']}
+            active = jobs.active(('rom-explorer',), project=slug)
+            if active:return {'job':active['id']}
             return {'job':jobs.start('rom-explorer',lambda log:rom_explorer.run(net,slug,log),project=slug,
                                      cancel_message='ROM scan stopped. The previous completed map and notes are retained.')}
 
@@ -914,12 +917,20 @@ def register(app: App) -> None:
     def start_search(slug, name, minutes, variants, **options):
         """One deep search per function, however it was asked for: a second ask joins the running one."""
         from .. import deep_permuter
+        def run(log):
+            # Source preparation can wait for a project check or compiler slot.
+            # Publish the job first so the drawer can follow it or request Stop.
+            log.progress({'phase': 'Preparing function'})
+            deep_permuter.validate(net, slug, name, minutes, variants)
+            log.check_cancel()
+            return deep_permuter.run(net, slug, name, minutes, variants, log, **options)
+
         with jobs._lock:
             previous = function_searches.get((slug, name))
             if previous and jobs.jobs.get(previous, {}).get('state') == 'running':
                 return previous
-            deep_permuter.validate(net, slug, name, minutes, variants)
-            job = jobs.start('deep-permuter', lambda log: deep_permuter.run(net, slug, name, minutes, variants, log, **options),
+            deep_permuter.validate_limits(minutes, variants)
+            job = jobs.start('deep-permuter', run, project=slug,
                              cancel_message='Deep permuter stopped. Verified improvements are saved.')
             jobs.jobs[job].update({'slug': slug, 'function': name})
             function_searches[slug, name] = job
