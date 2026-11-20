@@ -1903,8 +1903,9 @@ class Autosave:
             self.stop.wait(1)
 
     def _commit_once(self, slug, output):
-        # Read preferences now, not the coordinator's older discovery snapshot.
-        proj = self.net.project_row(slug)
+        # Check the current preferences without synchronizing the tree on every poll.
+        # The commit workers check their queues first and verify saved inputs at capture.
+        proj = self.net.project_row(slug, sync=False)
         if proj is None:return
         cfg = _settings(proj)
         if cfg.get('auto_commit_matches') or cfg.get('auto_commit_polished'):
