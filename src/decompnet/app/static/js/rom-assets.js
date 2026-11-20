@@ -51,7 +51,7 @@ function romAssetOptions(body) {
   options.record_page=body._romRecordPage || 0;
   return options;
 }
-function setupRomAsset(body,region,slug,imageHash,active) {
+function setupRomAsset(body,region,slug,imageHash,active,inspect=false) {
   const get=key=>body.querySelector(`[data-asset-${key}]`),button=get('preview'),work=get('work'),result=get('result');
   let busy=false,previewEpoch=0,controller=null;
   body._romCancelPreview=()=>{previewEpoch++;controller?.abort();};
@@ -100,6 +100,11 @@ function setupRomAsset(body,region,slug,imageHash,active) {
   button.onclick=()=>renderPreview(false);body._romPreviewFrame=()=>renderPreview(true);
   if(typeof setupRomTextureControls==='function')setupRomTextureControls(body,region,active);
   if(typeof setupRomAudio==='function')setupRomAudio(body,region,active);
+  if(inspect){
+    get('source').value='rom';get('format').value='auto';
+    get('offset').value='0x'+region.detected_asset.offset.toString(16);
+    layout();renderPreview(false);
+  }
 }
 let romRoleEpoch=0;
 async function loadRomLoaderRoles() {
