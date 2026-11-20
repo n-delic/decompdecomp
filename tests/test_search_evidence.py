@@ -52,3 +52,16 @@ def test_agent_attempt_output_is_added_to_the_same_compact_history():
     result['compiled_output']['granularity'] = 'section'
     JudgeMixin._remember_search_output(net,AGENT,'f','source-c','game',result)
     assert '3 source variants' not in search_evidence.brief(net,proj,fn)
+
+
+def test_parallel_evidence_writers_share_the_retention_limit():
+    from concurrent.futures import ThreadPoolExecutor
+
+    net = FakeNet()
+    fn, proj = net.function(), net.project_row('game')
+    def record(i):
+        search_evidence.remember(net, AGENT, proj, fn, str(i), i)
+        search_evidence.brief(net, proj, fn)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(record, range(32)))
+    assert len(next(iter(net._search_evidence.values()))) == 8

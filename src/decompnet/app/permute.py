@@ -296,6 +296,10 @@ class State:
             self.current = ", ".join(self._held)
 
 
+class StaleProjectGeneration(NetworkError):
+    """A project generation changed before a parallel candidate could be recorded."""
+
+
 class Permuter:
     def __init__(self, net):
         self.net = net
@@ -1018,6 +1022,8 @@ class Permuter:
                     changed.append('header')
                 if self.net._generation.get(proj['id'], 0) != generation:
                     changed.append('symbols or layout')
+                if changed == ['symbols or layout']:
+                    raise StaleProjectGeneration('Search inputs changed while compiling (symbols or layout).')
                 if changed:
                     raise NetworkError('Search inputs changed while compiling ('+', '.join(changed)+'); the saved result was left untouched. Retry the function.')
         compile_candidate = getattr(self.net, "_attempt_compilation", self.net._compile)

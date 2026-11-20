@@ -8248,3 +8248,17 @@ loads before them (600).
   stayed the same. Testing alternate flags on the saved draft did not improve
   its score. Stripping its one-iteration `do … while (0)` scopes raised the
   score to 850, so startup recovery now preserves those scopes.
+
+### Repeated call-result lifetimes in a fresh machine draft
+
+Controlled ROM replay with gcc-2.7.2-kmc and
+`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`. The refined m2c source scored 23,075.
+Reusing a previous scalar result slot for a later call to the same callee
+produced a 22,930-point candidate. Repeating the pass on that saved winner
+reached 22,600. Splitting another call result into its own local reached
+22,500. Independent two-worker searches from freshly generated drafts
+reproduced the same source and linked score. This is a partial improvement.
+With two workers, a one-minute run finished at 22,500 after 41 candidate
+checks. A four-minute run tested 81 candidates and reached 22,410 with a
+built-in random rewrite. Both saved results were independently recompiled and
+linked. The 22,410 result has one observed run.

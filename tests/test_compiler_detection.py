@@ -163,3 +163,21 @@ def test_a_much_closer_profile_is_told_once_in_words_and_never_applied():
     assert closer(net, None, 'game', 'f', profile, 130, 10) is None and len(said) == 1  # already on the page
     assert closer(net, None, 'game', 'f', profile, 130, 80) is None  # not much closer
     assert closer(net, None, 'game', 'f', profile, 130, 0) is None  # exact goes through the recheck instead
+
+
+def test_profile_proposal_generation_observes_the_search_deadline():
+    import pytest
+
+    from decompnet.app.deep_permuter import SearchLimit
+
+    search = Search({})
+    def expired():
+        raise SearchLimit('Time limit reached')
+    def generate(args, options, check):
+        assert args[-1] == LATE['flags']
+        check()
+    search.check = expired
+    search.compile_pool = SimpleNamespace(proposal_pool=lambda: SimpleNamespace(generate=generate))
+    with pytest.raises(SearchLimit, match='Time limit reached'):
+        profile_climb.climb(search, None, PROJ, FN, FN['best_source'], LATE, 10)
+    assert search.tested == 0
