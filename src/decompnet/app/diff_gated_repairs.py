@@ -28,6 +28,7 @@ from . import (
     target_conversion_diff_repairs,
     target_edge_diff_repairs,
     target_guard_width_diff_repairs,
+    target_inline_storage_diff_repairs,
     target_memory_diff_repairs,
     target_schedule_diff_repairs,
 )
@@ -153,6 +154,8 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         return result
 
     if toolchain.startswith('gcc-2.7.2-kmc'):
+        result += target_inline_storage_diff_repairs.proposals(source,name,header,rows,target,candidate,asm,
+                                                             read_data=read_data,big_endian=big_endian)
         result += measured_immediate_repairs.variants(source,name,rows)
         result += kmc_cast_repairs.variants(source,name,header,rows,flags)
         result += target_guard_width_diff_repairs.proposals(source,name,header,rows,target,candidate,asm,
