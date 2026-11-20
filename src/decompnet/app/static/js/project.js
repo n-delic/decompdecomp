@@ -101,6 +101,7 @@ async function openProject(slug, tab = "overview") {
   L.q = ""; L.filter = "all"; L.limit = FUNCTION_ROWS; $("fnSearch").value = "";
   $("instrEdit").value = S.ov.instructions || "";
   renderClaimOrder(S.ov);
+  renderRoutingExperiment(S.ov);
   renderHeader(S.ov);
   markNav();
   const setup = fork && !S.ov.ready;

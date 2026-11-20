@@ -109,7 +109,8 @@ def run(net,agent,slug,function,revision,trials):
             out.append(f'{i}: {status}; {tag}; trial_id={key}; compiler={t["compiler"]}; flags={t.get("flags","") or "platform defaults"}')
             if exact:
                 if not fork:
-                    promotion_hint=(f'\nTo save this exact pair, retrieve trial {key}, then suggest(function=\"{fn["name"]}\", compiler=\"{t["compiler"]}\", flags=\"{t.get("flags","")}\", source=<the exact trial C>). No ranges argument is needed: function-only suggestions reverify and save only that entry; automatic changes must be enabled, otherwise they wait for review.')
+                    promotion_hint = (f'\nUse suggest(function={fn["name"]!r}, trial_id={key!r}, '
+                                      'text="Reverify and save this exact trial") to submit the stored pair for ordinary approval.')
                 break
         return '\n'.join(out)+f'\nCandidate revision {actual} unchanged. get_compiler_trial retrieves the exact C/profile pair. No match credited or compiler choice applied.'+promotion_hint
 
@@ -136,3 +137,21 @@ def retrieve(net,agent,slug,function,trial_id,include_header=False):
     compact['same_current_source'] = (hashlib.sha256(agent_tokens.candidate(net,agent,slug,function)[0].encode()).hexdigest()==hashlib.sha256(record['source'].encode()).hexdigest()) if hasattr(net,'store') else False
     compact['same_current_scope'] = (record['scope'] == agent_tokens.target_scope(net,fn,agent_tokens.candidate(net,agent,slug,function)[1])) if hasattr(net,'store') else False
     return json.dumps(compact,ensure_ascii=False)
+
+
+def suggest_trial(net, agent, slug, function, trial_id, text):
+    """Submit frozen diagnostic inputs through the same fresh judge and approval as a manual suggestion."""
+    from . import reviewed_search_seeds
+
+    proj = net.project_row(slug)
+    if not reviewed_search_seeds.supported(net, proj):
+        raise NetworkError('Saving by trial ID needs a local ROM project with frozen compiler diagnostic inputs.')
+    fn = net._function(function, slug)
+    record = reviewed_search_seeds.record(net, fn, trial_id)
+    result = record.get('result')
+    if not isinstance(result, dict) or result.get('exact') is not True:
+        raise NetworkError('Choose a trial with a verified exact diagnostic result.')
+    if record.get('seed_scope') != reviewed_search_seeds.scope(net, proj, fn, record['source']):
+        raise NetworkError('This compiler trial is stale. Run a fresh experiment before proposing the match.')
+    return net.suggest(agent, slug, text or 'Reverify the exact compiler trial.',
+                       record['compiler'], record['flags'], fn['name'], source=record['source'])

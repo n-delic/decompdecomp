@@ -140,3 +140,20 @@ def test_memory_access_order_is_an_agent_category_and_search_filter(corpus):
     for name, field in (('compile_and_diff','repair_category'),('report_repair','category'),
                         ('search_repair_examples','category')):
         assert 'memory_access_order' in schema[name]['properties'][field]['description']
+
+
+def test_retry_surfaces_one_verified_profile_and_shape_match(corpus):
+    from decompnet.app.repair_search import retry_example
+
+    net, agent, other = corpus
+    past = add_function(net, 'past')
+    case = capture(net, other, past, SIGNED)
+    net.repair_feedback.report(other, 'demo', 'past', category='types', change='Recover the signed comparison')
+    current = add_function(net, 'current')
+    proj = net.project_row('demo')
+    found = retry_example(net, proj, current, SIGNED)
+    if net.fork_slug('demo'):
+        assert not found  # No exact per-file flags in this imported repair record.
+    else:
+        assert f'#{case}' in found and 'Recover the signed comparison' in found
+    assert not retry_example(net, proj, current, BRANCH)

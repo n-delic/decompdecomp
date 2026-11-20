@@ -6,7 +6,7 @@ repair_policy repair_policy_coverage repair_sequences repair_sequence_outcomes r
 agent_tool_usage agent_tool_task_usage room_membership_effects activity_events
 variant_games game_variants logical_functions variant_bindings variant_sources variant_edit_locks variant_jobs'''.split())
 SCOPED = set('''functions agent_family_targets agent_selection agent_variant_runs attempt_hints attempts
-claims claim_routing_samples auto_match_commits candidate_rechecks compiler_tests compiler_trial_evidence context_history
+claims claim_routing_experiments claim_routing_samples auto_match_commits candidate_rechecks compiler_tests compiler_trial_evidence context_history
 context_versions cross_game_attempts cross_game_index deep_permutation_improvements
  deep_permutation_measurements deep_permutation_passes deep_permutation_recipe_wins
  deep_permutation_recipes events free_match_attempts helper_sessions history_revisions history_rewrites
@@ -21,7 +21,7 @@ COUNTERS = {'read_revisions','layout_revision','map_clock','repair_capture_group
 DERIVED = {'read_snapshots','payload_links','payload_sizes'}
 BLOBS = {'text_payloads','header_blobs'}
 KNOWN = SHARED | SCOPED | TRANSCRIPTS | COUNTERS | DERIVED | BLOBS | {'projects','settings'}
-FUNCTION_KEYS = set('''agent-stall agent-review agent-experiment candidate-quality machine-draft
+FUNCTION_KEYS = set('''agent-stall agent-review agent-experiment agent-output-history candidate-quality machine-draft
 machine-draft-generation permuter-checkpoint permuter-inputs-v1 dependency-pivot repair-first'''.split())
 PROJECT_KEYS = set('''boundary-repair code-audit data-region deep-metrics-reset deep-sweep
  draft-repair-cursor free-candidate-cursor named-donor-cursor source-recovery-queue source-preparation

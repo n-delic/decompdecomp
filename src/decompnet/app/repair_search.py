@@ -61,13 +61,8 @@ def _short(text, limit):
     return single_line if len(single_line) <= limit else single_line[:limit - 1] + '…'
 
 
-def search(net, agent, slug, category, function=''):
-    if category not in CATEGORIES:
-        raise NetworkError('Choose a repair category: ' + ', '.join(CATEGORIES))
-    proj = net._project(slug)
-    store = net.project_store(proj['id'])
-    fn, settings, signature = _context(net, store, agent, proj, function)
-    rows = store.all(
+def _examples(store, project_id, signature, category=None):
+    return store.all(
         "SELECT e.id,f.name,substr(e.explanation,1,300) explanation,e.suggested_category,"
         "json_extract(e.evidence,'$.after.settings') settings,"
         "json_extract(e.evidence,'$.before.mismatch_signature') signature,"
@@ -76,9 +71,36 @@ def search(net, agent, slug, category, function=''):
         "THEN substr(f.asm,1,4096) END AS target,"
         "(SELECT COUNT(*) FROM repair_example_votes v WHERE v.example_id=e.id) votes "
         "FROM main.repair_examples e JOIN functions f ON f.id=e.function_id "
-        "WHERE e.project_id=? AND e.category=? AND e.status!='dismissed' "
+        "WHERE e.project_id=? AND (? IS NULL OR e.category=?) AND e.status!='dismissed' "
         "AND CASE WHEN json_valid(e.evidence) THEN json_type(e.evidence,'$.before')='object' ELSE 0 END ORDER BY e.id DESC LIMIT ?",
-        bool(signature), proj['id'], category, SHORTLIST_LIMIT)
+        bool(signature and category), project_id, category, category, SHORTLIST_LIMIT)
+
+
+
+def retry_example(net, proj, fn, rows):
+    signature = {tuple(pair) for pair in mismatch_signature(rows)}
+    if not signature:
+        return ''
+    settings = _settings(proj, fn)
+    store = net.project_store(proj['id'])
+    ranked = []
+    for row in _examples(store, proj['id'], signature):
+        compiler, flags, exact, _, _, votes, number = _rank(row, settings, signature)
+        if compiler and flags and exact and row['explanation']:
+            ranked.append((exact, votes, number, _short(row['explanation'], 180)))
+    if not ranked:
+        return ''
+    _, _, number, hint = max(ranked)
+    return f'Past exact repair with this compiler, flags and a shared mismatch (#{number}): {hint} Read get_repair_examples for the evidence.'
+
+
+def search(net, agent, slug, category, function=''):
+    if category not in CATEGORIES:
+        raise NetworkError('Choose a repair category: ' + ', '.join(CATEGORIES))
+    proj = net._project(slug)
+    store = net.project_store(proj['id'])
+    fn, settings, signature = _context(net, store, agent, proj, function)
+    rows = _examples(store, proj['id'], signature, category)
     if not rows:
         return f'No captured repairs in category {category} in this project.'
     ranked = sorted(rows, key=lambda row: _rank(row, settings, signature), reverse=True)[:SEARCH_LIMIT]

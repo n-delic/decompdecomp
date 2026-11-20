@@ -1,5 +1,6 @@
 """Bounded build-scoped search notes for agents: useful differences without full assembly replay."""
 import hashlib
+import json
 import threading
 
 from . import (
@@ -31,6 +32,8 @@ def remember(net, agent, proj, fn, source, score, *, output=None):
              'frame_source': source if gap and len(source) <= 65536 else None,
              'kind': permuter_focus.classify(rows), 'allocation': allocation_evidence.diagnose(rows, proj['arch']),
              'output': output, 'family': (current_trial() or {}).get('family', 'manual')}
+    if output and score > 0:
+        _remember_fingerprint(net, current, key[1], digest, entry)
     with _POOL_LOCK:
         pool = cache.setdefault(key,{})
         parent = pool.get(parent_hash)
@@ -46,14 +49,48 @@ def remember(net, agent, proj, fn, source, score, *, output=None):
             del cache[next(iter(cache))]
 
 
-def brief(net, proj, fn):
+def _remember_fingerprint(net, fn, scope, source_digest, entry):
+    store = net.project_store(fn['project_id'])
+    key = 'agent-output-history:' + str(fn['id'])
+    record = [source_digest, entry['output'], entry['family']]
+    with store.tx() as db:
+        row = db.execute('SELECT value FROM settings WHERE key=?', (key,)).fetchone()
+        saved = json.loads(row['value']) if row else {}
+        history = saved.get('history', []) if saved.get('scope') == scope else []
+        history = [item for item in history if item[0] != source_digest] + [record]
+        db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',
+                   (key, json.dumps({'scope': scope, 'history': history[-24:]})))
+
+
+def repeated_hint(net, proj, fn, source):
+    store = net.project_store(fn['project_id'])
+    row = store.one('SELECT value FROM settings WHERE key=?', 'agent-output-history:' + str(fn['id']))
+    if not row:
+        return ''
+    saved = json.loads(row['value'])
+    if saved['scope'] != experiment_evidence.build_scope(net, proj, fn):
+        return ''
+    digest = hashlib.sha256(source.encode()).hexdigest()
+    current = next((output for key, output, _ in saved['history'] if key == digest), None)
+    siblings = [family for key, output, family in saved['history'] if output == current and key != digest]
+    if not siblings:
+        return ''
+    families = ', '.join(dict.fromkeys(siblings))[:150]
+    return (f'{len(siblings)} other source variants produced the same measured function output on these inputs '
+            f'({families}). Change the hypothesis before repeating those edits.')
+
+
+def brief(net, proj, fn, source=None):
     """Only current-input evidence is shown. Retained alternatives are hints, not saved winners."""
-    source = fn['best_source'] or ''
+    source = (fn['best_source'] or '') if source is None else source
     key = (fn['id'],experiment_evidence.build_scope(net,proj,fn))
     with _POOL_LOCK:
         pool = getattr(net,'_search_evidence',{}).get(key,{}).copy()
     current = pool.get(hashlib.sha256(source.encode()).hexdigest())
     lines = []
+    repeat = repeated_hint(net, proj, fn, source) if source else ''
+    if repeat:
+        lines.append(repeat)
     scratch_hint = ''
     # Scores alone cannot identify repeated machine code. Use only measured output fingerprints.
     groups = {}
@@ -61,7 +98,7 @@ def brief(net, proj, fn):
         if trial.get('output'):
             groups.setdefault(trial['output'], []).append((source_hash, trial))
     repeated = [trials for trials in groups.values() if len(trials) > 1]
-    if repeated:
+    if repeated and not repeat:
         trials = max(repeated, key=len)
         families = list(dict.fromkeys(t['family'] for _, t in trials))[:3]
         lines.append(f"Repeated compiler output: {len(trials)} source variants ({', '.join(families)}) "
@@ -132,7 +169,7 @@ def brief(net, proj, fn):
             lines.append(allocation_evidence.text(rows,proj['arch']))
             if clue := allocation_search.brief(net,proj,fn,source,rows):lines.append(clue)
     experiment_evidence.prepare(net)
-    rows = net.project_store(fn['project_id']).all('SELECT family,attempted,same_output,no_edit,improved,worse,failed FROM repair_input_effects WHERE function_id=? AND scope=? ORDER BY attempted DESC LIMIT 3',fn['id'],experiment_evidence.scope(net,proj,fn))
+    rows = net.project_store(fn['project_id']).all('SELECT family,attempted,same_output,no_edit,improved,worse,failed FROM repair_input_effects WHERE function_id=? AND scope=? ORDER BY attempted DESC LIMIT 3',fn['id'],experiment_evidence.scope(net, proj, fn, source))
     if rows:
         lines.append('Current-input local trials: '+'; '.join(f"{r['family']}: {r['attempted']} proposals, {r['same_output']} identical output, {r['no_edit']} no edits, {r['worse']} worse, {r['failed']} failed, {r['improved']} improvements" for r in rows)+'. Unchanged source/build inputs need not repeat ineffective trials; a changed lifetime or declaration shape starts fresh evidence. These families remain available.')
     cached = net.project_store(fn['project_id']).all("SELECT family,COUNT(*) AS n FROM agent_family_targets WHERE function_id=? AND scope=? AND family IN ('compiled-miss','compiled-error') GROUP BY family", fn['id'], agent_tokens.target_scope(net,fn,''))

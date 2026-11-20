@@ -1493,7 +1493,7 @@ class Progress:
     # function's file is not an input to this judgment.
     JUDGE_FOLDERS = ("include",)
 
-    def check_for_judging(self, slug: str) -> bool:
+    def check_for_judging(self, slug: str, *, function: str = "") -> bool:
         """The check before a judge: only what it reads, when the last full check is on record.
 
         A forced check stats every saved file (2,100 on an N64 game: 0.3 to 1.8 s a compile under load). The folder's
@@ -1510,10 +1510,19 @@ class Progress:
         if cached is not None and slug not in self.rechecking and slug not in self.blocked:
             try:
                 folder = saves.default_folder(self.net, slug)
-                wanted = {*saves.TOP_FILES, *self.JUDGE_FOLDERS}
-                kept = tuple(item for item in cached if item[0] in wanted
-                             or item[0].split("/", 1)[0] in self.JUDGE_FOLDERS)
-                if kept and self._judge_signature(folder) == kept:
+                shapes = self.__dict__.setdefault('_scoped_judge_signatures', {})
+                kept = shapes.get(slug)
+                if not kept or kept[0] is not cached:
+                    by_path = {item[0]: item for item in cached}
+                    wanted = {*saves.TOP_FILES, *self.JUDGE_FOLDERS}
+                    build = tuple(item for item in cached if item[0] in wanted
+                                  or item[0].split('/', 1)[0] in self.JUDGE_FOLDERS)
+                    kept = (cached, by_path, build)
+                    if len(shapes) >= 32:
+                        shapes.clear()
+                    shapes[slug] = kept
+                if kept[2] and self._judge_signature(folder) == kept[2] and (
+                        not function or self._candidate_files_unchanged(folder, function, kept[1])):
                     self._judge_check("narrow")
                     # Nested project lookups must not follow this verified snapshot with a full sync.
                     synced = getattr(self.local, 'synced', None)
@@ -1526,6 +1535,22 @@ class Progress:
         from ..attempt_status import update
         update("waiting")
         return self.sync(slug, force=True)
+
+    @staticmethod
+    def _candidate_files_unchanged(folder, function, acknowledged):
+        filename = saves._source_file(function)
+        if '/' in filename or '\\' in filename:
+            return False
+        for directory in ('src', 'best'):
+            name = f'{directory}/{filename}'
+            try:
+                info = os.stat(folder / name, follow_symlinks=False)
+                current = (name, info.st_mtime_ns, info.st_size, info.st_mode, info.st_ctime_ns, info.st_ino)
+            except FileNotFoundError:
+                current = None
+            if acknowledged.get(name) != current:
+                return False
+        return True
 
     def _judge_check(self, way: str) -> None:
         """Count which check a judge made, and log the counts now and then: whether the narrow check holds."""

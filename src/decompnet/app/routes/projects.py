@@ -688,6 +688,26 @@ def register(app: App) -> None:
         net.set_claim_order(slug, str(data.get("order", "")))
         return net.overview(slug)
 
+    def p_routing_experiment(slug, request, data):
+        from ... import routing_experiment
+
+        budget = data.get('budget')
+        if type(budget) is not int or not 0 <= budget <= routing_experiment.LIMIT:
+            raise NetworkError(f'Choose a claim limit from 1 to {routing_experiment.LIMIT}, or stop the experiment.')
+        proj = net.project_row(slug, sync=False)
+        store = net.project_store(proj['id'])
+
+        def change(cfg):
+            current = cfg.get('routing_experiment') or {}
+            counts = store.one('SELECT COUNT(*) AS used,SUM(ended_at IS NULL) AS pending '
+                               'FROM claim_routing_experiments WHERE project_id=? AND run=?',
+                               proj['id'], current['run']) if budget and current.get('enabled') else None
+            routing_experiment.configure(cfg, budget, **dict(counts) if counts else {})
+
+        net._update_cfg(slug, change, synchronize=False)
+        with net.progress.view():
+            return net.overview(slug)
+
     def p_title(slug, request, data):
         net.set_title(slug, str(data.get("title", "")))
         return net.overview(slug)
@@ -1277,6 +1297,7 @@ def register(app: App) -> None:
         "/api/rename-function": (p_rename_function, ["POST"]),
         "/api/cross-game/functions": (p_project_functions, ["GET"]),
         "/api/claim-order": (p_claim_order, ["POST"]),
+        "/api/routing-experiment": (p_routing_experiment, ["POST"]),
         "/api/priority": (p_priority, ["POST"]), "/api/note": (p_note, ["POST"]), "/api/scope": (p_scope, ["POST"]),
         "/api/unanalysed": (p_unanalysed, ["POST"]),
         "/api/suggestion": (p_suggestion, ["POST"]), "/api/boundary": (p_boundary, ["POST"]),

@@ -1,4 +1,7 @@
 """Compact continuation and mismatch advice; never a replacement for the exact judge."""
+import json
+import re
+
 from .permuter_focus import classify, normalized
 
 LABELS={'register':'register allocation','stack':'stack layout','call':'calls / arguments',
@@ -39,6 +42,43 @@ def next_experiment(rows, *, arch):
             'Inspect the raw diff and check the encoding or relocations before editing source.')
 
 
+def draft_triage(measured, fn, arch):
+    """Use the first measured large draft to choose a prerequisite investigation."""
+    score = measured.get('score')
+    if not score or score <= max(100, 6 * (fn['n_insns'] or 0)):
+        return ''
+    if 'when linking your code' in measured.get('warnings', ''):
+        return 'Large draft first check: resolve the linker diagnostics before instruction tuning.'
+    rows = measured.get('rows') or ()
+    focus = classify(rows, arch)
+    if focus == 'call':
+        action = 'Compare the first changed call, its argument setup and the declaration visible at the call.'
+    elif focus in {'register', 'scheduling'}:
+        action = 'Check the effective profile against a verified neighbouring function. Test one supported profile hypothesis before tuning lifetimes or scheduling.'
+    else:
+        action = 'Compare the first differing target block with the C. Check control flow, side effects and types before tuning allocation.'
+    return 'Large draft first check: ' + action
+
+
+def patch_anchors(text, source):
+    """Get exact source anchors only from compiler-mapped locations for this submission."""
+    from ..source_lines import feedback_note
+
+    mapping = feedback_note(text)
+    indices = {int(number) - 1 for number in re.findall(r'^\| (\d+) \|', mapping, re.M)}
+    lines = source.splitlines(keepends=True)
+    anchors = []
+    for index in sorted(indices):
+        if not 0 <= index < len(lines) or not lines[index].strip():
+            continue
+        anchor = lines[index].rstrip('\r\n')
+        if source.count(anchor) != 1:
+            anchor = ''.join(lines[max(0, index - 1):index+2]).rstrip('\r\n')
+        if 0 < len(anchor) <= 320 and source.count(anchor) == 1:
+            anchors.append(anchor)
+    return list(dict.fromkeys(anchors))[:3]
+
+
 def instruction_window(rows, index=None):
     """A small normalized view, including insertions; raw evidence remains available by paging."""
     rows=normalized(rows)
@@ -74,10 +114,13 @@ def target_anchor(rows, region=1):
     return ''
 
 
-def continuation(net,agent,slug,function,*,applied=None,base=None):
+def continuation(net,agent,slug,function,*,applied=None,base=None, current=None):
     from .agent_tokens import candidate
-    fn=net._function(function,slug)
-    source,revision=candidate(net,agent,slug,function)
+    if current is None:
+        fn = net._function(function, slug)
+        source, revision = candidate(net, agent, slug, function)
+    else:
+        fn, source, revision = current
     held=bool(net.project_store(fn['project_id']).one('SELECT 1 FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id))
     text=f'Continuation state: function={fn["name"]}; revision={revision}; status={fn["status"]}; claim={"held" if held else "not held"}'
     if held:
@@ -95,10 +138,13 @@ def continuation(net,agent,slug,function,*,applied=None,base=None):
 
 def frontload(net, agent, slug, function, text):
     """One authoritative continuation header after all automatic edits have finished."""
-    import re
     if not function or ',' in function or not isinstance(text, str):
         return text
-    state = continuation(net, agent, slug, function)
+    from .agent_tokens import candidate
+
+    fn = net._function(function, slug)
+    source, current_revision = candidate(net, agent, slug, fn['name'])
+    state = continuation(net, agent, slug, function, current=(fn, source, current_revision))
     old = re.findall(r'(?m)^Continuation state:[^\n]*', text)
     revision = re.search(r'; revision=([^;]+);', state)
     # Batch continuation includes useful applied patch IDs; retain it only for the current revision.
@@ -110,4 +156,11 @@ def frontload(net, agent, slug, function, text):
             if 'applied_patch_ids=' in state:
                 state += ' Batch patches are independent, not cumulative.'
     text = re.sub(r'(?m)^Continuation state:[^\n]*\n?', '', text).strip()
+    if fn['status'] == 'open' and 'claim=held' in state:
+        evidence = getattr(net, '_agent_outcomes', {}).get((agent.id, fn['id'])) or {}
+        if evidence.get('source') == source and revision and revision[1] == current_revision and evidence.get('anchors'):
+            state += '\nExact C anchors near the measured mismatch for this revision: ' + json.dumps(evidence['anchors'])
+        edit = evidence.get('patch_receipt')
+        if evidence.get('source') == source and edit:
+            state += '\nAccepted edit in this continuation: ' + json.dumps(edit)
     return state + '\n\n' + text

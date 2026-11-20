@@ -508,3 +508,50 @@ record for that case. The comparable policy assigned 6 of 6. The fixtures revers
 which model is better across compiler profiles and starting score bands. Separate
 demo tests drive both real judges to verify what constitutes a recorded miss and
 an exact win. The fixed outcomes measure assignment behavior without model calls.
+
+## Faster continuation and diagnosis
+
+CLI and API candidate tools share the narrow saved-progress preflight. It reuses
+the acknowledged file index and checks the function's saved C alongside the
+manifest and headers. Relevant changes take the ordinary synchronization path.
+The existing publication and judging guards still apply.
+
+Patch feedback identifies the accepted edit when it remains in the current
+continuation. When the compiler supplies source locations, the reply includes
+uniquely anchored C from that same revision. A variant batch preserves the score
+winner and keeps one other continuation if it recovers a target region. Use
+`get_candidate(base="regional_alternative")` before another attempt, which
+ends that alternate's availability.
+
+`get_search_brief` follows the active continuation by default. Pass
+`base="saved_best"` to inspect the inherited best. The first scored large
+draft gets a short investigation for a structural, call or profile issue when
+its mismatch supports one. Recent measured function-output fingerprints are
+shared across workers for the same build. Repeated-output feedback can surface
+one captured exact repair when the recorded compiler, flags and mismatch agree.
+
+An exact local ROM `compiler_experiments` result can be submitted by
+`suggest(function=..., trial_id=...)`. The receipt supplies source and settings
+to the ordinary fresh judge and approval. Imported diagnostics still follow
+their project-owned compiler approval path.
+
+Automatic low-progress and repeated-output releases publish the attempts and
+remaining measured mismatch as a scoped handoff. An applicable, untested patch
+from an earlier handoff remains available. A fallback diagnostic next check
+uses the ordinary search brief.
+
+## Optional live model routing comparison
+
+Open **Agents → Model routing comparison** for a project and choose a maximum
+of 1–200 sampled claims. About one eighth of comparable hard functions are
+assigned to one of two groups, stable by function for the run. Normal routing
+continues in the control group. The overlap group also makes those functions
+available to other eligible models from the same comparison. Existing work,
+explicit queue orders and model eligibility limits still govern admission.
+
+The cap counts sampled assignments, including claims that ended without a
+compile. Stop ends sampling and lets held claims finish. The results compare
+completed claims grouped by starting candidate, compiler profile and configured
+claim limits, for groups with results on both sides. Helper-hours use elapsed
+time on single-function sampled claims, including waiting in the claim. The
+comparison runs on ordinary agent traffic when enabled and starts no helpers.

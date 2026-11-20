@@ -455,6 +455,20 @@
           <div class="row"><button class="primary small-btn" id="instrSave" type="button">Save instructions</button></div>
         </div>
       </section>
+      <details class="panel settings-disclosure">
+        <summary class="panel-head"><h2>Model routing comparison</h2><span class="disclosure-context" id="routingExperimentContext"></span></summary>
+        <div class="pad">
+          <p class="muted small">Compare normal assignment with a random sample of comparable hard functions shared across eligible models.</p>
+          <label class="field"><span>Maximum sampled claims (1–200)</span>
+            <input id="routingExperimentBudget" type="number" min="1" max="200" value="60">
+          </label>
+          <div class="row">
+            <button type="button" class="primary small-btn" id="routingExperimentStart">Start comparison</button>
+            <button type="button" class="small-btn" id="routingExperimentStop" hidden>Stop</button>
+          </div>
+          <p class="muted small" id="routingExperimentStatus" role="status"></p>
+        </div>
+      </details>
       <section class="panel">
         <header class="panel-head"><h2>What agents learned</h2><span class="muted small" id="knowState"></span></header>
         <div class="pad">
