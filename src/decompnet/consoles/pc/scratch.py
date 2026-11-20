@@ -1199,8 +1199,10 @@ _WHOLE_REGISTER = {**{n: f"r{x}x" for x in "abcd" for n in (f"{x}l", f"{x}h", f"
                    **{n: f"r{x}" for x in ("si", "di", "bp", "sp") for n in (x, f"{x}l", f"e{x}", f"r{x}")}}
 
 
-def _whole_register(ins, reg: int) -> str:
+def _whole_register(ins, reg: int) -> str | None:
     name = ins.reg_name(reg)
+    if name is None:
+        return None
     return _WHOLE_REGISTER.get(name, name.rstrip("bdw") if name[:1] == "r" and name[1:2].isdigit() else name)
 
 
@@ -1236,7 +1238,8 @@ def _code_references_x64(md, pe: PE, start: int, code_end: int, starts: set[int]
             starts.add(taken.pop(reg))  # (a lea's address that wasn't read through: a function's, a callback)
         if ins.id == x86.X86_INS_LEA and ops[1].mem.base == x86.X86_REG_RIP and \
                 in_code(at := ins.address + ins.size + ops[1].mem.disp) and at != pe.image_base:
-            taken[_whole_register(ins, ops[0].reg)] = at
+            if (reg := _whole_register(ins, ops[0].reg)) is not None:
+                taken[reg] = at
     starts.update(taken.values())
 
 
@@ -2927,7 +2930,8 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print, in
     args = args or tool_args()
     ensure_ghidra(log)
     pe = read_pe(game.read_bytes())
-    modules, left_out = find_modules(game, pe)
+    standalone_dll = platform == "pc" and game.suffix.lower() == ".dll"
+    modules, left_out = ([], []) if standalone_dll else find_modules(game, pe)
     if modules or left_out:
         log(f"the game's own DLLs beside {game.name}: {', '.join(m.rel for m in modules) or 'none'}")
     for line in left_out_lines(left_out):
@@ -2949,6 +2953,13 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print, in
     debugs = [debug.info] if debug is not None else []
     real = debug_names(debug.info, [f for fns in groups.values() for f in fns]) if debug is not None else {}
     taken = {re.sub(r"^[_@]|@\d+$", "", f.name) for fns in groups.values() for f in fns} | set(real.values())
+    if standalone_dll:
+        starts = {f.addr for fns in groups.values() for f in fns}
+        for addr, name in sorted(exports(pe).items()):
+            key = f"func_{addr:08X}" if addr in starts else f"D_{addr:08X}"
+            if key not in real and name not in taken:
+                real[key] = name
+                taken.add(name)
     symbols = {f.name for fns in groups.values() for f in fns}
     for m in modules:
         pes[m.name] = m.pe
@@ -2995,7 +3006,8 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print, in
 
     shutil.copytree(TEMPLATE, root)
     (root / "orig").mkdir()
-    for source, dest in ((game, root / "orig" / f"{version}.exe"), *((m.path, root / "orig" / m.rel) for m in modules)):
+    game_path = f"orig/{version}.{'dll' if standalone_dll else 'exe'}"
+    for source, dest in ((game, root / game_path), *((m.path, root / "orig" / m.rel) for m in modules)):
         dest.parent.mkdir(parents=True, exist_ok=True)
         try:
             dest.hardlink_to(source)
@@ -3011,7 +3023,7 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print, in
     conf = root / "config" / version
     conf.mkdir(parents=True)
     (conf / "functions.json").write_text(json.dumps({
-        "exe": f"orig/{version}.exe", "sha1": info["sha1"], "image_base": pe.image_base,
+        "exe": game_path, "sha1": info["sha1"], "image_base": pe.image_base,
         **({"machine": "x64"} if pe.x64 else {}),  # (tools/delink.py, names.py and rebuild.py read x64's objects)
         **({"modules": [{"name": m.name, "exe": f"orig/{m.rel}", "sha1": hashlib.sha1(m.path.read_bytes()).hexdigest(),
                          "image_base": m.pe.image_base, "preferred_base": m.preferred} for m in modules]}
@@ -3067,7 +3079,7 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print, in
         "created": "from scratch", "platform": platform, "version": version, "compiler": f"MSVC/{compiler}",
         "analysis": WindowsPC.ANALYSIS,  # (all of it: nothing to repair, stubs set aside, pieces joined, thunks named...)
         "tools": tools_version(),
-        "game": {"what": what, "path": f"orig/{version}.exe", "sha1": info["sha1"]},
+        "game": {"what": "your copy of the DLL" if standalone_dll else what, "path": game_path, "sha1": info["sha1"]},
         "setup": [["python", "tools/configure.py", version, *args], ["ninja", "prepare"]],
         "rebuild": rebuild, **plan.get("manifest", {}),
     }, indent=2), encoding="utf-8")
@@ -3078,12 +3090,12 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print, in
 Started from scratch with [decompdecomp](https://github.com/n-delic/decompdecomp): the game's functions, {FOUND_BY_X64 if pe.x64 else 'found by Ghidra'}, are cut out of your
 copy of its program and compared with what `src/` compiles to, function by function, with objdiff.
 
-1. {game_step or f"Put your own copy of the game's program here as `orig/{version}.exe`"} (never commit it).
+1. {game_step or f"Put your own copy of the program here as `{game_path}`"} (never commit it).
 2. `python tools/configure.py {version} --msvc <Visual C++ folder> [--wibo <wibo>]`, then `ninja`. A file built with
    Visual C++ 2017 on Linux or macOS runs it through wine: set `DECOMPNET_WINE` (or have wine on the PATH) and
    `DECOMPNET_WINE_PREFIX` (a wine prefix of its own) first.
 3. Decompiled code goes in `src/`; `objdiff.json` shows each function's progress in [objdiff](https://github.com/encounter/objdiff).
-4. `ninja rebuild` puts the whole program back together in `build/{version}/{version}.exe`, each function from its C
+4. `ninja rebuild` puts the whole program back together in `build/{version}/{Path(game_path).name}`, each function from its C
    where that compiles to the game's code (else from your copy's), and says whether it's your copy, byte for byte.
 
 Compiler: Visual C++ {compiler} (change `MSVC_VERSION` and `CL_FLAGS` in tools/configure.py if the game was built

@@ -196,7 +196,7 @@ the game.
 | **PlayStation 4** | Beta | ✓ decrypted x86-64 Orbis ELF (Linux x86-64, including WSL 2) | Public Clang 5.0.2 (verify per game) | — | ✓ |
 | **PSP** | Beta | ✓ UMD image (ISO, CSO, CHD) with its other modules, or ELF/PRX, unencrypted or decrypted | CodeWarrior for PSP 3.0.1 · PSP SDK GCC 3.3.3 · SN pspsnc | ✓ export | ✓ |
 | **GameCube · Wii** | Beta | ✓ disc (ISO, RVZ, WBFS…) or DOL | CodeWarrior GC 1.0 – Wii 1.7 | ✓ dtk-template | ✓ |
-| **Windows PC** | Beta | ✓ program (32-bit x86 or 64-bit x64 .exe) | Visual C++ 6.0 · 7.0 · 7.1 · 2005 · 2008 · 2010 · 2017 (wine; 64-bit games too, with its 64-bit compiler); any other, from your own copy (Setup), for 32-bit and 64-bit games | — | ✓ |
+| **Windows PC** | Beta | ✓ program (32-bit x86 or 64-bit x64 .exe or standalone .dll) | Visual C++ 6.0 · 7.0 · 7.1 · 2005 · 2008 · 2010 · 2017 (wine; 64-bit games too, with its 64-bit compiler); any other, from your own copy (Setup), for 32-bit and 64-bit games | — | ✓ |
 | **Nintendo DS** | Beta | ✓ ROM (.nds) | CodeWarrior for DS 1.2 – DSi 1.6 (24 versions), one per source file | ✓ ds-decomp | ✓ |
 | **Game Boy Advance** | Beta | ✓ ROM (.gba) | agbcc | ✓ luvdis export | ✓ |
 | **Xbox** | Beta | ✓ default.xbe, .xiso or Redump .iso (as a Windows program; Ghidra finds the functions) | Visual C++ 7.0 · 7.1 (the XDK's); your own XDK's for early games, and to set its library code aside | ✓ (`ninja rebuild` writes your default.xbe back) | |
@@ -234,7 +234,8 @@ different build, which is planned.
   their functions come from the program's
   own table (.pdata), not a guess. Programs for other processors (ARM), mostly-/GL ones and protected ones aren't
   started, and the import says why. Visual C++ 2017 (32- and 64-bit) runs through wine on Linux and macOS, which you
-  install. decompdecomp never removes or gets around DRM. A game that keeps code in DLLs of its own comes with them when
+  install. decompdecomp never removes or gets around DRM. An individual `.dll` can also be opened as its own project;
+  other DLLs beside it aren't included. A game that keeps code in DLLs of its own comes with them when
   you give its path (the game's folder, or its .exe; a dropped file comes alone): each DLL is a program of the project,
   with its source files in `src/auto/<its name>/`, its exports' names and its own Visual C++. The C runtime, DirectX
   wrappers, middleware (Miles, Bink, FMOD...), copy protection, ASI plugins and DLLs built long after the game (mods)

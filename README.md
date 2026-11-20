@@ -117,7 +117,7 @@ No whole game has been decompiled yet. The export uses matched C and assembly fo
 | PlayStation 4 | Beta | Decrypted `eboot.elf` (Linux x86-64 only) |
 | PSP | Beta | Unencrypted or decrypted UMD image, ELF or PRX |
 | GameCube, Wii | Beta | Disc or DOL |
-| Windows PC | Beta | 32-bit or 64-bit `.exe` |
+| Windows PC | Beta | 32-bit x86 or 64-bit x64 `.exe` or standalone `.dll` |
 | Xbox | Beta | `default.xbe`, `.xiso` or Redump `.iso` |
 | Nintendo DS | Beta | ROM (`.nds`) |
 | Game Boy Advance | Beta | ROM (`.gba`) |

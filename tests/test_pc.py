@@ -3171,6 +3171,50 @@ def test_a_forwarded_export_is_another_dlls_code():
     assert scratch_pe.exports(scratch_pe.read_pe(dll)) == {0x10001000: "Init"}
 
 
+@pytest.mark.parametrize("target", ["x86", "x64"])
+def test_a_standalone_dll_is_imported_once_and_keeps_its_extension(tmp_path, monkeypatch, target):
+    top = _game_folder(tmp_path)
+    dll = top / "engine.dll"
+    if target == "x64":
+        data = bytearray(_x64_program())
+        struct.pack_into("<H", data, 0x40 + 22, struct.unpack_from("<H", data, 0x40 + 22)[0] | 0x2000)
+        dll.write_bytes(data)
+    root = tmp_path / "project"
+    compiler = tmp_path / "toolchains"
+    version = "6.0" if target == "x86" else "14.16-x64"
+    (compiler / version).mkdir(parents=True)
+    monkeypatch.setattr(toolchains, "installed", lambda *args, **kwargs: compiler)
+    monkeypatch.setattr(toolchains, "path", lambda *args, **kwargs: compiler)
+    monkeypatch.setattr(toolchains, "runtime_error", lambda *args, **kwargs: None)
+    monkeypatch.setattr(scratch_pe, "ensure_ghidra", lambda log: None)
+    rows = ([_row(0x10001000, 0x10001006), _row(0x10001010, 0x10001016)] if target == "x86" else
+            [_row(X64_BASE + 0x1070, X64_BASE + 0x1088)])
+    monkeypatch.setattr(ghidra, "functions", lambda path: rows)
+    def prepare(cmd, root, *args, **kwargs):
+        if cmd[:2] == ["ninja", "prepare"]:
+            subprocess.run([sys.executable, "tools/delink.py", "config/engine/functions.json",
+                            "build/engine/target"], cwd=root, check=True, capture_output=True)
+        else:
+            (root / "objdiff.json").write_text("{}")
+
+    monkeypatch.setattr(scratch_pe, "_run", prepare)
+    monkeypatch.setattr(scratch_pe.shutil, "which", lambda name: None)
+    info = {"id": "engine", "title": "engine", "compiler": version, "target": target,
+            "sha1": hashlib.sha1(dll.read_bytes()).hexdigest(), "summary": "test", "cannot_match": [],
+            "compiler_why": "test", "exact": True}
+    scratch_pe.create(root, dll, info=info, args=["--test"], log=lambda *_: None)
+    manifest = json.loads((root / ".decomp.wtf.json").read_text())
+    config = json.loads((root / "config/engine/functions.json").read_text())
+    assert manifest["game"]["path"] == config["exe"] == "orig/engine.dll"
+    assert (root / config["exe"]).read_bytes() == dll.read_bytes()
+    assert not config.get("modules")
+    if target == "x86":
+        assert config["names"]["func_10001000"] == "Engine_Init"
+    assert "orig/engine.dll" in (root / "README.md").read_text()
+    assert manifest["rebuild"]["identical"]
+    assert (root / "build/engine/engine.dll").read_bytes() == dll.read_bytes()
+
+
 def test_a_folder_imports_its_biggest_program_decompdecomp_can_start(tmp_path):
     """Pointing at a game's folder: its .exe is the biggest program decompdecomp can start (a launcher or an
     uninstaller is smaller; a tool for another processor, 64-bit ARM, can't start), and the GUI knows a PC game's DLLs
@@ -3560,6 +3604,15 @@ def test_a_64_bit_programs_functions_are_its_pdata_and_the_code_between():
                                                                                     X64_BASE + 0x10C0}
     # (Ghidra's pieces: there are none to join, .pdata says where each function ends)
     assert scratch_pe.merge_pieces(pe, functions, log=lambda *_: None) == (functions, {})
+
+
+def test_a_64_bit_indexed_memory_operand_without_a_base_does_not_crash():
+    code = bytes.fromhex("8b048500200000c3")
+    unwind = bytes.fromhex("01000000")
+    pdata = struct.pack("<III", 0x1000, 0x1000 + len(code), 0x2000)
+    pe = scratch_pe.read_pe(_tiny_exe64(code, unwind + pdata, {3: (0x2004, len(pdata))}))
+    functions = scratch_pe.analyse(pe, [])
+    assert [(f.addr, f.size) for f in functions] == [(X64_BASE + 0x1000, len(code))]
 
 
 def test_the_64_bit_sweep_stops_where_the_loaded_code_ends():

@@ -299,7 +299,8 @@ function identifyHead(head, file) {
   if (pe32 || pe64) {
     const imageBase = pe64 ? dv.getUint32(pe + 52, true) * 2 ** 32 + dv.getUint32(pe + 48, true)
       : dv.getUint32(pe + 52, true);
-    return { ...base, platform: "win32", order: pe64 ? "64-bit Windows program (.exe)" : "Windows program (.exe)",
+    const format = /\.dll$/i.test(file.name) ? ".dll" : ".exe";
+    return { ...base, platform: "win32", order: `${pe64 ? "64-bit Windows program" : "Windows program"} (${format})`,
       entry: imageBase + dv.getUint32(pe + 40, true),
       pack: pe64 ? consoleOf("pc")?.pack_x64 || "msvc2015" : pcPack(head, pe), target: pe64 ? "x64" : "x86" };
   }
@@ -410,7 +411,7 @@ async function pickFile(file, extras = []) {
   $("romStatus").innerHTML = level === "recommended"
     ? `<b>★ Recommended platform.</b> The most tested path to a full decomp you can port and mod. ${TRY_AND_TELL}`
     : `<b>Beta.</b> ${esc(platformName(p) || "This platform")} works, and needs more games tried on it. ${TRY_AND_TELL}`;
-  if (consoleOf(p)?.games_in_folders) {  // a dropped .exe comes alone: its path brings the game's own DLLs along
+  if (consoleOf(p)?.games_in_folders && !/\.dll$/i.test(file.name)) {  // a dropped .exe comes alone
     $("romStatus").insertAdjacentHTML("beforeend", ` A dropped file comes alone: for the game's own DLLs too, <button class="link-btn" type="button" id="romByPath">use its path</button> (its folder, or the .exe) instead.`);
     $("romByPath").onclick = (e) => { e.stopPropagation(); resetDrop(); askPath(); };
   }
@@ -584,7 +585,7 @@ $("pathPick").onclick = (e) => { e.stopPropagation(); askPath(); };
 function askPath(why = "") {
   // the game isn't known yet: the scope question shows when any platform's import recognises library code
   const asks = (S.st?.consoles || []).some((c) => c.sets_aside);
-  const body = dialog("Use a file or folder on this computer", `${why ? `<p>${esc(why)}</p>` : ""}<p class="muted">For big disc images, and for a Windows game with DLLs of its own: decompdecomp reads the game where it is instead of copying it through the browser. A Windows game's folder, or its .exe, brings the game's own DLLs along (the import says which it found, and which it left out).</p>
+  const body = dialog("Use a file or folder on this computer", `${why ? `<p>${esc(why)}</p>` : ""}<p class="muted">For big disc images, and for a Windows game with DLLs of its own: decompdecomp reads the game where it is instead of copying it through the browser. A Windows game's folder, or its .exe, brings the game's own DLLs along (the import says which it found, and which it left out). Choose a .dll file to import it on its own.</p>
     <label class="field"><span>Path to the game file, or a Windows game's folder</span><span class="pick-row"><input id="ppPath" class="mono" placeholder="/home/me/games/my-game.iso"><button class="ghost small-btn" type="button" data-pick="file" data-for="ppPath" data-title="Your copy of the game">File…</button><button class="ghost small-btn" type="button" data-pick="folder" data-for="ppPath" data-title="The game's folder">Folder…</button></span></label>
     ${asks ? `<label class="field"><span>What should this project cover? (where decompdecomp recognises library code)</span><select id="ppScope">
       <option value="game" selected>The game's own code: library and middleware code it recognises is left out of agents' work and progress</option>

@@ -92,8 +92,8 @@ Where to start on a gap:
   game's own DLLs come along when its folder or .exe is given by path; a dropped .exe comes alone (a browser doesn't
   hand over the folder), a project made before can't take its DLLs in yet (Reimport analyses the programs
   a project has), a project restored or cloned asks only for the .exe (`ForkProject.needs` names one file: the DLLs go in
-  `orig/` by hand, as its README says), and a game whose .exe can't start (for ARM, mostly /GL, protected) can't start
-  from its DLLs either. Visual C++ 2017 inlines a file's small functions into their callers, defined before them or after: a
+  `orig/` by hand, as its README says). An individual DLL can start a project of its own; selecting a folder of
+  independent programs for a batch import is not supported yet. Visual C++ 2017 inlines a file's small functions into their callers, defined before them or after: a
   project's file that holds two of the original's (about 4 KiB of functions each) needs `split_file` where the second
   starts before its callers match (the guide says so).
 - **Windows PC debug symbols** (`consoles/pc/debuginfo.py`): Ghidra's function boundaries stay Ghidra's, though a
