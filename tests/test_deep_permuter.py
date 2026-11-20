@@ -887,3 +887,32 @@ clean:
                for text in candidates)
     assert any(labels[text] == 'out_of_line_guard_failure' and 'decomp_failure:' in text
                for text in candidates)
+
+
+def test_deep_local_generator_prioritizes_a_proven_loop_sentinel():
+    from decompnet.app import draft_repairs, repair_ranking
+
+    source = """int f(unsigned short *p) {
+    if (*p != 0xFFFF) {
+        do { p++; } while (*p != 0xFFFF);
+    }
+    return *p;
+}
+"""
+    asm = """ori $v0, $zero, 0xffff
+beq $a1, $v0, .Lexit
+nop
+ori $a2, $zero, 0xffff
+.Lloop:
+lhu $a1, 0($a0)
+bne $a1, $a2, .Lloop
+nop
+.Lexit:
+jr $ra
+nop
+"""
+    labels = {}
+    candidates = draft_repairs.variants(source, 'f', 'mips', asm, labels=labels)
+    winner = next(text for text in candidates if labels[text] == 'loop_sentinel_placement')
+    assert 'while (*p != repair_sentinel)' in winner
+    assert repair_ranking.guarded_first([source, winner], labels)[0] == winner

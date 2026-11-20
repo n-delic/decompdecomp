@@ -4,7 +4,7 @@ import re
 
 STRUCTURAL = ('scratch_role_reuse','scalar_storage_reuse','row_number_staging','explicit_loop_backedge','integer_array_pointer_phase','inferred_record_layout','scalar_normalization_scope')
 GUARDED = ('matched_zero_argument_call', 'zero_argument_parameter_alias', 'matched_integer_prototype', 'mips_debug_break','live_return_address','live_return_address_initializers', 'kmc_address_operand_order', 'kmc_float_comparison_order',
-           'callee_array_extent', 'callee_buffer_extent')
+           'callee_array_extent', 'callee_buffer_extent', 'loop_sentinel_placement')
 
 
 def four_word_transfer(instructions):
