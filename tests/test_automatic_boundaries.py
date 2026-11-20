@@ -276,3 +276,25 @@ def test_pc_relative_byte_table_is_data():
     result = repair(functions, data, image, consoles.get('n64'), segments)
     assert BASE + 40 not in {fn.vram for fn in result}
     assert [(symbol.vram, symbol.size) for symbol in data] == [(BASE + 40, 8)]
+
+
+@pytest.mark.parametrize('referenced', [False, True])
+def test_overlay_end_marker_is_data_only_without_entry_evidence(referenced):
+    words = [0, 0, 0x09000432, 0x40822000, 0, 0, 0x2400beef] + [0] * 7 + [0x03e00008, 0]
+    # Place the marker on a 16-byte VRAM boundary, with a trimmed zero gap after the tail jump.
+    image, functions, segments = fixture(words, (0, 16, 24, 28, 56, 64))
+    functions = [functions[i] for i in (0, 2, 4)]
+    for fn in functions:
+        fn.vram += 8
+        fn.name = f'func_{fn.vram:08X}'
+        for line in fn.lines:
+            line.vram += 8
+    segments[0].vram += 8
+    marker = functions[1]
+    symbols = [f'{marker.name} = 0x{marker.vram:08X}; // type:func'] if referenced else []
+    data = []
+    result = repair(functions, data, image, consoles.get('n64'), segments, symbols=symbols)
+    assert (marker.vram in {fn.vram for fn in result}) == referenced
+    assert [(symbol.vram, symbol.rom, symbol.size) for symbol in data] == (
+        [] if referenced else [(marker.vram, marker.rom, 4)]
+    )
