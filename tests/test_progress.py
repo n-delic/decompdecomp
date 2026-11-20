@@ -2040,18 +2040,36 @@ def test_progress_read_restarts_whole_snapshot_when_a_listed_file_disappears(tmp
     metadata.write_text('old manifest')
     disappearing = folder / 'best' / 'gone.c'
     disappearing.write_text('old candidate')
-    original = Path.lstat if phase == 'stat' else Path.read_text
     calls = []
 
-    def interrupted(path, *args, **kwargs):
-        if path == disappearing and not calls:
-            calls.append(1)
-            disappearing.unlink()
-            metadata.write_text('new manifest')
-            raise FileNotFoundError(errno.ENOENT, 'removed during snapshot', str(path))
-        return original(path, *args, **kwargs)
+    def remove():
+        calls.append(1)
+        disappearing.unlink()
+        metadata.write_text('new manifest')
 
-    monkeypatch.setattr(Path, 'lstat' if phase == 'stat' else 'read_text', interrupted)
+    if phase == 'stat':
+        original_scan = os.scandir
+
+        @contextlib.contextmanager
+        def after_listing(scan):
+            def entries():
+                for entry in scan:
+                    if Path(entry.path) == disappearing and not calls:
+                        remove()
+                    yield entry
+            with scan:
+                yield entries()
+
+        monkeypatch.setattr(os, 'scandir', lambda parent: after_listing(original_scan(parent)))
+    else:
+        original_read = Path.read_text
+
+        def interrupted_read(path, *args, **kwargs):
+            if path == disappearing and not calls:
+                remove()
+            return original_read(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, 'read_text', interrupted_read)
     assert _read(folder) == {saves.MANIFEST:'new manifest'}
     assert calls == [1]  # No partially read old manifest survives the retry.
 

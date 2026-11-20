@@ -194,28 +194,50 @@ def _read(folder: Path, *, cache=None) -> dict[str, str]:
                 raise
 
 
+def _saved_files(folder: Path):
+    """List the saved inputs with their metadata, keeping relative names for the manifest."""
+    directories = (("src", ".c"), ("best", ".c"), ("include", ".h"))
+    for directory, _ in directories:
+        if (folder / directory).is_symlink():
+            raise NetworkError(f"Progress folder {directory!r} is a symbolic link. Replace it with a regular directory and try again.")
+    for name in saves.TOP_FILES:
+        path = folder / name
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            continue
+        yield name, path, info
+    for directory, suffix in directories:
+        parent = folder / directory
+        try:
+            entries = os.scandir(parent)
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        with entries as children:
+            for entry in children:
+                if os.path.normcase(entry.name).endswith(suffix):
+                    path = parent / entry.name
+                    # Windows directory entries omit the device and inode needed by the file cache.
+                    info = path.lstat() if os.name == "nt" else entry.stat(follow_symlinks=False)
+                    yield f"{directory}/{entry.name}", path, info
+
+
 def _read_once(folder: Path, *, cache=None) -> dict[str, str]:
     files = {}
-    for directory in ("src", "best", "include"):
-        path = folder / directory
-        if path.is_symlink():
-            raise NetworkError(f"Progress folder {directory!r} is a symbolic link. Replace it with a regular directory and try again.")
-    for pattern in (*saves.TOP_FILES, "src/*.c", "best/*.c", "include/*.h"):
-        for path in folder.glob(pattern):
-            relative = path.relative_to(folder).as_posix()
-            info = path.lstat()
-            mode = info.st_mode
-            if stat.S_ISLNK(mode):
-                raise NetworkError(f"Progress file {relative!r} is a symbolic link. Replace it with a regular file and try again.")
-            if not stat.S_ISREG(mode):
-                raise NetworkError(f"Progress path {relative!r} is not a regular file. Move the conflicting path and try again.")
-            text = cache.get(path,info) if cache is not None else None
-            if text is None:
-                text = path.read_text(encoding="utf-8")
-                if any(line.startswith(("<<<<<<<", "=======", ">>>>>>>")) for line in text.splitlines()):
-                    raise NetworkError("Resolve the git conflicts in progress before continuing this project.")
-                if cache is not None and info == path.lstat():cache.put(path,info,text)
-            files[path.relative_to(folder).as_posix()] = text
+    for relative, path, info in _saved_files(folder):
+        mode = info.st_mode
+        if stat.S_ISLNK(mode):
+            raise NetworkError(f"Progress file {relative!r} is a symbolic link. Replace it with a regular file and try again.")
+        if not stat.S_ISREG(mode):
+            raise NetworkError(f"Progress path {relative!r} is not a regular file. Move the conflicting path and try again.")
+        text = cache.get(path, info) if cache is not None else None
+        if text is None:
+            text = path.read_text(encoding="utf-8")
+            if any(line.startswith(("<<<<<<<", "=======", ">>>>>>>")) for line in text.splitlines()):
+                raise NetworkError("Resolve the git conflicts in progress before continuing this project.")
+            if cache is not None and info == path.lstat():
+                cache.put(path, info, text)
+        files[relative] = text
     # A format 2 save's notes and verification records are their own files: everything after this reads the one
     # joined manifest, as it did before (saves.join_files).
     return saves.join_files(files)
