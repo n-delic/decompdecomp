@@ -364,8 +364,9 @@ class ImportMixin:
                         meta_data['naming'] = {'original_name': original_name, 'name': fn.name,
                                                'method': method, 'at': now}
                     from ..boundary_repairs import reason as boundary_reason
-                    warning = boundary_reason(console, {'target': target.code, 'status': status})
+                    warning = boundary_reason(console, {'target': target.code, 'status': status, 'meta': json.dumps(meta_data)})
                     if warning:meta_data['boundary_review'] = warning
+                    else:meta_data.pop('boundary_review', None)
                     meta = json.dumps(meta_data) if meta_data else None
                     n_insns = console.function_insns(fn)
                     if old is None:
