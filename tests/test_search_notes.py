@@ -11,3 +11,19 @@ def test_legacy_bookkeeping_and_repeated_summaries_do_not_hide_useful_notes():
         {'agent': 'you', 'text': 'Keep the signed comparison.'},
     ]
     assert useful(rows) == [rows[2], rows[4], rows[5]]
+
+def test_boilerplate_is_skipped_on_release_and_direct_note(tmp_path):
+    from .test_claims import _game
+
+    net, _ = _game(tmp_path, [('f', 10, 'open')])
+    agent, _ = net.local_agent('worker')
+    permutation = 'Deep permutation turn ended; improvements shared.'
+    limit = "User's max tries reached (5/5); best attempt retained."
+    assert net.claim_row(agent, 'game', 'f')
+    net.add_note(agent, 'game', permutation, 'f')
+    net.add_note(agent, 'game', limit, 'f')
+    useful_summary = 'Deep permuter: score 40 → 20 after reversing the branch.'
+    net.add_note(agent, 'game', useful_summary, 'f')
+    net.release(agent, 'f', permutation, 'game')
+    assert not net.store.one('SELECT 1 FROM claims')
+    assert [row['text'] for row in net.store.all('SELECT text FROM notes')] == [useful_summary]

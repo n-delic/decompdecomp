@@ -1294,7 +1294,7 @@ class Network:
             raise NetworkError(f"Focused try limit reached ({used}/{limit}). Your best attempt is saved.")
         held = store.one("SELECT 1 FROM claims WHERE function_id=? AND agent_id=?", fn["id"], agent.id)
         if held:
-            Network.release(self, agent, fn["name"], f"User's max tries reached ({used}/{limit}); best attempt retained.",
+            Network.release(self, agent, fn["name"], "",
                             store.one("SELECT slug FROM projects WHERE id=?", fn["project_id"])["slug"])
         raise NetworkError(f"Max tries reached for {fn['name']} ({used}/{limit}). Your work is saved. "
                            "Call claim_function for another function, or ask the user to raise the limit.")
@@ -1626,6 +1626,8 @@ class Network:
         (NOT_C_AGENTS)."""
         fn = self._function(function, project)
         store = self.project_store(fn["project_id"])
+        from .search_notes import boilerplate
+        notes = "" if boilerplate(notes) else notes
         if not_c and not notes.strip():
             raise NetworkError("say in notes why no C makes it: the next agents and the user read it")
         progress = self.claim_progress(agent, fn)
@@ -1641,7 +1643,7 @@ class Network:
                            (agent_review.EXPERIMENT + str(fn['id']), json.dumps(dict(handoff, released_at=time.time()))))
             db.execute("DELETE FROM claims WHERE function_id=?", (fn["id"],))
             db.execute("UPDATE functions SET abandons=abandons+1 WHERE id=?", (fn["id"],))
-            if notes.strip() and notes.strip() != "Deep permutation turn ended; improvements shared.":
+            if notes.strip():
                 agent_notes.save(db, fn["project_id"], fn["id"], agent.id, notes.strip(), agent_name=agent.name)
             self._event(db, fn["project_id"], agent.id, "release", fn["name"])
             said = self._not_c(db, fn, agent, notes.strip()) if not_c else ""
@@ -2533,6 +2535,9 @@ class Network:
         fn = self._function(function, proj["slug"]) if function else None
         if not text.strip():
             raise NetworkError("empty note")
+        from .search_notes import boilerplate
+        if boilerplate(text):
+            return "No function findings to save."
         with self.project_store(proj["id"]).tx() as db:
             measured = (score_before, score_after) if all(type(v) is int and v >= 0 for v in (score_before, score_after)) else None
             # Keep one current deep-search summary per runner/function. Other function

@@ -106,11 +106,14 @@ def test_try_cap_releases_at_boundary_and_is_independent_per_worker(net):
     b, _ = net.local_agent('b')
     net.set_selection('game', a.name, {'max_tries': 2})
     fn = net.claim_row(a, 'game', function='large')
+    net.add_note(a, 'game', 'Keep the signed comparison.', 'large')
     net._record(fn, a, None, 'invalid C', 1, compiled=False)
     assert net.store.one('SELECT 1 FROM claims WHERE agent_id=?', a.id)
     net._record(fn, a, 400, 'improved C', 1)
     assert not net.store.one('SELECT 1 FROM claims WHERE agent_id=?', a.id)
     assert net._function('large', 'game')['best_source'] == 'improved C'
+    assert net.store.one('SELECT COUNT(*) AS n FROM attempts WHERE function_id=?', fn['id'])['n'] == 2
+    assert [row['text'] for row in net.store.all('SELECT text FROM notes')] == ['Keep the signed comparison.']
     assert 'Max tries reached (2/2)' in net.attempt_limit_note(a, 'large', 'game')
     with pytest.raises(NetworkError, match='Max tries reached'):
         net.attempt(a, 'large', 'another C candidate', 'game')
