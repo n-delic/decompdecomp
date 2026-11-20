@@ -38,7 +38,9 @@ FAMILIES = ('assignment_at_use', 'comparison_sides', 'narrow_shift_pair', 'point
             # 0.5.29
             'shared_return',
             # 0.5.31
-            'read_before_assign', 'irregular_case')
+            'read_before_assign', 'irregular_case',
+            # 0.5.32
+            'unsigned_switch', 'volatile_reload')
 FLAGS = ['-G0', '-mips3', '-mgp32', '-mfp32', '-O2']
 HEADER = 'typedef int s32;\ntypedef unsigned int u32;\ntypedef short s16;\ntypedef float f32;\n'
 
@@ -96,3 +98,21 @@ f32 f(f32 *arg0) {
         assert 'const_read' in families and 'signed_division' in families
         assert 'const f32 *arg0' in texts[families.index('const_read')]
         assert (families.index('const_read') < families.index('signed_division')) is first
+
+
+def test_a_switch_tested_with_sltiu_is_offered_unsigned():
+    # an N64 function 830 points off with m2c's signed operand was exact with `switch ((u32)arg1)`
+    source = HEADER + '''typedef struct { char pad[0x58]; s32 flags; } S;
+void f(S *arg0, s32 arg1) {
+    s32 v = arg0->flags & ~0xF0;
+    switch (arg1) {
+    case 0: v |= 0x10; break;
+    case 1: v |= 0x20; break;
+    default: return;
+    }
+    arg0->flags = v;
+}
+'''
+    labels = {}
+    out = draft_repairs.variants(source, 'f', 'mips', '', FLAGS, labels, limit=None)
+    assert any('switch ((u32)arg1)' in text and labels.get(text) == 'unsigned_switch' for text in out)
