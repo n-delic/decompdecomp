@@ -147,3 +147,17 @@ def test_a_function_longer_than_the_quiet_stretch_joins_its_neighbours():
     assert len(close_gaps(rom, [found[0], (b_start, b_start + 0x400, 0x80400000)])) == 2
     quiet = bytes(0x1000) + nop * 0x100 + nop * 0x600 + nop * 0x100
     assert len(close_gaps(quiet, found)) == 2
+
+
+def test_adjacent_code_mapping_requires_call_evidence_from_both_sides():
+    from decompnet.consoles.n64.code import reconcile_adjacent
+
+    base = 0x80300000
+    size = 16*32
+    following = base+size
+    left = b''.join(struct.pack('>8I', *_function(base+i*32, following+i*32)) for i in range(16))
+    right = _code(following, 16)
+    ranges = [(0, size, base), (size, 2*size, following+8)]
+    assert reconcile_adjacent(left+right, ranges) == [(0, 2*size, base)]
+    assert reconcile_adjacent(_code(base, 16)+right, ranges) == ranges
+    assert reconcile_adjacent(left+_code(following+8, 16), ranges) == ranges
