@@ -439,6 +439,19 @@ class Search(Permuter):
         source = _candidate_source(fn, best)
         if fn['status'] == 'matched':return 0, source
         initial_rows = self.winner_diff[0] if self.winner_diff else repair_ranking.evidence(self.net,fn['id'],agent.id)
+        if not fork and max_trials is not None:
+            from . import deep_switch_loop
+            before = source
+            settings = compiler_for(self.net.cfg(proj), fn['vram'], fn)
+            best, source, trials = deep_switch_loop.run(self, agent, proj, fn, source, initial_rows, header,
+                best, settings, max_trials//3, min(self.deadline, phase_deadline or self.deadline))
+            if best == 0:
+                self.local_status = {'reason':'matched'}
+                return self._saved_result(proj, fn, best)
+            if before != source:
+                fn = self.net._function(fn['name'], proj['slug'])
+                source = _candidate_source(fn, best)
+                initial_rows = self.winner_diff[0] if self.winner_diff else []
         source_rows = {source:initial_rows}
         lineage = repair_sequences.Lineage(self.net,proj,fn,source,initial_rows)
         current_scope=agent_tokens.target_scope(self.net,{**dict(fn),'best_source':source},'')
@@ -808,7 +821,7 @@ class Search(Permuter):
     @deep_compilation.prepared
     def _score(self, agent, proj, fn, source, best, fork):
         from . import deep_profiles
-        if self.measuring_baseline or not hasattr(self, 'compiler_profiles') or fork:
+        if self.measuring_baseline or not hasattr(self, 'compiler_profiles') or fork or (current_trial() or {}).get('exact_only'):
             return self._score_current(agent, proj, fn, source, best, fork)
         own = compiler_for(self.net.cfg(proj), fn['vram'], fn)
         own_flags = own['flags'].split() if isinstance(own['flags'], str) else own['flags']
