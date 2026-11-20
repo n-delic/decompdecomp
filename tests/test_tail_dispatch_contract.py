@@ -48,3 +48,24 @@ def test_brief_connector_without_saved_c_and_unknown_processors():
     assert tail_dispatch_hint({'arch':'mips','big_endian':True},fn|{'status':'matched'})==''
     assert tail_dispatch_hint({},fn)==''
     assert get('mips').source_tail_dispatch is read
+
+
+def test_deep_search_selects_only_the_registered_installed_alternate(monkeypatch):
+    from types import SimpleNamespace
+
+    from decompnet import toolchains
+    from decompnet.app.deep_profiles import tail_dispatch
+
+    cfg = {'kind': 'rom', 'platform': 'n64', 'compiler': {'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-O2']}}
+    net = SimpleNamespace(cfg=lambda _: cfg)
+    project = {'arch': 'mips', 'big_endian': True}
+    fn = {'target': code(), 'vram': 0x1000, 'status': 'open'}
+    monkeypatch.setattr(toolchains, 'installed', lambda _: None)
+    assert tail_dispatch(net, project, fn) is None
+    monkeypatch.setattr(toolchains, 'installed', lambda tool: tool == 'gcc-4.4.0-n64')
+    result = tail_dispatch(net, project, fn)
+    assert result['toolchain'] == 'gcc-4.4.0-n64'
+    assert {'-mabi=32', '-mno-abicalls', '-fno-pic'} <= set(result['flags'])
+    assert tail_dispatch(net, project, fn | {'target': code()[:-4]}) is None
+    cfg['compiler'] = result
+    assert tail_dispatch(net, project, fn) is None
