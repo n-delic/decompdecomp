@@ -8035,3 +8035,29 @@ Two new matches and three large improvements, all under the game's default `-O2`
 
 Tried without a match: the product register of round 17's sequencer loop (now 40: the pointer bump written
 `next = next + 1; if (next->time != end)`), where operand order, `*=`, a `scale` local and casts all keep `mflo $v1`.
+
+### Round 19 (KMC gcc 2.7.2 `-O2`, an N64 game's second-pass functions)
+
+Two new exact matches, both under the game's default settings, judged by the running app's linked verdict:
+
+- **An element address formed from a byte offset** (410 → 0): `&s->stock[slot]` (a `s16` array at 0x1BC) puts the base
+  first (`addu t0, s2, s0`); the game's `addu s0, s0, s2` and its reuse of the index register came from
+  `(s16 *)((u8 *)s + slot * 2) + 0xDE` held in a pointer local, with the store and the item update moved inside
+  `if (flag == 0) { ... } return 1;` instead of an early `return 1`. Evidence: exact, controlled by the earlier forms
+  (180 with `&s->stock[slot]` in a local, 15 with only the `if` reshaped).
+- **A byte global stored with `sb`, and a byte argument used directly** (276 → 0): the draft declared a flag global as
+  `s32` (`sw`) and passed a stack copy of a byte argument (`u8 sp3F = arg5;` then `sp3F << 16`). Storing the flag as
+  `u8` (76) and passing `arg5 << 16` itself while keeping the dead stack copy (0) matched; the copy still produces the
+  game's `sb $t0, 0x3f($sp)`, and using it in the call makes gcc give the argument a saved register instead.
+
+Improved, not exact: a voice-envelope case with the two operands read into locals before `(0x7F - h) * w` (355 → 135; the
+tail's global still loads after the flag update), and a ratio of two unsigned counters written `(f32)u32 / (f32)u32`,
+which fixes the float registers (245 → 240; a `u8` state compare that the game masks with `andi 0xff` remains).
+
+Tried without gain: a 16-bit id built from two bytes that the game masks with `andi 0xffff` (u16/u32/s32 locals, casts on
+the call and the test all drop the mask); a mid-function copy of a flags word (an inline helper copies the accumulator
+instead, 640; a block-scoped copy is coalesced, 210); a search loop's result copied to `$v0` before its test (an inline
+helper returning the flag is propagated, 230); a 16-bit stack argument the game keeps unmasked in a saved register
+(`u16`, `u32`, `s32` parameter with a `(u16)` cast: 200–855); load order of a global after a read-modify-write
+(locals, pointer, adjacent-element forms: 135–330); and a per-function `-O1` override that scores worse than the
+default (420 against 300), left for the user to decide.
