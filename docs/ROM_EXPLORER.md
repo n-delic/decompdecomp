@@ -346,12 +346,21 @@ Every reference must resolve to a loaded vertex; every run must terminate and co
 complete stream. Positions alone never establish a model. Empty containers are not labelled
 as models. That indexed layout requires both RNC CRCs when compressed.
 
-The Model browser also recognizes EMshV010 meshes in byte-sum RNC blocks. It checks the
+The Model browser also recognizes EMshV010 meshes in byte-sum RNC blocks and chained RNX streams. It checks the
 decoded byte sum, table extents, corner indexes and optional ATEX trailer, then reconstructs
 local positions from signed deltas and triangulates the polygons. For effect meshes, the
 mesh group and texture resource tables can identify a bank in the same checked directory.
 The preview uses each polygon’s texture slot and each corner’s UVs. Meshes with unresolved
 scene materials still display in local space.
+
+RNX advances from one independently checked block to the next with 8-byte padding
+relative to the block start. It recognizes a terminal RNC block or a fill record and the
+stream terminator. Complete streams can contain descriptor texture banks, EMsh meshes,
+ELv9 level metadata and shared-palette graphics. The graphics browser previews the
+directly stored CI4 tiles whose dimensions, palette and record size agree.
+
+Audio browser lists directory-verified Acclaim DEAN streams and their encoded sizes and
+sample rates. DEAN waveform playback is unavailable.
 
 Open a model region, choose **Model mesh**, then **Preview asset**. Changing the mesh prepares
 its wireframe. The selector shows node, part and section identity; **Save notes** retains the
