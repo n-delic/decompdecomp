@@ -134,9 +134,8 @@ def prepare(net, slug, path, root, log):
     if net.progress.errors.get(slug):raise NetworkError(net.progress.errors[slug])
     destination.parent.mkdir(parents=True, exist_ok=True)
     old = saves.split_files(saves._read_owned(destination)) if (destination/saves.MANIFEST).is_file() else {}
-    if old:
-        for name in ('README.md', 'decompdecomp-progress.svg'):
-            if (destination/name).is_file():old[name] = (destination/name).read_text(encoding='utf-8')
+    if old and (destination/'decompdecomp-progress.svg').is_file():
+        old['decompdecomp-progress.svg'] = (destination/'decompdecomp-progress.svg').read_text(encoding='utf-8')
     baseline = {name: repository_sync.digest(repository_sync.inside(destination, name)) for name in old}
     with tempfile.TemporaryDirectory(prefix='.decomp-repository-', dir=destination.parent) as temporary:
         stage = Path(temporary)/'tree'
@@ -179,24 +178,33 @@ def prepare(net, slug, path, root, log):
         # repository inputs, and may differ from an earlier export's build cache.
         generated = {str(p.relative_to(stage)) for p in stage.rglob('*')
                      if p.is_file() and p.relative_to(stage).parts[0] != 'build'}
-        # The verified build needs the current extraction. Save earlier local
-        # copies in the same publication transaction so a cancelled upgrade
-        # restores the original files. Both trees are outside the Git allowlist.
-        backup_root = Path('.decomp-extraction-backups')/uuid4().hex
+        # The export supplies its own build instructions and verified extraction.
+        # Keep previous copies outside the Git allowlist and publish the backups
+        # in the same transaction so cancellation restores the original layout.
+        backup_id = uuid4().hex
         backups = set()
+        backup_locations = set()
         for name in sorted(generated):
             target = repository_sync.inside(destination, name)
             previous = repository_sync.digest(target)
             if target.exists() and name not in old and name != '.gitignore' and previous != repository_sync.digest(stage/name):
-                if previous is None or Path(name).parts[0] not in ('asm', 'assets'):
+                if name == 'README.md':
+                    backup_folder = '.decomp-repository-backups'
+                elif Path(name).parts[0] in ('asm', 'assets'):
+                    backup_folder = '.decomp-extraction-backups'
+                else:
+                    backup_folder = None
+                if previous is None or backup_folder is None:
                     raise NetworkError('Repository generation would replace an existing file: '+name+'. Its contents were preserved.')
-                backup = (backup_root/name).as_posix()
+                location = Path(backup_folder)/backup_id
+                backup = (location/name).as_posix()
                 copy = stage/backup
                 copy.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(target, copy)
                 if repository_sync.digest(copy) != previous:
-                    raise NetworkError('An extracted file changed while saving its local copy: '+name+'. Retry.')
+                    raise NetworkError('A file changed while saving its local copy: '+name+'. Retry.')
                 backups.add(backup)
+                backup_locations.add(location.as_posix())
             baseline.setdefault(name, previous)
         destination.mkdir(parents=True, exist_ok=True)
         target = destination/'progress'
@@ -210,7 +218,7 @@ def prepare(net, slug, path, root, log):
                 progress=lambda done, total: progress_step(log, 5, "Publishing repository files", done=done, total=total),
             )
             net._update_cfg(slug, lambda current: current.update(**moved_config(destination)), synchronize=False)
-    if backups:
-        log(f'Previous extracted files saved locally in {backup_root.as_posix()}.')
+    for location in sorted(backup_locations):
+        log(f'Previous files saved locally in {location}.')
     log('Full rebuildable repository prepared. Game images and extracted data remain ignored.')
     return target

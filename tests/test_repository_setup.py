@@ -716,3 +716,34 @@ def test_repository_upgrade_preserves_previous_extraction_locally(project, monke
     repository_setup.run(net, 'game', 'checkpoint', '', lambda _: None)
     tracked = git(root, 'ls-files').splitlines()
     assert all(not name.startswith(('asm/', 'assets/', '.decomp-extraction-backups/')) for name in tracked)
+
+
+def test_repository_creation_backs_up_a_readme_found_after_export(project, monkeypatch):
+    net, root, _ = project
+    console = net.console(net.project_row('game'))
+    export = console.export_project
+    readme = root/'README.md'
+    previous = b'# Local project notes\r\n\r\nKeep these notes verbatim.\r\n'
+
+    def verified_export(net, slug, out, log):
+        result = export(net, slug, out, log)
+        # A README absent from the flat save's baseline used to block publication.
+        readme.write_bytes(previous)
+        return result
+
+    (root/'README.md').unlink(missing_ok=True)
+    monkeypatch.setattr(console, 'export_project', verified_export)
+    messages = []
+    assert repository_setup.run(net, 'game', 'init', '', messages.append)['rebuildable']
+    assert readme.read_text().startswith('# Full source tree\n')
+    backup, = (root/'.decomp-repository-backups').glob('*/README.md')
+    assert backup.read_bytes() == previous
+    relative = backup.relative_to(root).as_posix()
+    assert git(root, 'check-ignore', relative) == relative
+    assert any(relative.rsplit('/', 1)[0] in line for line in messages)
+
+    git(root, 'config', 'user.name', 'Test')
+    git(root, 'config', 'user.email', 'test@example.invalid')
+    repository_setup.run(net, 'game', 'checkpoint', '', lambda _: None)
+    tracked = git(root, 'ls-files').splitlines()
+    assert 'README.md' in tracked and relative not in tracked
