@@ -7862,3 +7862,52 @@ Tried without a match: two swapped-register near misses (a float scale, 40; a sa
 declaration order, `register`, and separate result variables; a vector transform whose base `lui`/`addiu` pair gcc
 folds into each access however the base is written (`f32 *p = D`, a struct type, casts); a libm tangent whose
 divide is scheduled before the sign test (750, rewrites 765–940).
+
+### Round 14: an N64 racing game, KMC gcc 2.7.2 -O2 (2026-11-20)
+
+Controlled evidence: each score is the scratch judge's linked verdict under the project's own settings; matches were
+then adopted by the running app through Try. Two repair families came out of round 13's matches, decomp-repair
+0.5.32: `unsigned_switch` (a switch tested with one `sltiu` cast to `(u32)`; it rebuilds an 830-point draft exactly)
+and `volatile_reload` (an extern pointer global stored through twice declared `volatile`; 1030 → 40 on its draft,
+and it shaped the 3019 → 1520 below).
+
+Seven new exact matches:
+- **A collision-flag pass over linked lists** (965 → 0): the three-word position copies are a `typedef struct
+  { s32 x, y, z; }` struct assignment (`*(V3i *)(p + 0x50) = *arg3`; the game loads all three words before
+  storing), and each branch keeps its own locals for the flag word (`w`, `r`, `q`): one shared `v` moved them from
+  `$v0` to `$v1` (70).
+- **A scissor display-list command** (2215 → 0): the four corner sums times 4.0f go into locals *before*
+  `Gfx *g = D++`, then `g->w0 = 0xED000000 | (((s32)ulx & 0xFFF) << 12) | ((s32)uly & 0xFFF)`. Locals for the
+  four offsets instead (1950) or the `0xED000000` or-ed last (400) both miss.
+- **A sprite refresh** (2035 → 0): m2c called the setter `f(2, arg1)` after the store, but the game stores the
+  bitfield first and calls `f(2)` with `$a1` untouched; the 6-bit field written `(arg1 == 0 ? 7 : 0) | 3`
+  gives gcc's `sltiu`/`negu`/`andi 7`/`ori`.
+- **Two menu-state handlers** (2010 → 0, 2055 → 0): a `switch (u16)` over 0/0x2000/0x4000/0x8000 with a `return`
+  in every arm (one result variable cost 2300); the callee in `case 0` is declared without parameters,
+  `u16 func()`, because the game calls it with `$a0` still holding the switch value. A prototyped `f(arg0)` makes
+  gcc pass a literal `$zero` (200).
+- **A closest-point-on-segment** (2236 → 0): `const Vec3 *` parameters, and the query point's three coordinates
+  read into locals *before* the zero-length test (the game keeps `p->z` in `$f26` across it).
+
+Improved, adopted, not exact:
+- a list-sweep with a `goto next` (855 → 25): `else if (sp18 != 0.0f) {...}` rewritten as `else { if (sp18 ==
+  0.0f) goto next; ... }` gave the game's `bc1tl` into the loop latch; the rest is one register.
+- a sound-bank lookup (2035 → 250): the bank table indexed by a byte offset, the two `& 0xFFFF` masks moved inside
+  the non-empty-table block, and the inner search written as `do { if (v == sub) {...return} e += 0x84; v = *e; }
+  while (v != 0xFFFF)`; the last 250 is two `0xFFFF` constants the game keeps in separate registers.
+- a four-entry count (2025 → 5): only `move $v1, $a1` (the loop index copied from the zeroed count) is left; no
+  declaration order or `i = n` form reproduced it.
+- a three-way getter (2565 → 600), an actor spawner (3019 → 1520, the `volatile` global plus `o = *p` before the
+  null test), a state machine (1375 → 1170, a `switch` on 5/6 for the follow-up value), a sequence compare
+  (2827 → 2204, the command word read into a local so gcc can't narrow `(w >> 8) & 0xFF` to `lbu`), a rotation
+  matrix (2475 → 2375).
+
+Needs a settings decision: **a modf-style splitter** is exact with `-O1` for that function only (its `e + 12`
+must not fold into `- 0x3F3`); under the game's `-O2` the best C scores 1850 (adopted). Settings were not changed.
+
+Tried without a match: a box-clip routine (1175; a clean rewrite scored 1995 because the game copies the hit flag
+into a second variable between the passes), a list-init (1364; gcc folds the loop guard to `blez` once it knows
+the counter is zero, the game keeps `slt` against the decremented value), a matrix builder (85, two FPU saved
+registers; statement order, `-(cy * sx)`, declaration order and call placement tried), a sibling of the
+volatile-reload pair (80; the `a2 = 1` argument is scheduled before the `lui`), a segment loader (2497; the game
+recomputes each segment symbol's address where gcc reuses the previous end address).
