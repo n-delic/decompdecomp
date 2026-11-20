@@ -182,3 +182,24 @@ def test_n64_gap_with_a_switch_follows_its_table_in_declared_data():
     known=[(0x1000,0x1010,0x80001000),(0x1100,0x1110,0x80001100)]
     assert not complete(bytes(image),known)  # the table's address isn't mapped: its cases can't be followed
     assert complete(bytes(image),known,[(0x1000,0x1200,0x80001000)])==[(0x1010,0x1100,0x80001010)]
+
+
+def test_boundary_scan_preserves_a_match_saved_during_analysis(tmp_path):
+    from types import SimpleNamespace
+
+    from decompnet.app.engine import RomNetwork
+    from tests.test_loading import tiny_game
+
+    net = RomNetwork(tmp_path / 'audit.db', tmp_path)
+    tiny_game(net, functions=1)
+    proj = net.project_row('game', sync=False)
+
+    def analyze(_):
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET status='matched', meta='{\"saved\":true}' WHERE project_id=?", (proj['id'],))
+        return "A warning for the old snapshot"
+
+    assert boundary_review.refresh(net, proj, SimpleNamespace(boundary_reason=analyze)) == 0
+    row = net.store.one("SELECT status,meta FROM functions WHERE project_id=?", proj['id'])
+    assert row['status'] == 'matched'
+    assert json.loads(row['meta']) == {'saved': True}

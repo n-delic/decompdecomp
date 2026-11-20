@@ -2251,19 +2251,22 @@ class ForkEngine:
         src = self._current_source(ForkProject(Path(proj["root"])), fn)
         return bool(src and _ASM_DEF.match(src))
 
-    def mark_asm(self, fn, twin_name: str | None = None, reason: str | None = None) -> None:
+    def mark_asm(self, fn, twin_name: str | None = None, reason: str | None = None) -> bool:
         """fn's code is a matched assembly function's (runtime helpers each module links its own copy of), or code
         no compiler makes (`reason`: Console.asm_reason, arch/): agents can't write it in C, so it's out of their way."""
         meta = self._meta(fn)
         if meta.get("reopened"):  # the user gave it back to the agents (Network.reopen)
-            return
+            return False
         if twin_name:
             meta["asm_twin"] = twin_name
         if reason:
             meta["asm_code"] = reason
         with self.net.project_store(fn['project_id']).tx() as db:
-            db.execute("UPDATE functions SET status='asm', meta=? WHERE id=? AND status='open'", (json.dumps(meta), fn["id"]))
+            if not db.execute("UPDATE functions SET status='asm', meta=? WHERE id=? AND status='open' AND meta IS ?",
+                              (json.dumps(meta), fn["id"], fn["meta"])).rowcount:
+                return False
             db.execute("DELETE FROM claims WHERE function_id=?", (fn["id"],))
+        return True
 
     # ------------------------------------------------------------------ for agents
 

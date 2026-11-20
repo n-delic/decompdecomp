@@ -140,7 +140,8 @@ LIMIT_RESET_FURTHEST = 8 * 24 * 3600
 ROOM_RETRY = 10
 ROOM_STALE = 30
 PREP_WAIT = 15 * 60  # longest wait for start_files before the helpers start anyway
-ORDER_WAIT = 2 * 60  # longest wait for the twins' first ordering
+ORDER_WAIT = 2  # Give fresh twin priorities a head start, then use the current claim queue.
+ORDER_POLL = 0.1  # Stop responds while ordering is still in progress.
 STOP_GRACE = 5  # seconds between asking a helper's processes to end (SIGTERM) and ending them (SIGKILL)
 
 # Every process a helper starts carries this in its environment, set to the app's home: quitting ends them, even one
@@ -1517,9 +1518,11 @@ class Manager:
         twins = getattr(getattr(self.net, "twins", None), "jobs", {}).get(s.slug)
         if not targeted and twins is not None and not twins.ordered.is_set():
             agent_startup.stage(s, "Waiting for function ordering")
-            self._set(s, "starting", "first setting hand-written assembly aside and putting the functions in order "
-                                     "(seconds; a minute the first time)")
-            twins.ordered.wait(ORDER_WAIT)
+            self._set(s, "starting", "Giving function ordering a brief head start")
+            deadline = time.monotonic() + ORDER_WAIT
+            while not twins.ordered.is_set() and (remaining := deadline - time.monotonic()) > 0:
+                if s.stop.wait(min(ORDER_POLL, remaining)):
+                    break
         s.tool_handshake_failures = 0
         failures = fast = throttles = limits = auths = connection_failures = transport_failures = 0
         no_progress_sessions = 0

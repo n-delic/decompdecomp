@@ -475,36 +475,38 @@ class Twins:
         try matched code on its unmatched twins, which go last meanwhile (-1): they may be free in a minute.
         Returns how many groups."""
         prints = self.prints(proj)
-        rows = {r["id"]: r["status"] for r in self.net.project_store(proj['id']).all(
-            "SELECT id, status FROM functions WHERE project_id=?", proj["id"])}
+        store = self.net.project_store(proj["id"])
+        rows = {r["id"]: r for r in store.all(
+            "SELECT id, status, name, boost FROM functions WHERE project_id=?", proj["id"])}
         groups: dict[str, list[int]] = defaultdict(list)
         for fid, p in prints.items():
             from .maintenance import checkpoint
             checkpoint()
             if p.size >= 8:
                 groups[p.key].append(fid)
-        updates = []
-        names = {r["id"]: r["name"] for r in self.net.project_store(proj['id']).all(
-            "SELECT id, name FROM functions WHERE project_id=? AND status='matched'", proj["id"])}
+        updates = {}
         for members in groups.values():
-            open_ = sorted(f for f in members if rows.get(f) == "open")
-            matched = [f for f in members if rows.get(f) == "matched"]
+            open_ = sorted(f for f in members if f in rows and rows[f]["status"] == "open")
+            matched = [f for f in members if f in rows and rows[f]["status"] == "matched"]
             if matched:
                 if pending:
-                    updates += [(-1, f) for f in open_]
-                elif not any(names.get(f, "").startswith(_GENERATED) for f in matched):
+                    updates.update(dict.fromkeys(open_, -1))
+                elif not any(rows[f]["name"].startswith(_GENERATED) for f in matched):
                     # its twin's code didn't match by itself (a type or declaration this file lacks, mostly):
                     # an agent starts from it, shown in the brief, so these go first
-                    updates += [(1, f) for f in open_]
+                    updates.update(dict.fromkeys(open_, 1))
                 continue
             if len(open_) < 2:
                 continue
-            updates.append((len(open_) - 1, open_[0]))
-            updates += [(-1, f) for f in open_[1:]]
-        with self.net.project_store(proj['id']).tx() as db:
-            db.execute("UPDATE functions SET boost=0 WHERE project_id=? AND boost!=0", (proj["id"],))
-            db.executemany("UPDATE functions SET boost=? WHERE id=?", updates)
-        return sum(1 for b, _ in updates if b > 0)
+            updates[open_[0]] = len(open_) - 1
+            updates.update(dict.fromkeys(open_[1:], -1))
+        current = {fid: row["boost"] for fid, row in rows.items() if row["boost"]}
+        # Reusing the same priorities needn't wait for a save or a judge holding the writer.
+        if updates != current:
+            with store.tx() as db:
+                db.execute("UPDATE functions SET boost=0 WHERE project_id=? AND boost!=0", (proj["id"],))
+                db.executemany("UPDATE functions SET boost=? WHERE id=?", [(boost, fid) for fid, boost in updates.items()])
+        return sum(1 for boost in updates.values() if boost > 0)
 
     def set_aside_asm(self, proj) -> int:
         """Unmatched functions whose code no compiler makes (Console.asm_reason) get status 'asm': out of agents'
@@ -520,8 +522,7 @@ class Twins:
                                         "AND status='open'", *chunk):
                 if '"reopened"' in (r["meta"] or ""):  # the user gave it back to the agents (Network.reopen)
                     continue
-                self.net.forks.mark_asm(r, reason=prints[r["id"]].asm)
-                n += 1
+                n += self.net.forks.mark_asm(r, reason=prints[r["id"]].asm)
         return n
 
     def _set_aside_rom_asm(self, proj) -> int:
@@ -532,12 +533,19 @@ class Twins:
         marks = []
         for r in self.net.project_store(proj['id']).all("SELECT id, target, meta FROM functions WHERE project_id=? AND status='open'", proj["id"]):
             if '"reopened"' not in (r["meta"] or "") and (why := console.asm_reason(r["target"] or b"")):
-                marks.append((json.dumps({**json.loads(r["meta"] or "{}"), "asm_code": why}), r["id"]))
+                marks.append((r, json.dumps({**json.loads(r["meta"] or "{}"), "asm_code": why})))
+        marked = 0
         if marks:
             with self.net.project_store(proj['id']).tx() as db:
-                db.executemany("UPDATE functions SET status='asm', meta=? WHERE id=? AND status='open'", marks)
-                db.executemany("DELETE FROM claims WHERE function_id=?", [(fid,) for _, fid in marks])
-        return len(marks)
+                for row, meta in marks:
+                    # The scanner can overlap claims, matches and operator edits.
+                    changed = db.execute(
+                        "UPDATE functions SET status='asm', meta=? WHERE id=? AND status='open' AND target IS ? AND meta IS ?",
+                        (meta, row["id"], row["target"], row["meta"])).rowcount
+                    if changed:
+                        db.execute("DELETE FROM claims WHERE function_id=?", (row["id"],))
+                        marked += 1
+        return marked
 
     def _full_running(self, slug: str) -> bool:
         return (job := self.jobs.get(slug)) is not None and job.state == "running"
@@ -567,17 +575,7 @@ class Twins:
             from . import maintenance, workers
             workers.lower_priority()
             try:
-                # Starting agents wait for the claim order (job.ordered). It takes seconds and touches only this
-                # project, so it doesn't queue for the shared maintenance lane, where another game's reuse pass
-                # kept it (and the agents) waiting up to ORDER_WAIT. That holds after an update too: the recheck
-                # there queued for the lane first, so every start on a project a new version hadn't rechecked
-                # waited the whole ORDER_WAIT and agents claimed unordered. The recheck can change the functions
-                # (a DS game's pieces joined, more code set aside), so the order is stored again after it.
-                try:
-                    self.order(slug, job)
-                except Exception as e:  # the full pass tries again
-                    log.info("twins: ordering %s: %s", slug, e)
-                job.progress = {"phase": "Waiting for background CPU"}
+                self._order_before_pass(slug, job)
                 with maintenance.foreground(job.foreground), maintenance.slot(job.stop) as ready:
                     if not ready:
                         job.state = "done"
@@ -613,6 +611,8 @@ class Twins:
             while job.state == "running":
                 time.sleep(1)
             return job
+        if not job.ordered.is_set() and not job.stop.is_set():
+            self._order_before_pass(slug, job)
         # Deduplicate before taking the global lane: waiting for an existing queued
         # pass while holding that lane would prevent its owner from ever starting.
         with maintenance.foreground(job.foreground), maintenance.slot(job.stop) as ready:
@@ -627,16 +627,22 @@ class Twins:
             except maintenance_tasks.Unavailable:
                 return self._execute_full_pass(slug, job)
 
+    def _order_before_pass(self, slug: str, job: Job) -> None:
+        """Prepare this project's claim queue before joining the shared background lane."""
+        try:
+            self.order(slug, job)
+        except Exception as error:  # the full pass tries again
+            log.info("twins: ordering %s: %s", slug, error)
+        job.progress = {"phase": "Waiting for background CPU"}
+
     def order(self, slug: str, job: Job) -> None:
-        """Hand-written assembly set aside and the claim order stored (functions.boost), then job.ordered: what
-        starting agents wait for. Once per job."""
+        """Set assembly aside and store twin priorities (functions.boost) once per job."""
         if job.ordered.is_set():
             return
         from .cross_game_progress import report
         report(job, 'Putting functions in order')
-        # The bare row, not project_row: that first syncs saved progress, which queues behind any saved-file
-        # verification (a project's 1,000 saved functions judged again after a start), and starting agents
-        # waited out most of ORDER_WAIT for a look that takes a second or two. The full pass orders again after it.
+        # Saved-file verification can be running for thousands of functions. Ordering uses the current
+        # database snapshot and the background pass refreshes priorities after rechecking.
         proj = self.net.project_row(slug, sync=False)
         job.asm += self.set_aside_asm(proj)
         self.update_boosts(proj, pending=True)
@@ -1290,8 +1296,8 @@ class Twins:
             log.info("twins: %s from %s not tried: %s", b["name"], a["name"], str(e)[:WHY_CHARS])
             return "skip"
         if not source:
-            if self.net.fork_slug(proj["slug"]) and self.net.forks.is_asm(proj, a):
-                self.net.forks.mark_asm(b, a["name"])
+            if (self.net.fork_slug(proj["slug"]) and self.net.forks.is_asm(proj, a)
+                    and self.net.forks.mark_asm(b, a["name"])):
                 return "asm"
             return "skip"
         if self._missed(b["id"], source, project_id=proj["id"]):
