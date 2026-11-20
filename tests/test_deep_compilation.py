@@ -148,6 +148,7 @@ def test_baseline_evidence_shared_once_and_invalidated(monkeypatch):
     def build(search):
         calls.append(1);search.starting_score=search.best=40;search.baseline_measured=True
         search.winner_source=net.function()['best_source'];search.winner_diff=([('r','target','candidate')],'text')
+        search.winner_jump_tables = [{'table':100,'case':1,'target':20,'candidate':10}]
         return 40,1
     args = (AGENT,net.project_row('game'),net.function(),None,None)
     try:
@@ -156,6 +157,9 @@ def test_baseline_evidence_shared_once_and_invalidated(monkeypatch):
         assert len(calls)==1 and second.baseline_measured and second.best==40
         second.winner_diff[0].clear()
         assert first.winner_diff[0]
+        assert second.winner_jump_tables == first.winner_jump_tables
+        second.winner_jump_tables.clear()
+        assert first.winner_jump_tables
         with net.store.tx() as db:db.execute("UPDATE projects SET config=json_set(config,'$.compiler.flags','-O1')")
         deep_compilation.baseline(second,AGENT,net.project_row('game'),net.function(),None,None,lambda:build(second))
         assert len(calls)==2
@@ -202,6 +206,8 @@ def test_only_ordinary_random_misses_defer_detailed_diagnostics(monkeypatch, sco
     net._compile=lambda *a:compiler.CompileResult(True,b'object','')
     evaluated=[];locations=[];physical=[]
     net._evaluate=lambda *a:evaluated.append(1) or (target,exact,[])
+    table_rows = [{'table':100,'case':1,'target':20,'candidate':10}]
+    net._candidate_checks = lambda *args: {'jump_tables':table_rows}
     net._target_obj=lambda *a:target
     net.keep_diff=lambda *a:None
     net._record=lambda *a,**kw:None
@@ -214,6 +220,7 @@ def test_only_ordinary_random_misses_defer_detailed_diagnostics(monkeypatch, sco
     assert search._compact_trial is compact
     assert bool(locations) is not compact and bool(physical) is not compact
     assert len(evaluated) == (1 if compact else 2)
+    assert search._trial_jump_tables == (table_rows if not compact and not exact else ())
 
 
 def test_admission_is_bounded_across_lanes_without_partial_window_deadlock(monkeypatch):

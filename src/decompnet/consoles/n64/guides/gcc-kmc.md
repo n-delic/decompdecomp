@@ -126,6 +126,8 @@ switch
 - Dense cases become a jump table (`jtbl_` in .rodata, `jr $reg`); sparse ones become compare chains.
   Your jump table must equal the ROM's, so case values and order matter. The linked diff can show the target
   and candidate destination for each differing case even when the instructions match.
+  Deep search can turn a closed permutation into a single relabeling of explicit cases
+  when one source switch accounts for all the differences.
 
 Measured large-function findings (`-O2 -g3`, 32-bit MIPS)
 - Try a bounded small `__builtin_memcpy` when explicit loads/stores copy a short string. Preserve the
@@ -166,6 +168,12 @@ Expression and frame shape
 See `docs/COMPILER_MATCHING_LEARNINGS.md` for controlled evidence and failed experiments.
 
 ### Address association and call initialization
+
+With equal total frames and stable save slots, compare the accesses to the stack
+buffer before adding padding. An adjacent unused local can donate space without
+increasing the total. For a missing field reload after a store, compare the
+reload's position to intervening writes. Capturing the read at the later copy
+can leave the schedule wrong.
 
 Equivalent byte-pointer expressions can schedule differently in KMC GCC. The bounded
 `address_association` family tries constant displacement grouping, including candidate-owned

@@ -976,6 +976,7 @@ class Permuter:
         self._compact_trial = False
         self._trial_output = None
         self._trial_locations = None
+        self._trial_jump_tables = ()
         self._trial_output_granularity = None
         if fork:
             from ..inline_helpers import PREFIX as aggregate_helper_prefix
@@ -1087,6 +1088,8 @@ class Permuter:
             # Ordinary misses skip export/address reports; search feedback remains available.
             finish=getattr(self.net,'_complete_search_evaluation',self.net._evaluate)
             finish(fn,proj,result.obj)
+            if proj['arch'] == 'mips' and not d.bytes_match and hasattr(self.net, '_candidate_checks'):
+                self._trial_jump_tables = self.net._candidate_checks(fn,proj,result.obj).get('jump_tables', ())
         self._compact_trial = ((current_trial() or {}).get('kind') == 'random rewrite'
                                and source != fn['best_source'] and d.score >= best and not d.bytes_match)
         if not self._compact_trial:
