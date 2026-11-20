@@ -335,3 +335,51 @@ def test_moving_compiler_evidence_keeps_report_and_excludes_agent_prompt(net):
     assert item["models"] == ["model-a"]
     assert item["evidence"][0]["text"] == "Score 410 to 0"
     assert knowledge.listing("other", profile=True)["items"] == []
+
+
+def test_profile_merge_keeps_votes_examples_and_saved_trials_in_the_compiler_panel(net):
+    knowledge = net.knowledge
+    first, second = agent(net, "model-a-1"), agent(net, "model-b-1")
+    key = '0123456789abcdefabcd'
+    trial = {'id':key, 'function':'example', 'compiler':'gcc-2.7.2-kmc', 'flags':'-O1', 'score':0, 'exact':True}
+    knowledge.share(first, "game", "Check scheduling of register saves.", evidence="First example")
+    target = knowledge.listing("game")["items"][0]["id"]
+    knowledge.share(second, "game", "Recheck ordering of the function prologue.", evidence=f"Second example trial_id={key}")
+    source = knowledge.listing("game")["items"][0]["id"]
+    knowledge.share(first, "game", supports=source, evidence="Another example from the first model")
+    pid = net._project("game")['id']
+    with net.store.tx() as db:
+        db.execute("INSERT INTO settings VALUES(?,?)", (f'knowledge-trials:{pid}:{source}', json.dumps([trial])))
+    knowledge.move_to_profile("game", [target])
+    with pytest.raises(NetworkError, match="no longer active"):
+        knowledge.merge("game", target, [source], "Combined profile.", profile=True)
+    knowledge.move_to_profile("game", [source])
+    with pytest.raises(NetworkError, match="no longer active"):
+        knowledge.merge("game", target, [source], "Combined profile.")
+    knowledge.merge("game", target, [source], "Combined profile.", profile=True)
+    [item] = knowledge.listing("game", profile=True)["items"]
+    assert (item["id"], item["text"], item["status"]) == (target, "Combined profile.", "rejected")
+    assert item["models"] == ["model-a", "model-b"]
+    assert {e["text"] for e in item["evidence"]} == {
+        "First example", f"Second example trial_id={key}", "Another example from the first model",
+    }
+    assert [trial for e in item["evidence"] for trial in e["trials"]] == [{**trial, 'restored':True}]
+    assert knowledge.listing("game")["items"] == []
+    assert "Combined profile." not in knowledge.for_prompt("game")
+    with pytest.raises(NetworkError, match="no longer active"):
+        knowledge.merge("game", target, [source], "Combined profile.", profile=True)
+
+
+def test_profile_merge_rolls_back_if_a_helper_has_conflicting_model_attribution(net):
+    knowledge = net.knowledge
+    helper = agent(net, "model-a-1")
+    knowledge.share(helper, "game", "Check scheduling of register saves.", evidence="First example")
+    knowledge.share(helper, "game", "Recheck ordering of the function prologue.", evidence="Second example")
+    source, target = [item["id"] for item in knowledge.listing("game")["items"]]
+    with net.store.tx() as db:
+        db.execute("UPDATE knowledge_support SET model=? WHERE knowledge_id=?", ("model-b", source))
+    knowledge.move_to_profile("game", [target, source])
+    before = knowledge.listing("game", profile=True)
+    with pytest.raises(NetworkError, match="different models for the same helper"):
+        knowledge.merge("game", target, [source], "Combined profile.", profile=True)
+    assert knowledge.listing("game", profile=True) == before

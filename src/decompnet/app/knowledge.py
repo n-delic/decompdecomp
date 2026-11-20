@@ -191,6 +191,7 @@ SCHEMA = (
     END""",
 )
 PROPOSED, AGREED, ACCEPTED, REJECTED = "proposed", "agreed", "accepted", "rejected"
+PROFILE_FINDING = "EXISTS (SELECT 1 FROM settings WHERE key='knowledge-profile:' || k.project_id || ':' || k.id)"
 
 
 def model_key(model: str) -> str:
@@ -366,7 +367,7 @@ class Knowledge:
             db.execute("UPDATE knowledge SET status=?, decided_at=? WHERE id=? AND project_id=? AND status!=?",
                        (ACCEPTED if accept else REJECTED, time.time(), int(kid), proj["id"], REJECTED))
 
-    def merge(self, slug: str, target: int, sources: list[int], text: str) -> None:
+    def merge(self, slug: str, target: int, sources: list[int], text: str, *, profile: bool = False) -> None:
         """Consolidate equivalent findings while retaining the original records for audit."""
         if (type(target) is not int or not isinstance(sources, list) or not sources
                 or any(type(kid) is not int for kid in sources)
@@ -375,11 +376,13 @@ class Knowledge:
         if not isinstance(text, str) or not 0 < len(text.strip()) <= MAX_TEXT:
             raise NetworkError(f"Enter merged wording of up to {MAX_TEXT} characters.")
         proj = self.net._project(slug)
+        pid = proj['id']
+        condition = PROFILE_FINDING if profile else "k.status!='rejected'"
         with self._store(slug).tx() as db:
             ids = json.dumps([target, *sources])
             rows = db.execute(
-                "SELECT id,status FROM knowledge WHERE project_id=? AND status!=? "
-                "AND id IN (SELECT value FROM json_each(?))", (proj["id"], REJECTED, ids),
+                f"SELECT k.id,k.status FROM knowledge k WHERE k.project_id=? AND {condition} "
+                "AND k.id IN (SELECT value FROM json_each(?))", (pid, ids),
             ).fetchall()
             if len(rows) != len(sources) + 1:
                 raise NetworkError("A finding is no longer active on this project. Refresh and select it again.")
@@ -389,6 +392,13 @@ class Knowledge:
                 "FROM knowledge_support WHERE knowledge_id IN (SELECT value FROM json_each(?)) "
                 "ORDER BY created_at, knowledge_id", (target, archived),
             )
+            if profile and db.execute(
+                "SELECT agent_id,model FROM knowledge_support WHERE knowledge_id IN (SELECT value FROM json_each(?)) "
+                "EXCEPT SELECT agent_id,model FROM knowledge_support WHERE knowledge_id=? LIMIT 1",
+                (archived, target),
+            ).fetchone():
+                raise NetworkError("These findings record different models for the same helper. "
+                                   "Keep the findings separate to retain both votes.")
             db.execute(
                 "INSERT OR IGNORE INTO knowledge_evidence(knowledge_id,agent_id,text,created_at) "
                 "SELECT ?,agent_id,text,created_at FROM knowledge_evidence "
@@ -396,11 +406,23 @@ class Knowledge:
             )
             models = db.execute("SELECT count(DISTINCT model) FROM knowledge_support WHERE knowledge_id=?",
                                 (target,)).fetchone()[0]
-            status = PROPOSED
-            if any(row["status"] == ACCEPTED for row in rows):
+            status = REJECTED if profile else PROPOSED
+            if not profile and any(row["status"] == ACCEPTED for row in rows):
                 status = ACCEPTED
-            elif models >= MODELS_TO_AGREE:
+            elif not profile and models >= MODELS_TO_AGREE:
                 status = ACCEPTED if self.auto(proj) else AGREED
+            if profile:
+                db.executemany("DELETE FROM settings WHERE key=?",
+                               [(f"knowledge-profile:{pid}:{kid}",) for kid in sources])
+            trials = {}
+            for kid in [target, *sources]:
+                row = db.execute("SELECT value FROM settings WHERE key=?", (f"knowledge-trials:{pid}:{kid}",)).fetchone()
+                if row:
+                    for key, trial in saved_trials(json.loads(row['value'])).items():
+                        trials.setdefault(key, trial)
+            if trials:
+                db.execute("INSERT OR REPLACE INTO settings VALUES(?,?)",
+                           (f"knowledge-trials:{pid}:{target}", json.dumps(list(trials.values()))))
             now = time.time()
             db.execute("UPDATE knowledge SET text=?,status=?,decided_at=? WHERE id=?",
                        (text.strip(), status, now if status != PROPOSED else None, target))
@@ -441,10 +463,7 @@ class Knowledge:
     def listing(self, slug: str, *, profile: bool = False) -> dict:
         """For the GUI: every proposal not rejected, with the models behind it, and the project's setting."""
         proj = self.net._project(slug)
-        condition = (
-            "EXISTS (SELECT 1 FROM settings WHERE key='knowledge-profile:' || k.project_id || ':' || k.id)"
-            if profile else "k.status != 'rejected'"
-        )
+        condition = PROFILE_FINDING if profile else "k.status != 'rejected'"
         rows = self._store(slug).all(
             f"SELECT k.* FROM knowledge k WHERE k.project_id=? AND {condition} ORDER BY k.id DESC", proj["id"])
         if not rows:

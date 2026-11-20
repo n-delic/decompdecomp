@@ -363,7 +363,7 @@ function knowledgeExamples(it) {
   };
   return it.evidence?.length ? `<details data-knowledge-example="${it.id}"><summary>Reported compile evidence · ${it.evidence.length}</summary>${it.evidence.map(example).join('')}</details>` : '';
 }
-function openKnowledgeMerge(target, items, slug) {
+function openKnowledgeMerge(target, items, slug, profile = false) {
   const body = dialog("Merge findings", `<p>Choose equivalent findings to combine into #${target.id}. The merged finding keeps their votes and supporting examples.</p>
     <label class="field"><span>Merged wording</span><textarea data-merge-text rows="5" maxlength="600">${esc(target.text)}</textarea></label>
     <label class="field"><span>Find duplicates by ID or wording</span><input type="search" data-merge-search></label>
@@ -380,7 +380,7 @@ function openKnowledgeMerge(target, items, slug) {
   search.oninput = () => {
     const query = search.value.trim().toLowerCase();
     const candidates = items.filter(it => it.id !== target.id &&
-      (selected.has(it.id) || (query ? `#${it.id} ${it.text}`.toLowerCase().includes(query) : target.topic === it.topic)));
+      (selected.has(it.id) || (query ? `#${it.id} ${it.text}`.toLowerCase().includes(query) : profile || target.topic === it.topic)));
     options.innerHTML = candidates.map(it => `<label class="check"><input type="checkbox" value="${it.id}"${selected.has(it.id) ? ' checked' : ''}>
       <span><b>#${it.id}</b> · ${esc(it.text)}</span></label>`).join("") ||
       '<p class="muted">No findings match. Search by ID or wording to look across topics.</p>';
@@ -400,23 +400,25 @@ function openKnowledgeMerge(target, items, slug) {
       return;
     }
     keys.forEach(key => knowledgePending.add(key));
-    drawKnowledge();
+    const draw = profile ? drawCompilerProfileEvidence : drawKnowledge;
+    draw();
     const finish = beginWork(work, "Merging findings", [save, wording, search, ...options.querySelectorAll("input")], "");
     try {
       const result = await api("/api/knowledge/merge", {
-        method: "POST", body: {slug, target: target.id, sources: [...selected], text: wording.value}
+        method: "POST", body: {slug, target: target.id, sources: [...selected], text: wording.value, profile}
       });
       if (S.slug === slug) {
         if (S.dialogKind === "knowledge-merge" && work.isConnected) closeDialog();
         toast(esc(result.message));
-        await renderKnowledge(true);
+        if (profile) await loadCompilerProfileEvidence(slug);
+        else await renderKnowledge(true);
       }
     } catch (error) {
       showJobError(work, error.message);
     } finally {
       finish();
       keys.forEach(key => knowledgePending.delete(key));
-      drawKnowledge();
+      draw();
     }
   };
 }
@@ -1615,20 +1617,48 @@ async function loadCompilerProfileEvidence(slug) {
   box._request = request;
   if (box._slug !== slug) {
     box._slug = slug;
-    box.textContent = "Loading compiler profile evidence…";
+    box._items = null;
+    setHtml(box, '<p class="small muted">Loading compiler profile evidence…</p>');
   }
   try {
     const {items} = await api(`/api/knowledge/profile?slug=${encodeURIComponent(slug)}`);
     if (S.slug !== slug || S.tab !== "settings" || box._request !== request) return;
-    setHtml(box, items.map(it => `<div class="note">${saidHead("reported", it.models, it.t, true)}${saidText(it.text)}${knowledgeExamples(it)}</div>`).join("") ||
-      '<p class="small muted">No compiler profile evidence has been moved here.</p>');
+    box._items = items;
+    drawCompilerProfileEvidence();
   } catch (error) {
-    if (S.slug === slug && box._request === request) box.textContent = error.message;
+    if (S.slug === slug && box._request === request) {
+      box._items = null;
+      setHtml(box, `<p role="alert">${esc(error.message)}</p>`);
+    }
+  }
+}
+function drawCompilerProfileEvidence() {
+  const box = $("compilerProfileEvidence");
+  if (!box || box._slug !== S.slug || S.tab !== "settings" || !box._items) return;
+  const items = box._items;
+  const opened = new Set(Array.from(box.querySelectorAll('details[data-knowledge-example][open]'),
+    el => el.dataset.knowledgeExample));
+  setHtml(box, items.map(it => {
+    const busy = knowledgePending.has(`${S.slug}/${it.id}`);
+    const merge = items.length > 1 ? `<button type="button" class="ghost small-btn" data-profile-merge="${it.id}"${busy ? ' disabled' : ''}>Merge…</button>` : '';
+    return `<div class="note">${saidHead("reported", it.models, it.t, true)}${saidText(it.text)}${knowledgeExamples(it)}
+      ${merge}${busy ? '<span role="status">Merging…</span>' : ''}</div>`;
+  }).join("") || '<p class="small muted">No compiler profile evidence has been moved here.</p>');
+  for (const el of box.querySelectorAll('details[data-knowledge-example]')) {
+    if (opened.has(el.dataset.knowledgeExample)) el.open = true;
   }
 }
 $("compilerProfileEvidence")?.addEventListener("click", event => {
   const link = event.target.closest(".fn[data-fn]");
-  if (link) openFn(link.dataset.fn);
+  if (link) {
+    openFn(link.dataset.fn);
+    return;
+  }
+  const merge = event.target.closest("[data-profile-merge]");
+  const box = $("compilerProfileEvidence");
+  if (!merge || merge.disabled || box._slug !== S.slug) return;
+  const target = box._items?.find(it => it.id === Number(merge.dataset.profileMerge));
+  if (target) openKnowledgeMerge(target, box._items, S.slug, true);
 });
 const hexShort = (n) => "0x" + n.toString(16).toUpperCase();
 async function loadCompilerAnswer() {
