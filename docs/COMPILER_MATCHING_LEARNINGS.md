@@ -8278,3 +8278,14 @@ With two workers, a one-minute run finished at 22,500 after 41 candidate
 checks. A four-minute run tested 81 candidates and reached 22,410 with a
 built-in random rewrite. Both saved results were independently recompiled and
 linked. The 22,410 result has one observed run.
+
+### KMC MIPS address operand order in a controlled test
+
+- GCC 2.7.2 KMC, `-G0 -mips3 -mgp32 -mfp32 -O2`. For a function returning a
+  pointer to a halfword element, changing `&base[index]` to a pointer cast of
+  the unsigned byte offset plus the unsigned base reversed only the two source
+  operands of `addu`. The scale and destination register were identical.
+- This is a compiled regression fixture. The target is the fixture's original
+  instruction stream with those two operands reversed.
+  `tests/test_exit_returns_and_operand_temporaries.py` checks the entire stream
+  and the deep permuter still judges candidates through its normal match path.

@@ -38,8 +38,8 @@ def _run(net, proj, fn, log, check, max_profiles):
     own = compiler_for(cfg, fn['vram'], fn)
     if own.get('cmd') or not own.get('toolchain') or toolchains.installed(own['toolchain']) is None:
         return {'tested': 0}
-    from .profile_hypotheses import captured, kmc_priorities, neighbours, prioritized
-    from .repair_ranking import evidence
+    from .profile_hypotheses import captured, kmc_priorities, kmc_sqrt_probe, neighbours, prioritized
+    from .repair_ranking import evidence, instruction_rows
     choices = [list(own['flags'])]
     # Debug labels can change old GCC assembler scheduling. A near match deserves
     # these cheap same-toolchain checks before broad optimization exploration.
@@ -48,7 +48,11 @@ def _run(net, proj, fn, log, check, max_profiles):
     debug = net.debug_flag_variants(own['toolchain'], list(own['flags'])) if promising and hasattr(net, 'debug_flag_variants') else []
     focused = []
     if own['toolchain'] == 'gcc-2.7.2-kmc':
-        focused = [list(flags) for flags in kmc_priorities(own, dict(fn).get('asm', ''), evidence(net, fn['id'], None))]
+        rows = instruction_rows(evidence(net, fn['id'], None))
+        assembly = dict(fn).get('asm', '')
+        focused = [list(flags) for flags in kmc_priorities(own, assembly, rows)]
+        if sqrt_probe := kmc_sqrt_probe(own, assembly, rows):
+            focused.insert(0, sqrt_probe)
         if promising and '-O1' in own['flags']:
             from .profile_hypotheses import kmc_variants
             paired_schedule = next((flags for flags in kmc_variants(own['toolchain'], own['flags'])
@@ -148,7 +152,9 @@ def _run(net, proj, fn, log, check, max_profiles):
         # Another worker may have improved the C during probing. Never apply an old-source hypothesis.
         if (current['status'] == 'open' and current['best_source'] == fn['best_source']
                 and net._comparison_digest(fresh,current,current['best_source'],candidates)==input_digest):
-            if best['exact'] and net.auto_adjusts(fresh) and best.get('source', fn['best_source']) == fn['best_source']:
+            review_only = '-ffast-math' in best['flags'] and '-ffast-math' not in own['flags']
+            if (best['exact'] and not review_only and net.auto_adjusts(fresh)
+                    and best.get('source', fn['best_source']) == fn['best_source']):
                 try:
                     net.apply_function_compiler(proj['slug'], fn['name'], best['toolchain'], best['flags'])
                     result['applied'] = True
@@ -159,9 +165,10 @@ def _run(net, proj, fn, log, check, max_profiles):
                 if not best.get('notified'):
                     agent, _ = net.local_agent('autopilot')
                     try:
+                        options = {'review_only': True} if review_only else {}
                         said = net.suggest(agent, proj['slug'], 'Compiler preflight found a rejudged improvement.',
                                     compiler=best['toolchain'], flags=' '.join(best['flags']), function=fn['name'],
-                                    ranges=f"0x{fn['vram']:X}-0x{fn['vram']+fn['size']:X}", source=best.get('source', fn['best_source']))
+                                    ranges=f"0x{fn['vram']:X}-0x{fn['vram']+fn['size']:X}", source=best.get('source', fn['best_source']), **options)
                     except NetworkError as error:
                         # A partial/stale hypothesis may fail the exact suggestion gate. It must not
                         # abort source search or apply settings without the normal revalidation.
@@ -176,7 +183,7 @@ def _run(net, proj, fn, log, check, max_profiles):
                         result['applied'] = net._function(fn['name'],proj['slug'])['status']=='matched'
                         if not result['applied']:log(said)
                     if best_key:
-                        best['notified']=not best['exact'] or bool(result.get('applied')) or not net.auto_adjusts(fresh)
+                        best['notified']=review_only or not best['exact'] or bool(result.get('applied')) or not net.auto_adjusts(fresh)
                         with net.project_store(proj['id']).tx() as db:
                             db.execute('UPDATE reuse_trials SET feedback=? WHERE function_id=? AND signature=?',
                                        (json.dumps(best),fn['id'],best_key))

@@ -190,3 +190,47 @@ def test_captured_profiles_are_ranked_but_rejudged_with_current_inputs():
     assert preflight.run(net,proj,fn,max_profiles=2)['best']['exact']
     assert state['calls']==[['-O2'],['-O3']]
     assert not state['applied']
+
+
+def test_kmc_scheduler_orders_single_and_paired_passes_by_evidence(monkeypatch):
+    from decompnet.app import allocation_evidence
+    from decompnet.app.profile_hypotheses import kmc_priorities
+
+    own = {'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-O1']}
+    rows = [('o', 'sw $ra, 24($sp)', 'sw $ra, 24($sp)')]
+    diagnosis = {'scheduling': True, 'delay_slot': False}
+    monkeypatch.setattr(allocation_evidence, 'diagnose', lambda rows: diagnosis)
+    single = ('-O1', '-fschedule-insns2')
+    combined = ('-O1', '-fschedule-insns', '-fschedule-insns2')
+    assert kmc_priorities(own, '', rows) == [single, combined]
+    diagnosis['delay_slot'] = True
+    assert kmc_priorities(own, '', rows) == [combined, single]
+
+
+def test_kmc_sqrt_trial_stays_review_only_even_with_auto_adjust(monkeypatch):
+    from decompnet.app import repair_ranking
+
+    net, proj, fn, state = setup()
+    net.cfg(proj)['compiler']['toolchain'] = 'gcc-2.7.2-kmc'
+    fn['asm'] = 'sqrt.s $f0, $f12'
+    state['auto'] = True
+    monkeypatch.setattr(repair_ranking, 'evidence', lambda *a: [
+        ('>', '', 'c.eq.s $f0, $f0'), ('>', '', 'jal sqrtf'),
+    ])
+    net._judge_with = lambda p,f,t,flags,s: (
+        '-ffast-math' in flags, SimpleNamespace(score=1120), '',
+    )
+    assert preflight.run(net, proj, fn)['best']['exact']
+    assert not state['applied']
+    assert state['suggested'][0]['review_only']
+    assert state['suggested'][0]['flags'] == '-O2 -ffast-math'
+
+
+def test_four_word_copy_ranking_requires_contiguous_transfers():
+    from decompnet.app.repair_ranking import matching_topics, order
+
+    rows = [(' ', f'lw $t{i}, {i*4}($a0)', f'lw $t{i}, {i*4}($a0)') for i in range(4)]
+    rows += [('o', f'sw $t{i}, {i*4}($a1)', f'sw $t{i}, {i*4}($a1)') for i in range(4)]
+    assert order(['local_width', 'word_block_copy'], rows)[0] == 'word_block_copy'
+    rows[-1] = ('o', 'sw $t3, 20($a1)', '')
+    assert 'Grouped copies' not in matching_topics(rows)

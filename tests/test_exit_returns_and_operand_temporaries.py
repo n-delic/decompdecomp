@@ -118,3 +118,18 @@ def test_kmc_builds_the_shapes_the_game_had(tmp_path):
     inlined = [t for t in offered(COMPARISON, 'delay_slot_duplicate') if 'var_v0' not in t][0]
     assert 'andi' in [m for m, _ in _code(tmp_path, COMPARISON)]
     assert 'andi' not in [m for m, _ in _code(tmp_path, inlined)] and 'and' in [m for m, _ in _code(tmp_path, inlined)]
+
+
+def test_kmc_integer_address_candidate_matches_reversed_add_operands(tmp_path):
+    from decomprepair.kmc_operand_repairs import variants
+
+    source = 's16 *f(s16 *base, u32 index) { return &base[index]; }'
+    baseline = _code(tmp_path, source)
+    index, (op, operands) = next((i, insn) for i, insn in enumerate(baseline) if insn[0] == 'addu')
+    dst, left, right = operands.split(', ')
+    target = baseline.copy()
+    target[index] = op, f'{dst}, {right}, {left}'
+    rows = [(' ' if a == b else 'r', ' '.join(a), ' '.join(b)) for a, b in zip(target, baseline)]
+    [(family, candidate)] = variants(source, 'f', HEADER, rows)
+    assert family == 'kmc_address_operand_order'
+    assert _code(tmp_path, candidate) == target

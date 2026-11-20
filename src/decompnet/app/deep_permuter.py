@@ -576,6 +576,12 @@ class Search(Permuter):
                     self.phase = ordinary_phase
                 else:
                     choices = draft_repairs.variants(*args,labels=labels,**options)
+                if not fork and proj['arch'] == 'mips' and compiler_for(self.net.cfg(proj), fn['vram'], fn).get('toolchain') == 'gcc-2.7.2-kmc':
+                    from decomprepair import kmc_operand_repairs
+                    for family, candidate in kmc_operand_repairs.variants(
+                            source, fn['name'], header, repair_ranking.instruction_rows(rows)):
+                        labels[candidate] = family
+                        choices.insert(0, candidate)
                 from . import hazard_line_repairs
                 for family,candidate in hazard_line_repairs.variants(source,fn['name'],header,proj['arch'],rows):
                     labels[candidate]=family
