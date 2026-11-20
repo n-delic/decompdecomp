@@ -8072,3 +8072,10 @@ the first deep-permuter trial (4,304 linked bytes). Reversing the operands score
 730. Replacing the shift alone left the score unchanged. Newly generated m2c
 output in both syntax modes failed to compile, including after draft refinement
 and macro expansion. Neither draft exposed the four-statement pattern.
+
+Follow-up controlled replay with the same compiler and flags. A newly generated
+valid-syntax m2c draft compiled after refinement with decomprepair 0.5.34 and
+scored 23,075. A store through a void pointer immediately followed the closing
+brace of a conditional. Recognizing the star as a dereference there allowed
+the existing refinement to cast the store address while preserving byte-based
+pointer arithmetic. Expanding the field macros gave the same linked score.
