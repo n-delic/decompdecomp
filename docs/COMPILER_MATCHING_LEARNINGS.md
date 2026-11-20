@@ -8562,3 +8562,29 @@ score to 2. The remaining differences were the 16-byte stack frame adjustments w
 used 8 bytes. Removing the unused generated `u8 __repair_frame[8]` declaration from the indexed
 variant matched all 164 linked bytes in a scratch project. The library tests cover when the
 rewrite is offered. The linked result is evidence from an actual function.
+
+### Regenerating drafts when the failed attempt was never saved
+
+A pilot took 24 N64 ROM functions across four projects in three instruction-count bands
+(6–15, 16–28, and 29–42). All archived controls matched with their captured headers and
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` using the normal linked-byte judge. Fresh
+m2c drafts used the target assembly and captured header declarations. The archived
+winning C stayed out of generation and the blind search.
+
+Fourteen raw drafts matched. Of seven compilable misses, one matched in the blind search
+through `mmio_address` (score 110 to exact). Each search allowed up to 24 targeted and
+12 random candidate compiles. Three raw drafts failed compilation. In the follow-up,
+existing m2c cleanup recovered two more matches, one by correcting a scaled global
+address passed to a call (score 10 to exact) and one by repairing a local m2c prototype
+that rejected the emitted call. The remaining two compile failures were independent
+builds of the same type of SDK routine. m2c emitted undeclared stack-byte views into an unaligned copy. The tested initial
+recovery paths, refined m2c draft, a draft
+without header declarations, and the `--stack-structs`, `--no-stack-spill`, and
+`--no-switches` options yielded no match for those two cases.
+
+One further controlled edit split a standalone `mask = 1 << index` into
+`mask = 1;` and `mask = mask << index;`. This reproduced the target's separate
+constant materialization and in-place `sllv` and matched (score 175 to exact).
+Two other distinct variable-shift targets at this profile and size did not yield the
+same draft pattern. The isolated edit is evidence for this one case. The repeated
+stack problem occurs before ordinary source permutation can start.
