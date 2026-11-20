@@ -969,7 +969,7 @@ class Network:
     def _compile_snapshot(proj, fn, header, source):
         # Include naming metadata: canonical_source can change the compiler input after a rename.
         return (proj["id"], proj["root"], proj["config"], fn["id"], fn["name"], fn["vram"],
-                fn["meta"], header, source)
+                fn["meta"], fn["target"], fn["relocs"], header, source)
 
     @contextmanager
     def compiled_ahead(self, prepared, *, strict=False):
@@ -1924,6 +1924,73 @@ class Network:
             for key in ('exact','new_match','adopted'):result.setdefault(key,False)
             return result
 
+    def _verify_saved_match(self, project_id, name, source, credit, readable, check_cancel, *,
+                            previous_source, removed_status):
+        """Apply a saved contribution's verdict without making the previous match claimable during compilation."""
+        store = self.project_store(project_id)
+        with store.tx() as db:
+            fn = db.execute("SELECT * FROM functions WHERE project_id=? AND name=?", (project_id, name)).fetchone()
+            if fn is None or fn["status"] != "matched" or fn["matched_source"] != previous_source:
+                raise NetworkError(f"{name} changed during saved verification. Check saved progress again.")
+            if source is None and not removed_status:
+                raise NetworkError(f"Saved C for {name} is unavailable. Restore its source and check saved progress again.")
+            score = None
+            if source is not None:
+                proj = db.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+                ctx = self._context(project_id, fn["unit"])
+                exact, score, settings = self._saved_match_verdict(proj, ctx["header"], fn, source)
+                check_cancel()
+                if exact:
+                    # Keep the author's original attribution and timestamp for the
+                    # same C, while refreshing the proof under the current inputs.
+                    same = source.rstrip() == (fn["matched_source"] or "").rstrip()
+                    if same:
+                        source = fn["matched_source"]
+                    self._record(fn, credit, 0, source, ctx["version"], matched=True,
+                                 via="saved_recheck", effective_settings=settings, retain_match_credit=same)
+                    db.execute("UPDATE functions SET readable=? WHERE id=? AND readable IS NOT ?",
+                               (int(readable), fn["id"], int(readable)))
+                    return True
+                self._record(fn, credit, score, source, ctx["version"], best=False, via="saved_recheck",
+                             effective_settings=settings)
+
+            # A confirmed mismatch (or an explicit deletion) is the first point
+            # at which the function may join the claim queue.
+            if source is None:
+                check_cancel()
+                best = (None, None, None)
+            elif score is None:
+                best = (fn["matched_source"], fn["matched_agent_id"], max(1, fn["n_insns"] or 1) * 100)
+            else:
+                best = (source, credit.id, score)
+            db.execute("UPDATE functions SET status=?,matched_source=NULL,matched_agent_id=NULL,matched_at=NULL,"
+                       "readable=0,best_source=?,best_agent_id=?,best_score=? WHERE id=?",
+                       ("open" if source is not None else removed_status, *best, fn["id"]))
+            why = "saved source did not verify" if source is not None else "saved source was removed"
+            self._event(db, project_id, credit.id, "reopen", f"{name}: {why}")
+            return False
+
+    def _saved_match_verdict(self, proj, header, fn, source):
+        # A stale result requests fresh compilation outside both the project
+        # lock and the write transaction.
+        result = self._attempt_compilation(proj, header, source, fn)
+        if result.ok:
+            cand, verdict, _ = self._evaluate(fn, proj, result.obj)
+            if cand is not None:
+                diff = self._score_candidate(fn, proj, cand, verdict)
+                return diff.bytes_match, diff.score, getattr(result, "effective_settings", None)
+        elif re.search(r"Unknown section type|converter did not produce a big-endian ELF32|"
+                       r"Missing [^\n]*reinstall|compiler timed out|process exceeded|compiler exited with -\d+", result.log, re.I):
+            raise NetworkError("The compiler could not complete the saved verification. "
+                               "Check the toolchain and try again.\n" + result.log.strip())
+        return False, None, getattr(result, "effective_settings", None)
+
+    def _score_candidate(self, fn, proj, cand, verdict):
+        diff = scoring.diff(self._target_obj(fn, proj), cand)
+        if verdict is not None:
+            return scoring.DiffResult(0 if verdict else max(1, diff.score), diff.max_score, diff.rows, verdict)
+        return diff
+
     def _attempt_unlimited(self, agent: Agent, function: str, source: str, project: str | None = None) -> dict:
         """Compile, score and record one attempt. Returns {"text", "score", "matched"} (score None: didn't compile)."""
         fn = self._function(function, project)
@@ -1976,9 +2043,7 @@ class Network:
                     f"Define it with exactly that name (non-static).")
             self.remember_compile(key, agent, fn, text, None)
             return {"text": text, "score": None, "matched": False}
-        d = scoring.diff(self._target_obj(fn, proj), cand)
-        if verdict is not None:
-            d = scoring.DiffResult(0 if verdict else max(1, d.score), d.max_score, d.rows, verdict)
+        d = self._score_candidate(fn, proj, cand, verdict)
         checks = self._candidate_checks(fn, proj, result.obj)
         matched_now = d.bytes_match and not scratch
         last = store.one("SELECT score FROM attempts WHERE function_id=? AND agent_id=? AND score IS NOT NULL "
@@ -2174,7 +2239,7 @@ class Network:
     def _record(self, fn, agent: Agent, score: int | None, source: str, ctx_version: int, matched: bool = False,
                 compiled: bool | None = None, via: str = "agent", effective_settings=None,
                 prepared_header=None, prepared_inputs=None, prepared_compiler=None, before_record=None, restoring_exact=False, prepared_assembly=False, write_wait=None, exact_inputs=None,
-                best: bool = True):
+                best: bool = True, retain_match_credit: bool = False):
         """An attempt. `best`: False for one whose code can't stay in the source (it breaks matched neighbours), so
         it never becomes the best that briefs offer and a release puts back."""
         store = self.project_store(fn["project_id"])
@@ -2246,7 +2311,7 @@ class Network:
                 if improved:
                     from .app.permuter_inputs import external_seed
                     external_seed(db, current, source, agent.name)
-            if matched and not stale:
+            if matched and not stale and not retain_match_credit:
                 db.execute("UPDATE functions SET status='matched', matched_source=?, matched_agent_id=?, "
                            "matched_at=?, best_score=0, best_source=? WHERE id=?",
                            (source, agent.id, now, source, fn["id"]))
@@ -2262,7 +2327,7 @@ class Network:
                 self.check_attempt_limit(agent, fn)
             except NetworkError:
                 pass  # the attempt itself still returns its diff; the next claim moves on
-        if matched:
+        if matched and not retain_match_credit:
             store.after_commit(lambda: self.on_match(store.one("SELECT * FROM projects WHERE id=?", fn["project_id"]), fn["id"], agent))
         elif improved:
             self.on_improvement(store.one("SELECT * FROM projects WHERE id=?", fn["project_id"]), fn["id"])

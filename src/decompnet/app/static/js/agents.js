@@ -267,6 +267,57 @@ async function switchToAlternative(s, button) {
   }
 }
 
+const agentRestarts = new Map();
+
+function canRestartAgent(session) {
+  return session.state === "stopped" && !session.configuration_error;
+}
+
+function renderAgentRestart(sessions) {
+  const restart = agentRestarts.get(S.slug);
+  const button = $("restartAll"), feedback = $("restartAllFeedback");
+  button.hidden = !restart?.running && !sessions.some(canRestartAgent);
+  button.disabled = !!restart?.running;
+  button.textContent = restart?.running ? "Restarting agents…" : "Restart all";
+  feedback.hidden = !restart;
+  if (restart && feedback.firstChild !== restart.feedback) feedback.replaceChildren(restart.feedback);
+  if (!restart && feedback.firstChild) feedback.replaceChildren();
+}
+
+$("restartAll").onclick = async () => {
+  const slug = S.slug, sessions = S.sessions || [];
+  if (!slug || agentRestarts.get(slug)?.running || !sessions.some(canRestartAgent)) return;
+  const feedback = document.createElement("div");
+  const log = feedback.appendChild(document.createElement("div"));
+  const restart = { running: true, feedback };
+  agentRestarts.set(slug, restart);
+  renderSessions(sessions, false);
+  const finish = beginWork(log, "Restarting stopped agents");
+  let message;
+  try {
+    const { restarted, errors } = await api("/api/agents/restart", { method: "POST", body: { slug } });
+    message = restarted.length ? `Started ${plural(restarted.length, "agent")}.`
+      : errors.length ? "No agents restarted." : "No stopped agents to restart.";
+    if (errors.length) {
+      log.setAttribute("role", "alert");
+      const list = log.appendChild(document.createElement("ul"));
+      for (const { label, message } of errors) {
+        list.appendChild(document.createElement("li")).textContent = `${label} — ${message}`;
+      }
+    }
+  } catch (error) {
+    showJobError(log, error.message);
+  } finally {
+    finish();
+    if (message) log._workStatus.textContent = message;
+    restart.running = false;
+    if (S.slug === slug) {
+      renderSessions(S.sessions || [], false);
+      poll(false);
+    }
+  }
+};
+
 function renderSessions(sessions, refreshCosts = true) {
   sessions = sessions.map(session => {
     const reset = agentMetricResets.get(session.id);
@@ -280,6 +331,9 @@ function renderSessions(sessions, refreshCosts = true) {
   const running = sessions.filter((s) => LIVE.includes(s.state));
   const paused = sessions.filter((s) => s.state === "paused");
   $("stopAll").hidden = running.length < 2;
+  renderAgentRestart(sessions);
+  const restarting = !!agentRestarts.get(S.slug)?.running;
+  $("stopAll").disabled = restarting;
   $("removePaused").hidden = paused.length === 0;
   $("removePaused").textContent = paused.length ? `Remove paused (${paused.length})` : "Remove paused";
   // decompiling helpers, then polishing ones (task "readable"), each group under its heading when both are at work
@@ -300,13 +354,13 @@ function renderSessions(sessions, refreshCosts = true) {
     const todo = s.todo ? `${sentence(s.todo.replace(/\.$/, ""))}.${s.state === "paused" && !s.configuration_error ? " Then press Start again." : ""}` : "";
     const rate = agentTokenRate(s, b);
     return `${head}<div class="session${rowTint(s.agent)}" data-state="${esc(s.state)}"><div class="session-top"><span class="dot ${dot}"></span><b title="${esc(s.agent)}">${esc(s.label)}</b>
-        ${live ? `<button class="ghost" data-stop="${id}" type="button">Stop</button>` : s.configuration_error ? `<button class="ghost" data-change-model="${id}" type="button">Choose another model</button>` : `<button class="ghost" data-again="${id}" type="button">Start again</button>`}
+        ${live ? `<button class="ghost" data-stop="${id}" type="button">Stop</button>` : s.configuration_error ? `<button class="ghost" data-change-model="${id}" type="button">Choose another model</button>` : `<button class="ghost" data-again="${id}" type="button"${restarting && canRestartAgent(s) ? ' disabled' : ''}>Start again</button>`}
         <details class="agent-menu" data-agent-menu="${id}" ${agentMenusOpen.has(s.id) ? 'open' : ''}><summary aria-label="Actions for ${esc(s.label)}" title="Agent actions">⋮</summary><div class="agent-menu-items">
           <button data-rename="${id}" type="button">Rename</button>${!S.st?.agents?.find(a=>a.id===s.kind)?.uses_endpoints ? `<button data-change-model="${id}" type="button">Change model</button>` : ""}<button data-queue="${id}" type="button">Work settings</button><button data-agent-prompts="${id}" type="button">Prompts</button><button data-agent-tools="${id}" type="button">Tools</button>
           <button data-log="${id}" type="button" aria-pressed="${S.logFor === s.id}">${S.logFor === s.id ? 'Back to everything' : 'What it said and did'}</button>
           ${["readable","boundary","assets","data","port"].includes(s.task) ? "" : `<button data-retry-paused="${id}" type="button">Retry paused functions</button>`}
           <button data-reset-metrics="${id}" type="button" class="agent-menu-reset">Reset metrics</button>
-          ${live ? '' : `<button data-remove="${id}" type="button">Remove agent</button>`}</div></details></div>
+          ${live ? '' : `<button data-remove="${id}" type="button"${restarting && canRestartAgent(s) ? ' disabled' : ''}>Remove agent</button>`}</div></details></div>
       ${agentMetrics(s, b)}
       <span class="state ${s.state === 'paused' ? 'err' : ''}">${helperState(s, claim)}</span>
       ${["starting", "working"].includes(s.state) && s.startup_stage ? `<progress class="workbar" aria-label="Agent startup"></progress>` : ""}

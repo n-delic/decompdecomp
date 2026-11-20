@@ -1365,6 +1365,14 @@ def _saved_name(old_name, info, by_name, by_vram):
     return candidates[0] if len(candidates) == 1 else None
 
 
+
+def _file_identity(path: Path) -> tuple:
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return (None,)
+    return (info.st_mtime_ns, info.st_size, info.st_mode, info.st_ctime_ns, info.st_ino)
+
 def _saved_current(store, project_id, name, kind):
     # Already matched entries never use C here. For an open saved source, only the
     # normal judge needs the full function; unchanged drafts compare just best C.
@@ -1373,7 +1381,7 @@ def _saved_current(store, project_id, name, kind):
                      "FROM functions WHERE project_id=? AND name=?", kind == 'best', project_id, name)
 
 
-def _saved_checks(net, proj, folder, files, by_name, by_vram, saved, judge_code, check_cancel):
+def _saved_checks(net, proj, folder, files, by_name, by_vram, saved, judge_code, check_cancel, verifying=()):
     """Compile a bounded window ahead; only the caller may judge or change project state."""
     store = net.project_store(proj['id'])
     from .restore_compilation import Pool
@@ -1408,14 +1416,20 @@ def _saved_checks(net, proj, folder, files, by_name, by_vram, saved, judge_code,
                 kind = "src" if "matched_by" in info else "best"
                 text = _saved_source(folder, files, f"{kind}/{_source_file(old_name)}")
                 name = _saved_name(old_name, info, by_name, by_vram)
+                if name in verifying and text is None:
+                    removed_status, previous_source = verifying[name]
+                    if not removed_status:
+                        text = previous_source
                 prepared = None
                 if judge_code and name is not None and text is not None:
                     current = _saved_current(store, proj["id"], name, kind)
-                    if current["status"] != "matched" and not (kind == "best" and current["best_source"] == text):
+                    if name in verifying or (current["status"] != "matched"
+                                             and not (kind == "best" and current["best_source"] == text)):
                         fn = dict(store.one("SELECT * FROM functions WHERE project_id=? AND name=?", proj["id"], name))
                         # A foreground result can arrive between the narrow read and
                         # the full compiler snapshot. Recheck against that fresh row.
-                        if fn["status"] != "matched" and not (kind == "best" and fn["best_source"] == text):
+                        if name in verifying or (fn["status"] != "matched"
+                                                 and not (kind == "best" and fn["best_source"] == text)):
                             ctx = net._context(proj["id"], fn["unit"])
                             if ctx is not None:
                                 snapshot = net._compile_snapshot(proj, fn, ctx["header"], text)
@@ -1441,7 +1455,8 @@ def _saved_checks(net, proj, folder, files, by_name, by_vram, saved, judge_code,
 
 @restore_batch
 def _judge_saved(net, slug: str, folder: Path, manifest: dict, by_name: dict, saved: dict, log,
-                 files: dict[str, str] | None = None, judge_code: bool = True) -> dict:
+                 files: dict[str, str] | None = None, judge_code: bool = True, verifying=None) -> dict:
+    verifying = verifying or {}
     store = net.project_store(slug)
     check_cancel = getattr(log, "check_cancel", lambda: None)
     proj = dict(net._project(slug))
@@ -1460,10 +1475,11 @@ def _judge_saved(net, slug: str, folder: Path, manifest: dict, by_name: dict, sa
             check_cancel()
             name = _saved_name(old_name, info, by_name, by_vram)
             kind = "src" if "matched_by" in info else "best"
-            if name is not None and _saved_source(folder, files, f"{kind}/{_source_file(old_name)}") is not None:
+            if name is not None and name not in verifying and _saved_source(folder, files, f"{kind}/{_source_file(old_name)}") is not None:
                 yield name, old_name
     progress = getattr(net, "progress", None)
     verdict_lock = progress._project_lock(slug) if progress is not None else nullcontext()
+    active = None
     with verdict_lock:
         restore_evidence_many(net, pid, evidence_names(), manifest, check_cancel)
         if progress is not None and (active := progress.rechecking.get(slug)) is not None:
@@ -1475,9 +1491,10 @@ def _judge_saved(net, slug: str, folder: Path, manifest: dict, by_name: dict, sa
     # reading best_source here would inflate every candidate without using it.
     current_rows = None if judge_code else {row["name"]:row for row in store.all(
         "SELECT name,status FROM functions WHERE project_id=?", pid)}
+    guard = {entry[0]: entry[1:] for entry in active.signature} if active and verifying else {}
     last_update = 0
     judge_agent=None;credits={}
-    checks = _saved_checks(net, proj, folder, files, by_name, by_vram, saved, judge_code, check_cancel)
+    checks = _saved_checks(net, proj, folder, files, by_name, by_vram, saved, judge_code, check_cancel, verifying)
     with closing(checks):
         for index, (old_name, info, kind, text, name, prepared) in enumerate(checks):
             # Compile workers do no writes. Wait outside the lock so a slow compiler cannot
@@ -1500,9 +1517,10 @@ def _judge_saved(net, slug: str, folder: Path, manifest: dict, by_name: dict, sa
                 try:
                     with verdict_lock:
                         check_cancel()
-                        current = (None if name is None or text is None else
+                        current = (None if name is None or (text is None and name not in verifying) else
                                    _saved_current(store, pid, name, kind) if judge_code else current_rows[name])
-                        needs_attempt = (judge_code and current is not None and current['status'] != 'matched'
+                        needs_attempt = (judge_code and name not in verifying and current is not None
+                                         and current['status'] != 'matched'
                                          and not (kind == 'best' and current['best_source'] == text))
                         if needs_attempt and not yielded_autopilot:
                             # Only entries needing a verdict may wait for a claim.
@@ -1519,6 +1537,37 @@ def _judge_saved(net, slug: str, folder: Path, manifest: dict, by_name: dict, sa
                         check_cancel()
                         if judge_code:
                             log(f"checking {old_name}")
+                        if name in verifying:
+                            status, previous_source = verifying[name]
+                            path = _source_file(old_name)
+                            unit = store.one("SELECT unit FROM functions WHERE project_id=? AND name=?", pid, name)
+                            headers = manifest.get("headers") or {}
+                            own_header = headers.get(unit["unit"]) if unit is not None else None
+                            header_paths = {f"include/{path}" for path in (headers.get(""), own_header) if path}
+                            def check_verdict(paths=(MANIFEST, "include", f"src/{path}", f"best/{path}", *header_paths)):
+                                check_cancel()
+                                for key in paths:
+                                    if guard and _file_identity(folder / key) != guard.get(key, (None,)):
+                                        raise NetworkError(f"{key} changed during saved verification. Check saved progress again.")
+                            author = info.get("matched_by") or info.get("best_by") or "restored"
+                            try:
+                                if author not in credits:
+                                    credits[author] = net.attribution_agent(author)
+                                with net.compiled_ahead(prepared, strict=True):
+                                    exact = net._verify_saved_match(pid, name, text, credits[author],
+                                                                    info.get("readable", False), check_verdict,
+                                                                    previous_source=previous_source, removed_status=status)
+                            except (NetworkError, toolchains.ToolchainError) as error:
+                                check_cancel()
+                                raise NetworkError(f"Could not verify saved C for {name}: {error}. "
+                                                   "Saved files are retained. Resolve the error and retry synchronization.") from error
+                            if exact:
+                                matched += 1
+                            elif kind == "src":
+                                lost.append(name)
+                            else:
+                                best += 1
+                            break
                         if name is None or text is None:
                             lost.append(old_name) if kind == "src" else None
                             break

@@ -567,14 +567,30 @@ def affected_functions(old, new, changed, rows, included=None):
 
     # Symbol order and verdict notes do not alter linked bytes. Only actual symbol
     # changes are shared inputs; an assembly decision belongs to its own function.
-    def symbols(data):
-        return sorted(json.dumps(entry,sort_keys=True) for entry in data.get('symbols', []))
-    if symbols(old) != symbols(new):
-        return None
+    def symbols(data, named=True):
+        # (unnamed: a function's own symbol only names a place the layout already gives, and a function gets one
+        # when it is first renamed from its func_<address> name, so it is left out with the names)
+        places = {f['vram'] for f in data.get('layout', [])}
+        return sorted(json.dumps({k: v for k, v in entry.items() if named or k != 'name'}, sort_keys=True)
+                      for entry in data.get('symbols', [])
+                      if named or not (entry.get('kind') == 'func' and entry.get('address') in places))
     def layout(data):
         return {f['name']: (f['vram'], f['size']) for f in data.get('layout', [])}
+    # A rename (polishing's rename_symbol) changes only names: every symbol keeps its address, size and kind, and every
+    # function its place. That links the same bytes, so it isn't a shared change: the functions it renamed are
+    # affected, and the callers and headers it rewrote are caught below as changed files. Treated as unknown, one
+    # rename reopened all of a game's ~1,000 matches at once, and they came back one compile at a time.
+    renamed = set()
+    if symbols(old) != symbols(new):
+        if symbols(old, named=False) != symbols(new, named=False):
+            return None
+        old_names = {e.get('name') for e in old.get('symbols', [])}
+        new_names = {e.get('name') for e in new.get('symbols', [])}
+        renamed |= old_names ^ new_names
     if layout(old) != layout(new):
-        return None
+        if sorted(layout(old).values()) != sorted(layout(new).values()):
+            return None
+        renamed |= set(layout(old)) ^ set(layout(new))
     old_headers, new_headers = old.get('headers') or {}, new.get('headers') or {}
     known_headers = {'include/'+file for mapping in (old_headers, new_headers) for file in mapping.values()}
     unknown = [path for path in changed if path.startswith('include/') and path not in known_headers]
@@ -589,6 +605,7 @@ def affected_functions(old, new, changed, rows, included=None):
     affected = {name for name,address in previous_assembly.keys() | current_assembly.keys()
                 if ((name,address) in previous_assembly) != ((name,address) in current_assembly)
                 or previous_assembly.get((name,address)) != current_assembly.get((name,address))}
+    affected |= {row['name'] for row in rows if row['name'] in renamed}
     for row in rows:
         name, unit = row['name'], row['unit'] or ''
         previous = old_headers.get(unit, old_headers.get(''))
@@ -638,37 +655,8 @@ def _reverify_key(pid: int) -> str:
     return f"saved_reverify:{pid}"
 
 
-def _remember_reopened(db, pid: int, names) -> None:
-    """Durably list the matches a saved-progress check reopened, in the transaction that reopens them.
-
-    The check wins each one back one compile at a time; if it stops early (quitting, Stop, a crash, a compiler that
-    fails), what it didn't reach would stay open for good, the folder's copy of their C already moved to best/. A game
-    lost 415 of 658 matches over three restarts that way. The list lets the next sync finish the job."""
-    if not names:
-        return
-    key = _reverify_key(pid)
-    row = db.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
-    pending = set(json.loads(row["value"])) if row else set()
-    db.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-               (key, json.dumps(sorted(pending | set(names)))))
-
-
-def _settle_reopened(store, pid: int, judged) -> None:
-    """A completed check gave each function it judged a verdict: take those off the reopened list."""
-    key = _reverify_key(pid)
-    with store.tx() as db:
-        row = db.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
-        if row is None:
-            return
-        left = set(json.loads(row["value"])) - set(judged)
-        if left:
-            db.execute("UPDATE settings SET value=? WHERE key=?", (json.dumps(sorted(left)), key))
-        else:
-            db.execute("DELETE FROM settings WHERE key=?", (key,))
-
-
 def reopened(store, pid: int) -> set[str]:
-    """The matches a saved-progress check reopened and hasn't given a verdict yet."""
+    """Matches an older version reopened before judging. Keep their recovery path after an update."""
     row = store.one("SELECT value FROM settings WHERE key=?", _reverify_key(pid))
     return set(json.loads(row["value"])) if row else set()
 
@@ -1040,8 +1028,14 @@ class Progress:
         if row is not None and row["token"] == token:
             db.execute("UPDATE progress_dirty SET functions=0,headers=0,metadata=0 WHERE project_id=?", (project_id,))
 
+    @staticmethod
+    def _pending_match_checks(store, pid: int) -> dict[int, str]:
+        row = store.one("SELECT value FROM settings WHERE key=?", f"saved_match_checks:{pid}")
+        return {int(key): status for key, status in json.loads(row["value"]).items()} if row else {}
+
     def _remember(self, project_id: int, disk: dict[str, str], projected: dict[str, str],
-                  config_key: str, dirty_token: str | None, dirty_tokens: list[str]) -> None:
+                  config_key: str, dirty_token: str | None, dirty_tokens: list[str], *,
+                  rechecks: tuple[set[str], bool] | None = None) -> None:
         """Record a full sync as per-file hashes, writing only the hashes that changed."""
         store = self.net.project_store(project_id)
         baseline = _Baseline(_Snapshot.of(disk), _Snapshot.of(projected), dirty_token, config_key)
@@ -1054,6 +1048,9 @@ class Progress:
             self._write_side(db, project_id, "projected", old.projected if old else None, baseline.projected)
             self._write_state(db, project_id, baseline, packed)
             self._ack_dirty(db, project_id, dirty_token, dirty_tokens)
+            if rechecks is not None:
+                self._record_rechecks(db, project_id, *rechecks)
+                db.execute("DELETE FROM settings WHERE key=?", (f"saved_match_checks:{project_id}",))
         baseline.stored = True
         self.baselines[project_id] = baseline
         self.states[project_id] = _State(dirty_token, config_key)
@@ -1898,7 +1895,8 @@ class Progress:
                     changed_db = state is not None and (
                         dirty.token != state.dirty_token or dirty.functions or dirty.headers or dirty.metadata
                         or state.config_key is None or config_key != state.config_key)
-                    if state is not None and not changed_db:
+                    pending_matches = self._pending_match_checks(store, pid)
+                    if state is not None and not changed_db and not pending_matches:
                         if not force and time.monotonic() - self.checked.get(slug, 0) < CHECK_SECONDS:
                             return False
                         stamp = self._stamp(folder)
@@ -1914,7 +1912,7 @@ class Progress:
                 cached_signature = self.signatures.get(slug)
                 result = None
                 verified_signature = None
-                if rom and state is not None and self.net._context(pid) is not None:
+                if rom and state is not None and not pending_matches and self.net._context(pid) is not None:
                     baseline = self._baseline(pid)
                     if baseline is not None:
                         saves._check_progress_folder(folder, chosen=bool(self.net.cfg(proj).get("progress_folder")))
@@ -2291,8 +2289,9 @@ class Progress:
         db_changed = (dirty.token != stored_token or dirty.functions or dirty.headers or dirty.metadata)
         config_changed = state is not None and (state.config_key is None or config_key != state.config_key)
         baseline = self._baseline(pid)
+        pending_matches = self._pending_match_checks(store, pid)
         signature = self._folder_signature(slug, folder)
-        if baseline is not None and self.signatures.get(slug) == signature:
+        if baseline is not None and not pending_matches and self.signatures.get(slug) == signature:
             if not db_changed and not config_changed:
                 return False
             if self._defer_publish(slug, config_changed):
@@ -2303,7 +2302,7 @@ class Progress:
                 return result
         disk = _read(folder,cache=self.file_cache)
         snapshot = _Snapshot.of(disk)
-        if baseline is not None and snapshot.files == baseline.disk.files:
+        if baseline is not None and not pending_matches and snapshot.files == baseline.disk.files:
             if not db_changed and not config_changed:
                 return False
             if self._defer_publish(slug, config_changed):
@@ -2328,7 +2327,7 @@ class Progress:
                 saves.log.info("%s: its progress moved to %s/progress with its repository; following it", slug, root)
                 raise _RestartSync
             raise NetworkError("Restore progress/decompdecomp.json before continuing this project.")
-        if saves.MANIFEST in disk and (before is None or snapshot.files != before.files):
+        if saves.MANIFEST in disk and (before is None or snapshot.files != before.files or pending_matches):
             destination = logger or (lambda line: saves.log.info("%s: %s", slug, line))
             def report(line):
                 self._activity(slug, message=line)
@@ -2477,11 +2476,9 @@ class Progress:
                     "LIMIT 1", pid) is not None
                 judging_change = all_code or bool(affected) or any(name.startswith(("src/", "best/", "include/"))
                                                  for name in changed)
-                needs_judging = judging_change and (code_files or database_code)
+                needs_judging = bool(pending_matches) or judging_change and (code_files or database_code)
                 if needs_judging and getattr(net, "shutting_down", False):
-                    # Judging reopens every affected match first and wins it back one compile at a time. Quitting
-                    # gives it under a minute, so each restart left most of a big game's matches open (and their
-                    # C gone from the folder). Change nothing now: the next start judges the same folder in full.
+                    # Leave bulk verification for the next start, when its compiles can finish.
                     # (Overtaken, not a False result: that would acknowledge the folder as read.)
                     report("the saved code changed; it is checked when decompdecomp starts again")
                     raise _SyncOvertaken
@@ -2534,54 +2531,48 @@ class Progress:
             agents = (None if store is net.store else saves._context_agents(
                 net, store, applied_manifest, report.check_cancel, restore_notes=restore_notes))
             try:
-                # The layout, the database resets and every applied change are one transaction. An error rolls all
-                # of them back; the folder is written inside it, so a failed apply publishes nothing.
+                # Import inputs and schedule verification together. Keep existing matches
+                # intact until the saved judge can publish individual verdicts.
                 with store.tx() as db:
-                    rows = db.execute("SELECT id,name,vram,n_insns FROM functions WHERE project_id=?",
+                    rows = db.execute("SELECT id,name,vram,status FROM functions WHERE project_id=?",
                                       (pid,)).fetchall()
-                    self._record_rechecks(db, pid, deferred, recheck_due)
-                    reopened = []
+                    checks = dict(pending_matches)
+                    impacted_names = affected or set()
                     for row in rows:
-                        if row["name"] in deferred:
+                        if row["name"] in deferred and row["id"] not in checks:
                             continue  # its saved C is the database's own verdict: checked again when due
-                        impacted = all_code or row["name"] in (affected or set())
-                        changed_source = f"src/{saves._source_file(row['name'])}" in applied_changed
-                        changed_best = f"best/{saves._source_file(row['name'])}" in applied_changed
-                        keep_backup = False
-                        keep_best = False
-                        if changed_source or impacted or changed_best:
-                            old = db.execute("SELECT status,matched_source,matched_agent_id,best_source,best_score,"
-                                             "best_agent_id FROM functions WHERE id=?", (row["id"],)).fetchone()
-                            # A changed best/ file alone also reopens the function: its match must survive as the
-                            # best attempt then too, or a second interrupted check erases the only copy of its C.
-                            if old["status"] == "matched" and old["matched_source"]:
-                                # An all_code change (a header or the layout) can't be judged yet if the compiler is
-                                # missing or the restore is cancelled. The last match stays as the best attempt until
-                                # the new source is judged (#101 review).
-                                keep_backup = True
-                                reopened.append(row["name"])
-                                db.execute("UPDATE functions SET best_source=?,best_score=?,best_agent_id=? WHERE id=?",
-                                           (old["matched_source"], max(1, row["n_insns"] or 1) * 100,
-                                            old["matched_agent_id"], row["id"]))
-                            elif impacted and not changed_best and old["best_source"] is not None:
-                                # Nothing about this function's own code changed: rejudging can only replace or lose
-                                # the attempt already recorded, so keep it.
-                                keep_best = True
-                        if impacted or changed_source or changed_best:
-                            entry = layout_by_name.get(row["name"])
-                            if entry is None or entry["vram"] != row["vram"]:
-                                candidates = layout_by_vram.get(row["vram"], [])
-                                entry = candidates[0] if len(candidates) == 1 else None
-                            status = (entry or {}).get("status", "open")
-                            keep = keep_backup or keep_best
-                            db.execute("UPDATE functions SET status=?, "
-                                       "matched_source=NULL,matched_agent_id=NULL,matched_at=NULL,readable=0,"
-                                       "best_source=CASE WHEN ? THEN best_source ELSE NULL END,"
-                                       "best_score=CASE WHEN ? THEN best_score ELSE NULL END,"
-                                       "best_agent_id=CASE WHEN ? THEN best_agent_id ELSE NULL END WHERE id=?",
-                                       (status, keep, keep, keep, row["id"]))
-                            db.execute("DELETE FROM claims WHERE function_id=?", (row["id"],))
-                    _remember_reopened(db, pid, reopened)
+                        impacted = all_code or row["name"] in impacted_names
+                        file = saves._source_file(row["name"])
+                        path = f"src/{file}"
+                        changed_source = path in applied_changed
+                        changed_best = f"best/{file}" in applied_changed
+                        if not (impacted or changed_source or changed_best):
+                            continue
+                        entry = layout_by_name.get(row["name"])
+                        if entry is None or entry["vram"] != row["vram"]:
+                            candidates = layout_by_vram.get(row["vram"], [])
+                            entry = candidates[0] if len(candidates) == 1 else None
+                        status = (entry or {}).get("status", "open")
+                        if row["status"] == "matched":
+                            # A deliberate removal has its own verdict. An absent
+                            # entry alone cannot invalidate a previously verified match.
+                            if path in changed and path not in applied_files:
+                                checks[row["id"]] = status
+                            else:
+                                checks.setdefault(row["id"], "")
+                            continue
+                        keep = impacted and not changed_best
+                        db.execute("UPDATE functions SET status=?, "
+                                   "matched_source=NULL,matched_agent_id=NULL,matched_at=NULL,readable=0,"
+                                   "best_source=CASE WHEN ? THEN best_source ELSE NULL END,"
+                                   "best_score=CASE WHEN ? THEN best_score ELSE NULL END,"
+                                   "best_agent_id=CASE WHEN ? THEN best_agent_id ELSE NULL END WHERE id=?",
+                                   (status, keep, keep, keep, row["id"]))
+                        db.execute("DELETE FROM claims WHERE function_id=?", (row["id"],))
+                    if checks:
+                        db.execute("INSERT INTO settings(key,value) VALUES(?,?) "
+                                   "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                                   (f"saved_match_checks:{pid}", json.dumps(checks)))
                     # A source-only edit must not replay the whole note history. Compare
                     # with the fresh database render, retaining concurrent new notes too.
                     if restore_notes:
@@ -2617,13 +2608,23 @@ class Progress:
             saved = manifest.get("functions") or {}
             if affected is not None and needs_judging:
                 saved = {name: info for name, info in saved.items() if name in affected}
+            verifying = {}
+            if checks:
+                rows = store.all("SELECT id,name,vram,matched_source,readable FROM functions "
+                                 "WHERE status='matched' AND id IN (SELECT key FROM json_each(?))",
+                                 json.dumps(checks))
+                for row in rows:
+                    name = row["name"]
+                    info = manifest.get("functions", {}).get(name)
+                    removal = checks[row["id"]]
+                    verifying[name] = (removal, row["matched_source"])
+                    saved[name] = info or {"vram": row["vram"], "matched_by": "", "readable": row["readable"]}
+                needs_judging = needs_judging or bool(verifying)
             self.results[slug], recheck = self._judge_saved(slug, folder, manifest, by_name,
                                                     saved, report,
-                                                    files=disk, judge_code=needs_judging)
-            if needs_judging:
-                # Every saved function this pass reopened has its verdict now. A reopened match with no saved file
-                # stays listed: only its earlier verified C can bring it back (_resume_reverify).
-                _settle_reopened(store, pid, set(saved))
+                                                    files=disk, judge_code=needs_judging, verifying=verifying)
+            if any(status == "asm" for status, _ in verifying.values()):
+                saves._restore_set_aside(store, pid, manifest.get("set_aside") or [])
             # The saved judge has finished (including its worker's publications).
             # Rendering/export still holds this project's lock and file guards, but
             # must not occupy another project's compiler admission lane.
@@ -2688,10 +2689,9 @@ class Progress:
                     "matched": sum(name.startswith("src/") for name in rendered),
                     "best": sum(name.startswith("best/") for name in rendered)}
             self._remember(pid, disk, rendered, _config_key(proj, net.cfg(proj)),
-                           applied_dirty.token, applied_tokens)
+                           applied_dirty.token, applied_tokens, rechecks=(deferred, recheck_due))
             if baseline is not None and net.cfg(proj).get('auto_commit_matches'):
-                # The restore judge temporarily reopens existing matches. Queue only genuine
-                # promotions, after attribution is restored to the contributing agent.
+                # Queue promotions after attribution is restored to the contributing agent.
                 from . import match_commits
                 old = json.loads(baseline.projected.manifest or '{}').get('functions', {})
                 new = json.loads(rendered[saves.MANIFEST]).get('functions', {})

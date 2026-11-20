@@ -76,10 +76,12 @@ def proposals(source, name, arch, rows, choices, labels, evidence=None, header='
         selected=prepared_call_repairs.variants(source,name,header,arch)
         for family,candidate in selected:labels[candidate]=family
         return selected[:budget]
-    from decomprepair import identity_lifetime_repairs, later_local_repairs
+    from decomprepair import identity_lifetime_repairs, later_local_repairs, pointer_address_lifetime
 
     from . import value_trace_repairs
-    extra = later_local_repairs.variants(source,name,header,arch,evidence)
+    pointer_captures = (pointer_address_lifetime.variants(source,name,header)
+                        if arch == 'mips' and diagnosis['register_only'] and diagnosis['register_chains'] else [])
+    extra = pointer_captures + later_local_repairs.variants(source,name,header,arch,evidence)
     extra += identity_lifetime_repairs.variants(source,name,header,arch) if arch in {'mips','ppc','x86','arm','thumb'} else []
     trace = (evidence or {}).get('value_trace',{})
     extra += value_trace_repairs.variants(source,name,trace,rows,header)
@@ -103,7 +105,7 @@ def proposals(source, name, arch, rows, choices, labels, evidence=None, header='
     if not diagnosis['register_cycles']:
         # A scalar donor pool must not crowd the short pointer-chain lane out.
         from itertools import zip_longest
-        preferred=('pointer_local_reuse','pointer_load_inline','pointer_argument_alias',
+        preferred=(pointer_address_lifetime.FAMILY,'pointer_local_reuse','pointer_load_inline','pointer_argument_alias',
                    'paired_pointer_declarations','spill_declaration_order','pointer_index_scope',
                    'pointer_index_order','copy_register_reuse','dead_pointer_clear')
         selected.sort(key=lambda p:preferred.index(p[0]) if p[0] in preferred else len(preferred))
@@ -115,7 +117,7 @@ def proposals(source, name, arch, rows, choices, labels, evidence=None, header='
     # Reserve its finite prefix inside this lane's existing compile allowance.
     scratch=[(labels[c],c) for c in choices if labels.get(c)=='scratch_role_reuse'] if diagnosis['register_only'] else []
     predicates=[(labels[c],c) for c in choices if labels.get(c)=='inline_bit_predicate'][:7]
-    return list(dict.fromkeys(predicates+scratch+selected))[:budget]
+    return list(dict.fromkeys(pointer_captures[:1]+predicates+scratch+selected))[:budget]
 
 
 def brief(net, proj, fn, source, rows):

@@ -89,3 +89,13 @@ def test_the_other_permuter_bugs_count_too():
     assert untyped_register.damaged('void f(u32 *p) {\n    p[0] = (unsigned short)0xDA380003;\n}\n')
     assert untyped_register.damaged('void f(void) {\n    g((char *)((unsigned short)D) + 0xFC);\n}\n')
     assert not untyped_register.damaged('void f(u16 *p) {\n    p[0] = (u16)0x8000;\n}\n')
+
+
+def test_the_saved_best_can_use_one_iteration_loops():
+    source = 'void f(void) {\n    do { g(); } while (0);\n}\n'
+    assert not untyped_register.damaged(source)
+    assert untyped_register.damaged(source.replace('g();', 'register global = 0;'))
+    net = Net()
+    net.store.db.execute("INSERT INTO functions VALUES(1,'f','open',25,?)", (source,))
+    saved = untyped_register.restore(net, {'id': 1, 'slug': 'game'}, net._function('f', 'game'))
+    assert (saved['best_score'], saved['best_source']) == (25, source)

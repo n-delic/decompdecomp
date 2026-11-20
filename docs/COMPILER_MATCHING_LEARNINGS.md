@@ -8183,6 +8183,37 @@ where the game rematerialises a symbol after a subtraction (515); an inline chec
 the previous stack store (615; `*p` gets CSE'd, 1370); and a switch whose `j` delay slots the game fills with the
 loads before them (600).
 
+## Round 21: m2c's cursor walk over a global array, and a separate rate local (KMC gcc 2.7.2, `-O2`)
+
+- **Cursor walk to indexed loop** (controlled, now the `pointer_walk_index` repair in decomp-repair 0.5.35): m2c writes
+  `for (i = 0; i < 4; i++) { p = ARR[i]; ... }` as `i = 0; cur = &ARR; do { p = *cur; ...; i += 1; cur += 1; } while (i < 4U);`
+  and declares the global as a scalar (`extern void *ARR;`). Writing the indexed `for` loop with `extern void *ARR[];`
+  took an N64 function from 470 to exact; the same rewrite took another from 835 to 225. Evidence: two functions, the
+  first exact under the linked judge.
+- **Intermediate in its own local** (one function, 100 -> 70): `rate = arg0->rate * K / 1000; size = (rate / 192) * 192 + 192;`
+  instead of reusing `size` for both steps moved the allocated pointer into the game's `$s2`. The last 70 are `size` and
+  `size * 2` in swapped saved registers; declaration order, `size << 1`, `u32`/`s32` for either, and passing `size * 2`
+  inline didn't move it.
+- **Failed, recorded so it isn't repeated** (a loop over 0x68-byte records, 200): the game loads the record pointer after
+  the constants the loop hoists. Indexed forms (`&D[i]`, `D + i`, a local base, a `const` global, a local count) all
+  scored 1300-2025, because gcc 2.7.2 keeps the `* 0x68` multiply when the base is a global it can't prove invariant.
+  The m2c cursor walk at 200 stays the best.
+
+### Keep an address live across a call while leaving the load in place
+
+- **Evidence:** Exact ROM-mode replay on one 875-instruction N64 function with
+  `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`. The saved draft scored 25
+  with five register-only differences, two acyclic local register chains, and
+  a 360-byte frame on both sides.
+- **Source change:** Capture the fixed byte-array address in a dead pointer local
+  before the renderer reads its global camera pointer. Read through that local
+  at the subsequent call, preserving the position and type of the original
+  pointer load. The same local takes a different address in a later phase.
+- **Result:** The deep permuter's allocation search found and saved the linked
+  byte match at score 0 within 24 candidates. The frame and compiler profile
+  stayed the same. Testing alternate flags on the saved draft did not improve
+  its score. Stripping its one-iteration `do … while (0)` scopes raised the
+  score to 850, so startup recovery now preserves those scopes.
 ### Repeated call-result lifetimes in a fresh machine draft
 
 Controlled ROM replay with gcc-2.7.2-kmc and

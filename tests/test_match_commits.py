@@ -73,6 +73,45 @@ def test_one_commit_per_function_uses_notes_and_removes_only_its_draft(automatic
     assert match_commits.status(net, net.project_row('game'))['pending'] == 0
 
 
+@pytest.mark.parametrize('change', ['polish', 'reopen'])
+def test_queue_wait_leaves_the_project_lock_free_and_keeps_the_recorded_verdict(automatic, monkeypatch, change):
+    from concurrent.futures import ThreadPoolExecutor
+
+    net, _, _, agent = automatic
+    enable(automatic)
+    enqueue = match_commits.enqueue
+    lock = net.progress._project_lock('game')
+    store = net.project_store('game')
+    original_source = 'void f(void) { return; }'
+    polished = 'void f(void) { /* polished */ return; }'
+
+    def update_before_enqueue():
+        assert lock.acquire(blocking=False)
+        try:
+            if change == 'reopen':
+                with store.tx() as db:
+                    db.execute("UPDATE functions SET status='open',matched_source=NULL WHERE name='f'")
+            else:
+                net._record(net._function('f', 'game'), agent, 0, polished, 1, matched=True)
+        finally:
+            lock.release()
+
+    with ThreadPoolExecutor(1) as pool:
+        def interleave(*args, **kwargs):
+            pool.submit(update_before_enqueue).result(timeout=10)
+            return enqueue(*args, **kwargs)
+
+        monkeypatch.setattr(match_commits, 'enqueue', interleave)
+        match(automatic)
+
+    job = store.one('SELECT snapshot FROM auto_match_commits')
+    if change == 'reopen':
+        assert job is None
+    else:
+        assert json.loads(job['snapshot'])['source'] == original_source
+        assert store.one("SELECT matched_source FROM functions WHERE name='f'")['matched_source'] == polished
+
+
 def test_missing_notes_use_fallback_without_repeating_after_late_notes(automatic):
     net, root, _, agent = automatic
     enable(automatic)
