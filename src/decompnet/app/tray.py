@@ -151,6 +151,20 @@ def start(on_open: Callable[[], None], on_quit: Callable[[], None]) -> bool:
     return bool(ok)
 
 
+def start_in_background(on_open: Callable[[], None], on_quit: Callable[[], None],
+                        shown: Callable[[bool], None]) -> None:
+    """start() on a thread of its own, then shown(whether the icon shows). The app's main thread must never wait:
+    start() asks D-Bus and waits up to START_SECONDS for the icon, which held up the server's start behind it."""
+    def run():
+        try:
+            result = start(on_open, on_quit)
+        except Exception:
+            logging.getLogger("decompdecomp").info("the tray couldn't start", exc_info=True)
+            result = False
+        shown(result)
+    threading.Thread(target=run, daemon=True, name="tray-start").start()
+
+
 def _start_windows(on_open, on_quit) -> bool:
     """Keep a native tray icon alive while helpers work without a window."""
     ready, shown = threading.Event(), []

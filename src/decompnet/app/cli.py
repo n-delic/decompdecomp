@@ -284,7 +284,9 @@ def _start(args,home,internal,state_file,log,restarted,headless):
     from ..ui_diagnostics import Diagnostics
     app = Acknowledgments(Diagnostics(app, stack_path=internal / "logs" / "event-loop-stacks.log"))
     # with a tray icon, helpers kept working without the window have a way back to it
-    window.IN_TRAY = False if headless else tray.start(window.open_app, quit_app)
+    window.IN_TRAY = False
+    if not headless:  # (on its own thread: the main thread never waits for the icon)
+        tray.start_in_background(window.open_app, quit_app, lambda shown: setattr(window, 'IN_TRAY', shown))
     print(f"{edition.NAME} {__import__('decompnet').__version__}\nyour projects: {hostenv.shown_path(home)}"
           + ("\nproject directory switched" if restarted and restarted.get("switch_home") else "\nupdated and restarted" if restarted else "" if headless else "\nstop with Ctrl-C, or quit it in its window"), flush=True)
     # (1.0.2 and older restart into a new version without saying: they had a browser tab, which can't follow)

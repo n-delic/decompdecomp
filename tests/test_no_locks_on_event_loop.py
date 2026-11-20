@@ -62,3 +62,43 @@ def test_lane_watch_records_requests_without_a_lock():
         watch.running(key)
         assert watch.requests[key]['started'] is not None
     assert watch.requests == {}
+
+
+# The window and tray programs: their main thread runs the UI (Cocoa, GTK, WinForms, the tray's loop), where a
+# lock held by any other thread freezes the window. They take none at all, and hand slow work to threads.
+FRONT_ENDS = ('app/macwindow.py', 'app/gtkwindow.py', 'app/winwindow.py', 'app/wintray.py', 'app/tray.py')
+
+
+def test_window_and_tray_programs_take_no_locks():
+    found = []
+    for name in FRONT_ENDS:
+        tree = ast.parse((SRC / name).read_text(encoding='utf-8'))
+        for node in ast.walk(tree):
+            what = None
+            if isinstance(node, ast.With):
+                what = next((n for n in (ast.unparse(i.context_expr) for i in node.items) if 'lock' in n.lower()), None)
+            elif isinstance(node, ast.Call):
+                call = ast.unparse(node.func)
+                if call.endswith(('Lock', 'RLock', 'Semaphore', 'Condition', '.acquire', 'time.sleep')):
+                    what = call
+            if what:
+                found.append(f'{name}:{node.lineno}: {what}')
+    assert found == []
+
+
+def test_the_tray_starts_without_holding_up_the_main_thread(monkeypatch):
+    import threading
+    import time
+
+    from decompnet.app import tray
+    release, results = threading.Event(), []
+    monkeypatch.setattr(tray, 'start', lambda on_open, on_quit: release.wait(5))
+    began = time.monotonic()
+    tray.start_in_background(lambda: None, lambda: None, results.append)
+    assert time.monotonic() - began < 1 and results == []
+    release.set()
+    for _ in range(100):
+        if results:
+            break
+        time.sleep(0.01)
+    assert results == [True]
