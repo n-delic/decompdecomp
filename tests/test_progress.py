@@ -154,6 +154,85 @@ def test_a_zero_recheck_interval_checks_unchanged_saved_matches_on_every_sync(pr
     assert judged == [("f", "good local\n")]
 
 
+def test_paused_saved_match_rechecks_keep_due_work_and_judge_new_matches(project):
+    net, folder, judged = project
+    pid = _identical_saved_match(net, folder)
+    _last_recheck(net, pid, time.time() - 61 * 60)
+    net.progress.matched_rechecks_paused = True
+    (folder / "src/g.c").write_text("good new match", encoding="utf-8")
+
+    net.progress.sync("game", force=True)
+
+    assert judged == [("g", "good new match")]
+    assert net._function("f", "game")["status"] == "matched"
+    assert net._function("g", "game")["status"] == "matched"
+    assert len(net.progress._pending_match_checks(net.store, pid)) == 1
+
+    # The paused queue survives restarting, and resuming drains it even
+    # when the files have not changed since the previous sync.
+    net.progress = Progress(net)
+    net.progress.matched_rechecks_paused = True
+    assert not net.progress.sync("game", force=True)
+    net.progress.matched_rechecks_paused = False
+    net.progress.sync("game", force=True)
+    assert judged == [("g", "good new match"), ("f", "good local\n")]
+    assert not net.progress._pending_match_checks(net.store, pid)
+
+
+@pytest.mark.parametrize("saved_edit", ["new saved source", None])
+def test_paused_saved_match_rechecks_preserve_edits_until_resume(project, saved_edit):
+    net, folder, judged = project
+    pid = _identical_saved_match(net, folder)
+    net.progress.matched_rechecks_paused = True
+    source = folder / "src/f.c"
+    if saved_edit is None:
+        net.progress.sync("game", force=True)
+        source.unlink()
+    else:
+        source.write_text(saved_edit, encoding="utf-8")
+
+    net.progress.sync("game", force=True)
+    (folder / "src/g.c").write_text("good g", encoding="utf-8")
+    net.progress.sync("game", force=True)
+    assert judged == [("g", "good g")]
+    assert net._function("f", "game")["matched_source"] == "good local"
+    assert (source.read_text() if source.exists() else None) == saved_edit
+    assert len(net.progress._pending_match_checks(net.store, pid)) == 1
+
+    net.progress.matched_rechecks_paused = False
+    net.progress.sync("game", force=True)
+    assert net._function("f", "game")["status"] == "open"
+    assert not net.progress._pending_match_checks(net.store, pid)
+
+
+def test_pausing_after_interruption_keeps_match_checks_for_changed_headers(project, monkeypatch):
+    net, folder, judged = project
+    pid = _identical_saved_match(net, folder)
+    (folder / "include/common.h").write_text("broken saved header", encoding="utf-8")
+    verdict = net._saved_match_verdict
+
+    def unavailable(*_args, **_kwargs):
+        raise NetworkError("the compiler was cancelled")
+
+    monkeypatch.setattr(net, "_saved_match_verdict", unavailable)
+    with pytest.raises(NetworkError, match="Saved files are retained"):
+        net.progress.sync("game", force=True)
+    assert len(net.progress._pending_match_checks(net.store, pid)) == 1
+
+    net.progress.matched_rechecks_paused = True
+    (folder / "best").mkdir(exist_ok=True)
+    (folder / "best/g.c").write_text("new draft under changed header", encoding="utf-8")
+    net.progress.sync("game", force=True)
+    assert judged == [("g", "new draft under changed header")]
+    assert net._function("f", "game")["status"] == "matched"
+
+    monkeypatch.setattr(net, "_saved_match_verdict", verdict)
+    net.progress.matched_rechecks_paused = False
+    net.progress.sync("game", force=True)
+    assert net._function("f", "game")["status"] == "open"
+    assert not net.progress._pending_match_checks(net.store, pid)
+
+
 def test_metadata_pull_keeps_already_verified_local_matches(project):
     net, folder, judged = project
     with net.store.tx() as db:

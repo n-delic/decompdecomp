@@ -137,6 +137,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
     settings = Settings(home / "settings.json")
     maintenance.configure_cpu(settings.data.get("maintenance_cpu_percent", 0))
     net.progress.recheck_minutes = settings.data.get("saved_recheck_minutes", progress.RECHECK_MINUTES)
+    net.progress.matched_rechecks_paused = settings.data.get("saved_match_rechecks_paused", False)
     if hostenv.in_old_windows_install() and (settings.data.get("auto_update") or settings.data.get("check_updates", True)):
         # updated here from 1.0.2 on Windows: the way back is 1.0.2, which shares these settings and mustn't update
         # itself into this version again (README: Coming from an older version)

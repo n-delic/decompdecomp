@@ -81,6 +81,38 @@ def test_saved_recheck_interval_is_validated_saved_and_applied_live(app):
         client.post('/api/settings', json={'saved_recheck_minutes':60}, headers=headers)
 
 
+def test_saved_match_recheck_pause_is_validated_saved_and_applied_live(app, monkeypatch):
+    from decompnet.app.support import Settings
+
+    client, net, *_ = app
+    headers = {'X-Decomp': '1'}
+    key = 'saved_match_rechecks_paused'
+    assert not net.progress.matched_rechecks_paused
+    for value in (0, 'false', None):
+        assert client.post('/api/settings', json={key: value}, headers=headers).status_code == 400
+
+    def unwritable(_settings):
+        raise PermissionError("settings folder is read-only")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Settings, "save", unwritable)
+        rejected = client.post('/api/settings', json={key: True}, headers=headers)
+    assert rejected.status_code == 400
+    assert not net.progress.matched_rechecks_paused
+
+    try:
+        response = client.post('/api/settings', json={key: True}, headers=headers)
+        assert response.status_code == 200
+        assert response.json()[key] is True
+        assert net.progress.matched_rechecks_paused
+        saved = json.loads((net.workspace / '.decomp' / 'settings.json').read_text())
+        assert saved[key] is True
+    finally:
+        response = client.post('/api/settings', json={key: False}, headers=headers)
+    assert response.json()[key] is False
+    assert not net.progress.matched_rechecks_paused
+
+
 @pytest.fixture(scope="module")
 def app(tmp_path_factory):
     home = tmp_path_factory.mktemp("home")

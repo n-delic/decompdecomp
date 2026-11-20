@@ -343,6 +343,8 @@ async function renderWebGithubSettings(onSaved) {
 }
 
 /* ------------------------------------------------------------------ settings page */
+let savedMatchRecheckChange = null;
+
 async function showSettingsPage() {
   show("settingsPage");
   restoreSettingsJobs().catch(error=>showJobError($("databaseStorageLog"),`Unable to restore running tasks: ${error.message}`));
@@ -383,9 +385,37 @@ async function showSettingsPage() {
     <label class="field"><span>Background worker threads for the permuter and machine drafts (no limit; empty = automatic, ${st.settings.worker_threads_default ?? 1} on this computer). More threads match faster and leave the app slower to respond.</span><input id="workerThreads" type="number" min="1" placeholder="${st.settings.worker_threads_default ?? 1}" value="${st.settings.worker_threads || ""}"></label>
     <label class="field"><span>Maximum turns per function (1–1,000)</span><input id="permuterMaxTurns" type="number" min="1" max="1000" value="${st.settings.permuter_max_turns ?? 4}"></label>
     <h3>Saved progress</h3>
-    <p class="small muted">Saved C that is byte-identical to a match or draft the app already judged is compiled again only this often, so the CPU goes to finding new matches. Changed files, new matches and changed headers or compilers are still checked at once, and Check again checks everything.</p>
+    <p class="small muted">Pause rechecking existing ROM matches to focus on new matches. Saved changes to existing matches stay queued until you resume. This applies from the next sync.</p>
+    <label class="check"><input type="checkbox" id="savedMatchRechecksPaused" ${(savedMatchRecheckChange?.paused ?? st.settings.saved_match_rechecks_paused) ? "checked" : ""}><span>Pause automatic rechecks of matched functions</span></label>
+    <div id="savedMatchRecheckStatus" class="small" role="status"></div>
     <label class="field"><span>Re-check unchanged saved matches at most every (minutes, 0–10,080; 0 = on every change)</span><input id="savedRecheckMinutes" type="number" min="0" max="10080" value="${st.settings.saved_recheck_minutes ?? 60}"></label>
     <label class="check"><input type="checkbox" id="autopilotSet" ${st.settings.autopilot !== false ? "checked" : ""}><span><b>Autopilot after each import</b>: try every function's machine draft first, so free matches cost no agent time.</span></label>`;
+  const recheckPause = $("savedMatchRechecksPaused");
+  const recheckStatus = $("savedMatchRecheckStatus");
+  const showRecheckChange = async (change) => {
+    const finish = beginWork(recheckStatus, "Saving recheck setting", [recheckPause],
+      change.paused ? "Automatic rechecks paused for the next sync." : "Automatic rechecks resumed.");
+    try {
+      const settings = await change.request;
+      S.st.settings = settings;
+      recheckPause.checked = settings.saved_match_rechecks_paused;
+    } catch (error) {
+      recheckPause.checked = !change.paused;
+      showJobError(recheckStatus, error.message);
+    } finally {
+      if (savedMatchRecheckChange === change) savedMatchRecheckChange = null;
+      finish();
+    }
+  };
+  if (savedMatchRecheckChange) void showRecheckChange(savedMatchRecheckChange);
+  recheckPause.onchange = () => {
+    if (savedMatchRecheckChange) return;
+    const paused = recheckPause.checked;
+    const change = { paused, request: Promise.resolve().then(() =>
+      api("/api/settings", { method: "POST", body: { saved_match_rechecks_paused: paused } })) };
+    savedMatchRecheckChange = change;
+    void showRecheckChange(change);
+  };
   const theme = savedTheme();
   $("setComputer").innerHTML = `
     <div class="field"><span>Appearance</span><div class="seg" id="themeSeg">${THEMES.map(([k, l]) => `<button type="button" data-theme="${k}" class="${theme === k ? "on" : ""}">${l}</button>`).join("")}</div></div>
