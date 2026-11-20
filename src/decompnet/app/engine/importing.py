@@ -202,23 +202,33 @@ class ImportMixin:
             cfg.pop("system_calls_named", None)
         header = BASE_HEADER.format(title=info["title"]) + (GP_NOTE if consoles.small_gp(cfg) else "")
         header += self._debug_types(debug, cfg, workdir, log)
-        # A fresh import has no caller C to protect. Name unique exact SDK entries
-        # before symbols/assembly are generated; reimports preserve existing source names.
-        sdk_original_names={}
-        if reimport is None and console.sdk_assembly_sizes:
+        # Name unique assembly signatures before building symbols. A reimport
+        # preserves existing names because saved caller C can reference them.
+        assembly_original_names = {}
+        assembly_sizes = set(console.known_assembly_sizes) | set(console.sdk_assembly_sizes)
+        if reimport is None and assembly_sizes:
             from ..function_names import generated
-            leads=[]
+            leads = []
+            byte_order = 'big' if picked.big_endian else 'little'
             for fn in res.functions:
-                if fn.size not in console.sdk_assembly_sizes:continue
-                code=b''.join(line.word.to_bytes(4,'big' if picked.big_endian else 'little') for line in fn.lines)
-                hint=console.sdk_assembly_identity(code,picked.big_endian)
-                if hint:leads.append((fn,hint['name']))
-            counts=Counter(name for _,name in leads)
-            taken=set(res.named) | {fn.name for fn in res.functions}
-            for fn,name in leads:
-                if generated(fn.name) and counts[name]==1 and name not in taken:
-                    sdk_original_names[name]=fn.name
-                    fn.name=name; taken.add(name)
+                check_cancel()
+                if fn.size not in assembly_sizes:
+                    continue
+                code = b''.join(line.word.to_bytes(4, byte_order) for line in fn.lines)
+                name = console.known_assembly_name(code)
+                if name:
+                    leads.append((fn, name, 'assembly_exact_digest'))
+                elif fn.size in console.sdk_assembly_sizes:
+                    hint = console.sdk_assembly_identity(code, picked.big_endian)
+                    if hint:
+                        leads.append((fn, hint['name'], 'sdk_exact_digest'))
+            counts = Counter(name for _, name, _ in leads)
+            taken = set(res.named) | {fn.name for fn in res.functions} | {data.name for data in res.data}
+            for fn, name, method in leads:
+                if generated(fn.name) and counts[name] == 1 and name not in taken:
+                    assembly_original_names[name] = (fn.name, method)
+                    fn.name = name
+                    taken.add(name)
         symbols = SymbolTable()
         for name, addr in res.named.items():
             symbols.add(Symbol(name, addr, 0, "func"), reindex=False)
@@ -347,9 +357,10 @@ class ImportMixin:
                             meta_data['verified_assembly']=proof
                             meta_data['sdk_display']={'name':proof['name'],'names':proof['names'],'corpora':[proof['corpus']]}
                             meta_data['asm_code']='Verified handwritten SDK assembly; no C matching required.'
-                            if fn.name in sdk_original_names:
-                                meta_data['naming']={'original_name':sdk_original_names[fn.name],'name':fn.name,
-                                    'method':'sdk_exact_digest','at':now}
+                    if status == 'asm' and fn.name in assembly_original_names:
+                        original_name, method = assembly_original_names[fn.name]
+                        meta_data['naming'] = {'original_name': original_name, 'name': fn.name,
+                                               'method': method, 'at': now}
                     from ..boundary_repairs import reason as boundary_reason
                     warning = boundary_reason(console, {'target': target.code, 'status': status})
                     if warning:meta_data['boundary_review'] = warning

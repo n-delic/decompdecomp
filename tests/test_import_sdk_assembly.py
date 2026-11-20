@@ -23,18 +23,18 @@ def toy_pack(monkeypatch):
     monkeypatch.setattr(N64,'sdk_assembly_sizes',(8,))
 
 
-def import_toy(tmp_path,monkeypatch,duplicate=False):
+def import_toy(tmp_path,monkeypatch,duplicate=False,body=BODY):
     net=RomNetwork(tmp_path/'db',tmp_path)
     def fake_split(workdir,*args,**kwargs):
         functions=[]
         for index in range(2 if duplicate else 1):
-            addr=0x80001000+index*8
-            lines=[split.AsmLine(index*8+i,addr+i,int.from_bytes(BODY[i:i+4],'big'),'nop','') for i in (0,4)]
-            functions.append(split.RomFunction('func_'+f'{addr:08X}',addr,index*8,'code',lines,workdir/'toy.s'))
-        return split.SplitResult(functions,[],[split.Segment('code',0,16,0x80001000)],{},0,'','','')
+            addr=0x80001000+index*len(body)
+            lines=[split.AsmLine(index*len(body)+i,addr+i,int.from_bytes(body[i:i+4],'big'),'nop','') for i in range(0,len(body),4)]
+            functions.append(split.RomFunction('func_'+f'{addr:08X}',addr,index*len(body),'code',lines,workdir/'toy.s'))
+        return split.SplitResult(functions,[],[split.Segment('code',0,2*len(body),0x80001000)],{},0,'','','')
     monkeypatch.setattr(N64,'split_game',fake_split)
     monkeypatch.setattr(N64,'debug_info',lambda *a:None)
-    picked=Picked('n64',BODY*2,'toy.z64',{'title':'Toy','size':16,'game_code':'TEST','region':'US','compiler_guess':'KMC','sha1':'toy'},True)
+    picked=Picked('n64',body*2,'toy.z64',{'title':'Toy','size':2*len(body),'game_code':'TEST','region':'US','compiler_guess':'KMC','sha1':'toy'},True)
     slug=net.import_split(N64,picked,toolchain='gcc-2.7.2-kmc',flags=['-O2'],log=lambda s:None)
     return net,slug
 
@@ -95,3 +95,24 @@ def test_builtin_pack_metadata_has_complete_body_sizes():
     assert N64.sdk_assembly_sizes==pack.SIZES
     assert {entry[1] for entry in pack.KNOWN.values()}==set(pack.SIZES)
     assert all(len(digest)==64 and int(digest,16)>=0 and row[1]%4==0 for digest,row in pack.KNOWN.items())
+
+
+@pytest.mark.parametrize('duplicate', [False, True])
+def test_exact_runtime_helper_is_set_aside_before_claims(tmp_path, monkeypatch, duplicate):
+    from decompnet.consoles import n64
+
+    body = bytes.fromhex('24020001') * 11 + BODY  # synthetic leaf body, no game data
+    monkeypatch.setattr(n64, '_MUL64_LOW_FIRST_SHA256', hashlib.sha256(body).hexdigest())
+    assert N64.known_assembly_name(body[:-1]) is None
+    assert N64.known_assembly_name(body[:-1] + b'\1') is None
+    net, slug = import_toy(tmp_path, monkeypatch, duplicate, body)
+    proj = net.project_row(slug)
+    rows = net.project_store(proj['id']).all('SELECT name,status,meta FROM functions ORDER BY vram')
+    assert [row['status'] for row in rows] == ['asm'] * (2 if duplicate else 1)
+    if duplicate:
+        assert [row['name'] for row in rows] == ['func_80001000', 'func_80001034']
+    else:
+        assert rows[0]['name'] == 'mul64_low_first'
+        assert net.symbols(proj['id']).resolve('mul64_low_first') == 0x80001000
+        assert json.loads(rows[0]['meta'])['naming']['original_name'] == 'func_80001000'
+    assert net.claim_row(net.local_agent('worker')[0], slug) is None

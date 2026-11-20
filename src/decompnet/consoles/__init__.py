@@ -678,6 +678,12 @@ class Console:
 
     # for agents
 
+    known_assembly_sizes: tuple[int, ...] = ()
+
+    def known_assembly_name(self, code: bytes) -> str | None:
+        """Descriptive name for an exact, non-SDK assembly signature."""
+        return None
+
     def asm_reason(self, code: bytes) -> str | None:
         """Why a function's code can't come from a compiler (hand-written assembly), or None."""
         reason = arch.get(self.arch).asm_reason

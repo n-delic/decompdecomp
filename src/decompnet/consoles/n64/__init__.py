@@ -20,6 +20,7 @@ Its demo game is projects/demo-rom (the Demo Quest game in projects/demo-n64/ori
 
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 
@@ -27,6 +28,9 @@ from ...rom import Picked, RomError
 from .. import EXPORT, RECOMMENDED, ROM, Compiler, Console
 from . import emulator, recomp
 from .port import KIT as PORT_KIT
+
+# Store only a digest of the entire body, including the return delay slot.
+_MUL64_LOW_FIRST_SHA256 = "3de77e7c110a869794ff2998de80fb3fd6e4a7fc046d21378dc764a11b1676d0"
 
 
 class Nintendo64(Console):
@@ -186,6 +190,18 @@ class Nintendo64(Console):
         if move and src.resolve() != dest.resolve():
             src.unlink()
         return True
+
+    known_assembly_sizes = (52,)
+
+    def known_assembly_name(self, code: bytes) -> str | None:
+        if len(code) in self.known_assembly_sizes and hashlib.sha256(code).hexdigest() == _MUL64_LOW_FIRST_SHA256:
+            return "mul64_low_first"
+        return None
+
+    def asm_reason(self, code: bytes) -> str | None:
+        if self.known_assembly_name(code):
+            return "Exact signature of the low-word-first 64-bit multiply assembly helper."
+        return super().asm_reason(code)
 
     sdk_assembly_sizes = (160,272)
     # libultra 2.0I-2.0L as decompals/ultralib rebuilds it, so a user without the SDK still has its library found
