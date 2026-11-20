@@ -1475,8 +1475,7 @@ details.more[open] > summary::before { content: "− "; }
 .manual-mcp .mcp-tool, .mcp-connection { padding: 12px 0; }
 
 .deep-activity { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:12px; margin:16px 0; }
-.deep-worker { border:1px solid var(--line); border-radius:var(--r); padding:14px; min-width:0; }
-.deep-worker[data-active="true"] { border-top:3px solid var(--hl); }
+.deep-worker { border:1px solid var(--line); border-top:3px solid var(--hl); border-radius:var(--r); padding:14px; min-width:0; }
 .deep-worker header { display:flex; justify-content:space-between; gap:10px; }
 .deep-worker header span { font-size:12px; color:var(--muted); }
 .deep-worker p { margin:10px 0; overflow-wrap:anywhere; }

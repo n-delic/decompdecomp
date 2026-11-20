@@ -12,10 +12,9 @@ function renderDeepActivity(progress = {}) {
   sort.onchange = () => renderDeepActivity(deepActivitySnapshot);
   const host = $("deepActivity"), slug = S.slug;
   if (host.dataset.slug !== slug) { host.replaceChildren(); host.dataset.slug = slug; }
-  const rows = [...(progress.workers || []).map(w => ({...w, active:true})), ...(progress.recent_workers || [])];
+  const rows = [...(progress.workers || [])];
   const key = sort.value || "function";
-  rows.sort((a, b) => Number(!!b.active) - Number(!!a.active) ||
-    (key === "function" ? 0 : (Number(b[key]) || 0) - (Number(a[key]) || 0)) ||
+  rows.sort((a, b) => (key === "function" ? 0 : (Number(b[key]) || 0) - (Number(a[key]) || 0)) ||
     a.function.localeCompare(b.function));
   const keep = new Set(rows.map(w => w.function));
   host.querySelectorAll("[data-worker]").forEach(card => { if (!keep.has(card.dataset.worker)) card.remove(); });
@@ -23,7 +22,7 @@ function renderDeepActivity(progress = {}) {
     let card = Array.from(host.children).find(c => c.dataset.worker === worker.function);
     if (!card) {
       card = document.createElement("article"); card.className = "deep-worker"; card.dataset.worker = worker.function;
-      card.innerHTML = `<header><button class="link-btn mono" data-function type="button"></button><span data-state></span></header><p data-phase></p><p class="small muted" data-result></p><div class="deep-worker-metrics" data-metrics></div><progress max="1" value="0" aria-label="Function search budget"></progress><p class="small muted" data-duration></p><details><summary>Recent output</summary><pre class="joblog" data-output></pre></details>`;
+      card.innerHTML = `<header><button class="link-btn mono" data-function type="button"></button><span>Working</span></header><p data-phase></p><div class="deep-worker-metrics" data-metrics></div><progress max="1" value="0" aria-label="Function search budget"></progress><p class="small muted" data-duration></p><details><summary>Recent output</summary><pre class="joblog" data-output></pre></details>`;
       card.querySelector("[data-function]").textContent = worker.function;
       card.querySelector("[data-function]").onclick = () => { if(S.slug === slug) openFn(worker.function); };
       host.append(card);
@@ -31,15 +30,7 @@ function renderDeepActivity(progress = {}) {
     // Move existing cards into order, preserving expanded output and node identity.
     const position = rows.indexOf(worker);
     if (host.children[position] !== card) host.insertBefore(card, host.children[position] || null);
-    card.dataset.active = String(!!worker.active);
-    card.querySelector("[data-state]").textContent = worker.active ? "Working" : ({finished:"Turn complete",error:"Needs attention",waiting:"Waiting for claim",matched:"Matched",interrupted:"Stopped"}[worker.phase] || worker.phase);
-    card.querySelector("[data-phase]").textContent = worker.active ? [worker.phase, worker.current_family].filter(Boolean).join(" · ") : "";
-    const result = card.querySelector("[data-result]");
-    result.textContent = worker.active ? "" : worker.error ||
-      (worker.phase === "error" ? (worker.lines || []).at(-1) || "Open Recent output for the failure details." :
-       worker.reason?.startsWith("Budget rotation:") ? "Rotated early; eligible for the next run." :
-       worker.reason || "This turn has ended. This card is recent history, not an active worker.");
-    result.hidden = !result.textContent;
+    card.querySelector("[data-phase]").textContent = [worker.phase, worker.current_family].filter(Boolean).join(" · ");
     const percent = n => n == null ? "—" : `${Number(n) === 100 ? "100.0" : (Math.floor(Math.min(99.9, Number(n)) * 10 + 1e-8) / 10).toFixed(1)}%`;
     const count = worker.n_insns;
     const instructions = count == null ? "Instruction count unavailable" :
@@ -53,11 +44,11 @@ function renderDeepActivity(progress = {}) {
       return n < 60 ? `${n}s` : `${Math.floor(n / 60)}m ${n % 60}s`;
     };
     card.querySelector("[data-duration]").textContent =
-      `${worker.active ? "Elapsed" : "Ran for"} ${duration(worker.elapsed_seconds)}` +
-      (worker.active && worker.seconds_left != null ? ` · ${duration(worker.seconds_left)} left` : "");
+      `Elapsed ${duration(worker.elapsed_seconds)}` +
+      (worker.seconds_left != null ? ` · ${duration(worker.seconds_left)} left` : "");
     card.querySelector("[data-output]").textContent = (worker.lines || []).join("\n");
   }
   $("deepActivityEmpty").hidden = rows.length > 0;
-  $("deepActivityEmpty").textContent = "No function activity yet.";
-  $("deepActivityCount").textContent = `${(progress.workers || []).length} active · ${(progress.recent_workers || []).length} recent results`;
+  $("deepActivityEmpty").textContent = "No function searches are active.";
+  $("deepActivityCount").textContent = `${rows.length} active`;
 }

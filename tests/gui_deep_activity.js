@@ -22,7 +22,8 @@ ctx.renderDeepActivity({workers:[worker('<a>',['new a'])],recent_workers:[worker
 assert.equal(host.children[0],card);assert.equal(details.open,true);
 assert.equal(card.querySelector('[data-output]').textContent,'new a');
 card.querySelector('[data-function]').onclick();assert.deepEqual(opened,['<a>']);
-assert.match(count.textContent,/1 active/);
+assert.equal(count.textContent,'1 active');
+assert.equal(host.children.length,1);
 ctx.S.slug='other';ctx.renderDeepActivity({});assert.equal(host.children.length,0);
 card.querySelector('[data-function]').onclick();assert.equal(opened.length,1);
 
@@ -31,9 +32,8 @@ ctx.renderDeepActivity({workers:[worker('z',['Budget rotation: technical details
 assert.equal(host.children[0].dataset.worker,'z');
 assert.equal(empty.hidden,true);
 assert.match(host.children[0].querySelector('[data-metrics]').textContent,/34 instructions/);
-assert.match(host.children[1].querySelector('[data-metrics]').textContent,/34 instructions/);
+assert.equal(host.children.length,1);
 assert.equal(host.children[0].querySelector('[data-duration]').textContent,'Elapsed 1m 15s · 20s left');
-assert.equal(host.children[1].querySelector('[data-duration]').textContent,'Ran for 1m 15s');
 const z=host.children[0];z.querySelector('details').open=true;
 sort.value='tested';
 ctx.renderDeepActivity({workers:[worker('z',['raw output']),{...worker('b',[]),tested:9}]});
@@ -41,18 +41,11 @@ assert.equal(host.children[0].dataset.worker,'b');
 assert.equal(host.children[1],z);assert.equal(z.querySelector('details').open,true);
 assert.equal(z.querySelector('[data-output]').textContent,'raw output');
 
-ctx.renderDeepActivity({recent_workers:[{...worker('bad',['compiler unavailable']),phase:'error',error:'Saved C no longer compiles'}]});
-assert.equal(host.children[0].querySelector('[data-state]').textContent,'Needs attention');
-assert.equal(host.children[0].querySelector('[data-result]').textContent,'Saved C no longer compiles');
-ctx.renderDeepActivity({recent_workers:[{...worker('done',[]),phase:'finished',reason:'Variant limit reached'}]});
-assert.equal(host.children[0].querySelector('[data-state]').textContent,'Turn complete');
-assert.equal(host.children[0].querySelector('[data-result]').textContent,'Variant limit reached');
-
-ctx.renderDeepActivity({recent_workers:[{...worker('a', ['finished']),n_insns:1}]});
-assert.equal(empty.hidden, true);
-assert.match(host.children[0].querySelector('[data-metrics]').textContent, /1 instruction ·/);
-ctx.renderDeepActivity();
-assert.equal(empty.hidden, false);
+ctx.renderDeepActivity({recent_workers:[{...worker('b', ['finished']),phase:'finished'}]});
+assert.equal(host.children.length,0);
+assert.equal(count.textContent,'0 active');
+assert.equal(empty.hidden,false);
+assert.match(empty.textContent,/No function searches are active/);
 
 ctx.renderDeepActivity({workers:[{...worker('near', []),best_percent:99.999,best_score:1}]});
 assert.match(host.children[0].querySelector('[data-metrics]').textContent, /99\.9%/);
