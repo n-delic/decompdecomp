@@ -695,7 +695,7 @@ class Twins:
             self.net.cascades.wake()
         return job
 
-    def source_for(self, proj, a, b, includes: bool = False) -> str | None:
+    def source_for(self, proj, a, b, includes: bool = False, *, partial=False) -> str | None:
         """a's code made into b's (names swapped as their relocations say), or None if that can't be said.
         `includes`: (forks) bring a's file's includes along too."""
         prints = self.prints(proj)
@@ -707,7 +707,7 @@ class Twins:
             if names is None:
                 return None
             return self.net.forks.twin_source(proj, a, b, names, includes)
-        source = a["matched_source"]
+        source = a["best_source"] if partial else a["matched_source"]
         if not source:
             return None
         names = rom_renames(self.net.symbols(proj["id"]), source, pa, pb, a["name"], b["name"])
@@ -723,20 +723,71 @@ class Twins:
 
     # ------------------------------------------------------------------ the work
 
-    def try_pair(self, agent, proj, a_id: int, b_id: int) -> str:
-        """match | miss | asm | skip, for a's matched code on its twin b."""
-        a = self.net.project_store(proj['id']).one("SELECT * FROM functions WHERE id=?", a_id)
-        b = self.net.project_store(proj['id']).one("SELECT * FROM functions WHERE id=?", b_id)
-        if a is None or b is None or a["status"] != "matched" or b["status"] != "open":
+    def deep_donor(self, proj, fn):
+        """Prefer a matched twin, then a better saved C draft from this ROM."""
+        if fn['status'] != 'open':
+            return None
+        matched = self.twin_of(proj, fn['id'])
+        if matched is not None:
+            return matched, False
+        if not self.net.is_rom(proj) or self.net.fork_slug(proj['slug']):
+            return None
+        peers = self._deep_peers(proj, fn)
+        eligible = [row for row in peers if row['has_source'] and row['best_score'] is not None and
+                    (fn['best_score'] is None or row['best_score'] < fn['best_score'])]
+        if eligible:
+            return min(eligible, key=lambda row: (row['best_score'], row['id']))['id'], True
+        return None
+
+    def _deep_peers(self, proj, fn):
+        prints = self.prints(proj)
+        target = prints.get(fn['id'])
+        if target is None or target.size < 8 or target.asm:
+            return []
+        ids = [fid for fid, candidate in prints.items() if fid != fn['id'] and candidate.key == target.key]
+        if not ids:
+            return []
+        return self.net.project_store(proj['id']).all(
+            "SELECT id,best_score,best_source IS NOT NULL AS has_source FROM functions WHERE project_id=? AND status='open' "
+            "AND gone_mark IS NULL AND id IN (SELECT value FROM json_each(?))", proj['id'], json.dumps(ids))
+
+    def has_open_deep_twin(self, proj, fn):
+        return self.net.is_rom(proj) and not self.net.fork_slug(proj['slug']) and bool(self._deep_peers(proj, fn))
+
+    def try_improved_deep_twin(self, agent, proj, donor):
+        """Give one worse twin the improved ROM draft through its own judge."""
+        if donor['status'] != 'open' or donor['best_score'] is None or not self.net.is_rom(proj):
+            return 'skip'
+        for peer in self._deep_peers(proj, donor):
+            if peer['best_score'] is None or peer['best_score'] > donor['best_score']:
+                outcome = self.try_pair(agent, proj, donor['id'], peer['id'], partial=True)
+                if outcome not in ('skip', 'known'):
+                    return outcome
+        return 'skip'
+
+    def try_pair(self, agent, proj, a_id: int, b_id: int, *, partial=False) -> str:
+        """Try saved code on an identical target through its own judge."""
+        store = self.net.project_store(proj['id'])
+        a = store.one("SELECT * FROM functions WHERE id=?", a_id)
+        b = store.one("SELECT * FROM functions WHERE id=?", b_id)
+        if (a is None or b is None or a["project_id"] != proj['id'] or b["project_id"] != proj['id']
+                or a['gone_mark'] is not None or b['gone_mark'] is not None or b["status"] != "open"):
             return "skip"
-        if self.net.project_store(proj['id']).one("SELECT 1 FROM claims WHERE function_id=?", b_id):
-            return "skip"  # an agent is on it: its brief names the twin (see twin_of)
+        if partial:
+            if (not self.net.is_rom(proj) or self.net.fork_slug(proj['slug']) or a['status'] != 'open'
+                    or a['best_score'] is None or (b['best_score'] is not None and a['best_score'] >= b['best_score'])):
+                return "skip"
+        elif a["status"] != "matched":
+            return "skip"
+        from .boundary_repairs import blocked
+        if b_id in blocked(self.net, proj) or store.one("SELECT 1 FROM claims WHERE function_id=?", b_id):
+            return "skip"  # A claimed function can still see its twin in the brief.
         with self._lock:
             if b_id in self._trying:
                 return "skip"
             self._trying.add(b_id)
         try:
-            return self._try_pair(agent, proj, a, b)
+            return self._try_pair(agent, proj, a, b, partial=True) if partial else self._try_pair(agent, proj, a, b)
         finally:
             with self._lock:
                 self._trying.discard(b_id)
@@ -1292,9 +1343,9 @@ class Twins:
                         job.cross_matched += 1
         return matched
 
-    def _try_pair(self, agent, proj, a, b) -> str:
+    def _try_pair(self, agent, proj, a, b, *, partial=False) -> str:
         try:
-            source = self.source_for(proj, a, b)
+            source = self.source_for(proj, a, b, partial=True) if partial else self.source_for(proj, a, b)
         except (NetworkError, OSError, ValueError) as e:
             log.info("twins: %s from %s not tried: %s", b["name"], a["name"], str(e)[:WHY_CHARS])
             return "skip"
@@ -1305,8 +1356,15 @@ class Twins:
             return "skip"
         if self._missed(b["id"], source, project_id=proj["id"]):
             return "known"
-        outcome, why = self._attempt_twin(agent, proj, a, b, source)
-        if outcome == "miss":
+        if partial:
+            feedback = {}
+            outcome, why = self._attempt_twin(agent, proj, a, b, source, feedback=feedback, partial=True)
+            if outcome == 'miss' and feedback.get('score') is not None and (
+                    b['best_score'] is None or feedback['score'] < b['best_score']):
+                outcome = 'improved'
+        else:
+            outcome, why = self._attempt_twin(agent, proj, a, b, source)
+        if outcome in ('miss', 'improved'):
             with self.net.project_store(proj['id']).tx() as db:
                 db.execute("INSERT OR REPLACE INTO twin_misses(function_id, source_hash, project_id, at, why) "
                            "VALUES(?,?,?,?,?)", (b["id"], self._miss_key(source), proj["id"], time.time(), why))
@@ -1328,12 +1386,14 @@ class Twins:
         return (res.get("text") or "").splitlines()[0][:WHY_CHARS] if res.get("text") else f"score {res.get('score')}"
 
     def _attempt_twin(self, agent, proj, a, b, source: str, origin: str = "", theirs: bool = False,
-                      similar: bool = False, feedback: dict | None = None, mapping: dict | None = None) -> tuple[str, str]:
+                      similar: bool = False, feedback: dict | None = None, mapping: dict | None = None, *, partial=False) -> tuple[str, str]:
         """match | miss | skip for a's code made into b's (`source`). `theirs`: a is another project's, so the tries
         that take more from a's file (its types, includes, declarations) don't apply: twin_source took its
         declarations already."""
         relation = "adapted from similar verified C in" if similar else "identical to"
         note = f"/* {relation} {a['name']}{origin} (matched), with its names changed by decompdecomp */\n"
+        if partial:
+            note = f"/* Draft from identical target {a['name']}, retargeted and judged independently. */\n"
         if mapping is not None and self.net.is_rom(proj) and not self.net.fork_slug(proj['slug']):
             from .repair_mappings import remember
             remember(self.net, a, b, note + source, mapping)

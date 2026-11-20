@@ -270,3 +270,13 @@ def test_global_tool_disables_are_respected_by_boundary_investigation(game):  # 
         investigation.configure(net,'game',{'task':'boundary','boundary_function':'head'},1)
     agent,_=investigator(net)
     assert 'suggest_boundary' not in visible(net,'game',list(tools.HANDLERS),agent)
+
+
+def test_pc_capture_followed_by_halfword_indexing_is_table_evidence():
+    # Homemade bltzal zero, NOP, address formation, RA restore and indexed read.
+    words = [0x0410000e, 0, 0x27ec0030, 0x0020f821, 0x01856021, 0x01856021, 0x958c0000]
+    code = b''.join(word.to_bytes(4, 'big') for word in words)
+    assert boundary_evidence._halfword_table_base(code, 0, 0x80001000, True) == 0x80001038
+    words[-1] = 0x8d8c0000  # a different memory access is outside this recognizer
+    code = b''.join(word.to_bytes(4, 'big') for word in words)
+    assert boundary_evidence._halfword_table_base(code, 0, 0x80001000, True) is None

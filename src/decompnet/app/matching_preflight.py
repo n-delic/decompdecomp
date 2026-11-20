@@ -73,6 +73,13 @@ def _run(net, proj, fn, log, check, max_profiles):
             probes.insert(1, (ranked[0] if ranked else list(own['flags']), source))
     from decomprepair import guarded_loop_repairs
     context = net._context(proj['id'],fn['unit']) if hasattr(net,'_context') else None
+    from .profile_hypotheses import float_sqrt_source
+    sqrt_source = float_sqrt_source(own, dict(fn).get('asm') or '', fn['best_source'], fn['name'],
+                                    context['header'] if context else '')
+    if sqrt_source:
+        probes.insert(1, (list(own['flags']), sqrt_source))
+        if '-ffast-math' not in own['flags']:
+            probes.insert(2, ([*own['flags'], '-ffast-math'], sqrt_source))
     paired = guarded_loop_repairs.probes(proj,fn,own,context['header'] if context else '')
     # Preserve this tiny joint frontier independently of isolated source scores.
     probes[1:1] = [(list(flags),source) for flags,source in paired]
@@ -132,7 +139,9 @@ def _run(net, proj, fn, log, check, max_profiles):
                     probes[1:] = inferred + [probe for probe in probes[1:] if probe not in inferred]
                 if item.get('link'):
                     result['link'] = item['link']
-                    if index == 0 and item.get('sqrt_probe') and set(item['link']['symbols']) <= {'sqrt', 'sqrtf'}:
+                    if (set(item['link']['symbols']) <= {'sqrt', 'sqrtf'} and
+                            (index == 0 and (item.get('sqrt_probe') or sqrt_source)
+                             or source == sqrt_source and '-ffast-math' not in flags)):
                         # This probe may remove the compiler-generated reference itself.
                         continue
                     break
@@ -156,18 +165,19 @@ def _run(net, proj, fn, log, check, max_profiles):
     if result.get('link'):
         log(result['link']['message'])
     best = result.get('best')
-    if (best and best['exact'] and best['flags'] == own['flags'] and best['source'] == fn['best_source']
+    if (best and best['exact'] and best['flags'] == own['flags']
             and proj['slug'] not in getattr(net, 'links', {})):
-        result['applied'] = recover_exact(net, proj, fn, input_digest, candidates)
+        result['applied'] = recover_exact(net, proj, fn, input_digest, candidates, best['source'])
         if result['applied']:
-            log('Rejudged saved C matched with its current settings: '+fn['name'])
-    if best and (best['flags'] != own['flags'] or best.get('source', fn['best_source']) != fn['best_source']) and best['score'] < (fn['best_score'] if fn['best_score'] is not None else float('inf')):
+            log('Rejudged C matched with the current settings: '+fn['name'])
+    if best and not result.get('applied') and (best['flags'] != own['flags'] or best.get('source', fn['best_source']) != fn['best_source']) and best['score'] < (fn['best_score'] if fn['best_score'] is not None else float('inf')):
         fresh = net.project_row(proj['slug'])
         current = net._function(fn['name'], proj['slug'])
         # Another worker may have improved the C during probing. Never apply an old-source hypothesis.
         if (current['status'] == 'open' and current['best_source'] == fn['best_source']
                 and net._comparison_digest(fresh,current,current['best_source'],candidates)==input_digest):
             review_only = '-ffast-math' in best['flags'] and '-ffast-math' not in own['flags']
+            result['review_only'] = review_only and best['exact']
             if (best['exact'] and not review_only and net.auto_adjusts(fresh)
                     and best.get('source', fn['best_source']) == fn['best_source']):
                 try:
@@ -207,7 +217,7 @@ def _run(net, proj, fn, log, check, max_profiles):
     return result
 
 
-def recover_exact(net, proj, fn, digest, candidates):
+def recover_exact(net, proj, fn, digest, candidates, candidate=None):
     """Confirm a saved winner through the normal judge using the current project inputs."""
     slug = proj['slug']
     fresh = net.project_row(slug)
@@ -218,7 +228,7 @@ def recover_exact(net, proj, fn, digest, candidates):
         return False
     agent, _ = net.local_agent('autopilot')
     try:
-        net.try_quietly(agent, fresh, current, source, synchronize=False, exact_only=True)
+        net.try_quietly(agent, fresh, current, candidate or source, synchronize=False, exact_only=True)
     except NetworkError:
         return False  # Claim, boundary or input state changed during revalidation.
     return net._function(fn['name'], slug)['status'] == 'matched'

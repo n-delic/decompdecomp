@@ -56,7 +56,10 @@ def brief(net, fn, agent, header):
            f"claim_token: {current(net,fn,agent)}",f'candidate revision {revision}',
            'Preparation: deferred. No diagnostic build or new draft was run while reserving this claim.',
            'Saved scores are historical. get_candidate verifies the baseline; get_assembly reads target instructions; '
-           'get_function(section="brief") loads full supporting evidence. compile_patch/compile_and_diff use the ordinary judge.']
+           'get_function(section="brief") loads full supporting evidence and any retargeted twin. '
+           'Try a matched twin first, then compiler_experiments for a supported profile hypothesis, '
+           'then try_local_repairs for small register or scheduling differences. '
+           'compile_patch/compile_and_diff use the ordinary judge.']
     from .agent_review import handoff_brief
     if handoff := handoff_brief(net, proj['slug'], fn, source):
         lines.append(handoff)

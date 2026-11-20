@@ -50,6 +50,27 @@ def assembly(reader, image, owner, start, end, points, big_endian):
     return lines
 
 
+def _halfword_table_base(image, at, address, big_endian):
+    """Recognise a MIPS PC capture used immediately for an indexed halfword read."""
+    order = 'big' if big_endian else 'little'
+    branch, delay, address_add, restore, index_add, scale_add, load = [
+        int.from_bytes(image[i:i + 4], order) for i in range(at, at + 28, 4)]
+    if branch >> 16 != 0x0410 or delay or address_add >> 21 != 0x13f:
+        return None  # bltzal zero; nop; addiu base, ra, displacement
+    base = (address_add >> 16) & 31
+    if not base or base == 31 or restore != 0x0020f821:
+        return None  # move ra, at
+    if (index_add ^ scale_add) & 0x1f0000:
+        return None  # both adds must use the same index
+    for word in (index_add, scale_add):
+        if word >> 26 or word & 0x7ff != 0x21 or (word >> 21) & 31 != base or (word >> 11) & 31 != base:
+            return None
+    if load >> 26 != 0x25 or (load >> 21) & 31 != base or load & 0xffff:
+        return None
+    displacement = address_add & 0xffff
+    return (address + 8 + displacement - (0x10000 if displacement & 0x8000 else 0)) & 0xffffffff
+
+
 def read(net, slug, name):
     """Explain suspicious entries without claiming them or changing the detected layout."""
     proj = repairs._supported(net, slug)
@@ -73,7 +94,8 @@ def read(net, slug, name):
             and r['vram'] - owner.vram == r['rom_offset'] - owner.rom_start]
     previous = [r for r in rows if r['vram'] + r['size'] == start and r['id'] != fn['id'] and r['unit'] == fn['unit']]
     following = [r for r in rows if r['vram'] == end and r['id'] != fn['id'] and r['unit'] == fn['unit']]
-    neighbours = previous + following
+    overlap = [r for r in rows if r['id'] != fn['id'] and r['vram'] < end and start < r['vram'] + r['size']]
+    neighbours = previous + following + overlap
     points = [start, end] + [r['vram'] for r in previous]
     lines = assembly(reader, image, owner, start, end, points, proj['big_endian'])
     last = next((line for line in lines if line['address'] == end - 4), None)
@@ -87,7 +109,11 @@ def read(net, slug, name):
         evidence.append({'address': end - 8, 'text': 'A terminal transfer precedes the last instruction; review its delay slot and other paths.'})
     if previous:
         evidence.append({'address': start, 'text': 'There is an adjacent preceding entry. Adjacency alone does not establish shared ownership.'})
+    for row in overlap:
+        evidence.append({'address': max(start, row['vram']),
+                         'text': f"Extent overlaps {row['name']}. Compare the entries against the original image."})
     edges = []; words = 0; limited = False
+    table_points = []
     entry_points = {r['vram'] for r in neighbours}
     # Scan mapped original bytes, not candidate disassembly. Unknown indirect edges remain unknown.
     for row in sorted(rows, key=lambda r: (r['id'] != fn['id'], abs(r['vram'] - start))):
@@ -98,10 +124,18 @@ def read(net, slug, name):
             ins = reader(int.from_bytes(image[at:at+4], 'big' if proj['big_endian'] else 'little'), address)
             words += 1
             dest = ins['target']
+            if (proj['arch'] == 'mips' and dest == start and at + 28 <= row['rom_offset'] + row['size']
+                    and _halfword_table_base(image, at, address, proj['big_endian']) == start):
+                evidence.append({'address': address, 'text': 'This branch cannot be taken. It captures the PC, '
+                                 'then the following instructions use this entry address as a halfword table base.'})
+                table_points.append(address)
+                continue
             if dest is not None and (dest in entry_points or start - 32 <= dest <= end + 32 or start <= address < end and not start <= dest < end):
                 edges.append({'from': address, 'to': dest, 'function': row['name'],
                               'kind': 'call' if ins['call'] else 'branch', 'instruction': ins['instruction']})
         if limited: break
+    if table_points:
+        lines = assembly(reader, image, owner, start, end, points + table_points, proj['big_endian'])
     symbols = [dict(r) for r in net.project_store(proj['id']).all('SELECT name,address,size,kind FROM symbols WHERE project_id=? '
                  'AND address>=? AND address<=? ORDER BY address,name LIMIT 80', proj['id'], start-32, end+32)]
     if stamp != revision(net, proj, name) or _project_inputs(net.project_row(slug)) != _project_inputs(proj):

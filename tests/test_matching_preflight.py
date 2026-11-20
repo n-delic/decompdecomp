@@ -275,3 +275,27 @@ def test_kmc_fresh_baseline_prioritizes_targeted_profiles_on_resume(case):
         assert state['suggested'][0]['review_only'] and not state['applied']
     else:
         assert result['applied']
+
+
+def test_kmc_float_sqrt_repairs_source_and_flags_together(monkeypatch):
+    from decompnet.app import repair_ranking
+
+    net, proj, fn, state = setup()
+    net.cfg(proj)['compiler']['toolchain'] = 'gcc-2.7.2-kmc'
+    fn.update(asm='sqrt.s $f0, $f0', best_source='extern float sqrt(float);\nfloat f(float x) { return sqrt(x); }')
+    state['auto'] = True
+    monkeypatch.setattr(repair_ranking, 'evidence', lambda *a: [])
+
+    def judge(proj, fn, toolchain, flags, source):
+        state['calls'].append((flags, source))
+        if 'sqrtf(' in source and '-ffast-math' in flags:
+            return True, SimpleNamespace(score=0), ''
+        return False, SimpleNamespace(score=1120), '`sqrtf` is not a known symbol.' if 'sqrtf(' in source else ''
+
+    net._judge_with = judge
+    result = preflight.run(net, proj, fn)
+    assert result['best']['exact'] and result['review_only']
+    assert len(state['calls']) == 3
+    assert state['calls'][1][0] == ['-O2']
+    assert not state['applied']
+    assert state['suggested'][0]['review_only'] and 'sqrtf(' in state['suggested'][0]['source']

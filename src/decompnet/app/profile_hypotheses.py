@@ -48,6 +48,15 @@ def kmc_priorities(own, assembly, rows):
     return list(dict.fromkeys(tuple(variant) for variant in variants if variant != flags))
 
 
+def float_sqrt_source(own, assembly, source, name, header=''):
+    """The single-precision target can diagnose a draft's wrong sqrt spelling."""
+    if (own.get('toolchain') != 'gcc-2.7.2-kmc' or not re.search(r'\bsqrt\.s\b', assembly)
+            or re.search(r'\bjalr?\b.*\bsqrtf?\b', assembly)):
+        return None
+    from decomprepair.near_match_repairs import square_rootf
+    return square_rootf(source, name, header)
+
+
 def kmc_sqrt_probe(own, assembly, rows):
     """Test the missing GCC square-root fallback only when the target uses hardware sqrt."""
     if (own['toolchain'] != 'gcc-2.7.2-kmc' or '-ffast-math' in own['flags']

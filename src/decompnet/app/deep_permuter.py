@@ -329,6 +329,37 @@ class Search(Permuter):
             self.improvements += int(bool(result.get('applied')))
         return result
 
+    def operand_order_pass(self, agent, proj, fn, best, fork):
+        """Spend a few of the ordinary trials on a measured operand/register near miss."""
+        rows = self.winner_diff[0] if self.winner_diff else repair_ranking.evidence(self.net, fn['id'], agent.id)
+        if permuter_focus.classify(rows, proj['arch']) != 'register':
+            return best
+        from decomprepair import near_match_repairs
+        from decomprepair.target_local_repairs import value_lifetimes
+
+        source = _candidate_source(fn, best)
+        header = self.net._context(proj['id'], fn['unit'])['header']
+        proposals = near_match_repairs.bitwise_operand_order(source, fn['name'], header)
+        proposals += near_match_repairs.float_update_order(source, fn['name'], header)
+        proposals += [(family, child) for family, child in near_match_repairs.variants(source, fn['name'])
+                      if family == 'arithmetic_operand_order']
+        proposals += value_lifetimes(source, fn['name'])
+        seen = {source}
+        limit = min(6, (self.limit - self.tested) // 2)
+        for family, child in proposals:
+            if limit <= 0:
+                break
+            if child in seen:
+                continue
+            seen.add(child)
+            self.check()
+            with repair_trial({'kind': 'deep local repair', 'family': family}):
+                score = self._score(agent, proj, fn, child, best, fork)
+            limit -= 1
+            if score is not None and score < best:
+                return score
+        return best
+
     def call_result_pass(self, agent, proj, fn, best, fork):
         """Judge a small source-only pass before exploring alternate compiler profiles."""
         from decomprepair.target_local_repairs import call_result_pass
@@ -1199,6 +1230,11 @@ def _row(row):
 
 
 def run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, threads_per_function=1, maximum_throughput=False, compile_slots=0):
+    from .deep_profiles import validate as validate_profiles
+    from .deep_sweep import looking
+
+    validate_profiles(compiler_profiles)
+    validate_limits(minutes, max_variants)
     deep_throughput.options(maximum_throughput, compile_slots)
     if maximum_throughput and getattr(log, 'compile_pool', None) is None and threads_per_function == 1:threads_per_function = min(max_variants, deep_throughput.width(True, compile_slots))
     from .deep_parallel import validate_threads
@@ -1206,7 +1242,6 @@ def run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, thread
     # One explicit deep search per function, including credential issuance. Agents may keep working.
     fn = net._function(name, slug)
     if fn['status'] == 'open' and fn['target']:
-        from .deep_sweep import looking
         from .sdk_assembly import discover_known
         log.check_cancel()
         with looking(net):
@@ -1224,11 +1259,49 @@ def run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, thread
     admission = compiler._SLOTS.capacity(pool.count)
     admission.__enter__()
     try:
+        tried_twin = 0
+        twins = getattr(net, 'twins', None) if slug not in net.links else None
+        proj = None
+        if twins is not None and fn['status'] == 'open':
+            log.check_cancel()
+            with looking(net):
+                proj = net.project_row(slug)
+                from .boundary_repairs import blocked
+                donor = twins.deep_donor(proj, fn) if fn['id'] not in blocked(net, proj) else None
+                if donor:
+                    agent, _ = net.local_agent('autopilot')
+                    with compiler.cancellable(log.check_cancel):
+                        outcome = twins.try_pair(agent, proj, donor[0], fn['id'], partial=donor[1])
+                    tried_twin = int(outcome in ('match', 'miss', 'improved'))
+                    if tried_twin:
+                        log(f'Same-game twin trial: {outcome}.')
+                    if outcome == 'match' or tried_twin == max_variants:
+                        current = net._function(name, slug)
+                        return {'function': name, 'matched': outcome == 'match', 'tested': tried_twin,
+                                'starting_score': fn['best_score'], 'best_score': current['best_score'],
+                                'improvements': int(outcome in ('match', 'improved')),
+                                'reason': 'Matched from a same-game twin' if outcome == 'match' else 'Candidate limit reached',
+                                'throughput': pool.metrics.snapshot()}
+        remaining = max_variants - tried_twin
+        if proj is not None and remaining > 1 and twins.has_open_deep_twin(proj, fn):
+            remaining -= 1  # Reserve a destination compile if this draft improves.
         if threads_per_function > 1:
             from .deep_parallel import run as parallel
-            result = parallel(net, slug, name, minutes, max_variants, log, compiler_profiles, threads_per_function)
+            result = parallel(net, slug, name, minutes, remaining, log, compiler_profiles, threads_per_function)
         else:
-            result = _run(net, slug, name, minutes, max_variants, log, compiler_profiles)
+            result = _run(net, slug, name, minutes, remaining, log, compiler_profiles)
+        result['tested'] += tried_twin
+        if proj is not None and not result['matched'] and result['tested'] < max_variants:
+            with looking(net):
+                current = net._function(name, slug)
+                if current['best_score'] is not None and (fn['best_score'] is None or current['best_score'] < fn['best_score']):
+                    log.check_cancel()
+                    agent, _ = net.local_agent('autopilot')
+                    with compiler.cancellable(log.check_cancel):
+                        outcome = twins.try_improved_deep_twin(agent, proj, current)
+                    if outcome not in ('skip', 'known'):
+                        result['tested'] += 1
+                        log(f'Rejudged the improved draft on a same-game twin: {outcome}.')
         result['throughput'] = pool.metrics.snapshot()
         return result
     finally:
@@ -1316,13 +1389,16 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
         if review_boundary:
             reason = 'Exact diagnostic needs ordinary review'
         elif not outcome.get('matched'):
-            search._compiler_preflight(proj, fn, state, search.deadline)
+            preflight = search._compiler_preflight(proj, fn, state, search.deadline)
+            if (preflight.get('review_only') and not preflight.get('applied')
+                    and not preflight.get('suggestion_rejected')):
+                reason = PROFILE_LEAD
         if lane is not None:
             lane.prepared()
         proj, fn = net.project_row(slug), net._function(name, slug)
         if fn['status'] == 'matched':
             reason = 'Matched'
-        if reason not in ('Matched', 'Exact diagnostic needs ordinary review'):
+        if reason not in ('Matched', 'Exact diagnostic needs ordinary review', PROFILE_LEAD):
             if not search._hold(agent, fn, count_turn=False):
                 raise NetworkError('This function was claimed meanwhile; try again after it is released.')
             try:
@@ -1349,6 +1425,11 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
                     from .stack_layout import text as stack_text
                     if diagnostic := stack_text(proj['arch'], repair_ranking.evidence(net, fn['id'], agent.id)):
                         log(diagnostic)
+                    if not relabel and (lane is None or lane.index == 0):
+                        baseline = search.operand_order_pass(agent, proj, fn, baseline, fork)
+                        fn = net._function(name, slug)
+                        if baseline == 0:
+                            reason = 'Matched'
                     if not fork and baseline == measured_baseline and not relabel:
                         # A productive source pass continues under its measured compiler.
                         # (code built with other settings: before the local repairs spend their half of the time,

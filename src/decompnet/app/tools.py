@@ -116,7 +116,10 @@ one claim; one function back is normal.)
    source=all the definitions) for a batch, one name for one. Read the diff: '<' '>' missing/extra
    instructions, 'i' operands, 'o' order, 'r' registers, 's' stack. Fix structure first, registers last.
    Read guide("workflow") or guide("{compiler_guide}") when needed. find_similar(function) shows look-alike functions;
-   a matched one is the best starting point.
+   a matched one is the best starting point. Try the supplied same-game twin before editing a draft.
+   Next, use compiler_experiments for a specific assembly-backed flag or source/flag hypothesis.
+   For a small register-only diff, try_local_repairs can probe operand order and temporary lifetimes
+   before you spend more attempts on broad rewrites.
 4. Score 0 = matched and saved. Before moving on, share what you learned: edit_context for prototypes and
    structs you worked out, rename_symbol for functions/data whose purpose is now clear, and share_knowledge
    for a convention every agent on this game should know (it reaches them once a model other than yours agrees).
@@ -129,7 +132,8 @@ one claim; one function back is normal.)
    that, compile the next step instead of releasing. A direct callee blocks work?
    release_function(needs=that one) allows one pivot per unchanged input, respecting pauses. Sure that
    no C makes its code at all (hand-written assembly): not_c=true, saying why.
-   A boundary-review warning comes first: inspect adjacent bytes and segment limits before candidate tuning.
+   A boundary-review warning comes first: use get_boundary_evidence to inspect the original bytes, overlap,
+   and possible data references. Leave boundary decisions to review and move to an eligible function.
    A target ending without a return is not an assembly verdict; report or correct its extent first.
 
 Write plausible original code, pure C (no inline asm). Never fetch or copy code from outside this project

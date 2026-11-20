@@ -439,9 +439,31 @@ class Sweeps:
             sdk_set_aside = discover_known(self.net, self.net.project_row(slug), check_cancel=log.check_cancel)
         if sdk_set_aside:
             log(f'Identified {sdk_set_aside} SDK library functions before preparing C candidates.')
+        twin_trials = twin_matches = 0
+        if slug not in self.net.links:
+            from .. import compiler
+            from .boundary_repairs import blocked
+
+            with looking(self.net):
+                proj = self.net.project_row(slug)
+                unscored = {row['id'] for row in self._store(slug).all(
+                    "SELECT id FROM functions WHERE project_id=? AND status='open' "
+                    "AND (best_source IS NULL OR best_score IS NULL) AND " + IN_BUILD, proj['id'])}
+                if unscored:
+                    eligible = unscored - blocked(self.net, proj)
+                    agent, _ = self.net.local_agent('autopilot')
+                    for donor, target in self.net.twins.pairs(proj):
+                        log.check_cancel()
+                        if target in eligible:
+                            with compiler.cancellable(log.check_cancel):
+                                outcome = self.net.twins.try_pair(agent, proj, donor, target)
+                            twin_trials += int(outcome in ('match', 'miss'))
+                            twin_matches += int(outcome == 'match')
+                    if twin_trials:
+                        log(f'Tried matched twins for {twin_trials} functions without scored C; {twin_matches} matched.')
         maximum = getattr(log.compile_pool, 'maximum', False)
         count = deep_throughput.width(True,0) if maximum and not threads else workers.clamp(threads) if threads != 1 else 1
-        stats = {'visited': 0, 'tested': 0, 'matched': 0, 'rotated':0, 'activity': Activity(log)}
+        stats = {'visited': twin_trials, 'tested': twin_trials, 'matched': twin_matches, 'rotated':0, 'activity': Activity(log)}
         visited_turns = set()
         lock = threading.Lock()  # (the counters are shared by every thread's function)
         cycle = 1
@@ -468,6 +490,10 @@ class Sweeps:
                 identities = [dict(r) for r in self._store(slug).all(f"SELECT id,name,size FROM functions WHERE project_id=? AND status='open' AND {IN_BUILD}", proj['id'])]
                 from .boundary_repairs import blocked as boundary_blocked
                 held=boundary_blocked(self.net,proj)
+                if cycle == 1 and not order:
+                    boundary_count = sum(row['id'] in held for row in identities)
+                    if boundary_count:
+                        log(f'{boundary_count} functions need boundary review. See Settings → Code coverage → Review & repair boundaries.')
                 identities=[r for r in identities if r["id"] not in held]
                 if not order:
                     random.shuffle(identities)

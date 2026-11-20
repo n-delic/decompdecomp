@@ -930,3 +930,48 @@ def test_one_function_bug_does_not_stop_the_pass(sweep, monkeypatch, caplog, thr
     assert 'TypeError' in row['error']
     assert 'continuing with other functions' in caplog.text
     assert obj.history('game', net._function('f1', 'game'))['completed']
+
+
+def test_deep_search_tries_matched_twin_and_rejudges_improved_partial(tmp_path, monkeypatch):
+    net = RomNetwork(tmp_path / 'db.sqlite', tmp_path)
+    body = bytes.fromhex('2402000103e0000800000000')  # homemade return-one target
+    with net.store.tx() as db:
+        pid = db.execute('INSERT INTO projects(slug,name,arch,root,config,big_endian) VALUES(?,?,?,?,?,1)',
+                         ('game', 'Example', 'mips', str(tmp_path), json.dumps({
+                             'kind': 'rom', 'platform': 'n64', 'big_endian': True,
+                             'compiler': {'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-O2']}}))).lastrowid
+        for index, name in enumerate(('donor', 'target', 'other')):
+            db.execute('INSERT INTO functions(project_id,name,status,size,vram,target,relocs,best_source,best_score,matched_source) '
+                       'VALUES(?,?,?,?,?,?,?,?,?,?)',
+                       (pid, name, 'matched' if not index else 'open', len(body), 0x80001000+index*32, body, '[]',
+                        f'int {name}(void) {{return 2;}}', 50, 'int donor(void) {return 1;}' if not index else None))
+    monkeypatch.setattr(net, '_context', lambda *_: {'header': '', 'version': 1})
+    judged = []
+
+    def judge(agent, proj, fn, source, **kwargs):
+        judged.append((fn['name'], source))
+        exact = 'return 1;' in source
+        score = 0 if exact else 10
+        with net.store.tx() as db:
+            db.execute('UPDATE functions SET status=?,best_source=?,best_score=?,matched_source=? WHERE id=?',
+                       ('matched' if exact else 'open', source, score, source if exact else None, fn['id']))
+        return {'matched': exact, 'score': score}
+
+    monkeypatch.setattr(net, 'try_quietly', judge)
+    result = deep_permuter.run(net, 'game', 'target', 1, 10, Log())
+    assert result['matched'] and result['tested'] == 1
+    assert judged[0][0] == 'target' and 'int target(void)' in judged[0][1]
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='asm' WHERE name='donor'")
+        db.execute("UPDATE functions SET status='open',matched_source=NULL,best_score=50,best_source='int target(void) {return 2;}' WHERE name='target'")
+
+    def search(*args, **kwargs):
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET best_score=10,best_source='int target(void) {return 3;}' WHERE name='target'")
+        return {'matched': False, 'tested': 1}
+
+    monkeypatch.setattr(deep_permuter, '_run', search)
+    result = deep_permuter.run(net, 'game', 'target', 1, 10, Log())
+    assert result['tested'] == 2
+    assert judged[-1][0] == 'other' and 'int other(void) {return 3;}' in judged[-1][1]
+    assert net._function('other', 'game')['best_score'] == 10

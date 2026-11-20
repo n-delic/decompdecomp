@@ -1042,3 +1042,30 @@ def test_volatile_postfix_reaches_judge_before_broad_proposals(monkeypatch):
     monkeypatch.setattr(Permuter, '_score', judge)
     result = deep_permuter.run(net, 'game', 'f', 30, 1, Log())
     assert result['matched'] and result['tested']==1
+
+
+def test_targeted_register_pass_compiles_bitwise_and_float_lifetime_candidates(monkeypatch):
+    net = setup(monkeypatch)
+    log = Log()
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_score=5,best_source=? WHERE name='f'",
+                   ('unsigned f(unsigned x) { unsigned a=x; unsigned b=7; a &= b; return a; }',))
+    fn, proj = net.function(), net.project_row('game')
+    search = deep_permuter.Search(net, 1, 8, log, fn)
+    seen = []
+
+    def score(agent, proj, fn, candidate, best, fork):
+        seen.append(candidate)
+        search.tested += 1
+        return best
+
+    monkeypatch.setattr(search, '_score', score)
+    search.winner_diff = ([('r', 'and $v0, $v0, $v1', 'and $v0, $v1, $v0')], '')
+    assert search.operand_order_pass(AGENT, proj, fn, 5, None) == 5
+    assert len(seen) == 2 and any('a = b & a' in candidate for candidate in seen)
+
+    field = 'M2C_FIELD(obj, f32 *, 4)'
+    draft = f'void f(void *obj) {{ {field} = (compute({field}) * 0.5f) + {field}; }}'
+    search.winner_diff = ([('r', 'add.s $f2, $f2, $f0', 'add.s $f0, $f0, $f2')], '')
+    assert search.operand_order_pass(AGENT, proj, dict(fn, best_source=draft), 5, None) == 5
+    assert any('float repair_float_increment' in candidate for candidate in seen)

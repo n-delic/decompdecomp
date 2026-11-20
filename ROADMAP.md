@@ -2847,6 +2847,11 @@ snapshots local source/header/build inputs (at most 10,000 files / 32 MiB).
 
 Cross-game transfer results use compact, responsive rows with separate provenance, result labels and score changes; recent partial improvements can be filtered independently.
 
+Deep Permuter tries matched same-game twins before search and can rejudge a better ROM draft on an open twin.
+Compiler preflight pairs a corrected single-precision square-root call with narrowly scoped profile trials.
+Exact fast-math results require per-function review. Register-only diffs get bounded operand-order and lifetime
+trials. Boundary review highlights overlapping entries and corroborated PC-relative halfword table reads.
+
 Cross-game checks live below Deep permuter in project Settings. Manual searches check all eligible candidates without time or trial budgets, including unfinished C, until finished or stopped. One stage indicator shows current donor/target progress. Shared metric buttons open results in a side drawer; full saved matches load on demand. Active manual searches reconnect to their existing server job after reopening the window. Automatic matching passes retain their existing limits.
 
 Cross-game results can be collapsed per project without losing state on live refresh; Run now launches a dedicated, bounded cross-game check with progress and duplicate-run protection, in ROM and imported modes.

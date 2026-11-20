@@ -560,7 +560,9 @@ def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels
     for family, text in _generated(observed_repairs.variants, source, name):
         proposals.append(text)
         labels[text] = family
-    for family, text in _generated(near_match_repairs.variants, source, name, asm):
+    for family, text in (_generated(near_match_repairs.variants, source, name, asm)
+                         + _generated(near_match_repairs.bitwise_operand_order, source, name, header)
+                         + _generated(near_match_repairs.float_update_order, source, name, header)):
         proposals.append(text)
         labels[text] = family
     for family, text in _generated(captured_repairs.variants, source, name):

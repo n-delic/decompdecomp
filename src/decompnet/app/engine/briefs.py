@@ -74,16 +74,20 @@ class BriefMixin:
     def _twin_lines(self, proj, fn) -> list[str]:
         """For a brief: the matched function with the same code, and its C with this one's names."""
         try:
-            twin_id = self.twins.twin_of(proj, fn["id"])
-        except Exception:
+            donor = self.twins.deep_donor(proj, fn)
+            if not donor:
+                return []
+            twin_id, partial = donor
+            a = self.project_store(proj['id']).one("SELECT * FROM functions WHERE id=?", twin_id)
+            if a is None:
+                return []
+            source = self.twins.source_for(proj, a, fn, partial=partial)
+        except (NetworkError, OSError, ValueError):
             return []
-        if twin_id is None:
-            return []
-        a = self.project_store(proj['id']).one("SELECT * FROM functions WHERE id=?", twin_id)
-        source = self.twins.source_for(proj, a, fn)
-        out = ["", f"### Identical code: {a['name']} is the same machine code and already matches"]
+        relation = 'has a closer saved draft' if partial else 'already matches'
+        out = ["", f"### Identical target: {a['name']} {relation}"]
         if source and len(source) < 6000:
-            out += ["Its C with this function's names (try it first):", "```c", source.strip(), "```"]
+            out += ["Retargeted C (judge it first):", "```c", source.strip(), "```"]
         return out
 
     def _asm_text(self, fn, proj) -> str:
@@ -285,6 +289,8 @@ class BriefMixin:
                     +assembly.get('alias_note',''))
         warning=self.console(proj).boundary_reason(fn['target'] or b'') if fn['status']!='matched' else None
         review='\n\nBoundary review before tuning:\n'+warning if warning else ''
+        if warning:
+            review += '\nUse get_boundary_evidence before compiling. Review any overlapping entry and original data references.'
         if header_report:review += '\n\n'+header_report
         from ..wrapper_contracts import brief as wrapper_hint
         advice=wrapper_hint(self,proj,fn,fn['matched_source'] or fn['best_source'] or fn['seed'] or '')
@@ -312,6 +318,12 @@ class BriefMixin:
             rows = repair_ranking.evidence(self, fn['id'], agent.id if agent else None)
             suggestions = callee_writes(self, proj, fn, rows) + source_diagnostics.hints(
                 fn['best_source'], fn['name'], fn['asm'], proj['arch'], rows)
+            from ..profile_hypotheses import float_sqrt_source
+            if float_sqrt_source(compiler_for(self.cfg(proj), fn['vram'], fn), fn['asm'] or '',
+                                 fn['best_source'], fn['name'], self._context(proj['id'], fn['unit'])['header']):
+                suggestions.insert(0, 'Target uses sqrt.s. Try the float sqrtf prototype and call through '
+                                      'compiler_experiments with the current flags and with -ffast-math. '
+                                      'An exact fast-math result needs per-function review.')
             if advice:suggestions=[s for s in suggestions if not s.startswith('Return-contract hypothesis:')]
             if suggestions:
                 text += '\n\nSource checks (advisory):\n' + '\n'.join(suggestions)

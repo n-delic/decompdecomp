@@ -8504,3 +8504,20 @@ compiler settings (`-G0 -mips3 -mgp32 -mfp32 -O2`) and headers.
 - Staging a signed integer-to-float conversion before a floating
   negation preserved its guarded lifetime and produced the measured
   order through the comparison.
+
+### Single-precision square-root preflight and same-game twins
+
+- **Measured, N64 ROM, KMC GCC 2.7.2 `-G0 -mips3 -mgp32 -mfp32 -O2`.** A vector
+  normalization draft declared and called `sqrt` with a float prototype. The linked
+  baseline scored 1260. Changing that prototype and call to `sqrtf` and adding
+  function-only `-ffast-math` produced the target's hardware square root and exact
+  bytes. Replaying the saved draft at plain `-O1` or `-O2` left the score at 1260.
+  Deep Permuter preflight reproduced the exact result and offered it for review.
+- **Measured, same compiler and flags.** A table setter at score 20 had an identical
+  relocation-normalized sibling. Retargeting the sibling's matched C to both new
+  table symbols matched on the first attempt. Rejudging a different pair's closer
+  draft on its sibling moved the destination from 120 to 35.
+- **Measured negative controls, same compiler and flags.** Two unsigned local AND
+  operand orders both remained at score 5. Swapping and staging a floating-point
+  field update reached 30 versus the saved score 10. Keep the existing C when a
+  targeted trial fails to improve it.
