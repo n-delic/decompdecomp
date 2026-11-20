@@ -198,7 +198,7 @@ def _progress_capture(net, slug, root, folder, output, cache):
     except OSError:
         key = None
     if key is None or cache.get('capture_key') != key:
-        files, _, current = repository_progress.snapshot(net, slug, root, output, allow_unrelated_edits=True)
+        files, _, current = repository_progress.snapshot(net, slug, root, output, directories=('include',))
         try:
             stat = (folder / saves.MANIFEST).stat()
             cache['capture_key'] = (stat.st_mtime_ns, stat.st_size)
@@ -273,6 +273,8 @@ def scoped_snapshot(net, proj, root, job, output, cache=None):
         needed.extend(prefix + 'include/' + item.decode() for item in include.findall(files[path]))
     chosen.update(repository_progress.manifest_blobs(prefix, base))  # (a format 2 save's notes beside it)
     paths = set(chosen) | {prefix + f'best/{name}.c'}
+    for path in paths:
+        repository_sync.inside(root, path)
     return chosen, paths, head
 
 

@@ -137,6 +137,31 @@ def test_capture_reports_its_steps(progress):
         'Checking saved progress', 'Reading saved progress', 'Comparing with Git']
 
 
+def test_scoped_capture_skips_checkpoint_git_and_raw_reads_of_unselected_sources(progress, monkeypatch):
+    net, root, _ = progress
+    header = root/'include/common.h'
+    header.write_bytes(header.read_bytes().replace(b'\n', b'\r\n'))
+    (root/'private.txt').write_text('Keep unrelated work in the checkout')
+    original = repository_progress._capture_bytes
+    read_paths = []
+
+    def capture(path, text):
+        read_paths.append(path)
+        return original(path, text)
+
+    def unexpected_git(*args):
+        pytest.fail('A scoped capture does not inspect the whole Git checkout')
+
+    monkeypatch.setattr(repository_progress, '_capture_bytes', capture)
+    monkeypatch.setattr(repository_sync, 'git', unexpected_git)
+    files, paths, manifest = repository_progress.snapshot(net, 'game', root, print,
+                                                          directories=('include',))
+    assert read_paths == [header]
+    assert files == {'include/common.h': header.read_bytes()}
+    assert paths == set(files)
+    assert 'matched_by' in manifest['functions']['f']
+
+
 def test_index_lock_and_branch_change_preserve_checkpoint(progress, monkeypatch):
     _, root, _ = progress
     files = {'src/f.c': b'captured\n'}

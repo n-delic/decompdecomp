@@ -104,11 +104,20 @@ def recover_missing_sources(net, slug, folder, manifest, missing, log):
     return True
 
 
-def snapshot(net, slug, root, log, *, recover=True, allow_unrelated_edits=False):
+def _capture_bytes(path, text):
+    data = path.read_bytes()
+    normalized = data.decode('utf-8', errors='replace').replace('\r\n', '\n').replace('\r', '\n')
+    if path.name not in {'README.md', 'decompdecomp-progress.svg'} and normalized != text:
+        # Commit the judged text if an editor changed the file after capture.
+        return text.encode('utf-8')
+    return data
+
+
+def snapshot(net, slug, root, log, *, recover=True, allow_unrelated_edits=False, directories=None):
     """Read contributions through the ordinary judge, then capture files under the autosave lock.
 
-    Per-function commits may leave unrelated edits in place: their caller selects a strict
-    subset of this snapshot for the private index. Whole-progress checkpoints still reject them.
+    Per-function commits request only the saved directories they read. Their caller selects
+    the actual paths to commit, so only checkpoints compare the entire checkout with Git.
     """
     store = net.project_store(slug)
     folder = saves.default_folder(net, slug).resolve()
@@ -147,22 +156,32 @@ def snapshot(net, slug, root, log, *, recover=True, allow_unrelated_edits=False)
             raise NetworkError('The saved progress belongs to another game. Choose this project’s progress checkout.')
         # The commit holds the folder's own files: a format 2 save's notes and verification records apart.
         files = saves.split_files(files)
-        for name in ('README.md', 'decompdecomp-progress.svg'):
-            if (folder/name).is_file():
-                files[name] = (folder/name).read_bytes().decode('utf-8')
-        missing = owned(manifest) - files.keys()
-        for name in data_saves_owned(folder):
-            if (folder / name).is_file():
-                files[name] = (folder / name).read_text(encoding='utf-8')
+        visuals = {'README.md', 'decompdecomp-progress.svg'}
+        required = owned(manifest)
+        if directories is None:
+            for name in visuals:
+                if (folder/name).is_file():
+                    files[name] = (folder/name).read_bytes().decode('utf-8')
+            for name in data_saves_owned(folder):
+                if (folder / name).is_file():
+                    files[name] = (folder / name).read_text(encoding='utf-8')
+        else:
+            required -= visuals
+        missing = required - files.keys()
         if missing:
             if recover and recover_missing_sources(net, slug, folder, manifest, missing, log):
-                return snapshot(net, slug, root, log, recover=False, allow_unrelated_edits=allow_unrelated_edits)
+                return snapshot(net, slug, root, log, recover=False, allow_unrelated_edits=allow_unrelated_edits,
+                                directories=directories)
             names = ', '.join(sorted(missing)[:12])
             extra = f' (and {len(missing)-12} more)' if len(missing)>12 else ''
             raise NetworkError(f'Cannot commit: {len(missing)} saved progress file(s) are missing: {names}{extra}. '
                                'Restore these files from Git or save a recovered copy of the project, then retry.')
         prefix = folder.relative_to(root).as_posix()
         prefix = '' if prefix == '.' else prefix + '/'
+        if directories is not None:
+            captured = {prefix + name: _capture_bytes(repository_sync.inside(root, prefix + name), text)
+                        for name, text in files.items() if name.partition('/')[0] in directories}
+            return captured, set(captured), manifest
         paths = {prefix + name for name in owned(manifest, folder)}
         tracked = repository_sync.git(root, 'ls-files', '-z').decode().split('\0')
         if prefix + saves.MANIFEST in tracked:
@@ -185,14 +204,7 @@ def snapshot(net, slug, root, log, *, recover=True, allow_unrelated_edits=False)
         # Retired paths may be deleted, but never discard a file that survived a rename or layout change.
         if not allow_unrelated_edits and any(repository_sync.inside(root, name).exists() for name in paths - {prefix+n for n in files}):
             raise NetworkError('Retired progress files still contain edits. Move them before committing progress.')
-        captured = {}
-        for name, text in files.items():
-            data = (folder/name).read_bytes()
-            normalized = data.decode('utf-8', errors='replace').replace('\r\n', '\n').replace('\r', '\n')
-            if name not in {'README.md', 'decompdecomp-progress.svg'} and normalized != text:
-                # Edited after the judged read: commit what was judged; the newer edit stays for the next commit.
-                data = text.encode('utf-8')
-            captured[prefix + name] = data
+        captured = {prefix + name: _capture_bytes(folder / name, text) for name, text in files.items()}
         captured.update(scaffold)
         return captured, paths, manifest
 
