@@ -8,6 +8,30 @@ while keeping `-O2`. Debug line labels can prevent the old assembler moving an i
 A matching result proves the flags for that function; keep the override scoped to the verified address range.
 The automatic compiler survey also checks these debug variants on saved attempts.
 
+## Recheck the same C before changing a close candidate
+
+- If the target fills jump, call, or return delay slots and the current build leaves
+  `nop`s, try omitting `-g` or `-g3` with the other flags fixed. One N64 candidate went
+  from score 600 to exact without a source edit. A second recovered three switch-arm
+  loads in their jump delay slots and still had other differences.
+- With `-O1`, an interleaved prologue or a store displaced from a branch is a reason
+  to try `-fschedule-insns -fschedule-insns2` together. One candidate scored 410 with
+  plain `-O1`, 450 and 270 with the passes enabled individually, and 0 with both.
+  A replay on a second candidate improved from 1165 to 235. Keep the plain
+  `-O1` result as a control: on another routine it was exact and enabling both
+  passes raised the score to 840.
+- If a loop walks fixed-size records by incrementing a pointer, compare ordinary
+  typed indexing with strength reduction enabled. In a 12-byte record search, removing
+  `-fno-strength-reduce` improved the byte-offset version from 760 to 60. The typed
+  record version reached exact under the same revised profile.
+
+For grouped copies, three consecutive `lw`s followed by three `sw`s from the same
+respective bases can come from assigning a three-word struct. Verify width, alignment,
+and field offsets. With `lwc1` and `swc1`, check the float field types before trying an
+integer copy. An unused local aggregate can account for a frame gap without adding
+memory traffic. Use that as a diagnostic while checking conversion expansions,
+callee output extents, and the original local layout.
+
 ## Near-match checklist
 
 For loop-related plateaus, audit intermediate controls before increasing the budget. Integer-one

@@ -9,6 +9,10 @@ vm.runInContext(source.slice(source.indexOf('const KNOWLEDGE_EVERY_MS'),source.i
  await c.renderKnowledge(true);
  assert(elements.knowList.innerHTML.includes('Accept for all agents'));
  assert(elements.knowList.innerHTML.includes('waiting for a second model'));
- await elements.knowList.onclick({target:{closest:()=>({dataset:{know:'3',accept:'1'}})}});
+ await elements.knowList.onclick({target:{closest:selector=>selector==='[data-know]' ? {dataset:{know:'3',accept:'1'}} : null}});
  assert.deepEqual(JSON.parse(JSON.stringify(requests[1].options.body)),{slug:'game',id:3,accept:true});
+ assert(elements.knowList.innerHTML.includes('Merge…'));
+ await elements.knowList.onclick({target:{closest:selector=>selector==='[data-knowledge-profile]' ? {dataset:{knowledgeProfile:'3'}} : null}});
+ assert.equal(requests[3].url,'/api/knowledge/profile');
+ assert.deepEqual(JSON.parse(JSON.stringify(requests[3].options.body)),{slug:'game',ids:[3]});
 })().catch(e=>{console.error(e);process.exitCode=1;});

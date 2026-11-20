@@ -27,6 +27,15 @@ def test_the_variants_change_one_flag_each():
     assert not any("-Os" in v or "-fno-strength-reduce" in v for v in snc)
 
 
+def test_kmc_search_tests_both_scheduler_passes_and_removes_existing_overrides():
+    net = RomNetwork(":memory:", ".")
+    flags = ['-O1', '-g3', '-fno-schedule-insns', '-fno-strength-reduce']
+    variants = net.flag_variants('gcc-2.7.2-kmc', flags)
+    assert ['-O1', '-g3', '-fno-strength-reduce', '-fschedule-insns', '-fschedule-insns2'] in variants
+    assert ['-O1', '-g3', '-fno-strength-reduce'] in variants
+    assert flags[:-1] in variants
+
+
 def test_a_project_with_the_wrong_flags_hears_which_ones_match(built, tmp_path):  # noqa: F811
     net = RomNetwork(tmp_path / "decomp.db", tmp_path)
     slug = net.import_rom(ROM, confirmed=True, log=lambda *_: None)

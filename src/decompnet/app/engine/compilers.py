@@ -951,8 +951,9 @@ class CompilerMixin:
         Each variant changes the project's flags in one place, so what matches says which flag it was."""
         family = toolchains.compiler_family(toolchain) or next((f for prefix, f in FLAG_FAMILIES if toolchain.startswith(prefix)), "gcc")
         levels, extras = FLAG_LEVELS[family], FLAG_EXTRAS[family] + tuple(more)
+        from ..profile_hypotheses import kmc_variants
         current = next((f for f in base if f in levels), None)
-        out = [base]
+        out = [base, *kmc_variants(toolchain, base)]
         for level in levels:
             if level != current:
                 out.append([level if f == current else f for f in base] if current else [*base, level])

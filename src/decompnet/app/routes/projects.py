@@ -53,7 +53,8 @@ def register(app: App) -> None:
             started = time.monotonic()
             try:
                 def perform():
-                    if request.url.path in ('/api/priority', '/api/variants'):
+                    if request.url.path in ('/api/priority', '/api/variants', '/api/knowledge/merge') or (
+                            request.method == "POST" and request.url.path == "/api/knowledge/profile"):
                         return fn(slug, request, data)  # Metadata is published by autosave, without another recheck here.
                     if request.url.path in ('/api/try', '/api/cross-game/run', '/api/reconcile-matches') or (request.method=='POST' and request.url.path=='/api/reimport'):
                         return fn(slug, request, data)  # The worker synchronizes; return its job without waiting.
@@ -1176,6 +1177,16 @@ def register(app: App) -> None:
     def p_knowledge_verify(slug, request, data):
         return net.knowledge.request_verification(slug,int(data.get('id') or 0),list(manager.sessions.values()))
 
+    def p_knowledge_profile(slug, request, data):
+        if request.method == "POST":
+            net.knowledge.move_to_profile(slug, data.get("ids"))
+            return {"message": "Finding moved to Compiler profile evidence."}
+        return net.knowledge.listing(slug, profile=True)
+
+    def p_knowledge_merge(slug, request, data):
+        net.knowledge.merge(slug, data.get("target"), data.get("sources"), data.get("text"))
+        return {"message": "Findings merged with their votes and supporting examples."}
+
     def p_knowledge(slug, request, data):
         """What agents learned: GET lists it; POST accepts or rejects one ({id, accept}), or sets whether agreed
         knowledge is added by itself ({auto})."""
@@ -1214,6 +1225,8 @@ def register(app: App) -> None:
         "/api/project": (p_overview, ["GET"]),
         "/api/split-rom": (p_split_rom, ["POST"]),
         "/api/join-rom": (p_join_rom, ["POST"]),
+        "/api/knowledge/profile": (p_knowledge_profile, ["GET", "POST"]),
+        "/api/knowledge/merge": (p_knowledge_merge, ["POST"]),
         "/api/knowledge/verify": (p_knowledge_verify, ["POST"]),
         "/api/knowledge": (p_knowledge, ["GET", "POST"]),
         "/api/modelcosts": (lambda s, r, d: manager.costs(s), ["GET"]),

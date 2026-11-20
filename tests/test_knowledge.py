@@ -52,6 +52,41 @@ def test_the_same_idea_again_is_pointed_at_the_open_proposal(net):
     assert "back it: share_knowledge(supports=" in said and len(net.knowledge.listing("game")["items"]) == 1
 
 
+def test_review_links_historical_trials_and_restores_attributed_evidence(net):
+    from decompnet.app.compiler_experiments import save_trial
+    from decompnet.app.knowledge import restore_evidence, saved_evidence
+
+    a, b = agent(net, 'first-1'), agent(net, 'second-1')
+    pid = net._project('game')['id']
+    key = '0123456789abcdefabcd'
+    with net.store.tx() as db:
+        fid = db.execute("INSERT INTO functions(project_id,name) VALUES(?,?)", (pid, 'func_example')).lastrowid
+    save_trial(net, {'project_id':pid, 'id':fid}, key, {
+        'agent':a.id, 'compiler':'gcc-2.7.2-kmc', 'flags':'-O1', 'result':{'score':0, 'exact':True}})
+    rule = 'When the target groups three loads and three stores, try a struct assignment for the record.'
+    said = net.knowledge.share(a, 'game', rule, evidence=f'func_example trial_id={key} at -O1')
+    kid = int(said.split('#')[1].split('.')[0])
+    net.knowledge.share(b, 'game', supports=kid, evidence='Replayed a second grouped copy.')
+    net.knowledge.decide('game', kid, accept=True)
+    assert f'#{kid}' in net.knowledge.share(b, 'game', rule)
+    item = net.knowledge.listing('game')['items'][0]
+    assert item['topic'] == 'Grouped copies'
+    assert item['evidence'][0]['functions'] == ['func_example']
+    assert item['evidence'][0]['trials'][0]['exact']
+    assert rule in ' '.join(net.knowledge.relevant({'project_id':pid, 'name':'func_example'}))
+    snapshot = {'knowledge':[rule], 'knowledge_evidence':saved_evidence(net, net.store, pid)}
+    other = net._project('other')['id']
+    with net.store.tx() as db:
+        db.execute("INSERT INTO knowledge(project_id,text,status,created_at) VALUES(?,?,'accepted',1)", (other, rule))
+        restore_evidence(db, other, snapshot, {a.name:a.id,b.name:b.id}, lambda: None)
+    restored = net.knowledge.listing('other')['items'][0]
+    assert restored['models'] == item['models']
+    assert [e['text'] for e in restored['evidence']] == [e['text'] for e in item['evidence']]
+    assert restored['evidence'][0]['trials'][0]['restored']
+    assert restored['evidence'][0]['trials'][0]['score'] == 0
+    assert not restored['evidence'][0]['functions']  # No link to a function missing after restore.
+
+
 def test_compiler_guesses_go_to_the_compiler_tools(net):
     with pytest.raises(NetworkError, match="compiler map"):
         net.knowledge.share(agent(net, "claude-opus-5.5-1"), "game", "This part is built with ee-gcc 2.96 -O2 -G0")
@@ -251,3 +286,52 @@ def test_function_mentions_only_fetch_token_matches_in_owning_project(net,monkey
             assert net.knowledge._function_mentions(proj,'new_symbol')==['new_symbol']
             raise ValueError('rollback')
     assert net.knowledge._function_mentions(proj,'new_symbol')==[]
+
+
+def test_merge_preserves_unique_votes_examples_and_acceptance(net):
+    first, second = (agent(net, name) for name in ("model-a-1", "model-b-1"))
+    knowledge = net.knowledge
+    knowledge.share(first, "game", "Use signed arithmetic for the paired shifts.", evidence="First example")
+    target = knowledge.listing("game")["items"][0]["id"]
+    knowledge.share(first, "game", "Prefer aggregate assignment for adjacent words.", evidence="Second example")
+    source = knowledge.listing("game")["items"][0]["id"]
+    knowledge.share(second, "game", supports=source, evidence="Independent example")
+    knowledge.decide("game", source, True)
+    knowledge.share(second, "other", "Preserve this unrelated finding.")
+    other = knowledge.listing("other")["items"][0]["id"]
+
+    with pytest.raises(NetworkError, match="no longer active"):
+        knowledge.merge("game", target, [source, other], "Revised wording.")
+    assert len(knowledge.listing("game")["items"]) == 2
+
+    knowledge.merge("game", target, [source], "Revised wording.")
+    [item] = knowledge.listing("game")["items"]
+    assert (item["id"], item["text"], item["status"]) == (target, "Revised wording.", "accepted")
+    assert item["models"] == ["model-a", "model-b"]
+    assert {example["text"] for example in item["evidence"]} == {
+        "First example", "Second example", "Independent example",
+    }
+    assert net.store.one("SELECT count(*) AS n FROM knowledge_support WHERE knowledge_id=?", target)["n"] == 2
+    with pytest.raises(NetworkError, match="no longer active"):
+        knowledge.share(second, "game", supports=source, evidence="Stale submission")
+    knowledge.decide("game", source, True)
+    assert [item["id"] for item in knowledge.listing("game")["items"]] == [target]
+
+
+def test_moving_compiler_evidence_keeps_report_and_excludes_agent_prompt(net):
+    knowledge = net.knowledge
+    knowledge.share(agent(net, "model-a-1"), "game", "A diagnostic scheduling trial.", evidence="Score 410 to 0")
+    kid = knowledge.listing("game")["items"][0]["id"]
+    knowledge.decide("game", kid, True)
+    with pytest.raises(NetworkError, match="no longer active"):
+        knowledge.move_to_profile("game", [kid, kid + 1])
+    assert knowledge.listing("game", profile=True)["items"] == []
+
+    knowledge.move_to_profile("game", [kid])
+    assert knowledge.listing("game")["items"] == []
+    assert "diagnostic scheduling trial" not in knowledge.for_prompt("game")
+    [item] = knowledge.listing("game", profile=True)["items"]
+    assert item["id"] == kid
+    assert item["models"] == ["model-a"]
+    assert item["evidence"][0]["text"] == "Score 410 to 0"
+    assert knowledge.listing("other", profile=True)["items"] == []

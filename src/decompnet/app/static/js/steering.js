@@ -328,47 +328,201 @@ $("phRename").onclick = () => {
 };
 /* What agents learned (app/knowledge.py): fetched now and then, not on every poll. */
 const KNOWLEDGE_EVERY_MS = 30000;
+let knowledgeView;
+const knowledgePending = new Set();
 async function renderKnowledge(force = false) {
   if (!force && S.knowAt && Date.now() - S.knowAt < KNOWLEDGE_EVERY_MS && S.knowSlug === S.slug) return;
-  S.knowAt = Date.now(); S.knowSlug = S.slug;
-  let k;
-  try { k = await api(`/api/knowledge?slug=${encodeURIComponent(S.slug)}`); } catch { return; }
-  $("knowAuto").checked = k.auto;
-  const evidence = (it) => it.evidence?.length ? `<details><summary>Supporting examples · ${it.evidence.length}</summary>${it.evidence.map(e => `<p class="small muted">${esc(e.agent || 'Agent')}: ${esc(e.text)}</p>`).join('')}</details>` : '';
-  const row = (it) => {
-    const verification=it.verification ? `<p class="small muted">Independent review queued for ${esc(it.verification.agent)} · ${esc(it.verification.model)} · next session</p>` : '';
-    if (it.status === "agreed") return `<div class="note">${saidHead("agreed · waiting for you", it.models, it.t)}${saidText(it.text)}${evidence(it)}
-      <div class="row"><button class="primary small-btn" data-know="${it.id}" data-accept="1" type="button">Give it to agents</button>
-      <button class="ghost small-btn" data-know="${it.id}" type="button">Reject</button></div></div>`;
-    if (it.status === "accepted") return `<div class="note">${saidHead("agents get this", it.models, it.t, true)}${saidText(it.text)}${evidence(it)}
-      <div class="row"><button class="ghost small-btn" data-know="${it.id}" type="button">Take it back</button></div></div>`;
-    return `<div class="note">${saidHead("waiting for a second model", it.models, it.t, true)}${saidText(it.text)}${evidence(it)}${verification}<div class="row"><button class="primary small-btn" data-know="${it.id}" data-accept="1" type="button">Accept for all agents</button><button class="ghost small-btn" data-verify-knowledge="${it.id}" type="button">Verify with another model</button><button class="ghost small-btn" data-know="${it.id}" type="button">Reject</button></div></div>`;
-  };
-  const waiting = k.items.filter((it) => it.status === "agreed").length;
-  $("knowState").textContent = waiting ? `${waiting} waiting for you` : k.items.length ? "" : "nothing yet";
-  setHtml($("knowList"), k.items.map(row).join(""));
+  const request = {};
+  const slug = S.slug;
+  if (knowledgeView?.slug !== slug) {
+    knowledgeView = {slug, groups: new Set(), data: null};
+    setHtml($("knowList"), '<p class="small muted">Loading findings…</p>');
+  }
+  knowledgeView.request = request;
+  S.knowAt = Date.now(); S.knowSlug = slug;
+  try {
+    const data = await api(`/api/knowledge?slug=${encodeURIComponent(slug)}`);
+    if (S.slug !== slug || knowledgeView?.request !== request) return;
+    knowledgeView.data = data;
+    $("knowAuto").disabled = knowledgePending.has(slug);
+    if (!knowledgePending.has(slug)) $("knowAuto").checked = data.auto;
+    drawKnowledge();
+  } catch (error) {
+    if (S.slug === slug && knowledgeView?.request === request) {
+      S.knowAt = 0;
+      $("knowState").textContent = error.message;
+    }
+  }
 }
+function knowledgeExamples(it) {
+  const example = e => {
+    const refs = [...(e.revisions || []), ...(e.flags || [])];
+    const trials = (e.trials || []).map(t => `<p class="small">${t.restored ? 'Saved trial summary' : 'Recorded trial'} ${esc(t.id)} · ${t.exact ? 'Exact at trial time' : t.score == null ? 'Could not score' : `Score ${esc(t.score)}`}<br><code>${esc([t.compiler, t.flags].filter(Boolean).join(' '))}</code></p>`);
+    return `<p class="small"><b>${esc(e.agent || 'Agent')}</b> · ${esc(e.text)}</p>
+      ${(e.functions || []).map(fn => fnLink(fn)).join('')}${refs.length ? `<p class="mono small muted">${esc(refs.join(' · '))}</p>` : ''}${trials.join('')}`;
+  };
+  return it.evidence?.length ? `<details data-knowledge-example="${it.id}"><summary>Reported compile evidence · ${it.evidence.length}</summary>${it.evidence.map(example).join('')}</details>` : '';
+}
+function openKnowledgeMerge(target, items, slug) {
+  const body = dialog("Merge findings", `<p>Choose equivalent findings to combine into #${target.id}. The merged finding keeps their votes and supporting examples.</p>
+    <label class="field"><span>Merged wording</span><textarea data-merge-text rows="5" maxlength="600">${esc(target.text)}</textarea></label>
+    <label class="field"><span>Find duplicates by ID or wording</span><input type="search" data-merge-search></label>
+    <div data-merge-options></div>
+    <button type="button" class="primary" data-merge-save disabled>Merge findings</button>
+    <div data-merge-work></div>`, "knowledge-merge");
+  const search = body.querySelector("[data-merge-search]");
+  const options = body.querySelector("[data-merge-options]");
+  const wording = body.querySelector("[data-merge-text]");
+  const save = body.querySelector("[data-merge-save]");
+  const work = body.querySelector("[data-merge-work]");
+  const selected = new Set();
+  const update = () => { save.disabled = !selected.size || !wording.value.trim(); };
+  search.oninput = () => {
+    const query = search.value.trim().toLowerCase();
+    const candidates = items.filter(it => it.id !== target.id &&
+      (selected.has(it.id) || (query ? `#${it.id} ${it.text}`.toLowerCase().includes(query) : target.topic === it.topic)));
+    options.innerHTML = candidates.map(it => `<label class="check"><input type="checkbox" value="${it.id}"${selected.has(it.id) ? ' checked' : ''}>
+      <span><b>#${it.id}</b> · ${esc(it.text)}</span></label>`).join("") ||
+      '<p class="muted">No findings match. Search by ID or wording to look across topics.</p>';
+  };
+  options.onchange = ({target: input}) => {
+    if (input.checked) selected.add(Number(input.value));
+    else selected.delete(Number(input.value));
+    update();
+  };
+  wording.oninput = update;
+  search.oninput();
+  save.onclick = async () => {
+    if (save.disabled || S.slug !== slug) return;
+    const keys = [target.id, ...selected].map(id => `${slug}/${id}`);
+    if (keys.some(key => knowledgePending.has(key))) {
+      showJobError(work, "A selected finding is being updated. Try again after it finishes.");
+      return;
+    }
+    keys.forEach(key => knowledgePending.add(key));
+    drawKnowledge();
+    const finish = beginWork(work, "Merging findings", [save, wording, search, ...options.querySelectorAll("input")], "");
+    try {
+      const result = await api("/api/knowledge/merge", {
+        method: "POST", body: {slug, target: target.id, sources: [...selected], text: wording.value}
+      });
+      if (S.slug === slug) {
+        if (S.dialogKind === "knowledge-merge" && work.isConnected) closeDialog();
+        toast(esc(result.message));
+        await renderKnowledge(true);
+      }
+    } catch (error) {
+      showJobError(work, error.message);
+    } finally {
+      finish();
+      keys.forEach(key => knowledgePending.delete(key));
+      drawKnowledge();
+    }
+  };
+}
+function drawKnowledge() {
+  const k = knowledgeView?.data;
+  if (!k || knowledgeView.slug !== S.slug) return;
+  const query = ($("knowSearch")?.value || '').trim().toLowerCase();
+  const status = $("knowFilter")?.value || '';
+  const row = (it) => {
+    const busy = knowledgePending.has(`${S.slug}/${it.id}`);
+    const disabled = busy ? ' disabled' : '';
+    const verification=it.verification ? `<p class="small muted">Independent review queued for ${esc(it.verification.agent)} · ${esc(it.verification.model)} · next session</p>` : '';
+    const accepted = it.status === 'accepted';
+    const agreed = it.status === 'agreed';
+    const badge = accepted ? (it.models.length >= 2 ? 'accepted · model consensus' : 'accepted') :
+      agreed ? 'agreed · waiting for you' : 'waiting for a second model';
+    const accept = accepted ? '' : `<button class="primary small-btn" data-know="${it.id}" data-accept="1" type="button"${disabled}>${agreed ? 'Give it to agents' : 'Accept for all agents'}</button>`;
+    const verify = it.status === 'proposed' ? `<button class="ghost small-btn" data-verify-knowledge="${it.id}" type="button"${disabled}>Verify with another model</button>` : '';
+    return `<div class="note">${saidHead(badge, it.models, it.t, true)}${saidText(it.text)}${knowledgeExamples(it)}${verification}
+      <div class="row wrap">${accept}${verify}<button class="ghost small-btn" data-knowledge-merge="${it.id}" type="button"${disabled}>Merge…</button><button class="ghost small-btn" data-knowledge-profile="${it.id}" type="button"${disabled}>Move to compiler evidence</button><button class="ghost small-btn" data-know="${it.id}" type="button"${disabled}>${accepted ? 'Take it back' : 'Reject'}</button>${busy ? '<span role="status">Saving…</span>' : ''}</div></div>`;
+  };
+  const counts = {proposed: 0, agreed: 0, accepted: 0};
+  const topics = new Map();
+  for (const it of k.items) {
+    counts[it.status]++;
+    const topic = it.topic || 'Other techniques';
+    const searchable = [`#${it.id}`, topic, it.text, ...it.models, ...(it.evidence || []).map(e => e.text)].join(' ').toLowerCase();
+    if ((status && status !== it.status) || !searchable.includes(query)) continue;
+    if (!topics.has(topic)) topics.set(topic, []);
+    topics.get(topic).push(it);
+  }
+  $("knowState").textContent = k.items.length ? `${counts.proposed} pending · ${counts.agreed} ready for review · ${counts.accepted} accepted` : 'No findings yet';
+  const list = $("knowList");
+  const examples = new Set(Array.from(list.querySelectorAll?.('details[data-knowledge-example][open]') || [], el => el.dataset.knowledgeExample));
+  const html = [...topics].sort(([a], [b]) => a.localeCompare(b)).map(([topic, items]) =>
+    `<details class="more" data-knowledge-topic="${esc(topic)}"${query || status || knowledgeView.groups.has(topic) || k.items.length < 12 ? ' open' : ''}>
+      <summary>${esc(topic)} · ${items.length}</summary>${items.map(row).join('')}</details>`).join('');
+  setHtml(list, html || '<p class="muted small">No findings match this view.</p>');
+  for (const el of list.querySelectorAll?.('details[data-knowledge-example]') || []) {
+    if (examples.has(el.dataset.knowledgeExample)) el.open = true;
+  }
+}
+$("knowList").addEventListener?.('toggle', event => {
+  const topic = event.target.dataset?.knowledgeTopic;
+  if (!topic || !knowledgeView || $("knowSearch").value || $("knowFilter").value) return;
+  if (event.target.open) knowledgeView.groups.add(topic);
+  else knowledgeView.groups.delete(topic);
+}, true);
+$("knowSearch")?.addEventListener('input', drawKnowledge);
+$("knowFilter")?.addEventListener('change', drawKnowledge);
 $("knowList").onclick = async (e) => {
-  const verify=e.target.closest('[data-verify-knowledge]');
-  if(verify?.dataset.verifyKnowledge){
-    const slug=S.slug, work=$('knowledgeVerifyWork'), finish=beginWork(work,'Queueing independent verification',[verify],'');
-    try {const result=await api('/api/knowledge/verify',{method:'POST',body:{slug,id:Number(verify.dataset.verifyKnowledge)}});if(S.slug===slug){toast(esc(result.message));await renderKnowledge(true);}}
-    catch(error){showJobError(work,error.message);}finally{finish();}
+  const link = e.target.closest('.fn[data-fn]');
+  if (link?.dataset.fn) {
+    openFn(link.dataset.fn);
     return;
   }
+  const merge = e.target.closest("[data-knowledge-merge]");
+  if (merge) {
+    const items = knowledgeView?.slug === S.slug ? knowledgeView.data?.items : null;
+    const target = items?.find(it => it.id === Number(merge.dataset.knowledgeMerge));
+    if (target) openKnowledgeMerge(target, items, S.slug);
+    return;
+  }
+  const profile = e.target.closest("[data-knowledge-profile]");
+  const verify=e.target.closest('[data-verify-knowledge]');
   const b = e.target.closest("[data-know]");
-  if (!b) return;
+  const verification = verify?.dataset.verifyKnowledge;
+  const id = Number(verification || profile?.dataset.knowledgeProfile || b?.dataset.know);
+  if (!id) return;
+  const slug = S.slug, key = `${slug}/${id}`;
+  if (knowledgePending.has(key)) return;
+  knowledgePending.add(key);
+  drawKnowledge();
   try {
-    await api("/api/knowledge", { method: "POST", body: { slug: S.slug, id: Number(b.dataset.know), accept: !!b.dataset.accept } });
-    renderKnowledge(true);
-  } catch (err) { toast(esc(err.message), "err"); }
+    const result = await api(verification ? '/api/knowledge/verify' : profile ? '/api/knowledge/profile' : '/api/knowledge', {
+      method: 'POST', body: verification ? {slug, id} : profile ? {slug, ids: [id]} : {slug, id, accept: !!b.dataset.accept}
+    });
+    if (S.slug === slug) {
+      toast(esc(result.message || 'Finding updated.'));
+      await renderKnowledge(true);
+    }
+  } catch (err) {
+    if (S.slug === slug) toast(esc(err.message), 'err');
+  } finally {
+    knowledgePending.delete(key);
+    drawKnowledge();
+  }
 };
 $("knowAuto").onchange = async (e) => {
+  const slug = S.slug, control = e.target, next = control.checked;
+  if (knowledgePending.has(slug)) return;
+  knowledgePending.add(slug);
+  control.disabled = true;
   try {
-    await api("/api/knowledge", { method: "POST", body: { slug: S.slug, auto: e.target.checked } });
-    toast(e.target.checked ? "What two models agree on goes to agents by itself now." : "You decide what agents get.");
-    renderKnowledge(true);
-  } catch (err) { toast(esc(err.message), "err"); }
+    await api("/api/knowledge", { method: "POST", body: { slug, auto: next } });
+    if (S.slug === slug) {
+      toast(next ? "Automatic acceptance enabled." : "Automatic acceptance disabled.");
+      await renderKnowledge(true);
+    }
+  } catch (err) {
+    if (S.slug === slug) toast(esc(err.message), "err");
+  } finally {
+    knowledgePending.delete(slug);
+    control.disabled = knowledgePending.has(S.slug);
+    if (knowledgeView?.slug === S.slug && knowledgeView.data) control.checked = knowledgeView.data.auto;
+  }
 };
 $("instrSave").onclick = async () => {
   try {
@@ -1454,6 +1608,28 @@ const PART_STATE = {
   waiting: ["waiting", "agents try its neighbours when they take them"],
   "": ["not checked yet", ""],
 };
+async function loadCompilerProfileEvidence(slug) {
+  const box = $("compilerProfileEvidence");
+  if (!box) return;
+  const request = {};
+  box._request = request;
+  if (box._slug !== slug) {
+    box._slug = slug;
+    box.textContent = "Loading compiler profile evidence…";
+  }
+  try {
+    const {items} = await api(`/api/knowledge/profile?slug=${encodeURIComponent(slug)}`);
+    if (S.slug !== slug || S.tab !== "settings" || box._request !== request) return;
+    setHtml(box, items.map(it => `<div class="note">${saidHead("reported", it.models, it.t, true)}${saidText(it.text)}${knowledgeExamples(it)}</div>`).join("") ||
+      '<p class="small muted">No compiler profile evidence has been moved here.</p>');
+  } catch (error) {
+    if (S.slug === slug && box._request === request) box.textContent = error.message;
+  }
+}
+$("compilerProfileEvidence")?.addEventListener("click", event => {
+  const link = event.target.closest(".fn[data-fn]");
+  if (link) openFn(link.dataset.fn);
+});
 const hexShort = (n) => "0x" + n.toString(16).toUpperCase();
 async function loadCompilerAnswer() {
   clearTimeout(S.answerTimer);
@@ -1462,6 +1638,7 @@ async function loadCompilerAnswer() {
   try { a = await api(`/api/compilermap?slug=${encodeURIComponent(slug)}`); } catch (e) { $("compilerAnswer").textContent = e.message; return; }
   if (slug !== S.slug || S.tab !== "settings") return;
   renderCompilerAnswer(a);
+  loadCompilerProfileEvidence(slug);
   if (!compilerRecheckJob && S.ov?.kind !== "fork") loadCompilerRecheck();
   if (a.checking) S.answerTimer = setTimeout(loadCompilerAnswer, COMPILER_ANSWER_EVERY_MS);
 }

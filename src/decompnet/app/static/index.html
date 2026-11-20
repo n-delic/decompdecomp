@@ -460,7 +460,14 @@
         <div class="pad">
           <p class="muted small">Reusable matching tips for this game and compiler, useful across functions. Function-specific notes belong on the function. You can accept a proposal immediately; automatic acceptance requires two different models to agree independently.</p>
           <label class="check"><input type="checkbox" id="knowAuto"><span>Give agents what two models agree on without asking me</span></label>
-          <div id="knowList"></div><div id="knowledgeVerifyWork" role="status"></div>
+          <div class="row wrap">
+            <label>Search findings <input type="search" id="knowSearch" placeholder="ID, technique, flag, or function"></label>
+            <label>Status <select id="knowFilter">
+              <option value="">All statuses</option><option value="proposed">Pending</option>
+              <option value="agreed">Ready for review</option><option value="accepted">Accepted</option>
+            </select></label>
+          </div>
+          <div id="knowList"></div>
         </div>
       </section>
     </div>
@@ -809,6 +816,10 @@
             <p id="compilerRecheckResult" class="small" role="status"></p>
             <pre id="compilerRecheckLog" class="joblog" hidden></pre>
           </div></details>
+          <details class="more">
+            <summary>Compiler profile evidence</summary>
+            <div class="more-body" id="compilerProfileEvidence"></div>
+          </details>
           <div id="compilerWaiting"></div>
           <details class="more"><summary>Automatic compiler changes</summary><div class="more-body"><label class="check" id="autoAdjustRow"><input type="checkbox" id="autoAdjust"><span><b>Apply proven changes by themselves.</b> When agents prove a part of the game was built with another compiler (its code matches with it, and its neighbours agree), the app uses it without asking you.</span></label></div></details>
           <details class="more" id="installedCompilerTest">

@@ -23,7 +23,7 @@ import time
 from ..network import Agent, NetworkError
 
 MODELS_TO_AGREE = 2
-SAME_IDEA_RATIO = 0.6  # word overlap above which a new proposal is probably one that's open already
+SAME_IDEA_RATIO = 0.6  # word overlap above which a new proposal may duplicate an existing rule
 MAX_TEXT = 600
 SHOWN_IN_PROMPT = 2500  # characters of accepted knowledge in a session's prompt
 OPEN_SHOWN = 8  # open proposals an agent is shown, newest first
@@ -33,6 +33,130 @@ COMPILER_MENTION = re.compile(r"\b(compil(er|ed)|toolchain|flags?|gcc|ido|mwcc|c
 # A flag can describe the conditions of a source technique. Reject selection language,
 # not the mere presence of -O2/-g3; proposals still need the normal model/user review.
 COMPILER_SELECTION = re.compile(r"built\s+(?:with|by|using)|compiler\s+(?:is|was)|\b(?:use|switch|change|select|try)\s+(?:(?:the|to)\s+)?(?:compiler|flags?|gcc|ido|mwcc|-[OG]\d)", re.I)
+
+TOPICS = {
+    'Grouped copies': r'(?:struct|aggregate|record|word|vector).{0,35}(?:cop(?:y|ies)|assignment)|grouped (?:loads|stores)',
+    'Load width and indexing': r'\b(?:byte (?:offset|strid)|pointer scal|(?:lb|lbu|lh|lhu|lwc1)\b|halfword|typed (?:array|index))',
+    'Call signatures': r'\b(?:prototyp|pass(?:es|ing)? through|forward(?:s|ing)? (?:all |incoming )?arg)',
+    'Unsigned conversions': r'(?:float|double).{0,30}(?:to[ -](?:unsigned|u32)|conversion)|2\^31|unsigned (?:cast|conversion)',
+    'Compiler settings': r'-(?:f(?:no-)?(?:schedule|strength-reduce|fast-math)|g[0-3]?\b|O[0-4]\b)',
+    'Stack frames': r'\b(?:stack (?:slot|frame|space)|unused (?:automatic |local |volatile )?(?:array|aggregate|local))',
+}
+TOPIC_PATTERNS = {name: re.compile(pattern, re.I) for name, pattern in TOPICS.items()}
+
+
+def topic(text):
+    return next((name for name, pattern in TOPIC_PATTERNS.items() if pattern.search(text)), 'Other techniques')
+
+
+def varied(rows):
+    """Offer each recognized topic before filling the remaining space with newer entries."""
+    heads, remaining, seen = [], [], set()
+    for row in rows:
+        group = topic(row['text'])
+        (remaining if group in seen else heads).append(row)
+        seen.add(group)
+    return heads + remaining
+
+
+def example_details(text):
+    """Index references in historical prose without treating them as verified results."""
+    revisions = re.findall(r'\b(?:revision|trial(?:_id)?|candidate)(?:\s+|=)`?([0-9a-f]{16,64})\b', text, re.I)
+    flags = re.findall(r'(?<![\w-])-(?:[OG][0-9]|g[0-3]?|(?:m|f)[\w=-]+)\b', text)
+    return {'revisions': list(dict.fromkeys(revisions)), 'flags': list(dict.fromkeys(flags))}
+
+
+def trial_summaries(store, pid, keys):
+    if not keys or not store.one("SELECT 1 FROM sqlite_master WHERE name='compiler_trial_evidence'"):
+        return {}
+    summaries = {}
+    for row in store.all(
+        'SELECT t.id,t.record,f.name FROM compiler_trial_evidence t JOIN functions f ON f.id=t.function_id '
+        'WHERE t.project_id=? AND t.id IN (SELECT value FROM json_each(?))', pid, json.dumps(sorted(keys))
+    ):
+        record = json.loads(row['record'])
+        result = record.get('result')
+        if isinstance(result, dict):
+            summaries[row['id']] = {'id':row['id'], 'function':row['name'], 'compiler':record.get('compiler'),
+                                    'flags':record.get('flags'), 'score':result.get('score'),
+                                    'exact':result.get('exact') is True}
+    return summaries
+
+
+def saved_trials(rows):
+    """Read portable trial summaries as historical measurements."""
+    if not isinstance(rows, list):
+        return {}
+    fields = ('id', 'function', 'compiler', 'flags', 'exact', 'score')
+    return {row['id']:{key:row.get(key) for key in fields} for row in rows if isinstance(row, dict)
+            and isinstance(row.get('id'), str) and re.fullmatch(r'[0-9a-f]{20}', row['id'])
+            and all(isinstance(row.get(field), str) for field in ('function', 'compiler', 'flags'))
+            and type(row.get('exact')) is bool
+            and (row.get('score') is None or type(row['score']) is int)}
+
+
+def saved_evidence(net, store, pid):
+    """Keep the legacy list of accepted text and save the attributed records alongside it."""
+    from .project_labels import label
+    result = {}
+    for table, field in (('knowledge_support', 'model'), ('knowledge_evidence', 'text')):
+        rows = store.all(
+            f'SELECT k.text AS rule,r.agent_id,r.{field} AS value FROM {table} r '
+            'JOIN knowledge k ON k.id=r.knowledge_id WHERE k.project_id=? AND k.status=? '
+            'ORDER BY k.id,r.created_at,r.agent_id,r.' + field, pid, ACCEPTED)
+        for row in label(net, rows, {'by':'agent_id'}):
+            item = {'by': row['by'] or 'restored', 'value': row['value']}
+            records = result.setdefault(row['rule'], {}).setdefault(field, [])
+            if item not in records:
+                records.append(item)
+    refs = {rule: {key for row in fields.get('text', []) for key in example_details(row['value'])['revisions']}
+            for rule, fields in result.items()}
+    trials = {}
+    for row in store.all('SELECT value FROM settings WHERE key LIKE ?', f'knowledge-trials:{pid}:%'):
+        trials.update(saved_trials(json.loads(row['value'])))
+    trials.update(trial_summaries(store, pid, {key for keys in refs.values() for key in keys}))
+    for rule, keys in refs.items():
+        if linked := [trials[key] for key in sorted(keys) if key in trials]:
+            result[rule]['trials'] = linked
+    return result
+
+
+def saved_rows(manifest):
+    records = manifest.get('knowledge_evidence', {})
+    if not isinstance(records, dict):
+        return
+    for rule in manifest.get('knowledge', []):
+        item = records.get(rule, {})
+        if not isinstance(item, dict):
+            continue
+        for field in ('model', 'text'):
+            rows = item.get(field)
+            if isinstance(rows, list):
+                for row in rows:
+                    if isinstance(row, dict) and all(isinstance(row.get(k), str) for k in ('by', 'value')):
+                        yield rule, field, row
+
+
+def restore_evidence(db, pid, manifest, agents, check_cancel):
+    ids = {row['text']: row['id'] for row in db.execute(
+        'SELECT id,text FROM knowledge WHERE project_id=? AND status=?', (pid, ACCEPTED))}
+    now = time.time()
+    for rule, field, row in saved_rows(manifest):
+        check_cancel()
+        if rule in ids:
+            table = 'knowledge_support' if field == 'model' else 'knowledge_evidence'
+            db.execute(f'INSERT OR IGNORE INTO {table}(knowledge_id,agent_id,{field},created_at) VALUES(?,?,?,?)',
+                       (ids[rule], agents[row['by'] or 'restored'], row['value'], now))
+    records = manifest.get('knowledge_evidence')
+    if not isinstance(records, dict):
+        return
+    for rule, item in records.items():
+        check_cancel()
+        if rule not in ids or not isinstance(item, dict):
+            continue
+        if trials := saved_trials(item.get('trials')):
+            db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',
+                       (f'knowledge-trials:{pid}:{ids[rule]}', json.dumps(list(trials.values()))))
 
 SCHEMA = (
     """CREATE TABLE IF NOT EXISTS knowledge(
@@ -141,9 +265,11 @@ class Knowledge:
         proj = self.net._project(slug)
         evidence = " ".join(str(evidence).split())[:2000]
         if supports:
-            result = self._support(agent, proj, int(supports))
-            self._evidence(proj,int(supports),agent,evidence)
-            return result
+            model = self._model_of(agent)
+            with self._store(slug).tx():
+                result = self._support(agent, proj, int(supports), model=model)
+                self._evidence(proj, int(supports), agent, evidence)
+                return result
         text = " ".join(text.split())[:4000]
         original = text
         # Move clearly labelled concrete examples out of the reusable rule, never silently generalize a claim.
@@ -180,16 +306,20 @@ class Knowledge:
                                'Use add_note or release_function(notes=...) for function notes, or report_candidate_issue '
                                'for a source-quality concern. Shared knowledge is for reusable game/compiler matching techniques.')
         mine = _words(text)
-        for row in self._open(proj):
+        candidates = self._store(proj['id']).all(
+            'SELECT id,text,status FROM knowledge WHERE project_id=? AND status!=? ORDER BY id DESC',
+            proj['id'], REJECTED)
+        for row in candidates:
             if difflib.SequenceMatcher(None, mine, _words(row["text"])).ratio() >= SAME_IDEA_RATIO:
-                return (f"A proposal like it is open already, #{row['id']}: \"{row['text']}\". If it says the same, "
+                return (f"A similar {row['status']} rule exists, #{row['id']}: \"{row['text']}\". If it says the same, "
                         f"back it: share_knowledge(supports={row['id']}). If yours says something else, say what "
                         f"differs.")
+        model = self._model_of(agent)
         with self._store(slug).tx() as db:
             kid = db.execute("INSERT INTO knowledge(project_id, text, status, created_at) VALUES(?,?,?,?)",
                              (proj["id"], text, PROPOSED, time.time())).lastrowid
-        self._support(agent, proj, kid)
-        self._evidence(proj,kid,agent,evidence)
+            self._support(agent, proj, kid, model=model)
+            self._evidence(proj, kid, agent, evidence)
         return (f"Proposed as #{kid}. It reaches every agent once a helper running another model backs it "
                 f"(and the user accepts it, unless the project adds agreed knowledge by itself), or once the user "
                 f"gives it to agents.")
@@ -197,17 +327,23 @@ class Knowledge:
     def _evidence(self, proj, kid, agent, evidence):
         if evidence:
             with self._store(proj['id']).tx() as db:
-                db.execute('INSERT OR IGNORE INTO knowledge_evidence(knowledge_id,agent_id,text,created_at) VALUES(?,?,?,?)',
-                           (kid,agent.id,evidence,time.time()))
+                added = db.execute(
+                    'INSERT OR IGNORE INTO knowledge_evidence(knowledge_id,agent_id,text,created_at) VALUES(?,?,?,?)',
+                    (kid,agent.id,evidence,time.time()))
+                if added.rowcount:
+                    db.execute('UPDATE knowledge SET text=text WHERE id=? AND status=?', (kid, ACCEPTED))
 
-    def _support(self, agent: Agent, proj, kid: int) -> str:
-        row = self._store(proj['id']).one("SELECT * FROM knowledge WHERE id=? AND project_id=?", kid, proj["id"])
-        if row is None:
-            raise NetworkError(f"no proposal #{kid} on this project")
-        model = self._model_of(agent)
+    def _support(self, agent: Agent, proj, kid: int, *, model: str | None = None) -> str:
+        model = self._model_of(agent) if model is None else model
         with self._store(proj['id']).tx() as db:
-            db.execute("INSERT OR IGNORE INTO knowledge_support(knowledge_id, agent_id, model, created_at) VALUES(?,?,?,?)",
-                       (kid, agent.id, model, time.time()))
+            row = db.execute("SELECT * FROM knowledge WHERE id=? AND project_id=? AND status!=?",
+                             (kid, proj["id"], REJECTED)).fetchone()
+            if row is None:
+                raise NetworkError(f"Finding #{kid} is no longer active. Refresh the project's findings.")
+            added = db.execute("INSERT OR IGNORE INTO knowledge_support(knowledge_id, agent_id, model, created_at) VALUES(?,?,?,?)",
+                               (kid, agent.id, model, time.time()))
+            if added.rowcount and row['status'] == ACCEPTED:
+                db.execute('UPDATE knowledge SET text=text WHERE id=? AND status=?', (kid, ACCEPTED))
             models = {r["model"] for r in db.execute("SELECT model FROM knowledge_support WHERE knowledge_id=?", (kid,))}
             if row["status"] == PROPOSED and len(models) >= MODELS_TO_AGREE:
                 status = ACCEPTED if self.auto(proj) else AGREED
@@ -227,8 +363,70 @@ class Knowledge:
         """The user may accept any proposal, or reject/take back one, independently of model consensus."""
         proj = self.net._project(slug)
         with self._store(slug).tx() as db:
-            db.execute("UPDATE knowledge SET status=?, decided_at=? WHERE id=? AND project_id=?",
-                       (ACCEPTED if accept else REJECTED, time.time(), int(kid), proj["id"]))
+            db.execute("UPDATE knowledge SET status=?, decided_at=? WHERE id=? AND project_id=? AND status!=?",
+                       (ACCEPTED if accept else REJECTED, time.time(), int(kid), proj["id"], REJECTED))
+
+    def merge(self, slug: str, target: int, sources: list[int], text: str) -> None:
+        """Consolidate equivalent findings while retaining the original records for audit."""
+        if (type(target) is not int or not isinstance(sources, list) or not sources
+                or any(type(kid) is not int for kid in sources)
+                or target in sources or len(set(sources)) != len(sources)):
+            raise NetworkError("Choose one finding to keep and at least one different finding to merge.")
+        if not isinstance(text, str) or not 0 < len(text.strip()) <= MAX_TEXT:
+            raise NetworkError(f"Enter merged wording of up to {MAX_TEXT} characters.")
+        proj = self.net._project(slug)
+        with self._store(slug).tx() as db:
+            ids = json.dumps([target, *sources])
+            rows = db.execute(
+                "SELECT id,status FROM knowledge WHERE project_id=? AND status!=? "
+                "AND id IN (SELECT value FROM json_each(?))", (proj["id"], REJECTED, ids),
+            ).fetchall()
+            if len(rows) != len(sources) + 1:
+                raise NetworkError("A finding is no longer active on this project. Refresh and select it again.")
+            archived = json.dumps(sources)
+            db.execute(
+                "INSERT OR IGNORE INTO knowledge_support SELECT ?,agent_id,model,created_at "
+                "FROM knowledge_support WHERE knowledge_id IN (SELECT value FROM json_each(?)) "
+                "ORDER BY created_at, knowledge_id", (target, archived),
+            )
+            db.execute(
+                "INSERT OR IGNORE INTO knowledge_evidence(knowledge_id,agent_id,text,created_at) "
+                "SELECT ?,agent_id,text,created_at FROM knowledge_evidence "
+                "WHERE knowledge_id IN (SELECT value FROM json_each(?)) ORDER BY id", (target, archived),
+            )
+            models = db.execute("SELECT count(DISTINCT model) FROM knowledge_support WHERE knowledge_id=?",
+                                (target,)).fetchone()[0]
+            status = PROPOSED
+            if any(row["status"] == ACCEPTED for row in rows):
+                status = ACCEPTED
+            elif models >= MODELS_TO_AGREE:
+                status = ACCEPTED if self.auto(proj) else AGREED
+            now = time.time()
+            db.execute("UPDATE knowledge SET text=?,status=?,decided_at=? WHERE id=?",
+                       (text.strip(), status, now if status != PROPOSED else None, target))
+            db.execute("UPDATE knowledge SET status=?,decided_at=? WHERE id IN (SELECT value FROM json_each(?))",
+                       (REJECTED, now, archived))
+            db.executemany("DELETE FROM settings WHERE key=?",
+                           [(f"knowledge-review:{proj['id']}:{kid}",) for kid in sources])
+
+    def move_to_profile(self, slug: str, ids: list[int]) -> None:
+        """Keep reported compiler trials in the compiler panel, outside agent consensus."""
+        if (not isinstance(ids, list) or not ids or any(type(kid) is not int for kid in ids)
+                or len(set(ids)) != len(ids)):
+            raise NetworkError("Choose at least one compiler-profile finding to move.")
+        proj = self.net._project(slug)
+        with self._store(slug).tx() as db:
+            moved = db.execute(
+                "UPDATE knowledge SET status=?, decided_at=? WHERE project_id=? AND status!=? "
+                "AND id IN (SELECT value FROM json_each(?))", (REJECTED, time.time(), proj["id"], REJECTED,
+                                                               json.dumps(ids)),
+            )
+            if moved.rowcount != len(ids):
+                raise NetworkError("A finding is no longer active on this project. Refresh and select it again.")
+            db.executemany("INSERT INTO settings(key,value) VALUES (?,?)",
+                           [(f"knowledge-profile:{proj['id']}:{kid}", "1") for kid in ids])
+            db.executemany("DELETE FROM settings WHERE key=?",
+                           [(f"knowledge-review:{proj['id']}:{kid}",) for kid in ids])
 
     def forget(self, slug: str) -> None:
         """A deleted project's knowledge goes with it (its id may be a new project's later)."""
@@ -237,30 +435,56 @@ class Knowledge:
             db.execute("DELETE FROM knowledge_support WHERE knowledge_id IN (SELECT id FROM knowledge WHERE project_id=?)",
                        (pid,))
             db.execute("DELETE FROM knowledge WHERE project_id=?", (pid,))
+            db.execute("DELETE FROM settings WHERE key LIKE ? OR key LIKE ?",
+                       (f"knowledge-profile:{pid}:%", f"knowledge-review:{pid}:%"))
 
-    def listing(self, slug: str) -> dict:
+    def listing(self, slug: str, *, profile: bool = False) -> dict:
         """For the GUI: every proposal not rejected, with the models behind it, and the project's setting."""
         proj = self.net._project(slug)
-        rows = self._store(slug).all("SELECT * FROM knowledge WHERE project_id=? AND status != ? ORDER BY id DESC",
-                                  proj["id"], REJECTED)
+        condition = (
+            "EXISTS (SELECT 1 FROM settings WHERE key='knowledge-profile:' || k.project_id || ':' || k.id)"
+            if profile else "k.status != 'rejected'"
+        )
+        rows = self._store(slug).all(
+            f"SELECT k.* FROM knowledge k WHERE k.project_id=? AND {condition} ORDER BY k.id DESC", proj["id"])
+        if not rows:
+            return {"auto": self.auto(proj), "models_to_agree": MODELS_TO_AGREE, "items": []}
         support = {}
         for r in self._store(slug).all("SELECT s.knowledge_id, s.model FROM knowledge_support s JOIN knowledge k "
                                     "ON k.id=s.knowledge_id WHERE k.project_id=?", proj["id"]):
             support.setdefault(r["knowledge_id"], set()).add(r["model"])
+        store = self._store(slug)
+        from .project_labels import label
+        evidence = {}
+        rows_with_evidence = store.all(
+            'SELECT e.knowledge_id,e.text,e.agent_id FROM knowledge_evidence e JOIN knowledge k ON k.id=e.knowledge_id '
+            f'WHERE k.project_id=? AND {condition} ORDER BY e.id', proj['id'])
+        words = {word for row in rows_with_evidence for word in re.findall(r'[A-Za-z_]\w*', row['text'])}
+        functions = set()
+        if words:
+            functions = {row['name'] for row in store.all(
+                'SELECT name FROM functions WHERE project_id=? AND name IN (SELECT value FROM json_each(?))',
+                proj['id'], json.dumps(sorted(words)))}
+        examples = [(row, example_details(row['text'])) for row in label(self.net, rows_with_evidence, {'agent':'agent_id'})]
+        trials = trial_summaries(store, proj['id'], {key for _, example in examples for key in example['revisions']})
+        history = {int(row['key'].rsplit(':',1)[1]):saved_trials(json.loads(row['value'])) for row in store.all(
+            'SELECT key,value FROM settings WHERE key LIKE ?', f'knowledge-trials:{proj["id"]}:%')}
+        for row, details in examples:
+            saved = history.get(row['knowledge_id'], {})
+            attached = [trials.get(key) or {**saved[key], 'restored':True} for key in details['revisions']
+                        if key in trials or key in saved]
+            evidence.setdefault(row['knowledge_id'], []).append({
+                **row, **details, 'trials': attached,
+                'functions': sorted(functions.intersection(re.findall(r'[A-Za-z_]\w*', row['text']))
+                                    | {trial['function'] for trial in attached if not trial.get('restored')})})
+        reviews = {int(row['key'].rsplit(':',1)[1]):json.loads(row['value']) for row in store.all(
+            'SELECT key,value FROM settings WHERE key LIKE ?', f'knowledge-review:{proj["id"]}:%')}
         return {"auto": self.auto(proj), "models_to_agree": MODELS_TO_AGREE,
                 "items": [{"id": r["id"], "text": r["text"], "status": r["status"], "t": r["created_at"],
+                           "topic": topic(r["text"]),
                            "models": sorted(support.get(r["id"], ())),
-                           "verification": self._verification(proj['id'],r['id']),
-                           "evidence": self._evidence_rows(proj,r['id'])} for r in rows]}
-
-    def _evidence_rows(self, proj, kid):
-        from .project_labels import label
-        rows = self._store(proj['id']).all('SELECT text,agent_id FROM knowledge_evidence WHERE knowledge_id=? ORDER BY id',kid)
-        return label(self.net,rows,{'agent':'agent_id'})
-
-    def _verification(self, pid, kid):
-        row = self._store(pid).one('SELECT value FROM settings WHERE key=?',f'knowledge-review:{pid}:{kid}')
-        return json.loads(row['value']) if row else None
+                           "verification": reviews.get(r['id']),
+                           "evidence": evidence.get(r['id'], [])} for r in rows]}
 
     def request_verification(self, slug, kid, sessions):
         from .agent_review import view
@@ -286,12 +510,13 @@ class Knowledge:
         """What every agent starts with: the accepted knowledge, then the open proposals it can back."""
         proj = self.net._project(slug)
         out, used = [], 0
-        for r in self._store(slug).all("SELECT text FROM knowledge WHERE project_id=? AND status=? ORDER BY id DESC",
-                                    proj["id"], ACCEPTED):
+        accepted = self._store(slug).all("SELECT text FROM knowledge WHERE project_id=? AND status=? ORDER BY id DESC",
+                                         proj["id"], ACCEPTED)
+        for r in varied(accepted):
             if self._rule_mentions(proj, r["text"]):
                 continue
             if used + len(r["text"]) > SHOWN_IN_PROMPT:
-                break
+                continue
             out.append(f"- {r['text']}")
             used += len(r["text"])
         text = ("Accepted matching knowledge for this game (user-approved or model consensus):\n" + "\n".join(out)) if out else ""
@@ -303,6 +528,7 @@ class Knowledge:
             if item['model'] == model and agent and item['agent'] == agent.name:
                 queued[int(r['key'].rsplit(':',1)[1])] = item
         open_ = [r for r in self._open(proj) if r['id'] not in supported and not self._rule_mentions(proj, r["text"])]
+        open_ = varied(open_)
         open_.sort(key=lambda r: r['id'] not in queued)
         open_ = open_[:OPEN_SHOWN]
         if open_:
@@ -343,3 +569,20 @@ class Knowledge:
             if len(out) == 3:
                 break
         return ['### Function-specific knowledge (historical reports)', *out] if out else []
+
+    def relevant(self, fn, rows=()):
+        from .repair_ranking import matching_topics
+        store = self._store(fn['project_id'])
+        accepted = store.all(
+            'SELECT k.id,k.text FROM knowledge k WHERE k.project_id=? AND k.status=? ORDER BY k.id DESC',
+            fn['project_id'], ACCEPTED)
+        if not accepted:
+            return []
+        cited = {row['knowledge_id'] for row in store.all(
+            'SELECT DISTINCT e.knowledge_id FROM knowledge_evidence e JOIN knowledge k ON k.id=e.knowledge_id '
+            'WHERE k.project_id=? AND k.status=? AND instr(e.text,?)>0',
+            fn['project_id'], ACCEPTED, fn['name'])}
+        selected = set(matching_topics(rows))
+        hits = [row for row in accepted if row['id'] in cited or topic(row['text']) in selected]
+        hits.sort(key=lambda row: row['id'] not in cited)
+        return ['### Relevant accepted matching tips', *(f"- {row['text']}" for row in hits[:3])] if hits else []

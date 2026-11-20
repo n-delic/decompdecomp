@@ -8217,6 +8217,22 @@ where the game rematerialises a symbol after a subtraction (515); an inline chec
 the previous stack store (615; `*p` gets CSE'd, 1370); and a switch whose `j` delay slots the game fills with the
 loads before them (600).
 
+### Same-source replay of KMC scheduling and induction settings
+
+Replayed three saved source/header pairs from one N64 project with the pinned
+`gcc-2.7.2-kmc` toolchain and the linked ROM judge. All profiles shared
+`-G0 -mips3 -mgp32 -mfp32`. Scores below are fresh diagnostic results with the
+candidate and header fixed within each case.
+
+- `-O1` scored 1165. Adding `-fschedule-insns` scored 355 and adding
+  `-fschedule-insns2` alone scored 1045. Both together scored 235. On a separate
+  math routine, plain `-O1` was exact and adding both scored 840. Try both when the
+  target's scheduling supports the hypothesis.
+- `-O2 -fno-strength-reduce -g3` scored 2255. Dropping `-g3` scored 955 and
+  recovered the switch-arm delay-slot loads.
+- With a typed 12-byte record loop as the source, `-O2 -fno-strength-reduce`
+  scored 1375. Removing `-fno-strength-reduce` produced exact linked bytes.
+
 ## Round 21: m2c's cursor walk over a global array, and a separate rate local (KMC gcc 2.7.2, `-O2`)
 
 - **Cursor walk to indexed loop** (controlled, now the `pointer_walk_index` repair in decomp-repair 0.5.35): m2c writes

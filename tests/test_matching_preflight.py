@@ -83,7 +83,16 @@ def test_missing_compilers_are_not_installed_and_current_exact_profiles_are_pres
     assert preflight.run(net,proj,fn)['tested'] == 0 and not state['calls']
     monkeypatch.setattr(preflight.toolchains, 'installed', lambda tid:{'fingerprint':'pinned'})
     net._judge_with = lambda *a:(True,SimpleNamespace(score=0),'')
-    assert preflight.run(net,proj,fn)['tested'] == 1
+    recovered = []
+
+    def save(agent, project, candidate, source, **kwargs):
+        recovered.append((source, kwargs))
+        candidate['status'] = 'matched'
+
+    net.try_quietly = save
+    result = preflight.run(net, proj, fn)
+    assert result['tested'] == 1 and result['applied']
+    assert recovered == [(fn['best_source'], {'synchronize':False, 'exact_only':True})]
     assert not state['applied'] and not state['suggested']
 
 
@@ -115,6 +124,14 @@ def test_unexpected_suggestion_failure_is_not_swallowed():
     def fail(*args,**kwargs):raise NetworkError('project was removed')
     net.suggest=fail
     with pytest.raises(NetworkError,match='project was removed'):preflight.run(net,proj,fn)
+
+
+def test_grouped_word_transfer_prioritizes_existing_copy_repairs():
+    from decompnet.app.repair_ranking import matching_topics, order
+    rows = [(' ', f'lw $t{i}, {i*4}($a0)', f'lw $t{i}, {i*4}($a0)') for i in range(3)]
+    rows += [('o', f'sw $t{i}, {i*4}($a1)', f'sw $t{i}, {i*4}($a1)') for i in range(3)]
+    assert matching_topics(rows) == ['Grouped copies']
+    assert order(['local_width', 'global_record_copy'], rows) == ['global_record_copy', 'local_width']
 
 
 def test_one_profile_rounds_resume_durably_instead_of_retesting_first_choices():

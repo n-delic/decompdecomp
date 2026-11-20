@@ -397,6 +397,8 @@ def _manifest(files: dict[str, str], cfg: dict, known_names=()) -> dict:
                 raise ValueError("a note is malformed")
         if any(not isinstance(item, str) for item in manifest.get("knowledge", [])):
             raise ValueError("knowledge must be a list of text")
+        if not isinstance(manifest.get('knowledge_evidence', {}), dict):
+            raise ValueError('knowledge_evidence must be an object')
         for item in manifest.get("set_aside", []):
             if (not isinstance(item, dict) or not (IDENT.fullmatch(item.get("name", "")) or LOCAL_PIECE.fullmatch(item.get("name", "")))
                     or not isinstance(item.get("vram"), int)
@@ -564,6 +566,8 @@ def _initial_merge(manifest: dict, projected: dict[str, str], disk: dict[str, st
                 current.append(item)
                 known.add(ident)
         manifest[key] = current
+    if records := _merge_manifest({}, local.get('knowledge_evidence', {}), manifest.get('knowledge_evidence', {})):
+        manifest['knowledge_evidence'] = records
 
     headers = manifest.get("headers") or {}
     pending = {}
@@ -2646,7 +2650,12 @@ class Progress:
                     # with the fresh database render, retaining concurrent new notes too.
                     if restore_notes:
                         db.execute("DELETE FROM notes WHERE project_id=?", (pid,))
-                    db.execute("DELETE FROM knowledge WHERE project_id=? AND status='accepted'", (pid,))
+                    removed_knowledge = json.dumps(applied_manifest.get('knowledge', []))
+                    db.execute("DELETE FROM knowledge_support WHERE knowledge_id IN (SELECT id FROM knowledge "
+                               "WHERE project_id=? AND status='accepted' AND text NOT IN "
+                               "(SELECT value FROM json_each(?)))", (pid, removed_knowledge))
+                    db.execute("DELETE FROM knowledge WHERE project_id=? AND status='accepted' "
+                               "AND text NOT IN (SELECT value FROM json_each(?))", (pid, removed_knowledge))
                     units = set(applied_manifest.get("headers") or {})
                     for row in db.execute("SELECT DISTINCT unit FROM context_versions WHERE project_id=?",
                                           (pid,)).fetchall():
