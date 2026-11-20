@@ -136,3 +136,13 @@ with the normal judge.
 Use `memory_access_order` when the match depends on the sequence or number of loads
 or stores, including volatile accesses. Use `expression_order` for arithmetic and
 other expression ordering, and `addresses` for how an address is calculated.
+
+For a narrow mismatch, pass a unique exact C span as `anchor` to
+`try_local_repairs`. Proposed edits outside that span are skipped. The
+current revision and normal trial limit still apply.
+
+Use `compile_variants(combine=true)` with two to five independent patches
+to reserve one trial for a measured combination. The tool checks two
+nonoverlapping edits together when they recover different target
+instructions from the same measured starting candidate. The normal judge
+decides the combined result.

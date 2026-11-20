@@ -65,7 +65,7 @@ def near_match_priority(rows, score, instructions, arch):
     return [family for family in plan(rows, arch)['families'] if family in FAMILIES and family not in EXPERIMENTAL]
 
 
-def run(net, agent, slug, function, revision, families=None, max_trials=6, *, seconds=60, provenance_kind='agent batch', focused_only=False):
+def run(net, agent, slug, function, revision, families=None, max_trials=6, *, seconds=60, provenance_kind='agent batch', focused_only=False, anchor=''):
     if isinstance(max_trials,bool) or not isinstance(max_trials,int) or not 1<=max_trials<=6:
         raise NetworkError('Use max_trials from 1 to 6.')
     if families is not None and (not isinstance(families,list) or not families or len(families)>len(FAMILIES)
@@ -78,6 +78,8 @@ def run(net, agent, slug, function, revision, families=None, max_trials=6, *, se
         source,actual = agent_tokens.candidate(net,agent,slug,function)
         if actual!=revision:
             raise agent_tokens.stale(net,agent,fn,revision,source,actual)
+        if not isinstance(anchor, str) or len(anchor) > 4096 or (anchor and source.count(anchor) != 1):
+            raise NetworkError('Use an exact, unique C anchor of at most 4096 characters in this candidate revision.')
         checked = agent_evidence.preflight(net,agent,slug,fn,source)
         if checked and checked.get('error'):
             return agent_evidence.blocked_message(checked, actual)
@@ -104,7 +106,7 @@ def run(net, agent, slug, function, revision, families=None, max_trials=6, *, se
         if preferred:
             pools = available(net, agent, slug, fn, source, revision, preferred,
                               deadline=now + (discovery_deadline - now) * 0.8, desired=max_trials)
-        if not focused_only and (not preferred or sum(map(len, pools.values())) < max_trials):
+        if not focused_only and (anchor or not preferred or sum(map(len, pools.values())) < max_trials):
             extra = available(net, agent, slug, fn, source, revision,
                               [family for family in requested if family not in preferred],
                               deadline=discovery_deadline, desired=max_trials if families is not None else 0)
@@ -112,8 +114,11 @@ def run(net, agent, slug, function, revision, families=None, max_trials=6, *, se
             pools.incomplete = getattr(pools, 'incomplete', False) or getattr(extra, 'incomplete', False)
         from decomprepair.repair_localisation import order as local_order
         evidence = checked or getattr(net,'_agent_outcomes',{}).get((agent.id,fn['id'])) or {}
+        from .model_replay_evidence import touches_only
+
         for family,pool in pools.items():
-            pools[family] = [candidate for _,candidate in local_order(source,[(family,c) for c in pool],evidence.get('repair_locations'))]
+            candidates = [(family,c) for c in pool if not anchor or touches_only(source, c, anchor)]
+            pools[family] = [candidate for _,candidate in local_order(source,candidates,evidence.get('repair_locations'))]
         selected=[];seen=set()
         while len(selected)<max_trials and any(pools.values()):
             effective_left = any(pool for family, pool in pools.items() if family not in ineffective)
@@ -136,7 +141,8 @@ def run(net, agent, slug, function, revision, families=None, max_trials=6, *, se
                 proj=net._project(slug)
                 header=(net._context(proj['id'],fn['unit']) or {'header':''})['header']
                 explanation += ' '+call_preparation_repairs.explanation(source,fn['name'],header,proj['arch'])
-            return f'No untried applicable local repairs. Revision {actual}; no variants submitted.'+explanation
+            constraint = ' inside the supplied C anchor' if anchor else ''
+            return f'No untried applicable local repairs{constraint}. Revision {actual}; no variants submitted.'+explanation
         scope=agent_tokens.target_scope(net,fn,revision)
         baseline=checked or getattr(net,'_agent_outcomes',{}).get((agent.id,fn['id']))
         if baseline and baseline.get('source')!=source:
