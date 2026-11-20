@@ -572,7 +572,7 @@ class Search(Permuter):
                 observed_choices = [(family, child) for family, child in diff_gated_repairs.proposals(
                     source, fn['name'], header, proj['arch'], settings.get('toolchain',''),
                     self.winner_diff[0], fn['asm'], self.winner_jump_tables,
-                    flags=settings.get('flags',()),
+                    flags=settings.get('flags',()), big_endian=bool(proj['big_endian']),
                     resolve=resolve_symbol if hasattr(self.net,'symbols') else None) if child not in self.local_seen]
             observed_order = {child:index for index,(_,child) in enumerate(observed_choices)}
             focused_choices = observed_choices + buffer_choices + store_choices + frame_choices

@@ -23,6 +23,7 @@ from . import (
     operand_and_edge_search,
     permuter_focus,
     stack_layout,
+    target_memory_diff_repairs,
 )
 
 REGISTER = r'\$[a-z0-9]+'
@@ -129,11 +130,11 @@ def _division_pairs(code):
                               for second,b in divisors[i+1:i+17] if a or b))
 
 
-def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), *, flags=(), resolve=None):
+def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), *, flags=(), resolve=None, big_endian=False):
     if arch != 'mips':
         return []
     result = targeted_switch_labels.variants(source,name,jump_tables) if jump_tables else []
-    if not toolchain.startswith(('gcc-2.7.2-kmc','gcc-egcs')) or not rows:
+    if not toolchain.startswith(('gcc-2.7.2-kmc','gcc-egcs','ido-5.3')) or not rows:
         return result
     rows = [row for row in permuter_focus.normalized(rows)
             if isinstance(row,(tuple,list)) and len(row)==3 and all(isinstance(field,str) for field in row)]
@@ -145,6 +146,10 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
             result += arithmetic.squared_terms(source,name,header)
         return result
 
+    result += target_memory_diff_repairs.proposals(source,name,header,rows,asm,target,candidate,toolchain,
+                                             big_endian=big_endian)
+    if toolchain.startswith('ido-5.3'):
+        return result
     result += operand_and_edge_search.proposals(source,name,header,asm,target,candidate,flags,resolve)
     frame = stack_layout.diagnose(arch,rows)
     result += measured_mips_repairs.proposals(source,name,header,rows,asm,target,candidate,frame)

@@ -751,7 +751,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Stack slot layout diagnostics | ✓ | ✓ | ✓ | — | — | ✓ | — | — reader planned | — reader planned | — | — reader planned | — GUI adapter planned |
 | Linked switch case diff and caller-backed matched return review | ✓ bounded MIPS ROM | ✓ shared MIPS conditions | ✓ shared MIPS conditions | — | — | ✓ shared MIPS conditions | — | — | — | — | — | — owned-build adapter planned |
 | Callee stack-write diagnostics and floating-point initializer search | ✓ MIPS | ✓ shared MIPS conditions | ✓ shared MIPS conditions | — | — | ✓ shared MIPS conditions | — | — | — | — | — | ✓ MIPS floating-register diff only; caller stack-write adapter planned |
-| Diff-gated deep source repairs | ✓ KMC and EGCS MIPS | ✓ shared MIPS conditions | ✓ shared MIPS conditions | — | — | ✓ shared MIPS conditions | — | — | — | — | — | — build evidence adapter planned |
+| Diff-gated deep source repairs | ✓ KMC, EGCS and selected IDO MIPS | ✓ shared MIPS conditions | ✓ shared MIPS conditions | — | — | ✓ shared MIPS conditions | — | — | — | — | — | — build evidence adapter planned |
 | Learned repair sequences, scoped brief evidence and sweep rotation | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ | ✓ | — | ✓ | ✓ build-scoped |
 | Last-exact failed-recheck alerts | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ | ✓ | — | ✓ | ✓ local judgments only |
 | Public dtk SDK binary identification | — own corpus planned; local archives supported | — own corpus planned; local archives supported | — own corpus planned; local archives supported | — | — | — own corpus planned; local archives supported | — | ✓ built targets; direct evidence, advisory references | — own corpus planned; local archives supported | — | — own corpus planned; local archives supported | ✓ GameCube/Wii targets; other corpora planned |
@@ -3017,6 +3017,10 @@ The same lane handles measured float argument order, divide-and-square reuse,
 indexed store lifetimes, loop edges, clamps, paired byte decoders and guarded
 store constants. Wide clears require an aligned resolved address and one typed
 64-bit object.
+Measured follow-ups include volatile byte reloads, branch-local offsets, split
+loads, loop-exit resets, and arithmetic lifetime changes. IDO 5.3 can try a
+direct countdown-field update from its own delay-slot evidence. Signed
+multiply-high reconstruction requires big-endian MIPS.
 EGCS square staging requires floating-register-only differences. These lanes
 use the current input scope and ordinary compile budget. Imported builds still
 need reliable per-unit compiler and linked table evidence. Other processors

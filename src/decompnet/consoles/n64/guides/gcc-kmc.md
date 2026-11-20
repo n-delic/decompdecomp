@@ -175,6 +175,11 @@ For a division followed by squaring, a dead numerator local can carry both
 results when the target uses a single FPR. Give a final indexed store group its
 own offset local if the register changes are confined to that group.
 
+If a volatile byte counter reloads after its increment in the target, try
+postfix increment when compound assignment omits the reload. For an index
+wrapping around a search, try a separate global load and decrement if the
+target performs both in the existing index register.
+
 ### Address association and call initialization
 
 Compare the first actual use of a scalar selector with its initialization. When

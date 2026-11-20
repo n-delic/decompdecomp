@@ -1006,3 +1006,36 @@ def test_measured_float_lifetime_reaches_the_normal_judge_first(monkeypatch):
     monkeypatch.setattr(Permuter, '_score', judge)
     result = deep_permuter.run(net, 'game', 'f', 30, 1, Log())
     assert result['matched'] and result['tested']==1
+
+
+def test_volatile_postfix_reaches_judge_before_broad_proposals(monkeypatch):
+    from decompnet.app import agent_tokens
+
+    net = setup(monkeypatch)
+    source = 'extern volatile u8 count; void f(void) { count += 1; consume(); }'
+    with net.store.tx() as db:
+        db.execute('UPDATE functions SET best_source=?', (source,))
+    rows = [
+        (' ', 'lbu $v0, %lo(count)($v0)', 'lbu $v0, %lo(count)($v0)'),
+        (' ', 'addiu $v0, $v0, 1', 'addiu $v0, $v0, 1'),
+        (' ', 'sb $v0, %lo(count)($at)', 'sb $v0, %lo(count)($at)'),
+        (' ', 'jal consume', 'jal consume'),
+        ('|', 'lbu $v0, %lo(count)($v0)', 'nop'),
+    ]
+
+    def measured(search, agent, proj, fn, state, fork):
+        search.winner_source = source
+        search.winner_scope = agent_tokens.target_scope(net,dict(fn),'')
+        search.winner_diff = (rows, '')
+        return 40, 0
+
+    def judge(search, agent, proj, fn, candidate, best, fork):
+        assert candidate==source.replace('count += 1;', 'count++;')
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET best_source=?,best_score=0,status='matched'", (candidate,))
+        return 0
+
+    monkeypatch.setattr(deep_permuter.Search, '_baseline', measured)
+    monkeypatch.setattr(Permuter, '_score', judge)
+    result = deep_permuter.run(net, 'game', 'f', 30, 1, Log())
+    assert result['matched'] and result['tested']==1
