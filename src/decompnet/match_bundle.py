@@ -72,9 +72,21 @@ def abi(proj, cfg):
             'platform':cfg.get('platform'),'rom_sha1':cfg.get('rom',{}).get('sha1')}
 
 
+# Exact-match publication holds the project writer. Return one row so a large
+# symbol table does not hand the interpreter back to other threads per symbol.
+_SYMBOL_ROWS = (
+    'SELECT json_group_array(json_array(name,address,size,kind)) FROM '
+    '(SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name)'
+)
+
+
+def _symbol_digest(packed):
+    # Keep the digest of the historical Python tuple representation.
+    return digest(repr([tuple(row) for row in json.loads(packed)]))
+
+
 def symbols(db, project_id):
-    return digest(repr([tuple(row) for row in db.execute(
-        'SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name',(project_id,))]))
+    return _symbol_digest(db.execute(_SYMBOL_ROWS, (project_id,)).fetchone()[0])
 
 
 def capture(db, fn, attempt_id, source, context_version, settings):
@@ -122,10 +134,7 @@ def status(net, fn):
     if compiler_identity(compiler) != details['compiler_identity']: reasons.append('compiler installation/registry changed')
     if digest(fn['target'] or b'') != details['target_sha256'] or digest(fn['relocs'] or '') != details['relocations_sha256'] or fn['vram'] != details['vram']: reasons.append('target/address changed')
     if details.get('abi') != abi(proj,cfg): reasons.append('ABI/platform/game identity changed')
-    from .metadata_rows import rows as metadata_rows
-    fields = ('name','address','size','kind')
-    current_symbols = digest(repr([tuple(row[field] for field in fields) for row in metadata_rows(
-        store, fields, 'SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name',fn['project_id'])]))
+    current_symbols = _symbol_digest(store.one(_SYMBOL_ROWS, fn['project_id'])[0])
     if details.get('symbols_sha256') != current_symbols: reasons.append('symbol table changed')
     if fn['unit'] != details['unit']: reasons.append('function unit changed')
     if details.get('imported'): reasons.append('historical record imported; verify locally before accepting it')

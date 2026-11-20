@@ -27,6 +27,31 @@ def test_exact_record_retains_source_header_profile_target_and_portable_snapshot
     assert 'target' not in record  # fingerprints, never ROM bytes
 
 
+def test_batched_symbol_digest_agrees_with_existing_exact_records(tmp_path):
+    net, source = setup_bundle(tmp_path)
+    fn = net._function('f', 'game')
+    project_id = fn['project_id']
+    store = net.project_store(project_id)
+    with store.tx() as db:
+        db.executemany('INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)', [
+            (project_id, "quote'\\", 0x80001000, 8, 'func'),
+            (project_id, 'Ω', 0x80000100, 0, 'data'),
+            (project_id, 'first', 0x80000000, 4, 'data'),
+        ])
+        original = [tuple(row) for row in db.execute(
+            'SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name', (project_id,))]
+        expected = match_bundle.digest(repr(original))
+        assert match_bundle.symbols(db, project_id) == expected
+        proof = json.loads(db.execute('SELECT details FROM verified_matches WHERE function_id=?', (fn['id'],)).fetchone()[0])
+        proof['symbols_sha256'] = expected
+        db.execute('UPDATE verified_matches SET details=? WHERE function_id=?', (json.dumps(proof), fn['id']))
+    bundle = match_bundle.status(net, fn)
+    assert bundle['source'] == source and bundle['changed_inputs'] == []
+    with store.tx() as db:
+        db.execute("UPDATE symbols SET size=size+1 WHERE name='first'")
+    assert match_bundle.status(net, fn)['changed_inputs'] == ['symbol table changed']
+
+
 def test_later_source_header_flags_and_target_changes_are_explained_without_losing_evidence(tmp_path):
     net,source=setup_bundle(tmp_path)
     with net.store.tx() as db:
