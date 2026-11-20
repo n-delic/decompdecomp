@@ -47,12 +47,78 @@ def test_only_default_matches_are_checked_and_nothing_is_changed(net, monkeypatc
     assert out['total']==out['checked']==2 and out['passed']==out['failed']==1
     assert not out['compatible'] and not out['stale']
     assert out['failures'][0]['function']=='f1'
-    assert [p['checked'] for p in progress]==[0,1,2]
-    assert {p['function'] for p in progress[1:]} == {'f0', 'f1'}
-    assert all(p['passed']+p['failed']==p['checked'] for p in progress)
+    assert any('4 functions scanned' in p['phase'] for p in progress)
+    testing = [p for p in progress if p['phase'] == 'Testing default-profile matches']
+    assert [p['checked'] for p in testing] == [0, 1, 2]
+    assert {p['function'] for p in testing[1:]} == {'f0', 'f1'}
+    assert all(p['passed']+p['failed']==p['checked'] for p in testing)
     assert net._project('game')['config']==before_config
     assert [dict(r) for r in net.store.all('SELECT * FROM functions ORDER BY id')]==before_rows
     assert not net.store.all('SELECT * FROM attempts') and not net.store.all('SELECT * FROM events')
+
+
+def test_default_trial_pages_metadata_and_only_loads_candidate_payloads(net, monkeypatch):
+    monkeypatch.setattr(trial, '_SCAN_PAGE', 2)
+    monkeypatch.setattr(trial, '_COMPILE_BATCH', 1)
+    monkeypatch.setattr(net, '_project', RomNetwork._project.__get__(net))
+    monkeypatch.setattr(net.progress, 'sync', lambda *a, **k: pytest.fail('unexpected disk reconciliation'))
+    original = net.store.all
+    loaded = []
+
+    def track_reads(sql, *args):
+        rows = original(sql, *args)
+        if sql.startswith('SELECT * FROM functions'):
+            assert 'id IN' in sql and len(args) == 2
+            loaded.extend(row['name'] for row in rows)
+        return rows
+
+    monkeypatch.setattr(net.store, 'all', track_reads)
+    monkeypatch.setattr(net, '_judge_with', lambda *a: (True, None, ''))
+    progress = []
+
+    def log(line):
+        pass
+
+    log.progress = progress.append
+    out = trial.run(net, 'game', PROFILE, log)
+
+    assert out['compatible']
+    assert loaded == ['f0', 'f1', 'f0', 'f1']
+    scans = [p for p in progress if 'done' in p]
+    assert [(p['done'], p['total']) for p in scans] == [(2, 4), (4, 4)]
+
+
+def test_stop_during_metadata_scan_skips_compilation(net, monkeypatch):
+    monkeypatch.setattr(trial, '_SCAN_PAGE', 2)
+    monkeypatch.setattr(net, '_judge_with', lambda *a: pytest.fail('cancelled run compiled'))
+    scanned = []
+
+    def log(line):
+        pass
+
+    log.progress = lambda state: scanned.append(state['done']) if 'done' in state else None
+
+    def cancel():
+        if scanned:
+            raise RuntimeError('cancelled')
+
+    log.check_cancel = cancel
+    with pytest.raises(RuntimeError, match='cancelled'):
+        trial.run(net, 'game', PROFILE, log)
+    assert scanned == [2]
+
+
+def test_changed_function_override_marks_trial_stale(net, monkeypatch):
+    def judge(*args):
+        cfg = json.loads(net._project('game')['config'])
+        cfg['function_compilers'] = {'0': {**PROFILE, 'vram': 0x80001000}}
+        with net.store.tx() as db:
+            db.execute('UPDATE projects SET config=? WHERE id=1', (json.dumps(cfg),))
+        return True, None, ''
+
+    monkeypatch.setattr(net, '_judge_with', judge)
+    out = trial.run(net, 'game', PROFILE)
+    assert out['passed'] == 2 and out['stale'] and not out['compatible']
 
 
 def test_all_passing_and_empty_population(net, monkeypatch):

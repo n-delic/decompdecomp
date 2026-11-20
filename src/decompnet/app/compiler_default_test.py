@@ -2,45 +2,103 @@
 import copy
 import json
 from concurrent.futures import as_completed
+from hashlib import sha256
 
 from .. import toolchains
 from ..network import NetworkError
 from ..project import compiler_for
 from .compiler_cleanup import profile, replace_range
 
+_SCAN_PAGE = 512
+_COMPILE_BATCH = 64
+_PROFILE_FIELDS = ('id', 'name', 'vram', 'rom_offset', 'status')
+_INPUT_FIELDS = ('id', 'name', 'vram', 'rom_offset', 'unit', 'size', 'target', 'relocs',
+                 'meta', 'status', 'matched_source', 'best_source', 'best_score')
+
+
+def _profile_pages(store, project_id, cancel, *, matched_only=False):
+    status = " AND status='matched'" if matched_only else ''
+    cursor = -2**63
+    while True:
+        cancel()
+        rows = store.all(f'SELECT {','.join(_PROFILE_FIELDS)} FROM functions WHERE project_id=?{status} '
+                         'AND id>? ORDER BY id LIMIT ?', project_id, cursor, _SCAN_PAGE)
+        if not rows:
+            return
+        yield rows
+        cursor = rows[-1]['id']
+
+
+def _function_batches(store, project_id, candidates, cancel):
+    ids = list(candidates)
+    for start in range(0, len(ids), _COMPILE_BATCH):
+        cancel()
+        batch = ids[start:start + _COMPILE_BATCH]
+        placeholders = ','.join('?' for _ in batch)
+        rows = store.all(f'SELECT * FROM functions WHERE project_id=? AND id IN ({placeholders})',
+                         project_id, *batch)
+        yield batch, {row['id']: row for row in rows}
+
+
+def _signature(fn):
+    # Keep only a digest between batches, including the saved C and target the judge saw.
+    return sha256(repr(tuple(fn[key] for key in _INPUT_FIELDS)).encode()).digest()
+
 
 def run(net, slug, selected, log=print, nonmatches=False):
     if nonmatches:
         from .compiler_nonmatch_test import run as test_nonmatches
         return test_nonmatches(net,slug,selected,log)
-    net._rom_only(slug, 'testing a compiler profile as default')
+    report = getattr(log, 'progress', lambda value: None)
+    cancel = getattr(log, 'check_cancel', lambda: None)
+    cancel()
+    report({'phase': 'Reading project metadata'})
     if (not isinstance(selected, dict) or not isinstance(selected.get('toolchain'), str)
             or not isinstance(selected.get('flags'), list) or not all(isinstance(f, str) for f in selected['flags'])):
         raise NetworkError('Choose a compiler profile from the current list.')
-    selected={'toolchain':selected['toolchain'],'flags':list(selected['flags'])}
-    proj = net._project(slug)
+    with net.progress.view():
+        net._rom_only(slug, 'testing a compiler profile as default')
+        proj = net._project(slug)
+    project_id = proj['id']
+    store = net.project_store(project_id)
     cfg = json.loads(proj['config'])
     default, target = profile(cfg['compiler']), profile(selected)
-    rows = net.project_store(proj['id']).all('SELECT * FROM functions WHERE project_id=? ORDER BY id', proj['id'])
-    if target == default or not any(profile(compiler_for(cfg, f['vram'], f)) == target for f in rows):
-        raise NetworkError('Choose a non-default compiler profile currently used in this project.')
+    profile_error = 'Choose a non-default compiler profile currently used in this project.'
+    if target == default:
+        raise NetworkError(profile_error)
+
+    def headers():
+        return [tuple(r) for r in store.all(
+            'SELECT unit,version FROM context_versions WHERE project_id=? ORDER BY version', project_id)]
+
+    original_headers = headers()
+    candidates = {}
+    target_used = False
+    scanned = 0
+    scan_total = store.one('SELECT count(*) FROM functions WHERE project_id=?', project_id)[0]
+    for rows in _profile_pages(store, project_id, cancel):
+        for fn in rows:
+            if target_used and fn['status'] != 'matched':
+                continue
+            effective = profile(compiler_for(cfg, fn['vram'], fn))
+            target_used |= effective == target
+            if effective == default and fn['status'] == 'matched':
+                candidates[fn['id']] = tuple(fn)
+        scanned += len(rows)
+        report({'phase': f'Scanning compiler profiles · {scanned:,} functions scanned',
+                'done': scanned, 'total': max(scanned, scan_total)})
+    if not target_used:
+        raise NetworkError(profile_error)
+    cancel()
+    report({'phase': 'Checking compiler installation'})
     if toolchains.installed(target[0]) is None:
         raise NetworkError('Install the selected compiler before testing it as default.')
-    def population(items, config):
-        return [f for f in items if f['status'] == 'matched' and profile(compiler_for(config, f['vram'], f)) == default]
-    candidates = population(rows, cfg)
-    def signature(items):
-        return [tuple(f[k] for k in ('id','name','vram','unit','size','target','relocs','meta','status','matched_source','best_source','best_score')) for f in items]
-    def headers():
-        return [tuple(r) for r in net.project_store(proj['id']).all('SELECT unit,version FROM context_versions WHERE project_id=? ORDER BY version', proj['id'])]
-    original_headers = headers()
+    cancel()
     state = {'total':len(candidates), 'checked':0, 'passed':0, 'failed':0,
              'profile':{'toolchain':target[0], 'flags':list(target[1])},
              'default':cfg['compiler'], 'failures':[], 'matches':[], 'stale':False, 'nonmatches':False}
-    report = getattr(log, 'progress', lambda value:None)
-    cancel = getattr(log, 'check_cancel', lambda:None)
-    def publish():
-        report({**state, 'failures':list(state['failures']), 'matches':list(state['matches']), 'phase':'Testing default-profile matches'})
+    def publish(phase='Testing default-profile matches'):
+        report({**state, 'failures': list(state['failures']), 'matches': list(state['matches']), 'phase': phase})
     publish()
     log(f"Testing {len(candidates)} matched functions using the default against {target[0]} {' '.join(target[1])}. No settings will change.")
     def check(fn):
@@ -54,32 +112,61 @@ def run(net, slug, selected, log=print, nonmatches=False):
             return fn, ok, reason
         except (NetworkError, toolchains.ToolchainError, OSError) as error:
             return fn, False, str(error)[:300]
+    signatures = {}
+
+    def record(name, ok, reason):
+        state['function'] = name
+        state['checked'] += 1
+        state['passed' if ok else 'failed'] += 1
+        if ok:
+            state['matches'].append(name)
+        else:
+            state['failures'].append({'function': name, 'reason': reason})
+        publish()
+        if state['checked'] % 25 == 0 or state['checked'] == state['total']:
+            log(f"{state['checked']}/{state['total']} checked: {state['passed']} passed, {state['failed']} did not pass.")
+
     with net._pool.group('Default compiler verification', slug) as pool:
-        pending = [pool.submit(check, fn) for fn in candidates]
-        try:
-            for future in as_completed(pending):
-                cancel()
-                fn, ok, reason = future.result()
-                state['function'] = fn['name']
-                state['checked'] += 1
-                state['passed' if ok else 'failed'] += 1
-                if ok:
-                    state['matches'].append(fn['name'])
-                if not ok:
-                    state['failures'].append({'function':fn['name'], 'reason':reason})
-                publish()
-                if state['checked'] % 25 == 0 or state['checked'] == state['total']:
-                    log(f"{state['checked']}/{state['total']} checked: {state['passed']} passed, {state['failed']} did not pass.")
-        finally:
-            for future in pending:
-                future.cancel()
+        for batch, rows in _function_batches(store, project_id, candidates, cancel):
+            pending = []
+            try:
+                for identity in batch:
+                    cancel()
+                    fn = rows.get(identity)
+                    original = candidates[identity]
+                    if fn is None or tuple(fn[key] for key in _PROFILE_FIELDS) != original:
+                        record(original[1], False, 'Function changed during preparation; rerun the test.')
+                        continue
+                    signatures[identity] = _signature(fn)
+                    pending.append(pool.submit(check, fn))
+                for future in as_completed(pending):
+                    cancel()
+                    fn, ok, reason = future.result()
+                    record(fn['name'], ok, reason)
+            finally:
+                for future in pending:
+                    future.cancel()
+
     cancel()
-    current = net.project_store(proj['id']).one('SELECT config FROM projects WHERE id=?', proj['id'])
+    publish('Confirming tested inputs')
+    current = store.one('SELECT config FROM projects WHERE id=?', project_id)
     current_cfg = json.loads(current['config']) if current else None
-    latest = net.project_store(proj['id']).all('SELECT * FROM functions WHERE project_id=? ORDER BY id',proj['id'])
-    latest_candidates = population(latest, current_cfg) if current_cfg else []
-    state['stale'] = (not current_cfg or any(current_cfg.get(k) != cfg.get(k) for k in ('compiler','compiler_ranges'))
-                      or headers() != original_headers or signature(latest_candidates) != signature(candidates))
+    stale = (not current_cfg or len(signatures) != len(candidates)
+             or any(current_cfg.get(key) != cfg.get(key)
+                    for key in ('compiler', 'compiler_ranges', 'function_compilers'))
+             or headers() != original_headers)
+    if not stale:
+        latest_ids = {
+            fn['id'] for rows in _profile_pages(store, project_id, cancel, matched_only=True)
+            for fn in rows if profile(compiler_for(cfg, fn['vram'], fn)) == default
+        }
+        stale = latest_ids != signatures.keys()
+    if not stale:
+        for batch, rows in _function_batches(store, project_id, candidates, cancel):
+            if any(key not in rows or _signature(rows[key]) != signatures[key] for key in batch):
+                stale = True
+                break
+    state['stale'] = stale
     state['compatible'] = bool(candidates) and state['failed'] == 0 and not state['stale']
     log('Test finished. Settings, matches and saved scores are unchanged.' + (' Inputs changed during the test; rerun before making a decision.' if state['stale'] else ''))
     return state
@@ -90,7 +177,8 @@ def replace_default(net, slug, selected, log=print):
     with net.progress.judging(slug):
         proj = net._project(slug)
         cfg = json.loads(proj['config'])
-        rows = net.project_store(proj['id']).all('SELECT * FROM functions WHERE project_id=? ORDER BY id', proj['id'])
+        rows = net.project_store(proj['id']).all(
+            'SELECT name,vram,rom_offset,size FROM functions WHERE project_id=? ORDER BY id', proj['id'])
         result = run(net, slug, selected, log)
         if result['stale']:
             raise NetworkError('Code or settings changed during testing. Run the replacement again.')
