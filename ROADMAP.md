@@ -3037,6 +3037,12 @@ strided table offset, signed high-word bounds, and an image-verified double bias
 The corresponding IDO gate reorders independent stores around a final argument
 reload. These use the ROM-mode measured MIPS lane and the same byte-exact judge.
 
+The measured KMC lane also tries offset-initializer shifts, clamp fallbacks on
+the store edge, a shared zero-result label for list searches, and narrow
+selector-load and float-store scheduling changes. Other gates cover masked
+bounds, previous-record addressing, guarded float numerators, float word
+stores, and address arithmetic after a single volatile base read.
+
 ## Register-only local lifetime search
 
 Shared draft, agent-local and deep searches offer bounded branch-tail locals, scalar call staging

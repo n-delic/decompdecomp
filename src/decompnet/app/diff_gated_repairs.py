@@ -25,6 +25,7 @@ from . import (
     stack_layout,
     target_conversion_diff_repairs,
     target_memory_diff_repairs,
+    target_schedule_diff_repairs,
 )
 
 REGISTER = r'\$[a-z0-9]+'
@@ -147,6 +148,8 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
             result += arithmetic.squared_terms(source,name,header)
         return result
 
+    if toolchain.startswith('gcc-2.7.2-kmc'):
+        result += target_schedule_diff_repairs.proposals(source,name,header,rows,target,candidate,flags)
     result += target_conversion_diff_repairs.proposals(source,name,header,toolchain,rows,target,candidate,asm,
                                                read_data=read_data,big_endian=big_endian)
     result += target_memory_diff_repairs.proposals(source,name,header,rows,asm,target,candidate,toolchain,
