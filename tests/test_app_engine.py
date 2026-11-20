@@ -81,6 +81,31 @@ def test_split_match_and_rename(net):
     assert "clamp_s32" in net._function("clamp_s32", "demo-quest-64")["matched_source"]
 
 
+def test_rename_keeps_a_waiting_compiler_bundle_current(built, tmp_path):  # noqa: F811
+    from decompnet.app.function_profile_suggestions import actionable
+
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path)
+    slug = net.import_rom(built, confirmed=True, log=lambda *_: None)
+    old = "func_800081A0"
+    agent, _ = net.local_agent("tester")
+    fn = net._function(old, slug)
+    bundle = {"function": old, "vram": fn["vram"], "size": fn["size"],
+              "source": f'const char *{old}(void) {{ return "{old}"; }}',
+              "header": f"const char *{old}(void);"}
+    net._update_cfg(slug, lambda cfg: cfg.update(suggestions=[
+        {"id": 1, "status": "open", "toolchain": "gcc-2.7.2-kmc", "function_match": bundle},
+    ]))
+
+    assert net.rename_symbol(agent, slug, old, "renamed_function").startswith("✅")
+    proj = net.project_row(slug)
+    suggestion, = net.cfg(proj)["suggestions"]
+    assert actionable(net, proj, suggestion)
+    assert suggestion["function_match"] == dict(
+        bundle, function="renamed_function",
+        source=f'const char *renamed_function(void) {{ return "{old}"; }}',
+        header="const char *renamed_function(void);")
+
+
 def test_an_address_name_already_given_a_name_is_not_renamed_again(net):
     """Two helpers renamed one function at once: the second rename of its address name added a second name at the
     address and renamed the function, while its matched C kept the first name, so it stopped matching."""

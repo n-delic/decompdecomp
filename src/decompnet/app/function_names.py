@@ -44,6 +44,10 @@ def record(db, fid, old, new, **provenance):
 _C_TOKEN = re.compile(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|[A-Za-z_]\w*', re.S)
 
 
+def rename_identifiers(source: str, names: dict[str, str]) -> str:
+    return _C_TOKEN.sub(lambda match: names.get(match[0], match[0]), source)
+
+
 def canonical_source(fn, source: str) -> str:
     """Old saved attempts can predate a rename. Replay the function under its current symbol, preserving literals,
     comments and whitespace (period compilers can schedule differently when formatting changes)."""
@@ -55,4 +59,4 @@ def canonical_source(fn, source: str) -> str:
         aliases.add(f"func_{fn['vram']:08X}")
     aliases.discard(None)
     aliases.discard(fn["name"])
-    return _C_TOKEN.sub(lambda m: fn["name"] if m.group() in aliases else m.group(), source)
+    return rename_identifiers(source, dict.fromkeys(aliases, fn["name"]))

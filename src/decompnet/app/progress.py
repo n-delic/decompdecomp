@@ -30,6 +30,7 @@ import stat
 import threading
 import time
 import zlib
+from collections import Counter
 from contextlib import ExitStack, contextmanager
 from contextvars import copy_context
 from dataclasses import dataclass, field
@@ -41,6 +42,7 @@ from ..network import NetworkError
 from ..request_timing import phase
 from ..rom.symbols import ASM_LOCAL, IDENT
 from ..store import in_transaction
+from .function_names import rename_identifiers
 
 log = logging.getLogger("decompdecomp")
 
@@ -481,6 +483,66 @@ def _merge_manifest(old, new, current, key: str = ""):
         ordered.extend(current_items[name] for name in order if name in current_items)
         return ordered
     return new
+
+
+def _reconcile_renames(store, pid, saved, rendered, disk, before, pending, removed):
+    """Carry saved files through a database rename, preserving edits under the old filename."""
+    local = json.loads(rendered[saves.MANIFEST])
+    if saved["layout"] == local["layout"]:
+        return False
+    local_names = {entry["name"] for entry in local["layout"]}
+    missing = {entry["name"]: entry for entry in saved["layout"] if entry["name"] not in local_names}
+    if not missing:
+        return False
+    rows = metadata_rows(store, ("name", "vram", "size", "original", "previous"),
+        """SELECT name,vram,size,json_extract(meta,'$.naming.original_name') AS original,
+           json_extract(meta,'$.naming.previous_name') AS previous FROM functions
+           WHERE project_id=? AND json_extract(meta,'$.naming.name')=name""", pid)
+    renames = {}
+    for row in rows:
+        for old in {row["original"], row["previous"]} & missing.keys():
+            if (missing[old]["vram"], missing[old]["size"]) == (row["vram"], row["size"]):
+                renames.setdefault(old, []).append(row["name"])
+    renames = {old: new[0] for old, new in renames.items() if len(new) == 1}
+    # Several former names of one function on disk can represent independent edits.
+    counts = Counter(renames.values())
+    renames = {old: new for old, new in renames.items() if counts[new] == 1}
+    if not renames:
+        return False
+
+    merged = json.loads(pending.get(saves.MANIFEST, disk[saves.MANIFEST]))
+    layout = {entry["name"]: entry for entry in merged["layout"]}
+    for old, new in renames.items():
+        entry = layout.pop(old, missing[old])
+        layout.setdefault(new, dict(entry, name=new))
+        for key in ("functions", "function_headers"):
+            entries = merged.get(key) or {}
+            if old in entries:
+                entries.setdefault(new, entries.pop(old))
+        for directory in ("src", "best"):
+            source = f"{directory}/{saves._source_file(old)}"
+            target = f"{directory}/{saves._source_file(new)}"
+            if source == target or source not in disk:
+                continue
+            text = disk[source]
+            if before is None or _hash(text) != before.files.get(source) or target not in rendered:
+                renamed = rename_identifiers(text, renames)
+                if target in disk and saves._source_text(disk[target]) != saves._source_text(renamed):
+                    raise NetworkError(f"Both {source} and {target} contain saved C. Reconcile their edits before syncing.")
+                if target not in rendered or saves._source_text(renamed) != saves._source_text(rendered[target]):
+                    pending[target] = renamed
+                elif target not in disk:
+                    pending[target] = rendered[target]
+            elif target not in disk:
+                pending[target] = rendered[target]
+            pending.pop(source, None)
+            removed[source] = None
+    merged["layout"] = list(layout.values())
+    current_symbols = {(sym["name"], sym["address"]) for sym in local.get("symbols", [])}
+    merged["symbols"] = [sym for sym in merged.get("symbols", [])
+                         if (renames.get(sym["name"]), sym["address"]) not in current_symbols]
+    pending[saves.MANIFEST] = saves.manifest_text(merged)
+    return True
 
 
 def _initial_merge(manifest: dict, projected: dict[str, str], disk: dict[str, str]) -> tuple[dict, dict[str, str]]:
@@ -2379,6 +2441,7 @@ class Progress:
             deferred, recheck_due = set(), False
             judging_change = True  # Unknown import shapes conservatively invalidate in-flight results.
             pending = {}
+            reconciled_renames = False
             if projected is not None:
                 rendered = comparison if comparison is not None else saves._render(net, slug)[0]
                 previous = projected
@@ -2410,6 +2473,8 @@ class Progress:
                                         json.loads(disk[saves.MANIFEST])))
                 removed = {name: None for name in previous.files
                            if name not in changed and name not in rendered}
+                reconciled_renames = _reconcile_renames(
+                    store, pid, json.loads(disk[saves.MANIFEST]), rendered, disk, before, pending, removed)
                 candidate = {name: text for name, text in (disk | pending).items() if name not in removed}
                 # (the merge keeps a header entry the last sync's manifest had, after its function matched and the
                 # database's render dropped it: no file anywhere, and every sync after refused the folder)
@@ -2593,7 +2658,8 @@ class Progress:
                                                          files=applied_files, restore_notes=restore_notes, agents=agents)
                     report.check_cancel()
                     if not saves._publish(folder, pending, removed, expected=disk,
-                                          chosen=bool(cfg.get("progress_folder")), guarded=disk.keys() | applied_changed):
+                                          chosen=bool(cfg.get("progress_folder")), guarded=disk.keys() | applied_changed,
+                                          write_before_remove=reconciled_renames):
                         raise _FolderChanged
             except _FolderChanged:
                 return self._refused(slug, folder, set(pending) | set(removed) | disk.keys() | applied_changed,

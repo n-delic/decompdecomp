@@ -621,6 +621,37 @@ def test_an_invalid_merged_rename_does_not_write_the_manifest(project):
     assert path.read_bytes() == before
 
 
+@pytest.mark.parametrize("first_sync", [False, True])
+def test_a_database_rename_reconciles_a_saved_source_edit(project, first_sync):
+    from decompnet.app.function_names import record
+
+    net, folder, judged = project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched',matched_source='int f(void) { return 1; } /* good */' "
+                   "WHERE name='f'")
+    net.progress.sync("game", force=True)
+    old = folder / "src/f.c"
+    old.write_text('int f(void) { return 2; } /* good f */\n')
+    with net.store.tx() as db:
+        fid = db.execute("SELECT id FROM functions WHERE name='f'").fetchone()["id"]
+        db.execute("UPDATE functions SET name='renamed',matched_source='int renamed(void) { return 1; } /* good */' "
+                   "WHERE id=?", (fid,))
+        record(db, fid, "f", "renamed")
+        if first_sync:
+            db.execute("DELETE FROM progress_state")
+    if first_sync:
+        net.progress = Progress(net)
+    net.progress.sync("game", force=True)
+    layout = json.loads((folder / saves.MANIFEST).read_text())["layout"]
+    assert {entry["name"] for entry in layout} == {"renamed", "g"}
+    assert not old.exists()
+    edited = 'int renamed(void) { return 2; } /* good f */\n'
+    assert (folder / "src/renamed.c").read_text() == edited
+    assert ("renamed", edited) in judged
+    assert net._function("renamed", "game")["status"] == "matched"
+    assert not net.progress.sync("game", force=True)
+
+
 def test_a_failed_edited_match_keeps_the_last_match_as_a_best_backup(project):
     net, folder, _ = project
     with net.store.tx() as db:
