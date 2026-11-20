@@ -231,3 +231,13 @@ def test_parallel_baseline_refreshes_after_generation_change(monkeypatch):
     original = net.function()
     assert baseline(search, AGENT, net.project_row('game'), original, None, None) == (39, 1)
     assert seen == [original['best_source'], 'new']
+
+
+def test_empty_call_result_pass_keeps_remeasured_baseline(monkeypatch):
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    search = deep_permuter.Search(net, 1, 10, Log())
+    fn = net.function()
+    assert search.call_result_pass(AGENT, net.project_row('game'), fn, 115, None) == 115
+    assert search.tested == 0

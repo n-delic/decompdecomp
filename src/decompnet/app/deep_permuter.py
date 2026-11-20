@@ -348,7 +348,7 @@ class Search(Permuter):
                 if score is not None:
                     round_best = min(round_best, score)
             fn = self.net._function(fn['name'], proj['slug'])
-            if fn['best_score'] >= best:
+            if fn['best_source'] == parent or fn['best_score'] >= best:
                 break
             best = fn['best_score']
             self.log(f'Call-result lifetime search reached {best:,}.')
