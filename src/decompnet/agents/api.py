@@ -117,7 +117,7 @@ class Api(Agent):
         if saved:
             saved[0] = messages[0]  # Current rules and tools apply after restart.
             messages = saved + [{'role':'user','content':'Resume after interruption. Check current project state and reclaim eligible work. ' + handoff(s)}]
-            if s.options.get('automatic_assignment') and s.startup_context:
+            if (s.options.get('automatic_assignment') or s.options.get('focus_id')) and s.startup_context:
                 messages[-1]['content'] = s.startup_context + handoff(s)
             s.push('info','Restored saved API conversation and function handoff.')
         if s.record:

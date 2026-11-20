@@ -15,6 +15,9 @@ def plateau(scores):
 
 
 def track(net,agent,slug,fn):
+    from .focused_agents import scope as focused_scope
+    if focused_scope(net, agent):
+        return ''
     if net._function(fn['name'],slug)['status']!='open':
         return ''
     claim=net.project_store(fn['project_id']).one('SELECT claimed_at FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id)

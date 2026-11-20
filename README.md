@@ -380,6 +380,12 @@ accepted release. The worker follows its work selection and functions-per-sessio
 model requests when there is no eligible work. The option starts unchecked, so you can run workers in
 both modes on the same project.
 
+To keep an agent on a single function, open the function’s **Focused agent** panel and set **Maximum tries**.
+The app manages the assignment and ends the run on a verified match or when the budget is spent.
+Each recorded candidate submission uses one try, including compile errors and each judged variant in a batch.
+Cached repeats and compiler diagnostics use no tries. You can also set a time limit.
+The function panel shows the live count, and saved improvements are kept when the run ends.
+
 **Only functions below match %** restricts automatic claims to functions whose best recorded match percentage is
 strictly below the threshold, plus functions with no scored attempt. For example, 80 includes unscored functions
 and those below 80%, but excludes one at exactly 80%. This is the app's comparison score, not an estimate of work
