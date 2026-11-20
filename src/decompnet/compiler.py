@@ -372,6 +372,10 @@ def compile_source(cfg: CompilerConfig, context_header: str, source: str, truste
         # A deep search's compile thread: the work runs in its child process (compile_worker.py).
         return remote(cfg, context_header, source, trusted,
                       lambda: _compile_here(cfg, context_header, source, trusted))
+    from .app import attempt_workers
+    if _ARTIFACT_SINK.get() is None and attempt_workers.active():
+        args = (cfg, context_header, source, trusted)
+        return attempt_workers.run("compile", args, lambda: _compile_here(*args), compile_slot=True)
     return _compile_here(cfg, context_header, source, trusted)
 
 

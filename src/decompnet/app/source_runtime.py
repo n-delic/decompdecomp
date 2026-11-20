@@ -109,6 +109,8 @@ def changed_workers(paths) -> set[str]:
             workers.add("renderers")
         elif path == "src/decompnet/app/rom_scan_worker.py":
             workers.add("rom-scan")
+        elif path == "src/decompnet/app/attempt_worker_child.py":
+            workers.add("attempt")
         elif path not in ("README.md", "ROADMAP.md") and not path.startswith(("docs/", "tests/")):
             return set()
     return workers
@@ -191,7 +193,7 @@ class Runtime:
                 if self.cancel.is_set():
                     break
                 command(argv, cwd)
-            for module in ('tool_reader_worker', 'render_worker_child', 'rom_scan_worker'):
+            for module in ('tool_reader_worker', 'render_worker_child', 'rom_scan_worker', 'attempt_worker_child'):
                 if self.cancel.is_set():
                     break
                 if (staged / f'src/decompnet/app/{module}.py').is_file():
@@ -231,13 +233,15 @@ class Runtime:
             raise ValueError("The source update was applied, but the tool reader hasn't started. "
                              "The app is answering its requests. See logs/tool-reader.log for details.")
         labels = {"permuter": "permuter", "reader": "tool reader", "renderers": "saved-progress render workers",
-                  "rom-scan": "ROM Explorer scan worker"}
+                  "rom-scan": "ROM Explorer scan worker", "attempt": "compile and judge workers"}
         names = ", ".join(label for key, label in labels.items() if key in workers)
         message = f"Updated the {names}. The app, agents and other jobs kept running."
         if "renderers" in workers:
             message += " Each render worker picks up the change on its next save."
         if "rom-scan" in workers:
             message += " In-progress scans finish with their original code. New scans use the update."
+        if "attempt" in workers:
+            message += " Active attempts finish with their original code. New attempts use the update."
         self.job.update(state="done", message=message)
         return True
 

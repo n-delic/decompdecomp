@@ -867,9 +867,9 @@ app and leaves this one running. Neither copies/migrates data nor alters the ins
 New managed agent sessions and jobs are held until existing work finishes. Continuous background
 passes may need to be stopped from their own panels. You can cancel while waiting. Once idle, the
 app fast-forwards main, runs locked dependency sync, checks imports, then restarts with the chosen
-home. For changes confined to the permuter, tool reader, saved-progress renderer or ROM Explorer
-scan worker, the source app fast-forwards the checkout while agents, their claims and other jobs
-continue.
+home. For changes confined to the permuter, tool reader, saved-progress renderer, ROM Explorer
+scanner or compile and judge worker, the source app fast-forwards the checkout while agents,
+their claims and other jobs continue.
 Local changes, another branch, a different origin or failed preparation stop the handoff.
 The checkout and selected data remain separate from packaged code: to return to the packaged app,
 quit the source app before opening the installed app using the same data. External AI clients do
@@ -887,6 +887,8 @@ A permuter turn may be retried. The app can serve the tool reader's requests dur
 After an edit to `render_worker_child.py`, each render worker finishes its current save and picks
 up the new code on its next save. ROM Explorer starts a fresh process for each scan, so edits to
 `rom_scan_worker.py` take effect on the next scan and any scan already running can finish.
+Edits to `attempt_worker_child.py` take effect on the next ROM or project-mode attempt.
+An active attempt keeps its original worker code through result recording.
 Changes shared with the main Python backend require an app restart. Running copies need an
 initial restart to pick up worker reload support.
 
