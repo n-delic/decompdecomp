@@ -188,7 +188,8 @@ def track(net,agent,slug,fn):
     states[key]={'seen':seen,'repeated':count}
     while len(states)>128:
         del states[next(iter(states))]
-    limit=net.selection(slug,agent.name).get('unchanged_compiles',8)
+    from .focused_agents import scope as focused_scope
+    limit=0 if focused_scope(net,agent) else net.selection(slug,agent.name).get('unchanged_compiles',8)
     if limit and count>=limit and net._function(fn['name'],slug)['status']=='open':
         held=net.project_store(fn['project_id']).one('SELECT 1 FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id)
         if held:

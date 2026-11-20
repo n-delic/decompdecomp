@@ -37,3 +37,27 @@ def differences(before, after):
     missing = object()
     return {key for key in before.keys() | after.keys()
             if before.get(key, missing) != after.get(key, missing)}
+
+
+# Target listings can include splat's comment columns or a disassembly address.
+_OPCODE = re.compile(r'^\s*(?:/\*[^*]*\*/\s*)?(?:[0-9a-f]+:\s*)?([a-z][a-z0-9_.]*)\b', re.I)
+
+
+def opcode(text):
+    match = _OPCODE.match(text)
+    return match[1].lower() if match else ''
+
+
+def mismatch_signature(rows):
+    """Keep a compact, register- and address-independent sample of the failed verdict."""
+    from itertools import islice
+
+    pairs = {}
+    for marker, target, candidate in islice(rows, 2048):
+        if marker != ' ':
+            pair = (marker, opcode(target), opcode(candidate))
+            if pair[1] or pair[2]:
+                pairs[pair] = None
+                if len(pairs) == 12:
+                    break
+    return list(pairs)

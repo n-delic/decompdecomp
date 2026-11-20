@@ -36,6 +36,13 @@
   --cc-4: var(--color-status-success-fill); --cc-5: var(--color-status-warning-fill);
   --cc-6: color-mix(in oklch, var(--color-status-info-fill) 50%, var(--color-status-danger-fill));
   --cc-7: color-mix(in oklch, var(--color-status-success-fill) 50%, var(--color-status-info-fill));
+  /* Extra ROM region colours for maps with several types that share a preferred colour. */
+  --rom-color-coral: color-mix(in oklch, var(--cc-3) 65%, var(--cc-5));
+  --rom-color-pink: color-mix(in oklch, var(--cc-3) 65%, var(--cc-6));
+  --rom-color-lavender: color-mix(in oklch, var(--cc-6) 66%, white);
+  --rom-color-sky: color-mix(in oklch, var(--cc-1) 63%, white);
+  --rom-color-mint: color-mix(in oklch, var(--cc-4) 62%, white);
+  --rom-color-olive: color-mix(in oklch, var(--cc-4) 55%, var(--cc-2));
   --move: var(--color-status-info-text); --move-bg: var(--color-status-info-surface);
   --code-bg: var(--color-surface-sunken);
   --btn: var(--button-primary-bg); --btn-hover: var(--button-primary-bg-hover); --btn-ink: var(--button-primary-fg);

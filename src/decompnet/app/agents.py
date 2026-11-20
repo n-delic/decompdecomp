@@ -498,6 +498,8 @@ class Session:
                 "boundary_function":self.options.get("boundary_function"), "boundary_until":self.options.get("boundary_until"),
                 "focus_function":self.options.get("focus_function"), "focus_until":self.options.get("focus_until"),
                 "focus_id":self.options.get("focus_id"), "focus_minutes":self.options.get("focus_minutes"),
+                "focus_max_tries":self.options.get("focus_max_tries"),
+                "focus_tries_used":self.options.get("focus_tries_used", 0),
                 "per_session": self.options.get("per_session", PER_SESSION),
                 "automatic_assignment": self.options.get("automatic_assignment", False),
                 "task": self.options.get("task") or "",  # "readable": it polishes matched code
@@ -904,7 +906,8 @@ class Manager:
         with self._lock:
             session=self.sessions.get(sid)
             if session is None:raise ValueError('This agent no longer exists. Refresh the agents list.')
-            if session.options.get('task') in NOT_MATCHING:raise ValueError('Retry paused functions applies to matching agents.')
+            if session.options.get('task') in NOT_MATCHING or session.options.get('focus_id'):
+                raise ValueError('Retry paused functions applies to agents that work through a queue.')
             slug, name = session.slug, session.agent_name
         agent=self.net.attribution_agent(name)
         return retry_paused.retry(self.net,slug,agent,limit,log=log)
@@ -917,6 +920,11 @@ class Manager:
             if per_session is not None and (type(per_session) is not int or not 1 <= per_session <= 20):
                 raise ValueError("Functions per session must be a whole number from 1 to 20.")
             policy = self.net.validate_selection(policy)
+            if s.options.get('focus_id'):
+                if per_session is not None:
+                    raise ValueError('Focused agents work on their assigned function. Set the try limit when starting a focused agent.')
+                disabled = policy.get('disabled_tools', (s.options.get('selection') or {}).get('disabled_tools', []))
+                policy = {**(s.options.get('selection') or {}), 'disabled_tools': disabled}
             if 'disabled_tools' not in policy and 'disabled_tools' in (s.options.get('selection') or {}):
                 policy = {**policy, 'disabled_tools':s.options['selection']['disabled_tools']}
             policy = self.net.set_selection(s.slug, s.agent_name, policy)
@@ -947,9 +955,11 @@ class Manager:
         if session.options.get('task') == 'boundary':
             from .boundary_investigations import INSTRUCTIONS
             return INSTRUCTIONS
-        from . import automatic_assignment
+        from . import automatic_assignment, focused_agents
         from .prompt_settings import for_session
         instructions = for_session(self.net, session)['instructions']
+        if session.options.get('focus_id'):
+            return focused_agents.prompt(session) + '\n\n' + instructions
         if automatic_assignment.configured(session.options):
             return automatic_assignment.INSTRUCTIONS + '\n\n' + instructions
         return instructions
@@ -986,9 +996,8 @@ class Manager:
         s.output_limit_retries = 0
         s.started_at = time.time()
         if s.options.get('focus_id'):
-            s.options.setdefault('focus_until',s.started_at+s.options['focus_minutes']*60)
-            with self.net.store.tx() as db:
-                db.execute('UPDATE helpers SET options=? WHERE id=?',(json.dumps({k:v for k,v in s.options.items() if k!='api_key'}),s.id))
+            from .focused_agents import begin
+            begin(s)
         self._save(s)
         s.thread = threading.Thread(target=self._run, args=(s,), daemon=True, name=f"agent-{s.agent_name}")
         s.thread.start()
@@ -1027,7 +1036,10 @@ class Manager:
             options = self.options_now(s.kind, dict(s.options))
             if options is None:
                 raise ValueError("its account or API endpoint was removed: start a new helper and choose another one")
-            options.pop('focus_until',None)  # A manual restart explicitly begins a fresh time allowance.
+            # Start again gives the same function a fresh budget. Provider and
+            # app restarts keep the current run's allowance.
+            for key in ('focus_until', 'focus_since', 'focus_tries_used'):
+                options.pop(key, None)
             s.options, s.restarts = options, 0
             if not s.options.get("focus_id") and s.options.get("task") not in NOT_MATCHING:
                 self._prepare(s.slug)
@@ -1712,7 +1724,7 @@ class Manager:
                 investigation = 'Boundary recommendation submitted'
             if task=="assets" and asset_agents.progress(self.net,s.slug,agent.id)>asset_before:
                 investigation="Asset findings or unsuccessful approaches saved for review"
-            followup = task not in {"boundary","assets"} and ok and not s.rotated and not investigation and session_followups.premature(self, s, agent, compiled)
+            followup = not s.options.get("focus_id") and task not in {"boundary","assets"} and ok and not s.rotated and not investigation and session_followups.premature(self, s, agent, compiled)
             if compiled >= 2:
                 s.continuation_attempts = 0
             if followup:
@@ -1958,7 +1970,8 @@ class Manager:
             agent = self.net.authenticate(token)
         from . import automatic_assignment
         automatic = automatic_assignment.configured(s.options)
-        if (agent.id, s.slug) in getattr(self.net, '_pending_tool_handshakes', set()):
+        focused = bool(s.options.get('focus_id'))
+        if not focused and (agent.id, s.slug) in getattr(self.net, '_pending_tool_handshakes', set()):
             if automatic:
                 s.startup_context = 'First call project_info(detail=false) to confirm the tool connection and get your assigned function.'
                 return
@@ -1972,9 +1985,11 @@ class Manager:
             # A fresh provider session has no copy of a previous session's brief/C.
             getattr(self.net, '_claim_packets', {}).pop((agent.id, s.slug), None)
             packet = tools._claim(self.net, agent, s.slug, '', '', count=1)
+            if focused and packet.startswith(('Nothing to claim', 'Nothing left to claim', 'Work availability:')):
+                raise StartupMetadataPending('Waiting for the assigned function before starting the model.')
             if len(packet) > STARTUP_BRIEF_CHARS:
                 packet = packet[:STARTUP_BRIEF_CHARS].rsplit('\n', 1)[0] + '\n[Startup brief abbreviated. Read get_function(section=brief) or get_candidate for omitted evidence before editing.]'
-            if automatic:
+            if automatic or focused:
                 parts += ['Start with the assigned function below.', packet]
             else:
                 parts += ['The app already called claim_function(count=1) for you. Start with the brief below. '
@@ -2008,7 +2023,7 @@ class Manager:
             ov.get("platform") or "", ov.get("kind") or "", (ov.get("compiler") or {}).get("toolchain", ""))
         if automatic_assignment.configured(s.options):
             text = automatic_assignment.INSTRUCTIONS + "\n\n" + text.replace("release_function", automatic_assignment.RELEASE)
-        elif (order := self.net.claim_order(s.slug)):
+        elif not s.options.get('focus_id') and (order := self.net.claim_order(s.slug)):
             text += (f"\nThe project's owner chose the order helpers take functions in: {network.CLAIM_ORDERS[order]}. "
                      "claim_function without a function follows it; one you name still comes.\n")
         if (wish := self.net.instructions(s.slug)):
@@ -2018,10 +2033,6 @@ class Manager:
         if (known := self.net.knowledge.for_prompt(s.slug, knowledge_agent)):
             text += f"\n{known}\n"
         text += previous(self.net, s.id, s.slug)
-        if s.options.get('focus_id'):
-            text += (f"\nUSER FOCUS: Work only on {s.options['focus_function']} until the app's deadline. "
-                     'Do not move to other functions, even after repeated failures. Read callees as needed, save improved candidates and notes. '
-                     'Keep this conversation running; compact older context rather than ending the session. The app stops this worker on a match or timeout.\n')
         if s.continuation_note:
             text += '\n\nSession continuation guidance:\n' + s.continuation_note
             s.continuation_note = ""
@@ -2108,7 +2119,7 @@ class Manager:
         if s.options.get('resume_conversation') and k.focus_resume:
             prompt += '\nResume this conversation after interruption. Continue from saved context, checking current state first.\n'
         if s.tool_handshake_required:
-            prompt += '\nFirst call project_info(detail=false) to confirm tools in this CLI session, before claiming or editing. If unavailable, end immediately and report the connection failure. The app will retry once.'
+            prompt += '\nFirst call project_info(detail=false) to confirm tools in this CLI session, before editing. If unavailable, end immediately and report the connection failure. The app will retry once.'
         try:
             prompt_file = k.prompt_file(workdir, prompt)
         except ValueError as e:

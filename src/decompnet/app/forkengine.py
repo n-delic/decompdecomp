@@ -3406,7 +3406,7 @@ class ForkEngine:
                 if d.match_percent is not None:
                     own = max(1, len(d.literals)) if d.literals else scaled(d.match_percent, fn["n_insns"])
                 if quiet is None:  # an attempt, never the best: release puts the best back in the file
-                    self.net._record(fn, agent, own, code, 0, compiled=True, best=False)
+                    self.net._record(fn, agent, own, code, 0, compiled=True, best=False, mismatch_rows=d.rows)
                 listed = ", ".join(broken[:8])
                 if own is None:
                     text = (f"❌ REJECTED and undone: your change breaks matched function(s) {listed}. Check you "
@@ -3454,7 +3454,7 @@ class ForkEngine:
             if not matched and not keep and not was_matched:  # tried, not kept: the file stays as it was
                 undo()
                 if quiet is None or score < quiet:
-                    self.net._record(fn, agent, score, code, 0, compiled=True)
+                    self.net._record(fn, agent, score, code, 0, compiled=True, mismatch_rows=d.rows)
                 return {**evidence,"text": f"{percent_text(pct)} match (score {score}); not kept in {unit.source}", "score": score,
                         "matched": False, "percent": pct}
             best = fn["best_score"]
@@ -3464,7 +3464,7 @@ class ForkEngine:
                 # the one the notes and the brief call the best (an agent found its 91.8% try there, not its 92.3%)
                 undo()
                 if quiet is None:
-                    self.net._record(fn, agent, score, code, 0, compiled=True)
+                    self.net._record(fn, agent, score, code, 0, compiled=True, mismatch_rows=d.rows)
                 stall = self.net.stall_note(fn["id"], agent.id)
                 text = remembered(f"{percent_text(pct)} match (score {score}), worse than the best so far (score "
                                   f"{best}), so {unit.source} keeps what it had; your attempt is recorded.\n"
@@ -3485,7 +3485,7 @@ class ForkEngine:
                                                         f"Edited by {agent.name} with decompdecomp.")
                 return {**evidence,"text": f"✅ {fn['name']} still matches; your tidier version is committed.{_renamed_note(d)}",
                         "score": 0, "matched": True, "adopted": True}
-            self.net._record(fn, agent, score, code, 0, matched=matched)
+            self.net._record(fn, agent, score, code, 0, matched=matched, mismatch_rows=d.rows)
             self._apply_scores(proj, fn["unit"], d.unit_scores, skip=fn["id"], agent=agent, text=after,
                                via=f"unit diff after a compile of {fn['name']}")
             self._remember(proj, fp, unit, d)

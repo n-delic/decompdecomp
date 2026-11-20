@@ -3649,9 +3649,10 @@ Done: the function dialog can create one configured CLI/API agent for a named fu
 and a 1–240 minute wall-clock allowance. Shared claim enforcement pins the function by
 stable ID (including batch claims, PROJECT mode and room requests), preserving normal
 leases. Busy targets wait before a paid session starts. Context rotations stay on the
-same target; matches/set-aside status or expiry stop the worker through normal process
-termination and claim release. Deadlines persist across app restart; a manual agent
-restart grants a new allowance. The Agents card shows the target and deadline; the
+same target. The app owns the claim and stops the worker on a verified match, the
+configured try limit, set-aside status or an optional deadline. Try budgets and deadlines
+persist across app restart; a manual agent restart grants a new allowance. The Agents card
+shows the target and try count, and the function panel shows progress. The
 launcher has its own Stop control. No model is started until the user clicks Start.
 The function drawer groups AI and local search in matching shared collapsible boxes,
 with aligned cost labels and controls in both themes and narrow layouts.
@@ -3660,7 +3661,7 @@ with aligned cost labels and controls in both themes and narrow layouts.
 ## Focused conversation continuity
 
 Focused workers bypass ordinary 80-tool/160,000-character rotation and receive a continuous-work
-prompt until match, user stop or deadline. Codex and Claude persist and resume their exact provider
+prompt until match, try limit, user stop or an optional deadline. Codex and Claude persist and resume their exact provider
 conversation between turns (never a global latest session), leaving native compaction enabled.
 The compatible API loop removes its ordinary step/function cap for focused runs and summarizes
 older context in place near its context budget, preserving instructions and the latest complete

@@ -117,7 +117,7 @@ class Api(Agent):
         if saved:
             saved[0] = messages[0]  # Current rules and tools apply after restart.
             messages = saved + [{'role':'user','content':'Resume after interruption. Check current project state and reclaim eligible work. ' + handoff(s)}]
-            if s.options.get('automatic_assignment') and s.startup_context:
+            if (s.options.get('automatic_assignment') or s.options.get('focus_id')) and s.startup_context:
                 messages[-1]['content'] = s.startup_context + handoff(s)
             s.push('info','Restored saved API conversation and function handoff.')
         if s.record:
@@ -616,6 +616,13 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                                    s(function=st("function",True),revision=st("affected revision",True),
                                      issue=st("uninitialized|loop_mutation|wrong_store|wrong_value|other",True),
                                      reason=st("10–600 characters",True),alternative_revision=st("compiled alternative"))),
+        "search_repair_examples": ("Search up to 12 verified repair summaries in this project. One live claim provides ranking context.",
+                                   s(category=st(repair_labels + " | unclassified", True),
+                                     function=st("Optional ranking context for multiple claims"))),
+        "get_repair_examples": ("Read before/after diff excerpts and compiler settings for selected IDs.",
+                                s(ids={"type":"array","items":{"type":"integer","minimum":1},"minItems":1,"maxItems":6,"req":True})),
+        "upvote_repair_example": ("Mark an example that helped. One vote per agent and example.",
+                                  s(id={"type":"integer","minimum":1,"description":"Repair example ID","req":True})),
         "report_repair": ("Classify your captured verified repair before moving on.",
                           s(function=st("Function you matched", True), case_id=it("Repair example ID from the match result"),
                             change=st("Optional decisive change"), category=st(repair_labels),

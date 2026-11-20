@@ -3,11 +3,12 @@ homemade N64 image: a boot stub that clears .bss, one code segment, and its data
 import hashlib
 import json
 import struct
+from pathlib import Path
 
 import pytest
 
 from decompnet import toolchains
-from decompnet.app import data_units
+from decompnet.app import data_agents, data_units
 from decompnet.app.engine import RomNetwork
 from decompnet.consoles.n64.rom import bss_start
 from decompnet.port.readiness import readiness
@@ -71,6 +72,26 @@ def test_the_data_after_the_code_is_read_and_its_units_bounded_by_the_game_s_ref
         unit = data_units.unit(net, "game", "D_80000500")
     assert unit["span"] == 0x10 and unit["next"] == "D_80000510" and unit["used_by"] == ["boot"]
     assert bytes.fromhex(unit["bytes"]) == GAME_DATA[:0x10] and not unit["bss"]
+
+
+def test_explicit_split_data_fills_the_queue_when_the_parent_already_ends_at_bss(project):
+    net = project
+    with net.progress.view():
+        proj = dict(net.project_row("game"))
+        cfg = json.loads(proj["config"])
+        cfg["segments"][0]["rom_end"] = 0x1140
+        proj["config"] = json.dumps(cfg)
+        assert data_agents.queue(net, proj) == []
+
+        (Path(proj["root"]) / "game.yaml").write_text(
+            "segments:\n"
+            "- {type: code, start: 0x1000, vram: 0x80000400, subsegments: "
+            "[[0x1000, c], [0x1100, data], {type: bss, vram: 0x80000540}]}\n"
+            "- [0x1140]\n",
+            encoding="utf-8",
+        )
+        assert data_units.initialised_data(net, proj) == [{"rom_start": 0x1100, "vram": DATA, "size": 0x40}]
+        assert data_agents.queue(net, proj) == [DATA, DATA + 0x10]
 
 
 @pytest.fixture

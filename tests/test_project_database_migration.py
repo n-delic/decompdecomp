@@ -542,3 +542,37 @@ def test_corrupt_project_startup_names_slug_and_preserves_evidence(tmp_path):
     with pytest.raises(CorruptDatabaseError, match="Project 'first'") as failure:Network(path)
     assert str(selected) in str(failure.value)
     assert selected.read_bytes() == contents
+
+
+def test_repair_mismatch_evidence_and_votes_follow_the_project(tmp_path):
+    from decompnet.app import repair_search
+    from decompnet.network import Agent
+
+    path = tmp_path / 'catalog.db'
+    legacy(path)
+    agent = Agent(1, 'worker', None)
+    net = Network(path)
+    try:
+        fn = net._function('function', 'first')
+        # This recorded miss improves the legacy baseline and supplies the frozen instruction pair.
+        net._record(fn, agent, 5, 'int function(unsigned x) { return x > 1; }', 1,
+                    mismatch_rows=[('|', 'slt a0, a1', 'sltu a0, a1')])
+        net._record(fn, agent, 0, 'int function(int x) { return x > 1; }', 1, matched=True)
+        case = net.store.one('SELECT id FROM main.repair_examples')['id']
+        net.repair_feedback.report(agent, 'first', 'function', category='types')
+        repair_search.upvote(net, agent, 'first', case)
+    finally:
+        close(net)
+
+    net = Network(path, project_databases=True)
+    try:
+        result = repair_search.search(net, agent, 'first', 'types')
+        assert f'#{case}' in result and '1 vote]' in result
+        assert 'already upvoted' in repair_search.upvote(net, agent, 'first', case)
+        evidence = net.repair_feedback.detail('first', case)['evidence']
+        assert evidence['before']['mismatch_signature'] == [['|', 'slt', 'sltu']]
+        assert net.project_store('first').one('SELECT COUNT(*) n FROM repair_attempt_mismatches')['n'] == 1
+        assert net.project_store('second').one('SELECT COUNT(*) n FROM repair_attempt_mismatches')['n'] == 0
+        assert 'unavailable' in repair_search.details(net, agent, 'second', [case])
+    finally:
+        close(net)

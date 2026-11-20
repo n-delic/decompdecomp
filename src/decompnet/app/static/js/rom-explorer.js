@@ -3,7 +3,10 @@ const romViews=new Map();
 let romEpoch=0, romDetailEpoch=0;
 // One palette for both maps: the byte strip and the grid below it show the same
 // regions (grouped or not) in the same colours, under one legend.
-const ROM_TYPES=[['code','Function','--cc-1'],['data','Data','--cc-0'],['unknown','Unknown','--line'],['repeated bytes','Repeated bytes','--muted'],['image','Image','--cc-2'],['audio','Audio','--cc-3'],['3d model','3D model','--cc-4'],['compressed','Compressed','--cc-5'],['strings','Strings','--cc-6'],['animation','Animation','--cc-2'],['collision','Collision','--cc-4'],['object placements','Placements','--cc-0'],['world grid','World grid','--cc-1'],['music sequence','Music sequence','--cc-3'],['demo','Demo','--cc-6'],['other','Other data','--cc-7']];
+const ROM_TYPES=[['code','Function','--cc-1'],['data','Data','--faint'],['unknown','Unknown','--line'],['repeated bytes','Repeated bytes','--muted'],['image','Image','--cc-2'],['audio','Audio','--cc-3'],['3d model','3D model','--cc-4'],['compressed','Compressed','--cc-5'],['strings','Strings','--cc-6'],['animation','Animation','--cc-2'],['collision','Collision','--cc-4'],['object placements','Placements','--faint'],['world grid','World grid','--cc-1'],['music sequence','Music sequence','--cc-3'],['demo','Demo','--cc-6'],['other','Other data','--cc-7']];
+const ROM_COLORS=[...new Set(ROM_TYPES.map(([, , color])=>color).filter(color=>color.startsWith('--cc-'))),
+  '--rom-color-coral','--rom-color-pink','--rom-color-lavender',
+  '--rom-color-sky','--rom-color-mint','--rom-color-olive'];
 function romView(slug=S.slug) {
   if(!romViews.has(slug))romViews.set(slug,{sort:'start',direction:1,limit:100,query:'',function:'',report:null,job:null,busy:false});
   return romViews.get(slug);
@@ -144,20 +147,40 @@ function drawRomMap(view=romView()) {
   const ctx=canvas.getContext('2d');ctx.scale(ratio,ratio);
   const lo=view.zoom?.[0] || 0,hi=view.zoom?.[1] || report.size,span=hi-lo || 1;
   const style=getComputedStyle(document.documentElement);
-  const rows=romTypeRows(view);
+  const rows=romTypeRows(view),types=romMapTypes(rows);
   for(const row of rows){if(row.end<=lo || row.start>=hi)continue;
-    ctx.fillStyle=style.getPropertyValue(romRegionType(row)[2]).trim() || style.getPropertyValue('--muted').trim();
+    ctx.fillStyle=style.getPropertyValue(types.get(romRegionType(row)[0]).color).trim() || style.getPropertyValue('--muted').trim();
     ctx.fillRect(Math.max(0,(row.start-lo)/span*width),0,Math.max(1,(Math.min(row.end,hi)-Math.max(row.start,lo))/span*width),52);
   }
   $('romMapRange').textContent=`ROM ${hex8(lo)}–${hex8(hi)} (exclusive) · click the map to inspect a region`;
   canvas.onclick=event=>{const at=lo+(event.clientX-canvas.getBoundingClientRect().left)/width*span;
     const row=rows.find(r=>r.start<=at && r.end>at);if(row && !report.stale)openRomRegion(row.id);};
-  drawRomLegend(view,rows);
+  drawRomLegend(view,types);
 }
-function drawRomLegend(view,rows) {
-  const counts=new Map();for(const row of rows){const key=romRegionType(row)[0];counts.set(key,(counts.get(key)||0)+1);}
+function romMapTypes(rows) {
+  const counts=new Map();
+  for(const row of rows){
+    const [key]=romRegionType(row);
+    counts.set(key,(counts.get(key)||0)+1);
+  }
+  const types=new Map(),used=new Set();
+  // Reserve preferred colours before assigning spares, so an alternate never
+  // takes another visible type's colour.
+  for(const [key,label,preferred] of ROM_TYPES){
+    if(!counts.has(key))continue;
+    const color=used.has(preferred) ? null : preferred;
+    if(color)used.add(color);
+    types.set(key,{label,count:counts.get(key),color});
+  }
+  const spare=ROM_COLORS.filter(color=>!used.has(color));
+  for(const type of types.values()){
+    if(!type.color)type.color=spare.shift();
+  }
+  return types;
+}
+function drawRomLegend(view,types) {
   $('romGroupAssets').checked=view.groupAssets!==false;$('romGroupCount').textContent=`(${(view.report.asset_groups || []).length} groups)`;
-  $('romTypeLegend').innerHTML=ROM_TYPES.map(([key,label,color])=>`<span><i class="sw" data-rom-color="${color}"></i>${label} (${counts.get(key)||0})</span>`).join('');
+  $('romTypeLegend').innerHTML=[...types.values()].map(({label,count,color})=>`<span><i class="sw" data-rom-color="${color}"></i>${label} (${count})</span>`).join('');
   $('romTypeLegend').querySelectorAll('[data-rom-color]').forEach(node=>{node.style.background=`var(${node.dataset.romColor})`;});
   $('romMapKey').hidden=false;
 }
@@ -212,13 +235,13 @@ function drawRomTypeMap(view=romView()) {
   panel.hidden=!report?.available;if(panel.hidden)return;
   const canvas=$('romTypeMap'),rows=romTypeRows(view),width=canvas.clientWidth || 800;
   if(!rows.length){panel.hidden=true;return;}
-  const layout=squareMapLayout(width,rows.length),ratio=window.devicePixelRatio || 1,style=getComputedStyle(document.documentElement);
+  const types=romMapTypes(rows),layout=squareMapLayout(width,rows.length),ratio=window.devicePixelRatio || 1,style=getComputedStyle(document.documentElement);
   view.typeSelection=Math.max(0,Math.min(rows.length-1,view.typeSelection || 0));
   const describe=i=>{const row=rows[i];return `${row.asset_group ? 'Asset group · ' : ''}${romRegionType(row)[1]} · ${hex8(row.start)}–${hex8(row.end)} · ${row.size.toLocaleString()} bytes · ${row.annotation?.name || row.functions?.[0] || row.symbols?.[0]?.name || row.detected_asset?.resource_path || row.confidence}${row.annotation?.kind ? ' · Your annotation' : ''}`;};
   const paint=()=>{
     canvas.width=Math.round(width*ratio);canvas.height=Math.round(layout.h*ratio);canvas.style.height=layout.h+'px';
     const ctx=canvas.getContext('2d');ctx.scale(ratio,ratio);
-    rows.forEach((row,i)=>{ctx.fillStyle=style.getPropertyValue(romRegionType(row)[2]).trim();squareMapCell(ctx,layout,i);});
+    rows.forEach((row,i)=>{ctx.fillStyle=style.getPropertyValue(types.get(romRegionType(row)[0]).color).trim();squareMapCell(ctx,layout,i);});
     const i=view.typeSelection,x=i%layout.cols*(layout.size+layout.gap),y=Math.floor(i/layout.cols)*(layout.size+layout.gap);
     ctx.strokeStyle=style.getPropertyValue('--ink').trim();ctx.lineWidth=1.5;ctx.strokeRect(x-.5,y-.5,layout.size+1,layout.size+1);
     $('romTypeStatus').textContent=describe(i)+(report.stale ? ' · Refresh to inspect this changed image.' : '');

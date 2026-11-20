@@ -3,7 +3,7 @@ import json
 import time
 
 from ..network import NetworkError
-from . import automatic_assignment
+from . import automatic_assignment, focused_agents
 
 REQUIRED = {'project_info', 'claim_function', 'get_function', 'compile_and_diff', 'release_function'}
 KEY = 'agent-disabled-tools'
@@ -48,6 +48,8 @@ def connection_required(net, agent):
         return asset_agents.TOOLS - {'get_assembly','guide'}
     if agent is not None and boundary_investigations.scope(net,agent):
         return boundary_investigations.TOOLS
+    if focused_agents.scope(net, agent):
+        return {'project_info', 'compile_and_diff', 'get_claims'}
     if automatic_assignment.enabled(net, agent):
         return {'project_info', 'compile_and_diff', automatic_assignment.RELEASE}
     return {'project_info','claim_function','compile_and_diff','release_function'}
@@ -130,7 +132,10 @@ def visible(net, slug, names, agent=None):
         blocked.update(net.selection(slug, agent.name).get('disabled_tools', []))
     if matching_helper(net, agent):
         blocked |= OTHER_TASKS
-    if automatic_assignment.enabled(net, agent, slug):
+    if focused_agents.scope(net, agent):
+        names = [name for name in names if name not in focused_agents.BLOCKED_TOOLS | OTHER_TASKS]
+        blocked.discard('get_claims')
+    elif automatic_assignment.enabled(net, agent, slug):
         names = [name for name in names if name not in {'claim_function', 'release_function'}]
         blocked.difference_update({automatic_assignment.RELEASE, "get_claims"})
     else:
@@ -152,6 +157,8 @@ def set_global(net, name, enabled):
 def record(net, agent, slug, name, *, count=True):
     from .tools import HANDLERS
     if name not in visible(net, slug, list(HANDLERS), agent):
+        if focused_agents.scope(net, agent) and name in focused_agents.BLOCKED_TOOLS | OTHER_TASKS:
+            raise NetworkError('The app manages this focused assignment. Use get_claims for its details and add_note for findings.')
         if name in {'claim_function', 'release_function'} and automatic_assignment.enabled(net, agent, slug):
             raise NetworkError('The app assigns your functions. Use get_claims to recover your assignment or '
                                'release_and_continue to release it with notes.')

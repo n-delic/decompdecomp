@@ -1215,6 +1215,9 @@ class Network:
 
     def attempt_limit(self, agent: Agent, fn) -> tuple[int | None, int]:
         store = self.project_store(fn["project_id"])
+        from .app.focused_agents import limits
+        if (focused := limits(self, agent, fn, store)) is not None:
+            return focused
         slug = store.one("SELECT slug FROM projects WHERE id=?", fn["project_id"])["slug"]
         limit = self.selection(slug, agent.name).get("max_tries")
         used = store.one("SELECT COUNT(*) AS n FROM attempts WHERE function_id=? AND agent_id=?",
@@ -1239,7 +1242,9 @@ class Network:
         with timed_lock(store.lock,'write_lock_wait'):
             lock = self._attempt_locks.setdefault((agent.id, fn["id"]), threading.RLock())
         with timed_lock(lock,'candidate_lock_wait'):
+            from .app.focused_agents import check_target
             self.ensure_agent_active(agent)
+            check_target(self, agent, fn)
             self.check_attempt_limit(agent, fn)
             yield
 
@@ -1251,6 +1256,9 @@ class Network:
         limit, used = self.attempt_limit(agent, fn)
         if limit is None or used < limit:
             return
+        from .app.focused_agents import scope
+        if scope(self, agent):
+            raise NetworkError(f"Focused try limit reached ({used}/{limit}). Your best attempt is saved.")
         held = store.one("SELECT 1 FROM claims WHERE function_id=? AND agent_id=?", fn["id"], agent.id)
         if held:
             Network.release(self, agent, fn["name"], f"User's max tries reached ({used}/{limit}); best attempt retained.",
@@ -1874,6 +1882,9 @@ class Network:
         fn = self._function(function, project)
         limit, used = self.attempt_limit(agent, fn)
         if fn["status"] == "open" and limit is not None and used >= limit:
+            from .app.focused_agents import scope
+            if scope(self, agent):
+                return f"\nFocused try limit reached ({used}/{limit}). Your best attempt is saved. End this session."
             return (f"\nMax tries reached ({used}/{limit}); this function is released and your best attempt is saved. "
                     "Call claim_function for the next function.")
         return ""
@@ -2012,7 +2023,7 @@ class Network:
         matched_now = d.bytes_match and not scratch
         last = store.one("SELECT score FROM attempts WHERE function_id=? AND agent_id=? AND score IS NOT NULL "
                               "ORDER BY id DESC LIMIT 1", fn["id"], agent.id)
-        self._record(fn, agent, d.score, source, ctx["version"], matched=matched_now, effective_settings=getattr(result,"effective_settings",None))
+        self._record(fn, agent, d.score, source, ctx["version"], matched=matched_now, effective_settings=getattr(result,"effective_settings",None), mismatch_rows=d.rows)
         self.keep_diff(agent.id, fn["id"], self._search_rows(fn, proj, result.obj, d.rows))
         compiled_output = {'fingerprint': cand.fingerprint(), 'granularity': 'function'}
 
@@ -2206,7 +2217,7 @@ class Network:
     def _record(self, fn, agent: Agent, score: int | None, source: str, ctx_version: int, matched: bool = False,
                 compiled: bool | None = None, via: str = "agent", effective_settings=None,
                 prepared_header=None, prepared_inputs=None, prepared_compiler=None, before_record=None, restoring_exact=False, prepared_assembly=False, write_wait=None, exact_inputs=None,
-                best: bool = True, retain_match_credit: bool = False):
+                best: bool = True, retain_match_credit: bool = False, mismatch_rows=()):
         """An attempt. `best`: False for one whose code can't stay in the source (it breaks matched neighbours), so
         it never becomes the best that briefs offer and a release puts back."""
         store = self.project_store(fn["project_id"])
@@ -2260,7 +2271,8 @@ class Network:
                 current = db.execute("SELECT * FROM functions WHERE id=?", (fn['id'],)).fetchone()
             attempt = db.execute("INSERT INTO attempts(function_id,agent_id,score,compiled,context_version,source,created_at,via) "
                        "VALUES(?,?,?,?,?,?,?,?)", (fn["id"], agent.id, score, compiled, ctx_version, source, now, via)).lastrowid
-            self.repair_feedback.attempt(db, current, attempt, ctx_version, effective_settings)
+            self.repair_feedback.attempt(db, current, attempt, ctx_version, effective_settings,
+                                         mismatch_rows if score and score > 0 else ())
             if matched and not stale:
                 from .match_bundle import capture as capture_bundle
                 capture_bundle(db,current,attempt,source,ctx_version,effective_settings)

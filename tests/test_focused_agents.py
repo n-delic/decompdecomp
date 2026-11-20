@@ -69,6 +69,9 @@ def test_validation_and_persisted_deadline_survive_restore(tmp_path,quiet):  # n
     for minutes in (0,241,True,1.5,'30'):
         with pytest.raises(ValueError,match='minutes'):
             manager.start('codex','game',options={'focus_function':'f0','focus_minutes':minutes})
+    for tries in (0, 10001, True, 1.5, '30'):
+        with pytest.raises(ValueError, match='tries'):
+            manager.start('codex','game',options={'focus_function':'f0','focus_max_tries':tries})
     with pytest.raises(ValueError,match='one matching agent'):
         manager.start('codex','game',2,{'focus_function':'f0','focus_minutes':30})
     sid=manager.start('codex','game',options={'focus_function':'f0','focus_minutes':30})[0]
@@ -173,6 +176,111 @@ def test_focused_route_does_not_start_whole_project_work(tmp_path,quiet,monkeypa
     monkeypatch.setattr(net,'warm_briefs_soon',lambda *_:pytest.fail('Focused route warmed the whole project'))
     client=TestClient(mcp.streamable_http_app(transport_security=security,host='127.0.0.1'),base_url=f'http://127.0.0.1:{PORT}',headers=WINDOW)
     response=client.post('/api/agents/start',json={'slug':'game','kind':'codex','count':1,
-        'options':{'focus_function':'f0','focus_minutes':15}},headers={'X-Decomp':'1'})
+        'options':{'focus_function':'f0','focus_max_tries':12,'focus_minutes':15}},headers={'X-Decomp':'1'})
     assert response.status_code==200,response.text
-    assert len(response.json()['started'])==1
+    sid, = response.json()['started']
+    assert manager.sessions[sid].snapshot()['focus_max_tries'] == 12
+
+
+@pytest.mark.parametrize('fork', [False, True])
+@pytest.mark.parametrize('final_match', [False, True])
+def test_try_budget_counts_candidate_errors_and_allows_final_match(tmp_path, monkeypatch, fork, final_match):
+    net, agent, s = setup(tmp_path)
+    s.agent_name = agent.name
+    fn = net._function('f0', 'game')
+    # An earlier run by the same worker retains its history without spending this run's budget.
+    net._record(fn, agent, 50, 'old work', 1)
+    s.options.update(focus_max_tries=2, focus_since=time.time())
+    focused_agents.bind(net, s, agent)
+    net.claim_row(agent, 'game')
+    builds = []
+
+    def judge(agent, *args, **kwargs):
+        source = args[2] if fork else args[1]
+        builds.append(source)
+        score = None if source == 'syntax error' else 0 if final_match else 5
+        net._record(fn, agent, score, source, 1, matched=score == 0)
+        return {'text': 'Synthetic verdict', 'score': score, 'matched': score == 0}
+
+    monkeypatch.setattr(net, 'on_match', lambda *args: None)
+    if fork:
+        monkeypatch.setattr(net.forks, '_fn', lambda *args: net._function('f0', 'game'))
+        monkeypatch.setattr(net.forks, '_attempt_and_share', judge)
+        attempt = lambda source: net.forks.attempt(agent, 'game', 'f0', source)
+    else:
+        monkeypatch.setattr(net, '_attempt_unlimited', judge)
+        attempt = lambda source: net.attempt(agent, 'f0', source, 'game')
+    attempt('syntax error')
+    assert net.attempt_limit(agent, fn) == (2, 1)
+    assert focused_agents.completion(SimpleNamespace(net=net), s) is None
+    with net.store.tx() as db:
+        db.execute("INSERT INTO functions(project_id,name,status) VALUES(1,'other','open')")
+    with pytest.raises(NetworkError, match='Only the assigned function'):
+        with net.attempt_turn(agent, net._function('other', 'game')):
+            pytest.fail('A focused agent tried to judge a second function.')
+
+    # Parallel tools compete for the last try through the ordinary candidate lock.
+    from concurrent.futures import ThreadPoolExecutor
+    def submit(source):
+        try:
+            return attempt(source)
+        except NetworkError as error:
+            return str(error)
+    with ThreadPoolExecutor(2) as pool:
+        outcomes = list(pool.map(submit, ['improved work', 'another improvement']))
+    assert len(builds) == 2 and sum(isinstance(outcome, str) for outcome in outcomes) == 1
+    assert net.attempt_limit(agent, fn) == (2, 2)
+    reason = focused_agents.completion(SimpleNamespace(net=net), s)
+    assert ('Verified match' if final_match else 'try limit reached') in reason
+    assert net._function('f0', 'game')['best_source'] == builds[-1]
+    assert s.options['focus_tries_used'] == 2
+
+
+def test_focused_app_assignment_is_in_startup_and_stale_lease_tools_are_rejected(tmp_path, monkeypatch):
+    from decompnet.agents.api import api_tool_schemas
+    from decompnet.app import tool_policy
+    from decompnet.app.tool_reader import _hidden
+
+    net, agent, s = setup(tmp_path)
+    s.startup_context = None
+    s.agent_name = agent.name
+    net._pending_tool_handshakes = {(agent.id, 'game')}
+    monkeypatch.setattr(tools, '_project_info', lambda *a, **kw: 'Synthetic facts')
+    monkeypatch.setattr(net, '_brief', lambda *a, **kw: 'CLAIMED f0')
+    manager = agents.Manager(net, tmp_path, URL)
+    manager.prepare_session(s, agent)
+    assert 'CLAIMED f0' in s.startup_context
+    assert net.store.one('SELECT agent_id FROM claims WHERE function_id=?', s.options['focus_id'])['agent_id'] == agent.id
+    assert (agent.id, 'game') in net._pending_tool_handshakes
+    tools.call(net, agent, 'game', 'project_info', {'detail': False})
+    names = tools.project_tools(net, 'game', agent)
+    schema = {tool['function']['name'] for tool in api_tool_schemas(names=names)}
+    assert tool_policy.connection_required(net, agent) <= schema
+    assert _hidden(net, {str(agent.id): 'game'}) == {str(agent.id): ['claim_function']}
+    for name in ('claim_function', 'release_function', 'release_and_continue'):
+        assert name not in schema
+        response = tools.call(net, agent, 'game', name, {'function': 'f0', 'notes': 'give up'})
+        assert 'app manages this focused assignment' in response
+    assert net.store.one('SELECT agent_id FROM claims WHERE function_id=?', s.options['focus_id'])['agent_id'] == agent.id
+
+
+def test_restored_budget_starts_with_previous_usage_and_manual_restart_resets_it(tmp_path, quiet):  # noqa: F811
+    net = _game(tmp_path)
+    manager = agents.Manager(net, tmp_path, URL)
+    sid, = manager.start('codex', 'game', options={'focus_function': 'f0', 'focus_max_tries': 1,
+                                                  'focus_minutes': None})
+    s = manager.sessions[sid]
+    agent, _ = net.local_agent(s.agent_name)
+    focused_agents.bind(net, s, agent)
+    fn = net.claim_row(agent, 'game')
+    net._record(fn, agent, 5, 'saved candidate', 1)
+    manager.stop()
+    restored = agents.Manager(net, tmp_path, URL)
+    saved = restored.sessions[sid]
+    assert 'focus_until' not in saved.options
+    assert saved.options['focus_since'] == s.options['focus_since']
+    assert '1/1' in focused_agents.completion(restored, saved)
+    restored.restart(sid)
+    assert focused_agents.completion(restored, saved) is None
+    assert saved.snapshot()['focus_tries_used'] == 0
+    assert net._function('f0', 'game')['best_source'] == 'saved candidate'

@@ -381,6 +381,12 @@ accepted release. The worker follows its work selection and functions-per-sessio
 model requests when there is no eligible work. The option starts unchecked, so you can run workers in
 both modes on the same project.
 
+To keep an agent on a single function, open the function’s **Focused agent** panel and set **Maximum tries**.
+The app manages the assignment and ends the run on a verified match or when the budget is spent.
+Each recorded candidate submission uses one try, including compile errors and each judged variant in a batch.
+Cached repeats and compiler diagnostics use no tries. You can also set a time limit.
+The function panel shows the live count, and saved improvements are kept when the run ends.
+
 **Only functions below match %** restricts automatic claims to functions whose best recorded match percentage is
 strictly below the threshold, plus functions with no scored attempt. For example, 80 includes unscored functions
 and those below 80%, but excludes one at exactly 80%. This is the app's comparison score, not an estimate of work
@@ -746,7 +752,7 @@ the free compilers and keeps decompdecomp up to date:
 curl -fsSL https://raw.githubusercontent.com/RetroReversing/decompdecomp/main/site/public/install.sh | bash -s -- --source branch:main
 ```
 
-Upstream Linux packages remain available from the [releases](https://github.com/n-delic/decompdecomp/releases):
+Linux packages are available from the [releases](https://github.com/RetroReversing/decompdecomp/releases):
 
 ```
 sudo apt install ./decompdecomp_*_amd64.deb        # Debian, Ubuntu, Pop!_OS, Mint
@@ -754,7 +760,7 @@ sudo dnf install ./decompdecomp-*.x86_64.rpm       # Fedora
 chmod +x decompdecomp-*-x86_64.AppImage && ./decompdecomp-*-x86_64.AppImage   # any other distribution
 ```
 
-On **Windows**, download and open `decompdecomp-<version>-windows-x64-setup.exe` from the [releases](https://github.com/n-delic/decompdecomp/releases). Setup
+On **Windows**, download and open `decompdecomp-<version>-windows-x64-setup.exe` from the [releases](https://github.com/RetroReversing/decompdecomp/releases). Setup
 installs the Microsoft Edge WebView2 Runtime and .NET Framework 4.8 when they are missing, then opens the
 app installer. It may ask for administrator permission and needs an internet connection to download missing
 Microsoft components. The app installer lets you choose where decompdecomp goes and whether to add a
@@ -763,7 +769,7 @@ desktop shortcut (selected by default); it always adds a shortcut to Start.
 To install from source with [uv](https://docs.astral.sh/uv/getting-started/installation/) instead, open a new PowerShell window and run:
 
 ```powershell
-uv tool install --python 3.12 "decompnet @ https://github.com/n-delic/decompdecomp/archive/refs/heads/main.tar.gz"
+uv tool install --python 3.12 "decompnet @ https://github.com/RetroReversing/decompdecomp/archive/refs/heads/main.tar.gz"
 decomp setup
 decomp shortcut
 decomp
@@ -1113,7 +1119,7 @@ game's code is its rights holder's: keep it to yourself.
 | 3DS, Switch, Xbox 360 | Community decomps only |
 
 1.0.3 rewrote most of the app, so every platform needs testing again, Nintendo 64 too. Try it on a game you own and
-[tell us how it went](https://github.com/n-delic/decompdecomp/issues): what worked, what didn't, what was confusing. Reports are how a platform goes
+[tell us how it went](https://github.com/RetroReversing/decompdecomp/issues): what worked, what didn't, what was confusing. Reports are how a platform goes
 from beta to recommended.
 
 Proprietary compilers (CodeWarrior, Visual C++, IDO) are installed only after you accept their licenses in the app.
@@ -1206,7 +1212,7 @@ touches the projects of the decompdecomp you have installed.
 
 - [The guide](docs/GUIDE.md): how it works, agents, teams, platforms and the export.
 - [ROADMAP.md](ROADMAP.md): what's planned, and which feature works on which platform.
-- [Issues](https://github.com/n-delic/decompdecomp/issues): problems and requests.
+- [Issues](https://github.com/RetroReversing/decompdecomp/issues): problems and requests.
 - [Discord](https://discord.gg/hhEm3zZagB): questions, progress on your games, and talking with the people building it.
 
 ## Use it responsibly

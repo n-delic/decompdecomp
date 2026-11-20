@@ -1,12 +1,13 @@
 /* A focused worker uses the same configured providers and guarded creation job as other agents. */
 function openFocusedAgent(slug, name) {
   if (S.editDirty) return toast('Compile or copy your unsaved C before starting an agent.');
-  const panel = dialog('Focus an agent on this function', `<div class="focus-target"><span class="eyebrow">ONE FUNCTION</span><strong class="mono">${esc(name)}</strong><span class="small muted">Stops on a verified match or at your time limit.</span></div>
+  const panel = dialog('Focus an agent on this function', `<div class="focus-target"><span class="eyebrow">ONE FUNCTION</span><strong class="mono">${esc(name)}</strong><span class="small muted">Stops on a verified match or when it uses all its tries.</span></div>
     <div class="repair-form-grid focus-form"><label class="field">Agent<select data-focus-kind></select></label>
     <label class="field" data-focus-endpoint-field hidden>Saved endpoint<select data-focus-endpoint></select></label>
     <label class="field">Model<input data-focus-model list="focus-models" placeholder="Agent default"><datalist id="focus-models"></datalist></label>
-    <label class="field">Time limit · minutes<input data-focus-minutes type="number" min="1" max="240" value="30"></label></div>
-    <div class="focus-guidance small"><strong>Uses AI tokens</strong><p>The timer includes provider-limit and claim waits. If another agent holds this function, this agent waits its turn. Saved improvements are kept. Focused runs keep one long conversation and compress older context when supported by the provider.</p></div>
+    <label class="field">Maximum tries<input data-focus-tries type="number" min="1" max="10000" step="1" value="30"></label>
+    <label class="field">Time limit · minutes, optional<input data-focus-minutes type="number" min="1" max="240" step="1" placeholder="No time limit"></label></div>
+    <div class="focus-guidance small"><strong>Uses AI tokens</strong><p>Each submitted candidate judged uses one try, including compile errors. The app assigns this function and keeps the best saved attempt. If another worker holds it, the agent waits its turn. An optional time limit includes waits.</p></div>
     <div class="row"><button class="primary" data-focus-start>Start focused agent</button><button class="ghost" data-focus-stop hidden>Stop agent</button></div>
     <div class="focus-result" data-focus-result hidden><strong data-focus-heading>Agent created</strong><p data-focus-status role="status"></p></div>
     <div data-focus-progress></div><details class="focus-log" data-focus-details hidden><summary>Startup details</summary><pre data-focus-work></pre></details>`, 'focused-agent');
@@ -24,10 +25,15 @@ function openFocusedAgent(slug, name) {
   }
   kind.onchange = endpoint.onchange = updateModel; updateModel();
   const start = get('[data-focus-start]'), stop = get('[data-focus-stop]'), status = get('[data-focus-status]');
+  const triesInput = get('[data-focus-tries]'), minutesInput = get('[data-focus-minutes]');
+  const settings = [kind, endpoint, model, triesInput, minutesInput];
   start.disabled = !available.length;
   start.onclick = async () => {
-    const minutes = Number(get('[data-focus-minutes]').value), agent = available.find(a => a.id === kind.value);
-    if (!Number.isInteger(minutes) || minutes < 1 || minutes > 240) return toast('Choose 1–240 whole minutes.', 'err');
+    const tries = Number(triesInput.value);
+    const minutes = minutesInput.value.trim() ? Number(minutesInput.value) : null;
+    const agent = available.find(a => a.id === kind.value);
+    if (!Number.isInteger(tries) || tries < 1 || tries > 10000) return toast('Choose 1–10,000 whole tries.', 'err');
+    if (minutes !== null && (!Number.isInteger(minutes) || minutes < 1 || minutes > 240)) return toast('Choose 1–240 whole minutes, or leave the time limit blank.', 'err');
     if (agent?.uses_endpoints && !endpoint.value) return toast('Save an API endpoint in Agents & models first.', 'err');
     get('[data-focus-details]').hidden = false;
     get('[data-focus-result]').hidden = true;
@@ -40,9 +46,9 @@ function openFocusedAgent(slug, name) {
     };
     paint();
     const timer = setInterval(paint,1000);
-    const finish = beginWork(get('[data-focus-progress]'), 'Creating focused agent', [start,kind,endpoint,model,get('[data-focus-minutes]')]);
+    const finish = beginWork(get('[data-focus-progress]'), 'Creating focused agent', [start, ...settings]);
     try {
-      const options = {focus_function:name, focus_minutes:minutes};
+      const options = {focus_function:name, focus_max_tries:tries, focus_minutes:minutes};
       if (model.value.trim()) options.model = model.value.trim();
       if (agent.uses_endpoints) options.endpoint = endpoint.value;
       const response = await api('/api/agents/start', {method:'POST',body:{slug,kind:agent.id,count:1,options,background:true}});
@@ -51,18 +57,18 @@ function openFocusedAgent(slug, name) {
       if (!id) throw new Error('No worker was created. Check the Agents list before retrying.');
       get('[data-focus-result]').hidden = false;
       get('[data-focus-heading]').textContent = 'Agent created';
-      status.textContent = `${minutes}-minute limit · Saved files and the tool connection are checked before work. Follow its live status in the Agents tab.`;
+      status.textContent = `${tries} tries${minutes === null ? "" : ` · ${minutes}-minute limit`} · Follow its progress in the Agents tab.`;
       start.hidden = true;
       stop.hidden = false;
       poll(false).catch(() => {});
       stop.onclick = async () => {
         const done = beginWork(get('[data-focus-progress]'),'Stopping focused agent',[stop]);
-        try { await api('/api/agents/stop',{method:'POST',body:{id}}); get('[data-focus-heading]').textContent='Agent stopped'; status.textContent='Saved improvements are retained.'; stop.hidden=true; start.hidden=false; [kind,endpoint,model,get('[data-focus-minutes]')].forEach(control => { control.disabled=false; }); }
+        try { await api('/api/agents/stop',{method:'POST',body:{id}}); get('[data-focus-heading]').textContent='Agent stopped'; status.textContent='Saved improvements are retained.'; stop.hidden=true; start.hidden=false; settings.forEach(control => { control.disabled=false; }); }
         catch (error) { showJobError(get('[data-focus-progress]'),error.message); }
         finally { done(); }
       };
     } catch (error) { get('[data-focus-heading]').textContent = 'Creation stopped'; status.textContent = error.message; showJobError(get('[data-focus-progress]'),error.message); }
-    finally { clearInterval(timer); finish(); if (start.hidden) [kind,endpoint,model,get('[data-focus-minutes]')].forEach(control => { control.disabled = true; }); }
+    finally { clearInterval(timer); finish(); if (start.hidden) settings.forEach(control => { control.disabled = true; }); }
   };
 }
 
@@ -103,9 +109,13 @@ function renderFunctionFocusedAgents(detail, slug) {
     const state = {starting:'Starting',working:'Working',waiting:'Waiting',paused:'Paused',stopped:'Stopped',failed:'Needs attention'}[s.state] || s.state;
     const seconds = s.focus_until ? Math.max(0, Math.ceil(s.focus_until - Date.now()/1000)) : null;
     const time = live && seconds != null ? seconds ? `${Math.ceil(seconds/60)} min left` : 'Time limit reached' : s.focus_minutes ? `${s.focus_minutes}-minute limit` : '';
+    const limit = Number(s.focus_max_tries) || 0;
+    const used = Math.min(limit, Math.max(0, Number(s.focus_tries_used) || 0));
+    const tries = limit ? `${used} of ${limit} tries used` : '';
     return `<article class="function-focus-run">
       <div class="function-focus-heading"><strong>${esc(s.label || s.agent || s.kind_name || 'Focused agent')}</strong><span class="function-focus-state${live ? ' active' : ''}">${esc(state)}</span></div>
-      <p class="small muted">${[s.kind_name || s.kind, s.model || 'Default model', time].filter(Boolean).map(esc).join(' · ')}</p>
+      <p class="small muted">${[s.kind_name || s.kind, s.model || 'Default model', tries, time].filter(Boolean).map(esc).join(' · ')}</p>
+      ${limit ? `<div class="workbar counted" role="progressbar" aria-label="Tries used" aria-valuemin="0" aria-valuenow="${used}" aria-valuemax="${limit}" style="--work-progress:${100*used/limit}%"><i></i></div>` : ''}
       ${s.why || s.error ? `<p class="small function-focus-reason">${esc(s.why || s.error)}</p>` : ''}
       <div class="row"><button class="ghost small-btn" type="button" data-focus-view="${esc(s.id)}">View agent &amp; log</button>${live || detail.status === 'open' ? `<button class="${live ? 'ghost' : 'primary'} small-btn" type="button" data-focus-action="${esc(s.id)}"${pending ? ' disabled' : ''}>${pending ? live ? 'Stopping…' : 'Starting…' : live ? 'Stop agent' : 'Start again'}</button>` : ''}</div>
     </article>`;
