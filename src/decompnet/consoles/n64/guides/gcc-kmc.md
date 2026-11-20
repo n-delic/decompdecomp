@@ -167,6 +167,14 @@ Expression and frame shape
 
 See `docs/COMPILER_MATCHING_LEARNINGS.md` for controlled evidence and failed experiments.
 
+### Computed operands near calls and stores
+
+When two computed float arguments change registers or order, try swapping the
+evaluation order of independent expressions while keeping their call positions.
+For a division followed by squaring, a dead numerator local can carry both
+results when the target uses a single FPR. Give a final indexed store group its
+own offset local if the register changes are confined to that group.
+
 ### Address association and call initialization
 
 Compare the first actual use of a scalar selector with its initialization. When

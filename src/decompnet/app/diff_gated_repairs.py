@@ -16,7 +16,14 @@ from decomprepair import (
     observed_storage_repairs as storage,
 )
 
-from . import allocation_evidence, allocation_search, measured_mips_repairs, permuter_focus, stack_layout
+from . import (
+    allocation_evidence,
+    allocation_search,
+    measured_mips_repairs,
+    operand_and_edge_search,
+    permuter_focus,
+    stack_layout,
+)
 
 REGISTER = r'\$[a-z0-9]+'
 IMMEDIATE = r'(?:0x[0-9a-f]+|[1-9][0-9]*|0)'
@@ -122,7 +129,7 @@ def _division_pairs(code):
                               for second,b in divisors[i+1:i+17] if a or b))
 
 
-def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=()):
+def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), *, flags=(), resolve=None):
     if arch != 'mips':
         return []
     result = targeted_switch_labels.variants(source,name,jump_tables) if jump_tables else []
@@ -138,6 +145,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=()):
             result += arithmetic.squared_terms(source,name,header)
         return result
 
+    result += operand_and_edge_search.proposals(source,name,header,asm,target,candidate,flags,resolve)
     frame = stack_layout.diagnose(arch,rows)
     result += measured_mips_repairs.proposals(source,name,header,rows,asm,target,candidate,frame)
     widths = set(_released_reload(target)) - set(_released_reload(candidate))

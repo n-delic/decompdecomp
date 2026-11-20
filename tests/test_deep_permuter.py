@@ -978,3 +978,31 @@ def test_measured_selector_reaches_judge_before_broad_generation(monkeypatch):
     monkeypatch.setattr(Permuter, '_score', judge)
     result = deep_permuter.run(net, 'game', 'f', 30, 1, Log())
     assert result['matched'] and len(seen)==1
+
+
+def test_measured_float_lifetime_reaches_the_normal_judge_first(monkeypatch):
+    from decompnet.app import agent_tokens
+
+    net = setup(monkeypatch)
+    source = 'void f(void) { float n,d,q; n=read(); d=read(); q=n/d; use(q*q); }'
+    with net.store.tx() as db:
+        db.execute('UPDATE functions SET best_source=?', (source,))
+    rows = [('r','div.s $f2, $f2, $f4','div.s $f6, $f2, $f4'),
+            ('r','mul.s $f2, $f2, $f2','mul.s $f0, $f6, $f6')]
+
+    def measured(search, agent, proj, fn, state, fork):
+        search.winner_source = source
+        search.winner_scope = agent_tokens.target_scope(net,dict(fn),'')
+        search.winner_diff = (rows, '')
+        return 40, 0
+
+    def judge(search, agent, proj, fn, candidate, best, fork):
+        assert 'n /= d; n *= n; use(n);' in candidate
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET best_source=?,best_score=0,status='matched'", (candidate,))
+        return 0
+
+    monkeypatch.setattr(deep_permuter.Search, '_baseline', measured)
+    monkeypatch.setattr(Permuter, '_score', judge)
+    result = deep_permuter.run(net, 'game', 'f', 30, 1, Log())
+    assert result['matched'] and result['tested']==1
