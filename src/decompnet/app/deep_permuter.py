@@ -1246,7 +1246,7 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
                 if baseline is None:
                     raise NetworkError('The saved C does not compile in the current context; fix its declarations before deep search.')
                 measured_baseline = baseline
-                if baseline and (lane is None or lane.index == 0):
+                if baseline and compiler_profiles == 1 and (lane is None or lane.index == 0):
                     baseline = search.call_result_pass(agent, proj, fn, baseline, fork)
                     fn = net._function(name, slug)
                 if baseline == 0:

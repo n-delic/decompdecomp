@@ -8214,6 +8214,7 @@ loads before them (600).
   stayed the same. Testing alternate flags on the saved draft did not improve
   its score. Stripping its one-iteration `do … while (0)` scopes raised the
   score to 850, so startup recovery now preserves those scopes.
+
 ### Repeated call-result lifetimes in a fresh machine draft
 
 Controlled ROM replay with gcc-2.7.2-kmc and
