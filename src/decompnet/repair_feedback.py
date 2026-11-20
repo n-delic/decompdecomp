@@ -13,6 +13,7 @@ import logging
 import threading
 import time
 from contextlib import contextmanager
+from functools import wraps
 
 from .network import NetworkError
 from .project import compiler_for
@@ -52,6 +53,34 @@ SCHEMA = (
 _TRIAL = contextvars.ContextVar('repair_trial', default=None)
 _ANNOTATION = contextvars.ContextVar('repair_annotation', default=None)
 _MATCHES = contextvars.ContextVar('repair_matches', default=None)
+_SKIP_CAPTURE = contextvars.ContextVar('skip_repair_capture', default=False)
+
+
+def capture_suppressed():
+    return _SKIP_CAPTURE.get()
+
+
+@contextmanager
+def without_capture(enabled=True):
+    if not enabled:
+        yield
+        return
+    token = _SKIP_CAPTURE.set(True)
+    try:
+        yield
+    finally:
+        _SKIP_CAPTURE.reset(token)
+
+
+def inherit_capture_policy(fn):
+    if not capture_suppressed():
+        return fn
+
+    @wraps(fn)
+    def run(*args, **kwargs):
+        with without_capture():
+            return fn(*args, **kwargs)
+    return run
 
 
 @contextmanager
@@ -233,10 +262,21 @@ class RepairFeedback:
                 db.execute('INSERT INTO repair_attempt_mismatches VALUES(?,?)', (attempt_id, json.dumps(signature)))
 
     def capture(self, db, fn, source, agent_id, via, context_version, attempt_id=None):
+        if capture_suppressed() or fn['status'] == 'matched' or not source:
+            return
         owner = self.for_project(fn['project_id'])
         if owner is not self:return owner.capture(db,fn,source,agent_id,via,context_version,attempt_id)
-        if fn['status'] == 'matched' or not source:
-            return  # polishing an existing match is not a new matching repair
+        agent = self.net.store.one('SELECT name,owner,origin FROM agents WHERE id=?',agent_id) if agent_id else None
+        if agent:
+            origin = agent['origin'] or ''
+            in_room = origin.startswith('collab:')
+            if origin == 'local' or in_room:
+                from .permuter_claims import worker_name
+                name = worker_name(agent['name'], agent['owner'])
+                # Room verification can outlive the job, and room names can truncate the lane suffix.
+                deep = name == 'deep-permuter' or (name.startswith('permuter-') and name.split('-', 2)[1].isdigit())
+                if deep or (in_room and name in {'autopilot', 'autopilot-named-donors'}):
+                    return
         proj = db.execute('SELECT * FROM projects WHERE id=?', (fn['project_id'],)).fetchone()
         before = db.execute('SELECT * FROM attempts WHERE function_id=? AND compiled=1 AND score>0 AND (source_hash IS NOT NULL OR source IS NOT NULL) '
                             'AND (? IS NULL OR id<?) ORDER BY score,id DESC LIMIT 1',
@@ -264,7 +304,6 @@ class RepairFeedback:
                     'settings':json.loads(settings['settings']) if settings else None}
         provenance = db.execute('SELECT provenance FROM repair_attempt_provenance WHERE attempt_id=?',(attempt_id,)).fetchone()
         meta = json.loads(fn['meta'] or '{}')
-        agent = self.net.store.one('SELECT name FROM agents WHERE id=?',agent_id) if agent_id else None
         session = None
         if agent and db.execute("SELECT 1 FROM sqlite_master WHERE name='helper_sessions'").fetchone():
             session = db.execute('SELECT id,helper_id,model,kind FROM helper_sessions WHERE agent=? AND project=? '

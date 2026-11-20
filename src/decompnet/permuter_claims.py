@@ -2,10 +2,12 @@
 import re
 
 
+def worker_name(name, owner):
+    return name[len(owner) + 1:] if owner and name.startswith(owner + '.') else name
+
+
 def nonexclusive(agent):
-    name = getattr(agent, 'name', '')
-    owner = getattr(agent, 'owner', None)
-    if owner and name.startswith(owner+'.'):name=name[len(owner)+1:]
+    name = worker_name(getattr(agent, 'name', ''), getattr(agent, 'owner', None))
     return name in ('permuter', 'room-reconcile') or re.fullmatch(r'permuter-[0-9]+(?:-lane-[0-9]+)?', name) is not None
 
 

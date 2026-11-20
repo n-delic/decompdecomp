@@ -20,7 +20,7 @@ from ..compile_sessions import batched
 from ..forks.project import ForkError
 from ..network import NetworkError
 from ..project import compiler_for
-from ..repair_feedback import current_trial
+from ..repair_feedback import current_trial, without_capture
 from ..repair_feedback import trial as repair_trial
 from . import (
     adaptive_repairs,
@@ -1224,6 +1224,7 @@ def run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, thread
             lock.release()
 
 
+@without_capture()
 @deep_throughput.search
 @deep_compilation.shared
 @buffered

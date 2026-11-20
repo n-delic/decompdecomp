@@ -321,8 +321,9 @@ def test_repair_detail_explains_comment_only_changes_without_automatic_dismissal
 
 
 @pytest.mark.parametrize('path',['quiet_transfer','machine_draft','machine_refined','machine_buffer','machine_buffer_indexed','machine_local_context'])
-def test_autopilot_capture_uses_actual_compile_settings_instead_of_project_snapshot(setup,monkeypatch,path):
+def test_autopilot_retains_judge_settings_and_attempts_without_capturing_drafts(setup,monkeypatch,path):
     from decompnet import scoring
+    from decompnet.app import repair_outcomes
     from decompnet.app.engine import autopilot
     from decompnet.app.engine.autopilot import AutopilotMixin
     net,winner,_,pid,fid=setup
@@ -335,6 +336,8 @@ def test_autopilot_capture_uses_actual_compile_settings_instead_of_project_snaps
         cfg['compiler_ranges']=[{'start':0x80001000,'end':0x80001010,**effective['compiler']}]
         db.execute('UPDATE projects SET config=? WHERE id=?',(json.dumps(cfg),pid))
 
+    scheduled = []
+    monkeypatch.setattr(repair_outcomes, 'schedule', lambda _, example, digest: scheduled.append(example))
     monkeypatch.setattr(net, '_jtbl_asm', lambda *args: [], raising=False)
     result=SimpleNamespace(ok=True,obj=b'object',effective_settings=effective)
     monkeypatch.setattr(net,'_compile',lambda *args:result)
@@ -375,13 +378,19 @@ def test_autopilot_capture_uses_actual_compile_settings_instead_of_project_snaps
             monkeypatch.setattr(autopilot.m2cfix,'stack_array',lambda source,name,canonical:'/* BUFFER */ int target(void){return 0;}' if canonical==(path=='machine_buffer_indexed') else None)
             monkeypatch.setattr(net,'_compile',lambda *args:result if 'BUFFER' in args[2] else SimpleNamespace(ok=False,obj=None,log="synthetic compiler refusal"))
         assert AutopilotMixin._autopilot_one(net,winner,proj,fid)=='match'
-    case=net.repair_feedback.listing('demo')['examples'][0]['id']
-    detail=net.repair_feedback.detail('demo',case)
-    settings=detail['evidence']['after']['settings']
-    if path!='quiet_transfer':
+    assert fn(net,fid)['status'] == 'matched'
+    attempt = net.store.one('SELECT id FROM attempts WHERE function_id=? AND score=0',fid)['id']
+    settings = json.loads(net.store.one('SELECT settings FROM repair_attempt_settings WHERE attempt_id=?',attempt)['settings'])
+    examples = net.repair_feedback.listing('demo')['examples']
+    if path=='quiet_transfer':
+        case=examples[0]['id']
+        assert scheduled == [case]
+        assert net.repair_feedback.detail('demo',case)['evidence']['after']['settings'] == settings
+    else:
         family={'machine_draft':'raw_m2c','machine_refined':'refined_m2c','machine_buffer':'stack_array','machine_buffer_indexed':'stack_array_indexed','machine_local_context':'local_context_m2c'}[path]
-        assert detail['evidence']['provenance']=={'kind':'machine draft','family':family}
-        assert detail['status']=='implemented'
+        recorded = net.store.one('SELECT provenance FROM repair_attempt_provenance WHERE attempt_id=?',attempt)
+        assert json.loads(recorded['provenance']) == {'kind': 'machine draft', 'family': family}
+        assert not examples and not scheduled
     assert settings['compiler']==effective['compiler']
     assert settings['effective_command']==effective['effective_command']
     assert settings['settings_source']=='compile invocation snapshot'
@@ -622,7 +631,7 @@ def test_repeated_installed_rule_keeps_match_but_skips_extra_capture_and_analysi
             identity=db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit,vram,target,meta) VALUES(?,?,?,?,?,?,?,?,?)",
                 (pid,f'case{n}',16,4,'open','',0x80002000+n*16,b'original','{}')).lastrowid
         net._record(fn(net,identity),winner,10,f'int case{n}(int x){{return x;}}',1)
-        with trial({'kind':'deep local repair','family':'unsigned_return'}):
+        with trial({'kind':'deterministic draft repair','family':'unsigned_return'}):
             net._record(fn(net,identity),winner,0,f'unsigned case{n}(int x){{return x;}}',1,matched=True)
         assert fn(net,identity)['status']=='matched'
     assert net.store.one('SELECT COUNT(*) n FROM repair_examples')['n']==1
@@ -708,3 +717,44 @@ def test_repair_baseline_migration_preserves_frozen_baselines_and_reviews(setup)
     net.repair_feedback.review('demo', 1, 'reviewed', 'other')
     RepairFeedback(net)
     assert net.store.one('SELECT category FROM main.repair_examples WHERE id=1')['category'] == 'other'
+
+
+@pytest.mark.parametrize('worker', ['member.autopilot', 'member.permuter-25769806587-lan',
+                                    'member.deep-permuter', 'member.permuter', 'member.helper'])
+def test_room_automatic_match_attribution_skips_capture_only_for_requested_workers(setup, monkeypatch, worker):
+    from decompnet.app import repair_outcomes
+
+    net, _, _, _, fid = setup
+    agent = net.authenticate(net.register_agent(worker, owner='member', origin='collab:demo'))
+    scheduled = []
+    monkeypatch.setattr(repair_outcomes, 'schedule', lambda *args: scheduled.append(args))
+    net._record(fn(net,fid),agent,10,'near C',1)
+    net._record(fn(net,fid),agent,0,'matched C',1,matched=True,via='room')
+    assert fn(net,fid)['status'] == 'matched'
+    assert net.store.one('SELECT COUNT(*) n FROM attempts WHERE function_id=?',fid)['n'] == 2
+    expected = int(worker in {'member.permuter', 'member.helper'})
+    assert len(net.repair_feedback.listing('demo')['examples']) == len(scheduled) == expected
+
+
+def test_autopilot_reuse_worker_scope_survives_thread_handoff(setup, monkeypatch):
+    import threading
+
+    from decompnet.app import maintenance_tasks, repair_outcomes
+    from decompnet.repair_feedback import inherit_capture_policy
+
+    net, agent, _, _, fid = setup
+    scheduled = []
+    monkeypatch.setattr(repair_outcomes, 'schedule', lambda *args: scheduled.append(args))
+    def execute(slug, job):
+        assert job.autopilot
+        def publish():
+            net._record(fn(net,fid),agent,0,'reused exact C',1,matched=True)
+        thread = threading.Thread(target=inherit_capture_policy(publish))
+        thread.start()
+        thread.join()
+        job.matched = 1
+    net.twins = SimpleNamespace(_execute_full_pass=execute)
+    result = maintenance_tasks._run_full_pass(net, {'slug':'demo','autopilot':True},
+                                               threading.Event(), threading.Event(), lambda _:None)
+    assert result['matched'] == 1 and fn(net,fid)['status'] == 'matched'
+    assert not scheduled and not net.repair_feedback.listing('demo')['examples']

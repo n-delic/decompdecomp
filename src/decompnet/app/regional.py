@@ -877,6 +877,7 @@ def transfer(net, slug: str, job=None, log=lambda *_: None) -> dict:
     # Side by side: nearly all of a try is the compiler, and the machine has cores to spare (the shared compiler
     # slots keep agents' compiles going meanwhile). One at a time took 20 minutes on a game's 1,968 pairs, and its
     # polished code 12 s a function. Open functions first, then polished code for the matched ones.
+    from ..repair_feedback import inherit_capture_policy
     from . import workers
     from .purpose_work import Executor
     open_work = [t for t in work if t[1].status == 'open']
@@ -884,11 +885,11 @@ def transfer(net, slug: str, job=None, log=lambda *_: None) -> dict:
     for run, items in ((one, open_work), (polish, work[len(open_work):])):
         with Executor(max_workers=max(1, min(WIDTH, workers.WORKERS)), purpose="Other release's code",
                       project=slug, stop=stop.set if stop is not None else None) as pool:
-            list(pool.map(run, items))
+            list(pool.map(inherit_capture_policy(run), items))
             if run is one and held:  # what helpers held when the pass reached it, once more
                 again, held[:] = list(held), []
                 tally['done'] -= len(again)
-                list(pool.map(run, again))
+                list(pool.map(inherit_capture_policy(run), again))
     counts['held'] = len(held)
     if held:
         log(f"{len(held)} functions were held by helpers and weren't tried: Try its code again when they're free.")
