@@ -7911,3 +7911,32 @@ the counter is zero, the game keeps `slt` against the decremented value), a matr
 registers; statement order, `-(cy * sx)`, declaration order and call placement tried), a sibling of the
 volatile-reload pair (80; the `a2 = 1` argument is scheduled before the `lui`), a segment loader (2497; the game
 recomputes each segment symbol's address where gcc reuses the previous end address).
+
+### Round 15 (KMC gcc 2.7.2 `-O2`, one N64 game; hand fixes judged by the linked verdict, adopted live)
+
+Two new exact matches:
+- **A list sweep with a `goto next`** (25 → 0): the two values a flags word can take on a failed lookup were
+  written as `v = f | A; if (!(f & 2)) v = f | B;` (m2c's shape); `if (!(f & 2)) v = f | B; else v = f | A;` gives
+  the game's register (`$v0`, not `$a0`) for the value carried to the shared store. The earlier near-miss forms
+  (merging temporaries, moving the declaration, storing directly on each path) did not move it or made it worse.
+- **An actor-state reset** (180 → 0): after the game stores a computed float to `o->f74`, it reloads it at once and
+  copies it to a second field after three unrelated byte stores. Plain C forwards the stored value (220), and a
+  `const` read forwards it too (210); reading it through `volatile` into a local *right after the store*, then
+  storing the local after the byte stores, reproduces the reload and its position exactly. A `volatile` read placed
+  at the copy (180) does not: the reload's position is what was off.
+
+Improved, adopted, not exact (deep pass, 3 min / 800 variants, cleaned of permuter leftovers before submitting):
+an allocator wrapper and its twin (170 → 65 and 75: the call result is copied to `$s0` *before* the null test in
+the game, after it in ours; early-return, `if (p)` and hoisting `p + 0x84` all made it worse), a sound function
+(2640 → 2240), a lookup (190 → 185).
+
+Tried without a match: a four-entry count (5; `move $v1, $a1` — the loop index copied from the zeroed count —
+survives in the game, every `i = n` form is constant-folded), a bit-writer (15; giving the second field read its
+own temporary fixed that register but swapped the first two loads, 90), a flags handler (60; the game loads the
+flags word before materialising the `0x04000080` mask; declaration order, `s32`, `volatile`, and moving the
+pointer load did not change it), a velocity integrator (105; the game makes its 8-byte frame after four loads and
+keeps the product in `$f2`; `const` reads, operand order and a hoisted constant did not move either), a string
+scanner (155; the class-test exit jumps to the shared `move $v0, n` in the game and returns directly in ours), and a
+menu builder (2203 → 1950 on the scratch copy only, not submitted: a clean typed rewrite with a base-pointer local;
+the game reloads its `u16` mode global after storing it and hoists the loop constants before the first call's
+arguments).
