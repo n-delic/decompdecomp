@@ -589,6 +589,9 @@ the stored extents.
 Relocated USO polygon shapes appear under Models. Local previews apply the
 stored vertex remap when present. Material textures and scene transforms are
 separate from these previews.
-USO sound banks with a unique wave placement expose VADPCM samples in Audio.
-The preview rate is adjustable because the sample descriptors have no fixed
-playback rate. Sequence playback requires a separate sequencer.
+USO sound banks expose VADPCM samples in Audio when the loader tables identify
+the wave bank or the sample descriptors establish a unique wave placement.
+The sample preview rate is adjustable. Stored EAD sequences also appear under
+Audio when the loader tables resolve the sequence, instrument and wave data.
+Prepare a sequence and press Play for up to 30 seconds of stereo audio rendered
+from the cartridge samples. Runtime effects, branches and envelopes can differ.
