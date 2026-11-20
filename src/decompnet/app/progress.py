@@ -567,14 +567,30 @@ def affected_functions(old, new, changed, rows, included=None):
 
     # Symbol order and verdict notes do not alter linked bytes. Only actual symbol
     # changes are shared inputs; an assembly decision belongs to its own function.
-    def symbols(data):
-        return sorted(json.dumps(entry,sort_keys=True) for entry in data.get('symbols', []))
-    if symbols(old) != symbols(new):
-        return None
+    def symbols(data, named=True):
+        # (unnamed: a function's own symbol only names a place the layout already gives, and a function gets one
+        # when it is first renamed from its func_<address> name, so it is left out with the names)
+        places = {f['vram'] for f in data.get('layout', [])}
+        return sorted(json.dumps({k: v for k, v in entry.items() if named or k != 'name'}, sort_keys=True)
+                      for entry in data.get('symbols', [])
+                      if named or not (entry.get('kind') == 'func' and entry.get('address') in places))
     def layout(data):
         return {f['name']: (f['vram'], f['size']) for f in data.get('layout', [])}
+    # A rename (polishing's rename_symbol) changes only names: every symbol keeps its address, size and kind, and every
+    # function its place. That links the same bytes, so it isn't a shared change: the functions it renamed are
+    # affected, and the callers and headers it rewrote are caught below as changed files. Treated as unknown, one
+    # rename reopened all of a game's ~1,000 matches at once, and they came back one compile at a time.
+    renamed = set()
+    if symbols(old) != symbols(new):
+        if symbols(old, named=False) != symbols(new, named=False):
+            return None
+        old_names = {e.get('name') for e in old.get('symbols', [])}
+        new_names = {e.get('name') for e in new.get('symbols', [])}
+        renamed |= old_names ^ new_names
     if layout(old) != layout(new):
-        return None
+        if sorted(layout(old).values()) != sorted(layout(new).values()):
+            return None
+        renamed |= set(layout(old)) ^ set(layout(new))
     old_headers, new_headers = old.get('headers') or {}, new.get('headers') or {}
     known_headers = {'include/'+file for mapping in (old_headers, new_headers) for file in mapping.values()}
     unknown = [path for path in changed if path.startswith('include/') and path not in known_headers]
@@ -589,6 +605,7 @@ def affected_functions(old, new, changed, rows, included=None):
     affected = {name for name,address in previous_assembly.keys() | current_assembly.keys()
                 if ((name,address) in previous_assembly) != ((name,address) in current_assembly)
                 or previous_assembly.get((name,address)) != current_assembly.get((name,address))}
+    affected |= {row['name'] for row in rows if row['name'] in renamed}
     for row in rows:
         name, unit = row['name'], row['unit'] or ''
         previous = old_headers.get(unit, old_headers.get(''))

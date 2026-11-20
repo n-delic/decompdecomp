@@ -1712,6 +1712,35 @@ def test_affected_progress_checks_follow_effective_profiles_and_private_headers(
     assert affected_functions(old,new,set(),rows) is None
 
 
+def test_a_rename_is_not_a_shared_change_that_rechecks_every_match():
+    """A rename (polishing's rename_symbol) only changes names: one reopened all of a game's ~1,000 matches at once
+    (each judged again one compile at a time), and the project showed 38 of 300 matched for half an hour."""
+    from decompnet.app.progress import affected_functions
+    old={'compiler':{'toolchain':'gcc','flags':['-O2']},'headers':{'':'common.h'},
+         'symbols':[{'name':'func_80000010','address':16,'kind':'func','size':8},
+                    {'name':'D_80000100','address':256,'kind':'data','size':4}],
+         'layout':[{'name':'func_80000004','vram':4,'size':12},{'name':'func_80000010','vram':16,'size':8}]}
+    rows=[{'name':'func_80000004','unit':'','vram':4,'rom_offset':4},
+          {'name':'readStatus','unit':'','vram':16,'rom_offset':16}]
+    new=json.loads(json.dumps(old))
+    new['symbols'][0]['name']='readStatus'
+    new['layout'][1]['name']='readStatus'
+    assert affected_functions(old,new,set(),rows)=={'readStatus'}
+    # (its callers' C and the header it rewrote are changed files, judged as usual)
+    assert affected_functions(old,new,{'src/func_80000004.c'},rows)=={'readStatus','func_80000004'}
+    moved=json.loads(json.dumps(new));moved['symbols'][0]['address']=20
+    assert affected_functions(old,moved,set(),rows) is None
+    resized=json.loads(json.dumps(new));resized['layout'][1]['size']=12
+    assert affected_functions(old,resized,set(),rows) is None
+    # (the first rename of a func_<address> function adds its symbol: still only a name)
+    first=json.loads(json.dumps(new));first['layout'][0]['name']='initAudio'
+    first['symbols'].append({'name':'initAudio','address':4,'kind':'func','size':12})
+    rows2=[dict(rows[0],name='initAudio'),rows[1]]
+    assert affected_functions(new,first,set(),rows2)=={'initAudio'}
+    data=json.loads(json.dumps(new));data['symbols'].append({'name':'D_new','address':512,'kind':'data','size':4})
+    assert affected_functions(new,data,set(),rows) is None
+
+
 def test_default_compiler_change_does_not_recheck_overridden_functions():
     from decompnet.app.progress import affected_functions
     old={'compiler':{'toolchain':'gcc','flags':['-O2']},
