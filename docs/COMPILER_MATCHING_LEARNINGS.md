@@ -7940,3 +7940,39 @@ scanner (155; the class-test exit jumps to the shared `move $v0, n` in the game 
 menu builder (2203 → 1950 on the scratch copy only, not submitted: a clean typed rewrite with a base-pointer local;
 the game reloads its `u16` mode global after storing it and hoists the loop constants before the first call's
 arguments).
+
+### Round 16 (KMC gcc 2.7.2 `-O2`, one N64 game; second pass with new forms, judged by the linked verdict, adopted live)
+
+Nine new exact matches; four of them are round 15's "tried without a match" near misses:
+- **The four-entry count** (5 → 0): the game's `move $v1, $a1` (loop index copied from the zeroed count) appears
+  only when a control-flow boundary sits between the count's initialisation and `i = n`. An empty
+  `i = n; while (i < 4) { break; }` before `for (i = n; ...)` reproduces it exactly; a bare label, `goto`, block
+  scope, `register` and every initialiser/declaration order (u16/s16/s32/u32) were folded to `move $v1, $zero`.
+- **The flags handler** (60 → 0): `u32 mask = 0x04000080;` declared *before* the flags load makes gcc materialise
+  the mask (`lui`/`ori`) ahead of the load, as the game does. The constant inline in the test, and `0x04000080 & f`,
+  leave the load first.
+- **The allocator wrapper and its twin** (65 and 75 → 0): `r = alloc(...); if (r != NULL) { p = r; ... }` (the
+  callee-saved copy made *inside* the guard) gives the game's `beqz $v0` with `move $s0, $v0` in the delay slot. The
+  twin's last 10 points were a wrong callee name in its saved C (`func_80016928` for `func_80016948`).
+- **A table lookup** (410 → 0): m2c's draft read an uninitialised byte; `s32 *tbl = D; u8 i = o->x4B;` with both
+  arms forming `p = &tbl[i]` / `&tbl[8]` and one `return *p;` is exact. Direct `D[i]` scores 530, early returns 1045.
+- **A list scan** (345 → 0): plain typed C with a `u16` loop counter, nested null checks and an early `return`
+  after the call. m2c's `& 0xFFFF` counter forms score 864, an `s16` counter 2130.
+- **A random-chance helper** (410 → 0): only the switch's case order mattered: `case 2:`, then `case 0: default:`,
+  then `case 1:` (three of the six orders are exact).
+- **A spawn helper** (465 → 0): the `lbu` then `bltz` on the same byte (a `u8` widened to `s32` and tested `< 0`,
+  which gcc 2.7.2 does not fold) needs the five tests as separate `if (...) goto make;` statements; the same tests
+  joined with `||` compile to `sltiu`/`or` set-on-condition code (1900–2570).
+- **A per-entry flag setter** (230 → 0): the 0x28-stride byte offset in its own local
+  (`s32 off = i * 0x28; ... (base + off)`) puts the offset computation before the array-pointer load, as in the game.
+  Struct indexing and every inline form keep 230.
+
+Improved, adopted, not exact: a string scanner (155 → 5: `!(tbl[s[i++]] & 1)` in the guard puts `i++` in the
+branch's delay slot; the last 5 is `addu $a0, $a1, $a0` operand order, which no form of `s + i` changed), a
+key-table search (575 → 60: plain `while` loops; the game loads the first table entry before setting the record
+pointer), and a pitch-envelope reader (410 → 210: the out-of-range path reads a byte, `t[hi] << 16`, not a word).
+
+Tried without a match: a bit-writer (15; every split of the shared temporary swaps the first two loads to 90), a
+velocity integrator (105; struct, inline helper, operand order and `1.0f / 30.0f` all keep the product in `$f0`), a
+0x28-stride struct reader (265; the offset lands in `$a0` not `$a1` whatever the index type), and a sound trigger
+(210; the stack-slot load is scheduled before the `move $a0, $v0`).
