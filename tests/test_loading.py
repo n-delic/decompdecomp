@@ -238,7 +238,7 @@ def test_activity_changes_only_the_incremental_map_cursor(tmp_path):
     updated = net.map_signature("game")
     assert updated != sig and updated.rsplit(".",1)[0] == sig.rsplit(".",1)[0]
     sig = updated
-    for change in ("best_score=7", "status='matched', matched_at=5", "readable=1", "status='asm'"):
+    for change in ("best_score=7", "status='matched', name='updateWorld', matched_at=5", "readable=1", "status='asm'"):
         with net.store.tx() as db:
             db.execute(f"UPDATE functions SET {change} WHERE id=?", (fid,))
         assert net.map_signature("game") != sig, change

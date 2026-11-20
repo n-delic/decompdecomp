@@ -154,6 +154,8 @@ functions, then stop:
 1. claim_readable() gives you the next matched function that isn't readable yet, with its matching C.
 2. Read the function, and get_function on the functions it calls, until you understand what it does.
 3. {names}
+   Before submitting a polish, use rename_symbol to replace the function's generated name with a descriptive
+   camelCase name, for example updateActorTarget. Keep existing descriptive names.
 4. Prefer polish_function(function, renames='{{"arg0":"value"}}', comment="What it does") for local names and comments.
    renames/types are JSON objects. Existing header type aliases can be substituted with types. The app applies the
    plan without shifting physical lines, judges it, and learns verified patterns for identical helpers. reuse=true

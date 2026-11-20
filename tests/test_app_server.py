@@ -1411,14 +1411,14 @@ def test_the_map_brings_polished_and_set_aside_and_changes_when_a_function_is_po
     client = TestClient(mcp.streamable_http_app(transport_security=security, host="127.0.0.1"),
                         base_url=f"http://127.0.0.1:{PORT}", headers=WINDOW)
     with net.store.tx() as db:
-        db.execute("UPDATE functions SET status='matched' WHERE name='func_0'")
+        db.execute("UPDATE functions SET status='matched', name='updateWorld' WHERE name='func_0'")
     before = client.get("/api/map?slug=game").json()
     with net.store.tx() as db:
-        db.execute("UPDATE functions SET readable=1 WHERE name='func_0'")
+        db.execute("UPDATE functions SET readable=1 WHERE name='updateWorld'")
     after = client.get(f"/api/map?slug=game&since={before['sig']}").json()
     assert {"polished", "not_c"} <= set(after["keys"]) and "same" not in after
     rows = {r[after["keys"].index("name")]: dict(zip(after["keys"], r)) for r in after["rows"]}
-    assert rows["func_0"]["polished"] and not rows["func_1"]["polished"]
+    assert rows["updateWorld"]["polished"] and not rows["func_1"]["polished"]
 
 
 def test_rom_library_setting_and_background_lookup(app, tmp_path, monkeypatch):

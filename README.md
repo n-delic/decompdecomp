@@ -1178,7 +1178,8 @@ void add_score(s32 points) {
 Agents do that second step too: once half a game matches, **Start agents** offers **Polish matched code**. Helpers
 name functions, globals and parameters, describe structs in the shared header and add a comment, and a change is
 kept only when the function still matches byte for byte. Names are the agent's reading of the code: the bytes
-prove what a function does, not what its author called it.
+prove what a function does, not what its author called it. A function needs a descriptive name to count as
+polished. The default polishing prompt asks for camelCase when replacing a generated function name.
 
 Polishing briefs include callers, callees, existing declarations, data previews and nearby naming styles.
 For small edits, helpers use `polish_function`: a JSON map of local names, existing type aliases and a short

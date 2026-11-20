@@ -85,7 +85,7 @@ def test_polish_takes_starred_then_big_functions_and_stubs_last(matched):
     assert "clamp_s32" in net.readability.claim(other, slug)
     assert big["name"] in net.readability.claim(agent, slug)  # the big one before the stub
     net.release(agent, big["name"], "", slug)
-    net.store.conn.execute("UPDATE functions SET readable=1 WHERE id=?", (big["id"],))
+    net.store.conn.execute("UPDATE functions SET name='updateWorld', readable=1 WHERE id=?", (big["id"],))
     assert stub["name"] in net.readability.claim(agent, slug)  # then the stub
 
 
@@ -106,26 +106,33 @@ def test_project_mode_games_are_polished_too_through_their_own_files(tmp_path, m
     net.forks._register("p", "P", "fork", root, {"kind": "fork", "platform": "nds", "ready": True}, "x")
     with net.store.tx() as db:
         db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit,matched_source) "
-                   "VALUES(1,'func_02001000',64,16,'matched','src/a','int func_02001000(int a) { return a * 3; }')")
-    monkeypatch.setattr(ForkEngine, "_current_source", lambda self, fp, fn, comment=False: "int func_02001000(int a) { return a * 3; }")
+                   "VALUES(1,'tripleValue',64,16,'matched','src/a','int tripleValue(int a) { return a * 3; }')")
+    monkeypatch.setattr(ForkEngine, "_current_source", lambda self, fp, fn, comment=False: "int tripleValue(int a) { return a * 3; }")
     agent, _ = net.local_agent("claude-sonnet-5-5-1")
     brief = net.readability.claim(agent, "p")
-    assert "MAKE READABLE: func_02001000 in src/a" in brief and "edit_file" in brief and "rename_symbol" in brief
+    assert "MAKE READABLE: tripleValue in src/a" in brief and "edit_file" in brief and "rename_symbol" in brief
     tried = []
 
     def attempt(self, agent, slug, function, source, keep=True, prelude="", quiet=None, comment=False):
         tried.append(source)
-        ok = "triple" in source
+        ok = "/* triple it */" in source
         return {"text": "✅ still matches" if ok else "❌ the matching one was kept", "matched": ok, "score": 0}
     monkeypatch.setattr(ForkEngine, "attempt", attempt)
-    assert "❌" in net.readability.submit(agent, "p", "func_02001000", "int func_02001000(int x) { return x + x + x; }")
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET name='func_02001000'")
+    with pytest.raises(NetworkError, match="rename_symbol"):
+        net.readability.submit(agent, "p", "func_02001000", "int func_02001000(int n) { return n * 3; }")
+    assert not tried
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET name='tripleValue'")
+    assert "❌" in net.readability.submit(agent, "p", "tripleValue", "int tripleValue(int x) { return x + x + x; }")
     assert net.store.one("SELECT readable FROM functions")["readable"] == 0
-    said = net.readability.submit(agent, "p", "func_02001000", "/* triple it */\nint func_02001000(int n) { return n * 3; }")
+    said = net.readability.submit(agent, "p", "tripleValue", "/* triple it */\nint tripleValue(int n) { return n * 3; }")
     assert "readable now" in said and net.store.one("SELECT readable FROM functions")["readable"] == 1
     assert len(tried) == 2
-    preview = net.function_preview('p','func_02001000')
+    preview = net.function_preview('p','tripleValue')
     assert preview['polished']
-    assert preview['unpolished_source'] == "int func_02001000(int a) { return a * 3; }"
+    assert preview['unpolished_source'] == "int tripleValue(int a) { return a * 3; }"
     assert "claim_readable" in tools.tool_names(fork=True) and "make_readable" in tools.tool_names(fork=True)
     assert "edit_file" in tools.READABLE_PROMPT.format(title="T", count=1, names=tools.READABLE_FORK)
 
@@ -211,3 +218,44 @@ def test_push_poll_timestamp_during_real_polish_still_requires_exact_bytes(match
         assert answer.startswith('✅') and fn['matched_source'] == READABLE
     else:
         assert answer.startswith('❌ It no longer matches') and fn['matched_source'] == original
+
+
+def test_generated_names_are_removed_from_existing_and_restored_polished_progress(tmp_path):
+    from decompnet.store import Store
+
+    path = tmp_path / "progress.db"
+    store = Store(path)
+    with store.tx() as db:
+        db.execute("INSERT INTO projects(id, slug, name, arch, root, config) VALUES(1, 'p', 'P', 'mips', '', '{}')")
+        # Simulate a database saved by an older version.
+        db.execute("DROP TRIGGER polished_name_insert")
+        db.execute("DROP TRIGGER polished_name_update")
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,readable,matched_source,unpolished_source) "
+                   "VALUES(1,'func_80029068',32,8,'matched',1,'edited C','original C'),"
+                   "(1,'known_name',32,8,'matched',1,'edited C','original C')")
+    store.conn.close()
+
+    upgraded = Store(path)
+    rows = upgraded.all("SELECT name,status,readable,matched_source,unpolished_source FROM functions ORDER BY name")
+    assert [tuple(row) for row in rows] == [
+        ('func_80029068', 'matched', 0, 'edited C', 'original C'),
+        ('known_name', 'matched', 1, 'edited C', 'original C'),
+    ]
+    with upgraded.tx() as db:
+        db.execute("UPDATE functions SET readable=1 WHERE name='func_80029068'")
+        db.execute("UPDATE functions SET name='_func_00401234@4' WHERE name='known_name'")
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,readable) "
+                   "VALUES(1,'fn_80001234',32,8,'matched',1)")
+    assert [row['readable'] for row in upgraded.all("SELECT readable FROM functions")] == [0, 0, 0]
+    with upgraded.tx() as db:
+        # Some object reports keep the original linker symbol after a source rename.
+        db.execute("UPDATE functions SET meta=?, readable=1 WHERE name='_func_00401234@4'",
+                   ('{"real":"updateActorTarget"}',))
+    assert upgraded.one("SELECT readable FROM functions WHERE name='_func_00401234@4'")['readable'] == 1
+
+
+def test_default_polish_prompt_requests_descriptive_camelcase_function_names():
+    from decompnet.app.prompt_settings import defaults
+
+    prompt = defaults()['initial_readable']
+    assert 'descriptive' in prompt and 'camelCase' in prompt and 'rename_symbol' in prompt

@@ -4,8 +4,7 @@ import json
 import re
 import time
 
-_GENERATED = re.compile(r"_?(?:func|fn|FUN|sub)_[0-9a-fA-F]+(?:_[0-9a-fA-F]+)*(?:@.*)?$")
-
+from ..polish_names import generated
 
 # Giving a symbol a compiler builtin's spelling can change calls or reject existing prototypes.
 BUILTIN_NAMES = frozenset("bzero bcopy bcmp memcpy memmove memset memcmp memchr strlen strchr strrchr strcpy strncpy strcmp "
@@ -13,16 +12,15 @@ BUILTIN_NAMES = frozenset("bzero bcopy bcmp memcpy memmove memset memcmp memchr 
                           "abs labs malloc calloc realloc free printf sprintf snprintf puts putchar exit abort".split())
 
 
-def generated(name: str) -> bool:
-    # Overlay/unit suffixes are arbitrary labels appended to an automatic address name.
-    return name.startswith(("func_", "_func_")) or bool(_GENERATED.fullmatch(name))
-
-
 def check_rename(old: str, new: str):
     """A donor's placeholder must never erase an established descriptive symbol."""
     if old != new and not generated(old) and not old.startswith('func_') and new.startswith('func_'):
         from ..network import NetworkError
         raise NetworkError(f"Keep {old}: {new} is a generated function name, not a naming improvement.")
+
+
+def needs_name(fn) -> bool:
+    return generated(json.loads(fn["meta"] or "{}").get("real") or fn["name"])
 
 
 def state(fn) -> dict:
