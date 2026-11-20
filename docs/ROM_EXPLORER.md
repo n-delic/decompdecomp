@@ -579,4 +579,6 @@ with their stored palettes. The Model browser previews local meshes from support
 commands. Animation and scene indices expose record locations and metadata. The
 dialogue tables expose localized strings. Prepare and play MusyX ADPCM samples in the
 Audio tab using the sample rate and predictor book stored in the ROM. Prepare MORT dialogue clips as WAV in the same tab.
-MusyX song records support index inspection.
+MusyX songs with a verified instrument and sample bank support a stereo WAV preview
+for the first 30 seconds. The preview uses the cartridge samples and the song
+arrangement. Runtime effects and macro timing can differ.
