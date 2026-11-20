@@ -176,6 +176,10 @@ try {
   places; the compilers it runs stay pinned.
 - Proprietary compilers are installed only after the user accepts their licence in the app.
 - Heavy tools run through `limits.capped(argv)` (a memory cap) and with a timeout.
+- Draft repair proposal generation uses a separate Python process, including during an active local repair
+  discovery session. Regex searches can hold the interpreter lock for their entire run. Server handlers
+  dispatch to request workers before waiting for proposal results. A failed or timed-out proposal process
+  must never fall back to generating in the server.
 - Agents may edit only source and header files: `EDITABLE` and `FORBIDDEN_PARTS` in `forks/project.py`.
 - The judge is never weakened. A match is byte-identical after linking (ROM mode) or objdiff 100% (fork mode).
   decompdecomp never accepts code that "does the same thing".

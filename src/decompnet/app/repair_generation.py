@@ -34,12 +34,26 @@ class FamilyTimeout(BaseException):
 
 
 def _bounded(function, args, kwargs):
-    """`function(...)` (a generator's values as a list), cut off after FAMILY_SECONDS when it can be: a SIGALRM timer, which also interrupts a
-    regular expression (the regex engine checks for signals), on the main thread of a process that has no timer of
-    its own running. Families run on another thread are bounded by generating in a worker process instead
-    (draft_repairs.variants); here they run as before. The outermost family carries the timer; nested ones share it."""
+    """Run a family within the tighter of the worker's family cap and the request budget.
+
+    The proposal subprocess runs on its main thread so SIGALRM can interrupt a
+    long C regex. Nested stages share the outer timer. The server's request
+    threads cannot use this timer.
+    """
     depth = getattr(_DEPTH, 'value', 0)
-    timed = (depth == 0 and FAMILY_SECONDS > 0 and threading.current_thread() is threading.main_thread()
+    state = ACTIVE.get()
+    maximum = FAMILY_SECONDS
+    request_limited = False
+    if state and state.deadline is not None:
+        remaining = state.deadline - time.monotonic()
+        if remaining <= 0:
+            state.incomplete = True
+            return []
+        if maximum <= 0 or remaining < maximum:
+            maximum = remaining
+            request_limited = True
+    timed = (depth == 0 and maximum > 0 and hasattr(signal, 'setitimer')
+             and threading.current_thread() is threading.main_thread()
              and signal.getitimer(signal.ITIMER_REAL)[0] == 0)
     if not timed:
         _DEPTH.value = depth+1
@@ -52,7 +66,7 @@ def _bounded(function, args, kwargs):
     produced = []
     try:
         try:
-            signal.setitimer(signal.ITIMER_REAL, FAMILY_SECONDS)
+            signal.setitimer(signal.ITIMER_REAL, maximum)
             result = function(*args, **kwargs)
             if not hasattr(result, '__next__'):
                 produced = result  # (a list or other value, returned as it was)
@@ -65,13 +79,13 @@ def _bounded(function, args, kwargs):
         # (a timer that fired just as the family returned still lands here, never in the caller)
         if not isinstance(produced, list):
             produced = []
-        stage = function.__module__.rsplit('.', 1)[-1]+'.'+function.__qualname__
-        name = args[1] if len(args) > 1 and isinstance(args[1], str) else '?'
-        CUT_OFF.append((stage, name))
-        if (stage, name) not in _REPORTED:
-            _REPORTED.add((stage, name))
-            log.warning('Repair family %s was cut off after %ss on %s; the other families go on.', stage,
-                        FAMILY_SECONDS, name)
+        if request_limited:
+            state.incomplete = True
+        else:
+            stage = function.__module__.rsplit('.', 1)[-1]+'.'+function.__qualname__
+            name = args[1] if len(args) > 1 and isinstance(args[1], str) else '?'
+            CUT_OFF.append((stage, name))
+            report_cut_off(((stage, name),))
         # (a generator's proposals so far are complete sources and stay; a list-returning family gives none)
     finally:
         signal.signal(signal.SIGALRM, previous)
@@ -175,7 +189,7 @@ def _call(function,*args,**kwargs):
     # Proposals repeat almost all of their source. Compress raw stages so many agents can reuse
     # large-function proposals without retaining hundreds of megabytes of duplicate C strings.
     packed=zlib.compress(json.dumps(result).encode(),level=1)
-    if cacheable and len(packed) <= MAX_CACHE_BYTES:
+    if cacheable and not state.incomplete and len(packed) <= MAX_CACHE_BYTES:
         with CACHE_LOCK:
             state.cache[key] = (packed, len(packed))
             while len(state.cache) > 512 or sum(value[1] for value in state.cache.values()) > MAX_CACHE_BYTES:

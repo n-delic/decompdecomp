@@ -43,22 +43,44 @@ class Worker:
                 except queue.Full:pass
 
     def run(self, request, check):
+        write_errors = []
+
+        def send():
+            try:
+                self.process.stdin.write(request+b'\n')
+                self.process.stdin.flush()
+            except (OSError, ValueError) as error:
+                write_errors.append(error)
+
+        # A large request can fill the pipe before a stuck child reads it.
+        # Keep checking cancellation during both the send and the response.
+        writer = threading.Thread(target=send, daemon=True, name='deep-proposal-input')
         try:
             check()
-            self.process.stdin.write(request+b'\n');self.process.stdin.flush()
+            writer.start()
             while True:
                 check()
-                try:line = self.lines.get(timeout=.05);break
-                except queue.Empty:pass
-            if line is None:raise NetworkError('Local proposal generator stopped. Start the deep search again.')
+                if write_errors:
+                    raise write_errors[0]
+                try:
+                    line = self.lines.get(timeout=.05)
+                    break
+                except queue.Empty:
+                    pass
+            if line is None:
+                raise NetworkError('Local proposal generator stopped. Retry the repair.')
             result = json.loads(line)
-            if 'error' in result:raise NetworkError('Local proposal generation failed: '+result['error'])
+            if 'error' in result:
+                raise NetworkError('Local proposal generation failed: '+result['error'])
             from .repair_generation import report_cut_off
             report_cut_off(result.pop('cut_off',None) or ())
             return result
         except BaseException:
             self.close()
             raise
+        finally:
+            if writer.ident is not None:
+                writer.join(timeout=2)
 
     def close(self):
         if self.closed.is_set():return

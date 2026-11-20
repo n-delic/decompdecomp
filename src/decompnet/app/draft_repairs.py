@@ -275,61 +275,115 @@ _MEMBER = rf'{_IDENT}(?:\s*(?:->|\.)\s*{_IDENT})*'
 
 _IDLE_WORKERS = []
 _IDLE_LOCK = threading.Lock()
-IDLE_WORKERS_KEPT = 4
+_WORKER_SLOTS = threading.BoundedSemaphore(4)
 IDLE_WORKER_SECONDS = 300  # a kept worker unused this long is closed at the next request (bounded either way)
 
 
-def _in_worker(source, name, arch, asm, flags, labels, kwargs):
-    """variants() generated in a proposal worker process (deep_proposal_worker), where each family runs on the main
-    thread under repair_generation's time cap. A family stuck on another thread can't be interrupted at all: a
-    regular expression holds the interpreter lock until it ends, so not even a watchdog thread runs. None when the
-    request can't go there (arguments that aren't plain data) or the worker failed, and the caller generates here."""
-    import json
+class _ProposalDeadline(TimeoutError):
+    pass
 
-    from ..network import NetworkError
-    from .deep_proposals import Worker
-    try:
-        request = json.dumps([[source, name, arch, asm, list(flags)], kwargs], ensure_ascii=False).encode()
-    except (TypeError, ValueError):
-        return None
+
+def _worker_batch(request, check):
     import time
-    now = time.monotonic()
-    with _IDLE_LOCK:
-        stale = [w for w in _IDLE_WORKERS if now - w.idle_since > IDLE_WORKER_SECONDS]
-        _IDLE_WORKERS[:] = [w for w in _IDLE_WORKERS if w not in stale]
-        worker = _IDLE_WORKERS.pop() if _IDLE_WORKERS else None
-    for old in stale:
-        old.close()
+
+    from .deep_proposals import Worker
+
+    check()
+    while not _WORKER_SLOTS.acquire(timeout=0.05):
+        check()
     try:
+        now = time.monotonic()
+        with _IDLE_LOCK:
+            stale = [worker for worker in _IDLE_WORKERS if now - worker.idle_since > IDLE_WORKER_SECONDS]
+            _IDLE_WORKERS[:] = [worker for worker in _IDLE_WORKERS if worker not in stale]
+            worker = _IDLE_WORKERS.pop() if _IDLE_WORKERS else None
+        for expired in stale:
+            expired.close()
         if worker is None or worker.closed.is_set():
             worker = Worker()
-        result = worker.run(request, lambda: None)
-    except (NetworkError, OSError):
-        return None  # (Worker.run closed it)
-    with _IDLE_LOCK:
-        if len(_IDLE_WORKERS) < IDLE_WORKERS_KEPT:
+        result = worker.run(request, check)
+        with _IDLE_LOCK:
             worker.idle_since = time.monotonic()
             _IDLE_WORKERS.append(worker)
-            worker = None
-    if worker is not None:
-        worker.close()
+        return result
+    finally:
+        _WORKER_SLOTS.release()
+
+
+def _in_worker(source, name, arch, asm, flags, labels, kwargs):
+    """Keep parsers and rewrite families outside the server's interpreter."""
+    import hashlib
+    import json
+    import time
+
+    from ..network import NetworkError
+    from . import repair_generation
+    from .purpose_work import checkpoint
+
+    state = repair_generation.ACTIVE.get()
+    now = time.monotonic()
+    if state and repair_generation.exhausted():
+        return []
+    deadline = now + max(30, 2 * repair_generation.FAMILY_SECONDS)
+    if state:
+        if state.deadline is not None:
+            # Give the child time to return partial results after its cooperative
+            # deadline. A stuck child can still be stopped by the parent.
+            deadline = min(deadline, state.deadline + 0.25)
+        kwargs['_generation'] = {
+            'scope': hashlib.sha256(repr(state.scope).encode()).hexdigest(),
+            'families': sorted(state.families),
+            'deadline': state.deadline,
+        }
+    try:
+        request = json.dumps([[source, name, arch, asm, list(flags)], kwargs], ensure_ascii=False).encode()
+    except (TypeError, ValueError) as error:
+        raise NetworkError("Could not send the repair inputs to the proposal worker.") from error
+
+    def check():
+        checkpoint()
+        if time.monotonic() >= deadline:
+            raise _ProposalDeadline
+
+    try:
+        result = _worker_batch(request, check)
+    except _ProposalDeadline:
+        if state:
+            state.incomplete = True
+            return []
+        raise NetworkError("The repair proposal worker took too long. Retry the repair or choose a smaller search.") from None
+    except OSError as error:
+        raise NetworkError("Could not run the repair proposal worker. Check the app installation and retry.") from error
+
     choices = []
     for text, family in result['candidates']:
         choices.append(text)
         if family and labels is not None:
             labels[text] = family
+    if state:
+        state.incomplete |= result['incomplete']
+        for key in ('calls', 'generated_stages', 'cache_hits', 'generation_ms'):
+            state.metrics[key] += result['generation'][key]
+        repair_generation.count(state, ((family, text) for text, family in result['candidates']))
     return choices
 
 
 def variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels=None, *, limit=LIMIT, header='', tables=(), callees='', entry_scope=None) -> list[str]:
-    from .repair_generation import ACTIVE, FAMILY_SECONDS, PARTITION
-    if (FAMILY_SECONDS > 0 and threading.current_thread() is not threading.main_thread() and ACTIVE.get() is None
-            and PARTITION.get() is None):
-        # (on another thread a stuck family can't be cut off here: generate where it can be; _in_worker)
+    import asyncio
+
+    from ..network import NetworkError
+
+    # Server entry points dispatch work to request workers. Synchronous pipe and
+    # process waits must stay off the HTTP event loop even if a new caller forgets.
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        pass
+    else:
+        raise NetworkError("Run repair proposal generation outside the server event loop.")
+    if threading.current_thread() is not threading.main_thread():
         kwargs = dict(limit=limit, header=header, tables=tables, callees=callees, entry_scope=entry_scope)
-        delegated = _in_worker(source, name, arch, asm, flags, labels, kwargs)
-        if delegated is not None:
-            return delegated
+        return _in_worker(source, name, arch, asm, flags, labels, kwargs)
     return _variants(source, name, arch, asm, flags, labels, limit=limit, header=header, tables=tables,
                      callees=callees, entry_scope=entry_scope)
 

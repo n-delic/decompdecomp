@@ -54,7 +54,8 @@ def test_parallel_paths_share_one_generation_without_shared_mutation(monkeypatch
     finally:pool.close()
 
 
-def test_worker_is_killed_promptly_on_cancellation(monkeypatch):
+@pytest.mark.parametrize('request_size', [0, 2 << 20])
+def test_worker_is_killed_promptly_on_cancellation(monkeypatch, request_size):
     import json
     import sys
     original=deep_proposals.subprocess.Popen
@@ -67,7 +68,7 @@ def test_worker_is_killed_promptly_on_cancellation(monkeypatch):
         count[0]+=1
         if count[0]>2:raise RuntimeError('cancelled')
     with pytest.raises(RuntimeError,match='cancelled'):
-        worker.run(json.dumps(request()).encode(),check)
+        worker.run(json.dumps(request()).encode() + b" " * request_size,check)
     assert worker.process.poll() is not None and not worker.reader.is_alive()
 
 
