@@ -7871,7 +7871,7 @@ then adopted by the running app through Try. Two repair families came out of rou
 and `volatile_reload` (an extern pointer global stored through twice declared `volatile`; 1030 → 40 on its draft,
 and it shaped the 3019 → 1520 below).
 
-Seven new exact matches:
+Six new exact matches:
 - **A collision-flag pass over linked lists** (965 → 0): the three-word position copies are a `typedef struct
   { s32 x, y, z; }` struct assignment (`*(V3i *)(p + 0x50) = *arg3`; the game loads all three words before
   storing), and each branch keeps its own locals for the flag word (`w`, `r`, `q`): one shared `v` moved them from
