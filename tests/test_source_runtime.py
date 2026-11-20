@@ -1,6 +1,8 @@
 import json
 import subprocess
 import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -11,15 +13,20 @@ from decompnet.app import source_runtime as runtime
 
 
 def test_only_child_owned_python_can_update_without_a_server_restart():
-    assert runtime.worker_only_changes([
+    assert runtime.changed_workers([
         'src/decompnet/app/permute.py', 'src/decompnet/app/permuter_initialization.py', 'tests/test_permute.py'])
-    assert runtime.worker_only_changes(['src/decompnet/permuter_formatting.py'])
-    assert not runtime.worker_only_changes(['src/decompnet/app/permuter_worker.py'])
-    assert not runtime.worker_only_changes(['src/decompnet/app/permuter_focus.py'])
-    assert not runtime.worker_only_changes(['src/decompnet/app/permute.py', 'src/decompnet/app/engine/core.py'])
+    assert runtime.changed_workers(['src/decompnet/permuter_formatting.py'])
+    assert runtime.changed_workers(['src/decompnet/app/tool_reader_worker.py']) == {'reader'}
+    assert runtime.changed_workers(['src/decompnet/app/tool_reader_worker.py',
+                                    'src/decompnet/app/permute.py']) == {'permuter', 'reader'}
+    assert not runtime.changed_workers(['src/decompnet/app/tool_reader_worker.py',
+                                        'src/decompnet/app/tool_reader.py'])
+    assert not runtime.changed_workers(['src/decompnet/app/permuter_worker.py'])
+    assert not runtime.changed_workers(['src/decompnet/app/permuter_focus.py'])
+    assert not runtime.changed_workers(['src/decompnet/app/permute.py', 'src/decompnet/app/engine/core.py'])
 
 
-def test_permuter_only_pull_replaces_the_worker_and_keeps_the_server(tmp_path, monkeypatch):
+def worker_checkouts(tmp_path, path, old_source, new_source):
     def git(*args, cwd=None):
         return subprocess.run(['git', *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
 
@@ -33,7 +40,7 @@ def test_permuter_only_pull_replaces_the_worker_and_keeps_the_server(tmp_path, m
     git('switch', '-c', 'main', cwd=source)
     (source / 'src/decompnet/app').mkdir(parents=True)
     (source / 'src/decompnet/app/cli.py').write_text('')
-    (source / 'src/decompnet/app/permute.py').write_text('old worker')
+    (source / path).write_text(old_source)
     (source / 'pyproject.toml').write_text('')
     git('add', '.', cwd=source)
     git('commit', '-m', 'old', cwd=source)
@@ -41,11 +48,16 @@ def test_permuter_only_pull_replaces_the_worker_and_keeps_the_server(tmp_path, m
     git('clone', '--branch', 'main', str(remote), str(staged))
     git('config', 'user.email', 'test@example.invalid', cwd=staged)
     git('config', 'user.name', 'Test', cwd=staged)
-    (staged / 'src/decompnet/app/permute.py').write_text('new worker')
+    (staged / path).write_text(new_source)
     git('add', '.', cwd=staged)
     git('commit', '-m', 'worker only', cwd=staged)
     git('push', 'origin', 'main', cwd=staged)
+    return source, staged, git('rev-parse', '--short=12', 'HEAD', cwd=staged)
 
+
+def test_permuter_only_pull_replaces_the_worker_and_keeps_the_server(tmp_path, monkeypatch):
+    worker = 'src/decompnet/app/permute.py'
+    source, staged, revision = worker_checkouts(tmp_path, worker, 'old worker', 'new worker')
     app = make_app(tmp_path)
     app.build_id = 'old'
     steps = []
@@ -63,8 +75,135 @@ def test_permuter_only_pull_replaces_the_worker_and_keeps_the_server(tmp_path, m
     manager = runtime.Runtime(app)
     assert manager.update_worker_source(source, staged, 'git', 'example/repo')
     assert steps == ['paused', 'resumed']
-    assert (source / 'src/decompnet/app/permute.py').read_text() == 'new worker'
-    assert app.build_id == git('rev-parse', '--short=12', 'HEAD', cwd=staged)
+    assert (source / worker).read_text() == 'new worker'
+    assert app.build_id == revision
+
+
+@pytest.mark.parametrize('update_kind', ['source-update', 'local-edit'])
+def test_tool_reader_update_preserves_a_running_agent_session_and_claim(tmp_path, monkeypatch, update_kind):
+    from starlette.testclient import TestClient
+
+    from decompnet.app import tool_reader, tools
+    from decompnet.app.agents import Manager, Session
+    from tests.test_agent_workflow_efficiency import game
+    from tests.test_tool_reader import HEADERS, call
+
+    worker_path = 'src/decompnet/app/tool_reader_worker.py'
+    initial = tool_reader.WORKER_SOURCE.read_text()
+    updated = initial.replace('        return result\n\n\ndef window_routes',
+                              '        return json.dumps(json.loads(result) | {"updated_reader": True})\n\n\ndef window_routes')
+    assert updated != initial
+    source, staged, revision = worker_checkouts(tmp_path, worker_path, initial, updated)
+    monkeypatch.setattr(tool_reader, 'WORKER_SOURCE', source / worker_path)
+    # The source updater must request an explicit reload even if file watching is off.
+    monkeypatch.setenv('DECOMP_LIVE_RELOAD', '0' if update_kind == 'source-update' else '1')
+    monkeypatch.setattr(runtime.edition, 'CHECKOUT_ROOT', source)
+    monkeypatch.setattr(runtime, 'validate', lambda *args: (source, 'git'))
+
+    net, _, _ = game(tmp_path)
+    agent, token = net.local_agent('reload-helper')
+    app = make_app(tmp_path)
+    app.net = net
+    app.manager = manager = Manager(net, app.home, 'http://localhost/mcp')
+    app.reader = reader = tool_reader.Reader(net, app.home)
+    session = Session('helper', 'api', 'Reload helper', 'game', agent.name, {}, state='working')
+    manager.sessions[session.id] = session
+    manager.assignments[agent.id] = session.slug
+    session_id = manager._session_begin(session)
+
+    mcp = tools.build_mcp(net, lambda ctx: (net.authenticate(
+        ctx.headers['authorization'].removeprefix('Bearer ')), session.slug), observe=manager.record_agent)
+    update = runtime.Runtime(app)
+    monkeypatch.setattr(update, 'prepare', lambda *args: staged)
+    monkeypatch.setattr(update, 'drain', lambda: pytest.fail('the app must stay running'))
+
+    launching, allow_launch = threading.Event(), threading.Event()
+    launch = reader._launch
+
+    def delayed_replacement(port):
+        if reader.process is not None:
+            launching.set()
+            assert allow_launch.wait(15)
+        launch(port)
+
+    monkeypatch.setattr(reader, '_launch', delayed_replacement)
+    reader.start()
+    reader.attach(lambda: tool_reader.routes(net, manager, app.settings),
+                  lambda report: tool_reader.apply_report(net, manager, report))
+
+    try:
+        with (
+            TestClient(mcp.streamable_http_app(stateless_http=True, json_response=True),
+                       base_url='http://localhost:12345') as fallback,
+            ThreadPoolExecutor(max_workers=1) as agent_loop,
+            ThreadPoolExecutor(max_workers=1) as updater,
+        ):
+            headers = HEADERS | {'Authorization': f'Bearer {token}'}
+
+            def app_tool(name, arguments):
+                reply = fallback.post('/mcp', headers=headers, json={
+                    'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call',
+                    'params': {'name': name, 'arguments': arguments},
+                })
+                reply.raise_for_status()
+                result = reply.json()['result']
+                assert not result.get('isError'), result
+                return result['content'][0]['text']
+
+            session.thread = agent_loop.submit(threading.current_thread).result(timeout=5)
+            assert 'claim_token:' in agent_loop.submit(app_tool, 'claim_function', {'function': 'f'}).result(timeout=10)
+            deadline = time.monotonic() + 15
+            while reader.loaded_revision is None and time.monotonic() < deadline:
+                time.sleep(0.05)
+            assert reader.loaded_revision is not None
+            old_worker, url = reader.process, reader.url
+
+            def reader_claims():
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    result, error = call(reader, token, 'get_claims')
+                    if not error:
+                        return json.loads(result)
+                    assert tool_reader.DECLINED in result
+                    time.sleep(0.05)
+                pytest.fail('the reader did not accept the running agent')
+
+            before = agent_loop.submit(reader_claims).result(timeout=10)
+            claim = before['claims'][0]
+            assert claim['function'] == 'f' and claim['claim_token']
+            if update_kind == 'source-update':
+                job = updater.submit(update.run, source, 'git', 'uv', tmp_path, 'example/repo')
+            else:
+                edited = (source / worker_path).with_suffix('.tmp')
+                edited.write_text(updated)
+                edited.replace(source / worker_path)
+            try:
+                assert launching.wait(15)
+                assert old_worker.poll() == 0
+                assert json.loads(agent_loop.submit(app_tool, 'get_claims', {}).result(timeout=5)) == before
+                assert session.thread.is_alive()
+                assert manager.sessions[session.id] is session
+                assert session.session_id == session_id and session.state == 'working'
+            finally:
+                allow_launch.set()
+            if update_kind == 'source-update':
+                job.result(timeout=20)
+                assert update.job['state'] == 'done', update.job
+                assert app.build_id == revision
+            else:
+                deadline = time.monotonic() + 15
+                while reader.process is old_worker and time.monotonic() < deadline:
+                    time.sleep(0.05)
+            assert reader.process.pid != old_worker.pid
+            assert reader.url == url
+            assert agent_loop.submit(reader_claims).result(timeout=10) == before | {'updated_reader': True}
+            assert agent_loop.submit(threading.current_thread).result(timeout=5) is session.thread
+            assert session.session_id == session_id and session.state == 'working'
+            assert not session.stop.is_set()
+            rows = net.project_store('game').all('SELECT id, ended_at FROM helper_sessions WHERE helper_id=?', session.id)
+            assert [dict(row) for row in rows] == [{'id': session_id, 'ended_at': None}]
+    finally:
+        reader.stop()
 
 
 def test_worker_only_handoff_uses_the_selected_checkout_not_the_staged_clone(tmp_path, monkeypatch):
@@ -249,6 +388,10 @@ def test_prepare_uses_separate_checkout_and_environment_without_holding_workers(
         assert not app.manager.source_update_pending
         assert not app.jobs.source_update_pending
         calls.append((argv, cwd))
+        if argv[:2] == ['git', 'clone']:
+            reader_source = Path(argv[-1]) / 'src/decompnet/app/tool_reader_worker.py'
+            reader_source.parent.mkdir(parents=True)
+            reader_source.touch()
     monkeypatch.setattr(runtime, 'command', command)
     staged = r.prepare(tmp_path, 'git', 'uv', 'example/repo')
     assert staged != tmp_path and staged.parent == app.home / 'source-runtimes'
@@ -257,6 +400,7 @@ def test_prepare_uses_separate_checkout_and_environment_without_holding_workers(
     assert all(cwd == staged for _, cwd in calls[1:])
     assert '--locked' in calls[1][0]
     assert 'import decompnet.app.cli' in calls[2][0]
+    assert 'import decompnet.app.tool_reader_worker' in calls[3][0]
 
 
 def test_long_running_job_never_holds_new_work_and_retries(tmp_path, monkeypatch):

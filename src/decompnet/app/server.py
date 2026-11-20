@@ -407,7 +407,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
     # whose autopilot and with_project they use
     app = routes.App(net, mcp, home, port, secret, mcp_url, build_id, manager, jobs, settings, allowed_hosts,
                      guard, body, call, fail, ui_call=ui_call, fast_call=fast_call, live_call=live_call, stream_call=stream_call, control_call=control_call, updater=updates.Updater(before_restart, port, secret),
-                     busy=busy, quit_app=quit_app, web_login=net.web_login, headless=headless)
+                     busy=busy, quit_app=quit_app, web_login=net.web_login, headless=headless, reader=reader)
     from . import web_login
     web_login.register(app)
     for part in (pages, state, projects, repair_feedback, repository_sync, forks, setup, life, rooms, pairing, browser_bridge, data_directories):

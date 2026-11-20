@@ -7,6 +7,7 @@ import sys
 import tempfile
 import threading
 import time
+from contextlib import nullcontext
 from pathlib import Path
 
 from ..hostenv import NO_WINDOW, find_uv
@@ -92,16 +93,21 @@ ACTIVE = ('preparing', 'waiting', 'deferred', 'updating', 'restarting')
 RETRY_SECONDS = 60
 
 
-def worker_only_changes(paths):
-    """Only child-owned code can change under a live server; docs/tests are inert."""
-    worker = {"src/decompnet/app/permute.py", "src/decompnet/app/permuter_initialization.py",
-              "src/decompnet/app/permuter_local.py", "src/decompnet/app/permuter_macro_effects.py",
-              "src/decompnet/permuter_gen.py", "src/decompnet/permuter_capture.py", "src/decompnet/permuter_formatting.py"}
-    def child_owned(path):
-        return path in worker
-    return bool(paths) and any(child_owned(path) for path in paths) and all(
-        child_owned(path) or path in ("README.md", "ROADMAP.md") or
-        path.startswith(("docs/", "tests/")) for path in paths)
+def changed_workers(paths) -> set[str]:
+    """Identify updates whose code belongs entirely to replaceable workers."""
+    permuter = {"src/decompnet/app/permute.py", "src/decompnet/app/permuter_initialization.py",
+                "src/decompnet/app/permuter_local.py", "src/decompnet/app/permuter_macro_effects.py",
+                "src/decompnet/permuter_gen.py", "src/decompnet/permuter_capture.py",
+                "src/decompnet/permuter_formatting.py"}
+    workers = set()
+    for path in paths:
+        if path in permuter:
+            workers.add("permuter")
+        elif path == "src/decompnet/app/tool_reader_worker.py":
+            workers.add("reader")
+        elif path not in ("README.md", "ROADMAP.md") and not path.startswith(("docs/", "tests/")):
+            return set()
+    return workers
 
 
 class Runtime:
@@ -181,6 +187,9 @@ class Runtime:
                 if self.cancel.is_set():
                     break
                 command(argv, cwd)
+            reader_source = staged / 'src/decompnet/app/tool_reader_worker.py'
+            if not self.cancel.is_set() and reader_source.is_file():
+                command([uv, 'run', '--no-sync', 'python', '-c', 'import decompnet.app.tool_reader_worker'], staged)
         except BaseException:
             discard(staged)
             raise
@@ -188,8 +197,7 @@ class Runtime:
 
     def update_worker_source(self, folder, staged, git, repo):
         """Fast-forward child-only code while the server keeps its loaded modules."""
-        worker = getattr(self.app.net, "permuter", None)
-        if folder.resolve() != edition.CHECKOUT_ROOT.resolve() or not hasattr(worker, "code_update"):
+        if not edition.DEV or folder.resolve() != edition.CHECKOUT_ROOT.resolve():
             return False
         validate(str(folder), repo)
         desired = command([git, "rev-parse", "HEAD"], staged)
@@ -201,13 +209,22 @@ class Runtime:
         if command([git, "merge-base", current, desired], folder) != current:
             return False
         changed = command([git, "diff", "--name-only", current, desired], folder).splitlines()
-        if not worker_only_changes(changed):
+        workers = changed_workers(changed)
+        permuter = getattr(self.app.net, "permuter", None)
+        reader = self.app.reader if "reader" in workers else None
+        if not workers or ("permuter" in workers and not hasattr(permuter, "code_update")):
             return False
-        with worker.code_update():
+        self.job.update(state="updating", message="Applying worker changes while agents and jobs continue.")
+        with permuter.code_update() if "permuter" in workers else nullcontext():
             validate(str(folder), repo)  # work written while preparing cannot be overwritten
             command([git, "merge", "--ff-only", desired], folder)
         self.app.build_id = desired[:12]
-        self.job.update(state="done", message="Permuter updated. Its worker restarted; the app and other jobs kept running.")
+        if reader is not None and not reader.reload_code():
+            raise ValueError("The source update was applied, but the tool reader hasn't started. "
+                             "The app is answering its requests. See logs/tool-reader.log for details.")
+        names = " and ".join(name for key, name in (("permuter", "permuter"), ("reader", "tool reader"))
+                             if key in workers)
+        self.job.update(state="done", message=f"Updated the {names}. The app, agents and other jobs kept running.")
         return True
 
     def drain(self):
