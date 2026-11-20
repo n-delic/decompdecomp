@@ -5,7 +5,7 @@ import time
 
 from ..network import NetworkError
 
-DEFAULT_TRIES = 30
+DEFAULT_TRIES = 300
 MAX_TRIES = 10000
 BLOCKED_TOOLS = frozenset({'claim_function', 'release_function', 'release_and_continue',
                            'compile_data', 'edit_file', 'split_file', 'split_function', 'join_functions',

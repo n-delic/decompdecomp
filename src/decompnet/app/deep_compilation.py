@@ -304,7 +304,7 @@ def baseline(search, agent, proj, fn, state, fork, build):
         try:
             measured = build()
             fields = ('starting_score', 'best', 'baseline_measured', 'winner_diff', 'winner_source',
-                      'winner_output', 'winner_output_granularity', 'winner_locations', 'winner_scope')
+                      'winner_output', 'winner_output_granularity', 'winner_locations', 'winner_scope', 'winner_jump_tables')
             payload = (measured, {name:copy.deepcopy(getattr(search, name, None)) for name in fields})
             future.set_result(payload)
             with pool.lock:

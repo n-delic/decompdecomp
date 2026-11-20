@@ -85,6 +85,7 @@ def test_validation_and_persisted_deadline_survive_restore(tmp_path,quiet):  # n
     assert snapshot['focus_function']=='f0'
     assert snapshot['focus_id']==net._function('f0','game')['id']
     assert snapshot['focus_minutes']==30
+    assert snapshot['focus_max_tries']==300
 
 
 def test_expired_restored_run_stops_without_model_call(tmp_path):

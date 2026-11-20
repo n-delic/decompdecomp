@@ -5,7 +5,7 @@ function openFocusedAgent(slug, name) {
     <div class="repair-form-grid focus-form"><label class="field">Agent<select data-focus-kind></select></label>
     <label class="field" data-focus-endpoint-field hidden>Saved endpoint<select data-focus-endpoint></select></label>
     <label class="field">Model<input data-focus-model list="focus-models" placeholder="Agent default"><datalist id="focus-models"></datalist></label>
-    <label class="field">Maximum tries<input data-focus-tries type="number" min="1" max="10000" step="1" value="30"></label>
+    <label class="field">Maximum tries<input data-focus-tries type="number" min="1" max="10000" step="1" value="300"></label>
     <label class="field">Time limit · minutes, optional<input data-focus-minutes type="number" min="1" max="240" step="1" placeholder="No time limit"></label></div>
     <div class="focus-guidance small"><strong>Uses AI tokens</strong><p>Each submitted candidate judged uses one try, including compile errors. The app assigns this function and keeps the best saved attempt. If another worker holds it, the agent waits its turn. An optional time limit includes waits.</p></div>
     <div class="row"><button class="primary" data-focus-start>Start focused agent</button><button class="ghost" data-focus-stop hidden>Stop agent</button></div>

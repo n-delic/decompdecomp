@@ -1,0 +1,165 @@
+"""Route a measured MIPS mismatch to a few source hypotheses."""
+
+import re
+
+from decomprepair import (
+    loop_sentinel_repairs,
+    targeted_switch_labels,
+)
+from decomprepair import (
+    observed_arithmetic_repairs as arithmetic,
+)
+from decomprepair import (
+    observed_flow_repairs as flow,
+)
+from decomprepair import (
+    observed_storage_repairs as storage,
+)
+
+from . import allocation_evidence, allocation_search, permuter_focus, stack_layout
+
+REGISTER = r'\$[a-z0-9]+'
+IMMEDIATE = r'(?:0x[0-9a-f]+|[1-9][0-9]*|0)'
+ADDRESS = rf'(?:-?{IMMEDIATE})?\(({REGISTER})\)'
+BRANCH = re.compile(r'b(?:eq|ne|gez|gtz|lez|ltz)(?:z|l|zl)?\s')
+DOUBLE_COMPARE = re.compile(r'c\.(?:le|lt)\.d\s')
+FLOAT_MEMORY = re.compile(rf'(?P<op>[ls][wd]c1)\s+{REGISTER},\s*(?P<addr>{ADDRESS})')
+INDIRECT_LOAD = re.compile(rf'lw\s+{REGISTER},\s*(?:0x0|0)?\((?!\$sp\b){REGISTER}\)')
+
+
+def _instructions(rows, side):
+    return [(row[0] != ' ', row[side]) for row in rows if row[side]]
+
+
+def _released_reload(code):
+    for (store_diff, store), (load_diff, load) in zip(code, code[1:]):
+        stored, loaded = FLOAT_MEMORY.fullmatch(store), FLOAT_MEMORY.fullmatch(load)
+        if (stored and loaded and (store_diff or load_diff) and stored['op'].startswith('s')
+                and 'l'+stored['op'][1:] == loaded['op'] and stored['addr'] == loaded['addr']
+                and '($sp)' not in loaded['addr']):
+            yield 4 if stored['op'] == 'swc1' else 8
+
+
+def _entry_read(code):
+    for index, (changed, text) in enumerate(code):
+        if not INDIRECT_LOAD.fullmatch(text):
+            continue
+        for next_changed, address in code[index+1:index+4]:
+            if (changed or next_changed) and address.startswith('lui '):
+                return True
+            if BRANCH.match(address) or re.match(r'j\w*\s', address):
+                break
+    return False
+
+
+def _delay_values(code):
+    for (branch_diff, branch), (init_diff, init) in zip(code, code[1:]):
+        if (branch_diff or init_diff) and BRANCH.match(branch):
+            if re.fullmatch(rf'move\s+(?!\$zero\b){REGISTER},\s*\$zero', init):
+                yield 0
+            elif hit := re.fullmatch(rf'(?:addiu|ori)\s+(?!\$zero\b){REGISTER},\s*\$zero,\s*({IMMEDIATE})', init):
+                yield int(hit[1],0)
+
+
+def _has_double_conversion(code):
+    for i, (_, compare) in enumerate(code):
+        if not DOUBLE_COMPARE.match(compare):
+            continue
+        window = code[max(0,i-6):i+24]
+        if (any(changed for changed,_ in window)
+                and any(re.match(r'trunc\.w\.d\s', op) for _,op in window)
+                and any(re.fullmatch(rf'lui\s+{REGISTER},\s*(?:0x8000|32768)', op) for _,op in window)
+                and any(re.match(r'or\s', op) for _,op in window)):
+            return True
+    return False
+
+
+def _division_pairs(code):
+    """Read small literal dividers or simple multiply-high reciprocal dividers."""
+    constants = {}
+    divisors = []
+    for index, (changed, line) in enumerate(code):
+        opcode, _, text = line.partition(' ')
+        args = [field.strip() for field in text.split(',')]
+        rd = args[0]
+        value = None
+        if BRANCH.match(line) or opcode in {'b','bc1f','bc1t','j','jr','jal','jalr'}:
+            constants.clear()
+        if opcode in {'li','lui'} and len(args) == 2 and re.fullmatch(IMMEDIATE,args[1]):
+            value = int(args[1],0) << (16 if opcode == 'lui' else 0)
+        elif opcode in {'ori','addiu'} and len(args) == 3 and re.fullmatch(IMMEDIATE,args[2]):
+            base = constants.get(args[1], (0,False) if args[1]=='$zero' else (None,False))
+            if base[0] is not None:
+                imm = int(args[2],0)
+                if opcode == 'addiu':
+                    imm -= 0x10000 if imm >= 0x8000 else 0
+                value = (base[0] | imm) if opcode == 'ori' else (base[0]+imm) & 0xffffffff
+                changed |= base[1]
+        elif opcode == 'divu' and len(args) in (2,3):
+            constant = constants.get(args[-1])
+            # Some renderers show the literal immediate for a divider.
+            if constant is None and re.fullmatch(IMMEDIATE,args[-1]):
+                constant = (int(args[-1],0),False)
+            if constant and 1 < constant[0] <= 65535:
+                divisors.append((constant[0], changed or constant[1]))
+        elif opcode == 'multu' and len(args) == 2:
+            operands = [constants[r] for r in args if r in constants]
+            following = code[index+1:index+3]
+            if len(operands) == 1 and len(following) == 2:
+                magic, magic_changed = operands[0]
+                mfhi = re.fullmatch(rf'mfhi\s+({REGISTER})',following[0][1])
+                shift = re.fullmatch(rf'srl\s+{REGISTER},\s*({REGISTER}),\s*({IMMEDIATE})',following[1][1])
+                if mfhi and shift and mfhi[1] == shift[1] and magic and 0 < int(shift[2],0) < 32:
+                    numerator = 1 << (32+int(shift[2],0))
+                    divisor = (numerator+magic-1)//magic
+                    if 1 < divisor <= 65535 and (numerator+divisor-1)//divisor == magic:
+                        divisors.append((divisor,changed or magic_changed or any(flag for flag,_ in following)))
+        if value is not None:
+            constants[rd] = (value,changed)
+        elif opcode not in {'divu','multu','mult','sw','sh','sb','swc1','sdc1'}:
+            constants.pop(rd,None)
+    return list(dict.fromkeys((first,second) for i,(first,a) in enumerate(divisors[:16])
+                              for second,b in divisors[i+1:i+17] if a or b))
+
+
+def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=()):
+    if arch != 'mips':
+        return []
+    result = targeted_switch_labels.variants(source,name,jump_tables) if jump_tables else []
+    if not toolchain.startswith(('gcc-2.7.2-kmc','gcc-egcs')) or not rows:
+        return result
+    rows = [row for row in permuter_focus.normalized(rows)
+            if isinstance(row,(tuple,list)) and len(row)==3 and all(isinstance(field,str) for field in row)]
+    if not any(marker != ' ' for marker,_,_ in rows):
+        return result
+    target, candidate = (_instructions(rows, side) for side in (1,2))
+    if toolchain.startswith('gcc-egcs'):
+        if allocation_search.floating_only(rows, arch):
+            result += arithmetic.squared_terms(source,name,header)
+        return result
+
+    widths = set(_released_reload(target)) - set(_released_reload(candidate))
+    if len(widths) == 1:
+        result += storage.staged_reload(source,name,header,widths.pop())
+    frame = stack_layout.diagnose(arch,rows)
+    if frame and frame['frame_delta'] == 0 and not any(frame['saved_deltas']):
+        result += storage.redistribute(source,name,header,frame['local_deltas'])
+    if _entry_read(target) and not _entry_read(candidate):
+        result += flow.first_read(source,name,header)
+    if asm and any(changed and BRANCH.match(text) for changed,text in target):
+        values = loop_sentinel_repairs.target_sentinels(asm)
+        if values:
+            result += flow.sentinel_loop(source,name,header,values)
+    values = set(_delay_values(target)) - set(_delay_values(candidate))
+    if values:
+        result += flow.guarded_initializer(source,name,header,values)
+    if _has_double_conversion(target) and not _has_double_conversion(candidate):
+        result += arithmetic.double_unsigned(source,name,header)
+    if any(changed and re.match(r'(?:divu|multu|mfhi|srl)\s',text) for changed,text in target):
+        pairs = _division_pairs(target)
+        if pairs:
+            result += arithmetic.separated_divisions(source,name,header,pairs)
+    diagnosis = allocation_evidence.diagnose(rows,arch)
+    if diagnosis['register_only'] and any(changed and re.match(r'(?:subu?|sltu?)\s', text) for changed,text in target):
+        result += arithmetic.in_place_minmax(source,name,header)
+    return result
