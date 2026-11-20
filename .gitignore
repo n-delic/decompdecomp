@@ -28,6 +28,9 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
+# LLVM IR emitted by ad hoc compiler runs from the repo root
+/*.ll
+
 # DecompNet
 decompnet.db*
 projects/*/target/*.o
