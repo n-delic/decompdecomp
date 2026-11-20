@@ -1187,7 +1187,8 @@ def register(app: App) -> None:
         return net.knowledge.listing(slug, profile=True)
 
     def p_knowledge_merge(slug, request, data):
-        net.knowledge.merge(slug, data.get("target"), data.get("sources"), data.get("text"))
+        net.knowledge.merge(slug, data.get("target"), data.get("sources"), data.get("text"),
+                            profile=data.get("profile") is True)
         return {"message": "Findings merged with their votes and supporting examples."}
 
     def p_knowledge(slug, request, data):
