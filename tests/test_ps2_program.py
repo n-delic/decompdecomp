@@ -190,7 +190,11 @@ def test_install_all_brings_every_compiler_then_tests_them(monkeypatch):
     monkeypatch.setattr(toolchains, "installed", lambda tid, linux=None: {} if tid in have else None)
     monkeypatch.setattr(toolchains, "install", lambda tid, accept_license=False, log=None: have.add(tid))
     tested = []
-    net = SimpleNamespace(_project=lambda slug: {}, console=lambda proj: ps2, is_rom=lambda proj: True,
+    def project_row(slug, *, sync):
+        assert not sync, "Setup must be able to install a missing compiler before checking saved code."
+        return {}
+
+    net = SimpleNamespace(project_row=project_row, console=lambda proj: ps2, is_rom=lambda proj: True,
                           test_compilers=lambda slug, tcs, log: tested.append(tcs) or {"ee-gcc-2.96": 4})
     res = RomNetwork.install_compilers(net, "game", accept_license=False, log=lambda *_: None)
     assert res["left_out"] == ["mwcps2-2.3.3", "mwcps2-3.0.1"] and "mwcps2-3.0.1" not in have
