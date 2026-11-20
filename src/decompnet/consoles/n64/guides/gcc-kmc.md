@@ -169,6 +169,13 @@ See `docs/COMPILER_MATCHING_LEARNINGS.md` for controlled evidence and failed exp
 
 ### Address association and call initialization
 
+Compare the first actual use of a scalar selector with its initialization. When
+the target materializes it after a call and the candidate holds it in an extra
+saved register across the call, move only the initializer. For a loop whose
+backedge uses a differently scheduled invariant bound, check whether its C
+assignment belongs just before the tail test. KMC can still hoist the bound
+but schedule its register copy differently.
+
 With equal total frames and stable save slots, compare the accesses to the stack
 buffer before adding padding. An adjacent unused local can donate space without
 increasing the total. For a missing field reload after a store, compare the

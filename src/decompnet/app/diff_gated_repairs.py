@@ -16,7 +16,7 @@ from decomprepair import (
     observed_storage_repairs as storage,
 )
 
-from . import allocation_evidence, allocation_search, permuter_focus, stack_layout
+from . import allocation_evidence, allocation_search, measured_mips_repairs, permuter_focus, stack_layout
 
 REGISTER = r'\$[a-z0-9]+'
 IMMEDIATE = r'(?:0x[0-9a-f]+|[1-9][0-9]*|0)'
@@ -138,10 +138,11 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=()):
             result += arithmetic.squared_terms(source,name,header)
         return result
 
+    frame = stack_layout.diagnose(arch,rows)
+    result += measured_mips_repairs.proposals(source,name,header,rows,asm,target,candidate,frame)
     widths = set(_released_reload(target)) - set(_released_reload(candidate))
     if len(widths) == 1:
         result += storage.staged_reload(source,name,header,widths.pop())
-    frame = stack_layout.diagnose(arch,rows)
     if frame and frame['frame_delta'] == 0 and not any(frame['saved_deltas']):
         result += storage.redistribute(source,name,header,frame['local_deltas'])
     if _entry_read(target) and not _entry_read(candidate):
