@@ -60,7 +60,8 @@ region to choose a sample and prepare a local WAV preview; playback starts only 
 Verified Acclaim DEAN streams can be browsed and inspected. DEAN playback is unavailable.
 Find supported dialogue scripts in ROM Explorer and browse their cues by scene and speaker.
 Supported indexed N64 geometry is detected automatically, including EMsh meshes in byte-sum RNC and chained RNX streams. RNX can also contain descriptor banks
-and directly stored CI4 tiles in a shared-palette archive.
+and indexed tiles in a shared-palette archive. ROM Explorer can also inspect level sectors,
+path keyframes and cutscene commands.
 Open **Model browser** to rotate a local mesh or a supported assembled model, switch
 between textured, vertex-colour and wireframe rendering, follow related files and export
 a self-contained glTF. Supported PD3V cars use stored transforms; split scenery uses
