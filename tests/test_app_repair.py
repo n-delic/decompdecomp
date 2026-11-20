@@ -92,3 +92,33 @@ def test_standalone_success_and_repair_failures_are_ineligible(repair, monkeypat
     monkeypatch.setenv("DECOMP_PACKAGE", "macos")
     with pytest.raises(NetworkError, match="Git checkout"):
         service.preview("failed")
+
+
+def test_codex_repair_reads_edited_diagnostics_and_returns_test_report(tmp_path):
+    import os
+    import sys
+
+    from decompnet.agents.codex import Codex
+
+    if os.name == "nt":
+        pytest.skip("The stub is a POSIX executable")
+    worktree = tmp_path / "worktree"
+    home = worktree / ".repair-test-home"
+    home.mkdir(parents=True)
+    executable = tmp_path / "fake-codex"
+    executable.write_text(f"""#!{sys.executable}
+import json
+import sys
+from pathlib import Path
+
+assert "--ignore-user-config" in sys.argv and "workspace-write" in sys.argv
+assert "sandbox_workspace_write.network_access=false" in sys.argv
+assert json.dumps("Edited excerpt.") in sys.stdin.read()
+Path("regression.py").write_text("assert 2 + 2 == 4")
+exec(Path("regression.py").read_text())
+Path(sys.argv[sys.argv.index("-o") + 1]).write_text("regression.py passed.")
+""")
+    executable.chmod(0o700)
+    result = Codex().repair_source(str(executable), worktree, home, "Edited excerpt.", threading.Event())
+    assert result == "regression.py passed."
+    assert (worktree / "regression.py").is_file()
