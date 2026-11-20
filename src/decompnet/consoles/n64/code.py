@@ -126,10 +126,56 @@ def find_segments(rom: bytes, taken: list[tuple[int, int, int]], ends: tuple[int
     from .loader_mapping import refine, verified
 
     found=complete(rom,sorted(found),taken)
+    found=reconcile_adjacent(rom,found,taken,log)
     from .code_references import complete as referenced_gaps
 
     found=refine(rom,found+referenced_gaps(rom,sorted(taken+found),declared),taken,log)
     return close_gaps(rom, loaded_code(rom,found,verified(rom,taken),taken,log), taken)
+
+
+def reconcile_adjacent(rom, found, taken=(), log=print):
+    """Keep one mapping across adjacent inferred text when calls corroborate it."""
+    ordered = sorted(found)
+    if len(ordered) < 2:
+        return ordered
+    callers = sorted((*taken, *ordered))
+    result = [ordered[0]]
+    for lo, hi, vram in ordered[1:]:
+        before, left_end, left_vram = result[-1]
+        expected = left_vram+lo-before
+        # Test the preceding mapping only when the two ranges already meet in
+        # ROM and the inferred address jumps forward by a small amount.
+        if lo != left_end or not 0 < vram-expected <= BLOCK:
+            result.append((lo, hi, vram))
+            continue
+        if any(start < hi and lo < end or ram < expected+hi-lo and expected < ram+end-start
+               for start, end, ram in callers if (start, end, ram) != (lo, hi, vram)):
+            result.append((lo, hi, vram))
+            continue
+        sites = [set(), set()]
+        end_vram = expected+hi-lo
+        for start, end, entry in callers:
+            targets = jal_targets(struct.unpack_from(f'>{(end-start)//4}I', rom, start), entry)
+            inside = start == lo and end == hi
+            sites[inside].update(t for t in targets if vram <= t < end_vram)
+
+        if all(_supports_mapping(rom, lo, expected, vram, targets) for targets in sites):
+            result[-1] = before, hi, left_vram
+            log('Recovered a continuous N64 code mapping from calls inside and outside the range.')
+        else:
+            result.append((lo, hi, vram))
+    return result
+
+
+def _supports_mapping(rom, lo, expected, current, targets):
+    def fits(target, base):
+        pos = lo+target-base
+        word = struct.unpack_from('>I', rom, pos)[0]
+        return is_frame(word) or pos >= lo+8 and struct.unpack_from('>I', rom, pos-8)[0] == JR_RA
+
+    matched = sum(fits(t, expected) for t in targets)
+    old = sum(fits(t, current) for t in targets)
+    return len(targets) >= 8 and matched*4 >= len(targets)*3 and (matched-old)*4 >= len(targets)
 
 
 GAP_LIMIT = 0x10000  # the longest function a gap between two pieces of one segment can be
