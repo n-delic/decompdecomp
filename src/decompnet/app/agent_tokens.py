@@ -182,7 +182,7 @@ def next_action(net, agent, fn, source, revision):
     return 'Next: inspect the first differing region with last_diff; fix structure, calls or types rather than repeating ineffective edits.'
 
 
-def patch(net, agent, slug, function, revision, old, new, repair_note='', repair_category='other', repair_automation='', occurrence=0):
+def patch(net, agent, slug, function, revision, old, new, repair_note='', repair_category='', repair_automation='', occurrence=0, suggested_category=''):
     fn = net._function(function, slug)
     with net.attempt_turn(agent, fn):
         source, actual = candidate(net, agent, slug, function)
@@ -193,7 +193,7 @@ def patch(net, agent, slug, function, revision, old, new, repair_note='', repair
         except NetworkError as error:
             raise NetworkError(f'{error}\nCurrent candidate revision {actual}; no compile run. Use an exact anchor from the current C; no fuzzy edit was applied.') from error
         from .tools import _compile
-        return _compile(net, agent, slug, function, edited, repair_note, repair_category, repair_automation)
+        return _compile(net, agent, slug, function, edited, repair_note, repair_category, repair_automation, suggested_category)
 
 
 def remember(net, agent, fn, before):

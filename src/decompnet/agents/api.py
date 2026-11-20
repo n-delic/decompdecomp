@@ -552,6 +552,9 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
     from ..app import tools  # (here: app/tools.py imports this package)
 
     s = lambda **props: {"type": "object", "properties": props, "required": [k for k, v in props.items() if v.pop("req", False)]}
+    from ..repair_feedback import AGENT_CATEGORIES
+    repair_labels = ' | '.join(AGENT_CATEGORIES)
+    category_suggestion = 'Optional short new category when the label is other'
     st = lambda desc, req=False: {"type": "string", "description": desc, "req": req}
     it = lambda desc: {"type": "integer", "description": desc}
     bo = lambda desc: {"type": "boolean", "description": desc}
@@ -573,7 +576,8 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
         "compile_patch": ("Compile one exact-text replacement against a candidate revision using the normal judge.",
                           s(function=st("function", True), revision=st("revision from get_candidate or compile feedback", True),
                             old=st("text occurring exactly once", True), new=st("replacement", True),
-                            repair_note=st("Optional decisive repair"), repair_category=st("Repair category"),
+                            repair_note=st("Optional decisive repair"), repair_category=st(repair_labels),
+                            suggested_category=st(category_suggestion),
                             repair_automation=st("Potential deterministic repair"), occurrence=it("1-based occurrence; 0 requires unique anchor"))),
         "compiler_experiments": ("Bounded diagnostic source/profile trials on one candidate revision. 1–6 compiler profiles (compiler=current uses this function’s current compiler); optional independent old/new/occurrence patches. No compiler choice applied.",
                                  s(function=st("function",True),revision=st("candidate revision",True),trials={"type":"array","minItems":1,"maxItems":6,"req":True,"items":{"type":"object","additionalProperties":False,"properties":{"compiler":{"type":"string","description":"current or an exact compiler ID; use try_local_repairs for repair families"},"flags":{"type":"string"},"old":{"type":"string"},"new":{"type":"string"},"occurrence":{"type":"integer"}},"required":["compiler"]}})),
@@ -604,15 +608,16 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                              "Score 0 = matched. Several functions: names comma-separated, all definitions in source.",
                              s(function=st("function name, or several: a, b, c", True), source=st("C source", True),
                              repair_note=st("Optional one-sentence decisive change, single function only; saved only if it matches"),
-                             repair_category=st("types | casts | constants | addresses | signatures | layout | temporaries | expression_order | control_flow | compiler_settings | other"),
+                             repair_category=st(repair_labels), suggested_category=st(category_suggestion),
                              repair_automation=st("How a deterministic repair could make this change"))),
         "report_candidate_issue": ("Report a saved-C concern; no score or match changes.",
                                    s(function=st("function",True),revision=st("affected revision",True),
                                      issue=st("uninitialized|loop_mutation|wrong_store|wrong_value|other",True),
                                      reason=st("10–600 characters",True),alternative_revision=st("compiled alternative"))),
-        "report_repair": ("Annotate your captured verified match for human review, without enabling a rule.",
-                          s(function=st("Function you matched", True), change=st("Decisive change; do not guess", True),
-                            category=st("Repair category (same as compile_and_diff)"),
+        "report_repair": ("Classify your captured verified repair before moving on.",
+                          s(function=st("Function you matched", True), case_id=it("Repair example ID from the match result"),
+                            change=st("Optional decisive change"), category=st(repair_labels),
+                            suggested_category=st(category_suggestion),
                             automation=st("How a deterministic rule could make it"))),
         "last_diff": ("A page of rows from your last compile diff; start is zero-based and limit is at most 200. "
                       "Costs no compile.", s(function=st("function", True), context=it("equal rows around each difference"), start=it("zero-based row"), limit=it("up to 200 rows"))),
