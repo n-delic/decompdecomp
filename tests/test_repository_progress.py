@@ -348,13 +348,11 @@ def test_recovered_source_is_rejudged_before_the_snapshot_is_captured(progress, 
     net.progress.signatures['game'] = net.progress._signature(root)
     monkeypatch.setattr(net, 'apply_remote_layout', lambda *args: None)
     judged = []
-    def attempt(agent, name, text, slug):
-        judged.append(name)
-        with net.store.tx() as db:
-            db.execute("UPDATE functions SET status=?,matched_source=?,best_source=?,best_score=? WHERE project_id=? AND name=?",
-                       ('matched' if matched else 'open', text if matched else None, text, 0 if matched else 10, proj['id'], name))
-        return {'matched': matched}
-    monkeypatch.setattr(net, 'attempt', attempt)
+    def recheck(project, header, fn, text):
+        assert fn['status'] == 'matched'
+        judged.append(fn['name'])
+        return matched, 0 if matched else 10, None
+    monkeypatch.setattr(net, '_saved_match_verdict', recheck)
     files, _, manifest = repository_progress.snapshot(net, 'game', root, print)
     assert judged == ['f']
     assert files['src/f.c' if matched else 'best/f.c'] == source.encode()
