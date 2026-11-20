@@ -2379,3 +2379,50 @@ def test_slow_function_ordering_does_not_block_agent_start_or_stop(tmp_path, qui
         finally:
             ordered.set()
             session.stop.set()
+
+
+@pytest.mark.parametrize('failure,expected', [
+    (None, False),
+    ({'message': 'The MCP session limit was reached.'}, False),
+    ({'message': "You've hit your usage limit. Try again in 20 minutes."}, True),
+    ({'code': 'usage_limit_reached', 'message': 'Try again in 20 minutes.'}, True),
+])
+def test_codex_quota_cooldown_requires_provider_error(tmp_path, monkeypatch, failure, expected):
+    from decompnet.app import session_followups
+
+    manager = agents.Manager(RomNetwork(tmp_path/'app.db', tmp_path), tmp_path, URL)
+    monkeypatch.setattr(manager, '_preflight_tools', lambda *a, **kw: True)
+    monkeypatch.setattr(manager.net, 'selection_counts', lambda *a, **kw: {'available': 1})
+    helper = manager._record('game', 'codex', 'helper', 'helper', {'model': 'gpt-6-luna'})
+    peer = manager._record('game', 'codex', 'peer', 'peer', {'model': 'gpt-6-luna'})
+    agent, token = manager.net.local_agent(helper.agent_name)
+    events = [
+        {'type': 'item.started', 'item': {'type': 'mcp_tool_call', 'tool': 'project_info'}},
+        {'type': 'item.completed', 'item': {'type': 'agent_message',
+         'text': 'I’m moving to a third eligible function within the session limit.'}},
+        {'type': 'turn.completed'},
+    ]
+    if failure:
+        events[-1] = {'type': 'turn.failed', 'error': failure}
+    output = '\n'.join(map(json.dumps, events))
+    command = [sys.executable, '-c', f'print({output!r}); raise SystemExit({int(bool(failure))})']
+    def launch(*args):
+        manager.net._pending_tool_handshakes.discard((agent.id, helper.slug))
+        return command, dict(os.environ), ''
+
+    monkeypatch.setattr(manager, '_command', launch)
+
+    # Ignore account-wide cooldowns persisted by versions that scanned assistant prose.
+    with manager.net.store.tx() as db:
+        db.execute('INSERT INTO settings VALUES(?, ?)',
+                   (session_followups.account_key(helper), str(time.time() + 3600)))
+    assert session_followups.cooldown(manager, helper) is None
+
+    assert manager._run_cli(helper, token, tmp_path) is (failure is None)
+    assert helper.limited is expected
+    assert session_followups.cooldown(manager, peer) is None
+    if expected:
+        assert 1190 < helper.limit_until - time.time() <= 1200
+        assert session_followups.active_limit(manager, helper)
+    else:
+        assert session_followups.cooldown(manager, helper) is None

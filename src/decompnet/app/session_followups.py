@@ -23,8 +23,16 @@ def account_key(session):
     return 'agent-account-cooldown:' + hashlib.sha256(json.dumps(scope).encode()).hexdigest()
 
 
-def remember_limit(manager, session, until):
+def quota_key(session):
+    from .. import agents
     key = account_key(session)
+    if agents.get(session.kind).shares_quota_cooldown:
+        return key
+    return f'{key}:helper:{session.id}'
+
+
+def remember_limit(manager, session, until):
+    key = quota_key(session)
     with manager.net.store.tx() as db:
         row = db.execute('SELECT value FROM settings WHERE key=?',(key,)).fetchone()
         prior = float(row['value']) if row else 0
@@ -34,7 +42,7 @@ def remember_limit(manager, session, until):
 
 
 def active_limit(manager, session):
-    row=manager.net.store.one('SELECT value FROM settings WHERE key=?',account_key(session))
+    row=manager.net.store.one('SELECT value FROM settings WHERE key=?',quota_key(session))
     return bool(row and float(row['value'])>time.time())
 
 
@@ -43,11 +51,11 @@ def clear_limit(manager, session):
     if not session.cooldown_observed:return
     with manager.net.store.tx() as db:
         db.execute('DELETE FROM settings WHERE key=? AND CAST(value AS REAL)<=?',
-                   (account_key(session),session.cooldown_observed))
+                   (quota_key(session),session.cooldown_observed))
 
 
 def cooldown(manager, session):
-    row = manager.net.store.one('SELECT value FROM settings WHERE key=?',account_key(session))
+    row = manager.net.store.one('SELECT value FROM settings WHERE key=?',quota_key(session))
     until = float(row['value']) if row else 0
     if until <= time.time() or until <= session.cooldown_observed:
         return None

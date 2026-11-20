@@ -122,6 +122,7 @@ class Agent:
     tool_meta: dict = {}  # what it reads on the definition of each of decompdecomp's MCP tools (tools.ALWAYS_LOAD)
     recommended = False  # the launcher lists it first, and starts on it until the user picks another
     uses_endpoints = False  # its model and key come from the API endpoints saved in Agents & models, not a sign-in
+    shares_quota_cooldown = True  # helpers on the same sign-in share provider quota waits
     uses_accounts = False  # named sign-ins in separate configuration directories
     takes_effort = False  # the launcher offers a reasoning effort: with the model's name ("provider/model#high"), or
     # for an agent whose model is an endpoint's, as the helper's `effort` option
@@ -322,6 +323,10 @@ class Agent:
     def exit_reason(self, state: dict) -> str:
         """A bounded, non-content provider finish category for the final CLI diagnostic."""
         return 'not reported'
+
+    def quota_error(self, state: dict, exit_code: int, stderr: list[str], legacy_match: str) -> str:
+        """Return the CLI quota diagnostic used to schedule its next attempt."""
+        return legacy_match
 
     def clean_stderr(self, line: str) -> str:
         """One line of the agent's stderr as worth showing, or "" for noise: the last ones say why a session failed."""

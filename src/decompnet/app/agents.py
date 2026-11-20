@@ -898,7 +898,7 @@ class Manager:
                 raise ValueError('This agent is not waiting for a provider limit.')
             s.provider_retry_requested=True
             self._set(s,'waiting','Provider retry requested; checking within 30 seconds',time.time()+30,
-                      'This worker will retry once. A successful session releases the shared account wait.')
+                      'This worker will retry once. A successful session clears the cooldown it observed.')
         return {'requested':True}
 
     def retry_paused(self, sid, limit=5, log=lambda *_: None):
@@ -1641,7 +1641,7 @@ class Manager:
             if (shared_until := session_followups.cooldown(self, s)) is not None:
                 s.cooldown_observed = shared_until
                 self._wait(s, agents.get(s.kind).limit_wait_why(), shared_until + session_followups.stagger(s),
-                           "Helpers on the same account or model resume automatically after reset.", wall_clock=True)
+                           "Work resumes automatically after reset.", wall_clock=True)
                 continue
             s.runs += 1
             with self._lock:
@@ -2389,11 +2389,12 @@ class Manager:
         # Raw stderr (including title requests) still carries the provider's "usage limit" wording.
         # Strip it so a free-tier refusal cannot publish the account-wide cooldown.
         limit_text = FREE_MODEL_ALLOWANCE.sub("", everything)
-        if LIMIT.search(limit_text):
+        quota_error = k.quota_error(state, code, list(errors), limit_text if LIMIT.search(limit_text) else "")
+        if quota_error:
             s.limited = True  # whatever the exit code: Claude Code says so in an ordinary result
-            s.limit_until = limit_reset(limit_text)
-            # Publish the account cooldown before closing this session, so siblings
-            # do not launch another paid request while its exit is being recorded.
+            s.limit_until = limit_reset(quota_error)
+            # Persist the cooldown before closing the session. Connectors with shared waits
+            # need it visible before another helper starts a paid request.
             from . import session_followups
             session_followups.remember_limit(self, s, (s.limit_until or time.time()+LIMIT_WAIT_FIRST)+LIMIT_RESET_MARGIN)
             s.error = "Provider usage limit reached; waiting for reset."

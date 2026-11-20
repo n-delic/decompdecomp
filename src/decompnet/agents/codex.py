@@ -32,6 +32,10 @@ from . import (
 TOKEN_ENV = "DECOMP_TOKEN"  # the session's token reaches Codex through its environment, never its command line
 STARTUP_TIMEOUT = 30  # Wait for authenticated tool discovery before any model turn.
 TOOL_TIMEOUT = 180  # seconds a tool call may take (a fork's build)
+PROVIDER_QUOTA = re.compile(
+    r"^(?:Error:\s*)?(?:You(?:'ve| have) hit your usage limit\b|"
+    r"(?:usage_limit_reached|insufficient_quota)\b)", re.I
+)
 COMMAND_SHOWN = 80  # characters of a shell command the feed shows
 
 
@@ -55,6 +59,7 @@ class Codex(Agent):
     signin = "Run `codex login` once in a terminal."
     docs = "https://github.com/openai/codex"
     family = "gpt"
+    shares_quota_cooldown = False
     takes_effort = True  # Codex's model_reasoning_effort
     efforts = ("minimal", "low", "medium", "high", "xhigh", "max", "ultra")
 
@@ -270,6 +275,16 @@ class Codex(Agent):
             return 'Codex could not initialize its required app tools: '+text.strip()[-1200:]
         return None
 
+    def limit_wait_why(self) -> str:
+        return "This helper is waiting for its provider quota to reset"
+
+    def quota_error(self, state: dict, exit_code: int, stderr: list[str], legacy_match: str) -> str:
+        if state.get("quota_error"):
+            return state["quota_error"]
+        if exit_code:
+            return next((line for line in reversed(stderr) if PROVIDER_QUOTA.match(line)), "")
+        return ""
+
     def parse(self, event: dict, state: dict) -> list[tuple[str, str] | None]:
         t = event.get("type")
         out: list[tuple[str, str] | None] = []
@@ -289,6 +304,7 @@ class Codex(Agent):
             elif it == "error":
                 out.append(("error", str(item.get("message", ""))[:SAID_CHARS]))
         elif t == "turn.completed":  # its input tokens include the cached ones
+            state.pop("quota_error", None)
             state.pop('output_limit', None)  # The CLI completed a later turn itself.
             out.append(("info", "turn finished"))
             usage = event.get("usage") if isinstance(event.get("usage"), dict) else {}
@@ -296,7 +312,12 @@ class Codex(Agent):
             out.append(usage_item(input=max(0, number(usage, "input_tokens") - cached), cache_read=cached,
                                   output=number(usage, "output_tokens"), turns=1))
         elif t in ("error", "turn.failed"):
-            out.append(("error", error_text(event.get("error") or event.get("message"))[:SAID_CHARS]))
+            error = event.get("error") or event.get("message")
+            message = error_text(error)
+            code = (error.get("code") or error.get("type")) if isinstance(error, dict) else None
+            if code in ("usage_limit_reached", "insufficient_quota") or PROVIDER_QUOTA.match(message):
+                state["quota_error"] = message
+            out.append(("error", message[:SAID_CHARS]))
         # Retain the explicit provider category even if later diagnostics or
         # reasoning fill the bounded feed. A JSON parse error alone is not proof.
         if any(kind == 'error' and re.search(r'\bIncomplete response returned,\s*reason:\s*max_output_tokens\b', text, re.I)
