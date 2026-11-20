@@ -15,8 +15,9 @@ function compilerPartGroups(parts, mode = "settings", sort = "count") {
     group.parts.sort((a, b) => direction * (a.start - b.start) || direction * (a.end - b.end));
     group.start = Math.min(...group.parts.map(p => p.start));
     group.functions = group.parts.every(p => Number.isFinite(p.functions)) ? group.parts.reduce((n, p) => n + p.functions, 0) : null;
+    group.ranges = group.parts.filter(p => !p.function_only).length;
     group.default = group.parts.some(p => p.default);
     group.profiles = new Set(group.parts.map(p => JSON.stringify([p.toolchain || p.compiler, p.flags || ""]))).size;
   }
-  return result.sort((a, b) => Number(b.default) - Number(a.default) || (sort === "count" ? b.parts.length - a.parts.length : sort === "compiler" ? a.compiler.localeCompare(b.compiler) : direction * (a.start - b.start)) || a.start - b.start);
+  return result.sort((a, b) => Number(b.default) - Number(a.default) || (sort === "count" ? b.ranges - a.ranges : sort === "functions" ? (b.functions ?? -1) - (a.functions ?? -1) : sort === "compiler" ? a.compiler.localeCompare(b.compiler) : direction * (a.start - b.start)) || a.start - b.start);
 }
