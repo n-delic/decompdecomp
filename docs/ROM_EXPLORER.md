@@ -582,3 +582,7 @@ Audio tab using the sample rate and predictor book stored in the ROM. Prepare MO
 MusyX songs with a verified instrument and sample bank support a stereo WAV preview
 for the first 30 seconds. The preview uses the cartridge samples and the song
 arrangement. Runtime effects and macro timing can differ.
+
+USO texture banks with validated Yay0 sections and paired texel and palette
+relocations appear under Textures. Square preview dimensions are inferred from
+the stored extents.
