@@ -8393,3 +8393,23 @@ Two archived N64 failed sources were rebuilt and tested with KMC GCC 2.7.2,
   between a load and store to the same address and an upper immediate
   feeding its flag register. The constant can also exist in the failed
   assembly for another use, so a missing literal alone is not the signal.
+
+### One or two changed immediates (KMC GCC 2.7.2)
+
+Using the captured headers and compiler flags
+`-G0 -mips3 -mgp32 -mfp32 -O2`, the normal ROM linker recovered 15 archived
+matches from their saved failed attempts with the exact immediate edit:
+
+- Ten cases changed register-passed literals on direct calls. One needed
+  both argument literals in the same candidate (20 points to exact). A
+  single named call and its argument register identify which occurrence
+  to edit even when the same literal appears elsewhere in the function.
+- Two cases changed the mask in a bit test (10 points to exact). The
+  unchanged branch consumes the `andi` destination and identifies the test.
+- Three cases changed explicit field byte offsets (10 points to exact),
+  including zero in both directions. Access width, direction, and base
+  register matched. Frame and global-pointer offsets are excluded.
+
+The measured rule needs a diff restricted to immediate operands and uses
+the actual literal from each paired instruction. The broader target-literal
+heuristic remains useful for borrowed source with many changed constants.
