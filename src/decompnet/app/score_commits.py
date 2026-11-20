@@ -104,7 +104,7 @@ def _acknowledge(net, rows, *, project_id):
 
 def scoped_snapshot(net, proj, root, rows, output):
     store = net.project_store(proj['id'])
-    files, _, current = repository_progress.snapshot(net, proj['slug'], root, output, allow_unrelated_edits=True)
+    files, _, current = repository_progress.snapshot(net, proj['slug'], root, output, directories=('best', 'include'))
     prefix = saves.default_folder(net, proj['slug']).resolve().relative_to(root).as_posix()
     prefix = '' if prefix == '.' else prefix + '/'
     manifest_path = prefix+saves.MANIFEST
