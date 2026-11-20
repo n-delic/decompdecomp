@@ -1,8 +1,17 @@
 """A repair family that runs for seconds is a bug (decomp-repair 0.5.27's exponential pattern held a deep pass for
 hours): it is cut off for that function and the other families go on, with no change to what they propose."""
+import asyncio
+import signal
+import subprocess
+import sys
 import threading
+import time
+from types import SimpleNamespace
 
-from decompnet.app import draft_repairs, repair_generation
+import pytest
+
+from decompnet.app import deep_proposals, draft_repairs, repair_generation
+from decompnet.network import NetworkError
 
 CAPPED = r"""
 import re, signal, sys
@@ -38,10 +47,9 @@ print('ok')
 """
 
 
+@pytest.mark.skipif(not hasattr(signal, "setitimer"), reason="requires the Unix family timer")
 def test_a_stuck_family_is_cut_off_and_the_others_still_yield():
     # (in a process of its own: the cap runs on a main thread, and the test runner's workers aren't one)
-    import subprocess
-    import sys
     from pathlib import Path
     code = CAPPED.replace('{path!r}', repr(str(Path(repair_generation.__file__).parents[2])))
     run = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=60)
@@ -76,3 +84,72 @@ def test_another_thread_generates_in_a_worker_with_the_same_proposals():
     thread.join(300)
     assert here and out['choices'] == here and out['labels'] == labels_here
     assert draft_repairs._IDLE_WORKERS  # (it was generated in a worker process, which stays for the next call)
+
+
+def test_local_repair_session_keeps_families_and_cache_in_worker(monkeypatch):
+    monkeypatch.setattr(draft_repairs, '_IDLE_WORKERS', [])
+    net = SimpleNamespace()
+    families = set(draft_repairs.AGENT_FAMILIES)
+    name = 'func_80001000'
+
+    def discover(requested):
+        with repair_generation.session(net, 'scope', time.monotonic() + 10, requested) as state:
+            labels = {}
+            choices = draft_repairs.variants(SOURCE, name, 'mips', labels=labels, limit=None)
+            return choices, {labels[candidate] for candidate in choices}, dict(state.metrics)
+
+    async def check():
+        first = await asyncio.to_thread(discover, families)
+        second = await asyncio.to_thread(discover, families)
+        assert first[0] and second[0] == first[0]
+        family = next(iter(first[1] & families))
+        selected = await asyncio.to_thread(discover, {family})
+        assert family in selected[1]
+        assert second[2]['cache_hits'] > first[2]['cache_hits']
+        assert second[2]['generated_stages'] < first[2]['generated_stages']
+
+    try:
+        asyncio.run(check())
+    finally:
+        for worker in draft_repairs._IDLE_WORKERS:
+            worker.close()
+
+
+def test_a_stuck_local_proposal_worker_cannot_block_the_event_loop(monkeypatch):
+    monkeypatch.setattr(draft_repairs, '_IDLE_WORKERS', [])
+    popen = subprocess.Popen
+    children = []
+
+    def unresponsive_worker(*_args, **kwargs):
+        process = popen([sys.executable, '-c', 'import time; time.sleep(30)'], **kwargs)
+        children.append(process)
+        return process
+
+    def must_not_run(*_args, **_kwargs):
+        pytest.fail('Repair generator ran in the request process')
+
+    monkeypatch.setattr(deep_proposals.subprocess, 'Popen', unresponsive_worker)
+    monkeypatch.setattr(draft_repairs, '_variants', must_not_run)
+
+    def discover():
+        with repair_generation.session(SimpleNamespace(), 'scope', time.monotonic() + 2, draft_repairs.AGENT_FAMILIES) as state:
+            assert draft_repairs.variants(SOURCE, 'func_80001000', 'mips') == []
+            assert state.incomplete
+
+    async def check():
+        pending = asyncio.create_task(asyncio.to_thread(discover))
+        async def heartbeat():
+            while not children:
+                await asyncio.sleep(.01)
+            assert not pending.done()
+            assert children[0].poll() is None
+
+        await asyncio.wait_for(heartbeat(), 1.5)
+        await asyncio.wait_for(pending, 6)
+        assert children[0].poll() is not None
+        assert not draft_repairs._IDLE_WORKERS
+
+        with pytest.raises(NetworkError, match='outside the server event loop'):
+            draft_repairs.variants(SOURCE, 'func_80001000', 'mips')
+
+    asyncio.run(check())
