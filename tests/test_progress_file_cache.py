@@ -30,6 +30,20 @@ def test_cached_read_only_reads_changed_files_and_detects_restored_mtime(tmp_pat
     with pytest.raises(NetworkError,match='symbolic link'):_read(tmp_path,cache=cache)
 
 
+def test_saved_file_scan_keeps_only_progress_inputs_and_checks_their_types(tmp_path):
+    (tmp_path/'src').mkdir()
+    (tmp_path/'src/.local.c').write_text('int local;')
+    (tmp_path/'src/next.c.tmp').write_text('======= temporary output')
+    (tmp_path/'other.c').write_text('int other;')
+    (tmp_path/'src/nested').mkdir()
+    (tmp_path/'src/nested/other.c').write_text('int nested;')
+    assert _read(tmp_path) == {'src/.local.c': 'int local;'}
+
+    (tmp_path/'src/conflict.c').mkdir()
+    with pytest.raises(NetworkError, match="Progress path 'src/conflict.c' is not a regular file"):
+        _read(tmp_path)
+
+
 def test_file_cache_memory_is_bounded_and_conflicts_not_cached(tmp_path):
     path=tmp_path/'decompdecomp.json';path.write_text('=======')
     cache=FileCache(limit=10)
