@@ -128,3 +128,15 @@ def test_mcp_and_api_offer_the_same_lookup_tools(corpus):
     assert set(schemas) == set(names)
     assert schemas['search_repair_examples']['required'] == ['category']
     assert schemas['get_repair_examples']['properties']['ids']['maxItems'] == 6
+
+
+def test_memory_access_order_is_an_agent_category_and_search_filter(corpus):
+    net, agent, _ = corpus
+    case_id = capture(net, agent, add_function(net, 'ordered_reads'), BRANCH, category='memory_access_order')
+    result = tools.call(net, agent, 'demo', 'search_repair_examples', {'category': 'memory_access_order'})
+    assert f'#{case_id} ordered_reads' in result
+    schema = {s['function']['name']: s['function']['parameters'] for s in api_tool_schemas(
+        names=['compile_and_diff', 'report_repair', 'search_repair_examples'])}
+    for name, field in (('compile_and_diff','repair_category'),('report_repair','category'),
+                        ('search_repair_examples','category')):
+        assert 'memory_access_order' in schema[name]['properties'][field]['description']

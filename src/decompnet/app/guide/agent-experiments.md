@@ -132,3 +132,7 @@ With several claims, pass `function` to choose one or omit it for category-only 
 Open up to six promising IDs together with `get_repair_examples(ids=[42, 87])`.
 Once an example helps, call `upvote_repair_example(id=42)`. Verify any adapted change
 with the normal judge.
+
+Use `memory_access_order` when the match depends on the sequence or number of loads
+or stores, including volatile accesses. Use `expression_order` for arithmetic and
+other expression ordering, and `addresses` for how an address is calculated.

@@ -57,3 +57,7 @@ without a recorded near miss. Earlier compiler errors can be in the history with
 providing a scored baseline. Use the category to browse those captures separately from
 **Other** source repairs. Existing review states, notes and votes are retained when
 older captures are moved to this category.
+
+**Memory access order** covers edits that change the sequence or number of loads or
+stores, including volatile accesses. Use **Addresses** for changes to how addresses
+are formed and **Expression order** for arithmetic evaluation order.
