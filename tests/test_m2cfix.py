@@ -301,3 +301,24 @@ def test_a_jump_table_nobody_imported_says_what_is_missing():
                                        "but the corresponding jump table is not provided.  Please include it. */", "")
     reason = seeds._failure(done)
     assert "no bytes at the table's address" in reason and reason.startswith("Decompilation failure")
+
+
+def test_refined_draft_compiles_a_store_after_a_block(tmp_path):
+    from decompnet import toolchains
+    from decompnet.compiler import compile_source
+    from decompnet.project import compiler_config
+
+    if not toolchains.installed('gcc-2.7.2-kmc'):
+        pytest.skip('needs the period MIPS compiler')
+    source = """void f(void *arg0, s16 arg1) {
+    if (arg1) {
+        arg0 += 4;
+    }
+    *arg0 = arg1;
+}"""
+    header = 'typedef short s16;'
+    cfg = compiler_config(tmp_path, {'compiler': {'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-O2']}})
+    assert not compile_source(cfg, header, source).ok
+    refined = m2cfix.refine_draft(source, 'f', '')
+    result = compile_source(cfg, header, refined)
+    assert result.ok, result.log
