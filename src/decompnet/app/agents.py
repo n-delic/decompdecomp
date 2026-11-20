@@ -1046,15 +1046,16 @@ class Manager:
             self._launch(s)
 
     def restart_project(self, slug: str) -> dict:
-        """Restart stopped helpers on this project and report any that need attention."""
+        """Restart stopped or paused helpers and report any that need attention."""
         with self._lock:
-            stopped = [s for s in self.sessions.values() if s.slug == slug and s.state == "stopped"
-                       and not s.configuration_error]
+            restartable = [s for s in self.sessions.values() if s.slug == slug and s.state not in LIVE
+                           and not s.configuration_error]
         restarted = []
         errors = []
-        for session in stopped:
+        for session in restartable:
             with self._lock:
-                if self.sessions.get(session.id) is not session or session.state != "stopped":
+                if (self.sessions.get(session.id) is not session or session.state in LIVE
+                        or session.configuration_error):
                     continue
                 try:
                     self.restart(session.id)

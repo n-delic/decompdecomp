@@ -14,11 +14,12 @@ function element() {
 
 const controls = { restartAll: element(), restartAllFeedback: element() };
 const stopped = [{ state: 'stopped' }];
-const unavailable = [{ state: 'paused' }, { state: 'working' }, { state: 'stopped', configuration_error: true }];
+const paused = [{ state: 'paused' }];
+const unavailable = [{ state: 'waiting' }, { state: 'working' }, { state: 'paused', configuration_error: true }];
 const calls = [];
 let resolve, reject, polled = 0, finished = 0;
 const env = {
-  S: { slug: 'game', sessions: stopped },
+  S: { slug: 'game', sessions: paused },
   $: id => controls[id],
   document: { createElement: element },
   beginWork(log, label) {
@@ -36,6 +37,7 @@ const env = {
 };
 const source = fs.readFileSync('src/decompnet/app/static/js/agents.js', 'utf8');
 vm.createContext(env);
+vm.runInContext(source.match(/^const LIVE = .*$/m)[0], env);
 vm.runInContext(source.slice(source.indexOf('const agentRestarts'), source.indexOf('function renderSessions(')), env);
 
 async function test() {
@@ -44,6 +46,8 @@ async function test() {
   assert(button.hidden);
   env.renderAgentRestart(stopped);
   assert(!button.hidden);
+  env.renderAgentRestart(paused);
+  assert(!button.hidden);
   const request = button.onclick();
   assert(button.disabled && !feedback.hidden);
   assert.equal(button.textContent, 'Restarting agents…');
@@ -51,7 +55,7 @@ async function test() {
   await button.onclick();
   assert.deepEqual(calls, [['/api/agents/restart', 'POST', 'game']]);
   const work = feedback.firstChild.firstChild;
-  assert.equal(work._workStatus.textContent, 'Restarting stopped agents');
+  assert.equal(work._workStatus.textContent, 'Restarting agents');
 
   env.S.slug = 'other';
   env.renderAgentRestart(unavailable);

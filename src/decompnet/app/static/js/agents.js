@@ -270,7 +270,7 @@ async function switchToAlternative(s, button) {
 const agentRestarts = new Map();
 
 function canRestartAgent(session) {
-  return session.state === "stopped" && !session.configuration_error;
+  return !LIVE.includes(session.state) && !session.configuration_error;
 }
 
 function renderAgentRestart(sessions) {
@@ -292,12 +292,12 @@ $("restartAll").onclick = async () => {
   const restart = { running: true, feedback };
   agentRestarts.set(slug, restart);
   renderSessions(sessions, false);
-  const finish = beginWork(log, "Restarting stopped agents");
+  const finish = beginWork(log, "Restarting agents");
   let message;
   try {
     const { restarted, errors } = await api("/api/agents/restart", { method: "POST", body: { slug } });
     message = restarted.length ? `Started ${plural(restarted.length, "agent")}.`
-      : errors.length ? "No agents restarted." : "No stopped agents to restart.";
+      : errors.length ? "No agents restarted." : "No agents are ready to restart.";
     if (errors.length) {
       log.setAttribute("role", "alert");
       const list = log.appendChild(document.createElement("ul"));

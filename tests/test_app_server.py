@@ -3776,17 +3776,18 @@ def test_function_settings_recheck_is_one_job_a_returning_panel_finds(app, monke
     assert client.post('/api/compiler/unverified', json={'slug':slug, 'action':'other'}, headers=headers).status_code == 400
 
 
-def test_restart_all_restarts_only_stopped_agents_on_the_project(app, monkeypatch):
+def test_restart_all_restarts_eligible_agents_on_the_project(app, monkeypatch):
     client, _, manager = app
     monkeypatch.setattr(manager, "sessions", {})
     agents_to_restart = [
         ("stopped", "game", "stopped", False),
         ("blocked", "game", "stopped", False),
         ("second", "game", "stopped", False),
-        ("invalid-model", "game", "stopped", True),
+        ("invalid-model", "game", "paused", True),
         ("paused", "game", "paused", False),
         ("working", "game", "working", False),
-        ("other-project", "other", "stopped", False),
+        ("waiting", "game", "waiting", False),
+        ("other-project", "other", "paused", False),
     ]
     for name, slug, state, rejected in agents_to_restart:
         session = agents.Session(name, "codex", name, slug, name, {}, state=state)
@@ -3802,11 +3803,11 @@ def test_restart_all_restarts_only_stopped_agents_on_the_project(app, monkeypatc
     response = client.post("/api/agents/restart", json={"slug": "game"}, headers={"X-Decomp": "1"})
     assert response.status_code == 200
     assert response.json() == {
-        "restarted": ["stopped", "second"],
+        "restarted": ["stopped", "second", "paused"],
         "errors": [{"label": "blocked", "message": "blocked is still stopping: try again in a moment"}],
     }
     assert {sid: s.state for sid, s in manager.sessions.items()} == {
-        name: "starting" if name in {"stopped", "second"} else state
+        name: "starting" if name in {"stopped", "second", "paused"} else state
         for name, _, state, _ in agents_to_restart
     }
 
