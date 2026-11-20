@@ -146,3 +146,19 @@ to reserve one trial for a measured combination. The tool checks two
 nonoverlapping edits together when they recover different target
 instructions from the same measured starting candidate. The normal judge
 decides the combined result.
+
+For a hard claim, `get_function(section="work")` gives the complete current C,
+one objective, the current mismatch and recent measured trials. It reads
+existing measurements. Use the full brief or paged assembly when more
+context would change the next experiment.
+
+`try_local_repairs(compare=true)` measures up to three choices under the same
+claim budget. Look for the option that recovers your target region, then use
+`get_candidate(base="measured_option", option=NUMBER)` to choose it. The option
+expires when the lease, last attempt or build inputs change. A measured
+regional objective kept in saved C can be handed to the next claim.
+
+For a compiling candidate on an N64 ROM, `compare_candidate_behaviour` can
+compare up to three emulator-recorded calls on the current revision. Use it
+when a return value, sign, or memory write may be wrong. It reports the first
+observable difference and leaves code and exact verdicts to the ordinary judge.

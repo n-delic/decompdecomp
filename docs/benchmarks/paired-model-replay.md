@@ -90,3 +90,23 @@ discriminating probe and explicit contract evidence. Agents can constrain
 check with `compile_variants(combine=true)`. The latter reserves one of the
 six normal trials for the combination. Both operations keep their existing
 claim and judge checks.
+
+## Guided work and separate skill measurements
+
+Include `luna-guided` to compare a compact workflow against the existing arms.
+It measures up to three applicable local options, reserves a compiler check
+for the model, and asks the model which continuation to pursue. A locally
+exact option is credited to local search in the report. Later model turns
+have one objective, the current C, one measured mismatch window, and up to
+three recent outcomes. A failed build or regression restores the best
+measured parent for the next prompt.
+
+Use `--score-skills` with all arms in a separate comparison. It spends one
+additional model call per arm to ask for a diagnosis category and predicted
+target instruction. The report distinguishes agreement with the judge's
+mismatch category from a predicted site actually disappearing. It also
+counts candidate submissions that the judge could score, first improvements,
+and recovery to the previous best after a failed or worse submission.
+A prediction with no comparable measurement remains untested. These
+measurements describe performance on the frozen task and do not establish
+causality for the proposed source explanation.

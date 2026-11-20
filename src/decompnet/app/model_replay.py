@@ -16,7 +16,7 @@ from . import efficiency_feedback
 
 LUNA = 'gpt-6-luna'
 SOL = 'gpt-6.2-sol'
-ARMS = ('sol', 'luna', 'luna-historical', 'luna-diagnostic', 'luna-assisted')
+ARMS = ('sol', 'luna', 'luna-historical', 'luna-diagnostic', 'luna-assisted', 'luna-guided')
 
 
 def digest(value):
@@ -109,12 +109,12 @@ def ask_candidate(ask, model, packet, hint, seconds, session):
     return source if isinstance(source, str) and 0 < len(source) <= 65536 else None, session
 
 
-def packet(case, source, result, *, remaining=None):
+def packet(case, source, result, *, remaining=None, compact=False):
     profile = {key: case['profile'][key] for key in ('toolchain', 'flags', 'compiler') if key in case['profile']}
+    target = '' if compact else f"Target assembly:\n{case['assembly']}\n"
     return (f"Function: {case['name']}\nCompiler settings: {json.dumps(profile, sort_keys=True)}\n"
-            f"Relevant declarations:\n{case.get('declarations', '')}\n"
-            f"Target assembly:\n{case['assembly']}\n"
-            f"Current candidate:\n{source}\n{feedback(result)}"
+            f"Relevant declarations:\n{case.get('declarations', '')[:1600] if compact else case.get('declarations', '')}\n"
+            f"{target}Current candidate:\n{source}\n{feedback(result)}"
             + (f'\nCompile trials remaining: {remaining}.' if remaining is not None else ''))
 
 
@@ -175,7 +175,7 @@ def _historical_hint(case, baseline, ask, timeout):
     return '', None
 
 
-def _run_arm(case, arm, baseline, ask, trials, seconds, historical_hint):
+def _run_arm(case, arm, baseline, ask, trials, seconds, historical_hint, score_skills):
     started = time.monotonic()
     budget = Budget(case['measure'], trials, started+seconds)
     initial = source = case['source']
@@ -191,8 +191,33 @@ def _run_arm(case, arm, baseline, ask, trials, seconds, historical_hint):
     if arm == 'luna-historical' and not hint:
         return {'arm': arm, 'skipped': 'No reverified historical hint.'}
     model = SOL if arm == 'sol' else LUNA
+    from . import guided_matching, matching_skills, permuter_focus
+
+    skills = matching_skills.Scores() if score_skills else None
+    prediction = None
+    diagnosed = False
     while budget.remaining() and budget.seconds() and calls < trials + 2:
         try:
+            if arm == 'luna-guided':
+                arch = case['arch']
+                if calls == 0:
+                    source, current, checked = matching_skills.guided_options(
+                        case, budget, ask, model, source, current, packet(case, source, current, compact=True))
+                    assistance['measured_options'] = checked
+                    if current.get('matched'):
+                        best = current
+                        break
+                    if current['score'] < best['score']:
+                        best, best_source = current, source
+                elif current.get('score') is None or current['score'] > best['score']:
+                    current, source = best, best_source
+                history = [{'from_score': p.get('score'), 'score': m.get('score')} for _, p, _, m in attempted[-3:]]
+                hint = ('One objective. ' + guided_matching.GOALS[permuter_focus.classify(current.get('rows'), arch)]
+                        + '\nRecent measured trials. ' + json.dumps(history))
+                # Send a fresh compact packet, without accumulated dead-end context.
+                session = None
+                if not budget.seconds():
+                    break
             if arm == 'luna-diagnostic' and len(attempted) >= 2 and plateau >= 2 and diagnostics == 0:
                 diagnostics += 1
                 hint = ask_diagnosis(ask, packet(case, best_source, best), budget.seconds())
@@ -209,8 +234,15 @@ def _run_arm(case, arm, baseline, ask, trials, seconds, historical_hint):
                     best, best_source = current, source
                 if not budget.remaining() or not budget.seconds():
                     break
+            if skills is not None and not diagnosed:
+                prediction = skills.diagnose(ask, model, packet(case, source, current),
+                                             current, case.get('arch', 'mips'), budget.seconds())
+                diagnosed = True
+            if not budget.seconds():
+                break
             calls += 1
-            proposal, session = ask_candidate(ask, model, packet(case, source, current, remaining=budget.remaining()),
+            proposal, session = ask_candidate(ask, model, packet(case, source, current, remaining=budget.remaining(),
+                                                                                     compact=arm == 'luna-guided' and bool(current.get('rows'))),
                                               hint, budget.seconds(), session)
         except (RuntimeError, subprocess.TimeoutExpired) as exc:
             error = 'model_timeout' if isinstance(exc, subprocess.TimeoutExpired) else 'provider_error'
@@ -222,6 +254,9 @@ def _run_arm(case, arm, baseline, ask, trials, seconds, historical_hint):
         measured = budget.check(proposal)
         if measured is None:
             break
+        if skills is not None:
+            skills.observe(current, measured, best, prediction)
+            prediction = None
         attempted.append((source, current, proposal, measured))
         if arm in ('luna-historical', 'luna-diagnostic'):
             hint = ''
@@ -239,10 +274,11 @@ def _run_arm(case, arm, baseline, ask, trials, seconds, historical_hint):
             'compiler_invocations': budget.invocations if case.get('tracks_invocations') else None, 'model_calls': calls, 'sol_diagnostic_calls': diagnostics,
             'seconds': round(time.monotonic()-started, 2),
             **({'assistance': assistance} if assistance else {}),
+            **({'skills': skills.report()} if skills is not None else {}),
             **({'incomplete': error} if error else {})}
 
 
-def run_case(case, ask, *, arms=ARMS, trials=6, seconds=240):
+def run_case(case, ask, *, arms=ARMS, trials=6, seconds=240, score_skills=False):
     """Each arm starts from the same immutable source, profile, target and measured diff."""
     if not 1 <= trials <= 128 or not 1 <= seconds <= 1800 or not arms or set(arms) - set(ARMS):
         raise ValueError('Choose known replay arms, 1–128 trials and 1–1800 seconds per arm.')
@@ -264,7 +300,7 @@ def run_case(case, ask, *, arms=ARMS, trials=6, seconds=240):
     return {'id': case['id'], 'scope': case['scope'], 'baseline_score': baseline['score'],
             'starting_source_origin': case.get('starting_source_origin', 'manual'),
             'trial_budget': trials, 'seconds_budget': seconds, 'historical_hint_calls': historical_calls,
-            'arms': [_run_arm(case, arm, baseline, ask, trials, seconds, historical_hint) for arm in arms]}
+            'arms': [_run_arm(case, arm, baseline, ask, trials, seconds, historical_hint, score_skills) for arm in arms]}
 
 
 def private_file(path, flags):
@@ -288,6 +324,7 @@ def main():
     parser.add_argument('--trials', type=int, default=6)
     parser.add_argument('--seconds', type=int, default=240)
     parser.add_argument('--codex', default='codex')
+    parser.add_argument('--score-skills', action='store_true', help='Record independent diagnosis, editing and recovery measurements')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--learn-recipes', type=Path, help='Write private recipes from verified controls without model calls')
     parser.add_argument('--use-recipes', type=Path, help='Use separate training cases for the assisted arm')
@@ -347,7 +384,7 @@ def main():
         with tempfile.TemporaryDirectory(prefix='decomp-model-work-') as directory, open(args.output, 'x', opener=private_file) as output:
             ask = Codex(args.codex, Path(directory))
             for case in cases:
-                result = run_case(case, ask, arms=args.arms, trials=args.trials, seconds=args.seconds)
+                result = run_case(case, ask, arms=args.arms, trials=args.trials, seconds=args.seconds, score_skills=args.score_skills)
                 output.write(json.dumps(result) + '\n')
                 output.flush()
                 print(json.dumps(result), flush=True)

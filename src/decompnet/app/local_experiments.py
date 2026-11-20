@@ -65,12 +65,14 @@ def near_match_priority(rows, score, instructions, arch):
     return [family for family in plan(rows, arch)['families'] if family in FAMILIES and family not in EXPERIMENTAL]
 
 
-def run(net, agent, slug, function, revision, families=None, max_trials=6, *, seconds=60, provenance_kind='agent batch', focused_only=False, anchor=''):
+def run(net, agent, slug, function, revision, families=None, max_trials=6, *, seconds=60, provenance_kind='agent batch', focused_only=False, anchor='', compare=False):
     if isinstance(max_trials,bool) or not isinstance(max_trials,int) or not 1<=max_trials<=6:
         raise NetworkError('Use max_trials from 1 to 6.')
     if families is not None and (not isinstance(families,list) or not families or len(families)>len(FAMILIES)
                                  or any(f not in FAMILIES for f in families)):
         raise NetworkError('Choose supported local families: '+', '.join(FAMILIES))
+    if compare:
+        max_trials = min(max_trials, 3)
     requested = list(dict.fromkeys(families or [f for f in FAMILIES if f not in EXPERIMENTAL]))
     deadline=time.monotonic()+seconds
     fn = net._function(function,slug)
@@ -153,7 +155,8 @@ def run(net, agent, slug, function, revision, families=None, max_trials=6, *, se
         focus=classify((baseline or {}).get('rows') or [])
         if time.monotonic() >= deadline:return 'Local repair time budget reached during proposal generation; no variants submitted.'
         result=agent_tokens.variants(net,agent,slug,function,revision,[{'old':source,'new':s} for _,s in selected], 'local repairs',
-                                     seconds=seconds,deadline=deadline,provenance_kind=provenance_kind,variant_families=[family for family,_ in selected])
+                                     seconds=seconds,deadline=deadline,provenance_kind=provenance_kind,variant_families=[family for family,_ in selected],
+                                     **({'present_options': True} if compare else {}))
         observations=getattr(net,'_local_trial_observations',{}).get((agent.id,fn['id']),[])
         repair_ranking.remember(net, fn, effect_scope, baseline,
                                 ((family, candidate, measured) for (family, candidate), measured in zip(selected, observations)))

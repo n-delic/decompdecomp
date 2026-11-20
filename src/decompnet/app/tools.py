@@ -258,7 +258,7 @@ only for a precise patch with a unique anchor. If you explored a worse candidate
 before proposing its next step. If there is no usable candidate, leave those findings in notes.
 A handoff is advisory. The next agent sees it on the claim while it applies.
 """
-MATCHING_WORKFLOW = 'Prefer compile_patch for small edits and compile_and_diff for substantial rewrites. Keep the returned candidate revision. Do not fetch get_candidate after a successful patch unless the source is lost or stale. Same-function edits must be sequential. compile_variants runs up to six independent supplied alternatives against one revision and returns the chosen continuation; keep the baseline on ties. Automatic repairs are explicit via try_local_repairs, never a substitute for submitted variants. A saved historical score can differ from the current verified baseline; compare current trials to the rechecked baseline. Global share_knowledge is only for reusable game/compiler matching tips; function-specific findings belong in release notes. Optional tools may be disabled: use the available schema. guide(topic="agent-experiments") explains repair families, selectors, recovery, compiler trials and paging. Detailed tool help is guide(topic="tool:NAME").'
+MATCHING_WORKFLOW = 'On hard functions, get_function(section="work") gives one measured objective, current C and recent trials. Use try_local_repairs(compare=true) to compare up to three measured options, then choose a continuation. Prefer compile_patch for small edits and compile_and_diff for substantial rewrites. Keep the returned candidate revision. Do not fetch get_candidate after a successful patch unless the source is lost or stale. Same-function edits must be sequential. compile_variants runs up to six independent supplied alternatives against one revision and returns the chosen continuation; keep the baseline on ties. Automatic repairs are explicit via try_local_repairs, never a substitute for submitted variants. A saved historical score can differ from the current verified baseline; compare current trials to the rechecked baseline. Global share_knowledge is only for reusable game/compiler matching tips; function-specific findings belong in release notes. Optional tools may be disabled: use the available schema. guide(topic="agent-experiments") explains repair families, selectors, recovery, compiler trials and paging. Detailed tool help is guide(topic="tool:NAME").'
 WORK_PROMPT += "\n" + REPAIR_GUIDANCE + HANDOFF_GUIDANCE + MATCHING_WORKFLOW
 FORK_PROMPT += "\n" + REPAIR_GUIDANCE + HANDOFF_GUIDANCE + MATCHING_WORKFLOW
 
@@ -338,6 +338,12 @@ def _variant_project_info(net: RomNetwork, slug: str, detail: bool = False) -> s
         return _compact_project_info(net, slug) + compact_info_steering(net.instructions(slug), net.claim_order(slug))
     wish = net.instructions(slug)
     text = _project_info(net, slug, detail)
+    if hasattr(net, 'project_store') and (milestones := net.project_store(slug).one(
+            "SELECT COUNT(*) AS total,SUM(f.status='matched' AND f.matched_at>=m.recorded_at) AS later "
+            "FROM matching_milestones m JOIN functions f ON f.id=m.function_id "
+            "JOIN projects p ON p.id=f.project_id WHERE p.slug=?", slug)) and milestones['total']:
+        text += (f"\nMeasured regional objectives: {milestones['total']} functions, "
+                 f"{milestones['later'] or 0} later exact matches.")
     open_ = net.overview(slug).get("suggestions") or []
     if open_ and not detail:
         text += f'\nOpen suggestions: {len(open_)} compiler/setup suggestions; project_info(detail=true) lists them.'
@@ -421,6 +427,11 @@ def _fix_for_pc(net: RomNetwork, agent, slug: str, function: str, source: str = 
 def _check_for_pc(net: RomNetwork, slug: str, function: str, source: str = "", edits=None) -> str:
     from ..port import port_fix
     return port_fix.check(net, slug, function, source, edits=edits)
+
+
+def _candidate_behaviour(net, agent, slug, function, revision, calls=2, vis=3600, input=''):
+    from .candidate_behaviour import answer
+    return answer(net, agent, slug, function, revision, calls, vis, input)
 
 
 def _compare_behaviour(net: RomNetwork, slug: str, *args) -> str:
@@ -538,7 +549,10 @@ def _compile(net: RomNetwork, agent: Agent, slug: str, function: str, source: st
         result = net.attempt_many(agent, [net.resolve_function(agent, slug, n) for n in names], source, slug)
     if len(names) == 1:
         measured = agent_tokens.outcome(net, agent, fn, source, result)
-        from . import agent_evidence
+        from . import agent_evidence, guided_matching
+        saved_function = net._function(names[0], slug)
+        project = net.project_row(slug, sync=False)
+        objective = guided_matching.observe(net, project, saved_function, agent, source, measured) if measured.get('rows') else ''
         agent_tokens.remember(net, agent, fn, previous_attempt)
         unchanged_note = None if result.startswith("🔁 REPEAT:") else agent_evidence.track(net,agent,slug,fn)
         first = not net.project_store(slug).one(
@@ -552,6 +566,11 @@ def _compile(net: RomNetwork, agent: Agent, slug: str, function: str, source: st
                 result = result + '\n' + hint
         if unchanged_note:
             result += '\n'+unchanged_note
+        if objective:
+            result += '\n'+objective
+        if measured.get('build_failed') or (not unchanged_note and measured.get('score') is not None
+                and saved_function['best_score'] is not None and measured['score'] > saved_function['best_score']):
+            result += '\n'+guided_matching.recovery(measured.get('rows'), [], measured, saved_function['best_score'], project['arch'])
         _, revision = agent_tokens.candidate(net, agent, slug, names[0])
         open_function = net._function(names[0],slug)['status']=='open'
         held = net.project_store(slug).one('SELECT 1 FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id)
@@ -655,8 +674,8 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "get_compiler_trial": compiler_experiments.retrieve,
     "review_search_seed": reviewed_search_seeds.review,
     "get_search_brief": search_brief.read,
-    "try_local_repairs": lambda net,agent,slug,function,revision,families=None,max_trials=6,anchor='':
-        local_experiments.run(net,agent,slug,function,revision,families,max_trials,anchor=anchor),
+    "try_local_repairs": lambda net,agent,slug,function,revision,families=None,max_trials=6,anchor='',compare=False:
+        local_experiments.run(net,agent,slug,function,revision,families,max_trials,anchor=anchor,compare=compare),
     "compile_family": agent_tokens.local_family,
     "family_targets": agent_tokens.family_targets,
     "get_assembly": lambda net, agent, slug, function, start=0, limit=60, focus="": agent_tokens.assembly(net, slug, function, start, limit, focus, agent),
@@ -703,6 +722,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
         net.compiler_map_text(slug, bool(survey), bool(check_ranges)),
     "list_functions": lambda net, agent, slug, status="open", limit=40: net.list_functions(slug, status, limit),
     "port_readiness": lambda net, agent, slug: _port_readiness(net, slug),
+    "compare_candidate_behaviour": _candidate_behaviour,
     "compare_behaviour": lambda net, agent, slug, function, calls=3, vis=3600, from_vi=0, input="",
         expansion_pak=False: _compare_behaviour(net, slug, function, calls, vis, from_vi, input, expansion_pak),
     "watch_in_emulator": lambda net, agent, slug, target, kind="write", vis=600, from_vi=0, input="", length=4,
@@ -761,7 +781,7 @@ REPAIR_CAPTURE_TOOLS = frozenset({'compile_and_diff', 'compile_patch', 'compile_
                                  'edit_file', 'edit_context', 'redraft'})
 
 
-ROM_ONLY = {"watch_in_emulator","compare_behaviour","get_data_unit","compile_data","claim_data","release_data","claim_port_fix","release_port_fix","check_for_pc","fix_for_pc","claim_asset_region","inspect_asset_region","preview_asset_region","propose_asset_region","defer_asset_region","review_search_seed","get_boundary_evidence", "suggest_boundary", "get_context", "edit_context", "split_function", "redraft", "search_flags"}
+ROM_ONLY = {"watch_in_emulator","compare_behaviour","compare_candidate_behaviour","get_data_unit","compile_data","claim_data","release_data","claim_port_fix","release_port_fix","check_for_pc","fix_for_pc","claim_asset_region","inspect_asset_region","preview_asset_region","propose_asset_region","defer_asset_region","review_search_seed","get_boundary_evidence", "suggest_boundary", "get_context", "edit_context", "split_function", "redraft", "search_flags"}
 FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions", "tidy_done", "tidy_file",
              "standins_for"}
 LTCG_ONLY = {"standins_for"}  # only projects of games built with link-time code generation have harness/ files
@@ -780,6 +800,8 @@ def _supports(console, name: str, fork: bool) -> bool:
         return console.joins_functions if fork else _rom_joins()
     if name == "report_boundary":
         return console.reports_boundaries if fork else arch.BOUNDARIES in console.features
+    if name == "compare_candidate_behaviour":
+        return not fork and console.emulator is not None and console.recompiler is not None
     if name == "get_class":
         return console.reads_classes
     if name == "guess_struct":
@@ -861,7 +883,7 @@ def _tool_foreground(net, agent, slug, name, args):
     # Experimental recovery suggestions retain the complete-import boundary.
     function_read = name == 'get_function' and args.get('section', 'summary') in {
         'summary', 'brief', 'candidate', 'source', 'draft', 'matched', 'all', 'full',
-        'warnings', 'quality', 'history', 'notes', 'declarations', 'compiler', 'layouts'}
+        'warnings', 'quality', 'history', 'notes', 'declarations', 'compiler', 'layouts', 'work'}
     # Polishing also judges current DB inputs and rechecks source/header/target
     # receipts before publication; claims may reuse such a verified plan.
     releasing = name in {'release_function', automatic_assignment.RELEASE}
@@ -1253,7 +1275,7 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
     @tool
     async def get_function(ctx: Context, function: str, section: str = 'summary', start: int = 0, limit: int = 6000) -> str:
         """Show any function (by name or address): assembly, status, best attempt, notes. Read matched
-        functions to learn how this codebase is written. section: summary (default), brief, all, history, candidate, experiment, quality, notes, declarations, compiler, layouts. start/limit page supporting sections by character offset; candidate/brief always return complete C. Prefer the specific section you need."""
+        functions to learn how this codebase is written. section: summary (default), work (one objective, complete current C, mismatch and recent measurements), brief, all, history, candidate, experiment, quality, notes, declarations, compiler, layouts. start/limit page supporting sections by character offset; candidate/brief always return complete C. Prefer the specific section you need."""
         return await run(ctx, "get_function", function=function, section=section, start=start, limit=limit)
 
     @tool
@@ -1275,9 +1297,9 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         return await run(ctx, "get_claims")
 
     @tool
-    async def get_candidate(ctx: Context, function: str, base: Literal["current", "saved_best", "last_compiling", "reported_corrected", "regional_alternative"] = "current") -> str:
+    async def get_candidate(ctx: Context, function: str, base: Literal["current", "saved_best", "last_compiling", "reported_corrected", "regional_alternative", "measured_option"] = "current", option: int = 0) -> str:
         """Read your current candidate C/revision and bounded advisory C-line mismatch locations, when compiler debug information is available. Use base="saved_best" to explicitly restore saved best C, base="reported_corrected" to select a compiled alternative explicitly linked to a quality report (an agent hypothesis, not verified correctness), or base="last_compiling" to recover your last scored C after compiler errors. Selection changes only your continuation; historical scores require rejudging. No full assembly listing or historical notes."""
-        return await run(ctx, 'get_candidate', function=function, base=base)
+        return await run(ctx, 'get_candidate', function=function, base=base, option=option)
 
     @tool
     async def compile_patch(ctx: Context, function: str, revision: str, old: str, new: str, repair_note: str = '',
@@ -1318,9 +1340,9 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         return await run(ctx,'get_search_brief',function=function,base=base)
 
     @tool
-    async def try_local_repairs(ctx: Context, function: str, revision: str, families: list[str] | None = None, max_trials: int = 6, anchor: str = '') -> str:
-        """Try applicable local repairs against one revision; at most six normal compiles and 60 seconds. Omit families to discover repairs. Give an exact unique C anchor to restrict edits to that span. Includes local_widening, callee_parameter_width, callee_return_width, split_integer_lifetime, merge_integer_lifetimes, branch_call, goto_leaf and switch_layout. Retain best continuation; use instead of parallel family probes."""
-        return await run(ctx,'try_local_repairs',function=function,revision=revision,families=families,max_trials=max_trials,anchor=anchor)
+    async def try_local_repairs(ctx: Context, function: str, revision: str, families: list[str] | None = None, max_trials: int = 6, anchor: str = '', compare: bool = False) -> str:
+        """Try applicable local repairs against one revision; at most six normal compiles and 60 seconds. Use compare=true to measure at most three options and choose a continuation. Omit families to discover repairs. Give an exact unique C anchor to restrict edits to that span. Includes local_widening, callee_parameter_width, callee_return_width, split_integer_lifetime, merge_integer_lifetimes, branch_call, goto_leaf and switch_layout. Retain best continuation; use instead of parallel family probes."""
+        return await run(ctx,'try_local_repairs',function=function,revision=revision,families=families,max_trials=max_trials,anchor=anchor,compare=compare)
 
     @tool
     async def compile_family(ctx: Context, function: str, revision: str, family: str,
@@ -1581,6 +1603,15 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         """What still stands between this game and a native PC port (docs/PORTING.md): code without C, library
         code, graphics microcode, data reached by address, addresses written as numbers, raw blobs. Read-only."""
         return await run(ctx, "port_readiness")
+
+    @tool
+    async def compare_candidate_behaviour(ctx: Context, function: str, revision: str, calls: int = 2,
+                                          vis: int = 3600, input: str = '') -> str:
+        """Compare the current, already compiled open candidate on 1–3 emulator-recorded N64 calls.
+        Returns the first observable return or memory difference per call. Diagnostic only. Repeat
+        the same request if the isolated build is still running."""
+        return await run(ctx, 'compare_candidate_behaviour', function=function, revision=revision,
+                         calls=calls, vis=vis, input=input)
 
     @tool
     async def compare_behaviour(ctx: Context, function: str, calls: int = 3, vis: int = 3600, from_vi: int = 0,

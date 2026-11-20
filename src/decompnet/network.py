@@ -1579,7 +1579,7 @@ class Network:
         self._event(db, fn["project_id"], agent.id, "claim", fn["name"])
         if fn['abandons'] >= ESCALATE_AFTER and agent.name not in NON_MODEL_AGENTS:
             proj = proj or db.execute("SELECT * FROM projects WHERE id=?", (fn['project_id'],)).fetchone()
-            claim_routing.start(db, fn, agent, now, claim_routing.build_profiles(proj)(fn))
+            claim_routing.start(db, fn, agent, now, claim_routing.build_profiles(proj)(fn), proj)
 
     def _claim_plan(self, store, proj, agent: Agent, strategy: str, now: float, *, blocked, retry_grants, sdk,
                     batch_from):
@@ -2354,6 +2354,8 @@ class Network:
                                       "WHERE id=? AND status='open' AND (best_score IS NULL OR best_score > ?)",
                                       (score, source, agent.id, score < fn["n_insns"] * 100, now, fn["id"], score)).rowcount
                 if improved:
+                    if via == 'agent' and score > 0:
+                        claim_routing.remember_focus(db, current, proj['arch'], mismatch_rows, handoff_inputs, ctx_version)
                     from .app.permuter_inputs import external_seed
                     external_seed(db, current, source, agent.name)
             if (via == "agent" and not stale and current['status'] == 'open'
