@@ -149,8 +149,9 @@ def enqueue(net, proj, function_id, *, restored=False, polished=False, verdict=N
         snapshot = {'details': json.loads(row['details']), 'source': row['source'], 'header': row['header'],
                     'name': row['name'], 'info': {'vram': row['vram'], 'matched_by': credited['name'] if credited else '', 'readable': bool(row['readable'])}}
         snapshot['kind'] = 'polished' if polished else 'match'
-        snapshot['origin'] = match_commit_notes.origin(net, row['attempt_id'], snapshot['info']['matched_by'], restored=restored, project_id=proj['id'])
-        if polished:snapshot['origin'].update(agent=agent['name'] if agent else 'unknown', method='polishing')
+        snapshot['origin'] = match_commit_notes.origin(net, row['attempt_id'], agent['name'] if agent else '', restored=restored, project_id=proj['id'])
+        snapshot['actor_frozen'] = True
+        if polished:snapshot['origin']['method'] = 'polishing'
         frozen = json.dumps(snapshot)
         with store.tx() as db:
             fresh = db.execute('SELECT config FROM projects WHERE id=?', (proj['id'],)).fetchone()
