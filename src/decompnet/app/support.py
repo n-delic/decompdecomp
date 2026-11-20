@@ -383,7 +383,7 @@ class Settings:
         return {"agent_accounts": [a | {"signin": agent_kind(a["kind"]).account_signin(a["config_dir"])}
                                     for a in self.accounts()], "endpoints": eps, "api": eps[0] if eps else {},
                 "per_session": self.data.get("per_session", PER_SESSION), "last_project": self.data.get("last_project"),
-                "agent_local_enabled":bool(self.data.get('agent_local_enabled',False)),
+                "agent_local_enabled":bool(self.data.get('agent_local_enabled',True)),
                 "agent_local_trials":self.data.get('agent_local_trials',2),
                 "agent_local_seconds":self.data.get('agent_local_seconds',5),
                 "reuse_auto": self.data.get("reuse_auto", True), "reuse_seconds": self.data.get("reuse_seconds", 120),

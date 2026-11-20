@@ -91,3 +91,18 @@ def test_a_function_id_finds_its_project_database(tmp_path, project_databases):
         assert net.function_store(fid) is net.project_store(slug)
         assert net.function_store(fid) is net.project_store(slug)  # again, from what the first lookup learned
     assert net.function_store(max(ids.values()) + 1000) is None
+
+
+def test_compact_claim_carries_previous_repair_notes(tmp_path):
+    from decompnet.app import tools
+
+    net, _ = _game(tmp_path, functions=1)
+    previous, _ = net.local_agent('previous')
+    worker, _ = net.local_agent('worker')
+    function = net.claim_row(previous, 'game', 'f0')
+    net.add_note(previous, 'game', 'Declaration order produced the same register moves.', 'f0')
+    with net.store.tx() as db:
+        db.execute('DELETE FROM claims WHERE function_id=?', (function['id'],))
+    result = tools.call(net, worker, 'game', 'claim_function', {'function': 'f0'})
+    assert 'Recent handoff notes:' in result
+    assert 'Declaration order produced the same register moves.' in result

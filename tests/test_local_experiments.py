@@ -146,3 +146,32 @@ def test_automatic_pass_excludes_experimental_families_but_explicit_requests_wor
     monkeypatch.setattr(local_experiments,'available',available)
     local_experiments.run(net,a,'game','f',revision,['experimental_bitfield_frame'] if explicit else None)
     assert ('experimental_bitfield_frame' in requested)==explicit
+
+
+def test_near_match_generates_focused_families_before_generic_discovery(tmp_path, monkeypatch):
+    net, _ = _game(tmp_path, [('f', 10, 'open')])
+    with net.store.tx() as db:
+        cfg = {'kind': 'rom', 'compiler': {'toolchain': 'example', 'flags': []}}
+        db.execute('UPDATE projects SET config=?', (json.dumps(cfg),))
+    agent, _ = net.local_agent('solver')
+    source = 'int f(void){return 1;}'
+    net.claim_row(agent, 'game', 'f')
+    fn = net._function('f', 'game')
+    net._record(fn, agent, 10, source, 0)
+    _, revision = agent_tokens.candidate(net, agent, 'game', 'f')
+    rows = [('r', 'move r3,r4', 'move r3,r5')]
+    monkeypatch.setattr(local_experiments.agent_evidence, 'preflight',
+                        lambda *a: {'source': source, 'score': 10, 'rows': rows})
+    from decompnet.app import allocation_evidence
+    monkeypatch.setattr(allocation_evidence, 'plan',
+                        lambda *a: {'families': ['split_integer_lifetime', 'not_a_family']})
+    discovery = []
+
+    def available(*args, **kwargs):
+        discovery.append(args[-1])
+        return local_experiments.Pools(split_integer_lifetime=['int f(void){return 2;}'])
+
+    monkeypatch.setattr(local_experiments, 'available', available)
+    monkeypatch.setattr(agent_tokens, 'variants', lambda *a, **kw: 'judged')
+    assert '1: split_integer_lifetime' in local_experiments.run(net, agent, 'game', 'f', revision, max_trials=1)
+    assert discovery == [['split_integer_lifetime']]

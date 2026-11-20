@@ -170,3 +170,26 @@ def test_retries_by_one_model_do_not_count_as_distinct_functions():
         for index in range(30)
     ]
     assert claim_routing.preferences(rows, {1: 'model', 2: 'model', 3: 'peer'}, 'model') == (set(), set())
+
+
+def test_model_results_keeps_starting_cohorts_and_counts_done_claims_once(tmp_path):
+    net, pid = _game(tmp_path, [('f', 10, 'open'), ('g', 50, 'open')])
+    agent, _ = net.local_agent('codex-example-1')
+    peer, _ = net.local_agent('codex-example-2')
+    f = net._function('f', 'game')['id']
+    g = net._function('g', 'game')['id']
+    now = time.time()
+    with net.store.tx() as db:
+        db.executemany('INSERT INTO claim_routing_samples VALUES(?,?,?,?,?,?,?,?)', [
+            (pid, f, agent.id, now-3, 'profile', 'small:near', 1, 0),
+            (pid, f, peer.id, now-2, 'profile', 'small:near', 1, 1),
+            (pid, g, agent.id, now-1, 'profile', 'medium:partial', 1, 0),
+            (pid, g, peer.id, now, 'profile', 'medium:partial', 1, 1),
+        ])
+        db.execute('INSERT INTO claims VALUES(?,?,?,?)', (g, peer.id, now, now+60))
+    assert claim_routing.model_results(net.store, 'game', now, {
+        agent.id: agent.name, peer.id: peer.name,
+    }) == {'codex-example': [
+        {'band': 'medium:partial', 'claims': 1, 'matches': 0},
+        {'band': 'small:near', 'claims': 1, 'matches': 1},
+    ]}

@@ -33,6 +33,22 @@ def quick(function):
     return run
 
 
+def history(net, fn):
+    from ..search_notes import useful
+    from .agent_tokens import tried_summary
+
+    lines = []
+    if summary := tried_summary(net, fn, compact=True):
+        lines.append(summary.strip())
+    store = net.project_store(fn['project_id'])
+    notes = useful(store.all(
+        'SELECT text,agent_id AS agent FROM notes WHERE function_id=? ORDER BY created_at DESC,id DESC LIMIT 12',
+        fn['id']))
+    if notes:
+        lines.extend(['Recent handoff notes:', *('- ' + row['text'][:450] for row in notes[:2])])
+    return lines
+
+
 def brief(net, fn, agent, header):
     store = net.project_store(fn['project_id'])
     from .agent_tokens import candidate
@@ -49,6 +65,7 @@ def brief(net, fn, agent, header):
     from .agent_review import handoff_brief
     if handoff := handoff_brief(net, proj['slug'], fn, source):
         lines.append(handoff)
+    lines.extend(history(net, fn))
     from ..candidate_quality import source_hint as quality_hint
     if note := quality_hint(net, fn, source):lines.append(note)
     diagnostic = summary(read(net,fn['id'],project_id=fn['project_id']))

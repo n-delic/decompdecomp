@@ -1211,10 +1211,15 @@ class Manager:
         recent = [dict(r) for r in self.net.project_store(slug).all(query.format("AND task NOT IN (" + ",".join(f"'{task}'" for task in sorted(NOT_MATCHING)) + ")"), slug,
                                                       time.time() - SPIN_WINDOW)]
         advice = spin_advice(recent)
+        from ..claim_routing import model_results
+        from ..network import model_of
+        names = {row["id"]: row["name"] for row in self.net.store.all("SELECT id,name FROM agents")}
+        cohorts = model_results(self.net.project_store(slug), slug, time.time(), names)
         out = []
         for r in rows:
             said = advice.get((r["kind"], r["model"]), "")
             out.append(dict(r) | {"usd": r["usd"] or 0.0, "tokens": r["tokens"] or 0, "matches": r["matches"] or 0,
+                                  "claim_results": cohorts.get(model_of(helper_name(r["kind"], r["model"], set())), []),
                                   "advice": said, "advice_model": (r["model"] or r["kind"]) if said else ""})
         # a model without a price (the API helper counts only tokens) isn't free: priced models by dollars a match,
         # then the rest by tokens a match, then those that matched nothing

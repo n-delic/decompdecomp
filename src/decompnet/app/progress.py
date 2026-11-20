@@ -1490,6 +1490,10 @@ class Progress:
                              or item[0].split("/", 1)[0] in self.JUDGE_FOLDERS)
                 if kept and self._judge_signature(folder) == kept:
                     self._judge_check("narrow")
+                    # Nested project lookups must not follow this verified snapshot with a full sync.
+                    synced = getattr(self.local, 'synced', None)
+                    if synced is not None and getattr(self.local, 'deferring', False):
+                        synced.add(slug)
                     return False
             except (OSError, NetworkError):
                 pass

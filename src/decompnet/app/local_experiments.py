@@ -56,7 +56,15 @@ FAMILIES = ('inferred_frame_reservation','frame_branch_tail_sequence','value_tra
             'local_widening','callee_parameter_width','callee_return_width','split_integer_lifetime','merge_integer_lifetimes','branch_call','goto_leaf','switch_layout') + ('mapped_spill_storage','mapped_register_lifetime','hazard_statement_lines','floating_initializer_order') + draft_repairs.AGENT_FAMILIES
 
 
-def run(net, agent, slug, function, revision, families=None, max_trials=6, *, seconds=60, provenance_kind='agent batch'):
+def near_match_priority(rows, score, instructions, arch):
+    if not rows or not isinstance(score, int) or not 0 < score <= max(100, (instructions or 0) * 5):
+        return []
+    from .allocation_evidence import plan
+
+    return [family for family in plan(rows, arch)['families'] if family in FAMILIES and family not in EXPERIMENTAL]
+
+
+def run(net, agent, slug, function, revision, families=None, max_trials=6, *, seconds=60, provenance_kind='agent batch', focused_only=False):
     if isinstance(max_trials,bool) or not isinstance(max_trials,int) or not 1<=max_trials<=6:
         raise NetworkError('Use max_trials from 1 to 6.')
     if families is not None and (not isinstance(families,list) or not families or len(families)>len(FAMILIES)
@@ -81,7 +89,22 @@ def run(net, agent, slug, function, revision, families=None, max_trials=6, *, se
             if not hasattr(net, '_agent_outcomes'):
                 net._agent_outcomes={}
             net._agent_outcomes[agent.id,fn['id']]=checked
-        pools = available(net,agent,slug,fn,source,revision,requested,deadline=time.monotonic()+max(0,(deadline-time.monotonic())*0.35),desired=max_trials if families is not None else 0)
+        preferred = []
+        if families is None and checked:
+            preferred = near_match_priority(checked.get('rows'), checked.get('score'), fn['n_insns'],
+                                            net._project(slug)['arch'])
+        now = time.monotonic()
+        discovery_deadline = now + max(0, (deadline - now) * 0.35)
+        pools = Pools()
+        if preferred:
+            pools = available(net, agent, slug, fn, source, revision, preferred,
+                              deadline=now + (discovery_deadline - now) * 0.8, desired=max_trials)
+        if not focused_only and (not preferred or sum(map(len, pools.values())) < max_trials):
+            extra = available(net, agent, slug, fn, source, revision,
+                              [family for family in requested if family not in preferred],
+                              deadline=discovery_deadline, desired=max_trials if families is not None else 0)
+            pools.update(extra)
+            pools.incomplete = getattr(pools, 'incomplete', False) or getattr(extra, 'incomplete', False)
         from decomprepair.repair_localisation import order as local_order
         evidence = checked or getattr(net,'_agent_outcomes',{}).get((agent.id,fn['id'])) or {}
         for family,pool in pools.items():

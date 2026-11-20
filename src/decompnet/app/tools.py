@@ -525,7 +525,7 @@ def _compile(net: RomNetwork, agent: Agent, slug: str, function: str, source: st
     if len(names) == 1:
         agent_tokens.outcome(net, agent, fn, source, result)
         from . import agent_evidence
-        unchanged_note=agent_evidence.track(net,agent,slug,fn)
+        unchanged_note = None if result.startswith("🔁 REPEAT:") else agent_evidence.track(net,agent,slug,fn)
         agent_tokens.remember(net, agent, fn, previous_attempt)
         result = agent_tokens.feedback(net, agent, slug, names[0], result, previous_diff)
         if unchanged_note:

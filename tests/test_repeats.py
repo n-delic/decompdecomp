@@ -66,3 +66,41 @@ def test_a_variant_that_reproduces_an_earlier_score_says_which_compile_it_equals
     note = net.same_score_note(fn["id"], a.id, 1001, "int f(){return 3;}")
     assert "Same score as your compile #1 of this claim (1001)" in note
     assert net.same_score_note(fn["id"], a.id, 900, "int f(){return 2;}") == ""  # its own row only
+
+
+def test_repeat_judges_actual_object_across_identical_context_versions(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from decompnet import scoring
+
+    net, _ = _game(tmp_path, [('f', 10, 'open')])
+    agent, _ = net.local_agent('helper')
+    fn = net._function('f', 'game')
+    version = 1
+    header = 'typedef int word;'
+    obj = b'first object'
+    judged = []
+    monkeypatch.setattr(net, '_context', lambda *args: {'version': version, 'header': header})
+    monkeypatch.setattr(net, '_attempt_compilation', lambda *args: SimpleNamespace(ok=True, obj=obj, log=''))
+
+    def evaluate(fn, proj, candidate):
+        judged.append(candidate)
+        return SimpleNamespace(fingerprint=lambda: 'candidate'), False, []
+
+    monkeypatch.setattr(net, '_evaluate', evaluate)
+    monkeypatch.setattr(net, '_score_candidate', lambda *args: scoring.DiffResult(5, 1000, [], False))
+    monkeypatch.setattr(net, '_search_rows', lambda *args: [])
+    import decompnet.source_lines
+    monkeypatch.setattr(decompnet.source_lines, 'mismatches', lambda *args, **kwargs: {'available': False})
+    source = 'int f(void){return 1;}'
+    assert net._attempt_unlimited(agent, 'f', source, 'game')['score'] == 5
+    version = 2
+    assert net._attempt_unlimited(agent, 'f', source, 'game')['repeat']
+    assert judged == [obj]
+    assert net.project_store(fn['project_id']).one('SELECT COUNT(*) n FROM attempts')['n'] == 1
+
+    obj = b'changed object'
+    assert not net._attempt_unlimited(agent, 'f', source, 'game').get('repeat')
+    header = 'typedef long word;'
+    assert not net._attempt_unlimited(agent, 'f', source, 'game').get('repeat')
+    assert len(judged) == 3

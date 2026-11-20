@@ -3318,13 +3318,17 @@ class ForkEngine:
                 was_matched = fn["status"] == "matched"
             # the same file as an earlier compile of this function made, nothing it depends on changed since: that
             # compile's result, not another build
-            agents_try = keep and quiet is None and not was_matched
-            # (an LTCG project's driver and stand-ins are part of what the unit builds with: harness/<unit>.*.cpp)
-            harness = "".join(p.read_text(errors="replace", encoding="utf-8")
-                              for p in sorted((fp.root / "harness").glob(f"{unit.name}.*.cpp")))
-            key = self.net.compile_key(fn, unit.name, after, harness)
-            if agents_try and (again := self.net.repeat_of(key, agent, fn)) is not None:
-                return again
+            agents_try = keep and quiet is None and not was_matched and not structor
+            if agents_try:
+                from ..candidate_scope import key as build_scope
+
+                # The unit, build controls, target and headers may change outside the app.
+                harness = "".join(p.read_text(errors="replace", encoding="utf-8")
+                                  for p in sorted((fp.root / "harness").glob(f"{unit.name}.*.cpp")))
+                key = self.net.compile_key(fn, unit.name, after, harness, build_scope(self.net, proj, fn),
+                                           verbatim=True)
+                if (again := self.net.repeat_of(key, agent, fn)) is not None:
+                    return again
             renamed: dict[Path, str] = {}
             if structor:
                 try:

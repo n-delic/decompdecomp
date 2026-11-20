@@ -3869,6 +3869,26 @@ def test_a_compile_tool_call_checks_only_what_its_judge_reads(project, monkeypat
     assert forced == [1], "other work tools still check the whole folder first"
 
 
+def test_judge_tool_nested_lookups_reuse_verified_saved_inputs(project, monkeypatch):
+    from decompnet.app import tools
+
+    net, _, _ = project
+    agent, _ = net.local_agent('worker')
+    calls = []
+    real = net.progress._sync_checked
+    monkeypatch.setattr(net.progress, '_sync_checked',
+                        lambda *a, **kw: calls.append(kw) or real(*a, **kw))
+
+    def dispatch(*args):
+        for _ in range(3):
+            net.project_row('game')
+        return 'judged'
+
+    monkeypatch.setattr(tools, '_dispatch', dispatch)
+    assert tools._invoke(net, agent, 'game', 'compile_variants', {}) == 'judged'
+    assert calls == []
+
+
 # A big game lost 415 of its 658 matches over three restarts: a header its project no longer used
 # (include/common_main.h) made every sync recheck all saved C, quitting cut each pass off after under a minute,
 # and the matches it hadn't reached stayed open with their C gone from the folder.

@@ -16,6 +16,7 @@ from ...candidate_work import trial
 from ...network import MACHINE_AGENTS, Agent, Network, NetworkError, stall_line
 from ...release_receipts import operation as release_operation
 from ...request_timing import build as timed_build
+from ...request_timing import timed_lock
 from ...rom import match
 from ...rom.symbols import SymbolTable
 from ..function_names import canonical_source
@@ -352,7 +353,7 @@ class JudgeMixin:
         proj = store.one('SELECT * FROM projects WHERE id=?', fn['project_id']) if matching and not self.progress.applying else None
         automatic = proj is not None and self.cfg(proj).get('auto_commit_matches', False)
         verdict = None
-        with self.progress._project_lock(slug):
+        with timed_lock(self.progress._project_lock(slug), 'judge_publish_lock_wait'):
             # attempt()'s judging block already read progress just before this record; a second full read here made
             # every compile check the folder twice before and once after.
             if not self.progress.applying and not getattr(self.progress.local, "judging", None):
@@ -369,7 +370,7 @@ class JudgeMixin:
 
     def _remember_search_output(self, agent, function, source, project, result):
         """Give manual/agent trials the same compact output history as local search."""
-        if result.get('score') is None:
+        if result.get('score') is None or result.get('repeat'):
             return
         fn = self._function(function, project)
         proj = self.project_row(project) if project else self.project_store(fn['project_id']).one(

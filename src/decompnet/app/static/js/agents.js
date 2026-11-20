@@ -113,14 +113,22 @@ function tokenBreakdown(r) {
 async function renderCosts(force = false) {
   if (!force && S.costsAt && Date.now() - S.costsAt < COSTS_EVERY_MS && S.costsSlug === S.slug) return;
   S.costsAt = Date.now(); S.costsSlug = S.slug;
+  const slug = S.slug;
   let rows;
-  try { rows = await api(`/api/modelcosts?slug=${encodeURIComponent(S.slug)}`); } catch { return; }
+  try { rows = await api(`/api/modelcosts?slug=${encodeURIComponent(slug)}`); } catch { return; }
+  if (S.slug !== slug) return;
   const box = $("modelCosts");
   $("costPanel").hidden = !rows.length;
   const per = (r) => r.matches ? (r.usd ? `${money(r.usd / r.matches)} a match` : `${Math.round(r.tokens / r.matches / 1000)}k total tokens a match`) : "no match yet";
   setHtml(box, `<ul class="mini-list">${rows.map((r) => `<li><b>${esc(r.model || r.kind)}</b> <span class="muted small">${esc(r.kind)}</span>
       <span class="small">${r.matches.toLocaleString()} ${r.matches === 1 ? "match" : "matches"} · ${per(r)}${r.usd ? ` · ${money(r.usd)} in all` : ""}</span>
-      <span class="small muted" title="Reported token categories; cached tokens are included in the total and do not have the same price as uncached input">${tokenBreakdown(r)}</span></li>`).join("")}</ul>`);
+      <span class="small muted" title="Reported token categories; cached tokens are included in the total and do not have the same price as uncached input">${tokenBreakdown(r)}</span>
+      ${r.claim_results?.length ? `<details><summary>Match rate by starting difficulty</summary>
+        <p class="small muted">Recent completed hard claims with a judge attempt. Function size is measured in instructions.</p>
+        <ul class="mini-list">${r.claim_results.map(({band, claims, matches}) => {
+          const [size, start] = band.split(":");
+          return `<li>${esc(size)} · ${esc(start)} — ${matches} of ${claims} matched (${Math.round(100 * matches / claims)}%)</li>`;
+        }).join("")}</ul></details>` : ""}</li>`).join("")}</ul>`);
   const advice = rows.filter((r) => r.advice && r.advice_model)
     .map((r) => ({ model: r.advice_model, text: r.advice }));
   const dismissed = dismissedModelAdvice();

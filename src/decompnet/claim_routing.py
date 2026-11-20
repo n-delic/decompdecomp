@@ -136,6 +136,35 @@ def preferences(rows, active, model):
     return preferred, deferred
 
 
+def model_results(store, slug, now, names):
+    """Completed, tested hard claims grouped by their starting candidate and function size."""
+    from .network import model_of
+
+    rows = store.all(
+        'SELECT r.function_id,r.profile,r.band,r.won,r.agent_id FROM claim_routing_samples r '
+        'JOIN projects p ON p.id=r.project_id '
+        'WHERE p.slug=? AND r.claimed_at>=? AND r.tested=1 AND NOT EXISTS ('
+        'SELECT 1 FROM claims c WHERE c.function_id=r.function_id AND c.agent_id=r.agent_id '
+        'AND c.claimed_at=r.claimed_at) ORDER BY r.claimed_at DESC LIMIT ?',
+        slug, now - HISTORY_SECONDS, HISTORY_LIMIT)
+    counts, matches, seen = Counter(), Counter(), set()
+    for row in rows:
+        name = names.get(row['agent_id'])
+        if name is None:
+            continue
+        key = model_of(name), row['band']
+        sample = (*key, row['profile'], row['function_id'])
+        if sample in seen:
+            continue
+        seen.add(sample)
+        counts[key] += 1
+        matches[key] += row['won']
+    results = defaultdict(list)
+    for (model, band), count in sorted(counts.items()):
+        results[model].append({'band': band, 'claims': count, 'matches': matches[model, band]})
+    return results
+
+
 def routes(store, proj, agent, now, names):
     from .network import ESCALATE_AFTER, NON_MODEL_AGENTS, model_of
 

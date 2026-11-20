@@ -7,9 +7,10 @@ from . import agent_tokens, local_experiments
 
 
 def configure(net,data):
-    net.agent_local_repairs={'enabled':bool(data.get('agent_local_enabled',False)),
+    net.agent_local_repairs={'enabled':bool(data.get('agent_local_enabled',True)),
                              'trials':max(1,min(6,int(data.get('agent_local_trials',2)))),
-                             'seconds':max(1,min(15,int(data.get('agent_local_seconds',5))))}
+                             'seconds':max(1,min(15,int(data.get('agent_local_seconds',5)))),
+                             'targeted_only':'agent_local_enabled' not in data}
 
 
 def after_tool(net,agent,slug,name,args,text):
@@ -17,21 +18,27 @@ def after_tool(net,agent,slug,name,args,text):
     function=args.get('function','')
     if not config.get('enabled') or name not in {'compile_and_diff','compile_patch'} or not function or ',' in function:
         return text
-    if 'COMPILE ERROR' in text or text.startswith(('error:','❌')):return text
+    if 'COMPILE ERROR' in text or text.startswith(('error:','❌', '🔁 REPEAT:')):return text
     fn=net._function(function,slug)
     if fn['status']!='open' or net.attempt_limit_note(agent,function,slug):return text
     measured=getattr(net,'_agent_outcomes',{}).get((agent.id,fn['id']))
-    if not measured or measured.get('score') is None or not 0<measured['score']<=6*max(1,fn['n_insns'] or 0):return text
+    if not measured or measured.get('score') is None or not 0 < measured['score'] <= max(100, 6 * (fn['n_insns'] or 0)):
+        return text
+    if config.get('targeted_only') and not local_experiments.near_match_priority(measured.get('rows'), measured.get('score'), fn['n_insns'],
+                                                  net._project(slug)['arch']):
+        return text
     try:
         with net.attempt_turn(agent,fn):
             source,revision=agent_tokens.candidate(net,agent,slug,function)
             if measured['source']!=source:return text
             before=net.project_store(fn['project_id']).one('SELECT MAX(id) AS id FROM attempts WHERE function_id=?',fn['id'])['id'] or 0
             local_experiments.run(net,agent,slug,function,revision,max_trials=config['trials'],seconds=config['seconds'],
-                                  provenance_kind='automatic agent local pass')
+                                  provenance_kind='automatic agent local pass', focused_only=config.get('targeted_only', False))
             chosen,current=agent_tokens.candidate(net,agent,slug,function)
             trials=net.project_store(fn['project_id']).one('SELECT COUNT(*) AS n FROM attempts WHERE function_id=? AND id>?',fn['id'],before)['n']
             changed=chosen!=source
+            if not trials and not changed:
+                return text
             status=net._function(function,slug)['status']
             # The final revision/budget replaces the pre-pass lines rather than contradicting them.
             text=re.sub(r'\nBudget:[^\n]*|\nCandidate revision [^\n]*','',text)
