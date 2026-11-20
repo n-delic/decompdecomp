@@ -189,21 +189,46 @@ function setup(){
     t.run('romView().report.stale=true;drawRomTypeMap()');canvas.onkeydown({key:'Enter',preventDefault(){}});assert.equal(opened.length,2);
     t.run('romView().report=null;drawRomTypeMap()');assert.equal(t.context.$('romTypeMapPanel').hidden,true);
   }
-  // The byte strip and the grid draw the same rows in the same colours, and
-  // grouping changes both.
+  // Both maps and the legend share colours. Grouping can hide a type and free
+  // its colour for a type that would otherwise collide.
   {
     const t=setup(),strip=[],grid=[];
     const map=fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/js/map.js'),'utf8');
     vm.runInContext(map.slice(map.indexOf('function squareMapLayout('),map.indexOf('function layoutMap(')),t.context);
     t.context.getComputedStyle=()=>({getPropertyValue:name=>name});
-    const paint=(log,cell)=>{const ctx={scale(){},beginPath(){},fill(){},strokeRect(){},roundRect(){log.push(ctx.fillStyle);},fillRect(){log.push(ctx.fillStyle);}};return ()=>ctx;};
+    const paint=log=>{const ctx={scale(){},beginPath(){},fill(){},strokeRect(){},roundRect(){log.push(ctx.fillStyle);},fillRect(){log.push(ctx.fillStyle);}};return ()=>ctx;};
     t.context.$('romMap').getContext=paint(strip);t.context.$('romMap').clientWidth=200;
     t.context.$('romTypeMap').getContext=paint(grid);t.context.$('romTypeMap').clientWidth=200;
-    t.run("romView().report={available:true,size:40,regions:[{id:'a',start:0,end:10,size:10,kind:'code'},{id:'b',start:10,end:20,size:10,kind:'image'},{id:'c',start:20,end:30,size:10,kind:'image'},{id:'d',start:30,end:40,size:10,kind:'repeated bytes'}],asset_groups:[{id:'g',start:10,end:30,size:20,region_ids:['b','c']}]};drawRomMap();drawRomTypeMap()");
-    assert.deepEqual(strip,['--cc-1','--cc-2','--muted']);assert.deepEqual(grid,strip);
-    assert.match(t.context.$('romTypeLegend').innerHTML,/Image \(1\)/);assert.equal(t.context.$('romMapKey').hidden,false);
+    t.context.report={available:true,size:60,regions:[
+      {id:'code',start:0,end:10,size:10,kind:'code'},
+      {id:'audio',start:10,end:20,size:10,kind:'audio'},
+      {id:'music',start:20,end:30,size:10,kind:'music sequence'},
+      {id:'image1',start:30,end:40,size:10,kind:'image'},
+      {id:'image2',start:40,end:50,size:10,kind:'image'},
+      {id:'font',start:50,end:60,size:10,kind:'font'},
+    ],asset_groups:[
+      {start:10,end:30,size:20,region_ids:['audio','music']},
+      {start:30,end:50,size:20,region_ids:['image1','image2']},
+    ]};
+    const legend=t.context.$('romTypeLegend');
+    t.run('romView().report=report;drawRomMap();drawRomTypeMap()');
+    assert.deepEqual(strip,['--cc-1','--faint','--cc-2','--cc-7']);
+    assert.deepEqual(grid,strip);
+    assert.match(legend.innerHTML,/Data \(1\)/);
+    assert.match(legend.innerHTML,/Image \(1\)/);
+    assert.match(legend.innerHTML,/Other data \(1\)/);
+    assert.doesNotMatch(legend.innerHTML,/Audio|Music sequence|\(0\)/);
+
     strip.length=0;grid.length=0;t.context.$('romGroupAssets').checked=false;t.context.$('romGroupAssets').onchange();
-    assert.equal(strip.length,4);assert.deepEqual(grid,strip);assert.match(t.context.$('romTypeLegend').innerHTML,/Image \(2\)/);
+    assert.deepEqual(strip,['--cc-1','--cc-3','--cc-4','--cc-2','--cc-2','--cc-7']);
+    assert.deepEqual(grid,strip);
+    assert.match(legend.innerHTML,/data-rom-color="--cc-4"><\/i>Music sequence \(1\)/);
+    assert.match(legend.innerHTML,/Image \(2\)/);
+    assert.doesNotMatch(legend.innerHTML,/>Data |\(0\)/);
+
+    const colors=t.run('Array.from(romMapTypes(ROM_TYPES.map(([kind])=>({kind}))).values(),type=>type.color)');
+    assert.equal(new Set(colors).size,colors.length);
+    assert.ok(colors.every(Boolean));
   }
   // Discovery shares the preview lock and retains errors through delayed requests.
   {
