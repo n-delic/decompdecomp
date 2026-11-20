@@ -2199,7 +2199,7 @@ img.rom-preview-media { image-rendering:pixelated; background:var(--bg-alt); bor
 #romTypeStatus { min-height:2.5em; overflow-wrap:anywhere; }
 
 .rom-texture-discovery, .rom-model-inspection { margin-top:18px; padding-top:12px; border-top:1px solid var(--line); }
-.rom-texture-gallery { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(150px,100%),1fr)); gap:12px; margin-top:12px; }
+.rom-texture-gallery, .rom-asset-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(150px,100%),1fr)); gap:12px; margin-top:12px; }
 .rom-texture-gallery > p { grid-column:1/-1; }
 .rom-texture-candidate { height:auto; min-height:190px; display:flex; flex-direction:column; gap:8px; align-items:center; padding:10px; white-space:normal; overflow-wrap:anywhere; }
 .rom-texture-candidate img { width:128px; height:128px; max-width:100%; object-fit:contain; image-rendering:pixelated; background:var(--line); }
@@ -2216,7 +2216,13 @@ img.rom-preview-media { image-rendering:pixelated; background:var(--bg-alt); bor
 .rom-texture-open { height:auto; min-height:220px; padding:10px; display:flex; flex-direction:column; gap:6px; width:100%; text-align:left; white-space:normal; }
 .rom-texture-thumb { flex:none; display:flex; align-items:center; justify-content:center; width:100%; min-height:128px; background:var(--bg); overflow-wrap:anywhere; }
 .rom-texture-thumb img { width:128px; height:128px; max-width:100%; image-rendering:pixelated; object-fit:contain; }
-#romAudioPanel, #romModelPanel { min-width:0; }
+.rom-asset-toolbar { justify-content:space-between; gap:12px; flex-wrap:wrap; }
+.rom-asset-grid { grid-template-columns:repeat(auto-fit,minmax(min(220px,100%),1fr)); }
+.rom-asset-grid dl { margin:8px 0 12px; font-size:.875rem; }
+.rom-asset-grid dt { color:var(--muted); }
+.rom-asset-grid dd { margin:0 0 6px; }
+.rom-asset-icon { display:block; text-align:center; font-size:2rem; background:var(--bg); margin-bottom:8px; }
+#romAssetBrowser [role="tabpanel"] { min-width:0; }
 #romModelItems, #romModelResult, #romAudioItems, #romAudioResult, #romAudioSequences { min-width:0; overflow-wrap:anywhere; }
 #romModelItems td:last-child, #romModelItems th:last-child, #romAudioItems td:last-child, #romAudioItems th:last-child { position:sticky; right:0; background:var(--panel); }
 

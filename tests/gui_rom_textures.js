@@ -4,21 +4,24 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
 const tick=async()=>{for(let n=0;n<30;n++)await Promise.resolve();};
 const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};};
 function element(tag='div'){
- const fields=new Map();return {tag,children:[],value:'0',hidden:false,disabled:false,open:false,textContent:'',innerHTML:'',dataset:{},
+ const fields=new Map();return {tag,children:[],value:'0',hidden:false,disabled:false,open:false,textContent:'',innerHTML:'',dataset:{},attributes:{},classList:{toggle(){}},
+ setAttribute(key,value){this.attributes[key]=value;},focus(){this.focused=true;},
  append(...nodes){this.children.push(...nodes);},replaceChildren(...nodes){this.children=nodes;},addEventListener(){},
  querySelector(selector){if(selector==='img')return this.children.find(c=>c.tag==='img') || null;if(!fields.has(selector))fields.set(selector,element());return fields.get(selector);},
  querySelectorAll(selector){if(selector==='[data-texture-thumb]')return this.children.map(c=>c.querySelector(selector));return [];}};
 }
 function setup(report){
  const nodes=new Map(),calls=[],timers=new Map();let timer=0;
- const state={report},context=vm.createContext({console,Map,Set,Math,Number,Array,Object,String,Promise,Error,AbortController,
+ const state={report,assetBrowser:{type:0,layout:'icons'}},context=vm.createContext({console,Map,Set,Math,Number,Array,Object,String,Promise,Error,AbortController,
   S:{slug:'one',tab:'rom'},$:id=>{if(!nodes.has(id))nodes.set(id,element());return nodes.get(id);},romView:()=>state,
   esc:String,hex8:n=>'0x'+n.toString(16),document:{createElement:element,createTextNode:text=>({textContent:text})},openRomRegion(){},openFn(){},
   setTimeout(fn){timers.set(++timer,fn);return timer;},clearTimeout(id){timers.delete(id);},
   beginWork(log,label){log._workStatus={textContent:label,dataset:{state:'running'}};log._bar=true;return ()=>{log._bar=false;};},
   showJobError(log,message){log.error=message;},updateWorkProgress(log,value){log.progress=value;log._workStatus.textContent='Loading progress';},
   api(url,options){const pending=deferred();calls.push({url,options,pending});options.signal.addEventListener('abort',()=>pending.reject(Error('aborted')));return pending.promise;}});
- vm.runInContext(fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/js/rom-textures.js'),'utf8'),context);
+ for(const script of ['rom-textures','rom-model-browser','rom-audio-browser','rom-asset-browser'])
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/js',script+'.js'),'utf8'),context);
+ context.stopRomAssetAudio=()=>{};
  return {context,state,nodes,calls,timers,run:code=>vm.runInContext(code,context)};
 }
 const asset={offset:128,size:200,kind:'image',label:'Texture bank',frames:2,palettes:2,preview_settings:{format:'ci4',width:8,height:8},levels:[{width:8,height:8},{width:4,height:4}]};
@@ -33,8 +36,8 @@ const row=(n=0)=>({id:'r'+n,kind:'image',start:128+n*200,detected_asset:{...asse
  }
  {
   const t=setup({available:true,image_hash:'hash',regions:Array.from({length:25},(_,n)=>row(n))});
-  t.run('renderRomTextureGallery()');assert.equal(t.calls.length,0,'Collapsed browser must not request thumbnails');
-  const panel=t.context.$('romTexturePanel');panel.open=true;panel.ontoggle();assert.equal(t.calls.length,3,'Bound requests to three workers');
+  t.run('renderRomAssetBrowser(romView())');assert.equal(t.calls.length,0,'Collapsed browser must not request thumbnails');
+  const panel=t.context.$('romAssetBrowser');panel.open=true;panel.ontoggle();assert.equal(t.calls.length,3,'Bound requests to three workers');
   assert.equal(t.context.$('romTextureItems').children.length,24);assert.equal(t.context.$('romTextureStop').hidden,false);
   t.context.$('romTextureNext').onclick();await tick();assert.equal(t.calls.length,4);
   assert.equal(t.calls[3].options.body.region,'r24','Paging preserves each bank identity');
@@ -47,9 +50,39 @@ const row=(n=0)=>({id:'r'+n,kind:'image',start:128+n*200,detected_asset:{...asse
   assert.equal(t.context.$('romTextureWork')._bar,false);
  }
  {
-  const t=setup({available:true,image_hash:'hash',regions:[row()]});const panel=t.context.$('romTexturePanel');panel.open=true;t.run('renderRomTextureGallery()');
+  const t=setup({available:true,image_hash:'hash',regions:[row()]});const panel=t.context.$('romAssetBrowser');panel.open=true;t.run('renderRomTextureGallery()');
   t.context.S.slug='two';t.calls[0].pending.resolve({data_url:'data:image/png;base64,AA=='});await tick();
   assert.equal(t.context.$('romTextureItems').children[0].querySelector('[data-texture-thumb]').children.length,0,'Late thumbnails cannot paint another project');
+ }
+ {
+  const report={available:true,image_hash:'hash',regions:[
+   row(),
+   {id:'model',detected_asset:{media:'model',label:'Mesh',offset:12,size:4,vertices:4,triangles:2,meshes:[{}]}},
+   {id:'audio',detected_asset:{media:'audio',label:'Bank',samples:[{offset:16,size:8,codec:'PCM',samples:20,rate:1000}]}},
+  ]};
+  const t=setup(report),get=t.context.$;
+  const browser=get('romAssetBrowser');browser.open=true;t.run('renderRomAssetBrowser(romView())');
+  assert.equal(get('romTextureTab').attributes['aria-selected'],'true');
+  assert.equal(t.calls.length,1);
+  get('romAssetTable').onclick();
+  assert.equal(t.calls[0].options.signal.aborted,true);
+  assert.equal(t.calls.length,1,'Table layout does not decode thumbnails');
+  assert.match(get('romTextureItems').innerHTML,/<table>.*Texture bank/);
+  get('romTextureTab').onkeydown({key:'ArrowRight',preventDefault(){}});
+  assert.equal(get('romModelTab').focused,true);
+  assert.equal(get('romTexturePanel').hidden,true);
+  assert.match(get('romModelItems').innerHTML,/<table>.*Preview model/);
+  get('romAssetIcons').onclick();
+  assert.match(get('romModelItems').innerHTML,/rom-asset-grid/);
+  get('romAudioTab').onclick();
+  assert.match(get('romAudioItems').innerHTML,/rom-asset-grid/);
+  assert.match(get('romAudioItems').innerHTML,/Prepare audio/);
+  get('romAssetTable').onclick();
+  assert.match(get('romAudioItems').innerHTML,/<table>.*Prepare audio/);
+  browser.open=false;browser.ontoggle();
+  browser.open=true;browser.ontoggle();
+  assert.equal(get('romAudioTab').attributes['aria-selected'],'true');
+  assert.equal(get('romAssetTable').attributes['aria-pressed'],'true');
  }
  {
   const t=setup({});const body=element(),get=key=>body.querySelector(`[data-texture-${key}]`),pending=deferred();let requests=0,cancelled=0,active=true;

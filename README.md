@@ -49,9 +49,10 @@ vertex/index buffers as a rotatable wireframe. N64 scans also recognize supporte
 including RNC-compressed banks, CI8 banks with mixed 16/256-colour palettes, direct-color RGBA32, supported RGBA16 mipmaps and
 trailer-count texture packs inside embedded ZIP archives. Banks inside byte-sum RNC blocks
 can contain both CI4 and RGBA32 textures.
-Open **Texture browser** for a thumbnail gallery, format/dimension filters and reference links.
+Below **ROM Map**, open **Asset Browser** and choose Textures, Models or Audio. Each tab supports Icons and Table views.
+Textures can be filtered by format and dimensions and show links to recorded references.
 Select any frame, palette or mip level in a bank; animate frames at a chosen preview rate.
-Open **Audio browser** to filter detected samples, prepare WAV previews and listen with Play.
+Use the **Audio** tab to filter detected samples, prepare WAV previews and listen with Play.
 N64 scans recognize supported B1 sound banks, including wrapped banks with relocated control pointers,
 and libmus PtrTablesV2 banks and their sample tables.
 Banks without a stored rate use a labelled, editable preview rate. Archived sequence candidates

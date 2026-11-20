@@ -21,7 +21,7 @@ function stopRomAudioBrowser(message='Preview cleared. Choose Prepare audio to l
 }
 function renderRomAudioBrowser(view=romView()) {
   const panel=$('romAudioPanel'),report=view.report;stopRomAudioBrowser();
-  panel.hidden=!report?.available;if(!report?.available)return;
+  if(!report?.available)return;
   const all=romAudioRows(report),state=view.audio||={query:'',codec:'',sort:'name',direction:1,page:0,rate:22050};
   const sequences=new Map();for(const region of report.regions||[]){const asset=region.detected_asset;if(asset?.audio_kind==='libmus sequence'&&!sequences.has(asset.offset))sequences.set(asset.offset,{region:region.id,asset});}
   $('romAudioContext').textContent=`— ${all.length.toLocaleString()} samples${sequences.size?' · '+sequences.size+' sequence candidates':''}`;
@@ -29,25 +29,33 @@ function renderRomAudioBrowser(view=romView()) {
   $('romAudioFilter').value=state.query;$('romAudioRate').value=state.rate;
   $('romAudioCodec').innerHTML='<option value="">All codecs</option>'+[...new Set(all.map(r=>r.codec))].sort().map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');$('romAudioCodec').value=state.codec;
   const draw=()=>{
-    stopRomAudioBrowser();const host=$('romAudioItems');host.replaceChildren();if(!panel.open)return;
+    stopRomAudioBrowser();const host=$('romAudioItems');host.replaceChildren();if(!$('romAssetBrowser').open || panel.hidden)return;
     const rate=Number(state.rate),query=state.query.toLowerCase().trim(),rows=all.map(r=>({...r,seconds:r.sample.samples==null?null:r.sample.samples/(r.asset.rate_basis&&Number.isInteger(rate)&&rate>=1000&&rate<=192000?rate:r.sample.rate)})).filter(r=>(!state.codec||r.codec===state.codec)&&(!query||[r.name,r.codec,...r.direct,...r.traced].join(' ').toLowerCase().includes(query)));
-    rows.sort((a,b)=>{const x=a[state.sort],y=b[state.sort];if(x==null||y==null)return x==null?(y==null?0:1):-1;return state.direction*(typeof x==='number'?x-y:String(x).localeCompare(String(y),undefined,{numeric:true}))||a.key.localeCompare(b.key);});
+    sortRomAssetRows(rows,state);
     const pages=Math.max(1,Math.ceil(rows.length/24));state.page=Math.min(state.page,pages-1);const page=rows.slice(state.page*24,state.page*24+24);
     $('romAudioPage').textContent=`${rows.length} samples · page ${state.page+1} of ${pages}`;$('romAudioPrevious').disabled=state.page===0;$('romAudioNext').disabled=state.page>=pages-1;
-    const headings=[['name','Sample / bank'],['codec','Codec'],['seconds','Sample seconds'],['refs','References']];
-    host.innerHTML=page.length?`<div class="compiler-table"><table><thead><tr>${headings.map(([key,label])=>`<th scope="col" aria-sort="${state.sort===key?(state.direction===1?'ascending':'descending'):'none'}"><button type="button" class="table-sort" data-audio-sort="${key}">${label}${state.sort===key?(state.direction===1?' ↑':' ↓'):' ↕'}</button></th>`).join('')}<th scope="col">Preview</th></tr></thead><tbody>${page.map((r,i)=>`<tr><td><button type="button" class="link-btn" data-audio-region="${i}">${esc(r.name)}</button><div class="small muted">${esc(r.asset.table_confidence||'Recorded structure')}</div></td><td>${esc(r.codec)}</td><td>${r.seconds==null?'—':r.seconds.toFixed(2)}${r.asset.rate_basis?' at preview rate':''}</td><td>${[...new Set([...r.direct,...r.traced])].map(n=>`<button type="button" class="link-btn" data-audio-function="${esc(n)}">${esc(n)}</button>`).join(' · ')||'None recorded'}</td><td>${r.sample.preview_available===false?'<span class="small muted">Playback unavailable</span>':`<button type="button" class="primary small-btn" data-audio-prepare="${i}" ${report.stale?'disabled':''}>Prepare audio</button>`}</td></tr>`).join('')}</tbody></table></div>`:'<p class="small muted">'+(all.length?'No samples match these filters.':'No playable supported sample bank was detected. Raw audio previews remain available in region details.')+'</p>';
-    host.querySelectorAll('[data-audio-sort]').forEach(b=>b.onclick=()=>{const key=b.dataset.audioSort;state.direction=state.sort===key?-state.direction:1;state.sort=key;draw();});
+    const columns=[['name','Sample / bank'],['codec','Codec'],['seconds','Sample seconds'],['refs','References']];
+    if(!page.length){host.textContent=all.length?'No samples match these filters.':'No playable supported sample bank was detected. Raw audio previews remain available in region details.';return;}
+    const cells=page.map((r,i)=>[
+      `<button type="button" class="link-btn" data-audio-region="${i}">${esc(r.name)}</button><div class="small muted">${esc(r.asset.table_confidence||'Recorded structure')}</div>`,
+      `${esc(r.codec)}`,
+      `${r.seconds==null?'—':r.seconds.toFixed(2)}${r.asset.rate_basis?' at preview rate':''}`,
+      `${[...new Set([...r.direct,...r.traced])].map(n=>`<button type="button" class="link-btn" data-audio-function="${esc(n)}">${esc(n)}</button>`).join(' · ')||'None recorded'}`,
+      `${r.sample.preview_available===false?'<span class="small muted">Playback unavailable</span>':`<button type="button" class="primary small-btn" data-audio-prepare="${i}" ${report.stale?'disabled':''}>Prepare audio</button>`}`,
+    ]);
+    if(view.assetBrowser.layout==='icons')renderRomAssetCards(host,'&#x266B;',columns,cells);
+    else renderRomAssetTable(host,[...columns,[null,'Preview']],state,cells,draw);
     host.querySelectorAll('[data-audio-region]').forEach(b=>b.onclick=()=>{stopRomAudioBrowser();openRomRegion(page[Number(b.dataset.audioRegion)].region);});
     host.querySelectorAll('[data-audio-function]').forEach(b=>b.onclick=()=>{stopRomAudioBrowser();openFn(b.dataset.audioFunction);});
     host.querySelectorAll('[data-audio-prepare]').forEach(b=>b.onclick=()=>prepareRomAudio(page[Number(b.dataset.audioPrepare)],view));
   };
   $('romAudioFilter').oninput=()=>{state.query=$('romAudioFilter').value;state.page=0;draw();};$('romAudioCodec').onchange=()=>{state.codec=$('romAudioCodec').value;state.page=0;draw();};$('romAudioRate').onchange=()=>{state.rate=$('romAudioRate').value;draw();};
   for(const [id,delta] of [['romAudioPrevious',-1],['romAudioNext',1]])$(id).onclick=()=>{state.page+=delta;draw();};
-  panel.ontoggle=()=>{if(panel.open)draw();else stopRomAudioBrowser();};draw();
+  draw();
 }
 async function prepareRomAudio(row,view=romView()) {
   const host=$('romAudioResult');if(host._audioBusy)return;stopRomAudioBrowser();host._audioBusy=true;
-  const slug=S.slug,run=host._audioRun,active=()=>S.slug===slug&&S.tab==='rom'&&$('romAudioPanel').open&&host._audioRun===run;
+  const slug=S.slug,run=host._audioRun,active=()=>S.slug===slug&&S.tab==='rom'&&$('romAssetBrowser').open&&!$('romAudioPanel').hidden&&host._audioRun===run;
   const log=$('romAudioWork'),controller=new AbortController();host._audioAbort=controller;
   const controls=[...$('romAudioPanel').querySelectorAll('button,input,select')].filter(b=>b.id!=='romAudioStop');
   const finish=beginWork(log,'Preparing '+row.name,controls,'Audio ready. Press Play to listen.');host._audioFinish=finish;showJobError(log,'');$('romAudioStop').hidden=false;$('romAudioStop').onclick=()=>stopRomAudioBrowser('Audio preparation stopped.');

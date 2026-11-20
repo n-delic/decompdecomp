@@ -10,7 +10,7 @@ function setup(){const nodes=new Map(),calls=[],finishes=[];const context=vm.cre
  api(url,options){const pending=deferred();calls.push({url,options,pending});return pending.promise;}});
  context.view={report:{available:true,image_hash:'hash',regions:[]},audio:{rate:22050}};
  vm.runInContext(fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/js/rom-audio-browser.js'),'utf8'),context);
- context.$('romAudioPanel').open=true;context.$('romAudioPanel').controls=[element()];return {c:context,calls,finishes,run:s=>vm.runInContext(s,context)};}
+vm.runInContext(fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/js/rom-asset-browser.js'),'utf8'),context);context.view.assetBrowser={layout:'table'}; context.$('romAssetBrowser').open=true;context.$('romAudioPanel').controls=[element()];return {c:context,calls,finishes,run:s=>vm.runInContext(s,context)};}
 const sample={offset:1000,size:18,rate:22050,samples:32,codec:'N64 VADPCM',instrument:0,book_offset:96};
 const asset={offset:64,media:'audio',label:'Synthetic',samples:[sample],rate_basis:'Preview default',reason:'Static inference'};
 const row={region:'40-80',index:0,sample,asset,name:'Synthetic · 1'};
@@ -28,7 +28,7 @@ const row={region:'40-80',index:0,sample,asset,name:'Synthetic · 1'};
  t.c.view.report.regions[0].detected_asset.samples=[{...dean,samples:11025,preview_available:true}];
  t.run('renderRomAudioBrowser()');assert.match(t.c.$('romAudioItems').innerHTML,/Acclaim DEAN.*1\.00.*Prepare audio/);
  assert.equal(t.calls.length,0);}
- {const t=setup();t.c.$('romAudioPanel').open=false;t.run('renderRomAudioBrowser()');assert.equal(t.calls.length,0);assert.match(t.c.$('romAudioContext').textContent,/0 samples/);}
+ {const t=setup();t.c.$('romAssetBrowser').open=false;t.run('renderRomAudioBrowser()');assert.equal(t.calls.length,0);assert.match(t.c.$('romAudioContext').textContent,/0 samples/);}
  {const t=setup();t.c.row=row;const first=t.run('prepareRomAudio(row)');assert.equal(t.c.$('romAudioPanel').controls[0].disabled,true);await t.run('prepareRomAudio(row)');assert.equal(t.calls.length,1);
  t.c.$('romAudioStop').onclick();assert.equal(t.calls[0].options.signal.aborted,true);assert.equal(t.c.$('romAudioPanel').controls[0].disabled,false);
  const second=t.run('prepareRomAudio(row)');t.calls[0].pending.resolve({data_url:'data:audio/wav;base64,OLD',details:{}});await first;assert.equal(t.c.$('romAudioPanel').controls[0].disabled,true,'Old cleanup cannot unlock a new request');

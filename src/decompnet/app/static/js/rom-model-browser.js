@@ -15,29 +15,37 @@ function stopRomModelBrowser(message='Choose Preview model to inspect its meshes
   if(message){const log=$('romModelWork');showJobError(log,'');if(log._workStatus)log._workStatus.textContent=message;}
 }
 function renderRomModelBrowser(view=romView()) {
-  const panel=$('romModelPanel'),report=view.report;stopRomModelBrowser();panel.hidden=!report?.available;if(!report?.available)return;
+  const panel=$('romModelPanel'),report=view.report;stopRomModelBrowser();if(!report?.available)return;
   const all=romModelRows(report),state=view.models||={query:'',sort:'name',direction:1,page:0};
   $('romModelContext').textContent=`— ${all.length.toLocaleString()} models · ${all.reduce((n,r)=>n+r.asset.meshes.length,0).toLocaleString()} meshes`;$('romModelFilter').value=state.query;
   const draw=()=>{
-    stopRomModelBrowser();const host=$('romModelItems');host.replaceChildren();if(!panel.open)return;
+    stopRomModelBrowser();const host=$('romModelItems');host.replaceChildren();if(!$('romAssetBrowser').open || panel.hidden)return;
     const query=state.query.trim().toLowerCase(),rows=all.filter(r=>!query||[r.name,...r.direct,...r.traced].join(' ').toLowerCase().includes(query));
-    rows.sort((a,b)=>{const x=a[state.sort],y=b[state.sort];if(x==null||y==null)return x==null?(y==null?0:1):-1;return state.direction*(typeof x==='number'?x-y:String(x).localeCompare(String(y),undefined,{numeric:true}))||a.key.localeCompare(b.key);});
+    sortRomAssetRows(rows,state);
     const pages=Math.max(1,Math.ceil(rows.length/24));state.page=Math.min(state.page,pages-1);const page=rows.slice(state.page*24,state.page*24+24);
     $('romModelPage').textContent=`${rows.length} models · page ${state.page+1} of ${pages}`;$('romModelPrevious').disabled=!state.page;$('romModelNext').disabled=state.page>=pages-1;
     const columns=[['name','Model'],['vertices','Vertices'],['triangles','Triangles'],['refs','References']];
-    host.innerHTML=page.length?`<div class="compiler-table"><table><thead><tr>${columns.map(([key,label])=>`<th scope="col" aria-sort="${state.sort===key?(state.direction===1?'ascending':'descending'):'none'}"><button type="button" class="table-sort" data-model-sort="${key}">${label}${state.sort===key?(state.direction===1?' ↑':' ↓'):' ↕'}</button></th>`).join('')}<th scope="col">Preview</th></tr></thead><tbody>${page.map((r,i)=>`<tr><td><button type="button" class="link-btn" data-model-region="${i}">${esc(r.name)}</button><div class="small muted">${r.asset.meshes.length} local meshes</div></td><td>${r.vertices.toLocaleString()}</td><td>${r.triangles.toLocaleString()}</td><td>${[...new Set([...r.direct,...r.traced])].map(n=>`<button type="button" class="link-btn" data-model-function="${esc(n)}">${esc(n)}</button>`).join(' · ')||'None recorded'}</td><td><button type="button" class="primary small-btn" data-model-preview="${i}" ${report.stale?'disabled':''}>Preview model</button></td></tr>`).join('')}</tbody></table></div>`:'<p class="small muted">'+(all.length?'No models match this filter.':'No supported model geometry was detected. Raw geometry previews remain available in region details.')+'</p>';
-    host.querySelectorAll('[data-model-sort]').forEach(b=>b.onclick=()=>{const key=b.dataset.modelSort;state.direction=state.sort===key?-state.direction:1;state.sort=key;draw();});
+    if(!page.length){host.textContent=all.length?'No models match this filter.':'No supported model geometry was detected. Raw geometry previews remain available in region details.';return;}
+    const cells=page.map((r,i)=>[
+      `<button type="button" class="link-btn" data-model-region="${i}">${esc(r.name)}</button><div class="small muted">${r.asset.meshes.length} local meshes</div>`,
+      `${r.vertices.toLocaleString()}`,
+      `${r.triangles.toLocaleString()}`,
+      `${[...new Set([...r.direct,...r.traced])].map(n=>`<button type="button" class="link-btn" data-model-function="${esc(n)}">${esc(n)}</button>`).join(' · ')||'None recorded'}`,
+      `<button type="button" class="primary small-btn" data-model-preview="${i}" ${report.stale?'disabled':''}>Preview model</button>`,
+    ]);
+    if(view.assetBrowser.layout==='icons')renderRomAssetCards(host,'&#x25C7;',columns,cells);
+    else renderRomAssetTable(host,[...columns,[null,'Preview']],state,cells,draw);
     host.querySelectorAll('[data-model-region]').forEach(b=>b.onclick=()=>{stopRomModelBrowser();openRomRegion(page[Number(b.dataset.modelRegion)].region);});
     host.querySelectorAll('[data-model-function]').forEach(b=>b.onclick=()=>{stopRomModelBrowser();openFn(b.dataset.modelFunction);});
     host.querySelectorAll('[data-model-preview]').forEach(b=>b.onclick=()=>prepareRomModel(page[Number(b.dataset.modelPreview)],view));
   };
   $('romModelFilter').oninput=()=>{state.query=$('romModelFilter').value;state.page=0;draw();};
   for(const [id,delta] of [['romModelPrevious',-1],['romModelNext',1]])$(id).onclick=()=>{state.page+=delta;draw();};
-  panel.ontoggle=()=>{if(panel.open)draw();else stopRomModelBrowser();};draw();
+  draw();
 }
 async function prepareRomModel(row,view=romView(),mesh=row.asset.assembled?'assembled':0,animationIndex=0) {
   const host=$('romModelResult');if(host._modelBusy)return;stopRomModelBrowser();host._modelBusy=true;
-  const slug=S.slug,run=host._modelRun,active=()=>S.slug===slug&&S.tab==='rom'&&$('romModelPanel').open&&host._modelRun===run;
+  const slug=S.slug,run=host._modelRun,active=()=>S.slug===slug&&S.tab==='rom'&&$('romAssetBrowser').open&&!$('romModelPanel').hidden&&host._modelRun===run;
   const log=$('romModelWork'),controller=new AbortController();host._modelAbort=controller;
   const controls=[...$('romModelPanel').querySelectorAll('button,input,select')].filter(b=>b.id!=='romModelStop');
   const finish=beginWork(log,'Preparing '+row.name,controls,'Model ready. Drag to rotate.');host._modelFinish=finish;showJobError(log,'');$('romModelStop').hidden=false;$('romModelStop').onclick=()=>stopRomModelBrowser('Model preparation stopped.');

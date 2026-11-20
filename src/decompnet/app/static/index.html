@@ -291,7 +291,7 @@
   <section class="ptab" data-pane="overview">
     <section class="panel map-panel">
       <header class="panel-head">
-        <h2 id="mapTitle">ROM map</h2>
+        <h2 id="mapTitle">Function Map</h2>
         <div class="map-tools">
           <div class="seg small" id="mapView" role="radiogroup" aria-label="Colour the map by" hidden><button type="button" role="radio" aria-checked="true" data-view="progress" class="on">Progress</button><button type="button" role="radio" aria-checked="false" data-view="compiler">Compiler</button></div>
           <div class="legend" id="mapLegend"><span><i class="sw open"></i>to do</span><span><i class="sw tried"></i>tried</span><span title="tried, and close to matching: the closer, the greener"><i class="sw close"></i>close</span><span><i class="sw work"></i>working</span><span title="Incomplete extent; inspect adjacent bytes before treating this entry as resolved"><i class="sw boundary"></i>boundary review</span><span><i class="sw match"></i>matched</span><span title="matched, and polished: real names, types and a comment, and it still matches"><i class="sw polished"></i>polished</span><span title="SDK library code, set aside on its SDK proof: a port replaces it, so it needs no C"><i class="sw sdk"></i>SDK</span><span title="no C makes it, by its code's shape (hand-written assembly, a BIOS call, a piece of another function): agents aren't handed it, and it's out of the percentage"><i class="sw asm"></i>set aside</span><span title="Agent assessment, not verified assembly provenance. Its page can give it back to the agents"><i class="sw not-c"></i>agent set-aside</span></div>
@@ -493,36 +493,8 @@
         <div class="row"><button type="button" class="ghost small-btn" id="assetAgentPrevious">Previous findings</button><span class="small muted" id="assetAgentPage"></span><button type="button" class="ghost small-btn" id="assetAgentNext">Next findings</button></div>
       </div>
     </details>
-    <details class="panel settings-disclosure" id="romModelPanel" hidden>
-      <summary class="panel-head"><h2>Model browser <span class="disclosure-context" id="romModelContext"></span></h2></summary>
-      <div class="pad"><p>Browse detected geometry and rotate individual meshes to inspect their shape.</p>
-        <label class="field"><span>Find models or functions</span><input type="search" id="romModelFilter"></label>
-        <p class="small muted">Choose a local mesh or supported assembly. Textures follow recorded loader links; missing and ambiguous links stay visible. Animation and special strip commands are not rendered. No recorded references does not mean unused.</p>
-        <div id="romModelItems"></div><div class="row"><button id="romModelPrevious" type="button" class="ghost small-btn">Previous models</button><span id="romModelPage" class="small muted"></span><button id="romModelNext" type="button" class="ghost small-btn">Next models</button></div>
-        <button id="romModelStop" type="button" class="ghost small-btn" hidden>Stop preparing model</button><pre id="romModelWork" class="joblog" hidden></pre><div id="romModelResult" aria-live="polite"></div>
-      </div>
-    </details>
-    <details class="panel settings-disclosure" id="romAudioPanel" hidden>
-      <summary class="panel-head"><h2>Audio browser <span class="disclosure-context" id="romAudioContext"></span></h2></summary>
-      <div class="pad"><p>Browse detected samples and prepare a WAV preview, then press Play to listen. Music sequences, pitch, mixing and loops are not rendered.</p>
-        <div class="rom-asset-fields"><label class="field"><span>Find samples, banks or functions</span><input type="search" id="romAudioFilter"></label><label class="field"><span>Codec</span><select id="romAudioCodec"></select></label><label class="field"><span>Preview rate for banks without a stored rate (1000–192000 Hz)</span><input id="romAudioRate" type="number" min="1000" max="192000" value="22050"></label></div>
-        <p class="small muted">A marked table match is static evidence, not proof of runtime use. No recorded references does not mean unused. Previews are capped at 30 seconds / 4 MiB.</p>
-        <div id="romAudioSequences"></div><div id="romAudioItems"></div><div class="row"><button id="romAudioPrevious" type="button" class="ghost small-btn">Previous samples</button><span id="romAudioPage" class="small muted"></span><button id="romAudioNext" type="button" class="ghost small-btn">Next samples</button></div>
-        <button id="romAudioStop" type="button" class="ghost small-btn" hidden>Stop preparing audio</button><pre id="romAudioWork" class="joblog" hidden></pre><div id="romAudioResult" aria-live="polite"></div>
-      </div>
-    </details>
-    <details class="panel settings-disclosure" id="romTexturePanel" hidden>
-      <summary class="panel-head"><h2>Texture browser <span class="disclosure-context" id="romTextureContext"></span></h2></summary>
-      <div class="pad"><p>Browse detected images and texture banks, compare their layouts and follow recorded references or static loader leads.</p>
-        <div class="rom-asset-fields"><label class="field"><span>Find textures or functions</span><input type="search" id="romTextureFilter"></label><label class="field"><span>Format</span><select id="romTextureFormat"></select></label><label class="field"><span>Dimensions</span><select id="romTextureDimensions"></select></label></div>
-        <p class="small muted">Thumbnails show the first frame and palette. Open a bank for all frames, palettes and mip levels. References do not establish runtime rendering; no references found does not mean unused.</p>
-        <button id="romTextureStop" class="ghost small-btn" type="button" hidden>Stop loading thumbnails</button><pre id="romTextureWork" class="joblog" hidden></pre>
-        <div id="romTextureItems" class="rom-texture-gallery"></div>
-        <div class="row"><button id="romTexturePrevious" type="button" class="ghost small-btn">Previous textures</button><span id="romTexturePage" class="small muted"></span><button id="romTextureNext" type="button" class="ghost small-btn">Next textures</button></div>
-      </div>
-    </details>
     <details class="panel settings-disclosure" id="romExplorerPanel" open>
-      <summary class="panel-head"><h2>ROM Explorer <span class="disclosure-context" id="romContext"></span></h2></summary>
+      <summary class="panel-head"><h2>ROM Map <span class="disclosure-context" id="romContext"></span></h2></summary>
       <div class="pad">
         <p>Explore the whole image to find data, see which functions reference it and record what the evidence suggests.</p>
         <div class="row"><button class="ghost small-btn" id="romStop" type="button" hidden>Stop</button><button class="ghost small-btn" id="romReload" type="button">Refresh</button></div>
@@ -547,6 +519,47 @@
         <details id="romLoaderGroups" hidden><summary>Loader source groups <span id="romLoaderCount"></span></summary><p class="small muted" id="romLoaderNote"></p><div id="romLoaderItems"></div></details>
         <details id="romLoaderRoles"><summary>Describe a loader function</summary><p class="small muted">For an unnamed copy, DMA or decompression function, record which arguments hold source, destination and byte length. These are your hypotheses; they never edit symbols or build inputs. Argument numbers start at 0.</p><div id="romLoaderRoleBody"></div><pre id="romLoaderRoleWork" class="joblog" hidden></pre></details>
         <div id="romResult"></div>
+      </div>
+    </details>
+    <details class="panel settings-disclosure" id="romAssetBrowser" hidden>
+      <summary class="panel-head"><h2>Asset Browser</h2></summary>
+      <div class="pad">
+        <div class="row rom-asset-toolbar">
+          <div class="tabs" role="tablist" aria-label="Asset type">
+            <button class="tab" type="button" role="tab" id="romTextureTab" aria-controls="romTexturePanel" aria-selected="false" tabindex="-1">Textures</button>
+            <button class="tab" type="button" role="tab" id="romModelTab" aria-controls="romModelPanel" aria-selected="false" tabindex="-1">Models</button>
+            <button class="tab" type="button" role="tab" id="romAudioTab" aria-controls="romAudioPanel" aria-selected="false" tabindex="-1">Audio</button>
+          </div>
+          <div class="seg small" role="group" aria-label="Asset view">
+            <button type="button" id="romAssetIcons" aria-pressed="true">Icons</button>
+            <button type="button" id="romAssetTable" aria-pressed="false">Table</button>
+          </div>
+        </div>
+        <div id="romTexturePanel" role="tabpanel" aria-labelledby="romTextureTab" tabindex="0" hidden>
+          <p class="small muted" id="romTextureContext"></p>
+            <p>Browse detected images and texture banks, compare their layouts and follow recorded references or static loader leads.</p>
+          <div class="rom-asset-fields"><label class="field"><span>Find textures or functions</span><input type="search" id="romTextureFilter"></label><label class="field"><span>Format</span><select id="romTextureFormat"></select></label><label class="field"><span>Dimensions</span><select id="romTextureDimensions"></select></label></div>
+          <p class="small muted">Thumbnails show the first frame and palette. Open a bank for all frames, palettes and mip levels. References do not establish runtime rendering; no references found does not mean unused.</p>
+          <button id="romTextureStop" class="ghost small-btn" type="button" hidden>Stop loading thumbnails</button><pre id="romTextureWork" class="joblog" hidden></pre>
+          <div id="romTextureItems" class="rom-texture-gallery"></div>
+          <div class="row"><button id="romTexturePrevious" type="button" class="ghost small-btn">Previous textures</button><span id="romTexturePage" class="small muted"></span><button id="romTextureNext" type="button" class="ghost small-btn">Next textures</button></div>
+        </div>
+        <div id="romModelPanel" role="tabpanel" aria-labelledby="romModelTab" tabindex="0" hidden>
+          <p class="small muted" id="romModelContext"></p>
+            <p>Browse detected geometry and rotate individual meshes to inspect their shape.</p>
+          <label class="field"><span>Find models or functions</span><input type="search" id="romModelFilter"></label>
+          <p class="small muted">Choose a local mesh or supported assembly. Textures follow recorded loader links; missing and ambiguous links stay visible. Animation and special strip commands are not rendered. No recorded references does not mean unused.</p>
+          <div id="romModelItems"></div><div class="row"><button id="romModelPrevious" type="button" class="ghost small-btn">Previous models</button><span id="romModelPage" class="small muted"></span><button id="romModelNext" type="button" class="ghost small-btn">Next models</button></div>
+          <button id="romModelStop" type="button" class="ghost small-btn" hidden>Stop preparing model</button><pre id="romModelWork" class="joblog" hidden></pre><div id="romModelResult" aria-live="polite"></div>
+        </div>
+        <div id="romAudioPanel" role="tabpanel" aria-labelledby="romAudioTab" tabindex="0" hidden>
+          <p class="small muted" id="romAudioContext"></p>
+            <p>Browse detected samples and prepare a WAV preview, then press Play to listen. Music sequences, pitch, mixing and loops are not rendered.</p>
+          <div class="rom-asset-fields"><label class="field"><span>Find samples, banks or functions</span><input type="search" id="romAudioFilter"></label><label class="field"><span>Codec</span><select id="romAudioCodec"></select></label><label class="field"><span>Preview rate for banks without a stored rate (1000–192000 Hz)</span><input id="romAudioRate" type="number" min="1000" max="192000" value="22050"></label></div>
+          <p class="small muted">A marked table match is static evidence, not proof of runtime use. No recorded references does not mean unused. Previews are capped at 30 seconds / 4 MiB.</p>
+          <div id="romAudioSequences"></div><div id="romAudioItems"></div><div class="row"><button id="romAudioPrevious" type="button" class="ghost small-btn">Previous samples</button><span id="romAudioPage" class="small muted"></span><button id="romAudioNext" type="button" class="ghost small-btn">Next samples</button></div>
+          <button id="romAudioStop" type="button" class="ghost small-btn" hidden>Stop preparing audio</button><pre id="romAudioWork" class="joblog" hidden></pre><div id="romAudioResult" aria-live="polite"></div>
+        </div>
       </div>
     </details>
   </section>
@@ -1331,6 +1344,7 @@
 <script defer src="/assets/js/rom-audio.js"></script>
 <script defer src="/assets/js/rom-audio-browser.js"></script>
 <script defer src="/assets/js/rom-model-browser.js"></script>
+<script defer src="/assets/js/rom-asset-browser.js"></script>
 <script defer src="/assets/js/rom-assets.js"></script>
 <script defer src="/assets/js/rom-model-surface.js"></script>
 <script defer src="/assets/js/rom-model-animation.js"></script>

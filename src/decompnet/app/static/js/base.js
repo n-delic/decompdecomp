@@ -541,8 +541,7 @@ function show(view) {
   window.scrollTo(0, 0);
 }
 function leaveProject() {
-  if(typeof stopRomAudioBrowser==='function')stopRomAudioBrowser();
-  if(typeof stopRomModelBrowser==='function')stopRomModelBrowser();
+  if(typeof stopRomAssetBrowser==='function')stopRomAssetBrowser();
   if (typeof cancelProjectLoad === "function") cancelProjectLoad();
   stopPolling();
   S.gen++;  // what its polls bring back now is dropped

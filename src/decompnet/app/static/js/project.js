@@ -95,7 +95,6 @@ async function openProject(slug, tab = "overview") {
   if (S.ov.missing) { renderMissingProject(S.ov); return; }
   document.querySelectorAll("#ptabs [data-ptab]").forEach((a) => { a.href = `#/p/${slug}/${a.dataset.ptab}`; });
   const fork = S.ov.kind === "fork";
-  $("mapTitle").textContent = fork ? "Function map" : "ROM map";
   $("mapHint").textContent = fork ? "Every square is a function, grouped by source file. Click one to see it." : "Every square is a function, in ROM order. Click one to see it.";
   $("thAddr").textContent = fork ? "File" : "Address";
   groups.clear(); S.claimSig = "";
@@ -264,8 +263,7 @@ function renderMissingProject(ov) {
 }
 
 function setTab(tab) {
-  if(tab!=='rom' && typeof stopRomAudioBrowser==='function')stopRomAudioBrowser();
-  if(tab!=='rom' && typeof stopRomModelBrowser==='function')stopRomModelBrowser();
+  if(tab!=='rom' && typeof stopRomAssetBrowser==='function')stopRomAssetBrowser();
   if (!TABS.includes(tab)) tab = "overview";
   S.tab = tab;
   document.querySelectorAll("#ptabs [data-ptab]").forEach((a) => {
