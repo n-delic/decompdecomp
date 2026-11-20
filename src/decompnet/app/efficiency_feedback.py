@@ -20,6 +20,25 @@ def mismatch(rows, *, window=True):
             + (instruction_window(rows,index) if window else ''))
 
 
+EXPERIMENTS = {
+    'register': 'The diff shows register substitutions. Trace the differing values from definition to last use, then test one lifetime or temporary change.',
+    'stack': 'The diff shows stack offsets. Compare the frame size and the changed accesses, then check the corresponding local type or lifetime.',
+    'call': 'The diff changes a call instruction. Compare the target callee and its argument setup with the candidate. Check the declaration against known callers before changing it.',
+    'constant': 'The diff changes an operand. Trace the first differing immediate, address or field offset to its source expression and check it against the target.',
+    'scheduling': 'The same instructions appear in a different order. Check the dependencies around the moved instructions, then test the order of independent statements.',
+    'control': 'The diff changes instruction shape or control flow. Read the first differing block with get_assembly(focus="mismatch") and compare its condition, branches and side effects.',
+}
+
+
+def next_experiment(rows, *, arch):
+    """Recommend one investigation from the measured, advisory diff."""
+    advice = EXPERIMENTS.get(classify(rows, arch))
+    if advice:
+        return 'Next experiment: ' + advice
+    return ('Next: no specific mismatch is visible in the normalized listing. '
+            'Inspect the raw diff and check the encoding or relocations before editing source.')
+
+
 def instruction_window(rows, index=None):
     """A small normalized view, including insertions; raw evidence remains available by paging."""
     rows=normalized(rows)

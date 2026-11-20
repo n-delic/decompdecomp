@@ -442,3 +442,22 @@ resets remain unknown and use the existing conservative fallback waiting.
 This changes scheduling only. It does not bypass quotas, switch providers, resume
 paused agents or issue a model request while waiting. Existing live fallback timers
 are not rewritten by this change.
+
+## Next experiment after repeated instruction output
+
+After two successive unchanged instruction diffs, the retry hint uses the judge's
+normalized rows and the project's processor. Register, stack, call, operand, order
+and control-flow differences prompt different investigations. Compiler and link
+diagnostics take precedence. Release feedback can reuse the latest measurement when
+the current source and build inputs still agree. The advice runs no extra compiles
+and leaves the existing claim budgets and exact verdicts intact.
+
+A scripted comparison used the same homemade demo checksum in ROM mode and an
+imported objdiff project under pinned KMC GCC 2.7.2. Three equivalent spellings of
+the incorrect initializer `0x1235` produced the same diff in each mode. The
+previous hint suggested changing the loop counter's signedness. The one suggested
+trial went from 10 to 410 in ROM mode and from 1 to 121 in project mode. The new
+hint pointed to the differing immediate. Restoring the target's `0x1234` through
+the ordinary patch tool matched in both modes on the first guided retry.
+This measures the prescribed next step for one controlled mismatch in two
+judges. It does not measure autonomous model match rates or token use.

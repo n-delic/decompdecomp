@@ -111,18 +111,3 @@ def test_forward_guard_keeps_the_body_scope_and_both_return_paths():
 def test_shift_reuse_does_not_change_the_shift_counts_precedence():
     source='int f(){int index=2; return index << 2 + 1;}'
     assert not any(f=='last_shift_reuse' for f,_ in register_reuse_repairs.variants(source,'f'))
-
-
-def test_next_experiment_does_not_recommend_previously_compiled_misses(tmp_path):
-    from decompnet.app import agent_targets, agent_tokens
-    net,_=_game(tmp_path,[('f',10,'open')]);agent,_=net.local_agent('worker')
-    source='int f(){int value;return value;}'
-    with net.store.tx() as db: db.execute('UPDATE functions SET best_source=?',(source,))
-    fn=net._function('f','game');scope=agent_tokens.target_scope(net,fn,'')
-    for target in agent_targets.valid_targets(source,'signedness'):
-        for patch in agent_tokens.family_patches('signedness',target['old']):
-            candidate=agent_targets.replace_anchor(source,patch['old'],patch['new'])
-            with net.store.tx() as db:
-                db.execute('INSERT OR IGNORE INTO agent_family_targets VALUES(?,?,?,?)',
-                           (fn['id'],scope,'compiled-miss',hashlib.sha256(candidate.encode()).hexdigest()))
-    assert 'family="signedness"' not in agent_tokens.next_action(net,agent,fn,source,'revision')

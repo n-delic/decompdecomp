@@ -577,10 +577,10 @@ class JudgeMixin:
                 f"{stall_line(streak, after)}.")
         x86 = self.console(self.project_store(fn['project_id']).one("SELECT * FROM projects WHERE id=?", fn["project_id"])).arch == "x86"
         from .. import agent_tokens
-        source, revision = agent_tokens.candidate(self,agent,project,fn['name'])
+        source = agent_tokens.candidate(self, agent, project, fn['name'])[0] if n else None
         lines = [head,
                  f"No-improvement budget remaining: {max(0,after-streak)}/{after}; improvements reset it.",
-                 agent_tokens.next_action(self,agent,fn,source,revision),
+                 agent_tokens.next_action(self, agent, fn, source=source),
                  "Compile the next step your notes name first, and act on what the diff shows"
                  + (": a target that reads `this` or a pointer from the stack ([esp+4]) and ends in `ret N` is a "
                     "function taking it as a stack parameter (__stdcall; __cdecl with a plain `ret`), not a member "
