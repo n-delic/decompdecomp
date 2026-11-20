@@ -794,6 +794,8 @@ class Store:
         install_large_text(self.conn)
         from .shard_ids import remember
         remember(self.conn)
+        from .polish_names import install as install_polish_names
+        install_polish_names(self.conn)
         self._optimize()
         self.lock = threading.RLock()
         self._local = threading.local()  # per thread: the reading connection it borrowed, and whether it's inside tx()

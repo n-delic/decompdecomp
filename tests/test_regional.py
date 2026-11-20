@@ -217,8 +217,10 @@ def test_the_other_releases_code_matches_and_polishes_here(built, tmp_path):  # 
     polished = CLAMP.replace("func_800007D0", "clamp_s32").replace("s32 v,", "s32 value,").replace("(v ", "(value ") \
         .replace("return v;", "return value;")
     assert net.readability.submit(agent, slug, "clamp_s32", polished).startswith("✅")
+    assert regional.transfer(net, "other-release")["polished"] == 0
+    assert net.rename_symbol(agent, "other-release", "func_800007D0", "clamp_s32").startswith("✅")
     assert regional.transfer(net, "other-release")["polished"] == 1
-    fn = net._function("func_800007D0", "other-release")
+    fn = net._function("clamp_s32", "other-release")
     assert fn["readable"] and "value" in fn["matched_source"]
 
 
@@ -386,7 +388,7 @@ def test_trying_the_other_releases_code_does_not_sync_saved_files_per_function(b
     net.progress.sync = lambda *a, **k: (synced.append(a), sync(*a, **k))[1]
     result = regional.transfer(net, "other-release")
     assert result["tried"] >= 1 and result["matched"] >= 1
-    assert len(synced) <= 4  # opening the two projects; it was 17 for this one try
+    assert len(synced) <= 5  # project-level syncs, including the post-rename refresh; it was 17 for this one try
 
 
 def test_the_same_bytes_are_tried_before_the_same_instructions():
@@ -444,14 +446,16 @@ def test_bringing_polished_code_does_not_sync_saved_files_per_function(built, tm
     net, slug, agent = _two_releases(tmp_path)
     assert net.compile_and_diff(agent, "func_800007D0", CLAMP, slug).startswith("✅ MATCH")
     assert net.compile_and_diff(agent, "func_800007D0", CLAMP, "other-release").startswith("✅ MATCH")
-    polished = CLAMP.replace("s32 v,", "s32 value,").replace("(v ", "(value ").replace("return v;", "return value;")
-    assert net.readability.submit(agent, slug, "func_800007D0", polished).startswith("✅")
+    for project in (slug, "other-release"):
+        assert net.rename_symbol(agent, project, "func_800007D0", "clampValue").startswith("✅")
+    polished = CLAMP.replace("func_800007D0", "clampValue").replace("s32 v,", "s32 value,").replace("(v ", "(value ").replace("return v;", "return value;")
+    assert net.readability.submit(agent, slug, "clampValue", polished).startswith("✅")
     synced = []
     sync = net.progress.sync
     net.progress.sync = lambda *a, **k: (synced.append(a), sync(*a, **k))[1]
     assert regional.transfer(net, "other-release")["polished"] == 1
-    assert len(synced) <= 4  # opening the two projects
-    assert "value" in net._function("func_800007D0", "other-release")["matched_source"]
+    assert len(synced) <= 5  # project-level syncs, including the post-rename refresh
+    assert "value" in net._function("clampValue", "other-release")["matched_source"]
 
 
 def test_a_function_a_helper_holds_waits_for_the_end_of_the_pass_and_is_reported(built, tmp_path):  # noqa: F811

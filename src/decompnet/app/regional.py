@@ -32,6 +32,7 @@ from difflib import SequenceMatcher
 from ..network import IN_BUILD, NetworkError
 from ..rom.symbols import AUTO_NAME
 from .function_names import generated as _generated
+from .function_names import needs_name
 
 WIDTH = 6  # the other release's code tried on this many functions at once (fewer on a computer with fewer workers)
 _SETTINGS = threading.Lock()  # one compiler-settings change at a time
@@ -860,7 +861,7 @@ def transfer(net, slug: str, job=None, log=lambda *_: None) -> dict:
         said = ''
         try:
             b = net.project_store(proj['id']).one("SELECT * FROM functions WHERE id=?", y.id)
-            if b is not None and b['status'] == 'matched' and not b['readable'] and a['readable']:
+            if b is not None and b['status'] == 'matched' and not b['readable'] and a['readable'] and not needs_name(b):
                 with lock:
                     counts['tried'] += 1
                 said = net.readability.submit(agent, slug, b['name'], p.text(a['matched_source']), synchronize=False)

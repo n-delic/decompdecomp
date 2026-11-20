@@ -30,6 +30,7 @@ from .. import scoring
 from ..forks.csource import _blank, find
 from ..forks.project import ForkProject
 from ..network import GAME_CODE, IN_BUILD, Agent, NetworkError
+from .function_names import needs_name
 
 CLAIM_SECONDS = 30 * 60
 # The order polishing takes functions in (starred ones first): SMALL_INSNS to BIG_INSNS biggest first, where the logic
@@ -356,7 +357,8 @@ class Readability:
         # helpers named two getters of class names "static data" without looking at what the globals held, and each
         # picked its own style (Shape3_Init, Shape2_init, vec3_dot_product)
         names += ("- read_data a global before you name it: what it holds (a string, a table, a constant) says what it "
-                  "is;\n- name things in the style the names around them already use.\n")
+                  "is;\n- give functions descriptive camelCase names before submitting a polish. Keep existing descriptive\n"
+                  "  names and follow surrounding style for other identifiers.\n")
         start = self.preamble(source, fn["name"])
         shown, alone = source.strip(), ""
         if start:
@@ -426,6 +428,8 @@ class Readability:
         fn = self.net._function(function, proj["slug"])
         if fn["status"] != "matched":
             raise NetworkError(f"{fn['name']} isn't matched yet: compile_and_diff it first")
+        if needs_name(fn):
+            raise NetworkError(f"Give {fn['name']} a descriptive function name with rename_symbol before polishing it.")
         claim = self.net.project_store(proj['id']).one("SELECT agent_id FROM claims WHERE function_id=?", fn["id"])
         if claim is not None and claim["agent_id"] != agent.id:
             raise NetworkError(f"{fn['name']} is held by {self.net._agent_name(claim['agent_id'])}")
@@ -509,13 +513,15 @@ class Readability:
         baseline = polish_detail(store,fn)['unpolished_source'] if fn['readable'] else original
         with self.net.progress._project_lock(proj["slug"]), store.tx() as db:
             self.net.progress.check_result()
-            if self.net.is_rom(proj):
-                latest = store.one('SELECT name,status,matched_source FROM functions WHERE id=?',fn['id'])
-                if latest is None or latest['name'] != fn['name'] or latest['status'] != 'matched' or latest['matched_source'] != original:
-                    raise NetworkError("The matching source changed while polishing. Read the function again and retry.")
-            db.execute("UPDATE functions SET unpolished_source=CASE WHEN readable=0 THEN ? "
-                       "ELSE COALESCE(unpolished_source, ?) END, matched_source=?, best_source=?, readable=1 WHERE id=?",
-                       (baseline, baseline, source, source, fn["id"]))
+            latest = store.one('SELECT name,meta,status,matched_source FROM functions WHERE id=?', fn['id'])
+            if (latest is None or latest['name'] != fn['name'] or latest['status'] != 'matched'
+                    or self.net.is_rom(proj) and latest['matched_source'] != original):
+                raise NetworkError("The matching source changed while polishing. Read the function again and retry.")
+            if needs_name(latest):
+                raise NetworkError(f"Give {latest['name']} a descriptive function name with rename_symbol before polishing it.")
+            db.execute("UPDATE functions SET unpolished_source=COALESCE(unpolished_source, ?), "
+                       "matched_source=?, best_source=?, readable=1 WHERE id=?",
+                       (baseline, source, source, fn["id"]))
             db.execute("DELETE FROM claims WHERE function_id=?", (fn["id"],))
             self.net._event(db, proj["id"], agent.id, "readable", fn["name"])
             if self.net.is_rom(proj):
