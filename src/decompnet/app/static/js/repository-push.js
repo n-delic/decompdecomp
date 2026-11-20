@@ -1,6 +1,7 @@
 /* Existing commits only: polling reads local refs; the explicit push refreshes origin first. */
 let repositoryPushKey = "", repositoryPushState = null, repositoryPushChecked = 0;
 let repositoryPushRequest = 0, repositoryPushPending = false, repositoryPushBusy = false, repositoryPushJob = null;
+let repositoryPullReview = null;
 let repositoryPushFollowing = null, repositoryForkFollowing = null;
 function currentRepositoryPushKey() { return `${S.slug || ""}\n${(typeof repositorySaveRoot === "undefined" ? $("repositoryFolder").value.trim() : repositorySaveRoot)}`; }
 function renderRepositoryPush(state) {
@@ -10,9 +11,12 @@ function renderRepositoryPush(state) {
   const status = $("repositoryPushState"), details = $("repositoryUnpushedDetails");
   details.hidden = !state?.commits?.length;
   details.textContent = `${state?.unpushed || 0} unpushed commit${state?.unpushed === 1 ? "" : "s"}`;
-  status.textContent = state?.fork_job ? "Setting up GitHub fork…" : state?.job ? state.progress?.phase || "Push queued or running; reconnecting…" : state ? `${state.destination} · ${state.new_branch ? "Branch may be new on origin. " : ""}${state.behind ? `${state.behind} remote commits ahead; pull or merge first.` : state.unpushed ? "Ready to push committed changes." : "No unpushed commits since the last fetch."}` : "Choose a linked Git checkout to see unpushed commits.";
+  status.textContent = state?.fork_job ? "Setting up GitHub fork…" : state?.job ? state.progress?.phase || (state.action === "pull" ? "Pull queued or running; reconnecting…" : "Push queued or running; reconnecting…") : state ? `${state.destination} · ${state.new_branch ? "Branch may be new on origin. " : ""}${state.behind ? `${state.behind} remote commits ahead; pull or merge first.` : state.unpushed ? "Ready to push committed changes." : "No unpushed commits since the last fetch."}` : "Choose a linked Git checkout to see unpushed commits.";
   $("repositoryPushBasis").textContent = state?.basis || "";
   $("repositoryPushGo").disabled = repositoryPushBusy || !!repositoryForkFollowing || !state?.can_push;
+  const pull = $("repositoryPullGo"), count = repositoryPullReview?.count;
+  pull.disabled = repositoryPushBusy || !!repositoryForkFollowing || !state?.destination;
+  pull.textContent = count ? `Pull ${count} commit${count === 1 ? "" : "s"} from origin` : "Review pull from origin";
 }
 async function refreshRepositoryPush(force = false) {
   if (!S.slug || S.tab !== "settings") return;
@@ -25,7 +29,7 @@ async function refreshRepositoryPush(force = false) {
     if (repositoryPushFollowing) {
       repositoryPushFollowing.finish(); repositoryPushFollowing = null;
     }
-    repositoryPushBusy = false; repositoryPushJob = null;
+    repositoryPushBusy = false; repositoryPushJob = null; repositoryPullReview = null;
     repositoryPushKey = key; repositoryPushChecked = 0; repositoryPushPending = false;
     const log = $("repositoryPushLog"); log.textContent = ""; log.hidden = true;
     if (log._workStatus) log._workStatus.hidden = true;
@@ -40,7 +44,7 @@ async function refreshRepositoryPush(force = false) {
     const state = await api(`/api/repository-push?slug=${encodeURIComponent(S.slug)}&folder=${encodeURIComponent((typeof repositorySaveRoot === "undefined" ? $("repositoryFolder").value.trim() : repositorySaveRoot))}`);
     if (key === currentRepositoryPushKey() && request === repositoryPushRequest) {
       renderRepositoryPush(state);
-      if (state.job) followRepositoryPush(key, state.job);
+      if (state.job) followRepositoryPush(key, state.job, null, state.action);
       if (state.fork_job) followRepositoryFork(key, state.fork_job);
     }
   } catch (error) {
@@ -59,31 +63,53 @@ $("repositoryUnpushedDetails").onclick = () => {
   dialog("Unpushed commits", `<p>${esc(state.destination)} · ${state.unpushed} unpushed commits. Push sends existing commits; uncommitted files stay local.</p>${(state.commits || []).map(commit => `<div class="note"><b>${esc(commit.subject)}</b><p class="small mono">${esc(commit.sha.slice(0, 12))}</p><pre class="answer">${esc(commit.body)}</pre></div>`).join("")}${state.unpushed > state.commits.length ? "<p>Showing the newest 20 commits.</p>" : ""}<button class="ghost" type="button" data-close>Close</button>`);
 };
 $("repositoryPushStop").onclick = async () => {
-  try { if (repositoryPushJob) await api("/api/job/cancel", {method:"POST", body:{id:repositoryPushJob}}); }
-  catch (error) { showJobError($("repositoryPushLog"), error.message); }
+  const stop = $("repositoryPushStop"), following = repositoryPushFollowing;
+  if (!repositoryPushJob || stop.disabled) return;
+  stop.disabled = true;
+  stop.textContent = "Stopping…";
+  try { await api("/api/job/cancel", {method:"POST", body:{id:repositoryPushJob}}); }
+  catch (error) {
+    if (repositoryPushFollowing === following) {
+      stop.disabled = false; stop.textContent = "Stop";
+      showJobError($("repositoryPushLog"), error.message);
+    }
+  }
 };
-async function followRepositoryPush(key, existingJob = null, payload = null) {
+async function followRepositoryPush(key, existingJob = null, payload = null, action = "push") {
   if (repositoryPushFollowing?.key === key) return;
   const log = $("repositoryPushLog"), stop = $("repositoryPushStop");
   const following = {key, job:existingJob};
   const active = () => repositoryPushFollowing === following && key === currentRepositoryPushKey();
-  repositoryPushFollowing = following; repositoryPushBusy = true;
+  repositoryPushFollowing = following; repositoryPushBusy = true; repositoryPullReview = null;
+  renderRepositoryPush(repositoryPushState);
   if (log._workStatus) log._workStatus.hidden = false;
-  const done = beginWork(log, existingJob ? "Following push to origin" : "Queuing push to origin", [$("repositoryPushGo")], "Commits pushed to origin.");
+  const label = action === "pull" ? "Checking pull from origin" : existingJob ? "Following push to origin" : "Queuing push to origin";
+  const done = beginWork(log, label, [$("repositoryPushGo"), $("repositoryPullGo")], action === "push" ? "Commits pushed to origin." : "");
   let finished = false;
   following.finish = () => { if (!finished) { finished = true; done(); } };
   showJobError(log, ""); log.hidden = false;
   try {
-    if (!following.job) ({job:following.job} = await api("/api/repository-push", {method:"POST", body:payload}));
+    if (!following.job) {
+      const job = await api("/api/repository-push", {method:"POST", body:payload});
+      following.job = job.job;
+      action = job.action || action;
+    }
     if (!active()) return;
-    repositoryPushJob = following.job; stop.hidden = false;
+    repositoryPushJob = following.job; stop.hidden = false; stop.disabled = false; stop.textContent = "Stop";
     const result = await followJob(following.job, null, (lines, snapshot) => {
       if (active()) {
         log.textContent = lines.join("\n"); updateWorkProgress(log, snapshot.progress);
-        $("repositoryPushState").textContent = snapshot.progress?.phase || "Push to origin is running";
+        $("repositoryPushState").textContent = snapshot.progress?.phase || (action === "pull" ? "Pull from origin is running" : "Push to origin is running");
       }
     }, active);
-    if (active() && result) renderRepositoryPush(result.status);
+    if (active() && result) {
+      if (action === "pull" && log._workStatus) {
+        log._workStatus.textContent = result.message;
+        log._workStatus.dataset.state = "done";
+      }
+      repositoryPullReview = result.pull_review || null;
+      renderRepositoryPush(result.status);
+    }
   } catch (error) {
     if (active()) {
       if (repositoryPushState?.job) repositoryPushState = null;
@@ -109,6 +135,13 @@ $("repositoryPushGo").onclick = async () => {
   const folder = typeof repositorySaveRoot === "undefined" ? $("repositoryFolder").value.trim() : repositorySaveRoot;
   repositoryPushRequest++; repositoryPushPending = false;
   return followRepositoryPush(key, null, {slug, folder});
+};
+$("repositoryPullGo").onclick = () => {
+  if (repositoryPushBusy || repositoryForkFollowing || !repositoryPushState?.destination) return;
+  const key = currentRepositoryPushKey(), slug = S.slug, folder = repositoryPushState.folder;
+  const review = repositoryPullReview?.token || "";
+  repositoryPushRequest++; repositoryPushPending = false;
+  return followRepositoryPush(key, null, {slug, folder, action:"pull", review}, "pull");
 };
 // Once a minute: every 10 s was more git reads than this panel needs. Push itself fetches first, so it never acts on
 // a stale count. A hidden window (minimised, another tab) skips the check; it runs again within 60 s of being shown.
@@ -215,7 +248,7 @@ async function followRepositoryFork(key, job) {
   const log = $("repositoryForkLog"), stop = $("repositoryForkStop");
   const following = {key, job}; repositoryForkFollowing = following;
   const active = () => repositoryForkFollowing === following && key === currentRepositoryPushKey();
-  const finish = beginWork(log, "Setting up GitHub fork", [$("repositoryForkGo"), $("repositoryPushGo")], "GitHub fork connected. Ready to push.");
+  const finish = beginWork(log, "Setting up GitHub fork", [$("repositoryForkGo"), $("repositoryPushGo"), $("repositoryPullGo")], "GitHub fork connected. Ready to push.");
   following.finish = finish; stop.hidden = false; log.hidden = false; showJobError(log, "");
   try {
     const result = await followJob(job, null, (lines, state) => {

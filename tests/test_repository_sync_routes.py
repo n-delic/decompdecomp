@@ -33,3 +33,32 @@ def test_repository_commit_requires_boolean(repository_app):
     response = client.post('/api/repository-sync', json={'slug':'game', 'folder':'/repo', 'commit_push':'yes'},
                            headers={'X-Decomp':'1'})
     assert response.status_code == 400
+
+
+def test_pull_route_reserves_one_job_and_exposes_it_for_reattachment(repository_app, monkeypatch):
+    from decompnet.app import repository_pull
+
+    client, _, _ = repository_app
+    started, release = threading.Event(), threading.Event()
+    reviews = []
+
+    def run(net, slug, folder, log, *, review):
+        reviews.append((slug, folder, review))
+        started.set()
+        release.wait(5)
+        return {'pull_review': None}
+
+    monkeypatch.setattr(repository_pull, 'run', run)
+    data = {'slug': 'game', 'folder': '/repo', 'action': 'pull', 'review': 'reviewed-head'}
+    url = '/api/repository-push'
+    assert client.post(url, json=data).status_code == 403
+    try:
+        first = client.post(url, json=data, headers={'X-Decomp': '1'})
+        assert first.status_code == 200 and started.wait(1)
+        active = client.get(url, params={'slug': 'game', 'folder': '/repo'}).json()
+        assert active['job'] == first.json()['job'] and active['action'] == 'pull'
+        duplicate = client.post(url, json=data, headers={'X-Decomp': '1'})
+        assert duplicate.json() == {'job': first.json()['job'], 'action': 'pull'}
+        assert reviews == [('game', '/repo', 'reviewed-head')]
+    finally:
+        release.set()

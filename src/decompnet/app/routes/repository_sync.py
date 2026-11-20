@@ -133,7 +133,7 @@ def register(app):
         if bad := app.guard(request, write=request.method == 'POST'):
             return bad
         try:
-            repository_push, = await app.imports('decompnet.app', ('repository_push',))
+            repository_push, repository_pull = await app.imports('decompnet.app', ('repository_push', 'repository_pull'))
             if request.method == 'GET':
                 def pending_fork():
                     with app.jobs._lock:
@@ -150,15 +150,25 @@ def register(app):
             data = await app.body(request)
             slug = str(data.get('slug', ''))
             folder = str(data.get('folder', '')).strip()
+            action = data.get('action', 'push')
+            if action not in ('push', 'pull'):
+                raise NetworkError('Choose whether to push or pull commits.')
+            review = str(data.get('review', ''))
             # Reserve by project under the job lock; repeated clicks/windows attach
             # to the same queued push without blocking a sync's API reservation.
             def start_push():
                 with app.jobs._lock:
                     active = active_push(slug)
-                    if active:return JSONResponse({'job':active['id']})
-                    job = app.jobs.start('repository-push', lambda log: repository_push.run(app.net, slug, folder, log),
-                        cancel_message='Push stopped. Waiting requests are removed from the queue; check origin if pushing had already started.')
-                    app.jobs.jobs[job]['scope'] = {'slug':slug, 'folder':folder}
+                    if active:
+                        return JSONResponse({'job':active['id'], 'action':active['scope'].get('action', 'push')})
+                    if action == 'pull':
+                        job = app.jobs.start('repository-pull', lambda log: repository_pull.run(
+                            app.net, slug, folder, log, review=review), project=slug,
+                            cancel_message='Pull stopped. Check Git status if the fast-forward had already started.')
+                    else:
+                        job = app.jobs.start('repository-push', lambda log: repository_push.run(app.net, slug, folder, log),
+                            cancel_message='Push stopped. Waiting requests are removed from the queue; check origin if pushing had already started.')
+                    app.jobs.jobs[job]['scope'] = {'slug':slug, 'folder':folder, 'action':action}
                     pushes[slug] = job
                 return JSONResponse({'job':job})
             return await app.control(start_push)

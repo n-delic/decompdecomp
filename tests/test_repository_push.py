@@ -232,3 +232,62 @@ def test_push_queue_preserves_order_and_recovers_after_failure(tmp_path):
         with pytest.raises(ValueError, match='earlier push failed'):futures[0].result(timeout=5)
         for future in futures[1:]:future.result(timeout=5)
     assert order == [0,1,2] and not repository_operations._STATES
+
+
+def incoming(remote, tmp_path):
+    other = tmp_path/'other'
+    subprocess.run(['git', 'clone', '-q', str(remote), str(other)], check=True)
+    git(other, 'config', 'user.name', 'Other')
+    git(other, 'config', 'user.email', 'other@example.invalid')
+    return other
+
+
+def test_pull_reviews_fresh_count_and_applies_only_reviewed_commits(progress, tmp_path):
+    from decompnet.app import repository_pull
+
+    net, root, remote = progress
+    git(root, 'add', '-A')
+    git(root, 'commit', '-qm', 'save fixture progress')
+    git(root, 'push', 'origin', 'HEAD')
+    before = git(root, 'rev-parse', 'HEAD')
+    other = incoming(remote, tmp_path)
+    commit(other, 'first.txt')
+    commit(other, 'second.txt')
+    git(other, 'push', 'origin', 'HEAD')
+    log = []
+    assert repository_push.status(net, 'game', str(root))['behind'] == 0
+    review = repository_pull.run(net, 'game', str(root), log.append)['pull_review']
+    assert review['count'] == 2
+    assert git(root, 'rev-parse', 'HEAD') == before
+    latest = commit(other, 'third.txt')
+    git(other, 'push', 'origin', 'HEAD')
+    with pytest.raises(NetworkError, match='changed since your review'):
+        repository_pull.run(net, 'game', str(root), log.append, review=review['token'])
+    assert git(root, 'rev-parse', 'HEAD') == before
+    review = repository_pull.run(net, 'game', str(root), log.append)['pull_review']
+    assert review['count'] == 3
+    (root/'untracked-notes.txt').write_text('local notes')
+    state = repository_pull.run(net, 'game', str(root), log.append, review=review['token'])['status']
+    assert state['head'] == latest and state['behind'] == 0
+    assert (root/'untracked-notes.txt').read_text() == 'local notes'
+    assert 'Pulled 3 commits from ' in log[-1]
+    assert repository_pull.run(net, 'game', str(root), log.append)['pull_review'] is None
+
+
+def test_pull_preserves_dirty_work_and_reports_divergence(progress, tmp_path):
+    from decompnet.app import repository_pull
+
+    net, root, remote = progress
+    other = incoming(remote, tmp_path)
+    commit(other, 'upstream.txt')
+    git(other, 'push', 'origin', 'HEAD')
+    review = repository_pull.run(net, 'game', str(root), print)['pull_review']
+    (root/'staged.txt').write_text('staged edits')
+    git(root, 'add', 'staged.txt')
+    with pytest.raises(NetworkError, match='stash tracked changes'):
+        repository_pull.run(net, 'game', str(root), print, review=review['token'])
+    git(root, 'commit', '-qm', 'local edits')
+    with pytest.raises(NetworkError, match='1 incoming commit.*1 local-only commit'):
+        repository_pull.run(net, 'game', str(root), print)
+    assert not (root/'upstream.txt').exists()
+    assert (root/'staged.txt').read_text() == 'staged edits'
