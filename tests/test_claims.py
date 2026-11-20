@@ -207,19 +207,26 @@ def test_functions_given_up_on_go_to_the_strongest_model_at_work(tmp_path):
     on 3 times to it, and the strong one takes those first; with nothing else left the weak one still gets them."""
     import time
 
+    from decompnet.claim_routing import build_profiles
+
     net = RomNetwork(tmp_path / "app.db", tmp_path)
     strong, _ = net.local_agent("claude-sonnet-1")
     weak, _ = net.local_agent("opencode-beam-free-1")
     with net.store.tx() as db:
         pid = db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES(?,?,?,?,?,?,?)",
-                         ("game", "Game", "", "mips", 1, str(tmp_path), json.dumps({"kind": "rom"}))).lastrowid
+                         ("game", "Game", "", "mips", 1, str(tmp_path), json.dumps({"kind": "rom", "compiler": {"toolchain": "test"}}))).lastrowid
         for name, n, abandons in [("hard", 4, 3), ("tried", 40, 2), ("fresh", 60, 0)]:
             db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit,abandons) VALUES(?,?,?,?,?,?,?)",
                        (pid, name, n * 4, n, "open", "a", abandons))
+        proj = db.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone()
+        fn = db.execute("SELECT * FROM functions WHERE project_id=? LIMIT 1", (pid,)).fetchone()
+        profile = build_profiles(proj)(fn)
         for agent, won in ((strong, 15), (weak, 2)):  # 20 claims each, this many matched
             for i in range(20):
                 db.execute("INSERT INTO events(project_id,agent_id,kind,detail,created_at) VALUES(?,?,?,?,?)",
                            (pid, agent.id, "claim", f"old_{agent.id}_{i}", time.time()))
+                db.execute("INSERT INTO claim_routing_samples VALUES(?,?,?,?,?,?,1,?)",
+                           (pid, -agent.id * 100 - i, agent.id, time.time(), profile, "small:unscored", i < won))
             for i in range(won):
                 db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit,matched_agent_id) "
                            "VALUES(?,?,?,?,?,?,?)", (pid, f"won_{agent.id}_{i}", 40, 10, "matched", "a", agent.id))
@@ -240,20 +247,27 @@ def test_once_every_function_was_given_up_on_a_weak_model_keeps_the_less_tried_h
     back to the whole queue: 3,183 claims for 10 matches in a night. The line moves to the median instead."""
     import time
 
+    from decompnet.claim_routing import build_profiles
+
     net = RomNetwork(tmp_path / "app.db", tmp_path)
     strong, _ = net.local_agent("claude-opus-1")
     weak, _ = net.local_agent("claude-haiku-1")
     with net.store.tx() as db:
         pid = db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES(?,?,?,?,?,?,?)",
-                         ("game", "Game", "", "x86", 0, str(tmp_path), json.dumps({"kind": "rom"}))).lastrowid
+                         ("game", "Game", "", "x86", 0, str(tmp_path), json.dumps({"kind": "rom", "compiler": {"toolchain": "test"}}))).lastrowid
         # the smallest is the most given up on: "easiest" would hand it to the weak model first
-        for name, n, abandons in [("worst", 4, 25), ("bad", 10, 13), ("less", 40, 6), ("least", 60, 5)]:
+        for name, n, abandons in [("worst", 4, 25), ("bad", 10, 13), ("less", 20, 6), ("least", 25, 5)]:
             db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit,abandons) VALUES(?,?,?,?,?,?,?)",
                        (pid, name, n * 4, n, "open", "a", abandons))
+        proj = db.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone()
+        fn = db.execute("SELECT * FROM functions WHERE project_id=? LIMIT 1", (pid,)).fetchone()
+        profile = build_profiles(proj)(fn)
         for agent, won in ((strong, 15), (weak, 1)):
             for i in range(20):
                 db.execute("INSERT INTO events(project_id,agent_id,kind,detail,created_at) VALUES(?,?,?,?,?)",
                            (pid, agent.id, "claim", f"old_{agent.id}_{i}", time.time()))
+                db.execute("INSERT INTO claim_routing_samples VALUES(?,?,?,?,?,?,1,?)",
+                           (pid, -agent.id * 100 - i, agent.id, time.time(), profile, "small:unscored", i < won))
             for i in range(won):
                 db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit,matched_agent_id) "
                            "VALUES(?,?,?,?,?,?,?)", (pid, f"won_{agent.id}_{i}", 40, 10, "matched", "a", agent.id))

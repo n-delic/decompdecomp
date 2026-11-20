@@ -371,8 +371,9 @@ still has to pass; isolated matches alone do not establish a rebuildable checkpo
 
 In **Start agents → Work selection**, choose a queue for the workers you are starting. Launch an expensive
 model with **Largest first**, then start a cheaper model with **Untried first** or **Easiest first**. You can also
-choose **Closest to matching**, **Finish source files**, or **Random**. **Automatic** keeps the existing adaptive
-scheduler and model routing.
+choose **Closest to matching**, **Finish source files**, or **Random**. **Automatic** can give a stalled function
+to a model with a better exact-match record on similarly sized starting candidates built with the same compiler
+profile. When comparable results are sparse, the ordinary queue order applies.
 
 When starting matching agents, enable **Automatically assign the next function after a match or release**
 to have the app hand each new worker one function at a time. The next brief comes back with the match or
