@@ -28,11 +28,15 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
-# LLVM IR emitted by ad hoc compiler runs from the repo root
+# Compiler output from ad hoc builds
 /*.ll
+/*.o
+/src/decompnet/port/wasm/web/*.o
 
 # DecompNet
 decompnet.db*
+/match-library.sqlite3
+/match-library.sqlite3.writer.lock
 projects/*/target/*.o
 export/
 .pytest_cache/
