@@ -4037,7 +4037,7 @@ class ForkEngine:
         return f"With yours, {len(said)} agents of {len(models)} models agree: {done}. The game still builds byte for byte."
 
     @release_operation("release")
-    def release(self, agent: Agent, slug: str, function: str, notes: str, not_c: bool = False, claim_token: str = "") -> str:
+    def release(self, agent: Agent, slug: str, function: str, notes: str, not_c: bool = False, claim_token: str = "", *, handoff=None) -> str:
         fn = self._fn(slug, function)
         if (link := self.net.links.get(slug)) is not None:
             link.call("/collab/release", agent, function=fn["name"], notes=notes, not_c=not_c)
@@ -4049,7 +4049,7 @@ class ForkEngine:
                 self.attempt(agent, slug, function, fn["best_source"])
             except NetworkError:
                 pass
-        return Network.release(self.net, agent, function, notes, slug, not_c, claim_token=claim_token)
+        return Network.release(self.net, agent, function, notes, slug, not_c, claim_token=claim_token, handoff=handoff)
 
     def release_exempt(self, slug: str, fn) -> str | None:
         """Why compiling can't help with this function (release_function lets such a release through at once), or

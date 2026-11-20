@@ -461,3 +461,23 @@ hint pointed to the differing immediate. Restoring the target's `0x1234` through
 the ordinary patch tool matched in both modes on the first guided retry.
 This measures the prescribed next step for one controlled mismatch in two
 judges. It does not measure autonomous model match rates or token use.
+
+### Handoffs on the next claim
+
+The agent's stall instructions ask for the tested approach, the observed effect
+and one untested step against the candidate the next worker inherits. The step can
+be an advisory investigation or an exact-anchor patch. The release transaction
+publishes it when the claim ends. A push-back leaves the handoff unpublished.
+Ordinary release notes remain available as history.
+
+The new claim and explicit brief show a handoff only for the same candidate,
+target extent and build inputs. The patch view rechecks applicability and suppresses
+a patch that has since been tried. A later attempt supersedes an advisory step.
+Validation reads the existing input fingerprints and runs no new compiler.
+The handoff uses the local project store. Room synchronization continues to carry
+ordinary release notes.
+
+The real ROM and imported-project demo replay compiles three equivalent incorrect
+initializers, releases the stalled claim, and verifies the next worker's claim
+and patch view. It then edits the ROM context or the imported include file
+and verifies that the claim, brief and patch view withhold the handoff.

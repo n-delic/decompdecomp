@@ -1621,7 +1621,7 @@ class Network:
         return "strong" if share[mine] == best and weak else None
 
     @release_operation("release")
-    def release(self, agent: Agent, function: str, notes: str, project: str | None = None, not_c: bool = False, claim_token: str = "") -> str:
+    def release(self, agent: Agent, function: str, notes: str, project: str | None = None, not_c: bool = False, claim_token: str = "", *, handoff=None) -> str:
         """An agent gives a function back: its claim ends, its notes stay for the next agent, and the function
         counts one more give-up (the claim order puts those later). `not_c`: the agent found no C makes its code
         (NOT_C_AGENTS)."""
@@ -1637,6 +1637,9 @@ class Network:
             from .app import agent_review
             review_facts = (agent_review.facts(self,store.one('SELECT * FROM projects WHERE id=?',fn['project_id']),fn)
                             if agent_review.CONCERN.search(notes) or agent_review.load(self,agent_review.PREFIX+str(fn['id']),project_id=fn['project_id']) else None)
+            if handoff is not None:
+                db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',
+                           (agent_review.EXPERIMENT + str(fn['id']), json.dumps(dict(handoff, released_at=time.time()))))
             db.execute("DELETE FROM claims WHERE function_id=?", (fn["id"],))
             db.execute("UPDATE functions SET abandons=abandons+1 WHERE id=?", (fn["id"],))
             if notes.strip() and notes.strip() != "Deep permutation turn ended; improvements shared.":

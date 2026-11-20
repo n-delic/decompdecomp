@@ -29,7 +29,8 @@ def instruction(net, function_id, agent_id, *, project_id=None):
         return 'Claim ended; claim another eligible function. Do not release this function again.'
     lease=token(net,fn,claim)
     return (f'release_function(function={json.dumps(fn["name"])}, claim_token={json.dumps(lease)}, '
-            'notes="what you tried and what is left")')
+            'notes="why you are moving on"). Include next_experiment with the saved candidate revision, '
+            'what you tried, what changed and one untested next step')
 
 
 def operation(kind, *, protect_new=False):
@@ -50,6 +51,10 @@ def operation(kind, *, protect_new=False):
                 row=store.one('SELECT value FROM settings WHERE key=?',key)
                 receipts=json.loads(row['value']) if row else []
                 payload={k:v.get(k) for k in ('notes','not_c','needs','move_on','next_experiment') if k in v}
+                if v.get('handoff') is not None:
+                    payload['handoff'] = v['handoff']
+                if kind == 'function' and payload.get('next_experiment') is None:
+                    payload.pop('next_experiment', None)
                 digest=hashlib.sha256(json.dumps(payload,sort_keys=True).encode()).hexdigest()
                 supplied=v.get('claim_token') or ''
                 active=current(net,fn,agent)

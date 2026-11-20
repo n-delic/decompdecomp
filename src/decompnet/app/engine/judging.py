@@ -419,21 +419,22 @@ class JudgeMixin:
         self._record(fn, agent, score, source, self._context(fn["project_id"], fn["unit"])["version"], via="room", before_record=before_record)
 
     @release_operation("release")
-    def release(self, agent: Agent, function: str, notes: str, project: str | None = None, not_c: bool = False, claim_token: str = "") -> str:
+    def release(self, agent: Agent, function: str, notes: str, project: str | None = None, not_c: bool = False, claim_token: str = "", *, handoff=None) -> str:
         if (fork := self.fork_slug(project)):
-            return self.forks.release(agent, fork, function, notes, not_c, claim_token=claim_token)
+            return self.forks.release(agent, fork, function, notes, not_c, claim_token=claim_token, handoff=handoff)
         link = self._link(project)
         if link is not None:
             link.call("/collab/release", agent, function=self._function(function, project)["name"], notes=notes,
                       not_c=not_c)
-        said = super().release(agent, function, notes, project, not_c, claim_token=claim_token)
+        said = super().release(agent, function, notes, project, not_c, claim_token=claim_token, handoff=handoff)
         fn = self._function(function, project)
         self.rangechecks.gave_up(self.project_store(fn['project_id']).one("SELECT * FROM projects WHERE id=?", fn["project_id"]), fn)
         return said
 
     @release_operation("function", protect_new=True)
     def release_function(self, agent: Agent, function: str, notes: str, project: str | None = None,
-                         needs: str = "", not_c: bool = False, move_on: bool = False, claim_token: str = "", *, automatic_pivot: bool | None = None) -> str:
+                         needs: str = "", not_c: bool = False, move_on: bool = False, claim_token: str = "", *,
+                         next_experiment=None, automatic_pivot: bool | None = None) -> str:
         """release_function as agents call it (the app's own releases and a room host's go straight to release).
         On a demo fork and a large x86 game, agents released functions seconds after claiming them, untried,
         for reasons a compile would have shown were none (12,565 releases, median 5 s after the claim): so a release
@@ -463,7 +464,14 @@ class JudgeMixin:
             # A small model released a function it never compiled, with move_on and notes saying "no better score
             # in 6 compiles", and those notes are what the next agent starts from. Say what the app knows.
             notes = '[Released without compiling it once; notes not checked by a compile.] ' + notes
-        said = self.release(agent, function, notes, project, not_c, claim_token=claim_token)
+        if next_experiment is not None and not not_c and progress is not None:
+            from ..agent_review import prepare_experiment
+            slug = self.project_store(fn['project_id']).one('SELECT slug FROM projects WHERE id=?', fn['project_id'])['slug']
+            handoff = prepare_experiment(self, agent, slug, fn, next_experiment, progress)
+            said = self.release(agent, function, notes, project, not_c, claim_token=claim_token, handoff=handoff)
+            said += '\nNext experiment saved with the handoff. The next claim will show it while applicable.'
+        else:
+            said = self.release(agent, function, notes, project, not_c, claim_token=claim_token)
         if not not_c and need is None and progress is not None and progress['compiles']:
             from .. import release_repairs
             slug = self.project_store(fn['project_id']).one('SELECT slug FROM projects WHERE id=?',fn['project_id'])['slug']

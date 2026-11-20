@@ -1,4 +1,4 @@
-"""Cheap claim receipts: no diagnostic builds, drafts or imported-tree inspection on the claim path."""
+"""Cheap claim receipts; verify existing handoffs without running diagnostic builds or generating drafts."""
 import functools
 import json
 import threading
@@ -46,6 +46,9 @@ def brief(net, fn, agent, header):
            'Preparation: deferred. No diagnostic build or new draft was run while reserving this claim.',
            'Saved scores are historical. get_candidate verifies the baseline; get_assembly reads target instructions; '
            'get_function(section="brief") loads full supporting evidence. compile_patch/compile_and_diff use the ordinary judge.']
+    from .agent_review import handoff_brief
+    if handoff := handoff_brief(net, proj['slug'], fn, source):
+        lines.append(handoff)
     from ..candidate_quality import source_hint as quality_hint
     if note := quality_hint(net, fn, source):lines.append(note)
     diagnostic = summary(read(net,fn['id'],project_id=fn['project_id']))

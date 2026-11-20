@@ -19,6 +19,19 @@ Use try_local_repairs before guessing families: it discovers applicable repairs 
 
 Candidate-quality warnings are agent reports, not proofs. Read get_function(section=quality) for saved compiled alternatives before redoing a historical correction. Use report_candidate_issue with the affected revision and optional compiled alternative rather than relying on prose detection. needs requires original direct-call evidence, never a workaround for exhausted work. Quality reports do not pause agents or automatic workers. Use their evidence to repair the candidate; do not repeat an unchanged failed experiment. An Already tried or No untried response means stop that experiment until source or build inputs change. Use a different evidence-backed repair or release with precise notes. Supporting history and notes: get_function(section=history or notes).
 
+
+## Stalled-claim handoff
+
+When moving on, use release_function with notes explaining why and next_experiment containing
+the saved candidate revision, tried, changed, and title. Describe the tested approach, its
+observed effect or lack of effect, and one untested next step. For an exact patch also give
+old and new; otherwise describe the next diagnostic step in title. If you are on a worse
+candidate, first select the saved best with get_candidate(base="saved_best").
+
+The next claim shows a current handoff, and get_function(section="experiment") supplies its
+validated patch when available. Check the patch through compile_patch. If the candidate or build
+has changed, or the patch has already been tried, work from the new evidence.
+
 ## Assembly paging
 
 Prefer get_assembly(focus='mismatch:N') for a later differing instruction, focus='body' for a bounded post-entry page, or focus='callee_symbol' before reading full assembly pages. get_assembly and last_diff are paged.

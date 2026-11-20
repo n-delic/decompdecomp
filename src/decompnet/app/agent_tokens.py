@@ -345,9 +345,8 @@ def brief(net, text, slug=None, agent=None):
                     from . import agent_review
                     proj=net.project_row(slug)
                     review=agent_review.brief(net,proj,fn)
-                    pending=agent_review.load(net,agent_review.EXPERIMENT+str(fn['id']),project_id=fn['project_id'])
-                    next_step='\nStructured next experiment available: get_function(section="experiment"). It is untested and must pass current revision/anchor checks.' if pending else ''
-                    text = experiments+'\n'+review+next_step+'\n'+text
+                    next_step = agent_review.handoff_brief(net, slug, fn, source)
+                    text = experiments+'\n'+review+'\n'+next_step+'\n'+text
         except NetworkError:
             pass
     return text
@@ -601,6 +600,9 @@ def _function_view(net, agent, slug, function, section='all'):
                 text+='\nCurrent continuation:\n'+get_candidate(net,agent,slug,function)
             elif 'candidate revision '+revision not in text.lower():
                 text+=f'\nCandidate revision {revision}; use compile_patch on the supplied candidate.\n'
+            from .agent_review import handoff_brief
+            if handoff := handoff_brief(net, slug, fn, source):
+                text = handoff + '\n\n' + text
         return text
     if section == 'draft':
         fn=net._function(function,slug)
