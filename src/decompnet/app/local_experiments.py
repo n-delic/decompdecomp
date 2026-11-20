@@ -131,12 +131,13 @@ def run(net, agent, slug, function, revision, families=None, max_trials=6, *, se
                 repair_sequences.observe(net,recipe_profile,repair_sequences.focus((baseline or {}).get('rows'),net._project(slug)['arch']),[],family,
                     (baseline or {}).get('score'),measured.get('score'),output_key(baseline or {}),output_key(measured),
                     exact=bool(measured.get('matched') or measured.get('exact')),elapsed_ms=measured.get('elapsed_ms'))
-        for (family,candidate),measured in zip(selected,observations):
-            if not measured or measured.get('score') is None:
-                continue
+        tried = [(fn['id'], scope, 'local:'+family, hashlib.sha256(candidate.encode()).hexdigest())
+                 for (family, candidate), measured in zip(selected, observations)
+                 if measured and measured.get('score') is not None]
+        if tried:
+            # Scored trials are already settled. Enter the project writer once for their history.
             with net.project_store(fn['project_id']).tx() as db:
-                db.execute('INSERT OR IGNORE INTO agent_family_targets VALUES(?,?,?,?)',
-                           (fn['id'],scope,'local:'+family,hashlib.sha256(candidate.encode()).hexdigest()))
+                db.executemany('INSERT OR IGNORE INTO agent_family_targets VALUES(?,?,?,?)', tried)
         current=net._function(function,slug)
         if (current['status']=='matched' and current['best_source'] in [candidate for _,candidate in selected]
                 and recipe_profile==repair_sequences.profile(net,net._project(slug),fn)):
