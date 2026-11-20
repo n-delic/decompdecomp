@@ -854,3 +854,12 @@ def test_following_a_job_survives_a_lost_poll_but_not_a_stalled_one():
 def test_overview_groups_deep_permuter_workers():
     subprocess.run([NODE, str(Path(__file__).with_name("gui_match_attribution.js"))], check=True,
                    capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_restart_all_agents_feedback_survives_polling_and_navigation():
+    html = (Path(__file__).parents[1] / 'src/decompnet/app/static/index.html').read_text()
+    assert 'id="restartAll"' in html
+    if NODE is None:
+        pytest.skip('needs node')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_restart_agents.js'))], check=True,
+                   cwd=Path(__file__).resolve().parents[1], timeout=GUI_TIMEOUT_SECONDS)
