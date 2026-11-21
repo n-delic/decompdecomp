@@ -11,12 +11,19 @@ function markNav() {
 }
 /* One ask at a time: when the list took longer than 5 s (11 s with two projects whose game file was gone), the
    timer's asks piled up and kept the app's workers busy. One asked for meanwhile (a project renamed) goes after it. */
-let navLoading = false, navAgain = false;
+let navLoading = false, navAgain = false, navSig = "";
 async function loadNav(timer = false) {
   if (document.hidden && S.projects.length) return;  // the window is minimised: nobody sees the list
   if (navLoading) { navAgain = navAgain || !timer; return; }
   navLoading = true;
-  try { S.projects = await api("/api/projects"); } catch (e) {
+  try {
+    /* With hundreds of games the list is long: `since` gets just "the same" when nothing changed (routes/state.py),
+       and nothing is redrawn. A rename or a new project asks without it (timer=false). */
+    const got = await api(timer && navSig ? `/api/projects?since=${navSig}` : "/api/projects?since=");
+    if (Array.isArray(got)) { S.projects = got; navSig = ""; }  // (an older server: the list itself)
+    else if (got.same) return;
+    else { S.projects = got.projects; navSig = got.sig; }
+  } catch (e) {
     if (!S.projects?.length) $("navProjects").innerHTML = `<p class="nav-empty">Couldn't load your projects: ${esc(e.message)}</p>`;
     return;
   } finally {
@@ -29,19 +36,32 @@ async function loadNav(timer = false) {
    the order the projects were made (app.css orders the colours so that neighbours differ most): a new project never
    changes the colours of the ones before it. Past six projects the colours come round again. */
 const PROJECT_COLOURS = 6;  // app.css: .pc-0 ... .pc-5
+let colourList = null, colours = new Map();
 function colourOf(slug) {
-  const i = S.projects.length - 1 - S.projects.findIndex((p) => p.slug === slug);  // (the list is newest first)
-  return i < S.projects.length ? i % PROJECT_COLOURS : 0;
+  if (colourList !== S.projects) {  // (a look-up per row: finding each one in the list was n² for hundreds of games)
+    colourList = S.projects;
+    colours = new Map(S.projects.map((p, i) => [p.slug, (S.projects.length - 1 - i) % PROJECT_COLOURS]));  // newest first
+  }
+  return colours.get(slug) ?? 0;
 }
+/* Past NAV_FILTER_FROM projects the sidebar gets a filter box: hundreds of games don't fit a glance. */
+const NAV_FILTER_FROM = 12;
+let navFilter = "", navDrawn = "";
 
 function renderNav() {
   const box = $("navProjects");
-  if (!S.projects.length) { box.innerHTML = `<p class="nav-empty">None yet: drop in a game.</p>`; return; }
-  box.innerHTML = S.projects.map((p) => {
+  const filter = $("navFilter");
+  if (filter) filter.hidden = S.projects.length < NAV_FILTER_FROM;
+  const wanted = S.projects.length < NAV_FILTER_FROM || !navFilter ? S.projects
+    : S.projects.filter((p) => `${p.title} ${p.platform_short || ""} ${p.platform_name || ""}`.toLowerCase().includes(navFilter));
+  let html;
+  if (!S.projects.length) html = `<p class="nav-empty">None yet: drop in a game.</p>`;
+  else if (!wanted.length) html = `<p class="nav-empty">No project matches.</p>`;
+  else html = wanted.map((p) => {
     const pct = codePct(p);
     const short = p.platform_short || p.platform_name || "?";
     const state = p.working ? `<span class="dot on" title="${p.working} agent${p.working === 1 ? "" : "s"} working"></span>`
-      : p.autopilot === "running" ? `<span class="dot work" title="autopilot running"></span>` : "";
+      : p.autopilot === "running" ? `<span class="dot work" title="${p.autopilot_phase === "queued" ? "autopilot waiting for its turn" : "autopilot running"}"></span>` : "";
     if (p.missing) return `<a class="nav-proj broken" href="#/p/${esc(p.slug)}" data-slug="${esc(p.slug)}" title="${esc(p.missing)}">
       <span class="np-top"><span class="np-name">${esc(p.title)}</span></span>
       <span class="np-meta"><span>folder is missing: remove it from the home page</span></span></a>`;
@@ -53,9 +73,13 @@ function renderNav() {
       <span class="np-meta"><span>${p.progress_error ? "progress needs attention" : esc(short)}</span><span class="grow"></span><span>${p.kind === "fork" && !p.ready ? "set up" : pctNum(pct) + "%"}</span></span>
       <span class="np-bar"><i data-w="${pct.toFixed(2)}"></i></span></a>`;
   }).join("");
-  setWidths(box);
+  if (html !== navDrawn) {  // (the same list isn't rebuilt: hundreds of rows, every few seconds)
+    box.innerHTML = navDrawn = html;
+    setWidths(box);
+  }
   markNav();
 }
+if ($("navFilter")) $("navFilter").oninput = (e) => { navFilter = e.target.value.trim().toLowerCase(); renderNav(); };
 setInterval(() => loadNav(true), 5000);
 function openNav() { document.body.classList.add("nav-open"); $("navShade").hidden = false; }
 function closeNav() { document.body.classList.remove("nav-open"); $("navShade").hidden = true; }

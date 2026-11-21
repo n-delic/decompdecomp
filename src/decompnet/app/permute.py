@@ -71,7 +71,11 @@ def weight_family(cfg: dict, vram: int | None, fork: bool) -> str:
     if fork:  # forks name their console, not a toolchain: the console says its compilers' family
         return consoles.get(cfg.get("platform")).compiler_family or "base"
     toolchain = (compiler_for(cfg, vram).get("toolchain") or "") if cfg.get("compiler") else ""
-    return toolchains.compiler_family(toolchain) or next((family for prefix, family in FAMILIES if toolchain.startswith(prefix)), "base")
+    # a profile's declared family counts when it's one of decomp-permuter's weight sets (the registry also groups
+    # compilers for display, as `metrowerks`)
+    if (declared := toolchains.declared_family(toolchain)) in {family for _, family in FAMILIES}:
+        return declared
+    return next((family for prefix, family in FAMILIES if toolchain.startswith(prefix)), "base")
 
 
 def available() -> bool:
@@ -255,15 +259,22 @@ class Permuter:
         except Exception as e:  # one odd function must not stop the rest
             log.info("permuter: %s: %s", fn["name"], e, exc_info=True)
 
-    def _hold(self, agent, fn) -> bool:
+    def _hold(self, agent, fn, *, count_turn: bool = True) -> bool:
         now = time.time()
         with self.net.store.tx() as db:
             self.net._expire_claims(db)
             if db.execute("SELECT 1 FROM claims WHERE function_id=?", (fn["id"],)).fetchone():
                 return False
             db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + SECONDS + HOLD_SPARE_SECONDS))
-            db.execute("UPDATE functions SET permuted = permuted + 1 WHERE id=?", (fn["id"],))
+            if count_turn:
+                db.execute("UPDATE functions SET permuted = permuted + 1 WHERE id=?", (fn["id"],))
         return True
+
+    def _random_seed(self, fn):
+        return f"{fn['id']}-{fn['permuted']}"
+
+    def _turn_deadline(self):
+        return time.monotonic() + SECONDS
 
     def _renew(self, agent, fn) -> bool:
         """The turn's hold counted from now; False when it's no longer this turn's."""
@@ -282,7 +293,7 @@ class Permuter:
         st.add(tried=1)
         st.holding(fn["name"], True)
         fork = self.net.fork_slug(proj["slug"])
-        rng = random.Random(f"{fn['id']}-{fn['permuted']}")
+        rng = random.Random(self._random_seed(fn))
         gen = None
         held = ExitStack()
         try:
@@ -306,7 +317,7 @@ class Permuter:
                     log.info("permuter: decomp-permuter didn't start: %s", e)
             start_src = best_src = cur_src = fn["best_source"]
             best = cur = fn["best_score"]
-            deadline = time.monotonic() + SECONDS
+            deadline = self._turn_deadline()
             batches = misses = 0
             refused, taken = None, 0  # the last refusal of a variant (NetworkError), variants the project took
             while time.monotonic() < deadline and best > 0 and not st.stop.is_set():

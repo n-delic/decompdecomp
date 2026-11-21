@@ -37,7 +37,7 @@ def test_unpublished_profile_requires_the_users_own_kit(tmp_path, monkeypatch, p
     toolchains.install(kit.id, folder=folder, accept_license=True, log=lambda *_: None)
     assert compiler.version in {c.id for c in N64.compilers}
     assert kits.own_compiler(compiler.version) == compiler
-    assert toolchains.compiler_family(compiler.version) == tc.family
+    assert toolchains.declared_family(compiler.version) == tc.family
     assert not (tmp_path / 'toolchains' / kit.id / Path(kit.program)).exists()
 
     # Resolving the matching command keeps the user's folder as {tc}; only free runtime tools are pinned.

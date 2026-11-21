@@ -9,6 +9,7 @@ function element() {
   return {
     disabled: false, hidden: false, value: "", textContent: "", innerHTML: "", _html: null, dataset: {}, attrs: {},
     setAttribute(key, value) { this.attrs[key] = value; },
+    addEventListener() {}, querySelector: () => null, querySelectorAll: () => [],
   };
 }
 async function main() {
@@ -26,9 +27,10 @@ async function main() {
   vm.createContext(ctx);
   const base = read("base");
   vm.runInContext(base.slice(base.indexOf("const setHtml"), base.indexOf("/* The map's still")), ctx);
+  vm.runInContext(read("compiler-groups"), ctx);
+  get("compilerGroup").value = "settings";  // the parts list groups ranges by compiler profile (#242)
   const source = read("steering");
-  vm.runInContext(source.slice(source.indexOf("const PART_STATE"), source.indexOf("async function loadCompilerAnswer")), ctx);
-  vm.runInContext(source.slice(source.indexOf("function renderCompilerAnswer(a) {"), source.indexOf("function renderCompilerWaiting")), ctx);
+  vm.runInContext(source.slice(source.indexOf("const PART_STATE"), source.indexOf("function renderCompilerWaiting")), ctx);
   const marker = '$("compilerParts").onclick = async (e) => {';
   const start = source.indexOf(marker) + marker.length;
   vm.runInContext(source.slice(source.indexOf(marker), source.indexOf("\n};", start) + 3), ctx);
