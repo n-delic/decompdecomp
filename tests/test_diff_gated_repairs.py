@@ -504,3 +504,15 @@ def test_measured_relocated_signed_halfword_load():
                   if name == 'relocated_signed_halfword_load']
     assert any('do { value = *(s16 *)(fields + index); } while (0);' in text for text in candidates)
     assert 'relocated_signed_halfword_load' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_measured_leaf_call_byte_offset():
+    source = 'void f(s32 n, u16 *packet) { work(n & 0xffff, packet + 4, *packet); }\n'
+    rows = [
+        (' ', 'lhu $a2, ($a1)', 'lhu $a2, ($a1)'),
+        (' ', 'andi $a0, $a0, 0xffff', 'andi $a0, $a0, 0xffff'),
+        (' ', 'jal work', 'jal work'),
+        ('i', 'addiu $a1, $a1, 4', 'addiu $a1, $a1, 8'),
+    ]
+    assert dict(proposals(source, 'f', '', 'mips', KMC, rows, ''))['measured_call_byte_offset'] == source.replace(
+        'packet + 4', '(u8 *)packet + 4')

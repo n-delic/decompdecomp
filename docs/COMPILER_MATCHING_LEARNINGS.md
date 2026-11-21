@@ -10741,3 +10741,15 @@ app's exact judge and the compiler's own RTL dumps (`cc1 -dS -dR -dL -dg`); not 
 - **Left at 120:** two instructions out of place: the counter's `move` (the target has it after the `lbu` that
   loads the call's argument) and the `0x64` constant (the target has it right after the `lhu`). Both are scheduler
   ordering; no source position or wrapper tried changes them.
+
+### Recover byte displacements in small table readers and call wrappers
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, three machine drafts in a scratch
+N64 project reached exact linked matches. A halfword reader applied a byte stride
+through a word pointer. Preserving the odd factor of the stride in byte arithmetic
+and using a halfword load brought its score from 30 to 0. A floating-point reader
+cast and masked its input before indexing a float table. Typing the table and using
+its element index brought the score from 170 to 0. A call wrapper passed the address
+four bytes into a halfword record and the initial halfword separately. Applying the
+displacement as bytes brought its score from 10 to 0. The deep permuter reproduced
+all three matches using the measured shift, relocation and call-delay-slot evidence.
