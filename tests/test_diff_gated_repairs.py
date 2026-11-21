@@ -451,6 +451,32 @@ def test_repeated_float_products_routed_for_kmc(monkeypatch):
     assert 'repeated_float_product_staging' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
 
 
+def test_kmc_proposes_an_alias_for_a_separately_relocated_byte_test_and_clear():
+    source = '''
+extern M2C_UNK state;
+void f(void) {
+    if (M2C_FIELD(&state, u8 *, 0x24) == 1) {
+        M2C_FIELD(&state, u8 *, 0x24) = 0;
+        use();
+    }
+}
+'''
+    asm = '''
+/* 00 80001000 3C038000 */ lui $v1, %hi(state + 0x24)
+/* 04 80001004 90632024 */ lbu $v1, %lo(state + 0x24)($v1)
+/* 08 80001008 24020001 */ addiu $v0, $zero, 1
+/* 0C 8000100C 14620003 */ bne $v1, $v0, .Ldone
+/* 10 80001010 00000000 */ nop
+/* 14 80001014 3C018000 */ lui $at, %hi(state + 0x24)
+/* 18 80001018 A0202024 */ sb $zero, %lo(state + 0x24)($at)
+'''
+    resolve = {'state': 0x80002000, 'D_80002024': 0x80002024}.get
+    rows = case_rows('lbu $v1, %lo(D_80002024)($v1)', 'sb $zero, %lo(D_80002024)($at)')
+    candidates = dict(proposals(source, 'f', '', 'mips', KMC, rows, asm, resolve=resolve))
+    assert 'if (D_80002024 == 1)' in candidates['relocated_branch_byte']
+    assert 'D_80002024 = 0;' in candidates['relocated_branch_byte']
+
+
 def test_measured_boolean_byte_carrier():
     source = """void f(void) {
     s32 flag;

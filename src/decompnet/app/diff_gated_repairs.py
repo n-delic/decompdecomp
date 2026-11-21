@@ -51,6 +51,7 @@ from decomprepair import (
     stack_fill_drafts,
     stack_header_buffer,
     stack_read_retry,
+    switch_pointer_calls,
     symbol_width_repairs,
     target_string_repairs,
     targeted_switch_labels,
@@ -211,6 +212,8 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
                                                              big_endian=big_endian,flags=flags)
     if toolchain.startswith('gcc-2.7.2-kmc'):
         result += measured_storage_shapes.variants(source, name, header, rows, asm, big_endian=big_endian)
+        result += switch_pointer_calls.variants(source, name, asm or '', header,
+                                                read_data=read_data, big_endian=big_endian)
         result += short_leaf_drafts.variants(source, name, asm, header)
         result += target_inline_storage_diff_repairs.proposals(source,name,header,rows,target,candidate,asm,
                                                              read_data=read_data,big_endian=big_endian)
@@ -243,6 +246,9 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
             result.append(('relocated_byte_table', candidate_source))
         if candidate_source := relocated_global_update.rewrite(source, name, asm or '', header, resolve):
             result.append(('relocated_global_update', candidate_source))
+        if any(marker != ' ' and op.startswith(('lbu ', 'sb ')) for marker, op, _ in rows):
+            if candidate_source := relocated_global_update.rewrite_branch_byte(source, name, asm or '', header, resolve):
+                result.append(('relocated_branch_byte', candidate_source))
         if candidate_source := relocated_global_update.rewrite_countdown(source, name, asm or '', header, resolve):
             result.append(('relocated_countdown', candidate_source))
         if candidate_source := stack_fill_drafts.rewrite(source, name, asm or '', header):
