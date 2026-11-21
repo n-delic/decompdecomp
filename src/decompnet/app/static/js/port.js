@@ -181,8 +181,8 @@ function portSteps(report) {
       detail: (report.runtimes || []).length > 1
         ? "Your last save, played on the runtime you choose: WebAssembly now, the native runtimes once the steps they need are done"
         : "The WebAssembly build of your last save, in the browser: no native port needed",
-      buttons: ["portPlay", "portStop", "portExportMenu", ...(report.recomp_available ? ["portRecompile"] : [])],
-      logs: ["portPlayLog", "portExportLog", "portExportActions", "portExportNext", "portRecompLog"] },
+      buttons: ["portPlay", "portStop", "portExportMenu"],
+      logs: ["portPlayLog", "portExportLog", "portExportActions", "portExportNext"] },
   ];
   if (report.mode === "project") {
     const limits = report.limitations;
@@ -209,11 +209,11 @@ function renderPortSteps(report) {
   if (!list) return;
   const steps = portSteps(report), parked = $("portParked");
   for (const id of ["portDrafts", "portCompile", "portRenameCalls", "portFixCalls", "portAssets", "portExtract", "portPlay", "portStop",
-    "portExportMenu", "portRecompile", "portBehaviour", "portBehaviourStop", "portBehaviourSettings"]) {
+    "portExportMenu", "portBehaviour", "portBehaviourStop", "portBehaviourSettings"]) {
     if (parked && $(id)) parked.append($(id));  // back where they wait, then into their step
   }
   for (const id of ["portDraftLog", "portCompileLog", "portRenameLog", "portFixCallsLog", "portAssetsLog", "portExtractLog", "portPlayLog",
-    "portExportLog", "portExportActions", "portExportNext", "portRecompLog", "portBehaviourLog"]) {
+    "portExportLog", "portExportActions", "portExportNext", "portBehaviourLog"]) {
     if (parked && $(id)) parked.append(...withWork($(id)));
   }
   const shown = steps.filter((s) => s.pct != null);
@@ -316,21 +316,6 @@ async function extractAssets() {
                            "Extracted.");
   try {
     const { job } = await api("/api/asset-extract", { method: "POST", body: { slug } });
-    await followJob(job, log, null, () => S.slug === slug);
-  } catch (error) {
-    showJobError(log, error.message);
-  } finally { finish(); }
-  if (S.slug === slug) loadPortReadiness();
-}
-
-async function recompileGame() {
-  const slug = S.slug, log = $("portRecompLog");
-  log.hidden = false; log._showJobProgress = true;
-  showJobError(log, "");
-  const finish = beginWork(log, "Recompiling the game with N64Recomp", [$("portRecompile"), $("portReload")],
-                           "Recompiled.");
-  try {
-    const { job } = await api("/api/recompile", { method: "POST", body: { slug } });
     await followJob(job, log, null, () => S.slug === slug);
   } catch (error) {
     showJobError(log, error.message);
@@ -563,7 +548,6 @@ if ($("portPanel")) {
   $("portRenameCalls").onclick = fixRenamedCalls;
   $("portFixCalls").onclick = fixDisagreeingCalls;
   $("portExtract").onclick = extractAssets;
-  if ($("portRecompile")) $("portRecompile").onclick = recompileGame;
   if ($("portBehaviour")) $("portBehaviour").onclick = () => checkBehaviour();
   if ($("portBehaviourStop")) $("portBehaviourStop").onclick = stopBehaviour;
   $("portAssets").onclick = writeAssetMap;

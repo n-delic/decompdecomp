@@ -874,7 +874,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Set up as a project folder (import checkbox or Export panel; guessed `units.json`; edits to `src/<segment>/<function>.c` judged by the ROM judge on Refresh) | ✓ demo: 14 of 16 files found | ✓ demo: 1 of 18 files found (no padding between objects) | ✓ demo: 1 of 18 files found (functions padded like files) | — | — | — offered; demo not run (no PSP compiler build for Apple Silicon) | — | the project | the project | — | the project | the project |
 | The reversing emulator for agents (`watch_in_emulator`: which code writes an address, what a function is called with, on the user's ROM) | ✓ mupenRE (Linux, macOS) | — no emulator pinned yet | — no emulator pinned yet | — | — | — no emulator pinned yet | — | — no emulator pinned yet | — no emulator pinned yet | — | — no emulator pinned yet | — no ROM to run |
 | Code the game loads, found by running it (import and Reimport, consoles/n64/loaded_code.py) | ✓ when mupenRE is installed | — no emulator pinned yet | — no emulator pinned yet | — | — | — no emulator pinned yet | — | — no emulator pinned yet | — no emulator pinned yet | — | — no emulator pinned yet | — no ROM to run |
-| Static recompile (Recompile with N64Recomp, docs/N64RECOMP.md phase 0) | ✓ N64Recomp (Linux, macOS; bounded native-crash isolation, explicit stubs) | — no recompiler pinned | — no recompiler pinned | — | — | — no recompiler pinned | — | — no recompiler pinned | — no recompiler pinned | — | — no recompiler pinned | — no ROM to recompile |
+| Static recompile (N64Recomp, docs/N64RECOMP.md phase 0) | ✓ N64Recomp (Linux, macOS; bounded native-crash isolation, explicit stubs) | — no recompiler pinned | — no recompiler pinned | — | — | — no recompiler pinned | — | — no recompiler pinned | — no recompiler pinned | — | — no recompiler pinned | — no ROM to recompile |
 | Behaviour checked against the original (`compare_behaviour`, docs/N64RECOMP.md phase 1) | ✓ (recorded in mupenRE, run through N64Recomp's C and the WebAssembly port's) | — no emulator or recompiler yet | — no emulator or recompiler yet | — | — | — no emulator or recompiler yet | — | — no emulator or recompiler yet | — no emulator or recompiler yet | — | — no emulator or recompiler yet | — no ROM to run |
 | Open-candidate behavior checks (`compare_candidate_behaviour`) | ✓ (sampled emulator calls against a disposable candidate port) | — no recorded-call harness | — no recorded-call harness | — | — | — no recorded-call harness | — | — no recorded-call harness | — no recorded-call harness | — no recorded-call harness | — no ROM to run |
 | Port readiness report (docs/PORTING.md, phase 0) | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available |
@@ -1160,10 +1160,11 @@ behaviour** runs it over every matched function the game reaches in one run of t
 like the original", the counts and the functions that differ), saved per function and redone only where the C
 changed. Left: calls that wait on another thread, which time out today, and calls past the first.
 
-### The game as C before the decomp is done: Recompile with N64Recomp
+### The game as C before the decomp is done: N64Recomp
 
-Porting's **Recompile with N64Recomp** turns a ROM project's every function into C by N64Recomp (MIT, pinned with
-its five libraries and built from source like Torch): from the split, and the user's own ROM, into build/recomp
+Supported port builds and behaviour checks run N64Recomp on demand to translate a ROM project's functions into C
+(MIT, pinned with its five libraries and built from source like Torch). It reads the split and the user's own ROM
+and writes to build/recomp
 (`consoles/n64/recomp.py` through `Console.recompiler`, `app/recompile.py`). It finds the code the split doesn't list
 by the calls into it, sets aside as stubs what N64Recomp can't translate, with its reason, and checks the C with the
 computer's compiler. Port readiness shows the last run. On a racing game: 2,125 functions and 12 more, 14 stubs, the

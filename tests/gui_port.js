@@ -156,8 +156,8 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    await t.run('loadPortReadiness()');await Promise.resolve();await Promise.resolve();
    assert.deepEqual(followed,['b9'],'a check running elsewhere is followed, not started again');
    assert.ok(!t.calls.includes('/api/behaviour-check'));}
-  {const t=setup();t.c.S.tab='porting';const followed=[];t.c.followJob=async(job)=>{followed.push(job);};
-   t.c.reply=async url=>url==='/api/recompile'?{job:'rc1'}:({...report,recomp_available:true,recomp:{functions:2125,found:12,
+  {const t=setup();t.c.S.tab='porting';
+   t.c.reply=async()=>({...report,recomp_available:true,recomp:{functions:2125,found:12,
      stubs:14,runtime:4,errors:0,files:42,at:1,folder:'/p/build/recomp',stub_examples:['func_8008AE70 (cop0)'],
      found_examples:['func_80000400 (the ROM\'s entry point)']}});
    await t.run('loadPortReadiness()');
@@ -165,13 +165,11 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    assert.ok(rows.some(r=>r.startsWith('Recompiled (N64Recomp): 2,125 of the split\'s functions and 12 it doesn\'t list, as C in 42 files: 14 set aside as stubs, 4 for the runtime to provide, the C compiles')),rows.join('\n'));
    assert.ok(rows.some(r=>r.includes('set aside')&&r.includes('func_8008AE70 (cop0), ...')));
    const play=t.c.$('portSteps').children[9].children[1];
-   assert.ok(play.children.some(c=>c.children&&c.children.includes(t.c.$('portRecompile'))),'Recompile sits in the Play step');
-   t.calls.length=0;await t.run('recompileGame()');
-   assert.deepEqual(t.calls,['/api/recompile','/api/port-readiness?slug=a']);assert.deepEqual(followed,['rc1']);
-   assert.equal(t.c.$('portRecompile').disabled,false,'the button comes back');}
-  {const t=setup();t.c.S.tab='porting';t.c.reply=async()=>report;await t.run('loadPortReadiness()');
-   const play=t.c.$('portSteps').children[9].children[1];
-   assert.ok(!play.children.some(c=>c.children&&c.children.includes(t.c.$('portRecompile'))),'no recompiler: no button');}
+   const buttons=play.children.flatMap(c=>c.children||[]);
+   assert.ok(buttons.includes(t.c.$('portExportMenu')),'Export remains in the Play step');
+   assert.ok(!buttons.includes(t.c.$('portRecompile')),'no manual recompile action even when supported');
+   const html=fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/index.html'),'utf8');
+   assert.doesNotMatch(html,/id="portRecompile"/,'the manual button is removed from the page');}
   {const t=setup();t.c.S.tab='porting';const followed=[];t.c.followJob=async(job)=>{followed.push(job);};
    t.c.reply=async url=>url==='/api/rename-calls'?{job:'r1'}:report;
    await t.run('fixRenamedCalls()');

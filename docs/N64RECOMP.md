@@ -1,6 +1,6 @@
 # N64Recomp in decompdecomp: a port before the decomp is done, and a reference for every function
 
-Status: phases 0 and 1 are built (Porting → Recompile with N64Recomp, and the `compare_behaviour` tool; `consoles/n64/recomp.py`, `app/recompile.py`, `app/behaviour.py`), and phase 2 for the native build (Play and the app export: `port/wasm/recomp.py`); the rest is a plan. ROADMAP.md, "N64Recomp: a playable game from day one", tracks it.
+Status: phases 0 and 1 are built (on-demand recompilation and the `compare_behaviour` tool; `consoles/n64/recomp.py`, `app/recompile.py`, `app/behaviour.py`), and phase 2 for the native build (Play and the app export: `port/wasm/recomp.py`); the rest is a plan. ROADMAP.md, "N64Recomp: a playable game from day one", tracks it.
 
 ## Why
 
