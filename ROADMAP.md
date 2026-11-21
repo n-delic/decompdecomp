@@ -744,6 +744,10 @@ on Apple Silicon; physical Intel Mac and retail-game checks remain planned.
   pre-relocation bytes exactly. Exports compile matched C into raw or Yay0-compressed USO text,
   keeping the original relocation and data sections. Rebuilding private overlay data from C,
   translating public symbol names to USO aliases and supporting other overlay formats remain planned.
+- Native UV modules now import into separate module-relative text banks. The loader's entry,
+  local calls and relocated text pointers anchor function recovery. Exact pre-relocation bytes
+  and section bindings gate rebuilding matched overlay text. Donor review for UV modules,
+  module data rebuilds and functions without closed boundaries remain planned.
 
 ## What works where
 

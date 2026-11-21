@@ -1,4 +1,4 @@
-"""Judge USO text before runtime relocation, checking both bytes and symbol bindings."""
+"""Judge cartridge overlay text before runtime relocation, checking bytes and symbol bindings."""
 from dataclasses import dataclass
 from io import BytesIO
 
@@ -37,7 +37,7 @@ def link(obj, name, target, info):
         obj = unmangle(obj, lambda symbol: symbol == name)
         elf = ELFFile(BytesIO(obj))
         if elf.little_endian or elf['e_machine'] != 'EM_MIPS':
-            return LinkResult(None, False, ['USO text requires a big-endian MIPS object.'])
+            return LinkResult(None, False, ['Overlay text requires a big-endian MIPS object.'])
         entry = _function_symbols(elf).get(name)
         if not entry:
             return LinkResult(None, False, [f'The object has no function named {name}.'])
@@ -45,10 +45,10 @@ def link(obj, name, target, info):
         code = elf.get_section(shndx).data()[start:start + size]
         raw = raw_relocs(elf, shndx, start, size, code)
     except (ELFError, ValueError, TypeError, IndexError):
-        return LinkResult(None, False, ['The compiler object could not be read as USO text.'])
+        return LinkResult(None, False, ['The compiler object could not be read as overlay text.'])
 
     candidate = []
-    problems = (['This USO function needs validated relocation metadata. Reimport the ROM and try again.']
+    problems = (['This overlay function needs validated relocation metadata. Reimport the ROM and try again.']
                 if info['relocs'] is None else [])
     seen = set()
     for item in raw:
@@ -56,14 +56,14 @@ def link(obj, name, target, info):
         symbol = item['symtab'].get_symbol(item['symidx'])
         binding = symbol.name
         candidate.append(Reloc(at, kind, binding, item['value']))
-        # USO stores relocation addends in its text. Retain them and require an
+        # The cartridge stores relocation addends in its text. Retain them and require an
         # undefined ELF reference to the specific loader symbol, with no RELA override.
         if item['rela'] or symbol['st_shndx'] != 'SHN_UNDEF' or at in seen or expected.get(at) != (kind, binding):
             wanted = expected[at][1] if at in expected else 'no relocation'
-            problems.append(f'USO relocation at +0x{at:X} requires {wanted} with the original relocation kind.')
+            problems.append(f'Overlay relocation at +0x{at:X} requires {wanted} with the original relocation kind.')
         seen.add(at)
     for at in expected.keys() - seen:
-        problems.append(f'USO relocation at +0x{at:X} requires {expected[at][1]}.')
+        problems.append(f'Overlay relocation at +0x{at:X} requires {expected[at][1]}.')
     exact_bytes = code == target
     return LinkResult(FunctionObj(name, 'mips', True, code, candidate), exact_bytes and not problems,
                       problems, instructions_exact=exact_bytes, linked_code=code)

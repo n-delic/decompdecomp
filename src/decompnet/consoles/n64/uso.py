@@ -176,20 +176,21 @@ def rebuild(image, entries):
     for name, info, obj in entries:
         groups[info['section']].append((name, info, obj))
     from .uso_match import link
+    from .uv_modules import text_regions
 
-    regions = {region.offset: region for region in read(image)}
+    regions = {region.offset: region for region in [*read(image), *text_regions(image)]}
     cartridge = bytearray(image)
     for offset, patches in groups.items():
         region = regions.get(offset)
         if region is None:
-            raise ValueError(f'USO text section at 0x{offset:X} is missing')
+            raise ValueError(f'Overlay text section at 0x{offset:X} is missing')
         text = bytearray(region.data)
         end = 0
         for name, info, obj in sorted(patches, key=lambda patch: patch[1]['start']):
             start, size = info['start'], info['size']
             if (start < end or start + size > len(text) or size <= 0
                     or function_relocations(region, start, size) != info['relocs']):
-                raise ValueError(f'USO function placement at 0x{offset:X}+0x{start:X} has changed')
+                raise ValueError(f'Overlay function placement at 0x{offset:X}+0x{start:X} has changed')
             end = start + size
             verified = link(obj, name, region.data[start:end], info)
             if not verified.exact:
@@ -228,9 +229,12 @@ def add_to_split(result: "SplitResult", workdir: "Path", original: bytes, log) -
     """Recover closed bodies anchored by native exports and verified code references."""
     from ...rom.split import Segment, function_from_bytes
     from .loader_code import complete
+    from .uv_modules import bodies as uv_bodies
+    from .uv_modules import text_regions
 
     check = getattr(log, 'check_cancel', lambda: None)
-    regions = read(original)
+    regions = [('uso', region) for region in read(original)]
+    regions.extend(('uv', region) for region in text_regions(original, check=check))
     if not regions:
         return
     path = workdir / result.image
@@ -243,15 +247,15 @@ def add_to_split(result: "SplitResult", workdir: "Path", original: bytes, log) -
         pass
 
     quiet.check_cancel = check
-    count = 0
-    for region in regions:
+    counts = {}
+    for kind, region in regions:
         check()
         if not region.entries:
             continue
         # A raw module may have some entries recovered already. Keep their original
         # identities and report only new non-overlapping spans in this bank.
-        bodies = complete(region.data, [], [(0, len(region.data), 0)], entries=region.entries,
-                          log=quiet)
+        bodies = (uv_bodies(region, quiet) if kind == 'uv' else
+                  complete(region.data, [], [(0, len(region.data), 0)], entries=region.entries, log=quiet))
         if not region.compressed:
             bodies = [(a, b, v) for a, b, v in bodies
                       if not any(lo < region.offset + b and region.offset + a < hi for lo, hi in covered)]
@@ -262,19 +266,22 @@ def add_to_split(result: "SplitResult", workdir: "Path", original: bytes, log) -
         image.extend(region.data)
         result.analysis_banks[str(region.offset)] = start
         # Use the donor review's bank identity so reimport can pair previously recovered rows.
-        name = f'donor_uso_{region.offset:X}'
+        name = f'donor_{kind}_{region.offset:X}'
         result.segments.append(Segment(name, start, len(image), 0))
         for a, b, v in bodies:
-            entry = f'func_{v:08X}_uso_{region.offset:X}'
+            entry = f'func_{v:08X}_{kind}_{region.offset:X}'
             fn = function_from_bytes(entry, region.data[a:b], start + a, v, name)
             fn.uso = {'section': region.offset, 'start': a, 'size': b - a, 'relocs': function_relocations(region, a, b - a)}
             result.functions.append(fn)
-        count += len(bodies)
-    if count:
+        functions, banks = counts.get(kind, (0, 0))
+        counts[kind] = functions+len(bodies), banks+1
+    if counts:
         result.analysis_base = result.image
-        result.image = 'uso-analysis.z64'
+        result.image = 'overlay-analysis.z64' if 'uv' in counts else 'uso-analysis.z64'
         (workdir / result.image).write_bytes(image)
-        result.coverage_notes.append(
-            f'Recovered {count} closed functions in {len(result.analysis_banks)} USO text banks using the ROM’s '
-            'own symbols and code references. Bank addresses are relative. Export preserves their cartridge bytes.')
-        log(f'Recovered {count} native USO functions in {len(result.analysis_banks)} banks.')
+        for kind, (count, banks) in counts.items():
+            format_name = kind.upper()
+            result.coverage_notes.append(
+                f'Recovered {count} closed functions in {banks} {format_name} text banks using the ROM’s '
+                'own entry points and code references. Bank addresses are relative. Export preserves their cartridge bytes.')
+            log(f'Recovered {count} native {format_name} functions in {banks} banks.')
