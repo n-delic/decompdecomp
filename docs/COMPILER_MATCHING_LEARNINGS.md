@@ -11235,3 +11235,33 @@ the app; evidence level: exact match.
 - Permuter: `guarded_offset_index` (decomp-repair 0.5.238): indexed,
   counter-guarded, and shared-counter children; the shared one is 180 to
   20 on the saved best, then the frame trim finishes it.
+
+### Restore entry save order and stage a halfword mask
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, two isolated N64
+drafts reached exact linked matches. Restoring a forwarded first
+argument alone reduced the first score from 35 to 30. Reordering
+the two entry-parameter copies to match the target saves brought
+it to 0. For the other draft, staging a halfword mask before
+merging in the remaining bits reproduced the OR operand order
+and brought the score from 5 to 0. Swapping the written operands
+without staging preserved the original score of 5.
+
+### Preserve KMC's measured address and call preparation
+
+Five isolated N64 examples used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.
+
+- With `-ffast-math`, staging the squared length, square root and
+  divisor recovered the float register order and retained the two
+  source reloads. The linked score fell from 75 to zero across
+  116 bytes.
+- With `-g3`, taking the flag snapshot before publishing the pointer
+  reduced the score from 70 to 10. Restoring the empty loop's
+  initializer and final increment matched all 84 bytes.
+- Also with `-g3`, staging a byte pointer and a 24-byte record
+  displacement matched all 44 bytes of a word comparison (score 70).
+- Separating a call's biased offset from its loaded base with a
+  static inline sum matched all 80 bytes (score 90). The helper was
+  fully inlined.
+- Forwarding the untouched third entry argument through a record
+  update matched all 88 bytes (score 70).
