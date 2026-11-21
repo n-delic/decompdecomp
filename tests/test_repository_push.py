@@ -307,10 +307,18 @@ def test_pull_preserves_dirty_work_and_reports_divergence(progress, tmp_path):
     assert (root/'staged.txt').read_text() == 'staged edits'
 
 
-def test_pull_merge_conflict_leaves_checkout_untouched(progress, tmp_path):
+@pytest.mark.parametrize('nested_save', [False, True])
+def test_pull_merge_conflict_leaves_checkout_untouched(progress, tmp_path, nested_save):
     from decompnet.app import repository_pull
 
     net, root, remote = progress
+    if nested_save:
+        save = root/'progress'
+        save.mkdir()
+        for path in root.iterdir():
+            if path not in (save, root/'.git'):
+                path.rename(save/path.name)
+        net._update_cfg('game', lambda cfg: cfg.update(progress_folder=str(save)))
     git(root, 'add', '-A')
     git(root, 'commit', '-qm', 'save fixture progress')
     git(root, 'push', 'origin', 'HEAD')
@@ -326,9 +334,12 @@ def test_pull_merge_conflict_leaves_checkout_untouched(progress, tmp_path):
     before = git(root, 'status', '--porcelain')
 
     review = repository_pull.run(net, 'game', str(root), print)['pull_review']
-    with pytest.raises(NetworkError, match='changes need manual review'):
+    with pytest.raises(NetworkError, match='changes need manual review') as error:
         repository_pull.run(net, 'game', str(root), print, review=review['token'])
 
+    reason = 'outside the linked progress folder' if nested_save else 'no saved verdict'
+    assert reason in str(error.value)
+    assert '"new.txt"' in str(error.value)
     assert git(root, 'rev-parse', 'HEAD') == local
     assert git(root, 'status', '--porcelain') == before
     assert (root/'new.txt').read_text() == 'local version'
@@ -390,7 +401,7 @@ def test_pull_keeps_matches_and_lower_scores_in_diverged_progress(progress, tmp_
     git(other, 'push', 'origin', 'HEAD')
     review = repository_pull.run(net, 'game', str(root), print)['pull_review']
     if different_headers:
-        with pytest.raises(NetworkError, match='changes need manual review'):
+        with pytest.raises(NetworkError, match='changed saved headers, symbols or target layout'):
             repository_pull.run(net, 'game', str(root), print, review=review['token'])
         assert git(root, 'rev-parse', 'HEAD') == local
         assert git(root, 'status', '--porcelain') == ''

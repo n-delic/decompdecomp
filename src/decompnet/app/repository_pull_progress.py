@@ -14,6 +14,16 @@ _ABSENT = object()
 class NeedsReview(Exception):
     """A change requires a decision that the saved verdicts cannot make."""
 
+    def __init__(self, reason='The saved progress records could not be combined safely.', *, paths=()):
+        paths = sorted(paths, key=lambda path: (path.count('/'), path))
+        details = [reason]
+        if paths:
+            details.append(f'Conflicting files ({len(paths)}):')
+            details.extend('  ' + json.dumps(path) for path in paths[:8])
+            if len(paths) > 8:
+                details.append(f'  … and {len(paths) - 8} more')
+        super().__init__('\n'.join(details))
+
 
 class Incomparable(NeedsReview):
     """The tips contain competing versions whose verdicts cannot be compared."""
@@ -79,14 +89,14 @@ def _profile(manifest, name, info):
 
 def _winner(local, remote, manifests, layouts, name):
     if local is _ABSENT or remote is _ABSENT:
-        raise Incomparable
+        raise Incomparable(f'One branch removed or renamed {name} while the other changed its saved code.')
     left, right = local[0], remote[0]
     if (left.get('vram') != right.get('vram') or any(layouts[0].get(name) != side.get(name) for side in layouts[1:])
             or name not in layouts[0] or layouts[0][name].get('status') == 'asm'):
-        raise Incomparable
+        raise Incomparable(f'The saved function layout for {name} changed, so its verdicts cannot be compared.')
     if all('matched_by' not in info for info in (left, right)):
         if _profile(manifests[0], name, left) != _profile(manifests[1], name, right):
-            raise Incomparable
+            raise Incomparable(f'The drafts for {name} were scored with different compiler settings.')
     try:
         return 1 if _rank(left) <= _rank(right) else 2
     except NeedsReview:
@@ -202,15 +212,17 @@ def _plan(root, revisions, prefix, conflicts, check):
                    for side in entries]
         if (any(any(side.get(key) != base.get(key) for key in context) for side in manifests[1:])
                 or any(side != headers[0] for side in headers[1:])):
-            raise Incomparable
+            raise Incomparable('The branches changed saved headers, symbols or target layout. '
+                               'Competing candidates need to be judged against the merged project.')
     try:
         blobs = _merged_metadata(root, prefix, entries, conflicts, manifests, functions, winners)
     except (NeedsReview, ValueError, KeyError, TypeError, AttributeError):
         if winners:
             raise Incomparable from None
         raise
-    if conflicts - updates.keys() - blobs.keys():
-        raise NeedsReview
+    remaining = conflicts - updates.keys() - blobs.keys()
+    if remaining:
+        raise NeedsReview('Some conflicting files have no saved verdict the app can use.', paths=remaining)
     return updates, blobs, len(winners)
 
 
@@ -252,12 +264,15 @@ def prepare(net, slug, root, head, target, preview, check):
             raise NeedsReview
     if not repository_progress.linked_checkout(net, slug, root):
         if conflicts:
-            raise NeedsReview
+            raise NeedsReview('This checkout has no linked portable save to resolve conflicts from.', paths=conflicts)
         return None
     relative = saves.default_folder(net, slug).resolve().relative_to(root).as_posix()
     prefix = '' if relative == '.' else relative + '/'
-    if conflicts and any(not path.startswith(prefix) for path in conflicts):
-        raise NeedsReview
+    outside = {path for path in conflicts if not path.startswith(prefix)}
+    if outside:
+        raise NeedsReview('Both histories changed files outside the linked progress folder. Saved matches and '
+                          'draft scores cannot resolve changes to the repository structure or build.',
+                          paths=outside)
     bases = git(root, 'merge-base', '--all', head, target).splitlines()
     if len(bases) != 1:
         if conflicts:
@@ -267,9 +282,13 @@ def prepare(net, slug, root, head, target, preview, check):
         updates, blobs, count = _plan(root, (bases[0], head, target), prefix, conflicts, check)
     except Incomparable:
         raise
-    except (NeedsReview, ValueError, KeyError, TypeError, AttributeError):
+    except NeedsReview:
         if conflicts:
-            raise NeedsReview from None
+            raise
+        return None
+    except (ValueError, KeyError, TypeError, AttributeError):
+        if conflicts:
+            raise NeedsReview(paths=conflicts) from None
         return None
     if not conflicts and not updates:
         return None
