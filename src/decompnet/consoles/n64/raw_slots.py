@@ -16,6 +16,7 @@ class Slot:
     start: int
     end: int
     vram: int
+    data_only: bool = False
 
 
 def _directory(image, at, floor):

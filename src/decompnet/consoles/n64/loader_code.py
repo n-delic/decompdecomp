@@ -77,7 +77,8 @@ def complete(image, segments, banks, taken=(), log=print, *, table_ranges=(), wh
             lo,_,v=owners[0];at=lo+target-v;i=bisect_right(starts,at)-1
             if i<0 or not gaps[i][0]<=at<gaps[i][1]:continue
             if at not in bodies:
-                size=leaf_extent(image,at,gaps[i][1],target,table_ranges=table_ranges)
+                size=(called_extent(image,at,gaps[i][1],target,table_ranges=table_ranges)
+                      or leaf_extent(image,at,gaps[i][1],target,table_ranges=table_ranges))
                 if size:bodies[at]=(at,at+size,target)
         # Grow anchored runs in either direction. Padding is allowed only when
         # it is zero and no direct call names an interior instruction.

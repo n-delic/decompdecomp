@@ -1,5 +1,7 @@
 import struct
 
+import yaml
+
 from decompnet.consoles.n64 import shared_dma
 from decompnet.consoles.n64.raw_slots import Slot
 
@@ -48,3 +50,39 @@ def test_inline_cart_copies_in_recovered_text_establish_distinct_shared_banks():
     assert shared_dma.read(image,resident,inferred) == expected
     struct.pack_into('>I',image,0x800+3*36+28,0)
     assert shared_dma.read(image,resident,inferred) == []
+
+
+def test_start_end_rows_construct_a_stack_bounded_shared_copy(tmp_path):
+    image = bytearray(0x1000)
+    # The loader computes table[index], reads both bounds and passes their
+    # difference in the fifth argument. The fourth is a fixed RAM slot.
+    code = (
+        0, 0, 0x3c148000, 0x26940300, 0x000658c0, 0, 0, 0,
+        0x01744821, 0x8d260000, 0, 0, 0x10c0000c, 0,
+        0x8d2c0004, 0x3c078031, 0x24e72000, 0x01866823,
+        0xafad0010, 0xafa00014, 0, 0x0c010000, 0,
+    )
+    struct.pack_into(f'>{len(code)}I', image, 0, *code)
+    for index in range(4):
+        start = 0x500 + index * 0x80
+        struct.pack_into('>2I', image, 0x300 + index * 8, start, start + 0x80)
+        if index != 2:
+            struct.pack_into('>4I', image, start, 0x27bdffe8, 0, 0x03e00008, 0x27bd0018)
+    ranges = [(0, 0x200, 0x80000000)]
+    records = shared_dma.read(image, ranges, [])
+    assert [(slot.start, slot.data_only) for slot in records] == [
+        (0x500, False), (0x580, False), (0x600, True), (0x680, False),
+    ]
+    config = tmp_path / 'layout.yaml'
+    config.write_text(yaml.safe_dump({'segments': [
+        dict(name='main', type='code', start=0, vram=0x80000000, subsegments=[[0, 'c', 'main']]),
+        dict(type='bin', start=0x200), [len(image)],
+    ]}))
+    inferred = [(0x600, 0x604, 0x80400000)]
+    assert shared_dma.add(config, image, ranges, inferred, records, lambda _: None)
+    segments = yaml.safe_load(config.read_text())['segments']
+    assert [row['start'] for row in segments if isinstance(row, dict) and row['type'] == 'code'] == [
+        0, 0x500, 0x580, 0x680,
+    ]
+    struct.pack_into('>I', image, 18 * 4, 0xafad0014)
+    assert not shared_dma.read(image, ranges, [])

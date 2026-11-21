@@ -108,17 +108,78 @@ def _indexed(image, words, lo, base, calls, mappings, floor):
     return result
 
 
+def _stack_indexed(image, words, delta, floor):
+    """Find start/end rows copied to a constant RAM slot with a stack-passed size."""
+    from ...arch.mips_code_recovery import _lead, leaf_extent
+
+    records = set()
+    for index in range(8, len(words) - 12):
+        first = words[index]
+        if first >> 16 & 0xfc1f != 0x8c06 or first & 0xffff or words[index + 3] >> 16 != 0x10c0:
+            continue
+        last, high, low, subtract, store, mode, _, call = words[index + 5:index + 13]
+        row = first >> 21 & 31
+        end_reg, length_reg = last >> 16 & 31, subtract >> 11 & 31
+        if (last != 0x8c000004 | row << 21 | end_reg << 16 or high >> 16 != 0x3c07 or low >> 16 != 0x24e7
+                or subtract != end_reg << 21 | 6 << 16 | length_reg << 11 | 0x23
+                or store != 0xafa00010 | length_reg << 16 or mode != 0xafa00014 or call >> 26 != 3):
+            continue
+        add = words[index - 1]
+        if add & 0xfc00ffff != row << 11 | 0x21:
+            continue
+        operands = {add >> 21 & 31, add >> 16 & 31}
+        for table_high, table_low in pairwise(words[index - 8:index - 1]):
+            table_reg = table_high >> 16 & 31
+            if (table_high >> 26 != 15 or table_reg not in operands
+                    or table_low >> 16 != 0x2400 | table_reg << 5 | table_reg):
+                continue
+            scaled = next(iter(operands - {table_reg}), 0)
+            if not scaled or not any(word & 0xffe0ffff == scaled << 11 | 0xc0
+                                     for word in words[index - 8:index - 1]):
+                continue
+            base = _address(high, low)
+            at = _address(table_high, table_low) - delta
+            if not 0 <= at <= len(image) - 16 or at % 4:
+                continue
+            spans = []
+            for cursor in range(at, min(at + 64 * 8, len(image) - 7), 8):
+                start, end = struct.unpack_from('>II', image, cursor)
+                if not start and not end:
+                    continue
+                if (not floor <= start < end <= len(image) or (start | end | base) % 16
+                        or not 0x80000400 <= base < base + end - start <= 0x80800000
+                        or spans and spans[-1].end != start):
+                    break
+                spans.append(Slot(start, end, base))
+            code = [slot for slot in spans if _valid(image, slot, floor)
+                    or _lead(image, slot.start, slot.end, 'big', 'vr4300') is not None
+                    or leaf_extent(image, slot.start, slot.end, slot.vram)]
+            if len(code) >= 3 and len(code) * 4 >= len(spans) * 3:
+                records.update(code)
+                # A zero header without an aligned return cannot substantiate
+                # an entry at the start of this declared DMA range.
+                for slot in set(spans).difference(code):
+                    if (not any(image[slot.start:slot.start+16])
+                            and not any(word == JR_RA for word, in
+                                        struct.iter_unpack('>I', image[slot.start:slot.end]))):
+                        records.add(Slot(slot.start, slot.end, slot.vram, data_only=True))
+    return records
+
+
 def read(image, resident, inferred, *, include_inline=True):
     floor = max(end for _, end, _ in resident)
     groups = defaultdict(set)
-    for lo, hi, _ in resident:
+    indexed = set()
+    for lo, hi, base in resident:
         words = [word for word, in struct.iter_unpack('>I', image[lo:hi])]
+        indexed.update(_stack_indexed(image, words, base-lo, floor))
         for i in range(len(words)-7):
             if match := _constants(words[i:i+8]):
                 call, slot = match
                 if _valid(image, slot, floor):
                     groups[call, slot.vram].add(slot)
     records = _inline_slots(image, resident+inferred, floor) if include_inline else set()
+    records.update(indexed)
     calls = set()
     for (call, _), slots in groups.items():
         if len(slots) >= 3 and any(a.end == b.start for a, b in pairwise(sorted(slots, key=lambda s: s.start))):
@@ -149,5 +210,8 @@ def add(config, image, resident, inferred, records, log):
             start = max(start, bank.end)
         if start < hi:
             outside.append((start, hi, base+start-lo))
-    recovered = recover_registered(image, records, resident+outside, log)
-    return add_slots(config, image, sorted(outside+recovered), records, log, preserve_gaps=True)
+    # Inferred ranges can contain calls to other members of the same RAM
+    # slot. They cannot establish private interior entries in each member.
+    code_records = [record for record in records if not record.data_only]
+    recovered = recover_registered(image, code_records, resident, log)
+    return add_slots(config, image, sorted(outside+recovered), code_records, log, preserve_gaps=True)
