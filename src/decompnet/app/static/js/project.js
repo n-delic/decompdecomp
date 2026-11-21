@@ -1885,6 +1885,8 @@ function renderCodeCoverage(ov) {
   review.onclick=()=>{ $("codeAuditPanel").open=true; $("codeAuditPanel").scrollIntoView({behavior:"smooth",block:"start"}); };
   const missed=$("missedFunctionsBtn");missed.hidden=!ov.missed_functions;
   missed.onclick=()=>addMissedFunctions();
+  $("donorCodeBtn").hidden=!ov.donor_layout;
+  $("donorCodeBtn").onclick=openDonorCode;
   const key=ov.slug+":"+c.audit_revision;
   if (c.completion_audit_required && !coverageAuditRunning && !completionAuditAttempts.has(key)) {
     completionAuditAttempts.add(key);
@@ -1908,6 +1910,91 @@ async function runCoverageAudit() {
     if (S.slug!==slug) return;
     S.ov=ov;renderStats(ov);renderNext(ov);
   } catch(error) {if(S.slug===slug) {status.textContent="Scan failed: "+error.message+". You can try again.";showJobError(log,error.message);}} finally {coverageAuditRunning=false;finish();}
+}
+
+async function openDonorCode() {
+  const slug=S.slug;
+  const body=dialog("Review code from imported decomp", `<div data-donor-code>
+    <p class="small muted">Compare function bytes from a decomp that uses your exact ROM. Review the results before adding open functions.</p>
+    <label class="field">Imported decomp <select data-donor disabled></select></label>
+    <div class="row"><button class="primary" data-preview disabled>Preview</button>
+    <button class="primary" data-apply hidden>Add verified functions</button>
+    <button class="ghost" data-stop hidden>Stop</button></div>
+    <div data-results aria-live="polite"></div><pre class="joblog" data-log hidden></pre>
+  </div>`, "donor-code");
+  const pane=body.querySelector("[data-donor-code]");
+  const active=()=>S.slug===slug && pane.isConnected && S.dialogKind==="donor-code";
+  const select=pane.querySelector("[data-donor]"), preview=pane.querySelector("[data-preview]");
+  const add=pane.querySelector("[data-apply]"), stop=pane.querySelector("[data-stop]");
+  const results=pane.querySelector("[data-results]"), log=pane.querySelector("[data-log]");
+  let report=null;
+  select.onchange=()=>{report=null; add.hidden=true; results.textContent="";};
+  function show(data) {
+    report=data;
+    const banks=new Map(data.overlays.map(row=>[row.id,row]));
+    const group=(title, rows)=>rows.length ? `<details><summary>${esc(title)} (${rows.length})</summary>
+      <ul>${rows.map(row=>`<li><code>${esc(row.name)}</code> · ${esc(banks.get(row.region)?.name || "Raw ROM")}
+      · ${hex8(row.vram)} · ${row.size} bytes${row.overlaps.length ? " · overlaps " + esc(row.overlaps.join(", ")) : ""}</li>`).join("")}</ul></details>` : "";
+    results.innerHTML=`<p>${data.counts.raw} new raw functions · ${data.counts.overlay} new overlay functions · ${data.counts.review} boundary conflicts</p>
+      ${data.counts.overlay ? '<p class="small muted"><label><input type="checkbox" data-include-overlays> Add overlay functions too</label><br>Overlay banks use module-relative addresses. Export keeps the cartridge’s original bytes for these banks.</p>' : ''}
+      ${data.overlays.length ? `<details><summary>Verified overlay sections (${data.overlays.length})</summary><ul>${data.overlays.map(bank=>`<li>${esc(bank.name)} · ${bank.size} bytes${bank.compressed?' · Yay0':''}</li>`).join('')}</ul></details>` : ''}
+      ${group("New raw functions",data.functions.filter(row=>row.state==="new" && row.region==="raw"))}
+      ${group("New overlay functions",data.functions.filter(row=>row.state==="new" && row.region!=="raw"))}
+      ${group("Boundary conflicts for review",data.functions.filter(row=>row.state==="review"))}`;
+    add.hidden=data.counts.raw+data.counts.overlay===0;
+    add.disabled=!data.counts.raw;
+    const options=results.querySelector("[data-include-overlays]");
+    if(options) options.onchange=()=>{add.disabled=!options.checked && !data.counts.raw;};
+  }
+  async function run(action, existing=null) {
+    const finish=beginWork(log,action==="apply" ? "Adding verified functions" : "Verifying donor bytes",[preview,select,add]);
+    try {
+      const request=existing || await api("/api/donor-code",{method:"POST",body:{slug,action,
+        donor:action==="apply"?report?.donor:select.value,token:report?.token,
+        include_overlays:results.querySelector("[data-include-overlays]")?.checked===true}});
+      if (!active()) return;
+      const id=request.job || request.id;
+      stop.hidden=false;
+      stop.onclick=async()=>{
+        stop.disabled=true;
+        try {await api("/api/job/cancel",{method:"POST",body:{id}});}
+        catch(error){showJobError(log,error.message);stop.disabled=false;}
+      };
+      const result=await followJob(id,log,null,active);
+      if (!active() || !result) return;
+      if (request.kind==="donor-code-apply") {
+        report=null;
+        add.hidden=true;
+        results.textContent=`Added ${result.added} open functions.`;
+        await refreshMap(true);
+        if (active()) {
+          const ov=await api("/api/project?slug="+encodeURIComponent(slug));
+          if(active()){S.ov=ov;renderStats(ov);renderNext(ov);}
+        }
+      } else show(result);
+    } catch(error) {if(active())showJobError(log,error.message);}
+    finally {stop.hidden=true;stop.disabled=false;finish();
+      if(report) add.disabled=!report.counts.raw && !results.querySelector("[data-include-overlays]")?.checked;}
+  }
+  preview.onclick=()=>run("preview");
+  add.onclick=()=>run("apply");
+  const finish=beginWork(log,"Finding imports of this ROM");
+  try {
+    let state=await api("/api/donor-code?slug="+encodeURIComponent(slug));
+    if (!active()) return;
+    if (state.job) {
+      const existing=state.job;
+      finish();
+      await run(existing.kind==="donor-code-apply" ? "apply" : "preview",existing);
+      if (!active()) return;
+      state=await api("/api/donor-code?slug="+encodeURIComponent(slug));
+    }
+    if (!active()) return;
+    select.replaceChildren(...(state.donors || []).map(row=>new Option(row.name,row.slug)));
+    if (report) select.value=report.donor;
+    select.disabled=preview.disabled=!select.options.length;
+    if (!select.options.length && !report) results.textContent="Import a public decomp with the same local base ROM first.";
+  } catch(error){if(active())showJobError(log,error.message);} finally {finish();}
 }
 
 /* The import's search for functions the split left as data, run on the project as it is (no reimport). */

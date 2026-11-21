@@ -32,6 +32,11 @@ whole translation unit, the project saves that source snapshot for rechecks. A r
 the unit and links and verifies the selected entry every time it builds. This also uses generated C left by
 the donor build when available. Donor-specific object rewriting is outside this source replay.
 
+For an imported decomp using the same base ROM, open **Code coverage review → Review code from imported
+decomp**. Preview compares donor object functions with complete original byte spans in mapped ROM and supported
+overlay text. You can add verified non-overlapping candidates as open functions. The report lists overlaps for
+boundary review. Enable overlay additions explicitly. The export keeps those banks' original cartridge bytes.
+
 The function page and `find_similar(function)` also show near matches from other games. These are leads
 for writing C, not matches: similar instructions may come from unrelated functions. A name from another
 game is a suggestion until its purpose is checked here.
