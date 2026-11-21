@@ -68,6 +68,28 @@ in `pyproject.toml`, `uv lock`). What runs candidates stays in `src/decompnet/ap
 - Game data (ROMs, extracted code) is read only and never copied into the repo or a PR.
 - Use the scratchpad for experiments, a worktree + branch + PR for repo changes (AGENTS.md workflow).
 
+## 0. A run in progress is never a reason to wait
+
+Deep Permuter jobs, `scratch_run.py` and any other long search run in the background (`run_in_background`, or
+`judge.py permute` which returns a job id). Starting one is the *beginning* of a stretch of work, not the end of a
+turn. While it runs, in this order:
+
+1. **Do the other half of the goal.** If the run is the proof for a library change, the next thing is the part that
+   does not depend on it: the evidence entry for COMPILER_MATCHING_LEARNINGS.md, the PR text, the next rewrite's test.
+2. **Investigate the mismatch yourself, in a different direction from the run.** The search explores random rewrites;
+   you read. Dump the compiler's passes (step 3b), decode the target's block layout instruction by instruction, or
+   try hand shapes. Never repeat what the search is already doing (its log names the families it tries).
+3. **Mine the run as it goes.** `judge.py job ID` and the function's saved best show each verified improvement as it
+   lands: read the new best's source and diff now, since a step the search found (even at a score still far from 0)
+   is a lead for your own investigation and for the rewrite you will write. Keep a run's home (`--keep`) so its source
+   can be read.
+4. **Check on it by looking, not by blocking.** No `Monitor`/`sleep` loop as the only activity. A wait is only
+   acceptable when every item above is done and you say so in one line.
+5. **Say what you are doing.** A one-line status naming the run and the work done beside it; silence while a run
+   goes reads as being stuck.
+
+When the run finishes, compare its best with yours before trusting either.
+
 ## 1. Orient (5 minutes, do not skip)
 
 ```bash
@@ -132,6 +154,37 @@ wrongly: a 1000 → 680 local improvement was 1090 → 1030 in the app. Confirm 
   induction-variable updates itself, and only the all-index form put them where the target has them. IDO evaluates
   the operand written first first (`(p[0] & 0xF) << 2 | (p[1] >> 6) & 3` is not `(p[1] >> 6) & 3 | ...`). IDO refuses
   `void *` arithmetic; GCC accepts it. Bit-field structs never produced `lbu`/`sra` at all.
+
+## 3b. Out of hand-written shapes? Trace the compiler instead of guessing
+
+Three or four structurally different sources landing on the same score (or the same missing/extra instruction) means
+the shape is decided by a compiler pass, not by how you spell the C. Stop writing variants and find the pass:
+
+1. **Dump the compiler's own intermediate code.** The pinned GCC `cc1` is a native binary you can run directly
+   (`<toolchains>/gcc-2.7.2-kmc/cc1`; the folder is `~/Library/Application Support/decompnet/toolchains` on macOS,
+   `~/.local/share/decompnet/toolchains` on Linux). Run it in a scratch folder on a candidate with the project's flags
+   plus dump letters, and read the files it writes beside the source:
+
+   ```bash
+   cc1 -quiet -O2 -G0 -mips3 -mgp32 -mfp32 -dr -dj -dl -dg -dL cand.c -o cand.s    # cand.c needs the typedef prelude
+   ```
+   `cand.c.rtl` (after expansion), `.jump` (after jump optimisation: where a branch was inverted, threaded or a block
+   merged), `.cse`, `.loop`, `.greg` (after register allocation), `.sched`/`.dbr` (scheduling, delay slots) are
+   the stages. Diff the dump of your best candidate against the dump of a variant that moved the difference: the
+   first stage where they differ is the pass that decides it. For the target, you can't dump it, but its
+   instructions tell you which stage's output they are (a `li; j` pair in a branch's fall-through is jump-optimiser
+   output, an extra move is register allocation, a nop is delay-slot filling).
+2. **Read that pass's source.** The compilers here are GNU GCC builds: 2.7.2 is public (`jump.c`, `cse.c`, `loop.c`,
+   `local-alloc.c`/`global.c`, `sched.c`, `reorg.c`, `stmt.c`/`expr.c` for how C turns into RTL). Reading the pass
+   tells you which *input* it keys on (a label's use count, whether a block is reached by a fall-through, whether
+   a constant is a CONST_INT in a register or an operand, a variable's `REG_USERVAR_P`), and that is the C you
+   must write. The source is a reference, not game data, but it is a download: ask the user before fetching it, and keep
+   it outside the repo. A copy already on the machine (a decomp project's `tools/`, `ultralib-source` under the
+   toolchains folder) needs no download.
+3. **Turn the finding into a rewrite.** The pass's rule is the permuter's guide: a family in decomp-repair that
+   produces the source shape the rule needs (step 5). Record the rule, not only the spelling, in
+   COMPILER_MATCHING_LEARNINGS.md ("jump.c inverts `if (x) goto A; goto B;` unless an insn sits between them" is
+   reusable; "this function needed `goto`" is not).
 
 ## 4. Search only when you can name the mismatch
 
