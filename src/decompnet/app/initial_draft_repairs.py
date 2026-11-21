@@ -197,9 +197,14 @@ def variants(source, name, asm, processor, header=''):
 
 
 def recovery_drafts(draft, name, asm, processor, toolchain, context, data, report, generate=None):
-    """At most two extra m2c runs and six recovery candidates after ordinary drafts fail to compile."""
+    """Try bounded recovery candidates and at most two extra m2c runs after ordinary drafts fail to compile."""
     from . import draft_reports
     generate = generate or seeds.generate_from_asm
+    if toolchain == 'gcc-2.7.2-kmc':
+        from decomprepair import indirect_call_drafts
+
+        if typed := indirect_call_drafts.rewrite(draft, name, asm, context):
+            yield 'initial_typed_indirect_call', typed
     for family, source in variants(draft, name, asm, processor, context):
         yield family, source
     alternative = callback_context(draft, context, asm, processor)
