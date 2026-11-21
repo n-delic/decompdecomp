@@ -448,3 +448,12 @@ def test_measured_relocated_countdown_reaches_kmc_proposals(monkeypatch):
     rows = [('i', 'sw $v0, %lo(counter)($at)', 'sw $v0, ($a0)')]
     assert ('relocated_countdown', 'direct countdown') in route('void f(void) {}', rows, 'asm')
     assert 'relocated_countdown' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
+
+
+def test_measured_stack_read_retry_reaches_kmc_proposals(monkeypatch):
+    from decomprepair import stack_read_retry
+
+    monkeypatch.setattr(stack_read_retry, 'rewrite', lambda *args: 'stack read retry')
+    rows = [('s', 'addiu $sp, $sp, -56', 'addiu $sp, $sp, -32')]
+    assert ('stack_read_retry', 'stack read retry') in route('void f(void) {}', rows, 'asm')
+    assert 'stack_read_retry' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))

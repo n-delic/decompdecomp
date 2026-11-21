@@ -27,6 +27,7 @@ from decomprepair import (
     relocated_byte_table,
     relocated_global_update,
     split_dispatch_zero_case,
+    stack_read_retry,
     targeted_switch_labels,
     uncached_read_repairs,
 )
@@ -201,6 +202,8 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
             result.append(('relocated_global_update', candidate_source))
         if candidate_source := relocated_global_update.rewrite_countdown(source, name, asm or '', header, resolve):
             result.append(('relocated_countdown', candidate_source))
+        if candidate_source := stack_read_retry.rewrite(source, name, asm or '', header):
+            result.append(('stack_read_retry', candidate_source))
         if candidate_source := packed_matrix_conversion.rewrite(source, name, asm or '', header):
             result.append(('packed_matrix_conversion', candidate_source))
         if candidate_source := byte_cursor_postincrements.rewrite(source, name, asm or '', header):
