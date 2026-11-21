@@ -94,6 +94,56 @@ def full_pass(twins, slug: str, job):
     return job
 
 
+def cross_game(net, slug, job, log_):
+    """Run explicit donor search in the worker, keeping its progress and Stop in the app."""
+    # Only the room host process has the in-memory room and peer state.
+    worker = worker_of(net) if not net.links and slug not in net.rooms else None
+    log_('Checking eligible donor candidates. Stop at any time; verified results are saved.')
+    if worker is not None:
+        try:
+            result = worker.run_task("cross_game", {"slug": slug}, stop=job.stop,
+                                     on_status=lambda fields: apply_fields(job, fields))
+            if discovery := result.pop('discovery', None):
+                pid, snapshot = discovery
+                snapshot['hints'] = {int(fid): hints for fid, hints in snapshot['hints'].items()}
+                if not hasattr(net.twins, '_shared_discovery'):
+                    net.twins._shared_discovery = {}
+                net.twins._shared_discovery[pid] = snapshot
+        except Unavailable:
+            result = _search_cross_game(net, slug, job)
+    else:
+        result = _search_cross_game(net, slug, job)
+    log_.check_cancel()
+    log_(f"Search complete. {result['matched']} verified matches · "
+         f"{result['improved']} partial improvements · {result['tried']} checks.")
+    return result
+
+
+def _search_cross_game(net, slug, job):
+    from ..compile_sessions import session
+    from . import free_candidates, named_donors, similar_phase
+    from .cross_game_progress import report
+
+    free_candidates.budget(job, seconds=float("inf"), attempts=float("inf"))
+    job.cross_exhaustive = True
+    job.cross_started = time.monotonic()
+    job.cross_seconds = 0
+    job.partial_limit = float("inf")
+    report(job, 'Reading saved transfer results')
+    before = net.twins.cross_game_results(slug)['counts'].get('improved', 0)
+    with session():
+        matched = net.twins.across_games(slug, job)
+        if not job.stop.is_set():
+            report(job, 'Checking same-name verified source')
+            matched += named_donors.run(net.twins, slug, job)
+        if not job.stop.is_set():
+            report(job, 'Checking similar verified source')
+            matched += similar_phase.run(net.twins, slug, job)
+    improved = net.twins.cross_game_results(slug)['counts'].get('improved', 0) - before
+    report(job, 'Search stopped' if job.stop.is_set() else 'Donor search complete')
+    return {'matched': matched, 'improved': improved, 'tried': job.cross_tried}
+
+
 def deep_run(net, slug: str, name: str, minutes, variants, log_, *, maximum_seconds=None, parallel_claims=None):
     """deep_permuter.run in the worker, its lines and progress written to `log_`; Unavailable to run it here."""
     worker = worker_of(net)
@@ -166,6 +216,28 @@ def _run_full_pass(net, payload, stop, promote, status):
     return job_fields(job)
 
 
+def _run_cross_game(net, payload, stop, promote, status):
+    from . import maintenance
+    from .twins import Job
+
+    job = Job(stop=stop, foreground=promote)
+    job.promote()
+    done = threading.Event()
+    _ticker(stop, done, lambda: status({"progress": job.progress}))
+    try:
+        with maintenance.foreground(job.foreground):
+            slug = payload["slug"]
+            result = _search_cross_game(net, slug, job)
+            with net.progress.view():
+                pid = net.project_row(slug)['id']
+            if snapshot := getattr(net.twins, '_shared_discovery', {}).get(pid):
+                result['discovery'] = (pid, snapshot)
+        status({"progress": job.progress})
+        return result
+    finally:
+        done.set()
+
+
 class _TaskLog:
     """What deep_permuter.run needs of a job log, sending its lines and progress to the app."""
 
@@ -197,7 +269,7 @@ def _run_deep(net, payload, stop, promote, status):
     return json.loads(json.dumps(result, default=str))
 
 
-TASKS = {"full_pass": _run_full_pass, "deep_run": _run_deep}
+TASKS = {"full_pass": _run_full_pass, "deep_run": _run_deep, "cross_game": _run_cross_game}
 
 
 def run(net, kind, payload, stop, promote, status) -> dict:

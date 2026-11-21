@@ -39,7 +39,9 @@ class AutopilotMixin:
         background unless explicitly requested with foreground=True. Matches are saved before agents spend tokens; drafts that compile
         become the function's best attempt, so agents start from them. Agents and autopilot never collide: a
         function is held only while its draft compiles, and claimed ones are skipped."""
-        self.cascades.resume(slug)
+        with self.twins._lock:
+            if slug in self.twins.manual_jobs:
+                return self.autopilots.get(slug, {})
         state = self.autopilots.get(slug)
         if state and state["state"] == "running":
             if foreground:
@@ -49,6 +51,7 @@ class AutopilotMixin:
         if missing := self.project_missing(self._project(slug)):
             raise NetworkError(missing)
         fork = self.fork_slug(slug)
+        requested_workers = workers
         automatic_workers = 3 if workers is None else max(1, min(32, workers))
         # Manual ROM runs can use the machine's cores. Imported builds share build
         # directories and retain their existing two-worker safety ceiling.
@@ -81,24 +84,35 @@ class AutopilotMixin:
         except NetworkError as e:
             ids, try_one, no_drafts = [], None, str(e)
         state = {"state": "running", "total": len(ids), "tried": 0, "matched": 0, "near": 0, "twins": 0,
-                 "phase": "queued", "no_drafts": no_drafts, "started_at": time.time(), "stop": threading.Event()}
+                 "phase": "queued", "no_drafts": no_drafts, "started_at": time.time(), "stop": threading.Event(),
+                 "_finished": threading.Event(), "_workers": requested_workers}
         state['_foreground']=threading.Event()
         if foreground:state['_foreground'].set()
-        self.autopilots[slug] = state
-        threading.Thread(target=self._autopilot_run, args=(slug, ids, state, (workers, width), try_one),
-                         daemon=True, name=f"autopilot-{slug}").start()
+        with self.twins._lock:
+            current = self.autopilots.get(slug, {})
+            if slug in self.twins.manual_jobs or current.get("state") == "running":
+                return current
+            self.autopilots[slug] = state
+            threading.Thread(target=self._autopilot_run, args=(slug, ids, state, (workers, width), try_one),
+                             daemon=True, name=f"autopilot-{slug}").start()
+        self.cascades.resume(slug)
         return state
 
     def stop_autopilot(self, slug: str) -> None:
         self.cascades.pause(slug)
         self.twins.stop(slug)
-        if (state := self.autopilots.get(slug)) and state["state"] == "running":
-            state["stop"].set()
+        with self.twins._lock:
+            if state := self.autopilots.get(slug):
+                state["_resume_after_search"] = False
+                if state["state"] == "running":
+                    state["stop"].set()
 
     def autopilot_status(self, slug: str) -> dict | None:
         state = self.autopilots.get(slug)
         if state:
             result={k:v for k,v in state.items() if k!='stop' and not k.startswith('_')}
+            if state.get("_resume_after_search"):
+                result["paused_for_search"] = True
             if timing:=state.get('_timings'):result['timings']=timing.snapshot()
             return result
         last = self.cfg(self._project(slug)).get("autopilot")  # the last run, from before the app restarted
@@ -122,6 +136,10 @@ class AutopilotMixin:
         finally:
             if acquired:
                 _slots.release()
+            if state["state"] == "running":
+                state["state"] = "stopped"
+            if finished := state.get("_finished"):
+                finished.set()
 
     def _autopilot_work(self, slug, ids, state, workers, try_one):
         from .. import maintenance
@@ -136,7 +154,7 @@ class AutopilotMixin:
         try:  # identical code first: free, and it takes those functions off the drafts' list
             if slug not in self.links and not state["stop"].is_set():  # (a room member's matches come from the host)
                 from ..twins import Job
-                job = self.twins.full_pass(slug, Job(autopilot=True), foreground_event=state['_foreground'])
+                job = self.twins.full_pass(slug, Job(autopilot=True), foreground_event=state['_foreground'], cancel=state['stop'])
                 state["twins"] = job.matched
                 state["matched"] += job.matched
         except Exception as e:

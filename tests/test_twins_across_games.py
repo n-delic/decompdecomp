@@ -6,6 +6,8 @@ import json
 import shutil
 from pathlib import Path
 
+import pytest
+
 from decompnet.app.engine import RomNetwork
 
 from .test_app_engine import CLAMP
@@ -33,7 +35,8 @@ def copy_project(net, slug, new_slug):
     return pid
 
 
-def test_a_match_in_one_game_matches_the_same_function_in_another(built, tmp_path):  # noqa: F811
+@pytest.mark.parametrize("subprocess_search", [False, True])
+def test_a_match_in_one_game_matches_the_same_function_in_another(built, tmp_path, subprocess_search):  # noqa: F811
     net = RomNetwork(tmp_path / "decomp.db", tmp_path)
     slug = net.import_rom(ROM, confirmed=True, log=lambda *_: None)
     agent, _ = net.local_agent("claude-opus-5.5-1")
@@ -44,7 +47,29 @@ def test_a_match_in_one_game_matches_the_same_function_in_another(built, tmp_pat
     assert net.rename_symbol(agent, slug, "func_800007D0", "clamp_s32").startswith("✅")  # this game's name only
     hints = net.twins.suggestions("another-game", "func_800007D0")
     assert any(h["name"] == "clamp_s32" and h["kind"] == "verified C in another game" for h in hints)
-    assert net.twins.across_games("another-game") >= 1
+    if subprocess_search:
+        from decompnet.app import maintenance_tasks, workers
+        from decompnet.app.permuter_worker import PermuterWorker
+        from decompnet.app.twins import Job
+
+        class Log:
+            def __call__(self, line):
+                pass
+
+            def check_cancel(self):
+                pass
+
+        previous = workers.WORKERS
+        with_worker = net.permuter = PermuterWorker(net)
+        try:
+            result = maintenance_tasks.cross_game(net, "another-game", Job(), Log())
+            assert with_worker._process is not None
+            assert result['matched'] >= 1
+        finally:
+            with_worker.close()
+            workers.configure(previous)
+    else:
+        assert net.twins.across_games("another-game") >= 1
     results = net.twins.cross_game_results("another-game")
     assert results["counts"]["match"] >= 1
     assert any(r["source"] == "clamp_s32" and r["target"] == "func_800007D0" for r in results["recent"])

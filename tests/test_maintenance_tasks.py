@@ -47,6 +47,26 @@ def test_a_full_pass_runs_in_the_worker_and_finishes_the_apps_job(app, monkeypat
     assert job.progress.get("phase")  # its progress came back
 
 
+def test_manual_cross_game_runs_in_the_subprocess(app, monkeypatch):
+    net, worker = app
+    monkeypatch.setattr(twins.Twins, "across_games",
+                        lambda *args: pytest.fail("the manual search ran in the app's own process"))
+    job = twins.Job()
+    updates = []
+
+    class Log:
+        def __call__(self, line):
+            pass
+
+        def check_cancel(self):
+            assert not job.stop.is_set()
+
+    job.cross_report = updates.append
+    assert maintenance_tasks.cross_game(net, "game", job, Log()) == {'matched': 0, 'improved': 0, 'tried': 0}
+    assert worker._process is not None and worker._process.poll() is None
+    assert updates[-1]['phase'] == 'Donor search complete'
+
+
 def test_a_deep_runs_error_comes_back_as_the_apps_own(app):
     net, _ = app
 

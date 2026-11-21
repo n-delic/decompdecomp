@@ -159,7 +159,7 @@ class Jobs:
         self.closing=True
         for cancel in list(self.cancel_events.values()):cancel.set()
 
-    def start(self, kind: str, fn, *, foreground=True, project=None, include_recent_log=True, cancel_message="Opening the saved project was cancelled.") -> str:
+    def start(self, kind: str, fn, *, foreground=True, project=None, include_recent_log=True, cleanup=None, cancel_message="Opening the saved project was cancelled.") -> str:
         """Start a user job immediately; automatic callers opt into background scheduling."""
         with self._lock:
             self.check_start()
@@ -202,13 +202,17 @@ class Jobs:
             job["thread_id"] = threading.get_native_id()
             try:
                 logger.info("job %s %s started", kind, jid)
-                check_cancel()
-                from ..compiler import background_thread
-                if not interactive.is_set():background_thread()
-                from . import maintenance
-                from .purpose_work import owner
-                with maintenance.foreground(interactive), owner(job.get('activity_project'), lambda:self.cancel(jid), check_cancel):
-                    result = fn(log)
+                try:
+                    check_cancel()
+                    from ..compiler import background_thread
+                    if not interactive.is_set():background_thread()
+                    from . import maintenance
+                    from .purpose_work import owner
+                    with maintenance.foreground(interactive), owner(job.get('activity_project'), lambda:self.cancel(jid), check_cancel):
+                        result = fn(log)
+                finally:
+                    if cleanup is not None:
+                        cleanup(cancel.is_set())
                 with self._lock:
                     check_cancel()
                     job["result"] = result

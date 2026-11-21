@@ -87,7 +87,13 @@ async function checks() {
   ctx.api=async (url,options)=>{posted={url,body:options.body};return url.includes('cancel') ? {} : starting;};
   ctx.followJob=async (_id,_log,callback)=>{updates=callback;return following;};
   ctx.poll=async()=>{};ctx.refreshMap=()=>{};ctx.toast=()=>{};
+  get('autopilot').classList={toggle(){}};
+  ctx.updateWorkProgress=()=>{};
   let clock=1000; ctx.Date=class extends Date {static now(){return clock;}};
+  render({slug:'target-game', kind:'rom', matched:0,
+    autopilot:{state:'running',phase:'drafts',total:100,tried:20,matched:1},
+    twins:{state:'running'}});
+  assert.equal(get('crossGameRun').disabled,false);
   const run=get('crossGameRun').onclick();
   assert.equal(started,1); assert.equal(finished,0);
   assert.equal(get('crossGameRun').disabled,true);
@@ -106,6 +112,10 @@ async function checks() {
   resolveStart({job:'check'});
   for(let i=0;i<10;i++) await Promise.resolve();
   assert.equal(get('crossGameStop').disabled,false);
+  render({slug:'target-game', kind:'rom', matched:0, autopilot:{state:'stopped',paused_for_search:true},
+    twins:{state:'running',cross_job:'check'}});
+  assert.match(get('apTitle').textContent,/paused for cross-game search/);
+  assert.equal(get('apBtn').disabled,false);
   assert.equal(get('crossGameRun').textContent,'Searching…');
   updates([], {progress:{phase:'Finding shared machine code',game:'Demo',done:9,total:65,attempts:0,attempt_limit:100000,seconds:30,second_limit:86400,confirmed:0}});
   assert.match(get('crossGamePhaseStatus').textContent,/9 \/ 65 \(13%\).*Demo/);

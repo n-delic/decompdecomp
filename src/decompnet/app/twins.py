@@ -328,6 +328,7 @@ class Twins:
         self._queue: dict[int, set[int]] = defaultdict(set)  # project id -> newly matched functions to propagate
         self._busy: set[int] = set()
         self._trying: set[int] = set()  # functions a pass is trying now (a full pass and one after a match can overlap)
+        self.manual_jobs: dict[str, Job] = {}
         self.jobs: dict[str, Job] = {}  # slug -> the full pass (the one the overview shows)
 
     # ------------------------------------------------------------------ fingerprints
@@ -576,8 +577,11 @@ class Twins:
                         marked += 1
         return marked
 
+    def visible_job(self, slug: str) -> Job | None:
+        return self.manual_jobs.get(slug) or self.jobs.get(slug)
+
     def _full_running(self, slug: str) -> bool:
-        return (job := self.jobs.get(slug)) is not None and job.state == "running"
+        return (job := self.visible_job(slug)) is not None and job.state == "running"
 
     def stop(self, slug: str) -> None:
         if (job := self.jobs.get(slug)) is not None and job.state == "running":
@@ -593,7 +597,7 @@ class Twins:
     def refresh(self, slug: str) -> Job | None:
         """Bring a project's twins up to date in the background (see full_pass). Runs when agents start."""
         with self._lock:
-            if (job := self.jobs.get(slug)) is not None and job.state == "running":
+            if (job := self.visible_job(slug)) is not None and job.state == "running":
                 return job
             if slug in self.net.links:
                 return None
@@ -621,14 +625,18 @@ class Twins:
         threading.Thread(target=work, daemon=True, name=f"twins-{slug}").start()
         return job
 
-    def full_pass(self, slug: str, job: Job | None = None, *, foreground=False, foreground_event=None) -> Job:
+    def full_pass(self, slug: str, job: Job | None = None, *, foreground=False, foreground_event=None, cancel=None) -> Job:
         """Hand-written assembly set aside, the claim order (agents claim in it from the start, not after the pass),
         matched code tried on every unmatched twin, the claim order again. One at a time per project: while one runs
         (agents started it, say), a second call waits for it."""
         from . import maintenance
         foreground=foreground or maintenance.is_foreground()
         with self._lock:
+            if cancel is not None and cancel.is_set():
+                return Job(state="stopped")
             running = self.jobs.get(slug)
+            if running is None or running is not job:
+                running = self.visible_job(slug)
             if running is not None and running.state == "running" and running is not job:
                 job, mine = running, False
             else:
@@ -638,7 +646,10 @@ class Twins:
             if foreground or (foreground_event is not None and foreground_event.is_set()):job.promote()
         if not mine:
             while job.state == "running":
-                time.sleep(1)
+                if cancel is None:
+                    time.sleep(.2)
+                elif cancel.wait(.2):
+                    return Job(state="stopped")
             return job
         if not job.ordered.is_set() and not job.stop.is_set():
             self._order_before_pass(slug, job)
@@ -681,17 +692,26 @@ class Twins:
     def _execute_full_pass(self, slug, job):
         from .cross_game_progress import report
         try:
+            with self._lock:
+                self.jobs[slug] = job
+            if job.stop.is_set():
+                return job
             self.order(slug, job)
             report(job, 'Preparing reusable-code search')
             proj = self.net.project_row(slug)
-            self.run(slug, job)
-            job.state = "running"  # run() finishes its local pass; cross-project work is still cancellable
+            if job.stop.is_set():
+                return job
+            self.run(slug, job, full_pass=True)
+            if job.stop.is_set():
+                return job
             from . import regional  # another release of this game first: its pairs are the surest donors
             if regional.linked(self.net, proj):
                 report(job, "Trying the other release's code")
                 job.matched += regional.transfer(self.net, slug, job)['matched']
             report(job, 'Searching other games and local SDKs')
             job.matched += self.across_games(slug, job)
+            if job.stop.is_set():
+                return job
             from . import free_candidates, named_donors, similar_phase
 
             free_candidates.budget(job, self.net.cascades.seconds, self.net.cascades.attempts)
@@ -850,7 +870,10 @@ class Twins:
         fork = bool(self.net.fork_slug(slug))
         from . import shared_reuse
         from .cross_game_progress import report
+        if job is not None and job.stop.is_set():
+            return 0
         report(job, 'Reading the local verified-match library')
+        others = list(shared_reuse.compatible(self.net, proj))
         archived = self.net.match_library.reuse(self, proj, job) if hasattr(self.net, "match_library") else 0
         if fork:
             matched = archived
@@ -863,11 +886,13 @@ class Twins:
             from .partial_reuse import run as reuse_partial
             partial_state = {'tried':0}
             from .free_candidates import exhausted
-            for other in shared_reuse.compatible(self.net,proj):
+            for other in others:
                 if job is not None and (job.stop.is_set() or (hasattr(job,'reuse_limit') and exhausted(job))):return matched
                 snapshot=shared_reuse.discover(self,proj,job=job,donors=[other],matched_only=True)
-                matched+=shared_reuse.transfer(self,proj,job,snapshot=snapshot,donors=[other])
-            for other in shared_reuse.compatible(self.net,proj):
+                matched += shared_reuse.transfer(self, proj, job, snapshot=snapshot, donors=[other], refresh=False)
+            if job is None or not job.stop.is_set():
+                shared_reuse.discover(self, proj, job=job, donors=others, matched_only=True)
+            for other in others:
                 if job is not None and (job.stop.is_set() or (hasattr(job,'reuse_limit') and exhausted(job))):return matched
                 matched+=reuse_partial(self,proj,wanted,mine,job,projects=[other],budget_state=partial_state)
             return matched
@@ -888,7 +913,7 @@ class Twins:
         from .partial_reuse import run as reuse_partial
         partial_state = {'tried':0}
         agent, _ = self.net.local_agent("autopilot")
-        for other in shared_reuse.compatible(self.net, proj):
+        for other in others:
             if job is not None and (job.stop.is_set() or (bounded and exhausted(job))):
                 return matched
             report(job, 'Searching donor project', game=other['name'])
@@ -903,11 +928,12 @@ class Twins:
                 # Discovery and partial reuse run only after the exact pass.
             except (NetworkError, OSError, ValueError):
                 log.exception("twins: donor %s for %s", other['slug'], slug)
-        for other in shared_reuse.compatible(self.net,proj):
+        for other in others:
             if job is not None and (job.stop.is_set() or (bounded and exhausted(job))):return matched
             report(job,'Checking unfinished donor candidates',game=other['name'])
             matched+=reuse_partial(self,proj,wanted,mine,job,projects=[other],budget_state=partial_state)
-            shared_reuse.discover(self,proj,job=job,donors=[other],matched_only=True)
+        if job is None or not job.stop.is_set():
+            shared_reuse.discover(self, proj, job=job, donors=others, matched_only=True)
         return matched
 
     def _rom_to_rom(self, agent, proj, other, wanted, mine, job):
@@ -928,7 +954,9 @@ class Twins:
         if not sources:
             return 0
         store = self.net.project_store(proj["id"])
-        ids = [i for found in wanted.values() for i in found]
+        # Only fingerprints actually present in this donor need compiler ranks.
+        shared_keys = dict.fromkeys(a["fingerprint"] for a in sources)
+        ids = [i for key in shared_keys for i in wanted[key]]
         destinations = {}
         for at in range(0, len(ids), SQL_CHUNK):
             part = ids[at:at + SQL_CHUNK]
@@ -936,7 +964,7 @@ class Twins:
                 "SELECT id,name,vram,rom_offset FROM functions WHERE id IN (" + ",".join("?" for _ in part) + ")", *part))
         own = lambda b_id: (self._compiler_key(compiler_for(cfg, destinations[b_id]["vram"], destinations[b_id]))
                             if b_id in destinations else None)
-        prefer_own_compilers(sources, wanted, own)
+        prefer_own_compilers(sources, {key: wanted[key] for key in shared_keys}, own)
         source_prints = self.prints(other)
         source_symbols = self.net.symbols(other["id"])
         target_symbols = self.net.symbols(proj["id"])
@@ -1505,7 +1533,7 @@ class Twins:
             feedback.update(res)
         return ("match", "") if res.get("matched") else ("miss", self._why(res))
 
-    def run(self, slug: str, job: Job | None = None, only: set[int] | None = None, workers: int = 3) -> Job:
+    def run(self, slug: str, job: Job | None = None, only: set[int] | None = None, workers: int = 3, *, full_pass=False) -> Job:
         """Try matched code on every unmatched twin (or the twins of `only`), until a pass matches nothing new
         (a twin that matches can be the matched member of another group's pair next time)."""
 
@@ -1513,7 +1541,7 @@ class Twins:
         workers = max(1, min(workers, background_workers.WORKERS))
         proj = self.net.project_row(slug)
         job = job or Job()
-        if only is None:  # (a pass after a match runs beside the full one: the overview shows the full one)
+        if only is None and not full_pass:  # (a pass after a match runs beside the full one: the overview shows the full one)
             self.jobs[slug] = job
             job.ordered.set()
         agent, _ = self.net.local_agent("autopilot")
@@ -1581,7 +1609,8 @@ class Twins:
                 if only is not None:
                     only = fresh  # the next pass: twins of what this one matched (a whole run already covered all)
         finally:
-            job.state = "stopped" if job.stop.is_set() else "done"
+            if not full_pass:
+                job.state = "stopped" if job.stop.is_set() else "done"
             if job.matched:
                 with self.net.project_store(slug).tx() as db:
                     self.net._event(db, proj["id"], agent.id, "autopilot",

@@ -30,7 +30,7 @@ def existing_game(net, tmp_path):
 
 def twin():
     value=Twins.__new__(Twins)
-    value._lock=threading.Lock();value.jobs={}
+    value._lock=threading.Lock();value.jobs={};value.manual_jobs={}
     return value
 
 
@@ -112,7 +112,7 @@ def test_manual_autopilot_spawns_coordinator_and_compile_workers_while_lane_busy
 def test_click_promotes_running_autopilot_state_and_keeps_automatic_default():
     promoted=[];event=threading.Event();state={'state':'running','_foreground':event}
     net=SimpleNamespace(autopilots={'game':state},cascades=SimpleNamespace(resume=lambda slug:None),
-                        twins=SimpleNamespace(promote=promoted.append))
+                        twins=SimpleNamespace(promote=promoted.append, _lock=threading.Lock(), manual_jobs={}))
     assert AutopilotMixin.start_autopilot(net,'game') is state
     assert not event.is_set() and not promoted
     assert AutopilotMixin.start_autopilot(net,'game',foreground=True) is state

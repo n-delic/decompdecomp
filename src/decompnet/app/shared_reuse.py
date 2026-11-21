@@ -111,6 +111,8 @@ def discover(twins, proj, *, job=None, force=False, donors=None, matched_only=Fa
     blocked = sum(rows[fid]['status'] == 'nosource' and any(h['verified'] for h in items) for fid, items in found.items())
     result = {'at': time.monotonic(), 'hints': dict(found), 'detected': len(found), 'ready': ready, 'blocked': blocked,
               'checked_at': time.time()}
+    if blocked and (hit or {}).get('block_reason'):
+        result['block_reason'] = hit['block_reason']
     if donors is not None:
         donor_slugs = {p['slug'] for p in donors}
         merged = {fid:[h for h in items if h.get('source_slug') not in donor_slugs]
@@ -150,7 +152,7 @@ def hints(twins, proj, function, limit=5):
     return sorted(items, key=lambda h: not h['verified'])[:limit]
 
 
-def transfer(twins, proj, job, *, snapshot=None, donors=None):
+def transfer(twins, proj, job, *, snapshot=None, donors=None, refresh=True):
     """ROM or imported donors into imported C, through its unchanged objdiff judge."""
     from .free_candidates import exhausted
     from .twins import WHY_CHARS, _declared, _file_compiler, apply
@@ -193,7 +195,9 @@ def transfer(twins, proj, job, *, snapshot=None, donors=None):
             a = net.project_store(other['id']).one("SELECT * FROM functions WHERE id=? AND status='matched'", hint['function_id'])
             if a is None:
                 continue
-            if net.fork_slug(other['slug']):
+            # An exact fingerprint warrants a destination build even when the
+            # donor used a different compiler. Keep the automatic pass selective.
+            if net.fork_slug(other['slug']) and not getattr(job, 'cross_exhaustive', False):
                 _, source_project, _ = net.forks.get(other['slug'])
                 _, target_project, _ = net.forks.get(proj['slug'])
                 if _file_compiler(net.console(other), source_project, a) != \
@@ -217,7 +221,7 @@ def transfer(twins, proj, job, *, snapshot=None, donors=None):
                     header = net._context(other['id'], a['unit'])['header']
                     source = (_declared(header, '', names, a['name']) + apply(a['matched_source'], names)
                               if a['matched_source'] else None)
-                if not source or twins._missed(fid, source):
+                if not source or twins._missed(fid, source, project_id=proj['id']):
                     continue
                 if job is not None:
                     job.cross_candidates += 1
@@ -244,7 +248,10 @@ def transfer(twins, proj, job, *, snapshot=None, donors=None):
                         job.reuse_bytes += b['size']
                 break
     reason = snapshot.get('block_reason')
-    final = discover(twins, proj, job=job, force=True)
     if reason:
-        final['block_reason'] = reason
+        twins._shared_discovery[proj['id']]['block_reason'] = reason
+    if refresh and (job is None or not job.stop.is_set()):
+        final = discover(twins, proj, job=job, force=True)
+        if reason:
+            final['block_reason'] = reason
     return matched

@@ -1943,8 +1943,72 @@ def test_deep_sweep_routes_validate_start_stop_and_status(app, monkeypatch):
     assert client.post('/api/permuter/pass', json={'slug':'example','action':'unknown'}, headers={'X-Decomp':'1'}).status_code == 400
 
 
-def test_cross_game_run_is_dedicated_and_rejects_duplicate_passes(app, monkeypatch):
-    client, net, _ = app
+@pytest.fixture
+def cross_game_app(app, monkeypatch):
+    # These route tests control the work in-process. The subprocess protocol
+    # has its own integration test.
+    from decompnet.app import named_donors, similar_phase
+    monkeypatch.setenv('DECOMP_MAINTENANCE_WORKER', '0')
+    monkeypatch.setattr(named_donors, 'run', lambda *args: 0)
+    monkeypatch.setattr(similar_phase, 'run', lambda *args: 0)
+    return app
+
+
+@pytest.mark.parametrize('end', ['complete', 'cancel search', 'stop autopilot'])
+def test_cross_game_preempts_autopilot_and_resumes_after_search(cross_game_app, monkeypatch, end):
+    client, net, _ = cross_game_app
+    headers = {'X-Decomp': '1'}
+    slug = 'cross-preempts'
+    cancel = end == 'cancel search'
+    monkeypatch.setattr(net, 'project_row', lambda slug: {'slug': slug})
+    monkeypatch.setattr(net.twins, 'cross_game_results', lambda slug: {'counts': {}})
+    ap = {'state': 'running', 'stop': threading.Event(), '_finished': threading.Event(),
+          '_foreground': threading.Event(), '_workers': 4}
+    ap['_foreground'].set()
+    net.autopilots[slug] = ap
+    entered, release = threading.Event(), threading.Event()
+    resumed = []
+
+    def search(slug, job):
+        assert ap['_finished'].is_set()
+        assert not resumed
+        entered.set()
+        assert (job.stop if cancel else release).wait(5)
+        return 0
+
+    monkeypatch.setattr(net.twins, 'across_games', search)
+    monkeypatch.setattr(net, 'start_autopilot', lambda *args, **kw: resumed.append((args, kw)))
+    response = client.post('/api/cross-game/run', headers=headers, json={'slug': slug})
+    assert response.status_code == 200
+    jid = response.json()['job']
+    try:
+        assert ap['stop'].wait(2)
+        assert net.autopilot_status(slug)['paused_for_search']
+        assert net.twins.visible_job(slug).cross_job == jid
+        assert not entered.is_set()
+        ap['state'] = 'stopped'
+        ap['_finished'].set()
+        assert entered.wait(2)
+        if end == 'stop autopilot':
+            net.stop_autopilot(slug)
+            assert not net.autopilot_status(slug).get('paused_for_search')
+        if cancel:
+            assert client.post('/api/job/cancel', headers=headers, json={'id': jid}).json()['cancelled']
+    finally:
+        ap['_finished'].set()
+        release.set()
+    for _ in range(100):
+        job = client.get('/api/job', params={'id': jid}).json()
+        if job['state'] != 'running':
+            break
+        time.sleep(.01)
+    assert job['state'] == ('cancelled' if cancel else 'done'), job
+    assert resumed == ([] if end == 'stop autopilot' else [((slug, 4), {'foreground': True})])
+    assert not net.twins._full_running(slug)
+
+
+def test_cross_game_run_is_dedicated_and_rejects_duplicate_passes(cross_game_app, monkeypatch):
+    client, net, _ = cross_game_app
     entered, release = threading.Event(), threading.Event()
     monkeypatch.setattr(net, 'project_row', lambda slug: {'slug':slug})
     monkeypatch.setattr(net, 'autopilot_status', lambda slug: None)
@@ -1971,12 +2035,12 @@ def test_cross_game_run_is_dedicated_and_rejects_duplicate_passes(app, monkeypat
             break
         time.sleep(.01)
     assert job['state'] == 'done' and job['result'] == {'matched':1,'improved':0,'tried':3}
-    assert net.twins.jobs['cross-demo'].state == 'done'
+    assert not net.twins._full_running('cross-demo')
 
 
 @pytest.mark.parametrize('data', [{'seconds':1,'attempts':1}, {'seconds':1200,'attempts':128}])
-def test_cross_game_ignores_legacy_budgets(app, monkeypatch, data):
-    client, net, _ = app
+def test_cross_game_ignores_legacy_budgets(cross_game_app, monkeypatch, data):
+    client, net, _ = cross_game_app
     entered = threading.Event()
     monkeypatch.setattr(net, 'project_row', lambda slug: {'slug':slug})
     monkeypatch.setattr(net, 'autopilot_status', lambda slug: None)
@@ -1993,9 +2057,9 @@ def test_cross_game_ignores_legacy_budgets(app, monkeypatch, data):
     assert response.status_code == 200 and entered.wait(5)
 
 
-def test_cross_game_exhaustive_search_reports_current_work_and_cancels(app, monkeypatch):
+def test_cross_game_exhaustive_search_reports_current_work_and_cancels(cross_game_app, monkeypatch):
     from decompnet.app.cross_game_progress import report
-    client, net, _ = app
+    client, net, _ = cross_game_app
     entered = threading.Event()
     monkeypatch.setattr(net, 'project_row', lambda slug: {'slug':slug})
     monkeypatch.setattr(net, 'autopilot_status', lambda slug: None)
@@ -2022,11 +2086,11 @@ def test_cross_game_exhaustive_search_reports_current_work_and_cancels(app, monk
         if snapshot['state'] != 'running':break
         time.sleep(.01)
     assert snapshot['state'] == 'cancelled'
-    assert net.twins.jobs['custom'].state == 'stopped'
+    assert not net.twins._full_running('custom')
 
 
-def test_cross_game_run_failure_releases_busy_state(app, monkeypatch):
-    client, net, _ = app
+def test_cross_game_run_failure_releases_busy_state(cross_game_app, monkeypatch):
+    client, net, _ = cross_game_app
     monkeypatch.setattr(net, 'project_row', lambda slug: {'slug':slug})
     monkeypatch.setattr(net, 'autopilot_status', lambda slug: None)
     monkeypatch.setattr(net.twins, 'cross_game_results', lambda slug: {'counts':{}})
@@ -2039,7 +2103,7 @@ def test_cross_game_run_failure_releases_busy_state(app, monkeypatch):
         if job['state'] != 'running':
             break
         time.sleep(.01)
-    assert job['state'] == 'error' and net.twins.jobs['cross-failure'].state == 'done'
+    assert job['state'] == 'error' and not net.twins._full_running('cross-failure')
 
 
 def test_quality_alternative_selection_uses_explicit_review_route(app, monkeypatch):
@@ -3987,9 +4051,9 @@ def test_startup_does_not_stop_at_one_projects_half_written_save(tmp_path, monke
     net.autosave.close()
 
 
-def test_cross_game_admission_returns_job_without_saved_progress_sync(app, monkeypatch):
+def test_cross_game_admission_returns_job_without_saved_progress_sync(cross_game_app, monkeypatch):
     from .test_loading import tiny_game
-    client, net, _ = app
+    client, net, _ = cross_game_app
     tiny_game(net, 'cross-sync')
     entered, release = threading.Event(), threading.Event()
     monkeypatch.setattr(net.progress, 'sync', lambda *a, **kw: pytest.fail('Admission synchronized saved progress'))

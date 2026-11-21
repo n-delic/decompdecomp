@@ -20,7 +20,10 @@ functions are usually matched already in other public decomps.
 In ROM projects on this computer, decompdecomp indexes C that has already matched in your other games.
 Autopilot finds identical relocated code built with the same compiler and flags, adapts referenced names,
 and compiles it against this game's bytes. The project's **Matches from other games** panel shows every
-transfer attempt and its source. A match counts only after the byte judge accepts it. A manual search on a MIPS ROM
+transfer attempt and its source. A match counts only after the byte judge accepts it. **Start search** takes priority
+over Autopilot on the same project. Autopilot lets active work settle and restarts on the remaining open functions
+when the search ends. The manual search also tries verified source with the same function name in both project modes
+and a bounded set of similar verified functions in MIPS ROM projects. A manual search on a MIPS ROM
 also checks whether verified code from an imported project sits inside a larger function already mapped by
 the ROM importer. When it finds a unique span, checks the cuts, and builds the donor C to the exact bytes,
 it splits the function and submits the source to the ordinary judge. A manual search also uses the donor object’s relocation

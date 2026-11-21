@@ -1152,50 +1152,65 @@ def register(app: App) -> None:
         return net.overview(slug)
 
     def p_cross_run(slug, request, data):
+        from .. import maintenance_tasks
         from ..cross_game_progress import report
         from ..twins import Job
-        # Admission reads saved state; the worker synchronizes before judging.
+
         with net.progress.view():
             net.project_row(slug)
-            autopilot = net.autopilot_status(slug)
         if slug in net.links:
             raise ValueError('Run cross-game checks on the room host.')
-        with net.twins._lock:
-            if net.twins._full_running(slug) or (autopilot or {}).get('state') == 'running':
-                raise ValueError('A free matching pass is already running. Wait for it to finish.')
-            check = Job()
-            check.promote()
-            check.ordered.set()
-            net.twins.jobs[slug] = check
+        check = Job()
+        check.promote()
+        check.ordered.set()
+        paused = None
+
         def work(log):
-            from ..free_candidates import budget
-            budget(check, seconds=float("inf"), attempts=float("inf"))
-            check.cross_exhaustive = True
+            nonlocal paused
             check.stop = log.cancel_event
             check.cross_report = log.progress
-            check.cross_started = time.monotonic()
-            check.cross_seconds = 0
-            # Manual searches exhaust the eligible queue; automatic passes retain their caps.
-            check.partial_limit = float("inf")
+            with net.twins._lock:
+                prior = net.twins.jobs.get(slug)
+                ap = net.autopilots.get(slug)
+                if ap and ap['state'] == 'running' and not ap['stop'].is_set():
+                    paused = ap
+                    ap['_resume_after_search'] = True
+                    ap['stop'].set()
+                if prior and prior.state == 'running':
+                    prior.stop.set()
+            if ap and (finished := ap.get('_finished')) and not finished.is_set():
+                report(check, 'Pausing Autopilot after in-flight work')
+                finished.wait()
+            if prior and prior.state == 'running':
+                report(check, 'Waiting for the previous matching pass to stop')
+                while prior.state == 'running':
+                    time.sleep(.05)
+            log.check_cancel()
+            return maintenance_tasks.cross_game(net, slug, check, log)
+
+        def cleanup(cancelled):
+            with net.twins._lock:
+                check.state = 'stopped' if cancelled else 'done'
+                net.twins.manual_jobs.pop(slug, None)
+                resume = paused and paused.pop('_resume_after_search', False)
             try:
-                report(check, 'Reading saved transfer results')
-                log('Checking all eligible candidates. Stop at any time; verified results are saved.')
-                before = net.twins.cross_game_results(slug)['counts'].get('improved', 0)
-                matched = net.twins.across_games(slug, check)
-                improved = net.twins.cross_game_results(slug)['counts'].get('improved', 0) - before
-                reason = 'Search stopped' if check.stop.is_set() else 'All eligible candidates checked'
-                report(check, reason)
-                log(f'{reason}. {matched} verified matches · {improved} partial improvements · {check.cross_tried} checks.')
-                return {'matched': matched, 'improved': improved, 'tried': check.cross_tried}
+                if resume and not getattr(jobs, 'closing', False):
+                    net.start_autopilot(slug, paused.get('_workers'), foreground=paused['_foreground'].is_set())
             finally:
-                check.state = 'stopped' if check.stop.is_set() else 'done'
-        try:
-            check.cross_job = jobs.start('cross-game', work, project=slug,
-                                         cancel_message='Cross-game check stopped. Verified matches and improvements are saved.')
-            return {'job': check.cross_job}
-        except Exception:
-            check.state = 'done'
-            raise
+                net.cascades.wake()
+
+        with net.twins._lock:
+            if slug in net.twins.manual_jobs:
+                raise ValueError('A search for matches from other games is already running.')
+            net.twins.manual_jobs[slug] = check
+            try:
+                check.cross_job = jobs.start(
+                    'cross-game', work, project=slug, cleanup=cleanup,
+                    cancel_message='Cross-game check stopped. Verified matches and improvements are saved.')
+            except Exception:
+                net.twins.manual_jobs.pop(slug, None)
+                raise
+        return {'job': check.cross_job}
 
     def p_variants(slug, request, data):
         from .. import variants

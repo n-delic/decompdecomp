@@ -71,6 +71,27 @@ def test_imported_destination_uses_judge_records_misses_and_matches(pair, monkey
     assert pair.twins.cross_game_results('destination')['counts'] == {'miss': 1, 'match': 1}
 
 
+def test_manual_exact_transfer_allows_a_different_donor_compiler(pair, monkeypatch):
+    proj = setup(pair, monkeypatch, donor_fork=True)
+    monkeypatch.setattr(pair.forks, 'get', lambda slug: (proj, slug, {}))
+    monkeypatch.setattr('decompnet.app.twins._file_compiler', lambda console, project, fn: project)
+    monkeypatch.setattr(pair.forks, 'twin_source', lambda *args, **kw: 'int new(int x) { return x + 60; }')
+    calls = []
+
+    def judge(agent, slug, name, source, **kw):
+        calls.append((slug, name))
+        return {'matched': False, 'score': 12, 'text': 'score 12'}
+
+    monkeypatch.setattr(pair.forks, 'attempt', judge)
+    assert shared_reuse.transfer(pair.twins, proj, Job()) == 0
+    assert calls == []
+    manual = Job()
+    manual.cross_exhaustive = True
+    assert shared_reuse.transfer(pair.twins, proj, manual) == 0
+    assert calls == [('destination', 'new')]
+    assert pair.twins.cross_game_results('destination')['counts'] == {'miss': 1}
+
+
 def test_incompatible_processor_and_remote_projects_never_detected(pair, monkeypatch):
     proj = setup(pair, monkeypatch)
     pair.links['source'] = object()

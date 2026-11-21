@@ -854,7 +854,7 @@ function renderAutopilot(ov) {
   const run = $("crossGameRun"), stop = $("crossGameStop");
   stop.hidden = !run._working || $("crossGameLog")._slug !== ov.slug;
   run.hidden = !stop.hidden;
-  const busy = ov.twins?.state === 'running' || ov.autopilot?.state === 'running';
+  const busy = ov.twins?.state === 'running' && !!ov.twins.cross_job;
   run.disabled = !!run._working || busy;
   run.textContent = busy || run._working ? 'Searching…' : 'Start search';
   const logState = $("crossGameLog");
@@ -940,7 +940,9 @@ function renderAutopilot(ov) {
     $('apTimingText').textContent = `Generation ${seconds('generation')} · Compiler prep ${seconds('preparation')} · Compile ${seconds('compile')} · Compiler wait ${seconds('compiler_wait')} · Link ${seconds('link')} · Scoring ${seconds('scoring')} · Database reads ${seconds('database_reads')} · Database writes ${seconds('database_writes')}. Cumulative worker time; parallel totals can exceed elapsed time.`;
   }
   const running = ap && ap.state === "running";
-  const twinsRunning = tw && tw.state === "running";
+  const manualSearch = tw?.state === "running" && !!tw.cross_job;
+  const paused = !!ap?.paused_for_search;
+  const twinsRunning = tw && tw.state === "running" && !manualSearch;
   box.classList.toggle("on", !!(running || twinsRunning));
   const queued = !!running && ap.phase === "queued";  // (a few autopilots run at once across every project: engine/autopilot.py)
   const reuseRunning = twinsRunning || (running && ap.phase === "twins");
@@ -950,7 +952,12 @@ function renderAutopilot(ov) {
   const perm = pm && (pm.tried || pm.state === "running")
     ? ` The permuter ${pm.state === "running" ? `is rewriting near misses${pm.threads ? ` on ${plural(pm.threads, "thread")}` : ""}${pm.current ? ` (now ${pm.current})` : ""}` : "rewrote near misses"}: ${plural(pm.tried, "function")}, ${pm.matched} matched.` : "";
   const twinsDone = (ap && ap.twins) || (tw && tw.matched) || 0;
-  if (queued && !twinsRunning) {
+  if (paused) {
+    $("apBar").hidden = true;
+    $("apTitle").textContent = "Autopilot paused for cross-game search";
+    $("apSub").textContent = "Autopilot will resume when the search ends.";
+    $("apBtn").textContent = "Stop";
+  } else if (queued && !twinsRunning) {
     $("apTitle").textContent = "Autopilot: waiting for its turn";
     $("apSub").textContent = `Other games' autopilots are running; this one starts when one of them ends. Agents can work meanwhile.${perm}`;
     $("apBtn").textContent = "Stop";
@@ -990,14 +997,21 @@ function renderAutopilot(ov) {
       : "Autopilot matches identical copies of matched code and tries every function's machine draft (m2c) through the judge") + `; whatever matches costs no agent time.${perm}`;
     $("apBtn").textContent = "Run autopilot";
   }
+  $("apBtn").disabled = !!$("apBtn")._working || (manualSearch && !paused);
   $("apBtn").onclick = async () => {
+    if ($("apBtn").disabled) return;
+    const stopAutopilot = paused || running || twinsRunning;
     const label = $("apBtn").textContent;
+    $("apBtn")._working = true;
     $("apBtn").disabled = true;
-    $("apBtn").textContent = running || twinsRunning ? "Stopping…" : "Starting…";
+    $("apBtn").textContent = stopAutopilot ? "Stopping…" : "Starting…";
     try {
-      S.ov = await api("/api/autopilot", { method: "POST", body: { slug: S.slug, action: running || twinsRunning ? "stop" : "start" } });
+      S.ov = await api("/api/autopilot", { method: "POST", body: { slug: S.slug, action: stopAutopilot ? "stop" : "start" } });
       renderAutopilot(S.ov);
-    } catch (e) { $("apBtn").textContent = label; toast(esc(e.message), "err"); } finally { $("apBtn").disabled = false; }
+    } catch (e) { $("apBtn").textContent = label; toast(esc(e.message), "err"); } finally {
+      $("apBtn")._working = false;
+      $("apBtn").disabled = S.ov?.twins?.state === 'running' && !!S.ov.twins.cross_job && !S.ov?.autopilot?.paused_for_search;
+    }
   };
 }
 

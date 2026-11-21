@@ -222,7 +222,7 @@ class GuiMixin:
                     'helper_matches':self._helper_match_count(proj)}
         details = diagnostics() if getattr(self.project_store(proj['id'])._local, 'in_tx', False) else cache(self).get(
             ('overview',slug,revision['map_revision'] if revision else proj['config']),diagnostics,ttl=5)
-        twins = self.twins.jobs.get(proj["slug"])
+        twins = self.twins.visible_job(proj["slug"])
         from ..code_coverage import snapshot as coverage_snapshot
         from ..source_preparation import settings as source_settings
         return details | base | {"code_coverage": coverage_snapshot(self, proj), "last_activity": last, "autopilot": self.autopilot_status(slug),
@@ -267,7 +267,7 @@ class GuiMixin:
         return (proj['slug'], proj['id'], row['map'], row['attempts'], row['event'], row['context'])
 
     def live_volatile(self, slug: str, stable: dict) -> dict:
-        twins = self.twins.jobs.get(slug)
+        twins = self.twins.visible_job(slug)
         out = {"autopilot": self.autopilot_status(slug), "permuter": self.permuter.status(slug),
                "twins": None if twins is None else {
                    k: getattr(twins, k) for k in ("state", "progress", "pairs", "tried", "matched", "asm",

@@ -29,17 +29,17 @@ def test_exact_donors_are_tried_before_partial_candidates(pair,monkeypatch,fork_
     monkeypatch.setattr(net.twins,'_rom_to_rom',lambda a,p,o,*rest:events.append(('try',o['id'])) or 0)
     def discover(t,p,**kwargs):
         assert kwargs['matched_only']
-        donor=kwargs['donors'][0]
-        events.append(('discover',donor['id']))
-        return {'donor':donor['id']}
+        ids = tuple(donor['id'] for donor in kwargs['donors'])
+        events.append(('discover', ids))
+        return {'donor': ids[0]}
     monkeypatch.setattr(shared_reuse,'discover',discover)
     monkeypatch.setattr(shared_reuse,'transfer',lambda *a,**kw:events.append(('try',kw['snapshot']['donor'])) or 0)
     monkeypatch.setattr(partial_reuse,'run',lambda *a,**kw:events.append(('partial',kw['projects'][0]['id'])) or 0)
     net.twins.across_games('destination')
     if fork_destination:
-        assert events==[('discover',1),('try',1),('discover',3),('try',3),('partial',1),('partial',3)]
+        assert events==[('discover',(1,)),('try',1),('discover',(3,)),('try',3),('discover',(1,3)),('partial',1),('partial',3)]
     else:
-        assert events==[('load',1),('try',1),('load',3),('try',3),('partial',1),('discover',1),('partial',3),('discover',3)]
+        assert events==[('load',1),('try',1),('load',3),('try',3),('partial',1),('partial',3),('discover',(1,3))]
 
 
 @pytest.mark.parametrize('selected',[False,True])
