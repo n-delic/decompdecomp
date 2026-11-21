@@ -10132,12 +10132,20 @@ previous best:
 - 470 to 280: the slot-index temporary and a text-buffer temporary, shared by all four loops, renamed per
   loop. A name shared across loops is one multi-block pseudo and gets one saved register; the target's
   loops have the index in a scratch register.
-- 280 to 260: one more step by the deep search.
+- 280 to 260 to 80: two more steps by the deep search (`temp_s1` as `unsigned short` among them).
+- 80 to 20: the probe-timer loop's counter init left as its own statement before the loop's pointer declaration
+  (`i = 0; { volatile u8 *m = ...; for (; (u16)i < 2; i++) ... }`), not in the `for` header.
+- 20 to 0 (byte-identical): every `if (v != 0)` written as `if (inline_fn(v))` with
+  `static inline int inline_fn(s32 a) { return a != 0; }`. After `beqz v` gcc's CSE knows `v == 0` on the else
+  path and replaced `v` in `else if (v < n)` by the counter register that also held zero (`slt $v0, $s4, $v0`);
+  through the helper the byte kept its own register (`slt $v0, $v1, $v0`). The deep permuter's random
+  `perm_inline` found it after 1,704 candidates.
 
 No difference: moving each local declaration to the front or back, `bonusTable` as a local pointer, a
 `while` or `for` form of the first loop (918, worse), the totals update spelled three ways. Evidence level: a
-real game, not byte-identical; decomp-repair 0.5.162's `block_register_repairs` reproduces the first three
-steps' sources and splits the temporaries, and the deep permuter offers them first when register rows
+real game, byte-identical in the end; decomp-repair 0.5.185's `block_register_repairs` has the rewrites for
+steps one to three, the split of the temporaries, the init left in place and the inline test (two of its
+variants took the score-20 source to exact), and the deep permuter offers them first when register rows
 dominate the diff.
 
 ### Keep a conditional halfword update in the guarded arm
@@ -10403,6 +10411,41 @@ the reused local dies before the first loop starts, and the second loop always r
 it. Reuse across the next pair instead scored 649. Changing only the spelling of the
 zero as a one-shot block also failed to improve the baseline.
 
+
+## KMC gcc 2.7.2, `-O2`: single-row register leftovers that source shape alone did not move (N64, a game with about 1,900 functions)
+
+Ten unmatched functions sat at a judged score of 5 to 15, five of them with exactly one differing row. All were
+compiled locally with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` and compared register-exactly with the target
+(relocations, `addu rd,rs,$zero` as `move` and FP register names normalised). Controlled compile-only results, one
+function each; nothing here matched, so none of it is a recipe, only a list of dead ends.
+
+- **Commutative `and` with a mask that does not fit `andi`** (a 23-instruction function that clears nine bits of a
+  flags word, target `lw $v1; addiu $v0,$zero,-0x1c1; and $v0,$v0,$v1`). Two allocation clusters exist and nothing
+  tried leaves them: either `lw $v1 / li $v0 / and $v0,$v1,$v0` (the load first) or `lw $v0 / li $v1 / and $v0,$v0,$v1`.
+  The target is the first cluster's registers with the second cluster's operand order. 32 source shapes (compound
+  assignment, mask-first, mask in a local before or after the load, signed and unsigned, `(s16)` and `-449` spellings,
+  xor and De Morgan forms, a mask local assigned after the load) and 23 flag sets (`-O1`, `-O3`, `-fno-` scheduling,
+  cse, gcse, strength-reduce and friends, `-mcpu=r4000`) all stayed in one cluster or the other. The reading that fits:
+  cse knows the mask register equals a constant and canonicalises the constant to the second operand, so the first
+  operand can never be the constant while cse sees it as one; the target's order needs the mask not to look constant at
+  cse time.
+- **`f + product` where the product comes from a call** (a function adding `angleDelta12(f) * scale` to a float field;
+  target `add.s $f2,$f2,$f0` with the reload in `$f2`). Writing the sum as `field + product` gives the target's operand
+  order but swaps the product and the reload (`$f2`/`$f0`). Reusing one named local for the argument read and the reload
+  (`x = a->f; ...call(x)...; x = a->f; x = x + p;`) gives the target's whole second half, then moves the first load
+  and the `trunc.w.s` to the other register pair. 53 expression shapes, none exact; the best has 3 differing rows.
+- **A subtraction that reads a saved register while its copy is in the argument register** (target `subu $a1,$s0,$a1`
+  after `move $a0,$s0`; ours reads `$a0`). cse prefers the hard register that holds the copy, so any source where the
+  copy exists in RTL before the subtraction reads `$a0`. 144 combinations of subtraction spelling, argument spelling
+  and statement order (including the subtraction first) did not make the subtraction read `$s0`.
+- **A return value that must keep `$v0` busy** (target `lbu $v1,0x1e; bnez; move $v0,$zero`, ours `lbu $v0`). Initialising
+  a shared result local at the top moved every temporary one register up (`$t0`/`$t1`) instead.
+- The stock Deep Permuter, 500 candidates each (`perm_inline`, `perm_add_sub`, `perm_randomize_function_type` were the
+  families that ran last), found nothing better than the saved best on the first three.
+
+Tooling note: a hand harness that normalises relocations and FP register names before counting differing rows is what
+made single-row leftovers visible; the app's own diff already does this, but `compile_snippet.py` reports
+`addu ...,$zero` against `move` as a difference.
 
 ### KMC request packets and inode halfword scans
 
