@@ -1,5 +1,15 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: use fixed byte offsets within a record walk
+
+An isolated N64 replay used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.
+Two cursors started two bytes apart and both advanced three bytes per
+iteration. Replacing the second cursor's byte loads at offsets -1 and 0
+with base indices 1 and 2 improved the linked score from 14,888 to
+14,764. Correcting the matrix buffer and prototypes alone tied at
+14,888. The cursor rewrite reproduced the partial improvement on the
+original draft by itself.
+
 ### KMC GCC 2.7.2: typed access at an inferred array stride
 
 An isolated N64 replay used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.

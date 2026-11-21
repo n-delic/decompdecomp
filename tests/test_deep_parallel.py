@@ -251,7 +251,7 @@ def test_empty_call_result_pass_keeps_remeasured_baseline(monkeypatch):
     assert search.tested == 0
 
 
-def test_indexed_loop_frame_pass_tries_combined_source_first(monkeypatch):
+def test_loop_cursor_pass_tries_combined_source_first(monkeypatch):
     from tests.test_permute import AGENT
 
     net = setup(monkeypatch)
@@ -285,7 +285,7 @@ void f(void) {
         return 0
 
     monkeypatch.setattr(search, '_score', judge)
-    assert search.indexed_loop_frame_pass(AGENT, net.project_row('game'), fn, 35, None) == 0
+    assert search.loop_cursor_pass(AGENT, net.project_row('game'), fn, 35, None) == 0
     assert len(tried) == 1
     assert 'consume(items[i]);' in tried[0]
     assert '__repair_frame' not in tried[0]
@@ -639,3 +639,36 @@ def test_component_before_resets_uses_relocated_target_names(monkeypatch):
 
     assert search.operand_order_pass(AGENT, proj, fn, 3509, None) == 3389
     assert tried == [child]
+
+
+def test_loop_cursor_pass_scores_parallel_record_cursor(monkeypatch):
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    source = '''void f(u8 *records, int n) {
+    u8 *base;
+    void *lead;
+    int i;
+    base = records;
+    i = 0;
+    lead = base + 1;
+    do {
+        consume(*base, *(u8 *)((char *)(lead) + 0));
+        lead += 2;
+        base += 2;
+    } while (++i < n);
+}
+'''
+    fn = {**net.function(), 'name': 'f', 'best_source': source}
+    search = deep_permuter.Search(net, 1, 1, Log())
+    tried = []
+
+    def judge(agent, proj, fn, candidate, best, fork):
+        tried.append(candidate)
+        search.tested += 1
+        return 15
+
+    monkeypatch.setattr(search, '_score', judge)
+    assert search.loop_cursor_pass(AGENT, net.project_row('game'), fn, 35, None) == 15
+    assert len(tried) == 1
+    assert 'consume(*base, base[1]);' in tried[0]

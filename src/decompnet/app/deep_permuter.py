@@ -453,13 +453,19 @@ class Search(Permuter):
             frontier = sorted(children, key=lambda item: item[0])[:3]
         return lowest
 
-    def indexed_loop_frame_pass(self, agent, proj, fn, best, fork):
-        """Measure the indexed loop and padding cleanup together under the current settings."""
+    def loop_cursor_pass(self, agent, proj, fn, best, fork):
+        """Measure fixed-offset cursors, indexed loops and frame cleanup."""
         from . import generation_calls
 
         source = _candidate_source(fn, best)
-        for family, child in generation_calls.pairs(generation_calls.library(
-                [('decomprepair.pointer_walk_index_repairs.frame_variants', (source, fn['name']))])[0]):
+        name = fn['name']
+        calls = [('decomprepair.pointer_walk_index_repairs.frame_variants', (source, name))]
+        if 'do' in source and '+=' in source:
+            ctx = self.net._context(proj['id'], fn['unit'])
+            header = self.net.forks.permuter_header(fork, name) if fork else (ctx['header'] if ctx else '')
+            calls.append(('decomprepair.parallel_byte_cursors.variants', (source, name, header)))
+        proposals = generation_calls.library(calls)
+        for family, child in generation_calls.pairs([pair for group in proposals for pair in group]):
             if self.tested >= self.limit:
                 break
             self.check()
@@ -1721,7 +1727,7 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
                         if deep_profiles.probe(search, agent, proj, fn, _candidate_source(fn, baseline), profile) == 0:
                             baseline = search.best = 0
                 if baseline and not relabel and (lane is None or lane.index == 0):
-                    baseline = search.indexed_loop_frame_pass(agent, proj, fn, baseline, fork)
+                    baseline = search.loop_cursor_pass(agent, proj, fn, baseline, fork)
                     fn = net._function(name, slug)
                 if (baseline and compiler_profiles == 1 and not relabel
                         and (lane is None or lane.index == 0)):
