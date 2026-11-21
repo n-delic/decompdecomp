@@ -371,6 +371,10 @@ class Search(Permuter):
                  # a switch case's temporaries split and its flag update folded in one child, and record
                  # field stores beside a scalar global's store written raw (MEM_IN_STRUCT_P keeps their order)
                  (L + 'case_split_combinations.variants', (source, name)),
+                 # a clamp function's four steps as one child (chained zero stores split, a float temporary one
+                 # name across sibling arms given its own local, identical returns collapsed, the packed return
+                 # reassigned behind a scheduling barrier): 525 -> 665 -> 255 -> 765 -> 0 one at a time
+                 (L + 'arm_local_return_fold.variants', (source, name)),
                  (L + 'struct_store_raw_offsets.variants', (source, name, header)),
                  # a float field advanced by a call's product: call result, product in its own scheduling
                  # boundary, field re-read, sum field first (the allocation the one-line form can't give)
