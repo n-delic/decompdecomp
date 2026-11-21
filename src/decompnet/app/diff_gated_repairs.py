@@ -41,6 +41,7 @@ from decomprepair import (
     passthrough_argument_repairs,
     relocated_byte_table,
     relocated_global_update,
+    search_exit_loop_repairs,
     shared_return_repairs,
     short_leaf_drafts,
     split_dispatch_zero_case,
@@ -222,6 +223,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_global_rebase.variants(source, name, header, rows, resolve=resolve)
         result += measured_memory_order.variants(source,name,rows,resolve=resolve,header=header)
         result += measured_memory_order.staged_field_masks(source, name, rows, header)
+        result += search_exit_loop_repairs.sentinel_byte_guard_variants(source, name, rows)
         result += measured_float_grid_stores.variants(source, name, rows)
         result += measured_expression_repairs.variants(source,name,header,rows)
         result += stack_byte_init_repairs.variants(source, name, header, rows)
