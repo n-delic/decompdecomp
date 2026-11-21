@@ -485,3 +485,88 @@ def test_pull_keeps_unrelated_tracked_edits_out_of_the_checkpoint(progress, tmp_
     assert git(root, 'rev-parse', 'HEAD') == base
     assert (root/'local-notes.txt').read_text() == 'Edited notes'
     assert (root/'src/f.c').is_file()
+
+
+@pytest.mark.parametrize('case', ['identical', 'different_bytes', 'edited_build'])
+def test_pull_rejudges_independent_upgrades_and_requires_identical_build(progress, tmp_path, monkeypatch, case):
+    import hashlib
+    import json
+
+    from decompnet.app import rebuildable_repository, repository_pull, repository_pull_rebuild, repository_sync, saves
+
+    net, root, remote = progress
+    # Start with a flat portable save, then upgrade it independently on both branches.
+    data = json.loads((root/saves.MANIFEST).read_text())
+    fingerprint = hashlib.sha1(b'original demo image').hexdigest()
+    data['game']['sha1'] = fingerprint
+    data['functions']['f'] = {'vram': 4096, 'best_score': 10, 'best_by': 'fixture'}
+    (root/saves.MANIFEST).write_text(json.dumps(data))
+    (root/'src/f.c').unlink()
+    (root/'best').mkdir(exist_ok=True)
+    (root/'best/f.c').write_text('local draft\n')
+    git(root, 'add', '-A')
+    git(root, 'commit', '-qm', 'Flat save')
+    git(root, 'push', 'origin', 'HEAD')
+    other = incoming(remote, tmp_path)
+
+    def upgrade(checkout, content, source, score):
+        folder = checkout/'progress'
+        folder.mkdir()
+        for path in checkout.iterdir():
+            if path not in (folder, checkout/'.git'):
+                path.rename(folder/path.name)
+        portable = json.loads((folder/saves.MANIFEST).read_text())
+        portable['functions']['f']['best_score'] = score
+        (folder/saves.MANIFEST).write_text(json.dumps(portable))
+        (folder/'best/f.c').write_text(source)
+        (checkout/'build.py').write_text(content)
+        (checkout/'build.json').write_text(json.dumps({
+            'image': 'original.bin', 'output': 'rebuilt.bin', 'sha1': fingerprint, 'functions': []}))
+        (checkout/rebuildable_repository.MARKER).write_text(json.dumps({
+            'format': 1, 'hashes': {name: repository_sync.digest(checkout/name) for name in ('build.py', 'build.json')},
+        }))
+        git(checkout, 'add', '-A')
+        git(checkout, 'commit', '-qm', 'Upgrade portable save')
+        return git(checkout, 'rev-parse', 'HEAD')
+
+    local = upgrade(root, '# local layout\n', 'local draft\n', 1)
+    upstream = upgrade(other, '# origin layout\n', 'incoming draft\n', 100)
+    if case == 'edited_build':
+        commit(other, 'build.py', '# contributor edited the generated build\n')
+    git(other, 'push', 'origin', 'HEAD')
+    net._update_cfg('game', lambda cfg: cfg.update(progress_folder=str(root/'progress'), rom={'sha1': fingerprint}),
+                    synchronize=False)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='open',matched_source=NULL WHERE name='f'")
+    (root/'original.bin').write_bytes(b'original demo image')
+
+    def build(stage, argv, log):
+        assert (stage/'build.py').read_text() == '# local layout\n'
+        (stage/'rebuilt.bin').write_bytes(b'original demo image' if case == 'identical' else b'different image')
+        return 0, ''
+
+    judged = []
+    def rejudge(net, project, fn, source):
+        judged.append(source)
+        return False, 20 if source == 'local draft\n' else 5
+
+    monkeypatch.setattr(repository_sync, 'command', build)
+    monkeypatch.setattr(repository_pull_rebuild, '_rejudge', rejudge)
+    review = repository_pull.run(net, 'game', str(root), print)['pull_review']
+    if case != 'identical':
+        message = 'differs from the original game' if case == 'different_bytes' else 'committed edits outside'
+        with pytest.raises(NetworkError, match=message):
+            repository_pull.run(net, 'game', str(root), print, review=review['token'])
+        assert git(root, 'rev-parse', 'HEAD') == local
+        assert (root/'progress/best/f.c').read_text() == 'local draft\n'
+    else:
+        result = repository_pull.run(net, 'game', str(root), print, review=review['token'])
+        assert 'matched the original byte for byte' in result['message']
+        assert git(root, 'rev-parse', 'HEAD^1') == local
+        assert git(root, 'rev-parse', 'HEAD^2') == upstream
+        assert (root/'progress/best/f.c').read_text() == 'incoming draft\n'
+        saved = json.loads((root/'progress'/saves.MANIFEST).read_text())
+        assert saved['functions']['f']['best_score'] == 5
+    assert judged == ([] if case == 'edited_build' else ['incoming draft\n', 'local draft\n'])
+    assert (root/'build.py').read_text() == '# local layout\n'
+    assert not (root/'rebuilt.bin').exists()

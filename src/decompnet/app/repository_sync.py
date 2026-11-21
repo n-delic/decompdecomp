@@ -195,7 +195,7 @@ def source_text(source, old, new):
     return tokens.sub(lambda m:new if m.group()==old else m.group(),source)
 
 
-def integrate(net, proj, root, stage, log):
+def integrate(net, proj, root, stage, log, *, rows=None):
     """Check additions independently; preserve curated C and update only files owned by a prior sync."""
     store = net.project_store(proj['id'])
     manifest_path = stage/'build.json'
@@ -220,7 +220,8 @@ def integrate(net, proj, root, stage, log):
     previous = json.loads((stage/STATE).read_text(encoding='utf-8')) if (stage/STATE).exists() else {'owned':{}}
     owned = previous.get('owned',{})
     functions = {f['vram']:f for f in manifest['functions']}
-    rows = store.all("SELECT * FROM functions WHERE project_id=? AND status='matched' AND matched_source IS NOT NULL ORDER BY vram",proj['id'])
+    if rows is None:
+        rows = store.all("SELECT * FROM functions WHERE project_id=? AND status='matched' AND matched_source IS NOT NULL ORDER BY vram",proj['id'])
     skipped=[];accepted=[];files=set();rollbacks={}
     for index,row in enumerate(rows):
         progress=getattr(log,'progress',None)
