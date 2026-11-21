@@ -7,7 +7,7 @@ Goal: C that the game's own compiler turns into exactly the bytes in the ROM. No
 2. Read `get_context`: the shared header every compile includes (types, structs, prototypes).
 3. Write the function, then `compile_and_diff`. Your object is linked at the function's real address
    and compared with the ROM. Score 0 = byte-identical = matched and saved.
-4. Iterate. Change one thing at a time and watch the score. Keep the best saved draft, but retain a small alternative when its frame, spill offsets or register mapping improves despite a worse score.
+4. Iterate in small recorded steps: keep a numbered edit list with each result in `add_note` ("#3 sink v to the join: 14 -> 14, new diff"), and combine edits that are individually neutral (`compile_variants(combine=true)`, `score_permutations`): a late match is usually several of them together. Near-match (a few `r`/`o` rows left)? Read `guide("near-match")` and use `compiler_passes`. Keep the best saved draft, but retain a small alternative when its frame, spill offsets or register mapping improves despite a worse score.
 5. Matched: add what you learned to the codebase so others benefit:
    - prototypes and structs you worked out -> `edit_context` (accepted only if every matched function
      still matches);

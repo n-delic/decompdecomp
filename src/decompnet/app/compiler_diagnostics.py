@@ -19,6 +19,7 @@ from ..project import compiler_config
 # Legacy GCC runs its second CSE after loop optimization, before flow/allocation.
 PHASE_ORDER = ('rtl','jump','cse','loop','cse2','flow','combine','sched','lreg','greg','sched2','jump2','dbr')
 PHASES = set(PHASE_ORDER)
+EXCERPT_CHARS = 4000  # of one phase's text an agent is shown (compiler_passes): enough for a function's RTL head
 
 
 def output_fingerprint(raw):
@@ -54,7 +55,8 @@ def allocated_output(raw):
     return hashlib.sha256(repr(payload).encode()).hexdigest()
 
 
-def phase_summary(work, name=None, arch=None):
+def phase_summary(work, name=None, arch=None, excerpts=()):
+    """`excerpts`: phases whose text (the function's part, bounded: EXCERPT_CHARS) is kept for an agent to read."""
     texts = {}
     result = {}; remaining = 4*1024*1024
     for path in sorted(Path(work).glob('func.*')):
@@ -77,7 +79,12 @@ def phase_summary(work, name=None, arch=None):
         priority = sorted((dict(row, legacy_weight=(row['references'].bit_length()-1)*row['references']/row['live_insns'])
                            for row in lifetimes if row['references']>0 and row['live_insns']>0),
                           key=lambda row:-row['legacy_weight'])[:16]
-        result[phase] = {'allocation_priority':priority,
+        excerpt = {}
+        if phase in excerpts:
+            from .rtl_value_trace import function as function_text
+            body = (function_text(text, name) if name else '') or text
+            excerpt = {'excerpt': body[:EXCERPT_CHARS], 'excerpt_cut': len(body) > EXCERPT_CHARS}
+        result[phase] = {**excerpt, 'allocation_priority':priority,
                          'loop_begin_notes':len(re.findall(r'NOTE_INSN_LOOP_BEG',text)),
                          'lifetimes':lifetimes[:32],'file':path.name,'bytes':path.stat().st_size,'truncated':path.stat().st_size>len(raw),
                          'captured_sha256':hashlib.sha256(raw).hexdigest(),'registers':registers,
@@ -92,7 +99,7 @@ def phase_summary(work, name=None, arch=None):
                 'allocation':gcc_allocation.summarize(texts,name,arch)} if name else {})}
 
 
-def diagnose(profile, header, source, name, *, root='.', baseline_obj=None, on_compile=lambda: None):
+def diagnose(profile, header, source, name, *, root='.', baseline_obj=None, on_compile=lambda: None, excerpts=()):
     tid = profile.get('toolchain','')
     if not tid or 'cmd' in profile or not toolchains.installed(tid):
         return {'skipped':'Diagnostics require an already installed pinned compiler; nothing is downloaded.'}
@@ -110,7 +117,7 @@ def diagnose(profile, header, source, name, *, root='.', baseline_obj=None, on_c
         baseline_obj = baseline.obj
     captured = {}
     def collect(work):
-        captured.update(phase_summary(work,name,tc.arch))
+        captured.update(phase_summary(work,name,tc.arch,excerpts))
     with capture_artifacts(collect):
         on_compile()
         diagnostic = compile_source(replace(cfg,cmd=[*cfg.cmd,'-da']),header,source)
