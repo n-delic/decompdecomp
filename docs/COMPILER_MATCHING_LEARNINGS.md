@@ -1,5 +1,18 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: a nested identical-arm float guard
+
+In one N64 function, an existing identical-arm guard tested an
+initialized double while a float and another double held loop constants.
+Adding an identical-arm guard on that initialized float inside either arm
+changed the allocation order so those values occupied $f28 and $f30 as
+in the target. With `-G0 -mips3 -mgp32 -mfp32 -O2`, the linked score
+improved 30 to zero; the running app verified all 334 instructions
+byte-identical. Duplicating the call under an independent float guard
+elsewhere scored 2024; recomputing the stored float in the earlier
+400-point candidate scored 1821.
+These are observations on one function, not a controlled compiler regression.
+
 ### KMC GCC 2.7.2: lift a shared switch default tail
 
 In one 12,136-byte N64 function, the decompiler placed the shared
