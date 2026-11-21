@@ -11495,3 +11495,13 @@ second register for both and left the first argument live from entry.
 Forwarding the original pointer and fixing the helper prototype together
 scored 10 to 0. The deep permuter required control-flow evidence that the
 pointer reached the call unchanged and saved the match in 17 candidates.
+
+### Capture the field before the call and reload it for the update
+
+With gcc-2.7.2-kmc `-G0 -mips3 -mgp32 -mfp32 -O2`, a one-line N64
+float update allocated the sum to the product register, scoring 10. A
+plain operand swap scored 30. Capturing the initial field in a float local,
+putting the call and product in a single-iteration scope, then using a
+compound update to reload the field preserved the target's register and
+instruction order. The deep permuter saved a byte-exact match in six
+candidates.
