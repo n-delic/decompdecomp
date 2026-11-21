@@ -1,17 +1,23 @@
 """Select bounded library repairs using evidence owned by the project."""
 import re
 
-from decomprepair import inferred_layout_repairs, matched_prototype_repairs, target_call_arity_repairs
+from decomprepair import (
+    array_stride_repairs,
+    inferred_layout_repairs,
+    matched_prototype_repairs,
+    target_call_arity_repairs,
+)
 from decomprepair.integer_repair_support import split_args, view
 
 from .. import structs
 from ..arch import mips_returns
 from ..candidate_scope import callees
 from . import model_replay_evidence as trace
+from .measured_mips_repairs import _indexed_fields
 
 CALL = 'cross_function_call'
 RECORD = 'cross_function_record'
-FAMILIES = (CALL, RECORD)
+FAMILIES = (CALL, RECORD, array_stride_repairs.FAMILY)
 
 
 def argument_reads(asm):
@@ -118,5 +124,14 @@ def variants(net, proj, fn, source, header):
         return []
     if len(source)+len(header) > 64000 or not fn['asm']:
         return []
-    return (call_variants(net, proj, fn, source, header, net._asm_text(fn, proj))
-            + record_variants(net, proj, fn, source))
+    asm = net._asm_text(fn, proj)
+    indexed = []
+    if array_stride_repairs.ACCESS.search(source):
+        indexed = array_stride_repairs.variants(source, fn['name'], header, array_stride_repairs.evidence(asm))
+    if 'extern' in source and '*' in source:
+        # C may still name a symbol by its imported address after a rename.
+        for listing in dict.fromkeys((asm, fn['asm'])):
+            code = [(False, ' '.join(line.split())) for line in mips_returns.instructions(listing)]
+            groups, _ = _indexed_fields(code, separate_accesses=True)
+            indexed += array_stride_repairs.global_variants(source, fn['name'], header, groups)
+    return list(dict.fromkeys(indexed))[:4] + call_variants(net, proj, fn, source, header, asm) + record_variants(net, proj, fn, source)

@@ -1,5 +1,14 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: typed access at an inferred array stride
+
+An isolated N64 replay used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.
+The target's shift and add chain identified the byte stride at a relocated
+field. Replacing byte-pointer arithmetic with a padded struct member preserved
+the linked scores of 210 and 10,126 in three directly judged trials across two
+drafts. This is a measured tie for those drafts. It supplies no evidence of an
+exact match or of the complete original record layout.
+
 ### KMC GCC 2.7.2: move the third vector load before pointer resets
 
 An isolated N64 replay used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.

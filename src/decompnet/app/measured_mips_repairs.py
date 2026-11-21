@@ -239,7 +239,7 @@ def _stack_slots(code):
     return slots
 
 
-def _indexed_fields(code, widths=LOAD_WIDTH):
+def _indexed_fields(code, widths=LOAD_WIDTH, *, separate_accesses=False):
     groups = defaultdict(dict)
     changed = set()
     high, linear, indexed = {}, {}, {}
@@ -261,7 +261,7 @@ def _indexed_fields(code, widths=LOAD_WIDTH):
         if match := re.fullmatch(rf'({REG}),\s*%lo\(({SYMBOL})\)\(({REG})\)',rest):
             addr = indexed.get(match[3])
             if op in widths and addr and addr[0]==match[2]:
-                key = addr[1:]
+                key = ((addr[1], position), addr[2]) if separate_accesses else addr[1:]
                 groups[key][match[2]] = widths[op]
                 if diff:
                     changed.add(key)

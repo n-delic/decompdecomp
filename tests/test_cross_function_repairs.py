@@ -60,3 +60,19 @@ def test_handoff_survives_reload_and_expires_when_the_draft_or_build_changes(mon
     assert not deep_handoff.brief(net, proj, {**fn, 'best_source': source+' '}, source+' ')
     monkeypatch.setattr(experiment_evidence, 'build_scope', lambda *_: 'build2')
     assert not deep_handoff.brief(net, proj, fn, source)
+
+
+def test_stride_candidates_reach_cross_function_priority_queue(monkeypatch):
+    from decomprepair.array_stride_repairs import FAMILY
+
+    source = 'extern unsigned short table[];\nint f(int i) { return table[i * 6]; }'
+    ops = ['sll $t0, $a0, 1', 'addu $t0, $t0, $a0', 'sll $t0, $t0, 2',
+           'lui $t1, %hi(table)', 'addu $t1, $t1, $t0', 'lhu $v0, %lo(table)($t1)']
+    asm = '\n'.join(f'/* {i*4:X} {0x80000000+i*4:08X} 00000000 */ {op}' for i, op in enumerate(ops))
+    net = SimpleNamespace(is_rom=lambda proj: True, _asm_text=lambda fn, proj: asm)
+    fn, proj = {'name': 'f', 'asm': asm}, {'arch': 'mips'}
+    monkeypatch.setattr(repairs, 'record_variants', lambda *args: [])
+    monkeypatch.setattr(repairs, 'call_variants', lambda *args: [])
+    [(family, candidate)] = repairs.variants(net, proj, fn, source, '')
+    assert family == FAMILY and family in repairs.FAMILIES
+    assert 'padding[10]' in candidate
