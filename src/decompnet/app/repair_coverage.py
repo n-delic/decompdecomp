@@ -108,6 +108,7 @@ def verify(feedback, example):
             measured_expression_repairs,
             measured_immediate_repairs,
             measured_memory_order,
+            measured_mmio_polling,
             measured_pointer_scale,
             measured_temporary_repairs,
             uncached_read_repairs,
@@ -128,6 +129,8 @@ def verify(feedback, example):
         if candidate := measured_callback_loop.rewrite(source, fn['name'], fn['asm'] or '', header,
                                                        symbols.resolve if symbols else None):
             focused.append(('measured_callback_loop', candidate))
+        if candidate := measured_mmio_polling.rewrite(source, fn['name'], fn['asm'] or '', header):
+            focused.append(('measured_mmio_polling', candidate))
         focused += measured_callback_repairs.variants(source, fn['name'], rows)
         focused += measured_address_repairs.variants(source, fn['name'], header, rows, symbols)
         focused += measured_pointer_scale.variants(source, fn['name'], header, rows)

@@ -370,6 +370,7 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
         from decomprepair import (
             large_stack_drafts,
             measured_callback_loop,
+            measured_mmio_polling,
             measured_stack_drafts,
             shared_default_drafts,
             unaligned_stack_drafts,
@@ -384,6 +385,7 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
                 or shared_default_drafts.rewrite(source, name, asm_text, data_asm, context_header)
                 or uncached_read_repairs.rewrite(source, name, asm_text, resolve)
                 or measured_callback_loop.rewrite(source, name, asm_text, context_header, resolve)
+                or measured_mmio_polling.rewrite(source, name, asm_text, context_header)
                 or source)
     return source
 
