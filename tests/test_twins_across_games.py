@@ -182,3 +182,42 @@ def test_donors_built_with_the_wanting_functions_own_compiler_come_first():
     prefer_own_compilers(sources, {"fp": [1], "other": [2]}, own.get)
     assert [s["name"] for s in sources] == ["b", "a", "c"] or [s["name"] for s in sources] == ["b", "c", "a"]
     assert sources[0]["name"] == "b"
+
+
+def test_manual_search_finds_imported_code_inside_a_merged_rom_function(built, tmp_path, monkeypatch):  # noqa: F811
+    from decompnet.app.twins import Job, object_prints
+
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path)
+    slug = net.import_rom(ROM, confirmed=True, log=lambda *_: None)
+    agent, _ = net.local_agent("autopilot")
+    copy_project(net, slug, "imported-library")
+    proj, donor = net._project(slug), net._project("imported-library")
+    net.split_function(agent, donor['slug'], "func_800007C4", "0x800007D0")
+    a = net._function("func_800007D0", donor['slug'])
+    with net.project_store(donor['id']).tx() as db:
+        db.execute("UPDATE functions SET status='matched' WHERE id=?", (a['id'],))
+    ctx = net._context(donor['id'], a['unit'])
+    compiled = net._compile(donor, ctx['header'], CLAMP, a)
+    assert compiled.ok
+    fingerprint = object_prints(compiled.obj)[a['name']]
+    assert fingerprint.key == net.twins.prints(donor)[a['id']].key
+    monkeypatch.setattr(net.forks, "get", lambda _: (donor, object(), {"platform": "n64"}))
+    monkeypatch.setattr(net.forks, "is_asm", lambda *_: False)
+    monkeypatch.setattr(net.twins, "_fork_prints", lambda _, **kwargs: {a['id']: fingerprint})
+    job = Job()
+    job.cross_exhaustive = True
+    original = net._function("func_800007C4", slug)
+    monkeypatch.setattr(net.forks, "_current_source", lambda *_: "int func_800007D0(void) { return 123; }")
+    assert net.twins._fork_to_rom(agent, proj, donor, {}, net.twins.prints(proj), job) == 0
+    assert net._function(original['name'], slug)['target'] == original['target']
+
+    monkeypatch.setattr(net.forks, "_current_source", lambda *_: CLAMP)
+    assert net.twins._fork_to_rom(agent, proj, donor, {}, net.twins.prints(proj), job) == 1
+    recovered = net._function(a['name'], slug)
+    assert recovered['status'] == 'matched'
+    assert recovered['target'] == a['target']
+    assert recovered['vram'] == a['vram']
+    head = net._function(original['name'], slug)
+    assert original['target'].startswith(head['target'])
+    assert original['target'].endswith(recovered['target'])
+    assert not any(original['target'][head['size']:-recovered['size']])  # alignment padding

@@ -729,6 +729,10 @@ CodeWarrior PS2 2.3.3/3.0.1 also run through native Mac wibo after explicit
 license acceptance. Both pass homemade-demo matching, C++ method and export checks
 on Apple Silicon; physical Intel Mac and retail-game checks remain planned.
 
+- Extend donor-based discovery to code in unmapped ROM regions, including N64 USO overlays. Decode and
+  validate the original image and preserve each overlay's relocation and address scope before judging C.
+  Extend merged-function recovery to ROM-to-ROM donors and processors with other boundary rules.
+
 ## What works where
 
 Each feature and the platforms it covers today. A — is a gap: pick one up (the notes under the table say where to
@@ -823,6 +827,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Struct layouts from loads and stores (`guess_struct`) | ✓ | ✓ | ✓ | — | — | ✓ | — | — | ✓ | ✓ | — | — |
 | The game's own debug symbols: names, types, prototypes | — | — | ✓ symbol table, STABS, DWARF 1; the compiler of each object file | names (types and prototypes: —) | — | ✓ symbol table, DWARF 1 | — | — | ✓ PDB (Visual C++ 6.0's PDB 2.0, MSF 7.00), linker map, COFF symbols (64-bit games': untested) | — (an XBE has none) | — | — |
 | Twins across your games | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | ✓ (between project-mode games; not run on two GameCube games yet) | ✓ (between PC projects) | ✓ (as PC's; not run on two Xbox games yet) | ✓ (between project-mode games; not run on two DS games yet) | — |
+| Find imported donor code inside a merged function during manual search | ✓ MIPS ROM target | ✓ shared MIPS path | ✓ shared MIPS path | ✓ shared MIPS path | — separate owned build | ✓ shared MIPS path | — ARM/Thumb boundary reader planned | — separate owned build | — separate owned build | — separate owned build | — separate owned build | ✓ verified ELF donor to MIPS ROM |
 | Named Claude accounts, assigned per helper; recorded usage per account | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Grouped ROM variants: selector, identities, checked shared C and single-repository export | ✓ demo + two real releases verified | — adapter validation pending | — adapter validation pending | — | — | — adapter validation pending | — | — object adapter planned | — object adapter planned | — | — object adapter planned | — object adapter planned |
 | Other releases of a game: found, paired, names, header types and code brought over | ✓ | — not yet run | — not yet run | — | — | — not yet run | — | — object pairing planned | — object pairing planned | — | — object pairing planned | — object pairing planned |
