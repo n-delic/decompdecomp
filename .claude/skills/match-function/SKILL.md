@@ -83,6 +83,12 @@ holder you judge as the window's shared "you", and a second Claude session would
   scripts need an environment with decompnet (`.venv/bin/python`, read only: do not `uv sync` it).
 - Game data (ROMs, extracted code) is read only and never copied into the repo or a PR.
 - Use the scratchpad for experiments, a worktree + branch + PR for repo changes (AGENTS.md workflow).
+- **Never `git pull`/`checkout` in the primary checkout**: the user's live app runs from its `.venv`, and a pull
+  leaves the source ahead of it (the app's judge-worker then failed to import decomprepair). Read the latest skill
+  with `git fetch -q origin && git show origin/main:.claude/skills/match-function/SKILL.md`; run `fast_judge.py` or a
+  judge-worker from a private venv built in your own worktree (`UV_PROJECT_ENVIRONMENT=<scratch venv> uv sync`).
+- Shell on macOS: BSD `sed -i` needs `sed -i ''` (every run hit "invalid command code"; prefer Edit or Python), and
+  foreground `sleep` is blocked: wait with `Monitor` or a background command.
 
 ## 1. Orient (5 minutes, do not skip)
 
@@ -265,6 +271,12 @@ For each manual step that moved the score, answer: **could the permuter have don
   exists is taken (use the next version, never move a tag), and after the library's release check its archive
   contains your module before bumping the app's pin.
 
+  Tag gotchas seen in one batch: `git fetch --tags` "would clobber existing tag" means a tag you made locally was
+  released meanwhile by another session: `git tag -d` it, take the next free version, tag only right before the
+  push; and a run's "No module named decomprepair.<x>" meant the pinned tag predates your module (check the archive).
+- After the first 0, re-read `judge.py diff`: it must say **"matched best 0"**. "open best N" means the match was not
+  recorded (one run's 0 wasn't until resubmitted); resubmit the exact source with `judge.py try`.
+
 Step 5 is merged *before* you continue hunting, not saved for the end. If you still cannot match the function
 afterwards, leave its note with the evidenced blocker.
 
@@ -315,7 +327,8 @@ afterwards, leave its note with the evidenced blocker.
 
 The goal from the top of this file is met only when **both** hold:
 
-- the function's judged score is 0 (`judge.py diff` reports the app's verdict; re-read it, don't recall it); and
+- the function's judged score is 0 (`judge.py diff` reports the app's verdict; re-read it, don't recall it), "matched best 0";
+- the `docs/COMPILER_MATCHING_LEARNINGS.md` entry is written (step 5; skipped until reminded in one run); and
 - the permuter or app change from step 5 is merged (or an open PR with its test passing), the function is
   confirmed matched in the app after the merge (`judge.py diff`), and your final message gives the before/after
   evidence. Do not run `scratch_run.py`; the user tests the repair in their app.
