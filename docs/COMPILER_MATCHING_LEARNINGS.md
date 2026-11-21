@@ -8895,3 +8895,21 @@ cursor setup in a single-statement `do { ... } while (0)` before the loop label 
 saved-register allocation and reduced the linked score from 130 to 110. The candidate
 keeps the label after initialization so the existing backedge retains its destination.
 Deep Permuter reproduced the improvement under the original compiler settings.
+
+### Forwarding an incoming argument through a direct wrapper
+
+A nine-instruction N64 wrapper under `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`
+loaded a global into the second argument register and left the first argument
+register untouched through the call and its delay slot. m2c inferred a
+parameterless wrapper and a single-argument callee. The draft scored 10.
+Restoring the first argument in the wrapper, call and generated prototype
+reproduced the original 36 linked bytes on the copied project.
+
+### Scheduling fixed copies before a record loop
+
+A 29-instruction N64 draft under the same KMC flags scored 690. Using the
+existing explicit loop backedge reduced that to 20. Moving the cursor
+initializers after the third fixed field copy on its own scored 470. Combining
+both changes restored the original pointer allocation and matched all 116
+linked bytes. The target must show the three fixed word pairs, the two loop
+cursors, and the matching counter, stride and branch back to the body.
