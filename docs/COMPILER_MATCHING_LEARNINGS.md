@@ -11855,6 +11855,38 @@ that gives 0 (each run directly and scored with the judge-worker; no permuter ru
 families yet (the end temp shared between loops, natural spills with a pass-through argument, merging m2c's per-loop
 variables, the `first` copy). Not controlled across other functions.
 
+## An audio sequencer's update tick: a rotated `while` needs a cse barrier, the loop's companions come off the counter, the second block uses the loop's pointer (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, an N64 game, one 198-instruction function)
+
+An eight-slot loop (active flag, a sequence player pointer in a global, a list walk that advances a cursor by 8 until
+a `-1` sentinel, a block of fixed-point updates, five calls, an unlink loop). The saved best was 535 (m2c's explicit
+`k`/`f` byte-offset companions, `goto loop`). Edit list, each scored with the judge-worker on the one before (the app's
+own numbers; 0 is exact; sources are in the PR's evidence, no game data):
+
+| # | Edit | Score | What it changes in the compiler |
+| - | ---- | ----- | -------------------------------- |
+| 0 | saved best | 535 | |
+| 1 | after the walk, `n = D_800EDA8C;` and the block's field accesses through `n` (`global_pointer_run`) | 480 | the block is addressed through the loop's pointer register (`$a2`) instead of a fresh temporary |
+| 2 | `k` and `f` dropped: `D_800E6A84[j * 0xFF8]`, `D_800E5AC4 + j * 0xFF8`, `D_800E6A88[j * 0xFF8]` (`counter_companion`) | 420 | loop.c makes the givs after hoisting invariants: `li $fp,-1` now comes before `lui $s6` |
+| 3 | the call result staged: `rv = f(...); n = ...; t0 = n->f68; D_800EDA88 = rv;` | 497 alone (worse), needed for what follows | the byte store drops into the first branch's delay slot, after the field load (the target's order) |
+| 4 | the `goto loop` walk as `while (A) { if (B) break; ...; n = D_800EDA8C; }` with the literal `-1` | 505 | the sentinel constant is hoisted by loop.c into its own register (`li $s0,-1`) after the entry test, whose `beq` keeps its `nop` slot (a source `minus_one` local was pulled into the slot), as the target |
+| 5 | an (unused) label at the top of the loop body: `top: m = n->f6c;` (`loop_top_label`) | 230 | jump.c copies the test A before the loop; cse then follows the fall-through into the top label and reuses the test's address for `m`, carrying `m` round the loop (`move $a1,$a0`). A named label ends the extended basic block, so `m` is reloaded as the target does |
+| 6 | the `$f70` store written before the `$f74` update | 195 | the stores keep source order for the first scheduler; the second then orders the reads like the target |
+
+Rules (not spellings): a loop the compiler rotates shares its first load with the copied test unless something ends
+the extended basic block; an explicit source constant is a delay-slot candidate that a loop.c-hoisted constant is not
+(only the hoisted one stayed out of the slot); strides the compiler can derive are better left to it, because the
+hoisted constants land between the counter's and the givs' initialisations.
+
+Tried and failed: a `minus_one` local at any of five positions (355 at best; it merged with the first compare's
+constant and moved the `li` into the call's delay slot), `do { } while` with the break (1826, rotated through a `j`),
+`for (;;)` with breaks (1716), the struct-typed accesses for the tail, every order of the tail's six statements
+(195 floor), splitting `e` into two variables (365 to 415), declaration order and widths of `e`/`g`/`h`/`i`.
+
+Evidence: one function; steps 1, 2 and 5 are reproduced by the three decomp-repair 0.5.267 families run directly on the
+step before (535 -> 480, 535/480 -> 475/420, 505 -> 230), scored with the judge-worker; no permuter run. Not controlled
+across other functions. The residual at 195 is the final multiply's operand order and the register/order of the
+last block (below).
+
 ### Capture the current node before advancing a linked loop
 
 With gcc-2.7.2-kmc `-G0 -mips3 -mgp32 -mfp32 -O2`, a simple N64
