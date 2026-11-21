@@ -292,6 +292,13 @@ def prepare(net, slug, root, head, target, preview, check):
         return None
     if not conflicts and not updates:
         return None
+    commit = commit_merge(root, head, target, tree, updates, blobs, check,
+                          message='Merge origin and keep the best saved decompilation progress')
+    return commit, count
+
+
+def commit_merge(root, head, target, tree, updates, blobs, check, *, message):
+    """Create the prepared two-parent commit without changing the checkout or its real index."""
     with tempfile.TemporaryDirectory(prefix='decomp-progress-merge-') as temp:
         env = {'GIT_INDEX_FILE': str(Path(temp) / 'index')}
         git(root, 'read-tree', tree, env=env)
@@ -305,6 +312,4 @@ def prepare(net, slug, root, head, target, preview, check):
         git(root, 'update-index', '-z', '--index-info', env=env, input=''.join(records).encode())
         merged = git(root, 'write-tree', env=env)
         check()
-        commit = git(root, 'commit-tree', merged, '-p', head, '-p', target,
-                     '-m', 'Merge origin and keep the best saved decompilation progress')
-    return commit, count
+        return git(root, 'commit-tree', merged, '-p', head, '-p', target, '-m', message)

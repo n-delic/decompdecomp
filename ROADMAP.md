@@ -900,6 +900,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Verified Git export sync (explicit Settings action) | build.json export | shared export adapter | shared export adapter | — | — | shared export adapter | — | source already in checkout | source already in checkout | — | source already in checkout | source already in checkout |
 | Commit and push bound portable progress | ✓ | ✓ | ✓ | — | — | ✓ | — | — own checkout UI planned | — own checkout UI planned | — | — own checkout UI planned | — own checkout UI planned |
 | Create full verified rebuildable repository with nested app progress | ✓ | ✓ | ✓ | — | — | ✓ | — | — source checkout setup planned | — source checkout setup planned | — | — source checkout setup planned | — source checkout setup planned |
+| Merge independent rebuildable upgrades with a byte-identical rebuild | ✓ verified on an isolated game | ✓ shared build adapter | ✓ shared build adapter | — no full export | — no full export | ✓ shared build adapter | — no full export | — source checkout | — source checkout | — no full export | — source checkout | — source checkout |
 | Add missing origin remote in Settings | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ | ✓ | — | ✓ | ✓ |
 | Opt-in automatic push after a configurable commit threshold | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ | ✓ | — | ✓ | ✓ |
 | Review and push existing Git commits to origin | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ | ✓ | — | ✓ | ✓ |
@@ -4447,6 +4448,10 @@ ABI analysis and automatic source/profile selection remain planned.
   match or the lower comparable score with its source and preserving both Git parents.
   Confirming a pull also checkpoints eligible uncommitted progress locally before the
   comparison. The checkpoint is recoverable if the merge needs manual review.
+  Independently generated rebuildable upgrades of a shared flat save can merge when
+  the local layout contains the incoming function boundaries. Rejudge C using the
+  local build inputs, then compare the complete rebuilt image with the original before
+  updating the branch. Repositories with edited build files still need structural review.
   Build-owned projects still need a source-unit adapter that judges competing functions
   and preserves their file and build context.
 
