@@ -1,5 +1,18 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: reuse saved floating-point accumulator storage
+
+A large N64 draft assigned two block-local float temporaries and
+later added each temporary into its corresponding accumulator. The
+target reused each saved accumulator before the final additions.
+Reusing both accumulators from their temporary assignments improved
+the linked score from 33,408 to 32,007 under
+`-G0 -mips3 -mgp32 -mfp32 -O2`. The isolated changes measured
+33,657 and 32,123. Reusing earlier intermediates as well scored 32,082.
+The paired variant measured 36,122 under `-fno-schedule-insns2` and
+40,372 under `-g3`. These are measurements on one function. Controlled
+regressions cover competing reads, address escapes and conditional exits.
+
 ### KMC GCC 2.7.2: reuse nonoverlapping floating-point locals
 
 In a large N64 draft, separate temporary names indicated reuse of
