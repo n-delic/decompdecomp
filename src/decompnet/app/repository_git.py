@@ -10,7 +10,7 @@ from .. import hostenv
 from ..network import NetworkError
 
 
-def git(root, *args, env=None, input=None, missing=False, error=None):
+def git(root, *args, env=None, input=None, missing=False, error=None, merge_preview=False):
     """Never prompt invisibly for credentials in the app's background worker."""
     try:
         result = subprocess.run([shutil.which('git') or 'git', '-C', str(root), *args],
@@ -19,6 +19,9 @@ def git(root, *args, env=None, input=None, missing=False, error=None):
                                 creationflags=hostenv.NO_WINDOW if os.name == 'nt' else 0)
     except (OSError, subprocess.TimeoutExpired):
         raise NetworkError('Git timed out or could not start. Check the checkout and your Git credentials, then retry.') from None
+    # merge-tree -z reports a provisional tree and the unmerged paths even on exit 1.
+    if merge_preview and result.returncode in (0, 1) and not result.stderr:
+        return result.returncode == 0, result.stdout
     if missing and result.returncode == 1 and not result.stderr.strip():
         return None
     if result.returncode:
