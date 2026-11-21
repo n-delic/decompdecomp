@@ -366,6 +366,7 @@ class Search(Permuter):
         proposals += scoped_cursor_entry.variants(source, fn['name'], proj['arch'], asm)
         proposals += scoped_global_reset.variants(source, fn['name'], proj['arch'], asm)
         proposals += word_byte_loop_carrier.variants(source, fn['name'], proj['arch'], asm)
+        proposals += counter_derived_loop_offset.masked_byte_stride_variants(source, fn['name'], proj['arch'], asm)
         proposals += counter_derived_loop_offset.variants(source, fn['name'], proj['arch'], asm)
         proposals += stack_byte_loop_base.variants(source, fn['name'], proj['arch'], asm, header)
         proposals += unsigned_rate_division_scope.variants(source, fn['name'], proj['arch'], asm, header)
