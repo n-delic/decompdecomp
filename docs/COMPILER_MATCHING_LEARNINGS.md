@@ -10289,3 +10289,17 @@ final branch. Moving the existing labeled copy from the outer guard's else arm t
 reproduced both linked functions exactly. Removing the guard's early copy while flattening the exit
 scored 320 on each function. Wrapping the assignments or changing their scalar widths left residual
 differences. The deep permuter can now try the shared exit from those measured register differences.
+
+### Recover stack objects for queued messages and relocated packets
+
+Five earlier N64 drafts had undeclared stack-slot names. Independent archived sources matched their controls.
+
+- With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, the 132-byte request uses a 24-byte queue, a one-word
+  message buffer and a request whose result is written by the receiver. Reconstructing the objects compiled
+  at score 560. Returning early on the disabled path matched all bytes.
+- With the same flags, three request wrappers (132, 168 and 168 bytes) use a longer request before the queue.
+  An ordinary aggregate compiled but left scores 1185, 1245 and 1245. Passing the command as a parameter to a
+  small inline helper put the command in the expected saved register and reproduced the stack frames exactly.
+- With the same compiler options plus `-g3`, a relocated packet passes twelve bytes through unaligned word
+  copies. A twelve-byte aggregate compiled at score 10. Storing the terminator through an unsigned byte pointer
+  matched all 136 bytes.
