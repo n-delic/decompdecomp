@@ -7,6 +7,10 @@ pointer searches improved from a difference score of 210 to 10 after
 typing the indexed table read as a pointer. The linked target loads
 a word where the draft loaded a signed byte. The remaining register
 allocation differs, so neither draft matched byte for byte.
+Follow-up trials varied the index, flag and temporary integer types,
+declaration initialization, chained initialization and loop form. The
+best score remained 10 in both drafts. These trials used the same
+linked targets and compiler flags as the initial measurement.
 
 ### KMC GCC 2.7.2: recover byte cursors and input record setup
 
