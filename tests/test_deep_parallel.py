@@ -569,6 +569,44 @@ def test_join_initializer_sink_runs_in_the_local_pass(monkeypatch):
     assert '    v = 255;\n    L:' in tried[0] and '  v = 255;\n  if' not in tried[0]
 
 
+def test_a_pair_of_rewrites_is_tried_when_neither_improves_alone(monkeypatch):
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    proj = net.project_row('game')
+    fn = {**net.function(), 'name': 'f', 'asm': '', 'best_source': 'void f(void) { first; }'}
+    search = deep_permuter.Search(net, 1, 6, Log())
+    offered = {'void f(void) { first; }': ([('sink', 'A'), ('polarity', 'B')], []), 'A': ([('literal', 'AC')], [])}
+    monkeypatch.setattr(search, '_local_proposals', lambda source, proj, fn, rows: offered.get(source, ([], [])))
+    scores = {'A': 90, 'B': 500, 'AC': 40}
+    tried = []
+    monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or scores[child])
+
+    # A alone is worse than the best (60) but within reach; B is too far to build on; A + the literal wins.
+    assert search.operand_order_pass(AGENT, proj, fn, 60, None) == 40
+    assert tried == ['A', 'B', 'AC']
+
+
+def test_the_second_step_is_bounded_and_skips_far_children(monkeypatch):
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    proj = net.project_row('game')
+    fn = {**net.function(), 'name': 'f', 'asm': '', 'best_source': 'void f(void) { first; }'}
+    search = deep_permuter.Search(net, 1, 6, Log())
+    many = [('x', f'C{i}') for i in range(40)]
+    offered = {'void f(void) { first; }': ([('sink', 'A')], []), 'A': (many, [])}
+    monkeypatch.setattr(search, '_local_proposals', lambda source, proj, fn, rows: offered.get(source, ([], [])))
+    tried = []
+    monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 90)
+
+    assert search.operand_order_pass(AGENT, proj, fn, 60, None) == 60
+    assert len(tried) <= 1 + search.COMBINED_BUDGET
+    tried.clear()
+    monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 500)
+    assert search.operand_order_pass(AGENT, proj, fn, 60, None) == 60 and tried == ['A']
+
+
 def test_scoped_byte_global_update_uses_current_relocation_names(monkeypatch):
     from tests.test_permute import AGENT
 

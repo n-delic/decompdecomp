@@ -338,12 +338,10 @@ class Search(Permuter):
             self.improvements += int(bool(result.get('applied')))
         return result
 
-    def operand_order_pass(self, agent, proj, fn, best, fork):
-        """Spend a few of the ordinary trials on a measured operand/register near miss."""
-        rows = self.winner_diff[0] if self.winner_diff else repair_ranking.evidence(self.net, fn['id'], agent.id)
+    def _local_proposals(self, source, proj, fn, rows):
+        """(proposals, loop_shapes): every local rewrite the library offers for `source`, most promising first."""
         from . import generation_calls
 
-        source = _candidate_source(fn, best)
         header = self.net._context(proj['id'], fn['unit'])['header']
         asm = dict(fn).get('asm') or ''
         arch, name = proj['arch'], fn['name']
@@ -361,7 +359,8 @@ class Search(Permuter):
                  (L + 'counter_derived_loop_offset.variants', (source, name, arch, asm)),
                  (L + 'stack_byte_loop_base.variants', (source, name, arch, asm, header)),
                  (L + 'unsigned_rate_division_scope.variants', (source, name, arch, asm, header)),
-                 (L + 'join_initializer_sink_repairs.variants', (source, name))]
+                 (L + 'join_initializer_sink_repairs.variants', (source, name)),
+                 (L + 'branch_polarity_repairs.variants', (source, name))]
         zero_bound = None
         if arch == 'mips' and '%lo(' in asm:
             rename = getattr(self.net, 'rename_tokens', None)
@@ -399,8 +398,16 @@ class Search(Permuter):
             else:
                 proposals += result
         proposals = loop_shapes + proposals
+        return proposals, loop_shapes
+
+    def operand_order_pass(self, agent, proj, fn, best, fork):
+        """Spend a few of the ordinary trials on a measured operand/register near miss."""
+        rows = self.winner_diff[0] if self.winner_diff else repair_ranking.evidence(self.net, fn['id'], agent.id)
+        source = _candidate_source(fn, best)
+        proposals, loop_shapes = self._local_proposals(source, proj, fn, rows)
         seen = {source}
         limit = min(6 + min(len(loop_shapes), 12), (self.limit - self.tested) // 2)
+        frontier = []
         for family, child in proposals:
             if limit <= 0:
                 break
@@ -413,6 +420,40 @@ class Search(Permuter):
             limit -= 1
             if score is not None and score < best:
                 return score
+            if score is not None:
+                frontier.append((score, child, family))
+        return self._combined_step(agent, proj, fn, best, fork, rows, frontier, seen)
+
+    COMBINED_TOLERANCE = 2.0   # a first step may score up to this times the best and still be half of a pair
+    COMBINED_PARENTS = 3       # nearest non-improving children to build on
+    COMBINED_BUDGET = 12       # compiles for the whole second step
+
+    def _combined_step(self, agent, proj, fn, best, fork, rows, frontier, seen):
+        """Rewrites that are each no better alone but win together.
+
+        A hand match needed three changes at once (a constant sunk to its join, written as its literal, its stores
+        typed `u8`); one at a time every step scored the same or worse, so a search that keeps only improvements
+        never reaches the pair. Take the few children that compiled nearest the best and run the same rewrites on them."""
+        if not best or not frontier:
+            return best
+        budget = min(self.COMBINED_BUDGET, (self.limit - self.tested) // 2)
+        near = sorted((item for item in frontier if item[0] <= best * self.COMBINED_TOLERANCE), key=lambda item: item[0])
+        for _, parent, first in near[:self.COMBINED_PARENTS]:
+            if budget <= 0:
+                break
+            proposals, _ = self._local_proposals(parent, proj, fn, rows)
+            for family, child in proposals:
+                if budget <= 0:
+                    break
+                if child in seen:
+                    continue
+                seen.add(child)
+                self.check()
+                with repair_trial({'kind': 'deep local repair', 'family': f'{first}+{family}'}):
+                    score = self._score(agent, proj, fn, child, best, fork)
+                budget -= 1
+                if score is not None and score < best:
+                    return score
         return best
 
     def stub_note(self):
