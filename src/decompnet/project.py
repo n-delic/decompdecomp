@@ -57,6 +57,9 @@ def compiler_config(root: Path, cfg: dict) -> CompilerConfig:
             raise toolchains.ToolchainError(f"{tc.name} is a Linux program: on Windows it runs in WSL 2. {ok[1]}")
         dirs = ((own.root, *(toolchains.require(d, linux) for d in tc.requires)) if own
                 else toolchains.runtime_dirs(tc.id))
+        driver = Path(__file__).parent / tc.driver if tc.driver else None
+        if driver:
+            dirs = (*dirs, driver.parent)
         try:
             where_tools = (linuxvm.prepare_tools(dirs) if vm else
                            wsl.prepare_tools(dirs) if linux else tuple(str(directory) for directory in dirs))
@@ -77,7 +80,9 @@ def compiler_config(root: Path, cfg: dict) -> CompilerConfig:
         # Linux sandboxes and WSL use their own python3, not a host interpreter outside their mounts.
         python = sys.executable if sys.platform == "darwin" and not vm else "python3"
         cmd = [a.replace("{tc}", tc_dir).replace("{python}", python) for a in base]
-        for dep, where in zip(tc.requires, where_tools[1:]):  # {tc:<id>} is another toolchain this one needs
+        if driver:
+            cmd = [a.replace("{driver}", where_tools[-1] + "/" + driver.name) for a in cmd]
+        for dep, where in zip(tc.requires, where_tools[1:1 + len(tc.requires)]):
             cmd = [a.replace(f"{{tc:{dep}}}", where) for a in cmd]
     else:
         cmd = list(c["cmd"])

@@ -71,6 +71,10 @@ def weight_family(cfg: dict, vram: int | None, fork: bool) -> str:
     if fork:  # forks name their console, not a toolchain: the console says its compilers' family
         return consoles.get(cfg.get("platform")).compiler_family or "base"
     toolchain = (compiler_for(cfg, vram).get("toolchain") or "") if cfg.get("compiler") else ""
+    # a profile's declared family counts when it's one of decomp-permuter's weight sets (the registry also groups
+    # compilers for display, as `metrowerks`)
+    if (declared := toolchains.declared_family(toolchain)) in {family for _, family in FAMILIES}:
+        return declared
     return next((family for prefix, family in FAMILIES if toolchain.startswith(prefix)), "base")
 
 

@@ -23,3 +23,7 @@ Argument home slots
 Static functions
 - `static` functions may be called with a different convention only in the same file; for matching a
   single function it rarely matters, but keep the name the ROM uses.
+
+## Early SGI comparison profile
+
+`ido-4.1` is an explicit comparison profile with a checksum-pinned community pack. IDO 5.2, IDO 5.3 C++, IDO 6.0 and MIPSpro 7.4.4 are also available as profiles when you add your own compiler folder in Setup. Those four need a Linux x86_64 host and the IRIX emulator files in the folder; decompdecomp downloads none of their compiler files. IDO 5.3 C++ needs both `usr/lib/driver` and `usr/lib/CC` in that folder. Setup labels builds it cannot verify as user selected. The normal linked-byte judge decides a match. A profile's presence does not establish retail N64 use.
