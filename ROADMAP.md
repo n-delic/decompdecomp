@@ -1633,6 +1633,8 @@ planned; asset format descriptions are advisory text.
 
 ### ROM Explorer
 
+BAM3 sprite banks expose individual TIM images and their palettes after bounded decompression.
+
 Iguana resource archives now expose CI4 and CI8 bitmap banks with palette-backed previews
 and padded texture row support. Their QMesh resources also expose wireframe geometry from
 validated vertex and triangle commands. The same archive directory pairs relocated B1 wave
