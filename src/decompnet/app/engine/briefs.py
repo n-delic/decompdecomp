@@ -156,6 +156,7 @@ class BriefMixin:
                 large_stack_drafts,
                 likely_branch_cursor,
                 loop_storage_shapes,
+                measured_address_repairs,
                 measured_callback_loop,
                 measured_mmio_polling,
                 measured_stack_drafts,
@@ -209,6 +210,8 @@ class BriefMixin:
                 inputs.append('linked list insertion')
             if shared_return_repairs.global_guard_applies(fn['asm'] or ''):
                 inputs.append('guarded global return')
+            if measured_address_repairs.byte_offsets_apply(fn['asm'] or ''):
+                inputs.append('byte offsets from globals')
             if passthrough_argument_repairs.entry_wrapper_applies(fn['asm'] or ''):
                 inputs.append('entry argument wrapper')
             if loop_storage_shapes.copy_setup_applies(fn['asm'] or ''):

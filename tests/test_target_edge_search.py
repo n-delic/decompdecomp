@@ -505,3 +505,12 @@ def test_kmc_proposes_an_unsigned_array_for_a_single_byte_load_mismatch():
     rows = [('|', 'lbu $v0, %lo(data)($at)', 'lb $v0, %lo(data)($at)')]
     assert dict(route(source, rows, 'asm'))['kmc_unsigned_byte_array'] == source.replace('char', 'unsigned char')
     assert 'kmc_unsigned_byte_array' not in dict(route(source, rows, 'asm', compiler='ido-5.3'))
+
+
+def test_kmc_proposes_a_byte_offset_from_the_target_relocations():
+    source = 'extern M2C_UNK state;\nvoid f(void) { g(&state + 24); }'
+    rows = [('i', 'lui $a0, %hi(state+0x18)', 'lui $a0, %hi(state+0x60)')]
+    asm = 'lui $a0, %hi(state + 0x18)\naddiu $a0, $a0, %lo(state + 0x18)'
+    expected = source.replace('&state', '(char *)&state')
+    assert dict(route(source, rows, asm))['byte_scaled_global_offset'] == expected
+    assert 'byte_scaled_global_offset' not in dict(route(source, rows, asm, compiler='ido-5.3'))

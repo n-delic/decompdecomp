@@ -9214,15 +9214,30 @@ the first three and inlining the last two reached a score of 650.
 All measurements use copied projects and the original judge. Fresh
 drafts and Deep Permuter proposals matched in all ten cases.
 
-### Unsigned byte arrays under KMC at O1
+### Unsigned byte arrays under KMC
 
-Six N64 functions built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1`
-scored 200 because a generated `extern char[]` declaration made KMC
+Nine N64 functions built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32`
+(eight with `-O1` and one with `-O2`) scored 200 because a generated `extern char[]` declaration made KMC
 emit `lb` at the target's `lbu`. The register and address operand were
 identical. Declaring the loaded array as `unsigned char[]` reproduced
-all 48 to 100 linked bytes for each function on a copied project.
+all 48 to 288 linked bytes for each function on a copied project.
 
-One routine had two byte arrays. Changing the address passed to a
-callee left the score at 200. Changing the array used in the measured
-byte read took it to zero. The proposal requires either the read's
+One routine had two byte arrays. Changing the declaration of the array
+passed to a callee left the score at 200. Changing the declaration of the
+array used in the measured byte read took it to zero. The proposal requires either the read's
 relocation or a unique relocated source array with one read.
+
+### Byte offsets from generated global names
+
+Twenty-one N64 examples built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`
+scored 20 when the generated address expression added a byte offset to
+a word pointer. Casting the base to `char *` before the addition
+reproduced all 32 to 240 linked bytes. The high and low target operands
+identify the same base and displacement. The low operand can be in a
+call delay slot.
+
+Four more wrappers with those flags scored 20 with the same scaled
+address expression and a dropped first argument. The byte-pointer
+cast alone scored 10. Passing the incoming argument in the first slot,
+beside the corrected address in the second slot, reproduced all 36
+linked bytes each on the copied project.

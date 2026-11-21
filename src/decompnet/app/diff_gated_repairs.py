@@ -237,6 +237,8 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         if candidate_source := loop_storage_shapes.measured_copy_setup(source, name, asm or '', header):
             result.append(('measured_copy_loop_setup', candidate_source))
         result += measured_callback_repairs.variants(source,name,rows)
+        if candidate_source := measured_address_repairs.rewrite_byte_offsets(source, name, asm or '', header):
+            result.append(('byte_scaled_global_offset', candidate_source))
         result += measured_address_repairs.variants(source,name,header,rows,symbols)
         result += measured_pointer_scale.variants(source,name,header,rows)
         result += measured_immediate_repairs.variants(source,name,rows)
