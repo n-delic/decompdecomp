@@ -990,7 +990,8 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
         from . import recomp as recomp_c
         try:
             prepared = recomp_c.prepare(Path(recomp["folder"]), out / "recomp", (out / "c" / "game.h").read_text(
-                encoding="utf-8"), fixed, [*sorted(host.glob("*.c")), *own], Path(recomp["header"]), library_names, log)
+                encoding="utf-8"), fixed, [*sorted(host.glob("*.c")), *own], Path(recomp["header"]), library_names, log,
+                renames=renamed)
         except (OSError, ValueError) as error:
             raise NetworkError(f"the recompiled C couldn't be prepared for the port: {error}") from error
         recompiled = prepared["units"]
@@ -1004,7 +1005,8 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
                                        [*sorted(host.glob("*.c")), *own], library_names, bridged, left_out, replaced,
                                        interp.variadic(lls), interp.by_value(lls), interp.by_value(lls, declared=True),
                                        interp.pointer_types(p.read_text(encoding="utf-8", errors="replace")
-                                                            for p in sorted((out / "c").glob("game_*.c"))))
+                                                            for p in sorted((out / "c").glob("game_*.c"))),
+                                       renames=renamed)
     _write(out / "interp.c", interp_c)
     if counts["imports"]:
         log(f"{counts['imports']} functions the game's C calls have no C yet: the interpreter runs them from the ROM")

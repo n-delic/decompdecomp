@@ -558,6 +558,10 @@ That is how a racing game's backwards start was found. Each car's matrix came fr
 console passed it a yaw of 0x800, and the port passed 0. The yaw was the `$v0` a void function left for its
 caller, and the port had overwritten it (`port/wasm/adapt.py`).
 
+The same game could line up correctly and still spin during a race or the title-screen demo. Library detection
+renamed two conversion routines that its arctangent called, then the build lost their ROM addresses and stubbed
+both calls to zero. The build carries those addresses through the rename so both CPU fallbacks can run the routines.
+
 The build also lists what to look at before playing. Matched C is judged by one compiler, and on MIPS a call works
 whether or not its C agrees with the function it calls. So matched C can take a result from a function it declares
 void, call a variadic function through a fixed prototype, or pass a `u8` where the callee takes an `s32`. Each one is

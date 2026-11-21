@@ -327,8 +327,22 @@ def _vram(name: str, where: dict[str, int]) -> int | None:
     return int(auto.group(1), 16) if auto else None
 
 
+def _import_addresses(where: dict[str, int], renames: dict[str, str]) -> dict[str, int]:
+    """Keep the ROM address when the linker renames a call to a detected library routine.
+
+    An arctangent routine called two conversion helpers by their automatic names. Detection named them, but
+    the port lost their addresses under those names and generated stubs returning zero despite having the ROM
+    code. If more than one address was renamed to the same import, only a name in the split can resolve it.
+    """
+    candidates: dict[str, set[int]] = {}
+    for source, target in renames.items():
+        if target not in where and (address := _vram(source, where)) is not None:
+            candidates.setdefault(target, set()).add(address)
+    return where | {name: next(iter(addresses)) for name, addresses in candidates.items() if len(addresses) == 1}
+
+
 def prepare(folder: Path, out: Path, game_h: str, fixed: list[str], hosts: list[Path], recomp_h: Path,
-            library_names=None, log=print) -> dict:
+            library_names=None, log=print, *, renames=None) -> dict:
     """Write the port's recompiled C into `out` (recomp.h, funcs.h, rec_*.c and bridges.c, each only when it
     changed); returns {"units": [paths], "include": out, "counts": {...}, "pointers_lose_floats": bool}."""
     out = Path(out)
@@ -463,9 +477,10 @@ def prepare(folder: Path, out: Path, game_h: str, fixed: list[str], hosts: list[
                           for n in sorted(used)]
     # the game's C calling what only recompiled C has: its import, typed as the C declares it
     imported = 0
+    imports = _import_addresses(where, renames or {})
     for m in IMPORT.finditer(game_h):
         name, ret, c, params = m.groups()
-        vram = _vram(name, where)
+        vram = _vram(name, imports)
         if vram is None or vram not in choice or choice[vram][0] != "recomp" or _demangle(c[8:]) in hosted:
             continue
         types = [t.strip() for t in params.split(",") if t.strip()]
