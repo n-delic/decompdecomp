@@ -325,15 +325,17 @@ def register(app: App) -> None:
         from ...port import call_fixes
         return {"job": jobs.start("fix-calls", lambda log: call_fixes.fix(net, slug, log), project=slug)}
 
+    def require_port_build(data):
+        if data.get("build_mode", "compatibility") != "compatibility" or data.get("runtime", "wasm") != "wasm":
+            raise NetworkError("Choose N64 compatibility and the decompdecomp runtime to play or export today.")
+
     def p_play(slug, request, data):
         """Build the game for the PC and run it with its live view in the browser (port/wasm/play.py), in the
         background; Stop ends it."""
         from ...port.wasm import play
         if data.get("stop"):
             return {"stopped": play.stop(slug)}
-        if data.get("runtime", "wasm") != "wasm":
-            raise NetworkError(f"Play runs the WebAssembly build only for now; {data['runtime']} is planned "
-                               "(ROADMAP.md, Ports): choose WebAssembly")
+        require_port_build(data)
         if (url := play.running(slug)):
             return {"url": url}
         if (building := jobs.active(("play",), project=slug)):  # a second click, or another window: the same build
@@ -374,6 +376,7 @@ def register(app: App) -> None:
             why = hostenv.open_folder(folder)
             return {"ok": why is None, "message": why}
 
+        require_port_build(data)
         if "targets" in data:
             targets = export.target_selection(data["targets"])
             if not any(target in export.KINDS for target in targets):
