@@ -128,6 +128,7 @@ def verify(feedback, example):
             relocated_byte_table,
             relocated_global_update,
             shared_return_repairs,
+            short_leaf_drafts,
             split_dispatch_zero_case,
             stack_fill_drafts,
             stack_header_buffer,
@@ -138,8 +139,9 @@ def verify(feedback, example):
         from . import stack_padding_repairs
 
         symbols = net.symbols(proj['id']) if hasattr(net,'symbols') else None
-        focused = stack_padding_repairs.layout_candidates(source, fn['name'], header, proj['arch'],
-                                                         rows, symbols, profile['flags'], asm=fn['asm'])
+        focused = short_leaf_drafts.variants(source, fn['name'], fn['asm'], header)
+        focused += stack_padding_repairs.layout_candidates(source, fn['name'], header, proj['arch'],
+                                                          rows, symbols, profile['flags'], asm=fn['asm'])
         if candidate := uncached_read_repairs.rewrite(source, fn['name'], fn['asm'] or '',
                                                       symbols.resolve if symbols else None):
             focused.append(('measured_uncached_word_read', candidate))

@@ -395,6 +395,7 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
         relocated_global_update,
         shared_default_drafts,
         shared_return_repairs,
+        short_leaf_drafts,
         split_dispatch_zero_case,
         stack_fill_drafts,
         stack_header_buffer,
@@ -410,6 +411,8 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
     if 'M2C_UNALIGNED32' in source and (draft := unaligned_stack_drafts.rewrite(
             source, name, asm_text, context_header, resolve)):
         return draft
+    if leaves := short_leaf_drafts.variants(source, name, asm_text, context_header):
+        return leaves[0][1]
     return (measured_stack_drafts.rewrite(source, name, asm_text, context_header)
             or large_stack_drafts.rewrite(source, name, asm_text, context_header)
             or shared_default_drafts.rewrite(source, name, asm_text, data_asm, context_header)
