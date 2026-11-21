@@ -420,7 +420,7 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
 
     import yaml
 
-    from . import dma_overlays, overlays, resident_deflate
+    from . import dma_overlays, overlays, raw_slots, resident_deflate
 
     if result := overlays.add(config, workdir, image, log):
         return result
@@ -467,6 +467,9 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
     found = trim(rom, found, taken, log)
     recover(config, rom, found, log)
     extend_startup_trap(config, rom, log)
+    if not packed and taken and (slots := raw_slots.read(original_rom,taken)):
+        if raw_slots.add(config,original_rom,found,slots,log):
+            return original
     if not found:
         return original
     cfg = yaml.safe_load(config.read_text(encoding="utf-8"))

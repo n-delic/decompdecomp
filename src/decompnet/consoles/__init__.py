@@ -315,6 +315,10 @@ class Console:
         """Additional load mappings for jump-table evidence during ROM import."""
         return ()
 
+    def import_pointer_is_data(self, image, offset):
+        """Recognise a word whose native container gives it a data role."""
+        return False
+
     def split_game(self, workdir: Path, picked: Picked, *, symbols: list[str] | None = None, log=print):
         """ROM mode: split the program into functions and data (splat, rom/split.py); a console whose games another
         splitter finds overrides this."""
