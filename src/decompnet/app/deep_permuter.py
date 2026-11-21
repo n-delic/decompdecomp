@@ -658,12 +658,16 @@ class Search(Permuter):
             seen = {fn['best_source']}
             attempts = measured[1]
             targeted = []
-            if proj['arch'] == 'mips' and compiler_for(self.net.cfg(proj), fn['vram'], fn).get('toolchain') == 'ido-7.1':
+            if proj['arch'] == 'mips':
                 from decomprepair import draft_call_recovery
 
-                targeted = [(candidate, 'Recovered stack records in the saved IDO draft.', family)
-                            for family, candidate in draft_call_recovery.stack_variants(
-                                fn['best_source'], fn['name'], fn['asm'], header)]
+                toolchain = compiler_for(self.net.cfg(proj), fn['vram'], fn).get('toolchain')
+                def resolve(symbol):
+                    return self.net.symbols(proj['id']).resolve(symbol)
+
+                targeted = [(candidate, 'Recovered a source shape in the saved MIPS draft.', family)
+                            for family, candidate in draft_call_recovery.baseline_variants(
+                                fn['best_source'], fn['name'], fn['asm'], header, toolchain, resolve=resolve)]
             for candidate, message, family in chain(targeted, prototypes, saved):
                 if candidate in seen or candidate_quality.reported_source(self.net, fn, candidate):
                     continue

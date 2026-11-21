@@ -141,7 +141,13 @@ class BriefMixin:
         if target.startswith('mips-') and re.search(r'\bjr\s+\$(?!(?:ra|31)\b)\w+', fn['asm'] or ''):
             inputs.append('draft jump-table aliases')
         if own["toolchain"] == 'ido-7.1':
-            from decomprepair import ido_indirect_event, ido_stack_iterators, ido_strided_cursor, ido_switch_reply
+            from decomprepair import (
+                ido_indirect_event,
+                ido_mapped_poll,
+                ido_stack_iterators,
+                ido_strided_cursor,
+                ido_switch_reply,
+            )
 
             if ido_indirect_event.applies(fn['asm'] or ''):
                 inputs.append('IDO callback event frame')
@@ -151,6 +157,9 @@ class BriefMixin:
                 inputs.append('IDO switch reply frame')
             if ido_stack_iterators.applies(fn['asm'] or ''):
                 inputs.append('IDO stack iterator records')
+            if ido_mapped_poll.applies(fn['asm'] or ''):
+                base = self.symbols(proj['id']).resolve(ido_mapped_poll.ZERO_WORD)
+                inputs.append(('IDO mapped poll read', base))
         if own["toolchain"] == 'gcc-2.7.2-kmc' and 'swl' in (fn['asm'] or ''):
             from decomprepair.unaligned_stack_drafts import stack_copy
 
@@ -167,6 +176,7 @@ class BriefMixin:
                 float_matrix_identity,
                 global_pointer_local_repairs,
                 guard_inversion_repairs,
+                heap_span_drafts,
                 indexed_field_cursor,
                 indirect_call_drafts,
                 kmc_cast_repairs,
@@ -196,6 +206,8 @@ class BriefMixin:
                 uncached_read_repairs,
             )
 
+            if heap_span_drafts.applies(fn['asm'] or ''):
+                inputs.append('linked heap spans')
             if mips_entry_loops.applies(fn['asm'] or ''):
                 inputs.append('MIPS entry loop')
             if short_leaf_drafts.applies(fn['asm'] or ''):

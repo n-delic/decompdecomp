@@ -263,8 +263,13 @@ def test_better_historical_scores_are_rejudged_before_promotion(monkeypatch):
     assert net.function()['best_source'] == better
 
 
-@pytest.mark.parametrize('rule', ['ido_switch_reply', 'ido_stack_iterators'])
-def test_failed_ido_baseline_tries_stack_repairs_before_saved_attempts(monkeypatch, rule):
+@pytest.mark.parametrize(('rule', 'toolchain'), [
+    ('ido_switch_reply', 'ido-7.1'),
+    ('ido_stack_iterators', 'ido-7.1'),
+    ('ido_mapped_poll', 'ido-7.1'),
+    ('heap_span_drafts', 'gcc-2.7.2-kmc'),
+])
+def test_failed_mips_baseline_tries_measured_repairs_before_saved_attempts(monkeypatch, rule, toolchain):
     from importlib import import_module
 
     from decompnet.repair_feedback import current_trial
@@ -274,14 +279,14 @@ def test_failed_ido_baseline_tries_stack_repairs_before_saved_attempts(monkeypat
     net = setup(monkeypatch)
     monkeypatch.setattr(deep_permuter.Search, '_baseline', baseline)
     monkeypatch.setattr(Permuter, '_baseline', lambda *args: (None, 1))
-    net.cfg = lambda proj: {'compiler': {'toolchain': 'ido-7.1', 'flags': ['-O1']}}
+    net.cfg = lambda proj: {'compiler': {'toolchain': toolchain, 'flags': ['-O1']}}
     net._project = net.project_row
     broken = 's32 f(void) { return sp34; }'
     repaired = 's32 f(void) { return 0; }'
     with net.store.tx() as db:
         db.execute('UPDATE functions SET best_source=?', (broken,))
 
-    def rewrite(source, name, asm, header):
+    def rewrite(source, name, asm, header, resolve=None):
         assert source == broken
         return repaired
 
