@@ -221,3 +221,31 @@ def test_nearby_exact_profiles_supply_one_exact_only_trial(monkeypatch):
     neighbours.pop()
     assert profile_climb.lead(search_with_score(0), None, PROJ, FN, FN['best_source'], 155) is None
     assert tried == ['late-cc']
+
+
+def test_deep_climb_tries_disable_cross_block_cse_for_repeated_addresses(monkeypatch):
+    from decompnet.app.profile_hypotheses import kmc_cse_address_probe
+
+    own = {'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-O2']}
+    high, low = 'lui $a1, %hi(table)', 'addiu $a1, $a1, %lo(table)'
+    repeat = [(' ', high, high), (' ', low, low)]
+    rows = repeat + [('<', high, ''), ('<', low, '')] * 2
+    assert kmc_cse_address_probe(own, repeat) is None
+    assert kmc_cse_address_probe(own, rows[:-2]) is None
+    flags = ['-O2', '-fno-cse-skip-blocks']
+    assert kmc_cse_address_probe(own, rows) == flags
+    assert kmc_cse_address_probe(dict(own, flags=flags), rows) is None
+
+    monkeypatch.setattr('decompnet.project.compiler_for', lambda *args: own)
+    monkeypatch.setattr(cf, 'ranked', lambda *args, **kwargs: [(2, LATE)])
+    search = Search({})
+    search.net._last_diffs = {(None, FN['id']): (rows, '')}
+    measured = []
+
+    def judge(project, function, toolchain, flags, source):
+        measured.append(flags)
+        return False, SimpleNamespace(score=1160 if '-fno-cse-skip-blocks' in flags else 2391), ''
+
+    search.net._judge_with = judge
+    assert profile_climb.lead(search, None, PROJ, FN, FN['best_source'], 2391) == (dict(own, flags=flags), 1160)
+    assert measured[0] == flags

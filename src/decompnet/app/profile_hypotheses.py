@@ -1,6 +1,7 @@
 """Rank profile hypotheses from target evidence, never from a familiar function name alone."""
 import json
 import re
+from collections import Counter
 
 from ..arch.mips_runtime import helper
 
@@ -24,6 +25,26 @@ def kmc_variants(toolchain, flags, *, single_pass=False):
     return [variant for variant in variants if variant != flags]
 
 
+def kmc_cse_address_probe(own, rows):
+    """Try disabling CSE across skipped blocks when the target reloads one address repeatedly."""
+    flags = list(own['flags'])
+    option = '-fno-cse-skip-blocks'
+    if (own['toolchain'] != 'gcc-2.7.2-kmc' or '-O2' not in flags
+            or option in flags or '-fcse-skip-blocks' in flags):
+        return None
+    high = re.compile(r'^lui\s+\$\w+,\s*%hi\(([^()]+)\)$')
+    low = re.compile(r'^addiu\s+\$\w+,\s*\$\w+,\s*%lo\(([^()]+)\)$')
+    counts = []
+    for side in (1, 2):
+        halves = [Counter(match[1] for row in rows if (match := pattern.fullmatch(row[side].strip())))
+                  for pattern in (high, low)]
+        counts.append(halves[0] & halves[1])
+    target, candidate = counts
+    if any(candidate[symbol] > 0 and count - candidate[symbol] >= 2 for symbol, count in target.items()):
+        return [*flags, option]
+    return None
+
+
 def kmc_priorities(own, assembly, rows):
     from .allocation_evidence import diagnose
 
@@ -33,6 +54,8 @@ def kmc_priorities(own, assembly, rows):
     prologue = any(marker not in {' ', 'r'} and '$sp' in (left + right)
                    for marker, left, right in rows[:12])
     variants = []
+    if cse := kmc_cse_address_probe(own, rows):
+        variants.append(cse)
     if diagnosis['delay_slot'] and any(right.strip() == 'nop' for right in changed):
         variants.append([flag for flag in flags if not re.fullmatch(r'-g[0-3]?', flag)])
     scheduling = kmc_variants(own['toolchain'], flags, single_pass=prologue)

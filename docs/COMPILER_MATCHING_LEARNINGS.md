@@ -1,5 +1,16 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: retest repeated address formation with cross-block CSE disabled
+
+An isolated N64 replay used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.
+The target formed the same call-argument address eight times. The candidate
+formed it five times and kept the value live in a saved register across
+other calls. Adding `-fno-cse-skip-blocks` reduced the linked score from
+2,391 to 1,160 on the same source. Removing two declaration-free one-shot
+wrappers under that profile scored 1,130. The evidence ranks a single
+bounded profile trial. A partial result gives the profile search a lead
+without replacing the function's saved compiler settings.
+
 ### KMC GCC 2.7.2: share a float zero across repeated loop-local vector clears
 
 An isolated N64 replay used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.

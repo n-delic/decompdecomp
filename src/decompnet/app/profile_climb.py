@@ -35,12 +35,19 @@ def lead(search, agent, proj, fn, source, own_score):
     off under the game's settings and 890 off with scheduling off, written in the order the scheduler had made, while
     plain C was exact with scheduling off. Only ever climbing toward better scores never went there."""
     from ..project import compiler_for
-    from . import compiler_fingerprints
+    from . import compiler_fingerprints, profile_hypotheses, repair_ranking
     cfg = search.net.cfg(proj)
     own = compiler_for(cfg, fn['vram'], fn)
     floor = compiler_fingerprints.own_agreement(proj, fn, own)
     best = closer = None
     ranked = compiler_fingerprints.ranked(search.net, proj, cfg, fn, own, limit=PROFILES_MEASURED)
+    if proj['arch'] == 'mips':
+        rows = repair_ranking.instruction_rows(repair_ranking.evidence(search.net, fn['id'], getattr(agent, 'id', None)))
+        if flags := profile_hypotheses.kmc_cse_address_probe(own, rows):
+            profile = dict(own, flags=flags)
+            # Keep the same total profile allowance. This lead has source-diff evidence.
+            ranked = [(floor, profile), *((agree, p) for agree, p in ranked
+                                          if p['toolchain'] != own['toolchain'] or p['flags'] != flags)][:PROFILES_MEASURED]
     for agree, profile in ranked:
         search.check()
         if search.tested >= search.limit:
@@ -53,7 +60,7 @@ def lead(search, agent, proj, fn, source, own_score):
         search.log(f"Profile {profile['toolchain']} {' '.join(profile['flags'])} on the current C: score {score}")
         if score < own_score and (best is None or score < best[1]):
             best = (profile, score)
-        if floor is not None and agree > floor and (closer is None or score < closer[1]):
+        if floor is not None and agree is not None and agree > floor and (closer is None or score < closer[1]):
             closer = (profile, score)
     if search.tested < search.limit:
         search.check()
