@@ -1589,8 +1589,9 @@ planned; asset format descriptions are advisory text.
 
 Audio browser now prepares selected samples without autoplay. Native libmus pointer
 banks validate tuning/loop/book graphs and uniquely fitting marked wave tables, with
-explicitly editable preview rates because the banks store none. Archived channel-table
-sequences are tentative metadata only; synthesis and additional bank adapters remain planned.
+explicitly editable preview rates because the banks store none. Validated raw libmus
+tracks with a uniquely resolved wave bank have bounded stereo previews. Archived
+channel-table playback and additional bank adapters remain planned.
 
 The byte strip also has a rounded-square region type map using the function map renderer,
 with image/audio evidence and local 3D model classifications. Evidence-based grouping joins
