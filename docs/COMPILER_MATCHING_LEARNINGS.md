@@ -11043,3 +11043,13 @@ reproduced the remaining instruction order and brought the score to
   loops with both headers on the same line matched all 96 linked
   bytes. Splitting those headers across lines scored 20 by changing
   the order of the cursor advances.
+
+### Recover a forwarded middle argument before a float literal
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, an isolated N64
+draft put the bits of a float literal in the second argument register.
+The target left the incoming second argument in place and loaded the
+literal into the third register. The callee read both registers.
+Inserting the forwarded formal into the call and its generated
+prototype reduced the linked score from 5 to 0. The deep permuter
+reproduced and saved the exact match.
