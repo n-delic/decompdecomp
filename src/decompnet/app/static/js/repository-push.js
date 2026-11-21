@@ -16,7 +16,7 @@ function renderRepositoryPush(state) {
   $("repositoryPushGo").disabled = repositoryPushBusy || !!repositoryForkFollowing || !state?.can_push;
   const pull = $("repositoryPullGo"), count = repositoryPullReview?.count;
   pull.disabled = repositoryPushBusy || !!repositoryForkFollowing || !state?.destination;
-  pull.textContent = count ? `Pull ${count} commit${count === 1 ? "" : "s"} from origin` : "Review pull from origin";
+  pull.textContent = count ? `${repositoryPullReview.merge ? "Merge" : "Pull"} ${count} commit${count === 1 ? "" : "s"} from origin` : "Review pull from origin";
 }
 async function refreshRepositoryPush(force = false) {
   if (!S.slug || S.tab !== "settings") return;

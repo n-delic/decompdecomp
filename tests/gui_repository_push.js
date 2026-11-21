@@ -81,7 +81,7 @@ async function reconnect({failure=false}={}) {
   assert.equal(requests.filter(r=>r.options?.method==='POST' && r.url==='/api/repository-push').length,0,'rediscovery never restarts the push');
   if(failure)assert.match($('repositoryPushLog').textContent,/removed from queue/);
 }
-async function pull() {
+async function pull(merge = false) {
   const elements = {}, $ = id => elements[id] ??= {value:"/repo"};
   const state = {folder:"/repo", destination:"origin/main", behind:0};
   const posts = [];
@@ -104,9 +104,9 @@ async function pull() {
   assert.equal(posts.length, 1);
   assert.equal(posts[0].review, "");
   await new Promise(resolve => setImmediate(resolve));
-  follow({status:state, pull_review:{token:"reviewed-head", count:2}});
+  follow({status:state, pull_review:{token:"reviewed-head", count:2, merge}});
   await review;
-  assert.equal(button.textContent, "Pull 2 commits from origin");
+  assert.equal(button.textContent, `${merge ? "Merge" : "Pull"} 2 commits from origin`);
   assert.equal(button.disabled, false);
   const apply = button.onclick();
   await new Promise(resolve => setImmediate(resolve));
@@ -125,4 +125,4 @@ function modes() {
   ctx.ov={kind:'rom'};vm.runInContext(block,ctx);
   assert.equal(els.repositoryAutoCommitGroup.hidden,true,'overview cannot reveal Git settings before setup confirms a repository');assert.equal(els.repositorySyncActions.hidden,false);
 }
-(async()=>{modes();await run();await run({failure:true});await run({switchProject:true});await reconnect();await reconnect({failure:true});await pull();})().catch(e=>{console.error(e);process.exit(1);});
+(async()=>{modes();await run();await run({failure:true});await run({switchProject:true});await reconnect();await reconnect({failure:true});await pull();await pull(true);})().catch(e=>{console.error(e);process.exit(1);});

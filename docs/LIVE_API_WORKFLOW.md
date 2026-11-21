@@ -264,6 +264,13 @@ existing commits from the current branch. It does not commit or stage working fi
 New commits created after the push gets its repository turn remain for the next push. Imported build
 projects can use the same push-only control for their existing source commits.
 
+**Review pull from origin** fetches the branch and shows how many commits are available. If
+both branches have new commits, the review also shows the local-only count. Choose **Merge
+… from origin** to preserve both histories in a local merge commit. The app checks for
+conflicts before updating the checkout. If the branches conflict, open the checkout in your
+Git client to merge and resolve them. In-app merging of diverged branches requires Git 2.38
+or newer. A pull only updates the local checkout.
+
 A busy repository queues the push with Stop available. Queued pushes receive the next turn
 before automatic commits; automatic match batches yield after each completed commit and
 retain the rest for a later autosave. The panel reports the blocking operation, project,

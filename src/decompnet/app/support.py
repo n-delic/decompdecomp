@@ -159,7 +159,7 @@ class Jobs:
         self.closing=True
         for cancel in list(self.cancel_events.values()):cancel.set()
 
-    def start(self, kind: str, fn, *, foreground=True, project=None, cancel_message="Opening the saved project was cancelled.") -> str:
+    def start(self, kind: str, fn, *, foreground=True, project=None, include_recent_log=True, cancel_message="Opening the saved project was cancelled.") -> str:
         """Start a user job immediately; automatic callers opt into background scheduling."""
         with self._lock:
             self.check_start()
@@ -226,7 +226,7 @@ class Jobs:
                     job["trace"] = traceback.format_exc()[-TRACE_CHARS:]
                 job["error"] = job_error(e, self.log_path)
                 logger.error("job %s %s failed: %s\n%s", kind, jid, job["error"], traceback.format_exc())
-                tail=recent_log(self.log_path)
+                tail=recent_log(self.log_path) if include_recent_log else ""
                 details=job.get('trace','')
                 if details and details.strip() not in tail:
                     job['log'].extend(['Failure details:',*details.splitlines()])
