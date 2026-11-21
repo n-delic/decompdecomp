@@ -1,5 +1,12 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: recover indexed halfword switch state
+
+Two archived switch drafts with a 100-byte record stride matched after
+using a byte address and a halfword pointer for both the state read and
+the case-zero store. Each improved from a difference score of 240 to
+zero with `-G0 -mips3 -mgp32 -mfp32 -O2`.
+
 ### KMC GCC 2.7.2: load pointer table entries as words
 
 With `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, two archived masked
