@@ -12481,3 +12481,16 @@ With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, the Deep Permuter
 reached score 0 in 27 trials. The v0.5.290 control stayed at score 30
 after 100 trials. Synthetic tests reject a coefficient read after the
 product, since the original assignment would still be needed.
+
+### KMC GCC 2.7.2: keep byte subtraction in its signed result local
+
+A scratch draft carried one input byte in a pointer local that was also
+used earlier in a different branch. Load that byte into the signed result
+local and subtract the other byte with `-=`. This kept the two unsigned
+byte loads and sign test while restoring the target's register allocation
+in both the earlier branch and the subtraction.
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, the Deep Permuter
+went from score 50 to 0 in 22 trials. The v0.5.291 control stayed at 50
+after 100 trials. Synthetic tests cover the measured loads, sign test,
+and pointer lifetime guard.

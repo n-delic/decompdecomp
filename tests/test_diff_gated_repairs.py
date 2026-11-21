@@ -830,6 +830,26 @@ def test_measured_halfword_switch_is_routed_for_kmc(monkeypatch):
     assert 'halfword_switch_fixture' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))
 
 
+def test_byte_subtraction_carrier_reaches_kmc_diff_dispatch():
+    source = """void f(void *obj, void *child) {
+    short result;
+    void *pointer;
+    result = *((u8 *) (((char *) child) + 38));
+    pointer = (void *) (*((u8 *) (((char *) obj) + 130))); result = (u32) pointer - result;
+    if (result < 0) use(result);
+}
+"""
+    rows = [
+        ('r', 'lbu $a0, 0x26($s1)', 'lbu $a1, 0x26($s1)'),
+        ('r', 'lbu $a1, 0x82($s0)', 'lbu $a2, 0x82($s0)'),
+        ('r', 'subu $a0, $a1, $a0', 'subu $v1, $a2, $a1'),
+        ('r', 'bgez $a0, 0x18c', 'bgez $v1, 0x18c'),
+    ]
+    generated = proposals(source, 'f', '', 'mips', KMC, rows, '')
+    assert any(label == 'measured_byte_subtraction_carrier' and 'result -=' in candidate
+               for label, candidate in generated)
+
+
 def test_float_scale_carrier_reaches_kmc_diff_dispatch():
     source = """extern f32 table[];
 f32 f(int key, int plain, f32 factor) {
