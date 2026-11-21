@@ -10392,3 +10392,18 @@ app's own judge (`decomp judge-worker`, which returns exactly the app's score); 
   choices that follow from the loop counter taking `$s2` where the target has `$s5`, which is allocation priority
   (use count over live range), not statement order. The search stays in the Deep Permuter for near-matches whose
   difference is order; it is not a fix for this one.
+
+
+### KMC request packets and inode halfword scans
+
+- Replayed two N64 examples with no saved failed attempt using their archived context, original flags,
+  and linked-byte judge. A command request built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`
+  matched all 164 bytes after rebuilding the eight stack bytes as one byte-aligned aggregate, copying
+  it once per channel, resolving the distinct global fields, and omitting the unused m2c preamble.
+  The preamble alone caused parse errors because this header lacked the short type aliases it uses.
+- An inode scan built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` matched all 272 bytes after
+  restoring the 128-halfword array passed at stack offset 16, correcting the callee declaration,
+  and reconstructing the index loop with the target's first-bank rule and error exits. Declaring
+  the buffer and fixing the pointer step alone compiled with difference scores of 1465 and 1455.
+- The isolated replay of 38 drafts with missing stack-byte declarations went from 10 to 12 exact
+  matches. The other 26 still failed to compile.

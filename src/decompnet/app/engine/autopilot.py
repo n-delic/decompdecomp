@@ -377,11 +377,11 @@ class AutopilotMixin:
             data_key = hashlib.sha256((data_asm or '').encode()).hexdigest()
             report = {'key': input_key, 'seed_key':plan, 'data_key':data_key, 'compiled': False, 'scored': False, 'matched': False, 'trials': 0, 'failures': []}
             from .briefs import DRAFT_NOTE
-            prefix = DRAFT_NOTE+'\n'+seeds.M2C_MACROS+'\n'
+            prefix = DRAFT_NOTE+'\n'
             seed_row = self.project_store(proj['id']).one('SELECT seed_key FROM functions WHERE id=?',fid)
             if (seed and seed.startswith(prefix) and seed_row and seed_row['seed_key'] == plan
                     and previous.get('data_key',data_key) == data_key):
-                draft = seed[len(prefix):]
+                draft = seed[len(prefix):].removeprefix(seeds.M2C_MACROS+'\n')
             elif not retry_draft and previous.get('seed_key') == plan and previous.get('failures'):
                 report['failures'] = previous['failures']
                 draft = None
@@ -400,26 +400,26 @@ class AutopilotMixin:
             # (its compiler named in it: the same draft is worth judging again with another compiler)
             note = f"/* machine draft (m2c) for {toolchain} {' '.join(own.get('flags', []))}, tried by autopilot */\n"
             def draft_candidates():
-                yield 'raw_m2c', f"{note}{seeds.M2C_MACROS}\n{draft}\n"
+                yield 'raw_m2c', f"{note}{seeds.with_m2c_macros(draft)}\n"
                 candidates = []
                 from ..loop_storage_shapes import variants as loop_shapes
                 for family,source in loop_shapes(draft,fn['name'],ctx['header'],proj['arch'])[:2]:
-                    candidates.append((family,f"{note}{seeds.M2C_MACROS}\n{source}\n"))
+                    candidates.append((family,f"{note}{seeds.with_m2c_macros(source)}\n"))
                 if (seeds.m2c_target(toolchain) or "").startswith("mips"):
                     # next to m2c's own draft, the same with its usual mistakes undone (m2cfix.py): few lines change
                     refined = m2cfix.refine_draft(draft, fn["name"], target_asm)
                     if refined:
-                        candidates.append(('refined_m2c', f"{note}{seeds.M2C_MACROS}\n{refined}\n"))
+                        candidates.append(('refined_m2c', f"{note}{seeds.with_m2c_macros(refined)}\n"))
                 from ..capture_followup_repairs import callee_evidence
                 from ..recent_capture_repairs import variants as captured_variants
                 known_callees=callee_evidence(self,proj,fn,draft)
                 for family,source in captured_variants(draft,fn['name'],'mips' if (seeds.m2c_target(toolchain) or '').startswith('mips') else '',target_asm,ctx['header'],known_callees):
                     if family in ('overlay_callee_alias','argument_home_slot','untouched_argument_forwarding'):
-                        candidates.append((family,f"{note}{seeds.M2C_MACROS}\n{source}\n"))
+                        candidates.append((family,f"{note}{seeds.with_m2c_macros(source)}\n"))
                 for canonical in (False,True):
                     if array := m2cfix.stack_array(draft,fn['name'],canonical):
                         family = 'stack_array_indexed' if canonical else 'stack_array'
-                        candidates.append((family, f"{note}{seeds.M2C_MACROS}\n{array}\n"))
+                        candidates.append((family, f"{note}{seeds.with_m2c_macros(array)}\n"))
                 yield from candidates
             def local_candidates():
                 # Lazy fallback: successful normal drafts never pay for another m2c invocation.
@@ -439,11 +439,11 @@ class AutopilotMixin:
                     return
                 if not local:
                     return
-                yield 'local_context_m2c', f"{note}{seeds.M2C_MACROS}\n{local}\n"
+                yield 'local_context_m2c', f"{note}{seeds.with_m2c_macros(local)}\n"
                 if (seeds.m2c_target(toolchain) or '').startswith('mips'):
                     refined = m2cfix.refine_draft(local, fn['name'], fn['asm'] or '')
                     if refined and refined != local:
-                        yield 'local_context_refined', f"{note}{seeds.M2C_MACROS}\n{refined}\n"
+                        yield 'local_context_refined', f"{note}{seeds.with_m2c_macros(refined)}\n"
 
             def recovery_candidates():
                 if report['compiled']:
@@ -452,7 +452,7 @@ class AutopilotMixin:
                         draft, fn['name'], target_asm, proj['arch'], toolchain, context, data_asm, report)):
                     if report['compiled'] or index >= 6:
                         return
-                    yield family, f"{note}{seeds.M2C_MACROS}\n{source}\n"
+                    yield family, f"{note}{seeds.with_m2c_macros(source)}\n"
 
             from decomprepair.compiler_shape_repairs import machine_draft_copies
             from decomprepair.narrow_store_repairs import machine_drafts as narrow_drafts
