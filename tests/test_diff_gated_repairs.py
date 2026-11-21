@@ -614,3 +614,34 @@ void f(void *owner) {
     assert 'ticket = (u16)reserve(owner);' in fixed
     assert 'return ticket;' in fixed
     assert family not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_kmc_measured_stack_record_binds_the_payload_to_the_call():
+    source = '''
+void enqueue(s32 queue, s16 *record, s32 delay);
+void f(s32 queue, s16 value) {
+    s16 tag;
+    s16 payload;
+    payload = value;
+    tag = 2;
+    enqueue(queue + 64, &tag, 0);
+}
+'''
+    rows = [
+        ('s', 'addiu $sp, $sp, -40', 'addiu $sp, $sp, -32'),
+        (' ', 'addiu $v0, $zero, 2', 'addiu $v0, $zero, 2'),
+        (' ', 'addiu $a0, $a0, 64', 'addiu $a0, $a0, 64'),
+        ('<', 'sh $a1, 20($sp)', ''),
+        (' ', 'addiu $a1, $sp, 16', 'addiu $a1, $sp, 16'),
+        (' ', 'move $a2, $zero', 'move $a2, $zero'),
+        ('s', 'sw $ra, 32($sp)', 'sw $ra, 24($sp)'),
+        (' ', 'jal enqueue', 'jal enqueue'),
+        (' ', 'sh $v0, 16($sp)', 'sh $v0, 16($sp)'),
+        ('s', 'lw $ra, 32($sp)', 'lw $ra, 24($sp)'),
+        (' ', 'jr $ra', 'jr $ra'),
+        ('s', 'addiu $sp, $sp, 40', 'addiu $sp, $sp, 32'),
+    ]
+    family = 'measured_tagged_stack_record'
+    fixed = dict(proposals(source, 'f', '', 'mips', KMC, rows, ''))[family]
+    assert '__repair_stack_record.__repair_stack_record_data = value;' in fixed
+    assert family not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))

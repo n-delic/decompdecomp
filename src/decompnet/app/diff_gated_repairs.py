@@ -33,6 +33,7 @@ from decomprepair import (
     measured_immediate_repairs,
     measured_kmc_addresses,
     measured_kmc_lifetimes,
+    measured_kmc_wrappers,
     measured_lifetime_shapes,
     measured_memory_order,
     measured_mmio_polling,
@@ -40,6 +41,7 @@ from decomprepair import (
     measured_null_iteration_store,
     measured_pointer_scale,
     measured_scalar_updates,
+    measured_stack_records,
     measured_storage_shapes,
     measured_temporary_repairs,
     ordered_halfword_updates,
@@ -208,6 +210,8 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_cursor_schedule.variants(source, name, header, rows, asm or '')
         result += measured_kmc_addresses.variants(source, name, header, rows, flags)
         result += measured_kmc_lifetimes.variants(source, name, header, rows)
+        result += measured_kmc_wrappers.variants(source, name, header, rows)
+        result += measured_stack_records.variants(source, name, header, rows)
     if toolchain.startswith('ido-7.1'):
         return result
     target, candidate = (_instructions(rows, side) for side in (1,2))
