@@ -333,6 +333,7 @@ class Search(Permuter):
         """Spend a few of the ordinary trials on a measured operand/register near miss."""
         rows = self.winner_diff[0] if self.winner_diff else repair_ranking.evidence(self.net, fn['id'], agent.id)
         from decomprepair import (
+            counter_derived_loop_offset,
             float_stack_call_reuse,
             guard_xor_reuse,
             inline_float_vector_scale,
@@ -356,6 +357,7 @@ class Search(Permuter):
         proposals += guard_xor_reuse.variants(source, fn['name'], proj['arch'], asm, header)
         proposals += scoped_cursor_entry.variants(source, fn['name'], proj['arch'], asm)
         proposals += scoped_global_reset.variants(source, fn['name'], proj['arch'], asm)
+        proposals += counter_derived_loop_offset.variants(source, fn['name'], proj['arch'], asm)
         if proj['arch'] == 'mips' and '%lo(' in asm:
             rename = getattr(self.net, 'rename_tokens', None)
             current_asm = rename(proj, asm) if rename else asm

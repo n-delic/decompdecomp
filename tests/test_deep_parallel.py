@@ -479,3 +479,24 @@ def test_guarded_indexed_load_uses_current_relocation_name(monkeypatch):
     assert search.operand_order_pass(AGENT, proj, fn, 1310, None) == 1110
     assert len(tried) == 1
     assert '*((u8 *)' in tried[0]
+
+
+def test_counter_derived_offset_trial_runs_on_schedule_differences(monkeypatch):
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    proj = net.project_row('game')
+    fn = {**net.function(), 'name': 'f',
+          'asm': ('sw $a0, %lo(table)($at)\naddiu $a1, $a1, 1\nslti $v0, $a1, 32\n'
+                  'bnez $v0, .Lloop\naddiu $v1, $v1, 40\n'),
+          'best_source': ('void f(void) { s32 i; s32 offset; i = 0; offset = 0;\n'
+                          '    do { *(s32 *)(table + offset) = 0; i += 1; offset += 40; } while (i < 32);\n'
+                          '}')}
+    search = deep_permuter.Search(net, 1, 6, Log())
+    monkeypatch.setattr(deep_permuter.permuter_focus, 'classify', lambda *args: 'order')
+    tried = []
+    monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 0)
+
+    assert search.operand_order_pass(AGENT, proj, fn, 60, None) == 0
+    assert len(tried) == 1
+    assert 'offset = (i << 5) + (i << 3);' in tried[0]

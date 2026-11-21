@@ -8959,3 +8959,13 @@ integer and fractional stores separated by 32 bytes, and the pair and row
 latches. The source keeps the same function signature and uses unsigned
 shifts for the bit packing. The normal ROM judge confirmed the repair on
 the copied project.
+
+### Deriving a byte offset from a bounded loop counter
+
+Under `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, an N64 draft independently
+incremented a counter and its 40-byte offset. It scored 60 because the compiler moved
+the count increment before the stores. Computing the offset as `(i << 5) + (i << 3)`
+after the increment reproduced the target schedule and matched all 588 linked bytes.
+The trial requires zero initialization, an unchanged counter and offset in the body,
+a bounded product, and the target store and loop-tail sequence. Deep Permuter verified
+the match with the existing compiler flags.
