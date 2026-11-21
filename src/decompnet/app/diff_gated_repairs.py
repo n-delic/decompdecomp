@@ -204,6 +204,8 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
             result.append(('relocated_countdown', candidate_source))
         if candidate_source := stack_read_retry.rewrite(source, name, asm or '', header):
             result.append(('stack_read_retry', candidate_source))
+        if candidate_source := stack_read_retry.rewrite_inline(source, name, asm or '', header):
+            result.append(('stack_read_inline_compare', candidate_source))
         if candidate_source := packed_matrix_conversion.rewrite(source, name, asm or '', header):
             result.append(('packed_matrix_conversion', candidate_source))
         if candidate_source := byte_cursor_postincrements.rewrite(source, name, asm or '', header):

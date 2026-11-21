@@ -157,6 +157,8 @@ def verify(feedback, example):
             focused.append(('relocated_countdown', candidate))
         if candidate := stack_read_retry.rewrite(source, fn['name'], fn['asm'] or '', header):
             focused.append(('stack_read_retry', candidate))
+        if candidate := stack_read_retry.rewrite_inline(source, fn['name'], fn['asm'] or '', header):
+            focused.append(('stack_read_inline_compare', candidate))
         if candidate := packed_matrix_conversion.rewrite(source, fn['name'], fn['asm'] or '', header):
             focused.append(('packed_matrix_conversion', candidate))
         if candidate := byte_cursor_postincrements.rewrite(source, fn['name'], fn['asm'] or '', header):

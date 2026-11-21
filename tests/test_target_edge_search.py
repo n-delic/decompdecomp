@@ -457,3 +457,12 @@ def test_measured_stack_read_retry_reaches_kmc_proposals(monkeypatch):
     rows = [('s', 'addiu $sp, $sp, -56', 'addiu $sp, $sp, -32')]
     assert ('stack_read_retry', 'stack read retry') in route('void f(void) {}', rows, 'asm')
     assert 'stack_read_retry' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
+
+
+def test_measured_stack_read_inline_compare_reaches_kmc_proposals(monkeypatch):
+    from decomprepair import stack_read_retry
+
+    monkeypatch.setattr(stack_read_retry, 'rewrite_inline', lambda *args: 'inline stack compare')
+    rows = [('s', 'addiu $sp, $sp, -56', 'addiu $sp, $sp, -32')]
+    assert ('stack_read_inline_compare', 'inline stack compare') in route('void f(void) {}', rows, 'asm')
+    assert 'stack_read_inline_compare' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
