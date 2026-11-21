@@ -569,3 +569,29 @@ def test_valid_kmc_draft_expands_shared_cursor_branch_and_repairs_source(monkeyp
     assert seeds.generate_from_asm('original', 'f', 'gcc-2.7.2-kmc', 'header', valid=True) == 'repaired draft'
     assert seeds.generate_from_asm('original', 'f', 'ido-5.3', valid=True) == 'void f(void) {}'
     assert seen == ['expanded original', 'original']
+
+
+def test_kmc_repairs_indirect_table_calls_in_fresh_and_recovery_drafts(monkeypatch):
+    asm = """
+sll $v0, $a1, 2
+lui $at, %hi(handlers)
+addu $at, $at, $v0
+lw $v0, %lo(handlers)($at)
+jalr $v0
+move $a0, $s0
+"""
+    raw = """
+extern M2C_UNK handlers;
+void f(void *arg, s32 i) {
+    *(&handlers + (i * 4))(arg);
+}
+"""
+    monkeypatch.setattr(seeds, 'run_m2c', lambda *args, **kwargs: raw)
+    expected = '(*(void (**)())((char *)&handlers + (i * 4)))(arg);'
+    assert expected in seeds.generate_from_asm(asm, 'f', 'gcc-2.7.2-kmc', valid=True)
+    choices = repairs.recovery_drafts(raw, 'f', asm, 'mips', 'gcc-2.7.2-kmc', '', None, {'failures': []})
+    family, draft = next(choices)
+    assert family == 'initial_typed_indirect_call'
+    assert expected in draft
+    assert expected not in seeds.generate_from_asm(asm.replace('jalr $v0', 'jalr $v1'),
+                                                   'f', 'gcc-2.7.2-kmc', valid=True)

@@ -9654,3 +9654,13 @@ three-halfword record. The candidate advanced 3 bytes in the loop branch
 delay slot while the original advanced 6. Changing the source step from 3
 to 6 produced the original stride and improved the score from 2,599 to
 2,589 on the real-game scratch judge. The function remains unmatched.
+
+
+### Recover typed calls through word dispatch tables
+
+Seven independently generated N64 drafts failed to compile because m2c treated a table entry as an integer or object pointer and then called it. The target's shift, word load, and `jalr` proved the table had four-byte function-pointer entries. Forming the table address in bytes and calling through the loaded pointer made all seven compile under `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`. The archived sources compiled as independent controls.
+
+- A terminal message wrapper matched all 84 bytes after adding a statement boundary before the receive call. The indirection alone had score 60, with only the return-address save in a different position.
+- A message dispatch loop matched all 108 bytes after taking the invariant table address before the loop and placing the boundary before queue setup. The typed expression on its own scored 549. Hoisting without the boundary scored 60, and switching to a structured loop produced additional register differences.
+- A list handler loop needed the byte index staged at the head of its existing loop. That moved the typed draft from score 579 to 10. The existing measured frame rule then reserved eight bytes and matched all 112 bytes. Adding padding before staging the index left the scheduling difference.
+- The four remaining typed dispatch drafts compile and enter ordinary search. Their linked scores still range from 1125 to 1723.
