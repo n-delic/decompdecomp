@@ -112,6 +112,7 @@ def verify(feedback, example):
             measured_mmio_polling,
             measured_pointer_scale,
             measured_temporary_repairs,
+            relocated_byte_table,
             uncached_read_repairs,
         )
 
@@ -134,6 +135,9 @@ def verify(feedback, example):
             focused.append(('measured_mmio_polling', candidate))
         if candidate := likely_branch_cursor.rewrite(source, fn['name'], fn['asm'] or '', header):
             focused.append(('likely_branch_cursor', candidate))
+        if candidate := relocated_byte_table.rewrite(source, fn['name'], fn['asm'] or '', header,
+                                                     symbols.resolve if symbols else None):
+            focused.append(('relocated_byte_table', candidate))
         focused += measured_callback_repairs.variants(source, fn['name'], rows)
         focused += measured_address_repairs.variants(source, fn['name'], header, rows, symbols)
         focused += measured_pointer_scale.variants(source, fn['name'], header, rows)

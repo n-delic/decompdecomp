@@ -151,6 +151,7 @@ class BriefMixin:
                 measured_callback_loop,
                 measured_mmio_polling,
                 measured_stack_drafts,
+                relocated_byte_table,
                 shared_default_drafts,
                 uncached_read_repairs,
             )
@@ -161,6 +162,8 @@ class BriefMixin:
                 inputs.append('indexed callback loops')
             if likely_branch_cursor.applies(fn['asm'] or ''):
                 inputs.append('shared branch-likely cursor advance')
+            if relocated_byte_table.applies(fn['asm'] or ''):
+                inputs.append('relocated byte table')
             if measured_mmio_polling.applies(fn['asm'] or ''):
                 inputs.append('measured MMIO polling')
             if large_stack_drafts.applies(fn['asm'] or ''):

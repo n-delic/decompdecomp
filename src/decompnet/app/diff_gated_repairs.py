@@ -16,6 +16,7 @@ from decomprepair import (
     measured_mmio_polling,
     measured_pointer_scale,
     measured_temporary_repairs,
+    relocated_byte_table,
     targeted_switch_labels,
     uncached_read_repairs,
 )
@@ -184,6 +185,8 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
             result.append(('measured_mmio_polling', candidate_source))
         if candidate_source := likely_branch_cursor.rewrite(source, name, asm or '', header):
             result.append(('likely_branch_cursor', candidate_source))
+        if candidate_source := relocated_byte_table.rewrite(source, name, asm or '', header, resolve):
+            result.append(('relocated_byte_table', candidate_source))
         result += measured_callback_repairs.variants(source,name,rows)
         result += measured_address_repairs.variants(source,name,header,rows,symbols)
         result += measured_pointer_scale.variants(source,name,header,rows)

@@ -319,3 +319,20 @@ def test_shared_cursor_branch_uses_measured_kmc_proposal_path(monkeypatch):
     rows = [('r', 'beql $v0, $zero, .Ljoin', 'bnez $v0, .Lactive')]
     assert ('likely_branch_cursor', 'shared advance') in route('void f(void) {}', rows, 'asm')
     assert 'likely_branch_cursor' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
+
+
+def test_relocated_byte_table_is_proposed_only_for_kmc(monkeypatch):
+    from decomprepair import relocated_byte_table
+
+    calls = []
+
+    def rewrite(source, name, asm, header, resolve):
+        calls.append((source, name, asm, header, resolve))
+        return 'byte table candidate'
+
+    monkeypatch.setattr(relocated_byte_table, 'rewrite', rewrite)
+    rows = [('i', 'lbu $v0, ($v0)', 'lbu $v0, 3($v0)')]
+    resolve = {'slot': 0x80001000}.get
+    assert ('relocated_byte_table', 'byte table candidate') in route('void f(void) {}', rows, 'asm', resolve=resolve)
+    assert 'relocated_byte_table' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
+    assert calls == [('void f(void) {}', 'f', 'asm', '', resolve)]
