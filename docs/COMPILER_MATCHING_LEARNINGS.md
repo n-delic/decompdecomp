@@ -11566,3 +11566,14 @@ Returning the input directly improved the score from 110 to 95. Returning
 positive zero directly on the zero-input path as well reached score zero.
 Keeping the redundant zero initialization after that guard scored 115.
 The direct return preserves positive zero even for a negative zero input.
+
+## Allocation evidence for one-block float functions (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`)
+
+A rotation-matrix function stuck at 85 (17 rows, `$f20`/`$f22` swapped for `sin(z)` and `cos(y)`) had no
+allocation evidence at all: it is one basic block, so local-alloc assigns every pseudo, greg prints no
+"regs to allocate" order and `gcc_allocation.summarize` dropped everything; the FPR numbers (52 = `$f20`) also
+had no names. With both fixed (decomp-repair 0.5.258 FPR aliases; local-alloc ranking by
+`floor_log2(refs)*refs/length`), the brief shows the cause: the `cos(y)` pseudo (C lines 10,26,27,28: 4 refs over
+9 insns, rank 3) outranks the `sin(z)` pseudo (lines 9,12,15,29: 4 refs over 14 insns, rank 7). Shortening
+`sin(z)`'s range or lengthening `cos(y)`'s flips them, which is what the matching store order did. Not yet done:
+turning this into proposed edits (moves ranked by their effect on the two ranges).
