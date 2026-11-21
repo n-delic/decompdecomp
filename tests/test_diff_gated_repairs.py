@@ -764,3 +764,21 @@ def test_byte_offset_scale_reaches_the_deep_permuter_diff_dispatch():
     expected = ('measured_byte_offset_scale', source.replace('key * 4', 'key * 16'))
     assert expected in proposals(source, 'f', '', 'mips', KMC, rows, '')
     assert expected not in proposals(source, 'f', '', 'mips', EGCS, rows, '')
+
+
+def test_next_record_field_reaches_kmc_diff_dispatch():
+    source = """extern u16 *cursor;
+typedef struct { unsigned short field_0; unsigned char pad_2[10]; unsigned short field_C; } __repair_record_cursor;
+int f(void) {
+    cursor += 6;
+    if (((__repair_record_cursor *)cursor)->field_C != 0) {
+        return 1;
+    }
+    return 0;
+}
+"""
+    step = 'addiu $v0, $a1, 0xc'
+    rows = [('i', 'lhu $v1, 0xc($a1)', 'lhu $v1, 0x18($a1)'), (' ', step, step)]
+    expected = ('next_record_field_after_advance', source.replace('->field_C', '->field_0'))
+    assert expected in proposals(source, 'f', '', 'mips', KMC, rows, '')
+    assert expected not in proposals(source, 'f', '', 'mips', EGCS, rows, '')

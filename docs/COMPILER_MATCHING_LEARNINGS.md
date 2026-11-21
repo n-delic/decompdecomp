@@ -12172,3 +12172,20 @@ of sixteen in both assignments changed the two shifts from 2 to 4 and
 matched byte for byte. The released search stayed at 20 after 100 trials.
 The measured repair reached 0 in 16 trials through the Deep Permuter. This
 is one scratch ROM match, with synthetic tests for the source and diff guards.
+
+### KMC GCC 2.7.2: split guarded stores and use the advanced record base
+
+Two scratch ROM replays used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.
+The released search stayed at the starting score in 100 trials per draft.
+
+- Replace the short-circuit assignments and shared halfword store with
+  ordered ranges that each store their own constant. The compiled branch
+  layout stays the same and the input pointer and constant now use the
+  target registers. The Deep Permuter moved from 30 to 0 in 19 trials.
+- After advancing a halfword pointer by six elements, test the new
+  record's field at offset zero. The old draft used offset twelve on the
+  advanced pointer, applying the stride twice. The Deep Permuter moved
+  from 10 to 0 in 16 trials.
+
+These are linked-byte scratch matches. Synthetic tests exercise the
+instruction evidence, field width and source-shape checks.
