@@ -798,3 +798,22 @@ void f(void *input) {
     expected = ('measured_commuted_global_stride', source.replace('+ &table', '+ (s8 *)&table'))
     assert expected in proposals(source, 'f', '', 'mips', KMC, rows, '')
     assert expected not in proposals(source, 'f', '', 'mips', EGCS, rows, '')
+
+
+def test_measured_kmc_input_receives_the_linked_symbol_resolver(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    def resolve(name):
+        return {'table': 32}.get(name)
+
+    source = 'void f(void) {}'
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+
+    def repair(text, name, header, diff, resolve):
+        assert (text, name, header, diff) == (source, 'f', '', rows)
+        assert resolve('table') == 32
+        return [('input_fixture', 'repaired')]
+
+    monkeypatch.setattr(diff_gated_repairs.measured_kmc_input, 'variants', repair)
+    assert dict(proposals(source, 'f', '', 'mips', KMC, rows, '', resolve=resolve))['input_fixture'] == 'repaired'
+    assert 'input_fixture' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, '', resolve=resolve))
