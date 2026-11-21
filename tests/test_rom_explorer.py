@@ -620,3 +620,30 @@ def test_validated_preview_at_a_nested_resource_start_takes_precedence():
         rows = analyse(bytes(128),[],[],[],assets=assets)['regions']
         assert next(row for row in rows if row['start']==8)['detected_asset']==texture
         assert next(row for row in rows if row['start']==24)['detected_asset']==model
+
+
+def test_region_can_preview_two_detected_assets_at_the_same_offset(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    image = bytes(64)
+    path = tmp_path/'image'
+    path.write_bytes(image)
+    digest = hashlib.sha256(image).hexdigest()
+    settings = dict(source='rom', format='auto', offset=0)
+    model = dict(kind='3d model', media='model', offset=0, preview_settings=settings)
+    texture = dict(kind='image', media='image', offset=0, preview_settings=settings)
+    row = dict(start=0, detected_asset=model, evidence=[model, texture])
+    report = dict(size=len(image), regions=[row])
+    console = SimpleNamespace(asset_scene=lambda *_: None,
+                              asset_preview=lambda _, asset, selection: dict(media=asset['media']))
+    net = SimpleNamespace(console=lambda _: console)
+    monkeypatch.setattr(rom_explorer, '_current', lambda *_: ({}, dict(report=report), row))
+    monkeypatch.setattr(rom_explorer, '_source', lambda *_: dict(path=path))
+    monkeypatch.setattr(rom_explorer, '_resource_links', lambda *_: None)
+
+    request = dict(region='0-40', image_hash=digest)
+    assert rom_explorer.asset_preview(net, 'game', request)['media'] == 'model'
+    assert rom_explorer.asset_preview(net, 'game', request | dict(asset_view='image'))['media'] == 'image'
+    row['evidence'].remove(texture)
+    with pytest.raises(NetworkError, match='no detected asset'):
+        rom_explorer.asset_preview(net, 'game', request | dict(asset_view='image'))

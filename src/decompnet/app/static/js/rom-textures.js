@@ -94,10 +94,12 @@ function setupRomTextureControls(body,region,active) {
 function romTextureBanks(report) {
   const banks=new Map();
   for(const row of report?.regions || []) {
-    const asset=row.detected_asset || row.evidence?.find(e=>e.kind==='image' && e.size);
+    const primary=row.detected_asset;
+    const secondary=primary && ['audio','model','metadata'].includes(primary.media);
+    const asset=secondary ? romAssetForView(row,'image') : primary || row.evidence?.find(e=>e.kind==='image' && e.size);
     if(!asset || ['audio','model','metadata'].includes(asset.media) || row.kind==='code')continue;
     const key=`${asset.offset}:${asset.size}`;
-    if(!banks.has(key))banks.set(key,{key,region:row.id,offset:asset.offset,size:asset.size,asset,
+    if(!banks.has(key))banks.set(key,{key,region:row.id,offset:asset.offset,size:asset.size,asset,assetView:secondary?'image':undefined,
       name:row.annotation?.name || row.symbols?.[0]?.name || asset.label || 'Texture bank',direct:new Set(),traced:new Set()});
     const bank=banks.get(key);
     if(row.annotation?.name && !bank.annotated){bank.name=row.annotation.name;bank.annotated=true;}
@@ -149,7 +151,7 @@ function renderRomTextureGallery(view=romView()) {
       host.onclick=event=>{
         const bank=event.target.closest('[data-texture-bank]');
         const reference=event.target.closest('[data-texture-function]');
-        if(bank)openRomRegion(rows[Number(bank.dataset.textureBank)].region);
+        if(bank){const row=rows[Number(bank.dataset.textureBank)];openRomRegion(row.region,row.assetView);}
         if(reference)openFn(reference.dataset.textureFunction);
       };
       streamRomAssets('Texture',rows,(batch,start)=>appendRomAssetTable(target,batch.map((bank,i)=>[
@@ -167,7 +169,7 @@ function renderRomTextureGallery(view=romView()) {
       for(const bank of page) {
         const card=document.createElement('article');card.className='rom-texture-card';
         card.innerHTML=`<button type="button" class="ghost rom-texture-open" data-texture-region${report.stale ? ' disabled' : ''}><span data-texture-thumb class="rom-texture-thumb">Waiting for preview</span><b>${esc(bank.name)}</b><span class="small">${esc(bank.format)} · ${bank.width && bank.height ? `${bank.width} × ${bank.height}` : 'dimensions unavailable'} · ${hex8(bank.offset)}</span><span class="small">${bank.asset.texture_count || bank.asset.textures?.length ? (bank.asset.texture_count || bank.asset.textures.length)+' texture(s) · ':''}${bank.asset.frames || 1} frame(s) · ${bank.asset.palettes ?? '—'} palette(s)</span></button><div data-texture-usage></div>`;
-        card.querySelector('[data-texture-region]').onclick=()=>openRomRegion(bank.region);
+        card.querySelector('[data-texture-region]').onclick=()=>openRomRegion(bank.region,bank.assetView);
         const usage=card.querySelector('[data-texture-usage]');
         const links=(names,label)=>{
           const line=document.createElement('p');line.className='small muted';line.append(document.createTextNode(label+': '));
@@ -177,7 +179,7 @@ function renderRomTextureGallery(view=romView()) {
         const slot=card.querySelector('[data-texture-thumb]');slots.push(slot);
         tasks.push(async signal=>{
           try {
-            const result=await api('/api/rom-explorer/preview',{method:'POST',signal,body:{slug,region:bank.region,image_hash:report.image_hash,options:{format:'auto'}}});
+            const result=await api('/api/rom-explorer/preview',{method:'POST',signal,body:{slug,region:bank.region,image_hash:report.image_hash,asset_view:bank.assetView,options:{format:'auto'}}});
             if(!active() || signal.aborted)return;
             if(!/^data:image\/(png|jpeg);base64,/.test(result.data_url))throw Error('This entry did not produce an image. Open its region to inspect the format.');
             const image=document.createElement('img');image.alt=`${bank.name}, ${bank.format}`;image.src=result.data_url;

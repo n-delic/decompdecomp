@@ -291,6 +291,14 @@ def _asset_read(net,slug,data,read, *, detect=False):
     proj,state,row=_current(net,slug,data.get('region'),data.get('image_hash'))
     options=_preview_settings(data.get('options',{}))
     detected=row.get('detected_asset')
+    view = data.get('asset_view')
+    if detect and view is not None and options.get('format', 'auto') == 'auto' and options.get('source', 'rom') == 'rom':
+        if view not in ('image', '3d model'):
+            raise NetworkError('Choose a texture or model preview.')
+        detected = next((asset for asset in row['evidence']
+                         if asset.get('kind') == view and 'preview_settings' in asset), None)
+        if detected is None:
+            raise NetworkError('This region has no detected asset for that view. Scan ROM Explorer again.')
     using_detected=bool(detect and detected and options.get('format','auto')=='auto' and
                         options.get('source','rom')=='rom' and
                         asset_formats.integer(options.get('offset',row['start']),'Data offset',0,state['report']['size']-1) in (row['start'],detected['offset']))

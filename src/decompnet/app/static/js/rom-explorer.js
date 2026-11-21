@@ -186,13 +186,14 @@ function romRegionTitle(region) {
     || region?.archive_path || region?.symbols?.[0]?.name || 'ROM region';
 }
 
-async function openRomRegion(id) {
+async function openRomRegion(id,assetView) {
   const slug=S.slug,report=romView(slug).report,epoch=++romDetailEpoch;if(!report || report.stale)return;
   const body=dialog(romRegionTitle(report.regions?.find(region=>region.id===id)),'<pre data-rom-detail-work></pre>','rom-region');
   const log=body.querySelector('[data-rom-detail-work]'),finish=beginWork(log,'Reading region',[]);
   const active=()=>S.slug===slug && epoch===romDetailEpoch && S.dialogKind==='rom-region';
   try {
     const r=await api(`/api/rom-explorer?slug=${encodeURIComponent(slug)}&region=${id}&image_hash=${report.image_hash}`);if(!active())return;
+    if(assetView)r.detected_asset=romAssetForView(r,assetView) || r.detected_asset;
     finish();body.classList.add('rom-region-body');
     $('dialogTitle').textContent=romRegionTitle(r);
     const subtitle=$('dialogSubtitle');
@@ -200,7 +201,7 @@ async function openRomRegion(id) {
     subtitle.hidden=false;
     body.innerHTML=`${romAssetHTML(r)}<p class="small muted">${esc(r.kind)} (${esc(r.confidence)}) · ${esc(r.mappings.map(m=>m.segment+' at '+hex8(m.address)).join(' · ') || 'No known runtime address')}</p><h3>Evidence</h3>${r.evidence.map(e=>`<p><b>${esc(e.label)}</b> · ${esc(e.confidence)}<br>${esc(e.reason)}${e.expanded_size!=null ? ' Expanded size: '+e.expanded_size.toLocaleString()+' bytes.' : ''}</p>`).join('') || '<p>No format evidence found.</p>'}<p class="small muted">Sample entropy: ${r.entropy} bits per byte over ${r.sampled_bytes} bytes. Region boundaries may be display pages.</p><h3>Functions referencing this region</h3><p class="small muted">Imported address references; runtime execution and access length are not established.</p>${r.references.map(ref=>`<p><button type="button" class="link-btn" data-rom-function="${esc(ref.function)}">${esc(ref.function)}</button> at <code>${hex8(ref.instruction)}</code> → <code>${hex8(ref.target)}</code> · ${esc(ref.segment)} · ${esc(ref.confidence)}<br><span class="small muted">${esc(ref.reason)}</span></p>`).join('') || '<p>No references found. This does not establish that the bytes are unused.</p>'}<details><summary>Pointer chains (${r.pointers.length} sampled words)</summary><p class="small muted">Referencing function → this region → pointer word → possible destination. These are leads; a load or decompressor data flow has not been proven. At most 32 pointer words are shown.</p>${r.pointers.map(p=>`<p><code>${hex8(p.at)}</code> → ${hex8(p.target)} ${p.destinations.map(d=>`<button type="button" class="link-btn" data-rom-destination="${d.region}">${esc(d.segment)} ROM ${hex8(d.rom)}</button>`).join(' · ')}</p>`).join('') || '<p>No sampled pointers into known mappings.</p>'}</details>${romUsageHTML(r)}${romGroupHTML(r)}${romFlowHTML(r.loader_flow)}<details open><summary>Hex and text preview (first 256 bytes)</summary><pre>${esc(r.preview)}</pre>${r.strings.map(s=>`<p class="mono">${esc(s)}</p>`).join('')}</details><h3>Your interpretation</h3><p class="small muted">Labels and notes are local annotations; they do not change symbols, bytes or matching status.</p><label class="field"><span>Label</span><input data-rom-label maxlength="120" value="${esc(r.annotation.name || '')}"></label><label class="field"><span>Your classification (optional)</span><select data-rom-kind>${['','unknown','code','data','strings','pointer table','compressed','image','3d model','animation','collision','object placements','world grid','music sequence','demo','palette','audio','font','container','repeated bytes'].map(kind=>`<option value="${kind}"${kind===(r.annotation.kind || '') ? ' selected' : ''}>${kind || 'Keep automatic label'}</option>`).join('')}</select></label><label class="field"><span>Evidence / next steps</span><textarea data-rom-notes maxlength="4000" rows="4">${esc(r.annotation.notes || '')}</textarea></label><button type="button" class="primary small-btn" data-rom-save>Save notes</button><pre data-rom-save-work></pre>`;
     body._romRecordPage=0;body._romResourceSort=null;
-    setupRomAsset(body,r,slug,report.image_hash,active,romCanPreloadAsset(r));
+    setupRomAsset(body,r,slug,report.image_hash,active,romCanPreloadAsset(r),assetView);
     setupRomDiscovery(body,r,slug,report.image_hash,active);
     setupRomGroup(body,r);
     body.querySelectorAll('[data-rom-function]').forEach(b=>b.onclick=()=>{closeDialog();openFn(b.dataset.romFunction);});

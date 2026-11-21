@@ -1,5 +1,11 @@
 /* Local, bounded asset previews and inspectable buffer chains. No autoplay. */
 const ROM_ASSET_FORMATS=[['auto','Detect asset / bank'],['rgba8888','RGBA 8888'],['rgb888','RGB 888'],['rgba5551-be','RGBA 5551 (big endian)'],['rgb565-le','RGB 565 (little endian)'],['rgb565-be','RGB 565 (big endian)'],['ia4','Intensity + alpha 4-bit'],['ia8','Intensity + alpha 8-bit'],['ia16','Intensity + alpha 16-bit'],['i4','Intensity 4-bit'],['i8','Intensity 8-bit'],['ci4','Indexed 4-bit + palette'],['ci8','Indexed 8-bit + palette'],['palette-rgba5551','Palette RGBA 5551'],['palette-ia16','Palette intensity + alpha'],['pcm-s16le','PCM signed 16-bit little endian'],['pcm-s16be','PCM signed 16-bit big endian'],['pcm-u8','PCM unsigned 8-bit']];
+function romAssetForView(region, kind) {
+  const primary=region.detected_asset;
+  if(primary?.kind===kind || (kind==='3d model' && primary?.media==='model'))return primary;
+  return region.evidence?.find(asset=>asset.kind===kind && asset.preview_settings);
+}
+
 function stopRomAssetAudio(root=$('dialogBody')) {
   root._romAnimationStop?.();root._romCancelPreview?.();
   root._romAnimationStop=null;root._romCancelPreview=null;root._romPreviewFrame=null;
@@ -59,7 +65,7 @@ function romAssetOptions(body) {
   options.record_page=body._romRecordPage || 0;
   return options;
 }
-function setupRomAsset(body,region,slug,imageHash,active,preload=false) {
+function setupRomAsset(body,region,slug,imageHash,active,preload=false,assetView) {
   const get=key=>body.querySelector(`[data-asset-${key}]`),button=get('preview'),work=get('work'),result=get('result');
   let busy=false,previewEpoch=0,controller=null;
   body._romCancelPreview=()=>{previewEpoch++;controller?.abort();};
@@ -80,7 +86,7 @@ function setupRomAsset(body,region,slug,imageHash,active,preload=false) {
     const inspecting=region.detected_asset?.media==='metadata' && get('format').value==='auto';
     const finish=beginWork(work,inspecting ? 'Inspecting resource' : 'Preparing asset preview',[...body.querySelectorAll('input,select,button')].filter(control=>!control.hasAttribute?.('data-texture-play')),inspecting ? 'Resource details ready.' : 'Asset preview ready.');showJobError(work,'');
     try {
-      const preview=await api('/api/rom-explorer/preview',{method:'POST',signal:controller?.signal,body:{slug,region:region.id,image_hash:imageHash,options:romAssetOptions(body)}});
+      const preview=await api('/api/rom-explorer/preview',{method:'POST',signal:controller?.signal,body:{slug,region:region.id,image_hash:imageHash,asset_view:assetView,options:romAssetOptions(body)}});
       if(!current())return false;
       const inspect=()=>renderRomResource(result,preview,page=>{body._romRecordPage=page;return renderPreview(false);},current,body);
       if(preview.media==='metadata'){inspect();return true;}
