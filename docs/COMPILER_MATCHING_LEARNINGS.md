@@ -9626,3 +9626,13 @@ Two archived N64 functions matched after byte-store and expression repairs to in
 ### A shifted callback address occupies one argument
 
 Three archived N64 initializers passed their own context to a registration call through an unchanged `$a0`. m2c dropped it and inferred only two callback addresses and an integer tag. Each remaining callback address used two instructions, so the focused search saw five shifted instructions for three arguments. Verifying each adjacent hi/lo relocation pair let it run the existing passthrough rule. The tag and both callback symbols stayed the same. With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, all three fresh drafts moved from score 25 to byte-identical matches (68, 92, and 92 bytes). The archived match compiled independently as a control.
+
+### Bind repeated format arguments to their ROM string
+
+A 1,876-byte N64 routine with GCC 2.7.2 KMC and
+`-G0 -mips3 -mgp32 -mfp32 -O2` emitted compiler-local strings for two
+calls. Both original call sites loaded the same relocated data symbol.
+Reading the symbol through the caller’s ROM mapping confirmed the literal
+and its terminator. Using an extern array at both call sites resolved the
+string relocation and moved the judge from 6,384 to 6,344 in the scratch
+real-game trial. The switch table still differs.

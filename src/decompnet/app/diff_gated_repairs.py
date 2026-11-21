@@ -36,6 +36,7 @@ from decomprepair import (
     stack_fill_drafts,
     stack_header_buffer,
     stack_read_retry,
+    target_string_repairs,
     targeted_switch_labels,
     uncached_read_repairs,
 )
@@ -262,6 +263,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
             result.append(('byte_scaled_global_offset', candidate_source))
         result += measured_address_repairs.variants(source,name,header,rows,symbols)
         result += measured_pointer_scale.variants(source,name,header,rows)
+        result += target_string_repairs.verified_variants(source, name, header, rows, read_data)
         result += measured_immediate_repairs.variants(source,name,rows)
         result += kmc_cast_repairs.variants(source,name,header,rows,flags)
         result += target_guard_width_diff_repairs.proposals(source,name,header,rows,target,candidate,asm,
