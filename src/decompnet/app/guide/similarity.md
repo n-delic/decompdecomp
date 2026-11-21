@@ -23,7 +23,9 @@ and compiles it against this game's bytes. The project's **Matches from other ga
 transfer attempt and its source. A match counts only after the byte judge accepts it. A manual search on a MIPS ROM
 also checks whether verified code from an imported project sits inside a larger function already mapped by
 the ROM importer. When it finds a unique span, checks the cuts, and builds the donor C to the exact bytes,
-it splits the function and submits the source to the ordinary judge.
+it splits the function and submits the source to the ordinary judge. A manual search also uses the donor object’s relocation
+positions to find whole functions when the ROM importer inferred different relocation records. The destination
+keeps its original bytes and linker settings for verification.
 
 The function page and `find_similar(function)` also show near matches from other games. These are leads
 for writing C, not matches: similar instructions may come from unrelated functions. A name from another
