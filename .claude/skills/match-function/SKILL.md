@@ -17,7 +17,13 @@ is true, turn after turn, without waiting for the user. The rules of that mode:
   (other compiler profile, the neighbours' matched sources, the permuter's rejected variants, a scheduler-level
   reading of the target), run a longer permuter. Only the user can end the goal, by telling you to stop.
 - **Keep a visible plan and say what you are doing in a line** when you start a long run, so a user following along
-  can see the loop is alive. Long runs go in the background; waiting on them is not stopping.
+  can see the loop is alive. Long runs go in the background.
+- **Never idle while the Deep Permuter runs.** Start it (background, thousands of variants), then in the same turn go
+  back to manual matching: read the diff, write candidates, compile them locally (`compile_snippet.py`, grids over
+  source shapes) and judge the promising ones in the app. Waiting on a job with nothing else in progress is wasted
+  time. Check the job between your own attempts (`judge.py job ID`), and fold what it finds into your next idea. A
+  manual candidate that beats the saved best is saved by the judge; the running search picks up the better best on
+  its next restore, so do not stop one for the other.
 - When context grows long, keep going from the plan and the function's notes; do not wrap up early.
 - Only when the judge says 0, and the permuter PRs are merged with the proof from step 5, write the final message.
 
@@ -138,7 +144,7 @@ will not find the last rows. Verify its best in the app before believing it.
 The Deep Permuter: `judge.py permute SLUG FUNC MINUTES VARIANTS` (VARIANTS is a limit: use thousands, e.g. 5000; a run with 4 tests nothing) (a function with no scored C is refused:
 `judge.py seed SLUG FUNC` judges the app's untouched draft first). It restores the best, tries random rewrites
 and local repairs, and saves every verified improvement. Check the result with `judge.py job ID` and the function's
-Deep permuter tab. If it errors, that is a bug to fix (see PR "TracedVariant" for an example), not a reason to
+Deep permuter tab. Start it, then keep matching by hand while it runs (goal rules above). If it errors, that is a bug to fix (see PR "TracedVariant" for an example), not a reason to
 wait.
 
 ## 5. Teach the permuter (do it first, merge it, then continue hunting)
