@@ -12879,3 +12879,13 @@ With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1`, the linked score improved
 from 210 to an exact match. Casting the mask result alone did not recover the
 signed comparison. This is one observed match; synthetic tests cover the
 instruction differences and source types.
+
+### Group a packed color channel before combining half-intensity channels (KMC GCC 2.7.2)
+
+With `-G0 -mips3 -mgp32 -mfp32 -O2`, a retail N64 function differed by
+a register swap across nine instructions in two unsigned color channels.
+Wrap the first shift assignment in a single-iteration block and swap the
+channel operands around the final OR. The linked judge improved from 45
+to 0, and the live judge saved the match. Changing the block alone scored
+45, changing only the order scored 60, and the previous dispatcher
+generated no candidate. The released rewrite generated one exact candidate.
