@@ -406,3 +406,18 @@ def test_measured_guarded_loop_counter_reuse():
     assert 'while (j < n);' in dict(proposals(source, 'f', '', 'mips', KMC, rows, ''))[
         'guarded_loop_counter_reuse']
     assert 'guarded_loop_counter_reuse' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_shared_halfword_index_routed_for_kmc(monkeypatch):
+    from decompnet.app.diff_gated_repairs import measured_narrow_use
+
+    def candidate(source, name, rows):
+        assert source == 'void f(void) {}'
+        assert name == 'f'
+        assert rows == [('r', 'lh $a0, ($v0)', 'lh $v1, ($v0)')]
+        return [('shared_halfword_index', 'void f(void) { work(); }')]
+
+    monkeypatch.setattr(measured_narrow_use, 'shared_halfword_index_variants', candidate)
+    rows = [('r', 'lh $a0, ($v0)', 'lh $v1, ($v0)')]
+    assert 'shared_halfword_index' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'shared_halfword_index' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
