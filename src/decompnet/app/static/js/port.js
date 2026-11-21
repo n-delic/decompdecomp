@@ -1,6 +1,7 @@
 /* The Porting tab (docs/PORTING.md): what still stands between a game and a PC port, as a checklist of steps, each
    with how far along it is and the button that does it. Read-only; asked for only while the tab is open. */
 let portEpoch = 0;
+let portRenderedSlug = null;
 let portRuntime = null;  // the runtime chosen in the Play step, kept across refreshes of the same report
 
 /* What a runtime still waits for, in a sentence (port/readiness.py, runtimes). */
@@ -107,8 +108,9 @@ function renderPortReadiness(report) {
     facts.append(portRow("Recompiled (N64Recomp)", `${recomp.functions.toLocaleString()} of the split's functions and `
       + `${recomp.found} it doesn't list, as C in ${recomp.files} files: ${recomp.stubs} set aside as stubs, `
       + `${recomp.runtime} for the runtime to provide, `
-      + (recomp.errors ? `${recomp.errors} compile errors` : "the C compiles")
+      + (recomp.errors ? `${recomp.errors} compile error${recomp.errors === 1 ? "" : "s"}` : "the C compiles")
       + ` (${new Date(recomp.at * 1000).toLocaleString()})`));
+    for (const error of recomp.error_examples || []) facts.append(portRow("  compile error", error));
     if (recomp.stub_examples.length) facts.append(portRow("  set aside", recomp.stub_examples.join(", ")
       + (recomp.stubs > recomp.stub_examples.length ? ", ..." : "")));
     if (recomp.found_examples.length) facts.append(portRow("  not in the split", recomp.found_examples.join(", ")
@@ -122,6 +124,7 @@ function renderPortReadiness(report) {
     + (assets.extracted && assets.extracted.current
       ? `; extracted: ${assets.extracted.mapped} of ${assets.extracted.total} are the ROM's bytes` : "")));
   renderPortSteps(report);
+  portRenderedSlug = S.slug;
   attachPlay(report.play);
   const todo = $("portBlockers");
   todo.replaceChildren(...report.blockers.map((b) => { const li = document.createElement("li"); li.textContent = b; return li; }));
@@ -134,6 +137,23 @@ function renderPortReadiness(report) {
 const withWork = (log) => [log._workStatus, log._workBar, log._errorBox, log._frame || log].filter(Boolean);
 
 const pct = (part, whole) => (whole > 0 ? Math.max(0, Math.min(100, Math.round(100 * part / whole))) : null);
+
+function recompileStep(report) {
+  const result = report.recomp;
+  return {
+    title: "Recompile It", pct: null, diagnostic: true,
+    status: recompileRun?.slug === S.slug ? "Recompiling…" : result ? "Checked" : null,
+    unavailable: !report.recomp_available,
+    detail: report.recomp_available
+      ? "Run N64Recomp early to check how the ROM was split. It translates ROM instructions to C and looks for "
+        + "functions the split missed. Review any functions it sets aside and any generated C that fails to compile."
+      : report.mode === "project" ? "This project starts from source files. Recompilation needs an imported ROM."
+        : "This console needs a supported static recompiler to check its ROM split.",
+    summary: result ? `${result.found} functions found outside the split · ${result.stubs} set aside · ${result.errors} compile error${result.errors === 1 ? "" : "s"}. See the full report for examples.` : "",
+    buttons: report.recomp_available ? ["portRecompile", "portRecompileStop"] : [],
+    logs: report.recomp_available ? ["portRecompileLog"] : [],
+  };
+}
 
 /* The steps, from the report: each {title, pct (null: done or not, no share to show), detail, buttons and logs (the
    panel's own elements, moved into the step)}. */
@@ -201,23 +221,23 @@ function portSteps(report) {
     steps[9].runtimes = report.runtimes || [];
     steps[6].detail = "Call checks need a project port build.";
   }
-  return steps;
+  return [recompileStep(report), ...steps];
 }
 
-function renderPortSteps(report) {
+function renderPortSteps(report, steps = portSteps(report)) {
   const list = $("portSteps");
   if (!list) return;
-  const steps = portSteps(report), parked = $("portParked");
+  const parked = $("portParked");
   for (const id of ["portDrafts", "portCompile", "portRenameCalls", "portFixCalls", "portAssets", "portExtract", "portPlay", "portStop",
-    "portBehaviour", "portBehaviourStop", "portBehaviourSettings"]) {
+    "portBehaviour", "portBehaviourStop", "portBehaviourSettings", "portRecompile", "portRecompileStop"]) {
     if (parked && $(id)) parked.append($(id));  // back where they wait, then into their step
   }
   for (const id of ["portDraftLog", "portCompileLog", "portRenameLog", "portFixCallsLog", "portAssetsLog", "portExtractLog", "portPlayLog",
-    "portBehaviourLog"]) {
+    "portBehaviourLog", "portRecompileLog"]) {
     if (parked && $(id)) parked.append(...withWork($(id)));
   }
   const shown = steps.filter((s) => s.pct != null);
-  const totalSteps = report.mode === "project" ? steps.length : shown.length;
+  const totalSteps = report.mode === "project" ? steps.filter((s) => !s.diagnostic).length : shown.length;
   const overall = totalSteps ? Math.round(shown.reduce((a, s) => a + s.pct, 0) / totalSteps) : 0;
   $("portOverall").textContent = overall + "%";
   $("portOverallBar").style.width = overall + "%";
@@ -226,12 +246,13 @@ function renderPortSteps(report) {
     const state = step.play ? "play" : step.pct === 100 ? "done" : step.pct > 0 ? "part" : "todo";
     row.className = "port-step " + state;
     const mark = document.createElement("span"); mark.className = "port-mark";
-    mark.textContent = state === "done" ? "✓" : state === "play" ? "▶" : String(i + 1);
+    mark.textContent = String(i + 1);
     const body = document.createElement("div"); body.className = "port-body";
     const head = document.createElement("div"); head.className = "port-step-head";
     const title = document.createElement("b"); title.textContent = step.title;
     const share = document.createElement("span"); share.className = "port-pct";
-    share.textContent = step.unavailable ? "not checked" : step.pct == null ? (step.play ? "" : "to do") : step.pct + "%";
+    if (step.diagnostic) share.id = "portRecompileState";
+    share.textContent = step.status || (step.unavailable ? "not checked" : step.pct == null ? (step.play ? "" : "to do") : step.pct + "%");
     head.append(title, share);
     const detail = document.createElement("p"); detail.className = "small muted"; detail.textContent = step.detail;
     body.append(head);
@@ -241,6 +262,12 @@ function renderPortSteps(report) {
       body.append(meter);
     }
     body.append(detail);
+    if (step.summary) {
+      const summary = document.createElement("p");
+      summary.className = "small muted";
+      summary.textContent = step.summary;
+      body.append(summary);
+    }
     if (step.runtimes && step.runtimes.length) body.append(runtimeChoice(step.runtimes));
     const actions = document.createElement("div"); actions.className = "row port-actions";
     for (const id of step.buttons || []) if ($(id)) actions.append($(id));
@@ -256,6 +283,7 @@ async function loadPortReadiness() {
   const slug = S.slug, epoch = ++portEpoch, log = $("portWork");
   showJobError(log, "");
   const exportOptions = loadPortExportOptions(slug);
+  const recompileStatus = loadRecompileStatus(slug, epoch);
   const finish = beginWork(log, "Reading the project", [$("portReload")], "Read.");
   try {
     const report = await api("/api/port-readiness?slug=" + encodeURIComponent(slug));
@@ -263,7 +291,85 @@ async function loadPortReadiness() {
   } catch (error) {
     if (epoch === portEpoch) showJobError(log, error.message);
   } finally { finish(); }
-  await exportOptions;
+  await Promise.all([exportOptions, recompileStatus]);
+}
+
+let recompileRun = null;
+let recompileSlug = null;
+
+async function loadRecompileStatus(slug, epoch) {
+  const log = $("portRecompileLog");
+  if (recompileSlug !== slug) {
+    recompileRun?.finish();
+    recompileRun = null;
+    recompileSlug = slug;
+    $("portRecompileStop").hidden = true;
+    log.textContent = "";
+    log.hidden = true;
+    showJobError(log, "");
+    if (log._workStatus) log._workStatus.textContent = "";
+  }
+  try {
+    const status = await api("/api/recompile?slug=" + encodeURIComponent(slug));
+    if (S.slug !== slug || epoch !== portEpoch) return;
+    if (portRenderedSlug !== slug) {
+      portRenderedSlug = null;
+      renderPortSteps(status, [recompileStep(status)]);
+    }
+    if (status.job && !recompileRun) runRecompile(status.job);
+  } catch (error) {
+    if (S.slug === slug && epoch === portEpoch) showJobError(log, error.message);
+  }
+}
+
+async function runRecompile(existing = null) {
+  if (recompileRun) return;
+  const slug = S.slug, log = $("portRecompileLog"), stop = $("portRecompileStop");
+  log.hidden = false; log.textContent = ""; log._showJobProgress = true;
+  showJobError(log, "");
+  const finish = beginWork(log, "Checking the ROM split with N64Recomp", [$("portRecompile")], "ROM split checked.");
+  const run = recompileRun = {slug, id: existing?.id, finish};
+  const active = () => recompileRun === run && S.slug === slug;
+  const state = $("portRecompileState");
+  if (state) state.textContent = "Recompiling…";
+  stop.hidden = false; stop.disabled = !existing; stop.textContent = "Stop recompiling";
+  if (existing?.progress) updateWorkProgress(log, existing.progress);
+  let completed = false;
+  try {
+    if (!existing) {
+      const {job} = await api("/api/recompile", {method: "POST", body: {slug}});
+      if (!active()) return;
+      run.id = job;
+      stop.disabled = false;
+    }
+    completed = !!await followJob(run.id, log, null, active);
+  } catch (error) {
+    if (active()) showJobError(log, error.message);
+  } finally {
+    if (recompileRun === run) {
+      recompileRun = null;
+      finish();
+      stop.hidden = true;
+      const current = $("portRecompileState");
+      if (current) current.textContent = completed ? "Checked" : "Review the log";
+    }
+  }
+  if (completed && S.slug === slug) await loadPortReadiness();
+}
+
+async function stopRecompile() {
+  const run = recompileRun, stop = $("portRecompileStop");
+  if (!run?.id || run.slug !== S.slug || stop.disabled) return;
+  stop.disabled = true;
+  stop.textContent = "Stopping recompilation…";
+  try {
+    await api("/api/job/cancel", {method: "POST", body: {id: run.id}});
+  } catch (error) {
+    if (recompileRun !== run || S.slug !== run.slug) return;
+    showJobError($("portRecompileLog"), error.message);
+    stop.disabled = false;
+    stop.textContent = "Stop recompiling";
+  }
 }
 
 async function draftPortData() {
@@ -641,6 +747,8 @@ function attachPlay(play) {
 }
 
 if ($("portPanel")) {
+  $("portRecompile").onclick = () => runRecompile();
+  $("portRecompileStop").onclick = stopRecompile;
   $("portPlay").onclick = () => playGame();
   $("portStop").onclick = stopGame;
   for (const input of exportChoices()) input.onchange = saveExportTargets;

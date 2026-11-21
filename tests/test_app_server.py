@@ -167,6 +167,46 @@ def test_polishing_checklist_is_saved_per_game(app, tmp_path):
 
 
 
+def test_port_recompile_discovery_reuses_the_project_job(app, tmp_path, monkeypatch):
+    from decompnet.app import recompile
+
+    client, net, _ = app
+    for slug, kind in (("recompile-rom", "rom"), ("recompile-source", "project")):
+        with net.project_registration(slug=slug, name=slug, description="", arch="mips",
+                                      big_endian=True, root=tmp_path, config={"kind": kind, "platform": "n64"}):
+            pass
+
+    entered, release = threading.Event(), threading.Event()
+
+    def run(net, slug, log):
+        assert slug == "recompile-rom"
+        entered.set()
+        assert release.wait(5)
+        log.check_cancel()
+
+    monkeypatch.setattr(recompile, "run", run)
+    path, headers = "/api/recompile", {"X-Decomp": "1"}
+    source = client.get(path, params={"slug": "recompile-source"}).json()
+    assert source == {"mode": "project", "recomp_available": False, "job": None}
+    assert client.post(path, headers=headers, json={"slug": "recompile-source"}).status_code == 400
+    payload = {"slug": "recompile-rom"}
+    try:
+        job = client.post(path, headers=headers, json=payload).json()["job"]
+        assert entered.wait(3)
+        assert client.get(path, params=payload).json()["job"]["id"] == job
+        assert client.get(path, params={"slug": "recompile-source"}).json()["job"] is None
+        assert client.post(path, headers=headers, json=payload).json()["job"] == job
+        assert client.post("/api/job/cancel", headers=headers, json={"id": job}).status_code == 200
+    finally:
+        release.set()
+    for _ in range(100):
+        status = client.get("/api/job", params={"id": job}).json()
+        if status["state"] != "running":
+            break
+        time.sleep(.01)
+    assert status["state"] == "cancelled"
+
+
 def test_port_export_selections_and_batch_are_scoped_to_the_project(app, tmp_path, monkeypatch):
     from decompnet.network import NetworkError
     from decompnet.port.wasm import export

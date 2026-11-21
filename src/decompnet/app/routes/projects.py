@@ -65,7 +65,7 @@ def register(app: App) -> None:
                         return fn(slug, request, data)  # Metadata is published by autosave, without another recheck here.
                     if request.method == "POST" and request.url.path in (
                         '/api/try', '/api/cross-game/run', '/api/reconcile-matches', '/api/reimport',
-                        '/api/permuter/function', '/api/deep-permuter', '/api/play-export', '/api/port-export-options',
+                        '/api/permuter/function', '/api/deep-permuter', '/api/play-export', '/api/port-export-options', '/api/recompile',
                     ):
                         return fn(slug, request, data)  # The worker synchronizes; return its job without waiting.
                     if request.method == "GET" or request.url.path == "/api/permuter/pass":
@@ -106,7 +106,7 @@ def register(app: App) -> None:
                         return response(perform, started, JSONResponse, request.url.path)
                     finally:current_project.reset(token)
                 execute=(reader or call) if request.method=="GET" else call
-                if request.url.path in ('/api/cross-game/run', '/api/port-export-options') or (
+                if request.url.path in ('/api/cross-game/run', '/api/port-export-options', '/api/recompile') or (
                     request.url.path == '/api/play-export' and not data.get('show')
                 ):
                     execute=app.control
@@ -403,11 +403,23 @@ def register(app: App) -> None:
         from ...port import asset_map
         return {"job": jobs.start("asset-extract", lambda log: asset_map.extract(net, slug, log), project=slug)}
 
-    def p_recompile(slug, request, data):
-        """The game's own instructions as C by the console's static recompiler (app/recompile.py), in the background:
-        the first run builds it from source."""
+    def port_recompile(slug, request, data):
+        """Check the ROM split using the console's static recompiler, with a job the panel can reattach to."""
         from .. import recompile
-        return {"job": jobs.start("recompile", lambda log: recompile.run(net, slug, log), project=slug)}
+
+        project = net.project_row(slug, sync=False)
+        rom = net.is_rom(project)
+        available = rom and net.console(project).recompiler is not None
+        with jobs._lock:
+            running = jobs.active(("recompile",), project=slug)
+            if request.method == "GET":
+                return {"recomp_available": available, "mode": "rom" if rom else "project", "job": running}
+            if not available:
+                raise NetworkError("Recompilation needs an imported ROM and a static recompiler for its console.")
+            if running:
+                return {"job": running["id"]}
+            return {"job": jobs.start("recompile", lambda log: recompile.run(net, slug, log), project=slug,
+                                      cancel_message="Recompilation stopped.")}
 
     def p_behaviour_check(slug, request, data):
         """Check behaviour: every matched function's first call through its recompiled and decompiled C
@@ -1395,7 +1407,7 @@ def register(app: App) -> None:
         "/api/fix-calls": (p_fix_calls, ["POST"]),
         "/api/port-identity": (p_port_identity, ["POST"]),
         "/api/asset-extract": (p_asset_extract, ["POST"]),
-        "/api/recompile": (p_recompile, ["POST"]),
+        "/api/recompile": (port_recompile, ["GET", "POST"]),
         "/api/behaviour-check": (p_behaviour_check, ["POST"]),
         "/api/compilermap": (p_compilermap, ["GET", "POST"]),
         "/api/verification": (p_verification, ["POST"]),

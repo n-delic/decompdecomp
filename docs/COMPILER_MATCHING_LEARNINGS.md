@@ -9814,3 +9814,12 @@ With `integer_address_store`, `loop_index_inline`, `frame_padding` and `field_po
 0.5.140), hill-climbing the app's deterministic families from the raw draft reaches 0 in about 40 seconds: store width,
 then `field_struct_view` and the inlining and padding, `parameter_width`, `allocation_initialization_order`, and last
 `field_pointer_site`. The hill-climb stood in for the deep permuter, whose own scoring and budgets were not exercised.
+
+### Keep the measured pointer, call and result storage
+
+The original compiler independently compiled each archived source as a control. Exact replays of the four changes used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, with `-g3` in all cases except the copy before cursor binding.
+
+- Reusing the existing cursor local for a reloaded field plus eight matched all 68 bytes, from score 10. A fresh local kept the original register mismatch at score 10.
+- The 164-byte frame case needed both eight bytes of local storage and the untouched context in the first argument register. Four or eight bytes of volatile byte storage reduced score 15 to 5. Adding the first argument as well matched. Twelve bytes made the frame too large. The installed rule uses the measured eight-byte reservation.
+- Binding a loop cursor after the last scalar word copy matched all 116 bytes, from score 15. The earlier binding made the copy load use the loop cursor register and moved the loop's zero initialization.
+- The 84-byte timer call stored its two return registers into adjoining words in big-endian order. Declaring the known 64-bit SDK return and using one 64-bit lvalue matched from score 5. Changing the return signature in isolation left the broken split stores.
