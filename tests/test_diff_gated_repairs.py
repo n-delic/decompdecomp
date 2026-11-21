@@ -846,3 +846,13 @@ def test_early_float_load_reaches_kmc_diff_dispatch():
     assert any(label == 'measured_early_float_field_load' and
                '__repair_parent_float = M2C_FIELD(parent, f32 *, 40);' in candidate
                for label, candidate in generated)
+
+
+def test_measured_kmc_byte_stride_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_kmc_byte_stride, 'variants',
+                        lambda text, name, header, diff: [('byte_stride_fixture', text)])
+    assert 'byte_stride_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'byte_stride_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
