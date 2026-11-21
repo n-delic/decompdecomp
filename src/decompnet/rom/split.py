@@ -104,6 +104,8 @@ class SplitResult:
     gp: int = 0  # value of $gp for $gp-relative data (PlayStation), 0 if unused
     image: str = ""  # the flat image splat reads (the ROM itself, or one made from an ELF)
     coverage_notes: list[str] = field(default_factory=list)
+    analysis_base: str = ""
+    analysis_banks: dict[str, int] = field(default_factory=dict)
 
 
 def segments_from_config(path: Path) -> list[Segment]:

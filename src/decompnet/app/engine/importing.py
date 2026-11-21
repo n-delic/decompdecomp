@@ -192,6 +192,9 @@ class ImportMixin:
                       "confirmed_at": time.time()},
             "context": {"file": None},
         }
+        if res.analysis_banks:
+            cfg['donor_overlays'] = res.analysis_banks
+            cfg['rom']['donor_analysis_base'] = res.analysis_base
         cfg["compiler"]["flags"] = flags or console.default_flags(toolchain, consoles.small_gp(cfg))  # (its rom facts)
         if reimport is not None:
             old_cfg = json.loads(reimport["config"])

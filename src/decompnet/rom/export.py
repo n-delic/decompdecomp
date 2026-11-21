@@ -337,7 +337,7 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
         raise ExportError("Rebuildable export does not yet support overlapping overlay banks. "
                           "Your matches remain saved; continue working in the app until bank-aware export is available.")
     if excluded:
-        log(f'Keeping the original cartridge overlay bytes in the rebuild. {len(excluded)} donor overlay '
+        log(f'Keeping the original cartridge overlay bytes in the rebuild. {len(excluded)} analysis-only overlay '
             'functions remain available in the project; this export does not rebuild their code.')
     if EXPORT not in console.features:
         raise ExportError(f"exporting a rebuildable project isn't supported for {console.name or 'this console'} yet")

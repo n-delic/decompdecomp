@@ -1,7 +1,13 @@
 """Read executable text from cartridge USO section directories."""
 import re
 import struct
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from ...rom.split import SplitResult
 
 _MAGIC = b'\x12\x34\x56\x78'
 _FILE = re.compile(rb'\x12\x34\x56\x78.{8}([a-zA-Z0-9_.-]{1,32}\.uso)\0', re.S)
@@ -19,6 +25,7 @@ class Text:
     offset: int
     data: bytes
     compressed: bool
+    entries: tuple[int, ...] = ()
 
 
 def _yay0(source):
@@ -71,6 +78,7 @@ def _yay0(source):
 def _text(rom, name, at, end):
     sections = set()
     result = None
+    symbols = b''
     for _ in range(len(_KINDS)):
         for pad in range(4):
             if at + pad + 12 > end:
@@ -84,7 +92,14 @@ def _text(rom, name, at, end):
         if kind in sections or size > _MAX_SECTION:
             return None
         if kind == 11:
-            return result if {1, 2, 5} <= sections else None
+            if result is None or not {1, 2, 5} <= sections:
+                return None
+            if len(symbols) % 12:
+                return result
+            # A zero-valued text symbol is an import, not entry-point evidence.
+            entries = {value for tag, value, _ in struct.iter_unpack('>III', symbols)
+                       if (tag >> 16) & 0xFF == 0x52 and 0 < value < len(result.data) and value % 4 == 0}
+            return replace(result, entries=tuple(sorted(entries)))
         sections.add(kind)
         compressed = bool(flags & 0x10000)
         at = offset + (size if kind != 8 else 0)
@@ -97,8 +112,10 @@ def _text(rom, name, at, end):
             payload = _yay0(rom[offset:at])
             if payload is None:
                 return None
-        elif kind == 5:
+        elif kind in (1, 5):
             payload = rom[offset:at]
+        if kind == 1:
+            symbols = payload
         if kind == 5 and len(payload) >= 8 and len(payload) % 4 == 0:
             result = Text(name, offset, payload, compressed)
     return None
@@ -125,3 +142,58 @@ def read(rom: bytes) -> list[Text]:
                 return result
             result.append(text)
     return result
+
+
+
+def add_to_split(result: "SplitResult", workdir: "Path", original: bytes, log) -> None:
+    """Recover closed bodies anchored by native exports and verified code references."""
+    from ...rom.split import Segment, function_from_bytes
+    from .loader_code import complete
+
+    check = getattr(log, 'check_cancel', lambda: None)
+    regions = read(original)
+    if not regions:
+        return
+    path = workdir / result.image
+    image = bytearray(path.read_bytes())
+    if not image.startswith(original):
+        return
+    covered = [(fn.rom, fn.rom + fn.size) for fn in result.functions]
+
+    def quiet(*_):
+        pass
+
+    quiet.check_cancel = check
+    count = 0
+    for region in regions:
+        check()
+        if not region.entries:
+            continue
+        # A raw module may have some entries recovered already. Keep their original
+        # identities and report only new non-overlapping spans in this bank.
+        bodies = complete(region.data, [], [(0, len(region.data), 0)], entries=region.entries,
+                          log=quiet)
+        if not region.compressed:
+            bodies = [(a, b, v) for a, b, v in bodies
+                      if not any(lo < region.offset + b and region.offset + a < hi for lo, hi in covered)]
+        if not bodies:
+            continue
+        image.extend(bytes(-len(image) % 16))
+        start = len(image)
+        image.extend(region.data)
+        result.analysis_banks[str(region.offset)] = start
+        # Use the donor review's bank identity so reimport can pair previously recovered rows.
+        name = f'donor_uso_{region.offset:X}'
+        result.segments.append(Segment(name, start, len(image), 0))
+        for a, b, v in bodies:
+            entry = f'func_{v:08X}_uso_{region.offset:X}'
+            result.functions.append(function_from_bytes(entry, region.data[a:b], start + a, v, name))
+        count += len(bodies)
+    if count:
+        result.analysis_base = result.image
+        result.image = 'uso-analysis.z64'
+        (workdir / result.image).write_bytes(image)
+        result.coverage_notes.append(
+            f'Recovered {count} closed functions in {len(result.analysis_banks)} USO text banks using the ROM’s '
+            'own symbols and code references. Bank addresses are relative. Export preserves their cartridge bytes.')
+        log(f'Recovered {count} native USO functions in {len(result.analysis_banks)} banks.')

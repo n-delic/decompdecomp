@@ -738,6 +738,11 @@ on Apple Silicon; physical Intel Mac and retail-game checks remain planned.
   conflicts stay available for manual boundary review. Add relocation-aware location evidence, support
   more overlay formats, and rebuild the new banks from C on export.
 
+- N64 ROM import now reads native symbol anchors in raw and Yay0-compressed USO text and
+  recovers corroborated closed functions in separate banks. It needs no imported project.
+  Rebuildable exports preserve the original cartridge banks. Rebuilding them from matched C
+  needs relocation-aware export, and ambiguous bodies and other overlay formats still need analysis.
+
 ## What works where
 
 Polishing can ask helpers to check 64-bit PC compilation and repair casts between pointers and 32-bit integers.
