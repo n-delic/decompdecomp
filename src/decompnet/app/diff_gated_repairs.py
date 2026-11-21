@@ -26,6 +26,7 @@ from decomprepair import (
     measured_memory_order,
     measured_mmio_polling,
     measured_pointer_scale,
+    measured_scalar_updates,
     measured_storage_shapes,
     measured_temporary_repairs,
     ordered_halfword_updates,
@@ -186,6 +187,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     if not any(marker != ' ' for marker,_,_ in rows):
         return result
     result += measured_lifetime_shapes.variants(source, name, header, toolchain, rows)
+    result += measured_scalar_updates.variants(source, name, header, toolchain, rows, asm)
     if toolchain.startswith('ido-7.1'):
         return result
     target, candidate = (_instructions(rows, side) for side in (1,2))

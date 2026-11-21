@@ -232,6 +232,12 @@ def verify(feedback, example):
     else:
         focused = []
 
+    if proj['arch'] == 'mips' and compiler in ('gcc-2.7.2-kmc', 'ido-5.3'):
+        from decomprepair import measured_scalar_updates
+
+        focused[:0] = measured_scalar_updates.variants(source, fn['name'], header, compiler,
+                                                       permuter_focus.normalized(rows), fn['asm'])
+
     if proj['arch'] == 'mips' and compiler.startswith(('gcc-2.7.2-kmc', 'ido-7.1')):
         from decomprepair import measured_lifetime_shapes
 

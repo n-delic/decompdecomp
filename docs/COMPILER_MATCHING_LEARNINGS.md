@@ -9894,3 +9894,10 @@ had GCC-shaped loops. Controlled evidence (a manual match, not a regression test
 - Failed experiments worth not repeating: bit-field structs (`unsigned f:6`, packed or not, `unsigned char` or `short`
   base) give word or halfword loads and `srl`; `-fsigned-char`/`-funsigned-char` and every other -f flag KMC accepts
   leave `srl`.
+
+### Preserve measured scalar lifetimes and byte-cursor updates
+
+The archived sources independently compiled as controls. Each installed rule reproduced its bytes from a reconstructed draft.
+
+- Four cases used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`. Restoring the unchanged first argument before the reloaded byte matched all 84 bytes from score 20. Updating the local counter inside the first byte store matched all 120 bytes from score 20. Staging the masks and shifts into a single running sum matched a 40-byte pack from score 25. Using explicit post-increments for both byte reads preserved both halfword stores and matched all 64 bytes from score 25. Both halfword and word temporaries produced the same bytes in the last case.
+- With `ido-5.3 -O2 -mips2 -G 0 -non_shared -Xcpluscomm -Wab,-r4300_mul`, a compound byte decrement placed the address and value in different registers. Reading the byte into a word local, decrementing it, then writing it back moved score 25 to exact across all 24 bytes.
