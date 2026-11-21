@@ -80,7 +80,7 @@ def _rom(net, proj, fn, sources, agent, log):
                     current = store.one('SELECT * FROM functions WHERE id=?', fn['id'])
                     project = store.one('SELECT * FROM projects WHERE id=?', proj['id'])
                     claim = store.one('SELECT agent_id,expires_at FROM claims WHERE function_id=?', fn['id'])
-                    if (not current or current['status'] != 'open' or current['gone_mark'] is not None
+                    if (not project or not current or current['status'] != 'open' or current['gone_mark'] is not None
                             or current['best_score'] != fn['best_score'] or not claim or claim['agent_id'] != agent.id
                             or claim['expires_at'] <= time.time()
                             or current['meta'] != fn['meta'] or current['rom_offset'] != fn['rom_offset']
@@ -107,6 +107,10 @@ def prepare(net, proj, fn, log):
     if slug in net.links:
         return fn  # Only a room host owns the authoritative source and judge.
     store = net.project_store(pid)
+    # A sweep can wait behind many searches before reaching this function.
+    proj = store.one('SELECT * FROM projects WHERE id=?', pid)
+    if proj is None:
+        return fn
     fn = store.one('SELECT * FROM functions WHERE id=? AND project_id=?', fid, pid) or fn
     if fn['status'] != 'open' or fn['gone_mark'] is not None or (fn['best_source'] and fn['best_score'] is not None):
         return fn
