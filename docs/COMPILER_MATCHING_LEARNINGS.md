@@ -10685,3 +10685,17 @@ the load and mask registers differing) gets exactly one proposal, `(s32) (((R & 
 byte-identical. The first version (0.5.196) needed the swapped `and` row and never fired in a real run from the
 draft: a reminder that a rewrite proven on a hand-picked source is not proven. The same reasoning probably applies
 to other commutative instructions with a constant (`or`, `xor`, `add`), not yet seen.
+
+### KMC separately relocated flag and shared switch call
+
+- Both N64 functions were compiled with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` and checked
+  with the linked-byte judge. The first matched all 424 bytes after naming the flag independently of its
+  base object. A base-relative field access had scored 225 because KMC shared an address calculation that
+  the original split between the load and the guarded store. The new rule requires both raw relocations to
+  resolve to the same byte.
+- The second matched all 244 bytes after restoring four narrowed byte inputs and using a typed pointer with
+  the byte argument at the call shared by the switch arms. The original draft scored 970 and the bounded
+  search brought it to 865 without matching. The rewrite checks all 27 jump-table destinations and the
+  branch delay slots that supply the call's arguments before changing the source.
+- Both repairs also reproduced their matches from compiled drafts through the Deep Permuter proposal path.
+  The same 226-example replay rose from 28 to 30 exact matches, with 29 from fresh drafts and one after search.
