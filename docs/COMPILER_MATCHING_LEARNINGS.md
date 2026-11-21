@@ -9861,3 +9861,26 @@ Four previously uncompilable drafts matched all their bytes through fresh genera
 
 - With `ido-7.1 -O2 -mips2 -G 0 -non_shared -Xcpluscomm -Wab,-r4300_mul -woff 649,838,712`, making the pointers byte-sized compiled three drafts but left scores 640, 70, and 670. Two post-increment loads matched the 56-byte signed read. Restoring the wide result and staging the shift and mask of a variable-width read matched all 64 bytes. It scored 25 with neither unreachable staging statement, 10 or 15 with either one, and exact with both. Keeping the stored bytes and restoring the two incoming word-sized formals matched the 80-byte biased copy.
 - With `ido-7.1 -O2 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul -DNON_MATCHING`, renaming an invalid local-label pointer declaration to the verified absolute function-symbol alias matched all 52 bytes. The C declaration remained a function pointer, and the two instruction words verified its slot address. Trying the data alias failed compilation.
+
+### A shifted loaded byte names IDO inside a GCC game, and a bit-packed unpacker needs index loops
+
+A 656-byte, 164-instruction N64 function (an audio header unpacker) matched exactly with `ido-7.1 -O2 -mips2 -G 0
+-non_shared -Xcpluscomm -Wab,-r4300_mul -woff 649,838,712` in a game whose other functions were built with
+`gcc-2.7.2-kmc`. Under the game's own compiler it sat at score 11,654 across 243 attempts; the near-match drafts all
+had GCC-shaped loops. Controlled evidence (a manual match, not a regression test; the game data stays private):
+
+- The target shifted every freshly loaded byte with `sra` (`lbu t6,1(a1); sra t7,t6,6; andi t8,t7,3`, 21 times).
+  KMC GCC 2.7.2, GCC 2.8.1, egcs 2.91 and SN64 2.7.2/2.8.1 all write `srl` and drop a redundant `andi` for the same
+  C: more than a thousand combinations of byte/halfword/word types, casts to `s8`/`u8`/`s16`/`u16`/`s32`/`u32`,
+  `volatile`, reused signed locals, inline helpers, and `-O0` to `-O3` never produced `lbu` then `sra`. IDO 5.3 and 7.1
+  write it for plain `(p[1] >> 6) & 3` on an `unsigned char *`. `move_fingerprints.profiles` now treats it as a
+  second compiler signal beside the `or`/`addu` move (it names IDO even where the function has no move to read).
+- The shape that matched: byte-pointer parameter `u8 *p`; stack arrays declared in the order of the target's frame
+  from the highest address down (`h[8]`, `a[4]`, `c[4]`, `b[4]`, `d[4]`, `e[52]`) so IDO lays them out low to high in
+  reverse; one `for (i = 0; i < 4; i++)` loop writing `a[i]`, `b[i]`, `c[i]`, `d[i]` and `e[i*13+k]` from
+  `p[i*7+5+k]`; the five arrays passed to the callee. Explicit induction pointers (`*pa++`) scored 0.14 of the
+  instructions equal and a walked source pointer `q += 7` 0.93, because IDO places the induction-variable updates
+  itself and only the all-index form put them where the target has them (1.00).
+- Failed experiments worth not repeating: bit-field structs (`unsigned f:6`, packed or not, `unsigned char` or `short`
+  base) give word or halfword loads and `srl`; `-fsigned-char`/`-funsigned-char` and every other -f flag KMC accepts
+  leave `srl`.
