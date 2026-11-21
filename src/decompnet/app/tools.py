@@ -628,13 +628,25 @@ def _add_note(net: RomNetwork, agent: Agent, slug: str, text: str, function: str
     return net.add_note(agent, slug, text, function)
 
 
-def _redraft(net, slug, function, context, agent=None):
-    if isinstance(context,str) and context.strip() and not re.search(r'[;{}#]',context):
+def _redraft(net, slug, function, context, agent=None, reference_source='', reference_url='', reference_sha256=''):
+    if isinstance(context, str) and context.strip() and not re.search(r'[;{}#]', context):
         raise NetworkError('redraft context must be C declarations, not prose. Save observations with add_note; use get_function(section=candidate) to read existing C.')
+    evidence = ''
+    if reference_source or reference_url or reference_sha256:
+        prototype, evidence = net.reference_wrapper(slug, function, reference_source, reference_url, reference_sha256)
+        # Explicit declarations can refine opaque wrapper arguments and override the generated prototype.
+        from .. import seeds
+        generated_names = seeds.declarations(prototype)[0].names
+        if not any(generated_names & declaration.names for declaration in seeds.declarations(seeds.c_only(context))):
+            context = prototype + '\n' + context
     if not isinstance(context,str) or not context.strip():
         raise NetworkError('redraft needs nonempty C declarations in context (a real struct, callee prototype or extern). '
                            'To inspect existing C, use get_function(function, section="candidate"). No redraft was run.')
-    return agent_tokens.brief(net,net.redraft(slug,function,context),slug,agent)
+    draft = net.redraft(slug, function, context)
+    if evidence:
+        net.add_note(agent, slug, evidence, function)
+        draft = evidence + '\n\n' + draft
+    return agent_tokens.brief(net, draft, slug, agent)
 
 
 def _get_context(net, agent, slug, function=""):
@@ -720,7 +732,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "claim_data": lambda net, agent, slug, name="": _data_agents().claim(net, agent, slug, name),
     "release_data": lambda net, agent, slug, name, note="": _data_agents().release(net, agent, slug, name, note),
     "guess_struct": lambda net, agent, slug, function, argument="arg0": net.guess_struct(slug, function, argument),
-    "redraft": lambda net, agent, slug, function, context: _redraft(net, slug, function, context, agent),
+    "redraft": lambda net, agent, slug, function, context="", **reference: _redraft(net, slug, function, context, agent, **reference),
     "compiler_map": lambda net, agent, slug, survey=False, check_ranges=False:
         net.compiler_map_text(slug, bool(survey), bool(check_ranges)),
     "list_functions": lambda net, agent, slug, status="open", limit=40: net.list_functions(slug, status, limit),
@@ -1562,14 +1574,18 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         return await run(ctx, "compile_data", name=name, source=source)
 
     @tool
-    async def redraft(ctx: Context, function: str, context: str) -> str:
-        """Requires nonempty actual C declarations in context; to inspect existing C use get_function(section="candidate").
+    async def redraft(ctx: Context, function: str, context: str = '', reference_source: str = '',
+                      reference_url: str = '', reference_sha256: str = '') -> str:
+        """Pass C declarations or an N64Recomp wrapper’s GitHub commit permalink and required ROM SHA-256.
+        Supply reference_source to use pasted source instead of fetching the file.
+        Reference findings are saved as a function note after drafting. Review inferred types before judging.
         m2c's machine draft of a function made again with your declarations (a struct, a prototype, an extern
         you worked out) added to the shared header's; yours replace the header's where they declare the same
         names. Returns the new draft, recorded nowhere: try it with compile_and_diff, and edit_context what helped.
         PC games: Ghidra's draft made compilable again with them (a class declaring the function, a callee's
         prototype)."""
-        return await run(ctx, "redraft", function=function, context=context)
+        return await run(ctx, "redraft", function=function, context=context, reference_source=reference_source,
+                         reference_url=reference_url, reference_sha256=reference_sha256)
 
     @tool
     async def get_class(ctx: Context, what: str = "") -> str:

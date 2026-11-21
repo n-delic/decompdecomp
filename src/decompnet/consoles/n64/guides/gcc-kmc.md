@@ -1713,3 +1713,6 @@ decides at the end. What moved the most instructions, in order:
   `case 0: break;` when a test or a table's range shows it.
 - A loop reloads a constant instead of hoisting it when the loop is long enough: check `-dL`, and see
   docs/COMPILER_MATCHING_LEARNINGS.md, "A 4,399-instruction state machine", for the rest.
+- Two arms that each compute one float field, with `$f0`/`$f2` swapped: update the field in place (`+=`) in each
+  arm rather than through a result local stored after the join, and reuse one float local in both arms so it
+  spans blocks. docs/COMPILER_MATCHING_LEARNINGS.md, "swapped `$f0`/`$f2` roles in a two-branch field update".

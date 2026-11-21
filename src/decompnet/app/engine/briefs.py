@@ -331,6 +331,18 @@ class BriefMixin:
         return (self.is_rom(proj) and seeds.available()
                 and bool(seeds.m2c_target(self.cfg(proj)["compiler"]["toolchain"])))
 
+    def reference_wrapper(self, project, function, source, url, sha256):
+        """Compare a reference wrapper's argument setup with an original ROM function."""
+        from ..reference_wrapper import analyze
+
+        proj = self._project(project)
+        fn = self._function(function, proj['slug'])
+        if not self.is_rom(proj) or proj['arch'] != 'mips' or not fn['vram']:
+            raise NetworkError('Reference wrapper analysis currently needs a MIPS ROM function.')
+        rom, _ = self._rom(proj)
+        return analyze(source, url, sha256, hashlib.sha256(rom).hexdigest(),
+                       fn['name'], fn['vram'], fn['asm'] or '')
+
     def redraft(self, project: str | None, function: str, context: str) -> str:
         """m2c's draft of a function made again with declarations an agent worked out (a struct, a prototype) on top
         of the shared header's, replacing the header's where they declare the same names. Recorded nowhere: the agent
