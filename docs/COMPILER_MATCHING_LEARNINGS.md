@@ -10366,3 +10366,29 @@ A hand match of a ~0x35c-byte actor-update function (score 2225 -> 450, not yet 
   block out (450); the branchless `col = 0xFF; if (...) col = 0xBF;` form was worse (1675).
 - decomp-repair v0.5.181: `symbol_width_repairs` retypes `*(T *)((s8 *)&D + i)` casts on a symbol of known type (and the
   printed dialect with extra parentheses) when the target's loads never use T's width.
+
+## KMC gcc 2.7.2: base-relative stores, and a two-move search that did not help (N64, one 352-instruction startup function)
+
+Compiler and flags: `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`. Evidence level: one real function, searched with the
+app's own judge (`decomp judge-worker`, which returns exactly the app's score); not a controlled regression test.
+
+- **Stores that stay `off($sN)`.** A run of stores written as `*(s8 *)((char *)&sym + off) = v` compiled to absolute
+  `lui/sb` pairs, where the target addressed all of them from one saved register. Wrapping the first use of the
+  symbol's address in `do { call(&sym + k); } while (0);` kept every later store base-relative (linked score 4955 to
+  1760). Without the wrapper the compiler folds `(plus (reg) off)` back to a constant address. The library already
+  has the wrapper (`call_one_shot_scope`); it did not pair it with base-form accesses.
+- **Recompute, don't cache.** The target recomputed `n & 1` at the use site; a `temp = n & 1` local cost 45 points.
+  Recomputing the loop index from its counter at the top of the loop body (`i = n & 0xFFFF`) took 1715 to 1430.
+- **Loop constants.** Holding the loop's constants (`2`, `0x64`, `1`) in explicit locals took 1430 to 1330. Moving or
+  reordering their assignments changed nothing: the scheduler's priorities, not the source position, place them.
+- **Random search plateaus.** From 1090, six seeds of statement swaps, call-wrapper toggles and local type changes
+  reached 785 in one round; two more rounds (one with token-level rewrites) found nothing lower. Simulated annealing
+  at temperatures 8 to 40 did not either.
+- **Exhaustive single moves.** Every plain statement moved to every other position (870 single moves, one 64-statement
+  run): none scored below 785. 785 is a local minimum for one move at a time.
+- **Two moves (`paired_statement_moves`, decomp-repair 0.5.182) did not help here.** Judging every single move, taking
+  the 60 least-different results and trying every second move from each (27,400 exact judgments, 6 minutes) found
+  nothing below 785; neither did 9,000 randomly sampled pairs. The remaining difference is about 29 register
+  choices that follow from the loop counter taking `$s2` where the target has `$s5`, which is allocation priority
+  (use count over live range), not statement order. The search stays in the Deep Permuter for near-matches whose
+  difference is order; it is not a fix for this one.

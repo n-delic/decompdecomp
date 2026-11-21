@@ -718,6 +718,54 @@ class Search(Permuter):
             self.register_focus = True
         return best
 
+    PAIRED_ROUNDS = 3
+
+    def paired_move_pass(self, agent, proj, fn, state, best, fork):
+        """Two statement moves at once, judged exactly in parallel (paired_moves).
+
+        A near-match whose registers and order need two relocations together sits at a local minimum for a search
+        that tries one move at a time. This judges every single move, expands the least-bad ones by a second move,
+        and re-judges the best through the ordinary path so it is saved and verified. Judgments through the pool are
+        a cheap prefilter: a batch of 50 counts as one trial against the variant limit."""
+        from . import judge_pool, paired_moves
+        for _ in range(self.PAIRED_ROUNDS):
+            rows = self.winner_diff[0] if self.winner_diff else ()
+            if fork or not best or not rows or not paired_moves.worth(rows):
+                return best
+            if self.limit - self.tested < 4 or self.deadline - time.monotonic() < 90:
+                return best
+            fn = self.net._function(fn['name'], proj['slug'])
+            source = _candidate_source(fn, best)
+            header = self.net._context(proj['id'], fn['unit'])['header']
+            own = compiler_for(self.net.cfg(proj), fn['vram'], fn)
+            flags = own['flags'].split() if isinstance(own['flags'], str) else own['flags']
+            self.phase = 'two-move search'
+            self.log('Searching two statement moves at once: every single move is judged, then a second move on '
+                     'the least-different results.')
+            with judge_pool.JudgePool(proj['slug'], fn, own['toolchain'], flags) as pool:
+                score, candidate, judged = paired_moves.search(
+                    pool.judge_many, source, fn['name'], header, best, seen=self.local_seen, check=self.check,
+                    log=self.log)
+                if pool.errors:
+                    self.log('Two-move search could not judge here: ' + pool.errors[0][:200])
+            self.tested += max(1, judged // 50)
+            self.report()
+            if candidate is None:
+                self.log(f'Two-move search: {judged} candidates judged, none better than {best}.')
+                return best
+            self.local_seen.add(candidate)
+            with repair_trial({'kind': 'deep local repair', 'family': 'paired_statement_moves'}):
+                measured = self._score(agent, proj, fn, candidate, best, fork)
+            if measured is None or measured >= best:
+                self.log(f'Two-move search found {score} in the pool but the ordinary judge gave {measured}; '
+                         'keeping the saved source.')
+                return best
+            self.log(f'Two-move search improved {best} to {measured} ({judged} candidates judged).')
+            best = measured
+            if best == 0:
+                return 0
+        return best
+
     def allocation_choices(self, proj, fn, source, rows, choices, labels, header, fork):
         """One bounded lane before broad mutation, charged to the same global limit/deadline."""
         diagnosis = allocation_evidence.diagnose(rows,proj['arch'])
@@ -1762,6 +1810,9 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
                 relabel = baseline and not fork and search.can_relabel_switch(fn)
                 if baseline and not relabel and (lane is None or lane.index == 0):
                     baseline = search.near_register_pass(agent, proj, fn, state, baseline, fork)
+                    fn = net._function(name, slug)
+                if baseline and not fork and not relabel and (lane is None or lane.index == 0):
+                    baseline = search.paired_move_pass(agent, proj, fn, state, baseline, fork)
                     fn = net._function(name, slug)
                 if baseline and not fork and not relabel and (lane is None or lane.index == 0):
                     if profile := deep_profiles.tail_dispatch(net, proj, fn):
