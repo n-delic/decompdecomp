@@ -1,5 +1,31 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: recover byte strides and short scalar and call shapes
+
+The linked judge reproduced 12 of 36 archived near-matches after this
+batch, up from one. All cases used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32`.
+
+- With `-O1`, use byte pointers for both offsets into a shared call
+  buffer after fixing the byte table lookup (185 to 0 over 108 bytes).
+  The lookup alone reduced the score to 20. Two other `-O1` drafts
+  needed a halfword table load over a byte base, and a table of byte
+  pointers in place of a byte array (both 200 to 0, 144 and 40 bytes).
+- With `-O2 -g3`, stage a shared halfword mask in a scalar before two
+  shifted stores (200 to 0 over 52 bytes). An indexed `0xFFFF` store
+  needed an unsigned halfword lvalue (200 to 0 over 32 bytes). A masked
+  word-clear loop needed a word lvalue (200 to 0 over 56 bytes).
+- With `-O2 -g3`, use a byte parameter and a structured unsigned range
+  test for a 44-byte leaf (175 to 0). The structured test with a word
+  parameter scored 175.
+- With `-O2 -ffast-math`, use an early zero return and an explicit
+  hardware square root for the nonnegative integer input
+  (180 to 0 over 40 bytes).
+- With `-O2 -g3`, capture a field before publishing its pointer and
+  pass the captured value (160 to 0 over 56 bytes). A separate residual
+  involved staging a halfword literal before the call that uses the
+  same value. Both 72-byte drafts went from 160 to 0. One used `-g3`
+  and one used base `-O2`.
+
 ### KMC GCC 2.7.2: restore measured halfword and record operations
 
 Five additional KMC drafts linked byte for byte with
