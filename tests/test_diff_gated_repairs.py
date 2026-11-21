@@ -379,3 +379,30 @@ found:
     assert 'found:\n    key = index;' in dict(proposals(source, 'f', '', 'mips', KMC, rows, ''))[
         'search_sentinel_byte_guard']
     assert 'search_sentinel_byte_guard' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_measured_guarded_loop_counter_reuse():
+    source = """void f(void) {
+    u32 i;
+    u32 j;
+    i = load();
+    publish(i);
+    i = 0;
+    if (n) {
+        do { put(i); i += 1; } while (i < n);
+    }
+    j = 0;
+    if (m) {
+        offset = 0;
+        do { put(j); j += 1; } while (j < m);
+    }
+}
+"""
+    rows = [
+        ('r', 'move $s1, $zero', 'move $a2, $zero'),
+        ('r', 'addiu $s1, $s1, 1', 'addiu $a2, $a2, 1'),
+        ('r', 'sltu $v0, $s1, $v0', 'sltu $v0, $a2, $v0'),
+    ]
+    assert 'while (j < n);' in dict(proposals(source, 'f', '', 'mips', KMC, rows, ''))[
+        'guarded_loop_counter_reuse']
+    assert 'guarded_loop_counter_reuse' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))
