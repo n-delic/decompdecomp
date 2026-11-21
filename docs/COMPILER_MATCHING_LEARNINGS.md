@@ -8607,3 +8607,12 @@ symbol at the address proved by the original relocations reproduced the reload
 and matched exactly. Tests reject incomplete copies, conflicting stack offsets
 and changed input strides. These results use regenerated drafts and the normal
 linked ROM judge.
+
+### Signed halfword loads and word-store scheduling
+
+An N64 function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` scored 200 from a
+single `lw` where the target used `lh`. Reading through an `s16 *` instead of a
+`volatile s32 *` and making the consuming word store volatile scored 485 on their own.
+Adding `-fno-schedule-insns` alone scored 200. The combined source and compiler trial
+matched all 168 linked bytes in a scratch project. The repair can be queued from the target's
+symbolized load/store pair before any of the isolated trials have improved the score.
