@@ -11456,3 +11456,13 @@ matrix-building function, pointer locals) and 50 (a float-heavy function's point
 0.5.251's split restores 0 for each, where the stock family proposed nothing. Two float pairs (827, 605) were
 not recovered: their second phase is a self-update or is not dominated by one definition, which the family
 still declines.
+
+### Preserve the first argument across a guard on the second
+
+With gcc-2.7.2-kmc `-G0 -mips3 -mgp32 -mfp32 -O2`, a small N64
+wrapper tested a loaded halfword before calling a helper. The draft put
+the load and test in the first argument register. The target used the
+second register for both and left the first argument live from entry.
+Forwarding the original pointer and fixing the helper prototype together
+scored 10 to 0. The deep permuter required control-flow evidence that the
+pointer reached the call unchanged and saved the match in 17 candidates.
