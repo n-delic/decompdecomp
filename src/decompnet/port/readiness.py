@@ -89,6 +89,7 @@ def _recomp(net, proj) -> dict | None:
     return {"functions": s["functions"], "found": len(s["found"]), "stubs": len(s["refused"]),
             "runtime": len(s["runtime"]), "errors": s["error_count"], "files": s["files"], "at": s["at"],
             "folder": s["folder"], "available": net.console(proj).recompiler is not None,
+            "error_examples": s.get("errors", [])[:5],
             "stub_examples": [f"{r['name']} ({r['why']})" for r in s["refused"][:8]],
             "found_examples": [f"{f['name']} ({f['why']})" for f in s["found"][:8]]}
 
