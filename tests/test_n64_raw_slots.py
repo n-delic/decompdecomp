@@ -113,3 +113,19 @@ def test_registered_overlay_directory_keeps_native_slot_indices_separate():
     ]
     assert not raw_slots.registered(registered_cartridge(connected=False), mapping)
     assert not raw_slots.registered(registered_cartridge(last_start=0x310), mapping)
+
+
+def test_current_thread_dispatch_accepts_the_short_scheduler_with_interrupt_restore():
+    from decompnet.rom.automatic_boundaries import calls_current_thread_dispatch
+    from decompnet.rom.split import Segment
+
+    words = [0] * 51
+    words[0], words[2], words[6] = 0x27bdffe0, 0x00808021, 0x16000004
+    words[8:12] = [0x3c108007, 0x08000812, 0x8e10c620, 0x96030010]
+    words[38:46] = [0x3c028007, 0x8c42c620, 0x16020003, 0, 0x0c000400, 0, 0x0c000800, 0x02202021]
+    words[-2:] = [0x03e00008, 0x27bd0020]
+    start = 0x80002000
+    segments = [Segment('caller', 0, len(words)*4, start)]
+    assert calls_current_thread_dispatch(struct.pack('>51I', *words), start, 0x80001000, segments, 'big')
+    words[45] = 0
+    assert not calls_current_thread_dispatch(struct.pack('>51I', *words), start, 0x80001000, segments, 'big')
