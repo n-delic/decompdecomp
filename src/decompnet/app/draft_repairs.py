@@ -289,7 +289,7 @@ class _ProposalDeadline(TimeoutError):
     pass
 
 
-def _worker_batch(request, check):
+def _worker_batch(request, check, handlers=None):
     import time
 
     from . import library_skew
@@ -311,7 +311,7 @@ def _worker_batch(request, check):
         if worker is None or worker.closed.is_set():
             worker = Worker()
             worker.epoch = library_skew.EPOCH
-        result = worker.run(request, check)
+        result = worker.run(request, check, handlers)
         with _IDLE_LOCK:
             worker.idle_since = time.monotonic()
             if getattr(worker, 'epoch', 0) == library_skew.EPOCH:

@@ -9,6 +9,14 @@ from decompnet.network import NetworkError
 from tests.test_deep_permuter import Log, setup
 
 
+@pytest.fixture(autouse=True)
+def library_calls_in_this_process(monkeypatch):
+    """These tests stub library functions, which the proposal subprocess would not see (tests/test_generation_calls.py
+    covers the subprocess)."""
+    from decompnet.app import generation_calls
+    monkeypatch.setattr(generation_calls, 'IN_SERVER', True)
+
+
 @pytest.mark.parametrize('imported', [False, True])
 def test_paths_overlap_share_budget_deadline_and_aggregate(monkeypatch, imported):
     net = setup(monkeypatch, imported)
