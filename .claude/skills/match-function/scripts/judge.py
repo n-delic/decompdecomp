@@ -3,6 +3,8 @@
 
 Standard library only: it reads the app's own connection file and calls the same local API the window does.
 
+    judge.py claim SLUG [FUNC]           claim FUNC, or with none a random open function nobody holds; prints its name
+    judge.py release SLUG FUNC           give the claim back
     judge.py best SLUG FUNC OUT.c        the function's saved best C, to a file
     judge.py diff SLUG FUNC              the diff of the saved best (rows), and the app's verdict
     judge.py try SLUG FUNC CAND.c        judge a candidate; release the claim afterwards
@@ -12,7 +14,9 @@ Standard library only: it reads the app's own connection file and calls the same
     judge.py wait ID SECONDS             poll a job until it ends (or the time is up), then show it
 
 Options before the command: --home DIR (default: the dev home ~/Decomp-RetroReversing-dev, else ~/Decomp-RetroReversing).
-Use --home for a scratch app too (scratch_run.py does). Never prints the secret.
+Use --home for a scratch app too (scratch_run.py does). --holder NAME (claude-<id>, up to 40 of [A-Za-z0-9._-]) claims,
+judges and releases as that holder instead of the window's "you", so parallel sessions keep separate claims; pass the
+same one on every call of a session. Never prints the secret.
 """
 import json
 import sys
@@ -35,10 +39,13 @@ def connection(home=None):
 
 
 class App:
-    def __init__(self, home=None):
+    def __init__(self, home=None, holder=""):
         self.c = connection(home)
+        self.holder = holder
 
     def call(self, path, body=None, timeout=600):
+        if body is not None and self.holder:
+            body = {**body, "holder": self.holder}
         port = self.c["port"]
         request = urllib.request.Request(
             f"http://127.0.0.1:{port}{path}", method="POST" if body is not None else "GET",
@@ -53,6 +60,9 @@ class App:
 
     def function(self, slug, name):
         return self.call("/api/function?" + urllib.parse.urlencode({"slug": slug, "name": name}))
+
+    def claim(self, slug, name=""):
+        return self.call("/api/claim", {"slug": slug, "name": name})
 
     def release(self, slug, name):
         return self.call("/api/release", {"slug": slug, "name": name})
@@ -93,13 +103,20 @@ def show_job(app, job_id):
 
 
 def main(argv):
-    home = None
-    if argv[:1] == ["--home"]:
-        home, argv = argv[1], argv[2:]
+    options = {"--home": None, "--holder": ""}
+    while argv[:1] and argv[0] in options and len(argv) > 1:
+        options[argv[0]], argv = argv[1], argv[2:]
     if not argv:
         sys.exit(__doc__)
-    app, (command, *args) = App(home), argv
-    if command == "best" and len(args) == 3:
+    app, (command, *args) = App(options["--home"], options["--holder"]), argv
+    if command == "claim" and len(args) in (1, 2):
+        result = app.claim(*args)
+        if "name" not in result:
+            sys.exit(f"no claim: {result.get('error') or result}")
+        print(result["name"])
+    elif command == "release" and len(args) == 2:
+        print(app.release(*args))
+    elif command == "best" and len(args) == 3:
         slug, name, out = args
         source = app.function(slug, name).get("source") or ""
         Path(out).write_text(source)

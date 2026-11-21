@@ -1,6 +1,6 @@
 ---
 name: match-function
-description: Match one function by hand against the running decompdecomp app, then turn what the manual work taught into a Deep Permuter or app improvement so the next such function is matched automatically. Use for "get func_X in PROJECT to match" or a stuck near-match. It runs as a goal by itself: it does not stop or ask until the function is judged 0 and the permuter improvements are merged.
+description: Match one function by hand against the running decompdecomp app, then turn what the manual work taught into a Deep Permuter or app improvement so the next such function is matched automatically. Use for "get func_X in PROJECT to match", a stuck near-match, or just a project ("match a function in PROJECT"), when it claims a random open function nobody else holds. It runs as a goal by itself: it does not stop or ask until the function is judged 0 and the permuter improvements are merged.
 ---
 
 # Match a function by hand, then teach the permuter
@@ -55,15 +55,33 @@ skip it: a near-match that the permuter cannot close is always a permuter gap.
 The permuter's rewrites live in the decomp-repair library (AGENTS.md, "Agents": change it there, tag, bump the tag
 in `pyproject.toml`, `uv lock`). What runs candidates stays in `src/decompnet/app/`. Read that section first.
 
+## Which function: claim it first, always
+
+Before any other step, pick a holder name for this session, `claude-` and 8 random hex digits
+(`python3 -c "import secrets;print('claude-'+secrets.token_hex(4))"`), and pass it as `--holder NAME` on **every**
+`judge.py` call of the session (claim, try, seed, release, ...). The app keeps one claim per holder: without your own
+holder you judge as the window's shared "you", and a second Claude session would take over or release your claim.
+
+- **Only a project given** (no function): `judge.py --holder NAME claim SLUG` claims a random open function that no
+  agent, app job or other session holds, and prints its name. That function is the goal's function from here on.
+  Never pick one yourself from the function list: a function you chose without claiming may be the one another
+  session is already working on. If it says nothing is left, tell the user; that is the one case with nothing to do.
+- **A function given**: `judge.py --holder NAME claim SLUG FUNC` claims it by name. If it is held by someone else,
+  say so and ask the user whether to take another (`claim SLUG`), rather than working on it beside them.
+- Claims expire when idle: run `claim SLUG FUNC` again (it renews your own claim) before a long stretch of local
+  work, and after any message that the claim was lost.
+- When the goal is met (or the user stops it), `judge.py --holder NAME release SLUG FUNC` gives it back. A matched
+  function needs no claim any more, but release it anyway.
+
 ## Rules that keep other people's work safe
 
 - **Never restart, update or quit the running app, and never `uv sync` under it.** Other agents use it. If it
   quits or says "shutting down", wait for it; do not start another. Work on a copy for anything destructive.
 - Find the app: `ps -E -o pid,command | grep -E 'bin/decomp( |$)'`, then `<home>/.decomp/server.json` (port,
   secret, pid). Dev checkouts use `~/Decomp-RetroReversing-dev` on 6474. More than one app, or none: ask.
-- Judging goes through the app (`scripts/judge.py try`), so the user sees your attempts; it is credited to "you".
-  Your claim can clash with another ("you hold another claim": an app job or an earlier attempt of yours under the
-  same identity): `judge.py` releases that claim and asks again. `judge.py` is standard library only; the other
+- Judging goes through the app (`scripts/judge.py --holder NAME try`), so the user sees your attempts, credited to
+  your holder. Your claim can clash with another of the same holder ("you hold another claim": an earlier attempt
+  of yours): `judge.py` releases that claim and asks again. That is why each session needs its own holder. `judge.py` is standard library only; the other
   scripts need an environment with decompnet (`.venv/bin/python`, read only: do not `uv sync` it).
 - Game data (ROMs, extracted code) is read only and never copied into the repo or a PR.
 - Use the scratchpad for experiments, a worktree + branch + PR for repo changes (AGENTS.md workflow).
@@ -93,8 +111,9 @@ When the run finishes, compare its best with yours before trusting either.
 ## 1. Orient (5 minutes, do not skip)
 
 ```bash
-python3 .claude/skills/match-function/scripts/judge.py best SLUG FUNC /scratch/best.c
-python3 .claude/skills/match-function/scripts/judge.py diff SLUG FUNC
+python3 .claude/skills/match-function/scripts/judge.py --holder NAME claim SLUG          # no function given: prints FUNC
+python3 .claude/skills/match-function/scripts/judge.py --holder NAME best SLUG FUNC /scratch/best.c
+python3 .claude/skills/match-function/scripts/judge.py --holder NAME diff SLUG FUNC
 ```
 
 - **Is it the project's compiler?** Before any source shape, read the target's idioms and ask which compiler writes
@@ -292,5 +311,5 @@ The goal from the top of this file is met only when **both** hold:
 A long search with no new idea is not progress, and not a stopping point: when the score stops moving, go back to
 step 1 and read the diff again before spending more compiles.
 
-Final message (only once the goal is met): the score (0), what matched it, the PR links, and what the permuter
+Release the claim (`judge.py --holder NAME release SLUG FUNC`), then the final message (only once the goal is met): the score (0), what matched it, the PR links, and what the permuter
 still can't do.
