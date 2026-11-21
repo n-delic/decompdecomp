@@ -10999,3 +10999,19 @@ the linked score from 220 to 10. The other address was formed in
 a call's delay slot from a previously loaded relocation. Recovering
 that byte stride reduced the score from 10 to 0. The deep permuter
 measured and saved both edits independently.
+
+### Keep heap byte distances and the IDO mapped poll
+
+- Two isolated N64 examples used
+  `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`. Their drafts
+  mixed byte offsets, pointer subtraction and integer subtraction.
+  Typed byte pointers and explicit integer distances compiled but
+  scored 270 in both examples. Reusing the original argument for the
+  adjusted pointer and keeping one entry alias matched all 104 bytes
+  for the maximum and 96 bytes for the sum.
+- A mapped read used
+  `ido-7.1 -O1 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul -DNON_MATCHING`.
+  A volatile status poll and typed destination store recovered the
+  source steps. Expressing the base word as a null-pointer dereference
+  scored 165. Naming the resolved word at address zero matched all
+  84 bytes.
