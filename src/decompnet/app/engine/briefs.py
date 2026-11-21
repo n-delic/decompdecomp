@@ -145,9 +145,11 @@ class BriefMixin:
                 ido_indirect_event,
                 ido_mapped_poll,
                 ido_matrix_copy,
+                ido_packed_stack_word,
                 ido_stack_iterators,
                 ido_strided_cursor,
                 ido_switch_reply,
+                ido_typed_loops,
             )
 
             if ido_indirect_event.applies(fn['asm'] or ''):
@@ -160,6 +162,10 @@ class BriefMixin:
                 inputs.append('IDO stack iterator records')
             if ido_matrix_copy.applies(fn['asm'] or ''):
                 inputs.append('IDO unrolled matrix copy')
+            if ido_packed_stack_word.applies(fn['asm'] or ''):
+                inputs.append('IDO packed stack word')
+            if ido_typed_loops.applies(fn['asm'] or ''):
+                inputs.append('IDO typed loop cursors')
             if ido_mapped_poll.applies(fn['asm'] or ''):
                 base = self.symbols(proj['id']).resolve(ido_mapped_poll.ZERO_WORD)
                 inputs.append(('IDO mapped poll read', base))

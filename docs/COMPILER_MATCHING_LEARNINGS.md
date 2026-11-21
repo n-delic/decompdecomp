@@ -11062,3 +11062,20 @@ The instruction order, input fields and arithmetic already matched.
 Swapping the positions of the two affected local declarations
 changed the register allocation and brought the linked score from
 30 to 0. The deep permuter reproduced and saved the exact match.
+
+### Preserve IDO typed traversal, record stores and packed bytes
+
+- Three isolated N64 examples used
+  `ido-7.1 -O2 -mips2 -G 0 -non_shared -Xcpluscomm -Wab,-r4300_mul -woff 649,838,712`.
+  All failed on arithmetic with void pointers. The reciprocal matrix
+  copy matched all 96 bytes with the counter, destination and source
+  initialized in that order in the loop header. The indirect visitor
+  matched all 112 bytes with a typed word cursor and signed halfword
+  receiver adjustment. The mixed record copy matched all 128 bytes
+  with separate byte and word cursors, preserving the order of the
+  tag, byte loop, word copies and final stores.
+- Two command writers used
+  `ido-7.1 -O1 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul -DNON_MATCHING`.
+  Their drafts read undeclared stack bytes. A union with bitfields at
+  the witnessed offsets matched all 132 and 148 bytes. Declaring the
+  assigned third field unsigned scored 200 on the longer writer.
