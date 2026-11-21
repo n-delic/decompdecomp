@@ -12,9 +12,11 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from ... import hostenv
+from ...forks import directory
 from ...forks.local import MAX_REPOSITORIES
 from ...network import NetworkError
 from .. import setup_fix
+from ..romlibrary import directory_matches
 from ..support import MAX_DISC
 from . import App
 
@@ -42,7 +44,6 @@ def register(app: App) -> None:
         """Community decompilations listed by RetroReversing's directory, each one importable with a click."""
         if (bad := guard(request)):
             return bad
-        from ...forks import directory
         nonlocal directory_projects
         try:
             directory_projects = await call(directory.listing)
@@ -56,7 +57,6 @@ def register(app: App) -> None:
     async def api_directory_library(request: Request) -> Response:
         if (bad := guard(request, write=True)):
             return bad
-        from ..romlibrary import directory_matches
 
         folder = str(settings.data.get("rom_library") or "")
         projects = directory_projects
