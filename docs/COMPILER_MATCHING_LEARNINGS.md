@@ -1,5 +1,32 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: a float register swap that only an extra block insn fixes, and per-case temporaries
+
+A 2,426-instruction N64 cutscene interpreter (a 37-case switch with a 118-way sub-switch and a 56-entry update loop)
+matched byte for byte with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`. This is a new match, judged exactly by the
+app, not a replay of an archived source. The earlier best was a two-case stub at score 240,235.
+
+- Which cases share a temporary decided most of the late progress. Giving each case its own copy of a length or
+  parameter local, and merging others into one shared local, took the diff from 275 differing instructions to 13.
+  Locals that every case assigns before it reads can be split or merged freely; the app now proposes both
+  (`case_temporary_split`, `case_temporary_merge`).
+- Four rows were left: in the three stacked cases that read a vector and add 180.0f to its second component,
+  the target held the constant in `$f0` and the reloaded component in `$f2`, and the compiler did the opposite. In
+  `local-alloc.c` the constant (4 refs over 6 insns) and the reload (4 refs over 8 insns) tie in
+  `floor_log2(refs) * refs / (death - birth)` terms once the sum is counted, so the quantity born first wins `$f0`.
+  Reordering statements, moving the `+= 180.0f`, a separate temporary, an offset local, a `const` byte pointer,
+  duplicate assignments and `__asm__("")` markers either changed nothing or moved the swap around. (Inline assembly is
+  refused by the app anyway.)
+- A zero-size marker that C can write fixed it: an unused `{ s64 wide = arg; }` at the top of that case. The
+  optimiser removes its move but the CLOBBER of the 64-bit pair stays through the first scheduling pass, which then
+  put the `arg >> 8` shift between the add and its store, lengthening the sum's life by one insn and giving the
+  constant `$f0`. A `s32`/`u32` local, an empty-struct initialiser and a union initialiser did not do this (the
+  latter two also changed the code size). `phantom_wide_local` proposes it at every block start.
+- Evidence level: exact match of the whole function, one function. Whether the original source had such a local is
+  unknown; the match proves only that the bytes agree. Removing the phantom local from the solved source and running
+  the new family finds the match among 294 proposals (2 of them, `long long` and `unsigned long long` at the same
+  site); all 294 and all 47 case-temporary proposals compile.
+
 ### KMC GCC 2.7.2: typed access at an inferred array stride
 
 An isolated N64 replay used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.
