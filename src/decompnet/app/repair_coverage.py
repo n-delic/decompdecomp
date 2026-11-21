@@ -107,6 +107,7 @@ def verify(feedback, example):
             measured_expression_repairs,
             measured_immediate_repairs,
             measured_memory_order,
+            measured_pointer_scale,
             measured_temporary_repairs,
         )
 
@@ -121,6 +122,7 @@ def verify(feedback, example):
         focused += measured_temporary_repairs.variants(source, fn['name'], rows)
         focused += measured_callback_repairs.variants(source, fn['name'], rows)
         focused += measured_address_repairs.variants(source, fn['name'], header, rows, symbols)
+        focused += measured_pointer_scale.variants(source, fn['name'], header, rows)
         focused += measured_immediate_repairs.variants(source, fn['name'], rows)
         focused += kmc_cast_repairs.variants(source, fn['name'], header, rows, profile['flags'])
         focused += kmc_type_repairs.variants(source, fn['name'], header, rows)

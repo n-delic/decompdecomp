@@ -366,10 +366,13 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
     if not target:
         return None
     source = run_m2c(asm_text, name, target, context_header, data_asm, timeout, valid, strict, options)
-    if valid and source and toolchain_id == 'gcc-2.7.2-kmc' and 'M2C_UNALIGNED32' in source:
-        from decomprepair.unaligned_stack_drafts import rewrite
+    if valid and source and toolchain_id == 'gcc-2.7.2-kmc':
+        from decomprepair import measured_stack_drafts, unaligned_stack_drafts
 
-        return rewrite(source, name, asm_text, context_header, resolve) or source
+        if 'M2C_UNALIGNED32' in source and (draft := unaligned_stack_drafts.rewrite(
+                source, name, asm_text, context_header, resolve)):
+            return draft
+        return measured_stack_drafts.rewrite(source, name, asm_text, context_header) or source
     return source
 
 

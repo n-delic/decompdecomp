@@ -11,6 +11,7 @@ from decomprepair import (
     measured_expression_repairs,
     measured_immediate_repairs,
     measured_memory_order,
+    measured_pointer_scale,
     measured_temporary_repairs,
     targeted_switch_labels,
 )
@@ -173,6 +174,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_temporary_repairs.variants(source,name,rows)
         result += measured_callback_repairs.variants(source,name,rows)
         result += measured_address_repairs.variants(source,name,header,rows,symbols)
+        result += measured_pointer_scale.variants(source,name,header,rows)
         result += measured_immediate_repairs.variants(source,name,rows)
         result += kmc_cast_repairs.variants(source,name,header,rows,flags)
         result += target_guard_width_diff_repairs.proposals(source,name,header,rows,target,candidate,asm,

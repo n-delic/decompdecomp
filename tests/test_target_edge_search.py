@@ -251,3 +251,11 @@ out:
     family = 'measured_shared_exit_flag'
     assert (family, source.replace('int flag;', 'int flag = 0;')) in route(source, rows, '')
     assert family not in dict(route(source, rows, '', compiler='ido-5.3'))
+
+
+def test_measured_float_table_scale_reaches_kmc_deep_search():
+    source = 'extern M2C_UNK table;\nf32 f(s32 arg) {\n    return *(&table + (((arg + 1) & 0xFF) * 4));\n}'
+    rows = [('i', 'sll $a0, $a0, 2', 'sll $a0, $a0, 4'),
+            ('o', 'lwc1 $f0, %lo(table)($at)', 'cvt.s.w $f0, $f0')]
+    assert 'measured_float_table_scale' in dict(route(source, rows, ''))
+    assert 'measured_float_table_scale' not in dict(route(source, rows, '', compiler='ido-5.3'))

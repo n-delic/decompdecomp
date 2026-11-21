@@ -8653,3 +8653,27 @@ single `lw` where the target used `lh`. Reading through an `s16 *` instead of a
 Adding `-fno-schedule-insns` alone scored 200. The combined source and compiler trial
 matched all 168 linked bytes in a scratch project. The repair can be queued from the target's
 symbolized load/store pair before any of the isolated trials have improved the score.
+
+### Implemented repairs from the expanded draft batch
+
+The four stack cases that failed compilation now regenerate exact drafts in the
+normal KMC draft path. The outgoing 12-byte records retain the written bytes and
+the optional input payload, and use one aggregate store. The incoming byte-only
+record uses the original signed parameter types, a four-byte output stride, and
+assigns its source cursor after flag initialization. The indexed six-word copy
+uses an array only when the stack stores can be traced to consecutive source
+words and the target uses a word-scaled stack index.
+
+Both duplicated word-scale cases now match through Deep Permuter's measured
+proposals. The float lookup changed from 170 to exact with a float array and
+one word scale. The call case changed from 25 to 15 when the stride alone was
+divided by four, and to exact with both that change and an explicit assignment
+of the rounded argument before the call. All six checks used regenerated or
+measured candidates, the captured headers, `gcc-2.7.2-kmc -G0 -mips3 -mgp32
+-mfp32 -O2`, and the normal linked ROM judge. The two larger missing stack-base
+cases did not have a verified rewrite in this batch.
+
+Rerunning the same 120 examples with the original search budget raised exact
+matches from 63 to 69. Four former compile failures matched as regenerated
+drafts, and both word-scale cases matched in the bounded permuter search.
+Every prior exact match still reproduced.
