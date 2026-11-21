@@ -613,3 +613,22 @@ def test_automatic_recovery_keeps_the_current_header(monkeypatch):
     fn = net.store.one('SELECT status,unit FROM functions')
     assert (fn['status'], fn['unit']) == ('matched', before)
     assert not net.store.one('SELECT 1 FROM claims')
+
+
+def test_automatic_recovery_reaches_older_distinct_exact_source():
+    net, proj, fn = prepared_net()
+    previous = 'old header'
+    active = 'active header'
+    older = 'void f(void) { return; }'
+    repeated = 'void f(void) { stale(); }'
+    with net.store.tx() as db:
+        db.execute('DELETE FROM attempts')
+        db.executemany('INSERT INTO context_versions(project_id,version,header,created_at,unit) VALUES(?,?,?,?,?)',
+                       [(proj['id'], 2, previous, 0, fn['unit']), (proj['id'], 3, active, 0, fn['unit'])])
+        db.execute('INSERT INTO attempts(function_id,score,compiled,context_version,source) VALUES(?,0,1,2,?)',
+                   (fn['id'], older))
+        db.executemany('INSERT INTO attempts(function_id,score,compiled,context_version,source) VALUES(?,0,1,3,?)',
+                       [(fn['id'], repeated)] * 15)
+    current = dict(fn, best_source=None, matched_source=None)
+    candidates = recovery.candidates(net, proj, current, {}, current_header=True)
+    assert [(source, header) for source, header, _ in candidates] == [(repeated, active), (older, active)]

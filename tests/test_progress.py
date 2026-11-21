@@ -4095,7 +4095,9 @@ def test_an_automatic_resume_only_uses_c_judged_with_todays_header(project):
     assert any(header == "" for _, header, _ in every)  # (the manual recovery may bring an old header back)
     current = match_reconciliation.candidates(net, proj, fn, {}, current_header=True)
     assert current and all(header == "today" for _, header, _ in current)
-    assert [origin for *_, origin in current] == ["match kept as best attempt"]
+    assert [origin for *_, origin in current] == [
+        "match kept as best attempt", "distinct exact attempt, current header",
+    ]
 
 
 def test_a_read_only_tool_never_waits_for_a_recheck(project, monkeypatch):
