@@ -177,6 +177,15 @@ wrongly: a 1000 → 680 local improvement was 1090 → 1030 in the app. Confirm 
   all right and only the operand order swapped). cse always puts a known constant second, so no spelling of
   `x & mask` gets it; hide the constant from cse with `(x & mask) | mask`, which combine folds back. Found by dumping
   cc1's passes (3b); the family is `mask_operand_order` (decomp-repair 0.5.201). Same shape may exist for `or`/`xor`/`add`.
+- **Register swaps between saved registers (`$s1`/`$s2` exchanged, everything else right): read the priorities,
+  don't guess.** Compile the candidate with `cc1 ... -dl -dg` and read the `.lreg`/`.greg` table (uses, live length,
+  priority, register; `app/allocation_priority.py` parses it). GCC 2.x gives saved registers in order of
+  `floor_log2(uses) * uses / live_length`, so the fix is a use more or less, or a shorter range, for the pseudo that
+  must rank higher. A KMC 2.7.2 function with three array loops (180 -> 0): index each loop by the counter
+  (`base + i * 0x18`, not m2c's separate byte-offset variable), guard each loop on the counter (`if (i < n)`, not
+  `if (n > 0)`: one more use), give a value m2c had stored in a reused counter name its own temp, and use one counter
+  for all three loops; that lifted the counter's priority 0.82 -> 0.94 past the offsets (0.93). Then trim m2c's frame
+  union to the target's frame (`measured_trim_frame_view`). decomp-repair `guarded_offset_index` (0.5.238).
 - **IDO bit-packed unpackers** (an N64 audio-header function, `ido-7.1`, exact; the evidence is in
   COMPILER_MATCHING_LEARNINGS.md). The shape that matched: a `u8 *` parameter; stack arrays declared highest frame
   offset first (IDO lays the first-declared highest); one `for (i = 0; i < N; i++)` writing `a[i]`, `e[i*13+k]` from
@@ -215,6 +224,10 @@ the shape is decided by a compiler pass, not by how you spell the C. Stop writin
    produces the source shape the rule needs (step 5). Record the rule, not only the spelling, in
    COMPILER_MATCHING_LEARNINGS.md ("jump.c inverts `if (x) goto A; goto B;` unless an insn sits between them" is
    reusable; "this function needed `goto`" is not).
+
+4. **Register-only rows: dump priorities, not passes.** `-dl -dg` prints each pseudo's priority; compare it with the
+   target's register order and change uses/live ranges (above, in 3). An empty `.lreg` means cc1 didn't get the
+   flag or failed to parse: run the compiler's own `gcc -E` first and strip comments.
 
 ## 4. Search only when you can name the mismatch
 
@@ -287,6 +300,16 @@ afterwards, leave its note with the evidenced blocker.
 - **Check what already exists before writing a rewrite.** `passthrough_argument` already did the argument fix and
   `symbol_width_repairs` was one regex away from the cast fix; ten minutes of grep over the library's docstrings
   found both. Run the existing families on the saved best first: what they don't produce is the gap.
+
+- **Edit the best, keep an edit list, and score each row** (edit, score alone, score combined). It worked: the
+  180 -> 0 table above came straight from it, and it showed which edits only help together (guard on the counter
+  alone went 60 -> 193). Sharpen it: when an edit makes it worse, keep it in the list and test it again after each
+  later edit, rather than dropping it; and say for each row which compiler fact it changes (addressing, a priority,
+  the frame), so the rewrite you write in step 5 emits the whole set as one child.
+- **zsh doesn't word-split `$VAR`**: a `for f in $FILES` or a flag string in a variable passes one argument. Wrap the
+  judge in a shell function (`fj(){ ... "$@"; }`) or a small Python driver that keeps one `fast_judge.Judge` open.
+- **m2c reuses one variable name for unrelated values** (a counter later holding a call's result). That ties their
+  registers together; split the name before reading any register diff.
 
 ## 6. Finishing (the goal is met)
 
