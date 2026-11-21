@@ -98,9 +98,10 @@ def _run(net, proj, fn, log, check, max_profiles):
     candidates = [(own['toolchain'], tuple(flags)) for flags, _ in probes]
     input_digest = net._comparison_digest(proj, fn, fn['best_source'], candidates)
     from .baseline_status import revision
-    key = 'matching-preflight-v5:'+revision()+':'+input_digest+':'+hashlib.sha256(repr(probes).encode()).hexdigest()
+    key = 'matching-preflight-v6:'+revision()+':'+input_digest+':'+hashlib.sha256(repr(probes).encode()).hexdigest()
     result = {'tested': 0, 'best': None, 'pending': 0}
     best_key = None
+    relocation_source = None
     allowance = min(MAX_PROFILES, max_profiles)
     def ensure():
         if check() is False:
@@ -130,6 +131,11 @@ def _run(net, proj, fn, log, check, max_profiles):
                             inferred.insert(0, sqrt)
                             item['sqrt_probe'] = sqrt
                         item['inferred'] = inferred
+                    if index == 0 and item['link'] and dict(proj).get('arch') == 'mips':
+                        from decomprepair.aligned_relocation_names import replacement
+                        item['relocation_source'] = replacement(source, getattr(diff, 'rows', ()),
+                                                              item['link']['symbols'],
+                                                              context['header'] if context else '')
                     if item['link']:
                         from .helper_call_diagnostics import suggestions
                         for hint in suggestions(getattr(diff, 'rows', [])):log(hint)
@@ -141,6 +147,18 @@ def _run(net, proj, fn, log, check, max_profiles):
                     inferred = [(variant, source) for variant in item['inferred']]
                     probes[1:] = halfword + inferred + [probe for probe in probes[1:]
                                                         if probe not in halfword and probe not in inferred]
+                if index == 0 and item.get('relocation_source'):
+                    relocation_source = item['relocation_source']
+                    probes.insert(1, (list(own['flags']), relocation_source))
+                    result['link'] = item['link']
+                    continue
+                if source == relocation_source:
+                    if not item.get('link') and item['score'] is not None:
+                        result['relinked'] = {'source': source, 'baseline': fn['best_source'], 'digest': input_digest,
+                                              'candidates': candidates}
+                        result.pop('link', None)
+                        result['best'] = item
+                    break
                 if item.get('link'):
                     result['link'] = item['link']
                     if (set(item['link']['symbols']) <= {'sqrt', 'sqrtf'} and
@@ -174,7 +192,7 @@ def _run(net, proj, fn, log, check, max_profiles):
         result['applied'] = recover_exact(net, proj, fn, input_digest, candidates, best['source'])
         if result['applied']:
             log('Rejudged C matched with the current settings: '+fn['name'])
-    if best and not result.get('applied') and (best['flags'] != own['flags'] or best.get('source', fn['best_source']) != fn['best_source']) and best['score'] < (fn['best_score'] if fn['best_score'] is not None else float('inf')):
+    if best and not result.get('relinked') and not result.get('applied') and (best['flags'] != own['flags'] or best.get('source', fn['best_source']) != fn['best_source']) and best['score'] < (fn['best_score'] if fn['best_score'] is not None else float('inf')):
         fresh = net.project_row(proj['slug'])
         current = net._function(fn['name'], proj['slug'])
         # Another worker may have improved the C during probing. Never apply an old-source hypothesis.

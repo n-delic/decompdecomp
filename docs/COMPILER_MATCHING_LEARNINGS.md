@@ -1,5 +1,18 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: recover stale names from aligned relocations
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, five stale
+source-owned external names stopped Deep Permuter before its normal search.
+Paired HI/LO relocations and three direct calls independently identified the
+current names in the target. Recompiling the rewritten C in a scratch project
+cleared the unresolved symbols and took the advisory score from 390 to 200,
+equal to the historical saved score. The same-profile linked judge and the
+320-trial sweep both confirmed 200. The remaining byte mask is still different.
+Dropping the cast alone removed a required copy and scored 235. Dropping the
+cast and the later masks scored 1,410. This is a verified link recovery and a
+partial match on one function.
+
 ### KMC GCC 2.7.2: stage unsigned division before a global reset
 
 An isolated N64 replay used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.
