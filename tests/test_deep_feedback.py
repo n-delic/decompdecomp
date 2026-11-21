@@ -196,3 +196,32 @@ def test_losing_local_trials_do_not_replace_evidence_for_the_next_random_batch(m
     search._after_improvement(AGENT,net.project_row('game'),net.function(),State(),None,20,'winner')
     assert net._last_diffs[AGENT.id,1][0]==['winner']
     assert net._agent_outcomes[AGENT.id,1]['source']=='winner'
+
+
+def test_failed_baseline_rejudges_distinct_saved_attempts(monkeypatch):
+    baseline = deep_permuter.Search._baseline
+    net = setup(monkeypatch)
+    monkeypatch.setattr(deep_permuter.Search, '_baseline', baseline)
+    net._project = net.project_row
+    broken = 'int f(int x) { return retired(x); }'
+    fallback = 'int f(int x) { return x * 3; }'
+    with net.store.tx() as db:
+        db.execute('UPDATE functions SET best_source=?', (broken,))
+        db.executemany('INSERT INTO attempts(function_id,score,compiled,source) VALUES(1,?,1,?)',
+                       [(15, broken), (20, fallback), (25, fallback)])
+    monkeypatch.setattr(Permuter, '_baseline', lambda *args: (None, 1))
+    attempts = []
+    history = []
+    net._record = lambda fn, agent, score, source, *args, **kwargs: history.append((score, source))
+
+    def judge(self, agent, proj, fn, source, best, fork):
+        attempts.append(source)
+        return 80 if source == fallback else None
+
+    monkeypatch.setattr(Permuter, '_score', judge)
+    search = deep_permuter.Search(net, 1, 10, Log(), net.function())
+    assert search._baseline(AGENT, net.project_row('game'), net.function(), State(), None) == (80, 2)
+    assert attempts == [fallback]
+    assert history == [(None, broken)]
+    assert net.function()['best_source'] == fallback
+    assert net.function()['best_score'] == 80
