@@ -9495,3 +9495,21 @@ relocation, with its low half in the call's delay slot. The draft placed
 the address in the first argument register. Restoring the incoming
 argument reproduced all 32 or 40 linked bytes on a copied project, even
 when another no-argument call followed.
+
+### Recover an incoming argument from a shifted call setup
+
+Twelve N64 examples built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`
+scored 5 or 10. The target leaves its first argument register live while
+setting the other arguments. The generated call omits that first argument
+and shifts its other arguments down one register.
+
+Three wrappers also needed the incoming parameter restored in their own
+signature. One is a zero-fill wrapper whose original first argument is
+the destination pointer. The other two load a field for the second
+argument in the call's delay slot. All three matched from fresh drafts.
+
+For nine other functions the parameter was already declared. Giving the
+existing passthrough rule priority when the measured difference is the
+argument-register shift reproduced their original bytes. Across the
+twelve examples, the exact matches span 32 to 152 linked bytes on copied
+projects.
