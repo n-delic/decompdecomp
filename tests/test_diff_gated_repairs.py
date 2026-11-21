@@ -1202,3 +1202,13 @@ def test_byte_global_pointer_routes_to_kmc(monkeypatch):
                         lambda text, name, header, diff: [('byte_global_fixture', text)])
     assert 'byte_global_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'byte_global_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_guarded_pointer_table_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_kmc_pointer_table_guard, 'variants',
+                        lambda text, name, header, diff: [('pointer_table_guard_fixture', text)])
+    assert 'pointer_table_guard_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'pointer_table_guard_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))

@@ -12868,3 +12868,14 @@ local, preserving operand order, then copy the result back. The linked
 judge improved from 25 to 20 and removed one register mismatch. The
 previous dispatcher produced no proposal and the repair produced one
 candidate. The routine remains unmatched.
+
+### KMC GCC 2.7.2: indexed pointer store with a signed masked guard
+
+An isolated draft multiplied a typed word address by a byte stride, causing
+an extra factor of four, and used an unsigned comparison after a bit mask.
+Casting the table base to a byte pointer before indexing and casting the
+masked halfword to signed recovered the target's store address and comparison.
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1`, the linked score improved
+from 210 to an exact match. Casting the mask result alone did not recover the
+signed comparison. This is one observed match; synthetic tests cover the
+instruction differences and source types.
