@@ -167,6 +167,66 @@ def test_polishing_checklist_is_saved_per_game(app, tmp_path):
 
 
 
+def test_port_export_selections_and_batch_are_scoped_to_the_project(app, tmp_path, monkeypatch):
+    from decompnet.network import NetworkError
+    from decompnet.port.wasm import export
+
+    client, net, _ = app
+    slug, other = "multi-export-one", "multi-export-two"
+    for name in (slug, other):
+        root = tmp_path / name
+        root.mkdir()
+        with net.project_registration(slug=name, name=name, description="", arch="mips",
+                                      big_endian=True, root=root, config={"kind": "rom"}):
+            pass
+
+    options, build_route = "/api/port-export-options", "/api/play-export"
+    headers = {"X-Decomp": "1"}
+    selected = ["ios", "steamdeck", "web", "simd"]
+    payload = {"slug": slug, "targets": selected}
+    assert client.get(options, params={"slug": slug}).json()["targets"] == []
+    assert client.post(options, headers=headers, json=payload).json() == {"targets": selected}
+    assert client.post(options, headers=headers, json={**payload, "targets": ["missing"]}).status_code == 400
+    assert client.post(build_route, headers=headers, json={**payload, "targets": ["simd"]}).status_code == 400
+    assert client.get(options, params={"slug": slug}).json()["targets"] == selected
+    assert client.get(options, params={"slug": other}).json()["targets"] == []
+
+    entered, proceed = threading.Event(), threading.Event()
+    calls = []
+
+    def build_target(net, project, kind, log, simd=False):
+        calls.append((project, kind, simd))
+        log.progress({"phase": "Building", "step": 1, "steps": 2, "done": 1, "total": 2})
+        if kind == "ios":
+            entered.set()
+            assert proceed.wait(10)
+            raise NetworkError("Xcode project could not be generated.")
+        return {"kind": kind, "path": str(tmp_path / kind)}
+
+    monkeypatch.setattr(export, "export", build_target)
+    try:
+        job = client.post(build_route, headers=headers, json=payload).json()["job"]
+        assert entered.wait(3)
+        active = client.get(options, params={"slug": slug}).json()["job"]
+        assert active["id"] == job
+        assert active["progress"]["done"] == 25 and active["progress"]["total"] == 300
+        assert client.get(options, params={"slug": other}).json()["job"] is None
+        assert client.post(build_route, headers=headers, json=payload).json()["job"] == job
+    finally:
+        proceed.set()
+    for _ in range(100):
+        status = client.get("/api/job", params={"id": job}).json()
+        if status["state"] != "running":
+            break
+        time.sleep(.01)
+    assert status["state"] == "done", status
+    assert [result["kind"] for result in status["result"]["exports"]] == ["steamdeck", "web"]
+    assert "Xcode project could not be generated." in status["result"]["failures"][0]
+    assert calls == [(slug, "ios", False), (slug, "steamdeck", False), (slug, "web", True)]
+    assert client.post(options, headers=headers, json={**payload, "targets": []}).json() == {"targets": []}
+    assert client.get(options, params={"slug": slug}).json()["targets"] == []
+
+
 def test_deep_permuter_job_can_be_found_and_stopped_from_the_function(app, monkeypatch):
     """The function's view finds its running deep search (`deep_job`), asking again joins it, and Stop cancels it
     with what it found kept in the job's progress."""

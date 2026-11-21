@@ -293,7 +293,9 @@ The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`)
   for placing, its IR and its own rows of the signature and address tables; for the host, the wasm2c part), so a
   Save that changed one function recompiles that function and the one wasm2c part holding it.
   Its saves stay in the build folder (`game.eep`);
-- the app's **Export…** (Porting, beside Play; `port/wasm/export.py`): the game as something to keep and share,
+- **Export** in Porting (`port/wasm/export.py`): select one or more targets, then click **Export selected**.
+  Selections are saved per project. One job builds the selected targets in order and shows each successful
+  export's folder and instructions. The game is exported
   into the save repository's `port/wasm/export/` (git ignores it: it's built from the game). App, browser and iOS
   exports ask for the player's own ROM. The local Miyoo and Steam Deck exports can include your ROM.
   Each export also adds a GitHub Actions workflow to the project's repository (`port/wasm/workflows.py`) that makes

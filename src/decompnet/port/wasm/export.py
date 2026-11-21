@@ -29,6 +29,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+from functools import wraps
 from pathlib import Path
 
 from ...network import NetworkError
@@ -369,6 +370,54 @@ def export(net, slug: str, kind: str, log=print, simd: bool = False) -> dict:
     return {"kind": kind, "folder": str(folder), "path": str(path), "files": files, "bytes": size,
             "system": {"app": sys.platform, "window": sys.platform, "web": "browser"}.get(kind, kind),
             "instructions": steps_for_player, "github": github}
+
+
+def target_selection(value) -> list[str]:
+    """Validate and deduplicate the targets. SIMD adds files to the same website export."""
+    if not isinstance(value, list) or any(
+        not isinstance(item, str) or (item not in KINDS and item != "simd") for item in value
+    ):
+        raise ValueError("Choose export targets from the Porting panel.")
+    return list(dict.fromkeys(item for item in value if item != "simd" or "web" in value))
+
+
+def export_selected(net, slug: str, selected: list[str], log) -> dict:
+    """Run targets in order so their build files and release workflows can be updated safely."""
+    from ...app.support import job_error
+
+    kinds = [kind for kind in selected if kind in KINDS]
+    results, failures = [], []
+
+    def export_target(index, kind):
+        def progress(value):
+            log.check_cancel()
+            steps = value.get("steps") or 1
+            step = value.get("step") or 1
+            fraction = min(1, (value.get("done") or 0) / value["total"]) if value.get("total") else 0
+            percent = (step - 1 + fraction) / steps
+            log.progress({"phase": f"{KINDS[kind]} ({index + 1}/{len(kinds)}) · {value['phase']}",
+                          "done": round(100 * (index + percent)), "total": 100 * len(kinds)})
+
+        @wraps(log)
+        def target_log(message):
+            log(message)
+
+        target_log.progress = progress
+        progress({"phase": "Preparing export"})
+        return export(net, slug, kind, target_log, simd=kind == "web" and "simd" in selected)
+
+    for index, kind in enumerate(kinds):
+        log.check_cancel()
+        try:
+            results.append(export_target(index, kind))
+        except Exception as error:  # noqa: BLE001  another target can still finish
+            log.check_cancel()
+            message = f"Could not export {KINDS[kind]}: {job_error(error)}"
+            failures.append(message)
+            log(message)
+    if not results and failures:
+        raise NetworkError("\n".join(failures))
+    return {"exports": results, "failures": failures}
 
 
 def export_from_save(repo: Path, kind: str, out: Path, ultralib: bool = False, log=print) -> Path:

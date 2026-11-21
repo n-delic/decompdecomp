@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import secrets
 import shutil
+import sys
 import threading
 import time
 from contextlib import nullcontext
@@ -64,7 +65,7 @@ def register(app: App) -> None:
                         return fn(slug, request, data)  # Metadata is published by autosave, without another recheck here.
                     if request.method == "POST" and request.url.path in (
                         '/api/try', '/api/cross-game/run', '/api/reconcile-matches', '/api/reimport',
-                        '/api/permuter/function', '/api/deep-permuter',
+                        '/api/permuter/function', '/api/deep-permuter', '/api/play-export', '/api/port-export-options',
                     ):
                         return fn(slug, request, data)  # The worker synchronizes; return its job without waiting.
                     if request.method == "GET" or request.url.path == "/api/permuter/pass":
@@ -105,7 +106,9 @@ def register(app: App) -> None:
                         return response(perform, started, JSONResponse, request.url.path)
                     finally:current_project.reset(token)
                 execute=(reader or call) if request.method=="GET" else call
-                if request.url.path == '/api/cross-game/run':
+                if request.url.path in ('/api/cross-game/run', '/api/port-export-options') or (
+                    request.url.path == '/api/play-export' and not data.get('show')
+                ):
                     execute=app.control
                 if request.url.path=='/api/rom-explorer/discovery' and (request.query_params.get('view')=='activity' or data.get('action')=='stop'):
                     execute=app.control  # Discovery admission/cancellation must not queue behind builds.
@@ -337,14 +340,31 @@ def register(app: App) -> None:
             return {"job": building["id"]}
         return {"job": jobs.start("play", lambda log: play.play(net, slug, log), project=slug)}
 
+    def port_export_options(slug, request, data):
+        """Save export targets in the project database and discover an active export before port readiness scans."""
+        from ...port.wasm.export import target_selection
+
+        project = net.project_row(slug, sync=False)
+        store = net.project_store(project["id"])
+        key = f"port-export-options:{project['id']}"
+        if request.method == "POST":
+            selected = target_selection(data.get("targets"))
+            with store.tx() as db:
+                db.execute("INSERT OR REPLACE INTO settings VALUES(?,?)", (key, json.dumps(selected)))
+            return {"targets": selected}
+
+        row = store.one("SELECT value FROM settings WHERE key=?", key)
+        return {"targets": json.loads(row["value"]) if row else [], "available": net.is_rom(project),
+                "mac": sys.platform == "darwin", "job": jobs.active(("play-export",), project=slug)}
+
     def p_play_export(slug, request, data):
-        """Export the game (port/wasm/export.py): a standalone app for this computer ("app") or a browser build
-        ("web"), in the background; `show` opens the last export's folder."""
+        """Build the selected targets in one cancellable job, or open an existing export's folder."""
         from ...port.wasm import export, play
+
         kind = str(data.get("kind") or "")
-        if kind not in export.KINDS:
-            raise ValueError("Choose what to export: a standalone app or a browser build.")
         if data.get("show"):
+            if kind not in export.KINDS:
+                raise ValueError("Choose an exported target to open.")
             repo, _, _ = play.game(net, slug)
             folder = repo / "port" / "wasm" / "export" / kind
             if not folder.is_dir():
@@ -353,10 +373,23 @@ def register(app: App) -> None:
                 return {"ok": False, "message": f"The export is on the server, in {folder}"}
             why = hostenv.open_folder(folder)
             return {"ok": why is None, "message": why}
-        if (running := jobs.active(("play-export",), project=slug)):  # another click, or another window
-            return {"job": running["id"]}
-        simd = bool(data.get("simd")) and kind == "web"  # the browser build's faster modules, as well (web.SIMD)
-        return {"job": jobs.start("play-export", lambda log: export.export(net, slug, kind, log, simd=simd), project=slug)}
+
+        if "targets" in data:
+            targets = export.target_selection(data["targets"])
+            if not any(target in export.KINDS for target in targets):
+                raise ValueError("Select at least one export target.")
+            def run(log):
+                return export.export_selected(net, slug, targets, log)
+        else:
+            if kind not in export.KINDS:
+                raise ValueError("Choose what to export.")
+            def run(log):
+                return export.export(net, slug, kind, log, simd=bool(data.get("simd")) and kind == "web")
+
+        with jobs._lock:
+            if running := jobs.active(("play-export",), project=slug):
+                return {"job": running["id"]}
+            return {"job": jobs.start("play-export", run, project=slug, cancel_message="Export stopped.")}
 
     def p_asset_map(slug, request, data):
         """Write the ROM's data as the kit's extractor config into the project's folder (port/asset_map.py)."""
@@ -1357,6 +1390,7 @@ def register(app: App) -> None:
         "/api/asset-map": (p_asset_map, ["POST"]),
         "/api/play": (p_play, ["POST"]),
         "/api/play-export": (p_play_export, ["POST"]),
+        "/api/port-export-options": (port_export_options, ["GET", "POST"]),
         "/api/rename-calls": (p_rename_calls, ["POST"]),
         "/api/fix-calls": (p_fix_calls, ["POST"]),
         "/api/port-identity": (p_port_identity, ["POST"]),

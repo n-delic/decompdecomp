@@ -2270,14 +2270,13 @@ img.rom-preview-media { image-rendering:pixelated; background:var(--bg-alt); bor
 .port-runtime { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: start; cursor: pointer; }
 .port-runtime > span { display: grid; gap: 2px; min-width: 0; }
 .port-runtime input { margin-top: 2px; }
+#portExportWebSimdChoice { margin-inline-start: 24px; }
+#portExportStatus:empty { display: none; }
 .port-runtime.unavailable { cursor: not-allowed; }
 .port-runtime.unavailable b { color: var(--muted); }
 .port-step-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
 .port-pct { font: 600 13px/1 var(--mono); color: var(--muted); white-space: nowrap; }
 .port-actions { flex-wrap: wrap; gap: 6px; margin-top: 2px; }
-/* a menu whose trigger is a labelled button (Play it's Export…), not the ⋮ icon */
-.agent-menu.labelled > summary { width: auto; height: 30px; font-size: 13px; display: inline-flex; }
-.agent-menu.labelled .agent-menu-items { left: 0; right: auto; }
 .port-details { margin-top: 10px; }
 .port-details summary { cursor: pointer; color: var(--muted); }
 .port-actions button { white-space: normal; max-width: 100%; text-align: left; }

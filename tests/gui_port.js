@@ -10,9 +10,13 @@ function element(){return {open:false,disabled:false,hidden:false,textContent:''
   setAttribute(){},replaceChildren(...c){this.children=c;}};}
 function setup(){
   const nodes=new Map(),calls=[],bodies=[];
+  const values={App:'app',Window:'window',Web:'web',WebSimd:'simd',Ios:'ios',Miyoo:'miyoo',SteamDeck:'steamdeck'};
   const c=vm.createContext({console,Map,Promise,Error,Number,encodeURIComponent,S:{slug:'a'},
-    $:id=>{if(!nodes.has(id))nodes.set(id,element());return nodes.get(id);},document:{createElement:element,addEventListener(k,f){c.docListeners[k]=f;}},docListeners:{},
-    api(url,opts){calls.push(url);bodies.push(opts&&opts.body);return c.reply(url,opts);},reply:async()=>({})});
+    $:id=>{if(!nodes.has(id))nodes.set(id,{...element(),value:values[id.slice(10)]});return nodes.get(id);},document:{createElement:element,addEventListener(k,f){c.docListeners[k]=f;}},docListeners:{},
+    api(url,opts){
+      if(url.startsWith('/api/port-export-options?'))return c.exportOptions(url);
+      calls.push(url);bodies.push(opts&&opts.body);return c.reply(url,opts);
+    },exportOptions:async()=>({available:true,mac:true,targets:[]}),reply:async()=>({})});
   vm.runInContext(base.slice(base.indexOf('function beginWork('),base.indexOf('function updateWorkProgress(')),c);
   vm.runInContext(base.slice(base.indexOf('function showJobError('),base.indexOf('/*',base.indexOf('function showJobError('))),c);
   vm.runInContext(source,c);
@@ -166,11 +170,11 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    assert.ok(rows.some(r=>r.includes('set aside')&&r.includes('func_8008AE70 (cop0), ...')));
    const play=t.c.$('portSteps').children[9].children[1];
    const buttons=play.children.flatMap(c=>c.children||[]);
-   assert.ok(buttons.includes(t.c.$('portExportMenu')),'Export remains in the Play step');
+   assert.ok(buttons.includes(t.c.$('portPlay')),'Play stays in the Play step');
    assert.ok(!buttons.includes(t.c.$('portRecompile')),'no manual recompile action even when supported');
    const html=fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/index.html'),'utf8');
-   assert.match(html,/<button id="portExportApp"[^>]*>Standalone app \(opens in your browser\)<\/button>/);
-   assert.match(html,/<button id="portExportWindow"[^>]*>Standalone app \(opens in its own Mac window via SDL3\)<\/button>/);
+   assert.match(html,/type="checkbox" id="portExportApp"[^>]*><span>Standalone app \(opens in your browser\)/);
+   assert.match(html,/type="checkbox" id="portExportWindow"[^>]*><span>Standalone app \(opens in its own Mac window via SDL3\)/);
    assert.doesNotMatch(html,/id="portRecompile"/,'the manual button is removed from the page');}
   {const t=setup();t.c.S.tab='porting';const followed=[];t.c.followJob=async(job)=>{followed.push(job);};
    t.c.reply=async url=>url==='/api/rename-calls'?{job:'r1'}:report;
@@ -218,81 +222,77 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    t.c.reply=async()=>({...report,play:{job:null,url:'http://127.0.0.1:6/'}});
    await t.run('loadPortReadiness()');assert.equal(t.c.$('portStop').hidden,false,'a running game can be stopped');
    assert.equal(t.c.$('portStop').textContent,'Stop the game');}
-  {// Export: either kind is a job with the build's bar; the menu closes; Show the folder opens what was made
-   const t=setup(),follow=deferred(),bodies=[];t.c.S.tab='porting';t.c.followJob=()=>follow.promise;t.c.updateWorkProgress=()=>{};
-   t.c.reply=async(url,opts)=>{if(url==='/api/play-export'){bodies.push(opts.body);return opts.body.show?{ok:true}:{job:'e1'};}return report;};
-   t.c.$('portExportMenu').open=true;
-   const exporting=t.run('exportGame("web")');for(let i=0;i<5;i++)await Promise.resolve();
-   assert.equal(t.c.$('portExportMenu').open,false,'choosing closes the menu');
-   assert.equal(t.c.$('portExportWeb').disabled,true,'no second export while one runs');
-   assert.equal(t.c.$('portExportWindow').disabled,true,'nor one with its own window');
-   assert.equal(t.c.$('portExportIos').disabled,true,'nor iOS');
-   assert.equal(t.c.$('portExportStop').hidden,false);
-   await t.run('exportGame("app")');assert.equal(bodies.length,1,'a second choice starts nothing');
-   follow.resolve({kind:'web',path:'/save/port/wasm/export/web/index.html',folder:'/save/port/wasm/export/web'});await exporting;
-   assert.equal(t.c.$('portExportShow').hidden,false);assert.equal(t.c.$('portExportStop').hidden,true);
-   assert.equal(t.c.$('portExportWeb').disabled,false);
-   assert.ok(t.c.$('portExportLog').children.some(x=>String(x).includes('index.html')),'the log says where it went');
-   await t.run('showExport()');assert.equal(JSON.stringify(bodies[1]),JSON.stringify({slug:'a',kind:'web',show:true}));
-   t.c.$('portExportMenu').open=true;t.c.docListeners.click({target:{}});assert.equal(t.c.$('portExportMenu').open,false,'a click elsewhere closes it');}
-  {// The iOS choice uses the existing durable export job, with feedback before the first response.
+  {// Save by project on change, including before an export, and reload from the server in a new window.
+   const t=setup(),saved={a:[],b:['miyoo']},save=deferred();t.c.S.tab='porting';
+   t.c.exportOptions=async(url)=>({available:true,mac:true,targets:saved[url.at(-1)]});
+   t.c.reply=async(url,opts)=>{
+     if(url==='/api/port-export-options'){await save.promise;saved[opts.body.slug]=opts.body.targets;return {targets:opts.body.targets};}
+     return report;
+   };
+   await t.run('loadPortReadiness()');
+   assert.equal(t.c.$('portExportStart').disabled,true,'empty selection cannot start');
+   t.c.$('portExportIos').checked=true;
+   const saving=t.c.$('portExportIos').onchange();
+   assert.match(t.c.$('portExportStatus').textContent,/Saving/);
+   assert.equal(t.c.$('portExportStart').disabled,true,'waits for the save');
+   t.c.$('portExportSteamDeck').checked=true;
+   await t.c.$('portExportSteamDeck').onchange();
+   save.resolve();await saving;
+   assert.equal(t.c.$('portExportStart').disabled,false);
+   assert.equal(JSON.stringify(saved.a),'["ios","steamdeck"]');
+   t.c.S.slug='b';await t.run('loadPortReadiness()');
+   assert.equal(t.c.$('portExportIos').checked,false);
+   assert.equal(t.c.$('portExportMiyoo').checked,true);
+   const fresh=setup();fresh.c.S.tab='porting';fresh.c.exportOptions=t.c.exportOptions;fresh.c.reply=async()=>report;
+   await fresh.run('loadPortReadiness()');
+   assert.equal(fresh.c.$('portExportIos').checked,true);
+   assert.equal(fresh.c.$('portExportSteamDeck').checked,true);
+   fresh.c.reply=async()=>{throw Error('Database unavailable');};
+   fresh.c.$('portExportIos').checked=false;await fresh.c.$('portExportIos').onchange();
+   assert.equal(fresh.c.$('portExportIos').checked,true,'failed saves restore the saved selection');
+   assert.match(fresh.c.$('portExportStatus').textContent,/Database unavailable/);}
+  {// One job receives the complete batch. Each result keeps its instructions and folder action.
    const t=setup(),request=deferred(),follow=deferred();t.c.S.tab='porting';t.c.updateWorkProgress=()=>{};
-   t.c.reply=()=>request.promise;t.c.followJob=()=>follow.promise;
-   const exporting=t.c.$('portExportIos').onclick();
-   assert.equal(t.c.$('portExportIos').disabled,true,'iOS disables immediately');
-   assert.equal(t.c.$('portExportWeb').disabled,true,'other exports wait too');
-   assert.equal(JSON.stringify(t.bodies[0]),JSON.stringify({slug:'a',kind:'ios'}));
-   await t.run('exportGame("ios")');assert.equal(t.calls.length,1,'duplicate start suppressed');
-   request.resolve({job:'ios1'});for(let i=0;i<5;i++)await Promise.resolve();
-   follow.resolve({kind:'ios',path:'/save/export/ios/Game.xcodeproj',instructions:['Open in Xcode.','Choose your signing team.']});
+   t.c.exportOptions=async()=>({available:true,mac:false,targets:['window','ios','steamdeck']});
+   t.c.reply=async(url,opts)=>url==='/api/play-export'?(opts.body.show?{ok:true}:request.promise):report;
+   t.c.followJob=()=>follow.promise;
+   await t.run('loadPortReadiness()');
+   assert.equal(t.c.$('portExportWindowChoice').hidden,true,'Mac window only appears on a Mac host');
+   const exporting=t.c.$('portExportStart').onclick();
+   assert.equal(t.c.$('portExportStart').disabled,true);
+   assert.equal(t.c.$('portExportSteamDeck').disabled,true);
+   assert.equal(t.c.$('portExportStop').hidden,false);
+   assert.equal(JSON.stringify(t.bodies.at(-1)),'{"slug":"a","targets":["ios","steamdeck"]}');
+   await t.c.$('portExportStart').onclick();
+   assert.equal(t.calls.filter(url=>url==='/api/play-export').length,1,'duplicate start suppressed');
+   request.resolve({job:'e1'});
+   follow.resolve({exports:[{kind:'ios',path:'/save/ios/Game.xcodeproj',instructions:['Open in Xcode.']},
+     {kind:'steamdeck',path:'/save/steamdeck/README.txt',instructions:['Copy to Steam Deck.']}]});
    await exporting;
-   assert.equal(t.c.$('portExportIos').disabled,false);
-   assert.match(JSON.stringify(t.c.$('portExportNext').children),/Xcode.*signing team/);
-   t.c.reply=async()=>{throw Error('Browser port not available');};await t.run('exportGame("ios")');
-   assert.match(t.c.$('portExportLog')._errorBox.textContent,/Browser port not available/);
-   assert.equal(t.c.$('portExportIos').disabled,false,'failed requests restore the choice');}
-  {// The Miyoo Mini export is one more kind of the same job, and the log says what to do with the folder
-   const t=setup(),bodies=[];t.c.S.tab='porting';t.c.updateWorkProgress=()=>{};
-   t.c.followJob=async()=>({kind:'miyoo',path:'/save/port/wasm/export/miyoo/README.txt',folder:'/save/port/wasm/export/miyoo',
-     instructions:['Copy the App and Tools folders to the root of your SD card.','Your ROM is already in App/Rally64/ as rom.z64.']});
-   t.c.reply=async(url,opts)=>{if(url==='/api/play-export'){bodies.push(opts.body);return {job:'e3'};}return report;};
-   await t.run('exportGame("miyoo")');
-   assert.equal(JSON.stringify(bodies[0]),JSON.stringify({slug:'a',kind:'miyoo'}));
-   assert.equal(t.c.$('portExportMiyoo').disabled,false,'its button comes back');
-   const next=t.c.$('portExportNext'),text=JSON.stringify(next.children,(k,v)=>k==='parentNode'?undefined:v);
-   assert.equal(next.hidden,false,'what to do next shows under the log');
-   assert.ok(/SD card/.test(text)&&/rom\.z64/.test(text),'its steps say what to copy and where the ROM is');
-   assert.ok(!t.c.$('portExportLog').children.some(x=>/rom\.z64/.test(String(x))),'not buried in the log');
-   t.c.followJob=()=>new Promise(()=>{});t.run('exportGame("web")');for(let i=0;i<5;i++)await Promise.resolve();
-   assert.equal(next.hidden,true,'a new export clears the last one\'s steps until it ends');}
-  {// The Steam Deck export is one more kind of the same job: its button waits while it runs, and its steps show
-   const t=setup(),bodies=[];t.c.S.tab='porting';t.c.updateWorkProgress=()=>{};
-   let follow;t.c.followJob=()=>new Promise(r=>{follow=r;});
-   t.c.reply=async(url,opts)=>{if(url==='/api/play-export'){bodies.push(opts.body);return {job:'e4'};}return report;};
-   const exporting=t.run('exportGame("steamdeck")');for(let i=0;i<5;i++)await Promise.resolve();
-   assert.equal(t.c.$('portExportSteamDeck').disabled,true,'its button waits while it exports');
-   assert.equal(JSON.stringify(bodies[0]),JSON.stringify({slug:'a',kind:'steamdeck'}));
-   follow({kind:'steamdeck',path:'/save/port/wasm/export/steamdeck/README.txt',folder:'/save/port/wasm/export/steamdeck',
-     instructions:['Copy the Rally64 folder to your Steam Deck.','Add Rally64/launch.sh to Steam as a non-Steam game.']});
-   await exporting;
-   assert.equal(t.c.$('portExportSteamDeck').disabled,false,'its button comes back');
-   const next=t.c.$('portExportNext'),text=JSON.stringify(next.children,(k,v)=>k==='parentNode'?undefined:v);
-   assert.ok(/Steam Deck/.test(text)&&/non-Steam game/.test(text),'its steps say where it goes');}
-  {// "faster where it can" is the browser export with its SIMD modules as well: the same job, simd in its request
-   const t=setup(),bodies=[];t.c.S.tab='porting';t.c.updateWorkProgress=()=>{};
-   t.c.followJob=async()=>({kind:'web',path:'/save/port/wasm/export/web/index.html',folder:'/save/port/wasm/export/web'});
-   t.c.reply=async(url,opts)=>{if(url==='/api/play-export'){bodies.push(opts.body);return {job:'e4'};}return report;};
-   await t.run('exportGame("web", null, { simd: true })');
-   assert.equal(JSON.stringify(bodies[0]),JSON.stringify({slug:'a',kind:'web',simd:true}));
-   assert.equal(t.c.$('portExportWebSimd').disabled,false,'its menu item comes back');}
-  {// an export running when the panel is drawn again is followed, and its Stop cancels it
-   const t=setup(),follow=deferred(),cancels=[];t.c.S.tab='porting';t.c.followJob=()=>follow.promise;t.c.updateWorkProgress=()=>{};
-   t.c.reply=async(url,opts)=>{if(url==='/api/job/cancel'){cancels.push(opts.body.id);return {};}return {...report,play:{job:null,url:null,export_job:{id:'e2',progress:{phase:'Linking',step:5,steps:11}}}};};
-   await t.run('loadPortReadiness()');for(let i=0;i<5;i++)await Promise.resolve();
+   assert.equal(t.c.$('portExportStop').hidden,true);
+   assert.equal(t.c.$('portExportStart').disabled,false);
+   const results=t.c.$('portExportNext');
+   assert.match(JSON.stringify(results.children),/Open in Xcode.*Copy to Steam Deck/);
+   await results.children[1].children[0].children[1].onclick();
+   assert.equal(JSON.stringify(t.bodies.at(-1)),'{"slug":"a","kind":"steamdeck","show":true}');
+   t.c.followJob=async()=>({exports:[{kind:'steamdeck',path:'/save/steamdeck/README.txt'}],failures:['iOS build failed']});
+   await t.c.$('portExportStart').onclick();
+   assert.equal(results.children.length,1,'successful exports remain available after a partial failure');
+   assert.match(t.c.$('portExportLog')._errorBox.textContent,/iOS build failed/);}
+  {// A running batch is discovered independently of slower readiness reads, with Stop and no duplicate start.
+   const t=setup(),follow=deferred(),readiness=deferred(),cancels=[];
+   t.c.S.tab='porting';t.c.followJob=()=>follow.promise;t.c.updateWorkProgress=(log,value)=>{log.seen=value;};
+   t.c.exportOptions=async()=>({available:true,mac:true,targets:['web','simd'],
+     job:{id:'e2',progress:{phase:'Linking',done:50,total:200}}});
+   t.c.reply=async(url,opts)=>{if(url==='/api/job/cancel'){cancels.push(opts.body.id);return {};}return readiness.promise;};
+   const loading=t.run('loadPortReadiness()');for(let i=0;i<5;i++)await Promise.resolve();
    assert.ok(!t.calls.includes('/api/play-export'),'not started again');
+   assert.equal(t.c.$('portExportLog').seen.phase,'Linking');
+   assert.equal(t.c.$('portExportWebSimd').checked,true);
    await t.run('stopExport()');assert.deepEqual(cancels,['e2']);
-   follow.reject(new Error('Cancelled.'));await Promise.resolve();await Promise.resolve();await Promise.resolve();
-   assert.match(t.c.$('portExportLog')._errorBox.textContent,/Cancelled/);}
+   follow.reject(new Error('Export stopped.'));await Promise.resolve();await Promise.resolve();
+   assert.match(t.c.$('portExportLog')._errorBox.textContent,/Export stopped/);
+   readiness.resolve(report);await loading;}
   {const t=setup();t.c.S.tab='porting';t.c.followJob=async()=>({url:'http://127.0.0.1:5/',window:true});
    const runtimes=[{id:'wasm',name:'WebAssembly',summary:'Plays now.',built:true,missing:[],playable:true},
      {id:'libultraship',name:'libultraship',summary:'Native.',built:false,missing:['Compiles for a PC','Assets extracted'],playable:false},

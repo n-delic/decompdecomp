@@ -181,8 +181,8 @@ function portSteps(report) {
       detail: (report.runtimes || []).length > 1
         ? "Your last save, played on the runtime you choose: WebAssembly now, the native runtimes once the steps they need are done"
         : "The WebAssembly build of your last save, in the browser: no native port needed",
-      buttons: ["portPlay", "portStop", "portExportMenu"],
-      logs: ["portPlayLog", "portExportLog", "portExportActions", "portExportNext"] },
+      buttons: ["portPlay", "portStop"],
+      logs: ["portPlayLog"] },
   ];
   if (report.mode === "project") {
     const limits = report.limitations;
@@ -209,11 +209,11 @@ function renderPortSteps(report) {
   if (!list) return;
   const steps = portSteps(report), parked = $("portParked");
   for (const id of ["portDrafts", "portCompile", "portRenameCalls", "portFixCalls", "portAssets", "portExtract", "portPlay", "portStop",
-    "portExportMenu", "portBehaviour", "portBehaviourStop", "portBehaviourSettings"]) {
+    "portBehaviour", "portBehaviourStop", "portBehaviourSettings"]) {
     if (parked && $(id)) parked.append($(id));  // back where they wait, then into their step
   }
   for (const id of ["portDraftLog", "portCompileLog", "portRenameLog", "portFixCallsLog", "portAssetsLog", "portExtractLog", "portPlayLog",
-    "portExportLog", "portExportActions", "portExportNext", "portBehaviourLog"]) {
+    "portBehaviourLog"]) {
     if (parked && $(id)) parked.append(...withWork($(id)));
   }
   const shown = steps.filter((s) => s.pct != null);
@@ -255,6 +255,7 @@ async function loadPortReadiness() {
   if (!$("portPanel") || S.tab !== "porting" || !S.slug) return;
   const slug = S.slug, epoch = ++portEpoch, log = $("portWork");
   showJobError(log, "");
+  const exportOptions = loadPortExportOptions(slug);
   const finish = beginWork(log, "Reading the project", [$("portReload")], "Read.");
   try {
     const report = await api("/api/port-readiness?slug=" + encodeURIComponent(slug));
@@ -262,6 +263,7 @@ async function loadPortReadiness() {
   } catch (error) {
     if (epoch === portEpoch) showJobError(log, error.message);
   } finally { finish(); }
+  await exportOptions;
 }
 
 async function draftPortData() {
@@ -445,83 +447,193 @@ async function stopGame() {
   finally { stop.disabled = false; playStopLabel(); }
 }
 
-/* Export (port/wasm/export.py): the game as a standalone app for this computer, or a browser build (a folder with
-   index.html), from the last save. Its bar counts the build's steps; Stop cancels it; Show the folder opens it. */
-let exportJob = null;
-const EXPORTS = { app: "a standalone app", window: "a standalone app with its own window", web: "a browser build", miyoo: "a Miyoo Mini SD card folder", steamdeck: "a Steam Deck folder", ios: "an iPhone/iPad Xcode project" };
-const EXPORT_NEXT = { app: "Next: open the app", window: "Next: open the app", web: "Next: put it on a web server", miyoo: "Next: copy it to your Miyoo's SD card", steamdeck: "Next: copy it to your Steam Deck and add it to Steam", ios: "Next: build in Xcode for your iPhone or iPad" };
+/* Export options belong to the project. The server owns the batch and continues it across navigation. */
+const EXPORT_CHOICES = ["App", "Window", "Web", "WebSimd", "Ios", "Miyoo", "SteamDeck"];
+const EXPORT_LABELS = { app: "Standalone app (browser)", window: "Standalone app (Mac window via SDL3)",
+  web: "Website", ios: "iPhone / iPad", miyoo: "Miyoo Mini", steamdeck: "Steam Deck" };
+let exportState = null;
 
-/* What to do with the export, as numbered steps under the log (not in it: they're what the user acts on). */
-function showExportNext(result) {
-  const box = $("portExportNext");
-  if (!box) return;
-  const steps = (result && result.instructions) || [];
-  box.hidden = !steps.length;
-  if (!steps.length) { box.replaceChildren(); return; }
-  const head = document.createElement("b"); head.textContent = EXPORT_NEXT[result.kind] || "Next";
-  const list = document.createElement("ol");
-  for (const step of steps) { const li = document.createElement("li"); li.textContent = step; list.append(li); }
-  box.replaceChildren(head, list);
+function exportChoices() {
+  return EXPORT_CHOICES.map((suffix) => $(`portExport${suffix}`));
 }
 
-function closeExportMenu(focus = true) {
-  const menu = $("portExportMenu");
-  if (menu && menu.open) { menu.open = false; if (focus) menu.querySelector("summary").focus(); }
+function currentExport(state) {
+  return state === exportState && S.slug === state.slug;
 }
 
-async function exportGame(kind, existing = null, options = {}) {
-  if (exportJob) return;
-  closeExportMenu();
-  const slug = S.slug, log = $("portExportLog"), stop = $("portExportStop"), show = $("portExportShow");
-  exportJob = existing ? existing.id : "starting";
-  log.hidden = false; log._showJobProgress = true;
+function renderExportControls(state) {
+  const busy = !!state.job || !state.ready;
+  $("portExportWindowChoice").hidden = !state.mac;
+  for (const input of exportChoices()) {
+    input.checked = state.targets.includes(input.value);
+    input.disabled = busy || (input.value === "window" && !state.mac)
+      || (input.value === "simd" && !state.targets.includes("web"));
+  }
+  $("portExportStart").disabled = busy || state.saving || !exportChoices().some((input) => input.checked && !input.disabled);
+}
+
+async function loadPortExportOptions(slug) {
+  const log = $("portExportLog"), panel = $("portExportPanel");
+  if (exportState?.slug !== slug) {
+    exportState?.finish?.();
+    exportState = {slug, targets: [], ready: false, revision: 0, read: 0};
+    panel.hidden = true;
+    log.hidden = true;
+    log.textContent = "";
+    showJobError(log, "");
+    if (log._workStatus) log._workStatus.textContent = "";
+    $("portExportStatus").textContent = "";
+    $("portExportStop").hidden = true;
+    $("portExportNext").hidden = true;
+    $("portExportNext").replaceChildren();
+    renderExportControls(exportState);
+  }
+  const state = exportState, revision = state.revision, read = ++state.read;
+  try {
+    const options = await api("/api/port-export-options?slug=" + encodeURIComponent(slug));
+    if (!currentExport(state) || state.revision !== revision || state.read !== read || state.saving) return;
+    if (state.loadError) $("portExportStatus").textContent = "";
+    state.loadError = false;
+    state.targets = options.targets || [];
+    state.ready = true;
+    state.mac = options.mac;
+    panel.hidden = !options.available;
+    renderExportControls(state);
+    if (options.job && !state.job) exportGame(options.job);
+  } catch (error) {
+    if (!currentExport(state) || state.revision !== revision || state.read !== read) return;
+    state.loadError = true;
+    $("portExportStatus").textContent = `Could not load export options. Refresh to retry. ${error.message}`;
+    panel.hidden = false;
+  }
+}
+
+async function saveExportTargets() {
+  const state = exportState;
+  if (!state || !currentExport(state) || state.job || !state.ready) return;
+  let saved = state.targets;
+  const status = $("portExportStatus");
+  state.targets = exportChoices().filter((input) => input.checked).map((input) => input.value)
+    .filter((value, _, targets) => value !== "simd" || targets.includes("web"));
+  state.revision++;
+  if (state.saving) { renderExportControls(state); return; }
+  state.saving = true;
+  status.textContent = "Saving export selections…";
+  renderExportControls(state);
+  try {
+    // Keep changes in click order even if the user ticks another target before the first save returns.
+    while (saved !== state.targets) {
+      const pending = state.targets;
+      const {targets} = await api("/api/port-export-options", {
+        method: "POST", body: {slug: state.slug, targets: pending},
+      });
+      saved = targets;
+      if (state.targets === pending) state.targets = targets;
+    }
+    if (currentExport(state)) status.textContent = "Export selections saved.";
+  } catch (error) {
+    state.targets = saved;
+    if (currentExport(state)) status.textContent = `Could not save export selections. Try again. ${error.message}`;
+  } finally {
+    state.saving = false;
+    state.revision++;
+    if (currentExport(state)) renderExportControls(state);
+  }
+}
+
+function showExportResults(state, results) {
+  const box = $("portExportNext"), log = $("portExportLog");
+  for (const result of results) {
+    const label = EXPORT_LABELS[result.kind];
+    log.append(`\nExported ${label} to ${result.path}.`);
+    const entry = document.createElement("section");
+    const head = document.createElement("b"); head.textContent = label;
+    const show = document.createElement("button");
+    show.className = "ghost small-btn"; show.type = "button"; show.textContent = "Show folder";
+    show.setAttribute("aria-label", `Show folder for ${label}`);
+    show.onclick = () => showExport(state, result.kind, show);
+    const actions = document.createElement("div"); actions.className = "row port-actions";
+    actions.append(head, show);
+    entry.append(actions);
+    if (result.instructions?.length) {
+      const list = document.createElement("ol");
+      for (const step of result.instructions) {
+        const li = document.createElement("li"); li.textContent = step; list.append(li);
+      }
+      entry.append(list);
+    }
+    box.append(entry);
+  }
+  box.hidden = !results.length;
+}
+
+async function exportGame(existing = null) {
+  const state = exportState, start = $("portExportStart");
+  if (!state || !currentExport(state) || state.job || (!existing && start.disabled)) return;
+  const log = $("portExportLog"), stop = $("portExportStop"), next = $("portExportNext");
+  const targets = exportChoices().filter((input) => input.checked && !input.disabled).map((input) => input.value);
+  const active = () => currentExport(state);
+  state.revision++;
+  state.job = existing?.id || "starting";
+  renderExportControls(state);
+  log.hidden = false; log.textContent = ""; log._showJobProgress = true;
   showJobError(log, "");
-  $("portExportActions").hidden = false; show.hidden = true; stop.hidden = false; stop.disabled = false;
-  showExportNext(null);
-  stop.textContent = "Stop the export";
-  const finish = beginWork(log, `Exporting ${EXPORTS[kind] || "the game"}`, [$("portExportApp"), $("portExportWindow"), $("portExportWeb"), $("portExportWebSimd"), $("portExportMiyoo"), $("portExportSteamDeck"), $("portExportIos")],
-    "Exported.");
+  next.replaceChildren(); next.hidden = true;
+  stop.hidden = false; stop.disabled = !existing; stop.textContent = "Stop the export";
+  state.finish = beginWork(log, "Exporting selected targets", [], "Exported selected targets.");
   if (existing?.progress) updateWorkProgress(log, existing.progress);
   try {
-    let result = existing ? { job: existing.id } : await api("/api/play-export", { method: "POST", body: { slug, kind, ...options } });
-    if (result.job) { exportJob = result.job; result = await followJob(result.job, log, null, () => S.slug === slug); }
-    if (result && result.path) {
-      show.dataset.kind = result.kind;
-      show.hidden = false;
-      log.append(`\nExported ${EXPORTS[result.kind]} to ${result.path}.`);
-      showExportNext(result);
+    if (!existing) {
+      const result = await api("/api/play-export", {method: "POST", body: {slug: state.slug, targets}});
+      if (!active()) return;
+      state.job = result.job;
+      stop.disabled = false;
     }
+    const result = await followJob(state.job, log, null, active);
+    if (!active() || !result) return;
+    showExportResults(state, result.exports || (result.path ? [result] : []));
+    if (result.failures?.length) showJobError(log, result.failures.join("\n"));
   } catch (error) {
-    showJobError(log, error.message);
+    if (active()) showJobError(log, error.message);
   } finally {
-    exportJob = null; finish();
-    stop.hidden = true;
+    state.job = null;
+    state.revision++;
+    if (state === exportState) {
+      state.finish();
+      state.finish = null;
+      stop.hidden = true;
+      renderExportControls(state);
+    }
   }
 }
 
 async function stopExport() {
-  const stop = $("portExportStop");
-  if (!exportJob || exportJob === "starting") return;
-  stop.disabled = true; stop.textContent = "Stopping the export…";
-  try { await api("/api/job/cancel", { method: "POST", body: { id: exportJob } }); }
-  catch (error) { showJobError($("portExportLog"), error.message); stop.disabled = false; stop.textContent = "Stop the export"; }
+  const state = exportState, stop = $("portExportStop");
+  if (!state?.job || stop.disabled || !currentExport(state)) return;
+  stop.disabled = true;
+  stop.textContent = "Stopping the export…";
+  try { await api("/api/job/cancel", {method: "POST", body: {id: state.job}}); }
+  catch (error) {
+    if (!currentExport(state) || !state.job) return;
+    showJobError($("portExportLog"), error.message);
+    stop.disabled = false; stop.textContent = "Stop the export";
+  }
 }
 
-async function showExport() {
-  const show = $("portExportShow");
-  show.disabled = true;
+async function showExport(state, kind, button) {
+  if (!currentExport(state)) return;
+  button.disabled = true;
   try {
-    const result = await api("/api/play-export", { method: "POST", body: { slug: S.slug, kind: show.dataset.kind, show: true } });
-    if (result && result.ok === false && result.message) showJobError($("portExportLog"), result.message);
-  } catch (error) { showJobError($("portExportLog"), error.message); }
-  finally { show.disabled = false; }
+    const result = await api("/api/play-export", {method: "POST", body: {slug: state.slug, kind, show: true}});
+    if (currentExport(state) && result?.ok === false) showJobError($("portExportLog"), result.message);
+  } catch (error) {
+    if (currentExport(state)) showJobError($("portExportLog"), error.message);
+  } finally { button.disabled = false; }
 }
 
-/* The report says whether this project's game is building or running, or being exported: work started elsewhere
-   (another window, before navigating away) is followed, not started again. */
+/* Reattach to the project's running Play or behaviour job from the readiness report. */
 function attachPlay(play) {
   if (!play) return;
-  if (play.export_job && !exportJob) exportGame(null, play.export_job);
   if (play.behaviour_job && !behaviourJob) checkBehaviour(play.behaviour_job);
   if (playJob) return;
   if (play.job) { playGame(play.job); return; }
@@ -531,20 +643,9 @@ function attachPlay(play) {
 if ($("portPanel")) {
   $("portPlay").onclick = () => playGame();
   $("portStop").onclick = stopGame;
-  $("portExportApp").onclick = () => exportGame("app");
-  if ($("portExportWindow")) $("portExportWindow").onclick = () => exportGame("window");
-  $("portExportWeb").onclick = () => exportGame("web");
-  $("portExportWebSimd").onclick = () => exportGame("web", null, { simd: true });
-  if ($("portExportIos")) $("portExportIos").onclick = () => exportGame("ios");
-  if ($("portExportMiyoo")) $("portExportMiyoo").onclick = () => exportGame("miyoo");
-  if ($("portExportSteamDeck")) $("portExportSteamDeck").onclick = () => exportGame("steamdeck");
+  for (const input of exportChoices()) input.onchange = saveExportTargets;
+  $("portExportStart").onclick = () => exportGame();
   $("portExportStop").onclick = stopExport;
-  $("portExportShow").onclick = showExport;
-  $("portExportMenu").addEventListener("keydown", (e) => { if (e.key === "Escape") closeExportMenu(); });
-  document.addEventListener("click", (e) => {
-    const menu = $("portExportMenu");
-    if (menu && menu.open && !menu.contains(e.target)) closeExportMenu(false);
-  });
   $("portRenameCalls").onclick = fixRenamedCalls;
   $("portFixCalls").onclick = fixDisagreeingCalls;
   $("portExtract").onclick = extractAssets;
