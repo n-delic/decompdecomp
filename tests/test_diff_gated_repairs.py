@@ -1162,3 +1162,13 @@ def test_global_pointer_stores_route_to_kmc(monkeypatch):
     monkeypatch.setattr(diff_gated_repairs.measured_kmc_global_stores, 'variants', repair)
     assert 'global_stores_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, '', resolve=resolve))
     assert 'global_stores_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, '', resolve=resolve))
+
+
+def test_variable_byte_cursor_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_kmc_variable_byte_cursor, 'variants',
+                        lambda text, name, header, diff: [('variable_cursor_fixture', text)])
+    assert 'variable_cursor_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'variable_cursor_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))

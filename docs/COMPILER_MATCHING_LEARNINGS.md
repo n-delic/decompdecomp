@@ -12730,3 +12730,13 @@ word globals recovered the target's loads and register order. With
 score went from 250 to an exact match. A non-volatile pointer retained score
 250. Tests cover the instruction sequence, matching and distinct aligned
 addresses, and conflicting declarations. This is one observed match.
+
+### KMC GCC 2.7.2: advance a variable-length byte input parameter
+
+An isolated draft decoded one or two bytes into a halfword and returned the
+advanced input pointer. Using an unsigned-byte input parameter and advancing
+it at each read recovered the target's cursor register and delay slots.
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the linked score
+improved from 220 to an exact match. Moving the increments without using
+post-increment reads only improved the score to 70. This is one observed
+match; synthetic tests cover the target instructions and source shape.
