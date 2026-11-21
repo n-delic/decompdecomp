@@ -11204,3 +11204,34 @@ the linked score from 200 to 60. Moving the advance to the beginning
 of the loop reproduced the target's ordering around the sentinel
 guard and call, bringing the score to 0. The deep permuter recognized
 and saved the combined repair from score 200.
+
+### Index guarded counter loops by the counter, and share one counter
+
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, an N64 function with three
+loops over 0x18-byte records (one with calls, one without, one with three
+calls), from m2c's guarded `i = 0; if (n > 0) { off = 0; do { ... off + base
+...; i += 1; off += 0x18; } while (i < n); }` loops. One function, judged by
+the app; evidence level: exact match.
+
+- The target's offset zero (`move $s2,$zero`) comes after the hoisted loop
+  invariants (`addiu $s3,$sp,0x20; lui/mtc1 50.0f`): it is a giv made by
+  loop.c's strength reduction, so the source indexed `base + i * 0x18`. An
+  offset variable puts its zero before them. Indexing loops 1 and 2: 180 to
+  60; all three (the early `i += 1` of loop 3 moved last): 60.
+- Register order (`$s1` counter, `$s2` offsets in every loop) is global.c's
+  priority `floor_log2(uses) * uses / live_length`. One counter shared by
+  the three loops had 21 weighted uses over 102 insns (0.82); the givs 0.93,
+  so they took `$s1`. A guard written on the counter (`if (i < n)`, what a
+  `for` expands to) adds a use per loop: 24 uses, 0.94, counter first.
+  Guards alone: 193; shared counter alone (with m2c's reuse of the counter
+  name for a call result split off): 115 to 135; the three together: 20.
+- The last 20 was frame size only (0xb8 for 0xa0): the guards' compare
+  pseudos left dead ST_REGS pseudos that took stack. Shrinking m2c's frame
+  union (`bytes[68]` to 44) or declaring the three vectors as separate
+  locals was exact (0). `measured_trim_frame_view` already does the former.
+- Failed: 120 declaration orders of the five counters/offsets (all 180);
+  every partition of shared counters/offsets without indexing (best 180);
+  `i = 0` moved inside the guard (385).
+- Permuter: `guarded_offset_index` (decomp-repair 0.5.238): indexed,
+  counter-guarded, and shared-counter children; the shared one is 180 to
+  20 on the saved best, then the frame trim finishes it.

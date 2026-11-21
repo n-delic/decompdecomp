@@ -696,6 +696,60 @@ def test_masked_byte_stride_runs_in_the_bounded_local_lane(monkeypatch):
     assert tried == [child]
 
 
+def test_guarded_offset_index_runs_in_the_bounded_local_lane(monkeypatch):
+    from decomprepair import guarded_offset_index
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    proj = net.project_row('game')
+    fn = {**net.function(), 'asm': ''}
+    child = fn['best_source'] + '\n/* shared indexed counter */'
+    monkeypatch.setattr(guarded_offset_index, 'variants',
+                        lambda *args: [('guarded_offset_index_shared_counter', child)])
+    search = deep_permuter.Search(net, 1, 6, Log())
+    tried = []
+    monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 20)
+
+    assert search.operand_order_pass(AGENT, proj, fn, 180, None) == 20
+    assert tried == [child]
+
+
+def test_guarded_offset_index_reaches_the_shared_counter_on_an_m2c_draft():
+    """A 3-loop GCC 2.7.2 function's saved best (m2c's guarded do-whiles with byte offsets): the family's last
+    child is the one that judged 180 -> 20 there, before the frame trim finished it."""
+    from decomprepair import guarded_offset_index
+
+    draft = """void f(void *a) {
+    s32 var_s1;
+    s32 var_s1_2;
+    s32 var_s2;
+    s32 var_v1;
+    var_s1 = 0;
+    if ((*(s16 *)((char *)(a) + 0xC)) > 0) {
+        var_s2 = 0;
+        do {
+            g(var_s2 + (*(s32 *)((char *)(a) + 0)));
+            var_s1 += 1;
+            var_s2 += 0x18;
+        } while (var_s1 < (*(s16 *)((char *)(a) + 0xC)));
+    }
+    var_s1_2 = 0;
+    if ((*(s16 *)((char *)(a) + 0xC)) > 0) {
+        var_v1 = 0;
+        do {
+            h(var_v1 + (*(s32 *)((char *)(a) + 0)));
+            var_s1_2 += 1;
+            var_v1 += 0x18;
+        } while (var_s1_2 < (*(s16 *)((char *)(a) + 0xC)));
+    }
+}
+"""
+    families = dict(guarded_offset_index.variants(draft, 'f', 'mips', ''))
+    shared = families['guarded_offset_index_shared_counter']
+    assert shared.count('if (i < (*(s16 *)((char *)(a) + 0xC))) {') == 2
+    assert 'g((i * 0x18) + (*(s32 *)((char *)(a) + 0)));' in shared
+
+
 def test_component_before_resets_uses_relocated_target_names(monkeypatch):
     from decomprepair import load_store_order_repairs
     from tests.test_permute import AGENT
