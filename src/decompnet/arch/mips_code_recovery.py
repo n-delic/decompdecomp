@@ -12,7 +12,8 @@ def _closed(info, table_ranges):
         t['state'] == 'validated' for t in info['jump_tables'])
 
 
-def called_extent(image, start, end, vram, *, big_endian=True, cpu='', asm_check=None, table_ranges=()):
+def called_extent(image, start, end, vram, *, big_endian=True, cpu='', asm_check=None, table_ranges=(),
+                  allow_loop_epilogue=False):
     """Reject incomplete, unbalanced and multi-frame bodies; this never grants a match.
 
     A call into raw disassembler output can locate code, but a frame pattern alone is
@@ -35,8 +36,13 @@ def called_extent(image, start, end, vram, *, big_endian=True, cpu='', asm_check
         return None
     info=extent(image,entry,end,vram,order,cpu,table_ranges=table_ranges,max_steps=MAX_BYTES//4)
     size=info['extent_bytes']-lead
-    if not _closed(info,table_ranges) or info['step_limit'] or size<16:
+    if info['step_limit'] or size<16:
         return None
+    if not _closed(info,table_ranges):
+        if (not allow_loop_epilogue or not info['flow_bounded'] or info['return_sites']
+                or not (extra := _loop_epilogue(word, start, start+size, end, amount))):
+            return None
+        size += extra
     body=image[entry:start+size]
     if (asm_check(body) if asm_check else asm_reason(body,big_endian,cpu=cpu)):
         return None
@@ -87,6 +93,31 @@ def called_extent(image, start, end, vram, *, big_endian=True, cpu='', asm_check
     if destinations & {*range(entry,start+4,4)} or (pops|protected_returns) & destinations:
         return None  # no loop can allocate the entry frame again or enter a return delay slot
     return size+lead if returns else None
+
+
+def _loop_epilogue(word, frame, finish, limit, amount):
+    """Match the compiler's unused cleanup after a closed worker loop."""
+    registers = {*range(16,24), 30, 31}
+    saved = set()
+    for at in range(frame+4, min(frame+64,finish), 4):
+        value = word(at)
+        reg, slot = (value>>16)&31, value&0xffff
+        if value>>21 == 0x57d and reg in registers and slot < amount and not slot%4:
+            saved.add((reg,slot))
+    if not any(reg == 31 for reg,_ in saved) or len(saved)<2:
+        return None
+    restored = set()
+    for at in range(finish, min(finish+64,limit-4), 4):
+        value = word(at)
+        if value == JR_RA and restored == saved and word(at+4) == (0x27bd0000|amount):
+            return at+8-finish
+        if value>>21 != 0x47d:
+            return None
+        pair = ((value>>16)&31, value&0xffff)
+        if pair not in saved or pair in restored:
+            return None
+        restored.add(pair)
+    return None
 
 
 LEAD = 5  # instructions the compiler may schedule ahead of the frame

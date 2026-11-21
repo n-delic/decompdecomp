@@ -201,7 +201,11 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
                     continue
             else:
                 filler,target=None,None
-                size=size or called_extent(image,at,hi,at+mapping,**framed,table_ranges=tables)
+                independently_entered = (at+mapping in named_or_pointed or
+                                         any(source < at or source >= hi
+                                             for source,_ in references.get(at+mapping, ())))
+                size=size or called_extent(image,at,hi,at+mapping,**framed,table_ranges=tables,
+                                           allow_loop_epilogue=independently_entered)
                 if not size and at+mapping in direct_calls and at in cuts:
                     size=assembly_extent(image,at,hi,at+mapping,console,order)
                     if size and at+size not in cuts:
