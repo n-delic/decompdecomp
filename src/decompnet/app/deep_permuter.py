@@ -1684,6 +1684,14 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
     source = _candidate_source(fn, fn['best_score'])
     for hint in hints(source, name, fn['asm'], proj['arch'], repair_ranking.evidence(net, fn['id'], agent.id)):
         log('Source check (advisory): '+hint)
+    if lane is None or lane.index == 0:
+        try:  # the saved best's register swaps, explained by the compiler's own allocation priorities
+            from .allocation_priority import hints as allocation_hints
+            best_diff = net.function_diff(slug, name, 'best')
+            for hint in allocation_hints(net, proj, fn, net._context(proj['id'], fn['unit'])['header'], source, best_diff.get('rows')):
+                log('Allocation check (advisory): '+hint)
+        except Exception:  # (advice only: a search never fails for want of it)
+            pass
     try:
         # Explicitly configured local source carries real records/macros and original line breaks.
         # Try it before mutating an accumulated machine draft; never fetch a reference automatically.

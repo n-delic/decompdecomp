@@ -562,6 +562,7 @@ class GuiMixin:
                     d = scoring.DiffResult(0 if verdict else max(1, d.score), d.max_score, d.rows, verdict)
                 from ...diff_summary import text as summary_text
                 from ...source_lines import mismatches as source_mismatches
+                from ..allocation_priority import hints as allocation_hints
                 from ..callee_frame_evidence import messages as callee_writes
                 from ..source_diagnostics import hints as source_hints
                 from ..stack_layout import text as stack_text
@@ -570,7 +571,8 @@ class GuiMixin:
                                                        filename="func.cpp" if result.language == "c++" else "func.c"),
                        "stack_diagnostic": stack_text(proj['arch'],d.rows),
                        "mismatch_summary": summary_text(d.rows),
-                       "source_diagnostics": callee_writes(self, proj, fn, d.rows) + source_hints(source, fn["name"], fn["asm"], proj["arch"], d.rows),
+                       "source_diagnostics": callee_writes(self, proj, fn, d.rows) + source_hints(source, fn["name"], fn["asm"], proj["arch"], d.rows)
+                                       + allocation_hints(self, proj, fn, ctx["header"], source, d.rows),
                        "percent": 100.0 if d.bytes_match else min(99.9, int(d.percent * 10) / 10),
                        "problems": problems, "source": source,
                        "checks": self._candidate_checks(fn, proj, result.obj),
