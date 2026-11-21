@@ -220,7 +220,7 @@ function agentMetrics(s, stats) {
   const ago = seconds == null ? "None yet" : seconds < 60 ? `${Math.floor(seconds)}s` : seconds < 3600 ? `${Math.floor(seconds / 60)}m` : `${Math.floor(seconds / 3600)}h ${Math.floor(seconds % 3600 / 60)}m`;
   return `<div class="agent-results-summary">${s.task === 'readable' ? `<span><strong>${stats?.polished || 0}</strong> polished</span>` : metric('matched',stats?.matched || 0)}${metric('improved',stats?.improved || 0)}${metric('worked',stats?.worked || 0)}</div>
     ${s.task === "boundary" ? `<p class="small"><b>Boundary investigation:</b> ${esc(s.boundary_function || "selected function")} · advice only · no compilation or layout edits</p>` : ""}
-    ${s.focus_function ? `<p class="small"><b>Focused:</b> ${esc(s.focus_function)}${s.focus_max_tries ? ` · ${esc(s.focus_tries_used || 0)} of ${esc(s.focus_max_tries)} tries used` : ""}${s.focus_until ? ` · deadline ${esc(new Date(s.focus_until*1000).toLocaleTimeString())}` : ""}</p>` : ""}
+    ${s.focus_function ? `<p class="small"><b>Focused:</b> ${esc(s.focus_function)}${s.focus_converted ? " · switched automatically: a stuck near-match; returns to normal rotation afterwards" : ""}${s.focus_max_tries ? ` · ${esc(s.focus_tries_used || 0)} of ${esc(s.focus_max_tries)} tries used` : ""}${s.focus_until ? ` · deadline ${esc(new Date(s.focus_until*1000).toLocaleTimeString())}` : ""}</p>` : ""}
     <div class="agent-timing"><span>${runtime} <span class="muted">since latest start</span></span><span><span class="muted">${polishing ? 'Last polish' : 'Last improvement'}</span> ${ago === 'None yet' ? ago : ago + ' ago'}</span></div>`;
 }
 function agentEfficiency(s) {
@@ -381,7 +381,7 @@ function renderSessions(sessions, refreshCosts = true) {
       ${rate == null ? '' : `<span class="small muted">${compactAgentNumber(rate)} reported tokens / match${s.estimated_cost != null && b?.matched ? ` · ≈ ${money(s.estimated_cost / b.matched)} / match` : ''}</span>`}
       ${agentEfficiency(s)}
       ${s.metrics_since ? `<span class="small muted">Metrics since reset · ${new Date(s.metrics_since * 1000).toLocaleString()}</span>` : ''}
-      ${s.focus_id ? "" : `<span class="small muted">Work settings · ${s.per_session || 8} ${s.task==='assets'?'regions':s.task==='data'?'data units':'functions'}/session${["readable","assets","boundary","data","port"].includes(s.task) ? "" : ` · ${esc(QUEUE_STRATEGIES.find(([v]) => v === (s.selection?.strategy || ""))?.[1] || "Automatic")}${s.automatic_assignment ? " · automatic assignment" : ""}${s.selection?.model_untried ? " · never checked by this model" : ""}${s.selection?.match_below != null ? ` · below ${esc(s.selection.match_below)}%` : ""}${s.selection?.stall_compiles ? ` · move on after ${esc(s.selection.stall_compiles)} without improvement` : ""}${s.selection?.max_tries ? ` · max ${esc(s.selection.max_tries)} tries` : ""}`}</span>`}
+      ${s.focus_id ? "" : `<span class="small muted">Work settings · ${s.per_session || 8} ${s.task==='assets'?'regions':s.task==='data'?'data units':'functions'}/session${["readable","assets","boundary","data","port"].includes(s.task) ? "" : ` · ${esc(QUEUE_STRATEGIES.find(([v]) => v === (s.selection?.strategy || ""))?.[1] || "Automatic")}${s.automatic_assignment ? " · automatic assignment" : ""}${s.focus_near_matches ? " · focuses on stuck near-matches" : ""}${s.selection?.model_untried ? " · never checked by this model" : ""}${s.selection?.match_below != null ? ` · below ${esc(s.selection.match_below)}%` : ""}${s.selection?.stall_compiles ? ` · move on after ${esc(s.selection.stall_compiles)} without improvement` : ""}${s.selection?.max_tries ? ` · max ${esc(s.selection.max_tries)} tries` : ""}`}</span>`}
       ${s.last_message ? `<div class="agent-message"><b class="small">Latest agent reply${["starting", "working", "waiting"].includes(s.state) ? " · helper continues" : ""}</b><q class="said">${esc(s.last_message)}</q></div>` : ''}
       </div></details></div>`;
   }).join("");
@@ -502,7 +502,7 @@ $("removePaused").onclick = async () => {
 
 /* ------------------------------------------------------------------ the launcher: agent, model, how many */
 const LZ = { kind: null, model: "", customModel: false, apiSingleModel: null, apiCustomModel: "", models: [],
-  multiple: false, endpointModels: {}, byKind: {}, count: 1, per: null, effort: "", task: "", selection: {}, automaticAssignment: false };
+  multiple: false, endpointModels: {}, byKind: {}, count: 1, per: null, effort: "", task: "", selection: {}, automaticAssignment: false, focusNearMatches: false };
 const QUEUE_STRATEGIES = [
   ["", "Automatic (recommended)", "Uses default/adaptive routing: easiest for ROM projects, finish source files for imported projects."],
   ["easiest", "Easiest first", "Favours reusable matches and smaller functions; deprioritises abandoned functions and poorly performing regions."],
@@ -708,6 +708,7 @@ async function startAgents(a, model, count, btn, extra = {}, models = []) {
       options.asset_run=run;options.asset_scope=scope;
     }
     if (!LZ.task && LZ.automaticAssignment) options.automatic_assignment = true;
+    if (!LZ.task && LZ.focusNearMatches) options.focus_near_matches = true;
     if (!LZ.task) options.selection = btn?.closest(".lz-body")?.querySelector("[data-selection-strategy]")
       ? readSelection(btn.closest(".lz-body")) : LZ.selection;
     if (replacement && replacement.slug !== slug) throw new Error("Reopen Change model in the agent's project.");
@@ -734,6 +735,8 @@ async function startAgents(a, model, count, btn, extra = {}, models = []) {
     toast(replacement ? "Agent replaced. The original history and saved work are kept." : `${esc(a.uses_endpoints ? "Your API model" : a.name)}: ${total} ${total === 1 ? "agent is" : "agents are"} starting. ${LZ.task === "readable" ? "Matched functions get real names, types and a comment, one by one" : LZ.task==="assets" ? "Review discoveries in ROM Explorer" : LZ.task==="data" ? "Port readiness counts the data in C" : LZ.task==="port" ? "Port readiness counts what still doesn't build for a PC" : "Watch the map fill in"}; Agents says what each one does.`, "match");
     if(LZ.task==='assets'&&S.slug===slug&&S.tab==='rom')loadAssetAgents();
     LZ.automaticAssignment = false;
+  LZ.focusNearMatches = false;
+    LZ.focusNearMatches = false;
     poll(false);
     loadNav();
   } catch (e) {
@@ -838,6 +841,7 @@ function renderLauncher(box, compact = true) {
   box.innerHTML = `${LZ.replacement ? `<p>Replace <b>${esc(LZ.replacement.label)}</b> with the chosen model. Its task, account and work settings are kept. The original stops after the replacement is created; its history stays in Agents.</p>` : `${tasks}<div class="lz-kinds">${kinds}</div>`}
     <div class="lz-body">${body}
       ${ready && !LZ.task && !LZ.replacement ? `<label class="check"><input data-automatic-assignment type="checkbox" ${LZ.automaticAssignment ? "checked" : ""}><span>Automatically assign the next function after a match or release</span></label>` : ""}
+      ${ready && !LZ.task && !LZ.replacement ? `<label class="check"><input data-focus-near-matches type="checkbox" ${LZ.focusNearMatches ? "checked" : ""}><span>Stay on stuck near-matches <span class="muted small">— on a function with 50+ attempts and a score of 50 or less, this agent switches to a focused run (up to 300 tries or an hour), then returns to normal work</span></span></label>` : ""}
       ${ready && !LZ.task && !LZ.replacement ? `<details data-launch-selection><summary>Work selection (for these agents)</summary>${selectionFields(LZ.selection)}</details>` : ""}
       ${ready ? `<div class="lz-row">
         ${LZ.replacement ? "" : `<div class="field"><span>How many</span><span class="stepper"><button type="button" data-step="-1">−</button><output>${LZ.count}</output><button type="button" data-step="1">+</button></span></div>
@@ -849,6 +853,8 @@ function renderLauncher(box, compact = true) {
     </div>`;
   const assignment = box.querySelector("[data-automatic-assignment]");
   if (assignment) assignment.onchange = () => { LZ.automaticAssignment = assignment.checked; };
+  const nearMatches = box.querySelector("[data-focus-near-matches]");
+  if (nearMatches) nearMatches.onchange = () => { LZ.focusNearMatches = nearMatches.checked; };
   const selectionBox = box.querySelector("[data-launch-selection]");
   if (selectionBox) selectionBox.onchange = () => {
     updateSelectionDescription(selectionBox);

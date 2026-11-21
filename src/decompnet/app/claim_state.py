@@ -118,3 +118,11 @@ def ownership_hint(net, agent, project_id):
     names=', '.join(r['name'] for r in rows) or '(another project)'
     return ('you hold another claim: '+names+'. Use get_claims to recover live function names and claim tokens, '
             'then get_candidate for the intended function; release it before working on a different function')
+
+
+def claimed_name(net, agent, slug, named=None):
+    """The function `agent` claimed most recently in `slug` (what claim_function just gave it), or ''."""
+    row = net.project_store(slug).one(
+        'SELECT f.name FROM claims c JOIN functions f ON f.id=c.function_id WHERE c.agent_id=? '
+        'ORDER BY c.claimed_at DESC LIMIT 1', agent.id)
+    return row['name'] if row else ''

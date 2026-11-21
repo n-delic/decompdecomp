@@ -13,6 +13,74 @@ BLOCKED_TOOLS = frozenset({'claim_function', 'release_function', 'release_and_co
 CANDIDATE_TOOLS = frozenset({'compile_and_diff', 'compile_patch', 'compile_variants', 'compile_family',
                              'try_local_repairs'})
 TARGET_TOOLS = CANDIDATE_TOOLS | {'try_compiler', 'compiler_experiments', 'search_flags', 'suggest', 'redraft'}
+# A helper started with "focus on stuck near-matches" (the `focus_near_matches` option, off by default) turns into a
+# focused run when it claims a function this stuck: at least STUCK_ATTEMPTS attempts and a best score above 0 and at
+# most STUCK_SCORE. Functions a person matched in under 22 compiles had sat with helpers for 300-440 attempts at
+# scores 10-15, passed round by normal rotation; a focused run stays on one function with a large try budget.
+# When the focused run ends (match, tries or time) the helper goes back to normal rotation.
+STUCK_ATTEMPTS = 50
+STUCK_SCORE = 50
+CONVERTED_MINUTES = 60
+CONVERTED_TRIES = DEFAULT_TRIES
+
+
+def stuck(fn) -> bool:
+    best = fn['best_score']
+    return (fn['status'] == 'open' and (fn['attempts'] or 0) >= STUCK_ATTEMPTS
+            and best is not None and 0 < best <= STUCK_SCORE)
+
+
+def bind_conversion(manager, s, agent):
+    """Remember an opted-in matching helper's session, so its claims can convert it (convert)."""
+    sessions = manager.net.__dict__.setdefault('_focus_conversion', {})
+    if s.options.get('focus_near_matches') is True and not s.options.get('task'):
+        sessions[agent.id] = (manager, s)
+    else:
+        sessions.pop(agent.id, None)
+
+
+def convert(net, agent, slug, function_name):
+    """After a claim: an opted-in helper that now holds a stuck near-match becomes a focused run on it. Returns the
+    note for the claim's answer, or ''."""
+    entry = getattr(net, '_focus_conversion', {}).get(getattr(agent, 'id', None))
+    if entry is None or not function_name or scope(net, agent):
+        return ''
+    manager, s = entry
+    if s.slug != slug or s.options.get('focus_id'):
+        return ''
+    fn = net._function(function_name, slug)
+    if not stuck(fn):
+        return ''
+    now = time.time()
+    s.options.update({'focus_id': fn['id'], 'focus_function': fn['name'], 'focus_minutes': CONVERTED_MINUTES,
+                      'focus_max_tries': CONVERTED_TRIES, 'focus_since': now,
+                      'focus_until': now + CONVERTED_MINUTES * 60, 'focus_tries_used': 0,
+                      'focus_converted': {'selection': s.options.get('selection') or {},
+                                          'per_session': s.options.get('per_session')}})
+    s.options['selection'] = {**(s.options.get('selection') or {}), 'unchanged_compiles': 0, 'stall_compiles': 1000}
+    net.set_selection(slug, agent.name, s.options['selection'])
+    bind(net, s, agent)
+    why = (f"Focused on {fn['name']}: a stuck near-match ({fn['attempts']} attempts, best score {fn['best_score']}). "
+           f"Up to {CONVERTED_TRIES} tries or {CONVERTED_MINUTES} minutes, then back to normal rotation.")
+    s.push('info', why)
+    manager._save(s)
+    return ('\n\n🎯 ' + why + ' Stay on this function; read guide("near-match") and keep a numbered edit list. '
+            'Do not release it to move on.')
+
+
+def revert(manager, s, why):
+    """A converted focused run ended: the helper returns to normal rotation with its own settings."""
+    saved = s.options.pop('focus_converted', None) or {}
+    for key in ('focus_id', 'focus_function', 'focus_minutes', 'focus_max_tries', 'focus_since', 'focus_until',
+                'focus_tries_used'):
+        s.options.pop(key, None)
+    s.options['selection'] = saved.get('selection') or {}
+    agent = manager.net.store.one('SELECT id, name FROM agents WHERE name=?', s.agent_name)
+    if agent is not None:
+        manager.net.set_selection(s.slug, agent['name'], s.options['selection'])
+        getattr(manager.net, '_agent_focus', {}).pop(agent['id'], None)
+    s.push('info', f'{why} Back to normal rotation.')
+    manager._save(s)
 
 
 def configure(net,slug,options,count):
@@ -118,7 +186,7 @@ def completion(manager,s,now=None):
 
 
 def run(manager,s):
-    if not s.options.get('focus_id'):return manager._run_work(s)
+    if not s.options.get('focus_id') or s.options.get('focus_converted'):return manager._run_work(s)
     finished=threading.Event()
     def stop_if_finished():
         why=completion(manager,s)
@@ -143,6 +211,9 @@ def run(manager,s):
 def ready(manager,s,agent):
     """Wait for an existing owner without spending a model call or stealing its claim."""
     if not s.options.get('focus_id'):return True
+    if s.options.get('focus_converted') and (why := completion(manager, s)):
+        revert(manager, s, why)
+        return True
     if completion(manager, s):
         s.stop.wait(.5)  # The watcher records the reason and releases the claim.
         return False
