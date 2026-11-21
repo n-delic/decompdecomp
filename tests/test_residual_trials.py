@@ -47,3 +47,18 @@ def test_frame_followups_keep_a_measured_regression_with_smaller_frame():
     source = 'extern int buf; void f(int x) { format((char *)&buf, x); notify(x, x, &buf, 0); }'
     assert residual_trials.followups(source,'f','',rows(0x78),rows(0x70))
     assert not residual_trials.followups(source,'f','',rows(0x78),rows(0x78))
+
+
+def test_shared_float_return_prioritizes_the_rewrite_and_explains_the_hint():
+    source = ('int f(int mode, float a, float b) {\n int flag;\n'
+              ' if (mode) { flag = a < b; goto compare; }\n'
+              ' flag = b < a;\n compare: return flag ? 1 : 0;\n }')
+    target = ['bne $a1, $v0, 0x30', 'move $v0, $zero', 'c.lt.s $f0, $f2',
+              'bc1t 0x30', 'addiu $v0, $zero, 1']
+    rows = [('|',target[0],target[0].replace('bne','bnel'))] + [(' ',t,t) for t in target[1:]]
+    [(family, candidate)] = residual_trials.proposals(source,'f','',rows)
+    assert family == 'shared_fp_return' and candidate.count('goto __repair_fp_yes') == 2
+    assert 'later shared floating-point return' in residual_trials.shared_fp_return_hint(source,'f','',rows,'mips')
+    assert not residual_trials.shared_fp_return_hint(source,'f','',rows,'ppc')
+    rows[1] = ('|',target[1],'nop')
+    assert not residual_trials.shared_fp_return_hint(source,'f','',rows,'mips')
