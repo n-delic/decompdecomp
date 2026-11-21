@@ -417,3 +417,60 @@ def test_pull_keeps_matches_and_lower_scores_in_diverged_progress(progress, tmp_
     proof = json.loads((root/saves.VERIFICATION_FILE).read_text())
     assert proof['matches']['f']['source_sha256'] == 'remote-source'
     assert proof['sources']['remote-source'] == 'source snapshot'
+
+
+def test_pull_checkpoints_autosaved_match_and_keeps_it_over_upstream_draft(progress, tmp_path):
+    import json
+
+    from decompnet.app import repository_pull, saves
+
+    net, root, remote = progress
+    base = commit(root, 'retired.txt', 'Old tracked file')
+    git(root, 'push', 'origin', 'HEAD')
+    other = incoming(remote, tmp_path)
+    (root/'retired.txt').unlink()
+    (other/'retired.txt').unlink()
+    data = json.loads((other/saves.MANIFEST).read_text())
+    data['functions']['f']['best_score'] = 1
+    (other/saves.MANIFEST).write_text(json.dumps(data) + '\n')
+    (other/'best/f.c').write_text('void f(void) { /* improved draft */ }\n')
+    git(other, 'add', '-A')
+    git(other, 'commit', '-qm', 'Improve upstream draft')
+    git(other, 'push', 'origin', 'HEAD')
+    upstream = git(other, 'rev-parse', 'HEAD')
+
+    (root/'private-notes.txt').write_text('Keep local\n')
+    review = repository_pull.run(net, 'game', str(root), print)['pull_review']
+    assert review['merge']
+    assert git(root, 'rev-parse', 'HEAD') == base
+    result = repository_pull.run(net, 'game', str(root), print, review=review['token'])
+
+    assert 'best saved progress for 1 function.' in result['message']
+    assert git(root, 'rev-parse', 'HEAD^1^') == base
+    assert git(root, 'rev-parse', 'HEAD^2') == upstream
+    assert git(remote, 'rev-parse', 'HEAD') == upstream
+    assert 'matched_by' in json.loads((root/saves.MANIFEST).read_text())['functions']['f']
+    assert (root/'src/f.c').read_text() == 'void f(void) { return; }\n'
+    assert not (root/'best/f.c').exists()
+    assert not (root/'retired.txt').exists()
+    assert git(root, 'status', '--porcelain') == '?? private-notes.txt'
+
+
+def test_pull_keeps_unrelated_tracked_edits_out_of_the_checkpoint(progress, tmp_path):
+    from decompnet.app import repository_pull
+
+    net, root, remote = progress
+    base = commit(root, 'local-notes.txt', 'Original notes')
+    git(root, 'push', 'origin', 'HEAD')
+    (root/'local-notes.txt').write_text('Edited notes')
+    other = incoming(remote, tmp_path)
+    commit(other, 'upstream.txt')
+    git(other, 'push', 'origin', 'HEAD')
+
+    review = repository_pull.run(net, 'game', str(root), print)['pull_review']
+    with pytest.raises(NetworkError, match='local-notes.txt'):
+        repository_pull.run(net, 'game', str(root), print, review=review['token'])
+
+    assert git(root, 'rev-parse', 'HEAD') == base
+    assert (root/'local-notes.txt').read_text() == 'Edited notes'
+    assert (root/'src/f.c').is_file()
