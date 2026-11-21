@@ -87,7 +87,8 @@ def brief(net, proj, fn, source=None):
     with _POOL_LOCK:
         pool = getattr(net,'_search_evidence',{}).get(key,{}).copy()
     current = pool.get(hashlib.sha256(source.encode()).hexdigest())
-    lines = []
+    from . import deep_handoff
+    lines = [handoff] if (handoff := deep_handoff.brief(net, proj, fn, source)) else []
     repeat = repeated_hint(net, proj, fn, source) if source else ''
     if repeat:
         lines.append(repeat)

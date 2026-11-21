@@ -150,7 +150,10 @@ decides the combined result.
 For a hard claim, `get_function(section="work")` gives the complete current C,
 one objective, the current mismatch and recent measured trials. It reads
 existing measurements. Use the full brief or paged assembly when more
-context would change the next experiment.
+context would change the next experiment. When Deep Permuter leaves a handoff,
+start with its focused instruction block and the listed measured trials. Test a
+different hypothesis against the saved draft and keep the best verified result
+for the next sweep.
 
 `try_local_repairs(compare=true)` measures up to three choices under the same
 claim budget. Look for the option that recovers your target region, then use

@@ -73,7 +73,11 @@ def brief(net, fn, agent, header):
     lines.append('For a compact working packet with the current C, use get_function(section="work").')
     lines.extend(history(net, fn))
     if source:
+        from .deep_handoff import brief as deep_brief
         from .search_evidence import repeated_hint
+
+        if handoff := deep_brief(net, proj, fn, source):
+            lines.append(handoff)
 
         if repeat := repeated_hint(net, proj, fn, source):
             lines.append(repeat)
