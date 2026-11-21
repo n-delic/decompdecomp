@@ -10508,6 +10508,20 @@ and candidate then use the same register for all three operations. Using the
 narrowed opcode as both the sentinel and switch value did not improve the score.
 The deep permuter reproduced and saved the partial improvement.
 
+## Search shape: pairs of rewrites, branch polarity and the join sink's limits (N64, KMC gcc 2.7.2)
+
+From the same hand match as the join sink (one function; the numbers are that function's, not a controlled study).
+- Three changes (sink, literal, `u8` stores) each scored the same or worse alone. The deep local pass kept only
+  improvements and tried about six children, so it could never reach a pair. It now keeps the children that compiled
+  within 2x the best and runs the same rewrites on the nearest three (12 compiles in all): `<first>+<second>` families in
+  the repair log.
+- `branch_orientation` swaps `if/else` arms only where `negate` inverts a bare comparison; a bit test (`x & 0x10`), a `!`,
+  `&&`/`||` never flipped. decomp-repair 0.5.193 `branch_polarity` negates any side-effect-free condition and also writes
+  m2c's `if (c) { T; goto L; } R` as `if (!c) { R } else { T; goto L; }`. On this function the flipped variants compile to
+  the same length but score below the sunk form locally (0.68-0.74 against 0.75 exact): offered, not a fix by themselves.
+- `join_initializer_sink` now handles several constants, an assignment separated from its `if`, a join label after the
+  statement (no `else`) or in the then arm, and refuses a `goto` path that doesn't assign the value first or a second jump
+  to the label (both would read an unset register: the first version did not check).
 ### KMC fixed Huffman lengths and controller-write stack objects
 
 - A fixed Huffman draft compiled with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` matched
