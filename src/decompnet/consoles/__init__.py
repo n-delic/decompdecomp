@@ -474,6 +474,8 @@ class Console:
         """Exact self-contained handwritten SDK bodies only; no heuristic C exclusion."""
         return None
 
+    sdk_entry_stub: bool = False  # the cartridge's entry stub is SDK boot code (sdk_assembly_identity tells it by shape)
+
     sdk_linked_sizes: tuple[int, ...] = ()
 
     def sdk_linked_identity(self, code: bytes, image_sha1: str) -> dict | None:

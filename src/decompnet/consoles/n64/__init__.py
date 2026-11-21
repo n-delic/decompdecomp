@@ -208,6 +208,7 @@ class Nintendo64(Console):
         return super().asm_reason(code)
 
     sdk_assembly_sizes = sdk_assembly.SIZES
+    sdk_entry_stub = True
     # libultra 2.0I-2.0L as decompals/ultralib rebuilds it, so a user without the SDK still has its library found
     sdk_table = str(Path(__file__).with_name("ultralib_signatures.tsv"))
     # n_audio (libgn_audio.a 2.0J-2.0L), which ultralib doesn't rebuild: the SDK archives' fingerprints and names

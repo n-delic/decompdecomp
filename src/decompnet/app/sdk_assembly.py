@@ -417,7 +417,9 @@ def known_proof(console, proj, fn):
     found = known_identity(console, cfg, code, has_relocs=bool(json.loads(fn['relocs'] or '[]')))
     if not found or fn['size'] != len(code):
         return None
-    if found.get('from_c'):
+    if found.get('evidence'):
+        evidence = found['evidence']
+    elif found.get('from_c'):
         evidence = 'Exact SDK library C bytes in a known linked image; excluded from C matching by the library setting.'
     elif found.get('image_sha1'):
         evidence = 'Exact SDK assembly bytes in a known linked image; no C coverage.'
@@ -433,15 +435,18 @@ def discover_known(net, proj, *, function_id=None, check_cancel=None):
         return 0
     console = net.console(proj)
     sizes = sorted(set(console.sdk_assembly_sizes) | set(console.sdk_linked_sizes))
-    if not sizes:
+    # the cartridge's entry stub is told by its place, not its size: its length varies with the game's padding
+    entry = net.cfg(proj).get('rom', {}).get('entrypoint') if console.sdk_entry_stub else None
+    if not sizes and entry is None:
         return 0
     store = net.project_store(proj['id'])
     placeholders = ','.join('?' for _ in sizes)
     target_filter = ' AND id=?' if function_id is not None else ''
-    args = (proj['id'], *sizes) if function_id is None else (proj['id'], *sizes, function_id)
+    args = (proj['id'], *sizes, *([entry] if entry is not None else []), *([function_id] if function_id is not None else []))
+    where = f"(size IN ({placeholders})" + (" OR vram=?" if entry is not None else "") + ")"
     rows = store.all(f"""SELECT id,name,project_id,vram,rom_offset,size,target,relocs,status,meta
                          FROM functions WHERE project_id=? AND status IN ('open','asm') AND {IN_BUILD}
-                         AND size IN ({placeholders}){target_filter}""", *args)
+                         AND {where}{target_filter}""", *args)
     from .maintenance import checkpoint
 
     count = 0
