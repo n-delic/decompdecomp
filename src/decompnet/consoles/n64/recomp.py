@@ -34,7 +34,7 @@ from ...forks.csource import _blank
 
 TOOL = "n64recomp"
 JR_RA = 0x03E00008
-MAX_PROBE_RUNS = 64  # one crash's controlled body subsets, including CLI name resolution
+MAX_PROBE_RUNS = 64  # one crash's controlled body subsets
 
 
 class RecompError(RuntimeError):
@@ -212,7 +212,8 @@ def _translate(program, out, rom, entry, refused, renamed, stop, log):
     # Each full failed pass must refuse a new input body. Scale to the game instead of cutting a user's job off
     # after 400 functions; probes are separately bounded for each body, and repeated failures stop immediately.
     full_limit = len(patchable) + 1
-    total_limit = full_limit * (MAX_PROBE_RUNS + 1)
+    # Name resolution may try and then drop one alternate spelling per input name.
+    total_limit = full_limit * (MAX_PROBE_RUNS + 1) + 2 * len(patchable)
 
     def invoke(extra=(), *, probe=False):
         nonlocal runs, full_runs
@@ -263,10 +264,12 @@ def _translate(program, out, rom, entry, refused, renamed, stop, log):
 
         def probe(active):
             nonlocal probes
+            if probes >= MAX_PROBE_RUNS:
+                raise RecompError("N64Recomp reached its crash-isolation safety limit: check the split and retry")
+            probes += 1
+            # The CLI validates stub names before translating any body. Resolving those names and recording
+            # ordinary refusals can take several invocations before this subset yields evidence about the crash.
             while True:
-                if probes >= MAX_PROBE_RUNS:
-                    raise RecompError("N64Recomp reached its crash-isolation safety limit: check the split and retry")
-                probes += 1
                 done = invoke(names - active, probe=True)
                 if done.returncode == 0:
                     return False

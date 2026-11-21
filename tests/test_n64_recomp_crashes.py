@@ -99,6 +99,30 @@ def test_builtin_cli_renames_are_resolved_before_body_isolation(tmp_path, monkey
     assert set(refused) == {'bad_switch'}
 
 
+def test_cli_name_resolution_does_not_exhaust_the_body_probe_budget(tmp_path, monkeypatch):
+    setup(tmp_path)
+    path = tmp_path / 'syms.toml'
+    sections = tomllib.loads(path.read_text())['section']
+    names = {f'library_{i}' for i in range(12)}
+    aliases = [dict(name=name, vram=0x80000500 + 4*i, size=4) for i, name in enumerate(sorted(names))]
+    functions = sections[0]['functions'] + aliases
+    path.write_text(recomp.symbols(
+        SEGMENTS, [dict(f, rom=0x1000 + f['vram'] - 0x80000400) for f in functions]))
+    monkeypatch.setattr(recomp, 'MAX_PROBE_RUNS', 8)
+
+    def run(argv, **kwargs):
+        stubs = set(tomllib.loads((tmp_path / 'recomp.toml').read_text())['patches']['stubs'])
+        if unresolved := sorted(stubs & names):
+            return subprocess.CompletedProcess(
+                argv, 1, '', f'Function {unresolved[0]} is stubbed out in the config file but does not exist!')
+        return subprocess.CompletedProcess(argv, -signal.SIGSEGV if 'bad_switch' not in stubs else 0, '', '')
+
+    monkeypatch.setattr(recomp.subprocess, 'run', run)
+    refused = {}
+    recomp._translate('tool', tmp_path, Path('rom'), None, refused, set(), lambda: False, lambda *a: None)
+    assert set(refused) == {'bad_switch'}
+
+
 def test_a_crash_requiring_two_bodies_is_not_guessed_to_be_one_body(tmp_path, monkeypatch):
     names = setup(tmp_path)
     def run(argv, **kwargs):
