@@ -10867,3 +10867,15 @@ score from 120 to 0. In another draft, one offset served several word
 reads in a guarded block. Dividing its shared constant by the word size
 reduced the score from 10 to 0. The deep permuter independently found and
 saved both exact matches.
+
+### Recover byte displacements and selected halfword tables
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, two machine
+drafts in an isolated N64 ROM project reached exact linked matches.
+A call delay slot applied a negative byte displacement to a saved
+global address. Casting that one address to a byte pointer corrected
+the displacement from -32 to -8 and reduced the linked score from 10
+to 0. Another draft selected a table through a shared cursor. Typing
+that cursor as a halfword pointer corrected the shift and load offset.
+The existing word-table repair then handled a separate access, taking
+the score from 30 to 10 to 0.
