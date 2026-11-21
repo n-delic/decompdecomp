@@ -73,13 +73,26 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
         and (address_word_references(fn, references, lines_by_rom)
              or not fn.lines[0].word and buffer_written(fn, references, reference_bodies))
     }
-    destinations=sorted(references)
-    entered_addresses=explicit|pointers|set(destinations)
     tables=[dict(rom_start=s.rom_start,rom_end=s.rom_end,vram=s.vram) for s in segments
             if 0<=s.rom_start<s.rom_end<=len(image) and not s.rom_start%4 and not s.rom_end%4]
     functions = recover_segment_switch_data(functions, data, image, order, tables,
                                             explicit | pointers | transfer_targets, references, log)
     tables.extend(console.import_table_ranges(image,segments))
+    gaps = multiword_alignment(functions, image, order, owner, explicit | pointers, references, direct_calls, data, segments)
+    if gaps:
+        removed = {line.rom for fn in functions if (fn.rom, fn.vram) in gaps for line in fn.lines}
+        functions = [fn for fn in functions if (fn.rom, fn.vram) not in gaps]
+        # Discard edges decoded from filler, keeping an overlapping delay
+        # word wherever the next function owns it as an actual instruction.
+        removed.difference_update(line.rom for fn in functions for line in fn.lines)
+        for target in list(references):
+            references[target] = {(source, unit) for source, unit in references[target] if source not in removed}
+            if not references[target]:
+                del references[target]
+                direct_calls.discard(target)
+        log(f'Left {len(gaps)} fragments of alignment between functions in the original image.')
+    destinations=sorted(references)
+    entered_addresses=explicit|pointers|set(destinations)
     returns={fn.rom+fn.size for fn in functions if fn.size>=8 and fn.lines[-2].word==JR_RA}
     groups=[];group_end=0
     for fn in sorted(functions,key=lambda f:(owner(f),f.rom)):
@@ -335,6 +348,39 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
         data.extend(recovered_data)
         log(f'Recovered {len(recovered_data)} referenced words as data between functions.')
     return kept if dropped or markers or recovered_data else result if changed else functions
+
+
+def multiword_alignment(functions, image, order, owner, named, references, direct_calls, data, segments):
+    """Find short unreachable tails left by 16-byte alignment of code."""
+    gaps = set()
+    entries = {(fn.rom, fn.vram): fn for fn in functions}
+    for following in functions:
+        if following.vram % 16 or owner(following)[0] < 0:
+            continue
+        if following.vram not in direct_calls and not is_frame(following.lines[0].word):
+            continue
+        segment = segments[owner(following)[0]]
+        for size in (8, 12):
+            start = following.rom - size
+            address = following.vram - size
+            if start - 8 < segment.rom_start or int.from_bytes(image[start-8:start-4], order) != JR_RA:
+                continue
+            # Filler may decode as a branch into its own gap. Only incoming
+            # references from outside the gap establish a possible entry.
+            if any(dest in named or any(not start <= source < following.rom
+                                        for source, _ in references.get(dest, ()))
+                   for dest in range(address, following.vram, 4)):
+                continue
+            if any(d.rom is not None and d.rom < following.rom and start < d.rom+d.size for d in data):
+                continue
+            fragments = [entries[(start+offset, address+offset)] for offset in range(0, size, 4)
+                         if (start+offset, address+offset) in entries]
+            if any(owner(fn) != owner(following) or fn.rom+fn.size > following.rom+4
+                   or any(line.word & 0xfc1fffff == 8 for line in fn.lines)
+                   for fn in fragments):
+                continue
+            gaps.update((fn.rom, fn.vram) for fn in fragments)
+    return gaps
 
 
 def assembly_extent(image, start, end, vram, console, order):

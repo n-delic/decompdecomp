@@ -161,3 +161,18 @@ def test_adjacent_code_mapping_requires_call_evidence_from_both_sides():
     assert reconcile_adjacent(left+right, ranges) == [(0, 2*size, base)]
     assert reconcile_adjacent(_code(base, 16)+right, ranges) == ranges
     assert reconcile_adjacent(left+_code(following+8, 16), ranges) == ranges
+
+
+def test_ipl3_dma_proves_the_initial_cartridge_mapping():
+    from decompnet.consoles.n64.code import _BOOT_DMA, boot_switch_range
+    from decompnet.rom.split import Segment
+
+    image = bytearray(0x101000)
+    image[8:12] = (0x80000400).to_bytes(4, 'big')
+    image[0x100:0x100+len(_BOOT_DMA)] = _BOOT_DMA
+    segments = [Segment('entry', 0x1000, 0x1100, 0x80000400)]
+    assert boot_switch_range(image, segments) == [
+        dict(rom_start=0x1000, rom_end=0x101000, vram=0x80000400,
+             target_prefix=0x80000000, boot_copy=True)]
+    image[0x100+len(_BOOT_DMA)-1] ^= 1
+    assert not boot_switch_range(image, segments)

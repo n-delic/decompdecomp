@@ -480,3 +480,13 @@ def test_zero_address_passed_to_a_direct_setter_is_data(writer):
     result=repair(functions,data,image,consoles.get('n64'),segments)
     assert any(fn.rom==12 for fn in result) != writer
     assert [(row.vram,row.rom,row.size) for row in data]==([(BASE+12,12,4)] if writer else [])
+
+
+@pytest.mark.parametrize('protect', [False, True])
+@pytest.mark.parametrize('fill', [0x00040000, 0x04000000])
+def test_multiword_alignment_between_a_return_and_an_aligned_frame(protect, fill):
+    words = [0x03e00008, 0, fill, 0x00000021] + BODY
+    image, functions, segments = fixture(words, cuts=(0,8,16,len(words)*4))
+    symbols = [f'entry = 0x{BASE+12:08X};'] if protect else ()
+    result = repair(functions, [], image, consoles.get('n64'), segments, symbols=symbols)
+    assert [fn.rom for fn in result] == ([0,8,16] if protect else [0,16])

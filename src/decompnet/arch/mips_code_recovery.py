@@ -95,11 +95,22 @@ LEAD = 4  # instructions the compiler may schedule ahead of the frame
 def _lead(image, start, end, order, cpu):
     """How many bytes come before the frame: GCC can schedule a load or two ahead of `addiu $sp` (an N64 game's
     overlay: `lui $v0; lbu $v0; addiu $sp, -0x20`), and those stay part of the function. Only plain loads and
-    arithmetic into scratch registers qualify, never a transfer, a store, or anything touching $sp, $ra, $fp or a
-    saved register."""
+    arithmetic into scratch registers or a full run of argument home stores qualify. Transfers and other
+    accesses to $sp, $ra, $fp or saved registers stay outside this rule."""
     import rabbitizer
 
     from .mips import _mips_uses, rabbitizer_category
+
+    # o32 variadic entries spill the remaining incoming argument registers
+    # into their caller-provided home slots before allocating their own frame.
+    word = int.from_bytes(image[start:start+4], order)
+    first_arg = (word >> 16) & 31
+    homes = (8-first_arg)*4
+    if (4 <= first_arg <= 6 and start+homes+4 <= end
+            and all(int.from_bytes(image[at:at+4], order) == (0xafa00000 | arg << 16 | (arg-4)*4)
+                    for arg, at in zip(range(first_arg,8), range(start,start+homes,4)))
+            and is_frame(int.from_bytes(image[start+homes:start+homes+4], order))):
+        return homes
 
     for n in range(LEAD+1):
         at=start+4*n
@@ -138,6 +149,10 @@ def leaf_extent(image,start,end,vram,*,big_endian=True,cpu='',asm_check=None,tab
         word=int.from_bytes(image[at:at+4],order)
         ins=rabbitizer.Instruction(word,0,rabbitizer_category(cpu))
         uses=_mips_uses(word,cpu)
+        if ins.isValid() and ins.getOpcodeName() == 'cache':
+            # CACHE reads its address base and clobbers no general registers.
+            # This establishes a leaf's extent without granting a C match.
+            continue
         if not ins.isValid() or ins.doesLink() or uses is None or uses[1]&preserved:return None
         if any(getattr(ins,'modifies'+field)() and getattr(ins,field.lower()).value>=20
                for field in ('Fd','Fs','Ft')):return None
