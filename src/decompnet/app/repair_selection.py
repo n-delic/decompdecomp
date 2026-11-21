@@ -58,7 +58,8 @@ COMPLEMENTS = {
     'delayed_narrow_capture': ('debug_conversion_tail','shared_shift_mask'),
     'debug_conversion_tail': ('delayed_narrow_capture','shared_shift_mask'),
     'plain_float_slots': ('return_contract','narrow_expression_inline'),
-    'return_contract': ('plain_float_slots','narrow_expression_inline'),
+    # (a returned status leaves the walk over its table, which m2c wrote with cursors, as the next difference)
+    'return_contract': ('plain_float_slots','narrow_expression_inline','pointer_walk_index'),
     'narrow_expression_inline': ('return_contract','plain_float_slots'),
     'branch_scalar_lifetime': ('inline_call_count','embedded_call_assignment','typed_pointer_snapshot'),
     'inline_call_count': ('branch_scalar_lifetime','embedded_call_assignment','typed_pointer_snapshot'),
