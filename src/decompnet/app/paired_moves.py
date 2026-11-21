@@ -1,0 +1,78 @@
+"""The two-move search: for a near-match that needs two statements relocated together.
+
+A one-move search stops at a local minimum when the order a function needs comes from two relocations at once
+(a constant assigned earlier AND a counter initialised later decide which saved register each gets; neither alone
+helps). Here every single move is judged, the least-bad ones that changed the output become a beam, and every second
+move from each is judged too. The moves come from decomprepair.paired_statement_moves, which only proposes
+reorderings that cannot change behaviour; the judgments come from judge_pool (the app's exact judge, in parallel).
+
+This module only searches. Adopting a winner (re-judging it through the ordinary path so it is saved and verified)
+is the Deep Permuter's job (Search.paired_move_pass).
+"""
+from __future__ import annotations
+
+BEAM = 40  # single moves whose results are expanded by a second move
+JUDGMENTS = 8000  # exact judgments one pass may spend
+GATE_REGISTER_SHARE = 0.4  # of the differing rows, at least this many are register choices (or the diff is order only)
+
+
+def worth(rows) -> bool:
+    """Whether the diff looks like registers and order, which statement order can change; not a missing body."""
+    from . import permuter_focus
+
+    changed = [row for row in permuter_focus.normalized(rows) if row and row[0] != ' ']
+    if not changed:
+        return False
+    if permuter_focus.classify(rows) in ('register', 'scheduling') or permuter_focus.register_dominant(rows):
+        return True
+    registers = sum(1 for row in changed if row[0] == 'r')
+    inserted = sum(1 for row in changed if row[0] in '<>')
+    return registers >= 4 and registers / len(changed) >= GATE_REGISTER_SHARE and inserted <= len(changed) // 3
+
+
+def search(judge_many, source, name, header, base, *, beam=BEAM, budget=JUDGMENTS, seen=(), check=lambda: None,
+           log=lambda text: None):
+    """(score, candidate or None, judged): the best candidate within two statement moves of `source`.
+
+    `judge_many(sources)` returns exact scores (None when one did not compile). Candidates in `seen` are skipped.
+    A candidate is returned only when it scores below `base`.
+    """
+    try:
+        from decomprepair import paired_statement_moves as moves
+    except ImportError:
+        return base, None, 0
+    skip = set(seen) | {source}
+    singles = [c for c in moves.single_moves(source, name, header) if c not in skip]
+    if not singles:
+        return base, None, 0
+    skip.update(singles)
+    best, winner, judged = base, None, 0
+
+    def consider(candidates):
+        nonlocal best, winner, judged
+        for score, candidate in zip(judge_many(candidates, check), candidates):
+            judged += 1
+            if score is not None and score < best:
+                best, winner = score, candidate
+
+    scores = judge_many(singles, check)
+    judged += len(singles)
+    ranked = []
+    for score, candidate in zip(scores, singles):
+        if score is None:
+            continue
+        if score < best:
+            best, winner = score, candidate
+        elif score != base:  # a move that changed nothing leads nowhere a single move did not
+            ranked.append((score, candidate))
+    ranked.sort(key=lambda pair: pair[0])
+    log(f'Two-move search: {len(singles)} single moves judged ({len(ranked)} changed the output); '
+        f'expanding the {min(beam, len(ranked))} least different.')
+    for _, parent in ranked[:beam]:
+        if judged >= budget:
+            break
+        children = [c for c in moves.single_moves(parent, name, header) if c not in skip][:max(0, budget - judged)]
+        skip.update(children)
+        if children:
+            consider(children)
+    return best, winner, judged
