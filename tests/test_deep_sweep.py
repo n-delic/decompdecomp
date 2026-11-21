@@ -1029,10 +1029,25 @@ def test_rejudges_saved_candidates_before_search(sweep, monkeypatch):
         db.execute("INSERT INTO context_versions(project_id,version,header,unit) VALUES(?,1,'','')", (fn['project_id'],))
         db.executemany('INSERT INTO attempts(function_id,agent_id,source,compiled,score) VALUES(?,?,?,1,?)',
                        [(fn['id'], agent.id, bad, 1), (fn['id'], agent.id, bad, 2), (fn['id'], agent.id, good, 3)])
+    def change_config(**changes):
+        with net.store.tx() as db:
+            project = db.execute('SELECT config FROM projects WHERE id=?', (fn['project_id'],)).fetchone()
+            config = json.loads(project['config'])
+            config.update(changes)
+            db.execute('UPDATE projects SET config=? WHERE id=?', (json.dumps(config), fn['project_id']))
+
+    def shuffle(batch):
+        change_config(compiler={'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-O1']})
+        batch.reverse()  # Scored f1 would otherwise fill the queue first.
+
+    monkeypatch.setattr(deep_sweep.random, 'shuffle', shuffle)
     tried = []
 
     def compile_source(proj, header, source, fn):
+        assert net.cfg(proj)['compiler']['flags'] == ['-O1']
         tried.append(source)
+        change_config(spend={'tokens': len(tried)}, auto_push={'next_check': len(tried)},
+                      score_commits={'last_check': len(tried)})
         return SimpleNamespace(ok=source == good, log='undeclared name', obj=b'object')
 
     monkeypatch.setattr(net, '_compile', compile_source)

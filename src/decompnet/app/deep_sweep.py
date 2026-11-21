@@ -472,6 +472,7 @@ class Sweeps:
         if sdk_set_aside:
             log(f'Identified {sdk_set_aside} SDK library functions before preparing C candidates.')
         twin_trials = twin_matches = recovered_matches = recovery_trials = 0
+        unscored = set()
         if slug not in self.net.links:
             from .. import compiler
             from .boundary_repairs import blocked
@@ -535,6 +536,8 @@ class Sweeps:
                 identities=[r for r in identities if r["id"] not in held]
                 if not order:
                     random.shuffle(identities)
+                    # Restore missing baselines before the bounded search queue fills.
+                    identities.sort(key=lambda row: row['id'] not in unscored)
                     order.extend(r["id"] for r in identities)
                 ranks = {fid: i for i, fid in enumerate(order)}
                 identities.sort(key=lambda r: ranks.get(r["id"], len(ranks)))
@@ -546,10 +549,12 @@ class Sweeps:
                 activity.prepare(scanned, total, candidates, waiting)
 
                 failed = threading.Event()
-                def execute(item, blocked, proj=proj, total=total):
+                def execute(item, blocked, pid=proj['id'], total=total):
                     log.check_cancel()
-                    fn = self._store(slug).one('SELECT * FROM functions WHERE id=? AND project_id=?', item['id'], proj['id'])
-                    if not fn or fn['status'] != 'open' or fn['gone_mark'] is not None:
+                    store = self._store(slug)
+                    proj = store.one('SELECT * FROM projects WHERE id=?', pid)
+                    fn = store.one('SELECT * FROM functions WHERE id=? AND project_id=?', item['id'], pid)
+                    if not proj or not fn or fn['status'] != 'open' or fn['gone_mark'] is not None:
                         return
                     # Dispatch always uses fresh inputs, never the producer's shared snapshot.
                     with looking(self.net):

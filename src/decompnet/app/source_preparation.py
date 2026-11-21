@@ -375,15 +375,15 @@ def inputs(net, proj, fn):
     """The destination state that a private-header compile was judged against, checked again before promotion."""
     ctx = net._context(proj['id'], fn['unit'])
     symbols = [tuple(r) for r in net.project_store(proj['id']).all('SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name', proj['id'])]
+    from .exact_match_inputs import WORKFLOW_SETTINGS
     from .permuter_inputs import build_state
     cfg = json.loads(proj['config'])
     from ..project import compiler_for
     own = compiler_for(cfg, fn['vram'], fn) if 'compiler' in cfg else None
-    # Autosave revisions/locations and range-check progress are workflow evidence,
-    # not compilation inputs. Saving another function must not stale an exact candidate.
+    # Other workers can update spending and repository checkpoints while this C compiles.
     # Keep the selected function profile and every unknown build setting frozen.
-    for key in ('compiler_ranges', 'function_compilers', 'boundaries', 'suggestions', 'knowledge_auto', 'range_checks', 'compiler_survey',
-                'progress_revision', 'progress_folder', 'save_folder', 'instructions', 'priority', 'draft_generation'):
+    for key in ('compiler_ranges', 'function_compilers', 'boundaries', 'auto_push',
+                'repository_sync_folder') + WORKFLOW_SETTINGS:
         cfg.pop(key, None)
     cfg['compiler'] = own
     return (json.dumps(cfg, sort_keys=True), fn['unit'], fn['target'], fn['relocs'], fn['vram'], fn['best_source'], ctx['version'], symbols,
