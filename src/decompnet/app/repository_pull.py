@@ -4,7 +4,14 @@ import json
 from pathlib import Path
 
 from ..network import NetworkError
-from . import repository_operations, repository_progress, repository_pull_progress, repository_push, repository_sync
+from . import (
+    repository_operations,
+    repository_progress,
+    repository_pull_progress,
+    repository_pull_rebuild,
+    repository_push,
+    repository_sync,
+)
 from .repository_git import git
 
 
@@ -121,13 +128,15 @@ def _merge(net, slug, root, head, target, ahead, name, commits, destination, sel
         phase = f'Checking whether {commits} from {name} can merge'
         output.progress({'phase': phase, 'queued': False})
         output(phase + '…')
-        preview = git(root, 'merge-tree', '--write-tree', '--name-only', '-z', head, target,
-                      merge_preview=True,
-                      error='Git could not check the merge. Use Git 2.38 or newer and check that both branches share a history.')
-        phase = 'Comparing saved matches and best attempts'
-        output.progress({'phase': phase, 'queued': False})
         try:
-            prepared = repository_pull_progress.prepare(net, slug, root, head, target, preview, check)
+            prepared = repository_pull_rebuild.prepare(net, slug, root, head, target, output, check) if linked else None
+            verified = prepared is not None
+            if not verified:
+                preview = git(
+                    root, 'merge-tree', '--write-tree', '--name-only', '-z', head, target, merge_preview=True,
+                    error='Git could not check the merge. Use Git 2.38 or newer and check that both branches share a history.')
+                output.progress({'phase': 'Comparing saved matches and best attempts', 'queued': False})
+                prepared = repository_pull_progress.prepare(net, slug, root, head, target, preview, check)
         except repository_pull_progress.NeedsReview as exc:
             saved = ('Your progress is saved in a local commit.' if checkpoint
                      else 'Your local branch still contains your saved work.')
@@ -146,6 +155,8 @@ def _merge(net, slug, root, head, target, ahead, name, commits, destination, sel
             git(root, 'merge', '--no-ff', '--no-edit', '--no-autostash', '--no-overwrite-ignore',
                 '-s', 'ort', '-m', f'Merge {name}', target, error=merge_error)
         message = f'Merged {commits} from {name}. Both histories are saved in a local merge commit.'
+        if verified:
+            message += ' The rebuilt game matched the original byte for byte.'
         if prepared and resolved:
             message += f' Chose the best saved progress for {resolved} function' + ('.' if resolved == 1 else 's.')
     else:

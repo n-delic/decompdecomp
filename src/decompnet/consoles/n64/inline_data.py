@@ -30,7 +30,10 @@ _SINE = struct.pack('>4096h', *(round(16384 * math.sin(i * math.tau / 4096)) for
 
 
 def spans(image):
-    """Find unchanged fingerprints at word-aligned offsets."""
+    """Find verified non-CPU segments and unchanged inline data."""
+    from .rsp_prefix import audio_spans
+
+    yield from audio_spans(image)
     for match in re.finditer(re.escape(_SINE[:24]), image):
         start = match.start()
         if start % 4 == 0 and image[start:start+len(_SINE)] == _SINE:
@@ -61,7 +64,8 @@ def apply(config, image, log=print):
             cursor, limit, name = sub[0], ranges[sub[0]], sub[2]
             pending = sub
             for start, end in regions:
-                if not cursor <= start < end <= limit:
+                start, end = max(start, cursor), min(end, limit)
+                if start >= end:
                     continue
                 if start > cursor:
                     subsegments.append(pending)

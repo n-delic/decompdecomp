@@ -11779,6 +11779,15 @@ argument as its base, leaving the score at 10. Assigning the corrected
 pointer a local immediately after the original base was loaded kept the
 store on its original base and produced an exact match.
 
+### Carry a corrected byte address in the incoming index
+
+With gcc-2.7.2-kmc `-G0 -mips3 -mgp32 -mfp32 -O2`, a draft applied
+its byte stride to a word pointer, scaling it twice. Casting the base
+to a byte pointer fixed the stride and moved the score from 30 to 20.
+Scaling the incoming index and accumulating the row address into it
+before the byte load and store produced the target register allocation
+and an exact match.
+
 ## A queued breadth-first walk: index the queue, spill naturally, `for` the middle loop, drop the parameter copy (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, an N64 game, one 159-instruction function)
 
 A walk over an object graph: three loops over a 0x80-word stack queue (write position, read position), four calls
