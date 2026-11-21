@@ -1,6 +1,7 @@
 """A collaborator's files take precedence over SQLite, without an import button or a second on-disk copy."""
 
 import json
+import logging
 import shutil
 import threading
 import time
@@ -52,6 +53,44 @@ def manifest(folder, **changes):
     data = json.loads(path.read_text())
     data.update(changes)
     path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def test_a_zero_size_function_left_by_an_old_split_does_not_stop_a_save(project):
+    """#297: a row a splitter gave no bytes cannot be a layout entry (a saved entry needs a size above 0). Saving
+    leaves it out and sets it aside, so the project saves instead of refusing every time."""
+    net, folder, _ = project
+    pid = net.store.one("SELECT id FROM projects WHERE slug='game'")["id"]
+    with net.store.tx() as db:
+        db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit) "
+                   "VALUES(?,'empty',4104,0,1,'open','')", (pid,))
+    saves.save(net, "game")
+    data = json.loads((folder / saves.MANIFEST).read_text())
+    assert [entry["name"] for entry in data["layout"]] == ["f", "g"]
+    assert all(entry["size"] > 0 for entry in data["layout"])
+    row = net.store.one("SELECT status, meta FROM functions WHERE project_id=? AND name='empty'", pid)
+    assert row["status"] == "asm" and "#297" in json.loads(row["meta"])["asm_code"]
+
+
+def test_a_saved_layout_with_a_zero_size_function_still_opens(project, caplog):
+    """#297: a folder saved before the fix has a size-0 entry. Reading it leaves that entry out, with a log line,
+    instead of refusing the whole project (the sources of an entry left out are ignored too)."""
+    net, folder, _ = project
+    pid = net.store.one("SELECT id FROM projects WHERE slug='game'")["id"]
+    with net.store.tx() as db:
+        db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit) "
+                   "VALUES(?,'empty',4104,0,1,'open','')", (pid,))
+    data = json.loads((folder / saves.MANIFEST).read_text())
+    data["layout"].append({"name": "empty", "vram": 4104, "size": 0, "status": "open"})
+    (folder / saves.MANIFEST).write_text(json.dumps(data), encoding="utf-8")
+    (folder / "src").mkdir(exist_ok=True)
+    (folder / "src/empty.c").write_text("void empty(void) {}\n", encoding="utf-8")
+    caplog.set_level(logging.WARNING, logger="decompdecomp")
+    net.progress = Progress(net)
+    assert net.progress.sync("game", force=True)
+    saved = json.loads((folder / saves.MANIFEST).read_text())
+    assert "empty" not in [entry["name"] for entry in saved["layout"]]
+    assert not (folder / "src/empty.c").exists() and (folder / "unlisted/src/empty.c").exists()
+    assert any("size 0" in record.getMessage() and "empty" in record.getMessage() for record in caplog.records)
 
 
 def test_long_template_names_survive_saves_edits_and_deletions(project):

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import stat
@@ -30,6 +31,7 @@ from .. import toolchains
 from ..network import NetworkError
 from . import saves
 
+log = logging.getLogger("decompdecomp")
 CHECK_SECONDS = 0.25  # a non-forced check of an unchanged folder is this rare per project
 # A sync that failed (its game file gone) is tried again by reads and the autosave only when what it reads changed, or
 # after this long. Retried on every one, two such projects cost 2.9 s each second in the autosave alone, and each try
@@ -133,10 +135,16 @@ def _repair(net, pid: int, folder: Path, disk: dict[str, str], report) -> dict[s
     try:
         manifest = json.loads(disk[saves.MANIFEST])
         headers = dict(manifest.get("headers") or {})
-        layout = {saves._source_file(entry["name"]) for entry in manifest.get("layout") or []}
+        entries = manifest.get("layout") or []
+        # #297: a size-0 layout entry is left out when the manifest is checked, so its source is unlisted too: don't
+        # let it stop the folder from opening before that check runs.
+        layout = {saves._source_file(entry["name"]) for entry in entries
+                  if isinstance(entry, dict) and isinstance(entry.get("size"), int) and entry["size"] > 0}
+        empty_files = {saves._source_file(entry["name"]) for entry in entries
+                       if isinstance(entry, dict) and entry.get("size") == 0 and isinstance(entry.get("name"), str)}
     except (ValueError, TypeError, KeyError, AttributeError):
         return disk
-    if not layout:
+    if not isinstance(entries, list) or not entries:
         return disk
     disk = dict(disk)
     for unit, file in headers.items():
@@ -151,7 +159,7 @@ def _repair(net, pid: int, folder: Path, disk: dict[str, str], report) -> dict[s
     if left:
         known = {row["name"] for row in net.store.all("SELECT name FROM functions WHERE project_id=?", pid)}
         known_files = {saves._source_file(function) for function in known}
-        left = [name for name in left if Path(name).name not in known_files]
+        left = [name for name in left if Path(name).name not in known_files or Path(name).name in empty_files]
     for name in left:
         (folder / "unlisted" / name).parent.mkdir(parents=True, exist_ok=True)
         os.replace(folder / name, folder / "unlisted" / name)
@@ -174,8 +182,18 @@ def _manifest(files: dict[str, str], cfg: dict, known_names=()) -> dict:
         for file in (manifest.get("headers") or {}).values():
             if Path(file).name != file or "include/" + file not in files:
                 raise ValueError(f"header {file!r} is not a file in include/")
-        layout = {f["name"]: f for f in manifest.get("layout", [])}
-        if len(layout) != len(manifest.get("layout", [])):
+        entries = manifest.get("layout", [])
+        # #297: an older split could save an entry with no bytes. A save writes none now, but a project already saved
+        # with one must still open: leave it out here (and its source files below), and say which, instead of
+        # refusing the whole folder.
+        empty = [f for f in entries if isinstance(f, dict) and f.get("size") == 0]
+        if empty:
+            shown = ", ".join(str(f.get("name")) for f in empty[:8]) + (", ..." if len(empty) > 8 else "")
+            log.warning("progress layout: leaving out %d function(s) with no bytes (size 0): %s", len(empty), shown)
+            entries = [f for f in entries if f not in empty]
+            manifest["layout"] = entries
+        layout = {f["name"]: f for f in entries}
+        if len(layout) != len(entries):
             raise ValueError("a function is listed twice in layout")
         for name, entry in layout.items():
             if not NAME.fullmatch(name):
@@ -216,9 +234,11 @@ def _manifest(files: dict[str, str], cfg: dict, known_names=()) -> dict:
         if "" not in (manifest.get("headers") or {}):
             raise ValueError("headers must name the project-wide header (the empty name)")
         source_files = {saves._source_file(name) for name in layout}
+        empty_files = {saves._source_file(f["name"]) for f in empty if isinstance(f.get("name"), str)}
         known_by_file = {saves._source_file(name): name for name in known_names}
         for name in files:
-            if name.startswith(("src/", "best/")) and Path(name).name not in source_files:
+            if name.startswith(("src/", "best/")) and Path(name).name not in source_files \
+                    and Path(name).name not in empty_files:
                 symbol = known_by_file.get(Path(name).name, Path(name).stem)
                 raise NetworkError(f"Add {symbol} to the function layout in progress/decompdecomp.json before continuing.")
         functions = {}
@@ -893,9 +913,19 @@ class Progress:
         if saves.MANIFEST in disk and (before is None or snapshot.files != before.files):
             report = logger or (lambda line: saves.log.info("%s: %s", slug, line))
             disk = _repair(net, pid, folder, disk, report)
+            expected_disk = dict(disk)  # what the folder holds, before the cleaned manifest replaces its text
             known_names = {row["name"] for row in net.store.all(
                 "SELECT name FROM functions WHERE project_id=?", pid)}
+            try:
+                raw_layout = json.loads(disk[saves.MANIFEST]).get("layout") or []
+            except (ValueError, TypeError, AttributeError):
+                raw_layout = []  # _manifest below says what's wrong with it
+            had_empty = any(isinstance(entry, dict) and entry.get("size") == 0 for entry in raw_layout)
             manifest = _manifest(disk, cfg, known_names)
+            if had_empty:
+                # #297: the merge below starts from the folder's manifest; write the filtered one there too, or the
+                # zero-size entry it just left out would be merged back into the next save.
+                disk[saves.MANIFEST] = json.dumps(manifest, indent=1) + "\n"
             getattr(report, "check_cancel", lambda: None)()
             # Captured before any render: the folder's revision is compared with what the database wrote last.
             stored_revision = saves._stored_revision(cfg)
@@ -907,6 +937,8 @@ class Progress:
             else:
                 changed = {name for name in set(disk) | set(before.files)
                            if _hash(disk.get(name)) != before.files.get(name)}
+            if had_empty:
+                changed.add(saves.MANIFEST)  # write the cleaned manifest even when nothing else changed
             initial_pending = {}
             if before is None and slug not in self.adopting:
                 changed = {name for name in changed if name in disk}
@@ -948,6 +980,8 @@ class Progress:
                            if name not in changed and name not in rendered}
                 candidate = {name: text for name, text in (disk | pending).items() if name not in removed}
                 merged_manifest = _manifest(candidate, cfg, known_names)
+                if had_empty:
+                    pending[saves.MANIFEST] = json.dumps(merged_manifest, indent=1) + "\n"
                 all_code = any(name.startswith("include/") for name in changed)
                 if saves.MANIFEST in changed:
                     old = json.loads(comparison_manifest)
@@ -1058,7 +1092,7 @@ class Progress:
                                        (pid, row["unit"]))
                     by_name, _ = saves._apply_context(net, slug, folder, applied_manifest, report,
                                                      files=applied_files)
-                    if not saves._publish(folder, pending, removed, expected=disk,
+                    if not saves._publish(folder, pending, removed, expected=expected_disk,
                                           chosen=bool(cfg.get("progress_folder"))):
                         raise _FolderChanged
             except _FolderChanged:

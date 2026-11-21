@@ -21,8 +21,14 @@
 # The same through the environment: DECOMP_SOURCE=..., DECOMP_BRANCH=<name>.
 set -euo pipefail
 
-VERSION="1.0.10-alpha.2"
+VERSION="1.0.10-alpha.3"
 REPO="n-delic/decompdecomp"
+# decomp-repair (the permuters' rewrite library), the archive pyproject.toml pins and its SHA-256 (uv.lock's): uv tool
+# install doesn't read uv.lock, so this checks the archive itself and installs that file (tests/test_decomprepair.py keeps
+# the three in step)
+DECOMPREPAIR_URL="https://github.com/RetroReversing/decomp-repair/archive/28ef8c8967f050a9513e2e64e43a72ac2017f663.tar.gz"
+DECOMPREPAIR_VERSION="0.5.283"
+DECOMPREPAIR_SHA256="c7c3c4d7ce663b9cc58fed683c01995152716cdfd01f5fd9869f65f1827ec8d8"
 START=1
 SOURCE="${DECOMP_SOURCE:-}"
 [ -z "$SOURCE" ] && [ -n "${DECOMP_BRANCH:-}" ] && SOURCE="branch:${DECOMP_BRANCH}"
@@ -138,7 +144,14 @@ elif [ "$CHANNEL" = branch ]; then
 else
   step "installing decompdecomp ${VERSION}"
 fi
-uv tool install --force --quiet --python 3.12 "$SPEC"
+REPAIR_DIR="$(mktemp -d)"
+REPAIR="$REPAIR_DIR/decomprepair-$DECOMPREPAIR_VERSION.tar.gz"  # (uv reads a source archive's name and version from this)
+curl -fsSL "$DECOMPREPAIR_URL" -o "$REPAIR" || fail "couldn't download decomp-repair from $DECOMPREPAIR_URL"
+if command -v sha256sum >/dev/null; then GOT="$(sha256sum "$REPAIR" | cut -d' ' -f1)"; else GOT="$(shasum -a 256 "$REPAIR" | cut -d' ' -f1)"; fi
+[ "$GOT" = "$DECOMPREPAIR_SHA256" ] || fail "decomp-repair's archive isn't the pinned one (SHA-256 $GOT); nothing was installed"
+printf 'decomprepair @ file://%s\n' "$REPAIR" > "$REPAIR_DIR/overrides.txt"
+uv tool install --force --quiet --python 3.12 --overrides "$REPAIR_DIR/overrides.txt" "$SPEC"
+rm -rf "$REPAIR_DIR"
 [ -n "${TMP_SRC:-}" ] && rm -rf "$TMP_SRC"
 BIN="$(uv tool dir --bin)"
 uv tool update-shell >/dev/null 2>&1 || true

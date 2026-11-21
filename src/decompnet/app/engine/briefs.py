@@ -153,7 +153,7 @@ class BriefMixin:
             return self.forks.stale_drafts(proj)
         names = self._asm_names.setdefault(proj["id"], {})
         rows = self.store.all("SELECT id, size, unit, vram, seed, seed_key FROM functions WHERE project_id=? "
-                              "AND status='open' ORDER BY n_insns, vram", proj["id"])
+                              "AND status='open' AND (size IS NULL OR size > 0) ORDER BY n_insns, vram", proj["id"])
         unread = [r["id"] for r in rows if names.get(r["id"], (None,))[0] != r["size"]]
         for at in range(0, len(unread), STALE_BATCH):
             ids = unread[at:at + STALE_BATCH]

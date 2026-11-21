@@ -96,6 +96,28 @@ def _remember_folder(net, project_id: int, folder: Path, *, chosen: bool) -> Non
         db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), project_id))
 
 
+def _set_aside_empty_functions(net, proj) -> int:
+    """Set aside the open rows an older split gave no bytes (#297).
+
+    A size-0 function has nothing to decompile, but it can't be written to a save (a layout entry needs a size above
+    0) and it kept coming back to agents. Set aside rather than deleted: notes and attempts stay with it, it leaves
+    the open queue, and its size still keeps it out of the layout. Called before a save so an old project repairs
+    itself instead of failing again; the render would leave it out even if this hadn't run."""
+    with net.store.tx() as db:
+        rows = db.execute("SELECT id, name, meta FROM functions WHERE project_id=? AND status='open' "
+                          "AND (size IS NULL OR size <= 0) ORDER BY vram", (proj["id"],)).fetchall()
+        for row in rows:
+            meta = json.loads(row["meta"] or "{}")
+            meta["asm_code"] = "no code: the split gave it no bytes (#297)"
+            db.execute("UPDATE functions SET status='asm', meta=? WHERE id=? AND status='open'",
+                       (json.dumps(meta), row["id"]))
+            db.execute("DELETE FROM claims WHERE function_id=?", (row["id"],))
+    if rows:
+        shown = ", ".join(row["name"] for row in rows[:8]) + (", ..." if len(rows) > 8 else "")
+        log.info("%s: set aside %d function(s) with no bytes (size 0): %s", proj["slug"], len(rows), shown)
+    return len(rows)
+
+
 def save(net, slug: str, folder: Path | None = None) -> dict:
     """Write the project's work to `folder` (default: progress/ in the project's folder). Returns what was saved.
 
@@ -118,6 +140,7 @@ def save(net, slug: str, folder: Path | None = None) -> dict:
             result = _save_best(net, proj, target)
             _remember_folder(net, proj["id"], target.resolve(), chosen=chosen)
             return result
+        _set_aside_empty_functions(net, proj)
         if chosen:
             files, result = _render(net, slug, target, chosen=True)
             previous = _read_owned(target)
@@ -298,13 +321,16 @@ def _function_rows(net, project_id: int, *, sources: bool) -> list:
     layout and who matched it, not the megabytes of C that make the files."""
     exists = ("CASE WHEN matched_source IS NOT NULL AND matched_source != '' THEN 1 ELSE 0 END AS has_matched, "
               "CASE WHEN best_source IS NOT NULL AND best_source != '' THEN 1 ELSE 0 END AS has_best ")
+    # #297: a row an older split gave no bytes has no layout entry to write (a saved entry needs a size above 0), so
+    # leave it out of the manifest, its source files and the counts. The save also sets such open rows aside first.
     if sources:
         return net.store.all(
             "SELECT name, vram, size, status, matched_source, matched_agent_id, best_source, best_score, "
-            f"best_agent_id, readable, meta, {exists}FROM functions WHERE project_id=? ORDER BY vram", project_id)
+            f"best_agent_id, readable, meta, {exists}FROM functions WHERE project_id=? AND size > 0 ORDER BY vram",
+            project_id)
     return net.store.all(
         "SELECT name, vram, size, status, matched_agent_id, best_score, best_agent_id, readable, meta, "
-        f"{exists}FROM functions WHERE project_id=? ORDER BY vram", project_id)
+        f"{exists}FROM functions WHERE project_id=? AND size > 0 ORDER BY vram", project_id)
 
 
 def _manifest_from_rows(net, proj, cfg: dict, rows, folder: Path) -> tuple[dict, dict, set[str]]:
@@ -477,7 +503,8 @@ def _render_partial(net, proj, folder: Path, names: list[str], *, headers: bool 
                 "best_agent_id, readable, meta, "
                 "CASE WHEN matched_source IS NOT NULL AND matched_source != '' THEN 1 ELSE 0 END AS has_matched, "
                 "CASE WHEN best_source IS NOT NULL AND best_source != '' THEN 1 ELSE 0 END AS has_best "
-                f"FROM functions WHERE project_id=? AND name IN ({','.join('?' * len(chunk))})", pid, *chunk)
+                f"FROM functions WHERE project_id=? AND size > 0 AND name IN ({','.join('?' * len(chunk))})",
+                pid, *chunk)
             files.update(_source_files(selected))
     if readme_key is None or _readme_key(manifest) != readme_key:
         _write_readme(net, proj, folder, manifest, functions)
@@ -490,8 +517,8 @@ def _save_best(net, proj, folder: Path) -> dict:
     who wrote it and its source file in a comment at its top. Its matched C is in the project's own files."""
     names = {r["id"]: r["name"] for r in net.store.all("SELECT id, name FROM agents")}
     rows = net.store.all("SELECT name, unit, n_insns, best_source, best_score, best_agent_id, meta FROM functions WHERE "
-                         "project_id=? AND status='open' AND best_source IS NOT NULL AND best_score IS NOT NULL "
-                         "ORDER BY unit, name", proj["id"])
+                         "project_id=? AND status='open' AND size > 0 AND best_source IS NOT NULL "
+                         "AND best_score IS NOT NULL ORDER BY unit, name", proj["id"])
     folder.mkdir(parents=True, exist_ok=True)
     files = {}
     for r in rows:
