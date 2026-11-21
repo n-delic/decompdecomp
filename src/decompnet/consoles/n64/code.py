@@ -80,15 +80,18 @@ def find_segments(rom: bytes, taken: list[tuple[int, int, int]], ends: tuple[int
             floor = max([floor] + [e for e in ends if e < hi])  # (data has no code: one ending in it is before)
             stretches.append((lo, hi, floor))
             seg = place(rom, lo, hi, floor, calls, known_vram, REGIONS)
-            if seg:
+            if seg and seg[0] < seg[1]:
                 candidates.append(seg)
                 floor = seg[1]
     found = []
     used_vram = [(v, v + (e - s)) for s, e, v in taken]
 
     def accept(start: int, end: int, vram: int) -> bool:
-        if any(a < vram + (end - start) and vram < b for a, b in used_vram) or \
-                any(a < end and start < b for a, b, _ in found):
+        # The last return can precede the first plausible entry in a stretch.
+        # An empty range claims no bytes and cannot become a splat segment.
+        if (not 0 <= start < end <= size
+                or any(a < vram + (end - start) and vram < b for a, b in used_vram)
+                or any(a < end and start < b for a, b, _ in found)):
             return False
         found.append((start, end, vram))
         used_vram.append((vram, vram + end - start))
