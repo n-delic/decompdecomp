@@ -229,3 +229,12 @@ def test_custom_nvm_directory_is_searched_but_nonexecutables_are_ignored(tmp_pat
     assert helpers._which("example-agent") is None
     cli.chmod(0o755)
     assert helpers._which("example-agent") == str(cli)
+
+
+def test_focus_defaults_are_facts_each_connector_can_take():
+    """A focused run's strongest model and highest effort are connector facts, never agent-name ifs in app/."""
+    for a in agents.AGENTS:
+        assert isinstance(a.focus_model, str) and isinstance(a.focus_effort, str)
+        if a.focus_effort:
+            assert a.takes_effort and a.focus_effort in a.efforts
+    assert agents.get('claude').focus_model and agents.get('claude').focus_effort == 'max'

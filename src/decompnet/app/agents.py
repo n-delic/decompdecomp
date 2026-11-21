@@ -829,6 +829,13 @@ class Manager:
             kind = agent.id
             if not agent.alias_model_compatible:
                 options.pop("model", None)  # a legacy Gemini CLI model name may mean nothing to Antigravity
+        if options.get('focus_id'):
+            # a focused run with no model or effort chosen starts on the connector's strongest (Agent.focus_model)
+            if not options.get('model') and agent.focus_model and not agent.config_model():
+                options['model'] = agent.focus_model
+            if (agent.takes_effort and agent.focus_effort and not options.get('effort')
+                    and '#' not in str(options.get('model') or '')):
+                options['effort'] = agent.focus_effort
         configured = str(options.get('model') or agent.config_model() or '')
         resolved = agent.resolve_known_model(configured, agent.models(_which(agent.command), run=False) if agent.command else [])
         if why := agent.validate_model(resolved):

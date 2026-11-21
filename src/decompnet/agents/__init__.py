@@ -127,6 +127,12 @@ class Agent:
     takes_effort = False  # the launcher offers a reasoning effort: with the model's name ("provider/model#high"), or
     # for an agent whose model is an endpoint's, as the helper's `effort` option
     efforts: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")  # the efforts it offers, when it takes one
+    # A focused run (one function, often a near-match a dozen helpers gave up on) starts on these when the user chose
+    # no model or effort and the CLI's own settings name no default model: the strongest model alias its command line
+    # takes and the highest effort every model of it accepts. "" leaves the CLI's default. (Functions a person matched
+    # in under 22 compiles had 300-440 helper attempts, most from smaller models at their default effort.)
+    focus_model = ""
+    focus_effort = ""
 
     def __repr__(self) -> str:
         return f"<agent {self.id}>"

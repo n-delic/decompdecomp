@@ -285,3 +285,18 @@ def test_restored_budget_starts_with_previous_usage_and_manual_restart_resets_it
     assert focused_agents.completion(restored, saved) is None
     assert saved.snapshot()['focus_tries_used'] == 0
     assert net._function('f0', 'game')['best_source'] == 'saved candidate'
+
+
+def test_a_focused_run_without_a_choice_starts_on_the_connectors_strongest(tmp_path, quiet, monkeypatch):  # noqa: F811
+    from decompnet import agents as connectors
+    net = _game(tmp_path); manager = agents.Manager(net, tmp_path, URL)
+    codex = connectors.get('codex')
+    monkeypatch.setattr(type(codex), 'config_model', lambda self: None)
+    sid = manager.start('codex', 'game', options={'focus_function': 'f0', 'focus_minutes': 30})[0]
+    assert manager.sessions[sid].options.get('effort') == codex.focus_effort
+    # the user's own choice wins
+    sid = manager.start('codex', 'game', options={'focus_function': 'f0', 'focus_minutes': 30, 'effort': 'low'})[0]
+    assert manager.sessions[sid].options['effort'] == 'low'
+    # a normal (unfocused) helper is unchanged
+    sid = manager.start('codex', 'game', options={})[0]
+    assert not manager.sessions[sid].options.get('effort')
