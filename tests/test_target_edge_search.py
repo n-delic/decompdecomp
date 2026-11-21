@@ -561,3 +561,11 @@ def test_kmc_proposes_address_range_returns_and_linked_list_transfers(monkeypatc
     ido = dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
     assert 'direct_mapped_address' not in ido
     assert 'list_node_transfer' not in ido
+
+def test_kmc_proposes_unsigned_literal_stores_from_matching_byte_destinations():
+    source = 'extern s8 flag;\nvoid f(void) {\n    flag = 0xFF;\n}'
+    instructions = ('lui $at, %hi(flag)', 'sb $v0, %lo(flag)($at)')
+    rows = [('i', 'addiu $v0, $zero, 0xff', 'addiu $v0, $zero, -1'),
+            *((' ', instruction, instruction) for instruction in instructions)]
+    assert dict(route(source, rows, 'asm'))['kmc_unsigned_byte_store'] == source.replace('flag =', '*(u8 *)&flag =')
+    assert 'kmc_unsigned_byte_store' not in dict(route(source, rows, 'asm', compiler='ido-5.3'))

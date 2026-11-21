@@ -9336,3 +9336,14 @@ same saved node to both calls and reloads the head only after the second.
 Keeping the node in a local and computing the destination argument at
 the second call reproduced all 84 linked bytes per example. Keeping a
 separate destination local added a saved register and scored 652.
+
+### Unsigned byte constants at stores
+
+A 4,760-byte N64 function compiled with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`
+materialized `-1` at two sites where the target materialized `255`. The
+same byte stores consumed each immediate. Using unsigned byte lvalues
+for the constant writes recovered both instructions and lowered the
+linked score from 3726 to 3706 in a private replay. The other writes and
+the external declaration retained their original types. Folding the
+global's default assignment into a conditional expression instead
+raised the score to 5566.
