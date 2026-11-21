@@ -670,3 +670,20 @@ def test_recovery_tries_unaligned_copies_and_uncached_reads(monkeypatch):
     other = dict(repairs.recovery_drafts(source, 'f', '', 'mips', 'ido-5.3', '', None, {}))
     assert 'initial_unaligned_stack_copy' not in other
     assert 'initial_uncached_read' not in other
+
+
+def test_external_call_labels_are_recovered_only_in_mips_drafts(monkeypatch):
+    raw = '''int .L80001000(int); /* extern */
+void f(int arg) {
+    .L80001000(arg);
+}
+'''
+    asm = '/* 0 80000000 0C000400 */ jal .L80001000\n/* 4 80000004 00000000 */ nop'
+    monkeypatch.setattr(seeds, 'run_m2c', lambda *args, **kwargs: raw)
+    monkeypatch.setattr(seeds, 'm2c_target', lambda toolchain: 'mips-ido-c' if toolchain == 'ido-7.1' else 'ppc-c')
+    fresh = seeds.generate_from_asm(asm, 'f', 'ido-7.1', valid=True)
+    assert 'func_80001000(arg);' in fresh
+    assert seeds.generate_from_asm(asm, 'f', 'ido-7.1', valid=False) == raw
+    assert seeds.generate_from_asm(asm, 'f', 'ppc-compiler', valid=True) == raw
+    recovery = dict(repairs.recovery_drafts(raw, 'f', asm, 'mips', 'ido-7.1', '', None, {}))
+    assert recovery['initial_external_call_labels'] == fresh

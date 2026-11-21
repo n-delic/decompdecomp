@@ -200,6 +200,10 @@ def recovery_drafts(draft, name, asm, processor, toolchain, context, data, repor
     """Try bounded recovery candidates and at most two extra m2c runs after ordinary drafts fail to compile."""
     from . import draft_reports
     generate = generate or seeds.generate_from_asm
+    if processor == 'mips':
+        from decomprepair import draft_call_recovery
+
+        yield from draft_call_recovery.variants(draft, name, asm, context, toolchain)
     if toolchain == 'gcc-2.7.2-kmc':
         from decomprepair import (
             indirect_call_drafts,

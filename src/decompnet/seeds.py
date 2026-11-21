@@ -367,7 +367,11 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
         return None
     if not valid or toolchain_id != 'gcc-2.7.2-kmc':
         source = run_m2c(asm_text, name, target, context_header, data_asm, timeout, valid, strict, options)
-        return _compilable(source) if valid else source
+        if not valid:
+            return source
+        if target.startswith('mips'):
+            return _compilable(source, name, asm_text, context_header, toolchain_id)
+        return _compilable(source)
 
     from decomprepair import (
         aligned_allocator_request,
@@ -407,7 +411,8 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
     )
 
     draft_asm = likely_branch_cursor.draft_asm(asm_text)
-    source = _compilable(run_m2c(draft_asm, name, target, context_header, data_asm, timeout, valid, strict, options))
+    source = _compilable(run_m2c(draft_asm, name, target, context_header, data_asm, timeout, valid, strict, options),
+                         name, asm_text, context_header, toolchain_id)
     if not source:
         return None
     if 'M2C_UNALIGNED32' in source and (draft := unaligned_stack_drafts.rewrite(
@@ -457,14 +462,18 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
             or source)
 
 
-def _compilable(source: str | None) -> str | None:
-    """m2c's draft of a large switch-heavy function, repaired where m2c writes C that doesn't compile (a case of one
-    switch inside another, callees declared from their longest call, untyped float loads, placeholder arguments).
-    A large N64 state machine never had a compiling draft, so the deep permuter never started on it."""
+def _compilable(source: str | None, name='', asm='', header='', toolchain=None) -> str | None:
+    """Repair generated C before the first compiler trial, using the target when available."""
     if not source:
         return source
     from decomprepair import large_switch_drafts
-    return large_switch_drafts.rewrite(source) or source
+    source = large_switch_drafts.rewrite(source) or source
+    if asm:
+        from decomprepair import draft_call_recovery
+
+        if repaired := draft_call_recovery.variants(source, name, asm, header, toolchain):
+            return repaired[0][1]
+    return source
 
 
 def drop_saved_register_reads(source: str) -> str:

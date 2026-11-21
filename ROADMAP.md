@@ -4423,6 +4423,8 @@ ABI analysis and automatic source/profile selection remain planned.
 
 - Done: pulling from origin can merge linked portable save histories, keeping a saved
   match or the lower comparable score with its source and preserving both Git parents.
+  Confirming a pull also checkpoints eligible uncommitted progress locally before the
+  comparison. The checkpoint is recoverable if the merge needs manual review.
   Build-owned projects still need a source-unit adapter that judges competing functions
   and preserves their file and build context.
 
