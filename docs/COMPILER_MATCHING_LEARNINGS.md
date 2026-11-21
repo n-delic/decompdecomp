@@ -11345,3 +11345,13 @@ signed increment/decrement conditional directly inside the right shift and
 cast took the score to zero. Assigning the conditional to the original
 integer first left the score at 60. The deep permuter reproduced and saved
 the exact match in 19 candidates.
+
+## KMC GCC 2.7.2: a float field advanced by a call's product (F = F + call(F) * k)
+
+Compiler `gcc-2.7.2-kmc`, flags `-G0 -mips3 -mgp32 -mfp32 -O2`. One function, controlled by the app's judge.
+Target: product in `$f0`, field re-read after the call into `$f2`, `add.s $f2,$f2,$f0`. The one-line forms
+(`F = call*k + F`, `F + call*k`, `+=`, locals, casts, ~30 spellings) all scored 10-30: local-alloc ranks quantities by
+`floor_log2(refs)*refs/live length` and a sum ties to its first operand, so the field+sum quantity (span 3) outranked the
+product's (span 4) and took `$f0`. What matched (10 -> 0): `d = call(F); do { t = d * k; } while (0); v = F; F = v + t;`
+(the boundary keeps the load after the product while the split locals give the allocation). Without the boundary: 30; a
+boundary elsewhere: 60. Proposed by decomp-repair `float_sum_split` (0.5.244), run in the deep permuter's local lane.

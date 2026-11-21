@@ -822,3 +822,20 @@ def test_case_split_combinations_and_raw_field_stores_run_in_the_local_lane(monk
 
     assert search.operand_order_pass(AGENT, proj, fn, 240, None) == 0
     assert tried == [child]
+
+
+def test_float_sum_split_runs_in_the_bounded_local_lane(monkeypatch):
+    from decomprepair import float_sum_split
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    proj = net.project_row('game')
+    fn = {**net.function(), 'asm': ''}
+    child = fn['best_source'] + '\n/* split float sum */'
+    monkeypatch.setattr(float_sum_split, 'variants', lambda *args: [('float_sum_split', child)])
+    search = deep_permuter.Search(net, 1, 6, Log())
+    tried = []
+    monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 20)
+
+    assert search.operand_order_pass(AGENT, proj, fn, 180, None) == 20
+    assert tried == [child]

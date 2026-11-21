@@ -364,6 +364,9 @@ class Search(Permuter):
                  # field stores beside a scalar global's store written raw (MEM_IN_STRUCT_P keeps their order)
                  (L + 'case_split_combinations.variants', (source, name)),
                  (L + 'struct_store_raw_offsets.variants', (source, name, header)),
+                 # a float field advanced by a call's product: call result, product in its own scheduling
+                 # boundary, field re-read, sum field first (the allocation the one-line form can't give)
+                 (L + 'float_sum_split.variants', (source, name, arch, asm, header)),
                  (L + 'stack_byte_loop_base.variants', (source, name, arch, asm, header)),
                  (L + 'unsigned_rate_division_scope.variants', (source, name, arch, asm, header)),
                  (L + 'join_initializer_sink_repairs.variants', (source, name)),
