@@ -12,7 +12,7 @@ from ..project import compiler_config
 from ..repair_changes import TOKEN, without_comments
 from ..repair_comparison import complete_snapshot, differences
 from ..repair_feedback import _settings
-from . import draft_repairs, repair_generation, repair_ranking
+from . import draft_repairs, permuter_focus, repair_generation, repair_ranking
 from .engine.judging import search_evaluation
 from .function_names import canonical_source
 
@@ -228,6 +228,12 @@ def verify(feedback, example):
         focused += kmc_operand_repairs.variants(source, fn['name'], header, rows)
     else:
         focused = []
+
+    if proj['arch'] == 'mips' and compiler.startswith(('gcc-2.7.2-kmc', 'ido-7.1')):
+        from decomprepair import measured_lifetime_shapes
+
+        focused[:0] = measured_lifetime_shapes.variants(source, fn['name'], header, compiler,
+                                                       permuter_focus.normalized(rows))
 
     def generated():
         scope = ('coverage', evidence['target_sha256'], settings['context_sha256'], tuple(profile['flags']))

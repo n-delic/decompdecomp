@@ -758,3 +758,21 @@ def test_measured_record_extent_runs_only_for_frame_only_growth():
     assert 'u8 __repair_record_bytes[18]' in candidate
     changed = rows[:4] + [('s', 'sh $v0, 16($sp)', 'sh $v0, 18($sp)')] + rows[5:]
     assert 'stack_record_extent' not in dict(route(source, changed, asm))
+
+
+def test_ido_71_routes_the_measured_short_call():
+    source = '''int send(int, int, int); /* extern */
+void f(int base, int mode) {
+    send(mode, base + 8, base);
+}
+'''
+    rows = [
+        ('r', 'move $a3, $a0', 'move $a2, $a0'),
+        (' ', 'sw $ra, 0x14($sp)', 'sw $ra, 0x14($sp)'),
+        (' ', 'move $a0, $a1', 'move $a0, $a1'),
+        (' ', 'jal send', 'jal send'),
+        ('r', 'addiu $a1, $a3, 8', 'addiu $a1, $a2, 8'),
+    ]
+    fixed = dict(route(source, rows, '', compiler='ido-7.1'))
+    assert 'send(mode, base + 8);' in fixed['drop_duplicate_call_argument']
+    assert 'drop_duplicate_call_argument' not in dict(route(source, rows, '', compiler='ido-5.3'))
