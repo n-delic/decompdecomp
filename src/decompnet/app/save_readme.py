@@ -55,12 +55,7 @@ def update(net, proj, folder, initial, best, details=None):
     # address/unit/name order, including SQLite's NULL-first ordering.
     ordered.sort(key=lambda row: row[0])
     states = [(name, state) for _, name, state in ordered]
-    counts = Counter(state for _, state in states)
-    total = len(states) - counts["aside"]
-    pct = 100 * counts["matched"] / total if total else 0
-    progress = (f"- **Progress:** {counts['matched']} matching function(s), {best} best attempt(s)\n"
-                f"- **Completion:** {counts['matched']:,} / {total:,} functions ({pct:.1f}%). "
-                f"{counts['aside']:,} set aside, excluded from completion.")
+    progress, svg = progress_content(states, best, net.cfg(proj).get("platform") or "")
     path = folder / "README.md"
     image = folder / CARD
     for target in (path, image):
@@ -89,9 +84,19 @@ def update(net, proj, folder, initial, best, details=None):
     encoded = text.encode("utf-8")
     if not path.exists() or path.read_bytes() != encoded:
         path.write_bytes(encoded)
-    svg = _card(states, counts, total, pct, net.cfg(proj).get("platform") or "")
     if not image.exists() or image.read_text(encoding="utf-8") != svg:
         image.write_text(svg, encoding="utf-8")
+
+
+def progress_content(states, best, platform):
+    """Render the generated README counters and SVG from an ordered function map."""
+    counts = Counter(state for _, state in states)
+    total = len(states) - counts["aside"]
+    pct = 100 * counts["matched"] / total if total else 0
+    progress = (f"- **Progress:** {counts['matched']} matching function(s), {best} best attempt(s)\n"
+                f"- **Completion:** {counts['matched']:,} / {total:,} functions ({pct:.1f}%). "
+                f"{counts['aside']:,} set aside, excluded from completion.")
+    return progress, _card(states, counts, total, pct, platform)
 
 
 def _card(states, counts, total, pct, platform=""):

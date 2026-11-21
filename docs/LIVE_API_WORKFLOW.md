@@ -266,10 +266,13 @@ projects can use the same push-only control for their existing source commits.
 
 **Review pull from origin** fetches the branch and shows how many commits are available. If
 both branches have new commits, the review also shows the local-only count. Choose **Merge
-… from origin** to preserve both histories in a local merge commit. The app checks for
-conflicts before updating the checkout. If the branches conflict, open the checkout in your
-Git client to merge and resolve them. In-app merging of diverged branches requires Git 2.38
-or newer. A pull only updates the local checkout.
+… from origin** to preserve both histories in a local merge commit. For a linked portable
+save, competing versions of the same function keep the saved match or, for two comparable
+attempts, the one with the lower recorded score. The chosen C and its manifest record travel
+together. A tie between attempts keeps the local version. Normal saved-progress sync judges
+changed C against the game. If source settings differ or other changes need review, resolve
+them in your Git client. In-app merging of diverged branches requires Git 2.38 or newer.
+A pull only updates the local checkout.
 
 A busy repository queues the push with Stop available. Queued pushes receive the next turn
 before automatic commits; automatic match batches yield after each completed commit and

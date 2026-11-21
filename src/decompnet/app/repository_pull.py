@@ -3,7 +3,7 @@ import hashlib
 import json
 
 from ..network import NetworkError
-from . import repository_operations, repository_push
+from . import repository_operations, repository_pull_progress, repository_push
 from .repository_git import git
 
 
@@ -41,20 +41,32 @@ def run(net, slug, folder, log, *, review=''):
                 phase = f'Checking whether {commits} from {name} can merge'
                 output.progress({'phase': phase, 'queued': False})
                 output(phase + '…')
-                # Check the merge without touching the index or worktree. Use the same strategy to apply it.
-                if git(root, 'merge-tree', '--write-tree', head, target, missing=True,
-                       error='Git could not check the merge. Use Git 2.38 or newer and check that both branches share a history.') is None:
-                    raise NetworkError('The branches have merge conflicts. Open this checkout in your Git client, '
-                                       f'merge {name}, and resolve the conflicts there. The checkout is unchanged.')
+                preview = git(root, 'merge-tree', '--write-tree', '--name-only', '-z', head, target,
+                              merge_preview=True,
+                              error='Git could not check the merge. Use Git 2.38 or newer and check that both branches share a history.')
+                phase = 'Comparing saved matches and best attempts'
+                output.progress({'phase': phase, 'queued': False})
+                try:
+                    prepared = repository_pull_progress.prepare(net, slug, root, head, target, preview, check)
+                except repository_pull_progress.NeedsReview:
+                    raise NetworkError('Some changes need manual review. Open this checkout in your Git client, '
+                                       f'merge {name}, and resolve the conflicts there. The checkout is unchanged.') from None
                 check()
-                if destination() != selected or git(root, 'rev-parse', 'HEAD') != head:
-                    raise NetworkError('The branch or origin changed during the merge check. Review the pull again.')
+                if (destination() != selected or git(root, 'rev-parse', 'HEAD') != head
+                        or git(root, 'status', '--porcelain', '--untracked-files=no')):
+                    raise NetworkError('The branch, origin or tracked files changed during the merge check. Review the pull again.')
                 output.progress({'phase': f'Merging {commits} from {name}', 'queued': False})
                 check()
-                git(root, 'merge', '--no-ff', '--no-edit', '--no-autostash', '--no-overwrite-ignore',
-                    '-s', 'ort', '-m', f'Merge {name}', target,
-                    error='Git could not finish the merge. Check Git status in the checkout before retrying.')
+                merge_error = 'Git could not finish the merge. Check Git status in the checkout before retrying.'
+                if prepared:
+                    commit, resolved = prepared
+                    git(root, 'merge', '--ff-only', '--no-autostash', '--no-overwrite-ignore', commit, error=merge_error)
+                else:
+                    git(root, 'merge', '--no-ff', '--no-edit', '--no-autostash', '--no-overwrite-ignore',
+                        '-s', 'ort', '-m', f'Merge {name}', target, error=merge_error)
                 message = f'Merged {commits} from {name}. Both histories are saved in a local merge commit.'
+                if prepared and resolved:
+                    message += f' Chose the best saved progress for {resolved} function' + ('.' if resolved == 1 else 's.')
             else:
                 output.progress({'phase': f'Applying {commits} from {name}', 'queued': False})
                 output(f'Applying {commits} from {name}…')
@@ -64,7 +76,7 @@ def run(net, slug, folder, log, *, review=''):
                 message = f'Pulled {commits} from {name}.'
         elif behind and ahead:
             local = f'{ahead} local-only commit' + ('s' if ahead != 1 else '')
-            message = f'{name} has {commits} to pull and this branch has {local}. Merging keeps both histories and creates a local merge commit.'
+            message = f'{name} has {commits} to pull and this branch has {local}. Merging keeps both histories and uses saved match and score records to resolve compatible progress changes.'
         else:
             message = f'{commits} available from {name}.' if behind else f'No incoming commits from {name}.'
         output(message)

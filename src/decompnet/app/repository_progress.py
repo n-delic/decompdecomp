@@ -59,7 +59,8 @@ def committed_manifest_text(root, manifest_path, rev='HEAD'):
         return text
     prefix = manifest_path[:-len(saves.MANIFEST)]
     present = set(filter(None, repository_git.git(
-        root, 'ls-tree', '--name-only', rev, '--', *(prefix + name for name in saves.SIDE_FILES.values())).splitlines()))
+        root, '--literal-pathspecs', 'ls-tree', '--name-only', '-z', rev, '--',
+        *(prefix + name for name in saves.SIDE_FILES.values())).split('\0')))
     side = {name: repository_git.git(root, 'show', f'{rev}:{prefix}{name}') if prefix + name in present else None
             for name in saves.SIDE_FILES.values()}
     return saves.join_manifest(text, side)

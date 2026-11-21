@@ -326,9 +326,94 @@ def test_pull_merge_conflict_leaves_checkout_untouched(progress, tmp_path):
     before = git(root, 'status', '--porcelain')
 
     review = repository_pull.run(net, 'game', str(root), print)['pull_review']
-    with pytest.raises(NetworkError, match='branches have merge conflicts'):
+    with pytest.raises(NetworkError, match='changes need manual review'):
         repository_pull.run(net, 'game', str(root), print, review=review['token'])
 
     assert git(root, 'rev-parse', 'HEAD') == local
     assert git(root, 'status', '--porcelain') == before
     assert (root/'new.txt').read_text() == 'local version'
+
+
+@pytest.mark.parametrize('different_headers', [False, True])
+def test_pull_keeps_matches_and_lower_scores_in_diverged_progress(progress, tmp_path, different_headers):
+    import json
+
+    from decompnet.app import repository_pull, repository_pull_progress, save_readme, saves
+
+    net, root, remote = progress
+    # Use a clean checkpoint with four open functions. The two branches independently
+    # promote one function, improve another, and add separate attempts.
+    manifest_path = root/saves.MANIFEST
+    manifest = json.loads(manifest_path.read_text())
+    manifest['functions'] = {}
+    manifest['layout'] = [{'name': name, 'vram': addr, 'size': 4, 'status': 'open'}
+                          for addr, name in enumerate(('f', 'g', 'h', 'i'), 4096)]
+    (root/'src/f.c').unlink()
+    progress_text, card = repository_pull_progress._report(manifest)
+    (root/'README.md').write_text('My project notes\n\n' + save_readme.block('progress', progress_text) + '\n')
+    (root/save_readme.CARD).write_text(card)
+    manifest_path.write_text(json.dumps(manifest, indent=1) + '\n')
+    git(root, 'add', '-A')
+    git(root, 'commit', '-qm', 'shared progress checkpoint')
+    git(root, 'push', 'origin', 'HEAD')
+    other = incoming(remote, tmp_path)
+
+    def progress_commit(checkout, title, records):
+        manifest_file = checkout/saves.MANIFEST
+        data = json.loads(manifest_file.read_text())
+        for name, verdict in records.items():
+            matched = verdict is None
+            entry = {'matched_by': title} if matched else {'best_score': verdict, 'best_by': title}
+            data['functions'][name] = {'vram': next(row['vram'] for row in data['layout'] if row['name'] == name), **entry}
+            source = checkout/('src' if matched else 'best')/f'{name}.c'
+            source.parent.mkdir(exist_ok=True)
+            source.write_text(f'void {name}(void) {{}} /* {title} */\n')
+        manifest_file.write_text(json.dumps(data, indent=1) + '\n')
+        progress_text, card = repository_pull_progress._report(data)
+        readme = checkout/'README.md'
+        readme.write_text(save_readme._replace(readme.read_text(), 'progress', progress_text))
+        (checkout/save_readme.CARD).write_text(card)
+        notes = checkout/saves.NOTES_FILE
+        notes.write_text(json.dumps([{'function': 'f', 'text': title}], indent=1) + '\n')
+        if title == 'remote progress':
+            evidence = {'matches': {'f': {'source_sha256': 'remote-source'}},
+                        'sources': {'remote-source': 'source snapshot'}}
+            (checkout/saves.VERIFICATION_FILE).write_text(json.dumps(evidence) + '\n')
+            if different_headers:
+                (checkout/'include/common.h').write_text('typedef long s32;\n')
+        git(checkout, 'add', '-A')
+        git(checkout, 'commit', '-qm', title)
+        return git(checkout, 'rev-parse', 'HEAD')
+
+    local = progress_commit(root, 'local progress', {'f': 1, 'g': 12, 'h': 2})
+    upstream = progress_commit(other, 'remote progress', {'f': None, 'g': 3, 'i': 9})
+    git(other, 'push', 'origin', 'HEAD')
+    review = repository_pull.run(net, 'game', str(root), print)['pull_review']
+    if different_headers:
+        with pytest.raises(NetworkError, match='changes need manual review'):
+            repository_pull.run(net, 'game', str(root), print, review=review['token'])
+        assert git(root, 'rev-parse', 'HEAD') == local
+        assert git(root, 'status', '--porcelain') == ''
+        assert 'local progress' in (root/'best/f.c').read_text()
+        return
+    result = repository_pull.run(net, 'game', str(root), print, review=review['token'])
+
+    assert 'best saved progress for 2 functions' in result['message']
+    assert git(root, 'rev-parse', 'HEAD^1') == local
+    assert git(root, 'rev-parse', 'HEAD^2') == upstream
+    assert git(root, 'status', '--porcelain') == ''
+    data = json.loads(manifest_path.read_text())['functions']
+    assert data['f']['matched_by'] == 'remote progress'
+    assert not (root/'best/f.c').exists()
+    assert 'remote progress' in (root/'src/f.c').read_text()
+    assert data['g']['best_score'] == 3
+    assert 'remote progress' in (root/'best/g.c').read_text()
+    assert set(data) == {'f', 'g', 'h', 'i'}
+    readme = (root/'README.md').read_text()
+    assert readme.startswith('My project notes\n')
+    assert '1 matching function(s), 3 best attempt(s)' in readme
+    assert '1 / 4 functions matched' in (root/save_readme.CARD).read_text()
+    assert [item['text'] for item in json.loads((root/saves.NOTES_FILE).read_text())] == ['local progress', 'remote progress']
+    proof = json.loads((root/saves.VERIFICATION_FILE).read_text())
+    assert proof['matches']['f']['source_sha256'] == 'remote-source'
+    assert proof['sources']['remote-source'] == 'source snapshot'

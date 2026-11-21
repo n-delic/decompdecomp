@@ -765,6 +765,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Local register-chain and jump/delay-slot search hints | ✓ | ✓ | ✓ | — | — | ✓ | — | — reader planned | — reader planned | — | — reader planned | ✓ MIPS; other readers planned |
 | Per-model pauses and bounded fresh-turn retry | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ | ✓ | — | ✓ | ✓; room model metadata falls back to worker |
 | Targeted scalar scheduling repairs and experiment costs | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ | ✓ | — | ✓ | ✓ |
+| Resolve competing saved progress on pull from origin | ✓ portable save | ✓ portable save | ✓ portable save | ✓ portable save | — | ✓ portable save | ✓ portable save | — | — | — | — | — source-unit integration planned |
 | Portable last-exact evidence | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ | ✓ | — | ✓ | ✓ historical, own build |
 | Stack slot layout diagnostics | ✓ | ✓ | ✓ | — | — | ✓ | — | — reader planned | — reader planned | — | — reader planned | — GUI adapter planned |
 | Linked switch case diff and caller-backed matched return review | ✓ bounded MIPS ROM | ✓ shared MIPS conditions | ✓ shared MIPS conditions | — | — | ✓ shared MIPS conditions | — | — | — | — | — | — owned-build adapter planned |
@@ -4368,6 +4369,11 @@ ABI analysis and automatic source/profile selection remain planned.
   refreshes the remote and pushes existing commits without staging working edits,
   creating a commit, changing another upstream or force-pushing. ROM progress and
   imported project checkouts share the push-only path. Full repair archives stay local.
+
+- Done: pulling from origin can merge linked portable save histories, keeping a saved
+  match or the lower comparable score with its source and preserving both Git parents.
+  Build-owned projects still need a source-unit adapter that judges competing functions
+  and preserves their file and build context.
 
 - Done: single-function deep-permuter jobs appear in the Working filter and ROM map throughout their nonexclusive search, including before any compile. Live activity and map snapshots clear the display when jobs stop, finish, fail or match without taking another worker’s lease.
 
