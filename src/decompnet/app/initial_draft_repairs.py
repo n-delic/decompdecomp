@@ -201,10 +201,15 @@ def recovery_drafts(draft, name, asm, processor, toolchain, context, data, repor
     from . import draft_reports
     generate = generate or seeds.generate_from_asm
     if toolchain == 'gcc-2.7.2-kmc':
-        from decomprepair import indirect_call_drafts
+        from decomprepair import indirect_call_drafts, stack_fill_drafts, stack_word_index_drafts
 
-        if typed := indirect_call_drafts.rewrite(draft, name, asm, context):
-            yield 'initial_typed_indirect_call', typed
+        for family, rewrite in (
+            ('initial_typed_indirect_call', indirect_call_drafts.rewrite),
+            ('initial_stack_word_clear', stack_fill_drafts.rewrite_word_clear),
+            ('initial_indexed_stack_words', stack_word_index_drafts.rewrite),
+        ):
+            if candidate := rewrite(draft, name, asm, context):
+                yield family, candidate
     for family, source in variants(draft, name, asm, processor, context):
         yield family, source
     alternative = callback_context(draft, context, asm, processor)

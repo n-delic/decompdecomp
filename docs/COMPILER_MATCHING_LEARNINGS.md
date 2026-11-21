@@ -9709,3 +9709,15 @@ An N64 skeletal-animation update (2,122 instructions, one command loop, one even
 Tried and not kept: `f32 sp50[3]` or three scalar floats for the accumulated position (147 and 454 differing); inline helper functions for the vector tail (135 at best); a long-lived copy of the matrix pointer (needed in the first draft, 0 effect once the others were in); `mtc1`-based zero constants as a `0.0f` temporary; indexing the frame positions through a struct instead of an `(AV3 *)(base + 2)` cast (6 differing).
 
 The three shapes are proposals in decomp-repair 0.5.130, `loop_vector_shapes` (`indexed_pointer_loop`, `const_walked_pointer`, `vector_update_temps`). Starting from a copy of the exact source with all three undone (198 instructions off), a beam of width 3 over only those proposals and the real compiler returns to exactly 0 in five steps; a greedy climb stops at 15 because the first `const` and the first vector rewrite do not improve alone. The deep permuter runs that beam as `loop_vector_shape_pass`, in the same slot as the operand-order pass.
+
+
+### Recover the stack base of a word clear and an indexed copy
+
+Two independent N64 drafts referred to an undeclared stack base. Both matched using `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32` after reconstructing the storage from the instruction sequence. The archived sources compiled as independent controls.
+
+- With `-O2 -g3`, the target reserved 64 bytes, cleared four words, then reused the countdown register as the condition in its idle loop. A 16-word array and an element-wise pointer step alone generated the right operations with different register allocation (score 330). Explicitly reusing the counter in the second loop matched all 48 bytes.
+- With `-O1`, three groups of load/store pairs copied all eight words of a relocated record to the stack. A local record copy and an indexed unsigned word read made the draft compile at score 120. Assigning the fallback value to the same result variable as the loop matched all 212 bytes. An unsigned loop index produced a different comparison.
+
+### Recognize a repeated table read in a call delay slot
+
+An independently generated 147-instruction N64 draft doubled the index scale at two reads of the same word table. The second read was in the direct call's delay slot and loaded an argument register. Accepting that load as corroborating evidence let the existing array rewrite match all 588 bytes, from score 20, with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1`. The recorded match compiled independently as a control.
