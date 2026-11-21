@@ -347,6 +347,7 @@ class Search(Permuter):
             scoped_global_reset,
             stack_byte_loop_base,
             symbol_width_repairs,
+            targeted_switch_labels,
             unsigned_rate_division_scope,
             widen_scaled_local,
             word_byte_loop_carrier,
@@ -372,6 +373,7 @@ class Search(Permuter):
             rename = getattr(self.net, 'rename_tokens', None)
             current_asm = rename(proj, asm) if rename else asm
             proposals += global_store_repairs.scoped_byte_updates(source, fn['name'], current_asm, header)
+            proposals = targeted_switch_labels.zero_bound_variants(source, fn['name'], current_asm) + proposals
             proposals += symbol_width_repairs.guarded_indexed_variants(source, fn['name'], current_asm)
         # Existing saved drafts can still use their original address-based entry name.
         proposals += scoped_byte_read_call.variants(source, fn['name'], proj['arch'], asm, header)
