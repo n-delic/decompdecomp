@@ -11265,3 +11265,21 @@ Five isolated N64 examples used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.
   fully inlined.
 - Forwarding the untouched third entry argument through a record
   update matched all 88 bytes (score 70).
+
+## KMC gcc 2.7.2, `-O2`: the order of a do-while's last two counter updates (N64, a game with about 1,900 functions)
+
+Compiler `gcc-2.7.2-kmc`, flags `-G0 -mips3 -mgp32 -mfp32 -O2`. Evidence level: one function (a 147-instruction
+initializer with two table-clearing `do { } while (i < 0x20)` loops and two more loops), not a controlled regression.
+
+- The target ends each loop with `addiu $a1,$a1,1; slti $v0,$a1,0x20; bnez; addiu $v1,$v1,0x1a0` (the offset step
+  in the delay slot). Our source wrote `i += 1; offset += 0x1A0;` and the second scheduler hoisted the `i` step above
+  the run of stores to the loop's top: score 120 (two displaced rows).
+- Writing the tail `offset += 0x1A0; i += 1;` in the first loop alone: 120 -> 60. The same swap in the second loop
+  alone (`offset += 0x28; i += 1;`): 120 -> 60. Each alone only half-fixed it; both together: 0, confirmed by the
+  app's judge (byte-identical).
+- Rule: with two independent adds at a loop's tail, the one written last stays last; the one written first is the one
+  the scheduler may lift past stores. Read the delay slot to see which update sits there.
+- Not tried: dumping cc1's `-dS`/`-dR` passes to name the exact scheduler rule.
+- Permuter: decomp-repair family `loop_tail_update_order` (v0.5.241) swaps the last two plain counter updates of a
+  do-while body, each loop alone and all loops together; from the pre-fix saved best its combined child scored 0 with
+  `fast_judge`. App wiring: decompdecomp PR 1945.
