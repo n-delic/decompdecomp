@@ -121,6 +121,7 @@ def verify(feedback, example):
             measured_memory_order,
             measured_mmio_polling,
             measured_pointer_scale,
+            measured_storage_shapes,
             measured_temporary_repairs,
             ordered_halfword_updates,
             packed_matrix_conversion,
@@ -140,7 +141,9 @@ def verify(feedback, example):
         from . import stack_padding_repairs
 
         symbols = net.symbols(proj['id']) if hasattr(net,'symbols') else None
-        focused = short_leaf_drafts.variants(source, fn['name'], fn['asm'], header)
+        focused = measured_storage_shapes.variants(source, fn['name'], header, permuter_focus.normalized(rows),
+                                                   fn['asm'], big_endian=bool(proj['big_endian']))
+        focused += short_leaf_drafts.variants(source, fn['name'], fn['asm'], header)
         focused += stack_padding_repairs.layout_candidates(source, fn['name'], header, proj['arch'],
                                                           rows, symbols, profile['flags'], asm=fn['asm'])
         if candidate := uncached_read_repairs.rewrite(source, fn['name'], fn['asm'] or '',

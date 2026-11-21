@@ -26,6 +26,7 @@ from decomprepair import (
     measured_memory_order,
     measured_mmio_polling,
     measured_pointer_scale,
+    measured_storage_shapes,
     measured_temporary_repairs,
     ordered_halfword_updates,
     packed_matrix_conversion,
@@ -196,6 +197,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     result += target_memory_schedule_diff_repairs.proposals(source,name,header,toolchain,rows,target,candidate,asm,
                                                              big_endian=big_endian,flags=flags)
     if toolchain.startswith('gcc-2.7.2-kmc'):
+        result += measured_storage_shapes.variants(source, name, header, rows, asm, big_endian=big_endian)
         result += short_leaf_drafts.variants(source, name, asm, header)
         result += target_inline_storage_diff_repairs.proposals(source,name,header,rows,target,candidate,asm,
                                                              read_data=read_data,big_endian=big_endian)

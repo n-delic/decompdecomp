@@ -97,12 +97,14 @@ def measured(source, name, arch, rows, *, evidence=None):
 
 def layout_candidates(source, name, header, arch, rows, symbols=None, flags=(), *, asm=None):
     """Share the measured KMC layout pass with exact replay."""
-    from decomprepair import measured_layout_repairs, stack_object_size_repairs
+    from decomprepair import frame_padding_repairs, measured_layout_repairs, stack_object_size_repairs
 
     from .stack_layout import diagnose
 
     report = diagnose(arch,rows) or {}
     result = []
+    if arch == 'mips' and asm and (report.get('frame_delta') or 0) > 0:
+        result += frame_padding_repairs.forwarded_variants(source, name, header, rows, asm, report['frame_delta'])
     # A named buffer explains a larger frame when every changed row is a stack difference.
     if asm and (report.get('frame_delta') or 0) > 0 and all(marker in (' ', 's') for marker, _, _ in rows):
         result += stack_object_size_repairs.variants(source, name, asm)
