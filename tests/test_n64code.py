@@ -278,3 +278,32 @@ def test_adjacent_recovered_mappings_keep_a_called_scheduled_prologue():
     ]
     assert recover_scheduled_mapping_entries(body+(base+seam).to_bytes(4,'big'), ranges, []) == ranges
     assert recover_scheduled_mapping_entries(bytes(4)+body[4:], ranges, []) == ranges
+
+
+def test_wide_text_gap_keeps_a_called_scheduled_entry_on_the_existing_mapping():
+    from decompnet.consoles.n64.code import close_gaps
+
+    base, seam, right = 0x80001000, 128, 0x18000
+    entry = seam - 8
+    image = bytearray(struct.pack('>I', 0x24420001) * ((right + 16) // 4))
+    starts = [entry, 0x2400, 0x4800, 0x6c00, 0x9000, 0xb400, 0xd800, 0xfc00]
+
+    def put(offset, *words):
+        struct.pack_into(f'>{len(words)}I', image, offset, *words)
+
+    for index, start in enumerate(starts):
+        put(index * 8, 0x0c000000 | (((base + start) >> 2) & 0x3ffffff), 0)
+        frame = seam if start == entry else start
+        put(frame, 0x27bdffe8, 0xafbf0014, 0x8fbf0014, JR_RA, 0x27bd0018)
+    put(entry - 8, JR_RA, 0, 0x3c078001, 0x90e70420)
+    put(right - 8, JR_RA, 0)
+    ranges = [(0, seam, base), (right, right + 16, base + right)]
+    assert close_gaps(image, ranges) == [
+        (0, entry, base), (entry, right, base + entry), (right, right + 16, base + right),
+    ]
+    damaged = bytearray(image)
+    struct.pack_into('>I', damaged, 0x10000, 0x7000003f)
+    assert close_gaps(damaged, ranges) == ranges
+    assert close_gaps(image, ranges, [(0x1000, 0x1100, base + 0x1000)]) == ranges
+    put(0, 0, 0)
+    assert close_gaps(image, ranges) == ranges
