@@ -9847,3 +9847,10 @@ Five previously uncompilable N64 drafts matched with `gcc-2.7.2-kmc -G0 -mips3 -
 
 - Three 128-byte functions copied a six-byte aggregate and read overlapping byte views after the copy. Restoring the aggregate made the drafts compile. The generated guarded `do` loop still gave a frame eight bytes too small, score 2. Walking the same byte cursor in a counted `for` loop matched all three functions.
 - Two 76-byte functions saved the output pointer in the guard call's delay slot. Restoring the word load with an early error return matched both functions. Typing the load and replacing the segment symbol alone compiled but scored 871 because the compiler chose a different frame and register allocation.
+
+### Restore external call labels and untouched copy arguments in drafts
+
+The archived sources independently compiled as controls. Both fresh generation and compile recovery matched four formerly uncompilable drafts.
+
+- Three 48-byte wrappers compiled with `ido-7.1 -O2 -mips2 -G 0 -non_shared -Xcpluscomm -Wab,-r4300_mul -woff 649,838,712`. The disassembler used local label names for external direct calls, and those names were invalid in C. Using function symbols at the destinations encoded in the calls matched all three byte for byte. Absolute data aliases for those same addresses also linked to identical bytes.
+- A 52-byte wrapper under `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` lost all three arguments to `memcpy` and the otherwise unused second formal. The target left the arguments in their incoming registers and saved the first and third for its result. Restoring all three arguments matched. Both integer and pointer representations of the first parameter gave the same instructions.
