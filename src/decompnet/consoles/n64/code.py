@@ -490,12 +490,13 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
         found = sorted(found + loaded["segments"])
         found = sorted(complete_gaps(rom, taken, found, tuple((s.rom_start, s.rom_end, s.vram) for s in known),
                                      runtime_entries(workdir), log=log))
-    from .boot_mapping import extend_startup_trap, recover
+    from .boot_mapping import extend_startup_data, extend_startup_trap, recover
     from .rsp_prefix import trim
 
     found = trim(rom, found, taken, log)
     recover(config, rom, found, log)
     extend_startup_trap(config, rom, log)
+    extend_startup_data(config, rom, log)
     if not packed and taken and (slots := raw_slots.read(original_rom,taken)):
         if raw_slots.add(config,original_rom,found,slots,log):
             return original

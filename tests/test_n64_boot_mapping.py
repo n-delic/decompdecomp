@@ -107,3 +107,23 @@ def test_startup_break_belongs_to_the_boot_stub_before_a_called_helper(tmp_path,
     boundary = 0x1080 if named_entry else 0x1088
     assert entry.rom_end == main.rom_start == boundary
     assert main.vram == boundary+0x7ffff400
+
+
+@pytest.mark.parametrize('referenced', [False, True])
+def test_boot_data_terminator_precedes_a_called_aligned_frame(tmp_path, referenced):
+    from decompnet.consoles.n64.boot_mapping import extend_startup_data
+
+    path, rom, _, _ = layout(tmp_path)
+    cfg = yaml.safe_load(path.read_text())
+    entry, main = cfg['segments'][:2]
+    entry['subsegments'].append([0x1020, 'data'])
+    at, address = 0x107c, 0x8000047c
+    main.update(start=at, vram=address, subsegments=[[at, 'c', 'main']])
+    path.write_text(yaml.safe_dump(cfg))
+    image = bytearray(rom)
+    target = address if referenced else address+4
+    call = 0x0c000000 | ((target >> 2) & 0x3ffffff)
+    struct.pack_into('>8I', image, at, 0x41424300, 0x27bdffe8, 0xafbf0014,
+                     call, 0, 0x8fbf0014, 0x03e00008, 0x27bd0018)
+    assert extend_startup_data(path, image) != referenced
+    assert segments_from_config(path)[0].rom_end == at+(0 if referenced else 4)

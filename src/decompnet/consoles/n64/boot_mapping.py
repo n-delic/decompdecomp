@@ -1,5 +1,6 @@
 """Separate a TLB boot stub from code splat mistakenly placed at the boot address."""
 import collections
+import re
 import struct
 from pathlib import Path
 
@@ -97,4 +98,36 @@ def extend_startup_trap(config: Path, rom: bytes, log=print) -> bool:
     main.update(start=at+8,vram=vram+8,subsegments=[[at+8,'c','main']])
     config.write_text(yaml.safe_dump(cfg,sort_keys=False,default_flow_style=None),encoding='utf-8')
     log('Kept the trap after the startup call in the boot assembly.')
+    return True
+
+
+def extend_startup_data(config: Path, rom: bytes, log=print) -> bool:
+    """Keep the terminator of a boot data string on the data side of the split."""
+    from ...arch.mips_code_recovery import called_extent
+
+    cfg = yaml.safe_load(config.read_text(encoding='utf-8'))
+    layout = segments_from_config_data(cfg)
+    entry = next((segment for segment in layout if segment.name == 'entry'), None)
+    main = next((segment for segment in layout if segment.name == 'main'), None)
+    if entry is None or main is None or entry.rom_end != main.rom_start:
+        return False
+    raw_entry, raw_main = (next(row for row in cfg['segments']
+                               if isinstance(row, dict) and row.get('name') == name) for name in ('entry', 'main'))
+    at, end, address = main.rom_start, main.rom_end, main.vram
+    data = raw_entry.get('subsegments', [])[-1:]
+    if (not 0x1000 < at < 0x2000 or (address+4)%16 or end > len(rom)
+            or raw_main.get('follows_vram') != 'entry' or raw_main.get('subsegments') != [[at, 'c', 'main']]
+            or not data or not isinstance(data[0], list) or data[0][1:2] != ['data']
+            or not data[0][0] <= at-4 or entry.vram-entry.rom_start != address-at
+            or not re.fullmatch(rb'[A-Za-z]{3}\x00', rom[at:at+4])
+            or address.to_bytes(4, 'big') in rom):
+        return False
+    targets = set(jal_targets((word for word, in struct.iter_unpack('>I', rom[at:end])), address))
+    if address in targets or address+4 not in targets:
+        return False
+    if not called_extent(rom, at+4, end, address+4, cpu='vr4300'):
+        return False
+    raw_main.update(start=at+4, vram=address+4, subsegments=[[at+4, 'c', 'main']])
+    config.write_text(yaml.safe_dump(cfg, sort_keys=False, default_flow_style=None), encoding='utf-8')
+    log('Kept the boot data string before the first called frame.')
     return True
