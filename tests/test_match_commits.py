@@ -1,6 +1,7 @@
 """Automatic match commits exercise the ordinary record, notes, progress and local Git pipeline."""
 import json
 import subprocess
+import time
 
 import pytest
 
@@ -197,7 +198,13 @@ def test_autosave_drains_enabled_matches(automatic):
     enable(automatic)
     match(automatic, note='Saved from the ordinary autosave worker')
     before = git(root, 'rev-parse', 'HEAD')
-    saves.Autosave(net).run_once()
+    autosave = saves.Autosave(net)
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        autosave.run_once()
+        if not match_commits.status(net, net.project_row('game', sync=False))['pending']:
+            break
+        time.sleep(.01)  # An occupied project lock leaves the commit pending for the next cycle.
     assert git(root, 'rev-parse', 'HEAD') != before
     assert git(root, 'log', '-1', '--format=%s') == 'Saved from the ordinary autosave worker'
 
