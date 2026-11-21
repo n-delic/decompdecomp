@@ -1,5 +1,6 @@
 """Keep RSP vector microcode out of inferred CPU code segments."""
 
+import re
 import struct
 
 from ...arch.mips import is_frame, jal_targets
@@ -12,6 +13,30 @@ _MIN_VECTORS = 64
 def _vector(word):
     return word >> 25 == 0x25  # RSP COP2 vector arithmetic
 
+
+
+def audio_spans(image):
+    """Find an audio RSP program before the verified libultra bootstrap."""
+    from .port import RSPBOOT
+
+    for match in re.finditer(re.escape(RSPBOOT), image):
+        end = match.start()
+        if end % 16:
+            continue
+        for start in range(max(0, end - 0x1000), end - 0x100, 16):
+            status, data, size = struct.unpack_from('>3I', image, start)
+            # The first operations read SP_STATUS and the two task DMEM
+            # fields for its command list.
+            if (status & 0xffe0ffff != 0x40005800 or data & 0xffe0ffff != 0x8c200030
+                    or size & 0xffe0ffff != 0x8c200034):
+                continue
+            words = struct.unpack_from(f'>{(end-start)//4}I', image, start)
+            if sum(map(_vector, words)) < _MIN_VECTORS:
+                continue
+            branches = {word & 0x03ffffff for word in words if word >> 26 in (2, 3)}
+            if sum(0x01000400 <= target < 0x01000800 for target in branches) >= 3:
+                yield start, end
+                break
 
 def trim(image, found, known, log=print):
     """Trim a vector-code prefix only where scalar calls establish the CPU boundary."""
