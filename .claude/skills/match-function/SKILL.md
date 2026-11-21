@@ -130,6 +130,13 @@ python3 .claude/skills/match-function/scripts/judge.py --holder NAME diff SLUG F
   evidence; repeat none of them.
 - **Saved sources go stale when symbols are renamed.** A source using a name that no longer exists doesn't link
   ("not a known symbol") and scores terribly. Rewrite to the address names the assembly shows (`D_80102EFC`).
+- **Edit the current best; don't rewrite the function from scratch.** Start from `best.c` (or the app's draft) and
+  reach the match by a list of small, named edits: sink this assignment, swap this operand order, make this store
+  `u8`, wrap this call. Keep that list (with each step's score) in your notes as you go. Each edit is a candidate
+  permuter rewrite, so the list is step 5's to-do list; a clean rewrite that matches teaches the permuter nothing,
+  since nobody can tell which of its hundred differences mattered. If a large restructure seems needed, do it as
+  the smallest edit that shows it, and when a from-scratch source does match, diff it against the best and reduce
+  it to the minimal set of edits before writing any rewrite.
 
 ## 2. Work fast and locally
 
