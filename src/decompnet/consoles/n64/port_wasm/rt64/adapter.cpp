@@ -26,7 +26,10 @@ std::array<uint8_t, rdram_size> memory;
 std::array<uint8_t, 0x1000> dmem, imem;
 std::array<uint8_t, 0x40> header;
 std::array<uint32_t, 8> dpc;
-uint32_t interrupt, origin, base_y;
+uint32_t interrupt, framebuffer;
+bool has_framebuffer;
+std::array<PortRt64ViField, 2> vi_fields;
+float vertical_scale;
 std::unique_ptr<RT64::Application> app;
 
 auto *vi() {
@@ -57,7 +60,9 @@ int open(void *window, void *layer) {
     auto *regs = vi();
     *regs = {0x3202, 0, 320, 2, 0, 0x03E52239, 0x20D, 0xC15, 0x0C150C15,
              0x006C02EC, 0x002501FF, 0x000E0204, 0x200, 0x400};
-    base_y = regs->VI_Y_SCALE_REG;
+    vi_fields.fill({0, regs->VI_Y_SCALE_REG, regs->VI_V_START_REG, regs->VI_V_BURST_REG, regs->VI_INTR_REG});
+    vertical_scale = 1.0f;
+    has_framebuffer = false;
     core.VI_STATUS_REG = &regs->VI_STATUS_REG;
     core.VI_ORIGIN_REG = &regs->VI_ORIGIN_REG;
     core.VI_WIDTH_REG = &regs->VI_WIDTH_REG;
@@ -110,12 +115,21 @@ void features(uint32_t flags) {
     vi()->VI_STATUS_REG = port_rt64_vi_features(vi()->VI_STATUS_REG, flags);
 }
 
-void screen(const uint8_t *rdram, uint32_t framebuffer) {
-    framebuffer &= physical_mask;
-    if (framebuffer >= rdram_size || origin >= rdram_size - framebuffer)
-        return;
-    snapshot(rdram);
-    vi()->VI_ORIGIN_REG = framebuffer + origin;
+bool interlaced() {
+    return (vi()->VI_STATUS_REG & PORT_RT64_VI_SERRATE) != 0;
+}
+
+void present(unsigned field) {
+    auto *regs = vi();
+    const auto &scan = vi_fields[field];
+    if (scan.origin >= rdram_size - framebuffer) return;
+    regs->VI_ORIGIN_REG = framebuffer + scan.origin;
+    regs->VI_V_CURRENT_LINE_REG = field;
+    regs->VI_Y_SCALE_REG = (scan.y_scale & ~0xFFFu) |
+        std::min(0xFFFu, uint32_t((scan.y_scale & 0xFFFu) * vertical_scale));
+    regs->VI_V_START_REG = scan.v_start;
+    regs->VI_V_BURST_REG = scan.v_burst;
+    regs->VI_INTR_REG = scan.interrupt;
     auto &queue = *app->presentQueue;
     const auto video = app->core.decodeVI();
     const auto *target = video.visible() ? app->state->framebufferManager.find(video.fbAddress()) : nullptr;
@@ -141,6 +155,21 @@ void screen(const uint8_t *rdram, uint32_t framebuffer) {
     }
 }
 
+void screen(const uint8_t *rdram, uint32_t address) {
+    address &= physical_mask;
+    if (address >= rdram_size) return;
+    framebuffer = address;
+    has_framebuffer = true;
+    snapshot(rdram);
+    if (!interlaced()) present(0);
+}
+
+void retrace(unsigned field) {
+    // Use the last snapshot taken on the game thread at a swap or graphics task. The host serializes
+    // adapter calls, and the retrace thread never copies memory the game is writing into.
+    if (has_framebuffer && interlaced()) present(field & 1);
+}
+
 void mode(const uint32_t *w) {
     auto *regs = vi();
     regs->VI_STATUS_REG = w[0];
@@ -151,16 +180,13 @@ void mode(const uint32_t *w) {
     regs->VI_LEAP_REG = w[5];
     regs->VI_H_START_REG = w[6];
     regs->VI_X_SCALE_REG = w[7];
-    origin = w[9];
-    base_y = regs->VI_Y_SCALE_REG = w[10];
-    regs->VI_V_START_REG = w[11];
-    regs->VI_V_BURST_REG = w[12];
-    regs->VI_INTR_REG = w[13];
+    vi_fields = {port_rt64_vi_field(w, 0), port_rt64_vi_field(w, 1)};
+    vertical_scale = 1.0f;
 }
 
 void yscale(float scale) {
     if (scale > 0 && scale <= 4)
-        vi()->VI_Y_SCALE_REG = (base_y & ~0xFFF) | std::min(0xFFFu, uint32_t((base_y & 0xFFF) * scale));
+        vertical_scale = scale;
 }
 
 void close() {
@@ -170,6 +196,6 @@ void close() {
 }
 
 extern "C" __attribute__((visibility("default"))) const PortRt64 *decompnet_rt64_adapter(void) {
-    static const PortRt64 api = {PORT_RT64_ABI, open, task, screen, mode, yscale, close, features};
+    static const PortRt64 api = {PORT_RT64_ABI, open, task, screen, mode, yscale, close, features, retrace};
     return &api;
 }

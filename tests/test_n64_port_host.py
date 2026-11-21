@@ -628,7 +628,7 @@ int main(void) {
 
 
 @pytest.mark.skipif(shutil.which("c++") is None, reason="needs a C++ compiler")
-def test_rt64_vi_features_and_incomplete_framebuffers(tmp_path):
+def test_rt64_vi_fields_features_and_incomplete_framebuffers(tmp_path):
     source = tmp_path / "present.cpp"
     source.write_text(r"""
 #include "presentation.h"
@@ -644,6 +644,16 @@ int main() {
     assert(port_rt64_incomplete_framebuffer(320, 240, 3, 320, 240, 2));
     assert(!port_rt64_incomplete_framebuffer(640, 480, 2, 640, 476, 2));
 
+    // A high-resolution interlaced mode advances by one more row for its second field.
+    const uint32_t mode[] = {0x324e, 640, 0, 0, 0, 0, 0, 0, 0,
+                             1280, 0x2000800, 0x5d0237, 0x9026b, 2,
+                             2560, 0x3000800, 0x5f0239, 0xd0269, 4};
+    const auto even = port_rt64_vi_field(mode, 0);
+    assert(even.origin == 1280 && even.y_scale == 0x2000800 && even.v_start == 0x5d0237);
+    assert(even.v_burst == 0x9026b && even.interrupt == 2);
+    const auto odd = port_rt64_vi_field(mode, 1);
+    assert(odd.origin == 2560 && odd.y_scale == 0x3000800 && odd.v_start == 0x5f0239);
+    assert(odd.v_burst == 0xd0269 && odd.interrupt == 4);
 }
 """)
     program = tmp_path / "present"

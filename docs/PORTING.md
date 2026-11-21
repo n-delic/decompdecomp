@@ -202,8 +202,9 @@ and click **Play**. The adapter uses N64ModernRuntime's VI state and RT64's Meta
 continues to run game threads, input, audio and saves. It sends RT64 a word-swapped RDRAM snapshot and retains the
 software RDP's writes to the game's memory. Decompilation, N64Recomp and MIPS interpretation share the same
 execution path as the built-in runtime. Desktop Play is verified on a partially decompiled demo on Apple Silicon.
-The adapter forwards the game's VI feature settings, including gamma. It uses the full scanout from
-game memory when RT64 has cached only part of the framebuffer selected by the VI. This restored the
+The adapter forwards the game's VI feature settings, including gamma. Interlaced modes use both fields from
+libultra's VI mode table and alternate them at retrace, including when the game keeps the same buffer. It uses the
+full scanout from game memory when RT64 has cached only part of the framebuffer selected by the VI. This restored the
 missing lower portion of the picture in a matched SDL3 and Metal replay of a retail race.
 Broader retail renderer accuracy, RT64 exports, and other desktop platforms remain open.
 
