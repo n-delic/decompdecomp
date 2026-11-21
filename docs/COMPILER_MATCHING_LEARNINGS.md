@@ -8787,3 +8787,12 @@ loads and mask, both output stores, the direct call with its delay-slot
 store, and the final status acknowledgement. Fresh draft generation and the
 Deep Permuter proposal reproduced the match with the normal ROM judge on a
 copied project.
+
+### Untruncated scaling of a conditional size
+
+In a scratch N64 function under `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, the saved draft
+selected a size in a 16-bit local, then multiplied it by eight in place. This produced
+a left shift by 19 and an arithmetic right shift by 16, which truncated a value the
+target kept wide. Widening that local alone scored 140. Widening it and writing the
+product into a separate local produced the target's left shift by three and matched all
+316 linked bytes. Deep Permuter rejudged the combined repair at score zero.
