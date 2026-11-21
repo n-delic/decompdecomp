@@ -1633,7 +1633,8 @@ planned; asset format descriptions are advisory text.
 
 ### ROM Explorer
 
-BAM3 sprite banks expose individual TIM images and their palettes after bounded decompression.
+BAM3 and counted big-endian TIM sprite banks expose individual textures and palettes after bounded decompression.
+Unnamed B1 relocators can establish a nearby sample-table address, including uncached cartridge addresses.
 
 Iguana resource archives now expose CI4 and CI8 bitmap banks with palette-backed previews
 and padded texture row support. Their QMesh resources also expose wireframe geometry from
