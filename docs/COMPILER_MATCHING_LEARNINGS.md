@@ -1,5 +1,26 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: recover cursor advances, switch initializers and call arguments
+
+The same 36-case measured replay went from 12 to 18 exact matches.
+The original command was `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`,
+with `-g3` except for the switch.
+
+- In three 80-byte drafts, make the source pointer a byte cursor and
+  advance it in the first call's argument. Use the word call result
+  for the two byte stores and return the pointer after both reads
+  (180 to 0). A byte pointer copied from an untyped parameter still
+  scored 180.
+- In a 52-byte wrapper, give the conditional swap a local alias and
+  pass only the selected field to the callee (190 to 0). The old draft
+  inferred the unchanged object register as a second argument.
+- In an 80-byte switch, set the mask to one before copying the value,
+  then shift the mask in a separate assignment (175 to 0).
+- In a 132-byte wrapper, express the final call as the alternate arm
+  and remove its inferred argument. The target establishes the branch
+  before the no-argument call and has a nop in the call delay slot
+  (200 to 0).
+
 ### KMC GCC 2.7.2: recover byte strides and short scalar and call shapes
 
 The linked judge reproduced 12 of 36 archived near-matches after this
