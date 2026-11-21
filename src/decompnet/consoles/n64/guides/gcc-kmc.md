@@ -1716,3 +1716,12 @@ decides at the end. What moved the most instructions, in order:
 - Two arms that each compute one float field, with `$f0`/`$f2` swapped: update the field in place (`+=`) in each
   arm rather than through a result local stored after the join, and reuse one float local in both arms so it
   spans blocks. docs/COMPILER_MATCHING_LEARNINGS.md, "swapped `$f0`/`$f2` roles in a two-branch field update".
+
+## A loop over records: write the index where it is used, and check the frame
+
+When m2c's draft carries a masked loop index in a variable and names temporaries from it (`temp = var_v1 * 0x68;
+ptr = temp + base;`), write `(i & 0xFFFF) * 0x68 + base` at each use instead, offset first: GCC shares the repeated
+expression into the register the temporary would have copied from. A frame larger than the draft's, with nothing else
+explaining the gap between the argument area and the lowest saved register, is a `volatile u64 scratch;` the original
+had. If the member form of `M2C_FIELD` fixes the loads but moves a store late, put that one access back to the pointer
+form. See docs/COMPILER_MATCHING_LEARNINGS.md, "A 189-instruction record loop".
