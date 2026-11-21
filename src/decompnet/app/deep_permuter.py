@@ -336,6 +336,7 @@ class Search(Permuter):
         from decomprepair import (
             counter_derived_loop_offset,
             float_stack_call_reuse,
+            global_store_repairs,
             guard_xor_reuse,
             inline_float_vector_scale,
             near_match_repairs,
@@ -366,6 +367,7 @@ class Search(Permuter):
         if proj['arch'] == 'mips' and '%lo(' in asm:
             rename = getattr(self.net, 'rename_tokens', None)
             current_asm = rename(proj, asm) if rename else asm
+            proposals += global_store_repairs.scoped_byte_updates(source, fn['name'], current_asm, header)
             proposals += symbol_width_repairs.guarded_indexed_variants(source, fn['name'], current_asm)
         # Existing saved drafts can still use their original address-based entry name.
         proposals += scoped_byte_read_call.variants(source, fn['name'], proj['arch'], asm, header)

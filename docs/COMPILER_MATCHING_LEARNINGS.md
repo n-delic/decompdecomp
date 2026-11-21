@@ -1,5 +1,14 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: retain a byte global address through an update
+
+An N64 replay with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` went
+from 255 to 30 when the byte decrement used a block-local pointer to the
+global. GCC then materialized the address once for the load and store, as
+the target did. A volatile pointer object did not reproduce the same result.
+Deep Permuter saved the 30 candidate during a 72-trial scratch replay. Six
+register differences remain in other branches.
+
 ### KMC GCC 2.7.2: keep a byte loop comparison separate from its guard carrier
 
 An N64 replay built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`
