@@ -192,6 +192,11 @@ wrongly: a 1000 → 680 local improvement was 1090 → 1030 in the app. Confirm 
   decomp-repair do it. A library family only helps when `app/draft_repairs.py` calls it and the installed library is
   current: if the app didn't offer one, check both before writing a new rewrite.
 - Declaration order, `register` and integer width hints often produce identical RTL: test one, don't grid them.
+- **Statement order is worth a grid; declarations aren't.** When the diff is a few loads/stores in the wrong order
+  (global address loads, a flag store, a byte read-modify-write), permute those 3-4 statements with `fast_judge.py`
+  (a few dozen compiles, seconds): one switch case went 610 -> 420 -> 240 -> 0 that way, where reordering by eye stalled.
+  A byte global updated as `b = g; b &= ~1; g = b;` (m2c's split form) versus `g &= ~1;` changes the order too;
+  decomp-repair `compound_global_update_repairs` offers both (0.5.237).
 - **A commutative op whose constant must come first** (`and $v0,$v0,$v1` with the mask in `$v0`, the target's registers
   all right and only the operand order swapped). cse always puts a known constant second, so no spelling of
   `x & mask` gets it; hide the constant from cse with `(x & mask) | mask`, which combine folds back. Found by dumping
@@ -302,6 +307,12 @@ afterwards, leave its note with the evidenced blocker.
 - **One manual step is often several permuter gaps.** Here the match needed three changes at once (sink, literal, `u8`);
   each alone left the score unchanged or worse, so a one-step-at-a-time search cannot see them. The rewrite should
   emit the whole combination as one child, and its test should assert the combination, not the parts.
+- **`judge.py best` writes the function without the project's typedefs** (`u8`, `f32`, its structs). Fed to
+  `fast_judge.py` or `compile_snippet.py` as is, it fails to parse and the score comes back `None` (looks like "no
+  verdict", not an error). Build one header once (typedefs plus the externs) and prepend it to every candidate; and
+  test scores with `is None`, never `score or BIG`, which turns an exact 0 into a failure.
+- **`fast_judge.Judge` needs the target bytes**: `judge.App().function(SLUG, FUNC)` gives `rom_offset`, `size`,
+  `vram`; slice `<project>/rom.z64` (the project folder in the app's home, `ps -E` shows which home) with them.
 - **Check what already exists before writing a rewrite.** `passthrough_argument` already did the argument fix and
   `symbol_width_repairs` was one regex away from the cast fix; ten minutes of grep over the library's docstrings
   found both. Run the existing families on the saved best first: what they don't produce is the gap.
