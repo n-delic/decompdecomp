@@ -10137,3 +10137,16 @@ Both cases used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`. The independen
   index in the first argument register across the float store. Caching the index or grouping both shifts into one
   expression left score 30. Computing shift/add and the final shift in separate statements before that call matched
   all 184 bytes from the fresh draft. The second call keeps its original expression.
+
+### Schedule indexed bytes, a masked list index, and a recursive count
+
+Three fresh N64 drafts matched byte for byte with the original compiler. Their independently archived sources
+also matched as controls.
+
+- With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, moving a constant subtraction to the indexed unsigned byte
+  and spelling the power-of-two scale as a shift restored the byte load order and matched all 68 bytes from score 45.
+  Introducing a separate address local gave the same result.
+- Adding `-g3`, computing the incoming index mask once in the non-null list arm and making the back edge an explicit
+  non-null test matched all 76 bytes from score 60. Simplifying the loop tail without staging the mask left score 60.
+- With the same `-g3` command, forwarding the entry argument to a count helper moved the 112-byte recursive draft
+  from score 280 to 245. Updating the original count after recursion and returning it on every path matched exactly.
