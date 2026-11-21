@@ -2377,10 +2377,11 @@ $("sourcePrepExportRun").onclick = async () => {
 
 let deepSweepFollowing = null, deepSweepProjectVersion = 0, deepSweepSnapshot = null, deepSweepRetryTimer = null;
 // Keep the actual inputs when the shared drawer closes or changes tasks, so a poll never loses edits.
-function openDeepOptions() {
+function openDeepOptions(startLabel = "") {
   const settings = $("deepSweepSettings"), slug = S.slug;
-  dialog("Deep permuter search options", `<p class="small muted" id="deepSweepOptionsHelp"></p><div id="deepSweepOptionsHost"></div><div class="row"><button type="button" class="primary" id="deepSweepOptionsDone">Done</button></div>`, "deep-options");
+  dialog("Deep permuter search options", `<p class="small muted" id="deepSweepOptionsHelp"></p><div id="deepSweepOptionsHost"></div><div class="row"><button type="button" class="primary" id="deepSweepOptionsDone">${startLabel ? esc(startLabel) : "Done"}</button></div>`, "deep-options");
   $("deepSweepOptionsHost").append(settings);
+  $("deepSweepOptionsDone").dataset.start = startLabel;
   $("deepSweepOptionsHelp").textContent = settings.disabled
     ? "These settings are in use. Stop the search to change them."
     : "Changes apply when you start the next search.";
@@ -2396,7 +2397,10 @@ function openDeepOptions() {
   settings.oninput = edited;
   settings.onchange = edited;
   $("deepSweepOptionsDone").onclick = () => {
-    if ([...settings.querySelectorAll("input")].every(input => input.reportValidity())) closeDialog();
+    if (S.slug !== slug || (startLabel && settings.disabled)) return;
+    if (![...settings.querySelectorAll("input")].every(input => input.reportValidity())) return;
+    closeDialog();
+    if (startLabel) return startDeepSweep();
   };
   (settings.disabled ? $("deepSweepOptionsDone") : $("deepSweepMinutes")).focus();
 }
@@ -2558,15 +2562,25 @@ function renderDeepOptionsSummary() {
 function setDeepRunVisibility(running) {
   $("deepSweepSettings").disabled = running;
   renderDeepOptionsSummary();
-  if (S.dialogKind === "deep-options") $("deepSweepOptionsHelp").textContent = running
-    ? "These settings are in use. Stop the search to change them."
-    : "Changes apply when you start the next search.";
+  if (S.dialogKind === "deep-options") {
+    $("deepSweepOptionsDone").disabled = running && !!$("deepSweepOptionsDone").dataset.start;
+    $("deepSweepOptionsHelp").textContent = running
+      ? "These settings are in use. Stop the search to change them."
+      : "Changes apply when you start the next search.";
+  }
   for (const id of ["deepActivitySection", "deepSweepLogSection"]) $(id).hidden = !running;
 }
 function renderDeepQueueState(status) {
   if (status.control_only === true) status = {...deepSweepSnapshot, ...status, statistics_pending:status.statistics_pending ?? deepSweepSnapshot?.statistics_pending ?? true};
   if (status.control_only !== true && status.statistics_pending == null) status = {...status, statistics_pending:false};
+  const seconds = Math.max(status.runtime_seconds || 0, deepSweepSnapshot?.runtime_seconds || 0);
+  status = {...status, runtime_seconds:seconds};
   deepSweepSnapshot = status;
+  const runtime = $("deepSweepRuntime"), wholeSeconds = Math.floor(seconds);
+  const hours = Math.floor(wholeSeconds / 3600);
+  const minutes = Math.floor(wholeSeconds / 60) % 60;
+  runtime.hidden = !seconds && status.state !== "running";
+  runtime.textContent = `Total runtime: ${hours ? hours + "h " : ""}${minutes || hours ? minutes + "m " : ""}${wholeSeconds % 60}s`;
   renderDeepMetricDrawer();
   const running = status.state === "running", left = status.queue_left || 0;
   setDeepRunVisibility(running);
@@ -2588,7 +2602,7 @@ function renderDeepQueueState(status) {
   }
   const done = status.queue_done || 0, total = done + left + blocked;
   $("deepSweepQueueState").dataset.state = running ? "running" : stopped ? "stopped" : error ? "error" : "idle";
-  $("deepSweepQueueTitle").textContent = running ? active ? `Running — searching ${active} function${active === 1 ? "" : "s"}` : status.progress?.phase === "waiting for host claims or scored C" ? "Running — waiting for available functions" : preparing ? "Running — checking candidates" : "Running — preparing the next search"
+  $("deepSweepQueueTitle").textContent = running ? ""
     : stopped ? "Search stopped" : error ? "Search needs attention" : left && status.has_activity ? `Paused — ${left} function${left === 1 ? "" : "s"} available`
     : blocked ? "Paused — remaining functions need attention" : status.statistics_pending ? "Ready to search" : status.has_activity ? "Finished — no eligible functions left" : "Ready to search";
   $("deepSweepQueueReason").textContent = running
@@ -2792,11 +2806,12 @@ $("deepSweepBlockedGroup").onclick = () => openDeepMetric("attention");
 $("deepSweepMetricMatched").onclick = () => openDeepMetric("matched");
 $("deepSweepMetricImproved").onclick = () => openDeepMetric("improved");
 $("deepSweepMetricActive").onclick = () => openDeepMetric("active");
-$("deepSweepOptions").onclick = openDeepOptions;
-$("deepSweepStart").onclick = async () => {
-  if ($("deepSweepStart").disabled) return;
-  const invalid = [...$("deepSweepSettings").querySelectorAll("input")].find(input => !input.checkValidity());
-  if (invalid) { openDeepOptions(); invalid.reportValidity(); return; }
+$("deepSweepOptions").onclick = () => openDeepOptions();
+$("deepSweepStart").onclick = () => {
+  if (!$("deepSweepStart").disabled) openDeepOptions($("deepSweepStart").textContent);
+};
+async function startDeepSweep() {
+  if ($("deepSweepStart").disabled || $("deepSweepSettings").disabled) return;
   $("deepSweepPanel").open = true;
   const slug = S.slug, log = $("deepSweepLog");
   deepSweepProjectVersion++; clearTimeout(deepSweepRetryTimer);
@@ -2824,11 +2839,19 @@ $("deepSweepStart").onclick = async () => {
   }
   finally { done(); }
   if (job && S.slug === slug) { $("deepSweepStop").hidden = false; followDeepSweep(slug, job); }
-};
+}
 $("deepSweepStop").onclick = async () => {
-  const button = $("deepSweepStop"); button.disabled = true; button.textContent = "Stopping…";
-  try { await api("/api/permuter/pass", {method:"POST", body:{slug:S.slug, action:"stop"}}); }
-  catch (error) {
+  const button = $("deepSweepStop");
+  if (button.disabled) return;
+  button.disabled = true; button.textContent = "Stopping…";
+  const slug = S.slug, job = deepSweepSnapshot?.job;
+  try {
+    const status = await api("/api/permuter/pass", {method:"POST", body:{slug, action:"stop"}});
+    if (S.slug === slug && deepSweepSnapshot?.job === job && deepSweepSnapshot?.state === "running") {
+      renderDeepQueueState(status);
+    }
+  } catch (error) {
+    if (S.slug !== slug || deepSweepSnapshot?.job !== job) return;
     button.disabled = false; button.textContent = "Stop";
     $("deepSweepQueueReason").textContent = "Could not stop: " + error.message;
     $("deepSweepQueueReason").hidden = false;

@@ -68,6 +68,7 @@ class Sweeps:
     def __init__(self, net, jobs):
         self.net, self.jobs = net, jobs
         self.active = {}
+        self.started_at = {}
         self.queue_cache = {}
         self.lock = threading.RLock()
         self.ready = set()
@@ -278,16 +279,38 @@ class Sweeps:
                 db.executemany("UPDATE deep_permutation_passes SET state='pending',error='' WHERE function_id=?",[(fid,) for fid in ids])
             with self.lock:self.queue_cache.clear()
 
+    def runtime(self, slug, cfg):
+        started = self.started_at.get(slug)
+        return cfg.get('runtime_seconds', 0) + (time.monotonic() - started if started is not None else 0)
+
+    def finish_runtime(self, slug, cfg):
+        if slug in self.started_at:
+            cfg = cfg | {'runtime_seconds': self.runtime(slug, cfg)}
+            self.save(slug, cfg)
+            del self.started_at[slug]
+
+    def timed_run(self, slug, minutes, variants, log, threads, loop):
+        with self.lock:
+            log.check_cancel()
+            self.started_at[slug] = time.monotonic()
+        try:
+            return self.run(slug, minutes, variants, log, threads, loop)
+        finally:
+            with self.lock:
+                if slug in self.started_at:
+                    self.finish_runtime(slug, self.config(slug))
+
     def control(self, slug):
         """Discover work and controls without scanning saved searches or build inputs."""
-        cfg = self.config(slug)
         with self.lock:
+            cfg = self.config(slug)
+            runtime = self.runtime(slug, cfg)
             current = dict(self.active.get(slug, {}))
         with self.jobs._lock:
             job = self.jobs.jobs.get(current.get('job'), {})
             live = {key:job[key] for key in ('state', 'progress', 'error') if key in job}
         return cfg | {'control_only':True, 'threads_default':workers.default_workers(),
-                      'has_activity':bool(job or cfg.get('metrics_started')), 'state':'idle', **current, **live}
+                      'runtime_seconds':runtime, 'has_activity':bool(job or cfg.get('metrics_started')), 'state':'idle', **current, **live}
 
     def status(self, slug):
         # A status poll must never queue behind a writer to repair old pass records.
@@ -301,13 +324,14 @@ class Sweeps:
                                       "WHERE f.project_id=? AND d.state='completed'", proj['id'])['n']
 
         improvements = self.improvements(proj['id'])
-        cfg = self.config(slug)
         attention = self.attention(proj)
         errors = len(attention)
         # Matching the current build can inspect project files. Cache the result briefly so opening
         # details or polling a running pass does not repeatedly hash every completed function.
         ready = counts['ready'] or 0
         with self.lock:
+            cfg = self.config(slug)
+            runtime = self.runtime(slug, cfg)
             current = dict(self.active.get(slug, {}))
         def count_queue():
             shared = candidate_scope.batch_context(self.net, proj)
@@ -341,7 +365,7 @@ class Sweeps:
         reset = self._store(slug).one('SELECT value FROM settings WHERE key=?', f'deep-metrics-reset:{proj["id"]}')
         has_activity = bool(job or improvements or recipes or measurements or wins
                             or cfg.get('metrics_started', bool((completed or errors) and not reset)))
-        return cfg | {'has_activity': has_activity, 'threads_default': workers.default_workers(),
+        return cfg | {'runtime_seconds': runtime, 'has_activity': has_activity, 'threads_default': workers.default_workers(),
                       'total': counts['total'], 'ready': ready, 'queue_done': done_open + done_matched,
                       'queue_left': max(0, ready - done_open - blocked), 'queue_rotated': rotated, 'queue_blocked': blocked, 'awaiting_source': max(0, counts['total'] - ready),
                                    'improved': len(improvements), 'improvements': improvements, 'recipes': recipes, 'recipe_wins': wins,
@@ -375,8 +399,9 @@ class Sweeps:
                     db.execute("DELETE FROM deep_permutation_passes WHERE function_id IN "
                                "(SELECT id FROM functions WHERE project_id=? AND status='open')",
                                (self.net.project_row(slug)['id'],))
-            self.save(slug, {'enabled': True, 'minutes': minutes, 'max_variants': max_variants, 'threads': threads, 'threads_per_function': threads_per_function, 'compiler_profiles': compiler_profiles, 'metrics_started': True, 'loop': loop, **throughput})
-            job = self.jobs.start('deep-permutation-pass', lambda log: self.run(slug, minutes, max_variants, log, threads, loop),
+            self.save(slug, {'runtime_seconds': self.config(slug).get('runtime_seconds', 0),
+                             'enabled': True, 'minutes': minutes, 'max_variants': max_variants, 'threads': threads, 'threads_per_function': threads_per_function, 'compiler_profiles': compiler_profiles, 'metrics_started': True, 'loop': loop, **throughput})
+            job = self.jobs.start('deep-permutation-pass', lambda log: self.timed_run(slug, minutes, max_variants, log, threads, loop),
                                   project=slug, cancel_message='Deep pass stopped. Verified improvements and completed passes are saved.')
             self.active[slug] = {'job': job}
         return self.control(slug)
@@ -384,7 +409,11 @@ class Sweeps:
     def stop(self, slug):
         with self.lock:
             cfg = self.config(slug)
-            self.save(slug, cfg | {'enabled': False})
+            cfg = cfg | {'enabled': False}
+            if slug in self.started_at:
+                self.finish_runtime(slug, cfg)
+            else:
+                self.save(slug, cfg)
             job = self.active.get(slug, {}).get('job')
             if job:
                 self.jobs.cancel(job)
@@ -406,8 +435,10 @@ class Sweeps:
         release_repairs.shutdown(self.net,self.jobs)
         # Stop current searches; their completed records remain available for a manual restart.
         with self.lock:
-            for current in self.active.values():
+            for slug, current in self.active.items():
                 self.jobs.cancel(current['job'])
+                if slug in self.started_at:
+                    self.finish_runtime(slug, self.config(slug))
 
     def completed(self, slug, before, minutes, variants, result, build_scope):
         self.improvement(before, result.get('best_score'))

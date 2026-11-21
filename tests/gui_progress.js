@@ -129,7 +129,7 @@ async function main() {
   }
   // A project sweep has separate start and long-running follow phases, including page navigation.
   for (const failed of [false, true]) {
-    const test = setup("steering", '$("deepSweepStart").onclick = async () => {', '\n};', "deepSweepLog", "deepSweepStart");
+    const test = setup("steering", 'async function startDeepSweep() {', '\n}\n', "deepSweepLog", "deepSweepStart");
     const followed = [];
     test.ctx.setDeepRunVisibility = () => {};
     test.ctx.followDeepSweep = (...args) => followed.push(args);
@@ -151,7 +151,7 @@ async function main() {
   }
   // Run again explicitly repeats saved completed turns, even with Advanced unchecked.
   {
-    const test = setup("steering", '$("deepSweepStart").onclick = async () => {', '\n};', "deepSweepLog", "deepSweepStart");
+    const test = setup("steering", 'async function startDeepSweep() {', '\n}\n', "deepSweepLog", "deepSweepStart");
     test.ctx.setDeepRunVisibility = () => {};
     test.ctx.deepSweepSnapshot = {has_activity:true, queue_left:0, queue_done:12};
     test.ctx.$("deepSweepRepeat").checked = false;

@@ -849,7 +849,10 @@ def test_invalid_function_threads_do_not_start_or_save(sweep, value):
 
 def test_controls_and_start_stop_do_not_wait_for_saved_statistics(sweep, monkeypatch):
     import threading
+    import time
     obj, net, calls, path = sweep
+    clock = [100]
+    monkeypatch.setattr(deep_sweep, 'time', SimpleNamespace(monotonic=lambda: clock[0], time=time.time))
     entered, release = threading.Event(), threading.Event()
     def slow(*args):
         entered.set()
@@ -866,9 +869,42 @@ def test_controls_and_start_stop_do_not_wait_for_saved_statistics(sweep, monkeyp
         assert current['job'] == result['job'] and current['state'] == 'running'
         assert obj.start('game')['job'] == result['job']
         assert len(obj.jobs.jobs) == 1
-        assert not obj.stop('game')['enabled']
+        clock[0] = 112
+        assert obj.control('game')['runtime_seconds'] == 12
+        stopped = obj.stop('game')
+        assert not stopped['enabled']
+        assert stopped['runtime_seconds'] == 12
+        clock[0] = 200
+        assert obj.control('game')['runtime_seconds'] == 12
+        assert Sweeps(net, Jobs()).control('game')['runtime_seconds'] == 12
     finally:
         release.set()
+
+
+@pytest.mark.parametrize('fails', [False, True])
+def test_runtime_continues_from_saved_total_and_freezes_on_exit(sweep, monkeypatch, fails):
+    import time
+
+    obj, net, _, _ = sweep
+    obj.save('game', obj.config('game') | {'runtime_seconds': 40})
+    clock = [200]
+    monkeypatch.setattr(deep_sweep, 'time', SimpleNamespace(monotonic=lambda: clock[0], time=time.time))
+
+    def run(*args):
+        clock[0] = 207
+        assert obj.control('game')['runtime_seconds'] == 47
+        if fails:
+            raise NetworkError('Search failed.')
+
+    monkeypatch.setattr(obj, 'run', run)
+    if fails:
+        with pytest.raises(NetworkError, match='Search failed'):
+            obj.timed_run('game', 5, 10000, Log(), 1, False)
+    else:
+        obj.timed_run('game', 5, 10000, Log(), 1, False)
+    clock[0] = 300
+    assert obj.status('game')['runtime_seconds'] == 47
+    assert Sweeps(net, Jobs()).control('game')['runtime_seconds'] == 47
 
 
 def test_maximum_throughput_controls_persist_for_returning_project(sweep, monkeypatch):
