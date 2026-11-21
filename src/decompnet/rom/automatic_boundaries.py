@@ -78,12 +78,14 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
     functions = recover_segment_switch_data(functions, data, image, order, tables,
                                             explicit | pointers | transfer_targets, references, log)
     tables.extend(console.import_table_ranges(image,segments))
+    functions, removed = split_address_tables_after_return(functions, data, image, order, console, owner,
+                                                          segments, explicit | pointers | set(references))
     functions = split_aligned_frames(functions, data, image, order, console, owner, segments,
                                      explicit | pointers | set(references))
     gaps = multiword_alignment(functions, image, order, owner, explicit | pointers, references,
                                direct_calls, data, segments, console)
-    if gaps:
-        removed = {line.rom for fn in functions if (fn.rom, fn.vram) in gaps for line in fn.lines}
+    if gaps or removed:
+        removed.update(line.rom for fn in functions if (fn.rom, fn.vram) in gaps for line in fn.lines)
         functions = [fn for fn in functions if (fn.rom, fn.vram) not in gaps]
         # Discard edges decoded from filler, keeping an overlapping delay
         # word wherever the next function owns it as an actual instruction.
@@ -93,7 +95,7 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
             if not references[target]:
                 del references[target]
                 direct_calls.discard(target)
-        log(f'Left {len(gaps)} fragments of alignment between functions in the original image.')
+        if gaps:log(f'Left {len(gaps)} fragments of alignment between functions in the original image.')
     destinations=sorted(references)
     entered_addresses=explicit|pointers|set(destinations)
     returns={fn.rom+fn.size for fn in functions if fn.size>=8 and fn.lines[-2].word==JR_RA}
@@ -366,6 +368,65 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
     return kept if dropped or markers or recovered_data else result if changed else functions
 
 
+def call_targets_delay_slot(word, address, image, order, segments):
+    if word >> 26 != 3:
+        return False
+    target = ((address+4) & 0xf0000000) | ((word & 0x3ffffff) << 2)
+    offsets = [target-4-s.vram+s.rom_start for s in segments if s.contains(target-4, 8)]
+    if len(offsets) != 1 or offsets[0]+8 > len(image):
+        return False
+    import rabbitizer
+    return rabbitizer.Instruction(int.from_bytes(image[offsets[0]:offsets[0]+4], order)).hasDelaySlot()
+
+
+def split_address_tables_after_return(functions, data, image, order, console, owner, segments, entered):
+    """Separate a size-prefixed address record folded between two closed bodies."""
+    result = []
+    removed = set()
+    for fn in functions:
+        if owner(fn)[0] < 0:
+            result.append(fn)
+            continue
+        for index in range(4, len(fn.lines)-10):
+            call = fn.lines[index].word
+            if call>>26 != 3:
+                continue
+            delay, ret, slot, size = (line.word for line in fn.lines[index+1:index+5])
+            if (delay or ret != JR_RA or slot or not 36 <= size <= 256 or size%4
+                    or fn.lines[index-2].word != JR_RA):
+                continue
+            start = fn.rom+index*4
+            end = start+size
+            entry = fn.vram+index*4
+            following = entry+size
+            stop = fn.rom+fn.size
+            if (end >= stop or following%16
+                    or not call_targets_delay_slot(call, entry, image, order, segments)
+                    or any(address in entered for address in range(entry, following, 4))
+                    or any(symbol.rom is not None and symbol.rom < end and start < symbol.rom+symbol.size
+                           for symbol in data)):
+                continue
+            fmt = '>I' if order=='big' else '<I'
+            if any(address & 0xe0000003 != 0x80000000 for address, in struct.iter_unpack(fmt,image[start+20:end])):
+                continue
+            pointers = b'|'.join(re.escape(address.to_bytes(4,order)) for address in range(entry,following,4))
+            if any(not hit.start()%4 for hit in re.finditer(pointers,image)):
+                continue
+            options = dict(big_endian=console.big_endian, cpu=console.cpu_variant, asm_check=console.asm_reason)
+            if (assembly_extent(image,fn.rom,start,fn.vram,console,order) != start-fn.rom
+                    or leaf_extent(image,end,stop,following,**options) != stop-end):
+                continue
+            removed.update(range(start,end,4))
+            result.append(replace(fn, lines=fn.lines[:index], labels={label for label in fn.labels if label < entry}))
+            result.append(replace(fn, name=f'func_{following:08X}', vram=following, rom=end,
+                                  lines=fn.lines[(end-fn.rom)//4:],
+                                  labels={label for label in fn.labels if label >= following}))
+            break
+        else:
+            result.append(fn)
+    return result, removed
+
+
 def split_aligned_frames(functions, data, image, order, console, owner, segments, entered):
     """Separate short alignment folded into a validated following frame."""
     result = []
@@ -376,7 +437,8 @@ def split_aligned_frames(functions, data, image, order, console, owner, segments
             continue
         size = -fn.vram % 16
         start = fn.rom+size
-        if (size not in (8, 12) or not is_frame(fn.lines[size//4].word)
+        if (size not in (4, 8, 12) or not is_frame(fn.lines[size//4].word)
+                or size == 4 and not call_targets_delay_slot(fn.lines[0].word, fn.vram, image, order, segments)
                 or int.from_bytes(image[fn.rom-8:fn.rom-4], order) != JR_RA
                 or any(address in entered for address in range(fn.vram, fn.vram+size, 4))
                 or any(d.rom is not None and d.rom < start and fn.rom < d.rom+d.size for d in data)
@@ -411,8 +473,11 @@ def multiword_alignment(functions, image, order, owner, named, references, direc
                 # An apparent backward branch in one filler word can falsely
                 # make the preceding routine look as if it has a second entry.
                 word = int.from_bytes(image[start:start+4], order)
-                if (following.vram not in direct_calls or word>>26 not in (4,5,6,7,20,21,22,23)
-                        or not word & 0x8000):
+                backward_branch = (following.vram in direct_calls and word>>26 in (4,5,6,7,20,21,22,23)
+                                   and word & 0x8000)
+                discarded_call = (is_frame(following.lines[0].word)
+                                  and call_targets_delay_slot(word, address, image, order, segments))
+                if not (backward_branch or discarded_call):
                     continue
             # Filler may decode as a branch into its own gap. Only incoming
             # references from outside the gap establish a possible entry.
