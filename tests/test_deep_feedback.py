@@ -225,3 +225,39 @@ def test_failed_baseline_rejudges_distinct_saved_attempts(monkeypatch):
     assert history == [(None, broken)]
     assert net.function()['best_source'] == fallback
     assert net.function()['best_score'] == 80
+
+
+def test_better_historical_scores_are_rejudged_before_promotion(monkeypatch):
+    from decompnet.app import source_preparation
+
+    net = setup(monkeypatch)
+    current = 'int f(int x) { return x; }'
+    unlinked = 'int f(int x) { return x + 1; }'
+    better = 'int f(int x) { return x + 2; }'
+    weaker = 'int f(int x) { return x + 3; }'
+    with net.store.tx() as db:
+        db.execute('UPDATE functions SET best_source=?,best_score=40', (current,))
+        db.executemany('INSERT INTO attempts(function_id,score,compiled,source) VALUES(1,?,1,?)',
+                       [(5, unlinked), (10, better), (55, weaker)])
+    net.cfg = lambda proj: {'compiler': {'toolchain': 'example', 'flags': ['-O2']}}
+    monkeypatch.setattr(source_preparation, 'inputs', lambda net, proj, fn: fn['best_source'])
+    judged = []
+
+    def rejudge(proj, fn, toolchain, flags, source):
+        judged.append(source)
+        if source == unlinked:
+            return False, SimpleNamespace(score=5), 'unplaced relocation'
+        return False, SimpleNamespace(score=20), ''
+
+    def score(self, agent, proj, fn, source, threshold, fork):
+        assert source == better and threshold == 40
+        with net.store.tx() as db:
+            db.execute('UPDATE functions SET best_source=?,best_score=20', (source,))
+        return 20
+
+    net._judge_with = rejudge
+    monkeypatch.setattr(deep_permuter.Search, '_score', score)
+    search = deep_permuter.Search(net, 1, 10, Log(), net.function())
+    assert search.better_saved_baseline(AGENT, net.project_row('game'), net.function(), State(), 40) == 20
+    assert judged == [unlinked, better]
+    assert net.function()['best_source'] == better

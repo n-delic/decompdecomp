@@ -14,12 +14,13 @@ ATTEMPTS = 8
 PREFIX = 'deep-source-recovery:'
 
 
-def saved_attempts(store, fid):
+def saved_attempts(store, fid, *, below=None):
     return store.all("""SELECT id FROM main.attempts
         WHERE function_id=? AND compiled=1 AND score IS NOT NULL
           AND (source_hash IS NOT NULL OR source IS NOT NULL)
         GROUP BY COALESCE(source_hash, source)
-        ORDER BY MIN(score), MAX(id) DESC LIMIT ?""", fid, ATTEMPTS)
+        HAVING (? IS NULL OR MIN(score) < ?)
+        ORDER BY MIN(score), MAX(id) DESC LIMIT ?""", fid, below, below, ATTEMPTS)
 
 
 def saved_sources(store, attempts):

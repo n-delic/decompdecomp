@@ -583,6 +583,51 @@ class Search(Permuter):
         finally:
             self.measuring_baseline = False
 
+    def better_saved_baseline(self, agent, proj, fn, state, measured):
+        """A historical score is a lead. Only a fresh clean link can beat today's baseline."""
+        from .. import candidate_quality
+        from . import deep_source_recovery, source_preparation
+        from .function_names import canonical_source
+
+        store = self.net.project_store(proj['id'])
+        floor = min(measured, fn['best_score']) if fn['best_score'] is not None else measured
+        attempts = deep_source_recovery.saved_attempts(store, fn['id'], below=floor)
+        if not attempts or not hasattr(self.net, '_judge_with'):
+            return measured
+        snapshot = source_preparation.inputs(self.net, proj, fn)
+        profile = compiler_for(self.net.cfg(proj), fn['vram'], fn)
+        seen = {fn['best_source']}
+        allowance = min(4, max(0, self.limit - self.tested - 1))
+        for historical in deep_source_recovery.saved_sources(store, attempts):
+            if allowance <= 0:
+                break
+            source = canonical_source(fn, historical)
+            if source in seen or candidate_quality.reported_source(self.net, fn, source):
+                continue
+            seen.add(source)
+            self.check()
+            allowance -= 1
+            self.tested += 1
+            self.report()
+            exact, diff, problems = self.net._judge_with(proj, fn, profile['toolchain'], profile['flags'], source)
+            if problems or diff is None or (not exact and diff.score >= floor):
+                continue
+            current = self.net._function(fn['name'], proj['slug'])
+            project = self.net.project_row(proj['slug'])
+            if (current['status'] != 'open' or current['best_score'] != fn['best_score']
+                    or source_preparation.inputs(self.net, project, current) != snapshot):
+                break
+            state.add(variants=1, repairs=1)
+            with repair_trial({'kind': 'deep local repair', 'family': 'rechecked_saved_attempt'}):
+                score = self._score(agent, project, current, source, floor, None)
+            if score is not None and score < floor:
+                updated = self.net._function(fn['name'], proj['slug'])
+                if updated['best_source'] == source or updated['status'] == 'matched':
+                    self.log(f'Rechecked a better saved attempt: {measured:,} → {score:,}.')
+                    return score
+            break
+        return measured
+
     def allocation_choices(self, proj, fn, source, rows, choices, labels, header, fork):
         """One bounded lane before broad mutation, charged to the same global limit/deadline."""
         diagnosis = allocation_evidence.diagnose(rows,proj['arch'])
@@ -1517,8 +1562,11 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
                 baseline, _ = search._baseline(agent, proj, fn, state, fork)
                 if baseline is None:
                     raise NetworkError('The saved C does not compile in the current context; fix its declarations before deep search.')
-                measured_baseline = baseline
                 fn = net._function(name, slug)
+                if baseline and not fork and (lane is None or lane.index == 0):
+                    baseline = search.better_saved_baseline(agent, proj, fn, state, baseline)
+                    fn = net._function(name, slug)
+                measured_baseline = baseline
                 relabel = baseline and not fork and search.can_relabel_switch(fn)
                 if baseline and not fork and not relabel and (lane is None or lane.index == 0):
                     if profile := deep_profiles.tail_dispatch(net, proj, fn):
