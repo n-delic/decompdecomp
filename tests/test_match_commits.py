@@ -42,6 +42,16 @@ def enable(automatic):
     return match_commits.configure(net, 'game', True, str(root))
 
 
+def drain_matches(net, run_once):
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        run_once()
+        state = match_commits.status(net, net.project_row('game', sync=False))
+        if not state['pending'] or state['error']:
+            return
+        time.sleep(.01)  # Busy project or repository locks leave the commit pending for the next cycle.
+
+
 def test_default_off_and_enabling_does_not_backfill(automatic):
     net, root, _, _ = automatic
     match(automatic, note='Existing match')
@@ -59,7 +69,7 @@ def test_one_commit_per_function_uses_notes_and_removes_only_its_draft(automatic
     enable(automatic)
     match(automatic, 'f', 'Use the signed comparison\n\nPreserve loop order and the literal `$(text)`.')
     match(automatic, 'g', 'Use an unsigned return value')
-    match_commits.process(net, 'game')
+    drain_matches(net, lambda: match_commits.process(net, 'game'))
     assert int(git(root, 'rev-list', '--count', 'HEAD')) == before + 2
     assert git(root, 'log', '-2', '--format=%s').splitlines() == ['Use an unsigned return value', 'Use the signed comparison']
     assert 'Preserve loop order and the literal `$(text)`.' in git(root, 'log', '-1', '--format=%B', 'HEAD^')
@@ -199,12 +209,7 @@ def test_autosave_drains_enabled_matches(automatic):
     match(automatic, note='Saved from the ordinary autosave worker')
     before = git(root, 'rev-parse', 'HEAD')
     autosave = saves.Autosave(net)
-    deadline = time.monotonic() + 5
-    while time.monotonic() < deadline:
-        autosave.run_once()
-        if not match_commits.status(net, net.project_row('game', sync=False))['pending']:
-            break
-        time.sleep(.01)  # An occupied project lock leaves the commit pending for the next cycle.
+    drain_matches(net, autosave.run_once)
     assert git(root, 'rev-parse', 'HEAD') != before
     assert git(root, 'log', '-1', '--format=%s') == 'Saved from the ordinary autosave worker'
 

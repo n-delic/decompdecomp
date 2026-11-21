@@ -66,7 +66,7 @@ def test_existing_pending_jobs_without_frozen_origin_are_supported(automatic):
     captured = json.loads(job['snapshot']);captured.pop('origin')
     with net.store.tx() as db:
         db.execute('UPDATE auto_match_commits SET snapshot=? WHERE id=?', (json.dumps(captured), job['id']))
-    match_commits.process(net, 'game')
+    test_match_commits.drain_matches(net, lambda: match_commits.process(net, 'game'))
     message = git(root, 'log', '-1', '--format=%B')
     assert message.startswith('Preserved agent notes\n\nMatched by: '+agent.name)
     assert 'Match method: agent' in message

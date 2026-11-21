@@ -75,6 +75,32 @@ def test_a_closed_or_disabled_watch_vouches_for_nothing(watched, monkeypatch, tm
     assert folder_watch.open_watch(save, [tmp_path / 'fences']) is None and not folder_watch.worth(10 ** 6)
 
 
+@pytest.mark.skipif(sys.platform != 'darwin', reason='uses the native macOS event queue')
+def test_closing_a_watch_drains_pending_native_callbacks(tmp_path, monkeypatch):
+    save = tmp_path / 'save'
+    save.mkdir()
+    fences = tmp_path / 'fences'
+    native = folder_watch._mac_libraries()
+    synchronize = native.dispatch_sync
+    closed = []
+
+    def synchronized(queue, context, marker):
+        synchronize(queue, context, marker)
+        closed.append(queue)
+
+    monkeypatch.setattr(native, 'dispatch_sync', synchronized)
+    for index in range(8):
+        watch = folder_watch.open_watch(save, [fences])
+        if index == 0 and watch is None:
+            pytest.skip('macOS folder watch is unavailable')
+        assert watch is not None
+        (save / 'changed').write_text(str(index))
+        watch.close()
+        watch.close()
+        assert not watch.unchanged_since(0)
+    assert closed == [native.queue] * 8
+
+
 def test_a_quiet_watched_save_is_not_read_file_by_file_and_an_in_place_edit_still_is(project, monkeypatch):  # noqa: F811
     net, folder, judged = project
     monkeypatch.setattr(folder_watch, 'WORTH_FILES', 0)  # (the demo save is small; a real one is thousands of files)
