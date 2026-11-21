@@ -9854,3 +9854,10 @@ The archived sources independently compiled as controls. Both fresh generation a
 
 - Three 48-byte wrappers compiled with `ido-7.1 -O2 -mips2 -G 0 -non_shared -Xcpluscomm -Wab,-r4300_mul -woff 649,838,712`. The disassembler used local label names for external direct calls, and those names were invalid in C. Using function symbols at the destinations encoded in the calls matched all three byte for byte. Absolute data aliases for those same addresses also linked to identical bytes.
 - A 52-byte wrapper under `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` lost all three arguments to `memcpy` and the otherwise unused second formal. The target left the arguments in their incoming registers and saved the first and third for its result. Restoring all three arguments matched. Both integer and pointer representations of the first parameter gave the same instructions.
+
+### Recover IDO byte cursors and indirect call slots from the draft
+
+Four previously uncompilable drafts matched all their bytes through fresh generation and recovery. The archived sources compiled independently as controls.
+
+- With `ido-7.1 -O2 -mips2 -G 0 -non_shared -Xcpluscomm -Wab,-r4300_mul -woff 649,838,712`, making the pointers byte-sized compiled three drafts but left scores 640, 70, and 670. Two post-increment loads matched the 56-byte signed read. Restoring the wide result and staging the shift and mask of a variable-width read matched all 64 bytes. It scored 25 with neither unreachable staging statement, 10 or 15 with either one, and exact with both. Keeping the stored bytes and restoring the two incoming word-sized formals matched the 80-byte biased copy.
+- With `ido-7.1 -O2 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul -DNON_MATCHING`, renaming an invalid local-label pointer declaration to the verified absolute function-symbol alias matched all 52 bytes. The C declaration remained a function pointer, and the two instruction words verified its slot address. Trying the data alias failed compilation.
