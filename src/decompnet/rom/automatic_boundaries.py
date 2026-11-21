@@ -183,19 +183,32 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
     returns_by_end = {(fn.rom+fn.size, fn.vram-fn.rom) for fn in result
                       if fn.size >= 8 and fn.lines[-2].word == JR_RA}
     protected = sorted(entered)
+    entries_by_rom = {(fn.rom, fn.vram):fn for fn in result}
 
-    def zero_alignment(fn):
+    def zero_alignment(fn, previous):
         if fn.size != 4 or fn.lines[0].word or image[fn.rom:fn.rom+4] != bytes(4):
             return False
         mapping = fn.vram-fn.rom
         for before in range(fn.rom, max(-1, fn.rom-HOLE), -4):
-            if (before, mapping) not in returns_by_end or any(image[before:fn.rom+4]):
+            returned = (before, mapping) in returns_by_end
+            looped = previous is not None and closes_with_back_edge(previous, before, mapping)
+            if not (returned or looped) or any(image[before:fn.rom+4]):
                 continue
             after = before
-            while after < min(len(image)-3, before+HOLE+4) and image[after:after+4] == bytes(4):
+            while after < min(len(image)-3, before+LONG_ALIGNMENT+4) and image[after:after+4] == bytes(4):
                 after += 4
-            if after-before > HOLE:
+            following = entries_by_rom.get((after, after+mapping))
+            if looped and (after-before != 4 or following is None or following.vram not in direct_calls):
                 return False
+            if after-before > HOLE:
+                # A longer zero run needs a separately called, aligned entry and no pointer anywhere into it.
+                if (after-before > LONG_ALIGNMENT or following is None or following.vram%16
+                        or following.vram not in direct_calls or not is_frame(following.lines[0].word)):
+                    return False
+                candidates = b'|'.join(re.escape(addr.to_bytes(4,order))
+                                       for addr in range(before+mapping,after+mapping,4))
+                if any(not match.start()%4 for match in re.finditer(b'(?=(?:'+candidates+b'))', image)):
+                    return False
             index = bisect_right(protected, before+mapping-1)
             if index < len(protected) and protected[index] < after+mapping:
                 return False
@@ -212,7 +225,7 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
             data.append(DataSymbol(fn.name, fn.vram, fn.rom, 4, 'data'))
             markers += 1
             continue
-        if zero_alignment(fn):
+        if zero_alignment(fn, previous):
             dropped+=1;continue
         if (filler_extent(fn.size,fn.lines[0].word) and previous is not None and following is not None
                 and owner(previous)==owner(fn)==owner(following)
@@ -226,6 +239,18 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
     if markers:
         log(f'Recovered {markers} overlay end markers as data.')
     return kept if dropped or markers else result if changed else functions
+
+
+def closes_with_back_edge(fn, end, mapping):
+    if fn.rom+fn.size != end or fn.vram-fn.rom != mapping or fn.size < 12:
+        return False
+    branch = fn.lines[-2]
+    # An unconditional local branch and its delay slot cannot fall into alignment.
+    if branch.word>>16 != 0x1000:
+        return False
+    delta = branch.word & 0xffff
+    target = branch.vram+4+(delta-0x10000 if delta&0x8000 else delta)*4
+    return fn.vram <= target < branch.vram
 
 
 def overlay_end_marker(fn, previous, following, image, order, segments):
@@ -302,6 +327,7 @@ def recover_inline_tables(functions, data, image, order, protected, references, 
     return functions
 
 
+LONG_ALIGNMENT = 128
 HOLE = 12  # the most alignment a group of one segment's pieces may skip between two of them
 SHARED_SLOT_CALLS = 8  # calls from elsewhere into a segment before their fit says anything about it
 
