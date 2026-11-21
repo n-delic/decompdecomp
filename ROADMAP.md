@@ -101,6 +101,9 @@
   use existing background source-restoration locks. Hosts accept legacy permutation
   claim/release requests without leases, and startup clears only legacy permutation claims.
 
+- Done: N64 imports map audited inline data spans separately from executable text when their
+  full surrounding fingerprints match. This prevents constants and alignment words from cutting
+  otherwise closed function bodies.
 - Done: N64 imports recover gzip-compressed boot programs using loader addresses and verified
   text/data member boundaries. Rebuildable exports check the linked bytes against those members
   before retaining the cartridge's original gzip encoding. Audited embedded tables use full-span

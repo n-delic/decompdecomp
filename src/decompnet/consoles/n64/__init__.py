@@ -8,6 +8,7 @@
 - uso.py / uso_match.py: bounded USO text and relocations, matching and cartridge reconstruction.
 - loader_code.py: full-bank closed-body recovery with CPU call, callback and adjacency evidence.
 - loader_mapping.py: bank mappings corroborated by constant arguments to independent loader helpers.
+- inline_data.py: verified constants and alignment bytes embedded among code.
 - boot_gzip.py: programs in paired gzip members placed at addresses supplied by the boot loader.
 - boot_mapping.py: returning TLB boot stubs separated from code with a strongly supported later load mapping.
 - sdk_assembly.py: exact self-contained libultra body fingerprints, classified before C claims.
@@ -330,8 +331,11 @@ class Nintendo64(Console):
 
     def add_code(self, config: Path, workdir: Path, image: str, picked: Picked, log=print) -> str:
         from .code import add_segments
+        from .inline_data import apply
 
-        return add_segments(config, workdir, image, log)
+        expanded = add_segments(config, workdir, image, log)
+        apply(config, (workdir / expanded).read_bytes(), log)
+        return expanded
 
     donor_layout = True
 
