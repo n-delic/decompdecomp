@@ -688,3 +688,23 @@ def test_independent_assembly_tail_is_retained_inside_a_closed_leaf():
     assert len(repair(functions,[],image,console,segments,symbols=[
         f'tail = 0x{BASE+16:08X};\nthird = 0x{BASE+20:08X};',
     ])) == 2
+
+
+@pytest.mark.parametrize('shared', [True, False])
+def test_branch_in_a_sibling_overlay_does_not_split_another_overlay(shared):
+    image, functions, segments = fixture()
+    address = BASE + 12
+    word = 0x0c000000 | ((address >> 2) & 0x3ffffff)
+    other = RomFunction('sibling', BASE, 32, 'sibling', [AsmLine(32, BASE, word, 'jal', '')], Path())
+    segments[0] = replace(segments[0], exclusive_ram_id='bank_slot')
+    segments.append(Segment('sibling', 32, 48, BASE, 'bank_slot' if shared else ''))
+    image += word.to_bytes(4, 'big') + bytes(12)
+    result = repair(functions + [other], [], image, consoles.get('n64'), segments)
+    assert [(fn.rom, fn.size) for fn in result if fn.rom < 32] == ([(0, 32)] if shared else [(0, 12), (12, 20)])
+
+
+def test_five_scheduled_entry_instructions_are_kept_with_their_frame():
+    lead = [0x308e00ff, 0x24050050, 0x01c50019, 0x3c028005, 0x24428198]
+    image, functions, segments = fixture(lead + BODY, cuts=(0, 32, 52))
+    result = repair(functions, [], image, consoles.get('n64'), segments)
+    assert [(fn.rom, fn.size) for fn in result] == [(0, 52)]

@@ -86,6 +86,7 @@ class Segment:
     rom_start: int
     rom_end: int
     vram: int
+    exclusive_ram_id: str = ""
 
     def contains(self, address: int, length: int = 1) -> bool:
         return self.vram <= address and address + length <= self.vram + (self.rom_end - self.rom_start)
@@ -131,7 +132,8 @@ def segments_from_config_data(cfg: dict) -> list[Segment]:
         nxt = next((start_of(s) for s in raw[i + 1:] if start_of(s) is not None), None)
         if nxt is None:
             continue
-        out.append(Segment(seg.get("name", f"{seg['start']:X}"), int(seg["start"]), int(nxt), int(seg["vram"])))
+        out.append(Segment(seg.get("name", f"{seg['start']:X}"), int(seg["start"]), int(nxt), int(seg["vram"]),
+                           seg.get("exclusive_ram_id") or ""))
     return out
 
 

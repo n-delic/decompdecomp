@@ -104,4 +104,4 @@ def add(config, image, found, banks, log):
         segments.setdefault(bank.end,dict(type='bin',start=bank.end))
     cfg['segments'] = [segments[key] for key in sorted(segments)]
     config.write_text(yaml.safe_dump(cfg,sort_keys=False),encoding='utf-8')
-    log(f'Mapped {len(banks)} overlay banks and instruction-cache ranges from copied loader tables.')
+    log(f'Mapped {len(banks)} overlay banks from verified loader bounds.')

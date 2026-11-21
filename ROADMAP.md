@@ -101,6 +101,9 @@
   use existing background source-restoration locks. Hosts accept legacy permutation
   claim/release requests without leases, and startup clears only legacy permutation claims.
 
+- Done: N64 imports recover shared overlay slots from indexed DMA tables and adjacent loaders'
+  cache bounds. Branches in one occupant of a shared slot cannot cut a closed function in another
+  occupant. Rebuildable exports for overlapping overlay banks remain planned.
 - Done: N64 imports map audited inline data spans separately from executable text when their
   full surrounding fingerprints match. This prevents constants and alignment words from cutting
   otherwise closed function bodies.
