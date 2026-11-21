@@ -309,3 +309,19 @@ def test_nop_padding_emitted_in_a_separate_source_unit_is_omitted():
     assert [f.rom for f in result] == [0, 40]
     result = repair(functions, [], image, console, segments, symbols=[f'keep = 0x{BASE+36:08X};'])
     assert sorted(f.rom for f in result) == [0, 32, 36, 40]
+
+
+def test_directly_called_leaf_recovers_return_in_the_next_fragment():
+    target = BASE+12
+    call = 0x0c000000 | (target>>2)&0x3ffffff
+    words = [call,0,0x8c820000,0x8c82002c,0x03e00008,0]
+    image,functions,segments = fixture(words,cuts=(0,12,16,24))
+    result = repair(functions,[],image,consoles.get('n64'),segments)
+    assert [(fn.rom,fn.size) for fn in result] == [(0,12),(12,12)]
+
+
+def test_generated_source_units_do_not_interrupt_a_single_mapped_function():
+    image,functions,segments = fixture()
+    functions[1] = replace(functions[1],segment='generated_next_unit')
+    result = repair(functions,[],image,consoles.get('n64'),segments)
+    assert [(fn.segment,fn.rom,fn.size) for fn in result] == [('code',0,32)]
