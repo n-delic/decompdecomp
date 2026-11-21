@@ -286,7 +286,8 @@ HEX_EXPONENT_SIGN = re.compile(r"\b(0[xX][0-9a-fA-F]*[eE])([+-])(?=[0-9A-Za-z_(]
 # An endless loop that does nothing (an idle thread's `for (;;) {}`): on the console only an interrupt switches away
 # from it, and the host switches threads only at a call, so a packed shooter's idle thread (priority 0) held the CPU
 # and its scheduler, ready at priority 14, never ran. It parks instead, as the interpreter parks `j .` (mips.c).
-EMPTY_FOREVER = re.compile(r"\b(?:for\s*\(\s*;\s*;\s*\)|while\s*\(\s*1\s*\))\s*(?:\{\s*\}|;)")
+EMPTY_FOREVER = re.compile(r"\b(?:for\s*\(\s*;\s*;\s*\)|while\s*\(\s*1\s*\))\s*(?:\{\s*\}|;)"
+                           r"|^(?P<label>[ \t]*(?P<name>[A-Za-z_]\w*)[ \t]*:\s*)goto\s+(?P=name)\s*;", re.M)
 IDLE = "void port_idle_forever(void);\n"
 
 
@@ -295,7 +296,7 @@ def ido_c(text: str) -> str:
     by a sign spaced apart, and an endless empty loop as the thread parking for good (EMPTY_FOREVER)."""
     text = HEX_EXPONENT_SIGN.sub(r"\1 \2 ", UNTYPED_DECLARATION.sub(r"\1()\2", text))
     if EMPTY_FOREVER.search(text):
-        text = IDLE + EMPTY_FOREVER.sub("for (;;) port_idle_forever();", text)
+        text = IDLE + EMPTY_FOREVER.sub(lambda loop: (loop["label"] or "") + "for (;;) port_idle_forever();", text)
     return text
 
 

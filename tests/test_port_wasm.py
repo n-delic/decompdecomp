@@ -697,6 +697,8 @@ def test_an_endless_empty_loop_parks_its_thread():
     for loop in ("for (;;) {}", "for(;;);", "while (1) { }", "while(1);"):
         out = ido_c(f"void idle(void) {{ start(); {loop} }}")
         assert "for (;;) port_idle_forever();" in out and out.startswith("void port_idle_forever(void);"), loop
+    assert "again:\n    for (;;) port_idle_forever();" in ido_c("void idle(void) {\nagain:\n    goto again;\n}")
+    assert ido_c("void f(void) {\nagain:\n    work(); goto again;\n}") == "void f(void) {\nagain:\n    work(); goto again;\n}"
     assert ido_c("void f(void) { for (;;) { work(); } }") == "void f(void) { for (;;) { work(); } }"
 
 
