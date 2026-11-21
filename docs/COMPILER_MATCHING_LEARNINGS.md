@@ -12783,3 +12783,14 @@ The linked judge went from 10 to 0 on a retail N64 function, and the live
 judge saved the match. Direct guard inversion and short-circuit return forms
 did not give an exact match. The diff dispatcher produced no candidate before
 the repair and one exact candidate afterward.
+
+### KMC GCC 2.7.2: recover a stack event record
+
+A scratch draft treated an event code and two payload bytes as unrelated
+stack locals. The compiler discarded the bytes because only the code's
+address reached the call. Grouping the fields into one ten-byte stack record
+restored the two stores and the target's stack frame. With
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, the linked difference score
+improved from 204 to an exact match. A six-byte record restored both stores
+but retained a four-point frame difference. This is one observed match;
+synthetic tests cover the target sequence and draft guards.
