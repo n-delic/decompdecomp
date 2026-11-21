@@ -127,6 +127,7 @@ def verify(feedback, example):
             relocated_global_update,
             shared_return_repairs,
             split_dispatch_zero_case,
+            stack_fill_drafts,
             stack_read_retry,
             uncached_read_repairs,
         )
@@ -159,6 +160,11 @@ def verify(feedback, example):
         if candidate := relocated_global_update.rewrite_countdown(source, fn['name'], fn['asm'] or '', header,
                                                                   symbols.resolve if symbols else None):
             focused.append(('relocated_countdown', candidate))
+        if candidate := stack_fill_drafts.rewrite(source, fn['name'], fn['asm'] or '', header):
+            focused.append(('descending_stack_fill', candidate))
+        if candidate := relocated_global_update.rewrite_reload_wrapper(
+                source, fn['name'], fn['asm'] or '', header, symbols.resolve if symbols else None):
+            focused.append(('direct_global_reload', candidate))
         if candidate := stack_read_retry.rewrite(source, fn['name'], fn['asm'] or '', header):
             focused.append(('stack_read_retry', candidate))
         if candidate := stack_read_retry.rewrite_inline(source, fn['name'], fn['asm'] or '', header):

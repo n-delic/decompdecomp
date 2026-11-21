@@ -31,6 +31,7 @@ from decomprepair import (
     relocated_global_update,
     shared_return_repairs,
     split_dispatch_zero_case,
+    stack_fill_drafts,
     stack_read_retry,
     targeted_switch_labels,
     uncached_read_repairs,
@@ -206,6 +207,10 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
             result.append(('relocated_global_update', candidate_source))
         if candidate_source := relocated_global_update.rewrite_countdown(source, name, asm or '', header, resolve):
             result.append(('relocated_countdown', candidate_source))
+        if candidate_source := stack_fill_drafts.rewrite(source, name, asm or '', header):
+            result.append(('descending_stack_fill', candidate_source))
+        if candidate_source := relocated_global_update.rewrite_reload_wrapper(source, name, asm or '', header, resolve):
+            result.append(('direct_global_reload', candidate_source))
         if candidate_source := stack_read_retry.rewrite(source, name, asm or '', header):
             result.append(('stack_read_retry', candidate_source))
         if candidate_source := stack_read_retry.rewrite_inline(source, name, asm or '', header):
