@@ -149,9 +149,11 @@ class BriefMixin:
                 aligned_stack_read,
                 large_stack_drafts,
                 likely_branch_cursor,
+                loop_storage_shapes,
                 measured_callback_loop,
                 measured_mmio_polling,
                 measured_stack_drafts,
+                passthrough_argument_repairs,
                 relocated_byte_table,
                 shared_default_drafts,
                 uncached_read_repairs,
@@ -167,6 +169,10 @@ class BriefMixin:
                 inputs.append('relocated byte table')
             if aligned_stack_read.applies(fn['asm'] or ''):
                 inputs.append('aligned stack read')
+            if passthrough_argument_repairs.entry_wrapper_applies(fn['asm'] or ''):
+                inputs.append('entry argument wrapper')
+            if loop_storage_shapes.copy_setup_applies(fn['asm'] or ''):
+                inputs.append('measured copy loop setup')
             if measured_mmio_polling.applies(fn['asm'] or ''):
                 inputs.append('measured MMIO polling')
             if large_stack_drafts.applies(fn['asm'] or ''):
