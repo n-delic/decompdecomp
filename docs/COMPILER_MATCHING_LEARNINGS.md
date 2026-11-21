@@ -12034,3 +12034,13 @@ by 29. The final left shift was three in the target and one in the draft.
 Increasing both record sizes from 58 to 232 bytes preserved the halfword
 loads and produced an exact match from score 10. The released control
 remained at 10 after 100 candidates. The new rule matched in 16.
+
+### Restore untouched middle arguments before the saved fourth argument
+
+With gcc-2.7.2-kmc `-G0 -mips3 -mgp32 -mfp32 -O2`, a guarded N64
+call appeared to take two arguments because the incoming middle registers
+needed no setup. The fourth argument was copied back from a saved register
+in the delay slot. Restoring the middle arguments produced an exact match
+from score 5. The rule checks that both values survive every path to the
+call. It matched in 16 candidates while the released control stayed at 5
+after 100.
