@@ -21,7 +21,7 @@ improvements found during the run merged with their tests.
   their live app and it already uses every core. To test a repair, call it directly: the library's family (or the
   app's `draft_repairs.variants`) on the current best source, scoring its variants with `fast_judge.py` and
   confirming the best one with `compile_and_diff`.
-- Keep a private checkpoint with the latest live verdict, the last sound source and its score, pending
+- Keep a private checkpoint with the latest live verdict, the measured search seeds and their scores, pending
   MCP calls, the next experiment, and open PRs or release tags. Resume from it across context changes.
   A plateau calls for a different experiment. Keep the claim while working on the match.
 - Report success after the judge records 0 and the tested permuter improvements from step 5 are merged.
@@ -119,9 +119,16 @@ and write it to a scratch file for local probes. Use `get_assembly` for the targ
   order, missing/extra instructions, branch shape, stack frame. Say which group dominates.
 - Read the function's notes and history with the corresponding `get_function` sections. Earlier agents' dead ends are
   evidence; repeat none of them.
-- Inspect a newly saved best before adopting it. If its lower score relies on an uninitialized read
-  or other undefined behavior, resume from the last sound source and record why. Check initialization,
-  lifetimes and side effects before promoting a local rewrite to a repair family.
+- Keep a newly improved candidate as a private search seed even if it contains a suspicious read.
+  Record the issue and keep the prior candidate as a control. Compare the exact judge diffs and, where
+  supported, the compiler's allocation and scheduling dumps to find what the edit changed. An identical-arm
+  float guard can affect floating-point live ranges before the compiler merges the arms, so removing
+  the guard immediately can also discard useful allocation evidence.
+- Work from the improved seed. Try bounded Deep Permuter families against it and measure their
+  children. For an uninitialized float guard, test alternatives that retain the useful guard or
+  lifetime shape while supplying an initialized value, and measure which other repairs combine with it.
+  If generation or routing misses the improvement, add a regression that starts from that seed and
+  test the emitted child with the exact judge. A lower score alone does not establish source behavior.
 - **Saved sources go stale when symbols are renamed.** A source using a name that no longer exists doesn't link
   ("not a known symbol") and scores terribly. Rewrite to the address names the assembly shows (`D_80102EFC`).
 - **Edit the current best; don't rewrite the function from scratch.** Start from `best.c` (or the app's draft) and
@@ -153,8 +160,8 @@ its state, and parallelises across processes. `scripts/fast_judge.py` wraps it (
 wrongly: a 1000 → 680 local improvement was 1090 → 1030 in the app. Confirm any result once with `compile_and_diff`.
 
 Before searching, reproduce the live baseline with the same source, effective compiler, flags and
-project context. Resolve a score discrepancy before ranking variants. Use the last sound candidate
-as the control even if another worker has since saved a lower score.
+project context. Resolve a score discrepancy before ranking variants. Measure children against the
+seed they came from and keep the earlier control so the effect of a questionable edit stays visible.
 
 ## 3. What has worked (extend this list when you learn more; it is the permuter's to-do list)
 
