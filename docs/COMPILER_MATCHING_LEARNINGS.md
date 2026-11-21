@@ -8913,3 +8913,13 @@ initializers after the third fixed field copy on its own scored 470. Combining
 both changes restored the original pointer allocation and matched all 116
 linked bytes. The target must show the three fixed word pairs, the two loop
 cursors, and the matching counter, stride and branch back to the body.
+
+### Scheduling a guarded cluster of global resets
+
+Under `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, a scratch N64 draft scored 855
+because the compiler hoisted global reads across three byte resets. Scoping the first
+reset lowered the linked score to 575. The same scope plus volatile declarations
+for the third reset, the later word reset, and the count read lowered it to 395.
+Localized volatile expressions did not reproduce that score. The target's ordered
+memory sequence gates both candidates. Deep Permuter verified and saved the combined
+partial improvement under the existing flags.

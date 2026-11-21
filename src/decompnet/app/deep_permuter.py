@@ -340,6 +340,7 @@ class Search(Permuter):
             packed_word_scheduling,
             scoped_byte_read_call,
             scoped_cursor_entry,
+            scoped_global_reset,
             widen_scaled_local,
         )
         from decomprepair.target_local_repairs import value_lifetimes
@@ -353,6 +354,7 @@ class Search(Permuter):
         proposals += inline_float_vector_scale.variants(source, fn['name'], proj['arch'], asm, header)
         proposals += guard_xor_reuse.variants(source, fn['name'], proj['arch'], asm, header)
         proposals += scoped_cursor_entry.variants(source, fn['name'], proj['arch'], asm)
+        proposals += scoped_global_reset.variants(source, fn['name'], proj['arch'], asm)
         # Existing saved drafts can still use their original address-based entry name.
         proposals += scoped_byte_read_call.variants(source, fn['name'], proj['arch'], asm, header)
         if proj['arch'] == 'mips' and (vram := dict(fn).get('vram')) is not None:
