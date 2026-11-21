@@ -1126,6 +1126,12 @@ per-file compiler context, template readers and SDK source placement must be int
 Project-mode similar-transfer support is planned: align target-object relocations and adapt file-local declarations before trying
 similar C through objdiff. Other processors need an instruction reader for this search.
 
+The Deep Permuter's two-move pass (`app/paired_moves.py`, judged through `app/judge_pool.py`: a pool of `decomp
+judge-worker` processes) runs for ROM projects, whose functions carry target bytes the worker judges exactly. Project
+mode (GameCube/Wii/PC/DS) has no standalone exact judge yet: objdiff judges there, so the pass is skipped. Planned: a
+judge worker for project-mode units, then the same pass. It found nothing on the first function it was built for
+(docs/COMPILER_MATCHING_LEARNINGS.md); a register-allocation-priority search is the next step for that kind of diff.
+
 ## Recently done
 
 - **Agents & models controls.** Collapsible sections show installed agent apps, prompt templates, optional tool
