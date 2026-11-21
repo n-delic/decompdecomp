@@ -5,6 +5,7 @@ from decomprepair import (
     allocation_repairs,
     call_lifetime_repairs,
     residual_source_repairs,
+    shared_fp_return_repairs,
 )
 
 from ..arch.mips_returns import instructions
@@ -12,7 +13,8 @@ from . import allocation_evidence, model_replay_evidence, region_repairs
 from .cross_function_repairs import argument_reads
 
 FAMILIES = (residual_source_repairs.ADDRESS, residual_source_repairs.BRANCH, residual_source_repairs.CALL,
-            residual_source_repairs.ENTRY, residual_source_repairs.FRAME, 'residual_call_buffer')
+            residual_source_repairs.ENTRY, residual_source_repairs.FRAME, 'residual_call_buffer',
+            shared_fp_return_repairs.FAMILY)
 
 
 def prologue_rotation(rows):
@@ -58,11 +60,41 @@ def forwarded_pointer(net, proj, fn, source, header):
     return residual_source_repairs.forward_second_pointer(source,fn['name'],header,name)
 
 
+def shared_fp_return_evidence(rows):
+    """A lone annulled integer branch before an unchanged floating-point return."""
+    rows = region_repairs.clean(rows)
+    changed = [(i,a,b) for i,(mark,a,b) in enumerate(rows) if mark != ' ']
+    if len(changed) != 1:
+        return False
+    i, target, candidate = changed[0]
+    if not re.match(r'^b(?:eq|ne) ',target) or candidate != target.replace(' ', 'l ', 1):
+        return False
+    zero = 'move $v0, $zero'
+    if i+1 >= len(rows) or tuple(rows[i+1]) != (' ',zero,zero):
+        return False
+    tail = [left for _,left,_ in rows[i+2:]]
+    return (any(re.match(r'c\.(?:lt|le)\.[sd] ',left) for left in tail)
+            and any(left.startswith('bc1t ') and right in ('addiu $v0, $zero, 1','li $v0, 1')
+                    for left,right in zip(tail,tail[1:])))
+
+
+def shared_fp_return_hint(source, name, header, rows, arch):
+    if (arch == 'mips' and shared_fp_return_evidence(rows)
+            and shared_fp_return_repairs.variants(source,name,header)):
+        return ('The later shared floating-point return can affect whether GCC annuls the earlier integer branch. '
+                'Try branching from each comparison directly to the same return-0 and return-1 labels. '
+                'Keep the original comparisons so unordered floating-point inputs behave the same.')
+    return ''
+
+
 def proposals(source, name, header, rows, *, net=None, proj=None, fn=None):
     rows = region_repairs.clean(rows)
     changed = [(i,a,b) for i,(mark,a,b) in enumerate(rows) if mark != ' ']
     if not changed:
         return []
+    if shared_fp_return_evidence(rows):
+        if candidates := shared_fp_return_repairs.variants(source,name,header):
+            return candidates
     if len(changed) <= 3 and any(re.fullmatch(r'b(?:eq|ne)\b', a.partition(' ')[0])
             and b == a.replace(' ', 'l ', 1) and i+1 < len(rows) and rows[i+1][0] == ' '
             for i,a,b in changed):

@@ -1,5 +1,20 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: branch directly to shared floating-point returns
+
+An isolated N64 replay used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.
+The saved draft was one opcode off at score 200. The target used `bne` while
+the compiler emitted `bnel` with the same operands and zero-return delay slot.
+An instrumented scheduler showed that a temporary liveness marker for the
+later floating-point return's value of one kept the return register live on
+the integer branch's fallthrough path.
+
+Replacing every assignment into the shared Boolean return with a direct
+branch to the same two constant return labels preserved all predicates,
+including their behavior on NaNs. The unchanged compiler and linked judge
+verified score zero. Rewriting only the integer guard or separating one
+floating-point path did not produce an exact match.
+
 ### KMC GCC 2.7.2: publish the advanced command cursor
 
 An isolated N64 replay used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.

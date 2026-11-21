@@ -128,6 +128,9 @@ def brief(net, proj, fn, source=None):
                 lines.append(clue)
             if clue := probe(current['rows'], proj['arch']):
                 lines.append(clue)
+        from .residual_trials import shared_fp_return_hint
+        if hint := shared_fp_return_hint(source,fn['name'],header,current['rows'],proj['arch']):
+            lines.append(hint)
         if hint := advice(current['rows']):lines.append(hint)
         clues = allocation_evidence.text(current['rows'],proj['arch'])
         if clues:lines.append(clues)
