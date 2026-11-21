@@ -1,5 +1,18 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: publish the advanced command cursor
+
+An isolated N64 replay used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.
+The target advanced a cursor before its relocated global store. The C
+published the old cursor and advanced only its local copy. Publishing the
+advanced pointer improved the linked score from 715 to 675. Swapping which
+zero-valued local was initialized outside a guarded assignment reduced
+the score to 665. The false path returns or overwrites both locals before
+using them. The zero-initializer change on its own scored 705. Reusing an
+existing local to capture the relocated state pointer in a one-shot scope
+improved 665 to 510. The later reload remained in place. The linked result
+is a partial match.
+
 ### KMC GCC 2.7.2: narrow a word where the byte or halfword is used
 
 An isolated N64 replay used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.

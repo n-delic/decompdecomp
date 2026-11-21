@@ -227,3 +227,47 @@ def test_kmc_routes_narrowing_at_the_remainder_operand():
     [candidate] = [text for family, text in proposals(source, 'f', '', 'mips', KMC, rows, '')
                    if family == 'measured_narrow_use']
     assert 'value = sample();\n    value = (u16)value % modulus;' in candidate
+
+
+def test_kmc_routes_missing_cursor_advance_before_the_relocated_store():
+    source = """extern void *volatile stream;
+void f(void) {
+    void *cursor;
+    s32 mode;
+    cursor = stream;
+    stream = cursor;
+    mode = modeFlag;
+    cursor += 8;
+    consume(mode);
+}
+"""
+    rows = [
+        ('<', 'addiu $a2, $a2, 8', ''),
+        (' ', 'lui $at, %hi(stream)', 'lui $at, %hi(stream)'),
+        (' ', 'sw $a2, %lo(stream)($at)', 'sw $a2, %lo(stream)($at)'),
+    ]
+    assert ('measured_cursor_publish', source.replace('stream = cursor;', 'stream = cursor + 8;')) in proposals(
+        source, 'f', '', 'mips', KMC, rows, '',
+    )
+
+
+def test_kmc_routes_a_scoped_relocated_field_capture():
+    source = """extern void *state;
+void f(void) {
+    void *local;
+    int field;
+    field = (*(s32 *)((char *)(state) + 8));
+    consume(field);
+    local = state;
+    consume(local);
+}
+"""
+    rows = [
+        (' ', 'lui $a1, %hi(state)', 'lui $v1, %hi(state)'),
+        (' ', 'lw $a1, %lo(state)($a1)', 'lw $v1, %lo(state)($v1)'),
+        ('<', 'addiu $a0, $zero, 4', ''),
+        (' ', 'lw $v1, 8($a1)', 'lw $v1, 8($v1)'),
+    ]
+    [candidate] = [text for family, text in proposals(source, 'f', '', 'mips', KMC, rows, '')
+                   if family == 'measured_scoped_global_field']
+    assert 'do {\n        local = state;\n    } while (0);' in candidate
