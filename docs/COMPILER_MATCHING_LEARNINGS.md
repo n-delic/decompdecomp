@@ -9977,3 +9977,11 @@ Three reconstructed near misses matched byte for byte with `gcc-2.7.2-kmc -G0 -m
 - The division target masked its third parameter in place after storing the previous value of a reused local. In-place masking alone moved the previous store and increased score 25 to 190. Preserving that store with a volatile word lvalue and masking the parameter together matched all 184 bytes.
 - A field update set or cleared a flag through a temporary also used in a sibling branch. Updating the field directly in either arm kept the sibling's earlier value intact and matched all 192 bytes from score 25.
 - An early-return mode case sits between selection of two defaults. Assigning the defaults in their own arms matched all 72 bytes from score 30.
+
+### Preserve narrow arguments and separately relocated pointers
+
+Three reconstructed N64 drafts matched byte for byte. The archived sources compiled independently as controls.
+
+- With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, forwarding the unchanged first parameter before a reloaded halfword moved the 112-byte draft from score 30 to exact. Using an explicit table symbol also matched. The linked bytes were identical with either relocation spelling.
+- At `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1`, narrowing the index parameter and removing a spurious integer argument to the float call moved score 30 to 10. Casting the relocated base to a byte pointer before adding the record stride matched all 248 bytes.
+- With the first case's compiler and flags, keeping two separate loads of the global state pointer preserved the two callback stores and the intervening sentinel store. Staging the sentinel constant before the first load and preserving the final byte store matched all 152 bytes from score 30. An inline byte-address helper also matched, and the installed rule only needs separate locals.
