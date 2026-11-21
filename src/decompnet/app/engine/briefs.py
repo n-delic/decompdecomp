@@ -142,6 +142,7 @@ class BriefMixin:
             inputs.append('draft jump-table aliases')
         if own["toolchain"] == 'ido-7.1':
             from decomprepair import (
+                ido_buffer_drafts,
                 ido_indirect_event,
                 ido_mapped_poll,
                 ido_matrix_copy,
@@ -166,6 +167,8 @@ class BriefMixin:
                 inputs.append('IDO packed stack word')
             if ido_typed_loops.applies(fn['asm'] or ''):
                 inputs.append('IDO typed loop cursors')
+            if ido_buffer_drafts.applies(fn['asm'] or ''):
+                inputs.append('IDO typed buffer access')
             if ido_mapped_poll.applies(fn['asm'] or ''):
                 base = self.symbols(proj['id']).resolve(ido_mapped_poll.ZERO_WORD)
                 inputs.append(('IDO mapped poll read', base))
@@ -188,6 +191,7 @@ class BriefMixin:
                 heap_span_drafts,
                 indexed_field_cursor,
                 indirect_call_drafts,
+                kmc_buffer_drafts,
                 kmc_cartridge_io,
                 kmc_cast_repairs,
                 large_stack_drafts,
@@ -219,7 +223,9 @@ class BriefMixin:
             if heap_span_drafts.applies(fn['asm'] or ''):
                 inputs.append('linked heap spans')
             if kmc_cartridge_io.applies(fn['asm'] or ''):
-                inputs.append('KMC cartridge I/O')
+                inputs.append('KMC cartridge I/O with diagnostic symbols')
+            if kmc_buffer_drafts.applies(fn['asm'] or ''):
+                inputs.append('KMC typed buffer access')
             if mips_entry_loops.applies(fn['asm'] or ''):
                 inputs.append('MIPS entry loop')
             if short_leaf_drafts.applies(fn['asm'] or ''):

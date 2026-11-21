@@ -11102,3 +11102,22 @@ expression without the cast retained the score of 5. In a list walk,
 returning the already initialized count removed a redundant zero
 result path and used the target's source register in the delay slot.
 The deep permuter saved both linked matches, each from score 5 to 0.
+
+### Recover typed queue and buffer accesses
+
+- Four isolated N64 examples used
+  `ido-7.1 -O2 -mips2 -G 0 -non_shared -Xcpluscomm -Wab,-r4300_mul -woff 649,838,712`.
+  The drafts failed on void-pointer arithmetic. Word indexing and
+  early exits restored the queue submission (108 linked bytes).
+  Four staged copies per iteration restored the linear float
+  copy (128 bytes). A typed word loop restored the tagged record
+  copy (148 bytes), and a signed byte-count division with a staged
+  word load restored the checksum routine (184 bytes).
+- With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1`, recovering the
+  nested pointer table and keeping the destination stride in bytes
+  matched all 124 bytes of a halfword copy. Under the same flags
+  with `-O2` in place of `-O1`, using a typed tag, count and table of
+  32-bit offsets matched all 148 bytes of a relocation walk.
+- A cartridge read with the same `-O2` flags matched all 148 bytes
+  after restoring the diagnostic symbol addresses from the call's
+  relocations. The draft had emitted inline string literals.
