@@ -2367,8 +2367,8 @@ class Network:
             reported = not matched and candidate_quality.reported_source(self, current, source)
             if score is not None and not stale and not reported and best:
                 improved = db.execute("UPDATE functions SET best_score=?, best_source=?, best_agent_id=?, last_improved=CASE WHEN ? THEN ? ELSE last_improved END "
-                                      "WHERE id=? AND status='open' AND (best_score IS NULL OR best_score > ?)",
-                                      (score, source, agent.id, score < fn["n_insns"] * 100, now, fn["id"], score)).rowcount
+                                      "WHERE id=? AND status='open' AND (best_source IS NULL OR best_score IS NULL OR best_score > ?)",
+                                      (score, source, agent.id, score < (fn["n_insns"] or 0) * 100, now, fn["id"], score)).rowcount
                 if improved:
                     if via == 'agent' and score > 0:
                         claim_routing.remember_focus(db, current, proj['arch'], mismatch_rows, handoff_inputs, ctx_version)

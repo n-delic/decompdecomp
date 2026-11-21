@@ -328,19 +328,19 @@ class AutopilotMixin:
                 with self.project_store(proj['id']).tx() as db:
                     db.execute("DELETE FROM claims WHERE function_id=? AND agent_id=?", (fn["id"], agent.id))
 
-    def _autopilot_one(self, agent, proj, fid: int) -> str:
+    def _autopilot_one(self, agent, proj, fid: int, *, retry_draft=False) -> str:
         """match | near | far | fail | skip, for one function's draft. A draft autopilot already judged with the same
         header is skipped: autopilot tries a function again when its draft changed (the background drafter asks it
         to after the header or the compiler changed, app/drafts.py), not to judge the same C twice."""
         with self.progress.judging(proj["slug"], synchronize=False) if hasattr(self, "progress") else nullcontext():
-            return AutopilotMixin._autopilot_one_work(self, agent, proj, fid)
+            return AutopilotMixin._autopilot_one_work(self, agent, proj, fid, **({"retry_draft": True} if retry_draft else {}))
 
     def _autopilot_repair_one(self, agent, proj, fid):
         with self.progress.judging(proj['slug'],synchronize=False) if hasattr(self,'progress') else nullcontext():
             return self._autopilot_one_work(agent,proj,fid,repair_only=True)
 
     @without_capture()
-    def _autopilot_one_work(self, agent, proj, fid: int, *, repair_only=False) -> str:
+    def _autopilot_one_work(self, agent, proj, fid: int, *, repair_only=False, retry_draft=False) -> str:
         now = time.time()
         store = self.project_store(proj['id'])
         from .. import autopilot_claims
@@ -364,7 +364,7 @@ class AutopilotMixin:
             input_key = draft_reports.key(plan, ctx['header'], data_asm, fn)
             previous = draft_reports.read(self, fid, project_id=proj['id'])
             external_inputs = own.get('cmd') or own.get('ro_paths') or any(flag.startswith(('-I','-include','-imacros')) for flag in own.get('flags',[]))
-            if not external_inputs and previous.get('key') == input_key and previous.get('complete'):
+            if not retry_draft and not external_inputs and previous.get('key') == input_key and previous.get('complete'):
                 return 'skip'
             target_asm = self._asm_text(fn, proj)
             # Eligibility is known before any generation. Reuse this exact captured
@@ -382,7 +382,7 @@ class AutopilotMixin:
             if (seed and seed.startswith(prefix) and seed_row and seed_row['seed_key'] == plan
                     and previous.get('data_key',data_key) == data_key):
                 draft = seed[len(prefix):]
-            elif previous.get('seed_key') == plan and previous.get('failures'):
+            elif not retry_draft and previous.get('seed_key') == plan and previous.get('failures'):
                 report['failures'] = previous['failures']
                 draft = None
             else:

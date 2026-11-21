@@ -2666,11 +2666,11 @@ function renderDeepQueueState(status) {
     : stopped ? "Search stopped" : error ? "Search needs attention" : left && status.has_activity ? `Paused — ${left} function${left === 1 ? "" : "s"} available`
     : blocked ? "Paused — remaining functions need attention" : status.statistics_pending ? "Ready to search" : status.has_activity ? "Finished — no eligible functions left" : "Ready to search";
   $("deepSweepQueueReason").textContent = running
-    ? preparing ? active ? "Searching while preparing the queue. More candidates are checked as workers become free." : "Checking saved candidates and previous passes. Searches start as soon as work is ready."
+    ? preparing ? active ? "Searching while preparing the queue. More candidates are checked as workers become free." : "Checking saved attempts and machine drafts. Searches start as soon as scored C is ready."
     : !active && status.progress?.phase === "waiting for host claims or scored C" ? "Waiting for available functions or saved C. The queue is checked automatically." : "Improvements are verified and saved as they happen."
     : stopped ? "Your improvements and completed searches are saved." : error ? error : left ? `${rotated ? `${rotated} paused early without further progress. ` : ""}Continue gives remaining functions a fresh search; completed turns stay saved.`
     : blocked ? "Open the reasons below, fix the affected functions, then run again."
-    : waiting ? `${waiting} functions need saved C with a measured score before they can be searched.`
+    : waiting ? `${waiting} functions need scored C. Start a search to try recovering it automatically.`
     : status.statistics_pending ? "Saved totals are loading. You can start a search now." : status.has_activity ? "Each eligible function finished a bounded turn. Run again repeats completed turns to try more rewrites." : "Start with untested or changed functions that have saved C.";
   $("deepSweepQueueReason").hidden = !error && !stopped && !blocked && !waiting && !preparing
     && !(running && status.progress?.phase === "waiting for host claims or scored C");

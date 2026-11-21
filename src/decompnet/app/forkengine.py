@@ -3826,7 +3826,7 @@ class ForkEngine:
                     yield '', '/* private initial draft recovery, judged normally */\n'+drafts.self_contained(source, repaired, current)
 
     @without_capture()
-    def autopilot_one(self, agent: Agent, proj, fid: int) -> str:
+    def autopilot_one(self, agent: Agent, proj, fid: int, *, retry_draft=False) -> str:
         """match | near | far | fail | skip, for one function's drafts, each built and diffed like an agent's, until
         one matches. A draft autopilot already judged as it is now is skipped: autopilot tries a function again when
         its drafts changed (the background drafter asks it to after the headers changed, app/drafts.py)."""
@@ -3852,7 +3852,7 @@ class ForkEngine:
                 inputs += (refresh,)
             input_key = draft_reports.key(repr(inputs), self._known(fp,unit), '', fn)
             previous = draft_reports.read(self.net, fid, project_id=proj['id'])
-            if previous.get('key') == input_key and previous.get('complete'):
+            if not retry_draft and previous.get('key') == input_key and previous.get('complete'):
                 return 'skip'
             report = {'key':input_key, 'compiled':False, 'scored':False, 'matched':False, 'trials':0, 'failures':[]}
             outcomes = []
