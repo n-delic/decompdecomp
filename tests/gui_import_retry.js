@@ -2,15 +2,16 @@
 const fs = require('fs'), vm = require('vm'), assert = require('assert/strict');
 const elements = new Map();
 const $ = id => {
-  if (!elements.has(id)) elements.set(id, {hidden: false, textContent: '', style: {}, firstElementChild: {style: {}}});
+  if (!elements.has(id)) elements.set(id, {hidden: false, textContent: '', style: {}, firstElementChild: {style: {}}, setAttribute() {}, removeAttribute() {}});
   return elements.get(id);
 };
 let calls = [], finish;
+const warnings = [];
 const ctx = {$, Blob, ArrayBuffer, Date, encodeURIComponent, setInterval, clearInterval,
   uploadFile: async (url, body) => {calls.push({url, body}); return {job: 1};},
   api: async (url, options) => {calls.push({url, options}); return {job: 1};},
   followJob: async () => new Promise(resolve => {finish = resolve;}),
-  loadNav() {}, location: {}, esc: String, toast() {}};
+  loadNav() {}, location: {}, esc: String, toast(message) { warnings.push(message); }};
 vm.createContext(ctx);
 const source = fs.readFileSync('src/decompnet/app/static/js/home.js', 'utf8');
 vm.runInContext(source.slice(source.indexOf('let importRunning ='), source.indexOf('async function ensureCodeWarrior')), ctx);
@@ -41,7 +42,9 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
   await tick(); finish(Promise.reject(new Error('Missing tool'))); await local;
   const again = $('errRetry').onclick({stopPropagation() {}});
   await tick(); assert.equal(calls[0].url, calls[1].url);
-  finish({slug: 'local'}); await again;
+  finish({slug: 'local', repository_warning: 'Retry repository setup in Settings.'}); await again;
+  assert.equal(ctx.location.hash, '#/p/local');
+  assert.deepEqual(warnings, ['Retry repository setup in Settings.']);
   ctx.importFailed('game', new Error('Invalid file'), '', undefined);
   assert.equal($('errRetry').hidden, true);
 })().catch(error => {console.error(error); process.exitCode = 1;});

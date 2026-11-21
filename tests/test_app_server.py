@@ -7,6 +7,7 @@ import shutil
 import sys
 import threading
 import time
+from pathlib import Path
 
 import httpx
 import pytest
@@ -15,7 +16,7 @@ from starlette.testclient import TestClient
 from decompnet import agents as kinds
 from decompnet import toolchains
 from decompnet.agents import api
-from decompnet.app import agents, window
+from decompnet.app import agents, repository_setup, window
 from decompnet.app.engine import RomNetwork
 from decompnet.app.server import build
 
@@ -450,6 +451,10 @@ def test_import_demo_and_follow_it_live(app):
         time.sleep(0.1)
     assert j["state"] == "done", j
     slug = j["result"]["slug"]
+    state = repository_setup.status(net, slug)
+    assert state["rebuildable"] and state["repository"]
+    assert not state["checkpoint"] and not state["origin"]
+    assert (Path(state["root"]) / ".gitignore").is_file()
     st = client.get("/api/state").json()
     assert any(a["id"] == "api" for a in st["agents"])
     listed = client.get("/api/projects").json()[0]

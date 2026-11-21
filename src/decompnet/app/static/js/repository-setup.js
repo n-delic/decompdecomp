@@ -34,7 +34,7 @@ function renderRepositoryInit() {
     button.textContent = run.stopping ? "Stopping…" : "Stop";
     return;
   }
-  button.hidden = !!state?.rebuildable || !state?.portable;
+  button.hidden = !!(state?.rebuildable && state?.repository) || !state?.portable;
   button.disabled = repositorySetupBusy || !!(state?.portable && $("saveFolder").value.trim() !== state.folder);
   button.textContent = state?.repository ? "Upgrade to rebuildable repository" : "Create rebuildable repository";
 }
