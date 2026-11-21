@@ -21,8 +21,10 @@ improvements found during the run merged with their tests.
   their live app and it already uses every core. To test a repair, call it directly: the library's family (or the
   app's `draft_repairs.variants`) on the current best source, scoring its variants with `fast_judge.py` and
   confirming the best one with `compile_and_diff`.
-- When context grows long, keep going from the plan and the function's notes; do not wrap up early.
-- Report success after the judge records 0 and any permuter PRs from step 5 are merged.
+- Keep a private checkpoint with the latest live verdict, the last sound source and its score, pending
+  MCP calls, the next experiment, and open PRs or release tags. Resume from it across context changes.
+  A plateau calls for a different experiment. Keep the claim while working on the match.
+- Report success after the judge records 0 and the tested permuter improvements from step 5 are merged.
 
 The aim is two things, and a run that delivers only the first has not finished:
 
@@ -59,8 +61,9 @@ project-scoped connection for this session. In the app, open **Agents & models �
 tool with MCP**, select the requested project and use the configuration it provides for the client.
 Use the Streamable HTTP URL on the Rust gateway's MCP port, with the connection's bearer credential.
 The app keeps that port in `.decomp/mcp-gateway.port` in its data home. Let the client supply the
-credential. If the gateway or project connection is missing,
-tell the user what setup is needed. Do not send claims through the window API.
+credential. If the gateway or project connection is missing, report which dependency is missing
+and continue read-only investigation or isolated scoring while setup is pending. Do not send claims
+through the window API or restart the app.
 
 Call `project_info` and verify that the connection is scoped to the requested project. Use the same
 connection throughout the run so the app keeps attempts and claims under one identity.
@@ -72,10 +75,13 @@ connection throughout the run so the app keeps attempts and claims under one ide
 - **Only a project given**: call `claim_function(strategy="random")` and use the name the app returns.
 - **A function given**: call `claim_function(function=FUNC)`. If someone else holds it, report the
   conflict before selecting a different function.
-- Keep the canonical name and current claim token. A compile renews the claim. Check `get_claims`
-  after a deadline or lost response before retrying a claim. A gateway receipt can arrive before the
-  app records it. Wait for the tool to confirm which function you hold before submitting.
-  Reacquire the same function if the claim expires.
+- If the gateway replies **still running**, repeat the identical tool call with the same arguments and
+  connection to collect its result. Keep other experiments local while a claim or compile is pending.
+  If it replies **accepted** and says not to repeat, let the app finish and read the notice on the next reply.
+- If the client loses the response without a gateway receipt, recover with `get_claims` for a claim
+  or the recorded verdict and history for a submission before retrying. Keep the canonical name and
+  current claim token, and wait for the claim to be confirmed before submitting.
+- Keep the claim across submissions. A compile renews it. Reacquire the same function if it expires.
 - On completion or stop, check `get_claims`. If the claim is still held, use `release_function`
   with its current token. Follow the tool's release guidance if the claim has no compile yet.
 
@@ -113,6 +119,9 @@ and write it to a scratch file for local probes. Use `get_assembly` for the targ
   order, missing/extra instructions, branch shape, stack frame. Say which group dominates.
 - Read the function's notes and history with the corresponding `get_function` sections. Earlier agents' dead ends are
   evidence; repeat none of them.
+- Inspect a newly saved best before adopting it. If its lower score relies on an uninitialized read
+  or other undefined behavior, resume from the last sound source and record why. Check initialization,
+  lifetimes and side effects before promoting a local rewrite to a repair family.
 - **Saved sources go stale when symbols are renamed.** A source using a name that no longer exists doesn't link
   ("not a known symbol") and scores terribly. Rewrite to the address names the assembly shows (`D_80102EFC`).
 - **Edit the current best; don't rewrite the function from scratch.** Start from `best.c` (or the app's draft) and
@@ -142,6 +151,10 @@ source judged 1090 in the app judged 1090 here) in about 0.1 s, needs no claim, 
 its state, and parallelises across processes. `scripts/fast_judge.py` wraps it (`Judge(...).score(source)`).
 **Do not search on an approximation**: a home-made scorer (opcode alignment plus register counts) ranked candidates
 wrongly: a 1000 → 680 local improvement was 1090 → 1030 in the app. Confirm any result once with `compile_and_diff`.
+
+Before searching, reproduce the live baseline with the same source, effective compiler, flags and
+project context. Resolve a score discrepancy before ranking variants. Use the last sound candidate
+as the control even if another worker has since saved a lower score.
 
 ## 3. What has worked (extend this list when you learn more; it is the permuter's to-do list)
 
@@ -276,7 +289,9 @@ For each manual step that moved the score, answer: **could the permuter have don
   Say in the PR which features you ran and how, and for a library change the tag you bumped. Other sessions release
   the library too: before tagging, `git fetch --tags` and read `git ls-remote origin refs/tags/vX.Y.Z`; a tag that
   exists is taken (use the next version, never move a tag), and after the library's release check its archive
-  contains your module before bumping the app's pin.
+  contains your module before bumping the app's pin. If main already pins a newer archive with the
+  repair, keep that pin and test against it. While CI runs, keep the next independent local experiment
+  ready without changing a worktree used by an active judge.
 
   Tag gotchas seen in one batch: `git fetch --tags` "would clobber existing tag" means a tag you made locally was
   released meanwhile by another session: `git tag -d` it, take the next free version, tag only right before the
