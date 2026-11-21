@@ -11355,3 +11355,22 @@ Target: product in `$f0`, field re-read after the call into `$f2`, `add.s $f2,$f
 product's (span 4) and took `$f0`. What matched (10 -> 0): `d = call(F); do { t = d * k; } while (0); v = F; F = v + t;`
 (the boundary keeps the load after the product while the split locals give the allocation). Without the boundary: 30; a
 boundary elsewhere: 60. Proposed by decomp-repair `float_sum_split` (0.5.244), run in the deep permuter's local lane.
+
+## KMC gcc 2.7.2: a 16-store float matrix function matched by store order alone (N64, one 85-instruction function)
+
+- Compiler `gcc-2.7.2-kmc`, `-G0 -mips3 -mgp32 -mfp32 -O2`. A function writing a 4x4 float matrix through `m[k] = expr`
+  from six call results (cos/sin of three angles). Saved best 85: all 85 opcodes agreed, 17 register-only rows (the
+  saved registers of `sin(z)` and `cos(y)` swapped). Thirteen earlier hand attempts (declaration order, `-cy` temps,
+  product operand order, `register`, flags) stayed at 85.
+- Fix: reorder only the 16 store statements (declarations and expressions untouched): 85 -> 65 -> 35 -> 15 -> 10 -> 0
+  by accepting each improving 1-3 swap. The fact: the order of the stores moves the live ranges of `cy`, `sz` and `sy`,
+  which changes their allocation priorities (GCC 2.x global.c: `floor_log2(uses) * uses / live_length`), so a pure
+  store permutation can flip two saved registers. One function; the winning order was found by random search, not read
+  from a pass dump.
+- Why the permuter missed it: `paired_statement_moves` treated any two stores through one pointer as conflicting, and
+  counted locals initialised by a call (`f32 c = cosf(x);`) as globals, so a straight run of 16 stores had no movable
+  statement. decomp-repair 0.5.244: stores to different constant cells of one array whose values read only locals
+  commute, and call-initialised locals are locals. The app's own `paired_moves.search` then went 85 -> 0 in 2500
+  judgments from the saved best (240 single moves, beam 40).
+- Failed: a beam of width 3 over single moves, and greedy/pair steps at limit 300, stayed at 85-115; the improvement needed
+  the app's wider beam (40) or random multi-swaps.
