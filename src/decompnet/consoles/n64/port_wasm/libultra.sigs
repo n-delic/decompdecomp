@@ -59,6 +59,7 @@ osPfsInitPak	i32	ptr, ptr, i32
 osAiSetFrequency	i32	i32
 memcpy	ptr	ptr, ptr, i32
 str_len	i32	ptr
+strlen	i32	ptr
 abs	i32	i32
 func_80091920	void	ptr, i32
 func_8008C4F0	void	

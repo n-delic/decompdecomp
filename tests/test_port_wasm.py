@@ -504,6 +504,24 @@ def test_renamed_library_calls_share_a_signature(tmp_path):
         assert ("call double @log.port_thunk_" in ir) == (source == loose)
 
 
+def test_renamed_strlen_uses_the_host_signature(tmp_path):
+    """A legacy declaration of a renamed import must not change the ABI of the host's strlen."""
+    import subprocess
+    import sys
+
+    from decompnet.port.wasm.build import HERE
+
+    source = tmp_path / "caller.ll"
+    source.write_text("declare i16 @string_length(ptr, i32, i32, i32)\n")
+    aliases = tmp_path / "renames.txt"
+    aliases.write_text("string_length strlen\n")
+    sigs = tmp_path / "sigs.txt"
+    known = get("n64").port_kit.wasm / "libultra.sigs"
+    subprocess.run([sys.executable, HERE / "sigs.py", sigs, known, aliases, source],
+                   check=True, capture_output=True, text=True)
+    assert "strlen\ti32\tptr" in sigs.read_text().splitlines()
+
+
 def test_library_code_with_no_c_is_called_by_its_library_name(tmp_path):
     """A racing game's bzero kept its automatic name (`func_8003DDC0`): the host stubbed it to nothing. Library
     detection's name goes to the host, which answers bzero by name in any game; a name another file defines wins."""
