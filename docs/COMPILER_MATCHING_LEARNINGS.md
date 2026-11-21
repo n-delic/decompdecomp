@@ -8969,3 +8969,18 @@ after the increment reproduced the target schedule and matched all 588 linked by
 The trial requires zero initialization, an unchanged counter and offset in the body,
 a bounded product, and the target store and loop-tail sequence. Deep Permuter verified
 the match with the existing compiler flags.
+
+### Advancing a byte cursor during a packed read
+
+An archived 20-instruction N64 draft under
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` scored 845. The target
+updates the cursor slot before each of four unsigned byte loads. The draft
+put all four cursor assignments before the loads, allowing KMC to discard
+the first three assignments.
+
+Interleaving explicit slot stores with ordinary byte reads scored 80.
+Making the byte expressions volatile scored 85. A typed byte-pointer slot
+with four postincrements and four unsigned-byte locals reproduced all 80
+linked bytes on the copied project. Replacing those locals with unsigned
+words scored 80. The rewrite requires each step's slot and displacement,
+the four big-endian packing positions and the return delay slot.

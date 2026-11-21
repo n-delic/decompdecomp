@@ -398,3 +398,12 @@ def test_measured_packed_matrix_conversion_reaches_kmc_proposals(monkeypatch):
     rows = [('r', 'sw $a0, ($t1)', 'sw $a0, ($t3)')]
     assert ('packed_matrix_conversion', 'matrix candidate') in route('void f(void) {}', rows, 'asm')
     assert 'packed_matrix_conversion' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
+
+
+def test_measured_byte_cursor_postincrements_reach_kmc_proposals(monkeypatch):
+    from decomprepair import byte_cursor_postincrements
+
+    monkeypatch.setattr(byte_cursor_postincrements, 'rewrite', lambda *args: 'byte cursor candidate')
+    rows = [('s', 'addiu $v0, $a1, 1', 'addiu $v0, $a1, 4')]
+    assert ('byte_cursor_postincrements', 'byte cursor candidate') in route('void f(void) {}', rows, 'asm')
+    assert 'byte_cursor_postincrements' not in dict(route('void f(void) {}', rows, '', compiler='ido-5.3'))
