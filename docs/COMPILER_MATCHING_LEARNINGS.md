@@ -511,6 +511,29 @@ Capturing the record's address with cancelling unsigned arithmetic around
 an initialized local kept the address in a register and scored zero.
 The exact result was verified with the linked ROM judge.
 
+### KMC GCC 2.7.2: keep a stack pointer store and its saved registers
+
+An N64 effect-spawn routine matched all 1,472 linked bytes with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`. The previous live
+judge score was 10. The two differing instructions formed a local
+vector's address and spilled it through `$t0`; the target used `$a3`.
+
+- Staging the address in an ordinary short-lived C temporary tied at
+  10. The GCC reload dump showed that the allocator still selected
+  `$t0` for the spill.
+- Moving the pointer into an explicit volatile stack member preserved
+  the reloads. Staging its address through an existing short-lived
+  pointer gave the desired `$a3` store in the scratch compiler probe,
+  but changed the allocation of three saved pointers elsewhere.
+- Wrapping the final trigonometric multiply, two component negations,
+  matrix-element assignment and vector rotation call in one
+  `do { ... } while (0)` scope recovered the other registers. This
+  changed the C scheduling boundary without changing the compiler flags.
+  The live linked ROM judge scored the combined rewrite zero.
+
+Evidence level: one new exact match. The reload and scope comparisons
+were diagnostics on the same function.
+
 ### KMC GCC 2.7.2: use fixed byte offsets within a record walk
 
 An isolated N64 replay used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.
