@@ -53,6 +53,25 @@ def audio_spans(image):
                 yield start, end
                 break
 
+
+def graphics_spans(image):
+    """Find a bootstrap variant and its vector-rich 4 KiB graphics program."""
+    from .port import RSPBOOT
+
+    signature = bytes.fromhex('342100010900041a') + RSPBOOT[4:]
+    for match in re.finditer(re.escape(signature), image):
+        start = match.start()
+        code = start + 0xd0
+        end = code + 0x1000
+        if start % 16 or end > len(image):
+            continue
+        words = struct.unpack_from('>1024I', image, code)
+        branches = {word & 0x03ffffff for word in words if word >> 26 in (2, 3)}
+        if (sum(map(_vector, words)) >= _MIN_VECTORS
+                and sum(0x01000400 <= target < 0x01000800 for target in branches) >= 3):
+            yield start, end
+
+
 def trim(image, found, known, log=print):
     """Trim a vector-code prefix only where scalar calls establish the CPU boundary."""
     ranges = [*known, *found]

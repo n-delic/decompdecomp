@@ -31,9 +31,10 @@ _SINE = struct.pack('>4096h', *(round(16384 * math.sin(i * math.tau / 4096)) for
 
 def spans(image):
     """Find verified non-CPU segments and unchanged inline data."""
-    from .rsp_prefix import audio_spans
+    from .rsp_prefix import audio_spans, graphics_spans
 
     yield from audio_spans(image)
+    yield from graphics_spans(image)
     for match in re.finditer(re.escape(_SINE[:24]), image):
         start = match.start()
         if start % 4 == 0 and image[start:start+len(_SINE)] == _SINE:

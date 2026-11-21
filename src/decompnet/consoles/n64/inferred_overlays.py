@@ -101,6 +101,26 @@ def runtime_mappings(image, found, ranges, taken=()):
     return result, changed
 
 
+def scopes_fit(found, scoped, taken):
+    """Splat's global range spans the gaps between all unscoped code segments."""
+    global_ranges = [(base, base + end - start) for start, end, base in taken]
+    global_ranges += [(base, base + end - start) for start, end, base in found if start not in scoped]
+    if not global_ranges:
+        return True
+    low = min(start for start, _ in global_ranges)
+    high = max(end for _, end in global_ranges)
+    return all(not (base < high and low < base + end - start)
+               for start, end, base in found if start in scoped)
+
+
+def safe_scopes(found, scoped, taken):
+    """Scope inferred code on both sides of the global range when necessary."""
+    if not scoped or scopes_fit(found, scoped, taken):
+        return scoped
+    all_inferred = {start for start, _, _ in found}
+    return all_inferred if scopes_fit(found, all_inferred, taken) else None
+
+
 def scope(config, found, scoped):
     """Put each overlapping connected set into one exclusive address space."""
     if not scoped:

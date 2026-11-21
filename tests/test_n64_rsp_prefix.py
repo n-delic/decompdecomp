@@ -7,6 +7,20 @@ from decompnet.consoles.n64.rsp_prefix import trim
 from .test_n64code import _function
 
 
+def test_graphics_boot_variant_needs_vector_and_internal_branch_evidence():
+    from decompnet.consoles.n64.port import RSPBOOT
+    from decompnet.consoles.n64.rsp_prefix import graphics_spans
+
+    image = bytearray(0xd0 + 0x1000)
+    image[:36] = bytes.fromhex('342100010900041a') + RSPBOOT[4:]
+    assert list(graphics_spans(image)) == []
+    for i in range(64):
+        struct.pack_into('>I', image, 0x100 + i * 4, 0x4a000000)
+    for i in range(3):
+        struct.pack_into('>I', image, 0x200 + i * 4, 0x09000400 + i)
+    assert list(graphics_spans(image)) == [(0, len(image))]
+
+
 def test_trim_inferred_rsp_prefix_preserves_called_cpu_leaf():
     base = 0x80001000
     vectors = [0x4a000037]*64

@@ -70,3 +70,17 @@ def test_rejected_partial_runtime_range_does_not_split_the_inferred_segment():
     image[0x3000:0x3000+4*48]=bytes(4*48)
     old=(0,0x5000,0x80040000)
     assert inferred_overlays.runtime_mappings(image,[old],[(0,0x4000,0x80100000)])==([old],set())
+
+
+def test_scopes_cannot_overlap_the_global_range_even_in_its_gaps():
+    found=[(0x2000,0x3000,0x80050000)]
+    taken=[(0,0x1000,0x80000400),(0x1000,0x2000,0x80100000)]
+    assert not inferred_overlays.scopes_fit(found,{0x2000},taken)
+    assert inferred_overlays.scopes_fit([(0x2000,0x3000,0x80200000)],{0x2000},taken)
+
+
+def test_scope_inferred_segments_below_banks_or_keep_original_for_known_conflict():
+    found=[(0x1000,0x2000,0x80000400),(0x2000,0x3000,0x80050000)]
+    taken=[(0,0x1000,0x80100000)]
+    assert inferred_overlays.safe_scopes(found,{0x2000},taken)=={0x1000,0x2000}
+    assert inferred_overlays.safe_scopes(found,{0x2000},[(0,0x100000,0x80000400)]) is None
