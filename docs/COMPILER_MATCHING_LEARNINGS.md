@@ -10327,3 +10327,17 @@ argument and masks that word afterward. The draft put the zero first. Reading th
 32-bit local and then applying the mask lowered the linked score to 120. The deep permuter reproduced
 and saved the improvement. Staging the later call's byte and halfword arguments did not reduce the
 original score. The function still has four reordered instructions.
+
+### Recover payload packets, channel status words and relocated reply bounds
+
+Five N64 drafts failed on undeclared stack slots. Independently compiled archive controls matched all five targets.
+
+- With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, copying eight payload bytes into a twelve-byte
+  aggregate, then copying the aggregate and writing an unsigned terminator, matched the 168-byte packet.
+- Two status routines read the same location as both a byte and a halfword. Two word-aligned stack buffers
+  and separate return tests matched all 224 bytes at the same flags without `-g3`. The 236-byte `-g3` draft
+  additionally needed its relocated pointer expressed in bytes and its positive timeout value staged before
+  assignment to a signed byte. Direct assignment compiled with `-6` in place of the target's 250.
+- At the `-g3` flags, the typed reply aggregate alone left scores 245 and 365 in two 180-byte routines.
+  Using a symbol at the loop-bound byte's resolved address let KMC reload it within each iteration and matched
+  both targets. The input byte cursor retained the separately evidenced relocation and offset.

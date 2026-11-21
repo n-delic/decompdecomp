@@ -422,7 +422,7 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
         return words[0][1]
     if leaves := short_leaf_drafts.variants(source, name, asm_text, context_header):
         return leaves[0][1]
-    return (measured_stack_drafts.rewrite(source, name, asm_text, context_header)
+    return (measured_stack_drafts.rewrite(source, name, asm_text, context_header, resolve=resolve)
             or large_stack_drafts.rewrite(source, name, asm_text, context_header)
             or shared_default_drafts.rewrite(source, name, asm_text, data_asm, context_header)
             or uncached_read_repairs.rewrite(source, name, asm_text, resolve)
