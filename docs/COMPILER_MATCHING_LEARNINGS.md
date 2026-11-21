@@ -11778,3 +11778,36 @@ place fixed the argument but changed the delay-slot store to use that
 argument as its base, leaving the score at 10. Assigning the corrected
 pointer a local immediately after the original base was loaded kept the
 store on its original base and produced an exact match.
+
+## A queued breadth-first walk: index the queue, spill naturally, `for` the middle loop, drop the parameter copy (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, an N64 game, one 159-instruction function)
+
+A walk over an object graph: three loops over a 0x80-word stack queue (write position, read position), four calls
+with the same four arguments, and three pseudo registers the target spills (`sw $a0/$a3/$zero` at 0x214/0x21c/0x224,
+`lw $t1, 0x21c($sp)` before each mode test). The saved best was 2158, built with `volatile` slots for the three values
+and explicit `*p++` cursors. Edit list, each scored alone on the one before (app judge-worker, 0 is exact):
+
+| # | Edit | Score | What it changes in the compiler |
+| - | ---- | ----- | -------------------------------- |
+| 0 | saved best (volatile spills, pointer cursors, 0x82-word queue) | 2158 | |
+| 1 | `*w++ = x; n++;` / `*r` / `r++` become `q[n] = x; n++;` / `q[i]` (`queue_cursor_index`) | 1658 | one pseudo per position, not two: the saved registers go in priority order flags, read, count, end, base |
+| 2 | the third loop's bound reuses loop 2's end temp (`end = n` again, not `n` itself) | 1414 | the end pseudo is live over both loops, so it outranks the base address (`-dl -dg`: 0.443 vs 0.276) |
+| 3 | drop the three `volatile` slots, use the parameters, pass `arg0` to all four calls, queue 0x80 words | 1230 | arg0, arg3 and the start index now spill by priority (the three lowest), the slots land at 0x214/0x21c/0x224 by themselves |
+| 4 | one `list`, one `temp`, one `i` for all three loops (m2c had split them) | 695 | the temp in loop 3 is live across the call, so it takes `$s1` as the target does, not `$a0` |
+| 5 | `first = start; end = n; i = first;` in loop 2 | 590 | `lw $v0; move $s7,$s6; move $s3,$v0` (a copy that stays because the two pseudos differ in calls crossed) |
+| 6 | loop 2 as `for (; i < end; i++)` instead of `if (i < end) { do {...; i++;} while (i < end); }` (`guarded_do_for`) | 300 | the for loop carries `NOTE_INSN_LOOP_VTOP`; reorg's `mostly_true_jump` then predicts the skip branch taken and fills its slot from the step (`beql ...; addiu $s3,$s3,1`), where the rotated `do` got the fall-through `sll` in the slot (`beqz`). The same change on loop 3 did nothing (its fall-through starts with a load, which cannot fill a slot) |
+| 7 | flags used as `arg2` directly instead of `var_s4 = arg2;` (`parameter_copy_drop`) | 0 | with a second pseudo for `$a2` the first scheduler put the `$a3` copy after the zero start-index store (the copies tie to the branch and sort by priority); reload_cse then kept `$a3` live and the first mode test used `bnez $a3` instead of `lw $t1, 0x21c($sp)` (one fewer instruction, every later branch offset moved) |
+
+Rules (not spellings): a spill is a priority outcome, not something to write with `volatile`; a `volatile` slot sits in
+the locals area and gives other offsets and `$v0` reloads. The 8-byte spacing of the target's spill slots is what natural
+spills look like. Each register swap was read from `cc1 -dl -dg` (priority = floor_log2(uses) * uses / live length); the
+branch-likely difference and the store order were read from `-dS -dR -dd`.
+
+Tried and failed: moving `var_s6 = 0` into the guard (590, it splits the counter's live range), 24 orders of the four
+entry statements and the declarations (no effect: block 1's order is the scheduler's), a volatile `arg3` alone (105 but
+wrong slots and `$v0` reloads), a volatile store of the start index (306-333), copying `arg3` into a local first (296).
+
+Evidence: one function, judged 0 by the app (`matched best 0`). decomp-repair 0.5.264/0.5.265 has the three families:
+`queue_cursor_index` on the saved best gives 1658, `guarded_do_for` on edit 5's source gives 300, `parameter_copy_drop` on
+that gives 0 (each run directly and scored with the judge-worker; no permuter run). Edits 2, 3, 4 and 5 are not
+families yet (the end temp shared between loops, natural spills with a pass-through argument, merging m2c's per-loop
+variables, the `first` copy). Not controlled across other functions.
