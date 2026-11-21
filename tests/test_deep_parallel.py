@@ -369,3 +369,27 @@ def test_inline_float_scale_runs_before_broad_rewriting(monkeypatch):
     assert search.operand_order_pass(AGENT, proj, fn, 35, None) == 0
     assert len(tried) == 1
     assert '__repair_float_mul(v[2], 0.5f)' in tried[0]
+
+
+def test_guard_xor_trial_runs_on_an_opcode_near_miss(monkeypatch):
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    proj = net.project_row('game')
+    fn = {**net.function(), 'name': 'f',
+          'asm': 'xori $v0, $s1, 0x20\nsltu $v0, $zero, $v0\n',
+          'best_source': ('void f(void) {\n'
+                          '    s32 key;\n'
+                          '    s32 changed;\n'
+                          '    key = read_key();\n'
+                          '    changed = key ^ 0x20;\n'
+                          '    if (key == 0x26) { different = key != 0x20; }\n'
+                          '}')}
+    search = deep_permuter.Search(net, 1, 6, Log())
+    monkeypatch.setattr(deep_permuter.permuter_focus, 'classify', lambda *args: 'instruction')
+    tried = []
+    monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 215)
+
+    assert search.operand_order_pass(AGENT, proj, fn, 410, None) == 215
+    assert len(tried) == 1
+    assert 'different = changed != 0;' in tried[0]

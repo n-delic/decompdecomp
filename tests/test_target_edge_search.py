@@ -319,3 +319,34 @@ def test_shared_cursor_branch_uses_measured_kmc_proposal_path(monkeypatch):
     rows = [('r', 'beql $v0, $zero, .Ljoin', 'bnez $v0, .Lactive')]
     assert ('likely_branch_cursor', 'shared advance') in route('void f(void) {}', rows, 'asm')
     assert 'likely_branch_cursor' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
+
+
+def test_relocated_byte_table_is_proposed_only_for_kmc(monkeypatch):
+    from decomprepair import relocated_byte_table
+
+    calls = []
+
+    def rewrite(source, name, asm, header, resolve):
+        calls.append((source, name, asm, header, resolve))
+        return 'byte table candidate'
+
+    monkeypatch.setattr(relocated_byte_table, 'rewrite', rewrite)
+    rows = [('i', 'lbu $v0, ($v0)', 'lbu $v0, 3($v0)')]
+    resolve = {'slot': 0x80001000}.get
+    assert ('relocated_byte_table', 'byte table candidate') in route('void f(void) {}', rows, 'asm', resolve=resolve)
+    assert 'relocated_byte_table' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
+    assert calls == [('void f(void) {}', 'f', 'asm', '', resolve)]
+
+
+def test_frame_reservation_prefers_a_new_scope_when_callee_keeps_local_slot():
+    source = 'void f(void) { short value; value = 7; send(0, &value); }'
+    target = ('addiu $sp, $sp, -40|addiu $a1, $sp, 16|sw $ra, 32($sp)|jal send|'
+              'sh $v0, 16($sp)|lw $ra, 32($sp)|jr $ra|addiu $sp, $sp, 40')
+    old = target.replace('-40', '-32').replace('32($sp)', '24($sp)').replace('$sp, 40', '$sp, 32')
+    rows = [(' ' if a == b else 's', a, b) for a, b in zip(target.split('|'), old.split('|'))]
+    options = [text for family, text in route(source, rows, '') if family == 'inferred_frame_reservation']
+
+    assert len(options) == 2
+    assert options[0].index('send(0, &value);') < options[0].index('char __repair_stack_padding[8];')
+    assert options[1].index('char __repair_stack_padding[8];') < options[1].index('send(0, &value);')
+    assert 'inferred_frame_reservation' not in dict(route(source, rows, '', compiler='ido-5.3'))

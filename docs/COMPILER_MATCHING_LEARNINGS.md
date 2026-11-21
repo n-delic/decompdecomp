@@ -8821,3 +8821,44 @@ byte-exact draft by introducing an inline float multiply. A controlled replay ne
 the helper only for the three initial component multiplies. Deep Permuter's targeted
 trial matched all 360 linked bytes after six total trials, compared with 199 trials
 in the earlier scratch run. Both runs used the existing compiler flags.
+
+### Relocated byte lookup tables in remainder loops
+
+An archived 17-instruction N64 draft failed to compile because m2c inferred
+an integer table expression and dereferenced it. With
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` and the captured header, casting
+the table to a byte pointer made the original draft compile but left a score
+of 350. The best prior compilable draft scored 10 because narrowing a word
+load addressed the fourth byte of each value.
+
+The target materializes the buffer with LUI/ADDIU, loads a separate table
+pointer with LUI/LW, then uses the unsigned division remainder for a
+zero-displacement byte load. Resolving both relocated addresses as separate
+typed objects recovered all 68 linked bytes on the copied project. The
+original draft and the previous 10-point candidate both matched after the
+repair. The rule checks the addresses computed from the target instruction
+words as well as the source symbols and offsets.
+
+### Reusing an XOR value under a guard
+
+In a scratch N64 function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`,
+a value computed by XOR was available before an equality guard. Repeating the key
+comparison inside the guarded arm gave score 410. Testing the existing XOR result
+against zero restored the target's unsigned nonzero test and reduced the linked score
+to 215 through Deep Permuter. This is a verified partial improvement.
+
+### Scoped frame reservation after a stack argument
+
+An archived 11-instruction N64 call wrapper under
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` had the correct halfword store
+and stack-address argument at offset 0x10 but a 0x20-byte frame. The target
+frame was 0x28 bytes. The existing eight-byte outer reservation corrected the
+frame and saves while shifting the argument and store to offset 0x18.
+
+Placing the same unused eight bytes in a trailing block after the call kept
+the argument and store at offset 0x10 and reproduced all 44 linked bytes
+on the copied project. A constant-true or constant-false block also matched.
+Moving the outer declaration before the local stayed two stack offsets away.
+The new trial requires a uniform frame and save gap, an unchanged local slot,
+and a final direct call passing that slot's address in the matching argument
+register.

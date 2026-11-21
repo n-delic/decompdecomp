@@ -532,6 +532,8 @@ class Network:
         Reimports select the existing owner. Legacy library callers retain their
         original one-file atomic transaction until app startup upgrades them.
         """
+        if existing is None and config.get('kind') == 'rom':
+            config = {'auto_commit_matches': True, **config}
         if existing is None and self._project_files is not None:
             values = (slug,name,description,arch,int(big_endian),str(root),json.dumps(config))
             with self._project_files.create(values) as result:yield result
