@@ -299,3 +299,32 @@ void f(void) {
     slot_rows = [('o', '', 'move $s1, $zero')] + rows + [('o', 'move $s1, $zero', 'andi $v0, $s1, 0xffff')]
     slot_candidates = dict(proposals(source, 'f', '', 'mips', KMC, slot_rows, ''))
     assert 'do { index = 0; } while (0);' in slot_candidates['guard_reset_delay_slot']
+
+
+def test_measured_shared_result_copy_runs_on_kmc():
+    source = """void f(void) {
+    s32 flag;
+    s32 result;
+    flag = 0;
+    if (obj != NULL) {
+        result = flag;
+        if (M2C_FIELD(obj, void **, 16) != NULL) {
+            flag = 1;
+            goto done;
+        }
+    } else {
+done:
+        result = flag;
+    }
+    if (result == 0) fallback();
+}
+"""
+    rows = [
+        (' ', 'beqz $v0, 0x40', 'beqz $v0, 0x40'),
+        ('r', 'move $v0, $a2', 'move $v1, $zero'),
+        ('r', 'move $v0, $a2', 'move $v1, $a2'),
+        ('r', 'bnez $v0, 0x50', 'bnez $v1, 0x50'),
+    ]
+    candidates = dict(proposals(source, 'f', '', 'mips', KMC, rows, ''))
+    assert '}\ndone:\n    result = flag;' in candidates['shared_result_copy']
+    assert 'shared_result_copy' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))
