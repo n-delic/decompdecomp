@@ -9604,3 +9604,13 @@ Five archived N64 targets reproduced byte-for-byte from independently generated 
 - With `-O2 -g3`, two signed halfword lookups scaled by 8 bytes instead of 2 and pointed at shifted relocations. Declaring the external symbol as a signed halfword array and indexing it in elements moved score 30 to exact for both (24 and 40 bytes).
 - With `-O1`, a masked index selected one byte at a 100-byte stride. The inferred word pointer added a second scale to that stride. A byte array preserved the explicit stride and moved score 30 to exact (120 bytes).
 - With `-O1`, two sentinel scans through an existing unsigned halfword pointer each shifted the index one bit too far. Removing the explicit multiplier from both reads moved score 20 to exact (124 bytes).
+
+### Repeated word-table reads with a duplicated stride
+
+A 1,876-byte N64 routine loaded the same relocated camera table at multiple
+call sites. GCC 2.7.2 KMC with `-G0 -mips3 -mgp32 -mfp32 -O2` emitted
+a shift by four for `*(&table + (index * 4))`. Each original access shifted
+by two. Converting all scalar-address reads to indexes into a word array
+changed the local judge score from 6,863 to 6,823. The real-game scratch
+trial and the live judge agreed. Unrelated constant-pool references remain
+unresolved, so this was a partial improvement.

@@ -638,3 +638,16 @@ def test_kmc_preserves_byte_stride_when_normalization_clears_the_high_relocation
     assert 'extern u8 D_80001230[];' in actual
     assert 'D_80001230[(i & 65535) * 100]' in actual
     assert family not in dict(route(source, rows, 'asm', compiler='ido-5.3'))
+
+
+def test_kmc_repairs_repeated_word_table_scaling_with_other_differences():
+    source = ('extern M2C_UNK table;\n'
+              's32 f(s32 i, s32 j) { return *(&table + (i * 4)) + *(&table + (j * 4)); }')
+    instructions = ('lui $at, %hi(table)', 'addu $at, $at, $a0', 'lw $v0, %lo(table)($at)')
+    access = [('i', 'sll $a0, $a0, 2', 'sll $a0, $a0, 4'),
+              *((' ', instruction, instruction) for instruction in instructions)]
+    rows = [*access, ('r', 'move $a0, $s2', 'move $a0, $s3'), *access]
+    family = 'measured_repeated_word_table'
+    candidate = dict(route(source, rows, 'asm'))[family]
+    assert 'return table[i] + table[j];' in candidate
+    assert family not in dict(route(source, rows, 'asm', compiler='ido-5.3'))
