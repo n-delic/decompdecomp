@@ -11577,3 +11577,11 @@ had no names. With both fixed (decomp-repair 0.5.258 FPR aliases; local-alloc ra
 9 insns, rank 3) outranks the `sin(z)` pseudo (lines 9,12,15,29: 4 refs over 14 insns, rank 7). Shortening
 `sin(z)`'s range or lengthening `cos(y)`'s flips them, which is what the matching store order did. Not yet done:
 turning this into proposed edits (moves ranked by their effect on the two ranges).
+
+## Two loop steps commute anywhere (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`)
+
+A word-copy loop (`t = *src; src += 4; n -= 4; *dst = t; dst += 4;` in a do-while) scores 20 with its two
+mid-body steps written `n -= 4; src += 4;` and 0 the other way. `loop_tail_update_order` only swapped the last
+two steps of a do-while, so it proposed nothing; decomp-repair 0.5.258 swaps any two adjacent constant steps of
+different names (mid-body, for/while tails, before an m2c `if (...) goto` close, and a `for` header's `a++, b += n`)
+and proposes the 0 source. Controlled perturbation of a matched function. Not done: gating by cc1 sched dumps.
