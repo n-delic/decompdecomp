@@ -12110,3 +12110,31 @@ instead of three. The target formed the pointer before several stack
 argument stores. Tracking that early address to the call and casting
 the global base to a byte pointer gave an exact match in 38 candidates.
 The released control remained at score 10 after 100 candidates.
+
+### KMC GCC 2.7.2: a scaled size written back into its variable gives the hoisted sum the call argument's register preference
+
+A 316-byte N64 heap setup (`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`: `size = 0x800 or 0x4000; size *= 8; buf =
+heapAlloc(size, 0)`, then a 3-iteration loop filling task records, one field `buf + size`). Saved best 125, then 140
+once the 16-bit cast around the sum was dropped; every instruction right, only registers shifted by one (loop pointer
+`$a1` for `$a0`, counter `$a2` for `$a1`, `buf` `$a3` for `$a2`, boot address `$t0` for `$a3`, sum `$a0` for `$t0`).
+Edit list, scored with the app's judge-worker (no permuter run):
+
+| # | Edit | Score |
+| - | ---- | ----- |
+| 0 | saved best (`(unsigned short) (buf + size)`: a masked copy, one `andi` extra) | 125 |
+| 1 | drop the 16-bit cast | 140 |
+| 2 | `end = ...` locals before or inside the loop, `D_800DD340 + size`, `size + buf`, `u32`, `<<= 3`, ternary size | 140 to 470, none better |
+| 3 | no `size *= 8;`; `heapAlloc(size * 8, 0)` and `buf + size * 8` | 0 |
+
+Compiler fact, from `cc1 -dl -dg`: the allocation order was already the target's (`ptr, counter, buf, boot, sum`) and
+the table printed `158 preferences: 4`: the sum pseudo (`buf + size`, loop.c moved it before the loop) prefers `$a0`.
+`size` is copied into `$a0` for the call and dies in the add, so the sum inherits the preference; find_reg then skips
+`$a0` for every higher-ranked pseudo that overlaps it, and each of them takes the next register. With the scale left at
+each use cse still shares the product, but `size` stays live and unscaled, the add is a fresh pseudo with no preference,
+and the pointer takes `$a0`. The 16-bit cast worked only by giving the sum a different pseudo (hence 125). One
+function, not controlled across others; the family is a bounded hypothesis and the exact judge decides.
+
+decomp-repair 0.5.278 `scaled_size_inline` removes the `x *= K;` (also `<<=`, `x = x * K`) and writes `(x * K)` at each
+later read, when it feeds a call argument and one more read; a second child also drops a 16-bit cast around the sum.
+From the saved best (125) the second child scores 0 in one step; from the 140 source the first does. Not run through the
+Deep Permuter.
