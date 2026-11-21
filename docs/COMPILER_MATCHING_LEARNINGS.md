@@ -11446,3 +11446,13 @@ and 10. `paired_statement_moves` treated declarations as barriers, so its best s
 move on it reaches 0 from all three states (about 535 candidates each, fast_judge). Evidence: controlled
 perturbations of a matched function, not a new match. Declarations whose value names a later-declared local
 are not split.
+
+## Float and pointer phases split like integer ones (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`)
+
+m2c names one register's successive values `x`, `x_2`; a draft that keeps them in one C local ties both values
+to one pseudo. `split_integer_phase` split such phases only for integer locals. Controlled test on three
+matched N64 functions: merging a reused pointer or float pair back into one local scored 730 and 1520 (a
+matrix-building function, pointer locals) and 50 (a float-heavy function's pointer temporary); decomp-repair
+0.5.251's split restores 0 for each, where the stock family proposed nothing. Two float pairs (827, 605) were
+not recovered: their second phase is a self-update or is not dominated by one definition, which the family
+still declines.
