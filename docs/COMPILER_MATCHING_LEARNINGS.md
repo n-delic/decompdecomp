@@ -11435,3 +11435,14 @@ value to the third slot in the call delay slot. Restoring the first
 parameter, the corresponding call argument and the callee prototype
 together scored 15 to 0. The deep permuter reproduced the match in 17
 candidates while preserving the reversed order of the other two arguments.
+
+## Initialised declarations block statement moves (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`)
+
+A rotation-matrix function (three cos/sin pairs, four products, sixteen float stores) is sensitive to the order
+of its `f32 a = cx * sz;` style initialisers: swapping one adjacent pair of product declarations scored 45, 10
+and 10. `paired_statement_moves` treated declarations as barriers, so its best single move from those states was
+40, 10 and 10. decomp-repair 0.5.249 splits a block's leading initialised declarations into `T name;` plus
+`name = value;` after the last declaration (same evaluation order); the split alone still judges 0, and one
+move on it reaches 0 from all three states (about 535 candidates each, fast_judge). Evidence: controlled
+perturbations of a matched function, not a new match. Declarations whose value names a later-declared local
+are not split.
