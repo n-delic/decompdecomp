@@ -23,12 +23,21 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
     starts={f.vram for f in functions}
     order='big' if console.big_endian else 'little'
     fmt='>I' if console.big_endian else '<I'
+    # Generated C units can change at a false cut inside one mapped code segment.
+    def owner(fn):
+        mapped = [i for i, s in enumerate(segments)
+                  if s.rom_start <= fn.rom < fn.rom+fn.size <= s.rom_end
+                  and s.vram-s.rom_start == fn.vram-fn.rom]
+        return (mapped[0], '') if len(mapped) == 1 else (-1, fn.segment)
+
     # A raw function-pointer entry is independent evidence even without a direct call.
     shared,slots=shared_slot_calls(functions,image,console,segments)
     # A stored word equal to an address in a shared slot may be any sibling overlay's table entry, and the segment's
     # own extent can run on over its siblings' images (the game above: five overlays in one segment's ROM range).
     pointers={w for w, in struct.iter_unpack(fmt,image[:len(image)//4*4]) if w in starts and not any(s.contains(w,4) for s in slots)}
     references=defaultdict(set)
+    direct_calls=set()
+    shared_calls=set(shared)
     names={f.name:f.vram for f in functions}
     for fn in functions:
         for line in fn.lines:
@@ -36,6 +45,8 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
             if op in (2,3):
                 dest=((line.vram+4)&0xf0000000)|((line.word&0x3ffffff)<<2)
                 references[dest].add((line.rom,fn.segment))
+                if op==3 and (dest,line.rom,fn.segment) not in shared_calls:
+                    direct_calls.add(dest)
             elif op in (1,4,5,6,7,20,21,22,23) or op==17 and (line.word>>21)&31==8:
                 delta=line.word&0xffff
                 dest=line.vram+4+(delta-0x10000 if delta&0x8000 else delta)*4
@@ -51,8 +62,8 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
             if 0<=s.rom_start<s.rom_end<=len(image) and not s.rom_start%4 and not s.rom_end%4]
     returns={fn.rom+fn.size for fn in functions if fn.size>=8 and fn.lines[-2].word==JR_RA}
     groups=[];group_end=0
-    for fn in sorted(functions,key=lambda f:(f.segment,f.rom)):
-        if (groups and groups[-1][-1].segment==fn.segment
+    for fn in sorted(functions,key=lambda f:(owner(f),f.rom)):
+        if (groups and owner(groups[-1][-1])==owner(fn)
                 and fn.vram-fn.rom==groups[-1][0].vram-groups[-1][0].rom
                 and (fn.rom<=group_end or fn.rom-group_end<=HOLE and not any(image[group_end:fn.rom]))):
             groups[-1].append(fn)
@@ -87,7 +98,9 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
         # A new interior entry needs the preceding balanced return, never a frame pattern alone.
         candidates=[at for at,line in lines.items() if is_frame(line.word) and (at in cuts or
                     at-8 in lines and lines[at-8].word==JR_RA and lines[at-4].word&0xffff0000==0x27bd0000)]
-        padding=set(holes);proposed_padding={};leaves=set()
+        padding=set(holes);proposed_padding={}
+        # A directly called frameless entry may have been cut from its own return.
+        leaves={at for at in cuts if at in lines and at+mapping in direct_calls}
         def seed(cut,hi=hi,lines=lines,mapping=mapping,leaves=leaves,proposed_padding=proposed_padding):
             at=cut
             while at<min(cut+12,hi) and at in lines and lines[at].word==0:at+=4
@@ -119,9 +132,9 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
             end=at+size;address=at+mapping;finish=end+mapping
             if any(address<a<finish for a in explicit|pointers):continue
             if any(d.rom is not None and d.rom<end and at<d.rom+d.size for d in data):continue
-            independent=any(not (at<=offset<end and segment==first.segment)
+            independent=any(not at<=offset<end
                             for dest in destinations[bisect_right(destinations,address):bisect_right(destinations,finish-1)]
-                            for offset,segment in references[dest])
+                            for offset,_ in references[dest])
             if independent:continue
             if not any(at<c<end for c in cuts) and at in cuts and end in cuts:continue
             # Retain alignment in the original image, outside the C function.
@@ -149,14 +162,14 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
     if changed:
         # A label moved to a separate body is now an entry symbol, not a local
         # label in the preceding assembly file. Keep cross-body branches linkable.
-        entries={(fn.segment,fn.vram):fn.name for fn in result}
+        entries={(owner(fn),fn.vram):fn.name for fn in result}
         rewritten=[]
         for fn in result:
             body=[]
             for line in fn.lines:
                 def entry(match, fn=fn):
                     address=int(match[1],16)
-                    return entries.get((fn.segment,address),match[0]) if not fn.vram<=address<fn.vram+fn.size else match[0]
+                    return entries.get((owner(fn),address),match[0]) if not fn.vram<=address<fn.vram+fn.size else match[0]
                 body.append(replace(line,operands=_LOCAL_REF.sub(entry,line.operands)))
             rewritten.append(replace(fn,lines=body))
         result=rewritten
@@ -192,7 +205,7 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
                     and not any(d.rom is not None and d.rom < after and before < d.rom+d.size for d in data))
         return False
 
-    kept=[];dropped=markers=0;ordered=sorted(result,key=lambda f:(f.segment,f.rom))
+    kept=[];dropped=markers=0;ordered=sorted(result,key=lambda f:(owner(f),f.rom))
     for i,fn in enumerate(ordered):
         previous=kept[-1] if kept else None;following=ordered[i+1] if i+1<len(ordered) else None
         if overlay_end_marker(fn, previous, following, image, order, segments) and not referenced(fn):
@@ -202,7 +215,7 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
         if zero_alignment(fn):
             dropped+=1;continue
         if (filler_extent(fn.size,fn.lines[0].word) and previous is not None and following is not None
-                and previous.segment==fn.segment==following.segment
+                and owner(previous)==owner(fn)==owner(following)
                 and previous.rom+previous.size==fn.rom and following.rom==fn.rom+4 and following.vram==fn.vram+4
                 and alignment_fill(fn.vram,previous.size>=8 and previous.lines[-2].word==JR_RA,
                                    following.vram in entered or is_frame(following.lines[0].word),referenced(fn))):
@@ -212,7 +225,7 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
         log(f'Left {dropped} alignment words out of the functions: filler between a return and the next entry, kept in the image.')
     if markers:
         log(f'Recovered {markers} overlay end markers as data.')
-    return kept if dropped or markers else result
+    return kept if dropped or markers else result if changed else functions
 
 
 def overlay_end_marker(fn, previous, following, image, order, segments):
@@ -310,7 +323,8 @@ def shared_slot_calls(functions, image, console, segments):
             if line.word>>26!=3:continue
             dest=((line.vram+4)&0xf0000000)|((line.word&0x3ffffff)<<2)
             for s in segments:
-                if s.name!=fn.segment and s.contains(dest,4):
+                if s.contains(dest,4) and not (s.rom_start<=line.rom<s.rom_end
+                                                 and line.vram-line.rom==s.vram-s.rom_start):
                     calls[s.name].append((dest,line.rom,fn.segment,dest-s.vram+s.rom_start,s.rom_start))
     out,slots=[],[]
     for name,found in calls.items():
