@@ -414,3 +414,27 @@ def test_displaced_jump_table_can_recover_with_delay_slot_scheduling_disabled(mo
     assert 'Jump-table relocation cleared' in '\n'.join(logs)
     assert not state['applied'] and not state['suggested']
     assert fn['best_score'] == 50
+
+
+def test_jump_table_preflight_combines_case_order_with_scheduling(monkeypatch):
+    from decompnet.app import switch_tables
+
+    net, proj, fn, state = setup()
+    proj['arch'] = 'mips'
+    net.cfg(proj)['compiler']['toolchain'] = 'gcc-2.7.2-kmc'
+    child = 'int f(void) { return 2; }'
+    monkeypatch.setattr(switch_tables, 'read', lambda *args: [(0, [4100, 4104])])
+    monkeypatch.setattr(switch_tables, 'variants', lambda *args: [('target_switch_order', child)])
+    calls = []
+
+    def judge(project, function, compiler, flags, source):
+        calls.append((flags, source))
+        if source == child and '-fno-schedule-insns' in flags:
+            return False, SimpleNamespace(score=90), ''
+        return False, SimpleNamespace(score=50), "your code refers to .rodata+0x0 where the ROM's code has no address"
+
+    net._judge_with = judge
+    assert not preflight.run(net, proj, fn).get('jump_table_profile')
+    assert preflight.run(net, proj, fn)['jump_table_profile']['source'] == child
+    assert (['-O2', '-fno-schedule-insns'], child) in calls
+    assert not state['applied']

@@ -45,6 +45,29 @@ def allowance(diagnosis):
     return LIMIT if diagnosis["register_cycles"] else CHAIN_LIMIT
 
 
+
+def near_registers(rows, arch):
+    """A few register-only differences merit a short, focused source search."""
+    changed = sum(row[0] != ' ' for row in rows)
+    return 0 < changed <= 8 and (allocation_evidence.diagnose(rows, arch)['register_only']
+                                or floating_only(rows, arch) or saved_register_swap(rows, arch))
+
+
+def near_proposals(source, name, header, rows, arch):
+    from decomprepair import allocation_repairs, prepared_call_repairs
+
+    from . import permuter_local
+
+    if not near_registers(rows, arch):
+        return []
+    calls = prepared_call_repairs.variants(source, name, header, arch)
+    local = permuter_local.variants(source, name)
+    labels = {candidate: family for family, candidate in local}
+    scoped = proposals(source, name, arch, rows, list(labels), labels, header=header)
+    declarations = [('spill_declaration_order', candidate) for candidate in
+                    allocation_repairs.declaration_orders(source, name, header)]
+    return list(dict.fromkeys(calls[:3] + declarations[:3] + scoped))[:CHAIN_LIMIT]
+
 def key(net, proj, fn, source):
     profile = compiler_for(net.cfg(proj),fn['vram'], fn)
     installed = toolchains.installed(profile.get('toolchain',''))
