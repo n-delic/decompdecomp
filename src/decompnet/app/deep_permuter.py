@@ -360,6 +360,9 @@ class Search(Permuter):
                  # m2c's byte offsets beside guarded counters, indexed by the counter again (and one shared
                  # counter, guarded on itself), the pseudo layout GCC 2.x's strength reduction gives
                  (L + 'guarded_offset_index.variants', (source, name, arch, asm)),
+                 # a record loop's byte offset recomputed from its counter, a global pointer held in a local from
+                 # the call before it, a float literal staged through a local (decomp-repair 0.5.257, in the pinned 0.5.258)
+                 (L + 'record_init_shapes.variants', (source, name, arch, asm)),
                  # a temporary stored to a global and read back, written as the global (cse's forwarding)
                  (L + 'global_store_forward.variants', (source, name)),
                  # a byte array's address added to an index in a nested loop's guarded block: the base set twice

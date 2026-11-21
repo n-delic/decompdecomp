@@ -11630,3 +11630,22 @@ The rotation-matrix function's store order decides its `$f20`/`$f22` choice. Mea
 
 A plain greedy single-move climb stalls at 40 from the 60 state (1,038 judgments). The pass now returns at an
 improving single move, expands six parents before widening the beam to 40, and runs up to eight rounds.
+
+### A record-initialising do/while: index by the counter, hold the global in a local, stage the float constant
+
+With gcc-2.7.2-kmc `-G0 -mips3 -mgp32 -mfp32 -O2`, an N64 scene-setup function (one do/while clearing 56 records of
+0xD4 bytes, then a run of global stores and calls) sat at 300 with three scheduling groups left (the offset's
+`move $a0,$zero` before the hoisted constants, one `swc1`, the call's `lui/lw $a2` and `addiu $a0`). Edit list, each
+scored with the app's judge-worker (fast_judge): m2c's second induction variable (`n += 1; off += 0xD4;`) replaced by
+`base + n * 0xD4` in every use, and the dead `off` argument of the following unprototyped call dropped:
+300 -> 240 (alone the first half is 430: the leftover `move $a0,$zero` for the argument appears until the call has no
+argument); `recs = gObjectRecords;` assigned just after the preceding call, the three later reads written as `recs`:
+240 -> 60; the `999.0f` store written as `big = 999.0f;` where the store stood and `*(f32 *)(p + 0x38) = big;` after
+the next address temporary: 60 -> 0. Rules: strength reduction makes the derived offset register itself, and its
+`move` is then emitted after the loop's hoisted constants (written as a separate variable it stays before them);
+GCC hoists a loop's constants in the order of their first use, so a store moved later flips the hoist order (the byte
+`0xFF` came before `999.0f` and the target has them the other way); the local that holds the constant first moves its
+first use back, and the store is then free to sit after the load the scheduler hoists. Failed: moving the `swc1`
+alone to every body position (all 300 or worse), `for` instead of `do/while`, single statement moves in the loop or the
+tail (240 or worse). Evidence: one function plus the library's tests (decomp-repair 0.5.257+ `record_init_shapes`; on
+the saved best the three families chain 300 -> 240 -> 60 -> 0; the app's Deep Permuter run is the user's to confirm).
