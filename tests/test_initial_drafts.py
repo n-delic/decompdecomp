@@ -509,14 +509,18 @@ def test_copied_word_index_repair_runs_during_valid_kmc_draft_generation(monkeyp
     monkeypatch.setattr(seeds, 'm2c_target', lambda *args: 'mips-gcc-c')
     calls = []
 
-    def repair(*args):
-        calls.append(args)
+    def resolve(symbol):
+        assert symbol == 'table'
+        return 0x80010000
+
+    def repair(*args, resolve):
+        calls.append((*args, resolve('table')))
         return 's32 f(s32 arg) { return table[arg]; }'
 
     monkeypatch.setattr(measured_stack_drafts, 'rewrite', repair)
-    assert 'table[arg]' in seeds.generate_from_asm('asm', 'f', 'gcc-2.7.2-kmc', 'header', valid=True)
+    assert 'table[arg]' in seeds.generate_from_asm('asm', 'f', 'gcc-2.7.2-kmc', 'header', valid=True, resolve=resolve)
     assert seeds.generate_from_asm('asm', 'f', 'gcc-2.7.2-kmc', 'header') == raw
-    assert calls == [(raw, 'f', 'asm', 'header')]
+    assert calls == [(raw, 'f', 'asm', 'header', 0x80010000)]
 
 
 def test_larger_stack_recovery_is_used_by_valid_kmc_drafts(monkeypatch):
