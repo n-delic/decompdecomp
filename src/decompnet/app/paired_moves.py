@@ -12,6 +12,8 @@ is the Deep Permuter's job (Search.paired_move_pass).
 from __future__ import annotations
 
 BEAM = 40  # single moves whose results are expanded by a second move
+RANKED = 60  # with a ranking (allocation_moves), this many of its first single moves are judged before the rest
+RANK_CHUNK = 10
 FIRST_BEAM = 6  # parents expanded before the beam widens: most improvements come from the least different few
 JUDGMENTS = 8000  # exact judgments one pass may spend
 SPLITS = 600  # wrapped-call split candidates judged before the single moves
@@ -33,7 +35,7 @@ def worth(rows) -> bool:
 
 
 def search(judge_many, source, name, header, base, *, beam=BEAM, budget=JUDGMENTS, seen=(), check=lambda: None,
-           log=lambda text: None):
+           log=lambda text: None, rank=None):
     """(score, candidate or None, judged): the best candidate within two statement moves of `source`.
 
     `judge_many(sources)` returns exact scores (None when one did not compile). Candidates in `seen` are skipped.
@@ -65,8 +67,26 @@ def search(judge_many, source, name, header, base, *, beam=BEAM, budget=JUDGMENT
         skip.update(splits)
         if splits:
             consider(splits)
-    scores = judge_many(singles, check)
-    judged += len(singles)
+    known = {}
+    if rank is not None:
+        # moves the allocation evidence says change the deciding ranges come first, judged a chunk at a time, and
+        # the first improvement is the step (allocation_moves)
+        singles = rank(singles)
+        for at in range(0, min(RANKED, len(singles)), RANK_CHUNK):
+            chunk = singles[at:at + RANK_CHUNK]
+            for score, candidate in zip(judge_many(chunk, check), chunk):
+                judged += 1
+                known[candidate] = score
+                if score is not None and score < best:
+                    best, winner = score, candidate
+            if winner is not None:
+                log(f'Two-move search: a move ranked by the allocation evidence improves {base} to {best} '
+                    f'({judged} judged).')
+                return best, winner, judged
+    rest = [c for c in singles if c not in known]
+    scores = [known[c] for c in singles if c in known] + judge_many(rest, check)
+    singles = [c for c in singles if c in known] + rest
+    judged += len(rest)
     ranked = []
     for score, candidate in zip(scores, singles):
         if score is None:

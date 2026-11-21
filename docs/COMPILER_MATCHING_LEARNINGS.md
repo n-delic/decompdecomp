@@ -11658,3 +11658,12 @@ difference used a different floating register, and its load order and
 later users differed with it. Squaring each difference in its original
 local before summing them, keeping the addition order, changed the score
 from 35 to an exact match. Typed pointer parameters alone scored 25.
+
+## Allocation evidence ranks the statement moves (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`)
+
+The rotation-matrix function's saved 85 state swaps `$f20`/`$f22` between two trig results. The evidence (one
+`-g -dr -df -dl -dg` compile) names the variables on the pseudos' first source lines; a move that lengthens the
+winner's span of lines or shortens the loser's changes exactly the two priorities that decide the swap.
+Judging those moves first (`allocation_moves`, 60 ranked moves in chunks of 10, step at the first improvement):
+85 -> 70 -> 60 -> 0 after 645 judgments, against 2,286 for the unranked step search and 8,000 for the old
+beam-40 pass. The ranking only orders candidates; the byte judge decides.

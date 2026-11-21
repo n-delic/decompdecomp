@@ -823,10 +823,11 @@ class Search(Permuter):
             self.phase = 'two-move search'
             self.log('Searching two statement moves at once: every single move is judged, then a second move on '
                      'the least-different results.')
+            rank = self._allocation_rank(proj, fn, source, rows, fork)
             with judge_pool.JudgePool(proj['slug'], fn, own['toolchain'], flags) as pool:
                 score, candidate, judged = paired_moves.search(
                     pool.judge_many, source, fn['name'], header, best, seen=self.local_seen, check=self.check,
-                    log=self.log)
+                    log=self.log, rank=rank)
                 if pool.errors:
                     self.log('Two-move search could not judge here: ' + pool.errors[0][:200])
             self.tested += max(1, judged // 50)
@@ -846,6 +847,31 @@ class Search(Permuter):
             if best == 0:
                 return 0
         return best
+
+    def _allocation_rank(self, proj, fn, source, rows, fork):
+        """An order for the two-move search's single moves from the GCC allocation evidence of a register swap
+        (allocation_moves), or None when there is no swap, no evidence or no variable to name."""
+        from . import allocation_moves, allocation_priority, allocation_search
+        if fork or not allocation_priority.swaps(rows) or not getattr(self.net, 'is_rom', lambda _: False)(proj):
+            return None
+        try:
+            evidence = allocation_search.saved(self.net, proj, fn, source)
+            if evidence is None and self.tested + 2 < self.limit and time.monotonic() + 40 < self.deadline:
+                def charged():
+                    self.check()
+                    self.tested += 1
+                    self.report()
+                evidence = allocation_search.capture(self.net, proj, fn, source, on_compile=charged, rows=rows)
+        except SearchLimit:
+            raise
+        except (OSError, ValueError, KeyError, RuntimeError):
+            return None
+        pairs = allocation_moves.rivals((evidence or {}).get('allocation'), rows, source)
+        if not pairs:
+            return None
+        self.log('Two-move search: judging first the moves that change the live ranges deciding '
+                 + ', '.join(f'{w} over {l}' for w, l in pairs) + ' (GCC allocation priority).')
+        return lambda singles: allocation_moves.order(source, singles, pairs)
 
     def allocation_choices(self, proj, fn, source, rows, choices, labels, header, fork):
         """One bounded lane before broad mutation, charged to the same global limit/deadline."""
