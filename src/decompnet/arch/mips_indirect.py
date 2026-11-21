@@ -99,13 +99,15 @@ def _ido_register_guard(image,start,at,order):
                 continue
         bound,branch,hi,lo,scale,add,load,jump,slot = words
         index, condition, count = (bound>>21)&31, (bound>>16)&31, bound&0xffff
-        base, scaled = (hi>>16)&31, (scale>>11)&31
+        high, base, scaled = (hi>>16)&31, (lo>>16)&31, (scale>>11)&31
+        destination = (load>>16)&31
         if (bound>>26!=11 or not 1<=count<=MAX_ENTRIES or not index or not condition or condition==index
-                or branch>>16!=0x1000|condition<<5 or not base or base==index
-                or hi>>16!=0x3c00|base or lo>>16!=0x2400|base<<5|base
+                or branch>>16!=0x1000|condition<<5 or not high or not base or index in (high,base)
+                or hi>>16!=0x3c00|high or lo>>16!=0x2400|high<<5|base
                 or not scaled or scaled==base or scale!=index<<16|scaled<<11|2<<6
                 or add&0xfc00ffff!=scaled<<11|33 or {(add>>21)&31,(add>>16)&31}!={base,scaled}
-                or load!=0x8c000000|scaled<<21|base<<16 or jump!=base<<21|8 or slot):
+                or not destination or load!=0x8c000000|scaled<<21|destination<<16
+                or jump!=destination<<21|8 or slot):
             continue
         if not scheduled and move and (delay>>11)&31==index:
             continue
