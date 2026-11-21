@@ -328,3 +328,22 @@ done:
     candidates = dict(proposals(source, 'f', '', 'mips', KMC, rows, ''))
     assert '}\ndone:\n    result = flag;' in candidates['shared_result_copy']
     assert 'shared_result_copy' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_measured_field_mask_staging():
+    source = """#define FIELD(p,T,o) (*(T *)((u8 *)(p) + (o)))
+void f(void *ptr) {
+    s32 word;
+    word = FIELD(ptr, s32, 40) & ~252;
+    output(0, word);
+}
+"""
+    rows = [
+        ('o', '', 'move $a0, $zero'),
+        (' ', 'lw $v1, 0x28($s0)', 'lw $v1, 0x28($s0)'),
+        ('o', 'move $a0, $zero', ''),
+        (' ', 'addiu $v0, $zero, -0xfd', 'addiu $v0, $zero, -0xfd'),
+        (' ', 'and $v1, $v1, $v0', 'and $v1, $v1, $v0'),
+    ]
+    assert 'word &= ~252;' in dict(proposals(source, 'f', '', 'mips', KMC, rows, ''))['staged_field_mask']
+    assert 'staged_field_mask' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))
