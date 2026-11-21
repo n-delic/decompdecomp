@@ -537,6 +537,86 @@ class Search(Permuter):
             frontier = sorted(children, key=lambda item: item[0])[:3]
         return lowest
 
+    NEUTRAL_DEPTH = 3     # score-neutral steps kept below one state before a step must pay off
+    NEUTRAL_WIDTH = 6     # neutral children expanded per level, one per family first
+    NEUTRAL_STATE = 64    # compiles spent below one state
+    NEUTRAL_BUDGET = 240  # compiles for the whole pass
+
+    @staticmethod
+    def neutral_frontier(children, width):
+        """The neutral children worth expanding: one per family first (a plateau is usually one family's many
+        spellings), then the rest in the order they came, up to `width`."""
+        picked, families = [], set()
+        for family, child in children:
+            if family not in families:
+                picked.append((family, child))
+                families.add(family)
+        picked += [item for item in children if item not in picked]
+        return picked[:width]
+
+    def neutral_plateau_pass(self, agent, proj, fn, best, fork):
+        """Search through score-neutral rewrites to the step that pays off after them, from every state that improved.
+
+        The other passes keep a child only when it scores better, so a step that pays off only after one or two
+        same-score steps is never reached, and the first improvement wins even when it leads nowhere. A 312-byte N64
+        voice-list walk at 623 needed its loop-invariant call arguments written at the call sites (623 -> 623) before
+        its staged table product matched (-> 0), while the quickest improvement (its loop as `goto`, 280) ended at
+        200. Each state keeps its same-score children for up to NEUTRAL_DEPTH levels (their children scored in
+        turn, one of each before the second of any); every child that beats its state becomes a state, and the
+        lowest-scoring state is searched next. Every child is judged normally."""
+        import heapq
+        import itertools
+
+        source = _candidate_source(fn, best)
+        if not best or not source:
+            return best
+        flags = [] if fork else compiler_for(self.net.cfg(proj), fn['vram'], fn).get('flags', [])
+        context = None if fork else self.net._context(proj['id'], fn['unit'])
+        header = self.net.forks.permuter_header(fork, fn['name']) if fork else (context['header'] if context else '')
+        budget = min(self.NEUTRAL_BUDGET, max(0, (self.limit - self.tested) // 2))
+        scored, done, order = {source: best}, set(), itertools.count()
+        states, lowest = [(best, next(order), source, ())], best
+
+        def children(parent):
+            labels = {}
+            try:
+                found = draft_repairs.variants(parent, fn['name'], proj['arch'], dict(fn).get('asm') or '', flags,
+                                               labels, limit=None, header=header)
+            except Exception:  # noqa: BLE001 - a family that fails on an edited source must not end the search
+                return []
+            return [(labels.get(child, 'local_repair'), child) for child in found]
+
+        while states and budget > 0 and lowest:
+            level, _, state, path = heapq.heappop(states)
+            if state in done:
+                continue
+            done.add(state)
+            frontier, allowance = [(state, path)], min(budget, self.NEUTRAL_STATE)
+            for _ in range(self.NEUTRAL_DEPTH):
+                rows = [[(family, child, trail) for family, child in children(parent)] for parent, trail in frontier]
+                neutral = []
+                for family, child, trail in (item for row in itertools.zip_longest(*rows) for item in row if item):
+                    if allowance <= 0 or not lowest:
+                        break
+                    if child not in scored:
+                        allowance -= 1
+                        budget -= 1
+                        self.check()
+                        with repair_trial({'kind': 'deep local repair', 'family': '+'.join(trail + (family,))}):
+                            scored[child] = self._score(agent, proj, fn, child, lowest, fork)
+                    score = scored[child]
+                    if score is None or child in done:
+                        continue
+                    if score < level:
+                        heapq.heappush(states, (score, next(order), child, trail + (family,)))
+                        lowest = min(lowest, score)
+                    elif score == level:
+                        neutral.append((family, (child, trail + (family,))))
+                if allowance <= 0 or not lowest or not neutral:
+                    break
+                frontier = [item for _, item in self.neutral_frontier(neutral, self.NEUTRAL_WIDTH)]
+        return lowest
+
     def loop_cursor_pass(self, agent, proj, fn, best, fork):
         """Measure fixed-offset cursors, indexed loops and frame cleanup."""
         from . import generation_calls
@@ -1975,6 +2055,9 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
                     local_trials = max(1, (search.limit-search.tested)//2)
                     best, _ = search.local_repairs(agent, proj, net._function(name, slug), baseline, fork,
                                                    max_trials=local_trials, phase_deadline=local_deadline)
+                    if best and (lane is None or lane.index == 0) and not relabel:
+                        search.phase = 'neutral steps'
+                        best = search.neutral_plateau_pass(agent, proj, net._function(name, slug), best, fork)
                     if best == 0:
                         reason = 'Matched'
             finally:
