@@ -10764,3 +10764,14 @@ directly removed the redundant mask and raised the linked score from 10 to
 240. The automatic follow-up tried full-byte casts and staged unsigned
 locals, including a volatile local and an instruction-free register
 constraint. The isolated replay retained score 10 after the five focused trials.
+
+### Narrow zero stores and preserve the bias in float table indexes
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, two machine drafts
+in an isolated N64 ROM project reached exact linked matches. Changing only
+the cast on an indexed zero store from word to byte brought its score from
+200 to 0. The target and draft used the same address instructions, with
+`sb` in the target and `sw` in the draft. In a float table reader, typing
+the table as an array and preserving the constant subtraction between the
+float-to-integer cast and index mask brought the score from 170 to 0.
+The deep permuter independently reproduced and saved both byte matches.
