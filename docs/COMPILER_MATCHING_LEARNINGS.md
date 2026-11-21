@@ -10952,3 +10952,15 @@ float local before evaluating the subtraction preserved the operand
 order of the subtraction and brought the linked score from 30 to 0.
 Moving the load statements alone retained score 30. Expressing the
 subtraction as addition of a negated product raised the score to 375.
+
+### Trim generated frame backing and recover a byte table load
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, an isolated N64
+draft's generated stack overlay had excess backing storage. Reducing
+the byte array by the eight-byte frame delta kept all typed view slots
+fixed and reduced the linked score from 8 to 0. Reducing it by twelve
+bytes instead retained a score of 8. A second draft used a word
+declaration for a byte table, which changed the load width and scaled
+the record offset twice. Restoring a byte array reduced its score
+from 270 to 60. The existing parameter-width repair then matched the
+remaining scheduling difference and brought the score to 0.
