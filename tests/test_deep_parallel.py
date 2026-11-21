@@ -303,3 +303,20 @@ def test_packed_word_store_scope_runs_with_mixed_operand_evidence(monkeypatch):
     assert search.operand_order_pass(AGENT, proj, fn, 95, None) == 30
     assert len(tried) == 1
     assert 'do { entry->color.word = (((0xff000000 | (shade << 16)) | (shade << 8)) | shade); }' in tried[0]
+
+
+def test_float_stack_call_reuse_runs_when_the_diff_has_extra_loads(monkeypatch):
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    proj = net.project_row('game')
+    fn = {**net.function(), 'asm': 'lwc1 $fa0, 0($s0)'}
+    search = deep_permuter.Search(net, 1, 6, Log())
+    monkeypatch.setattr(deep_permuter.permuter_focus, 'classify', lambda *args: 'instruction')
+    monkeypatch.setattr('decomprepair.float_stack_call_reuse.variants',
+                        lambda *args: [('float_stack_call_reuse', 'shared float loads')])
+    tried = []
+    monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 0)
+
+    assert search.operand_order_pass(AGENT, proj, fn, 235, None) == 0
+    assert tried == ['shared float loads']

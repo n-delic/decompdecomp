@@ -332,12 +332,14 @@ class Search(Permuter):
     def operand_order_pass(self, agent, proj, fn, best, fork):
         """Spend a few of the ordinary trials on a measured operand/register near miss."""
         rows = self.winner_diff[0] if self.winner_diff else repair_ranking.evidence(self.net, fn['id'], agent.id)
-        from decomprepair import near_match_repairs, packed_word_scheduling
+        from decomprepair import float_stack_call_reuse, near_match_repairs, packed_word_scheduling
         from decomprepair.target_local_repairs import value_lifetimes
 
         source = _candidate_source(fn, best)
         header = self.net._context(proj['id'], fn['unit'])['header']
-        proposals = packed_word_scheduling.variants(source, fn['name'], proj['arch'], dict(fn).get('asm') or '', header)
+        asm = dict(fn).get('asm') or ''
+        proposals = packed_word_scheduling.variants(source, fn['name'], proj['arch'], asm, header)
+        proposals += float_stack_call_reuse.variants(source, fn['name'], proj['arch'], asm, header)
         if permuter_focus.classify(rows, proj['arch']) == 'register':
             proposals += near_match_repairs.bitwise_operand_order(source, fn['name'], header)
             proposals += near_match_repairs.float_update_order(source, fn['name'], header)
