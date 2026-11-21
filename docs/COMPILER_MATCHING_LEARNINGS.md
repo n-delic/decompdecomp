@@ -10472,6 +10472,28 @@ made single-row leftovers visible; the app's own diff already does this, but `co
   and masks scored 941. The 38-example draft replay rose from 12 to 15 exact matches, with 23 drafts
   still failing compilation.
 
+### KMC display-list tail: a `do { } while (0)` boundary for the second scheduler
+
+- One N64 function (`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, 79 instructions) sat at score 60 with a single
+  misplaced `addiu`: the target has `add p; store p; add q; store q` at its end (two global pointer bumps, then
+  the call), every source order gave `add p; add q; store p; store q`. The first scheduler (before register
+  allocation, `-dS`) already produced the target's order; the second (after allocation, `-dR`) hoisted the second
+  add above the first store, because its chain to the store was longer.
+- A `do { } while (0)` leaves loop notes that are scheduling boundaries and no code. Wrapping the second half of the
+  run, through the final call, matched (60 -> 0, exact) **only** with the global the call reads
+  (`temp = D_8010A4D8;`) copied into a local before the boundary: left inside, its load moved after the boundary and
+  the target loads it with the first group. Hoisting alone and wrapping alone stayed at 60.
+- Failed first, so not repeated: every order of the seven tail statements (70), 300 spellings of the two increments
+  and the call's arguments, 108 pointer-type choices (`void *` .. `s16 *`), post-increment through a struct pointer
+  (changes the register the cursor lands in), `goto` and empty `while (0)` / `for (; 0;)` / `if (0)` / `switch (0)`
+  (all folded away before scheduling, no boundary), and inline `asm("")` (the judge refuses inline assembly).
+- The wrapper has a side effect: it moved arg0 and the constant 2 to swapped saved registers when the final call
+  stayed outside it (the loop depth changes the allocation priority of the pseudo that is live through it). Putting the
+  call inside the wrapper restored `$s0`/`$s1`. One function, one compiler: a measured result, not a controlled one.
+- decomp-repair 0.5.187 `scheduling_scope` proposes the pair; the deep permuter's local beam runs it
+  (`loop_vector_shape_pass`).
+
+
 ## A constant assigned early, shared through a `goto` join: sink it to the label (N64, KMC gcc 2.7.2 `-O2`)
 
 One hand match of an actor-update function (score 2225 -> 0, exact in the app's judge; one function, so one result, not a

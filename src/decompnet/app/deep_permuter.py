@@ -466,7 +466,7 @@ class Search(Permuter):
         return stub_message(found) if found else ''
 
     def loop_vector_shape_pass(self, agent, proj, fn, best, fork):
-        """Climb through the loop and vector-update shapes that only help together (decomp-repair 0.5.130).
+        """Climb through the loop, vector-update and scheduling-boundary shapes that only help together (0.5.130, 0.5.187).
 
         Indexed element access, `const` on read-only locals and sums-then-stores for a vector's components each
         left a 2,122-instruction function's score nearly unchanged alone and gained a hundred instructions in
@@ -484,7 +484,11 @@ class Search(Permuter):
             for _, parent in frontier:
                 proposals = [pair for result in generation_calls.library([
                     ('decomprepair.loop_vector_shapes.variants', (parent, fn['name'], proj['arch'])),
-                    ('decomprepair.statement_interleave.variants', (parent, fn['name'], proj['arch']))])
+                    ('decomprepair.statement_interleave.variants', (parent, fn['name'], proj['arch'])),
+                    # a do { } while (0) boundary in the last straight-line run (decomp-repair 0.5.187): a display
+                    # list function stuck at 60 under every source order matched once split, only with its call's
+                    # global hoisted first, so the proposals are the pair, not two steps a beam would drop
+                    ('decomprepair.scheduling_scope.variants', (parent, fn['name'], proj['arch']))])
                     for pair in generation_calls.pairs(result)]
                 for family, child in proposals:
                     if child in seen or budget <= 0:
