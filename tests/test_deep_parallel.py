@@ -500,3 +500,24 @@ def test_counter_derived_offset_trial_runs_on_schedule_differences(monkeypatch):
     assert search.operand_order_pass(AGENT, proj, fn, 60, None) == 0
     assert len(tried) == 1
     assert 'offset = (i << 5) + (i << 3);' in tried[0]
+
+
+def test_word_byte_loop_carrier_runs_before_random_rewrites(monkeypatch):
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    proj = net.project_row('game')
+    fn = {**net.function(), 'name': 'f',
+          'asm': ('addu $t0, $a1, $zero\nandi $a3, $t0, 255\n'
+                  'addu $v1, $a3, $zero\nlbu $v0, 8($a2)\nbeq $v0, $v1, .Lfound\n'),
+          'best_source': ('int f(u8 *items, u8 key) { s16 i; u8 probe;\n'
+                          'if (items != 0) { probe = key; if (probe == 255) return -1; i = 0;\n'
+                          'do { if (items[i] == probe) return i; i++; } while (i < 16); } return -1; }')}
+    search = deep_permuter.Search(net, 1, 6, Log())
+    tried = []
+    monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 0)
+
+    assert search.operand_order_pass(AGENT, proj, fn, 60, None) == 0
+    assert len(tried) == 1
+    assert 's32 probe;' in tried[0]
+    assert 'items[i] == (u8)key' in tried[0]

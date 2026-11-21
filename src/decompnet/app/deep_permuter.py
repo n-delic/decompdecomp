@@ -346,6 +346,7 @@ class Search(Permuter):
             symbol_width_repairs,
             unsigned_rate_division_scope,
             widen_scaled_local,
+            word_byte_loop_carrier,
         )
         from decomprepair.target_local_repairs import value_lifetimes
 
@@ -359,6 +360,7 @@ class Search(Permuter):
         proposals += guard_xor_reuse.variants(source, fn['name'], proj['arch'], asm, header)
         proposals += scoped_cursor_entry.variants(source, fn['name'], proj['arch'], asm)
         proposals += scoped_global_reset.variants(source, fn['name'], proj['arch'], asm)
+        proposals += word_byte_loop_carrier.variants(source, fn['name'], proj['arch'], asm)
         proposals += counter_derived_loop_offset.variants(source, fn['name'], proj['arch'], asm)
         proposals += unsigned_rate_division_scope.variants(source, fn['name'], proj['arch'], asm, header)
         if proj['arch'] == 'mips' and '%lo(' in asm:
