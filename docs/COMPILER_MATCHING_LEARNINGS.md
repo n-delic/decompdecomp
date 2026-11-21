@@ -9675,3 +9675,14 @@ advisory score of 2230 with an unplaced jump table. Adding
 `-fno-delayed-branch` cleared the linker error and gave a linked score of
 4720. The repair keeps this profile as a search lead. The function still
 needs an exact verdict before automatic compiler settings can change.
+
+
+### Match short KMC leaves from their complete instruction sequence
+
+Five archived N64 leaves of two to five instructions each matched byte-for-byte after applying target-backed changes to independently generated drafts. All used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`. The archived matches compiled as independent controls. Scores are linked instruction differences.
+
+- With `-ffast-math`, the decompiler emitted a recursive call for a hardware `sqrt.s` in the return delay slot. Using `__builtin_sqrtf` matched both instructions, from score 400 (8 bytes).
+- With `-g3`, a signed halfword lvalue made GCC materialize the sign-extended immediate before the same relocated store. An unsigned halfword lvalue kept the low 16 bits and matched the target's zero-extended immediate, from score 200 (16 bytes).
+- With `-g3`, the existing unused-local rule matched a constant-return leaf with a 24-byte frame. Recording the size from the symmetrical stack adjustments matched all 16 bytes from score 210. An 8- or 16-byte reservation matched the instruction order and still missed the frame size.
+- With `-g3`, an explicit true and false return on a masked global word generated the target's `andi` then `sltu` sequence, from score 270 (20 bytes). Changing signedness alone left the shift-and-mask sequence.
+- An empty leaf only spilled its four argument registers to their O32 home slots. Keeping the first named parameter and adding `...` generated that whole sequence, from score 500 (20 bytes).

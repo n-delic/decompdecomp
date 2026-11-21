@@ -171,6 +171,7 @@ class BriefMixin:
                 relocated_global_update,
                 shared_default_drafts,
                 shared_return_repairs,
+                short_leaf_drafts,
                 split_dispatch_zero_case,
                 stack_fill_drafts,
                 stack_header_buffer,
@@ -178,6 +179,8 @@ class BriefMixin:
                 uncached_read_repairs,
             )
 
+            if short_leaf_drafts.applies(fn['asm'] or ''):
+                inputs.append('short leaf functions')
             if measured_stack_drafts.applies(fn['asm'] or ''):
                 inputs.append('measured stack copies')
             if measured_callback_loop.applies(fn['asm'] or ''):

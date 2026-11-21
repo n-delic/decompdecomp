@@ -711,3 +711,17 @@ def test_kmc_repairs_a_byte_cursor_using_the_measured_halfword_loop():
     family = 'measured_halfword_byte_cursor'
     assert 'cursor += 6;' in dict(route(source, rows, 'asm'))[family]
     assert family not in dict(route(source, rows, 'asm', compiler='ido-5.3'))
+
+
+def test_short_halfword_leaf_repair_reaches_kmc_deep_search():
+    source = 'void f(void) { M2C_FIELD(&state, s16 *, 4) = 0x8001; }'
+    asm_rows = [
+        ('|', 'ori $v0, $zero, 0x8001', 'addiu $v0, $zero, -32767'),
+        (' ', 'lui $at, %hi(state + 4)', 'lui $at, %hi(state + 4)'),
+        (' ', 'jr $ra', 'jr $ra'),
+        (' ', 'sh $v0, %lo(state + 4)($at)', 'sh $v0, %lo(state + 4)($at)'),
+    ]
+    asm = '\n'.join(target for _, target, _ in asm_rows)
+    key = 'measured_unsigned_halfword_store'
+    assert dict(route(source, asm_rows, asm))[key] == source.replace('s16', 'u16')
+    assert key not in dict(route(source, asm_rows, asm, compiler='ido-5.3'))

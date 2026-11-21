@@ -32,6 +32,7 @@ from decomprepair import (
     relocated_byte_table,
     relocated_global_update,
     shared_return_repairs,
+    short_leaf_drafts,
     split_dispatch_zero_case,
     stack_fill_drafts,
     stack_header_buffer,
@@ -190,6 +191,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     result += target_memory_schedule_diff_repairs.proposals(source,name,header,toolchain,rows,target,candidate,asm,
                                                              big_endian=big_endian,flags=flags)
     if toolchain.startswith('gcc-2.7.2-kmc'):
+        result += short_leaf_drafts.variants(source, name, asm, header)
         result += target_inline_storage_diff_repairs.proposals(source,name,header,rows,target,candidate,asm,
                                                              read_data=read_data,big_endian=big_endian)
         result += stack_padding_repairs.layout_candidates(source,name,header,arch,rows,symbols,flags,asm=asm)
