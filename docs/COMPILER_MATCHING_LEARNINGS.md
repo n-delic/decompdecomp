@@ -8610,7 +8610,7 @@ linked ROM judge.
 
 ### Expanded batch without a saved failed attempt
 
-The follow-up regenerated 120 drafts across four projects at `gcc-2.7.2-kmc
+The follow-up attempted draft regeneration for 120 examples across four projects at `gcc-2.7.2-kmc
 -G0 -mips3 -mgp32 -mfp32 -O2`. It used 30 examples from each range of 6–15,
 16–28, 29–42 and 43–72 instructions, excluding the original 24 records. Ten
 candidate records were skipped because their targets were duplicates or had
