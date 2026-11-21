@@ -290,15 +290,42 @@ HEX_EXPONENT_SIGN = re.compile(r"\b(0[xX][0-9a-fA-F]*[eE])([+-])(?=[0-9A-Za-z_(]
 EMPTY_FOREVER = re.compile(r"\b(?:for\s*\(\s*;\s*;\s*\)|while\s*\(\s*1\s*\))\s*(?:\{\s*\}|;)"
                            r"|^(?P<label>[ \t]*(?P<name>[A-Za-z_]\w*)[ \t]*:\s*)goto\s+(?P=name)\s*;", re.M)
 IDLE = "void port_idle_forever(void);\n"
+LOOP_TOKEN = re.compile(r"""//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\w+|[^\s]""", re.S)
+
+
+def standalone_loops(text):
+    """A do-while trailer belongs to its body, even when it reads `while (1);`."""
+    depth = 0
+    pending = {}
+    previous = ""
+    for match in LOOP_TOKEN.finditer(text):
+        token = match[0]
+        if token.startswith(("//", "/*")):
+            continue
+        if token in ("{", "("):
+            depth += 1
+        elif token in ("}", ")"):
+            depth -= 1
+        elif token == "do":
+            pending[depth] = pending.get(depth, 0) + 1
+        elif token == "while" and pending.get(depth) and previous in (";", "}"):
+            pending[depth] -= 1
+        elif token in ("while", "for"):
+            yield match.start()
+        previous = token
 
 
 def ido_c(text: str) -> str:
     """The game's C as clang reads what IDO took: m2c's untyped declarations unprototyped, a hex constant followed
     by a sign spaced apart, and an endless empty loop as the thread parking for good (EMPTY_FOREVER)."""
     text = HEX_EXPONENT_SIGN.sub(r"\1 \2 ", UNTYPED_DECLARATION.sub(r"\1()\2", text))
-    if EMPTY_FOREVER.search(text):
-        text = IDLE + EMPTY_FOREVER.sub(lambda loop: (loop["label"] or "") + "for (;;) port_idle_forever();", text)
-    return text
+    if not EMPTY_FOREVER.search(text):
+        return text
+    starts = set(standalone_loops(text))
+    rewritten = EMPTY_FOREVER.sub(
+        lambda loop: (loop["label"] or "") + "for (;;) port_idle_forever();"
+        if loop["label"] or loop.start() in starts else loop[0], text)
+    return IDLE + rewritten if rewritten != text else text
 
 
 _PROTOTYPE = r"^([ \t]*)((?!static\b|extern\b|typedef\b|return\b)[A-Za-z_][\w \t*]*?[\s*]{name}\s*\([^;{{}}]*\)\s*;)"
