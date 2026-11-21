@@ -2654,8 +2654,15 @@ and link check read the chosen one, and Port readiness shows the choice with wha
 Porting separates the build mode from the runtime. The N64 compatibility build preserves the game's 32-bit memory
 layout and can play or export with decompdecomp's runtime today. libultraship and N64ModernRuntime are listed for
 both modes as planned integrations. The direct 64-bit C port shows the remaining checklist steps for each runtime.
-Tried on a Mac: libultraship and its libraries built from source; N64ModernRuntime built; RT64 stopped for want of
-Xcode's `metal`.
+Integrate N64ModernRuntime with the compatibility build first, so programs can keep using N64Recomp and the
+interpreter for functions without decompiled C. The desktop host needs to bridge graphics tasks and VI state into
+RT64, whose RDRAM layout reverses the bytes in each 32-bit word relative to the compatibility build. Verify display
+list submission, framebuffer synchronization and input on a partially decompiled demo before enabling Play.
+
+On Apple Silicon, an isolated build of N64ModernRuntime (`e4342ae0`) and RT64 (`d9817c68`) passed a synthetic RDP
+Full Sync probe with Metal and ModernRuntime's VI registers. Xcode's downloaded Metal toolchain needed explicit
+selection through `TOOLCHAINS` during the shader build. On macOS the probe supplied the native Cocoa window and
+Metal layer explicitly, since RT64's fallback passed an SDL window where its Cocoa wrapper expects an NSWindow.
 
 ### Ports: a native build of a finished game
 
