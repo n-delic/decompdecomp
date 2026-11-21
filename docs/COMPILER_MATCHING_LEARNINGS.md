@@ -11557,3 +11557,12 @@ scheduler leaves the `lui` in. Failed: swapping operand order, a local for the w
 cast spelling of the sum, setting the base inside the `if` or inside the loop (all 135 or 430). Evidence: one
 function plus the library's tests (decomp-repair 0.5.255 `loop_symbol_base_block`, reaches 0 from the 135 source
 in one child; the app's Deep Permuter run is the user's to confirm).
+
+### Return the floating identity and zero before the main calculation
+
+With gcc-2.7.2-kmc `-G0 -mips3 -mgp32 -mfp32 -O2`, an N64 routine
+used one double local for the input, zero and the computed result.
+Returning the input directly improved the score from 110 to 95. Returning
+positive zero directly on the zero-input path as well reached score zero.
+Keeping the redundant zero initialization after that guard scored 115.
+The direct return preserves positive zero even for a negative zero input.
