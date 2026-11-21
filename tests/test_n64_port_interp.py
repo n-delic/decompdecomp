@@ -24,6 +24,7 @@ HARNESS = r"""
 static uint8_t *mem;
 uint8_t *port_memory(void) { return mem; }
 uint64_t port_io_load(uint64_t a) { return a; }
+uint32_t port_stack_bus(uint32_t a) { return a >= 0x14000000u && a < 0x15000000u ? a : 0; }
 uint64_t port_io_store(uint64_t a, uint64_t v) { (void)v; return a; }
 void port_safe_point(void) {}
 /* a thread whose code jumps to itself is parked for good (host.c): here, say so with the word at DATA, and end */
@@ -397,3 +398,18 @@ def test_the_browser_build_says_each_pointer_calls_types():
     call = next(line for line in out if "@port_icall" in line)
     count = int(call.rsplit("i32 ", 1)[1].rstrip(")")) & 0xFFFFFFFF
     assert count & 0xFF == 3 and (count >> 8) & 0x3F == 0 | 2 << 2 | 3 << 4 and (count >> 24) & 3 == 2
+
+
+def test_tlb_probe_maps_a_compatibility_stack_pair(run):
+    def mtc0(rt, rd):
+        return r_type(0, rd=rd, rs=4, rt=rt, op=16)
+
+    def mfc0(rt, rd):
+        return r_type(0, rd=rd, rt=rt, op=16)
+
+    words = [mtc0("a0", 10), 0x42000008, mfc0("v0", 0), 0x42000001,
+             mfc0("v1", 3), JR_RA, NOP]
+    result = run(words, 0x1403E000)
+    assert result["v0"] == 0
+    assert result["v1"] == (0x1403F000 >> 6) | 2
+    assert run(words, 0x20000000)["v0"] == 0x80000000

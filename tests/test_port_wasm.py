@@ -715,3 +715,14 @@ def test_a_bitfield_shares_its_unit_with_the_members_after_it():
     # a unit that closes the struct, or isn't whole bytes, is laid out in reverse as before
     assert "int : 0;" in big_endian_bitfields("struct s {\n  int a:8;\n};")
     assert "int : 0;" in big_endian_bitfields("struct s {\n  int a:3;\n  char b;\n};")
+
+
+def test_compatibility_stack_buffers_keep_eight_byte_alignment_for_rom_calls():
+    from decompnet.port.wasm.beir import align_stack_objects
+
+    ir = """  %hdr = alloca { i32, i32 }, align 4
+  %buffer = alloca i8, i32 %size, align 1, !dbg !22
+  %matrix = alloca [4 x i32], align 16
+  %word = load i32, ptr %hdr, align 4
+"""
+    assert align_stack_objects(ir) == ir.replace("}, align 4", "}, align 8").replace("align 1,", "align 8,")
