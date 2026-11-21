@@ -1,5 +1,15 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: express the masked byte-table stride as shifts
+
+An isolated N64 replay with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`
+improved from 1,175 to 1,120 when a halfword-masked index multiplied by
+24 was written as `(index + (index << 1)) << 3` at a byte-table access.
+The target's mask, two shifts, addition and relocated unsigned byte
+load supported the trial. Separate pointer aliases and volatile reads
+did not reproduce the improvement. Deep Permuter selected and saved
+the 1,120 candidate in a 72-trial isolated replay.
+
 ### KMC GCC 2.7.2: recover a one-based switch table and an unused parameter
 
 An N64 replay with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` had
