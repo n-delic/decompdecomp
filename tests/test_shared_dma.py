@@ -27,3 +27,24 @@ def test_shared_dma_reads_constant_calls_and_indexed_slot():
     # An unrelated call must not grant the indexed table a RAM mapping.
     struct.pack_into('>I', image, 0x180, call+1)
     assert shared_dma.read(image, [(0, 0x400, 0x80000000)], []) == expected[:3]
+
+
+def test_inline_cart_copies_in_recovered_text_establish_distinct_shared_banks():
+    image = bytearray(0x4000)
+    address = 0x80001400
+    loader = 0x0c001200
+    entry = 0x0c000000 | ((address>>2)&0x03ffffff)
+    expected = []
+    for slot in range(4):
+        offset = 0x2000+slot*0x40
+        struct.pack_into('>9I', image, 0x800+slot*36, 0x3c04b000, 0x24840000 | offset,
+                         0x3c058000, 0x3c060000, 0x24c60040, loader, 0x34a51400,
+                         entry+4 if slot==3 else entry if slot else 0, 0)
+        struct.pack_into('>4I', image, offset, 0x27bdffd8, 0xafbf0024, 0x03e00008, 0x27bd0028)
+        struct.pack_into('>II', image, offset+16, 0x03e00008, 0)
+        expected.append(Slot(offset, offset+0x40, address))
+    resident = [(0x100,0x200,0x80004000)]
+    inferred = [(0x800,0xc00,0x80005000)]
+    assert shared_dma.read(image,resident,inferred) == expected
+    struct.pack_into('>I',image,0x800+3*36+28,0)
+    assert shared_dma.read(image,resident,inferred) == []

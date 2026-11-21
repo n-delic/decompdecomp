@@ -473,7 +473,7 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
     if not packed and taken and (slots := named_dma.read(original_rom, taken)):
         if shared_dma.add(config, original_rom, taken, found, slots, log):
             return original
-    if not packed and taken and (slots := shared_dma.read(original_rom, taken, found)):
+    if not packed and taken and (slots := shared_dma.read(original_rom, taken, found, include_inline=False)):
         if shared_dma.add(config, original_rom, taken, found, slots, log):
             return original
     if not packed and taken and (banks := dma_overlays.banks(original_rom)):
@@ -498,6 +498,9 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
     recover(config, rom, found, log)
     extend_startup_trap(config, rom, log)
     extend_startup_data(config, rom, log)
+    if not packed and taken and (slots := shared_dma.read(original_rom, taken, found)):
+        if shared_dma.add(config, original_rom, taken, found, slots, log):
+            return original
     if not packed and taken and (slots := raw_slots.read(original_rom,taken)):
         if raw_slots.add(config,original_rom,found,slots,log):
             return original
