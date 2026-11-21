@@ -217,7 +217,8 @@ def verify(feedback, example):
             focused.append(('guarded_global_return', candidate))
         if candidate := passthrough_argument_repairs.missing_entry_argument(source, fn['name'], fn['asm'] or '', header):
             focused.append(('entry_wrapper_argument', candidate))
-        focused += passthrough_argument_repairs.shifted_call_variants(source, fn['name'], header, fn['asm'] or '', rows)
+        focused += passthrough_argument_repairs.shifted_call_variants(
+            source, fn['name'], header, fn['asm'] or '', rows, resolve=symbols.resolve if symbols else None)
         if candidate := loop_storage_shapes.measured_copy_setup(source, fn['name'], fn['asm'] or '', header):
             focused.append(('measured_copy_loop_setup', candidate))
         focused += measured_callback_repairs.variants(source, fn['name'], rows)

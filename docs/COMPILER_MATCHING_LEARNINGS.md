@@ -10832,3 +10832,14 @@ with an explicit halfword load preserved the original stride for records.
 The deep permuter recovered both forms, including a load in a call delay
 slot and an address calculation interrupted by a return-address spill. All
 five linked scores fell from 30 to 0.
+
+### Forward an entry argument alongside a float call's stack output
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, machine drafts
+in an isolated N64 ROM project put a stack output pointer in the first
+argument register. The target put it in the second and carried the entry
+argument unchanged into the first. Restoring the forward fixed one
+register difference. Recovering the halfword table and, where present,
+the separate word table eliminated the remaining scaled-address
+differences. The normal deep permuter measured the combined improvements
+from scores 35 and 45 to exact linked matches.

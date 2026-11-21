@@ -516,3 +516,16 @@ def test_measured_leaf_call_byte_offset():
     ]
     assert dict(proposals(source, 'f', '', 'mips', KMC, rows, ''))['measured_call_byte_offset'] == source.replace(
         'packet + 4', '(u8 *)packet + 4')
+
+
+def test_forwarded_stack_output_resolves_the_callee_in_raw_assembly():
+    source = ('f32 distance(u16 *); /* extern */\n'
+              'void f(s32 item) {\n    u16 marker;\n    save(distance(&marker), item);\n}')
+    setup = 'addiu $a1, $sp, 0x10'
+    rows = [(' ', 'jal distance', 'jal distance'), ('r', setup, setup.replace('$a1', '$a0'))]
+    asm = assembly('addiu $sp, $sp, -0x18', 'sw $ra, 0x14($sp)', 'jal func_80002000', setup,
+                   'lw $ra, 0x14($sp)', 'jr $ra', 'addiu $sp, $sp, 0x18')
+    result = dict(proposals(source, 'f', '', 'mips', KMC, rows, asm,
+                            resolve={'distance': 0x80002000}.get))
+    assert 'distance(item, &marker)' in result['passthrough_argument']
+    assert 'passthrough_argument' not in dict(proposals(source, 'f', '', 'mips', KMC, rows, asm))
