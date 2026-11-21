@@ -15,7 +15,7 @@ CHAIN_LIMIT = 8
 def floating_only(rows, arch):
     # GCC's MIPS choices use numbered FPRs, or the ABI spellings from the
     # disassembler. Preserve opcode, addressing, and every other operand.
-    if arch != 'mips' or any(not isinstance(row,(list,tuple)) or len(row) != 3
+    if arch != 'mips' or not rows or any(not isinstance(row,(list,tuple)) or len(row) != 3
                              or not all(isinstance(item,str) for item in row) for row in rows):
         return False
     register = re.compile(r'\$(?:f\d+|f[astv]\d+)\b')

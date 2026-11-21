@@ -46,7 +46,7 @@ def _room_trial(network_fixture, monkeypatch, *, fork=False, outcome='match', co
     def claim(agent, name, strategy):
         events.append(('claim', agent.name, name))
         if claim_error:raise NetworkError('The room host is unavailable.')
-        return name
+        return name, ""
     def send(agent, name, source):
         events.append(('attempt', source))
         return {'matched':confirm, 'reason':'Host settings differ.'}

@@ -70,7 +70,7 @@ def test_project_brief_receives_advice_before_mode_specific_rendering(monkeypatc
                           _lifetime_hints=lambda _: '')
     net.project_store = lambda _project: net.store
     fn = dict(id=1, project_id=7, status='matched', name='stub', matched_source=SOURCE,
-              best_source=None, seed=None)
+              best_source=None, seed=None, meta='{}')
     text = BriefMixin._brief(net, fn, None, 'FUNCTION')
     assert 'project brief' in text and 'stub -> downstream' in text
 
@@ -83,7 +83,8 @@ def test_claim_hint_does_not_query_callees(monkeypatch):
     monkeypatch.setattr(draft_reports, 'summary', lambda *_: '')
     monkeypatch.setattr(claim_state, 'current', lambda *_: 'claim')
     net = SimpleNamespace(store=SimpleNamespace(
-        one=lambda sql, *_: {'slug': 'sample', 'name': 'Sample'} if 'FROM projects' in sql else None))
+        one=lambda sql, *_: {'slug': 'sample', 'name': 'Sample'} if 'FROM projects' in sql else None,
+        all=lambda *_: []), notes_for_brief=lambda *_, **kw: [])
     net.project_store = lambda _project: net.store
     fn = dict(id=1, project_id=7, status='open', name='stub', matched_source=None,
               best_source=SOURCE, seed=None, unit='', size=28)

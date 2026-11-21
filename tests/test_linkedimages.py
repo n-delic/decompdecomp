@@ -5,9 +5,9 @@ from io import BytesIO
 import pytest
 from elftools.elf.elffile import ELFFile
 
-from decompnet.arch.mips_image import linked_object
 from decompnet.forks import linkedimages
 from decompnet.forks.project import ForkError
+from tests.mips_elf_fixture import linked_object
 
 
 def population(root):

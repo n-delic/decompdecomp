@@ -1,6 +1,7 @@
 """Background scheduling changes stay local to maintenance, never foreground judging."""
 import threading
 import time
+from contextlib import nullcontext
 from types import SimpleNamespace
 
 import pytest
@@ -27,7 +28,7 @@ def test_deep_autosave_checks_are_periodic_but_dirty_checks_continue(monkeypatch
     monkeypatch.setattr(saves.time,'monotonic',lambda:clock[0])
     calls=[]
     net=SimpleNamespace(store=SimpleNamespace(all=lambda *_:[{'slug':'a','root':'','config':'{}'}]),
-                        progress=SimpleNamespace(sync=lambda slug,**kw:calls.append(kw['force']) or True))
+                        progress=SimpleNamespace(deferring=nullcontext, sync=lambda slug,**kw:calls.append(kw['force']) or True))
     net.project_store=lambda _:net.store
     auto=saves.Autosave(net)
     assert auto.run_once(force=False)==['a']

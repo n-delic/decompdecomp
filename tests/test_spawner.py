@@ -75,14 +75,22 @@ def test_macos_uses_posix_spawn_not_fork(monkeypatch):
 def test_installed_every_subprocess_call_spawns_without_forking(monkeypatch):
     """A git run for the repository panel used plain subprocess, forked the app and hung before exec for hours."""
     import subprocess as stdlib
-    monkeypatch.setattr(spawner, '_standard_execute_child', lambda *a, **k: pytest.fail('forked the app'))
-    try:
+    from functools import wraps
+
+    original = spawner._standard_execute_child
+
+    @wraps(original)
+    def unexpected_fallback(*args, **kwargs):
+        pytest.fail('forked the app')
+
+    monkeypatch.setattr(stdlib.Popen, '_execute_child', stdlib.Popen._execute_child)
+    with monkeypatch.context() as launch:
+        launch.setattr(spawner, '_standard_execute_child', unexpected_fallback)
         assert spawner.install()
         assert stdlib.run(['git', '--version'], capture_output=True, timeout=30).stdout.startswith(b'git version')
         assert stdlib.check_output(['/bin/echo', 'spawned'], cwd='/') == b'spawned\n'
-    finally:
-        spawner.uninstall()
-    assert stdlib.Popen._execute_child is not spawner._execute_child
+    spawner.uninstall()
+    assert stdlib.Popen._execute_child is original
 
 
 def test_install_is_a_no_op_with_the_setting_off(monkeypatch):

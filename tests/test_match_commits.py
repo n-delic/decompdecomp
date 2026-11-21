@@ -29,10 +29,10 @@ def automatic(progress, monkeypatch):
     return net, root, remote, agent
 
 
-def match(automatic, name='f', note=None):
+def match(automatic, name='f', note=None, *, polishing=False):
     net, _, _, agent = automatic
     fn = net._function(name, 'game')
-    net._record(fn, agent, 0, f'void {name}(void) {{ return; }}', 1, matched=True)
+    net._record(fn, agent, 0, f'void {name}(void) {{ return; }}', 1, matched=True, verified_replacement=polishing)
     if note is not None:net.add_note(agent, 'game', note, name)
 
 
@@ -92,7 +92,7 @@ def test_queue_wait_leaves_the_project_lock_free_and_keeps_the_recorded_verdict(
                 with store.tx() as db:
                     db.execute("UPDATE functions SET status='open',matched_source=NULL WHERE name='f'")
             else:
-                net._record(net._function('f', 'game'), agent, 0, polished, 1, matched=True)
+                net._record(net._function('f', 'game'), agent, 0, polished, 1, matched=True, verified_replacement=True)
         finally:
             lock.release()
 
@@ -123,7 +123,7 @@ def test_missing_notes_use_fallback_without_repeating_after_late_notes(automatic
     assert git(root, 'log', '-1', '--format=%s') == 'Match f'
     assert match_commits.status(net, net.project_row('game'))['pending'] == 0
     net.release_function(agent, 'f', 'Matching agent handoff notes', 'game')
-    match(automatic, note='Polishing the same match does not add another match commit')
+    match(automatic, note='Polishing the same match does not add another match commit', polishing=True)
     match_commits.process(net, 'game')
     assert git(root, 'rev-parse', 'HEAD') == committed
 
