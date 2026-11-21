@@ -53,9 +53,15 @@ def test_atomic_records_headers_bundles_and_notifications(tmp_path,monkeypatch):
         assert net._function('caller','game')['matched_source'].startswith('int f(')
         notifications.append(args[1])
     monkeypatch.setattr(net,'on_match',notify)
+    original_agent,_=net.local_agent('original')
+    with net.store.tx() as db:
+        db.execute('UPDATE functions SET matched_agent_id=?,matched_at=10,readable=1 WHERE id=2',(original_agent.id,))
     result=invoke(net,agent)
     assert result['matched'] and result['affected']==['f','caller']
-    assert notifications==[1,2]
+    assert sorted(notifications)==[1,2]
+    assert [row['detail'] for row in net.store.all("SELECT detail FROM events WHERE kind='match'")]==['f']
+    caller=net._function('caller','game')
+    assert (caller['matched_agent_id'],caller['matched_at'],caller['readable'])==(original_agent.id,10,1)
     assert net.store.one('SELECT COUNT(*) n FROM attempts')['n']==2
     assert net._function('f','game')['best_source']==CANDIDATE
     assert (tmp_path/'rom.z64').read_bytes()==b'private test image'
@@ -215,3 +221,39 @@ def test_failed_full_build_keeps_cause_and_verification_metrics(tmp_path,monkeyp
     result=invoke(net,agent)
     assert not result['matched'] and result['rebuild_verified'] is False
     assert result['rebuild_seconds']==12 and 'constant reads' in result['reason']
+
+
+def test_stale_candidate_cannot_replace_a_saved_polished_match(tmp_path,monkeypatch):
+    net,agent=game(tmp_path,monkeypatch)
+    original,_=net.local_agent('original')
+    fn=net._function('f','game')
+    Network._record(net,fn,original,0,SOURCE,1,matched=True)
+    with net.store.tx() as db:
+        db.execute('UPDATE functions SET readable=1 WHERE id=1')
+    saved=dict(net._function('f','game'))
+    with pytest.raises(NetworkError,match='already matched'):
+        Network._record(net,fn,agent,0,CANDIDATE,1,matched=True)
+    assert dict(net._function('f','game'))==saved
+    assert len(net.store.all("SELECT id FROM events WHERE kind='match'"))==1
+    assert len(net.store.all('SELECT id FROM attempts'))==1
+
+
+def test_agent_submission_to_matched_function_skips_judge(tmp_path,monkeypatch):
+    from decompnet.app import tools
+
+    net,agent=game(tmp_path,monkeypatch)
+    monkeypatch.setattr(net,'compile_and_diff',lambda *args:pytest.fail('Already matched C reached the judge'))
+    with pytest.raises(NetworkError,match='already matched'):
+        tools._dispatch(net,agent,'game','compile_and_diff',{'function':'caller','source':CALLER})
+
+
+def test_batch_skips_matched_member_and_keeps_judging_open_members(tmp_path,monkeypatch):
+    net,agent=game(tmp_path,monkeypatch)
+    judged=[]
+    def attempt(agent,function,source,project):
+        judged.append(function)
+        return {'text':'Judged', 'matched':False}
+    monkeypatch.setattr(net,'attempt',attempt)
+    result=net.attempt_many(agent,['caller','f'],CANDIDATE,'game')
+    assert 'caller is already matched' in result
+    assert judged==['f']

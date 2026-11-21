@@ -1050,6 +1050,10 @@ def _dispatch(net,agent,slug,name,args, *, count_usage=True):
             if handshake:pending.discard((agent.id,slug))
             return 'Asset discovery connection ready. Call claim_asset_region; do not claim or compile functions.'
         named=_named(net,agent,slug,args,name)
+        if name in {'compile_and_diff', 'compile_patch', 'compile_family', 'compile_variants', 'try_local_repairs'}:
+            function = named.get('function', '')
+            if function and ',' not in function and net._function(function, slug)['status'] == 'matched':
+                raise NetworkError(f"{function} is already matched. Claim another function, or use the polishing tools.")
         focused = focused_agents.scope(net, agent)
         if focused and name in focused_agents.TARGET_TOOLS and named.get('function'):
             net.focus_target(agent, slug, named['function'])

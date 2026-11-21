@@ -287,6 +287,9 @@ class AutopilotMixin:
                 'machine_ids': self._machine_agent_ids(), 'nonexclusive_ids': self._nonexclusive_agent_ids()}
             with store.tx() as db:
                 self._expire_claims(db, **identities)
+                fn = db.execute("SELECT * FROM functions WHERE id=?", (fn["id"],)).fetchone()
+                if fn is None or fn["status"] != "open":
+                    raise NetworkError("This function is no longer open. Claim another function.")
                 if db.execute("SELECT 1 FROM claims WHERE function_id=?", (fn["id"],)).fetchone():
                     raise NetworkError(f"{fn['name']} is claimed")
                 db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + 300))
