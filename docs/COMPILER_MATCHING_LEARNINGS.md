@@ -12678,3 +12678,16 @@ needed a two-global swap (score 225 to 0). Finally, giving a table base a
 pointer local recovered the target's address calculation (score 235 to 0).
 Each relocation must resolve to the same address as the field it replaces.
 These are four observed matches with synthetic source and evidence guards.
+
+### KMC GCC 2.7.2: remove an unread volatile doubleword from an oversized frame
+
+A scratch draft declared an unused `volatile u64` to reserve stack space.
+The candidate used an eight-byte larger frame and moved every saved
+register by eight bytes. The linked comparison reported no shifted live
+stack slots. Removing the declaration restored the frame while leaving
+the remaining register differences available for later repairs.
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, the diff dispatcher
+in v0.5.305 proposed no candidates for this draft. The new rule proposed
+one candidate, which the linked judge scored 30 from 42. It remains
+unmatched.
