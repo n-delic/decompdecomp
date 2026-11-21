@@ -551,11 +551,18 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
         cfg["sha1"] = hashlib.sha1(rom).hexdigest()
     from . import inferred_overlays
 
+    before_mapping = found
     found, runtime = inferred_overlays.runtime_mappings(rom, found, loaded.get('moved_ranges', ()), taken)
-    if runtime:
-        log(f'Corrected {len(runtime)} inferred code ranges using RAM-observed bytes and their internal calls.')
     found, scoped = inferred_overlays.recover(rom, found, taken, getattr(log, 'check_cancel', lambda: None),
                                              changed=runtime)
+    safe = inferred_overlays.safe_scopes(found, scoped, taken)
+    if safe is None:
+        found, scoped = before_mapping, set()
+        log('Kept the original code mappings because independent banks would overlap the global address range.')
+    else:
+        scoped = safe
+    if runtime and scoped:
+        log(f'Corrected {len(runtime)} inferred code ranges using RAM-observed bytes and their internal calls.')
     insert_segments(config, cfg, found, len(rom))
     if scoped:
         cfg = yaml.safe_load(config.read_text(encoding='utf-8'))
