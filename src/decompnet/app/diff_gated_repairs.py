@@ -26,6 +26,7 @@ from decomprepair import (
     measured_control_flow,
     measured_cursor_loop_tail,
     measured_cursor_publish,
+    measured_cursor_schedule,
     measured_expression_repairs,
     measured_float_grid_stores,
     measured_global_rebase,
@@ -201,6 +202,8 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         return result
     result += measured_lifetime_shapes.variants(source, name, header, toolchain, rows)
     result += measured_scalar_updates.variants(source, name, header, toolchain, rows, asm)
+    if toolchain == 'gcc-2.7.2-kmc':
+        result += measured_cursor_schedule.variants(source, name, header, rows, asm or '')
     if toolchain.startswith('ido-7.1'):
         return result
     target, candidate = (_instructions(rows, side) for side in (1,2))

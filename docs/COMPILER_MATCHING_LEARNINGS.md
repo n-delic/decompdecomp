@@ -11140,3 +11140,25 @@ argument unchanged in the first. The deep permuter read every entry
 of the original jump table, confirmed the incoming first argument
 on every route that reached the call, and widened the generated
 prototype. The linked score fell from 5 to 0.
+
+### Use KMC's measured cursor and call schedules
+
+Four isolated N64 near-matches used
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`. The first three also
+used `-g3`.
+
+- Staging the return-value clamp before passing a stack buffer to
+  the formatter moved its address setup after the arithmetic.
+  Score 60 fell to an exact 256-byte match.
+- Masking the input key once after the non-null check separated it
+  from the masked loop index. Removing the candidate's inert loop
+  wrapper alone scored 60. The combined repair reduced score 50
+  to an exact 76-byte match.
+- Keeping separate byte cursors for the record and its value slot
+  preserved both branch delay-slot increments. Indexing alone
+  scored 200. The complete repair reduced score 45 to an exact
+  108-byte match.
+- Reloading the context slot after both source writes preserved the
+  store-before-load order and the forwarded value. Reloading between
+  the two writes scored 265. The complete repair reduced score 60
+  to an exact 76-byte match.
