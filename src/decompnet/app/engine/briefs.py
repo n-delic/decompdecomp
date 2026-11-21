@@ -147,6 +147,7 @@ class BriefMixin:
         if own["toolchain"] == 'gcc-2.7.2-kmc':
             from decomprepair import (
                 large_stack_drafts,
+                measured_callback_loop,
                 measured_stack_drafts,
                 shared_default_drafts,
                 uncached_read_repairs,
@@ -154,6 +155,8 @@ class BriefMixin:
 
             if measured_stack_drafts.applies(fn['asm'] or ''):
                 inputs.append('measured stack copies')
+            if measured_callback_loop.applies(fn['asm'] or ''):
+                inputs.append('indexed callback loops')
             if large_stack_drafts.applies(fn['asm'] or ''):
                 inputs.append('larger stack objects')
             if shared_default_drafts.applies(fn['asm'] or ''):
