@@ -10279,3 +10279,13 @@ archived sources compiled as controls.
 - The 256-byte formatter draft initially failed compilation because two stack-byte names had no declarations.
   Recovering a four-byte buffer compiled at score 60; staging the signed clamp before the call matched exactly
   during draft generation. The target passes the buffer address and later loads three consecutive bytes from it.
+
+### KMC register allocation for a shared result copy
+
+Two related N64 functions compiled with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` had a linked diff
+score of 15 each. In both, a nested pointer guard skipped the loop with a zero folded into the delay slot.
+The target copied the initialized flag register at that site and copied the same register again before the
+final branch. Moving the existing labeled copy from the outer guard's else arm to its common exit
+reproduced both linked functions exactly. Removing the guard's early copy while flattening the exit
+scored 320 on each function. Wrapping the assignments or changing their scalar widths left residual
+differences. The deep permuter can now try the shared exit from those measured register differences.
