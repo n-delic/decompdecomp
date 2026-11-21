@@ -11235,3 +11235,14 @@ the app; evidence level: exact match.
 - Permuter: `guarded_offset_index` (decomp-repair 0.5.238): indexed,
   counter-guarded, and shared-counter children; the shared one is 180 to
   20 on the saved best, then the frame trim finishes it.
+
+### Restore entry save order and stage a halfword mask
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, two isolated N64
+drafts reached exact linked matches. Restoring a forwarded first
+argument alone reduced the first score from 35 to 30. Reordering
+the two entry-parameter copies to match the target saves brought
+it to 0. For the other draft, staging a halfword mask before
+merging in the remaining bits reproduced the OR operand order
+and brought the score from 5 to 0. Swapping the written operands
+without staging preserved the original score of 5.
