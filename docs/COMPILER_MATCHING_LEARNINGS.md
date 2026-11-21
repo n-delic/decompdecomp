@@ -11026,3 +11026,20 @@ initializations after the first call reduced it to 60. Moving a
 byte field read and its dependent index after a separate call
 reproduced the remaining instruction order and brought the score to
 0. Each step was independently measured in the deep permuter.
+
+### Restore cartridge I/O and IDO's unrolled matrix copy
+
+- With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, seven isolated
+  N64 examples had an invalid void dereference in the status poll.
+  Two examples also used `-g3`. The two word readers matched all
+  148 bytes each with a volatile poll, staged copies of the incoming
+  arguments, a typed uncached load and an empty loop before return.
+  Five DMA routines matched all 208 bytes each with explicit volatile
+  pointers for the DMA address registers and a shared length write
+  after the direction switch. Keeping the generated DRAM symbol
+  assignment in the tested draft scored 255.
+- With `ido-7.1 -O2 -mips2 -G 0 -non_shared -Xcpluscomm -Wab,-r4300_mul -woff 649,838,712`,
+  a float matrix copy had arithmetic on void pointers. Typed nested
+  loops with both headers on the same line matched all 96 linked
+  bytes. Splitting those headers across lines scored 20 by changing
+  the order of the cursor advances.

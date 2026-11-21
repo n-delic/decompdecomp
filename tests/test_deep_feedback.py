@@ -268,6 +268,8 @@ def test_better_historical_scores_are_rejudged_before_promotion(monkeypatch):
     ('ido_stack_iterators', 'ido-7.1'),
     ('ido_mapped_poll', 'ido-7.1'),
     ('heap_span_drafts', 'gcc-2.7.2-kmc'),
+    ('kmc_cartridge_io', 'gcc-2.7.2-kmc'),
+    ('ido_matrix_copy', 'ido-7.1'),
 ])
 def test_failed_mips_baseline_tries_measured_repairs_before_saved_attempts(monkeypatch, rule, toolchain):
     from importlib import import_module

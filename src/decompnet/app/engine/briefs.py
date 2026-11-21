@@ -144,6 +144,7 @@ class BriefMixin:
             from decomprepair import (
                 ido_indirect_event,
                 ido_mapped_poll,
+                ido_matrix_copy,
                 ido_stack_iterators,
                 ido_strided_cursor,
                 ido_switch_reply,
@@ -157,6 +158,8 @@ class BriefMixin:
                 inputs.append('IDO switch reply frame')
             if ido_stack_iterators.applies(fn['asm'] or ''):
                 inputs.append('IDO stack iterator records')
+            if ido_matrix_copy.applies(fn['asm'] or ''):
+                inputs.append('IDO unrolled matrix copy')
             if ido_mapped_poll.applies(fn['asm'] or ''):
                 base = self.symbols(proj['id']).resolve(ido_mapped_poll.ZERO_WORD)
                 inputs.append(('IDO mapped poll read', base))
@@ -179,6 +182,7 @@ class BriefMixin:
                 heap_span_drafts,
                 indexed_field_cursor,
                 indirect_call_drafts,
+                kmc_cartridge_io,
                 kmc_cast_repairs,
                 large_stack_drafts,
                 likely_branch_cursor,
@@ -208,6 +212,8 @@ class BriefMixin:
 
             if heap_span_drafts.applies(fn['asm'] or ''):
                 inputs.append('linked heap spans')
+            if kmc_cartridge_io.applies(fn['asm'] or ''):
+                inputs.append('KMC cartridge I/O')
             if mips_entry_loops.applies(fn['asm'] or ''):
                 inputs.append('MIPS entry loop')
             if short_leaf_drafts.applies(fn['asm'] or ''):
