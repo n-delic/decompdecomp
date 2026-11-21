@@ -2698,6 +2698,7 @@ class ForkEngine:
         from .. import candidate_quality
         if fn["status"] != "matched":
             lines.append(move_on_brief(fn, self.net.agent_stall_budget(fn, agent)))
+            lines += self.net.tried_at_best(fn)
         if meta.get("demangled"):
             lines.append(f"C++ name: {meta['demangled']}")
         if unit.scratch:
@@ -3376,7 +3377,7 @@ class ForkEngine:
                     return text
                 if kept:
                     self.net.remember_compile(key, agent, fn, text, score)
-                return text + self.net.same_score_note(fn["id"], agent.id, score, code, project_id=fn["project_id"])
+                return text + self.net.same_score_and_seen_note(fn["id"], agent.id, score, code, project_id=fn["project_id"])
 
             def undo() -> None:
                 _rewrite(path, before)

@@ -71,6 +71,7 @@ PROGRESS_COLUMNS = (
 # The functions still in the game's build: not one a measure found gone (a piece joined to its function, kept for its
 # attempts and notes; ForkEngine.sync marks it), which the map and every count leave out (meta's gone, copied too)
 IN_BUILD = "gone_mark IS NULL"
+TRIED_ROWS = 8  # rows of the brief's "already tried at this best" table (tried_at_best)
 BRIEF_NOTES = 8  # the newest notes on a function its brief shows
 REPEATS_KEPT = 4096  # compile results kept in memory for repeat_of
 # events after which earlier compile results don't stand for a repeat (bump_generation): a header, a source file, a
@@ -959,6 +960,54 @@ class Network:
             while len(self._compiled) > REPEATS_KEPT:
                 self._compiled.popitem(last=False)
 
+    def tried_at_best(self, fn, limit: int = TRIED_ROWS) -> list[str]:
+        """The brief's deduplicated "already tried at this best" table: the function's attempts at its best score,
+        one row per distinct diff (attempts.diff_digest), with how often and by how many agents it was reached and
+        what the edit was (attempt_hints). Helpers on near-matches handed over the same dead ends hundreds of times
+        ("Threshold reached", "Reached 3/3") because each saw only the last few notes."""
+        best = fn["best_score"]
+        if best is None or best <= 0:
+            return []
+        store = self.project_store(fn["project_id"])
+        rows = store.all("SELECT a.agent_id, a.diff_digest, a.source_digest, h.summary FROM attempts a "
+                         "LEFT JOIN attempt_hints h ON h.attempt_id=a.id WHERE a.function_id=? AND a.score=? "
+                         "ORDER BY a.id DESC LIMIT 400", fn["id"], best)
+        groups: dict = {}
+        for r in rows:
+            key = r["diff_digest"] or r["source_digest"] or "?"
+            g = groups.setdefault(key, {"n": 0, "agents": set(), "what": None})
+            g["n"] += 1
+            g["agents"].add(r["agent_id"])
+            g["what"] = g["what"] or r["summary"]
+        if len(rows) < 2:
+            return []
+        out = ["", f"### Already tried at this best (score {best}): {len(rows)} compiles, {len(groups)} distinct diffs",
+               "Don't repeat these; combine neutral edits or change a different row (guide(\"near-match\")).",
+               "| diff | times | agents | edit |", "| :-- | --: | --: | :-- |"]
+        for key, g in sorted(groups.items(), key=lambda kv: -kv[1]["n"])[:limit]:
+            out.append(f"| {key[:8]} | {g['n']} | {len(g['agents'])} | {(g['what'] or 'not recorded')[:120]} |")
+        return out
+
+    def judged_at_best_note(self, fn_id: int, score: int | None, source: str, digest: str | None, *,
+                            project_id=None) -> str:
+        """Flags (never refuses) a compile at the function's best score whose source or diff was already judged
+        there before, by any agent: the brief's "already tried" table, at the moment it happens."""
+        store = self.project_store(project_id) if project_id is not None else self.store
+        fn = store.one("SELECT best_score FROM functions WHERE id=?", fn_id)
+        if score is None or fn is None or fn["best_score"] != score or score <= 0:
+            return ""
+        latest = store.one("SELECT MAX(id) AS id FROM attempts WHERE function_id=?", fn_id)["id"] or 0
+        same = hashlib.sha256(source.encode()).hexdigest()
+        row = store.one("SELECT COUNT(*) AS n, COUNT(DISTINCT agent_id) AS agents, "
+                        "SUM(COALESCE(source_digest,source_hash)=?) AS sources FROM attempts "
+                        "WHERE function_id=? AND score=? AND id<? AND (COALESCE(source_digest,source_hash)=? "
+                        "OR (diff_digest IS NOT NULL AND diff_digest=?))", same, fn_id, score, latest, same, digest)
+        if not row or not row["n"]:
+            return ""
+        what = "this exact source" if row["sources"] else "this same diff"
+        return (f"\n⚠ Already judged at this best: {what} was reached {row['n']} time(s) by {row['agents']} agent(s) "
+                "before. Change a different row, or combine it with another neutral edit.")
+
     def same_score_note(self, fn_id: int, agent_id: int, score: int | None, source: str, *, project_id=None) -> str:
         """When a new variant only reproduces a score an earlier, different source of this claim had: which compile
         it equals (in one project, 21 of 56 compiles in two long sessions did, 1001 seven times on one function)."""
@@ -974,6 +1023,14 @@ class Network:
                 return (f"\nSame score as your compile #{k} of this claim ({score}) with a different source: this "
                         "score alone does not prove identical assembly. Check the remaining differences before repeating this kind of change.")
         return ""
+
+    def same_score_and_seen_note(self, fn_id, agent_id, score, source, *, project_id=None) -> str:
+        """same_score_note, then judged_at_best_note for the compile just recorded (both modes' compile results)."""
+        store = self.project_store(project_id) if project_id is not None else self.store
+        last = store.one("SELECT diff_digest FROM attempts WHERE function_id=? ORDER BY id DESC LIMIT 1", fn_id)
+        return (self.same_score_note(fn_id, agent_id, score, source, project_id=project_id)
+                + self.judged_at_best_note(fn_id, score, source, last["diff_digest"] if last else None,
+                                           project_id=project_id))
 
     def _agent_name(self, agent_id) -> str:
         row = self.store.one("SELECT name FROM agents WHERE id=?", agent_id) if agent_id else None
@@ -1914,6 +1971,7 @@ class Network:
                          f"(each compile_and_diff renews it)")
         if fn["status"] != "matched":
             lines.append(move_on_brief(fn, self.agent_stall_budget(fn, agent)))
+            lines += self.tried_at_best(fn)
         if fn["status"] == "matched":
             lines += [f"MATCHED by {self._agent_name(fn['matched_agent_id'])} {_ago(fn['matched_at'])}:",
                       "```c", fn["matched_source"].strip(), "```"]
@@ -2169,7 +2227,7 @@ class Network:
         text = f"{head}\n{d.render()}{render_source_lines(mapped, source)}{warn}"
         if not scratch:
             self.remember_compile(key, agent, fn, text, d.score)
-            text += self.same_score_note(fn["id"], agent.id, d.score, source, project_id=fn["project_id"])
+            text += self.same_score_and_seen_note(fn["id"], agent.id, d.score, source, project_id=fn["project_id"])
         selected = store.one('SELECT best_source FROM functions WHERE id=?',fn['id'])
         return {"text": text + self.stall_note(fn["id"], agent.id, project_id=fn["project_id"]), "score": d.score,
                 "matched": False, "exact": d.bytes_match, "new_match": False,
