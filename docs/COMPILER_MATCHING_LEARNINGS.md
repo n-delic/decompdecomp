@@ -10393,6 +10393,16 @@ app's own judge (`decomp judge-worker`, which returns exactly the app's score); 
   (use count over live range), not statement order. The search stays in the Deep Permuter for near-matches whose
   difference is order; it is not a fix for this one.
 
+### Reuse the next guarded loop's counter after earlier reads
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, a scratch N64 texture conversion
+function scored 419. Reusing the next guarded loop's counter in the preceding guarded loop
+lowered the linked score to 399. The first loop's zero, increment and bound comparison
+moved from an argument register to the target's saved register. The original value of
+the reused local dies before the first loop starts, and the second loop always resets
+it. Reuse across the next pair instead scored 649. Changing only the spelling of the
+zero as a one-shot block also failed to improve the baseline.
+
 
 ### KMC request packets and inode halfword scans
 

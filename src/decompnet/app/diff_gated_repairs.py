@@ -15,6 +15,7 @@ from decomprepair import (
     indexed_field_cursor,
     kmc_cast_repairs,
     likely_branch_cursor,
+    loop_counter_roles_repairs,
     loop_sentinel_repairs,
     loop_storage_shapes,
     measured_address_repairs,
@@ -224,6 +225,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_memory_order.variants(source,name,rows,resolve=resolve,header=header)
         result += measured_memory_order.staged_field_masks(source, name, rows, header)
         result += search_exit_loop_repairs.sentinel_byte_guard_variants(source, name, rows)
+        result += loop_counter_roles_repairs.guarded_reuse_variants(source, name, rows)
         result += measured_float_grid_stores.variants(source, name, rows)
         result += measured_expression_repairs.variants(source,name,header,rows)
         result += stack_byte_init_repairs.variants(source, name, header, rows)
