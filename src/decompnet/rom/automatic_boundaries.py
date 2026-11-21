@@ -625,6 +625,15 @@ def multiword_alignment(functions, image, order, owner, named, references, direc
         # unreachable suffix can look like a standalone loop to the splitter.
         if following.vram % 32 == 0 and following.vram in direct_calls:
             sizes += (16, 20, 24, 28)
+            # A reserved zero-filled area can follow a few leftover alignment
+            # words. The same return and incoming-reference checks still apply.
+            zero_start = following.rom
+            floor = max(segment.rom_start, zero_start-128)
+            while zero_start > floor and image[zero_start-4:zero_start] == bytes(4):
+                zero_start -= 4
+            zero_bytes = following.rom-zero_start
+            if zero_bytes >= 64:
+                sizes += tuple(range(zero_bytes, zero_bytes+29, 4))
         for size in sizes:
             start = following.rom - size
             address = following.vram - size
