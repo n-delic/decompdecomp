@@ -11896,3 +11896,12 @@ produced a register copy and a separate successor load. Capturing the
 current node in a loop-local pointer and advancing the cursor before
 calling the helper preserved the pre-call read and let the compiler use
 the call delay slot. The deep permuter saved the 180-to-0 match in 17 candidates.
+
+### Capture the indexed base before the stride calculation
+
+With gcc-2.7.2-kmc `-G0 -mips3 -mgp32 -mfp32 -O2`, a draft for an N64
+loop loaded its nested base within the final addition. The compiler
+started the index shift before the nested load and allocated the global
+base to a different register. Saving that nested load in a local before
+calculating the stride preserved the target's register use and schedule.
+The deep permuter saved a byte-exact match from score 75 in 38 candidates.
