@@ -11505,3 +11505,13 @@ putting the call and product in a single-iteration scope, then using a
 compound update to reload the field preserved the target's register and
 instruction order. The deep permuter saved a byte-exact match in six
 candidates.
+
+### Return constants directly around a guarded cleanup
+
+With gcc-2.7.2-kmc `-G0 -mips3 -mgp32 -mfp32 -O2`, an N64 function's
+draft used one local for the result of a null guard, callback and cleanup.
+The compiler put the constants in a different register and inserted a
+return-value copy. Returning zero directly for the null case and after
+cleanup, and one directly when cleanup was unnecessary, reproduced the
+target's register and instruction order. The deep permuter saved the
+115-to-0 match in 18 candidates.
