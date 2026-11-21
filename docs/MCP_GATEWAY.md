@@ -201,8 +201,9 @@ uv run pytest -q tests/test_mcp_gateway.py tests/test_mcp_gateway_install.py tes
 - Every release also carries `decomp-mcp-gateway-<platform>` and its `.sha256` (macOS arm64 and x86_64, Linux
   x86_64, Windows x86_64). An install from source (`site/public/install.sh`, `uv tool install`) has no Rust build:
   `decomp setup`, which the installer and every update run, downloads the one for this computer and checks it
-  against its checksum. It tries this version's release, then the latest.
+  against its checksum. Startup also tries this version’s release and then the latest if the executable is missing.
 - The app uses the newest of the package's copy and a checkout's cargo build, else the downloaded one.
-- Without any of them, or with `DECOMP_MCP_GATEWAY=0`, helpers connect to the app's `/mcp` as before;
-  `DECOMP_MCP_GATEWAY=<path>` names another build. The test suite turns it off (`tests/conftest.py`) except in
-  `tests/test_mcp_gateway.py`. The Linux CI job builds it, so those tests run there.
+- If the gateway is unavailable or fails to launch, decompdecomp reports the error before starting its server
+  or helpers. Use a packaged build or point `DECOMP_MCP_GATEWAY=<path>` at a compatible executable.
+  Set `DECOMP_MCP_GATEWAY=0` to explicitly use the app's own MCP endpoint. The test suite uses that opt-out
+  (`tests/conftest.py`) and exercises the Rust gateway separately (`tests/test_mcp_gateway.py`).

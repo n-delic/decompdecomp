@@ -235,10 +235,24 @@ def run(args) -> int:
 def _start(args,home,internal,state_file,log,restarted,headless):
     from .startup_steps import ready, step
     with step("Loading the app"):
-        from . import cleanup
+        from . import cleanup, mcp_gateway, tool_reader
         from .engine import RomNetwork
         from .runtime_server import Server
         from .server import build
+
+    def gateway_error(error):
+        message = str(error)
+        log.error("%s", message)
+        print(message, file=sys.stderr, flush=True)
+        if not headless and window.wanted():
+            window.tell_desktop(f"{edition.NAME} can't start its MCP gateway", message)
+        return 1
+
+    try:
+        with step("Finding or installing the agents' MCP gateway"):
+            executable = mcp_gateway.startup_program()
+    except (OSError, RuntimeError, ValueError) as error:
+        return gateway_error(error)
 
     sock = _listen(restarted["port"] if restarted else args.port, exact=bool(restarted) or headless)
     port = sock.getsockname()[1]
@@ -259,19 +273,21 @@ def _start(args,home,internal,state_file,log,restarted,headless):
         log.exception('Database corruption prevented startup')
         print(str(error), file=sys.stderr, flush=True)
         return 1
-    from . import mcp_gateway, tool_reader
-    # Read-only tools in a process of their own, behind the gateway (it sends them there first).
-    # The window's pages go through the gateway too, a few read-only ones answered by the reader (window_reads.py);
-    # the reader checks the window's secret as the app does.
+    # Read-only tools run in a separate process behind the gateway.
     window_reads = not headless and mcp_gateway.window_wanted()
-    with step("Starting the agents' MCP gateway"):
-        reader = tool_reader.start(net, internal, {"secret": secret, "port": port} if window_reads else None) \
-            if mcp_gateway.program() else None
-        gateway = mcp_gateway.start(port, internal / "logs" / "mcp-gateway.log", internal / "mcp-gateway.port",
-                                    reader=reader, window=window_reads)
-    if gateway is None and reader is not None:
-        reader.stop()
-        reader = None
+    gateway = reader = None
+    if executable is not None:
+        try:
+            with step("Starting the agents' MCP gateway"):
+                reader = tool_reader.start(net, internal, {"secret": secret, "port": port} if window_reads else None)
+                gateway = mcp_gateway.start(port, internal / "logs" / "mcp-gateway.log", internal / "mcp-gateway.port",
+                                            reader=reader, window=window_reads, executable=executable)
+        except (OSError, RuntimeError, ValueError) as error:
+            if reader is not None:
+                reader.stop()
+            sock.close()
+            state_file.unlink(missing_ok=True)
+            return gateway_error(error)
     if os.environ.get('DECOMP_OFFLOAD', '1') != '0':
         from . import offload
         offload.install()  # the repair families run in the proposal subprocess, not in this interpreter
@@ -415,7 +431,7 @@ def setup(args) -> int:
     from . import mcp_gateway
     try:
         mcp_gateway.install(log=lambda line: print(f"  {line}"))
-    except Exception as e:  # the app falls back to its own endpoint
+    except Exception as e:  # report setup failures alongside the other tools
         print(f"  ! MCP gateway: {e}")
     print("  IDO (most first-party games) is proprietary: install it from the app if you accept its license.")
     if why := window.missing():
