@@ -343,6 +343,7 @@ class Search(Permuter):
             scoped_cursor_entry,
             scoped_global_reset,
             symbol_width_repairs,
+            unsigned_rate_division_scope,
             widen_scaled_local,
         )
         from decomprepair.target_local_repairs import value_lifetimes
@@ -358,6 +359,7 @@ class Search(Permuter):
         proposals += scoped_cursor_entry.variants(source, fn['name'], proj['arch'], asm)
         proposals += scoped_global_reset.variants(source, fn['name'], proj['arch'], asm)
         proposals += counter_derived_loop_offset.variants(source, fn['name'], proj['arch'], asm)
+        proposals += unsigned_rate_division_scope.variants(source, fn['name'], proj['arch'], asm, header)
         if proj['arch'] == 'mips' and '%lo(' in asm:
             rename = getattr(self.net, 'rename_tokens', None)
             current_asm = rename(proj, asm) if rename else asm
