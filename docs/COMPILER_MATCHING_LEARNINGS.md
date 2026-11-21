@@ -9065,3 +9065,16 @@ A flat switch with only the three recognized commands and a default
 scored 550. Adding the adjacent explicit return-zero case reproduced all
 184 linked bytes on the copied project. The extra case preserves the
 default result and restores the compiler's original dispatch layout.
+
+### Direct word relocations in a guarded countdown
+
+A 42-instruction N64 countdown under `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`
+scored 375. KMC factored the draft's field expression into an address
+register reused for both guarded stores. The target loads the word directly
+and materializes its address again in each branch, with the decrement store
+in the early exit jump's delay slot.
+
+Naming just the countdown word at the address verified by its three raw
+relocation pairs reproduced all 168 linked bytes. A compound decrement
+also matched in the scratch trial. The rule keeps the original countdown
+tests, adjacent halfword clear and later body.

@@ -151,6 +151,9 @@ def verify(feedback, example):
         if candidate := relocated_global_update.rewrite(source, fn['name'], fn['asm'] or '', header,
                                                         symbols.resolve if symbols else None):
             focused.append(('relocated_global_update', candidate))
+        if candidate := relocated_global_update.rewrite_countdown(source, fn['name'], fn['asm'] or '', header,
+                                                                  symbols.resolve if symbols else None):
+            focused.append(('relocated_countdown', candidate))
         if candidate := packed_matrix_conversion.rewrite(source, fn['name'], fn['asm'] or '', header):
             focused.append(('packed_matrix_conversion', candidate))
         if candidate := byte_cursor_postincrements.rewrite(source, fn['name'], fn['asm'] or '', header):
