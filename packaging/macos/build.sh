@@ -14,6 +14,7 @@ ARCH="$(uname -m)"
 case "$ARCH" in arm64|x86_64) ;; *) echo "Unsupported Mac architecture: $ARCH" >&2; exit 1 ;; esac
 
 "$PYTHON" "$ROOT/packaging/build_gateway.py"  # the MCP gateway, carried in the wheel (docs/MCP_GATEWAY.md)
+"$PYTHON" "$ROOT/packaging/build_alignment.py"
 uv build --wheel --out-dir "$WORK/wheel" "$ROOT" >/dev/null
 APP="$WORK/decompdecomp.app"
 CONTENTS="$APP/Contents"

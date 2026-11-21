@@ -31,6 +31,7 @@ class Session:
         self.targets = OrderedDict()
         self.links = None
         self.instructions = OrderedDict()
+        self.alignments = OrderedDict()
         self.metrics = {}
         self.comparisons = OrderedDict()
         self.comparison_sizes = {}

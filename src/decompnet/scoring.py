@@ -5,7 +5,6 @@ score == 0 means a byte-for-byte (relocation-normalized) match. Lower is better.
 
 from __future__ import annotations
 
-import difflib
 import math
 import re
 import threading
@@ -14,7 +13,7 @@ from dataclasses import dataclass
 
 import capstone
 
-from . import arch, compile_sessions
+from . import arch, compile_sessions, instruction_alignment
 from .elfobj import FunctionObj, mask_relocs
 
 PENALTY_STACKDIFF = 1
@@ -447,12 +446,12 @@ def _diff(target: FunctionObj, candidate: FunctionObj, *, details=True) -> DiffR
     max_score = max(1, len(t_ins)) * PENALTY_INSERTION
     bytes_match = target_fingerprint == candidate.fingerprint()
 
-    sm = difflib.SequenceMatcher(a=[i.mnemonic for i in t_ins], b=[i.mnemonic for i in c_ins], autojunk=False)
+    alignment = instruction_alignment.opcodes([i.mnemonic for i in t_ins], [i.mnemonic for i in c_ins])
     rows: list[tuple[str, str, str]] = []
     score = 0
     missing: Counter[str] = Counter()
     extra: Counter[str] = Counter()
-    for op, a0, a1, b0, b1 in sm.get_opcodes():
+    for op, a0, a1, b0, b1 in alignment:
         if op == "equal":
             for a, b in zip(t_ins[a0:a1], c_ins[b0:b1]):
                 pen, mark = _classify(a, b)

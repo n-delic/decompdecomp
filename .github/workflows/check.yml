@@ -16,6 +16,20 @@ on:
   workflow_dispatch:
 
 jobs:
+  native-alignment:
+    strategy:
+      matrix:
+        runner: [blacksmith-4vcpu-ubuntu-2404, blacksmith-6vcpu-macos-15, blacksmith-4vcpu-windows-2025]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.0
+      - uses: dtolnay/rust-toolchain@stable
+      - run: uv sync --locked
+      - run: uv run --locked python packaging/build_alignment.py
+      - run: uv run --locked python -c "from decompnet.instruction_alignment import _kernel; assert _kernel() is not None"
+      - run: uv run --locked pytest -q -o addopts= tests/test_instruction_alignment.py
+
   windows:
     needs: check
     runs-on: blacksmith-4vcpu-windows-2025
