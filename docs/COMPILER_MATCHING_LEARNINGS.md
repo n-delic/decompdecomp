@@ -11735,6 +11735,41 @@ Failed on this function: reordering only the three products (50, 25), swapping s
 m01 (85), a direct form with a single reused angle local (442-512: the prologue then differs), and the
 `-fno-schedule-insns` compiler flags (522 and worse).
 
+## A list insertion in a loop: the same store in both ways out, and the global read in the loop (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, an N64 game, one 108-instruction function)
+
+A loop that stamps each entry's bounds (four float min/max updates) and links the entry into a depth-sorted list was
+320 for a long time (two hand-edit rows of layout, then the prologue). It is exact now, in two steps that each
+needed the other half:
+
+| step | edit | score |
+|---|---|---|
+| start | saved best: `head = entry; entry->next = NULL;` in the empty-list arm; `entry->next = cur;` before `if (prev == NULL)` | 320 |
+| 1a | empty-list arm: `entry->next = NULL;` first, then `head = entry;` | 550 (alone) |
+| 1b | found arm: `if (prev == NULL) { entry->next = cur; head = entry; goto next; } entry->next = cur; prev->next = entry; goto next;` | 320 (alone) |
+| 1a+1b | both | 60 |
+| 2 | read `gSurfaceQueryStamp` in the loop (`!= gSurfaceQueryStamp`, `= gSurfaceQueryStamp`) instead of `stamp = s0;` outside it | 0 |
+
+Why (read from cc1's `-dS -dR -dd` dumps, not from the C): the two blocks that store `head` and jump to the loop's
+end are identical in their last two insns after the second scheduling pass, and dbr_schedule merges identical tails.
+The target keeps two copies (`sw $zero; lui/sw head; j; addiu` and a bare `lui/sw head; j; addiu`), so the source must
+leave them different at that point: the field store first in the empty arm (so reorg cannot move it into the jump's
+delay slot, it is two insns away from the `j`), and `entry->next = cur` written inside each way out (hoisted above
+the branch it was shared, which let the head block merge into the empty arm's). Step 2: a local copy `stamp = s0`
+before the loop is a plain register copy in the block that ends with the entry test, so the scheduler put the loop
+counter's `move $t0, $zero` above the increment and the delay slot took the copy (2 rows, score 60). Reading the
+global in the loop makes the copy a loop invariant: loop.c hoists the load to the preheader after the entry test,
+cse2 turns it into `move $t2, $v0` (the value just stored), and the preheader then starts with the counter's `move`.
+Tried and failed for step 2: the same copy placed first in the loop body (cse1 copy-propagates it, the register
+allocator then ties it to the incremented value: `addiu $t2, $v0, 1`, 275), an explicit `if (D != 0)` guard around
+the loop with the copy inside it (290-590: the entry test is duplicated, the counter lands in `$t1`, the frame goes),
+a do-while form (400-590), early return on a zero count (295), and every order of the five prologue statements (60).
+
+Evidence: one function, judged 0 by the app (`matched best 0`). The two decomp-repair 0.5.262 families reproduce it:
+`arm_store_sink` on the saved score-320 source gives 320 (sink alone), 550 (swap alone) and 60 (`arm_store_sink_swap`, the
+combination), and `global_copy_forward` on that 60 child gives 0, scored with the app's judge-worker, no permuter run.
+Not controlled across other functions. `arm_store_sink` only fires when the branch condition reads nothing through a
+pointer, and `global_copy_forward` declines when a call follows the store or the global is written again.
+
 ### Stage the corrected halfword call address before the stores
 
 With gcc-2.7.2-kmc `-G0 -mips3 -mgp32 -mfp32 -O2`, a draft scaled a

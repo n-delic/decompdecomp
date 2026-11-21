@@ -877,6 +877,27 @@ def test_global_store_forward_runs_in_the_bounded_local_lane(monkeypatch):
     assert tried == [child]
 
 
+@pytest.mark.parametrize('module,family', [('arm_store_sink', 'arm_store_sink_swap'),
+                                           ('global_copy_forward', 'global_copy_forward')])
+def test_arm_store_sink_and_global_copy_forward_run_in_the_bounded_local_lane(monkeypatch, module, family):
+    import importlib
+
+    from tests.test_permute import AGENT
+
+    library = importlib.import_module('decomprepair.' + module)
+    net = setup(monkeypatch)
+    proj = net.project_row('game')
+    fn = {**net.function(), 'asm': ''}
+    child = fn['best_source'] + '\n/* ' + module + ' */'
+    monkeypatch.setattr(library, 'variants', lambda *args: [(family, child)])
+    search = deep_permuter.Search(net, 1, 6, Log())
+    tried = []
+    monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 20)
+
+    assert search.operand_order_pass(AGENT, proj, fn, 180, None) == 20
+    assert tried == [child]
+
+
 def test_loop_symbol_base_block_runs_in_the_bounded_local_lane(monkeypatch):
     from decomprepair import loop_symbol_base_block
     from tests.test_permute import AGENT

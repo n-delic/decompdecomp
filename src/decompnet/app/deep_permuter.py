@@ -365,6 +365,11 @@ class Search(Permuter):
                  (L + 'record_init_shapes.variants', (source, name, arch, asm)),
                  # a temporary stored to a global and read back, written as the global (cse's forwarding)
                  (L + 'global_store_forward.variants', (source, name)),
+                 # a store before a branch in both ways out and the leave block's stores swapped (together:
+                 # neither alone moves a list insertion, and without it the head-store blocks cross-jump), and a
+                 # global read in the loop instead of a local copy (loop.c then hoists the copy past the entry test)
+                 (L + 'arm_store_sink.variants', (source, name)),
+                 (L + 'global_copy_forward.variants', (source, name)),
                  # a byte array's address added to an index in a nested loop's guarded block: the base set twice
                  # (so the loop pass leaves it) after the index (the lui/addiu where the target has it)
                  (L + 'loop_symbol_base_block.variants', (source, name)),
