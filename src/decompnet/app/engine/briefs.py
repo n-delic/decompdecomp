@@ -146,6 +146,7 @@ class BriefMixin:
                 inputs.append('unaligned stack copy')
         if own["toolchain"] == 'gcc-2.7.2-kmc':
             from decomprepair import (
+                aligned_allocator_request,
                 aligned_stack_read,
                 byte_cursor_postincrements,
                 large_stack_drafts,
@@ -154,6 +155,7 @@ class BriefMixin:
                 measured_callback_loop,
                 measured_mmio_polling,
                 measured_stack_drafts,
+                ordered_halfword_updates,
                 packed_matrix_conversion,
                 passthrough_argument_repairs,
                 relocated_byte_table,
@@ -176,6 +178,10 @@ class BriefMixin:
                 inputs.append('packed matrix conversion')
             if byte_cursor_postincrements.applies(fn['asm'] or ''):
                 inputs.append('byte cursor increments')
+            if aligned_allocator_request.applies(fn['asm'] or ''):
+                inputs.append('aligned allocator request')
+            if ordered_halfword_updates.applies(fn['asm'] or ''):
+                inputs.append('ordered halfword updates')
             if aligned_stack_read.applies(fn['asm'] or ''):
                 inputs.append('aligned stack read')
             if passthrough_argument_repairs.entry_wrapper_applies(fn['asm'] or ''):

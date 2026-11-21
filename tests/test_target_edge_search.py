@@ -407,3 +407,17 @@ def test_measured_byte_cursor_postincrements_reach_kmc_proposals(monkeypatch):
     rows = [('s', 'addiu $v0, $a1, 1', 'addiu $v0, $a1, 4')]
     assert ('byte_cursor_postincrements', 'byte cursor candidate') in route('void f(void) {}', rows, 'asm')
     assert 'byte_cursor_postincrements' not in dict(route('void f(void) {}', rows, '', compiler='ido-5.3'))
+
+
+def test_measured_allocator_and_halfword_updates_reach_kmc(monkeypatch):
+    from decomprepair import aligned_allocator_request, ordered_halfword_updates
+
+    monkeypatch.setattr(aligned_allocator_request, 'rewrite', lambda *args: 'allocator')
+    monkeypatch.setattr(ordered_halfword_updates, 'rewrite', lambda *args: 'halfword')
+    rows = [('r', 'lw $v1, 8($a2)', 'lw $a0, 8($a2)')]
+    kmc = dict(route('void f(void) {}', rows, 'asm'))
+    assert kmc['aligned_allocator_request'] == 'allocator'
+    assert kmc['ordered_halfword_updates'] == 'halfword'
+    ido = dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
+    assert 'aligned_allocator_request' not in ido
+    assert 'ordered_halfword_updates' not in ido

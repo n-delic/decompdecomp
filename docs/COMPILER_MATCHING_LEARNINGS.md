@@ -8995,3 +8995,22 @@ with four postincrements and four unsigned-byte locals reproduced all 80
 linked bytes on the copied project. Replacing those locals with unsigned
 words scored 80. The rewrite requires each step's slot and displacement,
 the four big-endian packing positions and the return delay slot.
+
+### Staging the rounded allocator request
+
+An 18-instruction N64 allocator draft built with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` scored 575. Restoring two
+unused leading parameters put the heap pointer and factor in the observed
+registers and the final factor in the fifth ABI slot, leaving a score of
+95. Staging the rounded size before the heap cursor load reproduced all
+72 linked bytes on a copied project.
+
+### Scheduling relocated halfword snapshots
+
+A 20-instruction N64 draft built with the same KMC flags scored 680. The
+best prior draft scored 100. Using direct aliases alone scored 680.
+Staging only the final word ahead of the two clears scored 690. Separating
+both live word loads from their halfword stores, and using the addresses
+and store order verified against the seven original relocation pairs,
+reproduced all 80 linked bytes. Routing the marker store through a word
+temporary scored 50.
