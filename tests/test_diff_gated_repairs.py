@@ -469,3 +469,12 @@ def test_measured_boolean_byte_carrier():
     ]
     assert 'u8 flag;' in dict(proposals(source, 'f', '', 'mips', KMC, rows, ''))['boolean_byte_carrier']
     assert 'boolean_byte_carrier' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_measured_relocated_signed_halfword_load():
+    source = 'void f(void) { s32 value; value = *(volatile s32 *)(fields + index); use(value); }'
+    rows = [('|', 'lh $v0, %lo(fields)($v0)', 'lw $v0, %lo(fields)($v0)')]
+    candidates = [text for name, text in proposals(source, 'f', '', 'mips', KMC, rows, '')
+                  if name == 'relocated_signed_halfword_load']
+    assert any('do { value = *(s16 *)(fields + index); } while (0);' in text for text in candidates)
+    assert 'relocated_signed_halfword_load' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))

@@ -1094,6 +1094,29 @@ def test_loop_vector_shape_pass_composes_shapes_that_only_help_together(monkeypa
     assert any('const Bone *bone' in c and 'bones[k]' in c for c in seen) and len(seen) <= 15
 
 
+def test_loop_vector_shape_pass_reaches_the_scheduling_boundary_that_matched_a_display_list_function(monkeypatch):
+    """Every source order stayed at 60; splitting the tail with a do { } while (0), its call's global read first, was 0."""
+    net = setup(monkeypatch)
+    source = ('extern int D_8010A4D8;\nextern void *cursor;\nextern void *list;\nint g();\n'
+              'void f(int arg0) {\n    void *t;\n    g(arg0, 2);\n    ((S *)list)->a = 1;\n    ((S *)cursor)->a = 2;\n'
+              '    list += 8;\n    t = cursor + 8;\n    cursor = t;\n    g(arg0, D_8010A4D8, t);\n}\n')
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_score=60,best_source=? WHERE name='f'", (source,))
+    fn, proj = net.function(), net.project_row('game')
+    search = deep_permuter.Search(net, 1, 30, Log(), fn)
+    seen = []
+
+    def score(agent, proj, fn, candidate, best, fork):
+        seen.append(candidate)
+        search.tested += 1
+        # wrapping alone or hoisting alone stays at 60; the pair is exact
+        return 0 if 'do {' in candidate and 'repair_scope_1 = D_8010A4D8;' in candidate else 60
+
+    monkeypatch.setattr(search, '_score', score)
+    assert search.loop_vector_shape_pass(AGENT, proj, dict(fn, best_source=source, name='f'), 60, None) == 0
+    assert any('do {' in c and 'repair_scope_1' not in c for c in seen) or len(seen) < 64
+
+
 def test_a_stub_baseline_is_named_before_the_tuning_passes(monkeypatch):
     net = setup(monkeypatch)
     fn = net.function()
