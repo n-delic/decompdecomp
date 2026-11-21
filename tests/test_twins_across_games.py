@@ -248,7 +248,8 @@ def test_manual_search_finds_imported_code_inside_a_merged_rom_function(built, t
     assert not any(original['target'][head['size']:-recovered['size']])  # alignment padding
 
 
-def test_manual_search_tries_donor_when_relocation_layouts_differ(built, tmp_path, monkeypatch):  # noqa: F811
+@pytest.mark.parametrize('ambiguous', [False, True])
+def test_manual_search_tries_donor_when_relocation_layouts_differ(built, tmp_path, monkeypatch, ambiguous):  # noqa: F811
     from decompnet.app.twins import Job, Print, _key
     from decompnet.elfobj import Reloc, mask_relocs
 
@@ -269,15 +270,31 @@ def test_manual_search_tries_donor_when_relocation_layouts_differ(built, tmp_pat
     fingerprint = Print(_key(code, layout), ['donor_symbol'], len(code), layout=layout)
     mine = net.twins.prints(proj)
     assert mine[b['id']].key != fingerprint.key
-    monkeypatch.setattr(net.forks, 'get', lambda _: (donor, object(), {'platform': 'n64'}))
+    source = 'int func_800007D0(void) { return 123; }'
+    if ambiguous:
+        from types import SimpleNamespace
+
+        from decompnet.app import donor_build, donor_relocations, donor_sources
+        from decompnet.project import compiler_for
+
+        unit = SimpleNamespace(name=a['unit'], base=None)
+        fork = SimpleNamespace(root=tmp_path, units=lambda: [unit])
+        settings = compiler_for(net.cfg(proj), b['vram'], b)
+        monkeypatch.setattr(donor_build.Settings, 'for_unit', lambda *_: settings)
+        monkeypatch.setattr(donor_relocations, 'donor_refs', lambda *_:
+                            Print(fingerprint.key, ['.local_section'], len(code)))
+        monkeypatch.setattr(donor_sources, 'imported', lambda *_: [(source, '', '')])
+    else:
+        fork = object()
+    monkeypatch.setattr(net.forks, 'get', lambda _: (donor, fork, {'platform': 'n64'}))
     monkeypatch.setattr(net.forks, 'is_asm', lambda *_: False)
     monkeypatch.setattr(net.twins, '_fork_prints', lambda _, **kwargs: {a['id']: fingerprint})
     job = Job()
     job.cross_exhaustive = True
-    monkeypatch.setattr(net.forks, '_current_source', lambda *_: 'int func_800007D0(void) { return 123; }')
+    monkeypatch.setattr(net.forks, '_current_source', lambda *_: source)
     assert net.twins._fork_to_rom(agent, proj, donor, {}, mine, job) == 0
     assert net._function(b['name'], slug)['status'] == 'open'
-    monkeypatch.setattr(net.forks, '_current_source', lambda *_: CLAMP)
+    source = CLAMP
     assert net.twins._fork_to_rom(agent, proj, donor, {}, mine, job) == 1
     matched = net._function(b['name'], slug)
     assert matched['status'] == 'matched'

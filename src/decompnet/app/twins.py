@@ -1422,16 +1422,21 @@ class Twins:
                 overlay_names = donor_relocations.overlay_names(self.net, proj, b, pa, donor_name) if build else None
                 if names is None:
                     names = overlay_names
-                if names is None or self.net.forks.is_asm(other, a):
+                if self.net.forks.is_asm(other, a):
                     continue
-                original = self.net.forks._current_source(fp, a)
-                if not original:
-                    continue
-                source = apply(original, names)
                 unit = units.get(a['unit'])
                 settings = build.for_unit(unit) if unit is not None else None
                 replacement = build.replacement_source(unit, donor_name) if unit is not None else None
-                known_miss = self._missed(b_id, source, project_id=proj['id'])
+                if names is None and not (settings or replacement):
+                    continue
+                original = self.net.forks._current_source(fp, a)
+                source = apply(original, names) if original and names is not None else None
+                if source is None and not (replacement or (settings and original)):
+                    continue
+                # Let the compiled object's relocations drive private verification when
+                # static mapping is ambiguous. Generic source reuse still needs a mapping.
+                trial_names = names if names is not None else {}
+                known_miss = source is not None and self._missed(b_id, source, project_id=proj['id'])
                 if known_miss and not (settings or replacement):
                     continue
                 if job is not None:
@@ -1445,14 +1450,14 @@ class Twins:
                 if settings or replacement:
                     try:
                         outcome, why = donor_build.verify(
-                            self.net, proj, b, other, a, names, settings, agent, job, build.headers,
+                            self.net, proj, b, other, a, trial_names, settings, agent, job, build.headers,
                             **({'replacement': replacement} if replacement else {}))
                         if outcome == 'miss' and overlay_names is not None and overlay_names != names and not job.stop.is_set():
                             outcome, why = donor_build.verify(
                                 self.net, proj, b, other, a, overlay_names, settings, agent, job, build.headers)
                     except (NetworkError, OSError, ValueError) as error:
                         outcome, why = 'skip', str(error)
-                if outcome != 'match' and not known_miss and not (job and job.stop.is_set()):
+                if outcome != 'match' and source is not None and not known_miss and not (job and job.stop.is_set()):
                     fallback, detail = self._attempt_twin(
                         agent, proj, a, b, source, origin=f" in {other['name']}", mapping=names)
                     if fallback == 'match' or not why:
