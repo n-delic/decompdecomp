@@ -212,7 +212,9 @@ class Nintendo64(Console):
     # libultra 2.0I-2.0L as decompals/ultralib rebuilds it, so a user without the SDK still has its library found
     sdk_table = str(Path(__file__).with_name("ultralib_signatures.tsv"))
     # n_audio (libgn_audio.a 2.0J-2.0L), which ultralib doesn't rebuild: the SDK archives' fingerprints and names
-    sdk_tables = (str(Path(__file__).with_name("naudio_signatures.tsv")),)
+    # plus hand-written runtime code that cartridges share but no archive rebuilds (fingerprints of functions found
+    # byte for byte, relocations aside, in unrelated games: runtime_signatures.tsv)
+    sdk_tables = (str(Path(__file__).with_name("naudio_signatures.tsv")), str(Path(__file__).with_name("runtime_signatures.tsv")))
 
     def sdk_assembly_identity(self, code, big_endian=True):
         return sdk_assembly.identify(code, big_endian)

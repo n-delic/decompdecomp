@@ -1,0 +1,4 @@
+# n64-runtime-assembly 1, relocation-normalised fingerprints (twins._key) of hand-written runtime code that cartridges share byte for byte but no SDK archive the app can rebuild covers; named by the first cartridge's agents
+# fingerprint	size	name	builds
+f64ec533751ca2ae4112612fcab3415d83edc29a	284	f64ToFixed60	shared across cartridges
+c946e308e7007deb0f26cd36113fa76ee470b897	248	fixed60ToF64	shared across cartridges
