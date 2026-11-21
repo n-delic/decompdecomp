@@ -105,6 +105,7 @@ def verify(feedback, example):
             field_snapshot_copies,
             float_matrix_identity,
             global_pointer_local_repairs,
+            guard_inversion_repairs,
             indexed_field_cursor,
             kmc_cast_repairs,
             kmc_operand_repairs,
@@ -189,6 +190,10 @@ def verify(feedback, example):
             focused.append(('ordered_halfword_updates', candidate))
         if candidate := aligned_stack_read.rewrite(source, fn['name'], fn['asm'] or ''):
             focused.append(('aligned_stack_read', candidate))
+        if candidate := guard_inversion_repairs.rewrite_byte_toggle(source, fn['name'], fn['asm'] or '', header):
+            focused.append(('byte_flag_branch_orientation', candidate))
+        if candidate := kmc_cast_repairs.rewrite_float_table(source, fn['name'], fn['asm'] or '', header):
+            focused.append(('direct_float_table_load', candidate))
         if candidate := direct_mapped_address.rewrite(source, fn['name'], fn['asm'] or '', header):
             focused.append(('direct_mapped_address', candidate))
         if candidate := global_pointer_local_repairs.rewrite_list_transfer(source, fn['name'], fn['asm'] or '', header):
