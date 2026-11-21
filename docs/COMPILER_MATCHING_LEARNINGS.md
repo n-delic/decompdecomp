@@ -10809,3 +10809,14 @@ Same compiler, flags and function as the previous entry; hand work with `cc1 -dS
 - **Result:** the `volatile` form fixes the counter's `move` but costs the `$s6`/`$s7` order of the two constants
   (120 became 275); no source shape reproduced both. The remaining target feature is a held constant scheduled
   between a load and the stores that follow it.
+
+### Preserve halfword table strides across call slots and nested indexes
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, five machine drafts
+on an isolated N64 ROM project scored 30 because an indexed halfword load
+had a second word-scale multiplication and an extra two-byte relocation
+addend. A typed halfword array matched the contiguous reads. A byte array
+with an explicit halfword load preserved the original stride for records.
+The deep permuter recovered both forms, including a load in a call delay
+slot and an address calculation interrupted by a return-address spill. All
+five linked scores fell from 30 to 0.
