@@ -203,8 +203,12 @@ class Nintendo64(Console):
         return None
 
     def asm_reason(self, code: bytes) -> str | None:
+        from .context_switch import saves_context
+
         if self.known_assembly_name(code):
             return "Exact signature of the low-word-first 64-bit multiply assembly helper."
+        if saves_context(code):
+            return "Handwritten context switch saves all floating-point registers and hands off to the shared restore entry."
         return super().asm_reason(code)
 
     sdk_assembly_sizes = sdk_assembly.SIZES
