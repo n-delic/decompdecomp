@@ -74,6 +74,20 @@ def test_the_build_uses_original_code_for_a_profiled_rom_address(tmp_path):
     assert original_code(host, manifest, fixed) == set()
 
 
+def test_the_profiled_menu_quad_allocator_keeps_its_implicit_result():
+    from pathlib import Path
+
+    from decompnet.port.wasm.build import original_code
+
+    host = Path(get("n64").port_kit.wasm)
+    manifest = {"game": {"sha1": "da3f262dfb86cff1376c9a1aa081212e5a7aad64"}, "layout": [
+        {"name": "new_panel", "vram": 0x8004C4D0},
+        {"name": "draw_panel", "vram": 0x8004C370},
+    ]}
+    fixed, _ = addresses(manifest)
+    assert original_code(host, manifest, fixed) == {"new_panel.c"}
+
+
 def test_a_save_written_before_saves_named_headers_takes_the_projects_own(tmp_path):
     """An N64 game's save from before saves named each function's header had per-part headers but no
     function_headers: every function got the shared header and 268 files stopped at `unknown type name`. The

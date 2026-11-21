@@ -2,3 +2,5 @@
 # Run its caller from MIPS too, so the output pointer stays in the argument register.
 0x8001C1A8
 0x8002DF40
+# The menu's quad allocator returns its object in $v0 for the caller to configure.
+0x8004C4D0
