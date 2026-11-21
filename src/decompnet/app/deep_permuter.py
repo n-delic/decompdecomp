@@ -341,63 +341,56 @@ class Search(Permuter):
     def operand_order_pass(self, agent, proj, fn, best, fork):
         """Spend a few of the ordinary trials on a measured operand/register near miss."""
         rows = self.winner_diff[0] if self.winner_diff else repair_ranking.evidence(self.net, fn['id'], agent.id)
-        from decomprepair import (
-            counter_derived_loop_offset,
-            float_stack_call_reuse,
-            float_zero_local_repairs,
-            global_store_repairs,
-            guard_xor_reuse,
-            inline_float_vector_scale,
-            load_store_order_repairs,
-            near_match_repairs,
-            packed_word_scheduling,
-            scoped_byte_read_call,
-            scoped_cursor_entry,
-            scoped_global_reset,
-            stack_byte_loop_base,
-            symbol_width_repairs,
-            targeted_switch_labels,
-            unsigned_rate_division_scope,
-            widen_scaled_local,
-            word_byte_loop_carrier,
-        )
-        from decomprepair.target_local_repairs import value_lifetimes
+        from . import generation_calls
 
         source = _candidate_source(fn, best)
         header = self.net._context(proj['id'], fn['unit'])['header']
         asm = dict(fn).get('asm') or ''
-        proposals = packed_word_scheduling.variants(source, fn['name'], proj['arch'], asm, header)
-        proposals += float_zero_local_repairs.loop_variants(source, fn['name'], asm, header)
-        proposals += float_stack_call_reuse.variants(source, fn['name'], proj['arch'], asm, header)
-        proposals += widen_scaled_local.variants(source, fn['name'], proj['arch'], asm, header)
-        proposals += inline_float_vector_scale.variants(source, fn['name'], proj['arch'], asm, header)
-        proposals += guard_xor_reuse.variants(source, fn['name'], proj['arch'], asm, header)
-        proposals += scoped_cursor_entry.variants(source, fn['name'], proj['arch'], asm)
-        proposals += scoped_global_reset.variants(source, fn['name'], proj['arch'], asm)
-        proposals += word_byte_loop_carrier.variants(source, fn['name'], proj['arch'], asm)
-        proposals += counter_derived_loop_offset.masked_byte_stride_variants(source, fn['name'], proj['arch'], asm)
-        proposals += counter_derived_loop_offset.variants(source, fn['name'], proj['arch'], asm)
-        proposals += stack_byte_loop_base.variants(source, fn['name'], proj['arch'], asm, header)
-        proposals += unsigned_rate_division_scope.variants(source, fn['name'], proj['arch'], asm, header)
-        if proj['arch'] == 'mips' and '%lo(' in asm:
+        arch, name = proj['arch'], fn['name']
+        L = 'decomprepair.'
+        calls = [(L + 'packed_word_scheduling.variants', (source, name, arch, asm, header)),
+                 (L + 'float_zero_local_repairs.loop_variants', (source, name, asm, header)),
+                 (L + 'float_stack_call_reuse.variants', (source, name, arch, asm, header)),
+                 (L + 'widen_scaled_local.variants', (source, name, arch, asm, header)),
+                 (L + 'inline_float_vector_scale.variants', (source, name, arch, asm, header)),
+                 (L + 'guard_xor_reuse.variants', (source, name, arch, asm, header)),
+                 (L + 'scoped_cursor_entry.variants', (source, name, arch, asm)),
+                 (L + 'scoped_global_reset.variants', (source, name, arch, asm)),
+                 (L + 'word_byte_loop_carrier.variants', (source, name, arch, asm)),
+                 (L + 'counter_derived_loop_offset.masked_byte_stride_variants', (source, name, arch, asm)),
+                 (L + 'counter_derived_loop_offset.variants', (source, name, arch, asm)),
+                 (L + 'stack_byte_loop_base.variants', (source, name, arch, asm, header)),
+                 (L + 'unsigned_rate_division_scope.variants', (source, name, arch, asm, header))]
+        zero_bound = None
+        if arch == 'mips' and '%lo(' in asm:
             rename = getattr(self.net, 'rename_tokens', None)
             current_asm = rename(proj, asm) if rename else asm
-            proposals += load_store_order_repairs.component_before_resets(source, fn['name'], current_asm, header)
-            proposals += global_store_repairs.scoped_byte_updates(source, fn['name'], current_asm, header)
-            proposals = targeted_switch_labels.zero_bound_variants(source, fn['name'], current_asm) + proposals
-            proposals += symbol_width_repairs.guarded_indexed_variants(source, fn['name'], current_asm)
+            calls += [(L + 'load_store_order_repairs.component_before_resets', (source, name, current_asm, header)),
+                      (L + 'global_store_repairs.scoped_byte_updates', (source, name, current_asm, header))]
+            zero_bound = len(calls)
+            calls += [(L + 'targeted_switch_labels.zero_bound_variants', (source, name, current_asm)),
+                      (L + 'symbol_width_repairs.guarded_indexed_variants', (source, name, current_asm))]
         # Existing saved drafts can still use their original address-based entry name.
-        proposals += scoped_byte_read_call.variants(source, fn['name'], proj['arch'], asm, header)
-        if proj['arch'] == 'mips' and (vram := dict(fn).get('vram')) is not None:
+        calls.append((L + 'scoped_byte_read_call.variants', (source, name, arch, asm, header)))
+        if arch == 'mips' and (vram := dict(fn).get('vram')) is not None:
             alias = f'func_{vram:08X}'
-            if alias != fn['name']:
-                proposals += scoped_byte_read_call.variants(source, alias, proj['arch'], asm, header)
-        if permuter_focus.classify(rows, proj['arch']) == 'register':
-            proposals += near_match_repairs.bitwise_operand_order(source, fn['name'], header)
-            proposals += near_match_repairs.float_update_order(source, fn['name'], header)
-            proposals += [(family, child) for family, child in near_match_repairs.variants(source, fn['name'])
-                          if family == 'arithmetic_operand_order']
-            proposals += value_lifetimes(source, fn['name'])
+            if alias != name:
+                calls.append((L + 'scoped_byte_read_call.variants', (source, alias, arch, asm, header)))
+        register = permuter_focus.classify(rows, arch) == 'register'
+        if register:
+            calls += [(L + 'near_match_repairs.bitwise_operand_order', (source, name, header)),
+                      (L + 'near_match_repairs.float_update_order', (source, name, header)),
+                      (L + 'near_match_repairs.variants', (source, name)),
+                      (L + 'target_local_repairs.value_lifetimes', (source, name))]
+        results = [generation_calls.pairs(result) for result in generation_calls.library(calls)]
+        if register:
+            results[-2] = [(family, child) for family, child in results[-2] if family == 'arithmetic_operand_order']
+        proposals = []
+        for index, result in enumerate(results):
+            if index == zero_bound:
+                proposals = result + proposals  # linked-case zero-bound labels go before the rest
+            else:
+                proposals += result
         seen = {source}
         limit = min(6, (self.limit - self.tested) // 2)
         for family, child in proposals:
@@ -430,7 +423,7 @@ class Search(Permuter):
         left a 2,122-instruction function's score nearly unchanged alone and gained a hundred instructions in
         combination, so a greedy pass that stops at the first non-improvement never finds them. A small beam keeps
         the three best children of each level, inside the ordinary trial budget; every child is judged normally."""
-        from decomprepair import loop_vector_shapes, statement_interleave
+        from . import generation_calls
 
         source = _candidate_source(fn, best)
         # Interleaving two runs of statements took about 600 compiles to find by beam on a large function, so this
@@ -440,8 +433,10 @@ class Search(Permuter):
         while frontier and budget > 0:
             children = []
             for _, parent in frontier:
-                proposals = (loop_vector_shapes.variants(parent, fn['name'], proj['arch'])
-                             + statement_interleave.variants(parent, fn['name'], proj['arch']))
+                proposals = [pair for result in generation_calls.library([
+                    ('decomprepair.loop_vector_shapes.variants', (parent, fn['name'], proj['arch'])),
+                    ('decomprepair.statement_interleave.variants', (parent, fn['name'], proj['arch']))])
+                    for pair in generation_calls.pairs(result)]
                 for family, child in proposals:
                     if child in seen or budget <= 0:
                         continue
@@ -460,10 +455,11 @@ class Search(Permuter):
 
     def indexed_loop_frame_pass(self, agent, proj, fn, best, fork):
         """Measure the indexed loop and padding cleanup together under the current settings."""
-        from decomprepair.pointer_walk_index_repairs import frame_variants
+        from . import generation_calls
 
         source = _candidate_source(fn, best)
-        for family, child in frame_variants(source, fn['name']):
+        for family, child in generation_calls.pairs(generation_calls.library(
+                [('decomprepair.pointer_walk_index_repairs.frame_variants', (source, fn['name']))])[0]):
             if self.tested >= self.limit:
                 break
             self.check()
@@ -477,14 +473,15 @@ class Search(Permuter):
 
     def call_result_pass(self, agent, proj, fn, best, fork):
         """Judge a small source-only pass before exploring alternate compiler profiles."""
-        from decomprepair.target_local_repairs import call_result_pass
+        from . import generation_calls
 
         stop = self.tested + min(40, (self.limit - self.tested) // 2)
         seen = set()
         while best and self.tested < stop:
             parent = fn['best_source']
             round_best = best
-            for family, child in call_result_pass(parent, fn['name']):
+            for family, child in generation_calls.pairs(generation_calls.library(
+                    [('decomprepair.target_local_repairs.call_result_pass', (parent, fn['name']))])[0]):
                 if child in seen:
                     continue
                 seen.add(child)
@@ -513,10 +510,11 @@ class Search(Permuter):
         return self.winner_jump_tables if self.winner_jump_tables and self.measured_winner(fn, source) else ()
 
     def can_relabel_switch(self, fn):
-        from decomprepair import targeted_switch_labels
+        from . import generation_calls
         source = fn['best_source']
         cases = self.linked_case_diff(fn, source)
-        return bool(cases and targeted_switch_labels.variants(source,fn['name'],cases))
+        return bool(cases and generation_calls.library(
+            [('decomprepair.targeted_switch_labels.variants', (source, fn['name'], list(cases)))])[0])
 
     def _repair_preflight(self, agent, proj, fn, best, fork):
         """A new saved source merits new flag probes before more source mutations."""
@@ -717,9 +715,10 @@ class Search(Permuter):
             return choices,set()
         self.log(allocation_evidence.text(rows,proj['arch']))
         evidence = {}
-        from decomprepair import prepared_call_repairs
+        from . import generation_calls
         pending_call = bool(diagnosis['return_copy_rotation'] and any(
-            candidate not in self.local_seen for _,candidate in prepared_call_repairs.variants(source,fn['name'],header,proj['arch'])))
+            candidate not in self.local_seen for _, candidate in generation_calls.pairs(generation_calls.library(
+                [('decomprepair.prepared_call_repairs.variants', (source, fn['name'], header, proj['arch']))])[0])))
         if not fork and proj['slug'] not in self.net.links and getattr(self.net,'is_rom',lambda _:False)(proj):
             evidence = allocation_search.saved(self.net,proj,fn,source)
             if (not floating and (diagnosis['register_only'] or diagnosis['scheduling'] or diagnosis['allocation_schedule'] or diagnosis['return_copy_rotation']) and evidence is None and self.allocation_captures < 2 and self.tested+2 < self.limit
@@ -845,16 +844,16 @@ class Search(Permuter):
                 entry_scope=draft_repairs.promoted_entry_repairs.scope(self.net,proj,fn))
             # A fresh winner may no longer need an earlier lifetime wrapper. Generate this
             # small inverse pass before the broad proposal pool, sharing all ordinary budgets.
-            from . import repair_cleanup
-            cleanup = [(family, child) for family, child in repair_cleanup.variants(
-                source, fn['name'], header, proj['arch']) if child not in self.local_seen]
+            from . import generation_calls
+            cleanup = [(family, child) for family, child in generation_calls.generate(
+                'repair_cleanup.variants', (source, fn['name'], header, proj['arch']), {})
+                if child not in self.local_seen]
             branch_frames=[]
             incoming=None
-            from . import frame_plateau
-            frame_choices = [(family,child) for family,child in frame_plateau.proposals(source,fn['name'],header,rows,proj['arch']) if child not in self.local_seen]
-            from decomprepair import combined_store_repairs
+            frame_choices = [(family,child) for family,child in generation_calls.generate(
+                'frame_plateau.proposals', (source,fn['name'],header,rows,proj['arch']), {}) if child not in self.local_seen]
             store_choices = [(family, child) for family, child in
-                             combined_store_repairs.variants(source, fn['name'])
+                             generation_calls.generate('combined_store_repairs.variants', (source, fn['name']), {})
                              if child not in self.local_seen]
             from . import callee_frame_evidence
             buffer_choices = []
@@ -862,7 +861,6 @@ class Search(Permuter):
                 buffer_choices = [(family, child) for family, child in draft_repairs.capture_followup_repairs.variants(
                     source, fn['name'], header, options['callees'])
                     if family == 'callee_buffer_extent' and child not in self.local_seen]
-            from . import diff_gated_repairs
             observed_choices = []
             if not fork and proj['arch'] == 'mips' and self.measured_winner(fn, source):
                 settings = compiler_for(self.net.cfg(proj), fn['vram'], fn)
@@ -878,19 +876,21 @@ class Search(Permuter):
                         # A heuristic can skip missing optional data in this overlay.
                         return None
 
-                observed_choices = [(family, child) for family, child in diff_gated_repairs.proposals(
-                    source, fn['name'], header, proj['arch'], settings.get('toolchain',''),
-                    self.winner_diff[0], fn['asm'], self.winner_jump_tables,
-                    flags=settings.get('flags',()), big_endian=bool(proj['big_endian']),
+                observed_choices = [(family, child) for family, child in generation_calls.generate(
+                    'diff_gated_repairs.proposals',
+                    (source, fn['name'], header, proj['arch'], settings.get('toolchain',''),
+                     self.winner_diff[0], fn['asm'], self.winner_jump_tables),
+                    dict(flags=list(settings.get('flags',())), big_endian=bool(proj['big_endian'])),
                     resolve=resolve_symbol, symbols=symbol_table,
-                    read_data=read_data if hasattr(self.net,'reader') and resolve_symbol else None) if child not in self.local_seen]
+                    read_data=read_data if hasattr(self.net,'reader') and resolve_symbol else None)
+                    if child not in self.local_seen]
             observed_order = {child:index for index,(_,child) in enumerate(observed_choices)}
             focused_choices = observed_choices + buffer_choices + store_choices + frame_choices
             focused_pass = bool(focused_choices)
-            from decomprepair import bit_predicate_repairs
             shape=allocation_evidence.diagnose(rows,proj['arch'])
-            bit_choices = [(family,child) for family,child in bit_predicate_repairs.variants(
-                source,fn['name'],header,proj['arch'],**options['entry_scope'])
+            bit_choices = [(family,child) for family,child in generation_calls.generate(
+                'decomprepair.bit_predicate_repairs.variants', (source,fn['name'],header,proj['arch']),
+                dict(options['entry_scope']))
                 if child not in self.local_seen] if (shape['register_only'] or shape['scheduling'] or shape['allocation_schedule']) else []
             bit_pass = bool(bit_choices) and not focused_pass
             cleanup_pass = bool(cleanup) and not focused_pass and not bit_pass
@@ -922,10 +922,12 @@ class Search(Permuter):
                 else:
                     choices = draft_repairs.variants(*args,labels=labels,**options)
                 if not fork and proj['arch'] == 'mips' and compiler_for(self.net.cfg(proj), fn['vram'], fn).get('toolchain') == 'gcc-2.7.2-kmc':
-                    from decomprepair import kmc_operand_repairs, kmc_type_repairs
+                    from . import generation_calls
                     instructions = repair_ranking.instruction_rows(rows)
-                    focused = kmc_operand_repairs.variants(source, fn['name'], header, instructions)
-                    focused += kmc_type_repairs.variants(source, fn['name'], header, instructions)
+                    focused = [pair for result in generation_calls.library([
+                        ('decomprepair.kmc_operand_repairs.variants', (source, fn['name'], header, instructions)),
+                        ('decomprepair.kmc_type_repairs.variants', (source, fn['name'], header, instructions))])
+                        for pair in generation_calls.pairs(result)]
                     for family, candidate in focused:
                         labels[candidate] = family
                         choices.insert(0, candidate)
