@@ -103,6 +103,7 @@ def verify(feedback, example):
             kmc_operand_repairs,
             kmc_type_repairs,
             likely_branch_cursor,
+            loop_storage_shapes,
             measured_address_repairs,
             measured_callback_loop,
             measured_callback_repairs,
@@ -113,6 +114,7 @@ def verify(feedback, example):
             measured_mmio_polling,
             measured_pointer_scale,
             measured_temporary_repairs,
+            passthrough_argument_repairs,
             relocated_byte_table,
             uncached_read_repairs,
         )
@@ -141,6 +143,10 @@ def verify(feedback, example):
             focused.append(('relocated_byte_table', candidate))
         if candidate := aligned_stack_read.rewrite(source, fn['name'], fn['asm'] or ''):
             focused.append(('aligned_stack_read', candidate))
+        if candidate := passthrough_argument_repairs.missing_entry_argument(source, fn['name'], fn['asm'] or '', header):
+            focused.append(('entry_wrapper_argument', candidate))
+        if candidate := loop_storage_shapes.measured_copy_setup(source, fn['name'], fn['asm'] or '', header):
+            focused.append(('measured_copy_loop_setup', candidate))
         focused += measured_callback_repairs.variants(source, fn['name'], rows)
         focused += measured_address_repairs.variants(source, fn['name'], header, rows, symbols)
         focused += measured_pointer_scale.variants(source, fn['name'], header, rows)

@@ -7,6 +7,7 @@ from decomprepair import (
     kmc_cast_repairs,
     likely_branch_cursor,
     loop_sentinel_repairs,
+    loop_storage_shapes,
     measured_address_repairs,
     measured_callback_loop,
     measured_callback_repairs,
@@ -17,6 +18,7 @@ from decomprepair import (
     measured_mmio_polling,
     measured_pointer_scale,
     measured_temporary_repairs,
+    passthrough_argument_repairs,
     relocated_byte_table,
     targeted_switch_labels,
     uncached_read_repairs,
@@ -190,6 +192,10 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
             result.append(('relocated_byte_table', candidate_source))
         if candidate_source := aligned_stack_read.rewrite(source, name, asm or ''):
             result.append(('aligned_stack_read', candidate_source))
+        if candidate_source := passthrough_argument_repairs.missing_entry_argument(source, name, asm or '', header):
+            result.append(('entry_wrapper_argument', candidate_source))
+        if candidate_source := loop_storage_shapes.measured_copy_setup(source, name, asm or '', header):
+            result.append(('measured_copy_loop_setup', candidate_source))
         result += measured_callback_repairs.variants(source,name,rows)
         result += measured_address_repairs.variants(source,name,header,rows,symbols)
         result += measured_pointer_scale.variants(source,name,header,rows)

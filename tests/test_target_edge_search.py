@@ -366,3 +366,17 @@ def test_aligned_stack_read_is_proposed_only_for_kmc(monkeypatch):
     assert ('aligned_stack_read', 'aligned stack candidate') in route('void f(void) {}', rows, 'asm')
     assert 'aligned_stack_read' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
     assert calls == [('void f(void) {}', 'f', 'asm')]
+
+
+def test_measured_wrapper_and_copy_loop_rules_reach_kmc_proposals(monkeypatch):
+    from decomprepair import loop_storage_shapes, passthrough_argument_repairs
+
+    monkeypatch.setattr(passthrough_argument_repairs, 'missing_entry_argument', lambda *args: 'wrapper')
+    monkeypatch.setattr(loop_storage_shapes, 'measured_copy_setup', lambda *args: 'copy loop')
+    rows = [('r', 'lw $a1, ($v0)', 'lw $a0, ($v0)')]
+    kmc = route('void f(void) {}', rows, 'asm')
+    assert ('entry_wrapper_argument', 'wrapper') in kmc
+    assert ('measured_copy_loop_setup', 'copy loop') in kmc
+    ido = dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
+    assert 'entry_wrapper_argument' not in ido
+    assert 'measured_copy_loop_setup' not in ido
