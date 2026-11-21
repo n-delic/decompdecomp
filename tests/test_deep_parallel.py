@@ -610,3 +610,24 @@ def test_masked_byte_stride_runs_in_the_bounded_local_lane(monkeypatch):
 
     assert search.operand_order_pass(AGENT, proj, fn, 1175, None) == 1120
     assert tried == [child]
+
+
+def test_component_before_resets_uses_relocated_target_names(monkeypatch):
+    from decomprepair import load_store_order_repairs
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    proj = net.project_row('game')
+    net.rename_tokens = lambda project, asm: asm.replace('D_80001000', 'reset')
+    fn = {**net.function(), 'asm': 'sw $zero, %lo(D_80001000)($at)'}
+    child = fn['best_source'] + '\n/* moved component load */'
+    def propose(source, name, asm, header):
+        assert '%lo(reset)' in asm
+        return [('component_before_global_resets', child)]
+    monkeypatch.setattr(load_store_order_repairs, 'component_before_resets', propose)
+    search = deep_permuter.Search(net, 1, 6, Log())
+    tried = []
+    monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 3389)
+
+    assert search.operand_order_pass(AGENT, proj, fn, 3509, None) == 3389
+    assert tried == [child]
