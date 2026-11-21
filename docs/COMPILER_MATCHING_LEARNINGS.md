@@ -10075,3 +10075,13 @@ guard and passing it as the second argument matched all 56, 60, and 64 bytes fro
 The last case subtracts one more after masking to 16 bits. The rule checks the target branch destination, that the
 load and store address the same halfword, and that the original first argument reaches the call. The independently
 archived sources matched as controls.
+
+The rules behind that table, from GCC's own global.c (2.95.3 reads the same here; 2.7.2's source could not be fetched):
+allocation units are ranked by `floor_log2(n_refs) * n_refs / live_length * size`, ties to the lower number; `n_refs`
+is weighted by loop depth and `live_length` is the longest of the pseudos merged into the unit. `find_reg` makes two
+passes: the first only reuses registers that are already used (a saved register nobody took yet is not offered), the
+second may take a new one; both scan the registers in order and skip any a lower-ranked overlapping unit prefers
+(preferences come from copies and from moves to or from hard registers, and the dump prints them as `N preferences:`).
+For saved registers the preferences were all caller-saved ones in the function studied, so only the ranking and the
+conflicts decided its saved-register swaps. A swap that no single priority change explains usually means two pseudos
+were merged by a copy: look at the copies the compiler made (`-dl` shows them) rather than at one variable's uses.

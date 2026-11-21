@@ -7,7 +7,11 @@ decide them by one rule (global.c): the pseudo registers that live across calls 
     priority = floor_log2(uses) * uses / live_length
 
 where `uses` counts every reference weighted by loop depth and `live_length` the instructions the pseudo is live
-over. Each takes the lowest saved register no already placed pseudo that overlaps it uses. Nothing in the C source
+over. Each takes the lowest saved register that is free over its whole range, trying first the registers an earlier
+pseudo already took and only then a new one (global.c find_reg: pass 0 never allocates a register for the first
+time, pass 1 does), and skipping a register a lower-ranked pseudo that overlaps it prefers. Two pseudos joined by a
+copy whose source dies there can share one allocation unit (their uses add up, the live length is the longer one),
+which is why a copied temporary can outrank both of its parts. Nothing in the C source
 names a register, so a search that only compares instructions learns "a register differs" and nothing about why.
 Compiling the candidate once with `-dl -dg` makes the compiler print the numbers: a table of each pseudo's uses,
 length, priority and final register, in the order it allocated them. This module reads that table and, for the
@@ -134,7 +138,7 @@ def advice(table: list[Pseudo], rows, arch: str = "mips") -> list[str]:
         notes.append(
             f"Register swap {low} <-> {high} ({count} instruction{'s' if count != 1 else ''}): the candidate has "
             f"{describe(a, arch)}, and, live at the same time, {describe(b, arch)}. GCC 2.x allocates saved registers "
-            f"by floor_log2(uses)*uses/length and gives each the lowest free one, so the {first.role} (priority "
+            f"by floor_log2(uses)*uses/length and gives each the lowest free one it can reuse, so the {first.role} (priority "
             f"{first.priority:.2f}) was placed before the {second.role} (priority {second.priority:.2f}). To reverse "
             "them, lower the first one's priority (fewer or cheaper references inside its range, or a longer live "
             "range, for example the same variable also live across other code) or raise the second's (a reference "
