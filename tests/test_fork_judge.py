@@ -461,3 +461,12 @@ def test_a_run_of_tries_builds_each_once_and_the_file_once_at_its_end(fork, monk
     proj, fp, _ = net.forks.get(slug)
     assert fp.diff(fp.unit("lit"), None).unit_scores.get("offset") == 100  # the object is the file's again
     assert net.compile_and_diff(agent, "scale", SCALE, slug).startswith("✅ MATCH")
+
+
+def test_queued_machine_draft_skips_a_function_that_already_matches(fork, monkeypatch):
+    net, slug, agent = fork
+    assert _status(net, slug, 'offset') == 'matched'
+    monkeypatch.setattr(net.forks, '_build_unit', lambda *args: pytest.fail('Matched candidate reached the compiler'))
+    result = net.forks.attempt(agent, slug, 'offset', OFFSET, keep=False)
+    assert 'already matched' in result['text']
+    assert result['score'] is None and not result['matched']

@@ -3185,7 +3185,8 @@ class ForkEngine:
         identities = expiry_ids(self.net, store)
         with store.tx() as db:
             self.net._expire_claims(db, **identities)
-            if fn["status"] != "open" or db.execute("SELECT 1 FROM claims WHERE function_id=?", (fn["id"],)).fetchone():
+            current = db.execute("SELECT status FROM functions WHERE id=?", (fn["id"],)).fetchone()
+            if current is None or current["status"] != "open" or db.execute("SELECT 1 FROM claims WHERE function_id=?", (fn["id"],)).fetchone():
                 return None
             db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + 300))
         return fn["id"]
@@ -3297,10 +3298,11 @@ class ForkEngine:
         symbol = meta.get("symbol") or fn["name"]
         linked = fp.source_is_linked(unit)  # the game is built from this file: changes must keep it identical
         with self._tree(proj).exclusive() if linked else self._tree(proj).shared(), self._unit_lock(proj, unit.name):
-            if exact_only:
-                current = self._fn(slug, function)
-                if current['status'] != 'open' or source != current['best_source']:
-                    return {"matched": False, "score": None}
+            fn = self._fn(slug, function)
+            if exact_only and (fn['status'] != 'open' or source != fn['best_source']):
+                return {"matched": False, "score": None}
+            if not keep and not diagnostic and fn['status'] == 'matched':
+                return {"text": f"{fn['name']} is already matched.", "matched": False, "score": None}
             code, after, path, before = self._place(proj, fp, unit, fn, source, names, comment, prelude)
             from .local_claims import expiry_ids
             store = self.net.project_store(slug)
@@ -3330,6 +3332,8 @@ class ForkEngine:
                 protected = {n for n, pct in (self._last_scores(proj, unit) or {}).items()
                              if n != symbol and n not in held and pct is not None and pct >= 100}
                 was_matched = fn["status"] == "matched"
+            if was_matched and not keep and not diagnostic:
+                return {"text": f"{fn['name']} is already matched.", "matched": False, "score": None}
             # the same file as an earlier compile of this function made, nothing it depends on changed since: that
             # compile's result, not another build
             agents_try = keep and quiet is None and not was_matched and not structor

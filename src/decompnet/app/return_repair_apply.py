@@ -75,7 +75,12 @@ def apply(net, agent, proj, fn, source, log):
                     # this outer transaction commits. The engine wrapper syncs files too early here.
                     Network._record(net,row,agent,0,item['source'],item['context']['version'],matched=True,
                                     via='autopilot return repair',effective_settings={'compiler':evidence['compiler']},
-                                    exact_inputs=evidence)
+                                    exact_inputs=evidence, verified_replacement=True,
+                                    retain_match_credit=row['status']=='matched')
+                    if row['status']=='matched':
+                        db.execute('UPDATE functions SET matched_source=?,best_source=? WHERE id=?',
+                                   (item['source'],item['source'],row['id']))
+                        store.after_commit(lambda fid=row['id']:net.on_match(fresh,fid,agent))
                 net._event(db,proj['id'],agent.id,'analysis',fn['name']+': automatic return repair; affected functions and full image verified')
                 if net.cfg(proj).get('auto_commit_matches'):
                     from . import match_commits
