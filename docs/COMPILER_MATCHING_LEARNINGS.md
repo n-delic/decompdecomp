@@ -12666,3 +12666,15 @@ both reached 130 from the original score of 410.
 With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, the released v0.5.302
 control stayed at 410 after 100 attempts. The measured rule saved 130
 through the Deep Permuter. Five byte differences remain.
+
+### KMC GCC 2.7.2: recover relocated fields and a typed table base
+
+Four isolated scratch drafts matched their linked targets with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`. Replacing a guessed
+structure field with a directly relocated pointer restored two global loads
+(score 225 to 0). A direct byte global restored a branch's load and store
+(score 235 to 0). A draft that overwrote a word before reading its old value
+needed a two-global swap (score 225 to 0). Finally, giving a table base a
+pointer local recovered the target's address calculation (score 235 to 0).
+Each relocation must resolve to the same address as the field it replaces.
+These are four observed matches with synthetic source and evidence guards.

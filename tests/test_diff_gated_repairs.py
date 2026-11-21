@@ -1132,3 +1132,18 @@ def test_stack_pointer_scope_routes_only_to_kmc():
     assert 'frame.spillPointer = state;' in candidate
     assert 'do {' in candidate
     assert all(label != family for label, _ in proposals(source, 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_relocated_field_repairs_route_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    resolve = {'global': 32}.get
+
+    def repair(text, name, header, diff, resolver):
+        assert resolver('global') == 32
+        return [('relocated_fields_fixture', text)]
+
+    monkeypatch.setattr(diff_gated_repairs.measured_kmc_relocated_fields, 'variants', repair)
+    assert 'relocated_fields_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, '', resolve=resolve))
+    assert 'relocated_fields_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, '', resolve=resolve))
