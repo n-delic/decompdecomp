@@ -47,6 +47,8 @@ _CACHE_VERSION = 9  # of twins.json: 2 added why code is hand-written assembly, 
 MISS_TTL = 24 * 3600
 # Across games, functions this small are the same everywhere (a return, a stub): they match on their own anyway
 ACROSS_MIN_BYTES = 32
+SHORT_TRANSFER_BYTES = 1  # an explicit search can verify short C without transferring its name
+
 FORK_PRINTS_TTL = 10 * 60  # a fork's target objects are looked at again after this long (they can be rebuilt)
 WHOLE_WORD = (0, 4, 0xFFFFFFFF)  # a relocation of a type MASKS_BY_ARCH doesn't know: its whole word is masked
 LABELS_BACK, LABEL_REACH = 64, 0x10000  # rom_renames looks this many labels down, at most this many bytes below
@@ -55,6 +57,11 @@ WHY_CHARS = 300  # how much of a compiler's message a miss keeps
 UNDECLARED_RETRIES = 4  # names a fork twin's file declares later, declared and built again, at most
 _GENERATED = ("__dt__", "__ct__", "__sinit", "__vt__")  # C++ code the compiler writes: nothing to copy
 
+
+
+
+def transfer_min_bytes(job):
+    return SHORT_TRANSFER_BYTES if getattr(job, 'cross_exhaustive', False) else ACROSS_MIN_BYTES
 
 
 def prefer_own_compilers(sources: list, wanted: dict, own) -> None:
@@ -904,7 +911,7 @@ class Twins:
         wanted: dict[str, list[int]] = defaultdict(list)
         for r in self.net.project_store(slug).all("SELECT id FROM functions WHERE project_id=? AND status='open'", proj["id"]):
             p = mine.get(r["id"])
-            if p is not None and not p.asm and p.size >= ACROSS_MIN_BYTES:
+            if p is not None and not p.asm and p.size >= transfer_min_bytes(job):
                 wanted[p.key].append(r["id"])
         if not wanted:
             return archived
@@ -1410,7 +1417,11 @@ class Twins:
                 target = (mine[b_id] if b_id in found else donor_relocations.donor_refs(pa, b, label))
                 if target is None:
                     continue
-                names = renames(pa, target, pa.name or a["name"].split("@")[0], b["name"])
+                donor_name = pa.name or a["name"].split("@")[0]
+                names = renames(pa, target, donor_name, b["name"])
+                overlay_names = donor_relocations.overlay_names(self.net, proj, b, pa, donor_name) if build else None
+                if names is None:
+                    names = overlay_names
                 if names is None or self.net.forks.is_asm(other, a):
                     continue
                 original = self.net.forks._current_source(fp, a)
@@ -1433,6 +1444,9 @@ class Twins:
                 if settings:
                     try:
                         outcome, why = donor_build.verify(self.net, proj, b, other, a, names, settings, agent, job, build.headers)
+                        if outcome == 'miss' and overlay_names is not None and overlay_names != names and not job.stop.is_set():
+                            outcome, why = donor_build.verify(
+                                self.net, proj, b, other, a, overlay_names, settings, agent, job, build.headers)
                     except (NetworkError, OSError, ValueError) as error:
                         outcome, why = 'skip', str(error)
                 if outcome != 'match' and not known_miss and not (job and job.stop.is_set()):

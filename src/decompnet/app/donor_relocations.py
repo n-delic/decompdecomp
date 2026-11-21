@@ -5,7 +5,7 @@ from collections import defaultdict
 
 from ..elfobj import Reloc, mask_relocs
 from .cross_game_progress import report
-from .twins import ACROSS_MIN_BYTES, Print, _key
+from .twins import Print, _key, renames, transfer_min_bytes
 
 
 def _layout(row):
@@ -16,7 +16,7 @@ def candidates(net, proj, donors, job):
     """Mask the ROM bytes with the donor's own relocation positions before comparing."""
     by_size = defaultdict(dict)
     for donor in donors:
-        if donor.size >= ACROSS_MIN_BYTES and donor.layout is not None and not donor.asm:
+        if donor.size >= transfer_min_bytes(job) and donor.layout is not None and not donor.asm:
             layout = tuple(map(tuple, donor.layout))
             by_size[donor.size].setdefault(layout, {})[donor.key] = donor.prefix
     if not by_size:
@@ -79,3 +79,16 @@ def donor_refs(donor, row, label):
     refs = [label(actual[tuple(pair)]) if tuple(pair) in actual else ref
             for pair, ref in zip(donor.layout, donor.refs, strict=True)]
     return Print(donor.key, refs, donor.size)
+
+
+def overlay_names(net, proj, row, donor, donor_name):
+    """Map object references to verified loader symbols before compiling private C."""
+    if not donor.layout or net.console(proj).export_overlay(net._rom_target(row)) is None:
+        return None
+    expected = net._target_obj(row, proj)
+    refs = {(r.offset, r.type): r.symbol for r in expected.relocs}
+    sites = [tuple(pair) for pair in donor.layout]
+    if len(refs) != len(expected.relocs) or len(refs) != len(sites) or set(refs) != set(sites):
+        return None
+    target = Print(donor.key, [refs[site] for site in sites], donor.size)
+    return renames(donor, target, donor_name, row['name'])

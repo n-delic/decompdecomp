@@ -29,7 +29,9 @@ wider donors per function, with up to three slots for different compiler builds,
 close misses. The wider check covers larger instruction
 differences, aligns shifted references, and reserves room for verified C built with another compiler. It tries the
 destination build first. An exact result with a different installed compiler appears under **Compiler leads** and in the
-function's notes for compiler review. A manual search on a MIPS ROM
+function's notes for compiler review. An explicit search also tries verified short functions under the destination's existing names. For loader-managed
+overlays, matching object relocation sites can supply the required loader symbols for a private compiler retry.
+A manual search on a MIPS ROM
 also checks whether verified code from an imported project sits inside a larger function already mapped by
 the ROM importer. When it finds a unique span, checks the cuts, and builds the donor C to the exact bytes,
 it splits the function and submits the source to the ordinary judge. A manual search also uses the donor object’s relocation

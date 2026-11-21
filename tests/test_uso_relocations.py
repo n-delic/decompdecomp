@@ -34,6 +34,24 @@ def test_rebuild_uso_checks_text_and_symbol_binding(tmp_path, compressed):
     result = uso_match.link(wrong.obj, 'test_entry', code, info)
     assert result.instructions_exact and not result.exact
     assert any(binding in problem for problem in result.problems)
+    from types import SimpleNamespace
+
+    from decompnet.app.donor_relocations import overlay_names
+    from decompnet.app.source_symbol_recovery import rename
+    from decompnet.app.twins import Print
+
+    target = uso_match.Target('test_entry', 4, code, [], uso=info)
+    net = SimpleNamespace(console=lambda _: SimpleNamespace(export_overlay=lambda t: t.uso),
+                          _rom_target=lambda _: target,
+                          _target_obj=lambda *_: uso_match.symbolic_target(target))
+    wrong_symbol = uso_match.alias(region.offset, 2)
+    donor = Print('fingerprint', [wrong_symbol], len(code), layout=[(8, 4)])
+    mapping = overlay_names(net, {}, {'name': 'test_entry'}, donor, 'original_entry')
+    assert mapping == {'original_entry': 'test_entry', wrong_symbol: binding}
+    donor_source = source.replace(binding, wrong_symbol).replace('test_entry', 'original_entry')
+    rebound = compile_source(cfg, '', rename(donor_source, mapping))
+    assert rebound.ok, rebound.log
+    assert uso_match.link(rebound.obj, 'test_entry', code, info).exact
     with pytest.raises(ValueError, match='no longer matches'):
         uso.rebuild(cartridge, [('test_entry', info, wrong.obj)])
     with pytest.raises(ValueError, match='placement'):

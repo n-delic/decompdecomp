@@ -10,7 +10,7 @@ from collections import defaultdict
 
 from .. import consoles
 from ..network import NetworkError
-from .twins import ACROSS_MIN_BYTES
+from .twins import ACROSS_MIN_BYTES, transfer_min_bytes
 
 TTL = 60
 
@@ -62,7 +62,7 @@ def discover(twins, proj, *, job=None, force=False, donors=None, matched_only=Fa
     rows = {r['id']: r for r in net.project_store(proj['id']).all('SELECT id,name,status FROM functions WHERE project_id=?', proj['id'])}
     wanted = defaultdict(list)
     for fid, target in mine.items():
-        if fid in rows and target.size >= ACROSS_MIN_BYTES and not target.asm:
+        if fid in rows and target.size >= (transfer_min_bytes(job) if matched_only else ACROSS_MIN_BYTES) and not target.asm:
             wanted[target.key].append(fid)
     found = defaultdict(list)
     others = list(compatible(net, proj)) if donors is None else donors

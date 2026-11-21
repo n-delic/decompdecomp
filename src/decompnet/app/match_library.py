@@ -587,7 +587,7 @@ class Library:
         from ..rom.symbols import Symbol, SymbolTable
         from .free_candidates import exhausted
         from .shared_reuse import machine
-        from .twins import ACROSS_MIN_BYTES, Print, _declared, apply, renames, rom_renames
+        from .twins import Print, _declared, apply, renames, rom_renames, transfer_min_bytes
         net=self.net
         fork=bool(net.fork_slug(proj['slug']))
         if proj['slug'] in net.links:return 0
@@ -602,7 +602,8 @@ class Library:
         report(job,'Reading target fingerprints',game=proj['name'])
         prints=twins.prints(proj);matched=0
         rows=net.project_store(proj['id']).all("SELECT id,name FROM functions WHERE project_id=? AND status='open'",proj['id'])
-        targets=[r for r in rows if (p:=prints.get(r['id'])) and not p.asm and p.size>=ACROSS_MIN_BYTES]
+        minimum = transfer_min_bytes(job)
+        targets=[r for r in rows if (p:=prints.get(r['id'])) and not p.asm and p.size>=minimum]
         report(job,'Looking up indexed matches',done=0,total=len(targets))
         available=self.available(processor,big,{prints[r['id']].key for r in targets},exclude)
         targets=[r for r in targets if (prints[r['id']].key,prints[r['id']].size) in available]
@@ -614,7 +615,7 @@ class Library:
             if b is None:continue
             if job is not None and (job.stop.is_set() or (bounded and exhausted(job))):break
             pb=prints.get(b['id'])
-            if not pb or pb.asm or pb.size<ACROSS_MIN_BYTES or net.project_store(proj['id']).one('SELECT 1 FROM claims WHERE function_id=?',b['id']):continue
+            if not pb or pb.asm or pb.size<minimum or net.project_store(proj['id']).one('SELECT 1 FROM claims WHERE function_id=?',b['id']):continue
             candidates=self.candidates(processor,big,pb.key,pb.size,exclude)
             if not fork:
                 own=compiler_for(net.cfg(proj),b['vram'],b)
