@@ -8,6 +8,7 @@ from decomprepair import (
     byte_cursor_postincrements,
     direct_mapped_address,
     field_snapshot_copies,
+    float_intermediate_repairs,
     float_matrix_identity,
     global_pointer_local_repairs,
     guard_inversion_repairs,
@@ -227,6 +228,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += search_exit_loop_repairs.sentinel_byte_guard_variants(source, name, rows)
         result += loop_counter_roles_repairs.guarded_reuse_variants(source, name, rows)
         result += measured_float_grid_stores.variants(source, name, rows)
+        result += float_intermediate_repairs.repeated_products(source, name, rows)
         result += measured_expression_repairs.variants(source,name,header,rows)
         result += stack_byte_init_repairs.variants(source, name, header, rows)
         result += measured_temporary_repairs.variants(source,name,rows)
