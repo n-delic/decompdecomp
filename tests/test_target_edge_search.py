@@ -209,6 +209,16 @@ def test_measured_stack_reservation_ignores_volatile_in_neighboring_source():
 
 
 
+
+def test_measured_frame_word_removal_reaches_diff_dispatch():
+    source = 'void f(void) { volatile u64 scratch; work(); }'
+    target = 'addiu $sp, $sp, -48|sw $ra, 40($sp)|move $a0, $s0|jal work|nop|lw $ra, 40($sp)|jr $ra|addiu $sp, $sp, 48'
+    current = 'addiu $sp, $sp, -56|sw $ra, 48($sp)|move $a1, $s0|jal work|nop|lw $ra, 48($sp)|jr $ra|addiu $sp, $sp, 56'
+    rows = [(' ' if a == b else 'r' if a.startswith('move') else 's', a, b)
+            for a, b in zip(target.split('|'), current.split('|'))]
+    assert dict(route(source, rows, ''))['measured_unused_frame_word'] == source.replace('volatile u64 scratch;', '')
+
+
 def test_measured_frame_growth_extends_an_existing_array_despite_register_differences():
     source = 'void f(void) { char padding[8]; work(); }'
     target = 'addiu $sp, $sp, -80|sw $ra, 76($sp)|move $a0, $s0|jal work|nop|lw $ra, 76($sp)|jr $ra|addiu $sp, $sp, 80'
