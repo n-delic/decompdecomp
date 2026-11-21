@@ -281,3 +281,25 @@ void f(void) {
     assert len(tried) == 1
     assert 'consume(items[i]);' in tried[0]
     assert '__repair_frame' not in tried[0]
+
+
+def test_packed_word_store_scope_runs_with_mixed_operand_evidence(monkeypatch):
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    proj = net.project_row('game')
+    fn = {**net.function(),
+          'name': 'f',
+          'asm': 'sll $v1, $a1, 16\nsll $v0, $a1, 8\n',
+          'best_source': ('void f(Entry *entry, s16 value) {\n'
+                          '    u32 shade = (s32)value;\n'
+                          '    entry->color.word = (((0xff000000 | (shade << 8)) | (shade << 16)) | shade);\n'
+                          '}')}
+    search = deep_permuter.Search(net, 1, 6, Log())
+    monkeypatch.setattr(deep_permuter.permuter_focus, 'classify', lambda *args: 'operand')
+    tried = []
+    monkeypatch.setattr(search, '_score', lambda agent, project, function, child, best, fork: tried.append(child) or 30)
+
+    assert search.operand_order_pass(AGENT, proj, fn, 95, None) == 30
+    assert len(tried) == 1
+    assert 'do { entry->color.word = (((0xff000000 | (shade << 16)) | (shade << 8)) | shade); }' in tried[0]
