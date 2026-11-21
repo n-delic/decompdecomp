@@ -28,9 +28,63 @@ def _guard(image,at,order,scheduled):
     return at-28,bound,branch,delay,scale,hi,add,load,jump,slot
 
 
-def jump_table(image,start,end,vram,at,order,ranges=(),mappings=(),*,reader=None):
+def _saved_base(image,start,guard,order,register):
+    """Resolve a callee-saved base initialized before the first transfer."""
+    import rabbitizer
+
+    value = None
+    transferred = False
+    paired_low = -1
+    for at in range(start,guard,4):
+        if at==paired_low:
+            continue
+        word = int.from_bytes(image[at:at+4],order)
+        ins = rabbitizer.Instruction(word)
+        if not ins.isValid():
+            return None
+        if ins.hasDelaySlot():
+            transferred = True
+        if not ((ins.modifiesRt() and (word>>16)&31==register)
+                or (ins.modifiesRd() and (word>>11)&31==register)):
+            continue
+        if transferred:
+            return None
+        if word>>16 == 0x3c00|register and at+8<=guard:
+            low = int.from_bytes(image[at+4:at+8],order)
+            if low>>16 != 0x2400|register<<5|register:
+                return None
+            value = ((word&0xffff)<<16)+signed(low)
+            paired_low = at+4
+        else:
+            return None
+    return value
+
+
+def _saved_register_guard(image,start,at,order):
+    if at-start<20:
+        return None
+    guard = at-20
+    bound,branch,scale,add,load,jump,slot = (
+        int.from_bytes(image[p:p+4],order) for p in range(guard,at+8,4))
+    index,condition,count = (bound>>21)&31,(bound>>16)&31,bound&0xffff
+    scaled = (scale>>11)&31
+    left,right = (add>>21)&31,(add>>16)&31
+    base = right if left==scaled else left
+    if (bound>>26!=11 or not 0<count<=MAX_ENTRIES or not index or not condition or condition==index
+            or branch>>16!=0x1000|condition<<5
+            or scale!=index<<16|scaled<<11|2<<6
+            or not scaled or base not in range(16,24) or scaled==base or scaled not in (left,right)
+            or condition==base or add&0xfc00ffff!=scaled<<11|33
+            or load!=0x8c000000|scaled<<21|scaled<<16 or jump!=scaled<<21|8 or slot):
+        return None
+    address = _saved_base(image,start,guard,order,base)
+    if address is not None:
+        return guard,branch,count,address&0xffffffff
+
+
+def jump_table(image,start,end,vram,at,order,ranges=(),mappings=(),*,reader=None, allow_saved_base=False):
     """Recognize one exact guard/scale/LUI/add/load/JR idiom (its scale in the guard's delay slot or after it),
-    with no interior entry."""
+    with no interior entry. Import data classification may also follow an early saved-register base."""
     if at+8>end:return None
     for scheduled in (False,True):
         if at-start<(24 if scheduled else 28):continue
@@ -46,12 +100,14 @@ def jump_table(image,start,end,vram,at,order,ranges=(),mappings=(),*,reader=None
         if hi>>26!=15 or not base or not scaled or base==scaled:continue
         if add>>26 or add&63!=33 or (add>>11)&31!=base or {(add>>21)&31,(add>>16)&31}!={base,scaled}:continue
         if load>>26!=35 or (load>>21)&31!=base or (load>>16)&31!=dest or jump&0xfc1fffff!=8 or not dest or slot:continue
+        address=(((hi&0xffff)<<16)+signed(load))&0xffffffff
         break
     else:
-        return None
+        saved = _saved_register_guard(image,start,at,order) if allow_saved_base else None
+        if saved is None:return None
+        guard,branch,count,address = saved
     default=guard+8+signed(branch)*4
     if not start<=default<end or guard<default<=at+4:return None
-    address=(((hi&0xffff)<<16)+signed(load))&0xffffffff
     result={'guard_address':vram+guard-start,'address':vram+at-start,'table_address':address,'entry_count':count,'state':'unresolved'}
     for p in range(start,end-3,4):
         w=int.from_bytes(image[p:p+4],order);op=w>>26

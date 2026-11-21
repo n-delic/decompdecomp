@@ -347,3 +347,27 @@ def test_single_zero_after_a_closed_back_edge_requires_a_called_next_entry(calle
     image,functions,segments = fixture(words,cuts=(0,12,16,28,44))
     result = repair(functions,[],image,consoles.get('n64'),segments)
     assert any(fn.rom <= 12 < fn.rom+fn.size for fn in result) != called
+
+
+@pytest.mark.parametrize('case',['valid','base_clobber','explicit_entry','external_case'])
+def test_segment_prefix_with_saved_register_switch_is_recovered_as_data(case):
+    # The dispatch uses a table base initialized before a call in a preserved register.
+    start = BASE+20
+    first, default = start+44,start+52
+    prefix = [0x54455354,0,0,first,default if case!='external_case' else BASE+0x300]
+    call = 0x0c000000 | (((BASE+0x200)>>2)&0x3ffffff)
+    code = [0x3c158000,0x26b5100c,call,0 if case!='base_clobber' else 0x24150000,
+            0x2c620002,0x10400007,0x00031080,0x00551021,0x8c420000,0x00400008,0,
+            0x03e00008,0,0x03e00008,0]
+    image,functions,segments = fixture(prefix+code,cuts=(0,20,80))
+    functions[1].lines[0] = replace(functions[1].lines[0],
+                                      operands=f'$s5, %hi({functions[0].name} + 12)')
+    symbols=[f'entry = 0x{BASE:08X}; // type:func'] if case=='explicit_entry' else ()
+    data=[]
+    result=repair(functions,data,image,consoles.get('n64'),segments,symbols=symbols)
+    if case=='valid':
+        assert [(fn.rom,fn.size) for fn in result]==[(20,60)]
+        assert [(row.rom,row.size,row.kind) for row in data]==[(0,12,'data'),(12,8,'jtbl')]
+    else:
+        assert result==functions
+        assert not data
