@@ -1,5 +1,17 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: recover byte-addressed global entries
+
+Three archived drafts matched with the linked judge after correcting
+their source address widths. All used `-G0 -mips3 -mgp32 -mfp32`.
+
+- With `-O2 -g3`, keep the second function parameter as a word and
+  pass the first parameter through to the unprototyped lookup. The
+  masked second argument occupies the call delay slot (205 to 0).
+- With `-O1`, use byte-strided addresses for an indexed pointer read
+  and a byte read (220 to 0), or for an indexed record and a byte
+  store (210 to 0).
+
 ### KMC GCC 2.7.2: recover indexed halfword switch state
 
 Two archived switch drafts with a 100-byte record stride matched after
