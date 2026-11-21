@@ -322,3 +322,27 @@ def test_signed_halfword_word_store_pair_runs_before_isolated_flags(monkeypatch)
     assert [flags for flags, _ in state['calls']] == [['-O2'], ['-O2', '-fno-schedule-insns']]
     assert state['suggested'][0]['source'] == result['best']['source']
     assert not state['applied']
+
+
+def test_relocation_recovery_resumes_and_rejudges_the_source_before_clearing_the_link_blocker():
+    net, proj, fn, state = setup()
+    proj['arch'] = 'mips'
+    fn['best_source'] = 'extern int stale; int f(void){return stale;}'
+    rows = [('i', 'lui $v0, %hi(current)', 'lui $v0, %hi(?stale)'),
+            ('i', 'lw $v0, %lo(current)($v0)', 'lw $v0, %lo(?stale)($v0)')]
+
+    def judge(project, function, toolchain, flags, source):
+        state['calls'].append((flags, source))
+        if 'stale' in source:
+            return False, SimpleNamespace(score=70, rows=rows), '`stale` is not a known symbol.'
+        return False, SimpleNamespace(score=50), ''
+
+    net._judge_with = judge
+    first = preflight.run(net, proj, fn, max_profiles=1)
+    assert first['tested'] == 1 and first['link']['symbols'] == ['stale']
+    result = preflight.run(net, proj, fn, max_profiles=1)
+    assert result['tested'] == 1 and 'link' not in result
+    assert result['relinked']['source'] == 'extern int current; int f(void){return current;}'
+    assert result['relinked']['baseline'] == fn['best_source']
+    assert [flags for flags, _ in state['calls']] == [['-O2'], ['-O2']]
+    assert not state['suggested']

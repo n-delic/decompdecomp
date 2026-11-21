@@ -322,6 +322,7 @@ class Search(Permuter):
         self.report()
         result = run(self.net, proj, fn, self.log, self.check, max_profiles=self.limit-self.tested)
         self.tested += result['tested']
+        self.relinked_baseline = result.get('relinked')
         if result.get('link'):
             raise NetworkError(result['link']['message'])
         if self.net._function(fn['name'], proj['slug'])['status'] == 'matched' and self.best != 0:
@@ -492,6 +493,29 @@ class Search(Permuter):
         # Baseline evidence must come from today's compiler/header, including score-zero open rows.
         self.measuring_baseline = True
         try:
+            recovery = getattr(self, 'relinked_baseline', None)
+            if recovery and not fork and recovery['baseline'] == fn['best_source']:
+                source = recovery['source']
+                digest = recovery['digest']
+                profiles = recovery['candidates']
+                if self.net._comparison_digest(proj, fn, fn['best_source'], profiles) == digest:
+                    state.add(variants=1, repairs=1)
+                    score = self._score(agent, proj, fn, source, float('inf'), fork)
+                    if score is not None and (fn['best_score'] is None or score <= fn['best_score']):
+                        store = self.net.project_store(proj['id'])
+                        with store.tx() as db:
+                            current = self.net._function(fn['name'], proj['slug'])
+                            fresh = self.net.project_row(proj['slug'])
+                            if (current['status'] == 'open' and current['best_source'] == fn['best_source']
+                                    and current['best_score'] == fn['best_score']
+                                    and self.net._comparison_digest(fresh, current, current['best_source'],
+                                                                    profiles) == digest):
+                                db.execute("UPDATE functions SET best_source=?,best_score=?,best_agent_id=? WHERE id=?",
+                                           (source, score, agent.id, fn['id']))
+                        current = self.net._function(fn['name'], proj['slug'])
+                        if current['best_source'] == source or current['status'] == 'matched':
+                            self.log('Recovered stale source names from aligned target relocations.')
+                            return score, 1
             measured = super()._baseline(agent, proj, fn, state, fork)
             if measured[0] is not None or fork:
                 return measured
@@ -1458,6 +1482,8 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
                 if baseline is None:
                     raise NetworkError('The saved C does not compile in the current context; fix its declarations before deep search.')
                 measured_baseline = baseline
+                if getattr(search, 'relinked_baseline', None):
+                    fn = net._function(name, slug)
                 relabel = baseline and not fork and search.can_relabel_switch(fn)
                 if baseline and not fork and not relabel and (lane is None or lane.index == 0):
                     if profile := deep_profiles.tail_dispatch(net, proj, fn):
