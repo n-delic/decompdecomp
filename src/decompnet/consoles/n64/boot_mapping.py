@@ -73,3 +73,28 @@ def recover(config: Path, rom: bytes, found, log=print) -> bool:
     log(f'Separated TLB boot code from {main.rom_end-start} bytes at 0x{vram:08X}; '
         f'{hits} distinct calls agree with the later code mapping.')
     return True
+
+
+def extend_startup_trap(config: Path, rom: bytes, log=print) -> bool:
+    """Keep a break after the boot stub's final call in handwritten startup."""
+    cfg = yaml.safe_load(config.read_text(encoding='utf-8'))
+    by_name = {s.get('name'):s for s in cfg['segments'] if isinstance(s, dict)}
+    entry, main = by_name.get('entry'), by_name.get('main')
+    if not entry or not main or main.get('follows_vram') != 'entry':
+        return False
+    lo, at = entry['start'], main['start']
+    if (not 0x1000 <= lo < at-8 < at+8 < min(0x2000,len(rom))
+            or entry.get('subsegments') != [[lo,'hasm']] or main.get('subsegments') != [[at,'c','main']]
+            or entry['vram']-lo != main['vram']-at):
+        return False
+    call, delay, trap, padding = struct.unpack_from('>4I', rom, at-8)
+    vram = main['vram']
+    entry_words = [word for word, in struct.iter_unpack('>I',rom[lo:at])]
+    callers = set(jal_targets(entry_words,entry['vram']))
+    if (call>>26 != 3 or delay or trap&0xfc00003f != 0xd or padding or vram+8 not in callers
+            or vram in callers or vram+4 in callers):
+        return False
+    main.update(start=at+8,vram=vram+8,subsegments=[[at+8,'c','main']])
+    config.write_text(yaml.safe_dump(cfg,sort_keys=False,default_flow_style=None),encoding='utf-8')
+    log('Kept the trap after the startup call in the boot assembly.')
+    return True

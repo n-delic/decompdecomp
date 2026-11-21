@@ -446,11 +446,12 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
         found = sorted(found + loaded["segments"])
         found = sorted(complete_gaps(rom, taken, found, tuple((s.rom_start, s.rom_end, s.vram) for s in known),
                                      runtime_entries(workdir), log=log))
-    from .boot_mapping import recover
+    from .boot_mapping import extend_startup_trap, recover
     from .rsp_prefix import trim
 
     found = trim(rom, found, taken, log)
     recover(config, rom, found, log)
+    extend_startup_trap(config, rom, log)
     if not found:
         return original
     cfg = yaml.safe_load(config.read_text(encoding="utf-8"))
@@ -518,3 +519,35 @@ def missed_functions(config: Path, rom: bytes, log=print) -> list[tuple[int, int
         cfg = yaml.safe_load(config.read_text(encoding="utf-8"))
         insert_segments(config, cfg, new, len(rom))
     return new
+
+
+def recover_terminal_display_lists(result, image, log=print):
+    """Classify a display-list call and its neighboring asset name as data."""
+    from ...arch.mips_references import references
+
+    candidates = []
+    for fn in result.functions:
+        if fn.size != 8 or fn.lines[0].word != 0xde000000:
+            continue
+        end = fn.rom+8
+        pointer = fn.lines[1].word
+        tail = image[end:end+32]
+        if (0x80000400 <= pointer < 0x80800000 and not pointer%8 and fn.rom >= 12
+                and any(s.rom_end == end and s.rom_start <= fn.rom-12
+                        and s.vram-s.rom_start == fn.vram-fn.rom for s in result.segments)
+                and struct.unpack_from('>3I',image,fn.rom-12) == (JR_RA,0,0)
+                and re.fullmatch(rb'\0{4}[A-Z][A-Z0-9_ ]{5,19}\0{4,}',tail)):
+            candidates.append(fn)
+    if not candidates:
+        return
+    targets = set(result.named.values())
+    for segment in result.segments:
+        targets.update(target for target,_,_ in references(image,segment.rom_start,segment.rom_end,segment.vram))
+    removed = set()
+    for fn in candidates:
+        if any(address in targets or address.to_bytes(4,'big') in image for address in (fn.vram,fn.vram+4)):
+            continue
+        removed.add((fn.rom,fn.vram))
+        result.data.append(split.DataSymbol(fn.name,fn.vram,fn.rom,8,'data'))
+        log('Recovered a display-list command at the end of a code range.')
+    result.functions = [fn for fn in result.functions if (fn.rom,fn.vram) not in removed]

@@ -15,7 +15,7 @@ from ..arch.mips import JR_RA, is_frame
 from ..arch.mips_code_recovery import called_extent, leaf_extent
 
 
-def repair(functions, data, image, console, segments, *, symbols=(), log=print):
+def repair(functions, data, image, console, segments, *, symbols=(), log=print, inline_data=()):
     """Keep all original instructions while joining/splitting strictly validated bodies."""
     if console.arch!='mips':return functions
     from .split import _LOCAL_REF, _SYMBOL_LINE, AsmLine, DataSymbol
@@ -266,6 +266,7 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
     returns_by_end = {(fn.rom+fn.size, fn.vram-fn.rom) for fn in result
                       if fn.size >= 8 and fn.lines[-2].word == JR_RA}
     protected = sorted(entered)
+    inline_data = set(inline_data)
     entries_by_rom = {(fn.rom, fn.vram):fn for fn in result}
 
     def zero_alignment(fn, previous):
@@ -287,8 +288,12 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
             if after-before > HOLE:
                 # A pointer into a zero run can enter its suffix. Only the prefix before
                 # the earliest possible entry is unreachable from that pointer.
-                if (after-before > LONG_ALIGNMENT or following is None or following.vram%8
-                        or following.vram not in direct_calls or not is_frame(following.lines[0].word)):
+                next_is_data = following is None and (after, after+mapping) in inline_data
+                next_is_entry = (following is not None and not following.vram%8 and following.vram in direct_calls
+                                 and (is_frame(following.lines[0].word)
+                                      or assembly_extent(image,following.rom,following.rom+following.size,
+                                                         following.vram,console,order)==following.size))
+                if after-before > LONG_ALIGNMENT or not (next_is_data or next_is_entry):
                     return False
                 candidates = b'|'.join(re.escape(addr.to_bytes(4,order))
                                        for addr in range(before+mapping,after+mapping,4))
@@ -595,11 +600,12 @@ def address_word_references(fn, references, lines):
 def terminal_data_alignment(fn, previous, image, order, segments):
     """A word of assembler filler at the aligned end of code, before float data."""
     end = fn.rom+4
-    # A filler that decodes as BC1 can borrow the first word of the float
+    # A filler that decodes as a branch can borrow the first word of the float
     # table as a delay slot. Its apparent destination must also be in the data.
     word = fn.lines[0].word
-    branch_filler = (fn.size==8 and not end%16 and not (fn.vram+4)%8 and word>>21==0x228 and 1<=word&0xffff<=16
-                     and fn.lines[1].rom==end)
+    branch_filler = (fn.size==8 and not end%16 and not (fn.vram+4)%8
+                     and (word>>21==0x228 or word>>26 in (4,5,6,7,20,21,22,23))
+                     and 1 <= word&0xffff < 0x8000 and fn.lines[1].rom==end)
     text_filler = fn.size==4 and not (fn.vram+4)%16 and image[fn.rom+1:end]==bytes((13,10,13))
     if (not (branch_filler or text_filler) or previous is None or previous.size<8
             or previous.rom+previous.size!=fn.rom or previous.vram+previous.size!=fn.vram

@@ -223,8 +223,11 @@ class Nintendo64(Console):
         return relocated_switch_ranges(image, segments)
 
     def split_game(self, workdir: Path, picked: Picked, *, symbols: list[str] | None = None, log=print):
+        from .code import recover_terminal_display_lists
+
         result = super().split_game(workdir, picked, symbols=symbols, log=log)
         sdk_linked.split_scheduler(result, picked.info.get('sha1', ''))
+        recover_terminal_display_lists(result, (workdir / result.image).read_bytes(), log)
         return result
 
     def read_game(self, file, name: str = "") -> Picked:

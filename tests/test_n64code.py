@@ -186,3 +186,23 @@ def test_discovery_rejects_an_empty_range_at_the_first_plausible_entry(monkeypat
     rom[0x3000:0x3100] = _code(0x80002400, 8)
     monkeypatch.setattr(code, 'place', lambda *_: (0x3100, 0x3100, 0x80002500, 8))
     assert find_segments(rom, [(0x1000,0x1800,0x80000400)]) == []
+
+
+def test_terminal_display_list_word_stays_in_data_and_a_called_entry_stays_code(tmp_path):
+    from types import SimpleNamespace
+
+    from decompnet.consoles.n64.code import recover_terminal_display_lists
+    from decompnet.rom.split import AsmLine, RomFunction, Segment
+
+    vram = 0x80001000
+    tail = bytes(4)+b'SETUP_NAME'+bytes(18)
+    image = struct.pack('>5I', JR_RA,0,0,0xde000000,0x80304000)+tail
+    lines = [AsmLine(12,vram+12,0xde000000,'ld',''),AsmLine(16,vram+16,0x80304000,'lb','')]
+    fn = RomFunction('terminal',vram+12,12,'code',lines,tmp_path/'test.s')
+    result = SimpleNamespace(functions=[fn],data=[],named={'entry':fn.vram},
+                             segments=[Segment('code',0,20,vram)])
+    recover_terminal_display_lists(result,image)
+    assert result.functions == [fn] and not result.data
+    result.named.clear()
+    recover_terminal_display_lists(result,image)
+    assert not result.functions and [(d.rom,d.size) for d in result.data] == [(12,8)]
