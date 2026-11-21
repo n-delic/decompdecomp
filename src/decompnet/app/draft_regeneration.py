@@ -48,7 +48,7 @@ def generate(net, proj, fn, fork):
                                     '\n'.join(net._jtbl_asm(proj,fn)), valid=True, strict=True, timeout=20,
                                     resolve=lambda symbol: net.symbols(proj['id']).resolve(symbol))
     from .engine.briefs import DRAFT_NOTE
-    source = DRAFT_NOTE+'\n'+seeds.M2C_MACROS+'\n'+draft if draft else ''
+    source = DRAFT_NOTE+'\n'+seeds.with_m2c_macros(draft) if draft else ''
     with net.project_store(proj['id']).tx() as db:
         db.execute('UPDATE functions SET seed=?,seed_key=? WHERE id=?',(source,key,fn['id']))
     return source
@@ -83,15 +83,15 @@ def trial(net, agent, proj, fid, source, fork, stop=None):
                     if report['compiled'] or (stop and stop.is_set()):
                         return
                     _, toolchain, context = net._draft_plan(fn, proj)
-                    prefix = DRAFT_NOTE+'\n'+seeds.M2C_MACROS+'\n'
-                    draft = source.removeprefix(prefix)
+                    prefix = DRAFT_NOTE+'\n'
+                    draft = source.removeprefix(prefix).removeprefix(seeds.M2C_MACROS+'\n')
                     choices = initial_draft_repairs.recovery_drafts(
                         draft, fn['name'], net._asm_text(fn,proj), proj['arch'], toolchain,
                         context, '\n'.join(net._jtbl_asm(proj,fn)), report)
                     for index, (family, repaired) in enumerate(choices):
                         if index >= 6 or report['compiled'] or (stop and stop.is_set()):
                             return
-                        yield family, prefix+repaired
+                        yield family, prefix+seeds.with_m2c_macros(repaired)
                 report['trials'] = 0
                 seen = set()
                 for family, candidate_source in candidates():
