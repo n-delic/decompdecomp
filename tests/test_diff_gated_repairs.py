@@ -890,3 +890,13 @@ def test_measured_command_word_is_routed_for_kmc(monkeypatch):
                         lambda text, name, header, diff: [('command_fixture', text)])
     assert 'command_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'command_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_branch_halfword_pointer_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_kmc_branch_pointer, 'variants',
+                        lambda text, name, header, diff: [('branch_pointer_fixture', text)])
+    assert 'branch_pointer_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'branch_pointer_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
