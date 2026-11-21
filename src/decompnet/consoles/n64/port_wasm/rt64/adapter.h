@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-enum { PORT_RT64_ABI = 1 };
+enum { PORT_RT64_ABI = 2 };
 
 typedef struct {
     uint32_t abi;
@@ -13,6 +13,7 @@ typedef struct {
     void (*mode)(const uint32_t *words);
     void (*yscale)(float scale);
     void (*close)(void);
+    void (*features)(uint32_t flags);
 } PortRt64;
 
 #ifndef PORT_WEB
@@ -20,4 +21,5 @@ void port_rt64_task(const uint8_t *rdram, uint32_t ucode, uint32_t ucode_data, u
 void port_rt64_screen(const uint8_t *rdram, uint32_t framebuffer);
 void port_rt64_mode(const uint32_t *words);
 void port_rt64_yscale(float scale);
+void port_rt64_features(uint32_t flags);
 #endif

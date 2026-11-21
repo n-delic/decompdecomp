@@ -625,3 +625,22 @@ int main(void) {
     binary = tmp_path / "pi"
     subprocess.run(["cc", "-o", str(binary), str(source)], check=True, capture_output=True, timeout=60)
     subprocess.run([str(binary)], check=True, capture_output=True, timeout=30)
+
+
+@pytest.mark.skipif(shutil.which("c++") is None, reason="needs a C++ compiler")
+def test_rt64_vi_features_match_the_games_requests(tmp_path):
+    source = tmp_path / "present.cpp"
+    source.write_text(r"""
+#include "presentation.h"
+#include <cassert>
+
+int main() {
+    assert(port_rt64_vi_features(0x3202, 0x55) == 0x1321e);
+    assert(port_rt64_vi_features(0x1321e, 0xaa) == 0x3202);
+    assert(port_rt64_vi_features(0x321e, 0x03) == 0x3216);
+}
+""")
+    program = tmp_path / "present"
+    subprocess.run(["c++", "-std=c++17", "-I", str(KIT / "rt64"), str(source), "-o", str(program)],
+                   check=True, capture_output=True, timeout=60)
+    subprocess.run([str(program)], check=True, capture_output=True, timeout=30)
