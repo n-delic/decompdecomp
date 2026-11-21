@@ -9262,3 +9262,31 @@ address expression and a dropped first argument. The byte-pointer
 cast alone scored 10. Passing the incoming argument in the first slot,
 beside the corrected address in the second slot, reproduced all 36
 linked bytes each on the copied project.
+
+### Preserve byte offsets in halfword loads and unsigned byte stores
+
+Four N64 functions built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1`
+scored 200 because they loaded one byte where the target loaded an
+unsigned halfword. Casting the address after the original byte-scaled
+addition reproduced all 280 or 288 linked bytes on the copied project.
+
+Six other functions with the same flags scored 210. They had a signed
+byte load and materialized `-1` for a store of `0xff`. Making only the
+array read unsigned left a score of 10. Making the byte array and the
+separate byte destination unsigned together reproduced all 88 to 116
+linked bytes. The target ties the positive immediate to the byte store
+through the same register and relocation.
+
+### Stage a single-bit extraction in the measured register
+
+Eight N64 functions built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32`
+scored 10 because the right shift and mask used a different register.
+For three `-O1` getters, keeping the result in a byte and making the
+call, shift and mask separate assignments reproduced all 56 or 60
+linked bytes. The shift counts were below eight, so early truncation
+preserved the selected bit.
+
+In the other five examples, with `-O2` or `-O2 -g3`, an unsigned word
+local held the shift and its subsequent mask. This reproduced all 76
+linked bytes on each copied project, with the mask in the branch delay
+slot.

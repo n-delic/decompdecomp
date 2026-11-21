@@ -514,3 +514,22 @@ def test_kmc_proposes_a_byte_offset_from_the_target_relocations():
     expected = source.replace('&state', '(char *)&state')
     assert dict(route(source, rows, asm))['byte_scaled_global_offset'] == expected
     assert 'byte_scaled_global_offset' not in dict(route(source, rows, asm, compiler='ido-5.3'))
+
+
+def test_kmc_preserves_byte_stride_when_loading_an_unsigned_halfword():
+    source = 'extern char data[];\ns32 f(s32 i) { return *(data + i); }'
+    rows = [('|', 'lhu $v0, %lo(data)($at)', 'lb $v0, %lo(data)($at)')]
+    expected = source.replace('*(data', '*(u16 *)(data')
+    assert dict(route(source, rows, 'asm'))['kmc_unsigned_halfword_array_load'] == expected
+    assert 'kmc_unsigned_halfword_array_load' not in dict(route(source, rows, 'asm', compiler='ido-5.3'))
+
+
+def test_kmc_proposes_staging_a_shift_and_mask_after_a_call():
+    source = ('u32 status();\ns32 f(void) { s32 result; result = 0; '
+              'if (enabled) { result = (status() >> 2) & 1; } return result & 0xFF; }')
+    rows = [
+        ('r', 'srl $v0, $v0, 2', 'srl $v1, $v0, 2'),
+        ('r', 'andi $v1, $v0, 1', 'andi $v1, $v1, 1'),
+    ]
+    assert 'measured_staged_shift_mask' in dict(route(source, rows, 'asm'))
+    assert 'measured_staged_shift_mask' not in dict(route(source, rows, 'asm', compiler='ido-5.3'))
