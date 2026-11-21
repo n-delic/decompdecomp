@@ -265,8 +265,7 @@ def test_scheduler_cleanup_preserves_delay_slot_and_explicit_padding_entry(monke
     words[94:] = [0x42000018, 0x24040000, 0x0c000040, 0, 0]
     raw = b''.join(word.to_bytes(4, 'big') for word in words)
     image = '3' * 40
-    monkeypatch.setattr(sdk_linked, '_CLEANUP_ROM', image)
-    monkeypatch.setattr(sdk_linked, '_CLEANUP_WITH_PADDING', hashlib.sha256(raw).hexdigest())
+    monkeypatch.setitem(sdk_linked._CLEANUP_WITH_PADDING, image, hashlib.sha256(raw).hexdigest())
     lines = [split.AsmLine(i*4, start+i*4, word, '', '') for i, word in enumerate(words)]
     fn = split.RomFunction('dispatcher', start, 0, 'code', lines[:-1], tmp_path/'toy.s')
     padding = split.RomFunction('padding', start+392, 392, 'alignment', lines[-1:], tmp_path/'toy.s')

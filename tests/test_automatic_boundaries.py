@@ -411,10 +411,10 @@ def test_terminal_fp_branch_filler_can_borrow_a_word_from_the_float_table():
     assert [(fn.rom,fn.size) for fn in repair(functions,[],image,consoles.get('n64'),segments)]==[(0,12)]
 
 
-@pytest.mark.parametrize('case',['load','address_escape','branch'])
+@pytest.mark.parametrize('case',['load','nonzero','address_escape','branch'])
 def test_word_access_to_zero_between_return_and_entry_is_recovered_as_data(case):
     # A plain LUI/LW pair references the retained zero word, never executes it.
-    words=[0x8c820000,0x03e00008,0,0]+BODY
+    words=[0x8c820000,0x03e00008,0,0x100 if case=='nonzero' else 0]+BODY
     words += [0x3c028000,0x8c42100c if case!='address_escape' else 0x2442100c,
               0x1000fff4 if case=='branch' else 0x03e00008,0]
     image,functions,segments=fixture(words,cuts=(0,12,16,48,64))
@@ -424,7 +424,7 @@ def test_word_access_to_zero_between_return_and_entry_is_recovered_as_data(case)
                      replace(caller.lines[1],operands=f'$v0, %lo({ref})($v0)')]
     data=[]
     result=repair(functions,data,image,consoles.get('n64'),segments)
-    if case=='load':
+    if case in ('load','nonzero'):
         assert [(row.vram,row.rom,row.size) for row in data]==[(BASE+12,12,4)]
         assert all(fn.rom!=12 for fn in result)
     else:
