@@ -227,3 +227,25 @@ def test_kmc_routes_narrowing_at_the_remainder_operand():
     [candidate] = [text for family, text in proposals(source, 'f', '', 'mips', KMC, rows, '')
                    if family == 'measured_narrow_use']
     assert 'value = sample();\n    value = (u16)value % modulus;' in candidate
+
+
+def test_kmc_routes_missing_cursor_advance_before_the_relocated_store():
+    source = """extern void *volatile stream;
+void f(void) {
+    void *cursor;
+    s32 mode;
+    cursor = stream;
+    stream = cursor;
+    mode = modeFlag;
+    cursor += 8;
+    consume(mode);
+}
+"""
+    rows = [
+        ('<', 'addiu $a2, $a2, 8', ''),
+        (' ', 'lui $at, %hi(stream)', 'lui $at, %hi(stream)'),
+        (' ', 'sw $a2, %lo(stream)($at)', 'sw $a2, %lo(stream)($at)'),
+    ]
+    assert ('measured_cursor_publish', source.replace('stream = cursor;', 'stream = cursor + 8;')) in proposals(
+        source, 'f', '', 'mips', KMC, rows, '',
+    )

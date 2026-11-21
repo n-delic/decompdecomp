@@ -21,6 +21,7 @@ from decomprepair import (
     measured_callback_repairs,
     measured_control_flow,
     measured_cursor_loop_tail,
+    measured_cursor_publish,
     measured_expression_repairs,
     measured_float_grid_stores,
     measured_global_rebase,
@@ -213,6 +214,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
             result.append(('measured_uncached_word_read', candidate_source))
         result += measured_control_flow.variants(source,name,rows)
         result += measured_cursor_loop_tail.variants(source, name, rows)
+        result += measured_cursor_publish.variants(source, name, rows)
         result += measured_global_rebase.variants(source, name, header, rows, resolve=resolve)
         result += measured_memory_order.variants(source,name,rows,resolve=resolve,header=header)
         result += measured_float_grid_stores.variants(source, name, rows)
