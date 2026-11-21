@@ -28,10 +28,11 @@ class Element {
 }
 
 class Box extends Element {
+  elements = [];
   set innerHTML(html) {
     this.html = html;
     this.elements = [];
-    const tagPattern = /<(button|input|select|option|output|a|span|pre|p)\b([^>]*)>/g;
+    const tagPattern = /<(details|button|input|select|option|output|a|span|pre|p)\b([^>]*)>/g;
     for (const match of html.matchAll(tagPattern)) {
       const attrs = {};
       for (const item of match[2].matchAll(/([\w-]+)(?:="([^"]*)")?/g)) attrs[item[1]] = item[2] ?? "";
@@ -145,14 +146,28 @@ function requireOk(test, message) { if (!test) throw new Error(message); }
   const apiTile = box.querySelectorAll(".lz-kind").find((tile) => tile.dataset.k === "api");
   apiTile.onclick();
   requireOk(box.html === apiBefore || box.html.includes("checked"), "switching providers should retain API model selection");
-  const assignment = box.querySelector("[data-automatic-assignment]");
-  requireOk(assignment && !assignment.checked, "automatic assignment starts unchecked");
-  assignment.checked = true;
-  assignment.onchange();
+  const workSettings = box.querySelector("[data-launch-selection]");
+  requireOk(workSettings && !Object.hasOwn(workSettings.attributes, "open"), "agent work settings start collapsed");
+  const workSettingsMarkup = box.html.match(/<details data-launch-selection[^>]*>([\s\S]*?)<\/details>/)?.[1];
+  requireOk(workSettingsMarkup?.includes("<summary>Agent work settings</summary>"), "the launcher labels the work settings disclosure");
+  for (const option of ["automatic-assignment", "focus-near-matches"]) {
+    requireOk(workSettingsMarkup.includes(`data-${option}`), `${option} belongs inside agent work settings`);
+    requireOk(box.querySelectorAll(`[data-${option}]`).length === 1, `${option} appears only once`);
+    const checkbox = box.querySelector(`[data-${option}]`);
+    requireOk(!checkbox.checked, `${option} starts unchecked`);
+    checkbox.checked = true;
+    checkbox.onchange();
+  }
+  workSettings.open = true;
+  ctx.renderLauncher(box);
+  requireOk(Object.hasOwn(box.querySelector("[data-launch-selection]").attributes, "open"), "refresh keeps agent work settings open");
+  requireOk(box.querySelector("[data-automatic-assignment]").checked && box.querySelector("[data-focus-near-matches]").checked,
+    "refresh preserves both checkbox values");
   const apiStart = box.querySelector('[data-act="start"]');
   await apiStart.onclick();
   const apiCall = calls.find((call) => call.url === "/api/agents/start" && call.body.kind === "api");
   requireOk(apiCall.body.options.automatic_assignment === true, "the launch sends the selected assignment mode");
+  requireOk(apiCall.body.options.focus_near_matches === true, "the launch sends the selected near-match mode");
   requireOk(apiCall.body.background === true, "launcher must use nonblocking agent creation");
   requireOk(apiCall && apiCall.body.options.multiple_models && apiCall.body.options.models[0].endpoint === "e1" &&
     apiCall.body.options.models[0].model === "m-one", "API launch must send only selected endpoint/model pairs");
