@@ -919,6 +919,21 @@ profile, not fresh-start timing, extra progress or proof that the original 4h25m
 one second. Game source/ROMs and private checkpoints are not included in the app repository; regression
 fixtures here are synthetic.
 
+### A temporary stored to a global and read back: write the global (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`)
+
+- Evidence: one function (a bit-stream writer; one function, not a controlled test). m2c wrote `t = 1 << f(p); u =
+  1 << D1550; D1555 = u; D1554 = t; if (x & u) { *q |= t; }` and reused `t` for a later reload of `f(p)`. Saved best
+  15: all opcodes right, the reload landed in `$a2` (shared pseudo) instead of `$v1`.
+- Failed (all 90 or 5, one function): splitting the reload into its own variable (any name, any declaration position:
+  the `sllv` pair flips, 90); statement permutations of the shift/store lines; an `s16` shift temporary (5: then the
+  `or` operand order is swapped by combine's `subreg` copy); casts and `a | b` orders of the `|=`; types of the
+  temporaries; removing unused locals.
+- Fix: `G = expr` where the temporary was assigned, the `G = t` line gone, later reads of `t` read `G`, and the
+  two byte globals declared `extern s8 D_..54` / `extern u8 D_..55` (the global that is masked back must be unsigned,
+  or the read is `sll`/`sra`): 15 -> 0. cse forwards the stored register to the later reads in the block, so the
+  scratch pseudo gets the target's allocation and schedule. decomp-repair 0.5.246 `global_store_forward` (reached 0
+  from the saved best by the all-temporaries-and-unsigned child; each child alone 90/355/340/15).
+
 ## IDO 5.3 / 7.1, 32-bit big-endian MIPS
 
 ### Observation: source layout sensitivity (IDO 5.3)
