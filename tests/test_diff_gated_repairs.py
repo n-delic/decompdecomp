@@ -733,8 +733,9 @@ s32 f(s32 x) {
     assert family not in dict(proposals(source, 'f', '', 'mips', KMC, rows, ''))
 
 
-def test_kmc_measured_cursor_and_switch_route_is_compiler_specific(monkeypatch):
-    from decompnet.app.diff_gated_repairs import measured_kmc_cursor_switch
+@pytest.mark.parametrize('module_name', ['measured_kmc_cursor_switch', 'measured_kmc_carriers'])
+def test_measured_kmc_repairs_route_is_compiler_specific(monkeypatch, module_name):
+    from decompnet.app import diff_gated_repairs
 
     source = 'void f(void) {}'
     rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
@@ -743,6 +744,6 @@ def test_kmc_measured_cursor_and_switch_route_is_compiler_specific(monkeypatch):
         assert (text, name, header, diff) == (source, 'f', '', rows)
         return [('cursor_fixture', 'repaired')]
 
-    monkeypatch.setattr(measured_kmc_cursor_switch, 'variants', repair)
+    monkeypatch.setattr(getattr(diff_gated_repairs, module_name), 'variants', repair)
     assert dict(proposals(source, 'f', '', 'mips', KMC, rows, ''))['cursor_fixture'] == 'repaired'
     assert 'cursor_fixture' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))
