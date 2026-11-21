@@ -380,3 +380,12 @@ def test_measured_wrapper_and_copy_loop_rules_reach_kmc_proposals(monkeypatch):
     ido = dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
     assert 'entry_wrapper_argument' not in ido
     assert 'measured_copy_loop_setup' not in ido
+
+
+def test_measured_relocated_global_update_reaches_kmc_proposals(monkeypatch):
+    from decomprepair import relocated_global_update
+
+    monkeypatch.setattr(relocated_global_update, 'rewrite', lambda *args: 'direct global')
+    rows = [('r', 'lui $v0, %hi(state)', 'lui $a0, %hi(state)')]
+    assert ('relocated_global_update', 'direct global') in route('void f(void) {}', rows, 'asm')
+    assert 'relocated_global_update' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))

@@ -20,6 +20,7 @@ from decomprepair import (
     measured_temporary_repairs,
     passthrough_argument_repairs,
     relocated_byte_table,
+    relocated_global_update,
     targeted_switch_labels,
     uncached_read_repairs,
 )
@@ -190,6 +191,8 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
             result.append(('likely_branch_cursor', candidate_source))
         if candidate_source := relocated_byte_table.rewrite(source, name, asm or '', header, resolve):
             result.append(('relocated_byte_table', candidate_source))
+        if candidate_source := relocated_global_update.rewrite(source, name, asm or '', header, resolve):
+            result.append(('relocated_global_update', candidate_source))
         if candidate_source := aligned_stack_read.rewrite(source, name, asm or ''):
             result.append(('aligned_stack_read', candidate_source))
         if candidate_source := passthrough_argument_repairs.missing_entry_argument(source, name, asm or '', header):

@@ -8923,3 +8923,15 @@ for the third reset, the later word reset, and the count read lowered it to 395.
 Localized volatile expressions did not reproduce that score. The target's ordered
 memory sequence gates both candidates. Deep Permuter verified and saved the combined
 partial improvement under the existing flags.
+
+### Direct global word updates through paired relocations
+
+A 13-instruction N64 leaf under `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`
+scored 345 because the draft treated a state word as a field of a larger
+object. The compiler kept that indirect address for both accesses. The
+target had separate relocation pairs for loading and storing one word.
+
+Naming a single signed 32-bit object at the address verified in both raw
+relocation pairs reproduced all 52 linked bytes on the copied project.
+An unsigned word also matched. A volatile alias scored 120, so the rule
+keeps the unqualified type and the existing arithmetic and return mask.

@@ -378,6 +378,7 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
         measured_stack_drafts,
         passthrough_argument_repairs,
         relocated_byte_table,
+        relocated_global_update,
         shared_default_drafts,
         unaligned_stack_drafts,
         uncached_read_repairs,
@@ -398,6 +399,7 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
             or measured_mmio_polling.rewrite(source, name, asm_text, context_header)
             or likely_branch_cursor.rewrite(source, name, asm_text, context_header)
             or relocated_byte_table.rewrite(source, name, asm_text, context_header, resolve)
+            or relocated_global_update.rewrite(source, name, asm_text, context_header, resolve)
             or aligned_stack_read.rewrite(source, name, asm_text)
             or passthrough_argument_repairs.missing_entry_argument(source, name, asm_text, context_header)
             or loop_storage_shapes.measured_copy_setup(source, name, asm_text, context_header)
