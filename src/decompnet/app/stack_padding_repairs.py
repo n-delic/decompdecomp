@@ -106,6 +106,8 @@ def layout_candidates(source, name, header, arch, rows, symbols=None, flags=(), 
     # A named buffer explains a larger frame when every changed row is a stack difference.
     if asm and (report.get('frame_delta') or 0) > 0 and all(marker in (' ', 's') for marker, _, _ in rows):
         result += stack_object_size_repairs.variants(source, name, asm)
+        if report.get('frame_only_gap'):
+            result += stack_object_size_repairs.record_variants(source, name, asm, header)
     result += measured_layout_repairs.unused_frame_array(source,name,rows,report)
     if scoped := measured_layout_repairs.scoped_frame_array(source, name, rows, report):
         result.append(('inferred_frame_reservation', scoped))

@@ -9745,3 +9745,11 @@ Two drafts under the same compiler and flags missed only the byte store before f
 ### Stage a loop sentinel before copying the cursor
 
 Two drafts under the same compiler and flags had the correct loop and moved a cursor-copy instruction ahead of the matching `-1` constant. Naming the sentinel before the cursor assignment and using it in the loop condition moved score 60 to exact (64 and 116 bytes). Naming it after the cursor preserved the disagreement. In all three groups the archived source compiled independently as a control.
+
+### Keep the scalar prefix of an escaped stack record
+
+Two independent N64 drafts modeled the first halfword of an address-taken record as a scalar. The stack frame was eight bytes smaller than the target, with every other body instruction already correct. Keeping the same halfword field and extending storage to the first saved-register slot matched all 220 and 280 bytes with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`. The linked scores were 6 and 8. A scalar-only or undersized record left the frame mismatch.
+
+### Keep one header buffer when decoder stores overlap call setup
+
+An N64 draft modeled a 26-byte serialized header as six separate locals. Two adjacent decoder calls shared a saved global base, and the first result was stored in the next call's delay slot. Recovering the byte buffer from the measured read and the decoder word stores matched all 204 bytes with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, from a linked score of 11. The later condition and data accesses stayed byte-for-byte the same in the generated C. The archived sources compiled independently as controls for both groups.
