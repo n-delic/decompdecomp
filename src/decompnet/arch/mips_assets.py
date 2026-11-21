@@ -58,6 +58,11 @@ def read(vram, code, *, big_endian=True, argument_count=4, gp=0, cpu='', check=l
         elif op==0 and fun in (0,2,3) and b and b['kind']=='constant':
             shift=(w>>6)&31;n=b['value'];dest=rd
             value=constant(n<<shift if fun==0 else n>>shift if fun==2 else (n if n<0x80000000 else n-0x100000000)>>shift,at)
+        elif op==0 and fun==0x23 and a and b and a['kind']==b['kind']=='constant':
+            # A bounded DMA size may be computed from two cartridge addresses.
+            dest=rd
+            value=constant(a['value']-b['value'],at)
+            value['evidence']=list(dict.fromkeys(a['evidence']+b['evidence']+[at]))[-8:]
         elif op==0 and fun in (0x21,0x25,0x2d):
             dest=rd
             if a and b and b['kind']=='constant' and (b['value']==0 or fun!=0x25):value=plus(a,b['value'],at)
