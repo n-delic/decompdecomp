@@ -1038,7 +1038,11 @@ def register(app: App) -> None:
             with jobs._lock:
                 last = jobs.jobs.get(function_searches.get((slug, name)))
             return {'job': last['id'] if last and last['state'] == 'running' else None, 'last': last}
-        return {'job': start_search(slug, str(data.get('name', '')), data.get('minutes', 10), data.get('variants', 500))}
+        # The older /api/permuter/function route spells these `function` and `max_variants`. Sending those here used to
+        # start a search on function '' or silently cap it at 500 variants, so both spellings mean the same thing.
+        name = data.get('name') or data.get('function') or ''
+        variants = data.get('variants', data.get('max_variants', 500))
+        return {'job': start_search(slug, str(name), data.get('minutes', 10), variants)}
 
     def p_finish_near(slug, request, data):
         from .. import finish_near

@@ -4063,3 +4063,25 @@ def test_community_directory_reports_matching_library_roms(app, tmp_path, monkey
     assert job["state"] == "done", job
     assert job["result"]["matches"] == [["n64", repo]]
     assert str(library) not in str(job)
+
+
+def test_deep_permuter_tab_accepts_the_older_routes_field_names(app, monkeypatch):
+    """`function` and `max_variants` (the older permuter route's names) mean `name` and `variants` here, not function
+    '' and the 500-variant default."""
+    from decompnet.app import deep_permuter
+
+    client, net, _ = app
+    calls, done = [], threading.Event()
+    monkeypatch.setattr(deep_permuter, "validate", lambda *args: None)
+
+    def run(net, slug, name, minutes, variants, log, **options):
+        calls.append((name, minutes, variants))
+        done.set()
+        return {"function": name}
+
+    monkeypatch.setattr(deep_permuter, "run", run)
+    response = client.post("/api/deep-permuter", headers={"X-Decomp": "1"},
+                           json={"slug": "tab-game", "function": "g", "minutes": 3, "max_variants": 3000})
+    assert response.status_code == 200, response.text
+    assert done.wait(2)
+    assert calls == [("g", 3, 3000)]
