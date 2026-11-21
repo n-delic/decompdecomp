@@ -521,3 +521,22 @@ def test_word_byte_loop_carrier_runs_before_random_rewrites(monkeypatch):
     assert len(tried) == 1
     assert 's32 probe;' in tried[0]
     assert 'items[i] == (u8)key' in tried[0]
+
+
+def test_scoped_byte_global_update_uses_current_relocation_names(monkeypatch):
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    proj = net.project_row('game')
+    net.rename_tokens = lambda project, text: text.replace('D_80001234', 'state')
+    fn = {**net.function(), 'name': 'f',
+          'asm': ('lui $v1, %hi(D_80001234)\naddiu $v1, $v1, %lo(D_80001234)\n'
+                  'lbu $v0, 0($v1)\naddiu $v0, $v0, -1\nsb $v0, 0($v1)\n'),
+          'best_source': 'extern u8 state; void f(void) { state -= 1; }'}
+    search = deep_permuter.Search(net, 1, 6, Log())
+    tried = []
+    monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 30)
+
+    assert search.operand_order_pass(AGENT, proj, fn, 255, None) == 30
+    assert len(tried) == 1
+    assert '= &state; *__repair_byte_address -= 1;' in tried[0]
