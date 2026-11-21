@@ -10010,3 +10010,18 @@ Three reconstructed N64 drafts matched byte for byte. The archived sources compi
 - With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, forwarding the unchanged first parameter before a reloaded halfword moved the 112-byte draft from score 30 to exact. Using an explicit table symbol also matched. The linked bytes were identical with either relocation spelling.
 - At `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1`, narrowing the index parameter and removing a spurious integer argument to the float call moved score 30 to 10. Casting the relocated base to a byte pointer before adding the record stride matched all 248 bytes.
 - With the first case's compiler and flags, keeping two separate loads of the global state pointer preserved the two callback stores and the intervening sentinel store. Staging the sentinel constant before the first load and preserving the final byte store matched all 152 bytes from score 30. An inline byte-address helper also matched, and the installed rule only needs separate locals.
+
+### Reading the compiler's own register ranking (GCC 2.x)
+
+A register-only difference ("the candidate keeps $s2 where the target has $s3") is decided by GCC 2.x's global
+allocation, not by anything in the C that names a register. `app/allocation_priority.py` compiles the candidate once
+with `-dl -dg` (gcc-2.7.2-kmc, gcc-2.8.1-pm, egcs) and reads back each pseudo's weighted uses, live length, priority
+`floor_log2(uses) * uses / length` and final register, then explains each saved-register swap of a diff by the two
+pseudos that are live together: which was placed first and what moves the order (a reference more or fewer inside its
+range, a longer or shorter live range). It shows in the diff panel's source diagnostics and in a deep search's log.
+Controlled observations on one near-match function (`-G0 -mips3 -mgp32 -mfp32 -O2`): extra references added to a
+stride temporary moved it up the order only after about eight, while renaming, retyping or reordering the loop
+variables, `register` hints, and rewriting a counter's masks left every priority unchanged; a nested loop written
+with `goto` has no loop depth (its references count once), and a real nested loop changes the code itself (invariants
+are hoisted), so that spelling is not a free choice. This is a diagnostic: it names the cause of a swap, it does not
+accept a match, and it is not a rewrite family. A priority-aware rewrite family would aim at these numbers.
