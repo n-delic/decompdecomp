@@ -460,3 +460,22 @@ def test_global_reset_trials_try_the_combination_before_the_scope_only_variant(m
 
     assert search.operand_order_pass(AGENT, proj, fn, 855, None) == 395
     assert tried == ['combined reset']
+
+
+def test_guarded_indexed_load_uses_current_relocation_name(monkeypatch):
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    proj = net.project_row('game')
+    fn = {**net.function(), 'name': 'f', 'asm': 'lbu $v0, %lo(D_801001A1)($v0)',
+          'best_source': ('extern s32 slots;\n'
+                          'int f(int i) { return *((s32 *) (((s8 *) (&slots)) + i * 24)) == 0; }')}
+    monkeypatch.setattr(net, 'rename_tokens', lambda project, asm: asm.replace('D_801001A1', 'slots'), raising=False)
+    search = deep_permuter.Search(net, 1, 6, Log())
+    monkeypatch.setattr(deep_permuter.permuter_focus, 'classify', lambda *args: 'instruction')
+    tried = []
+    monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 1110)
+
+    assert search.operand_order_pass(AGENT, proj, fn, 1310, None) == 1110
+    assert len(tried) == 1
+    assert '*((u8 *)' in tried[0]
