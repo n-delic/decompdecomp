@@ -530,3 +530,22 @@ def test_larger_stack_recovery_is_used_by_valid_kmc_drafts(monkeypatch):
     assert 'buffer[48]' in seeds.generate_from_asm('asm', 'f', 'gcc-2.7.2-kmc', valid=True)
     assert seeds.generate_from_asm('asm', 'f', 'gcc-2.7.2-kmc') == raw
     assert seeds.generate_from_asm('asm', 'f', 'ido-5.3', valid=True) == raw
+
+
+def test_shared_default_draft_recovery_receives_the_original_table(monkeypatch):
+    from decomprepair import shared_default_drafts
+
+    raw = 'void f(void) { case 1: return; }'
+    monkeypatch.setattr(seeds, 'run_m2c', lambda *args: raw)
+    monkeypatch.setattr(seeds, 'intrinsic_leaf', lambda *args: None)
+    monkeypatch.setattr(seeds, 'm2c_target', lambda *args: 'mips-gcc-c')
+    calls = []
+
+    def repair(*args):
+        calls.append(args)
+        return 'void f(void) { switch (1) { case 1: return; } }'
+
+    monkeypatch.setattr(shared_default_drafts, 'rewrite', repair)
+    assert 'switch' in seeds.generate_from_asm('asm', 'f', 'gcc-2.7.2-kmc', 'header', 'table', valid=True)
+    assert seeds.generate_from_asm('asm', 'f', 'ido-5.3', 'header', 'table', valid=True) == raw
+    assert calls == [(raw, 'f', 'asm', 'table', 'header')]

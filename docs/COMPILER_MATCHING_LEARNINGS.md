@@ -8696,3 +8696,23 @@ each captured header, their regenerated drafts now match the linked ROM bytes:
 
 The same 120-example replay rose from 69 to 71 exact matches. Both additions
 matched as regenerated drafts, and every earlier exact result reproduced.
+
+### Cases shared with the default jump-table destination
+
+One 40-instruction KMC draft failed because m2c emitted two case labels inside
+the range guard's `else` block. The captured jump table maps those cases to the
+same direct call as the out-of-range branch. A single switch with that shared
+case group compiles. Keeping only the selector parameter still scored 15
+with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`. The table index is computed
+from the second ABI argument register. Restoring the unused first parameter
+reproduces all linked bytes with the captured header.
+
+The draft rewrite requires agreement between the case labels, table entries,
+direct call destinations, delay slots and common epilogue. Draft alternatives
+using `--no-switches` or `--gotos-only` still failed compilation on this case.
+A separate integer pointer-cast experiment made another draft compile but
+still scored 775, so that case remains open.
+
+The same 120-example batch now yields 72 exact matches, up from 71. The new
+match comes directly from the regenerated switch draft, and all previous
+exact matches still reproduce.
