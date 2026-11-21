@@ -10942,3 +10942,13 @@ matched all 328 linked bytes. The explicit early break, reply field
 assignment order, and compound update preserved IDO's schedule.
 An aligned byte buffer with casts at the field offsets compiled but
 scored 640.
+
+### Stage the subtracted product to match floating-point scheduling
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, one isolated N64
+machine draft emitted two load-and-multiply pairs in the reverse of
+the target order. Computing the right-hand product in a separate
+float local before evaluating the subtraction preserved the operand
+order of the subtraction and brought the linked score from 30 to 0.
+Moving the load statements alone retained score 30. Expressing the
+subtraction as addition of a negated product raised the score to 375.
