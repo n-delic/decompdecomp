@@ -999,15 +999,17 @@ def _invoke_once(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict
         if progress is not None:
             # (a compile reads only the manifest and the headers: Progress.check_for_judging)
             if _judge_preflight(name, args):
+                # A claim never waits behind the autosave's check of the folder (Progress.check_for_claim).
+                check = progress.check_for_claim if name == 'claim_function' else progress.check_for_judging
                 function = args.get('function', '')
                 if function and ',' not in function:
                     # Resolve on the DB snapshot, then check the held function's
                     # saved files along with the shared judge inputs.
                     with progress.view():
                         function = _named(net, agent, slug, args, name)['function']
-                    progress.check_for_judging(slug, function=function)
+                    check(slug, function=function)
                 else:
-                    progress.check_for_judging(slug)
+                    check(slug)
             else:
                 progress.sync(slug, force=True)
         publish = name in PUBLISH_AFTER
