@@ -583,3 +583,14 @@ def test_kmc_proposes_byte_flag_orientation_and_float_table_types(monkeypatch):
     ido = dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
     assert 'byte_flag_branch_orientation' not in ido
     assert 'direct_float_table_load' not in ido
+
+
+def test_kmc_word_index_scales_only_once_at_a_measured_table_load():
+    source = 'extern M2C_UNK table;\ns32 f(s32 i) { return *(&table + (i * 4)); }'
+    instructions = ('lui $at, %hi(table)', 'addu $at, $at, $a0', 'lw $v0, %lo(table)($at)')
+    rows = [('i', 'sll $a0, $a0, 2', 'sll $a0, $a0, 4'),
+            *((' ', instruction, instruction) for instruction in instructions)]
+    candidate = dict(route(source, rows, 'asm'))['measured_duplicate_word_scale']
+    assert 'extern M2C_UNK table[];' in candidate
+    assert 'return table[i];' in candidate
+    assert 'measured_duplicate_word_scale' not in dict(route(source, rows, 'asm', compiler='ido-5.3'))
