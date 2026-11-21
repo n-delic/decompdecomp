@@ -71,9 +71,12 @@ def tail_dispatch(net, proj, fn):
 
 def probe(search, agent, proj, fn, source, profile):
     """Cache misses separately by profile; only a reverified exact bundle can change settings."""
-    from . import agent_tokens
+    from . import agent_tokens, ido_compat
     search.check()
     search.visited += 1
+    # (a draft IDO cannot build, for want of a `char *` cursor, is judged as the text that does build: that text is
+    # what a match is rechecked with and saved as)
+    source = ido_compat.adapted(profile['toolchain'], source)
     scope = agent_tokens.target_scope(search.net, {**dict(fn), 'best_source':source}, '')
     key = 'deep-profile-v1:'+hashlib.sha256(repr((scope, source, profile)).encode()).hexdigest()
     cached = search.net.project_store(proj['id']).one('SELECT outcome FROM reuse_trials WHERE function_id=? AND signature=?', fn['id'], key)

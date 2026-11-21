@@ -50,6 +50,20 @@ def test_cached_compile_failure_is_not_compiled_again(monkeypatch):
     assert len(calls) == 1 and search.tested == 1 and search.skipped == 1
 
 
+def test_an_ido_probe_judges_the_text_ido_can_build(monkeypatch):
+    # m2c's `void *` byte cursor is arithmetic IDO refuses: the probe judges (and would save) the `char *` text
+    net = setup(monkeypatch)
+    seen = []
+    net._judge_with = lambda proj, fn, toolchain, flags, source:(seen.append((toolchain, source)) or (False, None, 'x'))
+    fn = net.function(); proj = net.project_row('game')
+    search = deep_permuter.Search(net, 1, 20, Log(), fn)
+    draft = 'int f(void *a) {\n    void *cursor;\n    cursor = a;\n    cursor += 7;\n    return 0;\n}\n'
+    deep_profiles.probe(search, AGENT, proj, fn, draft, {'toolchain':'ido-7.1','flags':['-O2']})
+    deep_profiles.probe(search, AGENT, proj, fn, draft, {'toolchain':'gcc-2.7.2-kmc','flags':['-O2']})
+    assert [t for t, _ in seen] == ['ido-7.1', 'gcc-2.7.2-kmc']
+    assert '    char *cursor;' in seen[0][1] and seen[1][1] == draft
+
+
 @pytest.mark.parametrize('value', [True, 0, -1, 17, '2', 2.5])
 def test_invalid_counts(value):
     with pytest.raises(NetworkError):deep_profiles.validate(value)
