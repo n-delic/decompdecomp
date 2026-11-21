@@ -1696,3 +1696,20 @@ reads as `const` (`const f32 *arg0`, or `M2C_FIELD(arg0, const f32 *, 0)` for ea
 
 combine reassociates `a + g + 0xFFFC` and may put the constant on `a`. When the target adds it to the loaded global,
 write `t = g + 0xFFFC; return (a + t) & 0xFFFF;`: a separate statement keeps the constant where it was written.
+
+## A very large switch function: a checklist from one 4,399-instruction match
+
+Work from a local compile-and-compare loop and the pass dumps (`-dL` for loops, `-dS` for scheduling); the judge
+decides at the end. What moved the most instructions, in order:
+- Give each inlined copy of a test its own pointer local, and one scratch `s8` flag for the whole function: the
+  saved registers follow. A flag tested through `addu v0,s0,zero` is `s8`, not `u8` or `s32`.
+- Read fields as struct members (a one-member struct cast is enough): only then do field loads move above stores
+  to scalar globals, as the original's did.
+- Frame order: a scalar gets its slot at its first `&`, a struct at its declaration. `(void)&x;` and nested blocks
+  place them without emitting code.
+- Identical tails merge into the last textual copy. Where the target keeps an earlier one, put the later `case`
+  label inside that block. `if (!f()) A(); else B();` and its mirror give opposite branch senses once both merge.
+- `x = K; goto shared;` in a draft is usually two full calls. Keep `default:` where the target's block is, and add
+  `case 0: break;` when a test or a table's range shows it.
+- A loop reloads a constant instead of hoisting it when the loop is long enough: check `-dL`, and see
+  docs/COMPILER_MATCHING_LEARNINGS.md, "A 4,399-instruction state machine", for the rest.

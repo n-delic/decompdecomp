@@ -9366,3 +9366,107 @@ an already scaled offset, and the compiler converted the loaded integer
 to a float. The target shifted once by two and returned its direct float
 load in the return delay slot. An `f32[]` declaration and an unscaled
 subscript reproduced all 24, 44 or 48 linked bytes on a copied project.
+
+### A 4,399-instruction state machine: what decided the last 900 instructions
+
+A 17,596-byte N64 actor state machine compiled with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` was matched by hand on a live
+project: a new match, accepted by the running app's linked-byte judge, not a
+controlled regression test. It holds a 174-entry state switch, seventeen
+smaller jump tables and a 0x128-byte frame. Counts below are differing
+instructions out of 4,399 in a local comparison that masks relocations and
+branch offsets; they are not judge scores. The machine draft had failed
+because the jump tables in the data file hold raw addresses: giving each
+table entry a label and adding those labels to the function's assembly
+produced a draft from m2c. A hand rewrite of that draft started at 929.
+
+- **Loop-local temporaries decide the saved registers.** Three inlined
+  copies of one range test each kept their record pointer in a local. Adding
+  those locals, and exiting the outer list walk with `break` where the target
+  did, moved every long-lived pointer to its target register: 929 to 491.
+- **Field loads move above scalar global stores only when they are struct
+  members.** `*(s16 *)((u8 *)p + 0x7C)` stayed below a store to a byte
+  global; the target had hoisted it. Reading through a one-member struct
+  cast, `((struct H_ *)((u8 *)p + 0x7C))->v`, gave the target order: 473 to 361, with one
+  range-test rewrite in the same edit. The reverse also holds: a
+  global that the target does not reorder past a field store behaves like a
+  struct member.
+- **Flags tested through a plain register copy are `s8`.** A flag set only
+  to 0 or 1 and tested with `addu v0,s0,zero; beqz v0` is a signed byte:
+  `u8` gave `andi v0,s0,0xff` and `s32` no copy at all. A byte result kept
+  from a call is tested with `sll v0,s1,24` instead.
+- **One scratch flag, not one per block.** Separate flag locals in separate
+  cases let a shorter-lived address temporary take `s0` first. One
+  function-level flag reused by every case took `s0` as in the target.
+  Reusing the function's result variable for it instead moved the result
+  out of `s0` everywhere: 175 went to 354 and was reverted.
+- **Locals: scalars get their slot at the first `&`, structs at their
+  declaration.** Out-parameter words and 12-byte vectors were interleaved in
+  the target frame. Declaring everything at the top put the vectors first.
+  One struct holding all of them gave the right offsets but changed
+  scheduling, because every member became a struct reference. Separate
+  locals, with `(void)&x;` statements to place each scalar and nested blocks
+  to declare the vectors between them, reproduced the frame with no code
+  emitted. A 12-byte struct takes a 16-byte, 8-aligned slot.
+- **`x++` on a global through a pointer keeps the address in a register.**
+  Two counters were updated with `lui; addiu; lhu 0(v1); sh 0(v1)` and three
+  others with a relocated load and a relocated store. A plain `g++` gives the
+  second form; `{ u16 *p = &g; (*p)++; }` gives the first.
+- **Which duplicate survives tail merging.** The last textual copy of an
+  identical tail is kept and earlier ones jump to it. Where the target keeps
+  an earlier copy, the later `case` label is physically inside the earlier
+  block; writing the label there (inside an `if` body) reproduced it. Where
+  two arms of an `if` are both merged away, the arm written first decides the
+  branch sense: `if (!f()) A(); else B();` left `beqz` to A's shared copy
+  and a jump to B's, the opposite order left `bnez` to B's.
+- **A shared call with a differing argument is two calls.** Sites where a
+  draft shows `x = K; goto shared;` matched as two complete copies. A flag
+  cleared in the shared part belongs after the first call in each copy, so it
+  lands in that call's delay slot: `f(a, K); flag = 0; g(a, 0xC);`.
+- **Case order follows the code, including `default`.** Putting `default:`
+  first, last or between cases moved its block, and with it the delay slots
+  around the dispatch. A two-value case range tested low bound first only
+  when a higher case with an empty body followed it; a lone range tests the
+  high bound first. An extra `slti` in a three-way test came from an explicit
+  `case 0: break;`, and a table whose range starts at 0 needs `case 0:` even
+  when it shares the default block.
+- **Merged or separate comparisons.** `t != 12 && t != 9` on a local compiles
+  to `xori; sltu; xori; sltu; and`. The target used separate branches at
+  some sites and the merged form at others; nested `if`s gave separate
+  branches, and a local read once gave the merged form. Likewise
+  `!(w & A) && (w & B)` folds into one masked compare unless nested.
+- **Signed `slti` on an unsigned byte means a switch**, or an `int`
+  comparison written as nested `if`s; `u8 < K` gives `sltiu`.
+- **Hoisting out of a loop depends on the loop's size.** The target hoisted
+  the address of a stack vector out of a list walk but reloaded a double
+  constant inside it. The draft did the opposite. The pass dump
+  (`-dL`) showed the constant moved because the loop had 54 instructions;
+  eight dead float assignments at the top of the body pushed it past the
+  threshold and vanished later. The address is only a candidate when its
+  pointer local is set unconditionally at the top of the body. Together:
+  111 after the other fixes in that batch, from 185.
+- **`h = a; h -= b;` and `h *= f(); z -= h;`** keep a float in one saved
+  register where `h = a - b` and `z -= h * f()` used a scratch register and
+  a second saved one. A second local for the code after the loop let the
+  loop's local take the lower register.
+- **A result set before the calls of its block stays there.** Every case
+  ended by setting the result and jumping to one exit, merged into one copy.
+  In one case the target set it in the first call's delay slot and jumped
+  past the shared assignment; an explicit early assignment and a `goto` past
+  it reproduced that, and stopped a later call from merging with this one.
+- **A fifth argument that is `0.0f`** showed only where the zero was reused
+  from a float register (`swc1 fs0,0x10(sp)`); elsewhere it was `sw zero`.
+- **Argument load order.** A relocated global passed beside a nested call
+  loaded after the call's result was moved; reading it through a local
+  pointer (`s32 *p = &g; f(0, *p, h(), ...)`) loaded it first, as the
+  target did. The same pointer form made the target's second, separate load
+  of a global pointer that a plain second read had shared with the first.
+- **Operand order of a float compare** followed a local: reading the limit
+  into its own local before the tested value reversed the two loads when
+  reordering the expression did not.
+
+Failed or neutral: declaring the pointer global `volatile` fixed one double
+load and broke a store-then-pass site; a `volatile` cast materialized the
+address in a register; a user label on the shared exit call changed tail
+merging in five unrelated cases (6 to 26); passing a float argument through a
+local added `mtc1`/`mfc1` pairs.
