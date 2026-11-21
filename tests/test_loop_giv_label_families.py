@@ -2,6 +2,7 @@
 from decompnet.app import draft_repairs
 from decomprepair import (
     counter_companion_repairs,
+    dead_local_stage_repairs,
     global_pointer_run_repairs,
     loop_top_label_repairs,
     product_operand_reuse_repairs,
@@ -42,6 +43,7 @@ SOURCE = '''void f(void)
 def test_offered_to_the_permuter_and_the_agents():
     labels = {}
     draft_repairs.variants(SOURCE, 'f', 'mips', labels=labels, limit=None)
-    assert {'loop_top_label', 'counter_companion', 'global_pointer_run', 'product_operand_reuse'} <= set(labels.values())
-    for module in (loop_top_label_repairs, counter_companion_repairs, global_pointer_run_repairs, product_operand_reuse_repairs):
+    assert {'loop_top_label', 'counter_companion', 'global_pointer_run', 'product_operand_reuse', 'dead_local_stage'} <= set(labels.values())
+    for module in (loop_top_label_repairs, counter_companion_repairs, global_pointer_run_repairs, product_operand_reuse_repairs,
+                   dead_local_stage_repairs):
         assert set(module.FAMILIES) <= set(draft_repairs.AGENT_FAMILIES)

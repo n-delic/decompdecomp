@@ -11974,12 +11974,12 @@ that gives 0 (each run directly and scored with the judge-worker; no permuter ru
 families yet (the end temp shared between loops, natural spills with a pass-through argument, merging m2c's per-loop
 variables, the `first` copy). Not controlled across other functions.
 
-## An audio sequencer's update tick: a rotated `while` needs a cse barrier, the loop's companions come off the counter, the second block uses the loop's pointer (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, an N64 game, one 198-instruction function)
+## An audio sequencer's update tick: exact from 535 with shared locals, a rotated `while` and a cse barrier (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, an N64 game, one 198-instruction function)
 
 An eight-slot loop (active flag, a sequence player pointer in a global, a list walk that advances a cursor by 8 until
 a `-1` sentinel, a block of fixed-point updates, five calls, an unlink loop). The saved best was 535 (m2c's explicit
-`k`/`f` byte-offset companions, `goto loop`). Edit list, each scored with the judge-worker on the one before (the app's
-own numbers; 0 is exact; sources are in the PR's evidence, no game data):
+`k`/`f` byte-offset companions, `goto loop`); the app's judge now records it as exact (`matched best 0`). Edit list, each
+scored with the judge-worker on the one before (the app's own numbers; 0 is exact; no game data here):
 
 | # | Edit | Score | What it changes in the compiler |
 | - | ---- | ----- | -------------------------------- |
@@ -11990,31 +11990,36 @@ own numbers; 0 is exact; sources are in the PR's evidence, no game data):
 | 4 | the `goto loop` walk as `while (A) { if (B) break; ...; n = D_800EDA8C; }` with the literal `-1` | 505 | the sentinel constant is hoisted by loop.c into its own register (`li $s0,-1`) after the entry test, whose `beq` keeps its `nop` slot (a source `minus_one` local was pulled into the slot), as the target |
 | 5 | an (unused) label at the top of the loop body: `top: m = n->f6c;` (`loop_top_label`) | 230 | jump.c copies the test A before the loop; cse then follows the fall-through into the top label and reuses the test's address for `m`, carrying `m` round the loop (`move $a1,$a0`). A named label ends the extended basic block, so `m` is reloaded as the target does |
 | 6 | the `$f70` store written before the `$f74` update | 195 | the stores keep source order for the first scheduler; the second then orders the reads like the target |
+| 7 | the multiply's factor in a local that the next block reuses: `h = factor; g = h * lhu;` (`product_operand_reuse`) | 340 | `mflo $v1`, the multiply block's registers and order now the target's (a global pseudo does not tie to the product) |
+| 8 | the masked value in the loop's `a` local, the loaded `0x11C` word in its node pointer `m` (`dead_local_stage`) | 75 | both are pseudos of two blocks: allocated by the global allocator (`a0`, `a1`) while the block's temporaries keep `v0/v1` |
+| 9 | the multiply's factor in the call-result local `rv` (`s32`), not in the tail's `h` | 60 | `h` is then a block-local pseudo again, so the sum ties to its first operand as the target's does |
+| 10 | `a = (u16) h;` and the three loads of the last update through one scratch local `t1` (`t1 = f118; ...; t1 = f74; t1 += (h >> 16) + m; f74 = t1`) | 20 | `t1` is global: its load is scheduled with the other early loads, so `andi` follows `lw f74` and `$v1` is its register |
+| 11 | `h = f70; t1 = f118; h += t1;` | 0 | the `f70` load is `h` itself (local), so the first scheduler orders `lw f70` before `lw f118` as the target does |
 
-Rules (not spellings): a loop the compiler rotates shares its first load with the copied test unless something ends
-the extended basic block; an explicit source constant is a delay-slot candidate that a loop.c-hoisted constant is not
-(only the hoisted one stayed out of the slot); strides the compiler can derive are better left to it, because the
-hoisted constants land between the counter's and the givs' initialisations.
+Rules (not spellings):
+- A loop the compiler rotates shares its first load with the copied test unless something ends the extended basic
+  block; an explicit source constant is a delay-slot candidate that a loop.c-hoisted constant is not; strides the
+  compiler can derive are better left to it, because the hoisted constants land between the counter's and the givs'
+  initialisations.
+- local-alloc owns only pseudos of one block with one death; it ties a result to the first dying operand and orders its
+  quantities by priority. A local that the function also uses in another block (m2c's reuse of `temp_a0`) is a global
+  pseudo: allocated afterwards, never tied, loaded early by the first scheduler. The product's `mflo` register, the
+  `a0/a1` of the last block and the order of its loads were all decided by which values lived in such locals; operand
+  order, `*=`, casts, a one-use local and `register` did nothing (two other games' sequencer loops were left at their
+  last row for this reason). Checked with small programs under the pinned `cc1`: `mult $2,$3` + `mflo $3` appears only
+  when the first operand is used later or lives in two blocks.
+- The first scheduler's order of an ALU result and a load is decided by the pseudo class (global early, local as late
+  as possible), and by the reassociation of the sum that feeds the store.
 
-A product's register, which two games' sequencer functions left open (decomp-repair 0.5.275 `product_operand_reuse`):
-local-alloc ties the result of `g = A * B` to the first operand that dies in the multiply, so `mflo` wrote `$v0` (the
-computed factor's register) where the game writes `$v1`, the halfword factor's. That tie is only made for pseudos that
-local-alloc owns (one block, one death). A factor held in a local that the function assigns again in another block
-(`h = factor; g = h * lhu;`, `h` also holding the next block's sum) is a global pseudo, so the product takes the other
-factor's register and the whole block (chain, `mult`, `mflo`, the splitting stores) matched the game's instructions
-and registers (a function at 195 had no rows left in it). Operand order, `*=`, casts, a one-use local and register
-hints do not change it; checked with small programs under the pinned `cc1` (`mult $2,$3` + `mflo $3` appears when the
-first operand is used later or lives in two blocks, never otherwise).
+Tried and failed: a `minus_one` local at any of five positions (355 at best), `do { } while` with the break (1826),
+`for (;;)` with breaks (1716), struct-typed accesses for the tail, every order of the tail's statements with block-local
+temporaries (195 floor), splitting the flag into two block-local variables (365 to 415), declaration order and widths of
+`e`/`g`/`h`/`i`, the factor in `i` or `t0` or `f` (worse), `i` as a shared local (it broke the preceding block).
 
-Tried and failed: a `minus_one` local at any of five positions (355 at best; it merged with the first compare's
-constant and moved the `li` into the call's delay slot), `do { } while` with the break (1826, rotated through a `j`),
-`for (;;)` with breaks (1716), the struct-typed accesses for the tail, every order of the tail's six statements
-(195 floor), splitting `e` into two variables (365 to 415), declaration order and widths of `e`/`g`/`h`/`i`.
-
-Evidence: one function; steps 1, 2 and 5 are reproduced by the three decomp-repair 0.5.267 families run directly on the
-step before (535 -> 480, 535/480 -> 475/420, 505 -> 230), scored with the judge-worker; no permuter run. Not controlled
-across other functions. The residual at 195 is the final multiply's operand order and the register/order of the
-last block (below).
+Evidence: one function, judged exact by the app. Steps 1, 2, 5, 7 and 8 are reproduced by decomp-repair 0.5.267 / 0.5.275 /
+0.5.285 families run directly on the step before (535 -> 480, 535/480 -> 475/420, 505 -> 230, 195 -> 340, 195 -> 65),
+scored with the judge-worker; no permuter run. The last two edits (10, 11) and the choice of the call-result local are
+found by search over statement shapes, not yet a family. Not controlled across other functions.
 
 ### Capture the current node before advancing a linked loop
 
