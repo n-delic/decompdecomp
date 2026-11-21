@@ -52,5 +52,5 @@ branch falls into. Write the condition so that arm is the one the compiler keeps
 - Base-relative stores stay relative only when the symbol's first address use is wrapped in `do { ... } while (0)`.
 
 `try_local_repairs` runs the repair families that encode these (`join_initializer_sink`, `branch_polarity`,
-`join_copy_sink`, `shared_result_copy`, `mask_operand_order`, `scheduling_scope`, `guarded_offset_index`,
+`join_copy_sink`, `shared_result_copy`, `mask_operand_order`, `scheduling_scope`, `branch_slot_scope`, `guarded_offset_index`,
 `compound_global_update_repairs`, `operand_order_pass`): run it on your best revision before hand-writing them.
