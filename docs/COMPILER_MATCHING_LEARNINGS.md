@@ -11335,3 +11335,13 @@ from the matched source; the saved matches were not changed. decomp-repair
   The 1135 source threads three cases through one `do { ... } while (0)` with
   labels; the hand rewrite (240) changed every case at once. No existing
   family moved it, and a rewrite needs a CFG-to-switch reconstruction.
+
+### Keep the signed rounding choice inside the floating conversion
+
+For an N64 function built with gcc-2.7.2-kmc `-G0 -mips3 -mgp32 -mfp32 -O2`,
+the remaining difference at score 60 was a floating negation scheduled
+before, instead of after, an integer-to-float conversion. Putting the
+signed increment/decrement conditional directly inside the right shift and
+cast took the score to zero. Assigning the conditional to the original
+integer first left the score at 60. The deep permuter reproduced and saved
+the exact match in 19 candidates.
