@@ -299,6 +299,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += target_string_repairs.verified_variants(source, name, header, rows, read_data)
         result += measured_immediate_repairs.variants(source,name,rows)
         result += measured_narrow_use.variants(source, name, rows)
+        result += measured_narrow_use.boolean_byte_carriers(source, name, rows)
         result += measured_narrow_use.byte_backedge_variants(source, name, rows)
         result += measured_narrow_use.shared_halfword_index_variants(source, name, rows)
         result += kmc_cast_repairs.variants(source,name,header,rows,flags)

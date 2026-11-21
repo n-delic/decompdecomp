@@ -10591,3 +10591,12 @@ The deep permuter reproduced the 95 to 40 improvement from the starting draft.
   default destination, and a signed local for the masked selector. With the alias fixed alone, omitting the
   leading cases left scores of 2525 and 200. The compiler used a comparison chain for the first and rebased the
   jump table to the first explicit case for the second.
+
+### Store a comparison result in a byte local
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, a scratch N64 draft
+scored 200. The target copies a comparison result into a saved register,
+while assigning an explicitly cast byte to a word local emitted an extra
+mask. Declaring the flag as a byte and assigning the result directly
+matched the linked bytes. Removing only the cast scored 235 because KMC
+coalesced the two locals. The deep permuter reproduced the exact match.
