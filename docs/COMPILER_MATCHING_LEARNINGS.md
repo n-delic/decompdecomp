@@ -11924,6 +11924,16 @@ the extended basic block; an explicit source constant is a delay-slot candidate 
 (only the hoisted one stayed out of the slot); strides the compiler can derive are better left to it, because the
 hoisted constants land between the counter's and the givs' initialisations.
 
+A product's register, which two games' sequencer functions left open (decomp-repair 0.5.275 `product_operand_reuse`):
+local-alloc ties the result of `g = A * B` to the first operand that dies in the multiply, so `mflo` wrote `$v0` (the
+computed factor's register) where the game writes `$v1`, the halfword factor's. That tie is only made for pseudos that
+local-alloc owns (one block, one death). A factor held in a local that the function assigns again in another block
+(`h = factor; g = h * lhu;`, `h` also holding the next block's sum) is a global pseudo, so the product takes the other
+factor's register and the whole block (chain, `mult`, `mflo`, the splitting stores) matched the game's instructions
+and registers (a function at 195 had no rows left in it). Operand order, `*=`, casts, a one-use local and register
+hints do not change it; checked with small programs under the pinned `cc1` (`mult $2,$3` + `mflo $3` appears when the
+first operand is used later or lives in two blocks, never otherwise).
+
 Tried and failed: a `minus_one` local at any of five positions (355 at best; it merged with the first compare's
 constant and moved the `li` into the call's delay slot), `do { } while` with the break (1826, rotated through a `j`),
 `for (;;)` with breaks (1716), the struct-typed accesses for the tail, every order of the tail's six statements
