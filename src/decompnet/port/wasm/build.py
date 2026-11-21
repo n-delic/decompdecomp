@@ -874,7 +874,9 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
     progress.start(STEPS[2])
     log("one signature per function")
     lls = sorted((out / "ll").glob("*.ll"))
-    done = _run([py, HERE / "sigs.py", out / "sigs.txt", host / "libultra.sigs", *lls], log)
+    renamed = renames(lls, fixed, library_names)
+    _write(out / "renames.txt", "".join(f"{a} {b}\n" for a, b in sorted(renamed.items())))
+    done = _run([py, HERE / "sigs.py", out / "sigs.txt", host / "libultra.sigs", out / "renames.txt", *lls], log)
     if done.returncode:
         raise NetworkError(f"reading the functions' signatures failed: {done.stderr.strip()[-400:]}")
     own = game_host(host, repo)
@@ -890,13 +892,13 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
                                          library_names)
     extra += interp.mips_signatures(lls, fixed, [*sorted(host.glob("*.c")), *own], library_names, left_out, replaced,
                                     interp.by_value(lls, declared=True))
-    extra = sorted({n for n in extra if n not in known})
+    extra = {renamed.get(n, n) for n in extra}
+    extra = sorted(extra.difference(known))
     if extra:
         ret, params = recomp_c.MIPS_SIGNATURE
         _write(out / "sigs.txt", (out / "sigs.txt").read_text(encoding="utf-8")
                + "".join(f"{n}\t{ret}\t{params}\n" for n in extra))
 
-    _write(out / "renames.txt", "".join(f"{a} {b}\n" for a, b in sorted(renames(lls, fixed, library_names).items())))
     progress.start(STEPS[3])
     log("placing every symbol at its console address, data big-endian")
     if failed := place_all(out, lls, set(functions), zig, env, log, progress.files):

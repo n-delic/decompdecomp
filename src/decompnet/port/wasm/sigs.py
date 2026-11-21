@@ -1,4 +1,4 @@
-"""sigs.py out.txt known.sigs files.ll...: each function's one signature: its definition's, else its fullest declaration's."""
+"""sigs.py out.txt known.sigs renames.txt files.ll...: each function's one signature: its definition's, else its fullest declaration's."""
 import re
 import sys
 from collections import Counter
@@ -67,11 +67,14 @@ def main():
     global TYPES
     sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.abspath(__file__)))
     from beir import Types
-    for f in sys.argv[3:]:
+    renames = dict(row.split() for row in open(sys.argv[3]) if row.strip())
+    for f in sys.argv[4:]:
         TYPES = Types(open(f).read())
         for line in open(f):
             if line.startswith(("define", "declare")) and (s := signature(line)):
                 kind, name, ret, ps = s
+                # The linker sees the renamed symbol. Pool its callers' declarations before selecting an ABI.
+                name = renames.get(name, name)
                 if ps is None:  # declared with no prototype (`s32 f();`): only its return type is known
                     if kind == "declare":
                         loose.setdefault(name, Counter())[ret] += 1
