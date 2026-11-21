@@ -10176,3 +10176,51 @@ All four N64 controls compiled to their archived target bytes with the original 
 - At `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1`, passing the entry argument to the final call brought the
   168-byte draft from score 55 to 10. Casting each relocated word address to a byte pointer before adding the
   already-scaled index removed the remaining two-bit shift error and matched exactly.
+
+### Verified match: a 490-instruction N64 function reached by four small edits (switch stores, guard, address sum, counter)
+
+Compiler and flags: `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`. Evidence level: one real function, a "2,000-function
+N64 game" decoder routine of about 490 instructions, matched exactly by the app's judge (linked bytes exact, status
+matched); the intermediate word counts below come from a fast local compile of the same C against the target, not the
+judge. The function reads a bit stream into tables through eleven nested read loops after one switch.
+
+The chain, each step measured on its own and each an improvement: judge 465 (m2c draft reworked by agents) -> 405 (a
+local pointer for the repeated bit-reader address in the outer loop only, the nested goto loop keeping the literal:
+`loop_address_hoist`) -> 400 (operand order of an address sum inside the nested loop, from decomp-permuter's
+randomizer) -> then local differing words 21 -> 14 (a store in each switch arm instead of one store after the switch;
+`switch_arm_store`) -> 7 (the last loop's body duplicated into `if (v) {B} else {B}` on the nested loop's counter, a
+read of that counter after its loops; randomizer) -> 5 (one more reassociation of the nested loop's first call
+argument; randomizer) -> 0, judged 0 (the first read loop counting with the nested loop's counter instead of its own
+variable; `loop_counter_roles`). Without the guard the last step is worse (31 vs 2), so the steps are not
+interchangeable; each of guard, address sum and counter role is needed for the last 0 (all eight combinations
+measured: 15, 14, 7, 5, 31, 30, 2, 0 differing words).
+
+Why the switch edit matters: the target had the store to a hardware-pointer global first and the next call's argument
+setup after it, the candidate had them reversed (8 differing words, all instruction order). GCC 2.x merges identical
+store tails of switch arms late (cross-jumping, after the first scheduling pass). With the store after the merge it is
+in the same scheduling block as the next call's argument setup, which the first pass then schedules above it; with a
+store in each arm the cross-jumped store sits in a block of its own and stays first. The instructions are the same
+either way, only their order differs, so no instruction-level search could see the cause. A two-statement test
+reproduces it with the real compiler (tests/test_switch_arm_store.py).
+
+Why the counter and guard matter: GCC 2.7 gives saved registers by `floor_log2(uses) * uses / live length` (`-dl -dg`
+print the table; see the allocation-priority report), uses weighted by loop depth. A goto loop has no loop depth. A
+counter read again after its loops (the guard) is live over more code, which lowers its priority; and a loop that
+counts with another loop's counter variable adds uses and live range to that one pseudo. The two together moved two
+counters between saved registers without changing a single instruction.
+
+Failed on the same function, so they need not be tried again: renaming, retyping (`s32`/`u32`/`u16`/`s16`) or
+reordering declarations of the loop variables and temporaries (16,384 type combinations, 135 declaration orders);
+`register` on the locals; dead assignments inserted at every statement boundary (1,260 variants, no effect: GCC deletes
+them before allocation); `-mcpu` and optimisation flag changes (`-mcpu=r4600` was worse); inline helpers around the
+reader or the index arithmetic; writing the nested goto loops as real loops (the compiler then hoists and strength
+reduces, 490 differing words); statement order inside the loops; spelling variants of the index, stride, comparison and
+increment (1,080 combinations: one cleared a single row); a role assignment of seven later counters over five variable
+names (62,500 combinations, none below the starting count until the switch stores were in place).
+
+What the permuter now has for this: `switch_arm_store` (decomp-repair 0.5.170), `loop_counter_roles` taking a loop onto
+a counter that is read after its last loop, and recognising goto loops (0.5.170), `loop_address_hoist` (0.5.157); the
+guard and the address reassociation come from decomp-permuter's randomizer. Starting from the m2c form of the switch,
+`switch_arm_store` reproduces the edit exactly; starting from the guarded source, `loop_counter_roles` proposes the final
+counter edit (variant 8 of 23, among the reassignments that rank first).
+
