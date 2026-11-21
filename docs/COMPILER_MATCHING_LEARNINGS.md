@@ -1,5 +1,13 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: load pointer table entries as words
+
+With `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, two archived masked
+pointer searches improved from a difference score of 210 to 10 after
+typing the indexed table read as a pointer. The linked target loads
+a word where the draft loaded a signed byte. The remaining register
+allocation differs, so neither draft matched byte for byte.
+
 ### KMC GCC 2.7.2: recover byte cursors and input record setup
 
 The linked judge reproduced 35 of 36 archived drafts in one replay,
