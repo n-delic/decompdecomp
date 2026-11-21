@@ -98,6 +98,7 @@ def verify(feedback, example):
     compiler = profile['toolchain']
     if proj['arch'] == 'mips' and compiler == 'gcc-2.7.2-kmc':
         from decomprepair import (
+            aligned_allocator_request,
             aligned_stack_read,
             byte_cursor_postincrements,
             kmc_cast_repairs,
@@ -115,6 +116,7 @@ def verify(feedback, example):
             measured_mmio_polling,
             measured_pointer_scale,
             measured_temporary_repairs,
+            ordered_halfword_updates,
             packed_matrix_conversion,
             passthrough_argument_repairs,
             relocated_byte_table,
@@ -151,6 +153,11 @@ def verify(feedback, example):
             focused.append(('packed_matrix_conversion', candidate))
         if candidate := byte_cursor_postincrements.rewrite(source, fn['name'], fn['asm'] or '', header):
             focused.append(('byte_cursor_postincrements', candidate))
+        if candidate := aligned_allocator_request.rewrite(source, fn['name'], fn['asm'] or '', header):
+            focused.append(('aligned_allocator_request', candidate))
+        if candidate := ordered_halfword_updates.rewrite(source, fn['name'], fn['asm'] or '', header,
+                                                        symbols.resolve if symbols else None):
+            focused.append(('ordered_halfword_updates', candidate))
         if candidate := aligned_stack_read.rewrite(source, fn['name'], fn['asm'] or ''):
             focused.append(('aligned_stack_read', candidate))
         if candidate := passthrough_argument_repairs.missing_entry_argument(source, fn['name'], fn['asm'] or '', header):

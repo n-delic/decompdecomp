@@ -369,6 +369,7 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
         return run_m2c(asm_text, name, target, context_header, data_asm, timeout, valid, strict, options)
 
     from decomprepair import (
+        aligned_allocator_request,
         aligned_stack_read,
         byte_cursor_postincrements,
         large_stack_drafts,
@@ -377,6 +378,7 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
         measured_callback_loop,
         measured_mmio_polling,
         measured_stack_drafts,
+        ordered_halfword_updates,
         packed_matrix_conversion,
         passthrough_argument_repairs,
         relocated_byte_table,
@@ -404,6 +406,8 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
             or relocated_global_update.rewrite(source, name, asm_text, context_header, resolve)
             or packed_matrix_conversion.rewrite(source, name, asm_text, context_header)
             or byte_cursor_postincrements.rewrite(source, name, asm_text, context_header)
+            or aligned_allocator_request.rewrite(source, name, asm_text, context_header)
+            or ordered_halfword_updates.rewrite(source, name, asm_text, context_header, resolve)
             or aligned_stack_read.rewrite(source, name, asm_text)
             or passthrough_argument_repairs.missing_entry_argument(source, name, asm_text, context_header)
             or loop_storage_shapes.measured_copy_setup(source, name, asm_text, context_header)

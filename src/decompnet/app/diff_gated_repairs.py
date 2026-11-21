@@ -3,6 +3,7 @@
 import re
 
 from decomprepair import (
+    aligned_allocator_request,
     aligned_stack_read,
     byte_cursor_postincrements,
     kmc_cast_repairs,
@@ -19,6 +20,7 @@ from decomprepair import (
     measured_mmio_polling,
     measured_pointer_scale,
     measured_temporary_repairs,
+    ordered_halfword_updates,
     packed_matrix_conversion,
     passthrough_argument_repairs,
     relocated_byte_table,
@@ -199,6 +201,10 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
             result.append(('packed_matrix_conversion', candidate_source))
         if candidate_source := byte_cursor_postincrements.rewrite(source, name, asm or '', header):
             result.append(('byte_cursor_postincrements', candidate_source))
+        if candidate_source := aligned_allocator_request.rewrite(source, name, asm or '', header):
+            result.append(('aligned_allocator_request', candidate_source))
+        if candidate_source := ordered_halfword_updates.rewrite(source, name, asm or '', header, resolve):
+            result.append(('ordered_halfword_updates', candidate_source))
         if candidate_source := aligned_stack_read.rewrite(source, name, asm or ''):
             result.append(('aligned_stack_read', candidate_source))
         if candidate_source := passthrough_argument_repairs.missing_entry_argument(source, name, asm or '', header):
