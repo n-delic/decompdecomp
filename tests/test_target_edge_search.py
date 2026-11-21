@@ -208,6 +208,16 @@ def test_measured_stack_reservation_ignores_volatile_in_neighboring_source():
     assert dict(route(excess,shrinking,''))['measured_unused_frame_array'] == excess.replace('char frame[8];','')
 
 
+
+def test_measured_frame_growth_extends_an_existing_array_despite_register_differences():
+    source = 'void f(void) { char padding[8]; work(); }'
+    target = 'addiu $sp, $sp, -80|sw $ra, 76($sp)|move $a0, $s0|jal work|nop|lw $ra, 76($sp)|jr $ra|addiu $sp, $sp, 80'
+    current = 'addiu $sp, $sp, -64|sw $ra, 60($sp)|move $a1, $s0|jal work|nop|lw $ra, 60($sp)|jr $ra|addiu $sp, $sp, 64'
+    rows = [(' ' if a == b else 'r' if a.startswith('move') else 's', a, b)
+            for a, b in zip(target.split('|'), current.split('|'))]
+    assert dict(route(source, rows, ''))['measured_grow_unused_frame_array'] == source.replace('[8]', '[24]')
+
+
 def test_measured_direct_return_reaches_kmc_proposals():
     source = 's32 f(void *p) { s32 result = 0; if (p) result = *(s32 *)((char *)p + 0x10); return result; }'
     rows = [('r','lw $v0, 0x10($v1)','lw $v1, 0x10($v0)'),
