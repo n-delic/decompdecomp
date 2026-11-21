@@ -12212,3 +12212,50 @@ The released search stayed at the starting score in 100 trials per draft.
 
 These are linked-byte scratch matches. Synthetic tests exercise the
 instruction evidence, field width and source-shape checks.
+
+## A 636-instruction render function: members, rhs-first stores, a parameter copy (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, an N64 game, one 636-instruction camera/render function)
+
+A function that sets up three viewports, pushes three display-list commands and calls a render pipeline; saved best 8805
+(a search's printed dialect: `*((T *) (((char *) p) + off))` everywhere, `void *` display-list cursor, `short`/`unsigned
+char` locals for `arg1 * 2` and `arg1 << 6`). Matched by hand (judge 0, recorded); each row scored with the app's judge
+(judge-worker), one function, not controlled across others.
+
+| # | Edit | Score |
+| - | ---- | ----- |
+| 0 | saved best | 8805 |
+| 1 | display-list cursor as `Gfx *` (`cur->w0 = c; cur->w1 = p; cur++`) instead of `void *` and `+= 8` | 8620 |
+| 2 | `arg1 * 2` / `arg1 << 6` written in place instead of `short` / `unsigned char` locals (the casts were `sll/sra` and `andi` the target does not have; the locals had only been there to rank their pseudos for `$s1`/`$s3`, which the plain expressions do by themselves) | 8535 |
+| 3 | every viewport store as a struct member (`((Vp *)p)->h[k] = ...`) | 7430 |
+| 4 | the camera parameter as a declared struct (every `*(f32 *)(arg0 + off)` as `arg0->f`), `ThreeWords` copies as struct assignment | 6105 |
+| 5 | the three viewport blocks rewritten with a typed global pointer (`sRenderState->a[arg1].h[k] = ...`, natural store order, no `do { } while (0)` wrappers, the saved scale local used in all three) | 2240 |
+| 6 | the matrix-pool update with `u32` and the sum's operands in the target's order, the angle locals inlined into the call | 890 to 845 |
+| 7 | each float-to-short store as `tv = (s16)(...); lhs = tv;` (sixteen, all three blocks; each block alone: 560, 390) | 815 to 90 |
+| 8 | the three `-field` negations in source order | 50 |
+| 9 | yaw/pitch/roll inlined, `rs->s74c + (n << 6)` | 40 (only the prologue's register saves differed) |
+| 10 | `arg1` as a local: the signature takes `p1`, `arg1 = p1;` right after the first load | 0 |
+
+Rules (the compiler facts the rows change):
+- **Member accesses schedule differently from raw offsets.** A reference through a struct member is "in struct"; the
+  first scheduler orders it against fixed-address scalars (`gCullFarDistance`, the display-list cursor, the render-state
+  pointer) differently from `*(T *)(p + off)`. On the printed spelling the whole step 3-4 gain (8535 to 6105, the same as
+  declaring the structs) comes from rewriting every raw dereference as `((Field_T *)(addr))->v` of a one-member struct.
+  Worse on the raw saved best (8805 to 12336): the effect depends on the rest of the source, so offer all, stores only,
+  loads only and each base alone. Failed: the member form on only the stores or only one base (no change).
+- **`lhs = rhs;` expands the left side's address first.** The load of the global pointer and the index arithmetic precede
+  the float multiply/truncate/`mfc1` of the right side, so the pointer is loaded before the value; the target loads it
+  after. Writing the value into a local first reverses it. This also moved `lw` of the pointer from before `mul.s` to
+  after the constant loads; no reordering of the statements themselves did (a grid of 144 orders, 24 orders of the four
+  tail stores, 35 placements of the cursor push: all unchanged).
+- **The second scheduler works backwards and fills stalls with the lowest-priority insn left.** Ties go to the later
+  insn of the first scheduler's order; a prologue `sw $s5` ahead of `sw $ra` means the parameter's `move $s5,$a1` sits
+  early in the entry block (it has an anti-dependence on that save). Copying the parameter into a local after the first
+  statement moved it; copying it first (before the `lwc1`) made it 250.
+- Matrix-pool `if (used < limit) { used = used + 1; slot = rs->s74c + (used << 6); }`: the global the compare loads takes
+  `$a2` only when the angle locals are written inline in the call; declared locals before the update gave `$v1`.
+- Failed (do not repeat): a local holding the constant `0xDC080008` early (no effect), the raw (non-member) cursor stores
+  (7430), `RS *rs = sRenderState` as a local (same RTL), shuffling declaration order (300 shuffles, no change).
+
+decomp-repair 0.5.281 `entry_parameter_copy` (step 10), `store_value_first` (step 7) and `field_struct_view_printed`
+(steps 3-4) run on the source before each step reach it (40 to 0, 815 to 90, 8535 to 6105; judge-worker, no permuter
+run). Not yet in the permuter: the typed-array rewrite of step 5 (a global pointer's array element accessed in place of
+m2c's `temp = sRenderState + off` locals), and the operand/store-order choices of steps 6, 8 and 9.
