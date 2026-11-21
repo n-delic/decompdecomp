@@ -2277,6 +2277,7 @@ img.rom-preview-media { image-rendering:pixelated; background:var(--bg-alt); bor
 #portDiscoveryAdd { justify-self: start; }
 .port-runtimes { border: 0; margin: 4px 0 0; padding: 0; display: grid; gap: 8px; min-width: 0; }
 .port-runtimes legend { padding: 0; margin-bottom: 4px; }
+#portBuildPickers legend { font-weight: 650; }
 .port-runtime { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: start; cursor: pointer; }
 .port-runtime > span { display: grid; gap: 2px; min-width: 0; }
 .port-runtime input { margin-top: 2px; }

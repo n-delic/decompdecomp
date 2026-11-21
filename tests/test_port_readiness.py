@@ -170,6 +170,13 @@ def test_the_play_step_offers_each_runtime_with_what_it_still_needs(project):
                                                    "Assets extracted"]
     assert "Assets extracted" not in runtimes["n64modernruntime"]["missing"]  # it reads the ROM as it runs
     assert not runtimes["libultraship"]["playable"] and not runtimes["n64modernruntime"]["playable"]
+    compatibility, direct = report["build_modes"]
+    assert compatibility["id"] == "compatibility" and direct["id"] == "direct"
+    first, ship, modern = compatibility["runtimes"]
+    assert first["name"] == "decompdecomp runtime" and first["playable"]
+    assert all(not runtime["playable"] and not runtime["missing"] for runtime in (ship, modern))
+    assert direct["runtimes"] == [runtimes["libultraship"], runtimes["n64modernruntime"]]
+
 
 
 def test_a_native_runtime_is_closed_until_decompdecomp_builds_on_it():
