@@ -9928,3 +9928,10 @@ The archived sources independently compiled as controls. Each installed rule rep
 
 - Four cases used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`. Restoring the unchanged first argument before the reloaded byte matched all 84 bytes from score 20. Updating the local counter inside the first byte store matched all 120 bytes from score 20. Staging the masks and shifts into a single running sum matched a 40-byte pack from score 25. Using explicit post-increments for both byte reads preserved both halfword stores and matched all 64 bytes from score 25. Both halfword and word temporaries produced the same bytes in the last case.
 - With `ido-5.3 -O2 -mips2 -G 0 -non_shared -Xcpluscomm -Wab,-r4300_mul`, a compound byte decrement placed the address and value in different registers. Reading the byte into a word local, decrementing it, then writing it back moved score 25 to exact across all 24 bytes.
+
+The same function's unmodified m2c draft (score 11,654 under GCC) now reaches the match without a hand edit: the
+`stack_unpack_loop` family (decomprepair 0.5.151) rebuilds the pointer walks as the indexed loop over stack arrays
+(counts from the end test, array extents from the objects' offsets, the callee's stack arguments from the target's
+stores), and the `sra` signal above makes the deep pass probe IDO. Through `draft_repairs.variants` it produced two
+variants, one with the draft's `|` operand order (0.71 of the instructions) and one swapped (all 164, exact in the
+judge): IDO evaluates the operand written first first, so the swapped form is offered beside the plain one.
