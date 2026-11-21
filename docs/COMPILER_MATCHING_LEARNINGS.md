@@ -1,5 +1,13 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: carry a halfword pointer through a branch
+
+Three 92-byte archived drafts matched after capturing the global
+halfword pointer inside both branches and using the selected pointer
+for the shared store. Each improved from 245 to zero with
+`-G0 -mips3 -mgp32 -mfp32 -O2`. One case also used `-g3`.
+Loading the pointer once before the branch scored 330.
+
 ### KMC GCC 2.7.2: stage a command word before a second allocation
 
 A 248-byte archived draft matched after staging its command word in an
