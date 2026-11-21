@@ -75,3 +75,43 @@ def test_yay0_rebuild_uses_literals_and_verifies_back_references():
     assert result != compressed
     assert uso._yay0(result) == changed
     assert uso._yay0(compressed, changed[:-1] + b'q') is None
+
+
+def test_overlay_replays_distinct_loader_calls_from_one_donor_placeholder(tmp_path):
+    import threading
+    from unittest.mock import Mock
+
+    from decompnet.app.overlay_donor_aliases import retry
+
+    if toolchains.installed('ido-5.3') is None:
+        pytest.skip('needs IDO 5.3')
+    cfg = compiler_config(tmp_path, {'compiler': {'toolchain': 'ido-5.3', 'flags': toolchains.get('ido-5.3').flags}})
+    source = 'void example(void) { placeholder(1); placeholder(2); }'
+    section = 64
+    first, second = uso_match.alias(section, 1), uso_match.alias(section, 2)
+    header = 'extern void placeholder(int);'
+    original = compile_source(cfg, header, source)
+    assert original.ok, original.log
+    from decompnet.elfobj import extract_function
+    raw = extract_function(original.obj, 'example')
+    sites = [(r.offset, r.type, i) for i, r in enumerate(raw.relocs, 1)]
+    assert len(sites) == 2
+    info = {'section': section, 'start': 0, 'size': len(raw.code), 'relocs': sites}
+    target = uso_match.symbolic_target(uso_match.Target('example', 0, raw.code, [], uso=info))
+    baseline = uso_match.link(original.obj, 'example', raw.code, info)
+    assert baseline.instructions_exact and not baseline.exact
+
+    def measure(text, context):
+        build = compile_source(cfg, context, text)
+        assert build.ok, build.log
+        return uso_match.link(build.obj, 'example', raw.code, info).candidate
+
+    stopped = threading.Event()
+    stopped.set()
+    forbidden = Mock(side_effect=AssertionError('stopped probe ran'))
+    assert retry(source, header, 'example', baseline.candidate, target, forbidden, stopped) is None
+    rewritten, context = retry(source, header, 'example', baseline.candidate, target, measure, threading.Event())
+    assert f'{first}(1)' in rewritten and f'{second}(2)' in rewritten
+    result = compile_source(cfg, context, rewritten)
+    assert result.ok, result.log
+    assert uso_match.link(result.obj, 'example', raw.code, info).exact

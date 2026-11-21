@@ -138,3 +138,27 @@ def test_whole_unit_ido_preprocessing_accepts_line_comments(tmp_path):
     assert output is not None
     assert 'int entry' in output and 'https://example.org' in output
     assert 'continued comment contents' not in output
+
+
+def test_replacement_source_is_literal_and_checkout_local(tmp_path):
+    from types import SimpleNamespace
+
+    from decompnet.app.donor_build import Settings
+
+    root = tmp_path / 'donor'
+    sources = root / 'src'
+    sources.mkdir(parents=True)
+    source = sources / 'replacement.c'
+    source.write_text('int original(void) { return 7; }\n')
+    outside = tmp_path / 'outside.c'
+    outside.write_text('outside')
+    (sources / 'escape.c').symlink_to(outside)
+    (root / 'Makefile').write_text(
+        'build/non_matching/src/unit.c.o: private REPLACE_FUNC_BODY += '
+        'original=build/non_matching/src/replacement.c.o.linked.elf.bound.elf '
+        'escape=build/src/escape.c.o traversal=build/src/../outside.c.o '
+        'variable=$(OTHER) cpp=build/src/other.cpp.o\n')
+    settings = Settings(SimpleNamespace(root=root))
+    unit = SimpleNamespace(base=root / 'build/non_matching/src/unit.c.o')
+    assert settings.replacement_source(unit, 'original') == source
+    assert all(settings.replacement_source(unit, name) is None for name in ('escape', 'traversal', 'variable', 'cpp'))

@@ -64,3 +64,25 @@ def candidate(other, donor, names, invocation, cache):
 
 def is_unit(header, proj):
     return proj['arch'] == 'mips' and header.startswith(DONOR_UNIT_HEADER)
+
+
+def replacement(other, donor, target_name, invocation, path):
+    """Prepare literal replacement C without executing the donor's build or object patches."""
+    root = Path(other['root']).resolve()
+    if not path.resolve().is_relative_to(root):
+        return None
+    roots, _ = donor_sources.build_hints(root)
+    reader = donor_sources.DonorReader({'root': str(root), 'include_roots': '\n'.join(map(str, roots))})
+    text = preprocess_donor_unit(invocation, reader.flatten(path))
+    if text is None:
+        return None
+    text = re.sub(r'(?m)^[ \t]*#[^\n]*', '', text)
+    entry = (donor['meta'] and json.loads(donor['meta']).get('symbol')) or donor['name']
+    span = csource.find(text, entry)
+    if not span or csource.is_stub(text[slice(*span)]):
+        return None
+    from .source_symbol_recovery import rename
+
+    start = text.rfind('\n', 0, span[0]) + 1
+    aliases = {entry: target_name}
+    return rename(text[start:], aliases), DONOR_UNIT_HEADER + rename(text[:start], aliases)

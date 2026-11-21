@@ -1443,7 +1443,10 @@ class Twins:
                 fallback = None
                 if settings:
                     try:
-                        outcome, why = donor_build.verify(self.net, proj, b, other, a, names, settings, agent, job, build.headers)
+                        replacement = build.replacement_source(unit, donor_name)
+                        outcome, why = donor_build.verify(
+                            self.net, proj, b, other, a, names, settings, agent, job, build.headers,
+                            **({'replacement': replacement} if replacement else {}))
                         if outcome == 'miss' and overlay_names is not None and overlay_names != names and not job.stop.is_set():
                             outcome, why = donor_build.verify(
                                 self.net, proj, b, other, a, overlay_names, settings, agent, job, build.headers)

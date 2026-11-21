@@ -4,6 +4,7 @@ import json
 import re
 import shlex
 import time
+from pathlib import Path
 
 from .. import arch, toolchains
 from ..network import NetworkError
@@ -29,6 +30,7 @@ class Settings:
         self.root = project.root
         self.variables = {}
         self.overrides = {}
+        self.replacements = {}
         self.recipe_defines = {}
         path = project.root / 'Makefile'
         if not path.is_file() or not path.resolve().is_relative_to(project.root.resolve()) or path.stat().st_size > 2**20:
@@ -60,6 +62,15 @@ class Settings:
                 self._assign(self.variables, assignment.groups())
                 continue
             assignment = _ASSIGNMENT.fullmatch(value.strip().removeprefix('private ').lstrip())
+            if colon and assignment and assignment[1] == 'REPLACE_FUNC_BODY':
+                for name in recipe_targets:
+                    entries = self.replacements.setdefault(name, {})
+                    if assignment[2] in (':=', '='):
+                        entries.clear()
+                    for token in assignment[3].split():
+                        symbol, equals, obj = token.partition('=')
+                        if equals and re.fullmatch(r'[A-Za-z_]\w*', symbol):
+                            entries[symbol] = obj
             if colon and assignment and assignment[1] in ('CC', *_FLAG_VARIABLES):
                 for name in target.split():
                     self.overrides.setdefault(name, []).append(assignment.groups())
@@ -109,6 +120,17 @@ class Settings:
             return None
         return self._profile(match[1], [*groups, ' '.join(literal)])
 
+    def replacement_source(self, unit, symbol):
+        if not unit.base or not unit.base.is_relative_to(self.root):
+            return None
+        target = unit.base.relative_to(self.root).as_posix()
+        artifact = self.replacements.get(target, {}).get(symbol, '')
+        match = re.fullmatch(r'build/(?:non_matching/)?(src/[A-Za-z_0-9./-]+\.c)\.o(?:\.linked\.elf\.bound\.elf)?', artifact)
+        if not match or '..' in Path(match[1]).parts:
+            return None
+        path = (self.root / match[1]).resolve()
+        return path if path.is_relative_to(self.root.resolve()) and path.is_file() else None
+
     @staticmethod
     def _profile(version, groups):
         flags = []
@@ -129,7 +151,7 @@ class Settings:
         return {'toolchain': 'ido-' + version, 'flags': flags}
 
 
-def verify(net, proj, fn, other, donor, names, settings, agent, job, cache):
+def verify(net, proj, fn, other, donor, names, settings, agent, job, cache, *, replacement=None):
     """Compile in private and retain this exact header and profile only with a fresh byte verdict."""
 
     if not settings or toolchains.installed(settings['toolchain']) is None:
@@ -145,11 +167,18 @@ def verify(net, proj, fn, other, donor, names, settings, agent, job, cache):
         if proj['arch'] == 'mips':
             try:
                 _, invocation = net._invocation(private, fn)
+                if replacement is not None:
+                    lead = donor_unit.replacement(other, donor, fn['name'], invocation, replacement)
+                    if lead:
+                        accepted, whole_reason = _try(net, current, private, fn, *lead, agent, job)
+                        if accepted:
+                            return 'match', 'Verified from the donor build’s replacement C source.'
                 whole = donor_unit.candidate(other, donor, {**names, donor['name']: fn['name']}, invocation, cache)
             except (NetworkError, OSError, ValueError):
                 whole = None
             if whole:
-                accepted, whole_reason = _try(net, current, private, fn, *whole, agent, job)
+                accepted, reason = _try(net, current, private, fn, *whole, agent, job)
+                whole_reason = whole_reason or reason
                 if accepted:
                     return 'match', 'Verified from a saved donor translation unit.'
         for body, header, _ in donor_sources.imported(net, other, donor, cache):
@@ -207,6 +236,17 @@ def _try(net, proj, private, fn, source, header, agent, job):
                 if aliases:
                     variants = [('overlay-symbols', source_symbol_recovery.rename(source, aliases),
                                  source_symbol_recovery.rename(header, aliases))]
+                else:
+                    from . import overlay_donor_aliases
+
+                    def measure(probe, context, private=private, fn=fn, proj=proj):
+                        built = net._compile(private, context, probe, fn)
+                        return net._evaluate(fn, proj, built.obj)[0] if built.ok else None
+
+                    rewritten = overlay_donor_aliases.retry(
+                        source, header, fn['name'], candidate, net._target_obj(fn, proj), measure, job.stop)
+                    if rewritten:
+                        variants = [('overlay-call-sites', *rewritten)]
             else:
                 recover = arch.get(proj['arch']).source_symbol_bindings
                 bindings = (recover(result.obj, fn['name'], fn['target'], fn['vram'], net.symbols(proj['id']).resolve)

@@ -1371,6 +1371,25 @@ on an isolated copy. The synthetic regression checks preprocessing output and th
 whole-unit fixture independently rechecks a saved function through the ROM judge.
 The port-only include diagnosed during inspection was under an inactive conditional.
 
+### IDO 7.1 donor body replacements and shared overlay placeholders
+
+On an isolated N64 copy, IDO 7.1 with
+`-O2 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul -DNON_MATCHING`
+emitted 8-byte placeholders for eleven imported overlay functions whose donor build
+substituted a distinct C++ body. Another resident source emitted 552 bytes for a
+560-byte target. Reading the literal replacement C from the donor's build declaration
+produced all 560 bytes, and the ordinary loader-relocation judge accepted it after
+rebinding the symbols. Replaying the original C allocation or its compiler flags
+alone did not reproduce the replacement object.
+
+Four other real functions compiled to the correct raw bytes but emitted the same
+undefined symbol at sites that needed distinct loader bindings. Changing one source
+occurrence at a time identified its emitted relocation sites without changing the raw
+bytes. Applying the measured bindings together and compiling again produced four
+verified overlay matches. A controlled IDO regression exercises two calls that start
+with one placeholder. This is source recovery, with the destination's existing exact
+instruction and relocation checks still required.
+
 ### Observation: source layout sensitivity (IDO 5.3)
 
 The existing [IDO guide](../src/decompnet/consoles/n64/guides/ido.md) records a private same-source
