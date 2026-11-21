@@ -8770,3 +8770,20 @@ ordinary float locals, then using those locals in a separate call statement, mat
 260 bytes. Passing the volatile stack slots or using assignment expressions directly
 in the call arguments did not match. A linked run through Deep Permuter confirmed the
 combined repair, with no profile change.
+
+### Two-stage volatile hardware polling
+
+A 52-instruction N64 draft from the no-baseline archive used invalid pointer
+dereferences for hardware status and output writes. With the captured header
+and `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, nonvolatile word casts
+compiled with a score of 3440. Using volatile word accesses brought it to 710.
+Removing three inferred call arguments and the otherwise unused staging
+brought it to 280. A typed saved pointer alone kept that score.
+
+Staging each volatile read in a local before testing the mask reproduced the
+exact linked bytes. Each guarded polling block still reads once before the
+first test and once per iteration. The target must support the two status
+loads and mask, both output stores, the direct call with its delay-slot
+store, and the final status acknowledgement. Fresh draft generation and the
+Deep Permuter proposal reproduced the match with the normal ROM judge on a
+copied project.
