@@ -99,7 +99,7 @@ def _run(net, proj, fn, log, check, max_profiles):
     candidates = [(own['toolchain'], tuple(flags)) for flags, _ in probes]
     input_digest = net._comparison_digest(proj, fn, fn['best_source'], candidates)
     from .baseline_status import revision
-    key = 'matching-preflight-v7:'+revision()+':'+input_digest+':'+hashlib.sha256(repr(probes).encode()).hexdigest()
+    key = 'matching-preflight-v8:'+revision()+':'+input_digest+':'+hashlib.sha256(repr(probes).encode()).hexdigest()
     result = {'tested': 0, 'best': None, 'pending': 0}
     best_key = None
     relocation_source = None

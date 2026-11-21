@@ -9654,3 +9654,14 @@ three-halfword record. The candidate advanced 3 bytes in the loop branch
 delay slot while the original advanced 6. Changing the source step from 3
 to 6 produced the original stride and improved the score from 2,599 to
 2,589 on the real-game scratch judge. The function remains unmatched.
+
+### Branch-delay scheduling and jump-table placement
+
+
+Disabling branch-delay scheduling is a separate KMC probe. In a scratch
+replay of a 592-byte N64 routine under
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, the same C gave an
+advisory score of 2230 with an unplaced jump table. Adding
+`-fno-delayed-branch` cleared the linker error and gave a linked score of
+4720. The repair keeps this profile as a search lead. The function still
+needs an exact verdict before automatic compiler settings can change.

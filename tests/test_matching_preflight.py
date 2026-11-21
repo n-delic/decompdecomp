@@ -386,3 +386,31 @@ def test_jump_table_search_scores_only_clean_candidates():
     net._judge_with = lambda *args: (False, SimpleNamespace(score=30), '')
     assert profile_climb._judge(search, proj, fn, profile, source, require_clean=True) == 30
     assert search.tested == 2
+
+
+def test_displaced_jump_table_can_recover_with_delay_slot_scheduling_disabled(monkeypatch):
+    from decompnet.app import switch_tables
+
+    net, proj, fn, state = setup()
+    proj['arch'] = 'mips'
+    net.cfg(proj)['compiler']['toolchain'] = 'gcc-2.7.2-kmc'
+    monkeypatch.setattr(switch_tables, 'read', lambda *args: [(0, [4100, 4104])])
+    logs = []
+
+    def judge(project, function, toolchain, flags, source):
+        state['calls'].append(flags)
+        if '-fno-delayed-branch' in flags:
+            return False, SimpleNamespace(score=90), ''
+        return False, SimpleNamespace(score=50), "your code refers to .rodata+0x0 where the ROM's code has no address"
+
+    net._judge_with = judge
+    assert not preflight.run(net, proj, fn, log=logs.append, max_profiles=1).get('jump_table_profile')
+    result = preflight.run(net, proj, fn, log=logs.append, max_profiles=3)
+    assert state['calls'][:4] == [
+        ['-O2'], ['-O2', '-fno-schedule-insns'], ['-O2', '-fno-schedule-insns2'], ['-O2', '-fno-delayed-branch'],
+    ]
+    assert result['jump_table_profile']['score'] == 90
+    assert result['jump_table_profile']['flags'] == ['-O2', '-fno-delayed-branch']
+    assert 'Jump-table relocation cleared' in '\n'.join(logs)
+    assert not state['applied'] and not state['suggested']
+    assert fn['best_score'] == 50
