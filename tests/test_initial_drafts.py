@@ -498,3 +498,22 @@ def test_valid_kmc_draft_recovers_the_witnessed_copy(monkeypatch):
     assert seeds.generate_from_asm('asm', 'f', 'gcc-2.7.2-kmc', 'header', **opts) == raw
     assert seeds.generate_from_asm('asm', 'f', 'ido-5.3', 'header', valid=True, **opts) == raw
     assert calls == [(raw, 'f', 'asm', 'header', resolve)]
+
+
+def test_copied_word_index_repair_runs_during_valid_kmc_draft_generation(monkeypatch):
+    from decomprepair import measured_stack_drafts
+
+    raw = 's32 f(s32 arg) { return *((arg * 4) + sp); }'
+    monkeypatch.setattr(seeds, 'run_m2c', lambda *args: raw)
+    monkeypatch.setattr(seeds, 'intrinsic_leaf', lambda *args: None)
+    monkeypatch.setattr(seeds, 'm2c_target', lambda *args: 'mips-gcc-c')
+    calls = []
+
+    def repair(*args):
+        calls.append(args)
+        return 's32 f(s32 arg) { return table[arg]; }'
+
+    monkeypatch.setattr(measured_stack_drafts, 'rewrite', repair)
+    assert 'table[arg]' in seeds.generate_from_asm('asm', 'f', 'gcc-2.7.2-kmc', 'header', valid=True)
+    assert seeds.generate_from_asm('asm', 'f', 'gcc-2.7.2-kmc', 'header') == raw
+    assert calls == [(raw, 'f', 'asm', 'header')]
