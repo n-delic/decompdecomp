@@ -1,5 +1,13 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: update a flag in both branches
+
+Two archived drafts matched after replacing a temporary flag value and
+shared assignment with direct bit updates in the branches. Both
+improved from 215 to zero with
+`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`. The linked output still joined
+the two paths at a common store.
+
 ### KMC GCC 2.7.2: carry a halfword pointer through a branch
 
 Three 92-byte archived drafts matched after capturing the global
