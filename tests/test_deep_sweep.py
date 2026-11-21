@@ -1198,3 +1198,40 @@ def test_missing_randomizer_is_installed_once_and_a_failure_is_reported(monkeypa
     monkeypatch.setitem(permute._auto, 'failed', 0.0)
     assert permute.ensure_available(said.append) is True and state['calls'] == 2
     assert permute.ensure_available(said.append) is True and state['calls'] == 2
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+def test_new_focused_rule_retries_only_the_matching_completed_pass(sweep, monkeypatch, legacy):
+    from decompnet import claim_stalls
+    from decompnet.app import targeted_retry
+    from tests.test_residual_trials import BYTE_GUARD, BYTE_MASK_ROWS, assembly
+
+    obj, net, calls, _ = sweep
+    rules = [('unrelated_repairs.py', 'unchanged')]
+    monkeypatch.setattr(claim_stalls, 'repair_rules', lambda: list(rules))
+    asm = assembly(*(left for _, left, _ in BYTE_MASK_ROWS))
+    with net.store.tx() as db:
+        for name in ('f0', 'f1'):
+            db.execute("UPDATE functions SET best_score=10,best_source=?,asm=? WHERE name=?",
+                       (BYTE_GUARD.replace('f0', name), asm if name == 'f0' or not legacy else '', name))
+    def search(net, slug, name, minutes, variants, log):
+        calls.append(name)
+        fn = net._function(name, slug)
+        return {'tested': 5, 'matched': False, 'best_score': 10, 'reason': 'Variant limit reached',
+                'targeted_retry': targeted_retry.snapshot(fn['best_source'], BYTE_MASK_ROWS)}
+
+    monkeypatch.setattr(deep_permuter, 'run', search)
+    proj = net.project_row('game')
+    for name in ('f0', 'f1'):
+        fn = net._function(name, 'game')
+        rows = BYTE_MASK_ROWS if name == 'f0' else BYTE_MASK_ROWS + [('i', 'nop', 'move $a0, $a1')]
+        evidence = None if legacy else targeted_retry.snapshot(fn['best_source'], rows)
+        obj.record(fn, deep_sweep.signature(net, proj, fn, 1, 10), 'completed', 1, 10,
+                   {'targeted_retry': evidence})
+    assert obj.run('game', 1, 10, Log())['functions_tested'] == 0
+    rules.append(('last_byte_mask_repairs.py', 'new'))
+    assert obj.history('game', net._function('f0', 'game'))['stale']
+    assert obj.history('game', net._function('f1', 'game'))['completed']
+    assert obj.run('game', 1, 10, Log())['functions_tested'] == 1
+    assert calls == ['f0']
+    assert obj.run('game', 1, 10, Log())['functions_tested'] == 0
