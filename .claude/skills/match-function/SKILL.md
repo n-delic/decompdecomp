@@ -11,6 +11,25 @@ The aim is two things, and a run that delivers only the first has not finished:
 2. **The app gets better at it.** Every manual step that worked (or that the permuter should have found and
    didn't) becomes a tested rewrite, search guide or bug fix, so the permuter finds it itself next time.
 
+## The order of work: permuter first, then keep hunting until it matches
+
+The permuter improvement comes **before** the match, not after it, so every other user gets it while you work:
+
+1. Orient (step 1), name the mismatch, and try a few quick hand ideas (steps 2-4). Do not sink an hour in here.
+2. **As soon as you know what the permuter lacks** (a rewrite it has no form of, a family that never fires on this
+   shape, a cap or budget that cut the search, a bug in a run), land that improvement *first*: test, PR, merge
+   (step 5), a library release when it is a decomp-repair change. This happens even though the function is not
+   matched yet. A permuter run that failed to reach the near-match is itself the lesson: find out why and fix it.
+3. Then go back to the function and **keep hunting until the judge says 0**: re-read the diff, run the improved
+   permuter on it (with a real variant limit: a few thousand, not 4), try the next idea.
+4. Every time a hunt turns up another thing the permuter could do, repeat 2 before continuing 3. Each loop merges a
+   PR, so the permuter improves for everyone as you go.
+
+Do not stop to ask whether to keep hunting: stop only for a matched function, or a specific, evidenced blocker the
+user has agreed to. "Score unchanged after N ideas" is not a blocker. If you have no idea the permuter lacks yet,
+that is step 5's question to answer honestly (what would have found the near-miss's last row?), not a licence to
+skip it: a near-match that the permuter cannot close is always a permuter gap.
+
 The permuter's rewrites live in the decomp-repair library (AGENTS.md, "Agents": change it there, tag, bump the tag
 in `pyproject.toml`, `uv lock`). What runs candidates stays in `src/decompnet/app/`. Read that section first.
 
@@ -100,13 +119,13 @@ plateaued: two more rounds, including token-level rewrites (`x += 1` vs `++x`, `
 nothing. Use it to clear the easy rows, then stop and read the diff: a search that cannot name what it is looking for
 will not find the last rows. Verify its best in the app before believing it.
 
-The Deep Permuter: `judge.py permute SLUG FUNC MINUTES VARIANTS` (a function with no scored C is refused:
+The Deep Permuter: `judge.py permute SLUG FUNC MINUTES VARIANTS` (VARIANTS is a limit: use thousands, e.g. 5000; a run with 4 tests nothing) (a function with no scored C is refused:
 `judge.py seed SLUG FUNC` judges the app's untouched draft first). It restores the best, tries random rewrites
 and local repairs, and saves every verified improvement. Check the result with `judge.py job ID` and the function's
 Deep permuter tab. If it errors, that is a bug to fix (see PR "TracedVariant" for an example), not a reason to
 wait.
 
-## 5. Teach the permuter (required before you stop)
+## 5. Teach the permuter (do it first, merge it, then continue hunting)
 
 For each manual step that moved the score, answer: **could the permuter have done this?**
 
@@ -131,14 +150,16 @@ For each manual step that moved the score, answer: **could the permuter have don
   exists is taken (use the next version, never move a tag), and after the library's release check its archive
   contains your module before bumping the app's pin.
 
-If you could not match it, still do step 5 for what you learned, and leave the function's note with the blocker.
+Step 5 is merged *before* you continue hunting, not saved for the end. If you still cannot match the function
+afterwards, leave its note with the evidenced blocker.
 
 ## 6. Finishing, and using this under /goal
 
 Under `/goal`, the condition is only met when **both** hold, and you should say so in the goal text:
 
 - the function's judged score is 0 (`judge.py diff` reports the app's verdict; re-read it, don't recall it), **or**
-  you have stopped with a specific, evidenced blocker and the user agreed to stop; and
+  you have stopped with a specific, evidenced blocker and the user agreed to stop (do not ask before you have
+  merged at least one permuter improvement from this function); and
 - the permuter or app change from step 5 is merged (or an open PR with its test passing), `scratch_run.py` has
   reported PROVEN for it (say what it printed), and your final message gives the before/after
   evidence. "The rewrite produces an exact variant when I call it" does not meet this.
