@@ -1066,6 +1066,9 @@ def test_targeted_register_pass_compiles_bitwise_and_float_lifetime_candidates(m
     assert search.operand_order_pass(AGENT, proj, fn, 5, None) == 5
     assert len(seen) == 2 and any('a = b & a' in candidate for candidate in seen)
 
+    # Give the independent floating fixture its own compile allowance.
+    search.tested = 0
+    seen.clear()
     field = 'M2C_FIELD(obj, f32 *, 4)'
     draft = f'void f(void *obj) {{ {field} = (compute({field}) * 0.5f) + {field}; }}'
     search.winner_diff = ([('r', 'add.s $f2, $f2, $f0', 'add.s $f0, $f0, $f2')], '')
