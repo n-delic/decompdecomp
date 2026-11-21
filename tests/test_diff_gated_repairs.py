@@ -828,3 +828,21 @@ def test_measured_halfword_switch_is_routed_for_kmc(monkeypatch):
                         lambda text, name, header, diff: [('halfword_switch_fixture', text)])
     assert 'halfword_switch_fixture' in dict(proposals(source, 'f', '', 'mips', KMC, rows, ''))
     assert 'halfword_switch_fixture' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_early_float_load_reaches_kmc_diff_dispatch():
+    source = """void f(void *parent) {
+    void *child;
+    child = M2C_FIELD(parent, void **, 108);
+    M2C_FIELD(child, s16 *, 38) = 1;
+    M2C_FIELD(child, f32 *, 28) = (f32) (M2C_FIELD(parent, f32 *, 40) - 1.0f);
+}
+"""
+    read, sub = 'lwc1 $f0, 0x28($s0)', 'sub.s $f0, $f0, $f2'
+    bind, field, save = 'lw $v0, 0x6c($s0)', 'sh $v1, 0x26($v0)', 'swc1 $f0, 0x1c($v0)'
+    rows = [(' ', bind, bind), ('o', read, ''), ('o', sub, ''), (' ', field, field),
+            ('o', '', read), ('o', '', sub), (' ', save, save)]
+    generated = proposals(source, 'f', '', 'mips', KMC, rows, '')
+    assert any(label == 'measured_early_float_field_load' and
+               '__repair_parent_float = M2C_FIELD(parent, f32 *, 40);' in candidate
+               for label, candidate in generated)
