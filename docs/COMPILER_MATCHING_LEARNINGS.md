@@ -9314,3 +9314,25 @@ pairs of machine words independently resolve to the same data address.
 Replacing the two field expressions with a direct word declaration
 preserved the reload after the first call and reproduced all 64 linked
 bytes for each example on a copied project.
+
+### Preserve two direct-mapped address returns
+
+Six N64 routines built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`
+(one also used `-g3`) scored 235. The target returned the masked input
+independently for each unsigned address range and left the original
+argument in the first register for the fallback call.
+
+Two independent return statements with arithmetic on an unsigned
+input reproduced all 84 linked bytes per routine on copied projects.
+Combining the range checks scored 570. Routing both checks to a shared
+return scored 415.
+
+### Preserve a list node across unlink and link calls
+
+Five N64 routines built with the same KMC flags scored 673. The draft
+read the source list head again after unlinking it. The target passes the
+same saved node to both calls and reloads the head only after the second.
+
+Keeping the node in a local and computing the destination argument at
+the second call reproduced all 84 linked bytes per example. Keeping a
+separate destination local added a saved register and scored 652.

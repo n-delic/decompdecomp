@@ -6,6 +6,7 @@ from decomprepair import (
     aligned_allocator_request,
     aligned_stack_read,
     byte_cursor_postincrements,
+    direct_mapped_address,
     field_snapshot_copies,
     float_matrix_identity,
     global_pointer_local_repairs,
@@ -233,6 +234,10 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
             result.append(('ordered_halfword_updates', candidate_source))
         if candidate_source := aligned_stack_read.rewrite(source, name, asm or ''):
             result.append(('aligned_stack_read', candidate_source))
+        if candidate_source := direct_mapped_address.rewrite(source, name, asm or '', header):
+            result.append(('direct_mapped_address', candidate_source))
+        if candidate_source := global_pointer_local_repairs.rewrite_list_transfer(source, name, asm or '', header):
+            result.append(('list_node_transfer', candidate_source))
         if candidate_source := global_pointer_local_repairs.rewrite_linked_insert(source, name, asm or '', header):
             result.append(('linked_insert', candidate_source))
         if candidate_source := shared_return_repairs.rewrite_global_guard(source, name, asm or ''):

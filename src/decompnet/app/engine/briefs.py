@@ -149,6 +149,7 @@ class BriefMixin:
                 aligned_allocator_request,
                 aligned_stack_read,
                 byte_cursor_postincrements,
+                direct_mapped_address,
                 field_snapshot_copies,
                 float_matrix_identity,
                 global_pointer_local_repairs,
@@ -211,6 +212,10 @@ class BriefMixin:
                 inputs.append('ordered halfword updates')
             if aligned_stack_read.applies(fn['asm'] or ''):
                 inputs.append('aligned stack read')
+            if direct_mapped_address.applies(fn['asm'] or ''):
+                inputs.append('direct address range returns')
+            if global_pointer_local_repairs.list_transfer_applies(fn['asm'] or ''):
+                inputs.append('linked list node transfer')
             if global_pointer_local_repairs.linked_insert_applies(fn['asm'] or ''):
                 inputs.append('linked list insertion')
             if shared_return_repairs.global_guard_applies(fn['asm'] or ''):
