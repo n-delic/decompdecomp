@@ -243,6 +243,13 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
             owned={a for a in labels if start+mapping<=a<end+mapping}|set(local.values())
             result.append(replace(source,name=name,vram=start+mapping,rom=start,lines=body,labels=owned,piece=source.piece if start==source.rom and not any(a==start and b==end for a,b in accepted) else False))
     if changed:
+        # Joining a validated body can expose alignment that the disassembler
+        # originally attached to the preceding routine.
+        recovered_gaps = multiword_alignment(result, image, order, owner, explicit | pointers, references,
+                                             direct_calls, data, segments, console)
+        if recovered_gaps:
+            result = [fn for fn in result if (fn.rom, fn.vram) not in recovered_gaps]
+            log(f'Left {len(recovered_gaps)} newly exposed alignment fragments in the original image.')
         # A label moved to a separate body is now an entry symbol, not a local
         # label in the preceding assembly file. Keep cross-body branches linkable.
         entries={(owner(fn),fn.vram):fn.name for fn in result}
@@ -631,7 +638,8 @@ def terminal_data_alignment(fn, previous, image, order, segments):
                      and (word>>21==0x228 or word>>26 in (4,5,6,7,20,21,22,23))
                      and 1 <= word&0xffff < 0x8000 and fn.lines[1].rom==end)
     text_filler = fn.size==4 and not (fn.vram+4)%16 and image[fn.rom+1:end]==bytes((13,10,13))
-    if (not (branch_filler or text_filler) or previous is None or previous.size<8
+    load_filler = fn.size==4 and not (fn.vram+4)%16 and word>>26 in (32,33,35,36,37,49)
+    if (not (branch_filler or text_filler or load_filler) or previous is None or previous.size<8
             or previous.rom+previous.size!=fn.rom or previous.vram+previous.size!=fn.vram
             or previous.lines[-2].word!=JR_RA
             or not 0<=fn.rom-8<end+32<=len(image)):
@@ -649,6 +657,13 @@ def terminal_data_alignment(fn, previous, image, order, segments):
         if (target+4>len(image) or any(s.rom_start<=target<s.rom_end for s in segments)
                 or not finite(struct.unpack_from(fmt,image,target)[0])):
             return False
+    if load_filler:
+        # Some float records end with a null field and continue with addresses.
+        # Require four distinct float fields before those addresses.
+        addresses = [address for address, in struct.iter_unpack('>I' if order=='big' else '<I', image[end+16:end+32])]
+        if any(address % 4 or not any(segment.contains(address, 4) for segment in segments) for address in addresses):
+            return False
+        values = values[:4]
     return all(map(finite,values)) and len(set(values))>=4
 
 

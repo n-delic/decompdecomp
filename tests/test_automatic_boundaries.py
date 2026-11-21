@@ -548,3 +548,22 @@ def test_alignment_between_return_and_closed_frameless_entry():
     image, functions, segments = fixture(words, cuts=(0, 8, 16, 28))
     result = repair(functions, [], image, consoles.get('n64'), segments)
     assert [(fn.rom, fn.size) for fn in result] == [(0, 8), (16, 12)]
+
+
+@pytest.mark.parametrize('protected', [False, True])
+def test_alignment_exposed_by_recovering_the_preceding_body(protected):
+    words = BODY[:-2]+[0x8C820000, 0x03E00008, 0x27BD0018]+[0x8C820000, 0x80FF80FF, 0]+BODY
+    image, functions, segments = fixture(words, cuts=(0, 12, 48, 80))
+    symbols = [f'entry = 0x{BASE+36:08X};'] if protected else ()
+    result = repair(functions, [], image, consoles.get('n64'), segments, symbols=symbols)
+    assert any(fn.rom <= 36 < fn.rom+fn.size for fn in result) == protected
+
+
+def test_terminal_alignment_before_float_fields_and_addresses():
+    import struct
+
+    words = [0x8C820000, 0x03E00008, 0, 0x8E050074]
+    image, functions, segments = fixture(words, cuts=(0, 12, 16))
+    image += struct.pack('>4f4I', 1, 50, -50, 0, BASE, BASE+4, BASE+8, BASE+4)
+    result = repair(functions, [], image, consoles.get('n64'), segments)
+    assert [fn.rom for fn in result] == [0]
