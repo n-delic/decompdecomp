@@ -11993,3 +11993,13 @@ written out. A ternary in the first case lost (560).
 
 decomp-repair 0.5.272 `join_store_split` does steps 1-3 as one child; run on the 30 source it scores 0 with the
 judge-worker (no permuter run). One function, not controlled across others.
+
+### Correct paired record strides from the last address shift
+
+With gcc-2.7.2-kmc `-G0 -mips3 -mgp32 -mfp32 -O2`, two halfword
+table arguments used the same index and private record declarations.
+The target and draft agreed on the index arithmetic through multiplication
+by 29. The final left shift was three in the target and one in the draft.
+Increasing both record sizes from 58 to 232 bytes preserved the halfword
+loads and produced an exact match from score 10. The released control
+remained at 10 after 100 candidates. The new rule matched in 16.
