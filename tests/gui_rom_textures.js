@@ -26,7 +26,7 @@ function setup(report){
   beginWork(log,label){log._workStatus={textContent:label,dataset:{state:'running'}};log._bar=true;return ()=>{log._bar=false;};},
   showJobError(log,message){log.error=message;},updateWorkProgress(log,value){log.progress=value;log._workStatus.textContent='Loading progress';},
   api(url,options){const pending=deferred();calls.push({url,options,pending});options.signal.addEventListener('abort',()=>pending.reject(Error('aborted')));return pending.promise;}});
- for(const script of ['rom-textures','rom-model-browser','rom-audio-browser','rom-asset-browser'])
+ for(const script of ['rom-assets','rom-textures','rom-model-browser','rom-audio-browser','rom-asset-browser'])
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/js',script+'.js'),'utf8'),context);
  context.stopRomAssetAudio=()=>{};
  return {context,state,nodes,calls,opened,observers,timers,run:code=>vm.runInContext(code,context)};
@@ -88,7 +88,7 @@ const row=(n=0)=>({id:'r'+n,kind:'image',start:128+n*200,detected_asset:{...asse
   get('romAssetIcons').onclick();
   assert.match(get('romModelItems').innerHTML,/rom-model-card-open/);
   get('romModelItems').onclick({target:{closest:key=>key==='[data-model-region]'?{dataset:{modelRegion:'0'}}:null}});
-  assert.deepEqual(t.opened,[['model']]);
+  assert.deepEqual(t.opened,[['model',undefined]]);
   assert.equal(t.calls.length,1,'The model list delegates preview to the drawer');
   t.state.report.regions.push(...Array.from({length:24},(_,i)=>({
    id:'sample'+i,detected_asset:{media:'audio',label:'Sample '+i,

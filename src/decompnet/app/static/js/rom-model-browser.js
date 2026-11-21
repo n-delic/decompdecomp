@@ -2,9 +2,9 @@
 function romModelRows(report) {
   const rows=new Map();
   for(const region of report?.regions||[]){
-    const asset=region.detected_asset;if(region.kind==='code'||asset?.media!=='model')continue;
+    const asset=romAssetForView(region,'3d model');if(region.kind==='code'||asset?.media!=='model')continue;
     const key=asset.offset+':'+asset.size;
-    if(!rows.has(key))rows.set(key,{key,region:region.id,asset,name:region.annotation?.name||asset.label||'Model',vertices:asset.vertices,triangles:asset.triangles,direct:new Set(),traced:new Set()});
+    if(!rows.has(key))rows.set(key,{key,region:region.id,asset,assetView:asset===region.detected_asset?undefined:'3d model',name:region.annotation?.name||asset.label||'Model',vertices:asset.vertices,triangles:asset.triangles,direct:new Set(),traced:new Set()});
     const row=rows.get(key);for(const n of region.direct_function_refs||[])row.direct.add(n);for(const n of region.traced_function_refs||[])row.traced.add(n);
   }
   return [...rows.values()].map(r=>({...r,refs:new Set([...r.direct,...r.traced]).size}));
@@ -29,7 +29,7 @@ function renderRomModelBrowser(view=romView()) {
     host.onclick=event=>{
       const model=event.target.closest('[data-model-region]');
       const reference=event.target.closest('[data-model-function]');
-      if(model)openRomRegion(rows[Number(model.dataset.modelRegion)].region);
+      if(model){const row=rows[Number(model.dataset.modelRegion)];openRomRegion(row.region,row.assetView);}
       if(reference)openFn(reference.dataset.modelFunction);
     };
     streamRomAssets('Model',rows,(batch,start)=>{
