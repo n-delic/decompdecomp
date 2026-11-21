@@ -1,4 +1,4 @@
-"""Raw cartridge banks loaded into one RAM slot by a resident five-word directory."""
+"""Raw cartridge banks loaded into a shared RAM slot by a resident directory."""
 
 import struct
 from dataclasses import dataclass
@@ -115,3 +115,91 @@ def add(config, image, found, records, log):
     config.write_text(yaml.safe_dump(cfg,sort_keys=False),encoding='utf-8')
     log(f'Mapped {len(records)} raw banks at their declared shared RAM slot.')
     return True
+
+
+_REGISTERED_ENTRY = struct.Struct('>7I')
+
+
+def _registered_directory(image, at, floor):
+    """Read raw ROM bounds followed by load base, initialized end and BSS end."""
+    records = []
+    for offset in range(at, min(at+32*_REGISTERED_ENTRY.size, len(image)-_REGISTERED_ENTRY.size+1),
+                        _REGISTERED_ENTRY.size):
+        start, end, base, initialized, bss, zero1, zero2 = _REGISTERED_ENTRY.unpack_from(image, offset)
+        if not (start | end | base | initialized | bss | zero1 | zero2) and offset == at+_REGISTERED_ENTRY.size:
+            continue  # an unpopulated overlay index after the startup record
+        if (not floor <= start < end <= len(image) or (start | end | base | initialized | bss)%16
+                or base+end-start != initialized or not 0x80000400 <= base < initialized <= bss <= 0x80800000
+                or zero1 or zero2 or records and base != records[0].vram
+                or JR_RA.to_bytes(4,'big') not in image[start:min(start+0x1000,end)]):
+            break
+        records.append(Slot(start, end, base))
+    records.sort(key=lambda record: record.start)
+    return records if len(records) >= 2 and all(a.end == b.start for a,b in zip(records,records[1:])) else []
+
+
+def _address(lui, low):
+    immediate = low & 0xffff
+    return ((lui & 0xffff)<<16) + (immediate if immediate < 0x8000 else immediate-0x10000)
+
+
+def registered(image, taken):
+    """Verify a boot-registered table against the consumer's seven-word indexing."""
+    for start, end, vram in taken:
+        words = list(struct.unpack_from(f'>{(end-start)//4}I', image, start))
+        globals_read = set()
+        for index in range(len(words)-4):
+            shift, subtract, scale, high, load = words[index:index+5]
+            source, index_reg = (shift >> 16) & 31, (shift >> 11) & 31
+            if (shift & 0xffe007ff != 0xc0 or not index_reg
+                    or subtract != (index_reg<<21 | source<<16 | index_reg<<11 | 0x23)
+                    or scale != (index_reg<<16 | index_reg<<11 | 0x80)
+                    or high>>26 != 15 or load>>26 != 0x23 or (load>>21)&31 != (high>>16)&31):
+                continue
+            offsets = {word & 0xffff for word in words[index+5:index+125] if word>>26 == 0x23}
+            if {0,4,8,12,16} <= offsets:
+                globals_read.add(_address(high,load))
+        if not globals_read:
+            continue
+        for index in range(len(words)-2):
+            high, low, call = words[index:index+3]
+            if high>>16 != 0x3c04 or low>>16 != 0x2484 or call>>26 != 3:
+                continue
+            address = _address(high,low)
+            at = start+address-vram
+            target = ((vram+index*4) & 0xf0000000) | ((call & 0x3ffffff)<<2)
+            callee = (target-vram)//4
+            if not 0 <= at <= len(image)-2*_REGISTERED_ENTRY.size or at%4 or not 0 <= callee < len(words):
+                continue
+            prologue = words[callee:callee+12]
+            for save, load, lui, store in zip(prologue,prologue[1:],prologue[2:],prologue[3:]):
+                value = (load>>16)&31
+                if (save>>16 == 0xafa4 and load>>21 == 0x47d and save&0xffff == load&0xffff
+                        and lui>>26 == 15 and store>>26 == 0x2b
+                        and (store>>21)&31 == (lui>>16)&31 and (store>>16)&31 == value
+                        and _address(lui,store) in globals_read):
+                    if records := _registered_directory(image,at,max(end for _,end,_ in taken)):
+                        return records
+    return []
+
+
+def recover_registered(image, records, resident, log):
+    from .loader_code import complete
+
+    class Quiet:
+        check_cancel = staticmethod(getattr(log, 'check_cancel', lambda: None))
+
+        def __call__(self, *_):
+            pass
+
+    found = []
+    for record in records:
+        scope = (record.start, record.end, record.vram)
+        bodies = complete(image, [], [scope], resident, Quiet(), table_ranges=[scope], entries=(record.vram,))
+        for start, end, vram in bodies:
+            if (found and record.start <= found[-1][0] and start-found[-1][1] <= 16
+                    and not any(image[found[-1][1]:start])):
+                found[-1] = found[-1][0], end, found[-1][2]
+            else:
+                found.append((start,end,vram))
+    return found

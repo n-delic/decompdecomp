@@ -748,6 +748,9 @@ on Apple Silicon; physical Intel Mac and retail-game checks remain planned.
   local calls and relocated text pointers anchor function recovery. Exact pre-relocation bytes
   and section bindings gate rebuilding matched overlay text. Donor review for UV modules,
   module data rebuilds and functions without closed boundaries remain planned.
+- Startup-registered N64 overlay directories now supply scoped banks for imports, including
+  a reserved index between populated records. The directory and its loader establish the ROM
+  bounds and shared RAM base. Rebuildable export for overlapping raw banks remains planned.
 
 ## What works where
 

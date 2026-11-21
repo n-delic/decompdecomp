@@ -82,3 +82,34 @@ def test_current_thread_dispatch_checks_the_target_and_the_same_global():
     assert not calls_current_thread_dispatch(struct.pack('>54I',*words),start,0x80001004,segments,'big')
     words[42] ^= 4
     assert not calls_current_thread_dispatch(struct.pack('>54I',*words),start,0x80001000,segments,'big')
+
+
+def registered_cartridge(*, connected=True, last_start=0x300):
+    image = bytearray(0x500)
+    # The caller passes the directory to a helper that stores it in a global.
+    struct.pack_into('>3I', image, 0, 0x3c048000, 0x24840180, 0x0c000010)
+    struct.pack_into('>4I', image, 0x40, 0xafa40018, 0x8fae0018, 0x3c018002, 0xac2e0000)
+    # The consumer scales the bank index by seven words and reads the bounds.
+    struct.pack_into('>10I', image, 0x80, 0x000e78c0, 0x01ee7823, 0x000f7880, 0x3c188002,
+                     0x8f180000 if connected else 0x8f180004, 0x8f080000, 0x8f080004,
+                     0x8f080008, 0x8f08000c, 0x8f080010)
+    base = 0x80100000
+    def row(offset, start, end):
+        struct.pack_into('>7I', image, offset, start, end, base, base+end-start, base+end-start+16, 0, 0)
+        struct.pack_into('>I', image, start, 0x03e00008)
+
+    row(0x180, 0x200, 0x280)
+    row(0x1b8, last_start, 0x380)
+    row(0x1d4, 0x280, 0x300)
+    return bytes(image)
+
+
+def test_registered_overlay_directory_keeps_native_slot_indices_separate():
+    mapping = [(0, 0x100, 0x80000000)]
+    assert raw_slots.registered(registered_cartridge(), mapping) == [
+        raw_slots.Slot(0x200, 0x280, 0x80100000),
+        raw_slots.Slot(0x280, 0x300, 0x80100000),
+        raw_slots.Slot(0x300, 0x380, 0x80100000),
+    ]
+    assert not raw_slots.registered(registered_cartridge(connected=False), mapping)
+    assert not raw_slots.registered(registered_cartridge(last_start=0x310), mapping)
