@@ -8,6 +8,7 @@
 - uso.py / uso_match.py: bounded USO text and relocations, matching and cartridge reconstruction.
 - loader_code.py: full-bank closed-body recovery with CPU call, callback and adjacency evidence.
 - loader_mapping.py: bank mappings corroborated by constant arguments to independent loader helpers.
+- boot_gzip.py: programs in paired gzip members placed at addresses supplied by the boot loader.
 - boot_mapping.py: returning TLB boot stubs separated from code with a strongly supported later load mapping.
 - sdk_assembly.py: exact self-contained libultra body fingerprints, classified before C claims.
 - port.py: its port kit, libultraship and Torch: what they replace and which graphics microcode they render.

@@ -420,7 +420,7 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
 
     import yaml
 
-    from . import copied_overlays, dma_overlays, overlays, raw_slots, resident_deflate
+    from . import boot_gzip, copied_overlays, dma_overlays, overlays, raw_slots, resident_deflate
 
     if result := overlays.add(config, workdir, image, log):
         return result
@@ -430,6 +430,8 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
     original_rom = rom
     taken = split.code_ranges(config)
     if taken and (result := resident_deflate.add(config,workdir,image,rom,taken,log)):
+        return result
+    if taken and (result := boot_gzip.add(config, workdir, image, rom, taken, log)):
         return result
     if taken and (slots := raw_slots.registered(rom, taken)):
         recovered = raw_slots.recover_registered(rom, slots, taken, log)

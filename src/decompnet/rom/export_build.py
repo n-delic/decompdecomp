@@ -591,7 +591,14 @@ def build() -> bool:
             if hashlib.sha1(original).hexdigest() != cartridge["sha1"]:
                 raise ValueError("original cartridge checksum differs from the fixed export target")
             reference = original
-            out = rebuild_cartridge(out, original, cartridge["blocks"])
+            if boot_ranges := cartridge.get("gzip_boot_ranges"):
+                from decompnet.consoles.n64.boot_gzip import verify_analysis
+
+                if not verify_analysis(original, out, boot_ranges):
+                    fail("Rebuilt code differs from the original gzip program members.")
+                out = original
+            else:
+                out = rebuild_cartridge(out, original, cartridge["blocks"])
             (ROOT / B["output"]).write_bytes(out)
             if out != original:
                 print("differs: reconstructed cartridge does not match the original")

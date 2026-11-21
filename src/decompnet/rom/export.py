@@ -624,10 +624,10 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
                    if s.kind != "func" and not AUTO_NAME.match(s.name)},
         "symbols": {k: v for k, v in sorted(absolute.items(), key=lambda kv: kv[1])},
     }
-    # An expanded analysis image is not the cartridge. Rebuild RNC literals from linked code before reporting
-    # an original-ROM match; both the expanded image and the final cartridge must pass their comparisons.
+    # Verify linked program bytes against the compressed cartridge members before reporting an original-ROM match.
     original_name = cfg["rom"].get("program")
     if console.id == "n64" and original_name and original_name != image_name:
+        from ..consoles.n64 import boot_gzip
         from ..consoles.n64.code import unpack_code
 
         original = (work / original_name).read_bytes()
@@ -638,11 +638,16 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
                 raise ExportError("compressed analysis export needs a verified reconstruction for every block")
             blocks.append({"rom": offset, "analysis": cursor, "size": len(payload)})
             cursor += len(payload)
+        gzip_boot_ranges = []
         if not blocks:
-            raise ExportError("expanded analysis image has no verified compressed-block reconstruction")
+            gzip_boot_ranges = [entry for entry in split.code_ranges(configs[0]) if entry[1] <= len(original)]
+            if not boot_gzip.verify_analysis(original, image, gzip_boot_ranges):
+                raise ExportError("expanded analysis image has no verified compressed-block reconstruction")
         cartridge = f"baserom.cartridge{ext}"
         (out / cartridge).write_bytes(original)
         build["cartridge"] = {"image": cartridge, "sha1": hashlib.sha1(original).hexdigest(), "blocks": blocks}
+        if gzip_boot_ranges:
+            build["cartridge"]["gzip_boot_ranges"] = gzip_boot_ranges
     (out / "build.json").write_text(json.dumps(build, indent=1), encoding="utf-8")
     shutil.copyfile(Path(__file__).with_name("export_build.py"), out / "build.py")
     shutil.copyfile(Path(__file__).with_name("export_entry.py"), out / "export_entry.py")
