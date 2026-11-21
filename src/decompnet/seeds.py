@@ -388,6 +388,7 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
         measured_callback_loop,
         measured_mmio_polling,
         measured_stack_drafts,
+        measured_word_drafts,
         ordered_halfword_updates,
         packed_matrix_conversion,
         passthrough_argument_repairs,
@@ -412,6 +413,8 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
     if 'M2C_UNALIGNED32' in source and (draft := unaligned_stack_drafts.rewrite(
             source, name, asm_text, context_header, resolve)):
         return draft
+    if words := measured_word_drafts.variants(source, name, asm_text, context_header):
+        return words[0][1]
     if leaves := short_leaf_drafts.variants(source, name, asm_text, context_header):
         return leaves[0][1]
     return (measured_stack_drafts.rewrite(source, name, asm_text, context_header)

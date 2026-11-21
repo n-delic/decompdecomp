@@ -635,3 +635,24 @@ void f(void) {
     family, draft = next(choices)
     assert family == 'initial_stack_word_clear'
     assert expected in draft
+
+
+def test_measured_word_store_is_tried_in_fresh_and_recovery_drafts(monkeypatch):
+    raw = '''extern M2C_UNK D_A0000000;
+s32 f(s32 offset, s32 value) {
+    *(offset | (s32) &D_A0000000) = value;
+    return 0;
+}
+'''
+    asm = '\n'.join((
+        '/* 00 80000000 3C02A000 */ lui $v0, %hi(D_A0000000)',
+        '/* 04 80000004 02021025 */ or $v0, $s0, $v0',
+        '/* 08 80000008 AC510000 */ sw $s1, %lo(D_A0000000)($v0)',
+    ))
+    monkeypatch.setattr(seeds, 'run_m2c', lambda *args, **kwargs: raw)
+    expected = '*(volatile u32 *)(offset | 0xA0000000U) = value;'
+    assert expected in seeds.generate_from_asm(asm, 'f', 'gcc-2.7.2-kmc', valid=True)
+    assert seeds.generate_from_asm(asm, 'f', 'gcc-2.7.2-kmc', valid=False) == raw
+    family, candidate = next(repairs.recovery_drafts(raw, 'f', asm, 'mips', 'gcc-2.7.2-kmc', '', None, {}))
+    assert family == 'initial_mapped_word_store'
+    assert expected in candidate

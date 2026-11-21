@@ -9832,3 +9832,11 @@ The original compiler independently compiled each archived source as a control. 
 - The 164-byte frame case needed both eight bytes of local storage and the untouched context in the first argument register. Four or eight bytes of volatile byte storage reduced score 15 to 5. Adding the first argument as well matched. Twelve bytes made the frame too large. The installed rule uses the measured eight-byte reservation.
 - Binding a loop cursor after the last scalar word copy matched all 116 bytes, from score 15. The earlier binding made the copy load use the loop cursor register and moved the loop's zero initialization.
 - The 84-byte timer call stored its two return registers into adjoining words in big-endian order. Declaring the known 64-bit SDK return and using one 64-bit lvalue matched from score 5. Changing the return signature in isolation left the broken split stores.
+
+### Recover missing types at target-proven word accesses
+
+Four initially uncompilable N64 drafts matched all their original bytes with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`. Both byte-indexed table examples also used `-g3`. The archived sources compiled independently as controls.
+
+- A byte-indexed table had an integer address expression with no pointer cast. A word cast matched all 40 bytes. A halfword cast compiled but changed the load and scored 200.
+- An unsigned comparator had two untyped word accesses. Adding word pointer casts alone compiled but scored 35. Staging the first entry address before the comparison and assigning its word in the right operand matched all 48 bytes. Loading the first word into a separate statement before the comparison scored 1100.
+- Two archived examples of an uncached word store matched all 72 bytes each. Keeping the symbolic segment expression after casting compiled but introduced an extra relocation instruction and scored 120. Using a volatile word lvalue with the proven segment literal matched.
