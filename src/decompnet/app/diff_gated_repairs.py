@@ -21,6 +21,7 @@ from decomprepair import (
     measured_callback_repairs,
     measured_control_flow,
     measured_expression_repairs,
+    measured_global_rebase,
     measured_immediate_repairs,
     measured_lifetime_shapes,
     measured_memory_order,
@@ -207,6 +208,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         if candidate_source := uncached_read_repairs.rewrite(source, name, asm or '', resolve):
             result.append(('measured_uncached_word_read', candidate_source))
         result += measured_control_flow.variants(source,name,rows)
+        result += measured_global_rebase.variants(source, name, header, rows, resolve=resolve)
         result += measured_memory_order.variants(source,name,rows,resolve=resolve,header=header)
         result += measured_expression_repairs.variants(source,name,header,rows)
         result += stack_byte_init_repairs.variants(source, name, header, rows)
