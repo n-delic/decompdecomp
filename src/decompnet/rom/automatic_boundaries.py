@@ -61,6 +61,13 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
         references[dest].discard((offset,segment))
         if not references[dest]:del references[dest]
     functions = recover_inline_tables(functions, data, image, order, explicit | pointers, references, segments, log)
+    data_only = {
+        fn.vram for fn in functions if fn.size==4
+        and image[fn.rom:fn.rom+4]==fn.lines[0].word.to_bytes(4,order)
+        and fn.vram not in explicit|pointers|transfer_targets
+        and not any(d.rom is not None and d.rom<fn.rom+4 and fn.rom<d.rom+d.size for d in data)
+        and address_word_references(fn, references, lines_by_rom)
+    }
     destinations=sorted(references)
     entered_addresses=explicit|pointers|set(destinations)
     tables=[dict(rom_start=s.rom_start,rom_end=s.rom_end,vram=s.vram) for s in segments
@@ -161,6 +168,7 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
             if not size:continue
             end=at+size;address=at+mapping;finish=end+mapping
             if any(address<a<finish for a in explicit|pointers):continue
+            if any(address<=a<finish for a in data_only):continue
             if any(d.rom is not None and d.rom<end and at<d.rom+d.size for d in data):continue
             independent=any(not at<=offset<end
                             for dest in destinations[bisect_right(destinations,address):bisect_right(destinations,finish-1)]
@@ -217,11 +225,6 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
     returns_by_end = {(fn.rom+fn.size, fn.vram-fn.rom) for fn in result
                       if fn.size >= 8 and fn.lines[-2].word == JR_RA}
     protected = sorted(entered)
-    data_only = {
-        fn.vram for fn in result if fn.size==4 and not fn.lines[0].word
-        and fn.vram not in explicit|pointers|transfer_targets
-        and address_word_references(fn, references, lines_by_rom)
-    }
     entries_by_rom = {(fn.rom, fn.vram):fn for fn in result}
 
     def zero_alignment(fn, previous):
@@ -281,8 +284,13 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
                 and owner(previous)==owner(fn)==owner(following)
                 and previous.rom+previous.size==fn.rom and following.rom==fn.rom+4 and following.vram==fn.vram+4
                 and alignment_fill(fn.vram,previous.size>=8 and previous.lines[-2].word==JR_RA,
-                                   following.vram in entered or is_frame(following.lines[0].word),referenced(fn))):
-            dropped+=1;continue
+                                   following.vram in entered or is_frame(following.lines[0].word),
+                                   referenced(fn) and fn.vram not in data_only)):
+            if fn.vram in data_only:
+                recovered_data.append(DataSymbol(fn.name,fn.vram,fn.rom,4,'data'))
+            else:
+                dropped+=1
+            continue
         kept.append(fn)
     if dropped:
         log(f'Left {dropped} alignment words out of the functions: filler between a return and the next entry, kept in the image.')
