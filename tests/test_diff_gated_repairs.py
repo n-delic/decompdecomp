@@ -733,7 +733,7 @@ s32 f(s32 x) {
     assert family not in dict(proposals(source, 'f', '', 'mips', KMC, rows, ''))
 
 
-@pytest.mark.parametrize('module_name', ['measured_kmc_cursor_switch', 'measured_kmc_carriers'])
+@pytest.mark.parametrize('module_name', ['measured_kmc_cursor_switch', 'measured_kmc_carriers', 'measured_kmc_call_setup'])
 def test_measured_kmc_repairs_route_is_compiler_specific(monkeypatch, module_name):
     from decompnet.app import diff_gated_repairs
 
