@@ -10622,3 +10622,13 @@ while assigning an explicitly cast byte to a word local emitted an extra
 mask. Declaring the flag as a byte and assigning the result directly
 matched the linked bytes. Removing only the cast scored 235 because KMC
 coalesced the two locals. The deep permuter reproduced the exact match.
+
+### Stage a relocated signed halfword read at its original load site
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, a scratch N64 draft replaced
+the target's signed halfword read with a volatile word read and scored 200.
+Changing only the volatile access width emitted an unsigned halfword load
+followed by sign-extension shifts and scored 400. A plain signed halfword read
+in a one-shot block retained the original load position and scored 95.
+Declaring the source offset before the other independent loop initializers
+lowered that to 30, leaving four register and prologue differences.
