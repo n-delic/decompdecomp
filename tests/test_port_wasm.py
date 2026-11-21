@@ -54,6 +54,26 @@ def test_the_build_takes_matched_c_less_what_the_host_provides_plus_the_ports_ow
     assert not (out / "src" / "func_8001E640.c").exists()
 
 
+def test_the_build_uses_original_code_for_a_profiled_rom_address(tmp_path):
+    from decompnet.port.wasm.build import original_code
+
+    repo, manifest = save(tmp_path)
+    host = tmp_path / "host"
+    (host / "games").mkdir(parents=True)
+    sha1 = "a" * 40
+    (host / "games" / f"{sha1}.original").write_text("# compiler stack layout\n0x80001000\n0x80001008\n")
+    manifest["game"] = {"sha1": sha1.upper()}
+    fixed, _ = addresses(manifest)
+    original = original_code(host, manifest, fixed)
+    assert original == {"race_update.c", "tokenize.c"}
+    out = tmp_path / "build"
+    chosen = gather(repo, out, original)
+    assert "race_update.c" not in chosen
+    assert chosen["tokenize.c"].parent.name == "overrides"
+    manifest["game"]["sha1"] = "a" * 39 + "b"
+    assert original_code(host, manifest, fixed) == set()
+
+
 def test_a_save_written_before_saves_named_headers_takes_the_projects_own(tmp_path):
     """An N64 game's save from before saves named each function's header had per-part headers but no
     function_headers: every function got the shared header and 268 files stopped at `unknown type name`. The

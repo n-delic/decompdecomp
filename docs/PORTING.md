@@ -269,6 +269,8 @@ automatic name to the name library detection found (`play.library_names`). What 
 functions it names by its own addresses, goes in `consoles/n64/port_wasm/games/<the ROM's SHA-1, 12 digits>.c`,
 compiled for that game alone (V-Rally's, where the host was written). A function a game runs with no C stops it
 there, named: matched C, or C only the port has (`port/wasm/src/`), lets it go on.
+When matching C relies on the console compiler's stack layout, an address in the ROM's `.original` file in that
+same directory selects N64Recomp or the MIPS interpreter. A port-specific source override can supply portable C.
 
 What the matched C gets away with on the console, the build adapts to:
 - arguments left in registers become explicit (`adapt.py`'s thunks, with MIPS register words for the rest);
