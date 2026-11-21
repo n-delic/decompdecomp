@@ -56,3 +56,13 @@ This uses the existing three-extra-trial allowance and keeps the raw draft first
 Measured local/deep search can later combine the tail alternative with a uniformly
 supported frame reservation. Inferred frame padding is labeled as such; it does
 not recover the original reservation's purpose or enlarge known objects.
+
+## Redraft using a recompilation wrapper
+
+For a MIPS ROM function, pass an N64Recomp wrapper’s GitHub commit permalink
+as `reference_url` and its required ROM digest as `reference_sha256` to
+`redraft`. You can paste the wrapper in `reference_source` when needed. The app compares the digest with
+the project's ROM and extracts argument locations from the caller's register
+and stack setup. It checks the original stack loads and adds the findings to
+the function's briefing notes. Pass a prototype in `context` to refine
+unknown types. Review the result and judge the draft with `compile_and_diff`.
