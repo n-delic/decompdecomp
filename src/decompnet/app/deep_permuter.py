@@ -344,6 +344,7 @@ class Search(Permuter):
             scoped_byte_read_call,
             scoped_cursor_entry,
             scoped_global_reset,
+            stack_byte_loop_base,
             symbol_width_repairs,
             unsigned_rate_division_scope,
             widen_scaled_local,
@@ -363,6 +364,7 @@ class Search(Permuter):
         proposals += scoped_global_reset.variants(source, fn['name'], proj['arch'], asm)
         proposals += word_byte_loop_carrier.variants(source, fn['name'], proj['arch'], asm)
         proposals += counter_derived_loop_offset.variants(source, fn['name'], proj['arch'], asm)
+        proposals += stack_byte_loop_base.variants(source, fn['name'], proj['arch'], asm, header)
         proposals += unsigned_rate_division_scope.variants(source, fn['name'], proj['arch'], asm, header)
         if proj['arch'] == 'mips' and '%lo(' in asm:
             rename = getattr(self.net, 'rename_tokens', None)
