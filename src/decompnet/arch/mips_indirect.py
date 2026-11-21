@@ -121,6 +121,20 @@ def jump_table(image,start,end,vram,at,order,ranges=(),mappings=(),*,reader=None
     for scheduled in (False,True):
         if at-start<(24 if scheduled else 28):continue
         guard,bound,branch,delay,scale,hi,add,load,jump,slot=_guard(image,at,order,scheduled)
+        branch_pc = guard+4
+        if scheduled and guard-start >= 12:
+            fp, candidate, clear_fp, step = struct.unpack_from(
+                '>4I' if order == 'big' else '<4I', image, guard-12)
+            index_reg, guard_reg = (candidate>>21)&31, (candidate>>16)&31
+            # The FP branch skips two instructions that leave the switch's
+            # bound and index intact. The bound runs in its normal delay slot.
+            if (fp in (0x45000003, 0x45010003) and candidate>>26 == 11
+                    and clear_fp & 0xffff07ff == 0x44800000 and step>>26 == 9
+                    and (step>>21)&31 == (step>>16)&31
+                    and (step>>16)&31 not in (index_reg, guard_reg)
+                    and bound == step):
+                guard -= 8
+                bound = candidate
         index=(bound>>21)&31;condition=(bound>>16)&31;count=bound&0xffff
         dest=(jump>>21)&31;base=(hi>>16)&31;scaled=(scale>>11)&31
         if bound>>26!=11 or not 0<count<=MAX_ENTRIES or not index or not condition or condition==index:continue
@@ -141,7 +155,8 @@ def jump_table(image,start,end,vram,at,order,ranges=(),mappings=(),*,reader=None
             uses_ido_guard = True
         if saved is None:return None
         guard,branch,count,address = saved
-    default=guard+8+signed(branch)*4
+        branch_pc = guard+4
+    default=branch_pc+4+signed(branch)*4
     if not start<=default<end or guard<default<=at+4:return None
     result={'guard_address':vram+guard-start,'address':vram+at-start,'table_address':address,'entry_count':count,'state':'unresolved'}
     for p in range(start,end-3,4):
@@ -149,7 +164,12 @@ def jump_table(image,start,end,vram,at,order,ranges=(),mappings=(),*,reader=None
         if op in (1,4,5,6,7,20,21,22,23) or (op==17 and (w>>21)&31==8):target=p+4+signed(w)*4
         elif op in (2,3):target=start+((((vram+p-start+4)&0xf0000000)|((w&0x3ffffff)<<2))-vram)
         else:continue
-        if guard<target<=at and not guard<=p<=at:return {**result,'reason':'an incoming edge bypasses the guard'}
+        # A normal FP branch can compute the bound in its delay slot,
+        # then jump directly to the guard branch. Both paths run the bound.
+        bound_in_slot = (p == guard-4 and target == branch_pc
+                         and w >> 16 in (0x4500, 0x4501))
+        if guard<target<=at and not guard<=p<=at and not bound_in_slot:
+            return {**result,'reason':'an incoming edge bypasses the guard'}
     def destinations(data, prefix=0):
         targets=[prefix|int.from_bytes(data[p:p+4],order) for p in range(0,len(data),4)]
         if all(t%4==0 and vram<=t<vram+end-start and not vram+guard-start<t<=vram+at-start+4 for t in targets):
@@ -170,9 +190,9 @@ def jump_table(image,start,end,vram,at,order,ranges=(),mappings=(),*,reader=None
     for offset,verified in choices:
         if targets := destinations(image[offset:offset+count*4]):
             valid.append((offset,verified,targets))
-    if not valid and uses_ido_guard:
-        aliases = [r for r in ranges
-                   if r.get('target_prefix')==vram&0xe0000000 and r.get('code_delta')==vram-start]
+    if not valid:
+        aliases = [r for r in ranges if r.get('target_prefix')==vram&0xe0000000
+                   and (r.get('boot_copy') or uses_ido_guard and r.get('code_delta')==vram-start)]
         choices,error = locations(address,count*4,image,aliases)
         if error:return {**result,'reason':error}
         for offset,verified in choices:

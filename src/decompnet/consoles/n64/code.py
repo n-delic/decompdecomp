@@ -251,9 +251,32 @@ def mapped_data(spans,declared,size):
     return ranges
 
 
+# IPL3 reads the cartridge header entry, masks it to a physical RAM
+# address, then writes the PI destination, cartridge offset and length.
+_BOOT_DMA = bytes.fromhex(
+    '3c0bb000 8d690008 3c0a1fff 354affff 3c01a460 012a4824 ac290000 '
+    '3c08a460 8d080010 31080002 5500fffd 3c08a460 '
+    '24081000 010b4020 010a4024 3c01a460 ac280004 '
+    '3c0a0010 254affff 3c01a460 ac2a000c'
+)
+
+
+def boot_switch_range(image, segments):
+    """Expose the IPL3 cartridge mirror only when its DMA is identified."""
+    start, end = 0x1000, 0x101000
+    if len(image) < end or _BOOT_DMA not in image[0x40:start]:
+        return []
+    entry = int.from_bytes(image[8:12], 'big')
+    if not 0x80000400 <= entry < 0x80800000 or entry % 4:
+        return []
+    if not any(s.rom_start == start and s.vram == entry for s in segments):
+        return []
+    return [dict(rom_start=start, rom_end=end, vram=entry, target_prefix=0x80000000, boot_copy=True)]
+
+
 def relocated_switch_ranges(image, segments):
     """Track the immediate data tail of code ranges that share an overlay load mapping."""
-    ranges = []
+    ranges = boot_switch_range(image, segments)
     ordered = sorted(segments,key=lambda segment:segment.rom_start)
     for i,(previous,segment) in enumerate(zip(ordered,ordered[1:]), 1):
         delta = segment.vram-segment.rom_start
