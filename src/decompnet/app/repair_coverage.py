@@ -130,6 +130,7 @@ def verify(feedback, example):
             shared_return_repairs,
             short_leaf_drafts,
             split_dispatch_zero_case,
+            stack_byte_init_repairs,
             stack_fill_drafts,
             stack_header_buffer,
             stack_read_retry,
@@ -149,6 +150,7 @@ def verify(feedback, example):
         focused += measured_memory_order.variants(source, fn['name'], rows, header=header,
                                                    resolve=symbols.resolve if symbols else None)
         focused += measured_expression_repairs.variants(source, fn['name'], header, rows)
+        focused += stack_byte_init_repairs.variants(source, fn['name'], header, rows)
         focused += measured_temporary_repairs.variants(source, fn['name'], rows)
         if candidate := measured_callback_loop.rewrite(source, fn['name'], fn['asm'] or '', header,
                                                        symbols.resolve if symbols else None):

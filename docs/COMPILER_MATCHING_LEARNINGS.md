@@ -9733,3 +9733,15 @@ Twelve independently generated N64 drafts reproduced byte-for-byte with `gcc-2.7
 - Two 36-byte fill wrappers omitted the destination pointer. A carrier copied the fill byte, and the delay slot supplied the third argument. Restoring the destination moved both from score 15 to exact. One also used `-g3`.
 - Four audio initializers already declared the context. Forwarding it to the first call matched 176, 176, 140 and 184 bytes. The cases started at scores 25, 25, 45 and 45. The first and fourth also used `-g3`. Two drafts had nested callback declarators, and two had additional scheduling differences at a later call.
 - An 188-byte function with `-g3` already forwarded its context at every later call to the same helper. Restoring it at the one short call changed score 5 to exact.
+
+### Update a field directly from both arms
+
+Three N64 drafts with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` used a temporary to carry a word's set-bit or clear-bit result to a common store. The target's only disagreements were the registers of the clear mask, field load, and AND. Updating the field directly from the two arms moved each from score 15 to exact (68, 72, and 144 bytes). Changing the temporary's signedness or separately naming the mask preserved the disagreement.
+
+### Preserve a byte initialized inside a stack buffer
+
+Two drafts under the same compiler and flags missed only the byte store before formatting. The target passed the stack buffer to the formatter and the renderer. The byte at offset four was part of the eight-byte buffer. Merging the two m2c locals kept the initializing store and matched both 128-byte functions from score 100. A 12- or 16-byte buffer kept the store but moved the frame and saved registers.
+
+### Stage a loop sentinel before copying the cursor
+
+Two drafts under the same compiler and flags had the correct loop and moved a cursor-copy instruction ahead of the matching `-1` constant. Naming the sentinel before the cursor assignment and using it in the loop condition moved score 60 to exact (64 and 116 bytes). Naming it after the cursor preserved the disagreement. In all three groups the archived source compiled independently as a control.
