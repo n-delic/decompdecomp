@@ -34,14 +34,24 @@ function fnBadge(d = S.fnDetail) {
   const working = S.claims.find((c) => c.name === d.name);
   const st = $("fnStatus");
   st.className = "badge " + (d.status === "matched" ? "matched" : d.not_c ? "not-c" : working ? "working" : "");
-  st.textContent = d.status === "matched" ? "matched" : d.status === "asm" ? (d.not_c ? "not C" : "set aside") : working ? `${working.agent} working` : d.best != null ? `best ${pctText(pctOf(d.best, d.insns))}` : "not started";
+  st.textContent = d.status === "matched" ? "matched" : d.status === "asm" ? (d.not_c ? "not C" : "set aside")
+    : working ? `${working.agent} working` : d.best != null ? `best ${pctText(pctOf(d.best, d.insns))}`
+    : noBest((d.scores || []).length);
 }
 
 function showFnTab(tab) {
   document.querySelectorAll("[data-ftab]").forEach((b) => b.classList.toggle("on", b.dataset.ftab === tab));
   $("fnDiffView").hidden = tab !== "diff";
   $("fnCodeView").hidden = tab !== "code";
+  $("deepPermuterPanel").hidden = tab !== "deep";
+  $("fnHistoryView").hidden = tab !== "history";
+  document.querySelectorAll("[data-ftab]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.ftab === tab)));
+  const d = S.fnDetail;
+  // The Latest/Best switch sits above every tab, so only the Diff tab shows it, and only when the two differ.
+  $("diffWhich").hidden = tab !== "diff" || !d || d.status === "matched" || !d.best_differs;
   if (tab === "diff") loadDiff();
+  if (tab === "history" && d) renderFnChart(d);
+  if (tab === "deep") renderDeepSearch();
 }
 function setWhich(which) {
   S.which = which;
@@ -66,7 +76,9 @@ async function refreshFn(first) {
     $("fnName").textContent = d.name;
     fnBadge(d);
     $("fnSetAside").hidden = d.status !== "open";
+    $("fnActionsMenu").hidden = d.status !== "open";
     $("fnSetAside").onclick = async () => {
+      $("fnActionsMenu").open = false;
       const why = prompt(`Why does no C make ${d.name}? (optional: agents and you read it on its page)`, "hand-written assembly");
       if (why === null) return;
       try {
@@ -87,7 +99,7 @@ async function refreshFn(first) {
       } catch (e) { toast(esc(e.message), "err"); }
     };
     const pinned = (S.ov.priority || []).includes(d.name);
-    $("fnPin").hidden = S.ov.kind === "fork" || d.status !== "open";
+    $("fnPin").hidden = d.status !== "open";
     $("fnPin").classList.toggle("on", pinned);
     $("fnPin").setAttribute("aria-pressed", pinned);
     $("fnPin").textContent = pinned ? "★ Agents do this first" : "☆ Do this first";
@@ -106,6 +118,8 @@ async function refreshFn(first) {
     const kinds = { matched: "Matching C", best: "Best attempt so far", latest: S.ov.kind === "fork" ? "In the source now" : "Latest attempt", draft: "Machine draft (m2c)" };
     $("fnSrcKind").textContent = kinds[d.source_kind] || "No C yet";
     if (!S.editDirty || first) setEditor(d.source || "", d);
+    renderDeepSearch();
+    reconnectDeepSearch(d.name);
     $("copySrc").onclick = () => navigator.clipboard.writeText($("fnEdit").value).then(() => toast("Copied."));
     renderFnChart(d);
     const canSwitch = d.status !== "matched" && !!d.best_differs;
@@ -157,6 +171,7 @@ $("fnEdit").addEventListener("keydown", (e) => {
   }
 });
 $("tryBtn").onclick = () => tryIt();
+
 
 async function tryIt() {
   const name = S.fn, source = $("fnEdit").value, msg = $("tryMsg");
@@ -310,9 +325,9 @@ const L = { q: "", filter: "all", sort: "i", dir: 1, limit: FUNCTION_ROWS, rows:
 const FILTERS = [["all", "All"], ["open", "To do"], ["working", "Working"], ["tried", "Tried"], ["matched", "Matched"], ["polished", "Polished"], ["first", "★ First"]];
 // polished: matched, and made readable (real names, types, a comment) by polishing helpers; still counted as matched
 const polished = (f) => f.status === "matched" && !!f.polished;
-// ★: the functions agents take before the others (it was "Next in line", which nobody could place); ROM projects only
+// ★: the functions agents take before the others (it was "Next in line", which nobody could place); ROM and fork projects
 const starred = (f) => !!(S.ov && (S.ov.priority || []).includes(f.name));
-const canStar = () => !!(S.ov && S.ov.kind !== "fork");
+const canStar = () => !!(S.ov);  // star/priority works on ROM and fork projects alike
 const fnState = (f) => (f.status === "matched" ? "matched" : f.status === "asm" ? "asm" : f.status === "working" ? "working" : f.best != null ? "tried" : "open");
 const STATE_RANK = { working: 0, tried: 1, open: 2, matched: 3, asm: 4 };
 

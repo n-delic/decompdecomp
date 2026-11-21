@@ -17,6 +17,13 @@
 decompdecomp is an app that decompiles games you own. Helper agents write C or C++, the game's original compiler builds it, and a function is matched only when
 the result is byte-identical to the game. The export builds your game again.
 
+<p align="center">
+  <img alt="decompdecomp on Demo Quest 64: the autopilot matches 20 functions for free, then a helper matches six more, each judged byte for byte." src=".github/assets/demo.webp" width="900">
+  <br>
+  <sub>The app on Demo Quest 64, the demo ROM that comes with it. To keep the recording short, the helper is a
+  stand-in for a model that hands in the demo's own C; the app compiles and judges every function for real.</sub>
+</p>
+
 ## Install
 decompdecomp runs on Linux and Windows 10/11 on x86-64, and on macOS 12+ on Intel or Apple Silicon. The Linux installer also gets the free compilers
 and keeps decompdecomp up to date.
@@ -39,6 +46,11 @@ chmod +x decompdecomp-*-x86_64.AppImage && ./decompdecomp-*-x86_64.AppImage   # 
 ### Windows
 Download and open `decompdecomp-<version>-windows-x64-setup.exe` from the [latest release](https://github.com/n-delic/decompdecomp/releases/latest). Setup
 installs WebView2 and .NET Framework 4.8 when they are missing.
+
+For a portable copy, extract `decompdecomp-<version>-windows-x64-portable.zip` from the same release and open
+`decompdecomp.exe`. Keep the `python` and `packages` folders beside it. It does not need administrator access, but
+.NET Framework 4.8 and WebView2 must already be installed. Projects and settings stay in `%USERPROFILE%\Decomp` (or
+`DECOMP_HOME`). Copy that folder too when you move your work.
 
 > [!IMPORTANT]
 > **PS1, PS2 and most N64 games need WSL 2 on Windows.** Their period compilers use Linux builds through WSL 2.
@@ -88,7 +100,8 @@ Type `decomp`, or open decompdecomp from your apps menu. It opens in its own win
 2. **Start helper agents.** Click **Start agents**. Choose any API model (DeepSeek, OpenRouter, OpenAI, or a local model), or a CLI helper agent: Claude Code,
    Codex, Cursor Agent, Kimi Code, opencode, Antigravity CLI, ZCode CLI or Oh My Pi. Run several; they work on different functions at the same time.
 3. **Watch the map.** Each square is a function and turns green when it matches. The autopilot matches the easy functions at no cost before any helper agent
-   starts.
+   starts. For a difficult function with saved C, open its **Deep permuter** tab. Give a time and variant limit. It
+   tries local rewrites with the same compiler and byte check, saves each better result, and uses no AI tokens.
 4. **Export.** Use **Export** in the project header. You get a decomp project that builds your game again, byte for byte.
 
 No whole game has been decompiled yet. The export uses matched C and assembly for the rest, so it still builds the game.
@@ -132,6 +145,14 @@ its git repository, then choose **Open a saved project** with your own copy of t
 
 **Multiple Claude accounts.** In **Agents & models → Claude Code → Additional accounts**, click **Add account**. Give it a label, run the command shown, sign in
 with `/login`, and choose the account when you start a helper agent.
+
+**Change the prompts and tools of helper agents.** In **Agents & models**, edit the prompt templates for all helper agents,
+or override them for one helper agent. **Agent tools & usage** shows the tools, how often agents use them, and lets you turn off
+the optional tools. A change applies when the next session of a helper agent starts.
+
+**Connect another AI tool with MCP.** In **Agents & models**, choose **Connect another AI tool with MCP**, select a project and
+click **Create connection**. Copy the URL and the token into your tool. Keep the token private: it can change the work of that
+project. Keep decompdecomp open while the tool works. Click **Revoke** to stop the connection.
 
 **ROM library.** In **Settings → ROM library**, choose a folder with your extracted game files. Click **Search ROM library** on an imported project's setup page to fill in a
 verified match.

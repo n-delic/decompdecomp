@@ -52,6 +52,8 @@ def test_reimport_replaces_analysis_and_keeps_only_unchanged_matches(tmp_path, m
                    (pid, removed_id, "note on removed function", 2))
         db.execute("INSERT INTO context_versions(project_id,version,header,message,created_at,unit) "
                    "VALUES(?,?,?,?,?,?)", (pid, 1, "user header", "custom", 1, ""))
+        for fid in (changed_id, removed_id):  # #241: saved compiler comparisons of code that changed or went
+            db.execute("INSERT INTO compiler_tests VALUES(?,?,?,?)", (fid, "digest", 0.0, "{}"))
 
     game = tmp_path / "selected.z64"
     game.write_bytes(b"new rom")
@@ -138,6 +140,7 @@ def test_reimport_replaces_analysis_and_keeps_only_unchanged_matches(tmp_path, m
     assert net.store.one("SELECT kind FROM events WHERE project_id=? ORDER BY id DESC LIMIT 1",
                          pid)["kind"] == "reimport"
     assert not list(tmp_path.glob(".game-reimport-backup-*"))
+    assert net.store.one("SELECT 1 FROM compiler_tests WHERE function_id IN (?,?)", changed_id, removed_id) is None
 
 
 def test_reimport_still_blocks_projects_with_an_active_room(tmp_path):

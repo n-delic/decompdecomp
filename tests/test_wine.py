@@ -245,3 +245,20 @@ def test_no_test_runs_wine_in_the_apps_own_prefix():
     assert named and wine.prefix() == Path(named)
     assert wine.prefix() not in {toolchains.root() / ".wine", toolchains.root() / ".wine-dev"}
     assert wine.environment()["WINEPREFIX"] == named
+
+
+@pytest.mark.parametrize("runner,available", [("wine", True), ("wibo", False), ("", False)])
+def test_user_compiler_supplies_wine_build_environment_without_a_pack(tc_root, monkeypatch, runner, available):
+    from types import SimpleNamespace
+
+    from decompnet import kits
+
+    monkeypatch.setattr(wine, "needed", lambda: True)
+    monkeypatch.setattr(wine, "find", lambda: "/opt/wine/bin/wine")
+    monkeypatch.setattr(toolchains, "registry", lambda: {})
+    monkeypatch.setattr(kits, "compilers", lambda ids: [SimpleNamespace(runner=runner)])
+    expected = {"DECOMPNET_WINE": "/opt/wine/bin/wine",
+                "DECOMPNET_WINE_PREFIX": str(wine.prefix())} if available else {}
+    assert wine.build_env() == expected
+    monkeypatch.setattr(wine, "find", lambda: None)
+    assert wine.build_env() == {}

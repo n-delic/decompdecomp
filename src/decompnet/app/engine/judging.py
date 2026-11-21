@@ -13,6 +13,9 @@ from ...network import MACHINE_AGENTS, WAITING, Agent, Network, NetworkError, st
 from ...rom.symbols import SymbolTable
 from .common import _AUTO_TOKEN, BATCH_INSNS
 
+# Releases with no compile pushed back per claim with the full advice; then the agent is told to stop (_push_back)
+UNCOMPILED_PUSH_BACKS = 2
+
 
 class JudgeMixin:
     def _rom_target(self, fn):
@@ -69,6 +72,8 @@ class JudgeMixin:
         if count == 1 or self._link(project) is not None:
             return self.claim(agent, project, None, strategy)
         proj = self._project(project)
+        with self.store.tx() as db:  # #283: a claim on a function set aside while held isn't a hold
+            self._drop_dead_claims(db, agent.id)
         held = self.store.all("SELECT f.* FROM claims c JOIN functions f ON f.id=c.function_id WHERE c.agent_id=? "
                               "AND f.project_id=? ORDER BY f.vram, f.id", agent.id, proj["id"])
         if not held:
@@ -279,16 +284,22 @@ class JudgeMixin:
         (stall_status: the same count, the same number): a release goes through once the function's move-on count is
         reached, with no compile more. Before that it's pushed back once per claim, with where the agent stands; asked
         again, it goes through. A release with no compile at all is always pushed back (agents called
-        release_function twice to get past it untried). It used to let a pushed-back release through after exactly one
-        more compile, which agents then spent on nothing (446 push-backs, 36 improved after it)."""
+        release_function twice to get past it untried). An agent whose own instructions said it was out of tries
+        wouldn't compile and asked again and again, 7 times in 90 seconds, each answer the full advice, until the
+        user's quota ran out: after UNCOMPILED_PUSH_BACKS it's told in one line to end its session instead (the
+        function stays held until the claim lapses, so it still isn't passed around untried). A function compiling
+        can't help with (release_exempt, _rom_release_exempt) goes through whenever it's asked, also after those: a
+        boundary report filed after two push-backs says itself to release it. It used to let a
+        pushed-back release through after exactly one more compile, which agents then spent on nothing (446
+        push-backs, 36 improved after it)."""
         if fn["status"] != "open" or agent.name in MACHINE_AGENTS:
             return None
         n, streak, after = progress["compiles"], progress["no_better"], progress["after"]
         if n and streak >= after:
             return None  # compile_and_diff said to move on
-        pushed = self.store.one("SELECT 1 FROM events WHERE agent_id=? AND kind='release_pushed' AND detail=? AND "
-                                "created_at >= ?", agent.id, fn["name"], progress["claimed_at"])
-        if n and pushed is not None:
+        pushed = self.store.one("SELECT COUNT(*) AS n FROM events WHERE agent_id=? AND kind='release_pushed' AND "
+                                "detail=? AND created_at >= ?", agent.id, fn["name"], progress["claimed_at"])["n"]
+        if n and pushed:
             return None  # asked again after the push-back, having tried it: it goes through
         fork = self.fork_slug(project)
         try:
@@ -297,7 +308,12 @@ class JudgeMixin:
         except (NetworkError, OSError, ValueError, KeyError):
             exempt, hints = None, []
         if exempt:
-            return None
+            return None  # compiling can't help with it (it may have become so since the last ask)
+        if not n and pushed >= UNCOMPILED_PUSH_BACKS:  # it won't compile it: asking again only spends the user's quota
+            with self.store.tx() as db:
+                self._event(db, fn["project_id"], agent.id, "release_pushed", fn["name"])
+            return (f"Not released yet: you haven't compiled {fn['name']} since you claimed it, and asking again "
+                    f"won't release it. Compile it now, or end your session here: don't call release_function again.")
         with self.store.tx() as db:
             self._event(db, fn["project_id"], agent.id, "release_pushed", fn["name"])
         head = (f"Not released yet: you haven't compiled {fn['name']} since you claimed it." if not n else
@@ -361,11 +377,12 @@ class JudgeMixin:
         return fn["best_source"] or (row["source"] if row else None)
 
     def claim_row(self, agent: Agent, project: str | None = None, function: str | None = None, strategy: str = "easiest"):
-        if function is None and project and not self.fork_slug(project):
+        if function is None and project:  # a starred function goes first on ROM and fork projects alike
             proj = self._project(project)
             for name in self.cfg(proj).get("priority", []):
                 row = self.store.one("SELECT f.id, f.status FROM functions f WHERE f.project_id=? AND f.name=?", proj["id"], name)
-                held = self.store.one("SELECT 1 FROM claims WHERE agent_id=?", agent.id)
+                held = self.store.one("SELECT 1 FROM claims c JOIN functions f ON f.id=c.function_id "
+                                      "WHERE c.agent_id=? AND f.status='open'", agent.id)  # #283: dead claims don't count
                 if row and row["status"] == "open" and not held and not self.store.one(
                         "SELECT 1 FROM claims WHERE function_id=?", row["id"]):
                     function = name

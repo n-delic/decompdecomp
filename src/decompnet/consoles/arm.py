@@ -37,8 +37,9 @@ class ArmConsole(Console):
     def target_from_row(self, fn: dict, cfg: dict):
         from ..arch.arm import ArmTarget
 
-        meta = json.loads(fn["meta"] or "{}")
-        return ArmTarget(fn["name"], fn["vram"], fn["target"], meta.get("thumb", True),
+        # the mode as function_meta reads it (meta, else the assembly's func-start macro): a meta-less ARM row must
+        # not fall back to Thumb, or its ARM bytes get disassembled as Thumb downstream
+        return ArmTarget(fn["name"], fn["vram"], fn["target"], self.function_meta(fn)["thumb"],
                          ArmTarget.relocs_from_json(json.loads(fn["relocs"] or "[]")))
 
     def target_object(self, fn: dict, cfg: dict, symbols):
@@ -49,8 +50,7 @@ class ArmConsole(Console):
     def target_arch(self, fn) -> str:
         if hasattr(fn, "thumb"):
             return "thumb" if fn.thumb else "arm"
-        meta = json.loads((fn.get("meta") if isinstance(fn, dict) else "") or "{}")
-        return "thumb" if meta.get("thumb", True) else "arm"
+        return "thumb" if self.function_meta(fn)["thumb"] else "arm"
 
     def link_function(self, obj: bytes, name: str, target, symbols, read):
         from ..arch import arm
