@@ -1289,8 +1289,8 @@ class Twins:
     def _fork_to_rom(self, agent, proj, other, wanted, mine, job) -> int:
         """Try imported, verified C against identical ROM fingerprints; only the ROM judge accepts it.
 
-        Donor headers are deliberately not installed in the ROM project. Self-contained functions and
-        declarations already available in its context work; missing dependencies remain ordinary misses.
+        Manual searches can verify a donor's per-file compiler and private header before falling back
+        to the destination context.
         """
         from .. import consoles
 
@@ -1303,9 +1303,11 @@ class Twins:
         report(job, 'Reading imported target objects', game=other['name'])
         theirs = self._fork_prints(other, matched_only=True, job=job)
         matched = 0
-        from . import donor_relocations
+        from . import donor_build, donor_relocations
         from .donor_boundaries import merged_candidates, recover
         manual = getattr(job, 'cross_exhaustive', False)
+        build = donor_build.Settings(fp) if manual and hasattr(fp, 'root') else None
+        units = {unit.name: unit for unit in fp.units()} if build else {}
         merged = merged_candidates(self.net, proj, theirs.values(), job) if manual else {}
         relaxed = donor_relocations.candidates(self.net, proj, theirs.values(), job) if manual else {}
         label = self.net.symbols(proj['id']).label if relaxed else None
@@ -1345,7 +1347,10 @@ class Twins:
                 if not original:
                     continue
                 source = apply(original, names)
-                if self._missed(b_id, source, project_id=proj['id']):
+                unit = units.get(a['unit'])
+                settings = build.for_unit(unit) if unit is not None else None
+                known_miss = self._missed(b_id, source, project_id=proj['id'])
+                if known_miss and not settings:
                     continue
                 if job is not None:
                     job.cross_candidates += 1
@@ -1353,14 +1358,25 @@ class Twins:
                 if bounded:
                     job.reuse_attempts += 1
                 report(job, 'Compiling candidate', game=other['name'], function=b['name'], donor=a['name'])
-                outcome, why = self._attempt_twin(agent, proj, a, b, source, origin=f" in {other['name']}", mapping=names)
+                outcome, why = 'skip', ''
+                fallback = None
+                if settings:
+                    try:
+                        outcome, why = donor_build.verify(self.net, proj, b, other, a, names, settings, agent, job, build.headers)
+                    except (NetworkError, OSError, ValueError) as error:
+                        outcome, why = 'skip', str(error)
+                if outcome != 'match' and not known_miss and not (job and job.stop.is_set()):
+                    fallback, detail = self._attempt_twin(
+                        agent, proj, a, b, source, origin=f" in {other['name']}", mapping=names)
+                    if fallback == 'match' or not why:
+                        outcome, why = fallback, detail
                 with self.net.project_store(proj['id']).tx() as db:
                     db.execute("INSERT INTO cross_game_attempts(project_id,function_id,source_project_id,"
                                "source_function_id,outcome,reason,created_at) VALUES(?,?,?,?,?,?,?)",
                                (proj["id"], b_id, other["id"], a["id"], outcome, why[:WHY_CHARS], time.time()))
-                    if outcome == "miss":
+                    if fallback == "miss":
                         db.execute("INSERT OR REPLACE INTO twin_misses(function_id,source_hash,project_id,at,why) "
-                                   "VALUES(?,?,?,?,?)", (b_id, self._miss_key(source), proj["id"], time.time(), why))
+                                   "VALUES(?,?,?,?,?)", (b_id, self._miss_key(source), proj["id"], time.time(), detail))
                 if outcome == "match":
                     if bounded:
                         job.reuse_matched += 1
