@@ -10753,3 +10753,14 @@ its element index brought the score from 170 to 0. A call wrapper passed the add
 four bytes into a halfword record and the initial halfword separately. Applying the
 displacement as bytes brought its score from 10 to 0. The deep permuter reproduced
 all three matches using the measured shift, relocation and call-delay-slot evidence.
+
+### KMC masked slot dispatch and signed table offsets
+
+- Two N64 functions built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` matched all 412 and 424
+  linked bytes. The rewrite uses a typed slot-list header, a signed halfword offset table, and four-byte
+  mask entries. It checks the nine original table destinations and the two observed call layouts.
+- Fresh drafts scored 3353 and 3673. The bounded search reduced both scores to 1145. In the first case,
+  a typed reconstruction that loaded the signed offset before forming the 36-byte stride still scored
+  40 and exchanged the registers for the two loop advances. Computing the stride first matched.
+- The original drafts also matched through the new Deep Permuter proposal. The 226-example replay
+  increased from 30 to 32 exact matches.
