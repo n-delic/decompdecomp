@@ -162,6 +162,7 @@ class BriefMixin:
                 relocated_byte_table,
                 relocated_global_update,
                 shared_default_drafts,
+                split_dispatch_zero_case,
                 uncached_read_repairs,
             )
 
@@ -183,6 +184,8 @@ class BriefMixin:
                 inputs.append('aligned allocator request')
             if indexed_field_cursor.applies(fn['asm'] or ''):
                 inputs.append('indexed field cursor')
+            if split_dispatch_zero_case.applies(fn['asm'] or ''):
+                inputs.append('split dispatch zero case')
             if ordered_halfword_updates.applies(fn['asm'] or ''):
                 inputs.append('ordered halfword updates')
             if aligned_stack_read.applies(fn['asm'] or ''):
