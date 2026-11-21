@@ -9614,3 +9614,15 @@ by two. Converting all scalar-address reads to indexes into a word array
 changed the local judge score from 6,863 to 6,823. The real-game scratch
 trial and the live judge agreed. Unrelated constant-pool references remain
 unresolved, so this was a partial improvement.
+
+
+### Preserve high-bit byte stores and keep packed lanes separate
+
+Two archived N64 functions matched after byte-store and expression repairs to independently generated drafts. The compiler was `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32`. The archived source served as a control. Scores are linked instruction diffs.
+
+- With `-O2`, storing `0xFF` via an external signed byte made GCC materialize it as `-1`. The target loads `255` before the same relocated byte store. Writing through an unsigned character lvalue preserved the external declaration and matched all 44 bytes (10 to exact).
+- With `-O1`, the same change moved score 15 to 5. The last disagreement was which register received the high-byte OR in a packed word. Saving the inverted lane, widening the byte local after preserving its unsigned byte load, and applying the high mask to that local matched all 100 bytes. Swapping OR operand order alone left the register difference. Promoting the local without staging the merge also left it.
+
+### A shifted callback address occupies one argument
+
+Three archived N64 initializers passed their own context to a registration call through an unchanged `$a0`. m2c dropped it and inferred only two callback addresses and an integer tag. Each remaining callback address used two instructions, so the focused search saw five shifted instructions for three arguments. Verifying each adjacent hi/lo relocation pair let it run the existing passthrough rule. The tag and both callback symbols stayed the same. With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, all three fresh drafts moved from score 25 to byte-identical matches (68, 92, and 92 bytes). The archived match compiled independently as a control.
