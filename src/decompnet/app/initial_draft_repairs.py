@@ -210,6 +210,10 @@ def recovery_drafts(draft, name, asm, processor, toolchain, context, data, repor
         ):
             if candidate := rewrite(draft, name, asm, context):
                 yield family, candidate
+    if toolchain == 'gcc-2.7.2-kmc':
+        from decomprepair import integer_address_store_drafts
+        for family, candidate in integer_address_store_drafts.variants(draft, name, asm):
+            yield 'initial_' + family, candidate
     for family, source in variants(draft, name, asm, processor, context):
         yield family, source
     alternative = callback_context(draft, context, asm, processor)
