@@ -838,11 +838,15 @@ function renderLauncher(box, compact = true) {
     availableTasks.map(([k, label, what]) => `<button type="button" role="radio" aria-checked="${LZ.task === k}" class="${LZ.task === k ? "on" : ""}" data-task="${k}" title="${what}">${label}</button>`).join("")}</div>
     <span class="muted small">${esc(TASKS.find(([k]) => k === LZ.task)[2])}</span></div>` : "";
   if (!tasks && !LZ.replacement) LZ.task = "";
+  const workSettingsOpen = ready && !LZ.task && !LZ.replacement && box.querySelector("[data-launch-selection]")?.open;
   box.innerHTML = `${LZ.replacement ? `<p>Replace <b>${esc(LZ.replacement.label)}</b> with the chosen model. Its task, account and work settings are kept. The original stops after the replacement is created; its history stays in Agents.</p>` : `${tasks}<div class="lz-kinds">${kinds}</div>`}
     <div class="lz-body">${body}
-      ${ready && !LZ.task && !LZ.replacement ? `<label class="check"><input data-automatic-assignment type="checkbox" ${LZ.automaticAssignment ? "checked" : ""}><span>Automatically assign the next function after a match or release</span></label>` : ""}
-      ${ready && !LZ.task && !LZ.replacement ? `<label class="check"><input data-focus-near-matches type="checkbox" ${LZ.focusNearMatches ? "checked" : ""}><span>Stay on stuck near-matches <span class="muted small">— on a function with 50+ attempts and a score of 50 or less, this agent switches to a focused run (up to 300 tries or an hour), then returns to normal work</span></span></label>` : ""}
-      ${ready && !LZ.task && !LZ.replacement ? `<details data-launch-selection><summary>Work selection (for these agents)</summary>${selectionFields(LZ.selection)}</details>` : ""}
+      ${ready && !LZ.task && !LZ.replacement ? `<details data-launch-selection ${workSettingsOpen ? "open" : ""}>
+        <summary>Agent work settings</summary>
+        <label class="check"><input data-automatic-assignment type="checkbox" ${LZ.automaticAssignment ? "checked" : ""}><span>Automatically assign the next function after a match or release</span></label>
+        <label class="check"><input data-focus-near-matches type="checkbox" ${LZ.focusNearMatches ? "checked" : ""}><span>Stay on stuck near-matches <span class="muted small">— on a function with 50+ attempts and a score of 50 or less, this agent switches to a focused run (up to 300 tries or an hour), then returns to normal work</span></span></label>
+        ${selectionFields(LZ.selection)}
+      </details>` : ""}
       ${ready ? `<div class="lz-row">
         ${LZ.replacement ? "" : `<div class="field"><span>How many</span><span class="stepper"><button type="button" data-step="-1">−</button><output>${LZ.count}</output><button type="button" data-step="1">+</button></span></div>
         <label class="field"><span>Functions per session</span><input data-f="per" type="number" min="1" max="${MAX_PER_SESSION}" value="${LZ.per || S.st.settings.per_session}"></label>`}
@@ -856,7 +860,8 @@ function renderLauncher(box, compact = true) {
   const nearMatches = box.querySelector("[data-focus-near-matches]");
   if (nearMatches) nearMatches.onchange = () => { LZ.focusNearMatches = nearMatches.checked; };
   const selectionBox = box.querySelector("[data-launch-selection]");
-  if (selectionBox) selectionBox.onchange = () => {
+  if (selectionBox) selectionBox.onchange = (event) => {
+    if (event.target === assignment || event.target === nearMatches) return;
     updateSelectionDescription(selectionBox);
     try { LZ.selection = readSelection(selectionBox); } catch (e) { toast(esc(e.message), "err"); }
   };
