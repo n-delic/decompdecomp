@@ -1,5 +1,27 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: recover call argument setup and a stack payload
+
+The linked replay went from 23 to 27 exact matches in 36 archived
+drafts. All four cases used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`,
+with `-g3` for the first three.
+
+- In a 200-byte routine, test the original mask at the final branch
+  and pass literal one or zero in its two arms. Keeping the masked
+  value in a local across earlier calls used a different saved register
+  (200 to 0).
+- In a 136-byte routine, stage the first interpolation input before
+  reading the second, then preserve the context pointer as the first
+  call argument. The loaded field belongs in the second argument and
+  arrives in the call delay slot. Staging the load and passing just
+  the field scored 5. Passing context and field scored 0 from 190.
+- In a 188-byte routine, capture the global pointer before setting the
+  flag and decrementing the halfword. Reuse the pointer for the final
+  call's field load (155 to 0).
+- In a 284-byte routine, put the tag and pointer in one stack record
+  with two trailing words. The pointer store survives and fills the
+  call delay slot, and the frame grows to the target size (178 to 0).
+
 ### KMC GCC 2.7.2: preserve value lifetimes and stack buffer shape
 
 Two archived replays through the linked judge went from 18 to 23 exact
