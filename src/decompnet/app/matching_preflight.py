@@ -6,8 +6,8 @@ import threading
 from .. import compiler, toolchains
 from ..network import NetworkError
 from ..project import compiler_for
+from . import switch_tables
 from .candidate_diagnostics import unresolved
-from .switch_tables import relocation_profiles
 
 MAX_PROFILES = 4
 
@@ -99,7 +99,7 @@ def _run(net, proj, fn, log, check, max_profiles):
     candidates = [(own['toolchain'], tuple(flags)) for flags, _ in probes]
     input_digest = net._comparison_digest(proj, fn, fn['best_source'], candidates)
     from .baseline_status import revision
-    key = 'matching-preflight-v8:'+revision()+':'+input_digest+':'+hashlib.sha256(repr(probes).encode()).hexdigest()
+    key = 'matching-preflight-v9:'+revision()+':'+input_digest+':'+hashlib.sha256(repr(probes).encode()).hexdigest()
     result = {'tested': 0, 'best': None, 'pending': 0}
     best_key = None
     relocation_source = None
@@ -127,7 +127,10 @@ def _run(net, proj, fn, log, check, max_profiles):
                             'score': None if diff is None else 0 if exact else max(1,diff.score),
                             'exact': bool(exact), 'link': unresolved([problems]), 'notified': False}
                     if index == 0 and diff is not None and not exact:
-                        item['jump_profiles'] = relocation_profiles(net, proj, fn, own, problems)
+                        item['jump_profiles'] = switch_tables.relocation_profiles(net, proj, fn, own, problems)
+                        if item['jump_profiles']:
+                            item['jump_sources'] = [candidate for _, candidate in switch_tables.variants(
+                                source, fn['name'], switch_tables.read(net, proj, fn))]
                     if (flags, source) in jump_probes:
                         item['clean_link'] = not problems
                     if index == 0 and not exact and own['toolchain'] == 'gcc-2.7.2-kmc':
@@ -155,6 +158,8 @@ def _run(net, proj, fn, log, check, max_profiles):
                                                         if probe not in halfword and probe not in inferred]
                 if index == 0 and item.get('jump_profiles'):
                     jump_probes = [(flags, source) for flags in item['jump_profiles']]
+                    for child in item.get('jump_sources', ()):
+                        jump_probes.extend((flags, child) for flags in [list(own['flags']), *item['jump_profiles']])
                     probes[1:] = jump_probes + [probe for probe in probes[1:] if probe not in jump_probes]
                 if (flags, source) in jump_probes and item.get('clean_link') and item['score'] is not None:
                     old = result.get('jump_table_profile')

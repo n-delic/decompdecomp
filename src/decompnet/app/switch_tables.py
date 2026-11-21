@@ -5,8 +5,48 @@ import re
 from decomprepair.switch_tables import *  # noqa: F403 - the rewrites (variants, hints, value)
 
 
+def _binary_tables(net, proj, fn):
+    """Read validated dispatches even when the address was hoisted out of the switch."""
+    from ..arch.mips_indirect import jump_table
+
+    code = dict(fn).get('target')
+    if proj['arch'] != 'mips' or not getattr(net, 'is_rom', lambda p: False)(proj) or not code:
+        return []
+    start = fn['vram']
+    order = 'big' if proj['big_endian'] else 'little'
+    read_rom = net.reader(proj, fn)
+    tables = []
+    for offset in range(24, len(code)-7, 4):
+        word = int.from_bytes(code[offset:offset+4], order)
+        if word & 0xfc1fffff != 8 or (word >> 21) & 31 == 31:
+            continue
+        table = jump_table(code, 0, len(code), start, offset, order,
+                           reader=read_rom, allow_saved_base=True)
+        if not table or table['state'] != 'validated':
+            continue
+        at = table['guard_address'] - start
+        guard = int.from_bytes(code[at:at+4], order)
+        if guard >> 26 != 11:
+            continue
+        index = (guard >> 21) & 31
+        low = 0
+        if at >= 4:
+            previous = int.from_bytes(code[at-4:at], order)
+            if previous >> 26 == 9 and (previous >> 16) & 31 == index and (previous >> 21) & 31:
+                low = -(int.from_bytes((previous & 0xffff).to_bytes(2, 'big'), 'big', signed=True))
+        tables.append((table['table_address'], low, table['targets']))
+    return tables
+
+
+def tables(net, proj, fn, *, diagnostic=False):
+    binary = _binary_tables(net, proj, fn)
+    addresses = {address for address, _, _ in binary}
+    return binary + [item for item in _read(net, proj, fn, diagnostic=diagnostic)
+                     if item[0] not in addresses]
+
+
 def read(net, proj, fn):
-    return [(low, targets) for _, low, targets in _read(net, proj, fn)]
+    return [(low, targets) for _, low, targets in tables(net, proj, fn)]
 
 
 def relocation_profiles(net, proj, fn, profile, problems):
@@ -101,11 +141,11 @@ def differences(net, proj, fn, result):
     """Resolve case numbers only when linked code and both table layouts agree."""
     if not result.instructions_exact or not result.data_mismatches:
         return []
-    tables = _read(net, proj, fn, diagnostic=True)
+    target_tables = tables(net, proj, fn, diagnostic=True)
     order = 'big' if proj['big_endian'] else 'little'
     rows = []
     for mismatch in result.data_mismatches:
-        options = {(low, tuple(targets)) for address, low, targets in tables if address == mismatch.address}
+        options = {(low, tuple(targets)) for address, low, targets in target_tables if address == mismatch.address}
         if len(options) != 1:
             continue
         low, targets = options.pop()

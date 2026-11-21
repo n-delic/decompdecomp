@@ -977,6 +977,7 @@ class Permuter:
 
     def _score_work(self, agent, proj, fn, source: str, best: int, fork: str | None) -> int | None:
         self._trial_outcome = 'unscored'
+        self._trial_clean = False
         self._compact_trial = False
         self._trial_output = None
         self._trial_locations = None
@@ -993,6 +994,7 @@ class Permuter:
                                          **({"background": True} if getattr(self, "parallel_claims", False) else {}))
             if res.get('score') is not None:
                 self._trial_outcome = 'scored'
+                self._trial_clean = True
                 measured=res.get('compiled_output') or {}
                 self._trial_output=measured.get('fingerprint')
                 self._trial_output_granularity=measured.get('granularity')
@@ -1041,10 +1043,11 @@ class Permuter:
         from .. import compile_timing
         from .engine.judging import search_evaluation
         with search_evaluation():
-            cand, verdict, _ = self.net._evaluate(fn, proj, result.obj)
+            cand, verdict, problems = self.net._evaluate(fn, proj, result.obj)
         if cand is None:
             return None
         self._trial_outcome = 'scored'
+        self._trial_clean = not problems
         from .experiment_evidence import output
         self._trial_output = output(cand)
         self._trial_output_granularity = 'function'
@@ -1072,9 +1075,10 @@ class Permuter:
                 self._trial_outcome = 'compile_failed'
                 return None
             with search_evaluation():
-                cand, verdict, _ = self.net._evaluate(fn, proj, result.obj)
+                cand, verdict, problems = self.net._evaluate(fn, proj, result.obj)
             if cand is None:
                 return None
+            self._trial_clean = not problems
             self._trial_output = output(cand)
             with compile_timing.phase('score'):
                 d = scoring.diff(target, cand)

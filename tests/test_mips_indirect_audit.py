@@ -184,3 +184,19 @@ def test_switch_reuses_the_high_half_register_for_the_scaled_index():
     assert result['flow_closed'] and result['return_sites'] == 2
     assert result['jump_tables'][0]['targets'] == [vram+36,vram+44]
     assert not extent(image,0,len(words)*4,vram,'big')['flow_closed']
+
+
+def test_deep_jump_table_evidence_reads_rom_without_assembly_labels():
+    from types import SimpleNamespace
+
+    from decompnet.app import switch_tables
+
+    for order in ('big', 'little'):
+        image, _ = fixture(order)
+        net = SimpleNamespace(is_rom=lambda _: True,
+                              reader=lambda *_, data=image: lambda address, size: data[address-0x80000000:address-0x80000000+size])
+        proj = {'arch': 'mips', 'big_endian': order == 'big'}
+        fn = {'vram': 0x80001000, 'size': 60, 'asm': '', 'target': image[0x1000:0x103c]}
+        assert switch_tables.read(net, proj, fn) == [(0, [0x80001024, 0x8000102c])]
+        image[0x1104:0x1108] = (0x80002000).to_bytes(4, order)
+        assert switch_tables.read(net, proj, fn) == []

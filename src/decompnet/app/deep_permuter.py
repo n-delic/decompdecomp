@@ -29,6 +29,7 @@ from . import (
     allocation_search,
     deep_compilation,
     deep_repair_feedback,
+    deep_resume,
     deep_throughput,
     draft_repairs,
     permuter_focus,
@@ -214,6 +215,8 @@ class Search(Permuter):
             raise SearchLimit('Time limit reached')
         if self.tested >= self.limit:
             raise SearchLimit('Variant limit reached')
+        if self.phase == 'random rewrites' and self.tested >= getattr(self, 'random_register_limit', float('inf')):
+            raise SearchLimit('Focused register search completed')
 
     def _chart(self, score):
         """A point on the run chart; past 200 every other middle point goes, the first and latest stay."""
@@ -672,6 +675,34 @@ class Search(Permuter):
             break
         return measured
 
+    def near_register_pass(self, agent, proj, fn, state, best, fork):
+        rows = self.winner_diff[0] if self.winner_diff else ()
+        if not allocation_search.near_registers(rows, proj['arch']):
+            return best
+        source = fn['best_source']
+        ctx = self.net._context(proj['id'], fn['unit'])
+        header = self.net.forks.permuter_header(fork, fn['name']) if fork else ctx['header']
+        choices = allocation_search.near_proposals(source, fn['name'], header, rows, proj['arch'])
+        allowance = min(len(choices), max(0, (self.limit-self.tested)//3))
+        if not allowance:
+            return best
+        self.log(f'Trying up to {allowance} focused register-allocation variants.')
+        tried = 0
+        for family, candidate in choices[:allowance]:
+            if candidate in self.local_seen:
+                continue
+            self.check()
+            self.local_seen.add(candidate)
+            tried += 1
+            state.add(variants=1, repairs=1)
+            with repair_trial({'kind': 'deep local repair', 'family': family}):
+                score = self._score(agent, proj, fn, candidate, best, fork)
+            if score is not None and score < best:
+                return score
+        if tried >= 4:
+            self.register_focus = True
+        return best
+
     def allocation_choices(self, proj, fn, source, rows, choices, labels, header, fork):
         """One bounded lane before broad mutation, charged to the same global limit/deadline."""
         diagnosis = allocation_evidence.diagnose(rows,proj['arch'])
@@ -747,6 +778,37 @@ class Search(Permuter):
         current_scope=agent_tokens.target_scope(self.net,{**dict(fn),'best_source':source},'')
         feedback=deep_repair_feedback.Feedback(source,best,initial_rows,self.winner_output if self.winner_source==source and self.winner_scope==current_scope else None,getattr(self,'winner_output_granularity','function'))
         source_locations={source:getattr(self,'winner_locations',None)}
+        resume_base = source
+        # Recheck prior roots rather than trusting cached results across turns.
+        if (max_trials and proj['slug'] not in self.net.links
+                and (not getattr(self, 'parallel_lane', None) or self.parallel_lane.index == 0)
+                and hasattr(self.net, '_comparison_digest')):
+            from .. import candidate_quality
+            resumed = []
+            for node in deep_resume.roots(self.net, proj, fn):
+                if trials >= max_trials or (phase_deadline is not None and time.monotonic() >= phase_deadline):
+                    break
+                if candidate_quality.reported_source(self.net, fn, node['source']):
+                    continue
+                self.check()
+                trials += 1
+                with repair_trial({'kind': 'deep local repair', 'family': 'resumed_repair_root', 'fresh': True}):
+                    score = self._score(agent, proj, fn, node['source'], 0, fork)
+                if score == 0:
+                    return self._saved_result(proj, fn, 0)
+                if score is None or not getattr(self,'_trial_clean',False) or score > best*2:
+                    continue
+                rows = repair_ranking.evidence(self.net, fn['id'], agent.id)
+                source_rows[node['source']] = rows
+                lineage.paths[node['source']] = node['path'][-(repair_sequences.MAX_STEPS-1):]
+                feedback.record(source,node['source'],lineage.paths[node['source']][-1],
+                                lineage.paths[node['source']][:-1],score,rows,self._trial_output)
+                alternatives.offer(node['source'],score,rows,arch=proj['arch'],baseline=initial_rows,baseline_score=best)
+                resumed.append(node['source'])
+            if resumed:
+                self.log(f'Resuming from {len(resumed)} rechecked repair roots.')
+                source = resumed[0]
+
         from . import layout_frontiers
         layout_state={}
         for saved_layout in layout_frontiers.saved(self.net,proj,fn,source,header):
@@ -1051,6 +1113,13 @@ class Search(Permuter):
                         if not any(n['source'] == candidate for n in alternatives.nodes):
                             counters['frontier_pruned'] += 1
                         source_rows[candidate] = measured_rows
+                        if (not getattr(self,'_trial_reused',False) and getattr(self,'_trial_clean',False) and max_trials
+                                and proj['slug'] not in self.net.links
+                                and hasattr(self.net,'_comparison_digest')):
+                            node = next((item for item in alternatives.nodes if item['source'] == candidate), None)
+                            if node and (score < best or node['repaired']):
+                                deep_resume.keep(self.net,proj,fn,candidate,score,measured_rows,measured_output,
+                                                 parent_path+[labels.get(candidate,'local_repair')],len(node['repaired']))
                         lineage.retain(parent_source,candidate,labels.get(candidate,'local_repair'),max_steps=repair_sequences.MAX_STEPS+repair_sequence_lane.EXTRA_DEPTH if candidate in feedback.loan_sources else repair_sequences.MAX_STEPS)
                         if (score<=best*2 and len(parent_path)+1<repair_sequences.MAX_STEPS
                                 and residual_bursts<residual_followups.BURSTS
@@ -1102,6 +1171,9 @@ class Search(Permuter):
                     if cleanup_pass or focused_pass or bit_pass:
                         # All inverses were measured/cache-checked. Resume the broad page once;
                         # do not treat a failed cleanup as exhaustion of ordinary repair families.
+                        continue
+                    if resume_base == fn['best_source'] and resume_base not in expanded:
+                        source = resume_base
                         continue
                     detour = next((node for node in alternatives.nodes
                                    if node['source'] not in detours_used and node['source'] not in expanded and node['source'] not in self.local_seen), None)
@@ -1280,7 +1352,7 @@ class Search(Permuter):
         recent_key = self._recent_key(proj, fn, source, fork)
         recent = getattr(self, '_recent_candidates', None)
         duplicate = recent.get(recent_key) if recent is not None and recent_key is not None else None
-        if duplicate is not None and duplicate[0] >= best:
+        if duplicate is not None and duplicate[0] >= best and not (current_trial() or {}).get('fresh'):
             self.skipped += 1
             self._trial_reused = True
             self._cached_rows = copy.deepcopy(duplicate[1])
@@ -1312,7 +1384,8 @@ class Search(Permuter):
         feedback = json.loads(cached['feedback']) if cached and cached['feedback'] else None
         score = feedback.get('score') if isinstance(feedback, dict) else feedback
         self._cached_rows = feedback.get('rows', []) if isinstance(feedback, dict) else []
-        reused = not self.measuring_baseline and isinstance(score, int) and score >= best
+        reused = (not self.measuring_baseline and not (current_trial() or {}).get('fresh')
+                  and isinstance(score, int) and score >= best)
         self._trial_reused = reused
         self._trial_locations = None
         self._trial_output_granularity = None
@@ -1612,6 +1685,9 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
                     fn = net._function(name, slug)
                 measured_baseline = baseline
                 relabel = baseline and not fork and search.can_relabel_switch(fn)
+                if baseline and not relabel and (lane is None or lane.index == 0):
+                    baseline = search.near_register_pass(agent, proj, fn, state, baseline, fork)
+                    fn = net._function(name, slug)
                 if baseline and not fork and not relabel and (lane is None or lane.index == 0):
                     if profile := deep_profiles.tail_dispatch(net, proj, fn):
                         log('Checking the saved tail dispatcher with the installed GCC sibling-call profile.')
@@ -1664,6 +1740,9 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
         if reason not in ('Matched', 'Exact diagnostic needs ordinary review', PROFILE_LEAD):
             search.check()
             search.phase = 'random rewrites'
+            if (getattr(search, 'register_focus', False) and search.winner_diff
+                    and allocation_search.near_registers(search.winner_diff[0], proj['arch'])):
+                search.random_register_limit = search.tested + 24
             search.log('Local repairs finished; generating random rewrites and judging each compiled candidate.')
             search.seconds = max(1, search.deadline-time.monotonic())
             current = net._function(name, slug)
