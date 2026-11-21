@@ -104,3 +104,33 @@ s32 f(void) {
     results = proposals(source, 'f', '', 'mips', KMC, rows, '', resolve={'low': 0x100, 'high': 0x124}.get)
     assert ('measured_global_rebase', source.replace('(s32 *)(base + 0x24)',
                                                      '(s32 *)((((u32)&high) + ok) - ok)')) in results
+
+
+def test_cursor_loop_tail_routes_the_measured_branch_likely_edge():
+    source = """void f(Node *node) {
+    Node *cursor;
+    Node *next;
+    cursor = head;
+    if (cursor != NULL) {
+        for (;;) {
+            next = cursor->right;
+            if (next == NULL) {
+                cursor->right = node;
+                break;
+            }
+            if (((cursor < node) & (node < next)) != 1) {
+                cursor = next;
+                continue;
+            }
+            cursor->right = node;
+            next->left = node;
+            break;
+        }
+    }
+}
+"""
+    rows = case_rows('and $v0, $v0, $v1', 'beql $v0, $zero, 0xc4', 'move $a0, $a1')
+    [repaired] = [candidate for family, candidate in proposals(source, 'f', '', 'mips', KMC, rows, '')
+                  if family == 'measured_cursor_loop_tail']
+    assert '} while (cursor != NULL);' in repaired
+    assert 'continue;' not in repaired
