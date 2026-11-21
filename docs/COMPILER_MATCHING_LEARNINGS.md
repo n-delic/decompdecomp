@@ -1,5 +1,13 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: recover a stack array and call scheduling
+
+Two archived drafts matched using `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
+One 100-byte loop needs three adjacent stack words represented as an
+array to retain their initialization and frame (230 to zero). One
+68-byte guarded call needs its source pointer and first argument staged
+before reading the remaining byte fields (250 to zero).
+
 ### KMC GCC 2.7.2: preserve repeated global reads
 
 Two 48-byte archived drafts matched with the linked judge after
