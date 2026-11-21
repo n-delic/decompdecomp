@@ -366,7 +366,8 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
     if not target:
         return None
     if not valid or toolchain_id != 'gcc-2.7.2-kmc':
-        return run_m2c(asm_text, name, target, context_header, data_asm, timeout, valid, strict, options)
+        source = run_m2c(asm_text, name, target, context_header, data_asm, timeout, valid, strict, options)
+        return _compilable(source) if valid else source
 
     from decomprepair import (
         aligned_allocator_request,
@@ -401,7 +402,7 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
     )
 
     draft_asm = likely_branch_cursor.draft_asm(asm_text)
-    source = run_m2c(draft_asm, name, target, context_header, data_asm, timeout, valid, strict, options)
+    source = _compilable(run_m2c(draft_asm, name, target, context_header, data_asm, timeout, valid, strict, options))
     if not source:
         return None
     if 'M2C_UNALIGNED32' in source and (draft := unaligned_stack_drafts.rewrite(
@@ -440,6 +441,16 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
             or passthrough_argument_repairs.missing_entry_argument(source, name, asm_text, context_header)
             or loop_storage_shapes.measured_copy_setup(source, name, asm_text, context_header)
             or source)
+
+
+def _compilable(source: str | None) -> str | None:
+    """m2c's draft of a large switch-heavy function, repaired where m2c writes C that doesn't compile (a case of one
+    switch inside another, callees declared from their longest call, untyped float loads, placeholder arguments).
+    A large N64 state machine never had a compiling draft, so the deep permuter never started on it."""
+    if not source:
+        return source
+    from decomprepair import large_switch_drafts
+    return large_switch_drafts.rewrite(source) or source
 
 
 def drop_saved_register_reads(source: str) -> str:
