@@ -32,6 +32,7 @@ from decomprepair import (
     measured_global_rebase,
     measured_immediate_repairs,
     measured_kmc_addresses,
+    measured_kmc_lifetimes,
     measured_lifetime_shapes,
     measured_memory_order,
     measured_mmio_polling,
@@ -206,6 +207,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     if toolchain == 'gcc-2.7.2-kmc':
         result += measured_cursor_schedule.variants(source, name, header, rows, asm or '')
         result += measured_kmc_addresses.variants(source, name, header, rows, flags)
+        result += measured_kmc_lifetimes.variants(source, name, header, rows)
     if toolchain.startswith('ido-7.1'):
         return result
     target, candidate = (_instructions(rows, side) for side in (1,2))

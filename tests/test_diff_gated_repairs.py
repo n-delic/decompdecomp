@@ -589,3 +589,28 @@ s32 f(s32 index) {
     assert 'extern s8 *state;' in fixed
     assert '__repair_address_offset = (index & 0xFF) * 24;' in fixed
     assert 'staged_indexed_context' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_kmc_narrow_call_result_preserves_the_measured_return_value():
+    source = '''
+s32 reserve();
+void f(void *owner) {
+    s32 ticket;
+    ticket = reserve(owner) & 0xffff;
+    M2C_FIELD(owner, s32 *, 4) = ticket;
+}
+'''
+    ops = (
+        'jal reserve', 'move $a0, $s0', 'lw $v1, 8($s0)', 'andi $v0, $v0, 0xffff',
+        'sll $a0, $v0, 2', 'addu $v1, $v1, $a0', 'sw $v0, ($v1)',
+        'lw $v1, 16($s0)', 'andi $a1, $v0, 31', 'or $a1, $a1, $a0',
+        'sw $a1, ($v1)', 'lw $ra, 20($sp)', 'lw $s1, 16($sp)', 'lw $s0, 12($sp)',
+        'jr $ra', 'addiu $sp, $sp, 24',
+    )
+    rows = [(' ', op, op) for op in ops]
+    rows[3] = ('r', ops[3], 'andi $a0, $v0, 0xffff')
+    family = 'measured_narrow_call_return'
+    fixed = dict(proposals(source, 'f', '', 'mips', KMC, rows, ''))[family]
+    assert 'ticket = (u16)reserve(owner);' in fixed
+    assert 'return ticket;' in fixed
+    assert family not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))
