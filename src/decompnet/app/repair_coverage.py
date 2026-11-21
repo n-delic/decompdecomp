@@ -109,6 +109,7 @@ def verify(feedback, example):
             measured_memory_order,
             measured_pointer_scale,
             measured_temporary_repairs,
+            uncached_read_repairs,
         )
 
         from . import stack_padding_repairs
@@ -116,6 +117,9 @@ def verify(feedback, example):
         symbols = net.symbols(proj['id']) if hasattr(net,'symbols') else None
         focused = stack_padding_repairs.layout_candidates(source, fn['name'], header, proj['arch'],
                                                          rows, symbols, profile['flags'])
+        if candidate := uncached_read_repairs.rewrite(source, fn['name'], fn['asm'] or '',
+                                                      symbols.resolve if symbols else None):
+            focused.append(('measured_uncached_word_read', candidate))
         focused += measured_control_flow.variants(source, fn['name'], rows)
         focused += measured_memory_order.variants(source, fn['name'], rows)
         focused += measured_expression_repairs.variants(source, fn['name'], header, rows)
