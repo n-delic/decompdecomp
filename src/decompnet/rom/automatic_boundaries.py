@@ -7,7 +7,7 @@ symbols, data, independent references, image gaps or competing mappings.
 import heapq
 import re
 import struct
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from dataclasses import replace
 
@@ -38,6 +38,7 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
     pointers={w for i,(w,) in enumerate(struct.iter_unpack(fmt,image[:len(image)//4*4]))
               if w in starts and not any(s.contains(w,4) for s in slots)
               and (w not in zero_entries or not console.import_pointer_is_data(image,4*i))}
+    named_or_pointed = explicit | pointers
     references=defaultdict(set)
     direct_calls=set()
     transfer_targets=set()
@@ -178,6 +179,7 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
         # The group's first entry is known as well: a leaf there ends at its own return, not at a call's cut.
         for cut in sorted(cuts & returns|{lo}):
             if (at:=seed(cut)) is not None:candidates.append(at)
+        called_cuts = sorted(cut for cut in cuts if cut+mapping in direct_calls)
         pending=list(set(candidates)|leaves);heapq.heapify(pending);seen=set()
         while pending:
             at=heapq.heappop(pending)
@@ -222,11 +224,17 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
             if any(address<a<finish for a in explicit|pointers):continue
             if any(address<=a<finish for a in data_only):continue
             if any(d.rom is not None and d.rom<end and at<d.rom+d.size for d in data):continue
+            # Alignment between a return and the next called entry may
+            # decode as a backward branch into the return's delay slot.
+            index = bisect_left(called_cuts, end)
+            following = called_cuts[index] if index < len(called_cuts) else None
+            tail = _return_delay_alignment(end, following, mapping, lines, references, named_or_pointed, data)
             # A branch within another occupant targets its own copy of the shared address.
             independent=any(not at<=offset<end
                             for dest in destinations[bisect_right(destinations,address):bisect_right(destinations,finish-1)]
                             for offset,_ in references[dest]
                             if (offset!=filler or dest!=ignored_edge)
+                            and not (offset==tail and dest==finish-4)
                             and not any(other.rom_start <= offset < other.rom_end and other.contains(dest, 4)
                                         for other in siblings))
             if independent:continue
@@ -239,6 +247,9 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
                 padding.add(proposed_padding[at])
                 cuts.update(proposed_padding[at])
             accepted.append((at,end));cuts={c for c in cuts if not at<c<end}|{at,end}
+            if tail is not None:
+                cuts = {c for c in cuts if not end<c<following}
+                padding.add((end, following))
             if end-8 in lines and lines[end-8].word==JR_RA:
                 if (following:=seed(end)) is not None:heapq.heappush(pending,following)
         if not accepted:result.extend(group);continue
@@ -572,6 +583,33 @@ def split_alignment_after_leaf(functions, data, image, order, console, owner, se
         result.append(replace(fn,lines=fn.lines[:split-2],labels={label for label in fn.labels if label<address-8}))
         result.append(replace(fn,name=f'func_{address-8:08X}',vram=address-8,rom=end-8,lines=fn.lines[split-2:],labels=set()))
     return result
+
+
+def _return_delay_alignment(end, following, mapping, lines, references, named, data):
+    """A branch from unentered alignment can imitate an entry into a stack pop."""
+    if (following is None or not 8 <= following-end <= 28 or (following+mapping)%32
+            or end-8 not in lines or lines[end-8].word != JR_RA
+            or lines[end-4].word >> 16 != 0x27bd or not 0 < lines[end-4].word & 0xffff < 0x8000
+            or any(symbol.rom is not None and symbol.rom < following and end < symbol.rom+symbol.size
+                   for symbol in data)):
+        return None
+    branch = None
+    for offset in range(end, following, 4):
+        if (offset+mapping in named or any(not end <= source < following
+                                          for source, _ in references.get(offset+mapping, ()))):
+            return None
+        word = lines[offset].word
+        if word & 0xfc1fffff == 8:
+            return None
+        if word>>26 not in (4, 5, 6, 7, 20, 21, 22, 23):
+            continue
+        delta = (word & 0xffff) - 0x10000
+        if branch is not None or not word & 0x8000 or offset+4+4*delta != end-4 or offset+8 > following:
+            return None
+        if lines[offset+4].word:
+            return None
+        branch = offset
+    return branch
 
 
 def multiword_alignment(functions, image, order, owner, named, references, direct_calls, data, segments, console):
