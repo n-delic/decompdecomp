@@ -141,7 +141,7 @@ class BriefMixin:
         if target.startswith('mips-') and re.search(r'\bjr\s+\$(?!(?:ra|31)\b)\w+', fn['asm'] or ''):
             inputs.append('draft jump-table aliases')
         if own["toolchain"] == 'ido-7.1':
-            from decomprepair import ido_indirect_event, ido_strided_cursor, ido_switch_reply
+            from decomprepair import ido_indirect_event, ido_stack_iterators, ido_strided_cursor, ido_switch_reply
 
             if ido_indirect_event.applies(fn['asm'] or ''):
                 inputs.append('IDO callback event frame')
@@ -149,6 +149,8 @@ class BriefMixin:
                 inputs.append('IDO strided cursor')
             if ido_switch_reply.applies(fn['asm'] or ''):
                 inputs.append('IDO switch reply frame')
+            if ido_stack_iterators.applies(fn['asm'] or ''):
+                inputs.append('IDO stack iterator records')
         if own["toolchain"] == 'gcc-2.7.2-kmc' and 'swl' in (fn['asm'] or ''):
             from decomprepair.unaligned_stack_drafts import stack_copy
 

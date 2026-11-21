@@ -10964,3 +10964,16 @@ declaration for a byte table, which changed the load width and scaled
 the record offset twice. Restoring a byte array reduced its score
 from 270 to 60. The existing parameter-width repair then matched the
 remaining scheduling difference and brought the score to 0.
+
+### Rebuild IDO iterator records and preserve the typed cursor stride
+
+Two isolated N64 replays used
+`ido-7.1 -O2 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul -DNON_MATCHING`.
+Both drafts dereferenced integer cursors and read undeclared stack
+words. Recovered record types and structured loops compiled, leaving
+scores of 4 and 10 from stack offsets alone. Restoring the scan's full
+scratch span and declaration order matched all 236 bytes. In the name
+lookup, reusing the loaded byte and the copy index, keeping the cache
+reload inside the loop, and ordering the addressed locals matched all
+300 bytes. Both exact drafts used local record declarations derived
+from the target's stack offsets and request increment.
