@@ -11389,3 +11389,13 @@ boundary elsewhere: 60. Proposed by decomp-repair `float_sum_split` (0.5.244), r
   judgments from the saved best (240 single moves, beam 40).
 - Failed: a beam of width 3 over single moves, and greedy/pair steps at limit 300, stayed at 85-115; the improvement needed
   the app's wider beam (40) or random multi-swaps.
+
+### Forward an untouched first argument to an indirect callback
+
+With gcc-2.7.2-kmc `-G0 -mips3 -mgp32 -mfp32 -O2`, a small N64
+wrapper loaded a callback from a global and wrote zero to the second
+argument register in the call delay slot. The draft supplied zero as the
+first argument and omitted the incoming argument that the wrapper forwards
+unchanged. Repairing the wrapper parameter, callback declaration and call
+together scored 5 to 0. The deep permuter verified and saved the match in
+17 candidates with the guarded leading-parameter rule.
