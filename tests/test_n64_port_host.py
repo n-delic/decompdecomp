@@ -293,6 +293,7 @@ static uint8_t M[0xA0010], rom[0x1000]; static size_t rom_size = sizeof rom;
 static void wbe32(uint32_t a, uint32_t v) { M[a] = v >> 24; M[a + 1] = v >> 16; M[a + 2] = v >> 8; M[a + 3] = v; }
 static int port_ai_register(uint32_t a, int w, uint32_t v, uint32_t *r) { (void)a; (void)w; (void)v; (void)r; return 0; }
 static int si_register(uint32_t a, int w, uint32_t v, uint32_t *r) { (void)a; (void)w; (void)v; (void)r; return 0; }
+static int pi_register(uint32_t a, int w, uint32_t v, uint32_t *r) { (void)a; (void)w; (void)v; (void)r; return 0; }
 """ + _function(HOST.read_text(), "rom32") + "\n" + _function(HOST.read_text(), "port_io_load") + """
 int main(void) {
     rom[0x578] = 0x34; rom[0x579] = 0x21; rom[0x57A] = 0x89; rom[0x57B] = 0x65;
@@ -578,3 +579,49 @@ int main(void) {
     program = tmp_path / "dma"
     subprocess.run([cc, str(harness), "-o", str(program)], check=True, capture_output=True, timeout=30)
     subprocess.run([str(program)], check=True, timeout=10)
+
+
+@pytest.mark.skipif(shutil.which("cc") is None, reason="needs a C compiler")
+def test_raw_pi_reads_rom_into_console_ram_and_compatibility_stack(tmp_path):
+    source = tmp_path / "pi.c"
+    host = HOST.read_text()
+    source.write_text("""
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <assert.h>
+static uint8_t *M;
+static uint8_t rom[] = {0, 1, 2, 3, 4, 5};
+static size_t rom_size = sizeof rom;
+static int interrupts;
+enum { EV_PI = 8 };
+static void post_event(int event) { assert(event == EV_PI); interrupts++; }
+#define SHADOW_STACKS 0x10000000u
+#define SHADOW_SIZE 0x100000u
+#define BOOT_STACK_SIZE 0x10000u
+#define BOOT_STACK_BUS 0x15000000u
+""" + _function(host, "stack_end") + "\n" + _function(host, "port_stack_bus") + "\n" + _function(host, "pi_register") + """
+int main(void) {
+    M = calloc(0x80800000u, 1);
+    assert(M);
+    uint32_t read;
+    assert(pi_register(0xA4600004u, 1, 0x10000002u, NULL));
+    assert(pi_register(0xA4600000u, 1, 0x400u, NULL));
+    assert(pi_register(0xA460000Cu, 1, 3, NULL));
+    assert(!memcmp(M + 0x80000400u, rom + 2, 4));
+    assert(pi_register(0xA4600000u, 1, 0x1403FE90u, NULL));
+    assert(pi_register(0xA460000Cu, 1, 3, NULL));
+    assert(!memcmp(M + 0x1403FE90u, rom + 2, 4));
+    assert(pi_register(0xA460000Cu, 1, 4, NULL));
+    assert(M[0x1403FE94u] == 0);
+    assert(pi_register(0xA4600010u, 0, 0, &read) && read == 0);
+    assert(pi_register(0xA4600000u, 1, port_stack_bus(0xFF00u), NULL));
+    assert(pi_register(0xA460000Cu, 1, 3, NULL));
+    assert(!memcmp(M + 0xFF00u, rom + 2, 4));
+    assert(interrupts == 4);
+    free(M);
+}
+""")
+    binary = tmp_path / "pi"
+    subprocess.run(["cc", "-o", str(binary), str(source)], check=True, capture_output=True, timeout=60)
+    subprocess.run([str(binary)], check=True, capture_output=True, timeout=30)
