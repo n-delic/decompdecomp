@@ -154,6 +154,11 @@ wrongly: a 1000 → 680 local improvement was 1090 → 1030 in the app. Confirm 
   `branch_polarity`.
 - **Several changes that are each no better alone** are the normal shape of a late match. Offer the combination as
   one child, and keep non-improving children for a second step (`operand_order_pass`'s combined step).
+- **A copy that lands in the wrong register (`$v1` for `$v0`) beside a `goto blockN` join.** m2c writes `v = s;`
+  before the inner guard *and* at the label; the early one occupies the register. Merge the guards and put `v = s;`
+  at the end of each arm (both stay: one definition is folded away). `join_copy_sink` and `shared_result_copy` in
+  decomp-repair do it. A library family only helps when `app/draft_repairs.py` calls it and the installed library is
+  current: if the app didn't offer one, check both before writing a new rewrite.
 - Declaration order, `register` and integer width hints often produce identical RTL: test one, don't grid them.
 - **IDO bit-packed unpackers** (an N64 audio-header function, `ido-7.1`, exact; the evidence is in
   COMPILER_MATCHING_LEARNINGS.md). The shape that matched: a `u8 *` parameter; stack arrays declared highest frame

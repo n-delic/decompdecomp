@@ -10538,3 +10538,33 @@ From the same hand match as the join sink (one function; the numbers are that fu
 - Across the same 226 inputs as the earlier v0.5.148 replay, fresh byte-exact drafts increased from
   8 to 25. The 17 changes were all prior compilation failures. There were still 161 compilation
   failures and 40 generation failures.
+
+### KMC GCC 2.7.2: a once-only byte-cursor walk and the join's copy (`pointer_walk_index`, `join_copy_sink`)
+
+One N64 function (`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`), reached two ways. In a fresh scratch app the
+untouched m2c draft scored 255 and had two byte cursors (`char *`, stepping 4) and `while (counter == 0)`; the
+dev project's autopilot draft already had the indexed `for` and scored 15. Both ended with the same two register
+names differing (`$v1` for `$v0`, on the skipped-loop path and before the final `bnez`), plus, on the raw draft,
+the order of three hoisted loop constants.
+
+- The indexed loop, `for (i = 0; i < 1U; i++)` over `((s32 *)&D_800C4470)[i]`, is the exact order of the hoisted
+  constants (195 -> 15). The bound must be unsigned: `< 1` scored 200, `< 1U` and a `u32` counter scored 0.
+  `pointer_walk_index` now writes the byte-cursor walk this way (library 0.5.189).
+- The copy: m2c wrote `v = x;` before the inner guard and again at the `goto` label. The early one is a real
+  instruction before the inner test, so `$v0` (live as the loaded field) is taken and the copy gets `$v1`. Merging
+  the guards and putting `v = x;` at the end of each arm gives `$v0` (15 -> 0; 195 -> 180 on the raw draft).
+  `join_copy_sink` (0.5.189) does it, and treats an early `v = 0;` as the label's `v = x;` after `x = 0;`.
+
+Controlled result, one function: stock Deep Permuter, fresh import, the draft untouched, one compiler profile:
+255 -> 195 (m2c_refinement) -> 180 (join_copy_sink) -> 0 (pointer_walk_index), 169 candidates, matched.
+Before the app wired `join_copy_sink` into `draft_repairs.py` the same run stopped at 15 with the exact variant one
+call away: a library family the app never calls is not offered, whatever the library ships.
+
+Failed forms (compiled locally, 0.779 = the draft's own ratio): one copy of any shape (`r = s; if (!r)`, `&&` with
+one copy, a goto join with one copy) folds the move into `s`; `s`/copy as `u8`, `s16`, `u32` add extension
+instructions; one copy per arm without merging the guards leaves a `j` to a shared tail.
+
+A second route to the same bytes is the measured `shared_result_copy` family (0.5.178, the entry above): it keeps
+the early copy and moves the label. It needs the diff rows, and the app that held this function had library 0.5.166
+installed, so it had never been offered either. First thing to check on a stuck near-match: the app's library
+version.
