@@ -12625,3 +12625,13 @@ and restored the frame and save/restore offsets.
 With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, this reduced score
 289 to 275. The v0.5.300 control stayed at 289 after 100 trials. Other
 instruction differences remain.
+
+### KMC GCC 2.7.2: keep a record field pointer across a call
+
+An isolated scratch draft computed a byte field address from a saved record
+pointer after a branch and a call. Keeping the intermediate pointer as a
+local from the original record load recovered the target's register and branch
+delay-slot schedule. With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`,
+the linked difference score went from 225 to an exact match. Tests cover the
+observed instruction differences and guards for pointer mutation, escape and
+volatile use. This is one observed match.

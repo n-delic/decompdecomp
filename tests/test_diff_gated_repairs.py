@@ -1070,3 +1070,13 @@ def test_packed_bits_repairs_route_to_kmc(monkeypatch):
                         lambda text, name, header, diff: [('packed_bits_fixture', text)])
     assert 'packed_bits_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'packed_bits_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_field_pointer_repairs_route_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_kmc_field_pointer, 'variants',
+                        lambda text, name, header, diff: [('field_pointer_fixture', text)])
+    assert 'field_pointer_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'field_pointer_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
