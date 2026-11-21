@@ -152,6 +152,14 @@ class ImportMixin:
             log("splat refused the game's own names: splitting without them")
             shutil.rmtree(workdir / "asm", ignore_errors=True)
             res = console.split_game(workdir, picked, log=log)
+        empty = [fn for fn in res.functions if fn.size <= 0]
+        if empty:
+            # #297: a splitter can hand back a start with no bytes (on GBA, luvdis named a literal-pool word). A
+            # size-0 function has nothing to compile or judge, and it stopped a project from being saved. Leave it
+            # out here, before its symbol or row exists, so no console can store one.
+            log(f"left out {len(empty)} function(s) with no bytes: "
+                + ", ".join(fn.name for fn in empty[:8]) + (", ..." if len(empty) > 8 else ""))
+            res.functions = [fn for fn in res.functions if fn.size > 0]
         if reimport is not None and not res.functions:
             raise NetworkError("the selected game produced no functions; the existing project was left unchanged")
         if reimport is not None:

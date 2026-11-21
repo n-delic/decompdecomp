@@ -312,7 +312,7 @@ def test_the_permuter_finishes_a_near_miss(game, monkeypatch):
     ("entity_spawn", "e->vel_x = 0;\n            e->vel_y = 0;", "e->vel_y = 0;\n            e->vel_x = 0;"),
     ("checksum_save", "(sum << 5) + sum", "sum + (sum << 5)"),  # no simple rewrite turns operands around
 ])
-def test_decomp_permuter_brings_a_near_miss_back_to_a_match(game, name, written, near):
+def test_decomp_permuter_brings_a_near_miss_back_to_a_match(game, name, written, near, monkeypatch):
     """A matching function with two statements in another order, or an addition's operands the other way round,
     left as an agent's near miss: decomp-permuter's variants, judged by our judge, match it again in one turn."""
     import time
@@ -337,8 +337,13 @@ def test_decomp_permuter_brings_a_near_miss_back_to_a_match(game, name, written,
     proj = net.project_row(slug)
     assert name in [r["name"] for r in net.permuter.candidates(proj)]
     permuter, _ = net.local_agent("permuter")
+    # the library's local hypotheses already match both near misses: without them, the turn shows the generator does
+    monkeypatch.setattr(permute.permuter_local, "variants", lambda *a, **k: [])
+    batch, batches = permute.Generator.batch, []
+    monkeypatch.setattr(permute.Generator, "batch", lambda self, job: batches.append(job) or batch(self, job))
     st = State()
     started = time.monotonic()
     net.permuter._permute(permuter, proj, net._function(name, slug), st)
     assert st.matched == 1 and net._function(name, slug)["status"] == "matched", st
+    assert batches, "matched without decomp-permuter's generator"
     assert time.monotonic() - started < permute.SECONDS

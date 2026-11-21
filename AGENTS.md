@@ -201,12 +201,3 @@ linting). In short:
 - Let agents edit a project's build setup: `forks/project.py` (`EDITABLE`, `FORBIDDEN_PARTS`) limits them to
   source and header files on purpose.
 - Weaken the judge: a match means byte-identical after linking (ROM mode) or objdiff 100% (fork mode).
-
-## Shared repair library
-
-Pure C rewrites used by the permuters live in RetroReversing/decomp-repair (AGPL-3.0-only).
-The tagged archive in `pyproject.toml` and its `uv.lock` hash pin the installed code. The app's
-`permuter.py`, `permuter_gen.py` and `app/permuter_local.py` retain compatible import names;
-edit rewrite implementations in the library, then release and bump the dependency here.
-Compiling, claiming, candidate budgets and the byte/objdiff judges stay in decompdecomp.
-The external decomp-permuter tool is still installed only through `toolchains.py`.
