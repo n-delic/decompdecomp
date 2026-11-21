@@ -592,3 +592,21 @@ def test_one_based_switch_repair_runs_before_broad_mutations(monkeypatch):
 
     assert search.operand_order_pass(AGENT, proj, fn, 280, None) == 0
     assert tried == [child]
+
+
+def test_masked_byte_stride_runs_in_the_bounded_local_lane(monkeypatch):
+    from decomprepair import counter_derived_loop_offset
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    proj = net.project_row('game')
+    fn = {**net.function(), 'asm': ''}
+    child = fn['best_source'] + '\n/* staged masked stride */'
+    monkeypatch.setattr(counter_derived_loop_offset, 'masked_byte_stride_variants',
+                        lambda *args: [('masked_byte_stride', child)])
+    search = deep_permuter.Search(net, 1, 6, Log())
+    tried = []
+    monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 1120)
+
+    assert search.operand_order_pass(AGENT, proj, fn, 1175, None) == 1120
+    assert tried == [child]
