@@ -382,7 +382,13 @@ class Search(Permuter):
                       (L + 'near_match_repairs.float_update_order', (source, name, header)),
                       (L + 'near_match_repairs.variants', (source, name)),
                       (L + 'target_local_repairs.value_lifetimes', (source, name))]
+        # Which values a function's loops keep in saved registers: local pointers to globals, one temporary shared
+        # by every loop, a do-while counter loop (decomp-repair 0.5.162). Offered first when registers dominate.
+        shapes = register or permuter_focus.register_dominant(rows)
+        if shapes:
+            calls.insert(0, (L + 'block_register_repairs.variants', (source, name)))
         results = [generation_calls.pairs(result) for result in generation_calls.library(calls)]
+        loop_shapes = results.pop(0) if shapes else []
         if register:
             results[-2] = [(family, child) for family, child in results[-2] if family == 'arithmetic_operand_order']
         proposals = []
@@ -391,8 +397,9 @@ class Search(Permuter):
                 proposals = result + proposals  # linked-case zero-bound labels go before the rest
             else:
                 proposals += result
+        proposals = loop_shapes + proposals
         seen = {source}
-        limit = min(6, (self.limit - self.tested) // 2)
+        limit = min(6 + min(len(loop_shapes), 12), (self.limit - self.tested) // 2)
         for family, child in proposals:
             if limit <= 0:
                 break

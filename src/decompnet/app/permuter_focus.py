@@ -99,6 +99,17 @@ def classify(rows, arch=None):
     return 'control' if markers & {'<', '>', '|', 'o'} else ''
 
 
+def register_dominant(rows):
+    """Most of the differing rows are register choices, with a few moved or inserted by their consequences.
+
+    `classify` says 'register' only when nothing else differs; a function whose loops allocate saved registers
+    differently also shows moved copies and a branch offset or two (an N64 function: 40 register rows, 2 moved
+    ones). The rewrites that decide which values sit in saved registers are worth their trials there too."""
+    changed = [row for row in normalized(rows) if row and row[0] != ' ']
+    registers = sum(1 for row in changed if row[0] == 'r')
+    return registers >= 4 and registers >= 2 * (len(changed) - registers)
+
+
 def boosts(rows):
     # Multiply existing upstream weights, never invent unknown mutations or remove the compiler's defaults.
     return dict.fromkeys(BOOSTS.get(classify(rows), ()), 3)
