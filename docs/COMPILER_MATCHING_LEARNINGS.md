@@ -12411,3 +12411,30 @@ With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, the Deep Permuter
 reached score 0 from 120 in 38 attempts. The v0.5.286 control stayed at
 120 after 100 attempts. This is one linked-byte scratch replay, with
 synthetic tests that reject different field offsets and intervening calls.
+
+### KMC GCC 2.7.2: score-neutral steps before the one that pays off (Deep Permuter `neutral_plateau_pass`)
+
+Three matched functions of an N64 game (`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`) each needed a step that scored
+the same as the state before it. The permuter kept only improving children, and took the first improvement even when
+it led nowhere. Before-states were rebuilt from the edit lists above and the attempt history, and scored with the
+judge-worker; the search below is the pass's algorithm run directly (no Deep Permuter job):
+
+| Function | Before | Path found | Compiles | Without neutral steps |
+| -------- | ------ | ---------- | -------- | --------------------- |
+| 312-byte voice-list walk, the 623 state (families' own 1023 -> 623 chain) | 623 | `single_use_inline` (high/low at the call sites, 623) then `product_temporary` (0) | 58 | 200 (`goto` loop 280, then wrappers), stuck |
+| the same function, m2c-style locals and `result = (u8) idx` | 1309 | `dead_call_arg_temp` 909, `reused_param_alias` 623, `symbol_address_local` 623, `dead_pointer_clear` 0 | 192 | 623 |
+| the same function, the agents' 1023 do-while | 1023 | 200 at best within 900 compiles | - | 200 |
+| 352-instruction init function, two constant locals left | 60 | `call_one_shot_scope_shift` 0 | 12 | 0 |
+
+- The trap is a quick improvement: the voice-list walk's loop as `goto` scores 280 from 623 in two compiles and
+  every child of it stays at 200 or above. The pass therefore searches the lowest-scoring state first but keeps
+  every state that improved on its own parent, so the 623 state's neutral children are still searched once the 200
+  region runs out of its per-state allowance (64 compiles).
+- Children of the neutral parents are scored round-robin (the first child of each, then the second): the paying
+  step was the sixth child of the fifth neutral parent.
+- Not closed: from the agents' 1023 do-while the 200 region (many states between 200 and 280) uses the whole budget
+  before the 623 branch is searched; and the saved 165 source reads an uninitialised `char index`, so its 165 -> 600
+  step (defining `idx = handle & 0xff`) is a semantic rewrite no family makes. Next step: rank states by distinct
+  diff rows rather than score alone, so a family's many same-diff spellings count once.
+- The init function's neutral chain (literals 60 -> 60 -> 60, then the shift) did not reappear from the rebuilt
+  states: with two constant locals left the shift alone gives 0.

@@ -1188,3 +1188,43 @@ def test_deep_search_leaves_a_function_the_user_gave_back_to_the_agents(monkeypa
         db.execute("UPDATE functions SET meta='{\"reopened\": true}'")
     assert net.twins.set_aside_function_asm(net.project_row('game'), net.function()) is None
     assert net.function()['status'] == 'open'
+
+
+def test_neutral_plateau_pass_reaches_a_step_that_pays_off_after_same_score_steps(monkeypatch):
+    """A voice-list walk: its call-site constants written again kept 623, and only then did the staged product give
+    0; its loop written with `goto` scored 280 at once and led no further than 200."""
+    from decompnet.app import draft_repairs
+
+    net = setup(monkeypatch)
+    source = 'void f(int a) {\n    g(a);\n}\n'
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_score=623,best_source=? WHERE name='f'", (source,))
+    fn, proj = net.function(), net.project_row('game')
+    search = deep_permuter.Search(net, 1, 30, Log(), fn)
+
+    def variants(parent, name, arch, asm='', flags=(), labels=None, **_):
+        found = []
+        for family, mark in (('goto', '/*g*/'), ('noise', '/*n*/'), ('inline', '/*i*/'), ('product', '/*p*/')):
+            if mark not in parent:
+                child = parent + mark
+                labels[child] = family
+                found.append(child)
+        return found
+
+    def score(agent, proj, fn, candidate, best, fork):
+        search.tested += 1
+        if '/*g*/' in candidate:
+            return 200 if candidate.count('/*') > 1 else 280  # quick, then nowhere
+        if '/*p*/' in candidate:
+            return 0 if '/*i*/' in candidate else 700  # the payoff needs the neutral step before it
+        return 900 if '/*n*/' in candidate else 623
+
+    monkeypatch.setattr(draft_repairs, 'variants', variants)
+    monkeypatch.setattr(search, '_score', score)
+    assert search.neutral_plateau_pass(AGENT, proj, dict(fn, best_source=source), 623, None) == 0
+    assert search.tested <= 20
+
+
+def test_neutral_frontier_spreads_over_families_first():
+    children = [('a', 1), ('a', 2), ('b', 3), ('a', 4), ('c', 5)]
+    assert deep_permuter.Search.neutral_frontier(children, 4) == [('a', 1), ('b', 3), ('c', 5), ('a', 2)]
