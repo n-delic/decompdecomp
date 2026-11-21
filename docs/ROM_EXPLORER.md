@@ -608,3 +608,7 @@ F3DEX meshes appear under Models when stored pointers corroborate the display
 list mapping and all triangle slots resolve to loaded vertices. The preview
 shows each list in local coordinates. A standalone compact MIDI directory
 immediately after its verified sound bank can use the same Audio player.
+
+Borg archives expose textures, local meshes, PCM samples and DCM sequences.
+Texture and mesh previews support the archive's LZB compression. DCM previews
+mix the stored samples for up to 30 seconds in one pass through the sequence.
