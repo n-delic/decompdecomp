@@ -34,6 +34,7 @@ from decomprepair import (
     shared_return_repairs,
     short_leaf_drafts,
     split_dispatch_zero_case,
+    stack_byte_init_repairs,
     stack_fill_drafts,
     stack_header_buffer,
     stack_read_retry,
@@ -200,6 +201,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_control_flow.variants(source,name,rows)
         result += measured_memory_order.variants(source,name,rows,resolve=resolve,header=header)
         result += measured_expression_repairs.variants(source,name,header,rows)
+        result += stack_byte_init_repairs.variants(source, name, header, rows)
         result += measured_temporary_repairs.variants(source,name,rows)
         if candidate_source := measured_callback_loop.rewrite(source, name, asm or '', header, resolve):
             result.append(('measured_callback_loop', candidate_source))
