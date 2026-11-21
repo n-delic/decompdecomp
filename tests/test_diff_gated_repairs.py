@@ -271,3 +271,31 @@ void f(void) {
     [candidate] = [text for family, text in proposals(source, 'f', '', 'mips', KMC, rows, '')
                    if family == 'measured_scoped_global_field']
     assert 'do {\n        local = state;\n    } while (0);' in candidate
+
+
+def test_measured_guard_reset_is_tried_with_kmc():
+    source = """extern volatile s32 flag;
+extern volatile s32 limit;
+extern s32 x, y, a, b;
+void f(void) {
+    s32 index;
+    do { { s32 first = a; s32 second = b; x = first; y = second; } flag = 0; index = 0; } while (0);
+    if (limit > 0) { do { index++; } while (index < limit); }
+}
+"""
+    rows = [
+        ('o', '', 'lui $at, %hi(flag)'),
+        ('o', '', 'sw $zero, %lo(flag)($at)'),
+        (' ', 'lui $v0, %hi(limit)', 'lui $v0, %hi(limit)'),
+        (' ', 'lw $v0, %lo(limit)($v0)', 'lw $v0, %lo(limit)($v0)'),
+        ('o', 'lui $at, %hi(flag)', ''),
+        ('o', 'sw $zero, %lo(flag)($at)', ''),
+        ('i', 'blez $v0, 0x48', 'blez $v0, 0x4c'),
+    ]
+    candidates = dict(proposals(source, 'f', '', 'mips', KMC, rows, ''))
+    assert 'if (initial_bound > 0)' in candidates['guard_reset_scheduling']
+    assert 'guard_reset_scheduling' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))
+
+    slot_rows = [('o', '', 'move $s1, $zero')] + rows + [('o', 'move $s1, $zero', 'andi $v0, $s1, 0xffff')]
+    slot_candidates = dict(proposals(source, 'f', '', 'mips', KMC, slot_rows, ''))
+    assert 'do { index = 0; } while (0);' in slot_candidates['guard_reset_delay_slot']

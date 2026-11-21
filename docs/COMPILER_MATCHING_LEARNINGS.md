@@ -10250,3 +10250,17 @@ Three fresh N64 drafts matched with the original compilers and independent archi
 - At `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, moving the slot read after the flag assignment still left
   score 330. Retaining the context for both stores and taking the address of the updated pointer slot matched all
   76 bytes from score 335. The target reloads that pointer for the word read and final call.
+
+### KMC loop-entry bound read before an unconditional reset
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, a draft for an
+unmatched N64 function cleared a volatile global before reading the
+volatile loop bound. The target's relocations show the entry read before
+the clear, followed by a branch using the saved value. In a scratch
+project, splitting the one-shot initialization block and capturing the
+entry bound before the reset lowered the linked diff score from 350 to
+230. Wrapping only the local counter's zero initialization in a one-shot
+`do { ... } while (0)` then let KMC place the zero in the branch delay
+slot and lowered the score to 0. The loop's back edge still reads the
+bound directly. The deep permuter reproduced the linked byte match
+starting from the original scratch draft.
