@@ -12794,3 +12794,12 @@ restored the two stores and the target's stack frame. With
 improved from 204 to an exact match. A six-byte record restored both stores
 but retained a four-point frame difference. This is one observed match;
 synthetic tests cover the target sequence and draft guards.
+
+### Reuse floating extrema for range selection (KMC GCC 2.7.2)
+
+With `-G0 -mips3 -mgp32 -mfp32 -O2`, the linked judge showed a different
+destination for one floating-point subtraction, propagated into its compare
+and store. Subtract the two minima from their corresponding maxima in place
+and use a plain block for the selected store. The score went from 15 to 0 on
+a retail N64 function. The released rule generated one exact candidate in the
+scratch dispatcher, where the previous version generated none.
