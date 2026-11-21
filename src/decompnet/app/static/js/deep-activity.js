@@ -13,7 +13,7 @@ function renderDeepActivity(progress = {}) {
   const host = $("deepActivity"), slug = S.slug;
   if (host.dataset.slug !== slug) { host.replaceChildren(); host.dataset.slug = slug; }
   const rows = [...(progress.workers || [])];
-  const key = sort.value || "function";
+  const key = sort.value || "improvements";
   rows.sort((a, b) => (key === "function" ? 0 : (Number(b[key]) || 0) - (Number(a[key]) || 0)) ||
     a.function.localeCompare(b.function));
   const keep = new Set(rows.map(w => w.function));

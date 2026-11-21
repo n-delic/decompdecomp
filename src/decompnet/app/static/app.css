@@ -1748,6 +1748,7 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 /* Deep permuter: primary decisions first, technical controls on demand. */
 .deep-sweep-settings .field { align-self:start; }
 .deep-activity-section > summary { cursor:pointer; font-size:14px; font-weight:600; }
+.deep-activity-count { margin-inline-start:8px; }
 .deep-activity-section[open] > summary { margin-bottom:14px; }
 .deep-advanced { align-self:start; padding:8px 0 0 16px; border-left:1px solid var(--line-soft); }
 .deep-advanced > summary { cursor:pointer; font-size:12px; color:var(--muted); padding:4px 0; }

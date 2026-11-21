@@ -5,15 +5,18 @@ function element(){return {dataset:{},children:[],fields:new Map(),textContent:'
  querySelectorAll(){return this.children;},replaceChildren(){this.children=[];},insertBefore(child,before){this.children=this.children.filter(c=>c!==child);const i=this.children.indexOf(before);this.children.splice(i<0?this.children.length:i,0,child);},append(child){this.children=this.children.filter(c=>c!==child);this.children.push(child);child.remove=()=>{this.children=this.children.filter(c=>c!==child);};}};}
 const host=element(), count=element(), opened=[], sort=element();
 const empty=element();
-sort.value="function";
 const ctx=vm.createContext({$:id=>({deepActivity:host,deepActivityCount:count,deepActivitySort:sort,deepActivityEmpty:empty}[id]),S:{slug:'a'},document:{createElement:element},openFn:name=>opened.push(name)});
 vm.runInContext(fs.readFileSync('src/decompnet/app/static/js/deep-activity.js','utf8'),ctx);
 const html=fs.readFileSync('src/decompnet/app/static/index.html','utf8');
 assert.match(html,/<details [^>]*id="deepActivitySection"[^>]* open[ >]/);
 assert.ok(html.indexOf('id="deepActivitySection"')<html.indexOf('id="deepSweepRecipes"'));
 assert.doesNotMatch(html,/deepActivityOnlyActive|deepActivityShowRecent/);
+assert.match(html, /<select id="deepActivitySort">\s*<option value="improvements">/);
 const worker=(name,lines)=>({function:name,n_insns:34,phase:'random rewrites',tested:4,variant_limit:10,starting_percent:90,best_percent:95,improvements:1,elapsed_seconds:75,seconds_left:20,lines});
-ctx.renderDeepActivity({workers:[worker('<a>',['a only']),worker('b',['b only'])]});
+ctx.renderDeepActivity({workers:[worker('<a>',['a only']),{...worker('b',['b only']),improvements:2}]});
+assert.equal(host.children[0].dataset.worker,'b');
+sort.value='function';
+sort.onchange();
 assert.equal(host.children.length,2);
 const card=host.children[0], details=card.querySelector('details'); details.open=true;
 assert.equal(card.querySelector('[data-function]').textContent,'<a>');
