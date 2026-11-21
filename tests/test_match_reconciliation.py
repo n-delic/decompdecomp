@@ -16,6 +16,7 @@ def setup(monkeypatch, *, best=20, exact=True, worker=False):
     net.is_rom=lambda p:True;net.fork_slug=lambda s:None;net.links={}
     net.project_row=lambda slug:net.store.one('SELECT * FROM projects WHERE id=1')
     net.local_agent=lambda name:(SimpleNamespace(id=1,name='autopilot'), '')
+    net.attribution_agent=lambda name:net.local_agent(name)[0]
     net.permuter=PermuterWorker(net) if worker else Permuter(net)
     with net.store.tx() as db:
         db.execute('DELETE FROM claims')
@@ -23,7 +24,7 @@ def setup(monkeypatch, *, best=20, exact=True, worker=False):
     monkeypatch.setattr(recovery,'bank',lambda *a:[])
     monkeypatch.setattr(recovery,'candidates',lambda *a:[('int f(void){return 1;}','private types','historical')])
     # (These stand-in candidates give every open function C: pass them all, as the SQL prefilter can't know that.)
-    monkeypatch.setattr(recovery,'_open_with_history',lambda pid,records,names=None:
+    monkeypatch.setattr(recovery,'_open_with_history',lambda pid,records,names=None,**kwargs:
                         ("SELECT * FROM functions WHERE project_id=? AND status='open' ORDER BY id",pid))
     monkeypatch.setattr(recovery.candidate_scope,'key',lambda *a:'scope')
     settings=json.loads(proj['config'])['compiler']
@@ -242,7 +243,8 @@ def test_cancelling_recovery_while_waiting_for_a_writer_keeps_work_and_releases_
 
 
 @pytest.mark.parametrize("count", [1, 4])
-def test_real_empty_mips_function_is_recovered_through_the_ordinary_exact_judge(tmp_path,monkeypatch,count):
+@pytest.mark.parametrize('automatic', [False, True])
+def test_real_empty_mips_function_is_recovered_through_the_ordinary_exact_judge(tmp_path,monkeypatch,count,automatic):
     from decompnet import toolchains
     from decompnet.app.engine import RomNetwork
     from decompnet.app.engine.common import BASE_HEADER
@@ -306,7 +308,7 @@ def test_real_empty_mips_function_is_recovered_through_the_ordinary_exact_judge(
             implicit.append(slug)
         return sync(slug, **kwargs)
     monkeypatch.setattr(net.progress, 'sync', tracked_sync)
-    result=recovery.run(net,'game',None,None,log)
+    result=recovery.run(net,'game',None,None,log,automatic=automatic)
     # Validation reads without syncing (the click returns its job at once) and preliminary per-function reads never
     # sync; the job synchronizes on purpose, forced, before it freezes compile inputs.
     assert implicit == []
@@ -575,13 +577,39 @@ def test_only_open_functions_with_earlier_exact_c_are_read_and_inspected():
             db.execute("INSERT INTO functions(project_id,name,unit,vram,size,n_insns,status) VALUES(?,?,'',?,4,1,?)",
                        (pid, name, vram, 'matched' if name == 'done' else 'open'))
         db.execute("UPDATE functions SET matched_source='int a;' WHERE name='old_match'")
-        db.execute("UPDATE functions SET best_source='int b;' WHERE name='kept_best'")
+        db.execute("UPDATE functions SET best_source='int b;',best_score=0 WHERE name='kept_best'")
         db.execute("INSERT INTO attempts(function_id,agent_id,score,compiled,context_version,source,created_at) "
                    "SELECT id,NULL,0,1,1,'int c;',0 FROM functions WHERE name='exact_attempt'")
         db.execute("INSERT INTO attempts(function_id,agent_id,score,compiled,context_version,source,created_at) "
                    "SELECT id,NULL,0,0,1,'int d;',0 FROM functions WHERE name='nothing'")  # (never compiled)
-    def names(*args):
-        return {row['name'] for row in net.store.all(*recovery._open_with_history(pid, *args))}
+    def names(*args, **kwargs):
+        return {row['name'] for row in net.store.all(*recovery._open_with_history(pid, *args, **kwargs))}
     assert names({0x400: []}) == {'old_match', 'exact_attempt', 'recorded'}
     # An automatic resume of named functions also tries the match a check kept as the best attempt.
+    assert names({}, automatic=True) == {'old_match', 'exact_attempt', 'kept_best'}
     assert names({}, {'kept_best', 'old_match', 'nothing', 'done'}) == {'kept_best', 'old_match'}
+
+
+def test_automatic_recovery_keeps_the_current_header(monkeypatch):
+    from contextlib import contextmanager
+
+    net, log = setup(monkeypatch)
+    before = net.store.one("SELECT unit FROM functions")['unit']
+    header = net._context(1, before)['header']
+
+    def candidates(net, proj, fn, records, current_header):
+        assert current_header
+        return [('int f(void){return 1;}', header, 'historical')]
+
+    @contextmanager
+    def judging(slug, *, synchronize):
+        assert not synchronize
+        yield
+
+    monkeypatch.setattr(recovery, 'candidates', candidates)
+    monkeypatch.setattr('decompnet.app.boundary_repairs.blocked', lambda *args: set())
+    net.progress = SimpleNamespace(judging=judging)
+    assert recovery.run(net, 'game', None, None, log, automatic=True)['matched'] == 1
+    fn = net.store.one('SELECT status,unit FROM functions')
+    assert (fn['status'], fn['unit']) == ('matched', before)
+    assert not net.store.one('SELECT 1 FROM claims')

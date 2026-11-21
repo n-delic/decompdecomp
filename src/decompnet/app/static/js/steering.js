@@ -2691,11 +2691,14 @@ function renderDeepQueueState(status) {
     $("deepSweep" + id).textContent = count.toLocaleString();
     $("deepSweep" + id + "Group").hidden = !count;
   }
+  const recovering = running && status.progress?.phase === "Rechecking saved matches";
+  const recoveryTotal = recovering ? status.progress.total || 0 : 0;
   const checked = status.progress?.functions_tested;
   const run = running && status.loop ? `Pass ${status.progress?.cycle || 1} (looping)` : running ? "This run" : "Last run";
-  $("deepSweepBar").max = Math.max(1, total);
-  $("deepSweepBar").value = done;
-  $("deepSweepBar").hidden = !total || !status.has_activity || status.statistics_pending;
+  $("deepSweepBar").max = Math.max(1, recovering ? recoveryTotal : total);
+  $("deepSweepBar").value = recovering ? status.progress.completed || 0 : done;
+  $("deepSweepBar").ariaLabel = recovering ? "Rechecking saved matches" : "Saved completed search turns";
+  $("deepSweepBar").hidden = recovering ? !recoveryTotal : !total || !status.has_activity || status.statistics_pending;
   const savedProgress = status.statistics_pending ? "Loading saved totals…"
     : total && status.has_activity
     ? `Saved progress: ${done.toLocaleString()} of ${total.toLocaleString()} search turns completed · ${left.toLocaleString()} remaining${blocked ? ` · ${blocked.toLocaleString()} need attention` : ""}`
@@ -2704,11 +2707,15 @@ function renderDeepQueueState(status) {
     : status.has_activity ? "No eligible functions remaining." : "No searches yet.";
   $("deepSweepProgressText").textContent = [
     savedProgress,
+    recovering ? recoveryTotal
+      ? `Rechecking saved matches: ${(status.progress.completed || 0).toLocaleString()} / ${recoveryTotal.toLocaleString()} · ${status.progress.matched || 0} recovered`
+      : "Looking for saved matches…" : "",
     checked != null ? `${run}: ${checked.toLocaleString()} functions checked` : "",
     waiting ? `${waiting.toLocaleString()} waiting for saved C` : "",
   ].filter(Boolean).join(" · ") || emptyProgress;
-  $("deepSweepLoadingBar").hidden = preparing || !(status.statistics_pending || (running && !total));
-  $("deepSweepLoadingBar").ariaLabel = status.statistics_pending ? "Loading saved search totals" : "Searching functions";
+  $("deepSweepLoadingBar").hidden = recovering ? !!recoveryTotal : preparing || !(status.statistics_pending || (running && !total));
+  $("deepSweepLoadingBar").ariaLabel = recovering ? "Looking for saved matches"
+    : status.statistics_pending ? "Loading saved search totals" : "Searching functions";
   if (status.statistics_pending) {
     for (const id of ["deepSweepMatched", "deepSweepImproved", "deepSweepLeft"]) $(id).textContent = "—";
     $("deepSweepStart").textContent = "Start search";

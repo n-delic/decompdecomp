@@ -892,8 +892,9 @@ function again: a match counts because it matches, not because a file says so.
 ## Collaborate
 
 This folder is the source of truth. Edit its C, headers, names, notes or settings and pull or merge contributions
-here. decompdecomp picks up changes automatically and judges changed code again. Deleted sources reopen their
-functions. Keep git conflict markers out of these files; unresolved conflicts pause synchronization.
+here. decompdecomp picks up changes automatically and judges changed code again. Deleting a matched source reopens
+its function. A missing draft file is restored from the last scored C. Keep git conflict markers out of these
+files; unresolved conflicts pause synchronization.
 """
     folder.mkdir(parents=True, exist_ok=True)
     save_readme.update(net, proj, folder, readme, len(functions) - matched, details)
@@ -1409,7 +1410,7 @@ def _saved_current(store, project_id, name, kind):
                      "FROM functions WHERE project_id=? AND name=?", kind == 'best', project_id, name)
 
 
-def _saved_checks(net, proj, folder, files, by_name, by_vram, saved, judge_code, check_cancel, verifying=()):
+def _saved_checks(net, proj, folder, files, by_name, by_vram, saved, judge_code, check_cancel, verifying=(), rejudge_best=()):
     """Compile a bounded window ahead; only the caller may judge or change project state."""
     store = net.project_store(proj['id'])
     from .restore_compilation import Pool
@@ -1452,12 +1453,12 @@ def _saved_checks(net, proj, folder, files, by_name, by_vram, saved, judge_code,
                 if judge_code and name is not None and text is not None:
                     current = _saved_current(store, proj["id"], name, kind)
                     if name in verifying or (current["status"] != "matched"
-                                             and not (kind == "best" and current["best_source"] == text)):
+                                             and not (kind == "best" and name not in rejudge_best and current["best_source"] == text)):
                         fn = dict(store.one("SELECT * FROM functions WHERE project_id=? AND name=?", proj["id"], name))
                         # A foreground result can arrive between the narrow read and
                         # the full compiler snapshot. Recheck against that fresh row.
                         if name in verifying or (fn["status"] != "matched"
-                                                 and not (kind == "best" and fn["best_source"] == text)):
+                                                 and not (kind == "best" and name not in rejudge_best and fn["best_source"] == text)):
                             ctx = net._context(proj["id"], fn["unit"])
                             if ctx is not None:
                                 snapshot = net._compile_snapshot(proj, fn, ctx["header"], text)
@@ -1483,7 +1484,7 @@ def _saved_checks(net, proj, folder, files, by_name, by_vram, saved, judge_code,
 
 @restore_batch
 def _judge_saved(net, slug: str, folder: Path, manifest: dict, by_name: dict, saved: dict, log,
-                 files: dict[str, str] | None = None, judge_code: bool = True, verifying=None) -> dict:
+                 files: dict[str, str] | None = None, judge_code: bool = True, verifying=None, rejudge_best=()) -> dict:
     verifying = verifying or {}
     store = net.project_store(slug)
     check_cancel = getattr(log, "check_cancel", lambda: None)
@@ -1522,7 +1523,7 @@ def _judge_saved(net, slug: str, folder: Path, manifest: dict, by_name: dict, sa
     guard = {entry[0]: entry[1:] for entry in active.signature} if active and verifying else {}
     last_update = 0
     judge_agent=None;credits={}
-    checks = _saved_checks(net, proj, folder, files, by_name, by_vram, saved, judge_code, check_cancel, verifying)
+    checks = _saved_checks(net, proj, folder, files, by_name, by_vram, saved, judge_code, check_cancel, verifying, rejudge_best)
     with closing(checks):
         for index, (old_name, info, kind, text, name, prepared) in enumerate(checks):
             # Compile workers do no writes. Wait outside the lock so a slow compiler cannot
@@ -1549,7 +1550,7 @@ def _judge_saved(net, slug: str, folder: Path, manifest: dict, by_name: dict, sa
                                    _saved_current(store, pid, name, kind) if judge_code else current_rows[name])
                         needs_attempt = (judge_code and name not in verifying and current is not None
                                          and current['status'] != 'matched'
-                                         and not (kind == 'best' and current['best_source'] == text))
+                                         and not (kind == 'best' and name not in rejudge_best and current['best_source'] == text))
                         if needs_attempt and not yielded_autopilot:
                             # Only entries needing a verdict may wait for a claim.
                             # Leave the lock first, then recheck eligibility: the
@@ -1602,7 +1603,7 @@ def _judge_saved(net, slug: str, folder: Path, manifest: dict, by_name: dict, sa
                         if current["status"] == "matched":
                             matched += kind == "src"
                             break
-                        if judge_code and kind == "best" and current["best_source"] == text:
+                        if judge_code and kind == "best" and name not in rejudge_best and current["best_source"] == text:
                             best += 1
                             break
                         if not judge_code:
@@ -1632,8 +1633,7 @@ def _judge_saved(net, slug: str, folder: Path, manifest: dict, by_name: dict, sa
                         except (NetworkError, toolchains.ToolchainError) as e:
                             check_cancel()  # A paused/cancelled check is not a failed match; abort and roll back instead.
                             # A claim or tool failure is no verdict. Do not acknowledge
-                            # the import: its cleared rows would make the next save
-                            # delete the only remaining C. Keep disk inputs for retry.
+                            # the import. Keep disk inputs for retry.
                             raise NetworkError(f"Could not verify saved C for {name}: {e}. "
                                                "Saved files are retained. Resolve the error and retry synchronization.") from e
                         finally:

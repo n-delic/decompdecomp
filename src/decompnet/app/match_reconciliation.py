@@ -84,14 +84,18 @@ def candidates(net, proj, fn, records, current_header=False):
     return out[:8]
 
 
-def _open_with_history(pid, records, names=None):
+def _open_with_history(pid, records, names=None, *, automatic=False):
     """The query for the open functions candidates() can offer something for: earlier matched C, a recorded exact
     match at the address, or an exact attempt (and, for an automatic resume, the match a check kept as the best
     attempt). A big game has hundreds of open functions with none; reading and inspecting each one took 80 s of a
     2.5-minute recovery of 3 functions."""
-    kept=" OR f.best_source IS NOT NULL" if names is not None else ""
+    kept = ''
+    if names is not None:
+        kept = ' OR f.best_source IS NOT NULL'
+    elif automatic:
+        kept = ' OR (f.best_score=0 AND f.best_source IS NOT NULL)'
     only=" AND f.name IN (SELECT value FROM json_each(?))" if names is not None else ""
-    sql=("SELECT f.* FROM functions f WHERE f.project_id=? AND f.status='open'"+only+" AND (f.matched_source IS NOT NULL"
+    sql=("SELECT f.* FROM functions f WHERE f.project_id=? AND f.status='open' AND f.gone_mark IS NULL"+only+" AND (f.matched_source IS NOT NULL"
          " OR f.vram IN (SELECT value FROM json_each(?))"
          " OR EXISTS(SELECT 1 FROM attempts a WHERE a.function_id=f.id AND a.score=0 AND a.compiled=1)"+kept+") ORDER BY f.id")
     return (sql,pid,*((json.dumps(sorted(names)),) if names is not None else ()),json.dumps(sorted(records)))
@@ -131,9 +135,10 @@ def _release(net, agent, functions, log):
         log(str(error))
 
 
-def run(net, slug, seconds, attempts, log, names=None):
+def run(net, slug, seconds, attempts, log, names=None, *, automatic=False):
     """Overlap bounded compiles; synchronize and publish once per small recovery group. `names`: only these
-    functions (the matches an interrupted saved-progress check reopened, progress.resume_reopened)."""
+    functions (the matches an interrupted saved-progress check reopened, progress.resume_reopened).
+    Automatic deep preparation reads the current project and only uses its active header."""
     from . import workers
     proj=validate(net,slug,seconds,attempts)
     stop=getattr(log,'cancel_event',threading.Event());started=time.monotonic()
@@ -141,6 +146,7 @@ def run(net, slug, seconds, attempts, log, names=None):
     # never repeated searches after the queue is exhausted. Stop remains cooperative.
     deadline=started+seconds if seconds is not None else float('inf')
     compile_limit=attempts if attempts is not None else float('inf')
+    current_header = automatic or names is not None
     abandoned=threading.Event()
     result=dict(matched=0,attempts=0,skipped=0,resumable=True)
     rows=[];completed=0;tried=set();done=set()
@@ -153,10 +159,12 @@ def run(net, slug, seconds, attempts, log, names=None):
         result['matches_per_minute']=result['matched']*60/max(.001,elapsed)
         if hasattr(log,'progress'):log.progress(dict(result,phase='Rechecking saved matches',completed=completed,total=len(rows)))
     def judging():
-        return net.progress.judging(slug) if hasattr(net,'progress') else nullcontext()
+        if not hasattr(net, 'progress'):
+            return nullcontext()
+        return net.progress.judging(slug, synchronize=False) if automatic else net.progress.judging(slug)
     def batch():
         method=getattr(getattr(net,'progress',None),'batch',None)
-        return method(slug) if method else nullcontext()
+        return method(slug) if method and not automatic else nullcontext()
     def view():
         method=getattr(getattr(net,'progress',None),'view',None)
         return method() if method else nullcontext()
@@ -176,15 +184,23 @@ def run(net, slug, seconds, attempts, log, names=None):
     executor=Executor(max_workers=width, purpose='Saved match recovery', project=slug,thread_name_prefix='saved-recovery',initializer=workers.lower_priority)
     agent=None
     try:
+        if automatic:
+            publish()
         with judging(), view():
             checkpoint()
             proj=net.project_row(slug);store=net.project_store(proj['id'])
             addresses={r['vram'] for r in store.all("SELECT vram FROM functions WHERE project_id=? AND status='open'",proj['id'])}
-            records=bank(net,proj,addresses);agent,_=net.local_agent('autopilot')
+            records=bank(net,proj,addresses)
             with store.tx(wait=checkpoint) as db:db.execute(SCHEMA)
             visits={r['function_id']:r for r in store.all('SELECT * FROM reconcile_visits')}
-            rows=store.all(*_open_with_history(proj['id'],records,names))
+            rows=store.all(*_open_with_history(proj['id'], records, names, automatic=automatic))
+            if automatic:
+                from .boundary_repairs import blocked
+                excluded = blocked(net, proj)
+                rows = [row for row in rows if row['id'] not in excluded]
             rows.sort(key=lambda f:visits[f['id']]['visited'] if f['id'] in visits else 0)
+        if automatic:
+            publish()
         entries=deque(rows)
         while entries and result['attempts']<compile_limit:
             checkpoint()
@@ -200,22 +216,24 @@ def run(net, slug, seconds, attempts, log, names=None):
                     if not entries:break
                     row=entries.popleft()
                     checkpoint()
-                    pool=candidates(net,current_proj,row,records,names is not None)
+                    pool=candidates(net,current_proj,row,records,current_header)
                     if pool and next(remaining(enumerate(pool),row,current_proj),None) is not None:group.append(row)
                     else:done.add(row['id']);completed=len(done)
                     if len(done)%64==0:publish()
             if not group:continue
+            if agent is None:
+                agent = net.attribution_agent('autopilot') if automatic else net.local_agent('autopilot')[0]
             jobs=[]
             # This bounded group defers autosaves only until at most eight first
             # candidates finish, rather than holding a project lock for the whole pass.
-            with batch(), judging():
+            with batch(), judging(), view():
                 try:
                     for row in group:
                         checkpoint()
                         proj=net.project_row(slug);fn=net.project_store(proj['id']).one('SELECT * FROM functions WHERE id=?',row['id'])
                         if not fn or fn['status']!='open':
                             done.add(row['id']);completed=len(done);continue
-                        pool=candidates(net,proj,fn,records,names is not None)
+                        pool=candidates(net,proj,fn,records,current_header)
                         pool_scope=hashlib.sha256(repr((candidate_scope.key(net,proj,fn),pool)).encode()).hexdigest()
                         prior=visits.get(fn['id']);cursor=prior['cursor'] if prior and prior['scope']==pool_scope else 0
                         ordered=list(enumerate(pool));ordered=ordered[cursor:]+ordered[:cursor]
@@ -248,10 +266,29 @@ def run(net, slug, seconds, attempts, log, names=None):
                                 verdict=candidate is not None and exact is True
                             if verdict:
                                 checkpoint()
-                                net._record(fn,agent,0,source,0,matched=True,via='saved-match-reconciliation',
-                                            effective_settings=getattr(built,'effective_settings',None),
-                                            prepared_header=header,prepared_inputs=job['expected'],restoring_exact=True,
-                                            before_record=checkpoint,write_wait=checkpoint)
+                                if automatic:
+                                    def check_current(proj=proj, fn=fn, expected=job['expected'], header=header, agent=agent):
+                                        checkpoint()
+                                        store = net.project_store(proj['id'])
+                                        current = store.one('SELECT * FROM functions WHERE id=?', fn['id'])
+                                        claim = store.one('SELECT agent_id,expires_at FROM claims WHERE function_id=?', fn['id'])
+                                        live = store.one('SELECT * FROM projects WHERE id=?', proj['id'])
+                                        if (not current or current['status'] != 'open' or current['gone_mark'] is not None
+                                                or current['meta'] != fn['meta'] or current['rom_offset'] != fn['rom_offset']
+                                                or not claim or claim['agent_id'] != agent.id or claim['expires_at'] <= time.time()
+                                                or source_preparation.inputs(net, live, current) != expected
+                                                or net._context(proj['id'], current['unit'])['header'] != header):
+                                            raise NetworkError('Inputs changed during saved-match recovery.')
+                                    context = net._context(proj['id'], fn['unit'])
+                                    net._record(fn, agent, 0, source, context['version'], matched=True,
+                                                via='saved-match-reconciliation',
+                                                effective_settings=getattr(built, 'effective_settings', None),
+                                                before_record=check_current, write_wait=checkpoint)
+                                else:
+                                    net._record(fn,agent,0,source,0,matched=True,via='saved-match-reconciliation',
+                                                effective_settings=getattr(built,'effective_settings',None),
+                                                prepared_header=header,prepared_inputs=job['expected'],restoring_exact=True,
+                                                before_record=checkpoint,write_wait=checkpoint)
                                 result['matched']+=1;log('Recovered '+fn['name']+' from '+origin+'.')
                                 done.add(fn['id'])
                             else:

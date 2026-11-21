@@ -87,6 +87,12 @@ vm.runInContext(source.slice(source.indexOf("let deepSweepFollowing"), source.in
   assert.equal(element("deepSweepStart").hidden, false);
   element("deepSweepMetricEligible").onclick();
   assert.match(element("dialogBody").innerHTML,/Start a search to check candidates/);
+  ctx.renderDeepQueueState({state:"running", progress:{phase:"Rechecking saved matches", completed:3, total:9, matched:2}});
+  assert.match(element("deepSweepProgressText").textContent, /Rechecking saved matches: 3 \/ 9 · 2 recovered/);
+  assert.equal(element("deepSweepBar").hidden, false);
+  assert.equal(element("deepSweepBar").value, 3);
+  assert.equal(element("deepSweepBar").max, 9);
+  assert.equal(element("deepSweepStop").hidden, false);
   const preparation = {checked:77,total:298,eligible:2,candidates:["first","second"],done:false};
   ctx.renderDeepQueueState({state:"running",loop:true,has_activity:true,queue_done:22,queue_left:240,awaiting_source:35,
     progress:{cycle:1,functions_tested:62,workers:[{function:"first"}],preparation}});
