@@ -11690,3 +11690,21 @@ winner's span of lines or shortens the loser's changes exactly the two prioritie
 Judging those moves first (`allocation_moves`, 60 ranked moves in chunks of 10, step at the first improvement):
 85 -> 70 -> 60 -> 0 after 645 judgments, against 2,286 for the unranked step search and 8,000 for the old
 beam-40 pass. The ranking only orders candidates; the byte judge decides.
+
+## Permuter gaps measured but not closed (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, an N64 game)
+
+- Frame growth without a frame union: every matched function's history (63 with a stack frame; states scoring
+  1-120, no `union`) was compiled with cc1 and its frame compared with the target's. 14 states had a larger frame,
+  all the same shape: an adapted body that takes a local's address (`f(&local, ...)`, 32 against 24 bytes), not
+  dead compare pseudos. In the 3-loop record function's 134 states, only states with m2c's frame union grow (168
+  against 160); swapping that union for three separate struct locals undershoots (144, or 136 without the
+  literal guard; score 313 and 200). No union-free dead-compare case exists in this game's history, so no family was
+  written; the next step is a case from another game.
+- Switch from goto-heavy m2c flow (the four-case switch at 1135): unwrapping the `do { ... } while (0)` that
+  threads three cases scores 1140; structuring case 0 alone (a `for` search loop in place of the `found`/`again`
+  labels) worsens it to 2560 (2255 with the counter not volatile). As with the earlier hand rewrite (240), only
+  every case changed together improves, so a family needs a whole-function CFG-to-switch rebuild (a relooper over
+  the labels and returns), not local rewrites.
+- float_sum_split's `do { } while (0)` boundary: the family emits the placement the hand grid found; choosing it
+  from the allocation evidence was not built. The allocation-ranked moves (`allocation_moves`) rank statement moves
+  only; a boundary placement needs a scheduling-side model (where the field load may move), next step.
