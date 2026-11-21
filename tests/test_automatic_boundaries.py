@@ -529,3 +529,22 @@ def test_long_zero_prefix_before_disassembled_inline_data():
     result = repair(functions,[],image,consoles.get('n64'),segments,inline_data=inline_data)
     assert [fn.rom for fn in result] == [0]
     assert [fn.rom for fn in repair(functions,[],image,consoles.get('n64'),segments)] == [0,12]
+
+
+@pytest.mark.parametrize('case', ['padding', 'named', 'next_mapping'])
+def test_unreachable_alignment_at_code_mapping_end(case):
+    words = [0x8C820000, 0x03E00008, 0, 0x8E050074]
+    image, functions, segments = fixture(words, cuts=(0, 12, 16))
+    image += bytes(64)
+    symbols = [f'entry = 0x{BASE+12:08X};'] if case == 'named' else ()
+    if case == 'next_mapping':
+        segments.append(Segment('other', 16, 80, BASE+64))
+    result = repair(functions, [], image, consoles.get('n64'), segments, symbols=symbols)
+    assert [fn.rom for fn in result] == ([0] if case == 'padding' else [0, 12])
+
+
+def test_alignment_between_return_and_closed_frameless_entry():
+    words = [0x03E00008, 0, 0x80FF80FF, 0x80FF80FF, 0x8C820000, 0x03E00008, 0]
+    image, functions, segments = fixture(words, cuts=(0, 8, 16, 28))
+    result = repair(functions, [], image, consoles.get('n64'), segments)
+    assert [(fn.rom, fn.size) for fn in result] == [(0, 8), (16, 12)]
