@@ -10786,3 +10786,26 @@ The deep permuter independently reproduced and saved both byte matches.
   40 and exchanged the registers for the two loop advances. Computing the stride first matched.
 - The original drafts also matched through the new Deep Permuter proposal. The 226-example replay
   increased from 30 to 32 exact matches.
+
+## KMC gcc 2.7.2: what the scheduler does around a one-shot loop (same function, 120 and two instructions short)
+
+Same compiler, flags and function as the previous entry; hand work with `cc1 -dS -dR` dumps.
+
+- **The first instruction after a loop note is pinned.** The dump gives it a dependence on every earlier set and use; the
+  rest of the region then depends on it. In `do { ci = 0; ... call(x); } while (0);` the counter's `move` is that
+  pinned first instruction, so it is scheduled before the argument `lbu`; the target has the `lbu` first.
+- **A load that feeds a call is forwarded into it** by combine, so it never becomes the region's first instruction
+  even when it is the first statement. Declaring the global `volatile` stops that without changing the code (the
+  load stays `lui` + `lbu $a0`): `targ = D_801002F1; ci = 0; c2 = 2; call(targ);` inside the wrapper then schedules
+  `[lbu, move, call, li2]` exactly as the target does. A `*(volatile u8 *)&sym` cast does not: it costs an address
+  register and an extra instruction.
+- **A call's delay slot is filled from before it or after it**: reorg takes the nearest single-word instruction, and
+  for a call it may take the one that follows. A constant scheduled just after a call can therefore end up in its
+  delay slot.
+- **After a load, the stall is filled by the first ready instruction**: stores of zero win it over a held constant,
+  whatever the source order, so `li c64` could not be placed right after the `lhu` as the target has it. Moving the
+  `lhu` statement to be first after the wrapper (so it is that region's pinned instruction) puts the `lhu` first but
+  sends the constant to the end of the region.
+- **Result:** the `volatile` form fixes the counter's `move` but costs the `$s6`/`$s7` order of the two constants
+  (120 became 275); no source shape reproduced both. The remaining target feature is a held constant scheduled
+  between a load and the stores that follow it.
