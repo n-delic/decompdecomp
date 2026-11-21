@@ -58,3 +58,7 @@ launch-dev.ps1
 /gateway/target/
 /src/decompnet/bin/decomp-mcp-gateway
 /src/decompnet/bin/decomp-mcp-gateway.exe
+
+# the skills' own helper scripts are source, not generated output
+!.claude/skills/*/scripts/
+!.claude/skills/*/scripts/**
