@@ -12900,3 +12900,12 @@ from 220 to 15; three register differences remained, so this is a partial
 improvement, not a match. Trials changing the subsequent index local's type
 or qualifiers did not resolve those differences. Synthetic tests cover the
 mask, source uses, mutation and instruction evidence.
+
+### Stage a scaled field store in its existing local (KMC GCC 2.7.2)
+
+With `-G0 -mips3 -mgp32 -mfp32 -O2`, a scaled unsigned field assignment
+used a different destination register for its shift and delay-slot store.
+Assign the scaled result back to the unsigned local before storing it.
+The linked score went from 40 to 30 on a retail N64 function. The previous
+dispatcher proposed nothing and the rewrite removed both register differences.
+Four earlier save and move differences remain.
