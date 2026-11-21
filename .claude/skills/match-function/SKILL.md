@@ -1,9 +1,25 @@
 ---
 name: match-function
-description: Match one function by hand against the running decompdecomp app, then turn what the manual work taught into a Deep Permuter or app improvement so the next such function is matched automatically. Use for "get func_X in PROJECT to match", for a stuck near-match, and as the working method under /goal when the goal is a match.
+description: Match one function by hand against the running decompdecomp app, then turn what the manual work taught into a Deep Permuter or app improvement so the next such function is matched automatically. Use for "get func_X in PROJECT to match" or a stuck near-match. It runs as a goal by itself: it does not stop or ask until the function is judged 0 and the permuter improvements are merged.
 ---
 
 # Match a function by hand, then teach the permuter
+
+**This skill runs as a goal, always.** Invoking it sets the goal for the whole session, as if the user had typed
+`/goal`: *the function is judged 0 and every permuter improvement found on the way is merged.* You work until that
+is true, turn after turn, without waiting for the user. The rules of that mode:
+
+- **Never stop, ask or hand back while the score is above 0.** No "keep going or stop?" questions, no wrap-up with
+  buttons, no final report of a function that is not matched. A turn that ends with the function unmatched ends
+  with the next action already running (a permuter job, a search, a PR in flight), never with a question.
+- **There is no "blocker" exit.** A function that will not match is a gap in the permuter or the app: find it
+  (step 5), land it, and continue. If one idea runs dry, take the next: read the diff again, change the angle
+  (other compiler profile, the neighbours' matched sources, the permuter's rejected variants, a scheduler-level
+  reading of the target), run a longer permuter. Only the user can end the goal, by telling you to stop.
+- **Keep a visible plan and say what you are doing in a line** when you start a long run, so a user following along
+  can see the loop is alive. Long runs go in the background; waiting on them is not stopping.
+- When context grows long, keep going from the plan and the function's notes; do not wrap up early.
+- Only when the judge says 0, and the permuter PRs are merged with the proof from step 5, write the final message.
 
 The aim is two things, and a run that delivers only the first has not finished:
 
@@ -25,8 +41,8 @@ The permuter improvement comes **before** the match, not after it, so every othe
 4. Every time a hunt turns up another thing the permuter could do, repeat 2 before continuing 3. Each loop merges a
    PR, so the permuter improves for everyone as you go.
 
-Do not stop to ask whether to keep hunting: stop only for a matched function, or a specific, evidenced blocker the
-user has agreed to. "Score unchanged after N ideas" is not a blocker. If you have no idea the permuter lacks yet,
+Do not stop to ask whether to keep hunting, and do not stop at all until the function is judged 0 (see the goal rules
+above). "Score unchanged after N ideas" is not a reason to stop or ask. If you have no idea the permuter lacks yet,
 that is step 5's question to answer honestly (what would have found the near-miss's last row?), not a licence to
 skip it: a near-match that the permuter cannot close is always a permuter gap.
 
@@ -153,19 +169,17 @@ For each manual step that moved the score, answer: **could the permuter have don
 Step 5 is merged *before* you continue hunting, not saved for the end. If you still cannot match the function
 afterwards, leave its note with the evidenced blocker.
 
-## 6. Finishing, and using this under /goal
+## 6. Finishing (the goal is met)
 
-Under `/goal`, the condition is only met when **both** hold, and you should say so in the goal text:
+The goal from the top of this file is met only when **both** hold:
 
-- the function's judged score is 0 (`judge.py diff` reports the app's verdict; re-read it, don't recall it), **or**
-  you have stopped with a specific, evidenced blocker and the user agreed to stop (do not ask before you have
-  merged at least one permuter improvement from this function); and
+- the function's judged score is 0 (`judge.py diff` reports the app's verdict; re-read it, don't recall it); and
 - the permuter or app change from step 5 is merged (or an open PR with its test passing), `scratch_run.py` has
   reported PROVEN for it (say what it printed), and your final message gives the before/after
   evidence. "The rewrite produces an exact variant when I call it" does not meet this.
 
-Example goal: `/goal Run /match-function on func_X in PROJECT until it is judged 0, then land the permuter
-change that would have found it, with a test.` A long search with no new idea is not progress: when the
-score stops moving, go back to step 1 and read the diff again before spending more compiles.
+A long search with no new idea is not progress, and not a stopping point: when the score stops moving, go back to
+step 1 and read the diff again before spending more compiles.
 
-Final message: the score now, what matched it (or blocks it), the PR links, and what the permuter still can't do.
+Final message (only once the goal is met): the score (0), what matched it, the PR links, and what the permuter
+still can't do.
