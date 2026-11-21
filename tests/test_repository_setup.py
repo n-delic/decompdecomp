@@ -131,6 +131,39 @@ def test_origin_on_imported_project_uses_its_source_checkout(project, tmp_path):
     assert git(root, 'remote', 'get-url', 'origin') == 'git@example.invalid:project.git'
 
 
+def test_first_checkpoint_recovers_a_missing_draft_with_a_long_symbol(project, monkeypatch):
+    net, root, _ = project
+    name = 'function_' + 'long_symbol_' * 30
+    source = 'void draft(void) {}\n'
+    with net.project_store('game').tx() as db:
+        db.execute("UPDATE functions SET name=?,best_source=?,best_score=10 WHERE name='f'", (name, source))
+    repository_setup.run(net, 'game', 'init', '', lambda _: None)
+    git(root, 'config', 'user.name', 'Test')
+    git(root, 'config', 'user.email', 'test@example.invalid')
+    relative = 'progress/best/' + saves._source_file(name)
+    draft = root / relative
+    assert draft.read_text() == source
+    draft.unlink()
+    # An older autosave could acknowledge a draft without materializing the file.
+    monkeypatch.setattr(net.progress, 'sync', lambda *args, **kwargs: False)
+
+    assert repository_setup.run(net, 'game', 'checkpoint', '', lambda _: None)['checkpoint']
+    assert draft.read_text() == source
+    assert git(root, 'show', 'HEAD:' + relative) == source.strip()
+    assert repository_setup.run(net, 'game', 'checkpoint', '', lambda _: None)['checkpoint']
+
+
+def test_first_checkpoint_accepts_an_older_save_without_a_progress_map(project):
+    net, root, _ = project
+    repository_setup.run(net, 'game', 'init', '', lambda _: None)
+    git(root, 'config', 'user.name', 'Test')
+    git(root, 'config', 'user.email', 'test@example.invalid')
+    (root/'progress'/'decompdecomp-progress.svg').unlink()
+
+    assert repository_setup.run(net, 'game', 'checkpoint', '', lambda _: None)['checkpoint']
+    assert 'progress/' + saves.MANIFEST in git(root, 'ls-files').splitlines()
+
+
 def test_first_checkpoint_rejects_a_concurrent_initial_commit(project):
     net, folder, _ = project
     repository_setup.run(net, 'game', 'init', '', lambda line: None)
@@ -272,7 +305,16 @@ def test_checkpoint_accepts_save_writer_final_newline(project, tmp_path, monkeyp
     # Isolate precisely the two exporter representations; all other bytes agree.
     (folder/relative).write_text('good source'+('' if newline_in_backup else '\n'))
     (target/relative).write_text('good source'+('\n' if newline_in_backup else ''))
-    monkeypatch.setattr(net.progress, 'sync', lambda *args, **kwargs:None)
+    sync = net.progress.sync
+
+    def sync_after_move(slug, **kwargs):
+        # Hold the two flat saves steady for the adoption comparison. Once the
+        # export moves the save, capture must verify the new folder normally.
+        if saves.default_folder(net, slug) == target/'progress':
+            return sync(slug, **kwargs)
+        return False
+
+    monkeypatch.setattr(net.progress, 'sync', sync_after_move)
     git(target, 'init', '--initial-branch=main')
     git(target, 'config', 'user.name', 'Test')
     git(target, 'config', 'user.email', 'test@example.invalid')

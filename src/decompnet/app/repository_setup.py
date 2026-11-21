@@ -75,7 +75,7 @@ def known_older_save(net, proj, saved, latest):
     store = net.project_store(proj['id'])
     for name, info in old_functions.items():
         current = new_functions[name]
-        relative = 'best/' + name + '.c'
+        relative = 'best/' + saves._source_file(name)
         if info == current and relative not in changed:
             continue
         if ({k:v for k,v in info.items() if k not in ('best_score', 'best_by')}
@@ -147,26 +147,7 @@ def checkpoint(net, slug, root, path, log, *, message='Save decompilation progre
         git(root, 'var', identity, error='Set Git user.name and user.email before committing saved progress.')
     head = git(root, 'rev-parse', '--verify', '--quiet', 'HEAD', missing=True)
     branch = git(root, 'symbolic-ref', '--quiet', 'HEAD', error='Switch to a named branch before committing saved progress.')
-    if head:
-        files, paths, _ = repository_progress.snapshot(net, slug, root, log, allow_unrelated_edits=True)
-    else:
-        net.progress.sync(slug, force=True, logger=log)
-        if net.progress.errors.get(slug):raise NetworkError(net.progress.errors[slug])
-        net.progress.prune_matched_drafts(slug)
-        saves._check_save_paths(path, chosen=True)
-        manifest = json.loads((path/saves.MANIFEST).read_text(encoding='utf-8'))
-        names = repository_progress.owned(manifest, path)
-        files = {}
-        for name in names:
-            item = repository_sync.inside(path, name)
-            if not item.is_file():raise NetworkError('Save current progress before creating its first commit.')
-            files[(path.relative_to(root)/name).as_posix()] = item.read_bytes()
-        paths = set(files)
-    from . import rebuildable_repository
-    scaffold = rebuildable_repository.files(root)
-    files.update(scaffold)
-    paths.update(scaffold)
-    paths.update(rebuildable_repository.retired(root))
+    files, paths, _ = repository_progress.snapshot(net, slug, root, log, allow_unrelated_edits=True)
     if root == path and (root/'.gitignore').is_file():
         files['.gitignore'] = repository_sync.inside(root, '.gitignore').read_bytes()
         paths.add('.gitignore')
