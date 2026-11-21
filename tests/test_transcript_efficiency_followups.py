@@ -93,3 +93,25 @@ def test_unattended_prompts_continue_after_difficult_functions():
     for prompt in (tools.WORK_PROMPT, tools.FORK_PROMPT):
         assert 'Continue with the next eligible function while session capacity remains' in prompt
         assert 'low effort setting alone is not a reason' in prompt
+
+
+def test_near_match_gets_a_larger_budget_and_new_diffs_count_as_progress(tmp_path):
+    """Near-matches sat at scores 10-15 for hundreds of attempts, each helper sent away after 3 compiles."""
+    assert network.stall_budget(10) == 3
+    assert network.stall_budget(10, 12) == network.NEAR_MATCH_BUDGET
+    assert network.stall_budget(10, 400) == 3 and network.stall_budget(10, 0) == 3
+    # a tie at the best with a diff not seen there is progress; the same diff again is not
+    assert network._no_better([12, 12, 12], None, ['a', 'b', 'c']) == 0
+    assert network._no_better([12, 12, 12], None, ['a', 'b', 'b']) == 1
+    assert network._no_better([12, 12], None) == 1
+    assert network.diff_digest([(' ', 'x', 'x')]) is None
+    assert network.diff_digest([('r', 'a', 'b')]) != network.diff_digest([('r', 'a', 'c')])
+    net,_=_game(tmp_path,[('f',10,'open')]);a,_=net.local_agent('a')
+    net._record(net._function('f','game'),a,12,'int f(){return 1;}',1,mismatch_rows=[('r','a','b')])
+    net.claim_row(a,'game','f')
+    fid=net._function('f','game')['id']
+    for i in range(4):
+        net._record(net._function('f','game'),a,12,f'int f(){{return {i};}}',1,mismatch_rows=[('r','a',str(i))])
+    st=net.stall_status(fid,a.id)
+    assert st['after']==network.NEAR_MATCH_BUDGET and st['no_better']==0
+    assert 'near-match' in network.move_on_brief(net._function('f','game'))
