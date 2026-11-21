@@ -200,6 +200,18 @@ def recovery_drafts(draft, name, asm, processor, toolchain, context, data, repor
     """Try bounded recovery candidates and at most two extra m2c runs after ordinary drafts fail to compile."""
     from . import draft_reports
     generate = generate or seeds.generate_from_asm
+    if processor == 'mips' and any(
+            item.get('phase') == 'compiler' and any(
+                diagnostic in item.get('reason', '') for diagnostic in (
+                    "Unacceptable operand of '+'.", "Unacceptable operand of '-'.",
+                    'Bad operand type for += or -=',
+                ))
+            for item in report.get('failures', [])):
+        # The IDO diagnostic works for both selected ROM compilers and project builds.
+        from decomprepair import void_pointer_drafts
+
+        if candidate := void_pointer_drafts.rewrite(draft, name):
+            yield 'initial_void_pointer_offsets', candidate
     if processor == 'mips':
         from decomprepair import draft_call_recovery
 
