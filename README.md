@@ -179,3 +179,13 @@ must give its full source under the same license. So must anyone who runs a chan
 The code from decomp.wtf was released under the MIT license by Sam Wolfs; its notice is in [LICENSE-decomp.wtf](LICENSE-decomp.wtf).
 
 <p align="center"><sub>Not related to Nintendo, Sony or Microsoft. Platform names are trademarks of their owners.</sub></p>
+
+## Local matching rewrites
+
+Deep permuter and the background permuter use [decomp-repair](https://github.com/RetroReversing/decomp-repair)
+for local C rewrite proposals and the guarded generator that calls the separately installed
+[decomp-permuter](https://github.com/simonlindholm/decomp-permuter). The library is pinned to one commit's source
+archive in `pyproject.toml`, with its SHA-256 in `uv.lock`; the installer checks that hash before it installs the
+archive, and installation needs no Git checkout.
+The library only proposes source. decompdecomp still compiles and judges each candidate with the game's
+original compiler, using the unchanged linked-byte or objdiff checks. Existing source and claims stay here.
