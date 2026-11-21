@@ -11734,3 +11734,12 @@ computed pointers (the family only reads `base[N] = e;` stores and declines when
 Failed on this function: reordering only the three products (50, 25), swapping szsx/szsy (15), moving m11 before
 m01 (85), a direct form with a single reused angle local (442-512: the prologue then differs), and the
 `-fno-schedule-insns` compiler flags (522 and worse).
+
+### Stage the corrected halfword call address before the stores
+
+With gcc-2.7.2-kmc `-G0 -mips3 -mgp32 -mfp32 -O2`, a draft scaled a
+two-byte call displacement twice. Correcting the pointer expression in
+place fixed the argument but changed the delay-slot store to use that
+argument as its base, leaving the score at 10. Assigning the corrected
+pointer a local immediately after the original base was loaded kept the
+store on its original base and produced an exact match.
