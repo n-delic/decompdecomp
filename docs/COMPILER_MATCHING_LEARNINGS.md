@@ -12889,3 +12889,14 @@ channel operands around the final OR. The linked judge improved from 45
 to 0, and the live judge saved the match. Changing the block alone scored
 45, changing only the order scored 60, and the previous dispatcher
 generated no candidate. The released rewrite generated one exact candidate.
+
+### KMC GCC 2.7.2: narrow a masked table index
+
+An isolated draft stored `arg & 7` in an `s32` before using it as a byte-table
+index. Making that bounded local `u8` restored the target's argument-register
+allocation through most of the function. With
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1`, the linked score improved
+from 220 to 15; three register differences remained, so this is a partial
+improvement, not a match. Trials changing the subsequent index local's type
+or qualifiers did not resolve those differences. Synthetic tests cover the
+mask, source uses, mutation and instruction evidence.
