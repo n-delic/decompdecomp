@@ -70,7 +70,7 @@ in `pyproject.toml`, `uv lock`). What runs candidates stays in `src/decompnet/ap
 
 ## 0. A run in progress is never a reason to wait
 
-Deep Permuter jobs, `scratch_run.py` and any other long search run in the background (`run_in_background`, or
+Deep Permuter jobs and any other long search run in the background (`run_in_background`, or
 `judge.py permute` which returns a job id). Starting one is the *beginning* of a stretch of work, not the end of a
 turn. While it runs, in this order:
 
@@ -231,14 +231,15 @@ For each manual step that moved the score, answer: **could the permuter have don
 - No: write the rewrite or the search guide. Smallest useful form: a function in decomp-repair that takes source
   and returns variants, with a test that fails without it (see `call_scope_repairs.py` for the shape). Prove it by
   running it on the function you just matched: starting from the state *before* your fix, it must reach the fix.
-- **No scratch proof run.** Do not run `scripts/scratch_run.py` (a throwaway app and a 20-minute fresh-import search
-  costs more than it tells you, and the user tests the repair themselves in their own app later). Instead: test your
-  rewrite on the function's *current best source* from `judge.py best` as well as on the draft (the search saves its
-  own best in a printed dialect, `*((u8 *) (((char *) p) + 5))`, `v = v + 2;`, a braced `goto`, and a rewrite written
-  against m2c's raw spelling never fires on that), add the unit test, wire it into the permuter, **merge, and then
-  connect to the running app to make sure the function is matched there too** (`judge.py diff SLUG FUNC` says
-  "matched"; the saved best is the source that judged 0). Say in the PR what you ran and that the real proof is
-  the user's run.
+- **Never run `scripts/scratch_run.py`, or any throwaway app, fresh import or long proof search.** It takes too much
+  CPU for the whole machine (other agents and the user's app share it), and the user tests every repair themselves in
+  their own app later. Your job is **new repairs in the permuter**, not proving old ones: spend the time finding the
+  next gap and writing its rewrite. To check a repair, test it on the function's *current best source* from
+  `judge.py best` as well as on the draft (the search saves its own best in a printed dialect,
+  `*((u8 *) (((char *) p) + 5))`, `v = v + 2;`, a braced `goto`, and a rewrite written against m2c's raw spelling never
+  fires on that), add the unit test, wire it into the permuter, **merge, and then connect to the running app to make
+  sure the function is matched there too** (`judge.py diff SLUG FUNC` says "matched"; the saved best is the source that
+  judged 0). Say in the PR what you ran and that the real proof is the user's run.
 - Record the evidence in `docs/COMPILER_MATCHING_LEARNINGS.md`: exact compiler and flags, the source change, the
   measured before/after, and failed experiments. Say which are controlled results and which are one function.
 - A change here needs its PR (AGENTS.md): branch `<type>/<name>`, test, `uv run ruff check`, merged after creation.
@@ -260,14 +261,13 @@ afterwards, leave its note with the evidenced blocker.
   above 0x7F (`li -1`, not `li 0xff`) look like m2c output and are not the game's: write literals, `u8` stores.
 - **Never `git stash`, `git checkout` or `uv run` in a worktree whose venv a run uses.** `uv run` re-syncs the
   environment to whatever `pyproject.toml` says at that moment: a stash that reverted the pin silently downgraded
-  the library, and the proof run failed at its first step with "No module named". `scratch_run.py` now checks
-  the pin; also run `python -c "import decomprepair.<your module>"` in the run's own interpreter before starting.
+  the library, and a run failed at its first step with "No module named". Run `python -c "import decomprepair.<your module>"` in the run's own interpreter before starting.
   Resolve merge conflicts in a separate `--detach` worktree, not the one a run is using; never remove that worktree.
 - **A run's first minute is where it fails.** Read its log once, at 30 seconds, then go back to step 0's work.
   "error checking baseline" means the search never started: read the job error, don't wait for it.
 - **Other sessions share the machine.** The scratch port, the tags in the library (`git ls-remote --tags` right
   before tagging; main's version may already be ahead) and the library's `main` all move under you. Use a free
-  `--port`; kill a run by its pid, never `pkill -f scratch_run.py` (it kills other sessions' runs and your own
+  `--port`; kill a run by its pid, never `pkill -f` on a script name (it kills other sessions' runs and your own
   `Monitor` loops, whose command lines contain the name).
 - **The app you judge through can disappear** (the user quits it). Don't start one. Score locally with
   `compile_snippet.py` (it needs the file's own typedefs: `f32` is not in its prelude) against the project's
