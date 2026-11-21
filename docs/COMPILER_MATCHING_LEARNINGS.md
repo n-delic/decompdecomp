@@ -12160,3 +12160,15 @@ decomp-repair 0.5.278 `scaled_size_inline` removes the `x *= K;` (also `<<=`, `x
 later read, when it feeds a call argument and one more read; a second child also drops a 16-bit cast around the sum.
 From the saved best (125) the second child scores 0 in one step; from the 140 source the first does. Not run through the
 Deep Permuter.
+
+### KMC GCC 2.7.2: recover repeated byte offsets after global address recovery
+
+In a scratch ROM replay with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`,
+global address recovery brought a draft from score 623 to 20. The remaining
+differences were two address shifts with the same registers and immediate
+mismatch. Both source temporaries multiplied the same global index by four
+and were used exclusively with byte-cast global addresses. Using a stride
+of sixteen in both assignments changed the two shifts from 2 to 4 and
+matched byte for byte. The released search stayed at 20 after 100 trials.
+The measured repair reached 0 in 16 trials through the Deep Permuter. This
+is one scratch ROM match, with synthetic tests for the source and diff guards.
