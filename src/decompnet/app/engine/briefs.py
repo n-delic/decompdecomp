@@ -155,6 +155,7 @@ class BriefMixin:
                 measured_stack_drafts,
                 passthrough_argument_repairs,
                 relocated_byte_table,
+                relocated_global_update,
                 shared_default_drafts,
                 uncached_read_repairs,
             )
@@ -167,6 +168,8 @@ class BriefMixin:
                 inputs.append('shared branch-likely cursor advance')
             if relocated_byte_table.applies(fn['asm'] or ''):
                 inputs.append('relocated byte table')
+            if relocated_global_update.applies(fn['asm'] or ''):
+                inputs.append('relocated global update')
             if aligned_stack_read.applies(fn['asm'] or ''):
                 inputs.append('aligned stack read')
             if passthrough_argument_repairs.entry_wrapper_applies(fn['asm'] or ''):

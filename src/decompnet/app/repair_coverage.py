@@ -116,6 +116,7 @@ def verify(feedback, example):
             measured_temporary_repairs,
             passthrough_argument_repairs,
             relocated_byte_table,
+            relocated_global_update,
             uncached_read_repairs,
         )
 
@@ -141,6 +142,9 @@ def verify(feedback, example):
         if candidate := relocated_byte_table.rewrite(source, fn['name'], fn['asm'] or '', header,
                                                      symbols.resolve if symbols else None):
             focused.append(('relocated_byte_table', candidate))
+        if candidate := relocated_global_update.rewrite(source, fn['name'], fn['asm'] or '', header,
+                                                        symbols.resolve if symbols else None):
+            focused.append(('relocated_global_update', candidate))
         if candidate := aligned_stack_read.rewrite(source, fn['name'], fn['asm'] or ''):
             focused.append(('aligned_stack_read', candidate))
         if candidate := passthrough_argument_repairs.missing_entry_argument(source, fn['name'], fn['asm'] or '', header):
