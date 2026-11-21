@@ -11091,3 +11091,14 @@ guarded wrapper, resolving the source callee name to the assembly
 label let the deep permuter prove that the first argument was
 forwarded unchanged. Restoring that argument reduced the score
 from 15 to 0.
+
+### Recover halfword copy address order and return a list count directly
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, two isolated N64
+drafts each had one register-operand difference. Computing a halfword
+copy destination in 32-bit integer units preserved the byte stride
+and matched the target's address addition. Swapping the source pointer
+expression without the cast retained the score of 5. In a list walk,
+returning the already initialized count removed a redundant zero
+result path and used the target's source register in the delay slot.
+The deep permuter saved both linked matches, each from score 5 to 0.
