@@ -288,8 +288,12 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
             looped = previous is not None and closes_with_back_edge(previous, before, mapping)
             exception_fallback = (previous is not None and owner(previous)==owner(fn)
                                   and previous.rom+previous.size==before and previous.size>=16
-                                  and [line.word for line in previous.lines[-4:-2]]==[0x42000018,0x00002021]
-                                  and previous.lines[-2].word>>26==3 and not previous.lines[-1].word)
+                                  and previous.lines[-2].word>>26==3
+                                  # The zero thread argument can be set before the call or in its delay slot.
+                                  and ([line.word for line in previous.lines[-4:-2]]==[0x42000018,0x00002021]
+                                       and not previous.lines[-1].word
+                                       or previous.lines[-3].word==0x42000018
+                                       and previous.lines[-1].word in (0x00002021,0x00002025)))
             if not (returned or looped or exception_fallback) or any(image[before:fn.rom+4]):
                 continue
             index = owner(fn)[0]

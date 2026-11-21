@@ -26,6 +26,22 @@ def fixture(words=BODY,cuts=(0,12,32),order='big'):
     return image,functions,[Segment('code',0,len(image),BASE)]
 
 
+@pytest.mark.parametrize('case',['scheduled','different argument','different callee','incoming pointer'])
+def test_exception_cleanup_delay_slot_can_precede_two_alignment_words(case):
+    entry = BASE+32
+    target = entry+4 if case=='different callee' else entry
+    call = 0x0c000000 | ((target>>2)&0x3ffffff)
+    delay = 0x00002825 if case=='different argument' else 0x00002025
+    words = [0x40026000,0,0,0x42000018,call,delay,0,0]+BODY
+    image,functions,segments=fixture(words,cuts=(0,24,28,32,64))
+    del functions[2]  # the second padding word was already trimmed by the disassembler
+    if case=='incoming pointer':
+        image+=(BASE+24).to_bytes(4,'big')
+    result=repair(functions,[],image,consoles.get('n64'),segments)
+    assert [(fn.rom,fn.size) for fn in result] == (
+        [(0,24),(32,32)] if case=='scheduled' else [(0,24),(24,4),(32,32)])
+
+
 @pytest.mark.parametrize('platform',['n64','psx','ps2','psp'])
 def test_import_joins_generated_fragments_for_each_mips_console(platform):
     console=consoles.get(platform)

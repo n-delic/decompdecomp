@@ -336,9 +336,6 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
     if len({row['vram'] for row in population}) != len(population):
         raise ExportError("Rebuildable export does not yet support overlapping overlay banks. "
                           "Your matches remain saved; continue working in the app until bank-aware export is available.")
-    if excluded:
-        log(f'Keeping the original cartridge overlay bytes in the rebuild. {len(excluded)} analysis-only overlay '
-            'functions remain available in the project; this export does not rebuild their code.')
     if EXPORT not in console.features:
         raise ExportError(f"exporting a rebuildable project isn't supported for {console.name or 'this console'} yet")
     work = Path(proj["root"])
@@ -472,6 +469,39 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
             f["obj"] = f"build/src/{f['seg']}/{f['name']}.o"
             private += [(f["obj"], section, base) for section, base in bases.items()]
 
+    overlays = []
+    all_rows = store.all('SELECT * FROM functions WHERE project_id=? ORDER BY rom_offset', proj['id']) if excluded else ()
+    overlay_rows = (dict(row) | ({'matched_source': sources[row['id']]['source'], 'status': 'matched'}
+                                 if row['id'] in sources else {})
+                    for row in all_rows if row['name'] in excluded)
+    overlay_rows = [row for row in overlay_rows if row['status'] == 'matched' and row['matched_source']]
+    with export_workers.ordered(compile_match, overlay_rows, check) as results:
+        for row, unit, hdr, compiled, error in results:
+            check()
+            target = net._rom_target(row)
+            placement = console.export_overlay(target)
+            if placement is None:
+                as_fallback.append((row['name'], 'Overlay placement needs a supported relocation table. Reimport the ROM.'))
+                continue
+            if error is not None or not compiled.ok:
+                as_fallback.append((row['name'], f'overlay C could not be compiled: {error or 'compilation failed'}'))
+                continue
+            linked = console.link_function(compiled.obj, row['name'], target, net.symbols(proj['id']), net.reader(proj, row))
+            if not linked.exact:
+                as_fallback.append((row['name'], 'overlay C no longer matches its bytes and relocation bindings'))
+                continue
+            src = out / 'src' / f"uso_{placement['section']:X}" / f"{row['name']}.{'cpp' if compiled.language == 'c++' else 'c'}"
+            src.parent.mkdir(parents=True, exist_ok=True)
+            compiler = compiler_for(cfg, row['vram'], row)
+            prelude = toolchains.source_prelude(toolchains.get(compiler['toolchain']), row['matched_source'] + "\n" + hdr)
+            include = f'common_{unit}.h' if unit else 'common.h'
+            src.write_text(exported_source(prelude, include, row['matched_source']), encoding='utf-8')
+            overlays.append({'name': row['name'], 'c': src.relative_to(out).as_posix(),
+                             'compiler': compiler, 'placement': placement})
+    if excluded:
+        log(f'Rebuilding {len(overlays)} overlay functions from C. '
+            f'The other {len(excluded) - len(overlays)} retain their original cartridge text.')
+
     progress_step(log, 3, 'Writing data and layout')
 
     # 3. everything else splat wrote: entry code, data, bss, binary blobs
@@ -586,7 +616,7 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
         "big_endian": console.big_endian, "asm_preamble": console.asm_preamble,
         "as_flags": [*console.as_flags, "-G0", "-no-pad-sections", "-I", "include"],
         "ld_flags": ["-EB" if console.big_endian else "-EL", "--no-check-sections"],
-        "assembly": objects, "segments": layout, "functions": fn_json,
+        "assembly": objects, "segments": layout, "functions": fn_json, "overlay_functions": overlays, "overlay_total": len(excluded),
         "data": [{k: d[k] for k in ("name", "src", "obj", "vram", "size")} for d in data_c],
         # every named datum's address, for the judge steps (export_entry, `build.py check`): names the assembly
         # defines aren't in "symbols" (the link has them), and a function's C that reads one couldn't be judged
@@ -625,8 +655,14 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
         units_json.append(unit)
     (out / "objdiff.json").write_text(json.dumps({"build_base": False, "build_target": False, "units": units_json}, indent=2),
                                       encoding="utf-8")
-    matched = sum(1 for f in functions if f["kind"] == "c")
-    _write_docs(out, proj["name"], console.name, base, matched, len(functions), as_fallback)
+    matched = sum(1 for f in functions if f["kind"] == "c") + len(overlays)
+    total_functions = len(functions) + len(excluded)
+    _write_docs(out, proj["name"], console.name, base, matched, total_functions, as_fallback)
+    if overlays:
+        with (out / 'README.md').open('a', encoding='utf-8') as readme:
+            readme.write("\nMatched USO text is compiled and checked against the original relocation bindings. "
+                         "The build writes the verified bytes into the original raw or Yay0 text section. "
+                         "Unmatched text and the original relocation and data sections remain cartridge inputs.\n")
     if cartridge := build.get("cartridge"):
         readme = out / "README.md"
         text = readme.read_text(encoding="utf-8")
@@ -649,7 +685,7 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
     identical = proc.returncode == 0 and "identical" in proc.stdout
     if not identical:
         log((proc.stdout + proc.stderr)[-3000:])
-    return {"path": str(out), "identical": identical, "matched": matched, "functions": len(functions),
+    return {"path": str(out), "identical": identical, "matched": matched, "functions": total_functions,
             "data": len(data_c),
             "fallback": as_fallback, "log": (proc.stdout + proc.stderr)[-3000:]}
 

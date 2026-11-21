@@ -257,7 +257,7 @@ def trim_data(path: Path, name: str, size: int) -> None:
     path.write_bytes(bytes(data))
 
 
-def build_objects(todo: list[tuple[str, str, str]]) -> None:
+def build_objects(todo: list[tuple[str, str, str]], overlays=()) -> None:
     # Resolve source paths once: looking through every function for each object
     # performed millions of filesystem checks on a 2,000-function release.
     function_of, entry_of = {}, {}
@@ -265,6 +265,7 @@ def build_objects(todo: list[tuple[str, str, str]]) -> None:
         if source := c_source(fn):
             function_of[source] = fn
             entry_of.setdefault(source, fn)
+    overlay_of = {fn['c']: fn for fn in overlays}
     datum_of = {d["src"]: d for d in B.get("data", [])}
     configs = {}
     as_ = binutils("as")
@@ -285,7 +286,7 @@ def build_objects(todo: list[tuple[str, str, str]]) -> None:
     # The pinned KMC driver's default command only writes the named object.
     # Custom and per-file profiles may use shared intermediate names.
     default = B["compiler"]
-    independent_c = (default.get("toolchain") == "gcc-2.7.2-kmc"
+    independent_c = (not overlays and default.get("toolchain") == "gcc-2.7.2-kmc"
                      and default.keys() <= {"toolchain", "flags", "timeout"}
                      and set(default.get("flags", ())) <= set(toolchains.get("gcc-2.7.2-kmc").flags)
                      and not B.get("compiler_ranges") and not B.get("function_compilers")
@@ -300,7 +301,8 @@ def build_objects(todo: list[tuple[str, str, str]]) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         fn = function_of.get(src)
         datum = datum_of.get(src)
-        compiler = compiler_for(B, fn['vram'] if fn else datum['vram'] if datum else None, fn)
+        overlay = overlay_of.get(src)
+        compiler = overlay['compiler'] if overlay else compiler_for(B, fn['vram'] if fn else datum['vram'] if datum else None, fn)
         key = json.dumps(compiler, sort_keys=True)
         cfg = configs.get(key) or configs.setdefault(key, compiler_config(ROOT, {"compiler": compiler}))
         argv = [a.replace("{src}", src).replace("{obj}", obj).replace("{include}", "include") for a in cfg.cmd]
@@ -311,6 +313,8 @@ def build_objects(todo: list[tuple[str, str, str]]) -> None:
         if src.endswith(".cpp"):  # C++ names back to the game's, as decompdecomp judged it
             target.write_bytes(unmangle(target.read_bytes(), lambda n: n in names or bool(AUTO_NAME.match(n))))
         entry = entry_of.get(src)
+        if overlay:
+            return
         if datum:
             trim_data(target, datum["name"], datum["size"])
         elif entry and entry.get('entry_only'):
@@ -544,6 +548,20 @@ def linker_script(provides: dict[str, str], placed: list[tuple[int, int, str]], 
     return "\n".join(lines) + "\n"
 
 
+def rebuild_overlays(base, selected):
+    from decompnet.consoles import get
+
+    console = get(B['platform'])
+    todo = [('c', fn['c'], f"build/{Path(fn['c']).with_suffix('.o').as_posix()}") for fn in selected]
+    build_objects(todo, overlays=selected)
+    entries = [(fn['name'], fn['placement'], (ROOT / obj).read_bytes())
+               for fn, (_, _, obj) in zip(selected, todo, strict=True)]
+    try:
+        return console.rebuild_overlays(base, entries)
+    except ValueError as error:
+        fail(str(error))
+
+
 def build() -> bool:
     setup()
     todo, provides, placed = objects()
@@ -560,22 +578,34 @@ def build() -> bool:
         retry_mips_abi=True)
     run([binutils("objcopy"), "-O", "binary", "build/game.elf", B["output"]])
     out, base = (ROOT / B["output"]).read_bytes(), (ROOT / B["image"]).read_bytes()
-    c_count = sum(1 for fn in B["functions"] if c_source(fn))
+    overlays = B.get("overlay_functions", [])
+    c_count = sum(1 for fn in B["functions"] if c_source(fn)) + len(overlays)
     if out == base:
+        if overlays and hashlib.sha1(base).hexdigest() != B['sha1']:
+            fail("The input image differs from the original overlay export.")
+        reference = base
         if cartridge := B.get("cartridge"):
             from decompnet.consoles.n64.rnc import rebuild_cartridge
 
             original = (ROOT / cartridge["image"]).read_bytes()
             if hashlib.sha1(original).hexdigest() != cartridge["sha1"]:
                 raise ValueError("original cartridge checksum differs from the fixed export target")
+            reference = original
             out = rebuild_cartridge(out, original, cartridge["blocks"])
             (ROOT / B["output"]).write_bytes(out)
             if out != original:
                 print("differs: reconstructed cartridge does not match the original")
                 return False
             print(f"cartridge verified: {cartridge['sha1']}")
+        if overlays:
+            out = rebuild_overlays(out, overlays)
+            (ROOT / B["output"]).write_bytes(out)
+            if out != reference:
+                print("differs: rebuilt overlay text changes the original cartridge")
+                return False
+            print(f"Rebuilt {len(overlays)} overlay functions from C.")
         print(f"identical: {B['output']} matches {B.get('cartridge', {}).get('image', B['image'])} byte for byte "
-              f"({c_count} of {len(B['functions'])} functions in C, {len(B.get('data', []))} data units in C)")
+              f"({c_count} of {len(B['functions']) + B.get('overlay_total', len(overlays))} exported functions in C, {len(B.get('data', []))} data units in C)")
         return True
     at = next((i for i in range(min(len(out), len(base))) if out[i] != base[i]), min(len(out), len(base)))
     where = next((fn["name"] for fn in sorted(B["functions"], key=lambda f: f["rom"] or 0, reverse=True)
@@ -591,6 +621,13 @@ def check(name: str) -> bool:
     from decompnet.rom.symbols import Symbol, SymbolTable
 
     setup()
+    overlay = next((f for f in B.get('overlay_functions', []) if f['name'] == name), None)
+    if overlay:
+        original = (ROOT / B.get('cartridge', {}).get('image', B['image'])).read_bytes()
+        if rebuild_overlays(original, [overlay]) != original:
+            fail(f"overlay {name} changed the cartridge")
+        print(f"{name}: identical overlay text and relocation bindings")
+        return True
     fn = next((f for f in B["functions"] if name in (f["name"], f.get('symbol'))), None)
     if fn is None:
         fail(f"no function {name}")
@@ -653,8 +690,10 @@ def check(name: str) -> bool:
 
 
 def status() -> None:
-    c = [fn["name"] for fn in B["functions"] if c_source(fn)]
-    print(f"{len(c)} of {len(B['functions'])} functions are C ({100 * len(c) / max(1, len(B['functions'])):.1f}%)")
+    overlays = B.get('overlay_functions', [])
+    count = sum(1 for fn in B['functions'] if c_source(fn)) + len(overlays)
+    total = len(B['functions']) + B.get('overlay_total', len(overlays))
+    print(f"{count} of {total} functions are C ({100 * count / max(1, total):.1f}%)")
 
 
 if __name__ == "__main__":

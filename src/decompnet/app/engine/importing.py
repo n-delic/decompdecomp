@@ -339,13 +339,17 @@ class ImportMixin:
                     known = debug.functions.get(fn.vram) if debug is not None else None
                     unit = debug.units.get(fn.vram, fn.segment) if debug is not None else fn.segment
                     old = old_functions.get(fn.name)
-                    same_target = (old is not None and old["target"] == target.code
+                    target_meta = console.function_target_meta(fn)
+                    previous_meta = json.loads(old['meta'] or '{}') if old is not None else {}
+                    same_target = (old is not None
+                                   and all(previous_meta.get(key) == value for key, value in target_meta.items()) and old["target"] == target.code
                                    and json.loads(old["relocs"] or "[]") == target.to_json())
                     asm = console.function_asm(fn)
                     # Identical targets keep operator decisions and naming provenance too.
                     # Re-analysis facts may refresh, but must not erase unrelated saved metadata.
-                    meta_data = json.loads(old['meta'] or '{}') if same_target else {}
+                    meta_data = previous_meta if same_target else {}
                     meta_data.update(console.function_meta(fn))
+                    meta_data.update(target_meta)
                     if known:
                         meta_data["debug"] = known
                     status = old["status"] if same_target else console.function_status(fn)

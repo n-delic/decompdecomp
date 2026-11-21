@@ -23,9 +23,10 @@ def setup(monkeypatch):
     monkeypatch.setattr(context,'metadata_placeholders',lambda e:{})
     def judge(obj,name,*args):
         calls.append(name);return LinkResult(object(),True,[],{},linked_code=b'compiled')
-    monkeypatch.setattr(context.match,'link',judge)
+    console = SimpleNamespace(link_function=judge)
     net=SimpleNamespace(is_rom=lambda p:True,store=SimpleNamespace(one=lambda sql,pid,name:rows.get(name)),
                         _rom_target=lambda row:row,symbols=lambda pid:object(),reader=lambda p,f:object())
+    net.console = lambda _: console
     net.project_store = lambda _: net.store
     return net,{'id':1,'arch':'mips'},rows,found,calls
 
@@ -53,8 +54,8 @@ def test_every_layout_identity_and_body_check_remains_required(monkeypatch,bad):
     if bad=='no_metadata':monkeypatch.setattr(context,'metadata_functions',lambda e:{})
     if bad=='other_arch':p['arch']='ppc'
     if bad=='project_mode':net.is_rom=lambda p:False
-    if bad=='inexact_auxiliary':monkeypatch.setattr(context.match,'link',lambda obj,name,*a:LinkResult(object(),name!='helper',[],{},linked_code=b'code'))
-    if bad=='missing_linked_code':monkeypatch.setattr(context.match,'link',lambda *a:LinkResult(object(),True,[]))
+    if bad=='inexact_auxiliary':monkeypatch.setattr(net.console(None), 'link_function',lambda obj,name,*a:LinkResult(object(),name!='helper',[],{},linked_code=b'code'))
+    if bad=='missing_linked_code':monkeypatch.setattr(net.console(None), 'link_function',lambda *a:LinkResult(object(),True,[]))
     assert context.private_unit(net,p,rows['entry'],b'obj') is None
 
 
@@ -102,11 +103,11 @@ def test_public_context_retains_each_identity_and_byte_gate(monkeypatch,bad):
     net,p,rows,found,calls=public_setup(monkeypatch)
     if bad=='open':rows['helper']['status']='open'
     if bad=='unknown':rows.pop('helper')
-    if bad=='inexact':monkeypatch.setattr(context.match,'link',lambda obj,name,*a:LinkResult(object(),name!='helper',[],{},linked_code=b'code'))
+    if bad=='inexact':monkeypatch.setattr(net.console(None), 'link_function',lambda obj,name,*a:LinkResult(object(),name!='helper',[],{},linked_code=b'code'))
     if bad=='overlap':rows['helper']['vram']=rows['entry']['vram']
     if bad=='wrong_size':rows['helper']['size']+=4
     if bad=='gap':found['entry']=(4,20,32)
-    if bad=='missing_code':monkeypatch.setattr(context.match,'link',lambda *a:LinkResult(object(),True,[]))
+    if bad=='missing_code':monkeypatch.setattr(net.console(None), 'link_function',lambda *a:LinkResult(object(),True,[]))
     assert context.private_unit(net,p,rows['entry'],b'obj') is None
 
 

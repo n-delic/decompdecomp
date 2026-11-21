@@ -15,7 +15,7 @@ from .test_app_engine import CLAMP
 from .test_rom import ROM, built  # noqa: F401
 
 
-def _module(data, *, compressed=True):
+def _module(data, *, compressed=True, relocations=b''):
     packed = crunch64.yay0.compress(data) if compressed else data
     symbols = b''.join(struct.pack('>III', tag, value, 0) for tag, value in (
         (0x00520000, 4), (0x00520000, 0), (0x00520000, 5), (0x00520000, len(data)), (0x00530000, 8)))
@@ -23,7 +23,7 @@ def _module(data, *, compressed=True):
     return (struct.pack('>III', 0x12345678, 1, 1) + b'code.uso\0'
             + struct.pack('>IIII', 0x12345678, 0, 0, 0)
             + record(1, symbols, 0x10000000)
-            + record(2, b'', 0x10000000)
+            + record(2, relocations, 0x10000000)
             + record(5, packed, 0x10010000 if compressed else 0x10000000)
             + record(11, b'', 0x10000000))
 

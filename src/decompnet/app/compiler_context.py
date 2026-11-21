@@ -11,7 +11,6 @@ from io import BytesIO
 from elftools.elf.elffile import ELFFile
 
 from ..elfobj import _function_symbols, metadata_functions, metadata_placeholders
-from ..rom import match
 from . import predecessor_context
 
 MAX_FUNCTIONS=4
@@ -54,7 +53,7 @@ def private_unit(net, proj, fn, obj):
     target_spans=sorted((row['vram'],row['vram']+row['size']) for row in rows)
     if any(a[1]>b[0] for a,b in zip(target_spans,target_spans[1:])):return None
     for row in rows:
-        result=match.link(obj,row['name'],net._rom_target(row),net.symbols(proj['id']),net.reader(proj,row))
+        result=net.console(proj).link_function(obj,row['name'],net._rom_target(row),net.symbols(proj['id']),net.reader(proj,row))
         if result.exact is not True or result.candidate is None or result.linked_code is None:return None
     return {'ready':False,'state':'requires_normalization','context_functions':[n for n in ordered if n!=fn['name']],
             'message':'Exact entry and independently verified compiler unit; matching-only extraction is required. Auxiliary entries are context, not newly published matches.'}
