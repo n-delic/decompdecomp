@@ -475,3 +475,32 @@ void f(void) {
     candidates = dict(proposals(source, 'f', '', 'mips', KMC, rows, asm, resolve=resolve))
     assert 'if (D_80002024 == 1)' in candidates['relocated_branch_byte']
     assert 'D_80002024 = 0;' in candidates['relocated_branch_byte']
+
+
+def test_measured_boolean_byte_carrier():
+    source = """void f(void) {
+    s32 flag;
+    s32 value;
+    flag = 0;
+    if (ready) {
+        value = state != 7;
+        flag = (u8)value;
+    }
+    if (flag & 0xff) work();
+}
+"""
+    rows = [
+        (' ', 'sltu $v0, $zero, $v0', 'sltu $v0, $zero, $v0'),
+        ('|', 'move $s0, $v0', 'andi $s0, $v0, 0xff'),
+    ]
+    assert 'u8 flag;' in dict(proposals(source, 'f', '', 'mips', KMC, rows, ''))['boolean_byte_carrier']
+    assert 'boolean_byte_carrier' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_measured_relocated_signed_halfword_load():
+    source = 'void f(void) { s32 value; value = *(volatile s32 *)(fields + index); use(value); }'
+    rows = [('|', 'lh $v0, %lo(fields)($v0)', 'lw $v0, %lo(fields)($v0)')]
+    candidates = [text for name, text in proposals(source, 'f', '', 'mips', KMC, rows, '')
+                  if name == 'relocated_signed_halfword_load']
+    assert any('do { value = *(s16 *)(fields + index); } while (0);' in text for text in candidates)
+    assert 'relocated_signed_halfword_load' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))
