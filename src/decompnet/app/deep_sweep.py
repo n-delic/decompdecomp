@@ -516,7 +516,8 @@ class Sweeps:
                 log.check_cancel()
                 with looking(self.net):
                     proj = self.net.project_row(slug)
-                pending = waiting = 0
+                candidates = []
+                waiting = 0
                 # Shuffle lightweight identities first. Never fingerprint the entire project before
                 # dispatching work; keep at most two turns per worker queued ahead of execution.
                 identities = [dict(r) for r in self._store(slug).all(f"SELECT id,name,size FROM functions WHERE project_id=? AND status='open' AND {IN_BUILD}", proj['id'])]
@@ -536,10 +537,8 @@ class Sweeps:
                 scanned = submitted = 0
                 shared = {'contexts': {}}
                 profiles = self.config(slug).get('compiler_profiles', 1)
-                def preparing(checked, eligible, blocked, done=False, total=total):
-                    stats['activity'].publish({'preparation': {'checked': checked, 'total': total,
-                        'eligible': eligible, 'waiting': blocked, 'done': done}}, force=done)
-                preparing(scanned, pending, waiting)
+                activity = stats['activity']
+                activity.prepare(scanned, total, candidates, waiting)
 
                 failed = threading.Event()
                 def execute(item, blocked, proj=proj, total=total):
@@ -582,7 +581,7 @@ class Sweeps:
                         AND f.id IN (SELECT value FROM json_each(?))""", proj['id'], json.dumps(ids))}
                     for fid in ids:
                         log.check_cancel()
-                        preparing(scanned, pending, waiting)
+                        activity.prepare(scanned, total, candidates, waiting)
                         scanned += 1
                         fn = rows.get(fid)
                         if fn is None or fid in visited_turns or fid in futures.values():
@@ -603,10 +602,11 @@ class Sweeps:
                             if (fn['pass_state'] == 'error' or (not loop and fn['pass_state'] == 'completed')) and fn['pass_scope'] == signature(
                                     self.net, proj, fn, minutes, variants, profiles, shared):
                                 continue
-                        pending += 1
+                        candidates.append(fn['name'])
                         if slug in self.net.links and (fn['claim_expires'] or 0) > time.time():
                             waiting += 1
                             continue
+                        activity.prepare(scanned, total, candidates, waiting)
                         while len(futures) >= count * 2:
                             log.check_cancel()
                             finished, _ = wait(futures, timeout=.1, return_when=FIRST_COMPLETED)
@@ -618,7 +618,7 @@ class Sweeps:
                             order.remove(fid)
                         order.append(fid)
                         submitted += 1
-                preparing(scanned, pending, waiting, done=True)
+                activity.prepare(scanned, total, candidates, waiting, done=True)
                 if loop and visited_turns and not submitted:
                     cycle += 1
                     visited_turns.clear()
@@ -635,7 +635,7 @@ class Sweeps:
                         futures.pop(future)
                         future.result()
                     continue  # Refill free workers without waiting for the longest turn.
-                if not pending and not waiting:
+                if not candidates and not waiting:
                     self.save(slug, self.config(slug) | {'enabled': False})
                     log('Deep pass finished. Completed bounded passes are saved; this is not an exhaustive search of all C.')
                     if stats['rotated']:

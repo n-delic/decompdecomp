@@ -12,6 +12,7 @@ class Activity:
         self.active = {}
         self.recent = []
         self.summary = {}
+        self.candidates = []
         self.started = {}
         self.last_publish = float('-inf')
         self.timer = None
@@ -47,6 +48,13 @@ class Activity:
             self.summary.update(value)
             self._schedule(urgent)
 
+    def prepare(self, checked, total, candidates, waiting, *, done=False):
+        with self.lock:
+            self.candidates = candidates
+            self.summary['preparation'] = {'checked': checked, 'total': total,
+                                           'eligible': len(candidates), 'waiting': waiting, 'done': done}
+            self._schedule(done)
+
     def _schedule(self, force):
         if force or time.monotonic() - self.last_publish >= PUBLISH_SECONDS:
             self._publish()
@@ -72,6 +80,10 @@ class Activity:
             self.timer.cancel()
             self.timer = None
         self.last_publish = time.monotonic()
-        self.log.progress({**self.summary, 'workers': [dict(w, elapsed_seconds=max(0, time.monotonic() - self.started[name]))
+        summary = dict(self.summary)
+        if prep := summary.get('preparation'):
+            # The scanner only appends. Copy the published prefix so counts and names agree.
+            summary['preparation'] = {**prep, 'candidates': self.candidates[:prep['eligible']]}
+        self.log.progress({**summary, 'workers': [dict(w, elapsed_seconds=max(0, time.monotonic() - self.started[name]))
                                                      for name, w in self.active.items()],
                            'recent_workers': list(self.recent)})

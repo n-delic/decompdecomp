@@ -2485,7 +2485,7 @@ function deepAttentionAction(issue) {
 function openDeepMetric(kind) {
   const slug = S.slug;
   if (!slug || $("deepSweepPanel").dataset.slug !== slug) return;
-  const titles = {matched:"Matched by deep permuter", improved:"Improved by deep permuter", active:"Searching now", attention:"Functions needing attention"};
+  const titles = {matched:"Matched by deep permuter", improved:"Improved by deep permuter", active:"Searching now", eligible:"Eligible functions", attention:"Functions needing attention"};
   if (!titles[kind]) return;
   dialog(titles[kind], "", "deep-metric:" + kind);
   deepMetricSlug = slug;
@@ -2496,21 +2496,32 @@ function renderDeepMetricDrawer() {
   if (!S.dialogKind?.startsWith("deep-metric:") || $("dialog").hidden) return;
   if (deepMetricSlug !== S.slug) { closeDialog(); return; }
   const kind = S.dialogKind.slice("deep-metric:".length), status = deepSweepSnapshot || {};
-  const active = kind === "active", attention = kind === "attention", body = $("dialogBody");
+  const active = kind === "active", attention = kind === "attention", eligible = kind === "eligible", body = $("dialogBody");
   if (kind === "improved") {
     if (body._deepMetricHtml && body._deepMetricSource === deepMetricResultStatus && body._deepMetricKind === kind) return;
     renderDeepImprovementTable(deepMetricResultStatus, body);
     body._deepMetricHtml = body.innerHTML; body._deepMetricSource = deepMetricResultStatus; body._deepMetricKind = kind;
     return;
   }
-  const source = active ? status.state === "running" ? status.progress?.workers : null : attention ? status.attention : deepMetricRows;
-  if (body._deepMetricHtml && body._deepMetricSource === source && body._deepMetricKind === kind) return;
+  const source = active ? status.state === "running" ? status.progress?.workers : null : attention ? status.attention : eligible ? status.progress?.preparation : deepMetricRows;
+  if (body._deepMetricHtml && body._deepMetricSource === source && body._deepMetricKind === kind && (!eligible || body._deepMetricState === status.state)) return;
+  body._deepMetricState = status.state;
   body._deepMetricSource = source; body._deepMetricKind = kind;
-  const rows = active || attention ? source || [] : deepMetricRows.filter(row => kind === "matched" ? row.new_score === 0 : row.new_score < row.starting_score);
-  const intro = attention ? "Searches that stopped for the current inputs. Open a function to inspect it; the reason and next step are shown below." : active ? "Live searches for this project. Select a function to inspect it."
+  const rows = eligible ? (source?.candidates || []).map(name => ({function:name}))
+    : active || attention ? source || [] : deepMetricRows.filter(row => kind === "matched" ? row.new_score === 0 : row.new_score < row.starting_score);
+  const checked = source?.checked || 0, total = source?.total || 0;
+  const checkLabel = source?.done ? "Candidates checked" : status.state === "running" ? "Checking candidates" : "Candidate check ended";
+  const checkPercent = total ? Math.floor(100 * checked / total) : source?.done ? 100 : 0;
+  const checkDetails = source
+    ? `<div class="compiler-queue-count"><span>${checkLabel} · ${checked.toLocaleString()} / ${total.toLocaleString()} · ${checkPercent}% · ${(source.eligible || 0).toLocaleString()} eligible${source.done ? "" : " so far"}</span><progress class="deep-sweep-bar" max="${Math.max(1, total)}" value="${total ? checked : Number(!!source.done)}" aria-label="Functions checked for search eligibility"></progress></div>`
+    : "";
+  const intro = eligible ? "Functions found eligible in the latest candidate check. Select a function to inspect it."
+    : attention ? "Searches that stopped for the current inputs. Open a function to inspect it; the reason and next step are shown below." : active ? "Live searches for this project. Select a function to inspect it."
     : "Saved deep-permuter results since the last metrics reset, across runs. Improved includes functions that reached a match.";
-  const html = `<p class="small muted">${intro}</p><p><b>${rows.length.toLocaleString()} function${rows.length === 1 ? "" : "s"}</b></p>` + (rows.length
-    ? `<ul class="deep-metric-list">${rows.map((row, i) => {
+  const html = `<p class="small muted">${intro}</p>` + (eligible ? checkDetails
+    : `<p><b>${rows.length.toLocaleString()} function${rows.length === 1 ? "" : "s"}</b></p>`) + (rows.length
+    ? `<ul class="${eligible ? "deep-issue-functions" : "deep-metric-list"}">${rows.map((row, i) => {
+      if (eligible) return `<li><button type="button" class="deep-issue-link mono" data-deep-metric-function="${i}">${esc(row.function)}<span aria-hidden="true">↗</span></button></li>`;
       const percent = n => n == null ? "—" : `${Number(n).toFixed(1)}%`;
       const before = active ? percent(row.starting_percent) : row.starting_percent_text || "—";
       const after = active ? percent(row.best_percent) : row.new_percent_text || "—";
@@ -2518,7 +2529,7 @@ function renderDeepMetricDrawer() {
         : `Score ${row.starting_score} → ${row.new_score}${row.new_score === 0 ? " · Byte-for-byte match" : ""}`;
       const updated = !active && row.updated_at ? `<p class="small muted">Last improvement: <time datetime="${esc(new Date(row.updated_at * 1000).toISOString())}">${esc(new Date(row.updated_at * 1000).toLocaleString())}</time></p>` : "";
       return `<li><header><button type="button" class="ghost small-btn mono" data-deep-metric-function="${i}">${esc(row.function)}</button>${attention ? "" : `<span class="deep-metric-match">${esc(before)} → <b>${esc(after)}</b></span>`}</header><p><b>${esc(info)}</b></p>${attention ? `<p class="small muted">${esc(deepAttentionAction(row))}</p><details><summary>Technical details</summary><p class="small mono">${esc(row.error || "No additional details.")}</p></details>` : updated}</li>`;
-    }).join("")}</ul>` : `<p class="deep-metric-empty">${attention ? "No functions currently need attention." : active ? "No functions are being searched right now." : kind === "matched" ? "No matches from the deep permuter yet. Verified matches will appear here." : "No improvements from the deep permuter yet. Verified improvements will appear here."}</p>`);
+    }).join("")}</ul>` : `<p class="deep-metric-empty">${eligible ? source ? "No eligible functions found in this check." : "Start a search to check candidates." : attention ? "No functions currently need attention." : active ? "No functions are being searched right now." : kind === "matched" ? "No matches from the deep permuter yet. Verified matches will appear here." : "No improvements from the deep permuter yet. Verified improvements will appear here."}</p>`);
   if (body._deepMetricHtml === html) return;
   const scrollTop = body.scrollTop;
   const focused = document.activeElement?.dataset?.deepMetricFunction;
@@ -2653,27 +2664,20 @@ function renderDeepQueueState(status) {
   const active = running ? (status.progress?.workers || []).length : 0;
   const preparation = status.progress?.preparation;
   const preparing = running && preparation && !preparation.done;
-  $("deepSweepPreparation").hidden = !preparing;
-  if (preparing) {
-    const checked = preparation.checked || 0, count = preparation.total || 0;
-    $("deepSweepPreparationText").textContent = `Checking candidates: ${checked.toLocaleString()} / ${count.toLocaleString()} · ${count ? Math.floor(100 * checked / count) : 0}% · ${preparation.eligible || 0} eligible so far`;
-    $("deepSweepPreparationBar").max = Math.max(1, count);
-    $("deepSweepPreparationBar").value = checked;
-  }
+  $("deepSweepEligible").textContent = preparation ? (preparation.eligible || 0).toLocaleString() : "—";
   const done = status.queue_done || 0, total = done + left + blocked;
   $("deepSweepQueueState").dataset.state = running ? "running" : stopped ? "stopped" : error ? "error" : "idle";
   $("deepSweepQueueTitle").textContent = running ? ""
     : stopped ? "Search stopped" : error ? "Search needs attention" : left && status.has_activity ? `Paused — ${left} function${left === 1 ? "" : "s"} available`
     : blocked ? "Paused — remaining functions need attention" : status.statistics_pending ? "Ready to search" : status.has_activity ? "Finished — no eligible functions left" : "Ready to search";
+  const waitingForWork = running && !active && status.progress?.phase === "waiting for host claims or scored C";
   $("deepSweepQueueReason").textContent = running
-    ? preparing ? active ? "Searching while preparing the queue. More candidates are checked as workers become free." : "Checking saved attempts and machine drafts. Searches start as soon as scored C is ready."
-    : !active && status.progress?.phase === "waiting for host claims or scored C" ? "Waiting for available functions or saved C. The queue is checked automatically." : "Improvements are verified and saved as they happen."
+    ? waitingForWork ? "Waiting for available functions or saved C. The queue is checked automatically." : ""
     : stopped ? "Your improvements and completed searches are saved." : error ? error : left ? `${rotated ? `${rotated} paused early without further progress. ` : ""}Continue gives remaining functions a fresh search; completed turns stay saved.`
     : blocked ? "Open the reasons below, fix the affected functions, then run again."
-    : waiting ? `${waiting} functions need scored C. Start a search to try recovering it automatically.`
+    : waiting ? "Start a search to try recovering missing saved C automatically."
     : status.statistics_pending ? "Saved totals are loading. You can start a search now." : status.has_activity ? "Each eligible function finished a bounded turn. Run again repeats completed turns to try more rewrites." : "Start with untested or changed functions that have saved C.";
-  $("deepSweepQueueReason").hidden = !error && !stopped && !blocked && !waiting && !preparing
-    && !(running && status.progress?.phase === "waiting for host claims or scored C");
+  $("deepSweepQueueReason").hidden = running ? !waitingForWork : !error && !stopped && !blocked && !waiting;
   $("deepSweepStart").hidden = running;
   $("deepSweepStart").textContent = left && status.has_activity ? "Continue search" : status.has_activity ? "Run again" : "Start search";
   $("deepSweepStart").disabled = false;
@@ -2683,24 +2687,30 @@ function renderDeepQueueState(status) {
   $("deepSweepActive").textContent = status.statistics_pending && !running ? "—" : active.toLocaleString();
   $("deepSweepDone").textContent = done.toLocaleString();
   $("deepSweepLeft").textContent = left.toLocaleString();
-  for (const [id, count] of [["Paused", rotated], ["Blocked", blocked], ["Waiting", waiting]]) {
+  for (const [id, count] of [["Paused", rotated], ["Blocked", blocked]]) {
     $("deepSweep" + id).textContent = count.toLocaleString();
     $("deepSweep" + id + "Group").hidden = !count;
   }
-  $("deepSweepRunChecked").textContent = status.progress?.functions_tested != null
-    ? `${running && status.loop ? `Pass ${status.progress.cycle || 1} · looping` : running ? "This run" : "Last run"}: ${status.progress.functions_tested.toLocaleString()} functions checked` : "";
+  const checked = status.progress?.functions_tested;
+  const run = running && status.loop ? `Pass ${status.progress?.cycle || 1} (looping)` : running ? "This run" : "Last run";
   $("deepSweepBar").max = Math.max(1, total);
   $("deepSweepBar").value = done;
-  $("deepSweepBar").hidden = !total || !status.has_activity;
-  $("deepSweepProgressText").textContent = total && status.has_activity
+  $("deepSweepBar").hidden = !total || !status.has_activity || status.statistics_pending;
+  const savedProgress = status.statistics_pending ? "Loading saved totals…"
+    : total && status.has_activity
     ? `Saved progress: ${done.toLocaleString()} of ${total.toLocaleString()} search turns completed · ${left.toLocaleString()} remaining${blocked ? ` · ${blocked.toLocaleString()} need attention` : ""}`
-    : running ? "Preparing search…" : status.has_activity ? "No eligible functions remaining." : "No searches yet.";
+    : "";
+  const emptyProgress = running ? preparing ? "" : "Preparing search…"
+    : status.has_activity ? "No eligible functions remaining." : "No searches yet.";
+  $("deepSweepProgressText").textContent = [
+    savedProgress,
+    checked != null ? `${run}: ${checked.toLocaleString()} functions checked` : "",
+    waiting ? `${waiting.toLocaleString()} waiting for saved C` : "",
+  ].filter(Boolean).join(" · ") || emptyProgress;
   $("deepSweepLoadingBar").hidden = preparing || !(status.statistics_pending || (running && !total));
   $("deepSweepLoadingBar").ariaLabel = status.statistics_pending ? "Loading saved search totals" : "Searching functions";
   if (status.statistics_pending) {
-    $("deepSweepBar").hidden = true;
     for (const id of ["deepSweepMatched", "deepSweepImproved", "deepSweepLeft"]) $(id).textContent = "—";
-    $("deepSweepProgressText").textContent = "Loading saved totals…";
     $("deepSweepStart").textContent = "Start search";
   }
 }
@@ -2742,7 +2752,7 @@ async function renderDeepSweep() {
     $("deepSweepStart").hidden = false;
     $("deepSweepActive").textContent = "—";
     $("deepSweepRecipes").replaceChildren();
-    for (const id of ["deepSweepDone", "deepSweepLeft", "deepSweepWaiting"]) $(id).textContent = "0";
+    for (const id of ["deepSweepDone", "deepSweepLeft"]) $(id).textContent = "0";
     $("deepSweepBar").value = 0;
     $("deepSweepProgressText").textContent = "";
     $("deepSweepLeft").textContent = "—";
@@ -2833,8 +2843,11 @@ async function followDeepSweep(slug, job) {
         refreshing = true; lastResults = Date.now();
         api(`/api/permuter/pass?slug=${encodeURIComponent(slug)}`).then(status => {
           if (S.slug === slug && deepSweepFollowing === following) {
-            renderDeepSweepResults(status);
-            renderDeepQueueState(status);
+            const live = deepSweepSnapshot;
+            const combined = live && live.job === status.job
+              ? {...status, state:live.state, progress:live.progress, error:live.error} : status;
+            renderDeepSweepResults(combined);
+            renderDeepQueueState(combined);
           }
         }).catch(() => {}).finally(() => { refreshing = false; });
       }
@@ -2866,6 +2879,7 @@ $("deepSweepBlockedGroup").onclick = () => openDeepMetric("attention");
 $("deepSweepMetricMatched").onclick = () => openDeepMetric("matched");
 $("deepSweepMetricImproved").onclick = () => openDeepMetric("improved");
 $("deepSweepMetricActive").onclick = () => openDeepMetric("active");
+$("deepSweepMetricEligible").onclick = () => openDeepMetric("eligible");
 $("deepSweepOptions").onclick = () => openDeepOptions();
 $("deepSweepStart").onclick = () => {
   if (!$("deepSweepStart").disabled) openDeepOptions($("deepSweepStart").textContent);

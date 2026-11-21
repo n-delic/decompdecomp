@@ -664,19 +664,16 @@
           <button type="button" class="deep-metric" id="deepSweepMetricMatched" aria-haspopup="dialog" title="View matched functions"><b id="deepSweepMatched">0</b><span>Matched<span aria-hidden="true">↗</span></span></button>
           <button type="button" class="deep-metric" id="deepSweepMetricImproved" aria-haspopup="dialog" title="View improved functions"><b id="deepSweepImproved">0</b><span>Improved<span aria-hidden="true">↗</span></span></button>
           <button type="button" class="deep-metric" id="deepSweepMetricActive" aria-haspopup="dialog" title="View searching now functions"><b id="deepSweepActive">0</b><span>Searching now<span aria-hidden="true">↗</span></span></button>
+          <button type="button" class="deep-metric" id="deepSweepMetricEligible" aria-haspopup="dialog" title="View eligible functions and candidate checks"><b id="deepSweepEligible">—</b><span>Eligible<span aria-hidden="true">↗</span></span></button>
         </div>
         <div class="local-search-progress">
           <div id="deepSweepLoadingBar" class="workbar" role="progressbar" aria-label="Loading saved search totals" hidden><i></i></div>
           <progress class="deep-sweep-bar" id="deepSweepBar" hidden max="1" value="0" aria-label="Saved completed search turns"></progress>
           <p class="small muted" id="deepSweepProgressText">No searches yet.</p>
-          <div id="deepSweepPreparation" class="compiler-queue-count" hidden><span id="deepSweepPreparationText"></span><progress id="deepSweepPreparationBar" max="1" value="0" aria-label="Functions checked for search eligibility"></progress></div>
-          <p class="small muted" id="deepSweepRunChecked"></p>
           <p class="small muted" id="deepSweepQueueReason" hidden></p>
-          <p class="hint" id="deepSweepThroughput" hidden></p>
           <div class="deep-queue-details small muted">
             <span id="deepSweepPausedGroup" hidden><b id="deepSweepPaused">0</b> paused early</span>
             <button type="button" id="deepSweepBlockedGroup" class="ghost small-btn" aria-haspopup="dialog" hidden><b id="deepSweepBlocked">0</b> need attention <span aria-hidden="true">↗</span></button>
-            <span id="deepSweepWaitingGroup" hidden><b id="deepSweepWaiting">0</b> waiting for saved C</span>
           </div>
           <span hidden><b id="deepSweepDone">0</b><b id="deepSweepLeft">0</b></span>
         </div>
@@ -711,6 +708,7 @@
         </div>
         <div id="deepActivity" class="deep-activity"></div>
         </details>
+        <p class="small muted" id="deepSweepThroughput" hidden></p>
         <div id="deepSweepRecipes"></div>
         <details id="deepSweepLogSection" hidden><summary>Combined technical log</summary><div id="deepSweepLog"></div></details>
 

@@ -686,7 +686,12 @@ def test_search_starts_before_full_preparation_and_reports_checked_total(sweep, 
     assert result['functions_tested'] == 34
     assert seen[0]['checked'] < seen[0]['total'] == 34
     assert all('preparation' in update for update in log.updates)
-    assert log.updates[-1]['preparation']['done']
+    preparations = [update['preparation'] for update in log.updates]
+    assert all(p['eligible'] == len(p['candidates']) <= p['checked'] for p in preparations)
+    full = next(p for p in preparations if p['done'] and p['eligible'] == 34)
+    assert len(set(full['candidates'])) == 34
+    assert {f'extra{i}' for i in range(32)} <= set(full['candidates'])
+    assert preparations[-1]['done']
 
 
 def test_loop_repeats_same_settings_and_stops_on_cancel(sweep, monkeypatch):
