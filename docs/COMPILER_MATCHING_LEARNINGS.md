@@ -12691,3 +12691,14 @@ With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, the diff dispatcher
 in v0.5.305 proposed no candidates for this draft. The new rule proposed
 one candidate, which the linked judge scored 30 from 42. It remains
 unmatched.
+
+### KMC GCC 2.7.2: reload a relocated pointer for consecutive stores
+
+An isolated scratch draft wrote two words through a pointer hidden inside a
+guessed global structure. The target reloaded that pointer before each store.
+Declaring the resolved pointer global volatile and using directly relocated
+word globals recovered the target's loads and register order. With
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the linked difference
+score went from 250 to an exact match. A non-volatile pointer retained score
+250. Tests cover the instruction sequence, matching and distinct aligned
+addresses, and conflicting declarations. This is one observed match.

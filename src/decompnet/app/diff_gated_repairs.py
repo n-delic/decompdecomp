@@ -46,6 +46,7 @@ from decomprepair import (
     measured_kmc_field_pointer,
     measured_kmc_flag_update,
     measured_kmc_flow,
+    measured_kmc_global_stores,
     measured_kmc_input,
     measured_kmc_lifetimes,
     measured_kmc_packed_bits,
@@ -246,6 +247,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_kmc_cursor_switch.variants(source, name, header, rows)
         result += measured_kmc_field_pointer.variants(source, name, header, rows)
         result += measured_kmc_flag_update.variants(source, name, header, rows)
+        result += measured_kmc_global_stores.variants(source, name, header, rows, resolve)
         result += measured_kmc_flow.variants(source, name, header, rows)
         result += measured_kmc_input.variants(source, name, header, rows, resolve)
         result += measured_halfword_switch.variants(source, name, header, rows)
