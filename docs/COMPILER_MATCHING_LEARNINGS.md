@@ -9524,3 +9524,55 @@ retained the swap but restored the original save order in two declaration
 placements. The official judge improved from 115 to 95 (99.32% to 99.44%).
 An earlier insertion worsened the output. This is an isolated real-game
 experiment. Neither version was byte-identical.
+
+### KMC GCC 2.7.2: swapped `$f0`/`$f2` roles in a two-branch field update
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, an 836-instruction N64
+actor-movement routine linked with every instruction right except six
+float-register operands (score 30). Both arms of an `if`/`else` compute a
+new value for one float field, and the target's store is a single merged
+tail. The candidate assigned a shared result local in each arm and stored
+it after the join:
+
+```c
+if (kind == 2) {
+    r = (limit - y) * 30.0f;
+    v = obj->speed;
+    r = (f32)((f64)(r - v) * K + (f64)v);
+} else {
+    r = scale * 14.999999f;
+}
+obj->speed = r;
+```
+
+Two changes matched it, measured on the running app's judge:
+
+- Update the field in place in the first arm with `+=`, and store to it
+  directly in the second. The old value is then loaded after the product,
+  reused for the subtraction and the final `add.d`, and tied to the
+  result register; identical-tail merging still leaves one `swc1`.
+  Score 30 to 15. `field = field + (...)` scored the same as `+=`.
+- Use one float local in both arms: the product in the first, the plainly
+  loaded operand in the second (`r = scale; obj->speed = r * 14.999999f;`).
+  Living in two blocks makes it a global-allocation pseudo, so it takes
+  `$f2` in both arms and the constant takes `$f0`. Score 15 to 0,
+  byte-identical after linking.
+
+```c
+if (kind == 2) {
+    r = (limit - y) * 30.0f;
+    obj->speed += (r - obj->speed) * K;
+} else {
+    r = scale;
+    obj->speed = r * 14.999999f;
+}
+```
+
+What did not help, so it need not be repeated: with the direct stores,
+writing the second arm as `14.999999f * scale`, or through a local used
+only in that arm (in either position), stayed at 15. Keeping the shared
+result local and loading the old value first (`r = field; r += ...`)
+scored 40; `r = field + (...)` in one expression scored 70. Assigning the
+difference (not the product) to the shared local scored 685: the store
+no longer merged. Evidence level: one new exact match on a real game,
+not a controlled regression test.
