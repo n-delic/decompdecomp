@@ -740,8 +740,10 @@ on Apple Silicon; physical Intel Mac and retail-game checks remain planned.
 
 - N64 ROM import now reads native symbol anchors in raw and Yay0-compressed USO text and
   recovers corroborated closed functions in separate banks. It needs no imported project.
-  Rebuildable exports preserve the original cartridge banks. Rebuilding them from matched C
-  needs relocation-aware export, and ambiguous bodies and other overlay formats still need analysis.
+  Matching uses the original loader symbol and kind for each text relocation and compares the
+  pre-relocation bytes exactly. Exports compile matched C into raw or Yay0-compressed USO text,
+  keeping the original relocation and data sections. Rebuilding private overlay data from C,
+  translating public symbol names to USO aliases and supporting other overlay formats remain planned.
 
 ## What works where
 

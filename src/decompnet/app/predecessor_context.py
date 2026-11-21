@@ -9,7 +9,6 @@ from io import BytesIO
 from elftools.elf.elffile import ELFFile
 
 from ..elfobj import _function_symbols
-from ..rom import match
 
 MAX_FUNCTIONS=4
 
@@ -50,7 +49,7 @@ def verified(net, proj, fn, obj):
         if name!=fn['name'] and row['status']!='matched':return None
         rows.append(row);end=offset+length
     for row in rows:
-        result=match.link(obj,row['name'],net._rom_target(row),net.symbols(proj['id']),net.reader(proj,row))
+        result=net.console(proj).link_function(obj,row['name'],net._rom_target(row),net.symbols(proj['id']),net.reader(proj,row))
         if result.exact is not True or result.candidate is None or result.linked_code is None:return None
     return {'ready':False,'state':'requires_normalization','context_functions':ordered[:-1],
             'message':'Exact entry with independently verified predecessor context; matching-only extraction is required to avoid exporting the predecessors twice.'}

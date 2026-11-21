@@ -26,15 +26,21 @@ class Text:
     data: bytes
     compressed: bool
     entries: tuple[int, ...] = ()
+    stored_size: int = 0
+    relocations: tuple[tuple[int, int, int], ...] | None = None  # (text offset, ELF kind, symbol index)
 
 
-def _yay0(source):
+
+def _yay0(source, replacement=None):
     """Decode within the section's declared stored length, including up to three padding bytes."""
     if len(source) < 16 or source[:4] != b'Yay0':
         return None
     size, links, chunks = struct.unpack_from('>III', source, 4)
     if not (0 < size <= _MAX_SECTION and 16 <= links <= chunks <= len(source)):
         return None
+    if replacement is not None and len(replacement) != size:
+        return None
+    encoded = bytearray(source) if replacement is not None else None
     mask_end, link_end = links, chunks
     mask_at, mask, remaining = 16, 0, 0
     out = bytearray()
@@ -51,7 +57,9 @@ def _yay0(source):
         if literal:
             if chunks >= len(source):
                 return None
-            out.append(source[chunks])
+            if encoded is not None:
+                encoded[chunks] = replacement[len(out)]
+            out.append(source[chunks] if encoded is None else encoded[chunks])
             chunks += 1
             continue
         if links + 2 > link_end:
@@ -72,13 +80,15 @@ def _yay0(source):
             out.append(out[-distance])
     if len(source) - chunks > 3:
         return None
+    if encoded is not None:
+        return bytes(encoded) if out == replacement else None
     return bytes(out)
 
 
 def _text(rom, name, at, end):
     sections = set()
     result = None
-    symbols = b''
+    symbols = relocations = b''
     for _ in range(len(_KINDS)):
         for pad in range(4):
             if at + pad + 12 > end:
@@ -99,7 +109,8 @@ def _text(rom, name, at, end):
             # A zero-valued text symbol is an import, not entry-point evidence.
             entries = {value for tag, value, _ in struct.iter_unpack('>III', symbols)
                        if (tag >> 16) & 0xFF == 0x52 and 0 < value < len(result.data) and value % 4 == 0}
-            return replace(result, entries=tuple(sorted(entries)))
+            return replace(result, entries=tuple(sorted(entries)),
+                           relocations=_relocations(relocations, len(symbols) // 12, len(result.data)))
         sections.add(kind)
         compressed = bool(flags & 0x10000)
         at = offset + (size if kind != 8 else 0)
@@ -112,13 +123,81 @@ def _text(rom, name, at, end):
             payload = _yay0(rom[offset:at])
             if payload is None:
                 return None
-        elif kind in (1, 5):
+        elif kind in (1, 2, 5):
             payload = rom[offset:at]
         if kind == 1:
             symbols = payload
+        if kind == 2:
+            relocations = payload
         if kind == 5 and len(payload) >= 8 and len(payload) % 4 == 0:
-            result = Text(name, offset, payload, compressed)
+            result = Text(name, offset, payload, compressed, stored_size=size)
     return None
+
+
+def _relocations(payload, symbols, size):
+    if len(payload) % 12:
+        return None
+    # The USO loader uses a different kind numbering from ELF.
+    kinds = {1: 4, 2: 6, 3: 5, 4: 2}
+    by_offset = {}
+    for info, at, _ in struct.iter_unpack('>III', payload):
+        kind, index = info & 15, info >> 4
+        if kind not in kinds or not 0 < index < symbols or at % 4 or at >= size or at in by_offset:
+            return None
+        by_offset[at] = (kinds[kind], index)
+    return tuple((at, *fields) for at, fields in sorted(by_offset.items()))
+
+
+def function_relocations(region, start, size):
+    if region.relocations is None:
+        return None
+    from bisect import bisect_left
+
+    relocs = region.relocations
+    begin = bisect_left(relocs, (start,))
+    end = bisect_left(relocs, (start + size,))
+    return [[at - start, kind, index] for at, kind, index in relocs[begin:end]]
+
+
+def replace_text(cartridge, region, text):
+    if len(text) != len(region.data):
+        raise ValueError('USO text length changed')
+    start, end = region.offset, region.offset + region.stored_size
+    body = _yay0(cartridge[start:end], text) if region.compressed else text
+    if body is None or len(body) != region.stored_size:
+        raise ValueError('USO text no longer fits the original Yay0 encoding')
+    cartridge[start:end] = body
+
+
+def rebuild(image, entries):
+    from collections import defaultdict
+
+    groups = defaultdict(list)
+    for name, info, obj in entries:
+        groups[info['section']].append((name, info, obj))
+    from .uso_match import link
+
+    regions = {region.offset: region for region in read(image)}
+    cartridge = bytearray(image)
+    for offset, patches in groups.items():
+        region = regions.get(offset)
+        if region is None:
+            raise ValueError(f'USO text section at 0x{offset:X} is missing')
+        text = bytearray(region.data)
+        end = 0
+        for name, info, obj in sorted(patches, key=lambda patch: patch[1]['start']):
+            start, size = info['start'], info['size']
+            if (start < end or start + size > len(text) or size <= 0
+                    or function_relocations(region, start, size) != info['relocs']):
+                raise ValueError(f'USO function placement at 0x{offset:X}+0x{start:X} has changed')
+            end = start + size
+            verified = link(obj, name, region.data[start:end], info)
+            if not verified.exact:
+                details = ', '.join(verified.problems) or 'text bytes differ'
+                raise ValueError(f'Overlay {name} no longer matches: {details}')
+            text[start:end] = verified.linked_code
+        replace_text(cartridge, region, text)
+    return bytes(cartridge)
 
 
 def read(rom: bytes) -> list[Text]:
@@ -187,7 +266,9 @@ def add_to_split(result: "SplitResult", workdir: "Path", original: bytes, log) -
         result.segments.append(Segment(name, start, len(image), 0))
         for a, b, v in bodies:
             entry = f'func_{v:08X}_uso_{region.offset:X}'
-            result.functions.append(function_from_bytes(entry, region.data[a:b], start + a, v, name))
+            fn = function_from_bytes(entry, region.data[a:b], start + a, v, name)
+            fn.uso = {'section': region.offset, 'start': a, 'size': b - a, 'relocs': function_relocations(region, a, b - a)}
+            result.functions.append(fn)
         count += len(bodies)
     if count:
         result.analysis_base = result.image

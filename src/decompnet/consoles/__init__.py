@@ -350,6 +350,16 @@ class Console:
 
         return match.link(obj, name, target, symbols, read)
 
+    def export_overlay(self, target):
+        """Return the checked cartridge placement for an independently loaded function."""
+        return None
+
+    def rebuild_overlays(self, image, entries):
+        """Put compiled overlay text back in the cartridge using its loader format."""
+        if entries:
+            raise ValueError('This console cannot rebuild exported overlays.')
+        return image
+
     def function_asm(self, fn) -> str:
         """ROM mode: a function's assembly, as the project stores and shows it."""
         from ..rom import split
@@ -364,6 +374,10 @@ class Console:
         """ROM mode: what a function's row must keep besides its bytes (GBA: whether it's Thumb)."""
         if getattr(fn,'entry_aliases',None):
             return {'asm_code': 'The closed body has an independent assembly entry inside its extent.'}
+        return {}
+
+    def function_target_meta(self, fn) -> dict:
+        """Additional target facts that require rejudging saved C when they change."""
         return {}
 
     def function_status(self, fn) -> str:

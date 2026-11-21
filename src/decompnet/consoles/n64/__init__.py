@@ -5,7 +5,7 @@
   aliases for its modules. The console gives it the MIPS code reader its audio and fonts use (`asset_regions`).
 - rom.py: the ROM file: its byte order (.z64, .v64, .n64), header and a first guess at the compiler.
 - code.py: code splat's own look misses: segments the game loads later, and code kept compressed in the ROM.
-- uso.py: bounded module directories and Yay0 text for donor-assisted coverage review.
+- uso.py / uso_match.py: bounded USO text and relocations, matching and cartridge reconstruction.
 - loader_code.py: full-bank closed-body recovery with CPU call, callback and adjacency evidence.
 - loader_mapping.py: bank mappings corroborated by constant arguments to independent loader helpers.
 - boot_mapping.py: returning TLB boot stubs separated from code with a strongly supported later load mapping.
@@ -222,6 +222,78 @@ class Nintendo64(Console):
         from .code import relocated_switch_ranges
 
         return relocated_switch_ranges(image, segments)
+
+    def function_target_meta(self, fn):
+        info = getattr(fn, 'uso', None)
+        return {'uso': info} if info is not None else {}
+
+    def target_from_row(self, fn, cfg):
+        import json
+
+        from .uso_match import Target
+
+        target = super().target_from_row(fn, cfg)
+        row = dict(fn)
+        offset = row.get('rom_offset')
+        banks = cfg.get('donor_overlays') or {}
+        if not banks or offset is None or offset < min(banks.values()):
+            return target
+        info = json.loads(row.get('meta') or '{}').get('uso', {})
+        if (banks.get(str(info.get('section'))) != offset - target.vram
+                or info.get('start') != target.vram or info.get('size') != len(target.code)):
+            info = {'section': None, 'relocs': None}
+        return Target(**vars(target), uso=info)
+
+    def target_object(self, fn, cfg, symbols):
+        from ...rom.match import canonical_target
+        from .uso_match import Target, symbolic_target
+
+        target = self.target_from_row(fn, cfg)
+        return symbolic_target(target) if isinstance(target, Target) else canonical_target(target, symbols)
+
+    def link_function(self, obj, name, target, symbols, read):
+        from . import uso_match
+
+        if isinstance(target, uso_match.Target):
+            return uso_match.link(obj, name, target.code, target.uso)
+        return super().link_function(obj, name, target, symbols, read)
+
+    def export_overlay(self, target):
+        from .uso_match import Target
+
+        return target.uso if isinstance(target, Target) and target.uso['relocs'] is not None else None
+
+    def rebuild_overlays(self, image, entries):
+        from .uso import rebuild
+
+        return rebuild(image, entries)
+
+    def function_asm(self, fn):
+        from dataclasses import replace
+
+        import rabbitizer
+
+        from .uso_match import alias
+
+        info = getattr(fn, 'uso', None)
+        if not info or not info['relocs']:
+            return super().function_asm(fn)
+        lines = list(fn.lines)
+        for at, kind, index in info['relocs']:
+            line = lines[at // 4]
+            name = alias(info['section'], index)
+            if kind in (4, 5, 6):
+                field = line.word & (0x3ffffff if kind == 4 else 0xffff)
+                mask = {4: '', 5: '%hi', 6: '%lo'}[kind]
+                immediate = name if not mask else f'{mask}({name})'
+                if field:
+                    # Keep the encoded addend visible when it is more than a symbol reference.
+                    immediate = f'{immediate} /* encoded addend 0x{field:X} */'
+                insn = rabbitizer.Instruction(line.word, line.vram)
+                parts = insn.disassemble(immOverride=immediate).split(None, 1)
+                if len(parts) == 2:
+                    lines[at // 4] = replace(line, operands=parts[1])
+        return super().function_asm(replace(fn, lines=lines))
 
     def split_game(self, workdir: Path, picked: Picked, *, symbols: list[str] | None = None, log=print):
         from .code import recover_terminal_display_lists
