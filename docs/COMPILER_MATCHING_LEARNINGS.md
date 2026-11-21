@@ -10062,3 +10062,16 @@ No difference: moving each local declaration to the front or back, `bonusTable` 
 real game, not byte-identical; decomp-repair 0.5.162's `block_register_repairs` reproduces the first three
 steps' sources and splits the temporaries, and the deep permuter offers them first when register rows
 dominate the diff.
+
+### Keep a conditional halfword update in the guarded arm
+
+Three fresh N64 drafts from `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` lost the first argument at a call
+following a guarded unsigned halfword increment or decrement. The target loaded the field into the second argument
+register, compared the original value, then updated that register in the branch delay slot. On fallthrough it stored
+the halfword back and prepared the second argument for the call. The first argument kept its entry value.
+
+Restoring the first argument alone left register allocation differences. Computing the updated halfword inside the
+guard and passing it as the second argument matched all 56, 60, and 64 bytes from fresh draft scores 35, 330, and 335.
+The last case subtracts one more after masking to 16 bits. The rule checks the target branch destination, that the
+load and store address the same halfword, and that the original first argument reaches the call. The independently
+archived sources matched as controls.
