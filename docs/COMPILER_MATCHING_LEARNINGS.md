@@ -1,5 +1,19 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: share a byte-store constant with a signed divide
+
+An isolated N64 replay used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.
+The target used one positive 255 register for byte stores and a signed
+division. The draft stored through signed byte pointers, so GCC hoisted
+minus one for the stores and loaded 255 again for division. Writing the
+same three byte values through unsigned pointers brought the linked score
+from 385 to 230. The target incremented the loop counter in the delay slot
+of the null-result branch and stored the halfword initializer in the
+successful path's call delay slot. An explicit null-result increment and
+continue, a one-shot scope around the successful iteration's increment,
+and moving the halfword initializer before the call brought the linked
+score to zero. Reordering the initializer alone did not improve the draft.
+
 ### KMC GCC 2.7.2: shorten expression lifetimes in a 3-by-3 float grid
 
 An isolated N64 replay used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.
