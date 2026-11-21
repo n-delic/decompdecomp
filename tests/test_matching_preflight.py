@@ -346,3 +346,43 @@ def test_relocation_recovery_resumes_and_rejudges_the_source_before_clearing_the
     assert result['relinked']['baseline'] == fn['best_source']
     assert [flags for flags, _ in state['calls']] == [['-O2'], ['-O2']]
     assert not state['suggested']
+
+
+def test_displaced_jump_table_keeps_a_clean_compiler_profile_as_a_search_lead(monkeypatch):
+    from decompnet.app import switch_tables
+
+    net, proj, fn, state = setup()
+    proj['arch'] = 'mips'
+    net.cfg(proj)['compiler']['toolchain'] = 'gcc-2.7.2-kmc'
+    monkeypatch.setattr(switch_tables, 'read', lambda *args: [(0, [4100, 4104])])
+    logs = []
+
+    def judge(project, function, toolchain, flags, source):
+        state['calls'].append(flags)
+        if '-fno-schedule-insns' in flags:
+            return False, SimpleNamespace(score=90), ''
+        return False, SimpleNamespace(score=50), "your code refers to .rodata+0x0 where the ROM's code has no address"
+
+    net._judge_with = judge
+    assert not preflight.run(net, proj, fn, log=logs.append, max_profiles=1).get('jump_table_profile')
+    result = preflight.run(net, proj, fn, log=logs.append, max_profiles=2)
+    assert state['calls'][:3] == [['-O2'], ['-O2', '-fno-schedule-insns'], ['-O2', '-fno-schedule-insns2']]
+    assert result['jump_table_profile']['score'] == 90
+    assert result['jump_table_profile']['flags'] == ['-O2', '-fno-schedule-insns']
+    assert 'Jump-table relocation cleared' in '\n'.join(logs)
+    assert not state['applied'] and not state['suggested']
+    assert fn['best_score'] == 50
+
+
+def test_jump_table_search_scores_only_clean_candidates():
+    from decompnet.app import profile_climb
+
+    net, proj, fn, _ = setup()
+    search = SimpleNamespace(net=net, tested=0, report=lambda: None)
+    profile = net.cfg(proj)['compiler']
+    source = fn['best_source']
+    net._judge_with = lambda *args: (False, SimpleNamespace(score=20), 'unplaced table')
+    assert profile_climb._judge(search, proj, fn, profile, source, require_clean=True) is None
+    net._judge_with = lambda *args: (False, SimpleNamespace(score=30), '')
+    assert profile_climb._judge(search, proj, fn, profile, source, require_clean=True) == 30
+    assert search.tested == 2

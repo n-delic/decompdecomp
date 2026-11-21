@@ -7,6 +7,7 @@ from .. import compiler, toolchains
 from ..network import NetworkError
 from ..project import compiler_for
 from .candidate_diagnostics import unresolved
+from .switch_tables import relocation_profiles
 
 MAX_PROFILES = 4
 
@@ -98,11 +99,12 @@ def _run(net, proj, fn, log, check, max_profiles):
     candidates = [(own['toolchain'], tuple(flags)) for flags, _ in probes]
     input_digest = net._comparison_digest(proj, fn, fn['best_source'], candidates)
     from .baseline_status import revision
-    key = 'matching-preflight-v6:'+revision()+':'+input_digest+':'+hashlib.sha256(repr(probes).encode()).hexdigest()
+    key = 'matching-preflight-v7:'+revision()+':'+input_digest+':'+hashlib.sha256(repr(probes).encode()).hexdigest()
     result = {'tested': 0, 'best': None, 'pending': 0}
     best_key = None
     relocation_source = None
     allowance = min(MAX_PROFILES, max_profiles)
+    jump_probes = []
     def ensure():
         if check() is False:
             raise PreflightStopped()
@@ -124,6 +126,10 @@ def _run(net, proj, fn, log, check, max_profiles):
                     item = {'toolchain': own['toolchain'], 'flags': list(flags), 'source': source,
                             'score': None if diff is None else 0 if exact else max(1,diff.score),
                             'exact': bool(exact), 'link': unresolved([problems]), 'notified': False}
+                    if index == 0 and diff is not None and not exact:
+                        item['jump_profiles'] = relocation_profiles(net, proj, fn, own, problems)
+                    if (flags, source) in jump_probes:
+                        item['clean_link'] = not problems
                     if index == 0 and not exact and own['toolchain'] == 'gcc-2.7.2-kmc':
                         rows = instruction_rows(getattr(diff, 'rows', []))
                         inferred = [list(flags) for flags in kmc_priorities(own, assembly, rows)]
@@ -147,6 +153,13 @@ def _run(net, proj, fn, log, check, max_profiles):
                     inferred = [(variant, source) for variant in item['inferred']]
                     probes[1:] = halfword + inferred + [probe for probe in probes[1:]
                                                         if probe not in halfword and probe not in inferred]
+                if index == 0 and item.get('jump_profiles'):
+                    jump_probes = [(flags, source) for flags in item['jump_profiles']]
+                    probes[1:] = jump_probes + [probe for probe in probes[1:] if probe not in jump_probes]
+                if (flags, source) in jump_probes and item.get('clean_link') and item['score'] is not None:
+                    old = result.get('jump_table_profile')
+                    if old is None or item['score'] < old['score']:
+                        result['jump_table_profile'] = item
                 if index == 0 and item.get('relocation_source'):
                     relocation_source = item['relocation_source']
                     probes.insert(1, (list(own['flags']), relocation_source))
@@ -184,6 +197,9 @@ def _run(net, proj, fn, log, check, max_profiles):
                    (fn['id'],key,'preflight','resumable compiler preflight',json.dumps(result)))
     if result['pending']:
         log(f"Compiler preflight has {result['pending']} untested profiles remaining for this saved source/context; later passes resume them.")
+    if relocated := result.get('jump_table_profile'):
+        log('Jump-table relocation cleared with ' + ' '.join(relocated['flags']) +
+            f" (linked score {relocated['score']:,}).")
     if result.get('link'):
         log(result['link']['message'])
     best = result.get('best')

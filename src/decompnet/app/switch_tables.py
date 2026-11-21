@@ -9,6 +9,19 @@ def read(net, proj, fn):
     return [(low, targets) for _, low, targets in _read(net, proj, fn)]
 
 
+def relocation_profiles(net, proj, fn, profile, problems):
+    """Try KMC scheduling changes when a compiled table has no aligned ROM relocation."""
+    if (dict(proj).get('arch') != 'mips' or profile['toolchain'] != 'gcc-2.7.2-kmc'
+            or not re.search(r'\.rodata\+0x[0-9A-F]+ where the ROM.s code has no address', problems or '')
+            or not read(net, proj, fn)):
+        return []
+    current = profile['flags']
+    return [[flag for flag in current if flag != enable] + [disable]
+            for enable, disable in (('-fschedule-insns', '-fno-schedule-insns'),
+                                    ('-fschedule-insns2', '-fno-schedule-insns2'))
+            if disable not in current]
+
+
 def _read(net, proj, fn, *, diagnostic=False):
     """MIPS assembly records the lower case bound and table address; other ISAs keep generic repairs."""
     if proj['arch']!='mips' or not getattr(net,'is_rom',lambda p:False)(proj):

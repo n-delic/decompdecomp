@@ -9576,3 +9576,14 @@ scored 40; `r = field + (...)` in one expression scored 70. Assigning the
 difference (not the product) to the shared local scored 685: the store
 no longer merged. Evidence level: one new exact match on a real game,
 not a controlled regression test.
+
+### Scheduling a displaced jump-table reference
+
+A 10,012-byte N64 function compiled with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` scored 49111 with an
+unplaced jump-table relocation. Its candidate's high-half reference landed
+at the ROM's low-half reference. Adding `-fno-schedule-insns` cleared the
+relocation error and scored 73225 under the linked judge with the same C.
+The clean profile provides a separate search starting point. The function
+still needs an exact match before the compiler setting can be applied
+automatically. The pinned compiler rejects `-fno-jump-tables`.

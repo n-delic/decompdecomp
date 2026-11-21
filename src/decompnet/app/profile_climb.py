@@ -101,21 +101,21 @@ def neighbour_profile(net, proj, cfg, fn, tested):
     return None
 
 
-def _judge(search, proj, fn, profile, source):
+def _judge(search, proj, fn, profile, source, *, require_clean=False):
     from ..network import NetworkError
     from ..toolchains import ToolchainError
     search.tested += 1
     search.report()
     try:
-        exact, diff, _ = search.net._judge_with(proj, fn, profile['toolchain'], profile['flags'], source)
+        exact, diff, problems = search.net._judge_with(proj, fn, profile['toolchain'], profile['flags'], source)
     except (ToolchainError, NetworkError):
         return None  # (a profile this machine can't run, e.g. one needing a runner not prepared: skipped)
-    if diff is None:
+    if diff is None or (require_clean and problems):
         return None
     return 0 if exact else max(1, diff.score)
 
 
-def climb(search, agent, proj, fn, source, profile, score, seed=0):
+def climb(search, agent, proj, fn, source, profile, score, seed=0, *, require_clean=False):
     """Greedy search under `profile` from `source` (scoring `score` there). 0 when an exact pair was found and handed
     to deep_profiles.probe; else the best score reached under the profile (its C kept in search.profile_bests)."""
     from decomprepair.permuter import mutate
@@ -163,7 +163,7 @@ def climb(search, agent, proj, fn, source, profile, score, seed=0):
                 break
             search.check()
             spent += 1
-            candidate = _judge(search, proj, fn, profile, text)
+            candidate = _judge(search, proj, fn, profile, text, require_clean=require_clean)
             if candidate is None or candidate >= best:
                 continue
             best_source, best = text, candidate

@@ -323,6 +323,7 @@ class Search(Permuter):
         result = run(self.net, proj, fn, self.log, self.check, max_profiles=self.limit-self.tested)
         self.tested += result['tested']
         self.relinked_baseline = result.get('relinked')
+        self.jump_table_profile = result.get('jump_table_profile')
         if result.get('link'):
             raise NetworkError(result['link']['message'])
         if self.net._function(fn['name'], proj['slug'])['status'] == 'matched' and self.best != 0:
@@ -1522,7 +1523,15 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
                         fn = net._function(name, slug)
                         if baseline == 0:
                             reason = 'Matched'
-                    if not fork and baseline == measured_baseline and not relabel:
+                    jump_profile = getattr(search, 'jump_table_profile', None)
+                    if baseline and not fork and not relabel and jump_profile:
+                        from . import profile_climb
+                        search.phase = 'jump-table relocation repair'
+                        profile = {key: jump_profile[key] for key in ('toolchain', 'flags')}
+                        if profile_climb.climb(search, agent, proj, fn, jump_profile['source'], profile,
+                                               jump_profile['score'], require_clean=True) == 0:
+                            reason = PROFILE_LEAD
+                    elif not fork and baseline == measured_baseline and not relabel:
                         # A productive source pass continues under its measured compiler.
                         # (code built with other settings: before the local repairs spend their half of the time,
                         # measure the profiles its habits point to and climb under one that scores the C better than
