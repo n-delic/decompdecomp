@@ -12101,3 +12101,12 @@ target hoists neither, because `high`/`low` use the register budget loop.c check
 decomp-repair 0.5.276 `reused_param_alias` (steps 4 and the inlining) and `dead_call_arg_temp` (step 3) propose them;
 on the m2c-style source they chain 1023 to 623 with the judge-worker. The last step is the existing address-temporary
 shape. One function, not controlled across others.
+
+### Follow an early call address through stack argument setup
+
+With gcc-2.7.2-kmc `-G0 -mips3 -mgp32 -mfp32 -O2`, an N64 draft scaled a byte
+offset by the size of a global's declared type. The final shift was five
+instead of three. The target formed the pointer before several stack
+argument stores. Tracking that early address to the call and casting
+the global base to a byte pointer gave an exact match in 38 candidates.
+The released control remained at score 10 after 100 candidates.
