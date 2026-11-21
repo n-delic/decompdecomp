@@ -1591,6 +1591,8 @@ Iguana resource archives now expose CI4 and CI8 bitmap banks with palette-backed
 and padded texture row support. Their QMesh resources also expose wireframe geometry from
 validated vertex and triangle commands. The same archive directory pairs relocated B1 wave
 banks with compact MIDI sequences and locates DEAN commentary clips for bounded playback.
+Packed archive directories also support playback using codebooks recovered from the
+checksummed program output.
 
 Audio browser now prepares selected samples without autoplay. Native libmus pointer
 banks validate tuning/loop/book graphs and uniquely fitting marked wave tables, with
