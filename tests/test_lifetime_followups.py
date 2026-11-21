@@ -139,7 +139,9 @@ def test_deep_search_spends_same_allowance_on_residual_from_worse_alternative(mo
     from tests.test_deep_permuter import Log, setup
     net=setup(monkeypatch)
     net.is_rom=lambda *a:False
-    original=net.function()['best_source']
+    original = 'int f(int a) { return a; }'
+    with net.store.tx() as db:
+        db.execute('UPDATE functions SET best_source=? WHERE name=?', (original, 'f'))
     measured=[BEFORE]
     monkeypatch.setattr(repair_ranking,'evidence',lambda *a:measured[0])
     monkeypatch.setattr(deep_permuter.Search,'_baseline',lambda *a:(115,0))
@@ -159,7 +161,7 @@ def test_deep_search_spends_same_allowance_on_residual_from_worse_alternative(mo
         return score
     monkeypatch.setattr(Permuter,'_score',judge)
     result=deep_permuter.run(net,'game','f',1,4,Log())
-    assert result['matched'] and result['tested']==2
+    assert result['matched'] and result['tested']==2, (result, tested)
     assert tested==['alternative','exact']
     assert net.store.one('SELECT COUNT(*) n FROM claims')['n']==0
 

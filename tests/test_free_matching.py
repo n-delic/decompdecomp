@@ -319,6 +319,7 @@ def test_typed_sdk_name_can_supply_a_candidate_when_flags_changed_its_fingerprin
     def judge(agent, project, function, candidate):
         seen.append(candidate)
         return {'matched':False,'score':20,'rows':[]}
+    monkeypatch.setattr(pair, '_compile', lambda *_: SimpleNamespace(ok=False))
     monkeypatch.setattr(pair,'try_quietly',judge)
     assert free.run(pair.twins,'destination',Job()) == 0
     assert seen and 'TypedPayload' in seen[0] and 'new(int x)' in seen[0]

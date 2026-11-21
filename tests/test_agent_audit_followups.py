@@ -113,7 +113,7 @@ def test_context_inference_never_chooses_another_agents_claim(tmp_path,monkeypat
 def test_candidate_base_is_enum_in_api_schema():
     # API schema is not a free-form string where a revision hash can be mistaken for a base.
     tool=next(t for t in api_tool_schemas() if t['function']['name']=='get_candidate')
-    assert set(tool['function']['parameters']['properties']['base']['enum'])=={'current','saved_best','last_compiling','reported_corrected'}
+    assert set(tool['function']['parameters']['properties']['base']['enum'])=={'current','saved_best','last_compiling','reported_corrected','regional_alternative'}
     # get_context must actually expose the optional function argument to API agents.
     context=next(t for t in api_tool_schemas() if t['function']['name']=='get_context')
     assert 'function' in context['function']['parameters']['properties']
@@ -149,7 +149,7 @@ def test_mcp_candidate_base_enum_and_context_schema(tmp_path,monkeypatch):
     server=tools.build_mcp(net,lambda ctx:(agent,'game'))
     definitions=anyio.run(server.list_tools)
     schema=next(t for t in definitions if t.name=='get_candidate').input_schema
-    assert set(schema['properties']['base']['enum'])=={'current','saved_best','last_compiling','reported_corrected'}
+    assert set(schema['properties']['base']['enum'])=={'current','saved_best','last_compiling','reported_corrected','regional_alternative','measured_option'}
 
 
 def test_one_low_effort_compile_can_receive_guidance_but_full_budget_cannot(tmp_path,monkeypatch):

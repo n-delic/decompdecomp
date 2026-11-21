@@ -155,8 +155,10 @@ def scope(net, proj, fn, source, donor):
     if net.fork_slug(proj['slug']):
         _, fp, _ = net.forks.get(proj['slug'])
         context += input_stamp(fp.root)
+    # Saving an attempt advances this counter without changing compilation inputs.
+    config = {key: value for key, value in net.cfg(proj).items() if key != 'progress_revision'}
     return 'partial-v1:' + hashlib.sha256(json.dumps([donor['best_score'],
-        trial_key(source, context, net.cfg(proj), fn, [tuple(r) for r in net.project_store(proj['id']).all('SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name', proj['id'])])], sort_keys=True).encode()).hexdigest()
+        trial_key(source, context, config, fn, [tuple(r) for r in net.project_store(proj['id']).all('SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name', proj['id'])])], sort_keys=True).encode()).hexdigest()
 
 
 def input_stamp(root):

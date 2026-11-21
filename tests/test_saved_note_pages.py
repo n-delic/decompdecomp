@@ -6,7 +6,7 @@ import pytest
 from decompnet.app.saves import _note_rows
 from decompnet.store import Store
 
-OLD = ('SELECT n.text,n.created_at,n.score_before,n.score_after,n.agent_id,f.name AS fn '
+OLD = ('SELECT n.text,n.created_at,n.score_before,n.score_after,n.handoff_inputs,n.agent_id,f.name AS fn '
        'FROM notes n LEFT JOIN functions f ON f.id=n.function_id WHERE n.project_id=? ORDER BY n.id')
 
 

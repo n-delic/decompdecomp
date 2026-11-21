@@ -1,6 +1,7 @@
 """Automatic match commits exercise the ordinary record, notes, progress and local Git pipeline."""
 import json
 import subprocess
+import time
 
 import pytest
 
@@ -29,16 +30,26 @@ def automatic(progress, monkeypatch):
     return net, root, remote, agent
 
 
-def match(automatic, name='f', note=None):
+def match(automatic, name='f', note=None, *, polishing=False):
     net, _, _, agent = automatic
     fn = net._function(name, 'game')
-    net._record(fn, agent, 0, f'void {name}(void) {{ return; }}', 1, matched=True)
+    net._record(fn, agent, 0, f'void {name}(void) {{ return; }}', 1, matched=True, verified_replacement=polishing)
     if note is not None:net.add_note(agent, 'game', note, name)
 
 
 def enable(automatic):
     net, root, _, _ = automatic
     return match_commits.configure(net, 'game', True, str(root))
+
+
+def drain_matches(net, run_once):
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        run_once()
+        state = match_commits.status(net, net.project_row('game', sync=False))
+        if not state['pending'] or state['error']:
+            return
+        time.sleep(.01)  # Busy project or repository locks leave the commit pending for the next cycle.
 
 
 def test_existing_project_stays_off_and_enabling_does_not_backfill(automatic):
@@ -94,7 +105,7 @@ def test_one_commit_per_function_uses_notes_and_removes_only_its_draft(automatic
     enable(automatic)
     match(automatic, 'f', 'Use the signed comparison\n\nPreserve loop order and the literal `$(text)`.')
     match(automatic, 'g', 'Use an unsigned return value')
-    match_commits.process(net, 'game')
+    drain_matches(net, lambda: match_commits.process(net, 'game'))
     assert int(git(root, 'rev-list', '--count', 'HEAD')) == before + 2
     assert git(root, 'log', '-2', '--format=%s').splitlines() == ['Use an unsigned return value', 'Use the signed comparison']
     assert 'Preserve loop order and the literal `$(text)`.' in git(root, 'log', '-1', '--format=%B', 'HEAD^')
@@ -128,7 +139,7 @@ def test_queue_wait_leaves_the_project_lock_free_and_keeps_the_recorded_verdict(
                 with store.tx() as db:
                     db.execute("UPDATE functions SET status='open',matched_source=NULL WHERE name='f'")
             else:
-                net._record(net._function('f', 'game'), agent, 0, polished, 1, matched=True)
+                net._record(net._function('f', 'game'), agent, 0, polished, 1, matched=True, verified_replacement=True)
         finally:
             lock.release()
 
@@ -159,7 +170,7 @@ def test_missing_notes_use_fallback_without_repeating_after_late_notes(automatic
     assert git(root, 'log', '-1', '--format=%s') == 'Match f'
     assert match_commits.status(net, net.project_row('game'))['pending'] == 0
     net.release_function(agent, 'f', 'Matching agent handoff notes', 'game')
-    match(automatic, note='Polishing the same match does not add another match commit')
+    match(automatic, note='Polishing the same match does not add another match commit', polishing=True)
     match_commits.process(net, 'game')
     assert git(root, 'rev-parse', 'HEAD') == committed
 
@@ -233,7 +244,8 @@ def test_autosave_drains_enabled_matches(automatic):
     enable(automatic)
     match(automatic, note='Saved from the ordinary autosave worker')
     before = git(root, 'rev-parse', 'HEAD')
-    saves.Autosave(net).run_once()
+    autosave = saves.Autosave(net)
+    drain_matches(net, autosave.run_once)
     assert git(root, 'rev-parse', 'HEAD') != before
     assert git(root, 'log', '-1', '--format=%s') == 'Saved from the ordinary autosave worker'
 
@@ -391,7 +403,7 @@ def test_later_edits_do_not_replace_the_queued_verified_source(automatic):
     original = 'void f(void) { return; }'
     # A later exact polish keeps matched status and is not another new match.
     fn = net._function('f', 'game')
-    net._record(fn, agent, 0, 'void f(void) { /* polished */ return; }', 1, matched=True)
+    net._record(fn, agent, 0, 'void f(void) { /* polished */ return; }', 1, matched=True, verified_replacement=True)
     net.add_note(agent, 'game', 'Original matching notes', 'f')
     match_commits.process(net, 'game')
     assert git(root, 'show', 'HEAD:src/f.c') == original
@@ -427,6 +439,7 @@ def test_new_saved_contributions_use_the_contributing_agents_notes(automatic, mo
     net.add_note(agent, 'game', 'The contributing agent found this match', 'f')
     monkeypatch.setattr(net, 'apply_remote_layout', lambda *args: None)
     monkeypatch.setattr(net, '_compile', lambda *args: SimpleNamespace(ok=True, obj=b'fake', log=''))
+    monkeypatch.setattr('decompnet.app.progress.toolchains.installed', lambda _: root)
     def attempt(worker, name, source, slug):
         net._record(net._function(name, slug), worker, 0, source, 1, matched=True)
         return {'matched': True}
@@ -680,7 +693,7 @@ def test_an_older_queued_source_never_replaces_a_newer_checkpointed_one(automati
     enable(automatic)
     match(automatic)
     newer = 'void f(void) { /* polished */ return; }'
-    net._record(net._function('f', 'game'), agent, 0, newer, 1, matched=True)
+    net._record(net._function('f', 'game'), agent, 0, newer, 1, matched=True, verified_replacement=True)
     head = checkpoint(automatic)
     match_commits.process(net, 'game')
     assert git(root, 'rev-parse', 'HEAD') == head

@@ -48,7 +48,7 @@ def test_job_captures_project_before_request_context_ends():
 def test_autosave_filters_before_opening_project_databases():
     activity, _, _, _ = policy()
     activity.touch('active')
-    rows = [{'slug':s,'config':'{}'} for s in ['idle', 'active']]
+    rows = [{'slug':s,'root':'','config':'{}'} for s in ['idle', 'active']]
     opened = []
     store = SimpleNamespace(all=lambda *_: rows)
     net = SimpleNamespace(store=store, project_activity=activity,
@@ -97,7 +97,7 @@ def test_automatic_reuse_filters_idle_projects_before_opening_stores():
     project = {'id':1,'arch':'mips','big_endian':1,'config':'{}'}
     other = {'id':3,'slug':'active','arch':'mips','big_endian':1,'config':'{}'}
     net = SimpleNamespace(store=SimpleNamespace(all=lambda *_:rows), links={}, project_activity=activity,
-                          cfg=lambda p:{}, project_store=lambda key: opened.append(key) or SimpleNamespace(one=lambda *_:other))
+                          cfg=lambda p:{}, project_store=lambda key: opened.append(key) or SimpleNamespace(one=lambda sql, *_: other if 'FROM projects' in sql else {'matched':0}))
     assert list(compatible(net, project, active_only=True)) == [other]
     assert opened == [3]
 

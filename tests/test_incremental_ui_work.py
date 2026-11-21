@@ -136,7 +136,7 @@ def test_autosave_reuses_project_inventory_but_still_checks_every_project(tmp_pa
     calls = []
     read = net.store.all
     def measured(sql, *args):
-        if sql == 'SELECT slug,root,config FROM projects':
+        if sql == 'SELECT id,slug,root,config FROM projects':
             calls.append(sql)
         return read(sql, *args)
     monkeypatch.setattr(net.store, 'all', measured)

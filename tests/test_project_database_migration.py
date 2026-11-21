@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from decompnet.app import repair_outcomes
 from decompnet.app.agents import SCHEMA as SESSION_SCHEMA
 from decompnet.app.transcripts import Transcripts, service
 from decompnet.network import Network
@@ -26,6 +27,7 @@ def close(net):
 
 def legacy(path):
     net = Network(path)
+    repair_outcomes.prepare(net.repair_feedback)
     with net.store.tx() as db:
         for sql in SESSION_SCHEMA:db.execute(sql)
         db.execute("INSERT INTO agents(id,name,token_hash) VALUES(1,'worker','token')")
@@ -36,6 +38,8 @@ def legacy(path):
             db.execute("INSERT INTO context_versions(project_id,version,header,unit) VALUES(?,1,?,'')",(pid,'int '+slug+';'))
             db.execute('INSERT INTO attempts(id,function_id,agent_id,source,score,compiled,created_at) VALUES(?,?,1,?,10,1,1)',
                        (pid,10*pid,('attempt '+slug+'\n')*1000))
+            db.execute('INSERT INTO repair_coverage_verdicts VALUES(?,?,?,?,?)',
+                       (pid,pid,'source hash','family '+slug,1))
             db.execute('INSERT INTO notes(project_id,function_id,text) VALUES(?,?,?)',(pid,10*pid,slug+' note'))
             db.execute("INSERT INTO helper_sessions(id,helper_id,project,kind,model,agent,started_at) VALUES(?,?,?,'codex','test','worker',1)",(pid,pid,slug))
             db.execute('INSERT INTO settings VALUES(?,?)',('agent-review:'+str(10*pid),json.dumps({'owner':slug})))
@@ -53,6 +57,7 @@ def test_upgrade_moves_operations_and_transcripts_preserving_exact_payloads(tmp_
     try:
         assert state(net.store)['phase']=='ready'
         assert net.store.one('SELECT COUNT(*) n FROM functions')['n']==0
+        assert net.store.one('SELECT COUNT(*) n FROM repair_coverage_verdicts')['n']==0
         assert net.store.one('SELECT COUNT(*) n FROM helper_messages')['n']==0
         assert net.store.one('SELECT COUNT(*) n FROM text_payloads')['n']==0
         assert net.store.one("SELECT value FROM settings WHERE key='agent-prompt-overrides'")
@@ -64,6 +69,7 @@ def test_upgrade_moves_operations_and_transcripts_preserving_exact_payloads(tmp_
             assert store.one('SELECT best_source FROM functions')['best_source']==('source '+slug+'\n')*1000
             assert store.one('SELECT header FROM context_versions')['header']=='int '+slug+';'
             assert store.one('SELECT source FROM attempts')['source']==('attempt '+slug+'\n')*1000
+            assert [row['family'] for row in store.all('SELECT family FROM repair_coverage_verdicts')]==['family '+slug]
             assert store.one('SELECT value FROM settings WHERE key=?','agent-review:'+str(10*pid))
             assert not store.one('SELECT value FROM settings WHERE key=?','agent-review:'+str(10*(3-pid)))
             transcript = service(net).for_project(slug)

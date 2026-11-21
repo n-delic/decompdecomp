@@ -4,10 +4,11 @@ from io import BytesIO
 
 from elftools.elf.elffile import ELFFile
 
+from decompnet import consoles
 from decompnet.app import candidate_diagnostics as diagnostics
 from decompnet.app.engine.judging import JudgeMixin
-from decompnet.arch.mips_image import linked_object
 from decompnet.rom.match import LinkResult
+from tests.mips_elf_fixture import linked_object
 
 
 def object_file():
@@ -39,6 +40,7 @@ def test_extra_bodies_are_reported_without_changing_the_function_verdict(monkeyp
     candidate = object()
     monkeypatch.setattr('decompnet.rom.match.link',lambda *args:LinkResult(candidate,True,[],{'.rodata':{0:4096,8:4200}}))
     class Net(JudgeMixin):
+        def console(self, proj):return consoles.get("n64")
         def is_rom(self, proj):return True
         def _rom_target(self, fn):return None
         def symbols(self, pid):return None
@@ -80,6 +82,7 @@ def test_raw_numeric_address_feedback_does_not_change_the_verdict(monkeypatch):
     candidate=FunctionObj('f','mips',True,b,[])
     monkeypatch.setattr('decompnet.rom.match.link',lambda *args:LinkResult(candidate,False,[],{},False,b))
     class Net(JudgeMixin):
+        def console(self, proj):return consoles.get("n64")
         def is_rom(self, proj):return True
         def _rom_target(self, fn):return SimpleNamespace(code=a)
         def _target_obj(self, fn, proj):return target

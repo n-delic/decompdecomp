@@ -70,7 +70,12 @@ def test_mac_hosts_use_pinned_tools(cpu, monkeypatch):
     assert toolchains.get("gcc-2.7.2-kmc").supported
     assert toolchains.get("ee-gcc-2.96").supported
     assert toolchains.get("ee-gcc-2.96").via_vm
-    assert all(p["sha256"] and p.get("rosetta") for p in toolchains.get("gcc-2.7.2-kmc").parts_for())
+    parts = toolchains.get("gcc-2.7.2-kmc").parts_for()
+    assert parts and all(part["sha256"] for part in parts)
+    if cpu == "arm64":
+        assert all(part.get("build") and not part.get("rosetta") for part in parts)
+    else:
+        assert all(part.get("rosetta") for part in parts)
 
 
 def test_missing_rosetta_is_an_actionable_error_before_download(monkeypatch, tmp_path):
@@ -80,13 +85,13 @@ def test_missing_rosetta_is_an_actionable_error_before_download(monkeypatch, tmp
     monkeypatch.setattr(toolchains, "_download", lambda *a, **kw: downloads.append(a))
     monkeypatch.setattr(toolchains.subprocess, "run", lambda *a, **kw: SimpleNamespace(returncode=1))
     with pytest.raises(toolchains.ToolchainError, match="softwareupdate --install-rosetta"):
-        toolchains.install("gcc-2.7.2-kmc")
+        toolchains.install("gcc-egcs-2.91.66")
     assert not list(tmp_path.iterdir())
     assert not downloads
     monkeypatch.setattr(toolchains.subprocess, "run", lambda *a, **kw: SimpleNamespace(returncode=0))
-    (tmp_path / "gcc-2.7.2-kmc").mkdir()
-    (tmp_path / "gcc-2.7.2-kmc" / toolchains.MANIFEST).write_text("{}")
-    assert toolchains.require("gcc-2.7.2-kmc") == tmp_path / "gcc-2.7.2-kmc"
+    (tmp_path / "gcc-egcs-2.91.66").mkdir()
+    (tmp_path / "gcc-egcs-2.91.66" / toolchains.MANIFEST).write_text("{}")
+    assert toolchains.require("gcc-egcs-2.91.66") == tmp_path / "gcc-egcs-2.91.66"
     toolchains._intel_mac_runtime_ready.cache_clear()
 
 

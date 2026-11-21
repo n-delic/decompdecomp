@@ -692,6 +692,10 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                                           "required": ["old", "new"]}})),
         "compile_data": ("Judge C defining one data symbol: kept only if it holds the game's bytes there, all of it.",
                          s(name=st("data symbol", True), source=st("C defining it", True))),
+        "compare_candidate_behaviour": ("Compare an already compiled N64 candidate with the original on recorded calls. Diagnostic only.",
+            s(function=st("function", True), revision=st("current candidate revision", True),
+              calls=it("number of recorded calls, 1–3"), vis=it("maximum emulator retraces"),
+              input=st("optional scripted controller input"))),
         "compare_behaviour": ("Does a function behave like the original in a port? Records its first real calls in "
                               "the reversing emulator (N64), runs each through its recompiled and decompiled C, and "
                               "compares results and memory. Slow the first time: 'still running' means call again "

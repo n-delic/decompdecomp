@@ -57,6 +57,8 @@ def test_upgrade_builds_rollups_for_existing_functions(tmp_path):
 def test_sidebar_batches_projects_without_scanning_functions(tmp_path, monkeypatch):
     net=RomNetwork(tmp_path/'db',tmp_path)
     tiny_game(net)
+    with net.store.tx() as db:
+        db.execute("UPDATE projects SET root=? WHERE slug='game'", (str(tmp_path),))
     asked=[]
     read=net.store._read
     monkeypatch.setattr(net.store,'_read',lambda sql,args,single:asked.append(sql) or read(sql,args,single))

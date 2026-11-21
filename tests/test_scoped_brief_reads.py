@@ -43,7 +43,7 @@ def test_verification_symbol_transport_retains_capture_hash_and_invalidation(tmp
         db.executemany('INSERT INTO symbols(project_id,name,address,size,kind) VALUES(1,?,?,?,?)',
                        [('名字\0λ',2**60+1,4,'data'),('alpha',4,0,'data')])
     agent,_=net.local_agent('capture')
-    fn=net._function('f','game');net._record(fn,agent,0,fn['matched_source'],1,matched=True)
+    fn=net._function('f','game');net._record(fn,agent,0,fn['matched_source'],1,matched=True,verified_replacement=True)
     original=net.store.all
     def read(sql,*args):
         assert 'FROM symbols' not in sql,'symbols must use batched metadata'

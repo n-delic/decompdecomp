@@ -3,7 +3,7 @@ import pytest
 
 from decompnet import object_emission, toolchains
 from decompnet.app import candidate_diagnostics
-from decompnet.arch.mips_image import linked_object
+from tests.mips_elf_fixture import linked_object
 
 
 def test_inventory_lists_focal_code_without_changing_verdict():

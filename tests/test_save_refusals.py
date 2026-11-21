@@ -23,11 +23,11 @@ def test_a_save_refused_again_and_again_names_the_file(progress, monkeypatch):
     net, root, _ = progress
     folder = saves.default_folder(net, 'game')
     original, edits = saves._publish, []
-    def editor_writes_meanwhile(target, files, previous=None, expected=None, *, chosen=False):
+    def editor_writes_meanwhile(target, files, previous=None, expected=None, **options):
         if expected is not None:
             edits.append(sorted(files))
             edit_instructions(target, f'An editor saved meanwhile ({len(edits)})')
-        return original(target, files, previous, expected, chosen=chosen)
+        return original(target, files, previous, expected, **options)
     monkeypatch.setattr(saves, '_publish', editor_writes_meanwhile)
     edit_instructions(folder, 'Edited by hand')
     assert net.progress.sync('game', force=True) is False

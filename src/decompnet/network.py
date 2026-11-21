@@ -2300,6 +2300,8 @@ class Network:
             if before_record is not None:
                 before_record()  # scoped callers can reject revoked or stale work before any writes
             current = db.execute("SELECT * FROM functions WHERE id=?", (fn["id"],)).fetchone()
+            if current is None:
+                raise NetworkError("The target inputs changed during compilation. Recheck the updated project.")
             already_matched = current['status'] == 'matched'
             if already_matched and (matched or fn['status'] != 'matched') and not verified_replacement:
                 raise NetworkError(f"{current['name']} is already matched. Call claim_function for the next function.")

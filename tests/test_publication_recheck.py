@@ -1,7 +1,6 @@
 """Only the app's proved file changes may advance a saved-recheck signature."""
 import errno
 import json
-from pathlib import Path
 
 import pytest
 
@@ -23,9 +22,9 @@ def test_publication_does_not_hide_external_edits_during_save(project, monkeypat
     worker.rechecking['game'] = active
     before = active.signature
     if change == 'before':(folder/'best/held.c').write_text('external before save')
-    original = Path.replace
-    def replace(path, target):
-        result = original(path, target)
+    original = saves._replace_text
+    def replace(target, text):
+        result = original(target, text)
         if target == folder/'best/own.c':
             if change == 'untouched':(folder/'best/held.c').write_text('external while saving')
             elif change == 'written':target.write_text('external after app write')
@@ -45,7 +44,7 @@ def test_publication_does_not_hide_external_edits_during_save(project, monkeypat
             elif change == 'deleted-recreated':(folder/'best/retired.c').write_text('external recreation')
             elif change == 'failure':raise OSError(errno.EIO, 'Synthetic write failure')
         return result
-    monkeypatch.setattr(Path, 'replace', replace)
+    monkeypatch.setattr(saves, '_replace_text', replace)
     try:
         if change == 'failure':
             with pytest.raises(OSError, match='Synthetic write failure'):
@@ -76,13 +75,13 @@ def test_overlapping_publications_leave_recheck_guard_invalid(project, monkeypat
     active = _Recheck(folder, worker._signature(folder), ready=True)
     worker.rechecking['game'] = active
     before = active.signature
-    original = Path.replace
-    def replace(path, target):
-        result = original(path, target)
+    original = saves._replace_text
+    def replace(target, text):
+        result = original(target, text)
         if target == folder/'best/outer.c':
             assert saves._publish(folder, {'best/inner.c':'nested app output'})
         return result
-    monkeypatch.setattr(Path, 'replace', replace)
+    monkeypatch.setattr(saves, '_replace_text', replace)
     try:
         assert saves._publish(folder, {'best/outer.c':'outer app output'})
         assert active.signature == before

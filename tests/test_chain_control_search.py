@@ -5,6 +5,7 @@ from decompnet.app import allocation_evidence, allocation_search, deep_permuter,
 from decompnet.arch import get
 from tests.test_deep_permuter import Log
 from tests.test_permute import FakeNet
+from tests.test_register_cycle_search import ROWS as CYCLE_ROWS
 
 CHAIN=[('r','lw $v0, 4($a0)','lw $v1, 4($a1)'),('r','addu $s0, $v0, $a0','addu $s0, $v1, $a1')]
 CONTROL=[('r','move $a0, $s0','move $v0, $s0'),('i','j .L10','j .L20'),(' ','nop','nop')]
@@ -14,8 +15,7 @@ def test_chain_is_local_acyclic_and_does_not_need_a_global_register_cycle():
     d=allocation_evidence.diagnose(CHAIN,'mips')
     assert not d['register_cycles'] and d['register_chains']==[['$a0','$a1'],['$v0','$v1']]
     assert allocation_search.allowance(d)==8
-    cycle=[('r','move $a0, $v0','move $a1, $v1'),('r','move $a1, $v1','move $a0, $v0')]
-    assert allocation_search.allowance(allocation_evidence.diagnose(cycle,'mips'))==24
+    assert allocation_search.allowance(allocation_evidence.diagnose(CYCLE_ROWS,'mips'))==24
     assert 'acyclic register chains' in allocation_evidence.text(CHAIN,'mips')
     assert repair_ranking.order(['constant_local','pointer_local_reuse'],CHAIN)[0]=='pointer_local_reuse'
     # The same physical register may describe unrelated values in another local run.
@@ -31,9 +31,11 @@ def test_chain_is_local_acyclic_and_does_not_need_a_global_register_cycle():
     [('r','lw $a0, 4($v0)','lw $a1, 8($v1)')]*2,
     ['unknown'],
 ])
-def test_uncertain_or_non_chain_evidence_does_not_open_the_lane(rows):
+def test_uncertain_rows_do_not_supply_chain_or_cycle_evidence(rows):
     assert not get('mips').repair_search_hints(rows)['register_chains']
-    assert not allocation_search.allowance(allocation_evidence.diagnose(rows,'mips'))
+    diagnosis = allocation_evidence.diagnose(rows, 'mips')
+    assert not diagnosis['register_chains'] and not diagnosis['register_cycles']
+    assert allocation_search.allowance(diagnosis) <= allocation_search.CHAIN_LIMIT
 
 
 def test_mixed_frame_or_instruction_changes_and_unsupported_processors_do_not_open_lane():
@@ -43,9 +45,9 @@ def test_mixed_frame_or_instruction_changes_and_unsupported_processors_do_not_op
 
 
 @pytest.mark.parametrize('fork',[None,'fork'])
-def test_deep_chain_lane_has_no_diagnostic_capture_and_respects_existing_allowance(monkeypatch,fork):
+def test_deep_chain_lane_skips_capture_when_the_remaining_budget_is_too_small(monkeypatch,fork):
     net=FakeNet();net.is_rom=lambda _:True
-    search=deep_permuter.Search(net,1,20,Log(),net.function())
+    search=deep_permuter.Search(net,1,2,Log(),net.function())
     monkeypatch.setattr(allocation_search,'saved',lambda *a:None)
     def forbidden(*a,**k):pytest.fail('A chain must not spend compiler calls on optional cycle diagnostics.')
     monkeypatch.setattr(allocation_search,'capture',forbidden)

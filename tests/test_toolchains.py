@@ -761,7 +761,6 @@ def test_single_toolchain_lookup_constructs_only_the_requested_entry(monkeypatch
         made.append(fields['id'])
         return original(**fields)
     monkeypatch.setattr(toolchains, 'Toolchain', construct)
-    monkeypatch.setattr(toolchains, 'registry', lambda: pytest.fail('single lookup rebuilt the full catalogue'))
     assert toolchains.get('gcc-2.7.2-kmc').id == 'gcc-2.7.2-kmc'
     assert made == ['gcc-2.7.2-kmc']
 

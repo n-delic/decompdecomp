@@ -386,8 +386,8 @@ class Twins:
         from .metadata_rows import rows as metadata_rows
         rows = metadata_rows(self.net.project_store(proj['id']), ('id','name','unit','meta'), "SELECT id, name, unit, meta FROM functions WHERE project_id=?"
                                   + (" AND status='matched'" if matched_only else "")
-                                  + (" AND id IN (SELECT value FROM json_each(?))" if function_ids is not None else ""),
-                                  proj["id"], *([json.dumps(function_ids)] if function_ids is not None else []))
+                                  + (" AND id IN (SELECT value FROM json_each(?))" if function_ids is not None else "")
+                                  + " ORDER BY id", proj["id"], *([json.dumps(function_ids)] if function_ids is not None else []))
         by_unit: dict[str, list] = defaultdict(list)
         for r in rows:
             by_unit[r["unit"]].append(r)

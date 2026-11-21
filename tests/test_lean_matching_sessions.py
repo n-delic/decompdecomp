@@ -64,6 +64,8 @@ def test_budget_waits_for_parallel_tools_and_blocks_new_calls():
 
 def test_dispatch_enforces_budget_after_completed_tool(monkeypatch):
     monkeypatch.setattr('decompnet.app.tool_policy.record',lambda *a,**kw:None)  # Isolate budget behavior from storage/policy.
+    monkeypatch.setattr(tools,'project_tools',lambda *args, **kwargs: ['project_info'])
+    monkeypatch.setattr('decompnet.app.automatic_assignment.enabled',lambda *args:False)
     net=SimpleNamespace(resolve_function=lambda *args:'f')
     agent=SimpleNamespace(id=1)
     budget=session_budget.start(net,1,'g',{'session_tool_limit':1})

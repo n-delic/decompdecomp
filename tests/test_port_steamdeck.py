@@ -144,6 +144,8 @@ def test_the_window_starts_full_screen_when_asked():
 def test_the_steam_deck_host_compiles_for_x86_64_linux(tmp_path):
     """live.c and window/sdl.c built as the export builds them (the pinned Zig, glibc 2.28, the Deck's Zen 2), from
     whichever computer exports."""
+    if toolchains.installed("zig") is None:
+        pytest.skip("needs the pinned Zig and WABT")
     zig, wabt = toolchains.binary("zig"), toolchains.root() / "wabt"
     if not zig.is_file() or not (wabt / "include" / "wasm-rt.h").is_file():
         pytest.skip("needs the pinned Zig and WABT")

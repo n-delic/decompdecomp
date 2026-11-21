@@ -151,6 +151,7 @@ def test_linked_operands_supply_advice_without_changing_judge_verdict(monkeypatc
     import struct
     from types import SimpleNamespace
 
+    from decompnet import consoles
     from decompnet.app import candidate_diagnostics
     from decompnet.app.engine.judging import JudgeMixin
     from decompnet.elfobj import FunctionObj
@@ -162,7 +163,7 @@ def test_linked_operands_supply_advice_without_changing_judge_verdict(monkeypatc
     net._rom_target=lambda _:SimpleNamespace(code=target_code)
     net.symbols=lambda _:None
     net.reader=lambda *a:None
-    net.console=lambda _:SimpleNamespace(cpu_variant='')
+    net.console=lambda _:consoles.get('n64')
     net._target_obj=lambda *a:FunctionObj('f','mips',True,target_code)
     verdict=SimpleNamespace(exact=False,instructions_exact=False,placements={},problems=[],
                             candidate=FunctionObj('f','mips',True,linked_code),linked_code=linked_code)
