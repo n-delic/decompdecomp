@@ -10303,3 +10303,12 @@ Five earlier N64 drafts had undeclared stack-slot names. Independent archived so
 - With the same compiler options plus `-g3`, a relocated packet passes twelve bytes through unaligned word
   copies. A twelve-byte aggregate compiled at score 10. Storing the terminator through an unsigned byte pointer
   matched all 136 bytes.
+
+### Stage a masked field load before zero argument setup
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, a scratch N64 function scored 180 because
+several instructions were scheduled out of order. The target loads a word before preparing a zero
+argument and masks that word afterward. The draft put the zero first. Reading the field into the same
+32-bit local and then applying the mask lowered the linked score to 120. The deep permuter reproduced
+and saved the improvement. Staging the later call's byte and halfword arguments did not reduce the
+original score. The function still has four reordered instructions.
