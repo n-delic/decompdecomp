@@ -12530,3 +12530,14 @@ With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, 100 attempts
 improved score 50 to 30. The v0.5.293 control stayed at 50. This is a
 partial linked-byte improvement. The rewrite requires the original
 pointer to be reset before its next use.
+
+### KMC GCC 2.7.2: reorder independent loop cursor advances
+
+A scratch draft advanced two word pointers around a third byte-pointer
+step. The linked diff reversed the two word-pointer increments while
+keeping the intermediate instruction and the stride unchanged. Swapping
+only those two source statements recovered both increment instructions.
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, the Deep Permuter
+improved score 40 to 30. The v0.5.295 control stayed at 40 after 100
+attempts. Six register differences remained after the rewrite.
