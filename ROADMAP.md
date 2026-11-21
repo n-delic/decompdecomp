@@ -1633,7 +1633,8 @@ planned; asset format descriptions are advisory text.
 
 ### ROM Explorer
 
-Indexed LZ banks expose named textures, including RDP textures drawn in separately paletted strips.
+Indexed LZ banks expose named textures, including RDP textures drawn in separately paletted strips. Their object
+records expose local F3DEX2 meshes and levels of detail, and packed Standard MIDI banks offer stereo playback.
 
 BAM3 and counted big-endian TIM sprite banks expose individual textures and palettes after bounded decompression.
 Unnamed B1 relocators can establish a nearby sample-table address, including uncached cartridge addresses.
