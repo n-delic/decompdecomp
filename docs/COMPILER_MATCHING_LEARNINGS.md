@@ -10010,3 +10010,16 @@ Three reconstructed N64 drafts matched byte for byte. The archived sources compi
 - With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, forwarding the unchanged first parameter before a reloaded halfword moved the 112-byte draft from score 30 to exact. Using an explicit table symbol also matched. The linked bytes were identical with either relocation spelling.
 - At `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1`, narrowing the index parameter and removing a spurious integer argument to the float call moved score 30 to 10. Casting the relocated base to a byte pointer before adding the record stride matched all 248 bytes.
 - With the first case's compiler and flags, keeping two separate loads of the global state pointer preserved the two callback stores and the intervening sentinel store. Staging the sentinel constant before the first load and preserving the final byte store matched all 152 bytes from score 30. An inline byte-address helper also matched, and the installed rule only needs separate locals.
+
+### Keep a conditional halfword update in the guarded arm
+
+Three fresh N64 drafts from `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` lost the first argument at a call
+following a guarded unsigned halfword increment or decrement. The target loaded the field into the second argument
+register, compared the original value, then updated that register in the branch delay slot. On fallthrough it stored
+the halfword back and prepared the second argument for the call. The first argument kept its entry value.
+
+Restoring the first argument alone left register allocation differences. Computing the updated halfword inside the
+guard and passing it as the second argument matched all 56, 60, and 64 bytes from fresh draft scores 35, 330, and 335.
+The last case subtracts one more after masking to 16 bits. The rule checks the target branch destination, that the
+load and store address the same halfword, and that the original first argument reaches the call. The independently
+archived sources matched as controls.
