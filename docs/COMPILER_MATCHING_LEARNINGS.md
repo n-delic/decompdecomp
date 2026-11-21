@@ -1,5 +1,13 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: preserve repeated global reads
+
+Two 48-byte archived drafts matched with the linked judge after
+expressing their observed global reads as volatile. One polls a word
+until its value changes, and the other reads an address-verified
+symbol in either branch. Their scores improved from 215 and 240 to
+zero with `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
+
 ### KMC GCC 2.7.2: address queue and thread stack with linked symbols
 
 A 128-byte archived thread setup matched after using the independently
