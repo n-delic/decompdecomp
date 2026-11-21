@@ -151,6 +151,7 @@ class BriefMixin:
                 byte_cursor_postincrements,
                 field_snapshot_copies,
                 float_matrix_identity,
+                global_pointer_local_repairs,
                 indexed_field_cursor,
                 large_stack_drafts,
                 likely_branch_cursor,
@@ -164,6 +165,7 @@ class BriefMixin:
                 relocated_byte_table,
                 relocated_global_update,
                 shared_default_drafts,
+                shared_return_repairs,
                 split_dispatch_zero_case,
                 stack_read_retry,
                 uncached_read_repairs,
@@ -203,6 +205,10 @@ class BriefMixin:
                 inputs.append('ordered halfword updates')
             if aligned_stack_read.applies(fn['asm'] or ''):
                 inputs.append('aligned stack read')
+            if global_pointer_local_repairs.linked_insert_applies(fn['asm'] or ''):
+                inputs.append('linked list insertion')
+            if shared_return_repairs.global_guard_applies(fn['asm'] or ''):
+                inputs.append('guarded global return')
             if passthrough_argument_repairs.entry_wrapper_applies(fn['asm'] or ''):
                 inputs.append('entry argument wrapper')
             if loop_storage_shapes.copy_setup_applies(fn['asm'] or ''):

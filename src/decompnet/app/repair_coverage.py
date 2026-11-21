@@ -103,6 +103,7 @@ def verify(feedback, example):
             byte_cursor_postincrements,
             field_snapshot_copies,
             float_matrix_identity,
+            global_pointer_local_repairs,
             indexed_field_cursor,
             kmc_cast_repairs,
             kmc_operand_repairs,
@@ -124,6 +125,7 @@ def verify(feedback, example):
             passthrough_argument_repairs,
             relocated_byte_table,
             relocated_global_update,
+            shared_return_repairs,
             split_dispatch_zero_case,
             stack_read_retry,
             uncached_read_repairs,
@@ -180,6 +182,10 @@ def verify(feedback, example):
             focused.append(('ordered_halfword_updates', candidate))
         if candidate := aligned_stack_read.rewrite(source, fn['name'], fn['asm'] or ''):
             focused.append(('aligned_stack_read', candidate))
+        if candidate := global_pointer_local_repairs.rewrite_linked_insert(source, fn['name'], fn['asm'] or '', header):
+            focused.append(('linked_insert', candidate))
+        if candidate := shared_return_repairs.rewrite_global_guard(source, fn['name'], fn['asm'] or ''):
+            focused.append(('guarded_global_return', candidate))
         if candidate := passthrough_argument_repairs.missing_entry_argument(source, fn['name'], fn['asm'] or '', header):
             focused.append(('entry_wrapper_argument', candidate))
         if candidate := loop_storage_shapes.measured_copy_setup(source, fn['name'], fn['asm'] or '', header):

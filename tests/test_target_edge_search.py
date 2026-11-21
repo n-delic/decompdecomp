@@ -484,3 +484,17 @@ def test_field_snapshot_copies_reach_kmc_proposals(monkeypatch):
     rows = [('s', 'lhu $v1, 0x4($v0)', 'lhu $v1, 0x6($v0)')]
     assert ('field_snapshot_copies', 'staged halfwords') in route('void f(void) {}', rows, 'asm')
     assert 'field_snapshot_copies' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
+
+
+def test_short_leaf_repairs_reach_kmc_proposals(monkeypatch):
+    from decomprepair import global_pointer_local_repairs, shared_return_repairs
+
+    monkeypatch.setattr(global_pointer_local_repairs, 'rewrite_linked_insert', lambda *args: 'snapshot and link')
+    monkeypatch.setattr(shared_return_repairs, 'rewrite_global_guard', lambda *args: 'early zero')
+    rows = [('r', 'lw $v0, 0x10($v1)', 'lw $v1, 0x10($v0)')]
+    kmc = dict(route('void f(void) {}', rows, 'asm'))
+    assert kmc['linked_insert'] == 'snapshot and link'
+    assert kmc['guarded_global_return'] == 'early zero'
+    ido = dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
+    assert 'linked_insert' not in ido
+    assert 'guarded_global_return' not in ido
