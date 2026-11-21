@@ -857,3 +857,21 @@ def test_global_store_forward_runs_in_the_bounded_local_lane(monkeypatch):
 
     assert search.operand_order_pass(AGENT, proj, fn, 180, None) == 20
     assert tried == [child]
+
+
+def test_loop_symbol_base_block_runs_in_the_bounded_local_lane(monkeypatch):
+    from decomprepair import loop_symbol_base_block
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    proj = net.project_row('game')
+    fn = {**net.function(), 'asm': ''}
+    child = fn['best_source'] + '\n/* base kept out of the loop pass */'
+    monkeypatch.setattr(loop_symbol_base_block, 'variants',
+                        lambda *args: [('loop_symbol_base_block', child)])
+    search = deep_permuter.Search(net, 1, 6, Log())
+    tried = []
+    monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 20)
+
+    assert search.operand_order_pass(AGENT, proj, fn, 180, None) == 20
+    assert tried == [child]
