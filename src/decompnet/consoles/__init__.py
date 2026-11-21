@@ -306,6 +306,10 @@ class Console:
         (N64: consoles/n64/code.py). None when the console has no such search yet (ROADMAP.md)."""
         return None
 
+    def import_table_ranges(self, image, segments):
+        """Additional load mappings for jump-table evidence during ROM import."""
+        return ()
+
     def split_game(self, workdir: Path, picked: Picked, *, symbols: list[str] | None = None, log=print):
         """ROM mode: split the program into functions and data (splat, rom/split.py); a console whose games another
         splitter finds overrides this."""

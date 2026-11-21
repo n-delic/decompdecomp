@@ -1,4 +1,7 @@
 """Bounded MIPS indirect-transfer evidence. No guessed mapping becomes an executable edge."""
+
+import struct
+
 MAX_ENTRIES=256
 MAX_CALLS=512
 MAX_WORDS=500000
@@ -82,10 +85,39 @@ def _saved_register_guard(image,start,at,order):
         return guard,branch,count,address&0xffffffff
 
 
+def _ido_register_guard(image,start,at,order):
+    """IDO materializes the complete table address before scaling its index."""
+    for scheduled in (False, True):
+        guard = at-(28 if scheduled else 32)
+        if guard<start:
+            continue
+        words = [int.from_bytes(image[p:p+4],order) for p in range(guard,at+8,4)]
+        if not scheduled:
+            delay = words.pop(2)
+            move = delay&0xfc1f07ff in (0x21,0x25)
+            if delay and delay>>21!=0x57d and not move:  # sw to the current stack frame
+                continue
+        bound,branch,hi,lo,scale,add,load,jump,slot = words
+        index, condition, count = (bound>>21)&31, (bound>>16)&31, bound&0xffff
+        base, scaled = (hi>>16)&31, (scale>>11)&31
+        if (bound>>26!=11 or not 1<=count<=MAX_ENTRIES or not index or not condition or condition==index
+                or branch>>16!=0x1000|condition<<5 or not base or base==index
+                or hi>>16!=0x3c00|base or lo>>16!=0x2400|base<<5|base
+                or not scaled or scaled==base or scale!=index<<16|scaled<<11|2<<6
+                or add&0xfc00ffff!=scaled<<11|33 or {(add>>21)&31,(add>>16)&31}!={base,scaled}
+                or load!=0x8c000000|scaled<<21|base<<16 or jump!=base<<21|8 or slot):
+            continue
+        if not scheduled and move and (delay>>11)&31==index:
+            continue
+        return guard,branch,count,(((hi&0xffff)<<16)+signed(lo))&0xffffffff
+    return None
+
+
 def jump_table(image,start,end,vram,at,order,ranges=(),mappings=(),*,reader=None, allow_saved_base=False):
     """Recognize one exact guard/scale/LUI/add/load/JR idiom (its scale in the guard's delay slot or after it),
     with no interior entry. Import data classification may also follow an early saved-register base."""
     if at+8>end:return None
+    uses_ido_guard = False
     for scheduled in (False,True):
         if at-start<(24 if scheduled else 28):continue
         guard,bound,branch,delay,scale,hi,add,load,jump,slot=_guard(image,at,order,scheduled)
@@ -104,6 +136,9 @@ def jump_table(image,start,end,vram,at,order,ranges=(),mappings=(),*,reader=None
         break
     else:
         saved = _saved_register_guard(image,start,at,order) if allow_saved_base else None
+        if saved is None:
+            saved = _ido_register_guard(image,start,at,order)
+            uses_ido_guard = True
         if saved is None:return None
         guard,branch,count,address = saved
     default=guard+8+signed(branch)*4
@@ -115,8 +150,8 @@ def jump_table(image,start,end,vram,at,order,ranges=(),mappings=(),*,reader=None
         elif op in (2,3):target=start+((((vram+p-start+4)&0xf0000000)|((w&0x3ffffff)<<2))-vram)
         else:continue
         if guard<target<=at and not guard<=p<=at:return {**result,'reason':'an incoming edge bypasses the guard'}
-    def destinations(data):
-        targets=[int.from_bytes(data[p:p+4],order) for p in range(0,len(data),4)]
+    def destinations(data, prefix=0):
+        targets=[prefix|int.from_bytes(data[p:p+4],order) for p in range(0,len(data),4)]
         if all(t%4==0 and vram<=t<vram+end-start and not vram+guard-start<t<=vram+at-start+4 for t in targets):
             return targets
         return None
@@ -128,12 +163,23 @@ def jump_table(image,start,end,vram,at,order,ranges=(),mappings=(),*,reader=None
         targets = destinations(data) if data is not None and len(data)==count*4 else None
         return {**result,'state':'validated','targets':targets} if targets else result
 
-    choices,error=locations(address,count*4,image,ranges,mappings)
+    ordinary = [r for r in ranges if 'target_prefix' not in r]
+    choices,error=locations(address,count*4,image,ordinary,mappings)
     if error:return {**result,'reason':error}
     valid=[]
     for offset,verified in choices:
         if targets := destinations(image[offset:offset+count*4]):
             valid.append((offset,verified,targets))
+    if not valid and uses_ido_guard:
+        aliases = [r for r in ranges
+                   if r.get('target_prefix')==vram&0xe0000000 and r.get('code_delta')==vram-start]
+        choices,error = locations(address,count*4,image,aliases)
+        if error:return {**result,'reason':error}
+        for offset,verified in choices:
+            data = image[offset:offset+count*4]
+            if all(word<0x20000000 for word, in struct.iter_unpack('>I' if order=='big' else '<I',data)):
+                if targets := destinations(data,vram&0xe0000000):
+                    valid.append((offset,verified,targets))
     if len(valid)!=1:return {**result,'reason':'no unique mapped table with all targets inside the candidate'}
     offset,verified,targets=valid[0]
     return {**result,'rom_offset':offset,'mapping_verified':verified,'targets':targets,

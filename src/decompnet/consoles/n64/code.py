@@ -251,6 +251,24 @@ def mapped_data(spans,declared,size):
     return ranges
 
 
+def relocated_switch_ranges(image, segments):
+    """Track the immediate data tail of code ranges that share an overlay load mapping."""
+    ranges = []
+    ordered = sorted(segments,key=lambda segment:segment.rom_start)
+    for i,(previous,segment) in enumerate(zip(ordered,ordered[1:]), 1):
+        delta = segment.vram-segment.rom_start
+        if (previous.rom_end!=segment.rom_start or previous.vram-previous.rom_start!=delta
+                or segment.vram&0xe0000000!=0x80000000 or segment.vram<0x80200000):
+            continue
+        start = segment.rom_end
+        limit = ordered[i+1].rom_start if i+1<len(ordered) else len(image)
+        end = min(limit,start+0x10000)&~3
+        if end>start:
+            ranges.append(dict(rom_start=start,rom_end=end,vram=(start+delta)&0x1fffffff,
+                               target_prefix=0x80000000,code_delta=delta))
+    return ranges
+
+
 # ---------------------------------------------------------------------------------------------- compressed code
 
 def _looks_like_code(data: bytes) -> bool:

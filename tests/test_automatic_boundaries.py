@@ -384,3 +384,16 @@ def test_alignment_word_decoding_as_conditional_link_does_not_cut_a_leaf(protect
     else:
         assert [(fn.rom,fn.size) for fn in result]==[(0,12),(16,16)]
         assert repair(result,[],image,consoles.get('n64'),segments)==result
+
+
+@pytest.mark.parametrize('case',['filler','explicit','code_follows','no_float_table'])
+def test_terminal_alignment_before_unmapped_float_data(case):
+    words=[0x8c820000,0x03e00008,0,0x530d0a0d]
+    image,functions,segments=fixture(words,cuts=(0,12,16))
+    import struct
+    image += struct.pack('>8f',1,2,3,4,5,6,7,8) if case!='no_float_table' else bytes(32)
+    symbols=[f'entry = 0x{BASE+12:08X}; // type:func'] if case=='explicit' else ()
+    if case=='code_follows':
+        segments.append(Segment('other',16,48,BASE+64))
+    result=repair(functions,[],image,consoles.get('n64'),segments,symbols=symbols)
+    assert any(fn.rom==12 for fn in result)==(case!='filler')
