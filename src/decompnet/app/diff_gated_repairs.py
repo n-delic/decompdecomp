@@ -6,6 +6,7 @@ from decomprepair import (
     kmc_cast_repairs,
     loop_sentinel_repairs,
     measured_address_repairs,
+    measured_callback_loop,
     measured_callback_repairs,
     measured_control_flow,
     measured_expression_repairs,
@@ -175,6 +176,8 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_memory_order.variants(source,name,rows)
         result += measured_expression_repairs.variants(source,name,header,rows)
         result += measured_temporary_repairs.variants(source,name,rows)
+        if candidate_source := measured_callback_loop.rewrite(source, name, asm or '', header, resolve):
+            result.append(('measured_callback_loop', candidate_source))
         result += measured_callback_repairs.variants(source,name,rows)
         result += measured_address_repairs.variants(source,name,header,rows,symbols)
         result += measured_pointer_scale.variants(source,name,header,rows)
