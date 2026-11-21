@@ -88,6 +88,7 @@ def _recomp(net, proj) -> dict | None:
     if s is None:
         return None
     return {"functions": s["functions"], "found": len(s["found"]), "stubs": len(s["refused"]),
+            "succeeded": s.get("succeeded"), "total": s["functions"] + len(s["found"]),
             "runtime": len(s["runtime"]), "errors": s["error_count"], "files": s["files"], "at": s["at"],
             "folder": s["folder"], "available": net.console(proj).recompiler is not None,
             "discoveries": findings(net, proj, s),

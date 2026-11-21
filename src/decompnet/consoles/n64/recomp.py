@@ -323,16 +323,18 @@ def _translate(program, out, rom, entry, refused, renamed, stop, log):
         raise RecompError(_failure(done))
 
 
-def check(out: Path, include: Path, stop=lambda: False) -> tuple[list[str], set[str], list[str]]:
+def check(out: Path, include: Path, stop=lambda: False) -> tuple[list[str], set[str], list[str], set[str]]:
     """The output checked with this computer's C compiler, as a port would build it (syntax only, nothing runs).
     Returns the functions the runtime has to provide (N64Recomp leaves out the libultra ones its runtime
-    reimplements: declared in funcs/runtime.h), names that clash with the C library, and what else is wrong."""
+    reimplements: declared in funcs/runtime.h), names that clash with the C library, other errors, and function
+    definitions in translation units that passed the final syntax check."""
     files = sorted((out / "funcs").glob("*.c"))
     runtime = out / "funcs" / "runtime.h"
     provided: set[str] = set()
     clashes: set[str] = set()
     errors: list[str] = []
     for second in (False, True):
+        passed: set[str] = set()
         runtime.write_text("#include \"recomp.h\"\n" + "".join(
             f"RECOMP_FUNC void {n}(uint8_t* rdram, recomp_context* ctx);\n" for n in sorted(provided)), encoding="utf-8")
         errors = []
@@ -342,6 +344,8 @@ def check(out: Path, include: Path, stop=lambda: False) -> tuple[list[str], set[
             done = subprocess.run(limits.capped(["cc", "-fsyntax-only", "-w", "-I", str(include), "-include",
                                                  str(runtime), str(f)]), cwd=out / "funcs", capture_output=True,
                                   text=True, encoding="utf-8", errors="replace", timeout=600)
+            if done.returncode == 0:
+                passed.update(DEFINED.findall(f.read_text(encoding="utf-8", errors="replace")))
             for line in done.stderr.splitlines():
                 if "error:" not in line:
                     continue
@@ -353,7 +357,7 @@ def check(out: Path, include: Path, stop=lambda: False) -> tuple[list[str], set[
                     errors.append(line.strip())
         if not provided:
             break
-    return sorted(provided), clashes, errors
+    return sorted(provided), clashes, errors, passed
 
 
 def _invalid_bodies(out: Path, errors: list[str]) -> dict[str, str]:
@@ -413,7 +417,7 @@ def recompile(program: Path, rom_path: Path, segments: list[dict], functions: li
     for _ in range(4):  # a name that clashes with the C library is renamed (name_recomp), and it runs again
         _translate(program, out, Path(rom_path).resolve(), entry if at_entry else None, refused, renamed, stop, log)
         log("checking the C with this computer's compiler")
-        provided, clashes, errors = check(out, include, stop)
+        provided, clashes, errors, passed = check(out, include, stop)
         known = _function_names(out, entry if at_entry else None)
         bad = {name: reason for name, reason in _invalid_bodies(out, errors).items()
                if name in known and name not in refused}
@@ -424,16 +428,19 @@ def recompile(program: Path, rom_path: Path, segments: list[dict], functions: li
         if not clashes - renamed and not bad:
             break
         renamed |= clashes
+    # Generated stubs can pass the syntax check. Count only requested bodies, including the CLI's renamed symbols.
+    translated = {name if name in known else name.removesuffix("_recomp") for name in passed - refused.keys()}
+    succeeded = len((translated & known) - refused.keys())
     written = len(list((out / "funcs").glob("*.c")))
     summary = {"at": time.time(), "image_sha1": hashlib.sha1(rom).hexdigest(), "functions": len(usable),
-               "found": found,
+               "found": found, "succeeded": succeeded,
                "refused": [{"name": n, "why": w} for n, w in refused.items()], "renamed": sorted(renamed),
                "runtime": provided, "errors": errors[:40], "error_count": len(errors),
                "between": [f["name"] for f in outside], "unusable": unusable, "files": written, "folder": str(out)}
     pending = out / "recomp.json.pending"
     pending.write_text(json.dumps(summary, indent=1), encoding="utf-8")
     pending.replace(out / "recomp.json")
-    log(f"N64Recomp: {len(everything) - len(refused)} functions as C in {written} files; {len(refused)} set aside "
+    log(f"N64Recomp: {succeeded} of {len(everything)} functions recompiled and passed the C check in {written} files; {len(refused)} set aside "
         f"as stubs, {len(found)} found that the split doesn't list, {len(provided)} for the runtime to provide; "
         + (f"{len(errors)} compile errors" if errors else "the C compiles"))
     return summary

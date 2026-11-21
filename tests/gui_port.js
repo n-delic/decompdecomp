@@ -163,7 +163,7 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    assert.ok(!t.calls.includes('/api/behaviour-check'));}
   {const t=setup();t.c.S.tab='porting';
    t.c.reply=async()=>({...report,recomp_available:true,recomp:{functions:2125,found:12,
-     stubs:14,runtime:4,errors:1,error_examples:['generated.c: invalid operand'],files:42,at:1,folder:'/p/build/recomp',stub_examples:['func_8008AE70 (cop0)'],
+     succeeded:2100,total:2137,stubs:14,runtime:4,errors:1,error_examples:['generated.c: invalid operand'],files:42,at:1,folder:'/p/build/recomp',stub_examples:['func_8008AE70 (cop0)'],
      found_examples:['func_80000400 (the ROM\'s entry point)']}});
    await t.run('loadPortReadiness()');
    const rows=t.c.$('portFacts').children.map(r=>r.children[0].textContent+r.children[1].textContent);
@@ -177,8 +177,11 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    const [first, second]=t.c.$('portSteps').children;
    assert.equal(first.children[0].textContent,'1');
    assert.equal(first.children[1].children[0].children[0].textContent,'Recompile It');
-   assert.match(first.children[1].children[1].textContent,/functions the split missed/);
-   assert.match(first.children[1].children[2].textContent,/12 functions found outside the split/);
+   assert.equal(first.children[1].children[0].children[1].textContent,'98%');
+   assert.equal(first.children[1].children[1].children[0].style.width,'98%');
+   assert.equal(first.children[1].children[2].textContent,'2,100 of 2,137 functions recompiled successfully');
+   assert.match(first.children[1].children[3].textContent,/functions the split missed/);
+   assert.match(first.children[1].children[4].textContent,/12 functions found outside the split/);
    assert.ok(first.children[1].children.some(row=>row.children.includes(t.c.$('portRecompile'))));
    assert.equal(second.children[0].textContent,'2');
    assert.equal(second.children[1].children[0].children[0].textContent,"The game's code in C");
@@ -197,6 +200,7 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    t.c.recompileStatus=async url=>url.includes('preview=')?{assembly:'80001000  jr $ra'}:{recomp_available:true};
    await t.run('loadPortReadiness()');
    assert.equal(t.c.$('portDiscoveries').hidden,false);
+   assert.match(t.c.$('portSteps').children[0].children[1].children[2].textContent,/again to measure/);
    const list=t.c.$('portDiscoveryList');
    assert.equal(list.children[0].children.length,13,'all discoveries are available for review');
    const [first, second]=list.children[0].children;

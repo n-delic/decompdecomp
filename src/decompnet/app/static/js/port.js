@@ -141,10 +141,15 @@ const pct = (part, whole) => (whole > 0 ? Math.max(0, Math.min(100, Math.round(1
 
 function recompileStep(report) {
   const result = report.recomp;
+  const success = result?.succeeded != null;
+  const share = success && result.total > 0 ? Math.floor(100 * result.succeeded / result.total) : null;
   return {
-    title: "Recompile It", pct: null, diagnostic: true,
+    title: "Recompile It", pct: share, diagnostic: true,
+    emptyMeter: report.recomp_available && !success,
+    count: success ? `${result.succeeded.toLocaleString()} of ${result.total.toLocaleString()} functions recompiled successfully`
+      : result ? "Run N64Recomp again to measure how many functions recompile successfully." : "",
     status: recompileRun?.slug === S.slug ? (recompileRun.adding ? "Adding functions…" : "Recompiling…")
-      : result ? "Checked" : null,
+      : null,
     unavailable: !report.recomp_available,
     detail: report.recomp_available
       ? "Run N64Recomp early to check how the ROM was split. It translates ROM instructions to C and looks for "
@@ -238,7 +243,7 @@ function renderPortSteps(report, steps = portSteps(report)) {
     "portBehaviourLog", "portRecompileLog", "portDiscoveries"]) {
     if (parked && $(id)) parked.append(...withWork($(id)));
   }
-  const shown = steps.filter((s) => s.pct != null);
+  const shown = steps.filter((s) => !s.diagnostic && s.pct != null);
   const totalSteps = report.mode === "project" ? steps.filter((s) => !s.diagnostic).length : shown.length;
   const overall = totalSteps ? Math.round(shown.reduce((a, s) => a + s.pct, 0) / totalSteps) : 0;
   $("portOverall").textContent = overall + "%";
@@ -258,10 +263,21 @@ function renderPortSteps(report, steps = portSteps(report)) {
     head.append(title, share);
     const detail = document.createElement("p"); detail.className = "small muted"; detail.textContent = step.detail;
     body.append(head);
-    if (step.pct != null) {
+    if (step.pct != null || step.emptyMeter) {
       const meter = document.createElement("div"); meter.className = "meter";
-      const fill = document.createElement("i"); fill.style.width = step.pct + "%"; meter.append(fill);
+      if (step.count && step.pct != null) {
+        meter.setAttribute("role", "meter");
+        meter.setAttribute("aria-label", "Successfully recompiled functions");
+        meter.setAttribute("aria-valuenow", String(step.pct));
+        meter.setAttribute("aria-valuetext", step.count);
+      } else if (step.emptyMeter) meter.setAttribute("aria-hidden", "true");
+      const fill = document.createElement("i"); fill.style.width = (step.pct ?? 0) + "%"; meter.append(fill);
       body.append(meter);
+    }
+    if (step.count) {
+      const count = document.createElement("p"); count.className = "small muted";
+      count.textContent = step.count;
+      body.append(count);
     }
     body.append(detail);
     if (step.summary) {
