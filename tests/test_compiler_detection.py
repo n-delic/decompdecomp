@@ -3,6 +3,8 @@ that fits (profile_climb), instead of only probing other profiles for an exact m
 import struct
 from types import SimpleNamespace
 
+import pytest
+
 from decompnet.app import compiler_fingerprints as cf
 from decompnet.app import profile_climb
 
@@ -249,3 +251,39 @@ def test_deep_climb_tries_disable_cross_block_cse_for_repeated_addresses(monkeyp
     search.net._judge_with = judge
     assert profile_climb.lead(search, None, PROJ, FN, FN['best_source'], 2391) == (dict(own, flags=flags), 1160)
     assert measured[0] == flags
+
+
+def test_profile_phase_shares_remaining_time_with_local_repairs(monkeypatch):
+    clock = [20.0]
+    monkeypatch.setattr(profile_climb.time, 'monotonic', lambda: clock[0])
+    logs = []
+    search = SimpleNamespace(deadline=60.0, check=lambda: None, log=logs.append)
+    visited = []
+
+    def lead(search, agent, proj, fn, source, baseline, *, check):
+        check()
+        clock[0] = 28.0
+        return LATE, 10
+
+    def climb(search, agent, proj, fn, source, profile, score, *, require_clean, check):
+        check()
+        visited.append((profile, score))
+        clock[0] = 30.0
+        check()
+        pytest.fail('Alternate profile ran through its deadline')
+
+    monkeypatch.setattr(profile_climb, 'lead', lead)
+    monkeypatch.setattr(profile_climb, 'climb', climb)
+    assert not profile_climb.explore(search, None, PROJ, FN, 155)
+    assert visited == [(LATE, 10)]
+    assert clock[0] < search.deadline
+    assert any('continuing with the current settings' in line for line in logs)
+
+
+def test_profile_phase_propagates_user_cancellation(monkeypatch):
+    def cancelled():
+        raise RuntimeError('cancelled')
+
+    search = SimpleNamespace(deadline=profile_climb.time.monotonic() + 100, check=cancelled)
+    with pytest.raises(RuntimeError, match='cancelled'):
+        profile_climb.explore(search, None, PROJ, FN, 155)
