@@ -12817,3 +12817,12 @@ and store. Subtract the two minima from their corresponding maxima in place
 and use a plain block for the selected store. The score went from 15 to 0 on
 a retail N64 function. The released rule generated one exact candidate in the
 scratch dispatcher, where the previous version generated none.
+
+### KMC GCC 2.7.2: restore ordered pointer updates in a two-byte reader
+
+A scratch draft wrote two successive cursor values before loading either
+byte, ending with the first value. Restoring the first cursor update, first
+byte load, second update and second byte load recovered the target sequence.
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, the linked score
+improved from 230 to an exact match. This is one observed match; synthetic
+tests cover the target instructions, cursor offset and draft guards.

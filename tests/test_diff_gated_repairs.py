@@ -1182,3 +1182,13 @@ def test_stack_event_record_routes_to_kmc(monkeypatch):
                         lambda text, name, header, diff: [('stack_event_fixture', text)])
     assert 'stack_event_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'stack_event_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_two_byte_reader_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_kmc_two_byte_reader, 'variants',
+                        lambda text, name, header, diff: [('two_byte_reader_fixture', text)])
+    assert 'two_byte_reader_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'two_byte_reader_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
