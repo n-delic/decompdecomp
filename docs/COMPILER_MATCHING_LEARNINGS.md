@@ -25,6 +25,14 @@ flags. None changed the registers.
 Library family: `loop_address_hoist` in decomp-repair 0.5.157 proposes it (every use; the uses outside the nested
 loops; one outer loop with and without its nested loops), with the assignment before the loop or up to two
 statements above it, for a global declared as a plain `extern T g;`.
+### KMC GCC 2.7.2: test a cursor loop at the bottom
+
+An isolated N64 replay used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.
+The draft compared the bitwise AND of two ordering tests against one and
+advanced the cursor with an explicit continue. A byte-sized zero test in a
+bottom-tested loop let GCC use the target's branch-likely back edge, with
+the cursor update in its delay slot. The linked score moved from 350 to
+zero. The same byte test in the original infinite loop scored 410.
 
 ### KMC GCC 2.7.2: preserve a call setup's allocation with an initialized guard
 

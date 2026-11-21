@@ -61,7 +61,7 @@ def read(image, taken):
     return []
 
 
-def add(config, image, found, records, log):
+def add(config, image, found, records, log, *, preserve_gaps=False):
     """Give each bank a distinct symbol scope and keep uncovered physical bytes opaque."""
     from .code import insert_segments
 
@@ -82,6 +82,9 @@ def add(config, image, found, records, log):
     first, last = records[0].start, records[-1].end
     outside = []
     for lo,hi,vram in found:
+        if preserve_gaps and all(hi <= bank.start or bank.end <= lo for bank in records):
+            outside.append((lo, hi, vram))
+            continue
         if lo < first:
             outside.append((lo,min(hi,first),vram))
         if hi > last:
