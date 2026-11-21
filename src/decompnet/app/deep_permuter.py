@@ -360,7 +360,8 @@ class Search(Permuter):
                  (L + 'counter_derived_loop_offset.masked_byte_stride_variants', (source, name, arch, asm)),
                  (L + 'counter_derived_loop_offset.variants', (source, name, arch, asm)),
                  (L + 'stack_byte_loop_base.variants', (source, name, arch, asm, header)),
-                 (L + 'unsigned_rate_division_scope.variants', (source, name, arch, asm, header))]
+                 (L + 'unsigned_rate_division_scope.variants', (source, name, arch, asm, header)),
+                 (L + 'join_initializer_sink_repairs.variants', (source, name))]
         zero_bound = None
         if arch == 'mips' and '%lo(' in asm:
             rename = getattr(self.net, 'rename_tokens', None)

@@ -10471,3 +10471,21 @@ made single-row leftovers visible; the app's own diff already does this, but `co
 - Restoring the stack array alone compiled but scored 3112 on all three. A flat byte map with shifts
   and masks scored 941. The 38-example draft replay rose from 12 to 15 exact matches, with 23 drafts
   still failing compilation.
+
+## A constant assigned early, shared through a `goto` join: sink it to the label (N64, KMC gcc 2.7.2 `-O2`)
+
+One hand match of an actor-update function (score 2225 -> 0, exact in the app's judge; one function, so one result, not a
+controlled one). The colour block sets three bytes to 0xFF or 0xBF, with the target storing 0xFF/0xBF in `$v0`.
+- m2c's form `v = 0xFF; if (c) { ...; if (!(t & 0x10)) { v = 0xBF; goto L; } stores of 0xFF } else { L: stores of v }`
+  put `v` in `$a0` (780). With the assignment moved to just before `L:` it lives in `$v0`, `li $v0,0xff` fills the
+  `bnez` delay slot and the `j tail` + `li $v0,0xbf` delay slot appear, as in the target.
+- A constant above 0x7F stored through `s8 *` is `li -1` (`addiu $v0,$zero,-1`); typed `u8` it is `li 0xff`.
+- A constant held in a local (`int c = 0xFF;`, the search's own `__repair_constant`) keeps a register and adds an extra
+  saved register (228 instructions against the target's 224): write its literal.
+- Failed: five hand spellings of the same branches (`goto` into a shared tail, a shared colour variable, duplicated
+  store blocks, the branchless `col = 0xFF; if (...) col = 0xBF;`) all ended at 450 or worse: `jump.c` inverts
+  `if (x) goto A; goto B;` and moves the fall-through block, so the *polarity* of the `if` and where the
+  assignment sits, not the spelling of the stores, decide the layout. Reading the target's raw assembly (delay slots
+  included) gave the polarity; the RTL dumps (`cc1 -dj -dr`) show where the pass moved the blocks.
+- decomp-repair v0.5.188 `join_initializer_sink` produces the sunk, literal and `u8` forms; on the function's saved best
+  the last child scores exactly like the hand-matched source locally, and it runs in the deep local pass.
