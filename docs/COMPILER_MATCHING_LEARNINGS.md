@@ -10110,3 +10110,16 @@ second may take a new one; both scan the registers in order and skip any a lower
 For saved registers the preferences were all caller-saved ones in the function studied, so only the ranking and the
 conflicts decided its saved-register swaps. A swap that no single priority change explains usually means two pseudos
 were merged by a copy: look at the copies the compiler made (`-dl` shows them) rather than at one variable's uses.
+
+### Reuse a call register across pointer lifetimes and stage a scaled call argument
+
+Both cases used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`. The independently archived sources matched.
+
+- A guarded call keeps the context in the first argument register. It loads a pointer into the second argument
+  register, then moves its return value into that same register before testing and dereferencing it. Forwarding the
+  context alone left score 20 on the near draft. Reusing the original pointer local moved score 30 to an exact 148
+  bytes. On the fresh draft it moved 40 to 10, and the existing unsigned byte-store repair resolved the last difference.
+- For a byte-indexed 12-byte stride, one call computes the first shift in the guard's delay slot and keeps the scaled
+  index in the first argument register across the float store. Caching the index or grouping both shifts into one
+  expression left score 30. Computing shift/add and the final shift in separate statements before that call matched
+  all 184 bytes from the fresh draft. The second call keeps its original expression.
