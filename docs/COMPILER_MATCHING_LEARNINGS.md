@@ -1,5 +1,18 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: loop header supplies a null-guard delay slot
+
+In one N64 function, rewriting a zero-initialized counter loop from
+`do { ...; ++i; } while ((i + 1) <= 2U)` to
+`for (i = 0; i < 2U; ++i) { ... }` placed the increment in the
+null-guard branch-likely delay slot and matched the loop back edge.
+With `-G0 -mips3 -mgp32 -mfp32 -O2`, the app's linked score improved
+from 400 to 65; the remaining differences are floating-point register
+allocation. A bottom-tested loop with an ordinary `i < 2U` condition
+scored 496, and an explicit null-path increment scored 856. This is
+one observed function, not a controlled compiler regression.
+
+
 ### KMC GCC 2.7.2: square each vector field at its store
 
 A 68-byte archived draft matched after expressing each of three
