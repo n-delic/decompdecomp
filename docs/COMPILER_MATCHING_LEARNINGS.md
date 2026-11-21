@@ -1,5 +1,31 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: preserve measured lifetimes in calls, loops and record writes
+
+Four isolated N64 replays used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.
+Each was compared against its archived matched control with the original
+flags and the linked byte judge. The source changes were:
+
+- With `-g3`, return the narrowed call result as `s32` and use a `u16`
+  cast in place of the original halfword mask. The target keeps the masked
+  result in the return register while it writes records. Score 75 to 0
+  over 372 bytes. Adding the return alone scored 165.
+- With `-g3`, increment and decrement two counters in place, retaining both
+  late reloads of the state pointer ahead of the final stores. Score 70
+  to 0 over 164 bytes. The draft used a separate result variable per counter.
+- Put a guarded pointer walk in a one-shot `do` scope, with its cursor
+  initialization, label and backedge inside the scope. The separation of
+  bound base, cursor and counter matches the target's saved register roles.
+  Score 100 to 0 over 172 bytes.
+- With `-g3`, update the masked slot in place and split the three
+  short-circuit paths into separate arms. Each arm writes a three-word
+  record using a three-element stride. Preserve the condition loads.
+  Score 75 to 0 over 240 bytes.
+
+The measured repair pass selects the rewrites from the draft and the
+linked instruction diff. Across the 11 archived near-matches tested,
+coverage went from seven byte-exact matches to eleven.
+
 ### IDO 7.1 rejects byte arithmetic on void pointers
 
 An isolated N64 replay used `ido-7.1 -O2 -mips2 -G 0 -non_shared -Xcpluscomm
