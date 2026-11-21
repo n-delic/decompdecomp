@@ -2300,8 +2300,9 @@ img.rom-preview-media { image-rendering:pixelated; background:var(--bg-alt); bor
 .local-search-progress .deep-sweep-bar { margin:0; }
 .local-search-progress .deep-queue-details { margin:0; gap:8px 16px; align-items:center; }
 .local-search-progress .deep-queue-details > span:not([hidden]) { border:0; padding:0; }
-.local-search-options-row { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; }
-.local-search-options-row > button { padding:4px 8px; }
+#deepSweepQueueTitle:empty { display:none; }
+#deepSweepRuntime { font-variant-numeric:tabular-nums; }
+#deepSweepOptions { white-space:normal; text-align:left; }
 .local-search-card .deep-sweep-tools { padding:0; border:0; gap:8px 16px; align-items:baseline; }
 .local-search-card .deep-sweep-tools > #deepSweepReset { margin-left:auto; }
 .local-search-card .deep-sweep-tools .deep-sweep-help { flex:initial; }

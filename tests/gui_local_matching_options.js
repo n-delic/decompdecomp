@@ -73,4 +73,24 @@ ctx.closeAll(); open(); assert.equal(active,get("deepSweepOptionsDone"));
 ctx.setDeepRunVisibility(false); assert.equal(settings.disabled,false);
 assert.match(get("deepSweepOptionsHelp").textContent,/next search/);
 ctx.closeAll();
+let starts = 0;
+ctx.startDeepSweep = () => ++starts;
+vm.runInContext(source.slice(source.indexOf('$("deepSweepOptions").onclick'), source.indexOf("async function startDeepSweep")), ctx);
+const start = get("deepSweepStart");
+for (const label of ["Start search", "Continue search", "Run again"]) {
+  start.textContent = label;
+  start.onclick();
+  assert.equal(get("deepSweepOptionsDone").dataset.start, label);
+  assert.equal(active, minutes);
+  assert.equal(starts, 0, "opening options does not start work");
+  minutes.valid = false;
+  get("deepSweepOptionsDone").onclick();
+  assert.equal(starts, 0);
+  minutes.valid = true;
+  keys.keydown({key:"Escape"});
+}
+start.onclick();
+get("deepSweepOptionsDone").onclick();
+assert.equal(starts, 1, "confirming options starts the search");
+assert.equal(get("dialog").hidden, true);
 console.log("Search options preserve values, validation and focus across every drawer dismissal.");

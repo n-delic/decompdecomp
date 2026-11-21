@@ -629,7 +629,12 @@
     <details class="panel settings-disclosure local-search-card" id="deepSweepPanel">
       <summary class="panel-head local-search-head" id="deepSweepQueueState">
         <div class="local-search-title"><h2>Deep permuter</h2><span class="local-search-state" id="deepSweepQueueTitle" role="status">Ready to search</span></div>
-        <div class="deep-sweep-actions"><button id="deepSweepStart" type="button" class="primary small-btn">Start search</button><button id="deepSweepStop" type="button" class="primary small-btn" hidden>Stop</button></div>
+        <div class="deep-sweep-actions">
+          <span class="local-search-state" id="deepSweepRuntime" hidden></span>
+          <button class="ghost small-btn" id="deepSweepOptions" type="button" aria-haspopup="dialog" title="Search options"><span class="sr-only">Search options </span><span id="deepSweepOptionsSummary">5 min per function</span> <span aria-hidden="true">↗</span></button>
+          <button id="deepSweepStart" type="button" class="primary small-btn">Start search</button>
+          <button id="deepSweepStop" type="button" class="primary small-btn" hidden>Stop</button>
+        </div>
       </summary>
       <div class="pad local-search-body">
         <p class="local-search-intro">Try variations of saved C to improve matches.</p>
@@ -655,7 +660,6 @@
           <span hidden><b id="deepSweepDone">0</b><b id="deepSweepLeft">0</b></span>
         </div>
         </div>
-        <div class="local-search-options-row"><span class="small muted" id="deepSweepOptionsSummary">5 min per function</span><button class="ghost small-btn" id="deepSweepOptions" type="button" aria-haspopup="dialog">Search options <span aria-hidden="true">↗</span></button></div>
         <div id="deepSweepSettingsHome" hidden>
         <fieldset class="local-search-options" id="deepSweepSettings">
           <legend class="sr-only">Search options</legend>
