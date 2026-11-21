@@ -431,6 +431,10 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
     taken = split.code_ranges(config)
     if taken and (result := resident_deflate.add(config,workdir,image,rom,taken,log)):
         return result
+    if taken and (slots := raw_slots.registered(rom, taken)):
+        recovered = raw_slots.recover_registered(rom, slots, taken, log)
+        if raw_slots.add(config, rom, recovered, slots, log):
+            return original
     packed = unpack_code(rom)
     locations = []
     if packed:
