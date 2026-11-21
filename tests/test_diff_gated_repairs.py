@@ -1003,3 +1003,18 @@ def test_repeated_reads_route_to_kmc_with_symbol_resolution(monkeypatch):
     monkeypatch.setattr(diff_gated_repairs.measured_kmc_repeated_reads, 'variants', repair)
     assert 'repeated_read_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, '', resolve=resolve))
     assert 'repeated_read_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, '', resolve=resolve))
+
+
+def test_stack_and_call_repairs_receive_the_resolver(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    resolve = {'word': 32}.get
+
+    def repair(text, name, header, diff, resolver):
+        assert resolver('word') == 32
+        return [('stack_call_fixture', text)]
+
+    monkeypatch.setattr(diff_gated_repairs.measured_kmc_stack_and_call, 'variants', repair)
+    assert 'stack_call_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, '', resolve=resolve))
+    assert 'stack_call_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, '', resolve=resolve))
