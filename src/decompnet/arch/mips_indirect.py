@@ -197,9 +197,15 @@ def jump_table(image,start,end,vram,at,order,ranges=(),mappings=(),*,reader=None
                    and (r.get('boot_copy') or uses_ido_guard and r.get('code_delta')==vram-start)]
         choices,error = locations(address,count*4,image,aliases)
         if error:return {**result,'reason':error}
+        resident = [r for r in aliases if r.get('boot_copy') and r['vram']-r['rom_start']==vram-start]
+        absolute, _ = locations(address, count*4, image, resident)
         for offset,verified in choices:
             data = image[offset:offset+count*4]
-            if all(word<0x20000000 for word, in struct.iter_unpack('>I' if order=='big' else '<I',data)):
+            # The initial IPL3 copy can also contain absolute KSEG0 table
+            # entries. Require the caller to be in that same ROM mapping.
+            if (offset,verified) in absolute and (targets := destinations(data)):
+                valid.append((offset,verified,targets))
+            elif all(word<0x20000000 for word, in struct.iter_unpack('>I' if order=='big' else '<I',data)):
                 if targets := destinations(data,vram&0xe0000000):
                     valid.append((offset,verified,targets))
     if len(valid)!=1:return {**result,'reason':'no unique mapped table with all targets inside the candidate'}

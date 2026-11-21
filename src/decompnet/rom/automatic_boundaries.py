@@ -69,11 +69,13 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
         if not references[dest]:del references[dest]
     functions = recover_inline_tables(functions, data, image, order, explicit | pointers, references, segments, log)
     buffer_written = buffer_write_evidence(functions, image, console, check=getattr(log,'check_cancel',lambda:None))
+    data_entry_targets = explicit|pointers|transfer_targets
     data_only = {
-        fn.vram for fn in functions if fn.size==4
-        and image[fn.rom:fn.rom+4]==fn.lines[0].word.to_bytes(4,order)
-        and fn.vram not in explicit|pointers|transfer_targets
-        and not any(d.rom is not None and d.rom<fn.rom+4 and fn.rom<d.rom+d.size for d in data)
+        fn.vram for fn in functions
+        if (fn.size==4 or fn.size==8 and all(line.word==0xbf800000 for line in fn.lines))
+        and image[fn.rom:fn.rom+fn.size]==b''.join(line.word.to_bytes(4,order) for line in fn.lines)
+        and not any(address in data_entry_targets for address in range(fn.vram,fn.vram+fn.size,4))
+        and not any(d.rom is not None and d.rom<fn.rom+fn.size and fn.rom<d.rom+d.size for d in data)
         and (address_word_references(fn, references, lines_by_rom)
              or not fn.lines[0].word and buffer_written(fn, references, reference_bodies))
     }
@@ -397,9 +399,20 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
         if (leading_repeated_double(fn, following, image, order, segments, direct_calls)
                 and not referenced(fn)):
             dropped+=1;continue
+        if (fn.vram in data_only and predecessor is not None and owner(fn)==owner(predecessor)
+                and predecessor.lines[-2].word==JR_RA
+                and (not fn.lines[0].word or fn.size==8)):
+            recovered_data.append(DataSymbol(fn.name, fn.vram, fn.rom, fn.size, 'data'))
+            continue
+        if (fn.vram not in data_entry_targets and owner(fn)[0]>=0
+                and predecessor is not None and owner(fn)==owner(predecessor)
+                and default_color_word(fn, predecessor, following, image, order, references, direct_calls)):
+            recovered_data.append(DataSymbol(fn.name, fn.vram, fn.rom, 4, 'data'))
+            continue
         if ((terminal_data_alignment(fn, predecessor, image, order, segments)
              or terminal_halfword_data_alignment(fn, predecessor, image, order, segments)
-             or terminal_memory_ranges(fn, predecessor, image, order, segments)) and not referenced(fn)):
+             or terminal_memory_ranges(fn, predecessor, image, order, segments)
+             or terminal_display_modes(fn, predecessor, image, order, segments)) and not referenced(fn)):
             dropped+=1;continue
         if zero_alignment(fn, previous):
             if fn.vram in data_only:
@@ -863,22 +876,75 @@ def buffer_write_evidence(functions, image, console, *, check):
 
 
 def address_word_references(fn, references, lines):
-    """Every symbolic use must be a matching LUI or a direct word load/store."""
-    high = ((fn.vram+0x8000)>>16)&0xffff
-    low = fn.vram&0xffff
+    """Every symbolic use must be a matching LUI or a typed memory access."""
     has_high = has_access = False
+    pattern = re.compile(r'%((?:hi|lo))\(' + re.escape(fn.name) + r'(?: \+ (0x[0-9a-fA-F]+))?\)')
     for offset,_ in references.get(fn.vram,()):
         line = lines.get(offset)
-        if line is None:
+        symbol = line and pattern.search(line.operands)
+        if not symbol:
             return False
-        word = line.word
-        if word>>26==15 and word&0xffff==high and f'%hi({fn.name})' in line.operands:
-            has_high = True
-        elif word>>26 in (35,43) and word&0xffff==low and f'%lo({fn.name})' in line.operands:
-            has_access = True
+        part, addend = symbol.groups()
+        shift = int(addend, 16) if addend else 0
+        # A zero base can label an array of globals. Keep the proof tied to
+        # an exact access to the base even when other references use a member.
+        if shift and (fn.lines[0].word or shift >= 64):
+            return False
+        address = fn.vram + shift
+        opcode = line.word>>26
+        immediate = line.word&0xffff
+        if part=='hi' and opcode==15 and immediate==((address+0x8000)>>16)&0xffff:
+            has_high |= not shift
+        elif part=='lo' and opcode in (32,33,35,36,37,40,41,43,49,57) and immediate==address&0xffff:
+            has_access |= not shift
         else:
             return False
     return has_high and has_access
+
+
+def default_color_word(fn, previous, following, image, order, references, direct_calls):
+    """A default RGBA word stored in a record before the next callable body."""
+    if (fn.size!=4 or fn.lines[0].word!=0xff or (fn.vram+4)%16
+            or previous.lines[-2].word!=JR_RA or following is None
+            or following.vram not in direct_calls or following.rom!=fn.rom+4
+            or following.vram!=fn.vram+4):
+        return False
+    uses = {at for at,_ in references.get(fn.vram, ())}
+    if len(uses)!=2:
+        return False
+    start, low = sorted(uses)
+    if low!=start+4 or start+28>len(image):
+        return False
+    hi, lo, first, second, third, fourth, assignment = struct.unpack_from(
+        '>7I' if order=='big' else '<7I',image,start)
+    if hi>>21!=0x1e0:
+        return False
+    value = hi>>16&31
+    base = first>>21&31
+    upper = ((fn.vram+0x8000)>>16)&0xffff
+    return (value!=0 and base!=0 and hi&0xffff==upper
+            and lo==(0x24000000|value<<21|value<<16|fn.vram&0xffff)
+            and (first,second,third,fourth,assignment)
+            == tuple(op|base<<21 for op in (0xa400000c,0xac000008,0xa4000014,0xa4000016,
+                                            0xac000004|value<<16)))
+
+
+def terminal_display_modes(fn, previous, image, order, segments):
+    """An all-ones marker and a zero before a table of display modes."""
+    end = fn.rom+8
+    if (fn.size!=4 or fn.lines[0].word!=0xffffffff or (fn.vram+8)%16
+            or previous is None or previous.size<8 or previous.lines[-2].word!=JR_RA
+            or previous.rom+previous.size!=fn.rom or previous.vram+previous.size!=fn.vram
+            or not 8<=fn.rom<end+48<=len(image) or any(image[fn.rom+4:end])):
+        return False
+    owners = [s for s in segments if s.rom_start<=fn.rom-8 and s.rom_end==end
+              and s.vram-s.rom_start==fn.vram-fn.rom]
+    if len(owners)!=1 or any(s.rom_start<end+48 and end<s.rom_end for s in segments):
+        return False
+    rows = tuple(struct.iter_unpack('>4H' if order=='big' else '<4H',image[end:end+48]))
+    return (len({height for _,height,_,_ in rows})>=3
+            and all(width==640 and height in (240,480,720) and field==511 and not reserved
+                    for width,height,field,reserved in rows))
 
 
 def leading_repeated_double(fn, following, image, order, segments, calls):

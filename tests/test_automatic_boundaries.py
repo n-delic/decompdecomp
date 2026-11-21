@@ -787,3 +787,45 @@ def test_terminal_scalar_alignment_before_halfword_data(case):
     symbols = [f'entered = 0x{BASE+44:08X};'] if case == 'named entry' else []
     result = repair(functions, [], image, consoles.get('n64'), segments, symbols=symbols)
     assert (36 in {fn.rom for fn in result}) == (case != 'directory')
+
+
+@pytest.mark.parametrize('word,opcode', [(0, 36), (0xbf800000, 49)])
+def test_typed_memory_access_preserves_data_after_closed_function(word, opcode):
+    words = [*BODY, word, *([word] if word else []), 0x3c088000,
+             opcode << 26 | 8 << 21 | 3 << 16 | 0x1020, 0x03e00008, 0]
+    end = 40 if word else 36
+    image, functions, segments = fixture(words, cuts=(0, 32, end, len(words)*4))
+    carrier = functions[1]
+    caller = functions[2]
+    caller.lines[0] = replace(caller.lines[0], operands=f'$t0, %hi({carrier.name})')
+    caller.lines[1] = replace(caller.lines[1], operands=f'$t1, %lo({carrier.name})($t0)')
+    data = []
+    result = repair(functions, data, image, consoles.get('n64'), segments)
+    assert carrier.name not in {fn.name for fn in result}
+    assert [(d.rom, d.size) for d in data] == [(32, end-32)]
+
+
+@pytest.mark.parametrize('valid', [True, False])
+def test_terminal_all_ones_marker_before_display_modes(valid):
+    from decompnet.rom.automatic_boundaries import terminal_display_modes
+
+    words = [0, 0, *BODY, 0xffffffff, 0]
+    image, functions, segments = fixture(words, cuts=(8, 40, 44))
+    heights = [480,480,240,240,240,720] if valid else [480,480,240,240,240,900]
+    for height in heights:
+        image += (640 << 16 | height).to_bytes(4, 'big') + (511 << 16).to_bytes(4, 'big')
+    assert terminal_display_modes(functions[-1], functions[0], image, 'big', segments) == valid
+
+
+def test_default_color_pointer_assigned_to_initialized_record():
+    from decompnet.rom.automatic_boundaries import default_color_word
+
+    data_at = BASE+12
+    init = [0x3c028000, 0x2442100c, 0xa600000c, 0xae000008,
+            0xa6000014, 0xa6000016, 0xae020004]
+    words = [0x24820001, 0x03e00008, 0, 0xff, *BODY, *init]
+    image, functions, _ = fixture(words, cuts=(0, 12, 16, 48, len(words)*4))
+    previous, data, following, _ = functions
+    references = {data_at: {(48, 'code'), (52, 'code')}}
+    assert default_color_word(data, previous, following, image, 'big', references, {following.vram})
+    assert not default_color_word(data, previous, following, image, 'big', references, set())
