@@ -598,3 +598,8 @@ from the cartridge samples. Runtime effects, branches and envelopes can differ.
 
 Packed UVMD models with validated vertex loads and triangle indices appear under
 Models. The preview shows the first level of detail in local coordinates.
+
+UV sound banks with paired control and wave chunks expose their samples under
+Audio. The adjacent compact MIDI music directory also offers stereo previews
+from the music bank, capped at 30 seconds. The player makes one pass through
+sequence loops and reports notes that it could not play.
