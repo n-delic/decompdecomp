@@ -362,6 +362,9 @@ class Search(Permuter):
                  (L + 'guarded_offset_index.variants', (source, name, arch, asm)),
                  # a temporary stored to a global and read back, written as the global (cse's forwarding)
                  (L + 'global_store_forward.variants', (source, name)),
+                 # a byte array's address added to an index in a nested loop's guarded block: the base set twice
+                 # (so the loop pass leaves it) after the index (the lui/addiu where the target has it)
+                 (L + 'loop_symbol_base_block.variants', (source, name)),
                  # a switch case's temporaries split and its flag update folded in one child, and record
                  # field stores beside a scalar global's store written raw (MEM_IN_STRUCT_P keeps their order)
                  (L + 'case_split_combinations.variants', (source, name)),

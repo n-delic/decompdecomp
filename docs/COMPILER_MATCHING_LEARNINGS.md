@@ -11538,3 +11538,22 @@ return-value copy. Returning zero directly for the null case and after
 cleanup, and one directly when cleanup was unnecessary, reproduced the
 target's register and instruction order. The deep permuter saved the
 115-to-0 match in 18 candidates.
+
+### A byte array's address in a nested loop's guarded block: set the pointer twice, index first
+
+With gcc-2.7.2-kmc `-G0 -mips3 -mgp32 -mfp32 -O2`, an N64 save-menu function (two nested loops, a call and a
+`switch` in a guarded block) sat at 135 with only scheduling and register rows left: the target builds
+`D_8011F118 + i * 12` in the block (`lui $v0` / `addiu $v0` after the index arithmetic, `addu $a2,$a2,$v0`), while
+the best source had the address in an early pointer (`__base_D = D;` at the top, the symbol-address family's form),
+which the compiler built as `lui $t0` after the argument moves with the operands swapped. Without that pointer the
+loop pass hoisted the address instead of the table the game kept in `$fp` (430). Edit list, each scored with the
+app's judge-worker: remove the early set and keep the pointer set twice (`__base = 0;` at the top, `__base = D;`
+just before the call): 135 -> 120 (the address stays in the block, right register and operand order, but the
+`lui`/`addiu` sits right after the first `sll`); compute the index first (`__m = __repair_i * 0xC;`, then the base
+set, then `__base + __m`): 120 -> 0. Rule: a pseudo set once is a movable for loop.c and lands in a saved register
+by floor_log2(uses) * uses / live length (the hoisted address was 94 insns long against 92 for the table, so it won
+`$fp`); a second set takes it out of the movables, and the order the RTL was built in is the order the first
+scheduler leaves the `lui` in. Failed: swapping operand order, a local for the whole argument, an index-array or
+cast spelling of the sum, setting the base inside the `if` or inside the loop (all 135 or 430). Evidence: one
+function plus the library's tests (decomp-repair 0.5.255 `loop_symbol_base_block`, reaches 0 from the 135 source
+in one child; the app's Deep Permuter run is the user's to confirm).
