@@ -1,4 +1,4 @@
-"""Review freshly fetched origin commits before fast-forwarding a linked checkout."""
+"""Review freshly fetched origin commits before updating a linked checkout."""
 import hashlib
 import json
 
@@ -33,21 +33,40 @@ def run(net, slug, folder, log, *, review=''):
         token = hashlib.sha256(json.dumps([str(root), branch, ref, url, head, target]).encode()).hexdigest()
         if review and review != token:
             raise NetworkError('Local or remote commits changed since your review. Check origin again to see the new count.')
-        if behind and ahead:
-            raise NetworkError(f'{name} has {behind} incoming commits and your branch has {ahead} local-only commits. '
-                               'Merge or rebase in Git before pulling from the app.')
         commits = f'{behind} commit' + ('s' if behind != 1 else '')
         if review and behind:
             if git(root, 'status', '--porcelain', '--untracked-files=no'):
                 raise NetworkError('Commit or stash tracked changes in the checkout before pulling.')
-            output.progress({'phase': f'Applying {commits} from {name}', 'queued': False})
-            output(f'Applying {commits} from {name}…')
-            check()
-            git(root, 'merge', '--ff-only', '--no-autostash', '--no-overwrite-ignore', target,
-                error='Git could not fast-forward the checkout. Check Git status for conflicting files or an in-progress operation, then retry.')
-            message = f'Pulled {commits} from {name}.'
+            if ahead:
+                phase = f'Checking whether {commits} from {name} can merge'
+                output.progress({'phase': phase, 'queued': False})
+                output(phase + '…')
+                # Check the merge without touching the index or worktree. Use the same strategy to apply it.
+                if git(root, 'merge-tree', '--write-tree', head, target, missing=True,
+                       error='Git could not check the merge. Use Git 2.38 or newer and check that both branches share a history.') is None:
+                    raise NetworkError('The branches have merge conflicts. Open this checkout in your Git client, '
+                                       f'merge {name}, and resolve the conflicts there. The checkout is unchanged.')
+                check()
+                if destination() != selected or git(root, 'rev-parse', 'HEAD') != head:
+                    raise NetworkError('The branch or origin changed during the merge check. Review the pull again.')
+                output.progress({'phase': f'Merging {commits} from {name}', 'queued': False})
+                check()
+                git(root, 'merge', '--no-ff', '--no-edit', '--no-autostash', '--no-overwrite-ignore',
+                    '-s', 'ort', '-m', f'Merge {name}', target,
+                    error='Git could not finish the merge. Check Git status in the checkout before retrying.')
+                message = f'Merged {commits} from {name}. Both histories are saved in a local merge commit.'
+            else:
+                output.progress({'phase': f'Applying {commits} from {name}', 'queued': False})
+                output(f'Applying {commits} from {name}…')
+                check()
+                git(root, 'merge', '--ff-only', '--no-autostash', '--no-overwrite-ignore', target,
+                    error='Git could not fast-forward the checkout. Check Git status for conflicting files or an in-progress operation, then retry.')
+                message = f'Pulled {commits} from {name}.'
+        elif behind and ahead:
+            local = f'{ahead} local-only commit' + ('s' if ahead != 1 else '')
+            message = f'{name} has {commits} to pull and this branch has {local}. Merging keeps both histories and creates a local merge commit.'
         else:
             message = f'{commits} available from {name}.' if behind else f'No incoming commits from {name}.'
         output(message)
         return {'message': message, 'status': repository_push.describe(root, branch, ref),
-                'pull_review': {'token': token, 'count': behind} if behind and not review else None}
+                'pull_review': {'token': token, 'count': behind, 'merge': bool(ahead)} if behind and not review else None}

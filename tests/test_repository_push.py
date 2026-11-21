@@ -278,6 +278,9 @@ def test_pull_preserves_dirty_work_and_reports_divergence(progress, tmp_path):
     from decompnet.app import repository_pull
 
     net, root, remote = progress
+    git(root, 'add', '-A')
+    git(root, 'commit', '-qm', 'save fixture progress')
+    git(root, 'push', 'origin', 'HEAD')
     other = incoming(remote, tmp_path)
     commit(other, 'upstream.txt')
     git(other, 'push', 'origin', 'HEAD')
@@ -287,7 +290,45 @@ def test_pull_preserves_dirty_work_and_reports_divergence(progress, tmp_path):
     with pytest.raises(NetworkError, match='stash tracked changes'):
         repository_pull.run(net, 'game', str(root), print, review=review['token'])
     git(root, 'commit', '-qm', 'local edits')
-    with pytest.raises(NetworkError, match='1 incoming commit.*1 local-only commit'):
-        repository_pull.run(net, 'game', str(root), print)
+    local = git(root, 'rev-parse', 'HEAD')
+    result = repository_pull.run(net, 'game', str(root), print)
+    review = result['pull_review']
+    assert review['count'] == 1 and review['merge']
+    assert '1 local-only commit' in result['message']
     assert not (root/'upstream.txt').exists()
+    assert git(root, 'rev-parse', 'HEAD') == local
+
+    result = repository_pull.run(net, 'game', str(root), print, review=review['token'])
+    assert result['status']['behind'] == 0
+    assert git(root, 'rev-parse', 'HEAD^1') == local
+    assert git(root, 'rev-parse', 'HEAD^2') == git(other, 'rev-parse', 'HEAD')
+    assert git(remote, 'rev-parse', 'HEAD') == git(other, 'rev-parse', 'HEAD')
+    assert (root/'upstream.txt').exists()
     assert (root/'staged.txt').read_text() == 'staged edits'
+
+
+def test_pull_merge_conflict_leaves_checkout_untouched(progress, tmp_path):
+    from decompnet.app import repository_pull
+
+    net, root, remote = progress
+    git(root, 'add', '-A')
+    git(root, 'commit', '-qm', 'save fixture progress')
+    git(root, 'push', 'origin', 'HEAD')
+    other = incoming(remote, tmp_path)
+    (other/'new.txt').write_text('remote version')
+    git(other, 'add', 'new.txt')
+    git(other, 'commit', '-qm', 'remote version')
+    git(other, 'push', 'origin', 'HEAD')
+    (root/'new.txt').write_text('local version')
+    git(root, 'add', 'new.txt')
+    git(root, 'commit', '-qm', 'local version')
+    local = git(root, 'rev-parse', 'HEAD')
+    before = git(root, 'status', '--porcelain')
+
+    review = repository_pull.run(net, 'game', str(root), print)['pull_review']
+    with pytest.raises(NetworkError, match='branches have merge conflicts'):
+        repository_pull.run(net, 'game', str(root), print, review=review['token'])
+
+    assert git(root, 'rev-parse', 'HEAD') == local
+    assert git(root, 'status', '--porcelain') == before
+    assert (root/'new.txt').read_text() == 'local version'

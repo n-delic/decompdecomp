@@ -163,8 +163,8 @@ def register(app):
                         return JSONResponse({'job':active['id'], 'action':active['scope'].get('action', 'push')})
                     if action == 'pull':
                         job = app.jobs.start('repository-pull', lambda log: repository_pull.run(
-                            app.net, slug, folder, log, review=review), project=slug,
-                            cancel_message='Pull stopped. Check Git status if the fast-forward had already started.')
+                            app.net, slug, folder, log, review=review), project=slug, include_recent_log=False,
+                            cancel_message='Pull stopped. Check Git status if the checkout update had already started.')
                     else:
                         job = app.jobs.start('repository-push', lambda log: repository_push.run(app.net, slug, folder, log),
                             cancel_message='Push stopped. Waiting requests are removed from the queue; check origin if pushing had already started.')

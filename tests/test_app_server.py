@@ -1139,8 +1139,18 @@ def test_a_job_always_ends_and_says_why(tmp_path):
     assert "KeyError" in "\n".join(job["log"]) and "Traceback" in "\n".join(job["log"])
     assert "dtk took longer than 30 minutes" in wait(jobs.start("import", slow))["error"]
     assert wait(jobs.start("build", failed))["error"] == "ninja failed (2): ld: undefined symbol foo"
+    def blocked_pull(log):
+        from decompnet.network import NetworkError
+
+        log("Checking origin")
+        raise NetworkError("Resolve merge conflicts in your Git client.")
+
+    pull = wait(jobs.start("repository-pull", blocked_pull, include_recent_log=False))
+    assert pull["error"] == "Resolve merge conflicts in your Git client."
+    assert pull["log"] == ["Checking origin"]
     logged = (tmp_path / "logs" / "decomp.log").read_text()
     assert "reading the ROM" in logged and "KeyError" in logged and "Traceback" in logged
+    assert pull["error"] in logged
 
 
 def test_a_panel_finds_the_running_job_of_its_own_project():
