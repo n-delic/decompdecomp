@@ -11162,3 +11162,35 @@ used `-g3`.
   store-before-load order and the forwarded value. Reloading between
   the two writes scored 265. The complete repair reduced score 60
   to an exact 76-byte match.
+
+### Collapse split byte-flag updates in a switch case
+
+One N64 four-case switch function (752 bytes),
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, matched by hand from a
+clean rewrite. Each step measured with the app's judge; one function,
+not a controlled test.
+
+- One pointer local shared by three cases (a table pointer in one case,
+  `&global` in two others) put the cursor and the pointer in swapped
+  saved registers. A local per case fixed the swap (1465 to 895). The
+  library's `case_temporary_split` already proposes this.
+- Byte temporaries shared by two cases: splitting them per case gave
+  1060 to 610.
+- Struct-field stores (`cur->pos = -1`) let the scheduler sink a
+  scalar global's byte store below them: gcc 2.7.2 treats an in-struct
+  memory reference and a fixed-address scalar as non-conflicting
+  (`MEM_IN_STRUCT_P`). Writing the cursor's fields as
+  `*(s16 *)((u8 *)cur + 0x12)` kept the target's store order (420 to
+  340). Rewriting the object's fields the same way made it worse (1070).
+- `a = *m; b = G; a = (a | 4) & ~1; b &= ~1; *m = a; G = b;` left the
+  two byte values in swapped `$v0`/`$v1`; folding the load
+  (`a = (*m | 4) & ~1;`) fixed it (340 to 240).
+- In the other case, the same split spelling put the `lui/addiu` of
+  `&m` before the `&global` set-up of `$s0`; `*m |= 1; G |= 1;` was
+  exact (240 to 0). Statement order in that case changed nothing (all
+  12 orders scored the same); sched1 dumps showed the extra local's
+  pseudo was what moved the address.
+- Permuter: `split_read_modify_write` (decomp-repair 0.5.237) offers
+  these folded and collapsed, per site, per interleaved group and all
+  together. From the 340 source its all-sites child is exact in one
+  step; the stock families' best single step there was 100.
