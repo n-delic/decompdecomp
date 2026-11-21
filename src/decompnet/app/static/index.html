@@ -698,12 +698,12 @@
         <div class="small" id="deepSweepStatus" role="status" hidden></div>
         <details id="deepSweepAttention" hidden><summary id="deepSweepAttentionTitle"></summary><p class="deep-issue-intro">Grouped by reason. Select a function to inspect its saved C and settings.</p><div id="deepSweepAttentionList"></div><p class="deep-issue-footer">After fixing an issue, start the pass again. To retry unchanged inputs, enable <b>Repeat completed passes</b>. This list covers errors for the current inputs; matched and set-aside functions are excluded.</p></details>
         <details class="deep-activity-section" id="deepActivitySection" open hidden>
-        <summary>Function activity <span class="muted small" id="deepActivityCount"></span></summary>
+        <summary>Function activity <span class="deep-activity-count muted small" id="deepActivityCount"></span></summary>
         <p class="deep-activity-empty small muted" id="deepActivityEmpty" hidden></p>
         <div class="deep-activity-controls">
           <label>Sort by <select id="deepActivitySort">
-            <option value="function">Function</option>
             <option value="improvements">Most improvements</option>
+            <option value="function">Function</option>
             <option value="best_percent">Best match</option>
             <option value="elapsed_seconds">Longest running</option>
             <option value="tested">Most candidates tested</option>
@@ -758,6 +758,7 @@
           <button class="ghost small-btn" type="button" id="boundaryReviewBtn">Review &amp; repair boundaries</button>
           <button class="ghost small-btn" type="button" id="coverageReviewBtn" hidden>Review candidates</button>
           <button class="ghost small-btn" type="button" id="missedFunctionsBtn" hidden title="Adds the functions a fresh import would now find in bytes the split left as data, including addresses Play saw the game run. Matches, attempts and notes stay as they are.">Add missed functions</button>
+          <button class="ghost small-btn" type="button" id="donorCodeBtn" hidden>Review code from imported decomp</button>
           <span class="small muted">CPU only · no AI tokens · does not change code</span>
         </div>
         <p class="small coverage-audit-status" id="coverageAuditStatus" role="status" hidden></p>

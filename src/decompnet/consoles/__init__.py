@@ -127,6 +127,7 @@ class Console:
     layout = ""  # what a game started from scratch becomes, for the GUI: "splat", "dtk-template"
     compilers: tuple[Compiler, ...] = ()  # the first is the default, unless default_compiler says another
     import_note = ""  # compiler/setup guidance before importing a project
+    donor_layout = False  # review exact same-ROM donor function spans and locally decoded overlays
     import_error = ""  # a host restriction that prevents importing on this computer
     packs: tuple[tuple[str, str], ...] = ()  # (toolchain, what it's for): more that Setup offers for it
     kits: tuple[str, ...] = ()  # the kits users bring that it takes (kits/: an SDK, a compiler only it came in)
@@ -299,6 +300,10 @@ class Console:
         """Before splat splits: code its own look misses (segments loaded later, overlays), added to its config.
         Returns the image splat reads."""
         return image
+
+    def donor_text_regions(self, image: bytes) -> list:
+        """Original code regions with separate module-relative addresses."""
+        return []
 
     def missed_functions(self, config: Path, image: bytes, log=print) -> list[tuple[int, int, int]] | None:
         """ROM mode: in a project that exists, the functions its split left as data that an import would now find,

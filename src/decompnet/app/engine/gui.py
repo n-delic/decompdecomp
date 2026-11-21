@@ -332,6 +332,7 @@ class GuiMixin:
         return {
             "slug": proj["slug"], "title": console.display_title(proj["name"], cfg.get("rom", {})), "description": proj["description"],
             "code_audit": self.is_rom(proj) and proj["arch"]=="mips",
+            "donor_layout": self.is_rom(proj) and console.donor_layout,
             "missed_functions": self.is_rom(proj) and type(console).missed_functions is not consoles.Console.missed_functions,
             **console.project_facts(),
             "compilers": [c.id for c in console.compilers],
