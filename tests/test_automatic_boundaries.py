@@ -298,3 +298,14 @@ def test_overlay_end_marker_is_data_only_without_entry_evidence(referenced):
     assert [(symbol.vram, symbol.rom, symbol.size) for symbol in data] == (
         [] if referenced else [(marker.vram, marker.rom, 4)]
     )
+
+
+def test_nop_padding_emitted_in_a_separate_source_unit_is_omitted():
+    image, functions, segments = fixture(words=[*BODY, 0, 0, *BODY], cuts=(0, 32, 36, 40, 72))
+    functions[1].segment = 'new_source_unit'
+    functions[2].segment = 'new_source_unit'
+    console = consoles.get('n64')
+    result = repair(functions, [], image, console, segments)
+    assert [f.rom for f in result] == [0, 40]
+    result = repair(functions, [], image, console, segments, symbols=[f'keep = 0x{BASE+36:08X};'])
+    assert sorted(f.rom for f in result) == [0, 32, 36, 40]
