@@ -8838,3 +8838,11 @@ typed objects recovered all 68 linked bytes on the copied project. The
 original draft and the previous 10-point candidate both matched after the
 repair. The rule checks the addresses computed from the target instruction
 words as well as the source symbols and offsets.
+
+### Reusing an XOR value under a guard
+
+In a scratch N64 function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`,
+a value computed by XOR was available before an equality guard. Repeating the key
+comparison inside the guarded arm gave score 410. Testing the existing XOR result
+against zero restored the target's unsigned nonzero test and reduced the linked score
+to 215 through Deep Permuter. This is a verified partial improvement.
