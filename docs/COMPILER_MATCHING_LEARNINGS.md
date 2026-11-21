@@ -10237,3 +10237,16 @@ guard and the address reassociation come from decomp-permuter's randomizer. Star
 `switch_arm_store` reproduces the edit exactly; starting from the guarded source, `loop_counter_roles` proposes the final
 counter edit (variant 8 of 23, among the reassignments that rank first).
 
+
+### Preserve relocated byte arithmetic and reload a stored context slot
+
+Three fresh N64 drafts matched with the original compilers and independent archived controls.
+
+- With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1`, intermediate shifts were two bits too large at one relocated
+  word load and three word stores. Applying their already-scaled expressions to byte pointers reproduced all
+  280 bytes from score 40. Narrowing the formal parameters as well produced the same result.
+- With the same flags, swapping the grouping of two shifted unsigned bytes repaired their load order, leaving
+  score 20. Casting the relocated base to a byte pointer before either add matched all 248 bytes from score 60.
+- At `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, moving the slot read after the flag assignment still left
+  score 330. Retaining the context for both stores and taking the address of the updated pointer slot matched all
+  76 bytes from score 335. The target reloads that pointer for the word read and final call.
