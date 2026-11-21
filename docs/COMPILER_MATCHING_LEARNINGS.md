@@ -1,5 +1,34 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2 and IDO 7.1: recover small call and store lifetimes
+
+The linked byte judge replayed 44 archived N64 drafts with their original
+compiler commands. The measured rules recovered 19 exact matches:
+
+- `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`: three 48-byte
+  wrappers lost the payload store because the draft only passed the address
+  of the tag. A record with the tag, an aligned halfword or word payload,
+  and the observed eight-byte tail matched (104 to 0). A record without
+  the tail restored the store but still scored 4.
+- Same KMC flags: four 48-byte hardware-register wrappers matched after
+  writing through the evidenced volatile address and sharing the result
+  variable between the two paths (130 to 0). Sharing the result while
+  keeping the ordinary global store still scored 130.
+- Same KMC flags plus `-g3`: eight short wrappers matched after changing
+  inferred and unused callee return types to `void` (135–145 to 0,
+  48–64 bytes). The target restores the link register after the final
+  field store and only then puts zero in the return register.
+- Same KMC flags plus `-g3`: returning the destination of a three-word
+  copy kept it in the target return register (130 to 0, 32 bytes).
+  Forming a signed mask from an explicit unsigned nonzero test recovered
+  a separate result wrapper (110 to 0, 40 bytes). A signed nonzero
+  condition raised that case's score to 300.
+- `ido-7.1 -O0 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul
+  -DNON_MATCHING`: bind the record pointer to a local for the counter
+  read and update, keeping the original parameter for the array store.
+  Two 52-byte replays matched (120 to 0). Using the alias for the array
+  store as well left a register difference.
+
 ### KMC GCC 2.7.2: preserve measured lifetimes in calls, loops and record writes
 
 Four isolated N64 replays used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.
