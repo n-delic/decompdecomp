@@ -12858,3 +12858,13 @@ that address for the load and store. With
 `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1`, the linked difference score
 improved from 225 to an exact match. This is one observed match; synthetic
 tests cover the instruction sequence, declaration and source guards.
+
+### Stage a float sum in its final square local (KMC GCC 2.7.2)
+
+With `-G0 -mips3 -mgp32 -mfp32 -O2`, a retail N64 routine had three
+rotated destination registers in squared floating-point terms and two
+related addition mismatches. Stage the last addition in the dead square
+local, preserving operand order, then copy the result back. The linked
+judge improved from 25 to 20 and removed one register mismatch. The
+previous dispatcher produced no proposal and the repair produced one
+candidate. The routine remains unmatched.
