@@ -990,6 +990,37 @@ def test_unscoped_lookup_and_stopped_claim_recovery_discover_project_stores(scop
     assert not net.store.one('SELECT 1 FROM notes')
 
 
+def test_startup_recovery_only_writes_for_stale_claims_and_recent_releases(scoped):
+    import time
+
+    net, stores = scoped
+    holding = net.authenticate(net.register_agent('holding', 'you', origin='local'))
+    released = net.authenticate(net.register_agent('released', 'you', origin='local'))
+    historic = net.authenticate(net.register_agent('historic', 'you', origin='local'))
+    already_reset = net.authenticate(net.register_agent('already-reset', 'you', origin='local'))
+    external = net.authenticate(net.register_agent('external', 'you', origin='cli'))
+
+    with stores[1].tx() as db:
+        db.execute('INSERT INTO claims VALUES(10,?,1,2)', (holding.id,))
+        now = time.time()
+        db.executemany(
+            "INSERT INTO events(project_id,agent_id,kind,detail,created_at) VALUES(1,?,?,'same_name',?)",
+            [(released.id, 'release', now), (historic.id, 'release', 1),
+             (already_reset.id, 'release', now), (already_reset.id, 'stopped', now)],
+        )
+    with stores[2].tx() as db:
+        db.execute('INSERT INTO claims VALUES(20,?,1,9999999999)', (external.id,))
+
+    assert net.release_local_claims() == ['same_name']
+    assert net.release_local_claims() == []
+    assert not stores[1].one('SELECT 1 FROM claims')
+    assert stores[2].one('SELECT agent_id FROM claims')['agent_id'] == external.id
+    assert [tuple(row) for row in stores[1].all(
+        "SELECT project_id,agent_id,detail FROM events WHERE kind='freed' ORDER BY id"
+    )] == [(1, holding.id, 'same_name'), (1, released.id, '')]
+    assert not stores[2].one("SELECT 1 FROM events WHERE kind='freed'")
+
+
 def test_imported_project_score_refresh_and_selection_use_owner(scoped):
     from decompnet.app.forkengine import ForkEngine
     net, stores = scoped

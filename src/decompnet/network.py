@@ -1939,7 +1939,40 @@ class Network:
         ids = [r["id"] for r in self.store.all("SELECT id FROM agents WHERE origin='local' AND name NOT IN "
                                                f"({', '.join('?' * (1 + len(MACHINE_AGENTS)))})",
                                                "you", *MACHINE_AGENTS)]
-        return self.release_stopped(ids)
+        if not ids:
+            return []
+        identities = json.dumps(ids)
+        recent = time.time() - SELF_RELEASE_WINDOW
+        freed = []
+        for store, projects in self.project_stores():
+            # Recover only agents with a lease or a release that can still affect
+            # their next claim. Most local identities are historical.
+            with store.tx() as db:
+                claims = db.execute(
+                    "SELECT f.id,f.project_id,f.name,c.agent_id FROM claims c JOIN functions f ON f.id=c.function_id "
+                    "WHERE c.agent_id IN (SELECT value FROM json_each(?)) ORDER BY c.agent_id,f.id",
+                    (identities,)).fetchall()
+                boundaries = db.execute(
+                    "SELECT DISTINCT e.agent_id,e.project_id FROM events e INDEXED BY idx_events_time "
+                    "WHERE e.created_at>? AND e.kind='release' AND e.agent_id IN (SELECT value FROM json_each(?)) "
+                    "AND NOT EXISTS (SELECT 1 FROM events b WHERE b.agent_id=e.agent_id "
+                    "AND b.kind IN ('freed','stopped') AND b.created_at>=e.created_at)",
+                    (recent, identities)).fetchall()
+                owned = set(projects)
+                reset = set()
+                for row in claims:
+                    if store is not self.store and row["project_id"] not in owned:
+                        continue
+                    db.execute("DELETE FROM claims WHERE function_id=? AND agent_id=?", (row["id"], row["agent_id"]))
+                    self._event(db, row["project_id"], row["agent_id"], "freed", row["name"])
+                    freed.append(row["name"])
+                    reset.add(row["agent_id"])
+                for row in boundaries:
+                    if row["agent_id"] in reset or (store is not self.store and row["project_id"] not in owned):
+                        continue
+                    self._event(db, row["project_id"], row["agent_id"], "freed", "")
+                    reset.add(row["agent_id"])
+        return freed
 
     def get_function(self, function: str, project: str | None = None, agent: Agent | None = None) -> str:
         return self._brief(self._function(function, project), agent, header="VIEW")
