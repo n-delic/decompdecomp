@@ -1018,3 +1018,13 @@ def test_stack_and_call_repairs_receive_the_resolver(monkeypatch):
     monkeypatch.setattr(diff_gated_repairs.measured_kmc_stack_and_call, 'variants', repair)
     assert 'stack_call_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, '', resolve=resolve))
     assert 'stack_call_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, '', resolve=resolve))
+
+
+def test_vector_square_repairs_route_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_kmc_vector_square, 'variants',
+                        lambda text, name, header, diff: [('vector_square_fixture', text)])
+    assert 'vector_square_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'vector_square_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
