@@ -1633,6 +1633,8 @@ planned; asset format descriptions are advisory text.
 
 ### ROM Explorer
 
+Indexed LZ banks expose named textures, including RDP textures drawn in separately paletted strips.
+
 BAM3 and counted big-endian TIM sprite banks expose individual textures and palettes after bounded decompression.
 Unnamed B1 relocators can establish a nearby sample-table address, including uncached cartridge addresses.
 Detached compact MIDI tables offer stereo previews when a unique validated wave bank matches the scores.
