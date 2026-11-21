@@ -372,15 +372,35 @@ def _defines_left_out(path: Path, leave_out) -> bool:
 EMPTY_UNIT = "port_no_game_c.c"
 
 
-def gather(repo: Path, out: Path, leave_out=(), function_headers=None, *, ensure_host_import=False) -> dict[str, Path]:
+def _save_manifest(repo: Path) -> dict:
+    progress = repo / "progress"
+    path = progress / "decompdecomp.json"
+    if not (progress / "src").is_dir() or not path.is_file():
+        raise NetworkError(f"{repo} has no progress/src and progress/decompdecomp.json: choose the game's save "
+                           "repository (the folder Save writes)")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def original_code(host: Path, manifest: dict, fixed: list[str]) -> set[str]:
+    """Functions that need the original instructions, keyed by ROM and address so renames still leave them out."""
+    sha1 = (manifest.get("game") or {}).get("sha1") or ""
+    if not re.fullmatch(r"[a-fA-F0-9]{40}", sha1):
+        return set()
+    addresses = {int(row, 16) for row in _names(host / "games" / f"{sha1.lower()}.original")}
+    if not addresses:
+        return set()
+    return {name + ".c" for name, address, kind in (row.split() for row in fixed)
+            if kind == "func" and int(address, 16) in addresses}
+
+
+def gather(repo: Path, out: Path, leave_out=(), function_headers=None, *, ensure_host_import=False, manifest=None) -> dict[str, Path]:
     """The C the build compiles, in out/src (one file per function, the shared header included) and out/include.
     `leave_out`: more matched files to leave out than exclude.txt names (play.library). `function_headers`: the
     project's own {function: part} (play.function_headers), over the save's, which an older save lacks. Returns
     {file name: where it came from}."""
     progress, port = repo / "progress", repo / "port" / "wasm"
-    if not (progress / "src").is_dir() or not (progress / "decompdecomp.json").is_file():
-        raise NetworkError(f"{repo} has no progress/src and progress/decompdecomp.json: choose the game's save "
-                           "repository (the folder Save writes)")
+    if manifest is None:
+        manifest = _save_manifest(repo)
     exclude = _names(port / "exclude.txt") | set(leave_out)
     chosen = {p.name: p for p in sorted((progress / "src").glob("*.c")) if p.name not in exclude}
     chosen = {name: path for name, path in chosen.items() if not _defines_left_out(path, leave_out)}
@@ -390,7 +410,6 @@ def gather(repo: Path, out: Path, leave_out=(), function_headers=None, *, ensure
     (out / "include").mkdir(parents=True, exist_ok=True)
     # The decomp compiles every function with the shared header, or with its part's own when the save names one
     # (a function from the game's own source files: common_<part>.h, the manifest's function_headers).
-    manifest = json.loads((progress / "decompdecomp.json").read_text(encoding="utf-8"))
     units = (manifest.get("function_headers") or {}) | (function_headers or {})
     headers = {h.name for folder in (progress / "include", port / "include") for h in folder.glob("*.h")}
     texts = own_functions(chosen, {name: kr_varargs(source.read_text(encoding="utf-8")) for name, source in chosen.items()})
@@ -856,10 +875,14 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
     files = _Files()
 
     log("gathering the game's C from its save")
-    sources = gather(repo, out, leave_out, function_headers, ensure_host_import=ensure_host_import)
-    library = _library(out, library_c or {}, sources, log)
-    manifest = json.loads((repo / "progress" / "decompdecomp.json").read_text(encoding="utf-8"))
+    manifest = _save_manifest(repo)
     fixed, functions = addresses(manifest)
+    original = original_code(host, manifest, fixed)
+    if original:
+        log(f"using the original game code for {len(original)} functions that depend on the console's stack layout")
+    leave_out = set(leave_out) | original
+    sources = gather(repo, out, leave_out, function_headers, ensure_host_import=ensure_host_import, manifest=manifest)
+    library = _library(out, library_c or {}, sources, log)
     _write(out / "fixed.txt", "\n".join(fixed) + "\n")
     _write(out / "functions.txt", "\n".join(sorted(functions)) + "\n")
 

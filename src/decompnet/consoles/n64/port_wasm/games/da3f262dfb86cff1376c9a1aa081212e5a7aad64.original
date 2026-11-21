@@ -1,0 +1,4 @@
+# A wheel rotation reads its matrix across the original compiler's adjacent stack slots.
+# Run its caller from MIPS too, so the output pointer stays in the argument register.
+0x8001C1A8
+0x8002DF40
