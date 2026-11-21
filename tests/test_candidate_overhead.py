@@ -108,12 +108,14 @@ def test_bookkeeping_flushes_at_size_and_time_boundaries(monkeypatch):
     clock = [0.];monkeypatch.setattr(trial_bookkeeping.time, 'monotonic', lambda: clock[0])
     calls = counted_transactions(net.store)
     with trial_bookkeeping.scope():
-        for _ in range(32):adaptive_repairs.record(net, 'profile', 'focus', 'family', 40, None)
-        assert len(calls) == 1  # 64 queued statements
+        # Each family and origin has a distinct counter. Repeating a key would merge its statements.
+        for index in range(32):
+            adaptive_repairs.record(net, 'profile', 'focus', f'family-{index}', 40, None, origin=f'origin-{index}')
+        assert len(calls) == 1  # 64 distinct counter updates
         clock[0] = .6
-        adaptive_repairs.record(net, 'profile', 'focus', 'family', 40, None)
+        adaptive_repairs.record(net, 'profile', 'focus', 'family-0', 40, None)
         assert len(calls) == 2
-    assert net.store.one('SELECT attempted FROM repair_policy')['attempted'] == 33
+    assert net.store.one("SELECT sum(attempted) AS attempted FROM repair_policy")['attempted'] == 33
 
 
 def test_progress_is_throttled_but_winners_phase_changes_and_final_are_immediate(monkeypatch):
