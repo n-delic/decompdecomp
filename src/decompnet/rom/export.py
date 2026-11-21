@@ -170,7 +170,9 @@ def _export_segments(config: dict, functions) -> dict:
                 continue
             address = segment['vram'] + start - segment['start']
             ends = [f['vram'] + f['size'] for f in functions
-                    if f['vram'] is not None and f['vram'] < address < f['vram'] + f['size']]
+                    if f['vram'] is not None and f['vram'] < address < f['vram'] + f['size']
+                    and (dict(f).get('rom_offset') is None or
+                         f['rom_offset'] == segment['start'] + f['vram'] - segment['vram'])]
             if not ends:
                 continue
             end = start + max(ends) - address

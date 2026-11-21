@@ -147,3 +147,17 @@ def test_expanded_image_and_original_cartridge_have_separate_hashes(tmp_path,mon
     split_config['sha1']='0'*40
     (tmp_path/'reviewed.yaml').write_text(yaml.safe_dump(split_config))
     with pytest.raises(NetworkError,match='analysis image'):reviewed_code.run(net,'game',change)
+
+
+def test_export_tracks_reviewed_function_in_its_own_overlapping_bank():
+    base=0x80000000
+    layout={'segments':[
+        {'type':'code','name':'first','start':0x100,'vram':base,
+         'subsegments':[[0x100,'c','first'],[0x118,'data','first_data']]},
+        {'type':'code','name':'second','start':0x140,'vram':base,
+         'subsegments':[[0x140,'c','second'],[0x158,'data','second_data']]},
+        [0x180],
+    ]}
+    result=_export_segments(layout,[{'vram':base+0x10,'rom_offset':0x150,'size':12}])
+    assert result['segments'][0]['subsegments'][1][0]==0x118
+    assert result['segments'][1]['subsegments'][1][0]==0x15c

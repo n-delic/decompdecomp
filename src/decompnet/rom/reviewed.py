@@ -12,8 +12,10 @@ def extend_config(config, functions):
     result=copy.deepcopy(config)
     for fn in functions:
         parents=_segments(result)
+        rom = dict(fn).get('rom_offset')
         owner=next((s for s in parents if s.get('type')=='code' and 'vram' in s and s['end'] is not None
-                    and s['vram']<=fn['vram']<s['vram']+s['end']-s['start']),None)
+                    and s['vram']<=fn['vram']<s['vram']+s['end']-s['start']
+                    and (rom is None or rom == s['start'] + fn['vram'] - s['vram'])),None)
         if owner is None:raise ExportError('The reviewed function has no existing code parent.')
         end=owner['start']+fn['vram']-owner['vram']+fn['size']
         if end<=owner['end']:continue
