@@ -2651,9 +2651,9 @@ Line Tools; queues that never wait, so decompdecomp's thread glue) or N64ModernR
 queues and timers; the RT64 renderer, complete S2DEX; reads the ROM at run time, so no extraction; RT64 needs full
 Xcode on macOS for its Metal shaders). The kit becomes a list per console (`Console.port_kits`), the readiness report
 and link check read the chosen one, and Port readiness shows the choice with what each needs on this computer.
-Started: the Porting tab's Play step lists the kit's runtimes (`PortKit.runtimes`), WebAssembly (playable now) and
-both native ones, each with the checklist steps it still waits for; the native ones can't be chosen until
-decompdecomp builds on them.
+Porting separates the build mode from the runtime. The N64 compatibility build preserves the game's 32-bit memory
+layout and can play or export with decompdecomp's runtime today. libultraship and N64ModernRuntime are listed for
+both modes as planned integrations. The direct 64-bit C port shows the remaining checklist steps for each runtime.
 Tried on a Mac: libultraship and its libraries built from source; N64ModernRuntime built; RT64 stopped for want of
 Xcode's `metal`.
 

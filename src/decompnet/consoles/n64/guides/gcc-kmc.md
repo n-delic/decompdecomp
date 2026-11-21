@@ -307,7 +307,10 @@ Do not tune setup order before allocation is plausible: 896 legal setup ordering
 earlier checkpoint. A lower score also hid an enlarged frame. Compare register substitutions,
 frame size and spill offsets alongside score, and preserve structurally different alternatives.
 Use `allocation_initialization_order`, `pointer_argument_alias`, `spill_declaration_order`,
-`byte_fill_constant` and the bounded `allocation_schedule_bridge` when offered. They automate
+`byte_fill_constant` and the bounded `allocation_schedule_bridge` when offered. In a large switch with a
+register-only difference, also `case_temporary_split` / `case_temporary_merge` (one local per case, or locals that
+never meet merged) and `phantom_wide_local` (an unused `long long` at a block start, which breaks an allocation
+tie by moving one insn). They automate
 subsets of these observations, not the complete historical search. Exact results do not prove
 original variable names, types or source spelling. See `docs/COMPILER_MATCHING_LEARNINGS.md`.
 

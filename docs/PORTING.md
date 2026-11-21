@@ -189,6 +189,11 @@ that never waits; a game that spins on a flag another thread sets would stop, an
 higher-priority thread had to wait. Which runtime a port uses (libultraship with this glue, or N64ModernRuntime with
 RT64) is to be the user's choice per game (ROADMAP.md, "A choice of runtime for a port").
 
+The Porting picker separates **N64 compatibility (32-bit game memory)** from **Direct 64-bit C port**. The former
+uses WebAssembly in the browser and wasm2c for desktop builds. It can play and export with decompdecomp's runtime
+today. libultraship and N64ModernRuntime are shown in the runtime picker for both modes as planned integrations.
+The direct C mode shows each runtime's outstanding 64-bit port prerequisites.
+
 ROM offsets the game uses as numbers (where an archive starts in the cartridge) and the values the N64's boot leaves
 in low memory for libultra are defined by Compile for PC too (`port/fixed_symbols.py`): offsets as symbols at those
 addresses, boot values with what the boot would leave, the TV system from the game code's country.

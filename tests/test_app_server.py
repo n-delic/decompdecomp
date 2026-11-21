@@ -3852,16 +3852,21 @@ def test_the_project_list_answers_same_for_an_unchanged_signature(app, monkeypat
     assert changed['sig'] != first['sig'] and changed['projects'][0]['matched'] == 2
 
 
-def test_play_refuses_a_runtime_it_cant_build_on_yet(app):
-    """The Play step's native runtimes are planned: asked for one, Play says so and starts nothing."""
+def test_play_and_export_refuse_an_unavailable_build_or_runtime(app):
     from .test_loading import tiny_game
 
     client, net, _ = app
     slug = "play-runtime"
     tiny_game(net, slug)
-    response = client.post("/api/play", headers={"X-Decomp": "1"}, json={"slug": slug, "runtime": "libultraship"})
-    assert response.status_code == 400 and "WebAssembly build only" in response.json()["error"]
-    net.remove_project(slug)
+    try:
+        for route in ("/api/play", "/api/play-export"):
+            for unsupported in ({"runtime": "libultraship"}, {"build_mode": "direct", "runtime": "wasm"}):
+                response = client.post(route, headers={"X-Decomp": "1"},
+                                       json={"slug": slug, "targets": ["web"], **unsupported})
+                assert response.status_code == 400
+                assert "Choose N64 compatibility and the decompdecomp runtime" in response.json()["error"]
+    finally:
+        net.remove_project(slug)
 
 
 def test_startup_does_not_stop_at_one_projects_half_written_save(tmp_path, monkeypatch):
