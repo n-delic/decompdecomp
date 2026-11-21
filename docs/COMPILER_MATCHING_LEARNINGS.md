@@ -8887,3 +8887,11 @@ storage alone left one stack offset difference. Adding the 15-byte bias to
 round the buffer's starting address up to 16 bytes matched all 148 linked
 bytes on the copied project. A 28-byte buffer also matched, so the inferred
 reservation is evidence for a usable layout rather than the original type.
+
+### Scoping a cursor initialized before a labelled loop
+
+In a scratch N64 function under `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, putting the
+cursor setup in a single-statement `do { ... } while (0)` before the loop label changed
+saved-register allocation and reduced the linked score from 130 to 110. The candidate
+keeps the label after initialization so the existing backedge retains its destination.
+Deep Permuter reproduced the improvement under the original compiler settings.

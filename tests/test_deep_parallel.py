@@ -417,3 +417,28 @@ def test_scoped_byte_read_trial_recognizes_a_saved_address_named_draft(monkeypat
     assert search.operand_order_pass(AGENT, proj, fn, 75, None) == 35
     assert len(tried) == 1
     assert tried[0].count('__repair_byte_table[0]') == 2
+
+
+def test_scoped_cursor_entry_runs_before_broad_rewriting(monkeypatch):
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    proj = net.project_row('game')
+    fn = {**net.function(), 'name': 'f', 'asm': 'addiu $s2, $s7, 0xc\n.Lscan:\nlw $s1, 0($s2)\n',
+          'best_source': ('void f(char *base) {\n'
+                          '    u16 **cursor;\n'
+                          '    char *item;\n'
+                          '    cursor = (u16 **) (base + 0xC);\n'
+                          'scan:\n'
+                          '    item = (char *) (*cursor);\n'
+                          '    if (accept(item)) return;\n'
+                          '    cursor += 3;\n'
+                          '    goto scan;\n}\n')}
+    search = deep_permuter.Search(net, 1, 6, Log())
+    monkeypatch.setattr(deep_permuter.permuter_focus, 'classify', lambda *args: 'operand')
+    tried = []
+    monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 110)
+
+    assert search.operand_order_pass(AGENT, proj, fn, 130, None) == 110
+    assert len(tried) == 1
+    assert 'do { cursor = (u16 **) (base + 0xC); } while (0);' in tried[0]
