@@ -163,3 +163,50 @@ def test_measured_float_grid_routes_store_offset_and_product_trials():
     assert len(candidates) == 2
     assert 'out[0][2] = (y - xy);\n    out[1][0] = (x - xy);' in candidates[0]
     assert 'float xy = y * x;' in candidates[1]
+
+
+def test_kmc_shares_measured_byte_store_immediate_with_division():
+    source = """void f(void *p, int divisor) {
+    (*(s8 *)((char *)p + 4)) = 0xff;
+    (*(s8 *)((char *)p + 5)) = 0xff;
+    sink(255 / divisor);
+}
+"""
+    rows = [
+        ('i', 'addiu $s4, $zero, 0xff', 'addiu $s5, $zero, -1'),
+        ('r', 'sb $s4, 4($s2)', 'sb $s5, 4($s2)'),
+        ('r', 'div $zero, $s4, $v0', 'div $zero, $v0, $v1'),
+        ('r', 'sb $s4, 5($s2)', 'sb $s5, 5($s2)'),
+    ]
+    assert ('kmc_unsigned_byte_store', source.replace('*(s8 *)', '*(u8 *)')) in proposals(
+        source, 'f', '', 'mips', KMC, rows, '',
+    )
+
+
+def test_kmc_routes_null_iteration_and_call_delay_slot_store():
+    source = """void f(int n) {
+    int i;
+    void *object;
+    void *inner;
+    i = 0;
+    do {
+        object = allocate(n);
+        if (object != NULL) {
+            inner = (*(void **)((char *)(object) + 8));
+            (*(s16 *)((char *)(object) + 2)) = 0;
+            (*(s16 *)((char *)(inner) + 12)) = (s16) (sample(4) + 4);
+            (*(s16 *)((char *)(object) + 4)) = 8;
+        }
+        i += 1;
+    } while (i < n);
+}
+"""
+    rows = case_rows(
+        'move $s2, $v0', 'beql $s2, $zero, 0x30', 'addiu $s3, $s3, 1', 'lw $s1, 8($s2)',
+        'addiu $a0, $zero, 4', 'addiu $v0, $zero, 8', 'sh $zero, 2($s2)', 'jal sample',
+        'sh $v0, 4($s2)', 'addiu $v0, $v0, 4', 'sh $v0, 0xc($s1)',
+    )
+    [candidate] = [text for family, text in proposals(source, 'f', '', 'mips', KMC, rows, '')
+                   if family == 'measured_null_iteration_store']
+    assert 'if (!object) { i += 1; continue; }' in candidate
+    assert candidate.index(' + 4)) = 8;') < candidate.index('sample(4)')

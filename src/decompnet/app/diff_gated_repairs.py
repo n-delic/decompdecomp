@@ -28,6 +28,7 @@ from decomprepair import (
     measured_lifetime_shapes,
     measured_memory_order,
     measured_mmio_polling,
+    measured_null_iteration_store,
     measured_pointer_scale,
     measured_scalar_updates,
     measured_storage_shapes,
@@ -284,6 +285,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += target_string_repairs.verified_variants(source, name, header, rows, read_data)
         result += measured_immediate_repairs.variants(source,name,rows)
         result += kmc_cast_repairs.variants(source,name,header,rows,flags)
+        result += measured_null_iteration_store.variants(source, name, rows)
         result += target_guard_width_diff_repairs.proposals(source,name,header,rows,target,candidate,asm,
                                                           resolve=resolve)
         result += target_edge_diff_repairs.proposals(source,name,header,rows,target,candidate,asm,
