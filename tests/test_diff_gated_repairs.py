@@ -830,6 +830,25 @@ def test_measured_halfword_switch_is_routed_for_kmc(monkeypatch):
     assert 'halfword_switch_fixture' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))
 
 
+def test_identical_branch_assignments_reach_kmc_diff_dispatch():
+    source = """s32 f(s32 input) {
+    f32 score;
+    s32 ok;
+    score = input;
+    if (score) {
+        do { ok = 1; } while (0);
+    } else {
+        ok = 1;
+    }
+    return ok;
+}
+"""
+    rows = [('>', '', 'move $t1, $zero')]
+    generated = proposals(source, 'f', '', 'mips', KMC, rows, '')
+    assert any(label == 'measured_identical_branch_assignments' and 'if (score)' not in candidate
+               for label, candidate in generated)
+
+
 def test_inline_interpolated_product_reaches_kmc_diff_dispatch():
     source = """extern f32 table[];
 f32 f(int i) {
