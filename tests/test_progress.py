@@ -2343,6 +2343,34 @@ def test_restore_batches_set_aside_rows_and_keeps_same_address_overlays_separate
     assert [row['name'] for row in store.all('SELECT name FROM restored_updates ORDER BY rowid')] == ['f', 'g']
 
 
+def test_saved_verdict_preserves_current_local_sdk_evidence(project):
+    import hashlib
+
+    from decompnet.app.boundary_repairs import reason
+
+    net, _, _ = project
+    proj = net.project_row('game', sync=False)
+    store = net.project_store(proj['id'])
+    target = bytes.fromhex('000020210c00040000000000')
+    proof = {'kind': 'sdk', 'verified': True, 'verification_method': 'builtin-sdk-digest',
+             'bytes': len(target), 'target_sha256': hashlib.sha256(target).hexdigest()}
+    with store.tx() as db:
+        db.execute("UPDATE functions SET status='asm',target=?,meta=? WHERE name='f'",
+                   (target, json.dumps({'verified_assembly': proof})))
+        db.execute("UPDATE functions SET status='asm',target=?,meta=? WHERE name='g'",
+                   (target[:-4], json.dumps({'verified_assembly': proof})))
+    items = [{'name': name, 'vram': vram, 'verified_assembly': {**proof, 'verified': False},
+              'asm_code': 'Saved assembly verdict'} for name, vram in [('f', 4096), ('g', 4100)]]
+    for _ in range(2):
+        saves._restore_set_aside(store, proj['id'], items)
+    rows = {row['name']: row for row in store.all('SELECT name,status,target,meta FROM functions')}
+    assert json.loads(rows['f']['meta']) == {
+        'verified_assembly': proof, 'asm_code': 'Saved assembly verdict',
+    }
+    assert reason(net.console(proj), rows['f']) is None
+    assert json.loads(rows['g']['meta'])['verified_assembly']['verified'] is False
+
+
 def test_saved_verdict_notes_and_list_order_are_not_shared_linking_inputs():
     from copy import deepcopy
 

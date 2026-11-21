@@ -1696,7 +1696,9 @@ def _restore_set_aside(store, project_id: int, items: list[dict]) -> None:
     addresses = sorted({item["vram"] for item in items})
     with store.tx() as db:
         rows = db.execute(
-            "SELECT id,name,vram,status,meta FROM functions WHERE project_id=? "
+            "SELECT id,name,vram,status,meta,CASE WHEN "
+            "json_extract(meta,'$.verified_assembly.verification_method')='builtin-sdk-digest' "
+            "THEN target END AS sdk_target FROM functions WHERE project_id=? "
             "AND status IN ('open','asm') AND vram IN (SELECT value FROM json_each(?))",
             (project_id, json.dumps(addresses))).fetchall()
         by_address = {}
@@ -1716,7 +1718,18 @@ def _restore_set_aside(store, project_id: int, items: list[dict]) -> None:
             meta = pending.get(identity)
             if meta is None:
                 meta = json.loads(row["meta"] or "{}")
-            merged = meta | restored_aside(item)
+            incoming = restored_aside(item)
+            proof = meta.get('verified_assembly')
+            target = row['sdk_target']
+            # A saved verdict is unverified on this machine. Keep the evidence
+            # the importer already verified locally for these exact SDK bytes.
+            if ('verified_assembly' in incoming and target and isinstance(proof, dict)
+                    and proof.get('verification_method') == 'builtin-sdk-digest'
+                    and proof.get('verified') is True and proof.get('kind') == 'sdk'
+                    and proof.get('bytes') == len(target)
+                    and proof.get('target_sha256') == hashlib.sha256(target).hexdigest()):
+                incoming.pop('verified_assembly')
+            merged = meta | incoming
             if row["status"] != "asm" or merged != meta:
                 pending[identity] = merged
         if pending:
