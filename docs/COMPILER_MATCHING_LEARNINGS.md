@@ -8846,3 +8846,19 @@ a value computed by XOR was available before an equality guard. Repeating the ke
 comparison inside the guarded arm gave score 410. Testing the existing XOR result
 against zero restored the target's unsigned nonzero test and reduced the linked score
 to 215 through Deep Permuter. This is a verified partial improvement.
+
+### Scoped frame reservation after a stack argument
+
+An archived 11-instruction N64 call wrapper under
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` had the correct halfword store
+and stack-address argument at offset 0x10 but a 0x20-byte frame. The target
+frame was 0x28 bytes. The existing eight-byte outer reservation corrected the
+frame and saves while shifting the argument and store to offset 0x18.
+
+Placing the same unused eight bytes in a trailing block after the call kept
+the argument and store at offset 0x10 and reproduced all 44 linked bytes
+on the copied project. A constant-true or constant-false block also matched.
+Moving the outer declaration before the local stayed two stack offsets away.
+The new trial requires a uniform frame and save gap, an unchanged local slot,
+and a final direct call passing that slot's address in the matching argument
+register.

@@ -103,5 +103,7 @@ def layout_candidates(source, name, header, arch, rows, symbols=None, flags=()):
 
     report = diagnose(arch,rows) or {}
     result = measured_layout_repairs.unused_frame_array(source,name,rows,report)
+    if scoped := measured_layout_repairs.scoped_frame_array(source, name, rows, report):
+        result.append(('inferred_frame_reservation', scoped))
     result += measured(source,name,arch,rows,evidence=report)
     return result + measured_layout_repairs.paired_word_copy(source,name,header,rows,symbols,flags)
