@@ -40,3 +40,23 @@ def test_verified_microcode_tail_ends_cpu_text_at_the_same_rom_offset(tmp_path, 
     assert code_ranges(config) == [(0, 12, 0x80000000)]
     spans = yaml.safe_load(config.read_text())['segments'][0]['subsegments']
     assert spans[-1][:2] == [12, 'rodata']
+
+
+def test_sine_cycle_is_split_out_of_mapped_text(tmp_path):
+    image = bytes(64) + inline_data._SINE + bytes(4)
+    end = len(image)-4
+    config = tmp_path / 'splat.yaml'
+    config.write_text(f'''segments:
+- name: code
+  type: code
+  start: 0
+  vram: 2147483648
+  subsegments:
+  - [0, c, text]
+- [{len(image)}]
+''')
+    inline_data.apply(config, image, lambda _: None)
+    assert yaml.safe_load(config.read_text())['segments'][0]['subsegments'] == [
+        [0, 'c', 'text'], [64, 'rodata', 'text_data_40'], [end, 'c', f'text_text_{end:X}'],
+    ]
+    assert not list(inline_data.spans(image[:1024] + b'\0\0' + image[1026:]))
