@@ -12044,3 +12044,33 @@ in the delay slot. Restoring the middle arguments produced an exact match
 from score 5. The rule checks that both values survive every path to the
 call. It matched in 16 candidates while the released control stayed at 5
 after 100.
+### KMC GCC 2.7.2: a loop that reuses a parameter as its offset hides the invariants and the argument masks
+
+A 312-byte N64 voice-list walk (`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, five callee-saved registers, one
+call-heavy loop over 0x1a0-byte records). Saved best 165 (the same loop in `goto` form, everything else right); the
+diff was three masks the target keeps (`andi $s0,$s2,0xff` twice, `andi $a3,$s3,0xff`) and register names. Edit
+list, each scored with the app's own judge (judge-worker), none a permuter run:
+
+| # | Edit | Score |
+| - | ---- | ----- |
+| 0 | saved best (`goto again`, uninitialised `char index`) | 165 |
+| 1 | defined `idx = handle & 0xff`, offset in `arg1` (the parameter reused), `goto` loop, `result = (u8) idx` in the arms | 600 |
+| 2 | `while (handle != -1)` instead of the `goto` (loop.c runs) | 1023 (mask on `low` kept, `s5` holds a hoisted symbol) |
+| 3 | pass `idx` to the calls, drop `result = (u8) idx;` | 623 (both argument masks kept) |
+| 4 | `high`/`low` written at their call sites (`arg1 & 0x7f`), the offset moved to the unused `arg0` | 623 |
+| 5 | the last table read through a plain temporary, `t = idx * 0x1a0; handle = *(s32 *)(D_8010D734 + t);` | 0 |
+
+Compiler facts, from `cc1 -dr -dc -dL` dumps: combine folds `zero_extend (subreg:QI x)` when it can bound `x`
+(`reg_last_set_value` in the same block, or the global bits of a register with one set); it does not when the pseudo
+has two sets (idx: set before the loop and again at its bottom; jump2's cross-jumping merges them after reload, which
+is why the asm shows one `andi`) or when loop.c hoists the expression into a new pseudo (`high`/`low` computed inside
+the loop from the parameter). A stored copy (`result = (u8) idx;`) is folded to a `move`; the same conversion as a
+call argument is not. loop.c hoists the symbol of `D_8010D734 + idx * 0x1a0` (a `(plus mult symbol)` address, a sixth
+saved register) and, when that address is a plain pseudo, the loop-test constant `-1` instead (`REG_LOOP_TEST_P`); the
+target hoists neither, because `high`/`low` use the register budget loop.c checks first. Failed here: types of
+`idx`/`low` (u8, s8, u16, char), explicit masks, dead initial sets (cse deletes them before combine counts sets),
+`while`/`for`/`do` spellings (all 508 to 623), a struct view of the table (same rows).
+
+decomp-repair 0.5.276 `reused_param_alias` (steps 4 and the inlining) and `dead_call_arg_temp` (step 3) propose them;
+on the m2c-style source they chain 1023 to 623 with the judge-worker. The last step is the existing address-temporary
+shape. One function, not controlled across others.
