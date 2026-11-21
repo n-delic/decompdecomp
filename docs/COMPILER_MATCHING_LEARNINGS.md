@@ -10471,3 +10471,13 @@ made single-row leftovers visible; the app's own diff already does this, but `co
 - Restoring the stack array alone compiled but scored 3112 on all three. A flat byte map with shifts
   and masks scored 941. The 38-example draft replay rose from 12 to 15 exact matches, with 23 drafts
   still failing compilation.
+
+### Share a halfword index across two guarded score loops
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, a scratch N64 function
+scored 50. The target narrows the same callee's result into one register in
+both loops, while the draft uses two different registers. Reusing the same
+index local, declaring the score separately after its original declaration
+group, and inlining the second loop's halfword load as the left operand of the
+equality brought the linked score to 0. Leaving the score in its declaration
+group left score 40. The deep permuter reproduced and saved the byte match.
