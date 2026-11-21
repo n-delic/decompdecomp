@@ -26,7 +26,19 @@ from starlette.responses import JSONResponse, Response
 from .. import agents as kinds
 from .. import hostenv, wine
 from ..network import NetworkError
-from . import agents, collab, maintenance, progress, routes, saves, tools, updates, window, workers
+from . import (
+    agents,
+    collab,
+    library_skew,  # noqa: F401  (noting the library versions at startup is its import's job)
+    maintenance,
+    progress,
+    routes,
+    saves,
+    tools,
+    updates,
+    window,
+    workers,
+)
 from .engine import RomNetwork
 from .routes import (
     browser_bridge,

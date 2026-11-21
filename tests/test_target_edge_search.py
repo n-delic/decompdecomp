@@ -776,3 +776,23 @@ void f(int base, int mode) {
     fixed = dict(route(source, rows, '', compiler='ido-7.1'))
     assert 'send(mode, base + 8);' in fixed['drop_duplicate_call_argument']
     assert 'drop_duplicate_call_argument' not in dict(route(source, rows, '', compiler='ido-5.3'))
+
+
+def test_combined_frame_and_call_repair_reaches_measured_search():
+    source = '''int get();
+void f(int context, int value) {
+    get(value);
+}
+'''
+    rows = [
+        ('s', 'addiu $sp, $sp, -32', 'addiu $sp, $sp, -24'),
+        ('s', 'sw $ra, 24($sp)', 'sw $ra, 16($sp)'),
+        (' ', 'jal get', 'jal get'),
+        ('r', 'move $a1, $a1', 'move $a0, $a1'),
+        ('s', 'lw $ra, 24($sp)', 'lw $ra, 16($sp)'),
+        (' ', 'jr $ra', 'jr $ra'),
+        ('s', 'addiu $sp, $sp, 32', 'addiu $sp, $sp, 24'),
+    ]
+    asm = '\n'.join(row[1] for row in rows)
+    fixed = dict(route(source, rows, asm))['frame_reservation_with_forwarded_argument']
+    assert 'get(context, value);' in fixed and 'volatile u64 scratch;' in fixed
