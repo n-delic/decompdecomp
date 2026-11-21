@@ -20,6 +20,13 @@ const row={region:'40-80',index:0,sample,asset,name:'Synthetic · 1'};
  {const t=setup();const samples=[{...sample,label:'Sample 1'},{...sample,offset:2000,label:'Sample 2'}];
  t.c.report={regions:[{id:'bank',kind:'audio',detected_asset:{...asset,samples}}]};
  assert.equal(t.run('romAudioRows(report).map(row=>row.name).join(",")'),'Synthetic · Sample 1,Synthetic · Sample 2');}
+ {const t=setup();const song={media:'audio',audio_kind:'indexed sample directory',label:'Song',samples:[{label:'Song',codec:'Standard MIDI'}]};
+ t.c.report={regions:[{id:'first',kind:'music sequence',detected_asset:{...song,offset:64}},
+   {id:'second',kind:'music sequence',detected_asset:{...song,offset:128}},
+   {id:'second-split',kind:'music sequence',detected_asset:{...song,offset:128}}]};
+ const rows=t.run('romAudioRows(report)');
+ assert.equal(rows.map(row=>row.region).join(','),'first,second');
+ assert.notEqual(rows[0].name,rows[1].name);}
  {const t=setup();t.c.view.report.regions=[{id:'music',kind:'music sequence',detected_asset:{
    offset:64,media:'audio',label:'USO music sequences',samples:[
      {offset:64,size:32,codec:'Nintendo EAD sequence',label:'Sequence 0',preview_available:true},
