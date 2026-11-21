@@ -9,6 +9,7 @@
  * The AI's registers are answered as the hardware would at that moment: the length of the buffer still playing, and
  * whether the AI's two-buffer queue is full, in real time at the game's sample rate, so the game paces its sound.
  */
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -269,9 +270,18 @@ static int is_abi1(uint32_t list, uint32_t size) {
     return 0;
 }
 
+void port_musyx_v1(uint8_t *memory, uint32_t frames, uint32_t count);
+
 void port_audio_task(uint32_t task) {
     A = port_memory();
-    uint32_t list = ram(rd32(ram(task) + 48)), size = rd32(ram(task) + 52); /* OSTask's data_ptr and data_size */
+    task = ram(task);
+    uint32_t list = ram(rd32(task + 48)), size = rd32(task + 52);
+    uint32_t ucode = rd32(task + 24);
+    /* MusyX v1 passes subframe descriptors and their count, rather than a byte-sized command list. */
+    if (ucode && rd32(task + 28) >= 0x14 && rd32(ram(ucode)) != 1 && rd32(ram(ucode) + 0x10) == 1) {
+        port_musyx_v1(A, list, size);
+        return;
+    }
     if (!is_abi1(list, size)) { naudio_task(list, size); return; }
     DMEM_BASE = 0x5C0;
     static int trace = -1; /* PORT_AUDIO_TRACE: each command, and the RAM address it names */
@@ -330,8 +340,10 @@ void port_audio_task(uint32_t task) {
 
 /* ---------------------------------------------------------------- the audio interface */
 
-static uint32_t ai_addr, ai_last_len, hz = 22050;
-static double play_end; /* when what's queued has played, in seconds */
+static uint32_t ai_addr, hz = 22050;
+static pthread_mutex_t ai_lock = PTHREAD_MUTEX_INITIALIZER;
+static struct { double end; uint32_t length; } ai_queue[2];
+static unsigned ai_count, ai_completed;
 static int bug_offset; /* the AI's DMA bug libultra works around: a buffer after one ending on 8 KB starts 8 KB on */
 static FILE *wav;
 static uint32_t wav_bytes;
@@ -341,7 +353,28 @@ static double now(void) {
     clock_gettime(CLOCK_MONOTONIC, &t);
     return (double)t.tv_sec + t.tv_nsec / 1e9;
 }
-void port_ai_frequency(uint32_t f) { if (f >= 4000 && f <= 96000) hz = f; }
+void port_ai_frequency(uint32_t f) {
+    pthread_mutex_lock(&ai_lock);
+    if (f >= 4000 && f <= 96000) hz = f;
+    pthread_mutex_unlock(&ai_lock);
+}
+
+/* Keep the FIFO's status and its interrupts in step even if the game polls the registers before the host ticks. */
+static void ai_advance(double time) {
+    while (ai_count && ai_queue[0].end <= time) {
+        ai_queue[0] = ai_queue[1];
+        ai_count--;
+        ai_completed++;
+    }
+}
+unsigned port_ai_completions(void) {
+    pthread_mutex_lock(&ai_lock);
+    ai_advance(now());
+    unsigned completed = ai_completed;
+    ai_completed = 0;
+    pthread_mutex_unlock(&ai_lock);
+    return completed;
+}
 
 static void wav_header(void) {
     uint8_t h[44] = "RIFF\0\0\0\0WAVEfmt \x10\0\0\0\x01\0\x02\0\0\0\0\0\0\0\0\0\x04\0\x10\0data\0\0\0\0";
@@ -358,6 +391,7 @@ static void play(uint32_t phys, uint32_t len) {
     int frames = (int)(len / 4);
     if (frames <= 0) return;
     int16_t *lr = malloc((size_t)frames * 4);
+    if (!lr) return;
     for (int i = 0; i < frames * 2; i++) lr[i] = (int16_t)rd16(ram(phys + 2 * (uint32_t)i));
     port_live_audio(lr, frames, (int)hz);
     static int opened;
@@ -369,32 +403,42 @@ static void play(uint32_t phys, uint32_t len) {
         fflush(wav);
     }
     free(lr);
-    double t = now();
-    if (play_end < t) play_end = t;
-    play_end += (double)frames / hz;
 }
 
 /* AI_DRAM_ADDR, AI_LEN, AI_CONTROL, AI_STATUS, AI_DACRATE, AI_BITRATE: 1 when addr is one of them. */
 int port_ai_register(uint32_t addr, int write, uint32_t value, uint32_t *read) {
     if (addr < 0xA4500000u || addr > 0xA4500014u) return 0;
-    double left = play_end - now();
-    uint32_t queued = left > 0 ? (uint32_t)(left * hz) * 4 : 0;
+    if (write && addr == 0xA4500010u) {
+        if (value) port_ai_frequency((uint32_t)(49656530ull / (1ull + value)));
+        return 1;
+    }
+    pthread_mutex_lock(&ai_lock);
+    double time = now();
+    ai_advance(time);
     switch (addr & 0x1F) {
     case 0x00: if (write) ai_addr = value & 0x1FFFFFFF; else *read = ai_addr; break;
     case 0x04:
         if (write) {
             uint32_t len = value & 0x3FFF8;
-            play(ai_addr + (bug_offset ? 0x2000 : 0), len);
-            bug_offset = ((ai_addr + (bug_offset ? 0x2000 : 0) + len) & 0x1FFF) == 0;
-            ai_last_len = len;
-        } else *read = queued < ai_last_len ? queued : ai_last_len; /* what's left of the buffer playing */
+            if (len && ai_count < 2) {
+                uint32_t start = ai_addr + (bug_offset ? 0x2000 : 0);
+                double end = ai_count ? ai_queue[ai_count - 1].end : time;
+                ai_queue[ai_count].end = end + (double)len / (4 * hz);
+                ai_queue[ai_count++].length = len;
+                play(start, len);
+                bug_offset = ((start + len) & 0x1FFF) == 0;
+            }
+        } else {
+            uint32_t left = ai_count ? (uint32_t)((ai_queue[0].end - time) * hz * 4) : 0;
+            *read = (left < ai_queue[0].length ? left : ai_queue[0].length) & ~7u;
+        }
         break;
     case 0x0C: /* full when a buffer waits behind the one playing; busy while one plays */
-        if (!write) *read = (queued > ai_last_len ? 0x80000001u : 0) | (queued ? 0x40000000u : 0);
+        if (!write) *read = (ai_count == 2 ? 0x80000001u : 0) | (ai_count ? 0x40000000u : 0);
         break;
-    case 0x10: if (write && value) port_ai_frequency(49656530u / (value + 1)); else if (read) *read = 0; break;
     default: if (read) *read = 0;
     }
+    pthread_mutex_unlock(&ai_lock);
     static int trace = -1; /* PORT_AI_TRACE: each access to the audio interface's registers */
     if (trace < 0) trace = getenv("PORT_AI_TRACE") != NULL;
     if (trace) fprintf(stderr, "AI %s %08X %08X\n", write ? "write" : "read", addr, write ? value : read ? *read : 0);

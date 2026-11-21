@@ -516,10 +516,15 @@ static void ram_dumps(const char *var, unsigned long now) {
         p = next ? next + 1 : path + n;
     }
 }
+unsigned port_ai_completions(void); /* audio.c */
+static void port_audio_interrupts(void) {
+    for (unsigned n = port_ai_completions(); n; n--) post_event(EV_AI);
+}
 static void retrace(void) {
     vi_count++;
     ram_dumps("PORT_RAM_DUMPS", vi_count);
     port_timers();
+    port_audio_interrupts();
     if (vi.queue && vi_count % vi.every == 0) put(vi.queue, vi.msg, 0, 0);
 }
 
@@ -532,10 +537,13 @@ u32 w2c_env_osPiStartDma(struct w2c_env *e, u32 mb, u32 pri, u32 dir, u32 dev, u
     dmas++;
     if (getenv("PORT_DMA")) fprintf(stderr, "osPiStartDma(mb %08X, pri %u, dir %u, dev %08X, dram %08X, size %X, mq %08X)\n", mb, pri, dir, dev, dram, size, mq);
     if (dram < 0x80000000u) { fprintf(stderr, "osPiStartDma to %08X, outside the console's RAM\n", dram); port_trace(); }
+    /* The PI uses a cartridge bus address. Some callers pass the full address returned by osRomBase,
+       including the KSEG bits, while others pass a byte offset into the ROM. Keep dev intact in OSIoMesg. */
+    u32 offset = dev & 0x0FFFFFFFu;
     if (dir != 0) LOG("osPiStartDma: a write to the cartridge (%08X), ignored", dev);
-    else if (dev + (uint64_t)size > rom_size) LOG("osPiStartDma: %08X+%X is past the ROM's end", dev, size);
-    else memcpy(M + dram, rom + dev, size);
-    if (dmas <= 20 || dmas % 500 == 0) LOG("DMA %lu: ROM %06X -> %08X, %X bytes", dmas, dev, dram, size);
+    else if (offset + (uint64_t)size > rom_size) LOG("osPiStartDma: %08X+%X is past the ROM's end", dev, size);
+    else memcpy(M + dram, rom + offset, size);
+    if (dmas <= 20 || dmas % 500 == 0) LOG("DMA %lu: ROM %06X -> %08X, %X bytes", dmas, offset, dram, size);
     if (mb) { wbe32(mb + 8, dram); wbe32(mb + 12, dev); wbe32(mb + 16, size); }
     if (mq) put(mq, mb, 0, 0);
     return 0;
@@ -556,7 +564,7 @@ u32 w2c_env_osCartRomInit(struct w2c_env *e) {
 }
 u32 w2c_env_osEPiStartDma(struct w2c_env *e, u32 handle, u32 mb, u32 dir) {
     (void)handle;
-    return w2c_env_osPiStartDma(e, mb, 0, dir, be32(mb + 12) & 0x0FFFFFFFu, be32(mb + 8), be32(mb + 16), be32(mb + 4));
+    return w2c_env_osPiStartDma(e, mb, 0, dir, be32(mb + 12), be32(mb + 8), be32(mb + 16), be32(mb + 4));
 }
 u32 w2c_env_osEPiReadIo(struct w2c_env *e, u32 handle, u32 dev, u32 data) {
     (void)e; (void)handle;
@@ -1108,6 +1116,21 @@ __attribute__((export_name("port_web_retrace_ms"))) double port_web_retrace_ms(v
 __attribute__((import_module("port_web"), import_name("trace"))) void port_web_trace(void);
 void port_trace(void) { port_web_trace(); }
 #else
+static uint64_t monotonic_us(void) {
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (uint64_t)t.tv_sec * 1000000 + (uint64_t)t.tv_nsec / 1000;
+}
+/* The audio interface can drain several buffers between VI interrupts. Give the game a chance to refill them. */
+static void wait_retrace(void) {
+    uint64_t deadline = monotonic_us() + (unsigned)retrace_us();
+    uint64_t time;
+    while ((time = monotonic_us()) < deadline) {
+        uint64_t left = deadline - time;
+        usleep((useconds_t)(left < 1000 ? left : 1000));
+        port_audio_interrupts();
+    }
+}
 static uint8_t *read_file(const char *path, size_t *size) {
     FILE *f = fopen(path, "rb");
     if (!f) return NULL;
@@ -1251,7 +1274,7 @@ int main(int argc, char **argv) {
     pthread_mutex_unlock(&lock);
     /* the VI retrace: 50 a second for PAL, 60 for NTSC */
     for (int frame = 0; seconds <= 0 || frame < seconds * 1000000 / retrace_us(); frame++) {
-        usleep((useconds_t)retrace_us());
+        wait_retrace();
         retrace();
         port_live_pump();
         if (getenv("PORT_SAMPLE") && frame % 10 == 5) sample();
