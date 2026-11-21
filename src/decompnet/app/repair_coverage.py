@@ -101,6 +101,7 @@ def verify(feedback, example):
             kmc_cast_repairs,
             kmc_operand_repairs,
             kmc_type_repairs,
+            likely_branch_cursor,
             measured_address_repairs,
             measured_callback_loop,
             measured_callback_repairs,
@@ -131,6 +132,8 @@ def verify(feedback, example):
             focused.append(('measured_callback_loop', candidate))
         if candidate := measured_mmio_polling.rewrite(source, fn['name'], fn['asm'] or '', header):
             focused.append(('measured_mmio_polling', candidate))
+        if candidate := likely_branch_cursor.rewrite(source, fn['name'], fn['asm'] or '', header):
+            focused.append(('likely_branch_cursor', candidate))
         focused += measured_callback_repairs.variants(source, fn['name'], rows)
         focused += measured_address_repairs.variants(source, fn['name'], header, rows, symbols)
         focused += measured_pointer_scale.variants(source, fn['name'], header, rows)

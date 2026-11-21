@@ -310,3 +310,12 @@ def test_mmio_polling_repair_uses_measured_kmc_proposal_path(monkeypatch):
     assert ('measured_mmio_polling', 'repaired polling') not in route(
         'void f(void) {}', rows, 'asm', compiler='ido-5.3')
     assert calls == [('void f(void) {}', 'f', 'asm', '')]
+
+
+def test_shared_cursor_branch_uses_measured_kmc_proposal_path(monkeypatch):
+    from decomprepair import likely_branch_cursor
+
+    monkeypatch.setattr(likely_branch_cursor, 'rewrite', lambda source, name, asm, header: 'shared advance')
+    rows = [('r', 'beql $v0, $zero, .Ljoin', 'bnez $v0, .Lactive')]
+    assert ('likely_branch_cursor', 'shared advance') in route('void f(void) {}', rows, 'asm')
+    assert 'likely_branch_cursor' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))

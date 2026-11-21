@@ -8796,3 +8796,19 @@ a left shift by 19 and an arithmetic right shift by 16, which truncated a value 
 target kept wide. Widening that local alone scored 140. Widening it and writing the
 product into a separate local produced the target's left shift by three and matched all
 316 linked bytes. Deep Permuter rejudged the combined repair at score zero.
+
+### List traversal with a shared branch-likely delay-slot move
+
+A 46-instruction N64 function had no reconstructed draft. m2c folded a
+taken-only list cursor advance into the identical move in a call's delay slot,
+then rejected the new branch target. Expanding the likely branch into an
+ordinary test with an explicit taken-path move let m2c produce compilable C.
+The structured draft scored 350 and the goto draft scored 942 under
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` with the archived header.
+
+Keeping the next-node read before the conditional, executing its body only
+when the guard is nonzero, and advancing the local cursor after that body
+reproduced the original 184 linked bytes on a copied project. The compiler
+emitted the shared move in both original delay slots. The rule requires the
+same source and destination saved registers in both slots, a matching
+next-node load and loop backedge, and a final argumentless call.
