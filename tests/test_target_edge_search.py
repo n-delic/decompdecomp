@@ -735,3 +735,26 @@ def test_kmc_recovers_a_missing_formal_argument_from_shifted_delay_slot_setup():
     assert 'f(s32 __repair_incoming)' in fixed
     assert 'lookup(__repair_incoming, &object);' in fixed
     assert 'passthrough_argument' not in dict(route(source, rows, 'move $a0, $zero\n' + asm))
+
+
+def test_measured_record_extent_runs_only_for_frame_only_growth():
+    source = '''void f(void) {
+    s16 sp10;
+    use(&sp10);
+    sp10 = 3;
+}'''
+    rows = [
+        ('s', 'addiu $sp, $sp, -40', 'addiu $sp, $sp, -32'),
+        ('s', 'sw $ra, 36($sp)', 'sw $ra, 28($sp)'),
+        (' ', 'jal use', 'jal use'),
+        (' ', 'addiu $a0, $sp, 16', 'addiu $a0, $sp, 16'),
+        (' ', 'sh $v0, 16($sp)', 'sh $v0, 16($sp)'),
+        ('s', 'lw $ra, 36($sp)', 'lw $ra, 28($sp)'),
+        (' ', 'jr $ra', 'jr $ra'),
+        ('s', 'addiu $sp, $sp, 40', 'addiu $sp, $sp, 32'),
+    ]
+    asm = '\n'.join(target for _, target, _ in rows)
+    candidate = dict(route(source, rows, asm))['stack_record_extent']
+    assert 'u8 __repair_record_bytes[18]' in candidate
+    changed = rows[:4] + [('s', 'sh $v0, 16($sp)', 'sh $v0, 18($sp)')] + rows[5:]
+    assert 'stack_record_extent' not in dict(route(source, changed, asm))
