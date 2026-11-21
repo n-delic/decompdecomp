@@ -12613,3 +12613,15 @@ score improved from 225 to an exact match. Grouping the lower shift with the
 constant improved the score to 20 but swapped the two shift amounts in the
 remaining instructions. Synthetic tests cover the mask, mutations, aliasing,
 volatile and target-difference guards; the exact match is one observed example.
+
+### KMC GCC 2.7.2: enlarge an existing unused byte array to restore frame size
+
+A scratch draft had an unused eight-byte padding array adjacent to a DMA
+header declaration. The target frame and all saved-register offsets were
+sixteen bytes larger, while the live stack-object offsets agreed.
+Growing the padding to twenty-four bytes left the header where it was
+and restored the frame and save/restore offsets.
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, this reduced score
+289 to 275. The v0.5.300 control stayed at 289 after 100 trials. Other
+instruction differences remain.
