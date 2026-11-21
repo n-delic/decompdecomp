@@ -405,6 +405,7 @@ class Search(Permuter):
                 calls.append((L + 'scoped_byte_read_call.variants', (source, alias, arch, asm, header)))
         register = permuter_focus.classify(rows, arch) == 'register'
         if register:
+            calls.append((L + 'identical_float_guard.variants', (source, name, header, arch)))
             calls += [(L + 'near_match_repairs.bitwise_operand_order', (source, name, header)),
                       (L + 'near_match_repairs.float_update_order', (source, name, header)),
                       (L + 'near_match_repairs.variants', (source, name)),

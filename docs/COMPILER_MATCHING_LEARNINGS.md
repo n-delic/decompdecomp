@@ -17,6 +17,17 @@ score to 57,287. Widening it after lifting the tail improved 39,693
 to 39,687. These are measurements on one function. The branch and
 break behavior also has controlled rewrite regressions.
 
+### KMC GCC 2.7.2: an initialized double in an identical-arm guard
+
+In one N64 function, changing an existing identical-arm `if (arg2)`
+to test an already initialized `(f64) arg2` local altered floating-point
+register allocation without changing the calls. With
+`-G0 -mips3 -mgp32 -mfp32 -O2`, the linked judge improved 65 to 30.
+Only the $f28/$f30 assignment remained. Testing other initialized
+float values left the score at 65. This is one observed function, not
+a controlled compiler regression; the rewrite requires the new local
+to be definitely initialized and unescaped.
+
 ### KMC GCC 2.7.2: loop header supplies a null-guard delay slot
 
 In one N64 function, rewriting a zero-initialized counter loop from

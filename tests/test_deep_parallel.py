@@ -914,3 +914,16 @@ def test_loop_symbol_base_block_runs_in_the_bounded_local_lane(monkeypatch):
 
     assert search.operand_order_pass(AGENT, proj, fn, 180, None) == 20
     assert tried == [child]
+
+
+def test_initialized_float_guard_is_offered_for_register_differences(monkeypatch):
+    net = setup(monkeypatch)
+    proj = net.project_row('game')
+    source = ('void f(f32 x) { f64 wide; wide = (f64) x; '
+              'do { if (x) { work(); } else { work(); } } while (more()); }')
+    fn = {**net.function(), 'name': 'f', 'asm': '', 'best_source': source}
+    search = deep_permuter.Search(net, 1, 6, Log())
+    rows = [('r', 'mul.d $f28, $f22, $f0', 'mul.d $f30, $f22, $f0')]
+    proposals, _ = search._local_proposals(source, proj, fn, rows)
+    assert any(family == 'initialized_identical_float_guard' and 'if (wide)' in child
+               for family, child in proposals)
