@@ -11425,3 +11425,13 @@ first argument and omitted the incoming argument that the wrapper forwards
 unchanged. Repairing the wrapper parameter, callback declaration and call
 together scored 5 to 0. The deep permuter verified and saved the match in
 17 candidates with the guarded leading-parameter rule.
+
+### Recover a leading argument when the following two are swapped
+
+With gcc-2.7.2-kmc `-G0 -mips3 -mgp32 -mfp32 -O2`, a small N64 direct
+wrapper's draft omitted an untouched first argument. The target saved the
+second input, copied the third to the second slot, then copied the saved
+value to the third slot in the call delay slot. Restoring the first
+parameter, the corresponding call argument and the callee prototype
+together scored 15 to 0. The deep permuter reproduced the match in 17
+candidates while preserving the reversed order of the other two arguments.
