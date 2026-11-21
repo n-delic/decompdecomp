@@ -10879,3 +10879,32 @@ to 0. Another draft selected a table through a shared cursor. Typing
 that cursor as a halfword pointer corrected the shift and load offset.
 The existing word-table repair then handled a separate access, taking
 the score from 30 to 10 to 0.
+
+### Preserve loops that branch to their own entry
+
+Two isolated N64 examples built with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` matched all 36 and 24
+linked bytes respectively. The byte scan also used `-g3`. Giving m2c a
+local entry label let it emit drafts, but the scan omitted the pointer
+advance in the taken branch's delay slot (score 400). A bitwise `&`
+between the byte and end-pointer checks preserved both evaluations, and
+the compiler placed the advance in that delay slot. The entry-label
+draft for the word poll scored 10 until a volatile declaration kept
+the load inside the loop.
+
+### Preserve IDO strided cursor initialization and scheduling
+
+- Two isolated N64 examples used
+  `ido-7.1 -O2 -mips2 -G 0 -non_shared -Xcpluscomm -Wab,-r4300_mul -woff 649,838,712`.
+  The halfword clear matched all 48 linked bytes with comma initialization
+  and a typed cursor. Correcting void-pointer arithmetic alone scored
+  240. An indexed loop scored 290.
+- A three-by-three float copy with four-float row strides matched all 76
+  linked bytes after ordering the destination initializer before the
+  source and initializing both loop counters. The byte-cursor draft
+  scored 75 and the typed step alone scored 65.
+- A four-word clearing loop used
+  `ido-7.1 -O2 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul -DNON_MATCHING`.
+  A typed cast with the counter assignment, cursor assignment and
+  `do` on one source line matched all 64 linked bytes. The split-line
+  form scored 20.

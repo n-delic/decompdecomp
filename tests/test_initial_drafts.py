@@ -707,3 +707,29 @@ def test_ido_pointer_diagnostic_offers_recovery_in_rom_and_project_builds():
         assert 'cursor = (unsigned char *) base + 8;' in choices['initial_void_pointer_offsets']
         assert 'cursor = (unsigned char *) cursor + 4;' in choices['initial_void_pointer_offsets']
     assert not list(repairs.recovery_drafts(raw, 'f', '', 'mips', 'ido-7.1', '', None, {}))
+
+
+def test_kmc_keeps_volatile_entry_loop_when_m2c_cannot_find_the_entry(monkeypatch):
+    asm = '''
+glabel f
+/* 00 80003000 3C028001 */ lui $v0, %hi(flag)
+/* 04 80003004 8C424000 */ lw $v0, %lo(flag)($v0)
+/* 08 80003008 1440FFFD */ bnez $v0, f
+/* 0C 8000300C 00000000 */ nop
+/* 10 80003010 03E00008 */ jr $ra
+/* 14 80003014 00000000 */ nop
+'''
+    calls = []
+
+    def unsupported(*args, **kwargs):
+        calls.append(args)
+        raise seeds.DraftError('Cannot find branch target f')
+
+    monkeypatch.setattr(seeds, 'run_m2c', unsupported)
+    draft = seeds.generate_from_asm(asm, 'f', 'gcc-2.7.2-kmc', valid=True, strict=True)
+    assert 'extern volatile s32 flag;' in draft
+    assert 'while (flag != 0)' in draft
+    assert not calls
+    with pytest.raises(seeds.DraftError):
+        seeds.generate_from_asm(asm.replace('1440FFFD', '1440FFFE'), 'f', 'gcc-2.7.2-kmc', valid=True, strict=True)
+    assert len(calls) == 1

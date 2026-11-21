@@ -378,6 +378,11 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
             return _compilable(source, name, asm_text, context_header, toolchain_id)
         return _compilable(source)
 
+    from decomprepair import mips_entry_loops
+
+    if entry_loop := mips_entry_loops.candidate(asm_text, name, context_header):
+        return entry_loop
+
     from decomprepair import (
         aligned_allocator_request,
         aligned_stack_read,
