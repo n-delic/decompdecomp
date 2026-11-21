@@ -311,6 +311,8 @@ class JudgeMixin:
         out, matched = [], 0
         for name in names:
             try:
+                if self._function(name, project)['status'] == 'matched':
+                    raise NetworkError(f"{name} is already matched. Claim another function.")
                 one = self.forks.one_definition(fork, source, name, [n for n in names if n != name]) if fork else source
                 res = self.attempt(agent, name, one, project)
                 res["text"] += self.attempt_limit_note(agent, name, project)
@@ -320,25 +322,26 @@ class JudgeMixin:
             out.append(f"### {name}\n{res['text']}")
         return f"{matched} of {len(names)} matched.\n\n" + "\n\n".join(out)
 
-    def _yield_autopilot(self, function: str | None, project: str | None, *, check_cancel=None) -> None:
-        """The autopilot holds a function only while its draft compiles: an agent that wants it waits for that."""
+    def _yield_autopilot(self, function: str | None, project: str | None, *, check_cancel=None) -> bool:
+        """Wait for an autopilot draft and return whether a wait was needed."""
         # Saved verification already waited outside its verdict lock. Repeating
         # that wait here can strand the autopilot waiting to publish under it.
-        if getattr(self._compile_ahead_local, 'strict', False):return
+        if getattr(self._compile_ahead_local, 'strict', False):return False
         if not function:
-            return
+            return False
         try:
             fn = self._function(function, project)
             fid = fn["id"]
         except NetworkError:
-            return
-        for _ in range(100):
+            return False
+        for poll in range(100):
             if check_cancel is not None:check_cancel()
             held = self.project_store(fn['project_id']).one('SELECT agent_id FROM claims WHERE function_id=?', fid)
             identity = self.store.one('SELECT name FROM agents WHERE id=?', held['agent_id']) if held else None
             if not identity or identity['name'] != 'autopilot':
-                return
+                return poll > 0
             time.sleep(0.2)
+        return True
 
     def attempt(self, agent: Agent, function: str, source: str, project: str | None = None, *, publish: bool = True) -> dict:
         # The editor leaves saved-folder publication to autosave. Its judge still checks the inputs explicitly.
@@ -391,7 +394,8 @@ class JudgeMixin:
         remember(self, agent, proj, fn, source, result['score'], output=output)
 
     def _attempt(self, agent: Agent, function: str, source: str, project: str | None = None) -> dict:
-        self._yield_autopilot(function, project)
+        if self._yield_autopilot(function, project) and self._function(function, project)['status'] == 'matched':
+            raise NetworkError(f"{function} is already matched. Call claim_function for the next function.")
         if (fork := self.fork_slug(project)):
             res = self.forks.attempt(agent, fork, function, source)
             self._remember_search_output(agent, function, source, project, res)

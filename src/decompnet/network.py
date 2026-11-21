@@ -1985,7 +1985,8 @@ class Network:
                     if same:
                         source = fn["matched_source"]
                     self._record(fn, credit, 0, source, ctx["version"], matched=True,
-                                 via="saved_recheck", effective_settings=settings, retain_match_credit=same)
+                                 via="saved_recheck", effective_settings=settings, retain_match_credit=same,
+                                 verified_replacement=True)
                     db.execute("UPDATE functions SET readable=? WHERE id=? AND readable IS NOT ?",
                                (int(readable), fn["id"], int(readable)))
                     return True
@@ -2043,6 +2044,12 @@ class Network:
         identities = expiry_ids(self, store)
         with store.tx() as db:
             self._expire_claims(db, **identities)
+            current = db.execute("SELECT * FROM functions WHERE id=?", (fn["id"],)).fetchone()
+            if current is None:
+                raise NetworkError("This function was removed. Call claim_function for the next function.")
+            if current["status"] == "matched" and fn["status"] != "matched":
+                raise NetworkError(f"{current['name']} is already matched. Call claim_function for the next function.")
+            fn = current
             claim = db.execute("SELECT agent_id FROM claims WHERE function_id=?", (fn["id"],)).fetchone()
             scratch = fn["status"] == "matched"
             if not scratch:
@@ -2278,9 +2285,11 @@ class Network:
     def _record(self, fn, agent: Agent, score: int | None, source: str, ctx_version: int, matched: bool = False,
                 compiled: bool | None = None, via: str = "agent", effective_settings=None,
                 prepared_header=None, prepared_inputs=None, prepared_compiler=None, before_record=None, restoring_exact=False, prepared_assembly=False, write_wait=None, exact_inputs=None,
-                best: bool = True, retain_match_credit: bool = False, mismatch_rows=(), handoff_inputs=None):
+                best: bool = True, retain_match_credit: bool = False, mismatch_rows=(), handoff_inputs=None,
+                verified_replacement: bool = False):
         """An attempt. `best`: False for one whose code can't stay in the source (it breaks matched neighbours), so
-        it never becomes the best that briefs offer and a release puts back."""
+        it never becomes the best that briefs offer and a release puts back.
+        Only explicit, verified source updates may publish over an existing match."""
         store = self.project_store(fn["project_id"])
         now = time.time()
         compiled = score is not None if compiled is None else compiled
@@ -2289,6 +2298,9 @@ class Network:
             if before_record is not None:
                 before_record()  # scoped callers can reject revoked or stale work before any writes
             current = db.execute("SELECT * FROM functions WHERE id=?", (fn["id"],)).fetchone()
+            already_matched = current['status'] == 'matched'
+            if already_matched and (matched or fn['status'] != 'matched') and not verified_replacement:
+                raise NetworkError(f"{current['name']} is already matched. Call claim_function for the next function.")
             if exact_inputs is not None:
                 if not matched or score != 0:
                     raise NetworkError('Only a freshly verified exact match can preserve its compile context.')
@@ -2366,7 +2378,8 @@ class Network:
                            "matched_at=?, best_score=0, best_source=? WHERE id=?",
                            (source, agent.id, now, source, fn["id"]))
                 self._release_matched_claim(db,fn['id'],agent.id)
-                self._event(db, fn["project_id"], agent.id, "match", fn["name"])
+                if not already_matched:
+                    self._event(db, fn["project_id"], agent.id, "match", fn["name"])
             db.execute('UPDATE attempts SET score_before=?,score_improved=? WHERE id=?',
                        (current['best_score'], int(bool(improved or (matched and not stale and current['status'] != 'matched'))), attempt))
 

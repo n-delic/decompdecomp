@@ -8608,6 +8608,43 @@ and matched exactly. Tests reject incomplete copies, conflicting stack offsets
 and changed input strides. These results use regenerated drafts and the normal
 linked ROM judge.
 
+### Expanded batch without a saved failed attempt
+
+The follow-up attempted draft regeneration for 120 examples across four projects at `gcc-2.7.2-kmc
+-G0 -mips3 -mgp32 -mfp32 -O2`. It used 30 examples from each range of 6–15,
+16–28, 29–42 and 43–72 instructions, excluding the original 24 records. Ten
+candidate records were skipped because their targets were duplicates or had
+changed since capture. The 120 archived controls all matched with their captured
+header and compiler invocation. The blind run used target assembly, the header,
+existing draft cleanup and up to 36 permuter compiles per function. It produced
+54 immediate matches, one draft-cleanup match, and eight permuter matches. It
+ended with 46 compiled misses, 10 compile failures, and one generation failure.
+
+Six compile failures lost a stack base or stack views. Separate follow-up
+probes used the normal linked-byte ROM judge with the same headers and compiler:
+
+- Two 12-byte outgoing command copies failed on undeclared stack words. One
+  typed byte record for the declared fields, optional input payload and final
+  aggregate store compiled and matched both targets. Unlike the eight-byte
+  incoming copy, this shape stores the aggregate from stack to the destination.
+- A third incoming eight-byte copy reads two individual bytes for a halfword,
+  uses a different output stride and maintains a bitmask. A byte-only copy
+  record recovered compilability but initially scored 645. Assigning the source
+  cursor after the flag initialization restored the original register allocation
+  and matched.
+- Reconstructing six adjacent copied words as one local array recovered a
+  missing stack base and matched the indexed read. The other two bare stack
+  references are associated with larger or mixed frame uses and remain open.
+- Two compiled misses had a byte offset scaled again by pointer arithmetic.
+  Giving one lookup a float array and a byte-sized index matched (170 to exact).
+  Removing the duplicate scale in the other case reduced its score from 25 to
+  15. That second case needs another change.
+- A generated switch emitted case labels outside the switch. The
+  `--no-switches` and `--gotos-only` alternatives still failed compilation.
+
+These controlled follow-up edits establish five additional exact cases.
+They have not yet been integrated into automatic draft or permuter rules.
+
 ### Signed halfword loads and word-store scheduling
 
 An N64 function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` scored 200 from a
