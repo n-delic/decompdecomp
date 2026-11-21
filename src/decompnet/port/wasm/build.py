@@ -879,7 +879,8 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
     fixed, functions = addresses(manifest)
     original = original_code(host, manifest, fixed)
     if original:
-        log(f"using the original game code for {len(original)} functions that depend on the console's stack layout")
+        log(f"using the original game code for {len(original)} functions that depend on the console's "
+            "stack layout or registers")
     leave_out = set(leave_out) | original
     sources = gather(repo, out, leave_out, function_headers, ensure_host_import=ensure_host_import, manifest=manifest)
     library = _library(out, library_c or {}, sources, log)
