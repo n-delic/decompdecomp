@@ -1222,6 +1222,15 @@ function addActivity(events, attempts, first) {
   // in the same second, the attempt before its match: else the match closed the line and the attempt opened a new one
   items.sort((a, b) => a.t - b.t || (a.at ? 0 : 1) - (b.at ? 0 : 1));
   for (const it of items) {
+    // Saved rechecks keep the original author's credit, but the app ran the compile.
+    if (it.at?.via === "saved_recheck") {
+      const fn = fnLink(it.at.function);
+      const result = it.at.score === 0
+        ? `<span class="ok">✓</span> Verified saved match for ${fn}`
+        : `<span class="bad">Couldn’t verify saved match for ${fn}</span>`;
+      addLine(it.t, result, first);
+      continue;
+    }
     const improvement = it.at && improvementActivityHtml(it.at);
     if (improvement) addLine(it.t, improvement, first, it.at.agent);
     const auto = (who) => who === AUTO || who === "@" + AUTO;  // ours, or the room host's

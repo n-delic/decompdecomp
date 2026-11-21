@@ -300,7 +300,10 @@ def test_live_feed_returns_recorded_score_change_without_source_payloads(tmp_pat
     with net.store.tx() as db:
         db.execute('INSERT INTO attempts(function_id,agent_id,score,score_before,score_improved,compiled,source,created_at) VALUES(?,?,?,?,?,?,?,?)',
                    (fid,agent.id,95,100,1,1,'private source',time.time()))
-    attempt = net.live('game')['attempts'][0]
+        db.execute("INSERT INTO attempts(function_id,agent_id,score,compiled,created_at,via) VALUES(?,?,0,1,?,?)",
+                   (fid,agent.id,time.time(),'saved_recheck'))
+    attempt, recheck = net.live('game')['attempts']
+    assert recheck['via'] == 'saved_recheck' and recheck['score'] == 0
     assert attempt['score_before'] == 100 and attempt['score'] == 95 and attempt['score_improved'] == 1
     assert 'source' not in attempt
 
