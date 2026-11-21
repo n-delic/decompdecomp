@@ -41,7 +41,7 @@ def enable(automatic):
     return match_commits.configure(net, 'game', True, str(root))
 
 
-def test_default_off_and_enabling_does_not_backfill(automatic):
+def test_existing_project_stays_off_and_enabling_does_not_backfill(automatic):
     net, root, _, _ = automatic
     match(automatic, note='Existing match')
     before = git(root, 'rev-parse', 'HEAD')
@@ -49,6 +49,42 @@ def test_default_off_and_enabling_does_not_backfill(automatic):
     assert enable(automatic)['pending'] == 0
     match_commits.process(net, 'game')
     assert git(root, 'rev-parse', 'HEAD') == before
+
+
+@pytest.mark.parametrize(('config', 'enabled'), [
+    ({'kind': 'rom'}, True),
+    ({'kind': 'rom', 'auto_commit_matches': False}, False),
+    ({'kind': 'fork'}, None),
+])
+def test_project_registration_defaults_only_new_rom_projects(tmp_path, config, enabled):
+    from decompnet.app.engine import RomNetwork
+
+    net = RomNetwork(tmp_path / 'app.db', tmp_path)
+    with net.project_registration(slug='new', name='New', description='', arch='mips',
+                                  big_endian=True, root=tmp_path, config=config):
+        pass
+    assert net.cfg(net.project_row('new', sync=False)).get('auto_commit_matches') is enabled
+
+
+def test_default_queues_until_the_linked_checkout_has_a_checkpoint(automatic):
+    net, root, _, _ = automatic
+    net._update_cfg('game', lambda cfg: cfg.update(auto_commit_matches=True, save_folder=str(root.parent / 'backup')))
+    with net.progress._project_lock('game'):
+        branch = git(root, 'symbolic-ref', 'HEAD')
+        git(root, 'symbolic-ref', 'HEAD', 'refs/heads/no-checkpoint')
+        try:
+            match(automatic, note='Match the signed comparison')
+            match_commits.process(net, 'game')
+            state = match_commits.status(net, net.project_row('game'))
+            assert state['enabled'] and state['awaiting_checkout']
+            assert state['pending'] == 1 and not state['error']
+        finally:
+            git(root, 'symbolic-ref', 'HEAD', branch)
+        match_commits.process(net, 'game')
+        state = match_commits.status(net, net.project_row('game'))
+        assert state['enabled'] and not state['awaiting_checkout'], state
+        assert state['pending'] == 0
+        assert git(root, 'log', '-1', '--format=%s') == 'Match the signed comparison'
 
 
 def test_one_commit_per_function_uses_notes_and_removes_only_its_draft(automatic):
