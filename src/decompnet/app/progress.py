@@ -2700,6 +2700,7 @@ class Progress:
                                       (pid,)).fetchall()
                     checks = dict(queued_matches)
                     impacted_names = affected or set()
+                    rejudge_best = set()
                     for row in rows:
                         if row["name"] in deferred and row["id"] not in checks:
                             continue  # its saved C is the database's own verdict: checked again when due
@@ -2723,13 +2724,13 @@ class Progress:
                             else:
                                 checks.setdefault(row["id"], "")
                             continue
-                        keep = impacted and not changed_best
+                        # A saved draft is a proposal. Keep the last scored C and let the judge
+                        # publish a better replacement, even if the saved file went missing.
+                        if changed_best:
+                            rejudge_best.add(row["name"])
                         db.execute("UPDATE functions SET status=?, "
-                                   "matched_source=NULL,matched_agent_id=NULL,matched_at=NULL,readable=0,"
-                                   "best_source=CASE WHEN ? THEN best_source ELSE NULL END,"
-                                   "best_score=CASE WHEN ? THEN best_score ELSE NULL END,"
-                                   "best_agent_id=CASE WHEN ? THEN best_agent_id ELSE NULL END WHERE id=?",
-                                   (status, keep, keep, keep, row["id"]))
+                                   "matched_source=NULL,matched_agent_id=NULL,matched_at=NULL,readable=0 WHERE id=?",
+                                   (status, row["id"]))
                         db.execute("DELETE FROM claims WHERE function_id=?", (row["id"],))
                     if checks:
                         db.execute("INSERT INTO settings(key,value) VALUES(?,?) "
@@ -2797,7 +2798,8 @@ class Progress:
                 needs_judging = needs_judging or bool(verifying)
             self.results[slug], recheck = self._judge_saved(slug, folder, manifest, by_name,
                                                     saved, report,
-                                                    files=disk, judge_code=needs_judging, verifying=verifying)
+                                                    files=disk, judge_code=needs_judging, verifying=verifying,
+                                                    rejudge_best=rejudge_best)
             if any(status == "asm" for status, _ in verifying.values()):
                 saves._restore_set_aside(store, pid, manifest.get("set_aside") or [])
             # The saved judge has finished (including its worker's publications).
@@ -2837,8 +2839,10 @@ class Progress:
             # is recorded, so publish the database's newer C over it.
             judged_files = ({f"{kind}/{saves._source_file(name)}" for name in saved for kind in ("src", "best")}
                             if needs_judging else set())
+            changed_drafts = {f"best/{saves._source_file(name)}" for name in rejudge_best}
             moved = {name: text for name, text in rendered.items()
-                     if name in judged_files and name in disk and saves._source_text(disk[name]) != saves._source_text(text)}
+                     if (name in judged_files and name in disk or name in changed_drafts)
+                     and (name not in disk or saves._source_text(disk[name]) != saves._source_text(text))}
             foreground_files.update(moved)
             # (and a header the save names but the folder lacks: see the merge above)
             missing_headers = {name: text for name, text in rendered.items()

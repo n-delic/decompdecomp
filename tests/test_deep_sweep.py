@@ -1100,3 +1100,22 @@ def test_claimed_function_defers_source_recovery(sweep, monkeypatch):
     monkeypatch.setattr(net, 'can_draft', lambda proj: pytest.fail('The helper owns this function'))
     assert prepare(net, proj, fn, Log())['best_source'] is None
     assert net.store.one('SELECT agent_id FROM claims WHERE function_id=?', fn['id'])['agent_id'] == agent.id
+
+
+def test_sweep_recovers_exact_candidates_before_search(sweep, monkeypatch):
+    from decompnet.app import match_reconciliation
+
+    obj, net, calls, _ = sweep
+    monkeypatch.setattr(net, 'is_rom', lambda proj: True)
+
+    def recover(engine, slug, seconds, attempts, log, *, automatic):
+        assert engine is net and slug == 'game' and automatic
+        assert seconds is None and attempts is None
+        assert calls == []
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET status='matched',best_score=0 WHERE name='f0'")
+        return {'matched': 1, 'attempts': 1}
+
+    monkeypatch.setattr(match_reconciliation, 'run', recover)
+    assert obj.run('game', 1, 10, Log())['matched'] == 1
+    assert calls == ['f1']

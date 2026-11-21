@@ -471,13 +471,18 @@ class Sweeps:
             sdk_set_aside = discover_known(self.net, self.net.project_row(slug), check_cancel=log.check_cancel)
         if sdk_set_aside:
             log(f'Identified {sdk_set_aside} SDK library functions before preparing C candidates.')
-        twin_trials = twin_matches = 0
+        twin_trials = twin_matches = recovered_matches = recovery_trials = 0
         if slug not in self.net.links:
             from .. import compiler
             from .boundary_repairs import blocked
 
             with looking(self.net):
                 proj = self.net.project_row(slug)
+                if self.net.is_rom(proj) and not self.net.fork_slug(slug):
+                    from . import match_reconciliation
+                    recovered = match_reconciliation.run(self.net, slug, None, None, log, automatic=True)
+                    log.check_cancel()
+                    recovered_matches, recovery_trials = recovered['matched'], recovered['attempts']
                 unscored = {row['id'] for row in self._store(slug).all(
                     "SELECT id FROM functions WHERE project_id=? AND status='open' "
                     "AND (best_source IS NULL OR best_score IS NULL) AND " + IN_BUILD, proj['id'])}
@@ -495,7 +500,7 @@ class Sweeps:
                         log(f'Tried matched twins for {twin_trials} functions without scored C; {twin_matches} matched.')
         maximum = getattr(log.compile_pool, 'maximum', False)
         count = deep_throughput.width(True,0) if maximum and not threads else workers.clamp(threads) if threads != 1 else 1
-        stats = {'visited': twin_trials, 'tested': twin_trials, 'matched': twin_matches, 'rotated':0, 'activity': Activity(log)}
+        stats = {'visited': twin_trials + recovered_matches, 'tested': twin_trials + recovery_trials, 'matched': twin_matches + recovered_matches, 'rotated':0, 'activity': Activity(log)}
         visited_turns = set()
         lock = threading.Lock()  # (the counters are shared by every thread's function)
         cycle = 1

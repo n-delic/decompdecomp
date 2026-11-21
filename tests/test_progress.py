@@ -998,18 +998,24 @@ def test_background_compile_discards_results_if_progress_changes(worker, project
             net.permuter._score(agent, proj, fn, "draft", 10, None)
 
 
-def test_a_best_attempt_can_be_edited_and_deleted(project):
-    net, folder, _ = project
+def test_saved_draft_edit_and_deletion_keep_the_last_scored_candidate(project):
+    net, folder, judged = project
     (folder / "best").mkdir()
     path = folder / "best/f.c"
     path.write_text("first attempt", encoding="utf-8")
     net.progress.sync("game", force=True)
-    path.write_text("worse attempt", encoding="utf-8")
+    before = net._function("f", "game")
+    path.write_text("compile error", encoding="utf-8")
     net.progress.sync("game", force=True)
-    assert net._function("f", "game")["best_source"] == "worse attempt"
+    assert judged[-1] == ("f", "compile error")
+    assert path.read_text().strip() == "first attempt"
     path.unlink()
     net.progress.sync("game", force=True)
-    assert net._function("f", "game")["best_source"] is None
+    current = net._function("f", "game")
+    assert [current[key] for key in ("best_source", "best_score", "best_agent_id")] == [
+        before[key] for key in ("best_source", "best_score", "best_agent_id")]
+    assert path.read_text().strip() == "first attempt"
+    assert not net.progress.sync("game", force=True)
 
 
 def test_an_uninstalled_compiler_does_not_clear_existing_work(project, monkeypatch):
@@ -2378,7 +2384,7 @@ def test_foreground_judge_finishes_while_saved_compile_is_waiting(project, monke
     monkeypatch.setattr(net, 'attempt', MethodType(RomNetwork.attempt, net))
     monkeypatch.setattr(net, '_attempt', ordinary_attempt)
     waiting, compilation = threading.Event(), Future()
-    def checks(net, proj, folder, files, by_name, by_vram, saved, judge_code, check_cancel, verifying=()):
+    def checks(net, proj, folder, files, by_name, by_vram, saved, judge_code, check_cancel, verifying=(), rejudge_best=()):
         for name in saved:
             prepared = ('synthetic saved compile', compilation) if name == 'f' else None
             waiting.set()
@@ -3409,7 +3415,7 @@ def test_stale_saved_compile_retries_without_holding_project_lock(project,monkey
         assert result.snapshot==net._compile_snapshot(proj,fn,ctx['header'],text), 'Stale compiler result reached the judge'
         return original(agent,name,text,slug)
     monkeypatch.setattr(net,'attempt',attempt)
-    def checks(net,proj,folder,files,by_name,by_vram,saved,judge_code,check_cancel,verifying=()):
+    def checks(net,proj,folder,files,by_name,by_vram,saved,judge_code,check_cancel,verifying=(),rejudge_best=()):
         ready=Future();ready.set_result(None)
         for name in saved:
             yield name,saved[name],'src',files['src/'+name+'.c'],name,('stale snapshot',ready) if prefetched else None

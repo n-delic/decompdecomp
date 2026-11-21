@@ -2873,7 +2873,9 @@ snapshots local source/header/build inputs (at most 10,000 files / 32 MiB).
 
 Cross-game transfer results use compact, responsive rows with separate provenance, result labels and score changes; recent partial improvements can be filtered independently.
 
-Deep Permuter tries matched same-game twins before search and can rejudge a better ROM draft on an open twin.
+Deep Permuter rechecks historical matches with the current header on local ROM projects before trying matched
+same-game twins or searching candidates. The standalone saved-match recovery action can still try historical
+headers. Saved-progress sync preserves scored drafts when their saved copies disappear or a replacement fails.
 Project-wide passes can fill missing scored C by recompiling saved attempts, then trying Machine Drafts where
 available. Room members receive recovered candidates through the host.
 Compiler preflight pairs a corrected single-precision square-root call with narrowly scoped profile trials.
