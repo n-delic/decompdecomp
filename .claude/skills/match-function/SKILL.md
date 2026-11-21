@@ -21,7 +21,9 @@ in `pyproject.toml`, `uv lock`). What runs candidates stays in `src/decompnet/ap
 - Find the app: `ps -E -o pid,command | grep -E 'bin/decomp( |$)'`, then `<home>/.decomp/server.json` (port,
   secret, pid). Dev checkouts use `~/Decomp-RetroReversing-dev` on 6474. More than one app, or none: ask.
 - Judging goes through the app (`scripts/judge.py try`), so the user sees your attempts; it is credited to "you".
-  Your claim can clash with another ("you hold another claim"): that is transient, `judge.py` retries.
+  Your claim can clash with another ("you hold another claim": an app job or an earlier attempt of yours under the
+  same identity): `judge.py` releases that claim and asks again. `judge.py` is standard library only; the other
+  scripts need an environment with decompnet (`.venv/bin/python`, read only: do not `uv sync` it).
 - Game data (ROMs, extracted code) is read only and never copied into the repo or a PR.
 - Use the scratchpad for experiments, a worktree + branch + PR for repo changes (AGENTS.md workflow).
 
@@ -32,6 +34,14 @@ python3 .claude/skills/match-function/scripts/judge.py best SLUG FUNC /scratch/b
 python3 .claude/skills/match-function/scripts/judge.py diff SLUG FUNC
 ```
 
+- **Is it the project's compiler?** Before any source shape, read the target's idioms and ask which compiler writes
+  them (this is the cheapest question and the one that cost most when skipped: 243 attempts under the wrong
+  compiler). Signals that name another compiler: a byte or halfword load shifted with `sra` (IDO writes it; every
+  GCC here folds it to `srl`, whatever the casts, types or flags), register moves written `or rd,rs,$zero` (SGI) versus
+  `addu` (GCC). Test it, don't assume it: write the idiom as a few lines of
+  C and run `scripts/compile_snippet.py TOOLCHAIN snippet.c` for each installed toolchain, or the whole candidate with
+  `--asm` to see how many instructions agree. The deep pass probes other profiles (`move_fingerprints`), but only a
+  candidate the other compiler can build and whose shape fits it will ever match there.
 - Read `best.c` and the **diff of the best source**, not the score. Group mismatches: register choice, instruction
   order, missing/extra instructions, branch shape, stack frame. Say which group dominates.
 - Read the function's notes (`GET /api/function` → `notes`) and the history. Earlier agents' dead ends are
@@ -41,18 +51,17 @@ python3 .claude/skills/match-function/scripts/judge.py diff SLUG FUNC
 
 ## 2. Work fast and locally
 
-The app takes seconds per compile. The period compiler on your machine takes 0.3 s. Use it for thinking and for
-searching, and the app only to confirm:
+The app takes seconds per compile. A pinned compiler through the app's own compiler path takes about a second. Use
+`scripts/compile_snippet.py` for thinking and searching, and the app only to confirm:
 
 ```bash
-.venv/bin/python .claude/skills/match-function/scripts/local_score.py cand.c --rom ROM --offset OFF --size N
-.venv/bin/python .claude/skills/match-function/scripts/local_score.py cand.c ... --dumps   # RTL passes
+.venv/bin/python .claude/skills/match-function/scripts/compile_snippet.py ido-7.1 cand.c --asm FUNC.s
+.venv/bin/python .claude/skills/match-function/scripts/compile_snippet.py gcc-2.7.2-kmc idiom.c -- -G0 -mips3 -mgp32 -mfp32 -O2
 ```
 
-`--dumps` writes the compiler's loop pass (`.loop`), schedulers (`.sched`, `.sched2`) and register allocation
-(`.greg`) beside the source. When a register or an instruction sits in the wrong place, read these to see which
-pass put it there: it is usually faster than guessing at source shapes. Local score is a guide; a candidate that
-looks better locally still has to beat the best in the app.
+It prints how many of the target's instructions agree and where the first differences are (registers and
+immediates normalised; the callee's address ignored). When a candidate reaches 1.000 it still has to pass the app's
+judge: `judge.py try`. A candidate that looks better locally has to beat the best in the app.
 
 ## 3. What has worked (extend this list when you learn more; it is the permuter's to-do list)
 
@@ -69,6 +78,13 @@ looks better locally still has to beat the best in the app.
   them; reordering or moving the assignments changed nothing. Unsolved: what makes the target's scheduler put them
   early. If you solve it, write it down here.
 - Declaration order, `register` and integer width hints often produce identical RTL: test one, don't grid them.
+- **IDO bit-packed unpackers** (an N64 audio-header function, `ido-7.1`, exact; the evidence is in
+  COMPILER_MATCHING_LEARNINGS.md). The shape that matched: a `u8 *` parameter; stack arrays declared highest frame
+  offset first (IDO lays the first-declared highest); one `for (i = 0; i < N; i++)` writing `a[i]`, `e[i*13+k]` from
+  `p[i*7+5+k]`. Explicit induction pointers (`*pa++`) and a walked `q += 7` did not match: IDO places the
+  induction-variable updates itself, and only the all-index form put them where the target has them. IDO evaluates
+  the operand written first first (`(p[0] & 0xF) << 2 | (p[1] >> 6) & 3` is not `(p[1] >> 6) & 3 | ...`). IDO refuses
+  `void *` arithmetic; GCC accepts it. Bit-field structs never produced `lbu`/`sra` at all.
 
 ## 4. Search only when you can name the mismatch
 
@@ -76,7 +92,8 @@ A blind hill-climb through the app judge is too slow and found nothing the permu
 climb (thousands of compiles) is cheap, but only worth starting from a source whose remaining diff is mostly
 registers and order. Verify its best in the app before believing it.
 
-The Deep Permuter: `judge.py permute SLUG FUNC MINUTES VARIANTS`. It restores the best, tries random rewrites
+The Deep Permuter: `judge.py permute SLUG FUNC MINUTES VARIANTS` (a function with no scored C is refused:
+`judge.py seed SLUG FUNC` judges the app's untouched draft first). It restores the best, tries random rewrites
 and local repairs, and saves every verified improvement. Check the result with `judge.py job ID` and the function's
 Deep permuter tab. If it errors, that is a bug to fix (see PR "TracedVariant" for an example), not a reason to
 wait.
@@ -89,10 +106,22 @@ For each manual step that moved the score, answer: **could the permuter have don
 - No: write the rewrite or the search guide. Smallest useful form: a function in decomp-repair that takes source
   and returns variants, with a test that fails without it (see `call_scope_repairs.py` for the shape). Prove it by
   running it on the function you just matched: starting from the state *before* your fix, it must reach the fix.
+- **Prove it in a real run, not by calling the rewrite.** Calling `draft_repairs.variants` on the original draft
+  is not proof: the search saves its own best in a printed dialect (`*((u8 *) (((char *) p) + 5))`, `v = v + 2;`, a
+  braced `goto`) and adds devices such as the argument home-slot pointers, and a rewrite written against m2c's raw
+  spelling never fires on that. First test your rewrite on the function's *current best source* from `judge.py best`
+  as well as on the draft. Then run `scripts/scratch_run.py`: a throwaway app, a fresh import of the user's own
+  ROM, the app's untouched draft as baseline, the stock Deep Permuter with one compiler profile, and it exits 0 only
+  when the search ends "Matched". Build its environment from the worktree with your change
+  (`UV_PROJECT_ENVIRONMENT=/tmp/dd-scratch-venv uv sync`), never the one the user's app runs from. If the run
+  does not match, read why (which family fired, what the profile probe said) and fix that before stopping.
 - Record the evidence in `docs/COMPILER_MATCHING_LEARNINGS.md`: exact compiler and flags, the source change, the
   measured before/after, and failed experiments. Say which are controlled results and which are one function.
 - A change here needs its PR (AGENTS.md): branch `<type>/<name>`, test, `uv run ruff check`, merged after creation.
-  Say in the PR which features you ran and how, and for a library change the tag you bumped.
+  Say in the PR which features you ran and how, and for a library change the tag you bumped. Other sessions release
+  the library too: before tagging, `git fetch --tags` and read `git ls-remote origin refs/tags/vX.Y.Z`; a tag that
+  exists is taken (use the next version, never move a tag), and after the library's release check its archive
+  contains your module before bumping the app's pin.
 
 If you could not match it, still do step 5 for what you learned, and leave the function's note with the blocker.
 
@@ -102,8 +131,9 @@ Under `/goal`, the condition is only met when **both** hold, and you should say 
 
 - the function's judged score is 0 (`judge.py diff` reports the app's verdict; re-read it, don't recall it), **or**
   you have stopped with a specific, evidenced blocker and the user agreed to stop; and
-- the permuter or app change from step 5 is merged (or an open PR with its test passing) and is described in
-  your final message with the before/after evidence.
+- the permuter or app change from step 5 is merged (or an open PR with its test passing), `scratch_run.py` has
+  reported PROVEN for it (say what it printed), and your final message gives the before/after
+  evidence. "The rewrite produces an exact variant when I call it" does not meet this.
 
 Example goal: `/goal Run /match-function on func_X in PROJECT until it is judged 0, then land the permuter
 change that would have found it, with a test.` A long search with no new idea is not progress: when the
