@@ -371,3 +371,16 @@ def test_segment_prefix_with_saved_register_switch_is_recovered_as_data(case):
     else:
         assert result==functions
         assert not data
+
+
+@pytest.mark.parametrize('protected',[False,True])
+def test_alignment_word_decoding_as_conditional_link_does_not_cut_a_leaf(protected):
+    words=[0x8c820000,0x03e00008,0,0x04330002,0x24840001,0x24820001,0x03e00008,0]
+    image,functions,segments=fixture(words,cuts=(0,12,24,32))
+    symbols=[f'entry = 0x{BASE+12:08X}; // type:func'] if protected else ()
+    result=repair(functions,[],image,consoles.get('n64'),segments,symbols=symbols)
+    if protected:
+        assert result==functions
+    else:
+        assert [(fn.rom,fn.size) for fn in result]==[(0,12),(16,16)]
+        assert repair(result,[],image,consoles.get('n64'),segments)==result

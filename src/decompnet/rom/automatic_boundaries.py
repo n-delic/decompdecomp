@@ -61,6 +61,7 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
         if not references[dest]:del references[dest]
     functions = recover_inline_tables(functions, data, image, order, explicit | pointers, references, segments, log)
     destinations=sorted(references)
+    entered_addresses=explicit|pointers|set(destinations)
     tables=[dict(rom_start=s.rom_start,rom_end=s.rom_end,vram=s.vram) for s in segments
             if 0<=s.rom_start<s.rom_end<=len(image) and not s.rom_start%4 and not s.rom_end%4]
     functions = recover_segment_switch_data(functions, data, image, order, tables,
@@ -106,6 +107,22 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
         padding=set(holes);proposed_padding={}
         # A directly called frameless entry may have been cut from its own return.
         leaves={at for at in cuts if at in lines and at+mapping in direct_calls}
+        link_fill={}
+        for cut in cuts & returns:
+            # A stray alignment word can decode as a conditional link through $at.
+            # If taken it would replace the return address of the frameless body.
+            if cut+8>hi or (cut+mapping)%8!=4 or lines[cut].word>>16!=0x0433:
+                continue
+            at=cut+4
+            delta=lines[cut].word&0xffff
+            target=cut+4+(delta-0x10000 if delta&0x8000 else delta)*4
+            if (target<=at+4 or target not in cuts or cut+mapping in entered_addresses
+                    or any(d.rom is not None and d.rom<at and cut<d.rom+d.size for d in data)):
+                continue
+            if any(offset!=cut for offset,_ in references.get(target+mapping,())):
+                continue
+            leaves.add(at)
+            link_fill[at]=(cut,target)
         def seed(cut,hi=hi,lines=lines,mapping=mapping,leaves=leaves,proposed_padding=proposed_padding):
             at=cut
             while at<min(cut+12,hi) and at in lines and lines[at].word==0:at+=4
@@ -131,18 +148,28 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
             # slot's switch functions stayed cut where outside calls had cut them). An entry after a return that is
             # no leaf can be a frame the compiler scheduled a load or two ahead of (called_extent's lead).
             framed=dict(big_endian=console.big_endian,cpu=console.cpu_variant,asm_check=console.asm_reason)
-            size=(leaf_extent(image,at,hi,at+mapping,**framed) if at in leaves else None) or \
-                called_extent(image,at,hi,at+mapping,**framed,table_ranges=tables)
+            size=leaf_extent(image,at,hi,at+mapping,**framed) if at in leaves else None
+            if at in link_fill:
+                filler,target=link_fill[at]
+                if not size or target>=at+size:
+                    continue
+            else:
+                filler,target=None,None
+                size=size or called_extent(image,at,hi,at+mapping,**framed,table_ranges=tables)
             if not size:continue
             end=at+size;address=at+mapping;finish=end+mapping
             if any(address<a<finish for a in explicit|pointers):continue
             if any(d.rom is not None and d.rom<end and at<d.rom+d.size for d in data):continue
             independent=any(not at<=offset<end
                             for dest in destinations[bisect_right(destinations,address):bisect_right(destinations,finish-1)]
-                            for offset,_ in references[dest])
+                            for offset,_ in references[dest]
+                            if offset!=filler or dest!=target+mapping)
             if independent:continue
             if not any(at<c<end for c in cuts) and at in cuts and end in cuts:continue
             # Retain alignment in the original image, outside the C function.
+            if filler is not None:
+                padding.add((filler,at))
+                cuts.add(at)
             if at in proposed_padding:
                 padding.add(proposed_padding[at])
                 cuts.update(proposed_padding[at])
