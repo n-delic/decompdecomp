@@ -39,7 +39,7 @@ def owned(manifest, folder=None):
     paths = {saves.MANIFEST, 'README.md', 'decompdecomp-progress.svg'}
     if manifest.get('format') == saves.FORMAT:  # (an older save holds them inside its manifest)
         paths.update(saves.SIDE_FILES.values())
-    paths.update(('src/' if 'matched_by' in value else 'best/') + name + '.c'
+    paths.update(('src/' if 'matched_by' in value else 'best/') + saves._source_file(name)
                  for name, value in manifest['functions'].items())
     paths.update('include/' + name for name in manifest['headers'].values())
     if folder is not None:
@@ -82,10 +82,13 @@ def recover_missing_sources(net, slug, folder, manifest, missing, log):
     store = net.project_store(slug)
     pid = store.one('SELECT id FROM projects WHERE slug=?', slug)['id']
     recovered = {}
+    names = {saves._source_file(name): name for name in manifest['functions']}
     for path in sorted(missing):
         if not path.startswith(('src/', 'best/')) or not path.endswith('.c'):
             continue
-        name = path.split('/', 1)[1][:-2]
+        name = names.get(path.split('/', 1)[1])
+        if name is None:
+            continue
         info = manifest['functions'].get(name)
         row = store.one('SELECT * FROM functions WHERE project_id=? AND name=?', pid, name)
         if not info or not row or row['vram'] != info.get('vram'):
@@ -106,7 +109,14 @@ def recover_missing_sources(net, slug, folder, manifest, missing, log):
 
 
 def _capture_bytes(path, text):
-    data = path.read_bytes()
+    try:
+        data = path.read_bytes()
+    except FileNotFoundError:
+        # A logical side file can come from the manifest itself, or from the
+        # save reader's default for missing verification records.
+        if path.name in saves.SIDE_FILES.values():
+            return text.encode('utf-8')
+        raise
     normalized = data.decode('utf-8', errors='replace').replace('\r\n', '\n').replace('\r', '\n')
     if path.name not in {'README.md', 'decompdecomp-progress.svg'} and normalized != text:
         # Commit the judged text if an editor changed the file after capture.
@@ -158,16 +168,17 @@ def snapshot(net, slug, root, log, *, recover=True, allow_unrelated_edits=False,
         # The commit holds the folder's own files: a format 2 save's notes and verification records apart.
         files = saves.split_files(files)
         visuals = {'README.md', 'decompdecomp-progress.svg'}
-        required = owned(manifest)
+        required = owned(manifest) - visuals
         if directories is None:
             for name in visuals:
                 if (folder/name).is_file():
                     files[name] = (folder/name).read_bytes().decode('utf-8')
-            for name in data_saves_owned(folder):
-                if (folder / name).is_file():
-                    files[name] = (folder / name).read_text(encoding='utf-8')
-        else:
-            required -= visuals
+            data_paths = data_saves_owned(folder)
+            required.update(data_paths)
+            for name in data_paths:
+                item = repository_sync.inside(folder, name)
+                if item.is_file():
+                    files[name] = item.read_text(encoding='utf-8')
         missing = required - files.keys()
         if missing:
             if recover and recover_missing_sources(net, slug, folder, manifest, missing, log):
@@ -185,20 +196,22 @@ def snapshot(net, slug, root, log, *, recover=True, allow_unrelated_edits=False,
             return captured, set(captured), manifest
         paths = {prefix + name for name in owned(manifest, folder)}
         tracked = repository_sync.git(root, 'ls-files', '-z').decode().split('\0')
-        if prefix + saves.MANIFEST in tracked:
-            previous = json.loads(committed_manifest_text(root, prefix + saves.MANIFEST))
+        head = repository_git.git(root, 'rev-parse', '--verify', '--quiet', 'HEAD', missing=True)
+        if head and prefix + saves.MANIFEST in tracked:
+            previous = json.loads(committed_manifest_text(root, prefix + saves.MANIFEST, head))
             paths.update(prefix + name for name in owned(previous))
         for name in paths:
             repository_sync.inside(root, name)
         # A tracked redundant draft must be deleted in the checkpoint too, even if an
         # older manifest selected only src/ and never listed the leftover best/ file.
-        paths.update(prefix + f'best/{name}.c' for name, info in manifest['functions'].items()
-                     if 'matched_by' in info and prefix + f'best/{name}.c' in tracked)
+        matched_drafts = {prefix + 'best/' + saves._source_file(name)
+                          for name, info in manifest['functions'].items() if 'matched_by' in info}
+        paths.update(matched_drafts.intersection(tracked))
         from . import rebuildable_repository
         scaffold = rebuildable_repository.files(root)
         paths.update(scaffold)
         paths.update(rebuildable_repository.retired(root))
-        changed = set(filter(None, repository_sync.git(root, 'diff', '--name-only', '--no-renames', '-z', 'HEAD').decode().split('\0')))
+        changed = set(filter(None, repository_sync.git(root, 'diff', '--name-only', '--no-renames', '-z', *([head] if head else [])).decode().split('\0')))
         changed.update(filter(None, repository_sync.git(root, 'ls-files', '--others', '--exclude-standard', '-z').decode().split('\0')))
         if changed - paths and not allow_unrelated_edits:
             repository_sync.checkout(root, blocking=changed - paths)  # Show only files that block this checkpoint.
