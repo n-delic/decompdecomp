@@ -1,5 +1,26 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: recover byte cursors and input record setup
+
+The linked judge reproduced 35 of 36 archived drafts in one replay,
+up from 32, and 3 of 69 in the next score band, up from zero. All six
+new matches used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
+
+- In three 40-, 72-, and 76-byte routines, type the incoming pointer as
+  a byte cursor and postincrement for all three reads (230 to 0 each).
+  Keep the optional signed floating-point conversion of the last byte
+  and return the updated cursor.
+- In a 200-byte wrapper, forward its context to the first call and
+  use a byte parameter for the fourth argument forwarded to the second
+  call (200 to 0). Forwarding the context alone scored 60.
+- In a 120-byte routine, preserve the word index through the address
+  calculation, capture the table before the callback stores, and
+  resolve the table symbol against the archived address (165 to 0).
+  Retaining a byte index in the same staged lookup scored 100.
+- In a 284-byte mask builder, read the global base before masking the
+  index, stage the first two words, and reuse a separate pointer for
+  three later fields (200 to 0).
+
 ### KMC GCC 2.7.2: recover indexed stores and loop and call scheduling
 
 The linked judge reproduced 32 of 36 archived drafts, up from 27.
