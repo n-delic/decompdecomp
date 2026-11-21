@@ -134,8 +134,13 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
             for at in range(a,b,4):lines[at]=AsmLine(at,at+mapping,0,'nop','')
         owners=[s for s in segments if s.rom_start<=lo<hi<=s.rom_end and s.vram-s.rom_start==mapping]
         if (not consistent or len(owners)!=1 or len(lines)*4!=hi-lo
-                or any(s is not owners[0] and s.vram<hi+mapping and lo+mapping<s.vram+s.rom_end-s.rom_start for s in segments)):
+                or any(s is not owners[0] and s.vram<hi+mapping and lo+mapping<s.vram+s.rom_end-s.rom_start
+                       and not (owners[0].exclusive_ram_id and s.exclusive_ram_id == owners[0].exclusive_ram_id)
+                       for s in segments)):
             result.extend(group);continue
+        segment = owners[0]
+        siblings = [other for other in segments if other is not segment and segment.exclusive_ram_id
+                    and other.exclusive_ram_id == segment.exclusive_ram_id]
         cuts={f.rom for f in group}|{hi}|{x for hole in holes for x in hole};accepted=[]
         # A new interior entry needs the preceding balanced return, never a frame pattern alone.
         candidates=[at for at,line in lines.items() if is_frame(line.word) and (at in cuts or
@@ -217,10 +222,13 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
             if any(address<a<finish for a in explicit|pointers):continue
             if any(address<=a<finish for a in data_only):continue
             if any(d.rom is not None and d.rom<end and at<d.rom+d.size for d in data):continue
+            # A branch within another occupant targets its own copy of the shared address.
             independent=any(not at<=offset<end
                             for dest in destinations[bisect_right(destinations,address):bisect_right(destinations,finish-1)]
                             for offset,_ in references[dest]
-                            if offset!=filler or dest!=ignored_edge)
+                            if (offset!=filler or dest!=ignored_edge)
+                            and not any(other.rom_start <= offset < other.rom_end and other.contains(dest, 4)
+                                        for other in siblings))
             if independent:continue
             if not any(at<c<end for c in cuts) and at in cuts and end in cuts:continue
             # Retain alignment in the original image, outside the C function.

@@ -89,7 +89,7 @@ def called_extent(image, start, end, vram, *, big_endian=True, cpu='', asm_check
     return size+lead if returns else None
 
 
-LEAD = 4  # instructions the compiler may schedule ahead of the frame
+LEAD = 5  # instructions the compiler may schedule ahead of the frame
 
 
 def _lead(image, start, end, order, cpu):
