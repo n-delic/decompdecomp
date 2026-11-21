@@ -9,6 +9,7 @@
 - loader_code.py: full-bank closed-body recovery with CPU call, callback and adjacency evidence.
 - loader_mapping.py: bank mappings corroborated by constant arguments to independent loader helpers.
 - indexed_overlays.py: shared RAM slots and DMA bounds recovered from loader arrays and cache calls.
+- inferred_overlays.py: overlapping code-bank mappings supported by independently called local entries.
 - inline_data.py: verified constants and alignment bytes embedded among code.
 - boot_gzip.py: programs in paired gzip members placed at addresses supplied by the boot loader.
 - boot_mapping.py: returning TLB boot stubs separated from code with a strongly supported later load mapping.

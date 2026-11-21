@@ -548,7 +548,15 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
         (workdir/image).write_bytes(rom)
         cfg.setdefault("options", {})["target_path"] = image
         cfg["sha1"] = hashlib.sha1(rom).hexdigest()
+    from . import inferred_overlays
+
+    found, scoped = inferred_overlays.recover(rom, found, taken, getattr(log, 'check_cancel', lambda: None))
     insert_segments(config, cfg, found, len(rom))
+    if scoped:
+        cfg = yaml.safe_load(config.read_text(encoding='utf-8'))
+        inferred_overlays.scope(cfg, found, scoped)
+        config.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding='utf-8')
+        log('Recovered overlapping code-bank addresses from their independent internal calls.')
     kib = sum(en - st for st, en, _ in found) // 1024
     log(f"found {len(found)} more code segment{'s' if len(found) != 1 else ''} the game loads later ({kib} KiB)")
     return image
