@@ -490,3 +490,32 @@ def test_multiword_alignment_between_a_return_and_an_aligned_frame(protect, fill
     symbols = [f'entry = 0x{BASE+12:08X};'] if protect else ()
     result = repair(functions, [], image, consoles.get('n64'), segments, symbols=symbols)
     assert [fn.rom for fn in result] == ([0,8,16] if protect else [0,16])
+
+
+@pytest.mark.parametrize('called', [False, True])
+def test_alignment_call_folded_into_the_next_frame(called):
+    apparent_call = 0x0c000000 | (BASE >> 2)&0x3ffffff
+    words = [0x03e00008, 0, apparent_call, 0] + BODY
+    image, functions, segments = fixture(words, cuts=(0,8,len(words)*4))
+    symbols = [f'entry = 0x{BASE+8:08X};'] if called else ()
+    result = repair(functions, [], image, consoles.get('n64'), segments, symbols=symbols)
+    assert [fn.rom for fn in result] == [0,8 if called else 16]
+
+
+@pytest.mark.parametrize('entered', [False, True])
+def test_backward_branch_filler_before_a_called_aligned_leaf(entered):
+    call = 0x0c000000 | (BASE+16 >> 2)&0x3ffffff
+    words = [0x8c820000, 0x03e00008, 0, 0x1440fffc, 0x8c820000, 0x03e00008, 0, call, 0, 0x03e00008, 0]
+    image, functions, segments = fixture(words, cuts=(0,12,16,28,44))
+    symbols = [f'entry = 0x{BASE+12:08X};'] if entered else ()
+    result = repair(functions, [], image, consoles.get('n64'), segments, symbols=symbols)
+    assert any(fn.rom == 12 for fn in result) == entered
+
+
+def test_three_alignment_words_after_a_closed_back_edge():
+    call = 0x0c000000 | (BASE+32 >> 2)&0x3ffffff
+    words = [0x8c820000, 0x24420001, 0xac820000, 0x1000fffc, 0, 0, 0, 0,
+             0x8c820000, 0x03e00008, 0, call, 0, 0x03e00008, 0]
+    image, functions, segments = fixture(words, cuts=(0,20,24,28,32,44,60))
+    result = repair(functions, [], image, consoles.get('n64'), segments)
+    assert [fn.rom for fn in result] == [0,32,44]

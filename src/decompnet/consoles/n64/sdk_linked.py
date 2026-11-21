@@ -8,6 +8,7 @@ import hashlib
 
 CORPUS = 'N64 C runtime'
 _LINKED_IMAGE = 'd347159808f0374a93cf44cfb6135d8f56279f7b'
+_LINKED_CLEANUP_SLOT = 'eb9bacb12eb6665be9936a3e1dfd6d57b2eaabdb'
 _KNOWN = {
     _LINKED_IMAGE: {
         'dd2ba42627dae6bc53ff6e61ca8ca0cfbe7f38149db59f304e22c4f9b5fa0897': ('atan2', 364),
@@ -23,6 +24,12 @@ _KNOWN = {
 # The PI manager references the EPI DMA entry. The scheduler uses linked
 # addresses for queues and OS globals when saving and restoring context.
 _LIBULTRA = {
+    _LINKED_CLEANUP_SLOT: {
+        '49204e7bcbcbb5aa09f6bd05cc18cce5b6a108c1fad5dd19cdacafc43298981a':
+            ('__osDispatchThread', 380, False, 'os/exceptasm.s'),
+        '0a995ca509a00083c2fedae1bb36d2e75c8fbd76e8fe38802abe620e4bd0f343':
+            ('__osCleanupThread', 8, False, 'os/exceptasm.s'),
+    },
     '70d08c55952d61fdb1e52a04836bd75b5bc2a428': {
         'f5183d7de6c4f9af7e9cbef377ed73e3777aded4aca8c731517b942ae3b0eb22':
             ('__osDispatchThread', 380, False, 'os/exceptasm.s'),
@@ -121,6 +128,8 @@ def split_scheduler(result, image_sha1: str) -> None:
 
 
 _CLEANUP_WITH_PADDING = {
+    _LINKED_CLEANUP_SLOT:
+        '5e1020780847e0662b9f6d8a5f68456a8c2cb7c2575181bd253b217024738a42',
     'aa576624f2a66034cb0d6e621ba16a0d3beaca3a':
         '68cdef5461e1450d4fadc5c4fc480fc9e828e9a874925593bfd890aa18583e53',
     '4f1b8635322190bb3d0c6fc7d3ba844941f05574':
@@ -132,7 +141,7 @@ def _split_cleanup_padding(result,digest):
     from ...rom.split import split_function
 
     for index, (fn, padding) in enumerate(zip(result.functions, result.functions[1:])):
-        if (fn.size != 392 or padding.size != 4 or padding.rom != fn.rom+fn.size
+        if (fn.size not in (388, 392) or padding.size != 4 or padding.rom != fn.rom+fn.size
                 or padding.vram != fn.vram+fn.size or padding.vram in result.named.values()):
             continue
         code = b''.join(line.word.to_bytes(4, 'big') for line in (*fn.lines, *padding.lines))

@@ -78,7 +78,10 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
     functions = recover_segment_switch_data(functions, data, image, order, tables,
                                             explicit | pointers | transfer_targets, references, log)
     tables.extend(console.import_table_ranges(image,segments))
-    gaps = multiword_alignment(functions, image, order, owner, explicit | pointers, references, direct_calls, data, segments)
+    functions = split_aligned_frames(functions, data, image, order, console, owner, segments,
+                                     explicit | pointers | set(references))
+    gaps = multiword_alignment(functions, image, order, owner, explicit | pointers, references,
+                               direct_calls, data, segments, console)
     if gaps:
         removed = {line.rom for fn in functions if (fn.rom, fn.vram) in gaps for line in fn.lines}
         functions = [fn for fn in functions if (fn.rom, fn.vram) not in gaps]
@@ -278,7 +281,8 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
             while after < min(len(image)-3, before+LONG_ALIGNMENT+4) and image[after:after+4] == bytes(4):
                 after += 4
             following = entries_by_rom.get((after, after+mapping))
-            if looped and (after-before != 4 or following is None or following.vram not in direct_calls):
+            if looped and (following is None or following.vram not in direct_calls
+                           or after-before != 4 and (after-before > HOLE or following.vram % 16)):
                 return False
             if after-before > HOLE:
                 # A pointer into a zero run can enter its suffix. Only the prefix before
@@ -350,21 +354,54 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
     return kept if dropped or markers or recovered_data else result if changed else functions
 
 
-def multiword_alignment(functions, image, order, owner, named, references, direct_calls, data, segments):
+def split_aligned_frames(functions, data, image, order, console, owner, segments, entered):
+    """Separate short alignment folded into a validated following frame."""
+    result = []
+    for fn in functions:
+        segment_index = owner(fn)[0]
+        if segment_index < 0 or fn.rom-8 < segments[segment_index].rom_start or fn.size < 24 or fn.vram in entered:
+            result.append(fn)
+            continue
+        size = -fn.vram % 16
+        start = fn.rom+size
+        if (size not in (8, 12) or not is_frame(fn.lines[size//4].word)
+                or int.from_bytes(image[fn.rom-8:fn.rom-4], order) != JR_RA
+                or any(address in entered for address in range(fn.vram, fn.vram+size, 4))
+                or any(d.rom is not None and d.rom < start and fn.rom < d.rom+d.size for d in data)
+                or not any(line.word >> 26 == 3 for line in fn.lines[:size//4])
+                or called_extent(image, start, fn.rom+fn.size, fn.vram+size,
+                                 big_endian=console.big_endian, cpu=console.cpu_variant,
+                                 asm_check=console.asm_reason) != fn.size-size):
+            result.append(fn)
+            continue
+        split = fn.vram+size
+        head, tail = fn.lines[:size//4], fn.lines[size//4:]
+        result.append(replace(fn, lines=head, labels={label for label in fn.labels if label < split}))
+        result.append(replace(fn, name=f'func_{split:08X}', vram=split, rom=start, lines=tail,
+                              labels={label for label in fn.labels if label >= split}))
+    return result
+
+
+def multiword_alignment(functions, image, order, owner, named, references, direct_calls, data, segments, console):
     """Find short unreachable tails left by 16-byte alignment of code."""
     gaps = set()
     entries = {(fn.rom, fn.vram): fn for fn in functions}
     for following in functions:
         if following.vram % 16 or owner(following)[0] < 0:
             continue
-        if following.vram not in direct_calls and not is_frame(following.lines[0].word):
-            continue
         segment = segments[owner(following)[0]]
-        for size in (8, 12):
+        for size in (4, 8, 12):
             start = following.rom - size
             address = following.vram - size
             if start - 8 < segment.rom_start or int.from_bytes(image[start-8:start-4], order) != JR_RA:
                 continue
+            if size == 4:
+                # An apparent backward branch in one filler word can falsely
+                # make the preceding routine look as if it has a second entry.
+                word = int.from_bytes(image[start:start+4], order)
+                if (following.vram not in direct_calls or word>>26 not in (4,5,6,7,20,21,22,23)
+                        or not word & 0x8000):
+                    continue
             # Filler may decode as a branch into its own gap. Only incoming
             # references from outside the gap establish a possible entry.
             if any(dest in named or any(not start <= source < following.rom
@@ -375,6 +412,13 @@ def multiword_alignment(functions, image, order, owner, named, references, direc
                 continue
             fragments = [entries[(start+offset, address+offset)] for offset in range(0, size, 4)
                          if (start+offset, address+offset) in entries]
+            if not fragments:
+                continue
+            if (following.vram not in direct_calls and not is_frame(following.lines[0].word)
+                    and called_extent(image, following.rom, following.rom+following.size, following.vram,
+                                      big_endian=console.big_endian, cpu=console.cpu_variant,
+                                      asm_check=console.asm_reason) != following.size):
+                continue
             if any(owner(fn) != owner(following) or fn.rom+fn.size > following.rom+4
                    or any(line.word & 0xfc1fffff == 8 for line in fn.lines)
                    for fn in fragments):
