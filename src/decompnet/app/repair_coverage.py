@@ -99,6 +99,7 @@ def verify(feedback, example):
     if proj['arch'] == 'mips' and compiler == 'gcc-2.7.2-kmc':
         from decomprepair import (
             aligned_stack_read,
+            byte_cursor_postincrements,
             kmc_cast_repairs,
             kmc_operand_repairs,
             kmc_type_repairs,
@@ -148,6 +149,8 @@ def verify(feedback, example):
             focused.append(('relocated_global_update', candidate))
         if candidate := packed_matrix_conversion.rewrite(source, fn['name'], fn['asm'] or '', header):
             focused.append(('packed_matrix_conversion', candidate))
+        if candidate := byte_cursor_postincrements.rewrite(source, fn['name'], fn['asm'] or '', header):
+            focused.append(('byte_cursor_postincrements', candidate))
         if candidate := aligned_stack_read.rewrite(source, fn['name'], fn['asm'] or ''):
             focused.append(('aligned_stack_read', candidate))
         if candidate := passthrough_argument_repairs.missing_entry_argument(source, fn['name'], fn['asm'] or '', header):

@@ -4,6 +4,7 @@ import re
 
 from decomprepair import (
     aligned_stack_read,
+    byte_cursor_postincrements,
     kmc_cast_repairs,
     likely_branch_cursor,
     loop_sentinel_repairs,
@@ -196,6 +197,8 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
             result.append(('relocated_global_update', candidate_source))
         if candidate_source := packed_matrix_conversion.rewrite(source, name, asm or '', header):
             result.append(('packed_matrix_conversion', candidate_source))
+        if candidate_source := byte_cursor_postincrements.rewrite(source, name, asm or '', header):
+            result.append(('byte_cursor_postincrements', candidate_source))
         if candidate_source := aligned_stack_read.rewrite(source, name, asm or ''):
             result.append(('aligned_stack_read', candidate_source))
         if candidate_source := passthrough_argument_repairs.missing_entry_argument(source, name, asm or '', header):
