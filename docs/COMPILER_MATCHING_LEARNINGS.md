@@ -11649,3 +11649,12 @@ first use back, and the store is then free to sit after the load the scheduler h
 alone to every body position (all 300 or worse), `for` instead of `do/while`, single statement moves in the loop or the
 tail (240 or worse). Evidence: one function plus the library's tests (decomp-repair 0.5.257+ `record_init_shapes`; on
 the saved best the three families chain 300 -> 240 -> 60 -> 0; the app's Deep Permuter run is the user's to confirm).
+
+### Reuse each floating difference for its own square
+
+With gcc-2.7.2-kmc `-G0 -mips3 -mgp32 -mfp32 -O2`, three coordinate
+differences were squared inline as inputs to a call. The middle
+difference used a different floating register, and its load order and
+later users differed with it. Squaring each difference in its original
+local before summing them, keeping the addition order, changed the score
+from 35 to an exact match. Typed pointer parameters alone scored 25.
