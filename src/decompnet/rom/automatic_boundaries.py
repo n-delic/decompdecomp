@@ -66,6 +66,7 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
             if 0<=s.rom_start<s.rom_end<=len(image) and not s.rom_start%4 and not s.rom_end%4]
     functions = recover_segment_switch_data(functions, data, image, order, tables,
                                             explicit | pointers | transfer_targets, references, log)
+    tables.extend(console.import_table_ranges(image,segments))
     returns={fn.rom+fn.size for fn in functions if fn.size>=8 and fn.lines[-2].word==JR_RA}
     groups=[];group_end=0
     for fn in sorted(functions,key=lambda f:(owner(f),f.rom)):
@@ -148,7 +149,7 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
             # slot's switch functions stayed cut where outside calls had cut them). An entry after a return that is
             # no leaf can be a frame the compiler scheduled a load or two ahead of (called_extent's lead).
             framed=dict(big_endian=console.big_endian,cpu=console.cpu_variant,asm_check=console.asm_reason)
-            size=leaf_extent(image,at,hi,at+mapping,**framed) if at in leaves else None
+            size=leaf_extent(image,at,hi,at+mapping,table_ranges=tables,**framed) if at in leaves else None
             if at in link_fill:
                 filler,target=link_fill[at]
                 if not size or target>=at+size:
@@ -257,6 +258,8 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
             data.append(DataSymbol(fn.name, fn.vram, fn.rom, 4, 'data'))
             markers += 1
             continue
+        if (terminal_data_alignment(fn, previous, image, order, segments) and not referenced(fn)):
+            dropped+=1;continue
         if zero_alignment(fn, previous):
             dropped+=1;continue
         if (filler_extent(fn.size,fn.lines[0].word) and previous is not None and following is not None
@@ -329,6 +332,23 @@ def closes_with_back_edge(fn, end, mapping):
     delta = branch.word & 0xffff
     target = branch.vram+4+(delta-0x10000 if delta&0x8000 else delta)*4
     return fn.vram <= target < branch.vram
+
+
+def terminal_data_alignment(fn, previous, image, order, segments):
+    """A word of assembler filler at the aligned end of code, before float data."""
+    end = fn.rom+4
+    if (fn.size!=4 or (fn.vram+4)%16 or previous is None or previous.size<8
+            or previous.rom+previous.size!=fn.rom or previous.vram+previous.size!=fn.vram
+            or previous.lines[-2].word!=JR_RA or image[fn.rom+1:end]!=bytes((13,10,13))
+            or not 0<=fn.rom-8<end+32<=len(image)):
+        return False
+    owner = [s for s in segments if s.rom_start<=fn.rom-8 and s.rom_end==end
+             and s.vram-s.rom_start==fn.vram-fn.rom]
+    if len(owner)!=1 or any(s.rom_start<end+32 and end<s.rom_end for s in segments):
+        return False
+    fmt = '>f' if order=='big' else '<f'
+    values = [value for value, in struct.iter_unpack(fmt,image[end:end+32])]
+    return all(value==0 or 0.0001<=abs(value)<=1_000_000 for value in values) and len(set(values))>=4
 
 
 def overlay_end_marker(fn, previous, following, image, order, segments):
