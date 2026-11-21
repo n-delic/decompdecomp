@@ -622,3 +622,19 @@ def test_kmc_prioritizes_existing_buffer_sizes_for_stack_only_growth():
     assert list(proposals).index('stack_object_size') < list(proposals).index('inferred_frame_reservation')
     assert 'stack_object_size' not in dict(route(source, rows + [('r', 'move $a0, $a1', 'move $a0, $a2')], asm))
     assert 'stack_object_size' not in dict(route(source, [(m, b, a) for m, a, b in rows], asm))
+
+
+def test_kmc_preserves_byte_stride_when_normalization_clears_the_high_relocation_difference():
+    source = ('extern M2C_UNK D_80001230;\n'
+              'u8 f(s32 i) { return *(&D_80001230 + ((i & 65535) * 100)); }')
+    rows = [
+        ('i', 'sll $a0, $a0, 2', 'sll $a0, $a0, 4'),
+        ('i', 'lui $at, %hi(D_80001230)', 'lui $at, %hi(D_80001233)'),
+        (' ', 'addu $at, $at, $a0', 'addu $at, $at, $a0'),
+        ('i', 'lbu $v0, %lo(D_80001230)($at)', 'lbu $v0, %lo(D_80001233)($at)'),
+    ]
+    family = 'measured_relocated_array_scale'
+    actual = dict(route(source, rows, 'asm'))[family]
+    assert 'extern u8 D_80001230[];' in actual
+    assert 'D_80001230[(i & 65535) * 100]' in actual
+    assert family not in dict(route(source, rows, 'asm', compiler='ido-5.3'))
