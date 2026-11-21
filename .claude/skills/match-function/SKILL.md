@@ -1,21 +1,20 @@
 ---
 name: match-function
-description: Match one function by hand against the running decompdecomp app, then turn what the manual work taught into a Deep Permuter or app improvement so the next such function is matched automatically. Use for "get func_X in PROJECT to match", a stuck near-match, or just a project ("match a function in PROJECT"), when it claims a random open function nobody else holds. It runs as a goal by itself: it does not stop or ask until the function is judged 0 and the permuter improvements are merged.
+description: Match one function by hand against the running decompdecomp app, then turn what the manual work taught into a Deep Permuter or app improvement so the next such function is matched automatically. Use for "get func_X in PROJECT to match", a stuck near-match, or just a project ("match a function in PROJECT"), when it claims a random open function nobody else holds.
 ---
 
 # Match a function by hand, then teach the permuter
 
-**This skill runs as a goal, always.** Invoking it sets the goal for the whole session, as if the user had typed
-`/goal`: *the function is judged 0 and every permuter improvement found on the way is merged.* You work until that
-is true, turn after turn, without waiting for the user. The rules of that mode:
+In Claude Code, use `/match-function PROJECT [FUNCTION]`. In Codex, use
+`$match-function PROJECT [FUNCTION]`. Both clients load this file and use the same scripts.
+For persistent Codex goal tracking, start with `/goal` and include the skill, the project and the
+optional function in the goal. The completion condition is a recorded score of 0 and any permuter
+improvements found during the run merged with their tests.
 
-- **Never stop, ask or hand back while the score is above 0.** No "keep going or stop?" questions, no wrap-up with
-  buttons, no final report of a function that is not matched. A turn that ends with the function unmatched ends
-  with the next action already running (a permuter job, a search, a PR in flight), never with a question.
-- **There is no "blocker" exit.** A function that will not match is a gap in the permuter or the app: find it
-  (step 5), land it, and continue. If one idea runs dry, take the next: read the diff again, change the angle
-  (other compiler profile, the neighbours' matched sources, the permuter's rejected variants, a scheduler-level
-  reading of the target), run the repair families directly on the new best. Only the user can end the goal, by telling you to stop.
+- Keep working toward that condition while there is a useful next step. When an approach stalls,
+  read the diff again, check other compiler profiles and nearby matched sources, or test repair
+  families on the current best. If further work genuinely needs user input or external access,
+  report the exact blocker and the current verdict.
 - **Keep a visible plan and say what you are doing in a line** when you start a long run, so a user following along
   can see the loop is alive. Long runs go in the background.
 - **Never start the Deep Permuter** (`judge.py permute`, `scratch_run.py`, any long search job). The user runs it in
@@ -23,7 +22,7 @@ is true, turn after turn, without waiting for the user. The rules of that mode:
   app's `draft_repairs.variants`) on the current best source, scoring its variants with `fast_judge.py` and
   confirming the best one with `judge.py try`.
 - When context grows long, keep going from the plan and the function's notes; do not wrap up early.
-- Only when the judge says 0, and the permuter PRs are merged with the proof from step 5, write the final message.
+- Report success after the judge records 0 and any permuter PRs from step 5 are merged.
 
 The aim is two things, and a run that delivers only the first has not finished:
 
@@ -45,8 +44,7 @@ The permuter improvement comes **before** the match, not after it, so every othe
 4. Every time a hunt turns up another thing the permuter could do, repeat 2 before continuing 3. Each loop merges a
    PR, so the permuter improves for everyone as you go.
 
-Do not stop to ask whether to keep hunting, and do not stop at all until the function is judged 0 (see the goal rules
-above). "Score unchanged after N ideas" is not a reason to stop or ask. If you have no idea the permuter lacks yet,
+Keep hunting while there is a useful next step (see the completion condition above). "Score unchanged after N ideas" is not a reason to stop or ask. If you have no idea the permuter lacks yet,
 that is step 5's question to answer honestly (what would have found the near-miss's last row?), not a licence to
 skip it: a near-match that the permuter cannot close is always a permuter gap.
 
@@ -55,10 +53,11 @@ in `pyproject.toml`, `uv lock`). What runs candidates stays in `src/decompnet/ap
 
 ## Which function: claim it first, always
 
-Before any other step, pick a holder name for this session, `claude-` and 8 random hex digits
-(`python3 -c "import secrets;print('claude-'+secrets.token_hex(4))"`), and pass it as `--holder NAME` on **every**
-`judge.py` call of the session (claim, try, seed, release, ...). The app keeps one claim per holder: without your own
-holder you judge as the window's shared "you", and a second Claude session would take over or release your claim.
+Before any other step, generate a holder name for this session with
+`python3 -c "import secrets;print('match-'+secrets.token_hex(4))"`. Pass it as `--holder NAME` on
+**every** `judge.py` call in the session. The app keeps one claim per holder and uses the window's
+shared "you" when the holder is omitted. A unique holder keeps concurrent sessions from taking
+over or releasing one another's claims.
 
 - **Only a project given** (no function): `judge.py --holder NAME claim SLUG` claims a random open function that no
   agent, app job or other session holds, and prints its name. That function is the goal's function from here on.
@@ -87,8 +86,9 @@ holder you judge as the window's shared "you", and a second Claude session would
   leaves the source ahead of it (the app's judge-worker then failed to import decomprepair). Read the latest skill
   with `git fetch -q origin && git show origin/main:.claude/skills/match-function/SKILL.md`; run `fast_judge.py` or a
   judge-worker from a private venv built in your own worktree (`UV_PROJECT_ENVIRONMENT=<scratch venv> uv sync`).
-- Shell on macOS: BSD `sed -i` needs `sed -i ''` (every run hit "invalid command code"; prefer Edit or Python), and
-  foreground `sleep` is blocked: wait with `Monitor` or a background command.
+- On macOS, BSD `sed -i` needs `sed -i ''`. For long commands, use the client's background
+  execution tools. In Claude Code, use `Monitor` when available. In Codex, poll the running command
+  or session with its process tools.
 
 ## 1. Orient (5 minutes, do not skip)
 
@@ -298,8 +298,7 @@ afterwards, leave its note with the evidenced blocker.
   Resolve merge conflicts in a separate `--detach` worktree, not the one a run is using; never remove that worktree.
 - **Other sessions share the machine.** The scratch port, the tags in the library (`git ls-remote --tags` right
   before tagging; main's version may already be ahead) and the library's `main` all move under you. Use a free
-  `--port`; kill a run by its pid, never `pkill -f` on a script name (it kills other sessions' runs and your own
-  `Monitor` loops, whose command lines contain the name).
+  `--port`; kill a run by its pid, never `pkill -f` on a script name (it kills other sessions' runs and any monitoring commands whose command lines contain the name).
 - **The app you judge through can disappear** (the user quits it). Don't start one. Score locally with
   `compile_snippet.py` (it needs the file's own typedefs: `f32` is not in its prelude) against the project's
   `asm/nonmatchings` file; a candidate that scores the same as a known-exact source is exact. Judge in the app when
@@ -329,16 +328,15 @@ afterwards, leave its note with the evidenced blocker.
 
 ## 6. Finishing (the goal is met)
 
-The goal from the top of this file is met only when **both** hold:
+Confirm these results before reporting success.
 
 - the function's judged score is 0 (`judge.py diff` reports the app's verdict; re-read it, don't recall it), "matched best 0";
 - the `docs/COMPILER_MATCHING_LEARNINGS.md` entry is written (step 5; skipped until reminded in one run); and
-- the permuter or app change from step 5 is merged (or an open PR with its test passing), the function is
+- the permuter or app change from step 5 is merged if an improvement was found, the function is
   confirmed matched in the app after the merge (`judge.py diff`), and your final message gives the before/after
   evidence. Do not run `scratch_run.py`; the user tests the repair in their app.
 
 A long search with no new idea is not progress, and not a stopping point: when the score stops moving, go back to
 step 1 and read the diff again before spending more compiles.
 
-Release the claim (`judge.py --holder NAME release SLUG FUNC`), then the final message (only once the goal is met): the score (0), what matched it, the PR links, and what the permuter
-still can't do.
+Release the claim (`judge.py --holder NAME release SLUG FUNC`), then report the score, what matched the function, the relevant PR links, and any remaining permuter gaps.
