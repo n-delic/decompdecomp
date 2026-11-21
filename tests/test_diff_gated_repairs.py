@@ -731,3 +731,18 @@ s32 f(s32 x) {
     fixed = dict(proposals(source, 'f', '', 'mips', KMC, rows, '', flags=('-ffast-math',)))[family]
     assert '__builtin_sqrtf' in fixed
     assert family not in dict(proposals(source, 'f', '', 'mips', KMC, rows, ''))
+
+
+def test_kmc_measured_cursor_and_switch_route_is_compiler_specific(monkeypatch):
+    from decompnet.app.diff_gated_repairs import measured_kmc_cursor_switch
+
+    source = 'void f(void) {}'
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+
+    def repair(text, name, header, diff):
+        assert (text, name, header, diff) == (source, 'f', '', rows)
+        return [('cursor_fixture', 'repaired')]
+
+    monkeypatch.setattr(measured_kmc_cursor_switch, 'variants', repair)
+    assert dict(proposals(source, 'f', '', 'mips', KMC, rows, ''))['cursor_fixture'] == 'repaired'
+    assert 'cursor_fixture' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))
