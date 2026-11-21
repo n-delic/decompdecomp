@@ -101,6 +101,7 @@ def verify(feedback, example):
             aligned_allocator_request,
             aligned_stack_read,
             byte_cursor_postincrements,
+            field_snapshot_copies,
             float_matrix_identity,
             indexed_field_cursor,
             kmc_cast_repairs,
@@ -172,6 +173,8 @@ def verify(feedback, example):
             focused.append(('indexed_field_cursor', candidate))
         if candidate := split_dispatch_zero_case.rewrite(source, fn['name'], fn['asm'] or '', header):
             focused.append(('split_dispatch_zero_case', candidate))
+        if candidate := field_snapshot_copies.rewrite(source, fn['name'], fn['asm'] or '', header):
+            focused.append(('field_snapshot_copies', candidate))
         if candidate := ordered_halfword_updates.rewrite(source, fn['name'], fn['asm'] or '', header,
                                                         symbols.resolve if symbols else None):
             focused.append(('ordered_halfword_updates', candidate))

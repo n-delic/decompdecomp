@@ -372,6 +372,7 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
         aligned_allocator_request,
         aligned_stack_read,
         byte_cursor_postincrements,
+        field_snapshot_copies,
         float_matrix_identity,
         indexed_field_cursor,
         large_stack_drafts,
@@ -417,6 +418,7 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
             or aligned_allocator_request.rewrite(source, name, asm_text, context_header)
             or indexed_field_cursor.rewrite(source, name, asm_text, context_header)
             or split_dispatch_zero_case.rewrite(source, name, asm_text, context_header)
+            or field_snapshot_copies.rewrite(source, name, asm_text, context_header)
             or ordered_halfword_updates.rewrite(source, name, asm_text, context_header, resolve)
             or aligned_stack_read.rewrite(source, name, asm_text)
             or passthrough_argument_repairs.missing_entry_argument(source, name, asm_text, context_header)
