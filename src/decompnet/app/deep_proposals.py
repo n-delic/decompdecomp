@@ -25,6 +25,7 @@ class Worker:
     def __init__(self):
         self.process = subprocess.Popen(limits.capped([sys.executable,str(Path(__file__).with_name('deep_proposal_worker.py'))],memory=2<<30),
             stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,creationflags=NO_WINDOW,
+            env={**os.environ,'DECOMP_PROPOSAL_WORKER':'1'},
             start_new_session=os.name!='nt')
         self.lines = queue.Queue(maxsize=1)
         self.closed = threading.Event()
@@ -80,6 +81,8 @@ class Worker:
                     line = self.lines.get(timeout=.05)
                 except queue.Empty:
                     continue
+                if line is not None and line.startswith(b'P'):
+                    return line.strip()  # a pickled answer to an offloaded call (decompnet.app.offload)
                 if line is not None and b'"rpc"' in line[:12] and 'rpc' in (question := json.loads(line)):
                     answer(question['rpc'])
                     continue
