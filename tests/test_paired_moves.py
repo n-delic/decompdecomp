@@ -248,3 +248,21 @@ def test_the_search_judges_wrapped_call_splits_and_returns_a_winner():
 
     score, winner, judged = paired_moves.search(judge, HELD, 'f', '', 100)
     assert score == 50 and winner in winners and judged > 0
+
+
+def test_an_improving_single_move_returns_at_once_and_a_pair_stops_the_wide_beam():
+    # gap 2: a matrix function's two-move search spent 8,000 judgments for 60 -> 40; stepping at the first
+    # improvement and expanding the narrow beam first reached 60 -> 40 -> 20 -> 0 in 7,466
+    from decomprepair import paired_statement_moves as moves
+    singles = moves.single_moves(SOURCE, 'f')
+    good = singles[3]
+    score, winner, judged = paired_moves.search(
+        lambda cs, check=lambda: None: [10 if c == good else 120 for c in cs], SOURCE, 'f', '', 100)
+    assert (score, winner, judged) == (10, good, len(singles))
+    ranked = {c: 101 + k for k, c in enumerate(singles)}  # every single move worse; the best is expanded first
+    first_children = set(moves.single_moves(singles[0], 'f')) - set(singles) - {SOURCE}
+    pair = sorted(first_children)[0]
+    score, winner, judged = paired_moves.search(
+        lambda cs, check=lambda: None: [50 if c == pair else ranked.get(c, 130) for c in cs], SOURCE, 'f', '', 100)
+    assert winner == pair and judged <= len(singles) + paired_moves.FIRST_BEAM * len(singles)
+    assert judged < len(singles) + min(paired_moves.BEAM, len(singles)) * len(first_children)
