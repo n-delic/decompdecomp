@@ -46,7 +46,12 @@ static int open_rt64(void *sdl_lib, void *window, const char *path) {
     void *(*layer)(void *) = dlsym(sdl_lib, "SDL_Metal_GetLayer");
     destroy_rt64_view = dlsym(sdl_lib, "SDL_Metal_DestroyView");
     const PortRt64 *api = adapter ? adapter() : NULL;
-    if (!api || api->abi != PORT_RT64_ABI || !properties || !pointer || !create_view || !layer || !destroy_rt64_view) {
+    if (api && api->abi != PORT_RT64_ABI) {
+        fprintf(stderr, "This RT64 adapter is for a different version of decompdecomp. Use the bundled adapter or rebuild it.\n");
+        dlclose(library);
+        return 0;
+    }
+    if (!api || !api->features || !properties || !pointer || !create_view || !layer || !destroy_rt64_view) {
         const char *error = dlerror();
         fprintf(stderr, "Cannot load the RT64 adapter: %s\n", error ? error : "incompatible adapter or SDL3");
         if (library) dlclose(library);
@@ -76,6 +81,7 @@ void port_rt64_task(const uint8_t *ram, uint32_t ucode, uint32_t data, uint32_t 
 void port_rt64_screen(const uint8_t *ram, uint32_t fb) { RT64_CALL(screen, (ram, fb)); }
 void port_rt64_mode(const uint32_t *words) { RT64_CALL(mode, (words)); }
 void port_rt64_yscale(float scale) { RT64_CALL(yscale, (scale)); }
+void port_rt64_features(uint32_t flags) { RT64_CALL(features, (flags)); }
 #else
 void port_rt64_task(const uint8_t *ram, uint32_t ucode, uint32_t data, uint32_t list) {
     (void)ram; (void)ucode; (void)data; (void)list;
@@ -83,6 +89,7 @@ void port_rt64_task(const uint8_t *ram, uint32_t ucode, uint32_t data, uint32_t 
 void port_rt64_screen(const uint8_t *ram, uint32_t fb) { (void)ram; (void)fb; }
 void port_rt64_mode(const uint32_t *words) { (void)words; }
 void port_rt64_yscale(float scale) { (void)scale; }
+void port_rt64_features(uint32_t flags) { (void)flags; }
 #endif
 
 #ifdef _WIN32 /* no SDL3 here yet (ROADMAP.md): PORT_WINDOW falls back to the browser view */

@@ -11,6 +11,7 @@
 #include "ultramodern/ultramodern.hpp"
 #include "lightweightsemaphore.h"
 #include "adapter.h"
+#include "presentation.h"
 
 /* The compatibility host owns the game's threads. Only ultramodern's VI state is used by this adapter. */
 std::atomic_bool exited{false};
@@ -105,6 +106,10 @@ void task(const uint8_t *rdram, uint32_t ucode, uint32_t ucode_data, uint32_t di
     }
 }
 
+void features(uint32_t flags) {
+    vi()->VI_STATUS_REG = port_rt64_vi_features(vi()->VI_STATUS_REG, flags);
+}
+
 void screen(const uint8_t *rdram, uint32_t framebuffer) {
     framebuffer &= physical_mask;
     if (framebuffer >= rdram_size || origin >= rdram_size - framebuffer)
@@ -148,6 +153,6 @@ void close() {
 }
 
 extern "C" __attribute__((visibility("default"))) const PortRt64 *decompnet_rt64_adapter(void) {
-    static const PortRt64 api = {PORT_RT64_ABI, open, task, screen, mode, yscale, close};
+    static const PortRt64 api = {PORT_RT64_ABI, open, task, screen, mode, yscale, close, features};
     return &api;
 }

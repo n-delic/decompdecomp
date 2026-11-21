@@ -202,7 +202,9 @@ and click **Play**. The adapter uses N64ModernRuntime's VI state and RT64's Meta
 continues to run game threads, input, audio and saves. It sends RT64 a word-swapped RDRAM snapshot and retains the
 software RDP's writes to the game's memory. Decompilation, N64Recomp and MIPS interpretation share the same
 execution path as the built-in runtime. Desktop Play is verified on a partially decompiled demo on Apple Silicon.
-Retail compatibility, RT64 exports, and other desktop platforms remain open.
+The adapter forwards the game’s VI feature settings, including gamma. A retail racing game’s attract-mode
+scenes were captured from the Metal drawable. Some still showed black regions that the SDL3 renderer filled.
+Broader retail compatibility, RT64 exports, and other desktop platforms remain open.
 
 ROM offsets the game uses as numbers (where an archive starts in the cartridge) and the values the N64's boot leaves
 in low memory for libultra are defined by Compile for PC too (`port/fixed_symbols.py`): offsets as symbols at those

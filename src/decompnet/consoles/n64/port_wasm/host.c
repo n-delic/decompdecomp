@@ -539,7 +539,12 @@ void w2c_env_osViSetYScale(struct w2c_env *e, f32 s) {
 #endif
 }
 void w2c_env_osViBlack(struct w2c_env *e, u32 on) { (void)e; (void)on; }
-void w2c_env_osViSetSpecialFeatures(struct w2c_env *e, u32 f) { (void)e; port_vi_features(f); }
+void w2c_env_osViSetSpecialFeatures(struct w2c_env *e, u32 f) {
+    (void)e; port_vi_features(f);
+#ifndef PORT_WEB
+    if (getenv("PORT_RT64")) port_rt64_features(f);
+#endif
+}
 void port_frame_shown(uint32_t fb, unsigned long n); /* render.c: saves it when asked */
 void port_vi_swap(uint32_t fb) { /* (games/: a game's own name) */
     frame_buffer = fb; swaps++; port_frame_shown(fb, swaps);
