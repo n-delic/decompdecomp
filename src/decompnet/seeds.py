@@ -411,6 +411,7 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
         stack_header_buffer,
         stack_read_retry,
         stack_word_index_drafts,
+        switch_pointer_calls,
         unaligned_stack_drafts,
         uncached_read_repairs,
     )
@@ -430,6 +431,7 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
     switch_asm = _mips_table_aliases(asm_text, data_asm) if data_asm and 'switch (' in source else asm_text
     return (measured_stack_drafts.rewrite(source, name, asm_text, context_header, resolve=resolve)
             or large_stack_drafts.rewrite(source, name, asm_text, context_header)
+            or switch_pointer_calls.rewrite(source, name, switch_asm, data_asm, context_header)
             or shared_default_drafts.explicit_default_labels(source, name, switch_asm, data_asm)
             or shared_default_drafts.rewrite(source, name, switch_asm, data_asm, context_header)
             or uncached_read_repairs.rewrite(source, name, asm_text, resolve)
@@ -440,6 +442,7 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
             or relocated_byte_table.rewrite(source, name, asm_text, context_header, resolve)
             or relocated_global_update.rewrite(source, name, asm_text, context_header, resolve)
             or relocated_global_update.rewrite_reload_wrapper(source, name, asm_text, context_header, resolve)
+            or relocated_global_update.rewrite_branch_byte(source, name, asm_text, context_header, resolve)
             or relocated_global_update.rewrite_countdown(source, name, asm_text, context_header, resolve)
             or stack_fill_drafts.rewrite(source, name, asm_text, context_header)
             or stack_fill_drafts.rewrite_ascending(source, name, asm_text, context_header)

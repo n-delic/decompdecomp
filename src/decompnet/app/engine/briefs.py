@@ -179,6 +179,7 @@ class BriefMixin:
                 stack_header_buffer,
                 stack_read_retry,
                 stack_word_index_drafts,
+                switch_pointer_calls,
                 uncached_read_repairs,
             )
 
@@ -196,6 +197,10 @@ class BriefMixin:
                 inputs.append('relocated byte table')
             if relocated_global_update.applies(fn['asm'] or ''):
                 inputs.append('relocated global update')
+            if relocated_global_update.branch_byte_applies(fn['asm'] or ''):
+                inputs.append('separately relocated test and clear')
+            if switch_pointer_calls.applies(fn['asm'] or ''):
+                inputs.append('masked switch pointer calls')
             if relocated_global_update.countdown_applies(fn['asm'] or ''):
                 inputs.append('relocated countdown')
             if stack_fill_drafts.applies(fn['asm'] or ''):
