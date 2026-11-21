@@ -63,6 +63,12 @@ It prints how many of the target's instructions agree and where the first differ
 immediates normalised; the callee's address ignored). When a candidate reaches 1.000 it still has to pass the app's
 judge: `judge.py try`. A candidate that looks better locally has to beat the best in the app.
 
+**For a search, use the app's own judge standalone.** `decomp judge-worker` returns exactly the app's score (a
+source judged 1090 in the app judged 1090 here) in about 0.1 s, needs no claim, runs beside the app without touching
+its state, and parallelises across processes. `scripts/fast_judge.py` wraps it (`Judge(...).score(source)`).
+**Do not search on an approximation**: a home-made scorer (opcode alignment plus register counts) ranked candidates
+wrongly: a 1000 → 680 local improvement was 1090 → 1030 in the app. Confirm any result once with `judge.py try`.
+
 ## 3. What has worked (extend this list when you learn more; it is the permuter's to-do list)
 
 - **Base-relative stores.** `*(s8 *)((char *)&sym + off) = v` stays `off($sN)` only when the first use of the
@@ -88,9 +94,11 @@ judge: `judge.py try`. A candidate that looks better locally has to beat the bes
 
 ## 4. Search only when you can name the mismatch
 
-A blind hill-climb through the app judge is too slow and found nothing the permuter doesn't. A local-score
-climb (thousands of compiles) is cheap, but only worth starting from a source whose remaining diff is mostly
-registers and order. Verify its best in the app before believing it.
+A blind hill-climb through the app's `/api/try` is too slow. With `fast_judge` it is cheap: random statement
+swaps, call-wrapper toggles and local type changes took one function from 1090 to 785 in a round of six seeds, then
+plateaued: two more rounds, including token-level rewrites (`x += 1` vs `++x`, `& 0xFFFF` vs a cast), found
+nothing. Use it to clear the easy rows, then stop and read the diff: a search that cannot name what it is looking for
+will not find the last rows. Verify its best in the app before believing it.
 
 The Deep Permuter: `judge.py permute SLUG FUNC MINUTES VARIANTS` (a function with no scored C is refused:
 `judge.py seed SLUG FUNC` judges the app's untouched draft first). It restores the best, tries random rewrites
