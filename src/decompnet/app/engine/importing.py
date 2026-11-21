@@ -19,6 +19,7 @@ from ...network import NetworkError
 from ...project import compiler_for
 from ...rom import DisassemblyTimeout, Picked, RomError, split
 from ...rom.symbols import AUTO_NAME, Symbol, SymbolTable
+from .. import recompile_review
 from .common import BASE_HEADER, GP_NOTE, data_preview, slugify
 
 # what the first header defines already: the game's typedefs of these names are left out (consoles/ps2/cheader.py)
@@ -178,6 +179,10 @@ class ImportMixin:
         if res.image and res.image != picked.filename:  # splat works on a flat image made from the program
             rom = (workdir / res.image).read_bytes()
 
+        analysis_sha1 = hashlib.sha1(rom).hexdigest()
+        if reimport is not None and console.recompiler is not None:
+            recompile_review.keep_reviewed_on_reimport(self, reimport, res, rom, analysis_sha1, log)
+
         chosen = bool(toolchain or flags or reimport is not None)  # a reimport keeps the project's compiler
         toolchain = toolchain or console.default_compiler(info, res.compiler)
         if info.get("compiler_why") and not chosen:
@@ -185,7 +190,7 @@ class ImportMixin:
         cfg = {
             "kind": "rom", "platform": console.id, "big_endian": picked.big_endian, "gp": res.gp,
             "rom": {**info, "file": res.image or picked.filename, "program": picked.filename,
-                    "analysis_sha1": hashlib.sha1(rom).hexdigest()},
+                    "analysis_sha1": analysis_sha1},
             "segments": [vars(s) for s in res.segments],
             "coverage_notes": getattr(res, 'coverage_notes', []),
             "compiler": {"toolchain": toolchain, "flags": flags, "timeout": 20},
@@ -363,6 +368,12 @@ class ImportMixin:
                     # Identical targets keep operator decisions and naming provenance too.
                     # Re-analysis facts may refresh, but must not erase unrelated saved metadata.
                     meta_data = previous_meta if same_target else {}
+                    if reviewed := previous_meta.get(recompile_review.PROVENANCE):
+                        if (reviewed["image_sha1"] == analysis_sha1 and old["rom_offset"] == fn.rom
+                                and old["vram"] == fn.vram and old["target"] == target.code):
+                            meta_data[recompile_review.PROVENANCE] = reviewed
+                        else:
+                            meta_data.pop(recompile_review.PROVENANCE, None)
                     meta_data.update(console.function_meta(fn))
                     meta_data.update(target_meta)
                     if known:

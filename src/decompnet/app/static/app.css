@@ -2265,6 +2265,16 @@ img.rom-preview-media { image-rendering:pixelated; background:var(--bg-alt); bor
 .port-step.part .meter i { background: var(--work); }
 .port-body { display: grid; gap: 6px; min-width: 0; }
 .port-body p { margin: 0; }
+.port-discoveries { border-top: 1px solid var(--line); padding-top: 10px; display: grid; gap: 8px; min-width: 0; }
+.port-discoveries h4 { margin: 0; }
+.port-discovery-list { list-style: none; margin: 0; padding: 0; max-height: 26rem; overflow: auto; }
+.port-discovery-list li { padding: 8px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.port-discovery-list label { margin-inline-end: 8px; }
+.port-discovery-list input { margin-inline-end: 8px; }
+.port-discovery-list li p, .port-discovery-list details { margin-inline-start: 24px; }
+.port-discovery-list summary { cursor: pointer; color: var(--muted); }
+.port-discovery-list pre { max-height: 14rem; overflow: auto; }
+#portDiscoveryAdd { justify-self: start; }
 .port-runtimes { border: 0; margin: 4px 0 0; padding: 0; display: grid; gap: 8px; min-width: 0; }
 .port-runtimes legend { padding: 0; margin-bottom: 4px; }
 .port-runtime { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: start; cursor: pointer; }

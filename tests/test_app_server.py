@@ -168,7 +168,7 @@ def test_polishing_checklist_is_saved_per_game(app, tmp_path):
 
 
 def test_port_recompile_discovery_reuses_the_project_job(app, tmp_path, monkeypatch):
-    from decompnet.app import recompile
+    from decompnet.app import recompile, recompile_review
 
     client, net, _ = app
     for slug, kind in (("recompile-rom", "rom"), ("recompile-source", "project")):
@@ -205,6 +205,23 @@ def test_port_recompile_discovery_reuses_the_project_job(app, tmp_path, monkeypa
             break
         time.sleep(.01)
     assert status["state"] == "cancelled"
+
+    address = 0x80000440
+    monkeypatch.setattr(recompile_review, "preview", lambda net, proj, revision, addr:
+                        {"assembly": f"{proj['slug']} {revision} {addr}"})
+    assert client.get(path, params={**payload, "preview": address, "revision": 42}).json() == {
+        "assembly": f"recompile-rom 42.0 {address}"}
+    monkeypatch.setattr(recompile_review, "add", lambda net, slug, revision, addresses, log:
+                        {"added": [slug, revision, *addresses]})
+    response = client.post(path, headers=headers, json={**payload, "revision": 42, "addresses": [address]})
+    job = response.json()["job"]
+    for _ in range(100):
+        status = client.get("/api/job", params={"id": job}).json()
+        if status["state"] != "running":
+            break
+        time.sleep(.01)
+    assert status["kind"] == "recompile-review"
+    assert status["result"] == {"added": ["recompile-rom", 42, address]}
 
 
 def test_port_export_selections_and_batch_are_scoped_to_the_project(app, tmp_path, monkeypatch):

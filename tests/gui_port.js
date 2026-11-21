@@ -12,7 +12,7 @@ function setup(){
   const nodes=new Map(),calls=[],bodies=[];
   const values={App:'app',Window:'window',Web:'web',WebSimd:'simd',Ios:'ios',Miyoo:'miyoo',SteamDeck:'steamdeck'};
   const c=vm.createContext({console,Map,Promise,Error,Number,encodeURIComponent,S:{slug:'a'},
-    $:id=>{if(!nodes.has(id))nodes.set(id,{...element(),value:values[id.slice(10)]});return nodes.get(id);},document:{createElement:element,addEventListener(k,f){c.docListeners[k]=f;}},docListeners:{},
+    $:id=>{if(!nodes.has(id))nodes.set(id,{...element(),value:values[id.slice(10)]});return nodes.get(id);},document:{createElement:element,createDocumentFragment:element,addEventListener(k,f){c.docListeners[k]=f;}},docListeners:{},
     api(url,opts){
       if(url.startsWith('/api/recompile?'))return c.recompileStatus(url);
       if(url.startsWith('/api/port-export-options?'))return c.exportOptions(url);
@@ -186,6 +186,35 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    assert.match(html,/type="checkbox" id="portExportApp"[^>]*><span>Standalone app \(opens in your browser\)/);
    assert.match(html,/type="checkbox" id="portExportWindow"[^>]*><span>Standalone app \(opens in its own Mac window via SDL3\)/);
    assert.match(html,/id="portRecompile"[^>]*>Run N64Recomp/);}
+  {const t=setup();t.c.S.tab='porting';
+   const discoveries=Array.from({length:13},(_,i)=>({name:`func_${i}`,vram:0x80001000+i*16,rom:0x1000+i*16,
+     size:12,unit:'main',why:'called from entry',blocked:i===1?'Overlaps the current split.':''}));
+   const result={...report,recomp_available:true,recomp:{at:42,functions:7,found:13,files:1,stubs:0,runtime:0,errors:0,
+     stub_examples:[],found_examples:[],discoveries}};
+   const pending=deferred();
+   t.c.reply=async(url)=>url==='/api/recompile'?{job:'add1'}:result;
+   t.c.followJob=()=>pending.promise;
+   t.c.recompileStatus=async url=>url.includes('preview=')?{assembly:'80001000  jr $ra'}:{recomp_available:true};
+   await t.run('loadPortReadiness()');
+   assert.equal(t.c.$('portDiscoveries').hidden,false);
+   const list=t.c.$('portDiscoveryList');
+   assert.equal(list.children[0].children.length,13,'all discoveries are available for review');
+   const [first, second]=list.children[0].children;
+   const check=first.children[0].children[0], preview=first.children[3];
+   preview.open=true;preview.ontoggle();
+   for(let i=0;i<8;i++)await Promise.resolve();
+   assert.match(preview.children[1].textContent,/jr \$ra/);
+   assert.equal(second.children[0].children[0].disabled,true);
+   assert.match(second.children[2].textContent,/Overlaps/);
+   check.checked=true;check.onchange();
+   assert.equal(t.c.$('portDiscoveryAdd').disabled,false);
+   const adding=t.c.$('portDiscoveryAdd').onclick();
+   assert.equal(t.c.$('portDiscoveryAdd').disabled,true,'duplicate confirmation is disabled immediately');
+   assert.deepEqual(JSON.parse(JSON.stringify(t.bodies.at(-1))),{slug:'a',revision:42,addresses:[0x80001000]});
+   discoveries[0]={...discoveries[0],blocked:'Already in the split as func_0.',added:'func_0'};
+   pending.resolve({added:[{name:'func_0'}]});await adding;
+   assert.equal(t.c.$('portDiscoveryAdd').disabled,true,'added rows cannot be selected again');
+   assert.match(list.children[0].children[0].children[2].textContent,/Already in the split/);}
   {const t=setup(),ready=deferred(),follow=deferred(),stopped=[];
    t.c.S.tab='porting';t.c.followJob=()=>follow.promise;
    t.c.updateWorkProgress=(log,progress)=>{log.seen=progress;};

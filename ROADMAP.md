@@ -1174,7 +1174,8 @@ Supported port builds and behaviour checks run N64Recomp on demand to translate 
 and writes to build/recomp
 (`consoles/n64/recomp.py` through `Console.recompiler`, `app/recompile.py`). It finds the code the split doesn't list
 by the calls into it, sets aside as stubs what N64Recomp can't translate, with its reason, and checks the C with the
-computer's compiler. Port readiness shows the last run. On a racing game: 2,125 functions and 12 more, 14 stubs, the
+computer's compiler. Porting lists every discovery for review and can add selected ranges to the split.
+Port readiness shows the last run. On a racing game: 2,125 functions and 12 more, 14 stubs, the
 rest compiling, in 16 seconds. docs/N64RECOMP.md phase 0; next, phase 1 (each function's recorded calls run through
 its recompiled and decompiled C).
 

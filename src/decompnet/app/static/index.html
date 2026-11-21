@@ -672,6 +672,12 @@
         <button class="ghost small-btn" id="portRecompile" type="button">Run N64Recomp</button>
         <button class="ghost small-btn" id="portRecompileStop" type="button" hidden>Stop recompiling</button>
         <pre id="portRecompileLog" class="joblog" hidden></pre>
+        <section class="port-discoveries" id="portDiscoveries" hidden>
+          <h4 id="portDiscoveryTitle">Missing functions</h4>
+          <p class="small muted">Review the evidence and proposed range for each function, then select the ones to add.</p>
+          <ul class="port-discovery-list" id="portDiscoveryList" aria-labelledby="portDiscoveryTitle"></ul>
+          <button class="primary small-btn" id="portDiscoveryAdd" type="button" disabled>Add selected to split</button>
+        </section>
         <pre id="portPlayLog" class="joblog" hidden></pre>
         <pre id="portCompileLog" class="joblog" hidden></pre>
         <pre id="portAssetsLog" class="joblog" hidden></pre>

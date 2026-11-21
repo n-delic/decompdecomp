@@ -124,6 +124,7 @@ function renderPortReadiness(report) {
     + (assets.extracted && assets.extracted.current
       ? `; extracted: ${assets.extracted.mapped} of ${assets.extracted.total} are the ROM's bytes` : "")));
   renderPortSteps(report);
+  renderRecompileDiscoveries(report.recomp);
   portRenderedSlug = S.slug;
   attachPlay(report.play);
   const todo = $("portBlockers");
@@ -142,7 +143,8 @@ function recompileStep(report) {
   const result = report.recomp;
   return {
     title: "Recompile It", pct: null, diagnostic: true,
-    status: recompileRun?.slug === S.slug ? "Recompiling…" : result ? "Checked" : null,
+    status: recompileRun?.slug === S.slug ? (recompileRun.adding ? "Adding functions…" : "Recompiling…")
+      : result ? "Checked" : null,
     unavailable: !report.recomp_available,
     detail: report.recomp_available
       ? "Run N64Recomp early to check how the ROM was split. It translates ROM instructions to C and looks for "
@@ -151,7 +153,7 @@ function recompileStep(report) {
         : "This console needs a supported static recompiler to check its ROM split.",
     summary: result ? `${result.found} functions found outside the split · ${result.stubs} set aside · ${result.errors} compile error${result.errors === 1 ? "" : "s"}. See the full report for examples.` : "",
     buttons: report.recomp_available ? ["portRecompile", "portRecompileStop"] : [],
-    logs: report.recomp_available ? ["portRecompileLog"] : [],
+    logs: report.recomp_available ? ["portRecompileLog", "portDiscoveries"] : [],
   };
 }
 
@@ -233,7 +235,7 @@ function renderPortSteps(report, steps = portSteps(report)) {
     if (parked && $(id)) parked.append($(id));  // back where they wait, then into their step
   }
   for (const id of ["portDraftLog", "portCompileLog", "portRenameLog", "portFixCallsLog", "portAssetsLog", "portExtractLog", "portPlayLog",
-    "portBehaviourLog", "portRecompileLog"]) {
+    "portBehaviourLog", "portRecompileLog", "portDiscoveries"]) {
     if (parked && $(id)) parked.append(...withWork($(id)));
   }
   const shown = steps.filter((s) => s.pct != null);
@@ -296,6 +298,102 @@ async function loadPortReadiness() {
 
 let recompileRun = null;
 let recompileSlug = null;
+let recompileReview = null;
+
+function renderRecompileDiscoveries(report) {
+  const rows = report?.discoveries || [], panel = $("portDiscoveries");
+  panel.hidden = !rows.length;
+  const prior = recompileReview;
+  const sameReport = prior?.slug === S.slug && prior.revision === report?.at;
+  const selected = sameReport ? prior.selected : new Set();
+  const previews = sameReport ? prior.previews : new Map();
+  const state = recompileReview = {slug: S.slug, revision: report?.at, selected, previews, inputs: []};
+  const busy = recompileRun?.slug === S.slug;
+  const list = $("portDiscoveryList");
+  const fragment = document.createDocumentFragment();
+  const hex = (address) => address == null ? "Unavailable" : "0x" + address.toString(16).toUpperCase();
+  const eligible = new Set();
+  for (const row of rows) {
+    const item = document.createElement("li");
+    const label = document.createElement("label");
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.disabled = !!busy || !!row.blocked;
+    input.checked = !row.blocked && selected.has(row.vram);
+    if (!row.blocked) {
+      eligible.add(row.vram);
+      state.inputs.push(input);
+    }
+    input.onchange = () => {
+      if (input.checked) selected.add(row.vram);
+      else selected.delete(row.vram);
+      updateRecompileSelection();
+    };
+    const name = document.createElement("code"); name.textContent = row.name;
+    label.append(input, name);
+    const range = document.createElement("span"); range.className = "small muted";
+    range.textContent = `${hex(row.vram)} · ROM ${hex(row.rom)} · ${row.size.toLocaleString()} bytes`;
+    const evidence = document.createElement("p"); evidence.className = "small muted";
+    evidence.textContent = row.why + (row.blocked ? ` · ${row.blocked}` : "");
+    item.append(label, range, evidence);
+    if (row.unit) item.append(recompilePreview(state, row));
+    fragment.append(item);
+  }
+  for (const address of selected) if (!eligible.has(address)) selected.delete(address);
+  $("portDiscoveryTitle").textContent = rows.length ? `Missing functions (${rows.length.toLocaleString()})` : "Missing functions";
+  list.replaceChildren(fragment);
+  updateRecompileSelection();
+}
+
+function recompilePreview(state, row) {
+  const detail = document.createElement("details");
+  const summary = document.createElement("summary");
+  summary.textContent = "Review assembly";
+  const log = document.createElement("pre");
+  log.className = "joblog";
+  detail.append(summary, log);
+  const saved = state.previews.get(row.vram) || {};
+  state.previews.set(row.vram, saved);
+  detail.open = !!saved.open;
+  let loading = false;
+  async function load() {
+    if (loading) return;
+    if (saved.assembly) { log.textContent = saved.assembly; return; }
+    showJobError(log, "");
+    const finish = beginWork(log, "Reading assembly", [], "");
+    loading = true;
+    try {
+      const url = `/api/recompile?slug=${encodeURIComponent(state.slug)}&preview=${row.vram}&revision=${state.revision}`;
+      saved.request ??= api(url);
+      const {assembly} = await saved.request;
+      saved.assembly = assembly;
+      log.textContent = assembly;
+    } catch (error) {
+      showJobError(log, error.message);
+    } finally {
+      saved.request = null;
+      loading = false;
+      finish();
+    }
+  }
+  detail.ontoggle = () => {
+    if (recompileReview !== state) return;
+    saved.open = detail.open;
+    if (detail.open) load();
+  };
+  if (detail.open) load();
+  return detail;
+}
+
+function updateRecompileSelection() {
+  const state = recompileReview, button = $("portDiscoveryAdd");
+  const busy = recompileRun?.slug === S.slug;
+  const count = state?.slug === S.slug ? state.selected.size : 0;
+  button.disabled = !!busy || !count;
+  button.textContent = count ? `Add selected to split (${count.toLocaleString()})` : "Add selected to split";
+  if (state?.slug === S.slug) for (const input of state.inputs) input.disabled = !!busy;
+}
+
 
 async function loadRecompileStatus(slug, epoch) {
   const log = $("portRecompileLog");
@@ -303,6 +401,7 @@ async function loadRecompileStatus(slug, epoch) {
     recompileRun?.finish();
     recompileRun = null;
     recompileSlug = slug;
+    renderRecompileDiscoveries(null);
     $("portRecompileStop").hidden = true;
     log.textContent = "";
     log.hidden = true;
@@ -322,22 +421,25 @@ async function loadRecompileStatus(slug, epoch) {
   }
 }
 
-async function runRecompile(existing = null) {
+async function runRecompile(existing = null, selection = null) {
   if (recompileRun) return;
   const slug = S.slug, log = $("portRecompileLog"), stop = $("portRecompileStop");
   log.hidden = false; log.textContent = ""; log._showJobProgress = true;
   showJobError(log, "");
-  const finish = beginWork(log, "Checking the ROM split with N64Recomp", [$("portRecompile")], "ROM split checked.");
-  const run = recompileRun = {slug, id: existing?.id, finish};
+  const adding = !!selection || existing?.kind === "recompile-review";
+  const finish = beginWork(log, adding ? "Adding functions to the split" : "Checking the ROM split with N64Recomp",
+    [$("portRecompile")], adding ? "Reviewed functions added." : "ROM split checked.");
+  const run = recompileRun = {slug, id: existing?.id, finish, adding};
+  updateRecompileSelection();
   const active = () => recompileRun === run && S.slug === slug;
   const state = $("portRecompileState");
-  if (state) state.textContent = "Recompiling…";
-  stop.hidden = false; stop.disabled = !existing; stop.textContent = "Stop recompiling";
+  if (state) state.textContent = adding ? "Adding functions…" : "Recompiling…";
+  stop.hidden = false; stop.disabled = !existing; stop.textContent = adding ? "Stop adding functions" : "Stop recompiling";
   if (existing?.progress) updateWorkProgress(log, existing.progress);
   let completed = false;
   try {
     if (!existing) {
-      const {job} = await api("/api/recompile", {method: "POST", body: {slug}});
+      const {job} = await api("/api/recompile", {method: "POST", body: {slug, ...selection}});
       if (!active()) return;
       run.id = job;
       stop.disabled = false;
@@ -349,6 +451,7 @@ async function runRecompile(existing = null) {
     if (recompileRun === run) {
       recompileRun = null;
       finish();
+      updateRecompileSelection();
       stop.hidden = true;
       const current = $("portRecompileState");
       if (current) current.textContent = completed ? "Checked" : "Review the log";
@@ -361,14 +464,14 @@ async function stopRecompile() {
   const run = recompileRun, stop = $("portRecompileStop");
   if (!run?.id || run.slug !== S.slug || stop.disabled) return;
   stop.disabled = true;
-  stop.textContent = "Stopping recompilation…";
+  stop.textContent = run.adding ? "Stopping…" : "Stopping recompilation…";
   try {
     await api("/api/job/cancel", {method: "POST", body: {id: run.id}});
   } catch (error) {
     if (recompileRun !== run || S.slug !== run.slug) return;
     showJobError($("portRecompileLog"), error.message);
     stop.disabled = false;
-    stop.textContent = "Stop recompiling";
+    stop.textContent = run.adding ? "Stop adding functions" : "Stop recompiling";
   }
 }
 
@@ -749,6 +852,12 @@ function attachPlay(play) {
 if ($("portPanel")) {
   $("portRecompile").onclick = () => runRecompile();
   $("portRecompileStop").onclick = stopRecompile;
+  $("portDiscoveryAdd").onclick = () => {
+    const review = recompileReview;
+    if (review?.slug === S.slug && review.selected.size) {
+      return runRecompile(null, {revision: review.revision, addresses: [...review.selected]});
+    }
+  };
   $("portPlay").onclick = () => playGame();
   $("portStop").onclick = stopGame;
   for (const input of exportChoices()) input.onchange = saveExportTargets;

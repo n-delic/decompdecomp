@@ -83,12 +83,14 @@ def _calls(net, slug: str) -> dict | None:
 def _recomp(net, proj) -> dict | None:
     """The last Recompile (app/recompile.py, the console's static recompiler), counted: never run here."""
     from ..app.recompile import summary
+    from ..app.recompile_review import findings
     s = summary(net, proj)
     if s is None:
         return None
     return {"functions": s["functions"], "found": len(s["found"]), "stubs": len(s["refused"]),
             "runtime": len(s["runtime"]), "errors": s["error_count"], "files": s["files"], "at": s["at"],
             "folder": s["folder"], "available": net.console(proj).recompiler is not None,
+            "discoveries": findings(net, proj, s),
             "error_examples": s.get("errors", [])[:5],
             "stub_examples": [f"{r['name']} ({r['why']})" for r in s["refused"][:8]],
             "found_examples": [f"{f['name']} ({f['why']})" for f in s["found"][:8]]}

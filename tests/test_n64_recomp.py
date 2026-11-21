@@ -113,6 +113,7 @@ def test_readiness_shows_the_last_run(project):
     with net.progress.view():
         report = readiness(net, "game")
     assert report["recomp"]["stubs"] == 1 and report["recomp"]["found"] == 1
+    assert report["recomp"]["discoveries"][0]["rom"] == 0x1040
     text = describe(report)
     assert "Recompiled (static recompiler, last run): 2 of the split's functions and 1 the split doesn't list" in text
     assert "listed (Unhandled instruction: lwc2)" in text and "func_80000440 (called from listed)" in text
@@ -120,6 +121,8 @@ def test_readiness_shows_the_last_run(project):
 
 @pytest.mark.skipif(toolchains.installed("n64recomp") is None, reason="needs the n64recomp tool")
 def test_recompile_writes_c_that_compiles(project):
+    from decompnet.app import recompile_review
+
     net, root = project
     summary = recompile.run(net, "game", log=lambda *a: None)
     assert summary["functions"] == 2 and [f["name"] for f in summary["found"]] == ["func_80000440"]
@@ -128,6 +131,12 @@ def test_recompile_writes_c_that_compiles(project):
     assert "RECOMP_FUNC void recomp_entrypoint(" in text and "RECOMP_FUNC void listed(" in text
     assert "func_80000440(rdram, ctx);" in text and "RECOMP_FUNC void func_80000440(" in text
     assert recomp.load(root)["files"] == summary["files"]
+
+    _code_config(root)
+    assert recompile_review.add(net, "game", summary["at"], [0x80000440], _review_log())["added"]
+    next_summary = recompile.run(net, "game", log=lambda *a: None)
+    assert next_summary["functions"] == 3 and not next_summary["found"]
+    assert next_summary["error_count"] == 0
 
 
 def _state(path, sp=0x80100000, args=(0, 0, 0, 0), fpr=None):
@@ -238,3 +247,76 @@ def test_port_job_can_cancel_while_waiting_for_recompile(tmp_path):
         stop.set()
         with pytest.raises(NetworkError, match='Stopped'):
             future.result(timeout=5)
+
+
+def _code_config(root):
+    (root / "splat.yaml").write_text(
+        "segments:\n  - {name: main, type: code, start: 0x1000, vram: 0x80000400}\n  - [0x1100]\n")
+
+
+def _review_log():
+    def log(_):
+        pass
+
+    log.progress = lambda _: None
+    log.check_cancel = lambda: None
+    return log
+
+
+def test_review_adds_only_selected_original_bytes_and_retains_them_on_reimport(project):
+    from decompnet.app import recompile_review
+    from decompnet.rom import split
+    from decompnet.rom.export import _symbol_lines
+
+    net, root = project
+    image = homemade_rom()
+    start, unselected = 0x80000440, 0x80000460
+    discoveries = recomp.discover(image, SEGMENTS, SPLIT, 0x80000400)
+    # The report can also contain poorly bounded guesses. Reviewing one leaves the others pending.
+    discoveries += [{"name": "func_80000460", "vram": unselected, "rom": 0x1060, "size": 8,
+                     "why": "called from another discovery"}]
+    _code_config(root)
+    out = recomp.folder(root)
+    out.mkdir(parents=True)
+    summary = {"at": 1.0, "found": discoveries, "image_sha1": hashlib.sha1(image).hexdigest()}
+    (out / "recomp.json").write_text(json.dumps(summary))
+    proj = net.project_row("game", sync=False)
+    store = net.project_store(proj["id"])
+    log = _review_log()
+
+    assert [r["vram"] for r in recompile_review.findings(net, proj, summary)] == [start, unselected]
+    assembly = recompile_review.preview(net, proj, 1.0, start)["assembly"]
+    assert "80000440" in assembly and "jr" in assembly and "80000448" in assembly
+    assert store.one("SELECT 1 FROM functions WHERE vram=?", start) is None
+    with pytest.raises(NetworkError, match="report changed"):
+        recompile_review.add(net, "game", 0.5, [start], log)
+    with pytest.raises(NetworkError, match="absent"):
+        recompile_review.add(net, "game", 1.0, [start, 0x80000500], log)
+    assert store.one("SELECT 1 FROM functions WHERE vram=?", start) is None
+    assert recompile_review.add(net, "game", 1.0, [start], log)["added"] == [
+        {"name": "func_80000440", "vram": start}]
+    added = store.one("SELECT * FROM functions WHERE vram=?", start)
+    assert added["target"] == image[0x1040:0x104C] and added["status"] == "open"
+    assert added["rom_offset"] == 0x1040 and added["size"] == 12
+    assert store.one("SELECT 1 FROM functions WHERE vram=?", unselected) is None
+    assert "func_80000440 = 0x80000440; // type:func size:0xC" in _symbol_lines(net, proj)
+    assert recompile_review.add(net, "game", 1.0, [start], log)["added"] == []
+    found = recompile_review.findings(net, proj, summary)
+    assert found[0]["added"] == "func_80000440" and not found[1]["blocked"]
+
+    original = [split.function_from_bytes(f["name"], image[f["rom"]:f["rom"] + f["size"]], f["rom"],
+                                          f["vram"], "main") for f in SPLIT]
+    result = SimpleNamespace(functions=original[:], segments=[split.Segment(**SEGMENTS[0])])
+    recompile_review.keep_reviewed_on_reimport(net, proj, result, image, summary["image_sha1"], log)
+    assert [(f.vram, f.size) for f in result.functions[len(original):]] == [(start, 12)]
+    overlap = split.function_from_bytes("overlap", image[0x1044:0x104C], 0x1044, start + 4, "main")
+    changed = SimpleNamespace(functions=original + [overlap], segments=result.segments)
+    recompile_review.keep_reviewed_on_reimport(net, proj, changed, image, summary["image_sha1"], log)
+    assert not any(f.vram == start for f in changed.functions)
+
+    with store.tx() as db:
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns,vram,rom_offset,status,meta) "
+                   "VALUES(?,?,?,?,?,?,?,?)", (proj["id"], "new_overlap", 8, 2, unselected + 4, 0x1064, "open", "{}"))
+    assert "Overlaps" in recompile_review.findings(net, proj, summary)[1]["blocked"]
+    with pytest.raises(NetworkError, match="Overlaps"):
+        recompile_review.add(net, "game", 1.0, [unselected], log)

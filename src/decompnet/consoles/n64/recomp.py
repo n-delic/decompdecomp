@@ -17,6 +17,7 @@ macros (MEM_W, LOOKUP_FUNC...), the port's next step (docs/N64RECOMP.md, phase 2
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -424,8 +425,8 @@ def recompile(program: Path, rom_path: Path, segments: list[dict], functions: li
             break
         renamed |= clashes
     written = len(list((out / "funcs").glob("*.c")))
-    summary = {"at": time.time(), "functions": len(usable), "found": [{k: f[k] for k in ("name", "vram", "size", "why")}
-                                                                       for f in found],
+    summary = {"at": time.time(), "image_sha1": hashlib.sha1(rom).hexdigest(), "functions": len(usable),
+               "found": found,
                "refused": [{"name": n, "why": w} for n, w in refused.items()], "renamed": sorted(renamed),
                "runtime": provided, "errors": errors[:40], "error_count": len(errors),
                "between": [f["name"] for f in outside], "unusable": unusable, "files": written, "folder": str(out)}

@@ -106,9 +106,9 @@ def register(app: App) -> None:
                         return response(perform, started, JSONResponse, request.url.path)
                     finally:current_project.reset(token)
                 execute=(reader or call) if request.method=="GET" else call
-                if request.url.path in ('/api/cross-game/run', '/api/port-export-options', '/api/recompile') or (
-                    request.url.path == '/api/play-export' and not data.get('show')
-                ):
+                if request.url.path in ('/api/cross-game/run', '/api/port-export-options') or (
+                    request.url.path == '/api/recompile' and 'preview' not in request.query_params
+                ) or (request.url.path == '/api/play-export' and not data.get('show')):
                     execute=app.control
                 if request.url.path=='/api/rom-explorer/discovery' and (request.query_params.get('view')=='activity' or data.get('action')=='stop'):
                     execute=app.control  # Discovery admission/cancellation must not queue behind builds.
@@ -405,19 +405,33 @@ def register(app: App) -> None:
 
     def port_recompile(slug, request, data):
         """Check the ROM split using the console's static recompiler, with a job the panel can reattach to."""
-        from .. import recompile
+        from .. import recompile, recompile_review
 
         project = net.project_row(slug, sync=False)
         rom = net.is_rom(project)
         available = rom and net.console(project).recompiler is not None
+        if request.method == "GET" and "preview" in request.query_params:
+            if not available:
+                raise NetworkError("Assembly review needs a supported ROM project.")
+            try:
+                revision = float(request.query_params.get("revision", ""))
+                address = int(request.query_params["preview"])
+            except ValueError:
+                raise NetworkError("Choose a function from the latest N64Recomp report.") from None
+            return recompile_review.preview(net, project, revision, address)
         with jobs._lock:
-            running = jobs.active(("recompile",), project=slug)
+            running = jobs.active(("recompile", "recompile-review"), project=slug)
             if request.method == "GET":
                 return {"recomp_available": available, "mode": "rom" if rom else "project", "job": running}
             if not available:
                 raise NetworkError("Recompilation needs an imported ROM and a static recompiler for its console.")
             if running:
                 return {"job": running["id"]}
+            if "addresses" in data:
+                def apply(log):
+                    return recompile_review.add(net, slug, data.get("revision"), data["addresses"], log)
+                return {"job": jobs.start("recompile-review", apply, project=slug,
+                                          cancel_message="Adding functions stopped. Refresh to check the split.")}
             return {"job": jobs.start("recompile", lambda log: recompile.run(net, slug, log), project=slug,
                                       cancel_message="Recompilation stopped.")}
 
