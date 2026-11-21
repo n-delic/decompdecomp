@@ -229,9 +229,11 @@ void port_live_start(void) {
     started = 1;
     const char *p = getenv("PORT_LIVE");
     if (getenv("PORT_WINDOW")) {
-        if (port_sdl_start()) { window = 1; return; }
-        if (!p) { fprintf(stderr, "PORT_WINDOW: the game can't open its window\n"); exit(5); } /* never run unseen */
-        fprintf(stderr, "PORT_WINDOW: playing in the browser instead\n");
+        if (port_sdl_start()) {
+            window = 1;
+            if (!getenv("PORT_RT64")) return;
+        } else if (!p || getenv("PORT_RT64")) { fprintf(stderr, "PORT_WINDOW: the game can't open its window\n"); exit(5); } /* never run unseen */
+        if (!window) fprintf(stderr, "PORT_WINDOW: playing in the browser instead\n");
     }
     if (!p) return;
 #ifdef _WIN32

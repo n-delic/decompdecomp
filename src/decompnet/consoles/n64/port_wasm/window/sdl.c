@@ -27,6 +27,64 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../rt64/adapter.h"
+
+/* RT64 is loaded only for explicit macOS desktop Play. Keep the ordinary native host free of RT64 links. */
+#if defined(__APPLE__)
+#include <dlfcn.h>
+static const PortRt64 *rt64;
+static void *rt64_view;
+static void (*destroy_rt64_view)(void *);
+static pthread_mutex_t rt64_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static int open_rt64(void *sdl_lib, void *window, const char *path) {
+    void *library = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+    const PortRt64 *(*adapter)(void) = library ? dlsym(library, "decompnet_rt64_adapter") : NULL;
+    uint32_t (*properties)(void *) = dlsym(sdl_lib, "SDL_GetWindowProperties");
+    void *(*pointer)(uint32_t, const char *, void *) = dlsym(sdl_lib, "SDL_GetPointerProperty");
+    void *(*create_view)(void *) = dlsym(sdl_lib, "SDL_Metal_CreateView");
+    void *(*layer)(void *) = dlsym(sdl_lib, "SDL_Metal_GetLayer");
+    destroy_rt64_view = dlsym(sdl_lib, "SDL_Metal_DestroyView");
+    const PortRt64 *api = adapter ? adapter() : NULL;
+    if (!api || api->abi != PORT_RT64_ABI || !properties || !pointer || !create_view || !layer || !destroy_rt64_view) {
+        const char *error = dlerror();
+        fprintf(stderr, "Cannot load the RT64 adapter: %s\n", error ? error : "incompatible adapter or SDL3");
+        if (library) dlclose(library);
+        return 0;
+    }
+    void *native = pointer(properties(window), "SDL.window.cocoa.window", NULL);
+    void *view = native ? create_view(window) : NULL;
+    void *metal_layer = view ? layer(view) : NULL;
+    if (!metal_layer || !api->open(native, metal_layer)) {
+        fprintf(stderr, "Cannot start RT64 in the Metal window\n");
+        if (view) destroy_rt64_view(view);
+        return 0;
+    }
+    rt64 = api;
+    rt64_view = view;
+    return 1;
+}
+
+#define RT64_CALL(member, args) do { \
+    pthread_mutex_lock(&rt64_lock); \
+    if (rt64) rt64->member args; \
+    pthread_mutex_unlock(&rt64_lock); \
+} while (0)
+void port_rt64_task(const uint8_t *ram, uint32_t ucode, uint32_t data, uint32_t list) {
+    RT64_CALL(task, (ram, ucode, data, list));
+}
+void port_rt64_screen(const uint8_t *ram, uint32_t fb) { RT64_CALL(screen, (ram, fb)); }
+void port_rt64_mode(const uint32_t *words) { RT64_CALL(mode, (words)); }
+void port_rt64_yscale(float scale) { RT64_CALL(yscale, (scale)); }
+#else
+void port_rt64_task(const uint8_t *ram, uint32_t ucode, uint32_t data, uint32_t list) {
+    (void)ram; (void)ucode; (void)data; (void)list;
+}
+void port_rt64_screen(const uint8_t *ram, uint32_t fb) { (void)ram; (void)fb; }
+void port_rt64_mode(const uint32_t *words) { (void)words; }
+void port_rt64_yscale(float scale) { (void)scale; }
+#endif
+
 #ifdef _WIN32 /* no SDL3 here yet (ROADMAP.md): PORT_WINDOW falls back to the browser view */
 int port_sdl_start(void) { return 0; }
 const char *port_sdl_rom(void) { return NULL; }
@@ -47,7 +105,7 @@ typedef union { uint32_t type; uint8_t bytes[128]; } SdlEvent;
 enum { EV_KEY_SCANCODE = 24, EV_KEY_REPEAT = 37, EV_PAD_WHICH = 16 };
 
 enum { SDL_INIT_AUDIO = 0x10, SDL_INIT_VIDEO = 0x20, SDL_INIT_GAMEPAD = 0x2000, SDL_WINDOW_FULLSCREEN = 0x1,
-       SDL_WINDOW_RESIZABLE = 0x20, SDL_WINDOW_HIGH_PIXEL_DENSITY = 0x2000, SDL_PIXELFORMAT_RGB24 = 0x17101803,
+       SDL_WINDOW_RESIZABLE = 0x20, SDL_WINDOW_HIGH_PIXEL_DENSITY = 0x2000, SDL_WINDOW_METAL = 0x20000000, SDL_PIXELFORMAT_RGB24 = 0x17101803,
        SDL_TEXTUREACCESS_STREAMING = 1, SDL_SCALEMODE_NEAREST = 0, SDL_LOGICAL_PRESENTATION_LETTERBOX = 2,
        SDL_EVENT_QUIT = 0x100, SDL_EVENT_KEY_DOWN = 0x300, SDL_EVENT_GAMEPAD_ADDED = 0x653,
        SDL_EVENT_GAMEPAD_REMOVED = 0x654, SDL_AUDIO_S16LE = 0x8010, SDL_MESSAGEBOX_ERROR = 0x10 };
@@ -100,6 +158,10 @@ static struct {
     const char *(*GetError)(void);
 } sdl;
 
+#ifdef __APPLE__
+static void *sdl_library;
+#endif
+
 static int load_sdl(void) {
     const char *names[] = {getenv("PORT_SDL"),
 #ifdef __APPLE__
@@ -123,6 +185,9 @@ static int load_sdl(void) {
     SYM(DestroyAudioStream);
     SYM(ShowOpenFileDialog); SYM(ShowSimpleMessageBox); SYM(Quit); SYM(GetError);
 #undef SYM
+#ifdef __APPLE__
+    sdl_library = lib;
+#endif
     return 1;
 }
 
@@ -153,6 +218,15 @@ int port_sdl_start(void) {
         fprintf(stderr, "SDL_Init: %s\n", sdl.GetError());
         return 0;
     }
+#ifdef __APPLE__
+    const char *adapter = getenv("PORT_RT64");
+    if (adapter && *adapter) {
+        window = sdl.CreateWindow(title(), 960, 720, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_METAL);
+        if (window && open_rt64(sdl_library, window, adapter)) return 1;
+        sdl.Quit();
+        return 0;
+    }
+#endif
     window = sdl.CreateWindow(title(), 960, 720, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
     renderer = window ? sdl.CreateRenderer(window, NULL) : NULL; /* SDL3 presents without vsync unless asked */
     if (!renderer) {
@@ -176,6 +250,13 @@ int port_sdl_start(void) {
 
 static void quit(void) {
     fprintf(stderr, "the window was closed\n");
+#ifdef __APPLE__
+    pthread_mutex_lock(&rt64_lock);
+    if (rt64) rt64->close();
+    rt64 = NULL;
+    pthread_mutex_unlock(&rt64_lock);
+    if (rt64_view) destroy_rt64_view(rt64_view);
+#endif
     sdl.Quit();
     exit(0);
 }
@@ -303,6 +384,7 @@ void port_sdl_pump(void) {
         }
     }
     read_controls();
+    if (!renderer) return;  /* RT64 presents through its own Metal layer. */
     int fresh = 0;
     pthread_mutex_lock(&lock);
     if (frame_new) {
@@ -334,7 +416,7 @@ void port_sdl_pump(void) {
 /* ---------------------------------------------------------------- what the game's threads leave */
 
 void port_sdl_frame(const uint8_t *rgb, int w, int h) {
-    if (w <= 0 || h <= 0) return;
+    if (!renderer || w <= 0 || h <= 0) return;
     pthread_mutex_lock(&lock);
     if (!frame || frame_w * frame_h != w * h) { free(frame); frame = malloc((size_t)w * h * 3); }
     frame_w = w; frame_h = h;

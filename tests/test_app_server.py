@@ -3852,6 +3852,85 @@ def test_the_project_list_answers_same_for_an_unchanged_signature(app, monkeypat
     assert changed['sig'] != first['sig'] and changed['projects'][0]['matched'] == 2
 
 
+@pytest.mark.skipif(sys.platform != "darwin" or not os.getenv("DECOMPNET_RT64_ADAPTER"),
+                    reason="requires a local RT64 adapter and a macOS desktop")
+def test_rt64_play_runs_saved_c_and_both_fallbacks(app, tmp_path, monkeypatch):
+    """Exercise the Porting request with a real native renderer and three distinct code paths."""
+    import hashlib
+    import struct
+
+    from decompnet.port.wasm import play
+
+    if any(toolchains.installed(tool) is None for tool in ("sdl3", "zig", "wabt", "n64recomp")):
+        pytest.skip("requires the pinned compatibility and SDL3 tools")
+    client, net, _ = app
+    slug = "rt64-play-demo"
+    folder = tmp_path / "progress"
+    (folder / "src").mkdir(parents=True)
+    (folder / "include").mkdir()
+    rom = bytearray(0x3000)
+    for address, words in ((0, (0x80371240, 0, 0x80000400)), (0x1000, (0x08000108, 0)),
+                           (0x1020, (0x03E00008, 0)), (0x1080, (0x24020007, 0x03E00008, 0)),
+                           (0x1200, (0x24020008, 0x03E00008, 0))):
+        struct.pack_into(">" + "I" * len(words), rom, address, *words)
+    rom[0x3E] = ord("E")
+    (tmp_path / "demo.z64").write_bytes(rom)
+    image = {"sha1": hashlib.sha1(rom).hexdigest(), "file": "demo.z64", "title": "RT64 demo"}
+    code = """void entry(void) {
+        volatile unsigned short *frame = (unsigned short *)0x80010000;
+        unsigned short color = func_80000480() + func_80000600() == 15 ? 0x07C1 : 0xF801;
+        for (int i = 0; i < 320 * 240; i++) frame[i] = color;
+        osViSwapBuffer((void *)frame);
+    }"""
+    (folder / "src/entry.c").write_text(code)
+    (folder / "include/common.h").write_text(
+        "int func_80000480(void); int func_80000600(void); void osViSwapBuffer(void *);")
+    layout = [{"name": name, "vram": vram, "size": size, "rom_offset": offset}
+              for name, vram, size, offset in (("entry", 0x80000420, 8, 0x1020),
+                                               ("func_80000480", 0x80000480, 12, 0x1080),
+                                               ("func_80000600", 0x80000600, 12, 0x1200))]
+    (folder / "decompdecomp.json").write_text(json.dumps({"format": 2, "game": image, "platform": "n64", "layout": layout}))
+    config = {"kind": "rom", "platform": "n64", "big_endian": True, "rom": image,
+              "segments": [{"name": "demo", "rom_start": 0x1000, "rom_end": 0x1100, "vram": 0x80000400}]}
+    with net.project_registration(slug=slug, name=slug, description="", arch="mips", big_endian=True,
+                                  root=tmp_path, config=config) as (db, pid):
+        for function, source in zip(layout[:2], (code, None)):
+            offset, size = function["rom_offset"], function["size"]
+            db.execute("INSERT INTO functions(project_id,name,size,n_insns,target,vram,rom_offset,status,matched_source)"
+                       " VALUES(?,?,?,?,?,?,?,?,?)",
+                       (pid, function["name"], size, size // 4, bytes(rom[offset:offset + size]), function["vram"],
+                        offset, "matched" if source else "open", source))
+
+    dump = tmp_path / "frame.rdram"
+    monkeypatch.setenv("PORT_RAM_DUMPS", f"8:{dump}")
+    monkeypatch.setenv("PORT_RECOMP_CALLS", "80000480")
+    monkeypatch.setenv("PORT_INTERP_TRACE", "1")
+    selection = {"slug": slug, "build_mode": "compatibility", "runtime": "n64modernruntime"}
+    headers = {"X-Decomp": "1"}
+    try:
+        response = client.post("/api/play", headers=headers, json=selection)
+        assert response.status_code == 200, response.json()
+        job = response.json()["job"]
+        for _ in range(600):
+            result = client.get("/api/job", params={"id": job}).json()
+            if result["state"] != "running":
+                break
+            time.sleep(.2)
+        assert result["state"] == "done", result
+        assert result["result"]["native"]
+        for _ in range(40):
+            if dump.exists() and dump.stat().st_size >= 0x10002:
+                break
+            time.sleep(.05)
+        assert dump.read_bytes()[0x10000:0x10002] == bytes.fromhex("07C1")
+        log = (tmp_path / "port/wasm/build/play.log").read_text()
+        assert "RT64 compatibility frame submitted" in log
+        assert "recompiled 80000480" in log and "interpreter: 80000600" in log
+        assert client.post("/api/play", headers=headers, json={"slug": slug, "stop": True}).json()["stopped"]
+    finally:
+        play.stop(slug)
+
+
 def test_play_and_export_refuse_an_unavailable_build_or_runtime(app):
     from .test_loading import tiny_game
 

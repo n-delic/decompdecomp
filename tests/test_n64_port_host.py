@@ -349,7 +349,7 @@ int main(void) {
     sdl.GetTicksNS = clock_ns; sdl.SetWindowTitle = set_title;
     sdl.PollEvent = poll; sdl.GetKeyboardState = keys; sdl.RenderClear = clear;
     sdl.RenderTexture = draw; sdl.RenderPresent = present; sdl.UpdateTexture = update;
-    texture = (void *)1; texture_w = texture_h = 1;
+    renderer = (void *)1; texture = (void *)1; texture_w = texture_h = 1;
     uint8_t rgb[3] = {0};
     for (int i = 1; i <= 50; i++) {
         ticks = i * 20000000ULL;
