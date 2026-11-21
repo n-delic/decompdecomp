@@ -11015,3 +11015,14 @@ measured and saved both edits independently.
   source steps. Expressing the base word as a null-pointer dereference
   scored 165. Naming the resolved word at address zero matched all
   84 bytes.
+
+### Recover adjacent halfword fields and local setup around calls
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, one isolated N64
+draft read two adjacent signed halfwords from the low halves of word
+objects. Typing the fields as halfwords and retaining the byte stride
+reduced the linked score from 220 to 180. Moving two local zero
+initializations after the first call reduced it to 60. Moving a
+byte field read and its dependent index after a separate call
+reproduced the remaining instruction order and brought the score to
+0. Each step was independently measured in the deep permuter.
