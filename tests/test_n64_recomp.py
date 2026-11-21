@@ -114,6 +114,7 @@ def test_readiness_shows_the_last_run(project):
         report = readiness(net, "game")
     assert report["recomp"]["stubs"] == 1 and report["recomp"]["found"] == 1
     assert report["recomp"]["discoveries"][0]["rom"] == 0x1040
+    assert report["recomp"]["succeeded"] is None and report["recomp"]["total"] == 3
     text = describe(report)
     assert "Recompiled (static recompiler, last run): 2 of the split's functions and 1 the split doesn't list" in text
     assert "listed (Unhandled instruction: lwc2)" in text and "func_80000440 (called from listed)" in text
@@ -127,6 +128,7 @@ def test_recompile_writes_c_that_compiles(project):
     summary = recompile.run(net, "game", log=lambda *a: None)
     assert summary["functions"] == 2 and [f["name"] for f in summary["found"]] == ["func_80000440"]
     assert summary["refused"] == [] and summary["error_count"] == 0, summary
+    assert summary["succeeded"] == 3
     text = "".join(p.read_text() for p in (recomp.folder(root) / "funcs").glob("*.c"))
     assert "RECOMP_FUNC void recomp_entrypoint(" in text and "RECOMP_FUNC void listed(" in text
     assert "func_80000440(rdram, ctx);" in text and "RECOMP_FUNC void func_80000440(" in text
