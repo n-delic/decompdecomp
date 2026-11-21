@@ -22,6 +22,7 @@ from decomprepair import (
     measured_control_flow,
     measured_expression_repairs,
     measured_immediate_repairs,
+    measured_lifetime_shapes,
     measured_memory_order,
     measured_mmio_polling,
     measured_pointer_scale,
@@ -177,11 +178,14 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     if arch != 'mips':
         return []
     result = targeted_switch_labels.variants(source,name,jump_tables) if jump_tables else []
-    if not toolchain.startswith(('gcc-2.7.2-kmc','gcc-egcs','ido-5.3')) or not rows:
+    if not toolchain.startswith(('gcc-2.7.2-kmc','gcc-egcs','ido-5.3','ido-7.1')) or not rows:
         return result
     rows = [row for row in permuter_focus.normalized(rows)
             if isinstance(row,(tuple,list)) and len(row)==3 and all(isinstance(field,str) for field in row)]
     if not any(marker != ' ' for marker,_,_ in rows):
+        return result
+    result += measured_lifetime_shapes.variants(source, name, header, toolchain, rows)
+    if toolchain.startswith('ido-7.1'):
         return result
     target, candidate = (_instructions(rows, side) for side in (1,2))
     if toolchain.startswith('gcc-egcs'):

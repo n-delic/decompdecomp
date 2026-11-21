@@ -49,3 +49,19 @@ def test_requires_same_frozen_baseline_and_exact_verdict(setup, monkeypatch):  #
     verdict = True
     assert repair_coverage.verify(net.repair_feedback, example) == 'installed_rule'
     assert fn(net, fid)['status'] == 'matched'
+
+    from decomprepair import measured_lifetime_shapes
+
+    profile = dict(settings['compiler'], toolchain='ido-7.1')
+    winner['settings']['compiler'] = profile
+    before['settings']['compiler'] = profile
+    rows = [('r', 'move $a3, $a0', 'move $a2, $a0')]
+    monkeypatch.setattr(repair_coverage.scoring, 'diff', lambda *_: SimpleNamespace(rows=rows))
+    monkeypatch.setattr(repair_coverage, 'proposals', lambda *_: iter(()))
+
+    def measured(source, name, header, compiler, diff):
+        assert (source, name, header, compiler, diff) == (before['source'], 'target', before['header'], 'ido-7.1', rows)
+        return [('drop_duplicate_call_argument', candidate)]
+
+    monkeypatch.setattr(measured_lifetime_shapes, 'variants', measured)
+    assert repair_coverage.verify(net.repair_feedback, example) == 'drop_duplicate_call_argument'

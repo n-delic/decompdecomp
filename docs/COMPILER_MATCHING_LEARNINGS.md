@@ -9757,3 +9757,12 @@ An N64 draft modeled a 26-byte serialized header as six separate locals. Two adj
 ### Forward an incoming argument on the paths that reach a call
 
 Two N64 drafts omitted a call's first argument. The first draft already declared it. A call in a sibling switch arm could clobber the register but could never reach the affected call. Forwarding the existing parameter before the masked second argument moved the 76-byte function from score 5 to exact with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1`. In the other draft, the target loaded the same global word into the second argument register with paired high and low relocations. Restoring the first parameter and forwarding it before that word moved the 60-byte function from score 10 to exact with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`. Both integer and pointer formals matched the latter's instructions, so its bytes alone do not identify the parameter type. The archived sources compiled independently as controls.
+
+### Match four small return, call and lifetime differences
+
+The archived sources compiled as independent controls. Exact replays compiled and linked each measured change from the independently generated C.
+
+- A target guard branched over the copy into the return register. The draft returned a local even when the guard skipped its assignment. Returning inside the guard moved the 192-byte function from score 10 to exact with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
+- A zeroed index register swapped places with an argument setup. Moving the zero assignment after the allocation in C moved the 164-byte function from score 10 to exact under the same settings. Assigning zero via subtraction of a parameter from itself also matched.
+- With `ido-7.1 -O2 -mips2 -G 0 -non_shared -Xcpluscomm -Wab,-r4300_mul -woff 649,838,712`, an extra duplicate argument made the compiler use the third argument register to hold the base of the second argument. The target used the fourth as a scratch register. Removing the duplicate from the call and trimming its generated prototype moved the 40-byte function from score 10 to exact. An unprototyped callee also matched.
+- A float update reused one register for the initial read and both branch results. Using one float local for those values moved the 72-byte function from score 15 to exact with the same KMC settings. Changing only the intermediate's type left score 15.
