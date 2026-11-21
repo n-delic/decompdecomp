@@ -691,3 +691,19 @@ void f(int arg) {
     assert seeds.generate_from_asm(asm, 'f', 'ppc-compiler', valid=True) == raw
     recovery = dict(repairs.recovery_drafts(raw, 'f', asm, 'mips', 'ido-7.1', '', None, {}))
     assert recovery['initial_external_call_labels'] == fresh
+
+
+def test_ido_pointer_diagnostic_offers_recovery_in_rom_and_project_builds():
+    raw = """void *f(void *base) {
+    void *cursor;
+    cursor = base + 8;
+    cursor += 4;
+    return cursor;
+}
+"""
+    report = {'failures': [{'phase': 'compiler', 'reason': 'cfe: Error: Bad operand type for += or -='}]}
+    for toolchain in ('ido-7.1', ''):
+        choices = dict(repairs.recovery_drafts(raw, 'f', '', 'mips', toolchain, '', None, report))
+        assert 'cursor = (unsigned char *) base + 8;' in choices['initial_void_pointer_offsets']
+        assert 'cursor = (unsigned char *) cursor + 4;' in choices['initial_void_pointer_offsets']
+    assert not list(repairs.recovery_drafts(raw, 'f', '', 'mips', 'ido-7.1', '', None, {}))

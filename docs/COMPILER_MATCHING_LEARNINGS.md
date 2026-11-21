@@ -1,5 +1,17 @@
 # Compiler matching learning log
 
+### IDO 7.1 rejects byte arithmetic on void pointers
+
+An isolated N64 replay used `ido-7.1 -O2 -mips2 -G 0 -non_shared -Xcpluscomm
+-Wab,-r4300_mul -woff 649,838,712`. Four machine drafts failed to compile
+because m2c added literal byte offsets to `void *` parameters and cursors.
+Casting each base to `unsigned char *` made simple assignments and stores
+through pointers compile. One draft also needed to expand `p += n` to
+`p = (unsigned char *) p + n`. Fixing only the simple assignments left that
+draft blocked. All four passed compilation and received linked scores
+(14059, 4109, 3915 and 7149) through deep-permuter source recovery.
+These were scored starting points for search.
+
 ### KMC GCC 2.7.2: branch directly to shared floating-point returns
 
 An isolated N64 replay used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.
