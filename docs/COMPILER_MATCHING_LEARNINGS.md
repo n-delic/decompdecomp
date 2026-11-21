@@ -10686,6 +10686,22 @@ byte-identical. The first version (0.5.196) needed the swapped `and` row and nev
 draft: a reminder that a rewrite proven on a hand-picked source is not proven. The same reasoning probably applies
 to other commutative instructions with a constant (`or`, `xor`, `add`), not yet seen.
 
+
+## KMC gcc 2.7.2, `-O2`: a `s16` local whose sign extension steals the argument register (N64, a game with about 1,900 functions)
+
+A 104-instruction function sat at score 5: the target's `subu $a1,$s0,$a1` read the switch result's saved register,
+ours read `$a0`. Dumping the passes (`cc1 -dr -dc`) showed why: the expanded RTL gives the `s16` local's sign extension
+(`sll`/`sra`) a pseudo of its own, cse reuses that pseudo for every later reader (the subtraction and the call
+argument), and local-alloc puts it in `$a0`. Declaring the local `s32` removes the extension: the subtraction then reads
+`$s0`. **Controlled, one function, not a match:** the only row that remains is a move's schedule position (the target's
+`move $a0,$s0` comes before the constant load; ours after the subtraction); 144 spellings of the subtraction, the call
+argument and statement order did not move it, and the `s32` step scores no better than the `s16` source in the app's
+judge, so a pure hill-climb never keeps it.
+The family is `kmc_widen_sign_local` in decomp-repair 0.5.203 (`kmc_type_repairs`): proposed when one changed row
+differs only by a saved register in the target against an argument register in ours, for a local assigned only
+literals that fit its type. A synthetic two-call reduction did not reproduce the effect (the reduction kept `$s0`
+either way), so the test here covers the proposal, not the byte effect.
+
 ### KMC separately relocated flag and shared switch call
 
 - Both N64 functions were compiled with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` and checked
