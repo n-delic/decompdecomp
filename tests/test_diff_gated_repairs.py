@@ -210,3 +210,20 @@ def test_kmc_routes_null_iteration_and_call_delay_slot_store():
                    if family == 'measured_null_iteration_store']
     assert 'if (!object) { i += 1; continue; }' in candidate
     assert candidate.index(' + 4)) = 8;') < candidate.index('sample(4)')
+
+
+def test_kmc_routes_narrowing_at_the_remainder_operand():
+    source = """s32 f(s32 modulus) {
+    s32 value;
+    value = sample() & 0xffff;
+    value = value % modulus;
+    return value;
+}
+"""
+    rows = [
+        ('i', 'andi $a0, $s1, 0xff', 'andi $v0, $v0, 0xffff'),
+        ('i', 'andi $v0, $v0, 0xffff', 'andi $a0, $s1, 0xff'),
+    ]
+    [candidate] = [text for family, text in proposals(source, 'f', '', 'mips', KMC, rows, '')
+                   if family == 'measured_narrow_use']
+    assert 'value = sample();\n    value = (u16)value % modulus;' in candidate

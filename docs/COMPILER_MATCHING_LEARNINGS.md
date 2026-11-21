@@ -1,5 +1,15 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: narrow a word where the byte or halfword is used
+
+An isolated N64 replay used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.
+An inline helper narrowed a temporary on assignment, while the target
+retained the word and narrowed it separately for a table index and an
+equality test. Moving the cast to those reads improved the linked score
+from 650 to 405. Moving a separate random-result mask down to its
+immediately following remainder operand improved 405 to 385. That
+second change alone scored 630. The saved result is partial.
+
 ### KMC GCC 2.7.2: share a byte-store constant with a signed divide
 
 An isolated N64 replay used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.
