@@ -315,7 +315,7 @@ subsets of these observations, not the complete historical search. Exact results
 original variable names, types or source spelling. See `docs/COMPILER_MATCHING_LEARNINGS.md`.
 
 For stubborn misses, Repair examples' GCC diagnostics now compare frozen before/after allocator and
-scheduler phases. Compare `lreg`/`greg` assignments and lifetimes with `sched`/`sched2`/`dbr`, only when
+scheduler phases (`compiler_passes(function, revision, passes=[...])` dumps them for your candidate). Compare `lreg`/`greg` assignments and lifetimes with `sched`/`sched2`/`dbr`, only when
 both diagnostic builds preserve ordinary output. Pseudo numbering changes are not causal proof. New
 captures can run bounded ablation automatically; use the retained edit set as a hypothesis for a local
 family, keeping the original exact source until a separate ordinary judge accepts any replacement.
@@ -862,7 +862,7 @@ minimum. Explicit early scalar captures changed register allocation instead.
 Treat the inferred record as a local hypothesis and keep ordinary linked verification.
 
 For byte-counter guards whose promoted index survives into the body, inspect local/global allocation
-in `.lreg` and `.greg` dumps. A named 32-bit scratch can capture the byte bound, then receive the
+in `.lreg` and `.greg` dumps (`compiler_passes` returns the table). A named 32-bit scratch can capture the byte bound, then receive the
 comparison result in a separate statement. This can change which local temporaries reserve return
 registers before the counter is allocated. Keep both stores sequenced; a nested double assignment
 can accidentally match while violating C90 sequence rules. Redirect an equality scratch only if the
@@ -1512,7 +1512,7 @@ unchanged live length 91. Its priority then passed a triangle index with
 the ordinary linked judge was exact.
 Wrapping the whole calculation instead worsened to 280; an initial scratch reuse
 left a 10-point mismatch. Scopes are hypotheses, not guaranteed allocation rules.
-Inspect `.lreg`/`.greg`, local reservations and conflicts, preserve real work, and
+Inspect `.lreg`/`.greg` (`compiler_passes(..., passes=["lreg","greg"])`), local reservations and conflicts, preserve real work, and
 use the ordinary judge. Do not add dummy references or fixed registers. A return-
 lifetime change also needs compatible caller declarations and evidence about
 whether callers consume the result; unused fallthrough is not a defined result.
@@ -1702,7 +1702,7 @@ write `t = g + 0xFFFC; return (a + t) & 0xFFFF;`: a separate statement keeps the
 
 ## A very large switch function: a checklist from one 4,399-instruction match
 
-Work from a local compile-and-compare loop and the pass dumps (`-dL` for loops, `-dS` for scheduling); the judge
+Work from a local compile-and-compare loop (`score_permutations` for statement orders and edit combinations) and the pass dumps (`compiler_passes`: `loop`, `sched`); the judge
 decides at the end. What moved the most instructions, in order:
 - Give each inlined copy of a test its own pointer local, and one scratch `s8` flag for the whole function: the
   saved registers follow. A flag tested through `addu v0,s0,zero` is `s8`, not `u8` or `s32`.

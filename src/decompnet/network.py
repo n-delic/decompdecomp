@@ -433,7 +433,10 @@ def move_on_brief(fn, after=None) -> str:
              else "this function’s size")
     return (f"move on after {after} compiles in a row without a better score ({basis}; "
             f"each compile_and_diff result shows the count). Recovery above the inherited best does not reset it. "
-            'To leave earlier with a reason, use release_function(move_on=true, claim_token="the current claim_token", notes="what you tried and why").')
+            'To leave earlier with a reason, use release_function(move_on=true, claim_token="the current claim_token", notes="what you tried and why").'
+            + (' Near-match: read guide("near-match") first; for register or order rows, compiler_passes shows the '
+               'allocation priorities and passes, and score_permutations grids statement orders and edit combinations.'
+               if near_match(best) else ''))
 
 
 def normalized_source(source: str) -> str:

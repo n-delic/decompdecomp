@@ -834,6 +834,8 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Consumed-constant forward switch repair | ✓ proven C32 GCC ROM profiles | — real-profile validation planned | — invocation/validation planned | — | — | — invocation/validation planned | — | — external invocation proof planned | — external invocation proof planned | — | — external invocation proof planned | — external invocation proof planned |
 | Branch integer-one staging / measured loop combinations | ✓ proven C32 / known frame | — profile validation planned | — profile validation planned | — | — | — profile validation planned | — | — frame/invocation proof planned | — frame/invocation proof planned | — | — frame/invocation proof planned | MIPS known-frame lane; invocation/other frame proof planned |
 | Permuter on near misses | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Agents read compiler passes and allocation priorities (`compiler_passes`) | ✓ GCC (IDO —: no pass dumps) | — GCC unchecked | — GCC unchecked | — | — | — GCC unchecked | — | — Metrowerks prints none | — MSVC prints none | — | — | — own build |
+| Agents grid statement orders and edit combinations with the exact judge (`score_permutations`) | ✓ ROM | ✓ ROM | ✓ ROM | — | — | ✓ ROM | — | — judge worker is ROM-only | — judge worker is ROM-only | — | — judge worker is ROM-only | — judge worker is ROM-only |
 | Hand-written assembly set aside | ✓ | ✓ | ✓ | ✓ (`sc` stubs) | — | ✓ | ✓ (`_call_via` helpers, `svc`/`swi` stubs) | ✓ | Visual C++'s exception-handling stubs (64-bit: the funclets its exception data names) | Visual C++'s exception-handling stubs | BIOS call stubs, pieces of functions | MIPS, PowerPC, ARM's BIOS stubs and pieces of functions |
 | Source splitting (`split_file`) | — | — | — | — | — | — | — | ✓ | ✓ | ✓ | ✓ | by project |
 | Pieces of functions joined to their function | — | — | — | — | — | — | — | — | ✓ (`scratch.merge_pieces`; 64-bit: .pdata's extents, none to join) | ✓ (`scratch.merge_pieces`) | ✓ (`recover.merge_pieces`) | — |
@@ -2086,6 +2088,10 @@ reuse the saved map. See [ROM Explorer](docs/ROM_EXPLORER.md) for support and li
   gets the copy's secure area checksum (of the area encrypted, which a dump no longer is; dsd left it 0). The game
   that differed rebuilds identical, its 1,784 recovered functions included. Projects made before get their build
   fixed at start (`scratch.write_tools`, kept unless an identical rebuild stops being one).
+- **Near-match tools in project mode and on other GCC consoles.** `compiler_passes` runs only where the app's own
+  compiler adapter compiles a native GCC driver (checked on N64 KMC GCC); PS1/PS2/PSP GCC builds need a run each, and
+  project-mode units compile through their own build. `score_permutations` needs a standalone objdiff judge worker
+  for project mode (`app/score_permutations.py`, `app/compiler_passes.py`).
 - **The permuter's real rewrites in forks.** decomp-permuter got no header in a fork, so it refused every
   function ("Syntax error in base.c": `u16` was no type it knew) and only the six simple rewrites ran, in every
   fork and on DS. It now reads what the function's file includes and declares.
