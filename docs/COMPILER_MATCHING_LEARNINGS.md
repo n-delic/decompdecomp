@@ -11194,3 +11194,13 @@ not a controlled test.
   these folded and collapsed, per site, per interleaved group and all
   together. From the 340 source its all-sites child is exact in one
   step; the stock families' best single step there was 100.
+
+### Advance a halfword cursor on sentinel loop entry
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, an isolated N64
+draft advanced a cast halfword cursor twice as far before the first
+iteration. Correcting the initial pointer arithmetic alone reduced
+the linked score from 200 to 60. Moving the advance to the beginning
+of the loop reproduced the target's ordering around the sentinel
+guard and call, bringing the score to 0. The deep permuter recognized
+and saved the combined repair from score 200.
