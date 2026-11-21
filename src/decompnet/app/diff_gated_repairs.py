@@ -196,7 +196,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         if candidate_source := uncached_read_repairs.rewrite(source, name, asm or '', resolve):
             result.append(('measured_uncached_word_read', candidate_source))
         result += measured_control_flow.variants(source,name,rows)
-        result += measured_memory_order.variants(source,name,rows)
+        result += measured_memory_order.variants(source,name,rows,resolve=resolve,header=header)
         result += measured_expression_repairs.variants(source,name,header,rows)
         result += measured_temporary_repairs.variants(source,name,rows)
         if candidate_source := measured_callback_loop.rewrite(source, name, asm or '', header, resolve):
