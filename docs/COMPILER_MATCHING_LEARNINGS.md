@@ -9180,3 +9180,24 @@ target reads three input fields before the first relocated store, then
 interleaves two more loads with the stores. Staging all five reads at
 their observed positions reproduced all 64 linked bytes. Staging only
 the first three and inlining the last two reached a score of 650.
+
+### Incoming arguments and early memory effects in short MIPS routines
+
+- Four seven-instruction wrappers compiled with
+  `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` scored 5. They set a
+  literal only in the second argument register, in the call's delay
+  slot. Restoring the wrapper's missing first parameter and passing it
+  through alongside the literal reproduced all 28 linked bytes each.
+- Three six-instruction linked-list inserts compiled with the same
+  KMC flags, with and without `-g3`, scored 135 after random rewrites
+  reordered the stores. Restoring the store order alone scored 220.
+  Caching the global base and reading the previous head before storing
+  the new link reproduced all 24 linked bytes each.
+- Three eight-instruction guarded getters compiled with those KMC flags
+  scored 230 with a zero-initialized result local or a ternary return.
+  An explicit conditional zero return followed by the value return
+  reproduced all 32 linked bytes each. A conditional value return
+  followed by the zero return still scored 15.
+
+All measurements use copied projects and the original judge. Fresh
+drafts and Deep Permuter proposals matched in all ten cases.

@@ -8,6 +8,7 @@ from decomprepair import (
     byte_cursor_postincrements,
     field_snapshot_copies,
     float_matrix_identity,
+    global_pointer_local_repairs,
     indexed_field_cursor,
     kmc_cast_repairs,
     likely_branch_cursor,
@@ -28,6 +29,7 @@ from decomprepair import (
     passthrough_argument_repairs,
     relocated_byte_table,
     relocated_global_update,
+    shared_return_repairs,
     split_dispatch_zero_case,
     stack_read_retry,
     targeted_switch_labels,
@@ -226,6 +228,10 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
             result.append(('ordered_halfword_updates', candidate_source))
         if candidate_source := aligned_stack_read.rewrite(source, name, asm or ''):
             result.append(('aligned_stack_read', candidate_source))
+        if candidate_source := global_pointer_local_repairs.rewrite_linked_insert(source, name, asm or '', header):
+            result.append(('linked_insert', candidate_source))
+        if candidate_source := shared_return_repairs.rewrite_global_guard(source, name, asm or ''):
+            result.append(('guarded_global_return', candidate_source))
         if candidate_source := passthrough_argument_repairs.missing_entry_argument(source, name, asm or '', header):
             result.append(('entry_wrapper_argument', candidate_source))
         if candidate_source := loop_storage_shapes.measured_copy_setup(source, name, asm or '', header):
