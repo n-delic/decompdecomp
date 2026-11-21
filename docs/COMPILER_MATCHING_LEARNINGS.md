@@ -12635,3 +12635,15 @@ delay-slot schedule. With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`,
 the linked difference score went from 225 to an exact match. Tests cover the
 observed instruction differences and guards for pointer mutation, escape and
 volatile use. This is one observed match.
+
+### KMC GCC 2.7.2: collapse identical scalar assignments in both branches
+
+Two side-effect-free conditionals in a scratch draft assigned the same
+literal in either arm. Replacing both with unconditional assignments
+removed one extra instruction and changed the surrounding register
+allocation and branch layout. A single rewrite scored 245, and applying
+both reached 130 from the original score of 410.
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, the released v0.5.302
+control stayed at 410 after 100 attempts. The measured rule saved 130
+through the Deep Permuter. Five byte differences remain.
