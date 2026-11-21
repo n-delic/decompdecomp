@@ -11708,3 +11708,29 @@ beam-40 pass. The ranking only orders candidates; the byte judge decides.
 - float_sum_split's `do { } while (0)` boundary: the family emits the placement the hand grid found; choosing it
   from the allocation evidence was not built. The allocation-ranked moves (`allocation_moves`) rank statement moves
   only; a boundary placement needs a scheduling-side model (where the field load may move), next step.
+
+### Write the shared products into their stores, and store in index order
+
+With gcc-2.7.2-kmc `-G0 -mips3 -mgp32 -mfp32 -O2`, a 3x3 rotation-matrix builder (three angles in, three `__cosf`
+and three `sinApprox` calls, nine float stores, 97 instructions) was 15 for a long time: 94 of 97 instructions
+exact and three multiplies scheduled in a different order (the register of each product was already right). Agents
+tried statement order of the named products, declaration order, `register`, operand order and inlining one
+temporary at a time: all 15 or worse (25 to 785), and a random walk over statement moves and per-product inlining
+(32,000 compiles) never went below 15.
+
+What matched was the plain form: no product temporaries, no in-place sums, one statement per output with the
+expression written out and the outputs in index order,
+`matrix[1] = (cz * sy) * sx - (sz * cx);` ... `matrix[8] = cy * cx;`, with the calls and the angle scaling before
+them unchanged. The two changes only work together: every product inlined with the old store order scored 70, the
+old temporaries with the stores in index order 180, both 0. The scheduler (sched1, then sched2 after allocation)
+puts the shared products in the order their first use appears, and the stores' order decides that order; the
+shared products are found again by the common-subexpression pass, so the inlined form still computes each once.
+The sibling function in the same game (same trig prefix, 4x4 matrix) had the same hand-written shape.
+
+Evidence: one function, judged 0 by the app, plus decomp-repair 0.5.260's `store_expression_form`, whose second
+child on the saved score-15 source is the matching source (the first child, inlining only, is 70). Not yet
+controlled across other functions; run it before assuming it applies to a matrix routine that stores through
+computed pointers (the family only reads `base[N] = e;` stores and declines when any expression reads memory).
+Failed on this function: reordering only the three products (50, 25), swapping szsx/szsy (15), moving m11 before
+m01 (85), a direct form with a single reused angle local (442-512: the prologue then differs), and the
+`-fno-schedule-insns` compiler flags (522 and worse).
