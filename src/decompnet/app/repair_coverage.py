@@ -191,6 +191,8 @@ def verify(feedback, example):
         if candidate := loop_storage_shapes.measured_copy_setup(source, fn['name'], fn['asm'] or '', header):
             focused.append(('measured_copy_loop_setup', candidate))
         focused += measured_callback_repairs.variants(source, fn['name'], rows)
+        if candidate := measured_address_repairs.rewrite_byte_offsets(source, fn['name'], fn['asm'] or '', header):
+            focused.append(('byte_scaled_global_offset', candidate))
         focused += measured_address_repairs.variants(source, fn['name'], header, rows, symbols)
         focused += measured_pointer_scale.variants(source, fn['name'], header, rows)
         focused += measured_immediate_repairs.variants(source, fn['name'], rows)
