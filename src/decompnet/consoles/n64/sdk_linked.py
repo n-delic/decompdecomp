@@ -22,7 +22,15 @@ _KNOWN = {
 }
 # The PI manager references the EPI DMA entry. The scheduler uses linked
 # addresses for queues and OS globals when saving and restoring context.
+_CLEANUP_ROM = 'aa576624f2a66034cb0d6e621ba16a0d3beaca3a'
+_CLEANUP_IMAGE = '70d08c55952d61fdb1e52a04836bd75b5bc2a428'
 _LIBULTRA = {
+    _CLEANUP_IMAGE: {
+        'f5183d7de6c4f9af7e9cbef377ed73e3777aded4aca8c731517b942ae3b0eb22':
+            ('__osDispatchThread', 380, False, 'os/exceptasm.s'),
+        '7293df9a83f05c62098c262ee68f059973d64519cae0ca9dd53cef242eeb8ff9':
+            ('__osCleanupThread', 12, False, 'os/exceptasm.s'),
+    },
     _LINKED_IMAGE: {
         '6df5833b52a06e452920791e169336c96b19c5fb45c111dca9b4950e844bb6bf':
             ('__osEPiRawStartDma', 492, True, 'io/epirawdma.c'),
@@ -88,6 +96,9 @@ _MERGED_SCHEDULER = '7d564e31a6368dd0ec8d03a12c38dbf239fd9295dcf26a9f4bdcf3c4fcc
 
 def split_scheduler(result, image_sha1: str) -> None:
     """Split a specifically verified merged scheduler target during ROM analysis."""
+    if image_sha1 == _CLEANUP_ROM:
+        _split_cleanup_padding(result)
+        return
     if image_sha1 != _LINKED_IMAGE:
         return
     from ...rom.split import split_function
@@ -102,4 +113,25 @@ def split_scheduler(result, image_sha1: str) -> None:
         dispatch, tail = split_function(fn, cleanup, f'func_{cleanup:08X}')
         cleanup_fn, mask_fn = split_function(tail, mask, f'func_{mask:08X}')
         result.functions[index:index + 1] = [dispatch, cleanup_fn, mask_fn]
+        return
+
+
+_CLEANUP_WITH_PADDING = '68cdef5461e1450d4fadc5c4fc480fc9e828e9a874925593bfd890aa18583e53'
+
+
+def _split_cleanup_padding(result):
+    from ...rom.split import split_function
+
+    for index, (fn, padding) in enumerate(zip(result.functions, result.functions[1:])):
+        if (fn.size != 392 or padding.size != 4 or padding.rom != fn.rom+fn.size
+                or padding.vram != fn.vram+fn.size or padding.vram in result.named.values()):
+            continue
+        code = b''.join(line.word.to_bytes(4, 'big') for line in (*fn.lines, *padding.lines))
+        if hashlib.sha256(code).hexdigest() != _CLEANUP_WITH_PADDING:
+            continue
+        # The dispatcher ends at ERET. The following cleanup stub destroys its
+        # own thread and cannot return to the alignment word after its call.
+        cleanup = fn.vram+380
+        head, tail = split_function(fn, cleanup, f'func_{cleanup:08X}')
+        result.functions[index:index+2] = [head, tail]
         return
