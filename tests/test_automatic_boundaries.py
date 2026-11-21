@@ -567,3 +567,29 @@ def test_terminal_alignment_before_float_fields_and_addresses():
     image += struct.pack('>4f4I', 1, 50, -50, 0, BASE, BASE+4, BASE+8, BASE+4)
     result = repair(functions, [], image, consoles.get('n64'), segments)
     assert [fn.rom for fn in result] == [0]
+
+
+@pytest.mark.parametrize('case', ['delay', 'named', 'entry'])
+def test_alignment_call_before_a_validated_frame_only_targets_a_delay_slot(case):
+    target = BASE+48 if case == 'entry' else BASE+60
+    call = 0x0C000000 | ((target >> 2) & 0x3FFFFFF)
+    words = [0x8C820000, 0x03E00008, 0, call]+BODY+BODY
+    image, functions, segments = fixture(words, cuts=(0, 12, 48, 80))
+    symbols = [f'entry = 0x{BASE+12:08X};'] if case == 'named' else ()
+    result = repair(functions, [], image, consoles.get('n64'), segments, symbols=symbols)
+    assert [fn.rom for fn in result] == [0, 16 if case == 'delay' else 12, 48]
+
+
+@pytest.mark.parametrize('case', ['data', 'named', 'bad_size'])
+def test_address_record_after_closed_assembly_preserves_only_reachable_bodies(case):
+    target = BASE+92
+    call = 0x0C000000 | ((target >> 2) & 0x3FFFFFF)
+    assembly = [0x20840001, 0, 0x03E00008, 0]
+    record = [call, 0, 0x03E00008, 0, 44 if case == 'bad_size' else 48, *[BASE+0x400]*7]
+    leaf = [0x8C820000, 0x24420001, 0x03E00008, 0]
+    words = assembly+record+leaf+BODY
+    image, functions, segments = fixture(words, cuts=(0, 80, 112))
+    symbols = [f'entry = 0x{BASE+16:08X};'] if case == 'named' else ()
+    result = repair(functions, [], image, consoles.get('n64'), segments, symbols=symbols)
+    expected = [(0, 16), (64, 16), (80, 32)] if case == 'data' else [(0, 80), (80, 32)]
+    assert [(fn.rom, fn.size) for fn in result] == expected
