@@ -10489,3 +10489,12 @@ controlled one). The colour block sets three bytes to 0xFF or 0xBF, with the tar
   included) gave the polarity; the RTL dumps (`cc1 -dj -dr`) show where the pass moved the blocks.
 - decomp-repair v0.5.188 `join_initializer_sink` produces the sunk, literal and `u8` forms; on the function's saved best
   the last child scores exactly like the hand-matched source locally, and it runs in the deep local pass.
+### Share a halfword index across two guarded score loops
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, a scratch N64 function
+scored 50. The target narrows the same callee's result into one register in
+both loops, while the draft uses two different registers. Reusing the same
+index local, declaring the score separately after its original declaration
+group, and inlining the second loop's halfword load as the left operand of the
+equality brought the linked score to 0. Leaving the score in its declaration
+group left score 40. The deep permuter reproduced and saved the byte match.
