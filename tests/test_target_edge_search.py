@@ -535,6 +535,33 @@ def test_kmc_proposes_staging_a_shift_and_mask_after_a_call():
     assert 'measured_staged_shift_mask' not in dict(route(source, rows, 'asm', compiler='ido-5.3'))
 
 
+def test_kmc_proposes_stack_buffer_fills_and_direct_global_reloads(monkeypatch):
+    from decomprepair import relocated_global_update, stack_fill_drafts
+
+    monkeypatch.setattr(stack_fill_drafts, 'rewrite', lambda *args: 'indexed buffer')
+    monkeypatch.setattr(relocated_global_update, 'rewrite_reload_wrapper', lambda *args: 'direct reload')
+    rows = [('s', 'addiu $sp, $sp, -48', 'addiu $sp, $sp, -32')]
+    kmc = dict(route('void f(void) {}', rows, 'asm'))
+    assert kmc['descending_stack_fill'] == 'indexed buffer'
+    assert kmc['direct_global_reload'] == 'direct reload'
+    ido = dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
+    assert 'descending_stack_fill' not in ido
+    assert 'direct_global_reload' not in ido
+
+
+def test_kmc_proposes_address_range_returns_and_linked_list_transfers(monkeypatch):
+    from decomprepair import direct_mapped_address, global_pointer_local_repairs
+
+    monkeypatch.setattr(direct_mapped_address, 'rewrite', lambda *args: 'separate returns')
+    monkeypatch.setattr(global_pointer_local_repairs, 'rewrite_list_transfer', lambda *args: 'retained node')
+    rows = [('r', 'and $v0, $a0, $v1', 'and $a1, $a0, $v1')]
+    kmc = dict(route('void f(void) {}', rows, 'asm'))
+    assert kmc['direct_mapped_address'] == 'separate returns'
+    assert kmc['list_node_transfer'] == 'retained node'
+    ido = dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
+    assert 'direct_mapped_address' not in ido
+    assert 'list_node_transfer' not in ido
+
 def test_kmc_proposes_unsigned_literal_stores_from_matching_byte_destinations():
     source = 'extern s8 flag;\nvoid f(void) {\n    flag = 0xFF;\n}'
     instructions = ('lui $at, %hi(flag)', 'sb $v0, %lo(flag)($at)')

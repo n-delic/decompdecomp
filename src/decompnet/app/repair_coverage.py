@@ -101,6 +101,7 @@ def verify(feedback, example):
             aligned_allocator_request,
             aligned_stack_read,
             byte_cursor_postincrements,
+            direct_mapped_address,
             field_snapshot_copies,
             float_matrix_identity,
             global_pointer_local_repairs,
@@ -127,6 +128,7 @@ def verify(feedback, example):
             relocated_global_update,
             shared_return_repairs,
             split_dispatch_zero_case,
+            stack_fill_drafts,
             stack_read_retry,
             uncached_read_repairs,
         )
@@ -159,6 +161,11 @@ def verify(feedback, example):
         if candidate := relocated_global_update.rewrite_countdown(source, fn['name'], fn['asm'] or '', header,
                                                                   symbols.resolve if symbols else None):
             focused.append(('relocated_countdown', candidate))
+        if candidate := stack_fill_drafts.rewrite(source, fn['name'], fn['asm'] or '', header):
+            focused.append(('descending_stack_fill', candidate))
+        if candidate := relocated_global_update.rewrite_reload_wrapper(
+                source, fn['name'], fn['asm'] or '', header, symbols.resolve if symbols else None):
+            focused.append(('direct_global_reload', candidate))
         if candidate := stack_read_retry.rewrite(source, fn['name'], fn['asm'] or '', header):
             focused.append(('stack_read_retry', candidate))
         if candidate := stack_read_retry.rewrite_inline(source, fn['name'], fn['asm'] or '', header):
@@ -182,6 +189,10 @@ def verify(feedback, example):
             focused.append(('ordered_halfword_updates', candidate))
         if candidate := aligned_stack_read.rewrite(source, fn['name'], fn['asm'] or ''):
             focused.append(('aligned_stack_read', candidate))
+        if candidate := direct_mapped_address.rewrite(source, fn['name'], fn['asm'] or '', header):
+            focused.append(('direct_mapped_address', candidate))
+        if candidate := global_pointer_local_repairs.rewrite_list_transfer(source, fn['name'], fn['asm'] or '', header):
+            focused.append(('list_node_transfer', candidate))
         if candidate := global_pointer_local_repairs.rewrite_linked_insert(source, fn['name'], fn['asm'] or '', header):
             focused.append(('linked_insert', candidate))
         if candidate := shared_return_repairs.rewrite_global_guard(source, fn['name'], fn['asm'] or ''):

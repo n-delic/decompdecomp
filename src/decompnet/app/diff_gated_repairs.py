@@ -6,6 +6,7 @@ from decomprepair import (
     aligned_allocator_request,
     aligned_stack_read,
     byte_cursor_postincrements,
+    direct_mapped_address,
     field_snapshot_copies,
     float_matrix_identity,
     global_pointer_local_repairs,
@@ -31,6 +32,7 @@ from decomprepair import (
     relocated_global_update,
     shared_return_repairs,
     split_dispatch_zero_case,
+    stack_fill_drafts,
     stack_read_retry,
     targeted_switch_labels,
     uncached_read_repairs,
@@ -206,6 +208,10 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
             result.append(('relocated_global_update', candidate_source))
         if candidate_source := relocated_global_update.rewrite_countdown(source, name, asm or '', header, resolve):
             result.append(('relocated_countdown', candidate_source))
+        if candidate_source := stack_fill_drafts.rewrite(source, name, asm or '', header):
+            result.append(('descending_stack_fill', candidate_source))
+        if candidate_source := relocated_global_update.rewrite_reload_wrapper(source, name, asm or '', header, resolve):
+            result.append(('direct_global_reload', candidate_source))
         if candidate_source := stack_read_retry.rewrite(source, name, asm or '', header):
             result.append(('stack_read_retry', candidate_source))
         if candidate_source := stack_read_retry.rewrite_inline(source, name, asm or '', header):
@@ -228,6 +234,10 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
             result.append(('ordered_halfword_updates', candidate_source))
         if candidate_source := aligned_stack_read.rewrite(source, name, asm or ''):
             result.append(('aligned_stack_read', candidate_source))
+        if candidate_source := direct_mapped_address.rewrite(source, name, asm or '', header):
+            result.append(('direct_mapped_address', candidate_source))
+        if candidate_source := global_pointer_local_repairs.rewrite_list_transfer(source, name, asm or '', header):
+            result.append(('list_node_transfer', candidate_source))
         if candidate_source := global_pointer_local_repairs.rewrite_linked_insert(source, name, asm or '', header):
             result.append(('linked_insert', candidate_source))
         if candidate_source := shared_return_repairs.rewrite_global_guard(source, name, asm or ''):

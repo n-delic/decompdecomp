@@ -9291,6 +9291,52 @@ local held the shift and its subsequent mask. This reproduced all 76
 linked bytes on each copied project, with the mask in the branch delay
 slot.
 
+### Descending byte fills in one outgoing stack buffer
+
+Four N64 functions built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`
+(with `-g3` for one) scored 10. The draft used separate scalars for the
+end of the byte fill and the start of the buffer passed to a call. The
+target's two stack addresses, fill count and first saved register bound a
+single 32-byte allocation.
+
+An eight-word array restored the measured extent and alignment.
+Filling its bytes with a descending index reproduced all 100 linked bytes
+per example on copied projects. A descending pointer emitted the same
+bytes in a scratch trial. The indexed loop stays within the array.
+
+### Direct global loads before successive calls
+
+Eight N64 wrappers built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`
+scored 658 because KMC kept the draft's field address in a saved register.
+The target instead uses a direct relocation before each of two calls. Both
+pairs of machine words independently resolve to the same data address.
+
+Replacing the two field expressions with a direct word declaration
+preserved the reload after the first call and reproduced all 64 linked
+bytes for each example on a copied project.
+
+### Preserve two direct-mapped address returns
+
+Six N64 routines built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`
+(one also used `-g3`) scored 235. The target returned the masked input
+independently for each unsigned address range and left the original
+argument in the first register for the fallback call.
+
+Two independent return statements with arithmetic on an unsigned
+input reproduced all 84 linked bytes per routine on copied projects.
+Combining the range checks scored 570. Routing both checks to a shared
+return scored 415.
+
+### Preserve a list node across unlink and link calls
+
+Five N64 routines built with the same KMC flags scored 673. The draft
+read the source list head again after unlinking it. The target passes the
+same saved node to both calls and reloads the head only after the second.
+
+Keeping the node in a local and computing the destination argument at
+the second call reproduced all 84 linked bytes per example. Keeping a
+separate destination local added a saved register and scored 652.
+
 ### Unsigned byte constants at stores
 
 A 4,760-byte N64 function compiled with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`
