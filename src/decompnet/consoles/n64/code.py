@@ -302,20 +302,24 @@ def _looks_like_code(data: bytes) -> bool:
     return sum(w == JR_RA for w in words) >= 16 and sum(is_frame(w) for w in words) >= 16
 
 
-def _rare(rom: bytes, at: int) -> tuple[bytes, int] | None:
-    """Rare's packing at `at`: 0x1172/0x1173, maybe the unpacked size (3 bytes), then a raw deflate stream.
+def _rare(rom: bytes, at: int, *, headers=(6,5,2), minimum=0x1000) -> tuple[bytes, int] | None:
+    """Rare's packing at `at`: 0x1172/0x1173, an optional three- or four-byte size, and raw deflate.
     Returns (unpacked, packed length)."""
-    for skip in (5, 2):
+    for skip in headers:
+        expected = int.from_bytes(rom[at+2:at+skip], "big") if skip > 2 else None
+        if expected is not None and not minimum <= expected <= 0x1000000:
+            continue
         d = zlib.decompressobj(-15)
+        view = memoryview(rom)[at+skip:at+skip+0x800000]
         try:
-            out = d.decompress(rom[at + skip:at + skip + 0x800000], 0x1000000)
+            out = d.decompress(view, (expected+1) if expected is not None else 0x1000000)
         except zlib.error:
             continue
-        if not d.eof or len(out) < 0x1000:
+        if not d.eof or len(out) < minimum:
             continue
-        if skip == 5 and int.from_bytes(rom[at + 2:at + 5], "big") != len(out):
+        if expected is not None and expected != len(out):
             continue
-        return out, skip + len(rom[at + skip:at + skip + 0x800000]) - len(d.unused_data)
+        return out, skip+len(view)-len(d.unused_data)
     return None
 
 
@@ -423,15 +427,17 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
 
     original = image
     rom = (workdir / image).read_bytes()
+    original_rom = rom
     packed = unpack_code(rom)
+    locations = []
     if packed:
         work = bytearray(rom)
         for _, data in packed:  # each after a gap, so pieces of different blocks never run together
             work += bytes(-len(work) % 0x10 + 0x2000)
+            locations.append(len(work))
             work += data
         work += bytes(-len(work) % 0x10)
         image = f"{Path(image).stem}.unpacked{Path(image).suffix}"
-        (workdir / image).write_bytes(work)
         rom = bytes(work)
         kib = sum(len(d) for _, d in packed) // 1024
         log(f"unpacked {len(packed)} compressed code block{'s' if len(packed) != 1 else ''} ({kib} KiB)")
@@ -439,6 +445,10 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
     known = split.segments_from_config(config)
     found = find_segments(rom, taken, tuple(s.rom_end for s in known), log=log,
                           declared=tuple((s.rom_start, s.rom_end, s.vram) for s in known)) if taken else []
+    if packed and found:
+        from . import rare_overlays
+        if result := rare_overlays.add(config,workdir,original,original_rom,packed,found,locations,log):
+            return result
     if taken:  # what the game loads that the search couldn't place: found by running it (when the emulator's here)
         from .loaded_code import find as run_and_find
 
@@ -456,6 +466,7 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
         return original
     cfg = yaml.safe_load(config.read_text(encoding="utf-8"))
     if packed:
+        (workdir/image).write_bytes(rom)
         cfg.setdefault("options", {})["target_path"] = image
         cfg["sha1"] = hashlib.sha1(rom).hexdigest()
     insert_segments(config, cfg, found, len(rom))
