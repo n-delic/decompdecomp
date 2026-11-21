@@ -118,3 +118,23 @@ def test_whole_unit_preprocessor_refuses_foreign_include_spellings():
     for spelling in ('#include "secret"', '#/**/include "secret"', '%:include "secret"',
                      '#inc\\\nlude "secret"', '??=include "secret"'):
         assert preprocess_donor_unit(config, spelling) is None
+
+
+def test_whole_unit_ido_preprocessing_accepts_line_comments(tmp_path):
+    import pytest
+
+    from decompnet import toolchains
+    from decompnet.compiler import preprocess_donor_unit
+    from decompnet.project import compiler_config
+
+    if not toolchains.installed('ido-7.1'):
+        pytest.skip('requires the installed pinned IDO 7.1 compiler')
+    invocation = compiler_config(tmp_path, {
+        'compiler': {'toolchain': 'ido-7.1', 'flags': ['-O2', '-G', '0', '-non_shared', '-Xcpluscomm']}})
+    source = ("// The original compiler doesn't recognize this as a comment in preprocessing mode. " + chr(92) + "\n"
+              "continued comment contents\n"
+              'char *part = "https://example.org";\nint entry(void) { return 7; }\n')
+    output = preprocess_donor_unit(invocation, source)
+    assert output is not None
+    assert 'int entry' in output and 'https://example.org' in output
+    assert 'continued comment contents' not in output

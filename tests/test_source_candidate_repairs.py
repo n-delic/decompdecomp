@@ -103,6 +103,20 @@ def test_unpaired_or_unsupported_relocations_are_not_guessed(monkeypatch):
     assert not mips.bindings(b'obj','entry',raw,0x80001000,lambda n:None)
 
 
+def test_overlay_aliases_require_equal_code_and_unambiguous_relocation_sites():
+    from decompnet.elfobj import FunctionObj, Reloc
+
+    def obj(relocs, code=b'\0' * 16):
+        return FunctionObj('fn', 'mips', True, code, relocs)
+
+    candidate = obj([Reloc(0, 5, 'source_data', 0), Reloc(4, 6, 'source_data', 0)])
+    expected = obj([Reloc(0, 5, 'loader_symbol', 0), Reloc(4, 6, 'loader_symbol', 0)])
+    assert symbols.relocation_aliases(candidate, expected) == {'source_data': 'loader_symbol'}
+    assert not symbols.relocation_aliases(candidate, obj(expected.relocs, b'\x01' * 16))
+    assert not symbols.relocation_aliases(candidate, obj([Reloc(0, 5, 'loader_symbol', 0)]))
+    assert not symbols.relocation_aliases(candidate, obj([*expected.relocs[:1], Reloc(4, 6, 'another', 0)]))
+
+
 def test_private_alias_pair_preserves_literals_and_comments():
     source='int entry(void){ return missing(); } // missing\nchar *s="missing";'
     header='int missing(void);'

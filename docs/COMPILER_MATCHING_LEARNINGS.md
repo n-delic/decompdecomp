@@ -1241,6 +1241,19 @@ fixtures here are synthetic.
 
 ## IDO 5.3 / 7.1, 32-bit big-endian MIPS
 
+### IDO 7.1 whole-unit preprocessing and line comments
+
+A private big-endian MIPS N64 donor with a byte-identical base ROM failed before the
+judge could test much of its verified C. IDO 7.1 run as a preprocessing pass with
+`-O2 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul -DNON_MATCHING`
+treated apostrophes in C++-style comments as unterminated character constants.
+Preparing the file by blanking line comments, including continued comments, while
+preserving quoted literals and physical line breaks let the same pinned compiler
+preprocess the unit. The transplant then reproduced exact bytes for real functions
+on an isolated copy. The synthetic regression checks preprocessing output and the
+whole-unit fixture independently rechecks a saved function through the ROM judge.
+The port-only include diagnosed during inspection was under an inactive conditional.
+
 ### Observation: source layout sensitivity (IDO 5.3)
 
 The existing [IDO guide](../src/decompnet/consoles/n64/guides/ido.md) records a private same-source

@@ -141,6 +141,7 @@ def verify(net, proj, fn, other, donor, names, settings, agent, job, cache):
         current = store.one('SELECT * FROM projects WHERE id=?', proj['id'])
         private = {**dict(current), 'config': json.dumps(prepared_evidence.scoped_config(current, fn, settings))}
         reason = 'Donor source did not reproduce the original bytes.'
+        whole_reason = ''
         if proj['arch'] == 'mips':
             try:
                 _, invocation = net._invocation(private, fn)
@@ -148,7 +149,7 @@ def verify(net, proj, fn, other, donor, names, settings, agent, job, cache):
             except (NetworkError, OSError, ValueError):
                 whole = None
             if whole:
-                accepted, reason = _try(net, current, private, fn, *whole, agent, job)
+                accepted, whole_reason = _try(net, current, private, fn, *whole, agent, job)
                 if accepted:
                     return 'match', 'Verified from a saved donor translation unit.'
         for body, header, _ in donor_sources.imported(net, other, donor, cache):
@@ -160,7 +161,7 @@ def verify(net, proj, fn, other, donor, names, settings, agent, job, cache):
             accepted, reason = _try(net, current, private, fn, source, header, agent, job)
             if accepted:
                 return 'match', 'Verified with donor header and per-file compiler settings.'
-        return 'miss', reason
+        return 'miss', whole_reason or reason
     finally:
         net.permuter._let_go(agent, fn)
 
@@ -199,10 +200,18 @@ def _try(net, proj, private, fn, source, header, agent, job):
                             exact_inputs={**evidence, 'source': source, 'header': header},
                             before_record=still_claimed)
             return True, ''
-        recover = arch.get(proj['arch']).source_symbol_bindings
-        bindings = (recover(result.obj, fn['name'], fn['target'], fn['vram'], net.symbols(proj['id']).resolve)
-                    if recover and not rebound else [])
-        variants = source_symbol_recovery.variants(source, header, {'symbol_bindings': bindings})
+        variants = []
+        if not rebound:
+            if net.console(proj).export_overlay(net._rom_target(fn)) is not None:
+                aliases = source_symbol_recovery.relocation_aliases(candidate, net._target_obj(fn, proj))
+                if aliases:
+                    variants = [('overlay-symbols', source_symbol_recovery.rename(source, aliases),
+                                 source_symbol_recovery.rename(header, aliases))]
+            else:
+                recover = arch.get(proj['arch']).source_symbol_bindings
+                bindings = (recover(result.obj, fn['name'], fn['target'], fn['vram'], net.symbols(proj['id']).resolve)
+                            if recover else [])
+                variants = source_symbol_recovery.variants(source, header, {'symbol_bindings': bindings})
         if not variants:
             return False, '; '.join(problems) or 'Donor source did not reproduce the original bytes.'
         _, source, header = variants[0]

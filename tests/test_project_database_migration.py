@@ -51,6 +51,25 @@ def legacy(path):
     close(net)
 
 
+def test_reopening_project_storage_preserves_cross_project_donor_history(tmp_path):
+    path = tmp_path / 'catalog.db'
+    legacy(path)
+    net = Network(path, project_databases=True)
+    try:
+        store = net.project_store('second')
+        with store.tx() as db:
+            db.execute("INSERT INTO cross_game_attempts(project_id,function_id,source_project_id,source_function_id,"
+                       "outcome,reason,created_at) VALUES(2,20,1,10,'match','exact donor',1)")
+    finally:
+        close(net)
+    restarted = Network(path, project_databases=True)
+    try:
+        row = restarted.project_store('second').one('SELECT source_project_id,outcome FROM cross_game_attempts')
+        assert dict(row) == {'source_project_id': 1, 'outcome': 'match'}
+    finally:
+        close(restarted)
+
+
 def test_upgrade_moves_operations_and_transcripts_preserving_exact_payloads(tmp_path):
     path = tmp_path/'catalog.db';legacy(path)
     net = Network(path,project_databases=True)

@@ -526,7 +526,13 @@ def preprocess_donor_unit(cfg: CompilerConfig, source: str) -> str | None:
     with _workspace('decompnet-donor-') as tmp:
         work = Path(tmp)
         (work / 'include').mkdir()
-        (work / 'unit.c').write_text(source, encoding='utf-8')
+        # Classic preprocessors can parse apostrophes in C++-style comments as
+        # unterminated character constants even when the compile accepts those comments.
+        # Keep strings and physical line numbers, including continued comment lines.
+        tokens = re.compile(r'//(?:\\\r?\n|\?\?/\r?\n|[^\n])*|/\*.*?\*/|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'', re.S)
+        text = tokens.sub(lambda match: re.sub(r'[^\r\n]', ' ', match[0])
+                          if match[0].startswith('//') else match[0], source)
+        (work / 'unit.c').write_text(text, encoding='utf-8')
         root = _root(cfg, work)
         values = {'{src}': root+'/unit.c', '{obj}': root+'/unit.i', '{include}': root+'/include'}
         argv = [values.get(arg, arg.replace('{include}', values['{include}'])) for arg in cfg.cmd]

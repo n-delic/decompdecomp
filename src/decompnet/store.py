@@ -716,8 +716,10 @@ class Store:
         self.conn.execute("DELETE FROM symbols WHERE project_id NOT IN (SELECT id FROM projects)")
         self.conn.execute("DELETE FROM cross_game_index WHERE project_id NOT IN (SELECT id FROM projects)")
         self.conn.execute("DELETE FROM library_transfers WHERE project_id NOT IN (SELECT id FROM projects)")
-        self.conn.execute("DELETE FROM cross_game_attempts WHERE project_id NOT IN (SELECT id FROM projects) "
-                          "OR source_project_id NOT IN (SELECT id FROM projects)")
+        # In a partition, other projects live in the catalog and their absence
+        # from this database says nothing about whether the donor still exists.
+        self.conn.execute("DELETE FROM cross_game_attempts WHERE project_id NOT IN (SELECT id FROM projects)"
+                          + (" OR source_project_id NOT IN (SELECT id FROM projects)" if self.project_namespace is None else ""))
         # before 0.10.4 a twin's try left the function claimed by the autopilot for 30 minutes, and each expiry
         # counted as an agent giving up on it: thousands of functions were put last for nothing. Counted again,
         # once, from what agents actually did (releases, and their own claims that ran out)

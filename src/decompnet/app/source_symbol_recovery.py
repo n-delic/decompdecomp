@@ -20,6 +20,24 @@ def rename(text, aliases):
     return text
 
 
+def relocation_aliases(candidate, target):
+    """Propose aliases for loader symbols when raw code and the relocation sites agree."""
+    if candidate is None or candidate.code != target.code:
+        return {}
+    expected = {(r.offset, r.type): r.symbol for r in target.relocs}
+    actual = {(r.offset, r.type): r.symbol for r in candidate.relocs}
+    if expected.keys() != actual.keys() or len(actual) != len(candidate.relocs) or len(expected) != len(target.relocs):
+        return {}
+    aliases = {}
+    for site, source in actual.items():
+        name = expected[site]
+        if not re.fullmatch(r'[A-Za-z_]\w*', source) or not re.fullmatch(r'[A-Za-z_]\w*', name):
+            return {}
+        if aliases.setdefault(source, name) != name:
+            return {}
+    return {old: new for old, new in aliases.items() if old != new}
+
+
 def variants(source, header, measurement):
     aliases = {row['name']:f"D_{row['address']:08X}" for row in measurement.get('symbol_bindings',[])}
     aliases.update(measurement.get('helper_aliases',{}))

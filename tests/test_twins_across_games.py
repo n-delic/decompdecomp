@@ -331,7 +331,10 @@ def test_saved_whole_donor_unit_reverifies_and_exports_only_its_entry(built, tmp
     root = tmp_path / 'donor'
     (root / 'build').mkdir(parents=True)
     (root / 'words.h').write_text('typedef int s32;\n')
-    whole = '#include "words.h"\nint other_body(int x) { return x + 31; }\n' + CLAMP
+    whole = ('#include "words.h"\n'
+             "// The donor's preprocessing must preserve the next definition. \\\n"
+             "this is still part of the line comment\n"
+             'int other_body(int x) { return x + 31; }\n' + CLAMP)
     (root / 'unit.c').write_text(whole)
     (root / 'build/unit.c').write_text(whole)
     (root / 'objdiff.json').write_text(json.dumps({'units': [

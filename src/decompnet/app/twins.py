@@ -1366,7 +1366,22 @@ class Twins:
         merged = merged_candidates(self.net, proj, theirs.values(), job) if manual else {}
         relaxed = donor_relocations.candidates(self.net, proj, theirs.values(), job) if manual else {}
         label = self.net.symbols(proj['id']).label if relaxed else None
-        for a in self.net.project_store(other['id']).all("SELECT id,project_id,name,unit,meta FROM functions WHERE project_id=? AND status='matched'", other["id"]):
+        donors = self.net.project_store(other['id']).all(
+            "SELECT id,project_id,name,unit,meta FROM functions WHERE project_id=? AND status='matched'", other["id"])
+        if manual:
+            # A common library wrapper can match the fingerprints of dozens of
+            # overlay functions. Try specific leads before spending time on fan-out.
+            def priority(row):
+                fingerprint = theirs.get(row['id'])
+                if not fingerprint or fingerprint.asm:
+                    return (2, 0)
+                key = fingerprint.key
+                count = len(set(wanted.get(key, ())).union(relaxed.get(key, ())))
+                if count:
+                    return (0, count)
+                return (1 if key in merged else 2, 0)
+            donors.sort(key=priority)
+        for a in donors:
             pa = theirs.get(a["id"])
             if pa is None or pa.asm:
                 continue
