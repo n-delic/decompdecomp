@@ -12740,3 +12740,14 @@ With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the linked score
 improved from 220 to an exact match. Moving the increments without using
 post-increment reads only improved the score to 70. This is one observed
 match; synthetic tests cover the target instructions and source shape.
+
+### Byte guard and comparison in one local (KMC GCC 2.7.2)
+
+With `-G0 -mips3 -mgp32 -mfp32 -O2`, a terminal byte guard and comparison
+differed only in the register used by `lbu` and its following `bnez`. Initialize
+an `int` local with the guard byte, assign the comparison to it on the zero
+path, and return it. Preserve the existing jump to the shared zero return.
+The linked judge went from 10 to 0 on a retail N64 function, and the live
+judge saved the match. Direct guard inversion and short-circuit return forms
+did not give an exact match. The diff dispatcher produced no candidate before
+the repair and one exact candidate afterward.
