@@ -420,7 +420,7 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
 
     import yaml
 
-    from . import dma_overlays, overlays, raw_slots, resident_deflate
+    from . import copied_overlays, dma_overlays, overlays, raw_slots, resident_deflate
 
     if result := overlays.add(config, workdir, image, log):
         return result
@@ -451,6 +451,9 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
     known = split.segments_from_config(config)
     found = find_segments(rom, taken, tuple(s.rom_end for s in known), log=log,
                           declared=tuple((s.rom_start, s.rom_end, s.vram) for s in known)) if taken else []
+    if not packed and taken and (banks := copied_overlays.read(original_rom, taken)):
+        copied_overlays.add(config, original_rom, found, banks, log)
+        return original
     if not packed and taken and (banks := dma_overlays.banks(original_rom)):
         dma_overlays.add(config,workdir,original_rom,found,banks,log)
         return original

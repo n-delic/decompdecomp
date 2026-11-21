@@ -751,6 +751,8 @@ on Apple Silicon; physical Intel Mac and retail-game checks remain planned.
 - Startup-registered N64 overlay directories now supply scoped banks for imports, including
   a reserved index between populated records. The directory and its loader establish the ROM
   bounds and shared RAM base. Rebuildable export for overlapping raw banks remains planned.
+- Resident N64 directory copy loops now establish overlay ROM bounds and instruction-cache
+  ranges. Banks that reuse a RAM range keep separate symbols and function boundaries.
 
 ## What works where
 
