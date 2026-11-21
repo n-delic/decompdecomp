@@ -1,7 +1,9 @@
 """Audited inline data and padding that disassemble as MIPS instructions."""
 
 import hashlib
+import math
 import re
+import struct
 
 import yaml
 
@@ -22,8 +24,17 @@ _LITERALS = (
 )
 
 
+# A complete Q14 sine cycle is data even when its negative values decode as
+# load-linked and store-conditional instructions.
+_SINE = struct.pack('>4096h', *(round(16384 * math.sin(i * math.tau / 4096)) for i in range(4096)))
+
+
 def spans(image):
     """Find unchanged fingerprints at word-aligned offsets."""
+    for match in re.finditer(re.escape(_SINE[:24]), image):
+        start = match.start()
+        if start % 4 == 0 and image[start:start+len(_SINE)] == _SINE:
+            yield start, start+len(_SINE)
     for prefix, context, size, digest in _LITERALS:
         for match in re.finditer(re.escape(bytes.fromhex(prefix)), image):
             start = match.start()

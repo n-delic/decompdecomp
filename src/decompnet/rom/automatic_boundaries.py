@@ -575,14 +575,19 @@ def split_alignment_after_leaf(functions, data, image, order, console, owner, se
 
 
 def multiword_alignment(functions, image, order, owner, named, references, direct_calls, data, segments, console):
-    """Find short unreachable tails left by 16-byte alignment of code."""
+    """Find short unreachable tails before aligned code entries."""
     gaps = set()
     entries = {(fn.rom, fn.vram): fn for fn in functions}
     for following in functions:
         if following.vram % 16 or owner(following)[0] < 0:
             continue
         segment = segments[owner(following)[0]]
-        for size in (4, 8, 12):
+        sizes = (4, 8, 12)
+        # Some objects align directly called entries to 32 bytes. Their
+        # unreachable suffix can look like a standalone loop to the splitter.
+        if following.vram % 32 == 0 and following.vram in direct_calls:
+            sizes += (16, 20, 24, 28)
+        for size in sizes:
             start = following.rom - size
             address = following.vram - size
             if start - 8 < segment.rom_start or int.from_bytes(image[start-8:start-4], order) != JR_RA:

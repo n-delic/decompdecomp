@@ -525,6 +525,19 @@ def test_multiword_alignment_between_a_return_and_an_aligned_frame(protect, fill
     assert [fn.rom for fn in result] == ([0,8,16] if protect else [0,16])
 
 
+@pytest.mark.parametrize('protect', [False, True])
+def test_long_alignment_before_a_directly_called_entry(protect):
+    call = 0x0c000000 | ((BASE+32) >> 2) & 0x3ffffff
+    words = [0x8c820000, 0x03e00008, 0, 0,
+             0xa0850000, 0x2463ffff, 0x0461fffd, 0x2484ffff,
+             *BODY, call, 0, 0x03e00008, 0]
+    image, functions, segments = fixture(words, cuts=(0,16,32,32+len(BODY)*4,len(words)*4))
+    symbols = [f'entry = 0x{BASE+16:08X};'] if protect else ()
+    result = repair(functions, [], image, consoles.get('n64'), segments, symbols=symbols)
+    assert any(fn.rom == 16 for fn in result) == protect
+    assert any(fn.rom == 32 for fn in result)
+
+
 @pytest.mark.parametrize('called', [False, True])
 def test_alignment_call_folded_into_the_next_frame(called):
     apparent_call = 0x0c000000 | (BASE >> 2)&0x3ffffff
