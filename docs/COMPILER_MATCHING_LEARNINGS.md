@@ -10632,3 +10632,30 @@ followed by sign-extension shifts and scored 400. A plain signed halfword read
 in a one-shot block retained the original load position and scored 95.
 Declaring the source offset before the other independent loop initializers
 lowered that to 30, leaving four register and prologue differences.
+
+
+## KMC gcc 2.7.2, `-O2`: an `and` whose mask register comes first (N64, a game with about 1,900 functions)
+
+A 23-instruction function that clears nine flag bits (`*flags &= ~0x1c0` after a call) sat at score 5 for hundreds of
+attempts. The one differing row was `and $v0,$v0,$v1` in the target (mask first, loaded word second) against
+`and $v0,$v1,$v0` in ours, with the load and the `addiu $v0,$zero,-0x1c1` in the same registers. **Exact match,
+controlled** (compile only, then the app's judge: byte-identical).
+
+- The cause is in cse, found by dumping the compiler's own passes (`cc1 -dr -dj -dc`): the expanded RTL has the mask
+  first (`(and (reg mask) (reg old))`, the order the source was written in), and cse's `fold_rtx` swaps a register it
+  knows to be a constant into the second operand. So `and rd, mask, x` with the mask first cannot come from
+  `x & mask` however it is spelled. 32 spellings (compound assignment, mask first, mask in a local before or after the
+  load, signed/unsigned, xor and De Morgan forms) and 23 flag sets stayed in one of two register clusters.
+- The source that matches: `u32 updated = (old & ~0x1c0U) | ~0x1c0U; updated &= old; *flags = updated;`. Cse cannot
+  see through `(x & K) | K`, so the mask is no longer a known constant and keeps its place; combine then folds the
+  expression back to the constant (`x & K` is a subset of `K`), so nothing extra is emitted. Several other identities
+  that hide the constant work the same way (`K & (old | K)`, `((u32)obj & K) | K`); `if (obj) u = K; else u = K;` also
+  works but jump.c turns it into a store-flag sequence and leaves two dead pseudos that grow the frame by 16 bytes
+  (`vars= 16`), so it does not match. A mask that fits `andi` (up to 0xFFFF) never takes a register, so none of this
+  applies to it.
+- The rule, not the spelling: **a known constant is always the second operand of a commutative instruction; to get it
+  first, make it unknown to cse and let combine recover it.**
+
+What the permuter has for this: `mask_operand_order` in decomp-repair 0.5.196 (`kmc_operand_repairs`), proposed when the
+diff has an `and` whose source registers are reversed and the mask needs a register. The same reasoning probably applies
+to other commutative instructions with a constant (`or`, `xor`, `add`), not yet seen.

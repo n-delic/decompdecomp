@@ -166,6 +166,10 @@ wrongly: a 1000 → 680 local improvement was 1090 → 1030 in the app. Confirm 
   decomp-repair do it. A library family only helps when `app/draft_repairs.py` calls it and the installed library is
   current: if the app didn't offer one, check both before writing a new rewrite.
 - Declaration order, `register` and integer width hints often produce identical RTL: test one, don't grid them.
+- **A commutative op whose constant must come first** (`and $v0,$v0,$v1` with the mask in `$v0`, the target's registers
+  all right and only the operand order swapped). cse always puts a known constant second, so no spelling of
+  `x & mask` gets it; hide the constant from cse with `(x & mask) | mask`, which combine folds back. Found by dumping
+  cc1's passes (3b); the family is `mask_operand_order` (decomp-repair 0.5.196). Same shape may exist for `or`/`xor`/`add`.
 - **IDO bit-packed unpackers** (an N64 audio-header function, `ido-7.1`, exact; the evidence is in
   COMPILER_MATCHING_LEARNINGS.md). The shape that matched: a `u8 *` parameter; stack arrays declared highest frame
   offset first (IDO lays the first-declared highest); one `for (i = 0; i < N; i++)` writing `a[i]`, `e[i*13+k]` from
