@@ -628,7 +628,7 @@ int main(void) {
 
 
 @pytest.mark.skipif(shutil.which("c++") is None, reason="needs a C++ compiler")
-def test_rt64_vi_features_match_the_games_requests(tmp_path):
+def test_rt64_vi_features_and_incomplete_framebuffers(tmp_path):
     source = tmp_path / "present.cpp"
     source.write_text(r"""
 #include "presentation.h"
@@ -638,6 +638,12 @@ int main() {
     assert(port_rt64_vi_features(0x3202, 0x55) == 0x1321e);
     assert(port_rt64_vi_features(0x1321e, 0xaa) == 0x3202);
     assert(port_rt64_vi_features(0x321e, 0x03) == 0x3216);
+
+    assert(port_rt64_incomplete_framebuffer(320, 140, 2, 320, 240, 2));
+    assert(port_rt64_incomplete_framebuffer(640, 480, 2, 320, 240, 2));
+    assert(port_rt64_incomplete_framebuffer(320, 240, 3, 320, 240, 2));
+    assert(!port_rt64_incomplete_framebuffer(640, 480, 2, 640, 476, 2));
+
 }
 """)
     program = tmp_path / "present"
