@@ -6,6 +6,7 @@ import threading
 import time
 import zlib
 from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 
 import pytest
 
@@ -110,12 +111,16 @@ def project(tmp_path):
     if hasattr(net,'autosave'):net.autosave.close()
 
 
-def test_rescan_refreshes_assets_after_library_update(project, monkeypatch):
+@pytest.mark.parametrize('changed', ['version', 'source'])
+def test_rescan_refreshes_assets_after_library_update(project, monkeypatch, changed):
     net, _, _ = project
-    monkeypatch.setattr(rom_explorer, 'version', lambda _: '1')
+    artifact = {'version': '1', 'source': '{"url":"https://example.test/assets-v1.tar.gz"}'}
+    monkeypatch.setattr(rom_explorer, 'distribution', lambda _: SimpleNamespace(
+        version=artifact['version'], read_text=lambda name: artifact['source'] if name == 'direct_url.json' else None,
+    ))
     assert not rom_explorer.run(net, 'game', Log()).get('cached')
     assert rom_explorer.run(net, 'game', Log())['cached']
-    monkeypatch.setattr(rom_explorer, 'version', lambda _: '2')
+    artifact[changed] = '2' if changed == 'version' else '{"url":"https://example.test/assets-v2.tar.gz"}'
     assert not rom_explorer.run(net, 'game', Log()).get('cached')
     assert rom_explorer.run(net, 'game', Log())['cached']
 
