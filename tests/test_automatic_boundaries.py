@@ -593,3 +593,32 @@ def test_address_record_after_closed_assembly_preserves_only_reachable_bodies(ca
     result = repair(functions, [], image, consoles.get('n64'), segments, symbols=symbols)
     expected = [(0, 16), (64, 16), (80, 32)] if case == 'data' else [(0, 80), (80, 32)]
     assert [(fn.rom, fn.size) for fn in result] == expected
+
+
+def test_folded_call_to_stack_restore_before_an_aligned_frame():
+    target = BASE+48+20
+    call = 0x0C000000 | ((target >> 2) & 0x3FFFFFF)
+    words = [0x03E00008, 0, 0, call]+BODY+BODY
+    words[17] = 0x8FBF0014
+    image, functions, segments = fixture(words, cuts=(0, 8, 12, 48, 80))
+    result = repair(functions, [], image, consoles.get('n64'), segments)
+    assert [fn.rom for fn in result] == [0, 16, 48]
+
+
+@pytest.mark.parametrize('entered', [False, True])
+def test_folded_call_after_return_and_before_closed_leaf(entered):
+    target = BASE+44
+    call = 0x0C000000 | ((target >> 2) & 0x3FFFFFF)
+    leaf = [0x8C820000, 0x03E00008, 0]
+    words = [*leaf, 0, 0x03E00008, 0, 0xA2030071, call, *leaf, 0x8FB00010, 0x03E00008, 0x27BD0018]
+    image, functions, segments = fixture(words, cuts=(0, 32, 44, 56))
+    symbols = [f'entry = 0x{BASE+28:08X};'] if entered else ()
+    result = repair(functions, [], image, consoles.get('n64'), segments, symbols=symbols)
+    assert any(fn.rom <= 28 < fn.rom+fn.size for fn in result) == entered
+
+
+def test_zero_alignment_can_run_to_end_of_mapping():
+    words = [0x8C820000, 0x03E00008, 0, 0, 0, 0]
+    image, functions, _ = fixture(words, cuts=(0, 12, 16, 24))
+    result = repair(functions[:2], [], image+bytes(16), consoles.get('n64'), [Segment('code', 0, 24, BASE)])
+    assert [fn.rom for fn in result] == [0]

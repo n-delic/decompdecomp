@@ -102,6 +102,7 @@ def verify(feedback, example):
             kmc_operand_repairs,
             kmc_type_repairs,
             measured_address_repairs,
+            measured_callback_loop,
             measured_callback_repairs,
             measured_control_flow,
             measured_expression_repairs,
@@ -124,6 +125,9 @@ def verify(feedback, example):
         focused += measured_memory_order.variants(source, fn['name'], rows)
         focused += measured_expression_repairs.variants(source, fn['name'], header, rows)
         focused += measured_temporary_repairs.variants(source, fn['name'], rows)
+        if candidate := measured_callback_loop.rewrite(source, fn['name'], fn['asm'] or '', header,
+                                                       symbols.resolve if symbols else None):
+            focused.append(('measured_callback_loop', candidate))
         focused += measured_callback_repairs.variants(source, fn['name'], rows)
         focused += measured_address_repairs.variants(source, fn['name'], header, rows, symbols)
         focused += measured_pointer_scale.variants(source, fn['name'], header, rows)

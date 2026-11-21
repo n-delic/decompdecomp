@@ -8731,3 +8731,32 @@ and to have the corresponding branch, uncached word load, and output store.
 It keeps earlier argument checks and diagnostics intact. Both fresh draft
 generation and a Deep Permuter proposal from the compilable 775-point case
 reproduced the match on a copied project with the normal ROM judge.
+
+### Indexed callback loops and addresses kept in saved registers
+
+An archived KMC draft treated a table entry as a callable expression without
+loading a function pointer. The target loads an unsigned halfword selector,
+scales it by four, reads the pointer and calls it with the received stack
+record. Making that call typed compiled but still scored 984. Giving the two
+relocated pointer bases byte scaling reduced the score to 954.
+
+At `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, keeping the relocated
+address in a local across the loop reduced the score to 485. Restoring the
+infinite loop structure with the receive argument at the call site reduced it
+to 190 when tried alone from the 954-point draft. Combining both changes with
+the byte-scaled bases and typed callback matched exactly. Omitting either of
+the two byte casts from the combined repair left a score of 20.
+
+Both raw draft generation and the Deep Permuter proposal reproduced the exact
+linked bytes on the copied project with the captured header. The rewrite
+requires the corresponding table and argument registers, stack record, loop
+backedge, and store from the saved address register.
+
+### Packed-word store scope and shift order
+
+A four-term packed color store on N64 under `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` scored 95.
+Wrapping the store in a single `do { ... } while (0)` block lowered the score to 45 by
+changing the allocation of two saved registers. Swapping the two shifts inside that block
+to match the target's 16-bit then 8-bit shift order lowered the score to 30. These are
+linked partial improvements on a real function. A target sequence with both shifts from
+the same register and a source expression over a single unsigned local identifies the trial.

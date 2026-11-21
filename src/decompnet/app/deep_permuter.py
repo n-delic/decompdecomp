@@ -332,18 +332,18 @@ class Search(Permuter):
     def operand_order_pass(self, agent, proj, fn, best, fork):
         """Spend a few of the ordinary trials on a measured operand/register near miss."""
         rows = self.winner_diff[0] if self.winner_diff else repair_ranking.evidence(self.net, fn['id'], agent.id)
-        if permuter_focus.classify(rows, proj['arch']) != 'register':
-            return best
-        from decomprepair import near_match_repairs
+        from decomprepair import near_match_repairs, packed_word_scheduling
         from decomprepair.target_local_repairs import value_lifetimes
 
         source = _candidate_source(fn, best)
         header = self.net._context(proj['id'], fn['unit'])['header']
-        proposals = near_match_repairs.bitwise_operand_order(source, fn['name'], header)
-        proposals += near_match_repairs.float_update_order(source, fn['name'], header)
-        proposals += [(family, child) for family, child in near_match_repairs.variants(source, fn['name'])
-                      if family == 'arithmetic_operand_order']
-        proposals += value_lifetimes(source, fn['name'])
+        proposals = packed_word_scheduling.variants(source, fn['name'], proj['arch'], dict(fn).get('asm') or '', header)
+        if permuter_focus.classify(rows, proj['arch']) == 'register':
+            proposals += near_match_repairs.bitwise_operand_order(source, fn['name'], header)
+            proposals += near_match_repairs.float_update_order(source, fn['name'], header)
+            proposals += [(family, child) for family, child in near_match_repairs.variants(source, fn['name'])
+                          if family == 'arithmetic_operand_order']
+            proposals += value_lifetimes(source, fn['name'])
         seen = {source}
         limit = min(6, (self.limit - self.tested) // 2)
         for family, child in proposals:
