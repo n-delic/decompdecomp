@@ -1587,6 +1587,9 @@ planned; asset format descriptions are advisory text.
 
 ### ROM Explorer
 
+Iguana resource archives now expose CI4 and CI8 bitmap banks with palette-backed previews
+and padded texture row support.
+
 Audio browser now prepares selected samples without autoplay. Native libmus pointer
 banks validate tuning/loop/book graphs and uniquely fitting marked wave tables, with
 explicitly editable preview rates because the banks store none. Validated raw libmus
