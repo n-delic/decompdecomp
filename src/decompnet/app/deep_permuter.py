@@ -407,6 +407,15 @@ class Search(Permuter):
                 return score
         return best
 
+    def stub_note(self):
+        """The stub message when the measured baseline emits under half of the target's instructions, else ''.
+
+        Passes that tune registers, operand order or scheduling judge a body that is not there; they would spend
+        the trial budget on a candidate that must be rebuilt first (diff_summary.stub)."""
+        from ..diff_summary import stub, stub_message
+        found = stub(self.winner_diff[0]) if self.winner_diff else None
+        return stub_message(found) if found else ''
+
     def loop_vector_shape_pass(self, agent, proj, fn, best, fork):
         """Climb through the loop and vector-update shapes that only help together (decomp-repair 0.5.130).
 
@@ -414,15 +423,19 @@ class Search(Permuter):
         left a 2,122-instruction function's score nearly unchanged alone and gained a hundred instructions in
         combination, so a greedy pass that stops at the first non-improvement never finds them. A small beam keeps
         the three best children of each level, inside the ordinary trial budget; every child is judged normally."""
-        from decomprepair import loop_vector_shapes
+        from decomprepair import loop_vector_shapes, statement_interleave
 
         source = _candidate_source(fn, best)
-        budget = min(24, max(0, (self.limit - self.tested) // 2))
+        # Interleaving two runs of statements took about 600 compiles to find by beam on a large function, so this
+        # pass may spend more of the budget than the other targeted ones; it stops at the first exact match.
+        budget = min(96, max(0, (self.limit - self.tested) // 2))
         frontier, seen, lowest = [(best, source)], {source}, best
         while frontier and budget > 0:
             children = []
             for _, parent in frontier:
-                for family, child in loop_vector_shapes.variants(parent, fn['name'], proj['arch']):
+                proposals = (loop_vector_shapes.variants(parent, fn['name'], proj['arch'])
+                             + statement_interleave.variants(parent, fn['name'], proj['arch']))
+                for family, child in proposals:
                     if child in seen or budget <= 0:
                         continue
                     seen.add(child)
@@ -1617,7 +1630,9 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
                     from .stack_layout import text as stack_text
                     if diagnostic := stack_text(proj['arch'], repair_ranking.evidence(net, fn['id'], agent.id)):
                         log(diagnostic)
-                    if not relabel and (lane is None or lane.index == 0):
+                    if not relabel and (lane is None or lane.index == 0) and (stub := search.stub_note()):
+                        log('Skipping the operand-order and loop-shape passes. ' + stub)
+                    elif not relabel and (lane is None or lane.index == 0):
                         baseline = search.operand_order_pass(agent, proj, fn, baseline, fork)
                         fn = net._function(name, slug)
                         if baseline == 0:
