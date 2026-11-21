@@ -9686,3 +9686,12 @@ Five archived N64 leaves of two to five instructions each matched byte-for-byte 
 - With `-g3`, the existing unused-local rule matched a constant-return leaf with a 24-byte frame. Recording the size from the symmetrical stack adjustments matched all 16 bytes from score 210. An 8- or 16-byte reservation matched the instruction order and still missed the frame size.
 - With `-g3`, an explicit true and false return on a masked global word generated the target's `andi` then `sltu` sequence, from score 270 (20 bytes). Changing signedness alone left the shift-and-mask sequence.
 - An empty leaf only spilled its four argument registers to their O32 home slots. Keeping the first named parameter and adding `...` generated that whole sequence, from score 500 (20 bytes).
+### Copy the exit jump with a shared switch store
+
+In a scratch ROM replay of a 580-byte N64 function,
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` compiled a shared
+state store nested in an earlier case with score 310. Placing the shared
+store at its last caller removed the remaining extra jump. The existing
+shared-tail repair can now produce the same byte-identical result by
+copying the store and its terminating goto to the other incoming cases.
+The original ROM judge verified score zero for both layouts.
