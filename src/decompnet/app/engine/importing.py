@@ -114,6 +114,8 @@ class ImportMixin:
         root = Path(proj["root"])
         if not root.is_dir():
             raise NetworkError("the project folder is missing; restore it before reimporting")
+        if (root / ".git").exists() or (root / ".git").is_symlink():
+            raise NetworkError("Reimport would replace files in the project folder's Git checkout. Move the checkout out of the analysis folder first.")
         log("Building the replacement analysis in a temporary folder; the current project is safe until the new split is ready.")
         stage = Path(tempfile.mkdtemp(prefix=f".{reimport_slug}-reimport-", dir=root.parent))
         try:
@@ -265,12 +267,19 @@ class ImportMixin:
 
         root = Path(reimport["root"]) if reimport is not None else workdir
         backup = None
+        retained = []
         if reimport is not None:
             check_cancel()
-            saved_progress = root / "progress"
-            if saved_progress.is_dir():
-                log("Copying saved progress into the replacement project.")
-                shutil.copytree(saved_progress, workdir / "progress", dirs_exist_ok=True)
+            names = {"progress", "source"}
+            for key in ("progress_folder", "save_folder", "repository_sync_folder", "auto_commit_folder"):
+                if folder := cfg.get(key):
+                    path = Path(folder).expanduser().absolute()
+                    if path.is_relative_to(root):
+                        names.update(path.relative_to(root).parts[:1])
+            keep = [name for name in sorted(names) if (root / name).exists() or (root / name).is_symlink()]
+            for name in keep:
+                if (workdir / name).exists() or (workdir / name).is_symlink():
+                    raise NetworkError(f"Reimport would overwrite {root / name}. Move it to a separate folder and try again.")
             log("Replacing project files and updating the function analysis.")
             backup = root.with_name(f".{root.name}-reimport-backup-{time.time_ns()}")
             root.replace(backup)
@@ -281,6 +290,12 @@ class ImportMixin:
                 raise
             workdir = root
         try:
+            if backup is not None:
+                # Move whole folders on the same filesystem so Git metadata, ignored files,
+                # and local edits all survive. Put them back if registration rolls back.
+                for name in keep:
+                    (backup / name).rename(root / name)
+                    retained.append(name)
             now = time.time()
             with self.project_registration(slug=slug,name=info["title"],
                     description=f"{info['game_code']} · {info['region']} · {len(res.functions)} functions",
@@ -459,8 +474,10 @@ class ImportMixin:
                 else:
                     event_kind = "reimport"
                 self._event(db, pid, None, event_kind, f"{len(res.functions)} functions from {info['title']}")
-        except Exception:
+        except BaseException:
             if backup is not None:
+                for name in reversed(retained):
+                    (root / name).rename(backup / name)
                 failed_root = root.with_name(f".{root.name}-reimport-failed-{time.time_ns()}")
                 root.replace(failed_root)
                 backup.replace(root)
