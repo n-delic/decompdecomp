@@ -8760,3 +8760,13 @@ changing the allocation of two saved registers. Swapping the two shifts inside t
 to match the target's 16-bit then 8-bit shift order lowered the score to 30. These are
 linked partial improvements on a real function. A target sequence with both shifts from
 the same register and a source expression over a single unsigned local identifies the trial.
+
+### Reusing stack-copy loads as float call arguments
+
+A scratch N64 function under `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` scored 235
+when it loaded the ends of a three-float input twice, once for a volatile stack copy and
+again for a nested call. Saving the first and third loads into both the stack slots and
+ordinary float locals, then using those locals in a separate call statement, matched all
+260 bytes. Passing the volatile stack slots or using assignment expressions directly
+in the call arguments did not match. A linked run through Deep Permuter confirmed the
+combined repair, with no profile change.
