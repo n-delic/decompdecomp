@@ -1,5 +1,15 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: retain a stack-byte buffer base through a guarded loop
+
+An isolated N64 replay used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.
+The target materialized the stack buffer's base before checking the seed,
+then used the saved base plus an index for both loop stores. Giving the C
+loop an ordinary byte pointer initialized before the first store took the
+linked score from 705 to 630. The compiler profile and frame size stayed
+the same. Volatile pointer variants did not improve that result. Deep
+Permuter independently selected and saved this partial match.
+
 ### KMC GCC 2.7.2: retain a byte global address through an update
 
 An N64 replay with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` went

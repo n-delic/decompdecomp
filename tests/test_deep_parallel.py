@@ -540,3 +540,20 @@ def test_scoped_byte_global_update_uses_current_relocation_names(monkeypatch):
     assert search.operand_order_pass(AGENT, proj, fn, 255, None) == 30
     assert len(tried) == 1
     assert '= &state; *__repair_byte_address -= 1;' in tried[0]
+
+
+def test_stack_byte_loop_base_runs_in_the_bounded_lane(monkeypatch):
+    from decomprepair import stack_byte_loop_base
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    proj = net.project_row('game')
+    fn = {**net.function(), 'asm': ''}
+    child = fn['best_source'] + '\n/* staged byte buffer */'
+    monkeypatch.setattr(stack_byte_loop_base, 'variants', lambda *args: [('stack_byte_loop_base', child)])
+    search = deep_permuter.Search(net, 1, 6, Log())
+    tried = []
+    monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 630)
+
+    assert search.operand_order_pass(AGENT, proj, fn, 705, None) == 630
+    assert tried == [child]
