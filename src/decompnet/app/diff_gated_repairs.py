@@ -39,6 +39,7 @@ from decomprepair import (
     measured_kmc_call_setup,
     measured_kmc_call_stores,
     measured_kmc_carriers,
+    measured_kmc_command,
     measured_kmc_cursor_switch,
     measured_kmc_flow,
     measured_kmc_input,
@@ -225,6 +226,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_kmc_byte_operations.variants(source, name, header, rows, resolve=resolve)
         result += measured_kmc_call_setup.variants(source, name, header, rows)
         result += measured_kmc_call_stores.variants(source, name, header, rows, resolve)
+        result += measured_kmc_command.variants(source, name, header, rows)
         result += measured_kmc_carriers.variants(source, name, header, rows)
         result += measured_kmc_cursor_switch.variants(source, name, header, rows)
         result += measured_kmc_flow.variants(source, name, header, rows)

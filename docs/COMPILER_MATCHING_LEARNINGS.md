@@ -1,5 +1,13 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: stage a command word before a second allocation
+
+A 248-byte archived draft matched after staging its command word in an
+integer local, giving the allocator result an unsigned word type, and
+removing an inferred argument from the second unprototyped allocator
+call. The linked score improved from 205 to zero with
+`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
+
 ### KMC GCC 2.7.2: recover byte-addressed global entries
 
 Three archived drafts matched with the linked judge after correcting
