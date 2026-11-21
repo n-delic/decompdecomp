@@ -127,3 +127,23 @@ def test_boot_data_terminator_precedes_a_called_aligned_frame(tmp_path, referenc
                      call, 0, 0x8fbf0014, 0x03e00008, 0x27bd0018)
     assert extend_startup_data(path, image) != referenced
     assert segments_from_config(path)[0].rom_end == at+(0 if referenced else 4)
+
+
+@pytest.mark.parametrize('trap', [0, 0x0000000d])
+def test_version_stamp_is_read_only_data_when_it_follows_the_boot_trap(tmp_path, trap):
+    from decompnet.consoles.n64.boot_mapping import mark_boot_version
+    from decompnet.rom.split import code_ranges
+
+    path, rom, _, _ = layout(tmp_path)
+    cfg = yaml.safe_load(path.read_text())
+    _, main, data, *_ = cfg['segments']
+    at = 0x1014
+    main.update(start=at, vram=0x80000414, subsegments=[[at,'c','main']])
+    data['start'] = at+12
+    path.write_text(yaml.safe_dump(cfg))
+    image = bytearray(rom)
+    struct.pack_into('>3I', image, at-12, 0x0c000400, 0, trap)
+    stamp = b'Version date 1/7/2000 02:03:04\0'
+    image[at:at+len(stamp)] = stamp
+    assert mark_boot_version(path, image) == bool(trap)
+    assert all(lo != at for lo,_,_ in code_ranges(path)) == bool(trap)

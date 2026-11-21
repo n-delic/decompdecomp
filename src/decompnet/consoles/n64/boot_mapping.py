@@ -131,3 +131,34 @@ def extend_startup_data(config: Path, rom: bytes, log=print) -> bool:
     config.write_text(yaml.safe_dump(cfg, sort_keys=False, default_flow_style=None), encoding='utf-8')
     log('Kept the boot data string before the first called frame.')
     return True
+
+
+_VERSION_DATE = re.compile(rb'Version date +[0-9]{1,2}/[0-9]{1,2}/[0-9]{2,4} +[0-9]{2}:[0-9]{2}:[0-9]{2}\0')
+
+
+def mark_boot_version(config: Path, rom: bytes, log=print) -> bool:
+    """Keep a version stamp after the startup trap out of the function list."""
+    cfg = yaml.safe_load(config.read_text(encoding='utf-8'))
+    by_name = {row.get('name'):row for row in cfg['segments'] if isinstance(row, dict)}
+    entry, raw_main = by_name.get('entry'), by_name.get('main')
+    if not entry or not raw_main or raw_main.get('follows_vram') != 'entry':
+        return False
+    main = next((segment for segment in segments_from_config_data(cfg) if segment.name == 'main'), None)
+    if (main is None or not 0x100c <= main.rom_start < main.rom_end < 0x2000
+            or raw_main.get('subsegments') != [[main.rom_start,'c','main']]
+            or entry.get('subsegments') != [[entry['start'],'hasm']]):
+        return False
+    at = main.rom_start
+    stamp = _VERSION_DATE.match(rom, at, at+64)
+    if not stamp or main.rom_end > stamp.end():
+        return False
+    call, delay, trap = struct.unpack_from('>3I', rom, at-12)
+    if call>>26 != 3 or delay or trap&0xfc00003f != 0xd:
+        return False
+    target = ((main.vram-8)&0xf0000000) | ((call&0x03ffffff)<<2)
+    if main.vram <= target < main.vram+main.rom_end-at:
+        return False
+    raw_main['subsegments'] = [[at,'rodata','boot_version']]
+    config.write_text(yaml.safe_dump(cfg,sort_keys=False,default_flow_style=None),encoding='utf-8')
+    log('Kept the version stamp following the boot trap in read-only data.')
+    return True
