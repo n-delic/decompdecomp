@@ -1089,6 +1089,9 @@ def _dispatch(net,agent,slug,name,args, *, count_usage=True):
         tracking = track_matches(slug, agent.id) if name in REPAIR_CAPTURE_TOOLS else nullcontext([])
         with (net.progress.view() if compact_handshake else nullcontext(), tracking as matches):
             result=HANDLERS[name](net,agent,slug,**named)
+        if name == 'claim_function' and isinstance(result, str):
+            from .claim_state import claimed_name
+            result += focused_agents.convert(net, agent, slug, claimed_name(net, agent, slug, named))
         if name in {'get_function','get_assembly'} and args.get('function') != named.get('function'):
             result = f"Resolved read {str(args.get('function'))[:200]!r} to {named['function']}. This does not rename or create a function.\n"+result
         if handshake and name == 'project_info':

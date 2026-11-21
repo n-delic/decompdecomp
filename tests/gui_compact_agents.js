@@ -91,3 +91,12 @@ c.resetExample={...c.resetExample,tokens:123,metrics_since:10};
 c.renderSessions([c.resetExample]);
 assert(elements.get('sessions').html.includes('123 reported tokens'));
 assert.equal(vm.runInContext('agentMetricResets.size',c),0);
+// focusing on stuck near-matches: the opt-in shows in work settings, a switch shows on the focused line
+c.renderSessions([{...agent,id:'opt',focus_near_matches:true}]);
+assert(elements.get('sessions').html.includes('focuses on stuck near-matches'));
+c.renderSessions([{...agent,id:'plain'}]);
+assert(!elements.get('sessions').html.includes('stuck near-matches'));
+c.renderSessions([{...agent,id:'conv',focus_id:3,focus_function:'func_1',focus_converted:true,focus_max_tries:300}]);
+assert(elements.get('sessions').html.includes('switched automatically'));
+assert(source.includes('if (!LZ.task && LZ.focusNearMatches) options.focus_near_matches = true;'));
+assert(source.includes('data-focus-near-matches type="checkbox" ${LZ.focusNearMatches ? "checked" : ""}'));
