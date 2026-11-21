@@ -656,3 +656,17 @@ s32 f(s32 offset, s32 value) {
     family, candidate = next(repairs.recovery_drafts(raw, 'f', asm, 'mips', 'gcc-2.7.2-kmc', '', None, {}))
     assert family == 'initial_mapped_word_store'
     assert expected in candidate
+
+
+def test_recovery_tries_unaligned_copies_and_uncached_reads(monkeypatch):
+    from decomprepair import unaligned_stack_drafts, uncached_read_repairs
+
+    source = 'void f(void) {}'
+    monkeypatch.setattr(unaligned_stack_drafts, 'rewrite', lambda *args: 'aggregate copy')
+    monkeypatch.setattr(uncached_read_repairs, 'rewrite', lambda *args: 'typed uncached read')
+    recovered = dict(repairs.recovery_drafts(source, 'f', '', 'mips', 'gcc-2.7.2-kmc', '', None, {}))
+    assert recovered['initial_unaligned_stack_copy'] == 'aggregate copy'
+    assert recovered['initial_uncached_read'] == 'typed uncached read'
+    other = dict(repairs.recovery_drafts(source, 'f', '', 'mips', 'ido-5.3', '', None, {}))
+    assert 'initial_unaligned_stack_copy' not in other
+    assert 'initial_uncached_read' not in other

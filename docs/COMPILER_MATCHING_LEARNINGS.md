@@ -9840,3 +9840,10 @@ Four initially uncompilable N64 drafts matched all their original bytes with `gc
 - A byte-indexed table had an integer address expression with no pointer cast. A word cast matched all 40 bytes. A halfword cast compiled but changed the load and scored 200.
 - An unsigned comparator had two untyped word accesses. Adding word pointer casts alone compiled but scored 35. Staging the first entry address before the comparison and assigning its word in the right operand matched all 48 bytes. Loading the first word into a separate statement before the comparison scored 1100.
 - Two archived examples of an uncached word store matched all 72 bytes each. Keeping the symbolic segment expression after casting compiled but introduced an extra relocation instruction and scored 120. Using a volatile word lvalue with the proven segment literal matched.
+
+### Recover a six-byte unaligned copy or an uncached read before the first compile
+
+Five previously uncompilable N64 drafts matched with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, one of the copy cases with `-g3`. The archived sources compiled independently as controls.
+
+- Three 128-byte functions copied a six-byte aggregate and read overlapping byte views after the copy. Restoring the aggregate made the drafts compile. The generated guarded `do` loop still gave a frame eight bytes too small, score 2. Walking the same byte cursor in a counted `for` loop matched all three functions.
+- Two 76-byte functions saved the output pointer in the guard call's delay slot. Restoring the word load with an early error return matched both functions. Typing the load and replacing the segment symbol alone compiled but scored 871 because the compiler chose a different frame and register allocation.
