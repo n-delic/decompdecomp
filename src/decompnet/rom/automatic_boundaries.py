@@ -158,22 +158,42 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
             # no leaf can be a frame the compiler scheduled a load or two ahead of (called_extent's lead).
             framed=dict(big_endian=console.big_endian,cpu=console.cpu_variant,asm_check=console.asm_reason)
             size=leaf_extent(image,at,hi,at+mapping,table_ranges=tables,**framed) if at in leaves else None
+            closed_leaf=bool(size)
+            ignored_edge=None
             if at in link_fill:
                 filler,target=link_fill[at]
+                ignored_edge=target+mapping
                 if not size or target>=at+size:
                     continue
             else:
                 filler,target=None,None
                 size=size or called_extent(image,at,hi,at+mapping,**framed,table_ranges=tables)
+                if not size and at+mapping in direct_calls and at in cuts:
+                    size=assembly_extent(image,at,hi,at+mapping,console,order)
+                    if size and at+size not in cuts:
+                        size=None
             if not size:continue
             end=at+size;address=at+mapping;finish=end+mapping
+            preceding=at-4
+            # A bogus conditional branch in one alignment word can point into
+            # the called leaf and otherwise look like an independent entry.
+            if (filler is None and closed_leaf and address in direct_calls
+                    and preceding in cuts & returns and (preceding+mapping)%8==4
+                    and preceding+mapping not in entered_addresses
+                    and not any(d.rom is not None and d.rom<at and preceding<d.rom+d.size for d in data)):
+                word=lines[preceding].word
+                if word>>26 in (4,5,6,7,20,21,22,23):
+                    delta=word&0xffff
+                    dest=address+4*(delta-0x10000 if delta&0x8000 else delta)
+                    if address<dest<finish:
+                        filler,ignored_edge=preceding,dest
             if any(address<a<finish for a in explicit|pointers):continue
             if any(address<=a<finish for a in data_only):continue
             if any(d.rom is not None and d.rom<end and at<d.rom+d.size for d in data):continue
             independent=any(not at<=offset<end
                             for dest in destinations[bisect_right(destinations,address):bisect_right(destinations,finish-1)]
                             for offset,_ in references[dest]
-                            if offset!=filler or dest!=target+mapping)
+                            if offset!=filler or dest!=ignored_edge)
             if independent:continue
             if not any(at<c<end for c in cuts) and at in cuts and end in cuts:continue
             # Retain alignment in the original image, outside the C function.
@@ -310,6 +330,24 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
         data.extend(recovered_data)
         log(f'Recovered {len(recovered_data)} referenced words as data between functions.')
     return kept if dropped or markers or recovered_data else result if changed else functions
+
+
+def assembly_extent(image, start, end, vram, console, order):
+    """A closed assembly body can span generated fragments even without a C-compatible frame."""
+    from ..arch.mips_gaps import extent
+
+    end = min(end,start+4096)
+    flow = extent(image,start,end,vram,order,console.cpu_variant)
+    size = flow['extent_bytes']
+    if (not flow['direct_flow_closed'] or flow['step_limit'] or size<16
+            or flow['decoded_instructions']*4!=size or image[start+size-8:start+size-4]!=JR_RA.to_bytes(4,order)):
+        return None
+    body = image[start:start+size]
+    # ERET resumes the saved exception context; the following bytes can be
+    # a separate cleanup entry even when a simple direct-flow walk continues.
+    if any(word==0x42000018 for word, in struct.iter_unpack('>I' if order=='big' else '<I',body)):
+        return None
+    return size if console.asm_reason(body) else None
 
 
 def recover_segment_switch_data(functions, data, image, order, tables, protected, references, log):

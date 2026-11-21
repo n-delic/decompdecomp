@@ -441,3 +441,24 @@ def test_raw_return_before_assembler_filler_needs_a_direct_call_to_the_next_entr
         functions.pop(0)
         result=repair(functions,[],image,consoles.get('n64'),segments)
         assert any(fn.rom==12 for fn in result) != called
+
+
+@pytest.mark.parametrize('case',['closed','protected','exception_return'])
+def test_called_closed_assembly_body_joins_generated_fragments(case):
+    words=[0x20820001,0x10800003,0x42000018 if case=='exception_return' else 0,0x03e00008,0,0x03e00008,0,
+           0x0c000000|((BASE>>2)&0x3ffffff),0,0x03e00008,0]
+    image,functions,segments=fixture(words,cuts=(0,12,20,28,44))
+    symbols=[f'entry = 0x{BASE+12:08X}; // type:func'] if case=='protected' else ()
+    result=repair(functions,[],image,consoles.get('n64'),segments,symbols=symbols)
+    assert [(fn.rom,fn.size) for fn in result]==(
+        [(0,28),(28,16)] if case=='closed' else [(0,12),(12,8),(20,8),(28,16)])
+
+
+def test_conditional_filler_cannot_create_an_entry_inside_a_called_leaf():
+    entry=BASE+16
+    call=0x0c000000|((entry>>2)&0x3ffffff)
+    words=[0x8c820000,0x03e00008,0,0x14850002,0x24820001,0x24420001,0x03e00008,0,
+           call,0,0x03e00008,0]
+    image,functions,segments=fixture(words,cuts=(0,12,16,20,32,48))
+    result=repair(functions,[],image,consoles.get('n64'),segments)
+    assert [(fn.rom,fn.size) for fn in result]==[(0,12),(16,16),(32,16)]
