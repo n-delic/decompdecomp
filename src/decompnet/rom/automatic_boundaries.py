@@ -37,6 +37,7 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
     pointers={w for w, in struct.iter_unpack(fmt,image[:len(image)//4*4]) if w in starts and not any(s.contains(w,4) for s in slots)}
     references=defaultdict(set)
     direct_calls=set()
+    transfer_targets=set()
     shared_calls=set(shared)
     names={f.name:f.vram for f in functions}
     for fn in functions:
@@ -45,12 +46,14 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
             if op in (2,3):
                 dest=((line.vram+4)&0xf0000000)|((line.word&0x3ffffff)<<2)
                 references[dest].add((line.rom,fn.segment))
+                transfer_targets.add(dest)
                 if op==3 and (dest,line.rom,fn.segment) not in shared_calls:
                     direct_calls.add(dest)
             elif op in (1,4,5,6,7,20,21,22,23) or op==17 and (line.word>>21)&31==8:
                 delta=line.word&0xffff
                 dest=line.vram+4+(delta-0x10000 if delta&0x8000 else delta)*4
                 references[dest].add((line.rom,fn.segment))
+                transfer_targets.add(dest)
             for token in re.findall(r'[\w.]+',line.operands):
                 if token in names:references[names[token]].add((line.rom,fn.segment))
     for dest,offset,segment in shared:
@@ -60,6 +63,8 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
     destinations=sorted(references)
     tables=[dict(rom_start=s.rom_start,rom_end=s.rom_end,vram=s.vram) for s in segments
             if 0<=s.rom_start<s.rom_end<=len(image) and not s.rom_start%4 and not s.rom_end%4]
+    functions = recover_segment_switch_data(functions, data, image, order, tables,
+                                            explicit | pointers | transfer_targets, references, log)
     returns={fn.rom+fn.size for fn in functions if fn.size>=8 and fn.lines[-2].word==JR_RA}
     groups=[];group_end=0
     for fn in sorted(functions,key=lambda f:(owner(f),f.rom)):
@@ -239,6 +244,52 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
     if markers:
         log(f'Recovered {markers} overlay end markers as data.')
     return kept if dropped or markers else result if changed else functions
+
+
+def recover_segment_switch_data(functions, data, image, order, tables, protected, references, log):
+    """Recover a segment prefix with a printable string tail and a proven switch table."""
+    from ..arch.mips_indirect import jump_table
+    from .split import DataSymbol
+
+    starts = {(mapping['rom_start'], mapping['vram']) for mapping in tables}
+    entries = sorted(protected)
+    removed = set()
+    for fn in functions:
+        if ((fn.rom, fn.vram) not in starts or not 20<=fn.size<=1088
+                or any(d.rom is not None and d.rom<fn.rom+fn.size and fn.rom<d.rom+d.size for d in data)):
+            continue
+        index = bisect_right(entries,fn.vram-1)
+        if index<len(entries) and entries[index]<fn.vram+fn.size:
+            continue
+        raw = image[fn.rom:fn.rom+fn.size]
+        if not re.match(rb'[ -~]{4,60}\x00', raw):
+            continue
+        offsets = {offset for offset,_ in references.get(fn.vram,())}
+        for consumer in functions:
+            if not any(consumer.rom<=offset<consumer.rom+consumer.size for offset in offsets):
+                continue
+            for line in consumer.lines:
+                if line.word==JR_RA or line.word&0xfc1fffff!=8:
+                    continue
+                table = jump_table(image,consumer.rom,consumer.rom+consumer.size,consumer.vram,
+                                   line.rom,order,tables,allow_saved_base=True)
+                if not table or table['state']!='validated':
+                    continue
+                start = table['rom_offset']-fn.rom
+                if (not 0<start<fn.size or start+table['entry_count']*4!=fn.size
+                        or not re.fullmatch(rb'[ -~]{4,60}\x00+', raw[:start])):
+                    continue
+                data.append(DataSymbol(fn.name,fn.vram,fn.rom,start,'data'))
+                data.append(DataSymbol(f"jtbl_{table['table_address']:08X}",table['table_address'],
+                                       table['rom_offset'],fn.size-start,'jtbl'))
+                removed.add(id(fn))
+                break
+            if id(fn) in removed:
+                break
+    if removed:
+        log(f'Recovered {len(removed)} segment prefixes containing validated switch tables.')
+        return [fn for fn in functions if id(fn) not in removed]
+    return functions
 
 
 def closes_with_back_edge(fn, end, mapping):
