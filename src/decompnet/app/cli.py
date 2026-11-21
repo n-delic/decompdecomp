@@ -272,6 +272,9 @@ def _start(args,home,internal,state_file,log,restarted,headless):
     if gateway is None and reader is not None:
         reader.stop()
         reader = None
+    if os.environ.get('DECOMP_OFFLOAD', '1') != '0':
+        from . import offload
+        offload.install()  # the repair families run in the proposal subprocess, not in this interpreter
     mcp, manager, security, quit_app = build(net, internal, port, secret, mcp_url=gateway.url if gateway else None,
                                              reader=reader, gateway=gateway, **({"headless":True} if headless else {}))
     if restarted and restarted.get('switch_home'):

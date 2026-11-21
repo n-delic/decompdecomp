@@ -37,6 +37,7 @@ os.environ["DECOMP_DEEP_LANES"] = "0"  # deep passes judge in this process (patc
 os.environ["DECOMPNET_PLAYSTATION_TITLES"] = tempfile.mkdtemp(prefix="decomp-tests-titles-")
 os.environ.setdefault("BROWSER", "true")
 os.environ.setdefault("DECOMP_TRAY", "0")
+os.environ.setdefault("DECOMP_OFFLOAD", "0")  # tests that want the proposal subprocess install it themselves
 # nor the wine prefix the user's app runs Visual C++ 2017 in (toolchains/.wine, a development copy's .wine-dev: #146):
 # a test that names no prefix of its own (the own_wine_prefix fixture) gets this one, so a wine program it starts,
 # or the server it leaves running, is never in the app's prefix (review of #138: three tests used it). One set before
@@ -178,3 +179,8 @@ def pytest_runtest_protocol(item, nextitem):
         yield
     finally:
         _running["test"] = None
+
+
+if os.environ.get("DECOMP_TEST_OFFLOAD") == "1":  # a whole run with the repair families in the proposal subprocess
+    from decompnet.app import offload as _offload
+    _offload.install()
