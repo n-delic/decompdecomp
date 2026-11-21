@@ -711,3 +711,23 @@ def test_kmc_record_repairs_receive_the_project_resolver(monkeypatch):
     assert kmc['record_fixture'] == 'records'
     egcs = dict(proposals(source, 'f', '', 'mips', EGCS, rows, '', resolve=resolve))
     assert 'halfword_fixture' not in egcs and 'record_fixture' not in egcs
+
+
+def test_kmc_short_integer_sqrt_requires_fast_math():
+    source = '''
+s32 f(s32 x) {
+    s32 result;
+    result = 0;
+    if (x >= 0) { result = (s32) sqrtf((f32) x); }
+    return result;
+}
+'''
+    ops = ('bltz $a0, 32', 'move $v0, $zero', 'mtc1 $a0, $f0', 'nop', 'cvt.s.w $f0, $f0',
+           'sqrt.s $f0, $f0', 'trunc.w.s $f2, $f0', 'mfc1 $v0, $f2', 'jr $ra', 'nop')
+    rows = [(' ', op, op) for op in ops]
+    rows[1] = ('r', rows[1][1], 'move $v1, $zero')
+    rows.insert(8, ('o', '', 'nop'))
+    family = 'measured_early_integer_sqrt'
+    fixed = dict(proposals(source, 'f', '', 'mips', KMC, rows, '', flags=('-ffast-math',)))[family]
+    assert '__builtin_sqrtf' in fixed
+    assert family not in dict(proposals(source, 'f', '', 'mips', KMC, rows, ''))
