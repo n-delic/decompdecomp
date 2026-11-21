@@ -15,15 +15,13 @@ is true, turn after turn, without waiting for the user. The rules of that mode:
 - **There is no "blocker" exit.** A function that will not match is a gap in the permuter or the app: find it
   (step 5), land it, and continue. If one idea runs dry, take the next: read the diff again, change the angle
   (other compiler profile, the neighbours' matched sources, the permuter's rejected variants, a scheduler-level
-  reading of the target), run a longer permuter. Only the user can end the goal, by telling you to stop.
+  reading of the target), run the repair families directly on the new best. Only the user can end the goal, by telling you to stop.
 - **Keep a visible plan and say what you are doing in a line** when you start a long run, so a user following along
   can see the loop is alive. Long runs go in the background.
-- **Never idle while the Deep Permuter runs.** Start it (background, thousands of variants), then in the same turn go
-  back to manual matching: read the diff, write candidates, compile them locally (`compile_snippet.py`, grids over
-  source shapes) and judge the promising ones in the app. Waiting on a job with nothing else in progress is wasted
-  time. Check the job between your own attempts (`judge.py job ID`), and fold what it finds into your next idea. A
-  manual candidate that beats the saved best is saved by the judge; the running search picks up the better best on
-  its next restore, so do not stop one for the other.
+- **Never start the Deep Permuter** (`judge.py permute`, `scratch_run.py`, any long search job). The user runs it in
+  their live app and it already uses every core. To test a repair, call it directly: the library's family (or the
+  app's `draft_repairs.variants`) on the current best source, scoring its variants with `fast_judge.py` and
+  confirming the best one with `judge.py try`.
 - When context grows long, keep going from the plan and the function's notes; do not wrap up early.
 - Only when the judge says 0, and the permuter PRs are merged with the proof from step 5, write the final message.
 
@@ -42,8 +40,8 @@ The permuter improvement comes **before** the match, not after it, so every othe
    shape, a cap or budget that cut the search, a bug in a run), land that improvement *first*: test, PR, merge
    (step 5), a library release when it is a decomp-repair change. This happens even though the function is not
    matched yet. A permuter run that failed to reach the near-match is itself the lesson: find out why and fix it.
-3. Then go back to the function and **keep hunting until the judge says 0**: re-read the diff, run the improved
-   permuter on it (with a real variant limit: a few thousand, not 4), try the next idea.
+3. Then go back to the function and **keep hunting until the judge says 0**: re-read the diff, call the improved
+   repair families directly on the new best (never a Deep Permuter job), try the next idea.
 4. Every time a hunt turns up another thing the permuter could do, repeat 2 before continuing 3. Each loop merges a
    PR, so the permuter improves for everyone as you go.
 
@@ -85,28 +83,6 @@ holder you judge as the window's shared "you", and a second Claude session would
   scripts need an environment with decompnet (`.venv/bin/python`, read only: do not `uv sync` it).
 - Game data (ROMs, extracted code) is read only and never copied into the repo or a PR.
 - Use the scratchpad for experiments, a worktree + branch + PR for repo changes (AGENTS.md workflow).
-
-## 0. A run in progress is never a reason to wait
-
-Deep Permuter jobs and any other long search run in the background (`run_in_background`, or
-`judge.py permute` which returns a job id). Starting one is the *beginning* of a stretch of work, not the end of a
-turn. While it runs, in this order:
-
-1. **Do the other half of the goal.** If the run is the proof for a library change, the next thing is the part that
-   does not depend on it: the evidence entry for COMPILER_MATCHING_LEARNINGS.md, the PR text, the next rewrite's test.
-2. **Investigate the mismatch yourself, in a different direction from the run.** The search explores random rewrites;
-   you read. Dump the compiler's passes (step 3b), decode the target's block layout instruction by instruction, or
-   try hand shapes. Never repeat what the search is already doing (its log names the families it tries).
-3. **Mine the run as it goes.** `judge.py job ID` and the function's saved best show each verified improvement as it
-   lands: read the new best's source and diff now, since a step the search found (even at a score still far from 0)
-   is a lead for your own investigation and for the rewrite you will write. Keep a run's home (`--keep`) so its source
-   can be read.
-4. **Check on it by looking, not by blocking.** No `Monitor`/`sleep` loop as the only activity. A wait is only
-   acceptable when every item above is done and you say so in one line.
-5. **Say what you are doing.** A one-line status naming the run and the work done beside it; silence while a run
-   goes reads as being stuck.
-
-When the run finishes, compare its best with yours before trusting either.
 
 ## 1. Orient (5 minutes, do not skip)
 
@@ -201,6 +177,15 @@ wrongly: a 1000 → 680 local improvement was 1090 → 1030 in the app. Confirm 
   all right and only the operand order swapped). cse always puts a known constant second, so no spelling of
   `x & mask` gets it; hide the constant from cse with `(x & mask) | mask`, which combine folds back. Found by dumping
   cc1's passes (3b); the family is `mask_operand_order` (decomp-repair 0.5.201). Same shape may exist for `or`/`xor`/`add`.
+- **Register swaps between saved registers (`$s1`/`$s2` exchanged, everything else right): read the priorities,
+  don't guess.** Compile the candidate with `cc1 ... -dl -dg` and read the `.lreg`/`.greg` table (uses, live length,
+  priority, register; `app/allocation_priority.py` parses it). GCC 2.x gives saved registers in order of
+  `floor_log2(uses) * uses / live_length`, so the fix is a use more or less, or a shorter range, for the pseudo that
+  must rank higher. A KMC 2.7.2 function with three array loops (180 -> 0): index each loop by the counter
+  (`base + i * 0x18`, not m2c's separate byte-offset variable), guard each loop on the counter (`if (i < n)`, not
+  `if (n > 0)`: one more use), give a value m2c had stored in a reused counter name its own temp, and use one counter
+  for all three loops; that lifted the counter's priority 0.82 -> 0.94 past the offsets (0.93). Then trim m2c's frame
+  union to the target's frame (`measured_trim_frame_view`). decomp-repair `guarded_offset_index` (0.5.238).
 - **IDO bit-packed unpackers** (an N64 audio-header function, `ido-7.1`, exact; the evidence is in
   COMPILER_MATCHING_LEARNINGS.md). The shape that matched: a `u8 *` parameter; stack arrays declared highest frame
   offset first (IDO lays the first-declared highest); one `for (i = 0; i < N; i++)` writing `a[i]`, `e[i*13+k]` from
@@ -240,6 +225,10 @@ the shape is decided by a compiler pass, not by how you spell the C. Stop writin
    COMPILER_MATCHING_LEARNINGS.md ("jump.c inverts `if (x) goto A; goto B;` unless an insn sits between them" is
    reusable; "this function needed `goto`" is not).
 
+4. **Register-only rows: dump priorities, not passes.** `-dl -dg` prints each pseudo's priority; compare it with the
+   target's register order and change uses/live ranges (above, in 3). An empty `.lreg` means cc1 didn't get the
+   flag or failed to parse: run the compiler's own `gcc -E` first and strip comments.
+
 ## 4. Search only when you can name the mismatch
 
 A blind hill-climb through the app's `/api/try` is too slow. With `fast_judge` it is cheap: random statement
@@ -248,11 +237,8 @@ plateaued: two more rounds, including token-level rewrites (`x += 1` vs `++x`, `
 nothing. Use it to clear the easy rows, then stop and read the diff: a search that cannot name what it is looking for
 will not find the last rows. Verify its best in the app before believing it.
 
-The Deep Permuter: `judge.py permute SLUG FUNC MINUTES VARIANTS` (VARIANTS is a limit: use thousands, e.g. 5000; a run with 4 tests nothing) (a function with no scored C is refused:
-`judge.py seed SLUG FUNC` judges the app's untouched draft first). It restores the best, tries random rewrites
-and local repairs, and saves every verified improvement. Check the result with `judge.py job ID` and the function's
-Deep permuter tab. Start it, then keep matching by hand while it runs (goal rules above). If it errors, that is a bug to fix (see PR "TracedVariant" for an example), not a reason to
-wait.
+Do not start the Deep Permuter (`judge.py permute`): the user runs it in their app and it takes every core. Its
+saved results (`judge.py job ID`, the function's Deep permuter tab) may be read as leads.
 
 ## 5. Teach the permuter (do it first, merge it, then continue hunting)
 
@@ -294,8 +280,6 @@ afterwards, leave its note with the evidenced blocker.
   environment to whatever `pyproject.toml` says at that moment: a stash that reverted the pin silently downgraded
   the library, and a run failed at its first step with "No module named". Run `python -c "import decomprepair.<your module>"` in the run's own interpreter before starting.
   Resolve merge conflicts in a separate `--detach` worktree, not the one a run is using; never remove that worktree.
-- **A run's first minute is where it fails.** Read its log once, at 30 seconds, then go back to step 0's work.
-  "error checking baseline" means the search never started: read the job error, don't wait for it.
 - **Other sessions share the machine.** The scratch port, the tags in the library (`git ls-remote --tags` right
   before tagging; main's version may already be ahead) and the library's `main` all move under you. Use a free
   `--port`; kill a run by its pid, never `pkill -f` on a script name (it kills other sessions' runs and your own
@@ -316,6 +300,16 @@ afterwards, leave its note with the evidenced blocker.
 - **Check what already exists before writing a rewrite.** `passthrough_argument` already did the argument fix and
   `symbol_width_repairs` was one regex away from the cast fix; ten minutes of grep over the library's docstrings
   found both. Run the existing families on the saved best first: what they don't produce is the gap.
+
+- **Edit the best, keep an edit list, and score each row** (edit, score alone, score combined). It worked: the
+  180 -> 0 table above came straight from it, and it showed which edits only help together (guard on the counter
+  alone went 60 -> 193). Sharpen it: when an edit makes it worse, keep it in the list and test it again after each
+  later edit, rather than dropping it; and say for each row which compiler fact it changes (addressing, a priority,
+  the frame), so the rewrite you write in step 5 emits the whole set as one child.
+- **zsh doesn't word-split `$VAR`**: a `for f in $FILES` or a flag string in a variable passes one argument. Wrap the
+  judge in a shell function (`fj(){ ... "$@"; }`) or a small Python driver that keeps one `fast_judge.Judge` open.
+- **m2c reuses one variable name for unrelated values** (a counter later holding a call's result). That ties their
+  registers together; split the name before reading any register diff.
 
 ## 6. Finishing (the goal is met)
 
