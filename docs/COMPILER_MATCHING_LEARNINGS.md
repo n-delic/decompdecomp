@@ -10417,3 +10417,14 @@ zero as a one-shot block also failed to improve the baseline.
   the buffer and fixing the pointer step alone compiled with difference scores of 1465 and 1455.
 - The isolated replay of 38 drafts with missing stack-byte declarations went from 10 to 12 exact
   matches. The other 26 still failed to compile.
+
+### KMC inode cache page and byte map
+
+- Three N64 examples built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, one also with
+  `-g3`, each matched 344 linked bytes from a fresh draft. The stack argument is a page of 128
+  halfwords used as both words and byte pairs. The output is a cache with its bank at offset 256
+  and the 256-byte map at offset 257. The typed map and the unsigned byte bank modulo expressions
+  preserve the original address computation and allocation.
+- Restoring the stack array alone compiled but scored 3112 on all three. A flat byte map with shifts
+  and masks scored 941. The 38-example draft replay rose from 12 to 15 exact matches, with 23 drafts
+  still failing compilation.
