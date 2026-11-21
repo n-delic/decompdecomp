@@ -99,12 +99,14 @@ def _first_address(path: Path) -> tuple[int | None, int | None]:
     return None, None
 
 
-def _symbol_lines(net, proj) -> list[str]:
+def _symbol_lines(net, proj, rows=None, excluded=()) -> list[str]:
     """symbol_addrs.txt entries for every function and every named symbol, so splat writes the project's names. A
     function's size too: spimdisasm ends a function with a switch at its first return, and the import put the cases
     back (split.merge_switch_cases: a PSP game's GCC and EE-GCC 3.2 load jump tables that way), so splat must too."""
     syms = net.symbols(proj["id"])
-    funcs = {r["vram"]: r for r in net.project_store(proj['id']).all("SELECT name, vram, size FROM functions WHERE project_id=?", proj["id"])}
+    if rows is None:
+        rows = net.project_store(proj['id']).all("SELECT name, vram, size FROM functions WHERE project_id=?", proj["id"])
+    funcs = {r["vram"]: r for r in rows}
     lines = []
     for vram, r in sorted(funcs.items()):
         lines.append(f"{r['name']} = 0x{vram:08X}; // type:func size:0x{r['size']:X}")
@@ -112,7 +114,7 @@ def _symbol_lines(net, proj) -> list[str]:
     # two names). The table's own name for the address labels it; the other names still link, from build.json.
     named = set(funcs)
     for s in sorted(syms.by_name.values(), key=lambda s: (s.address, s.name != syms.name_at(s.address)[0], s.name)):
-        if s.address in named or AUTO_NAME.match(s.name):
+        if s.name in excluded or s.address in named or AUTO_NAME.match(s.name):
             continue
         named.add(s.address)
         lines.append(f"{s.name} = 0x{s.address:08X};")
@@ -323,17 +325,27 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
     from ..consoles import EXPORT
 
     proj = net._project(slug)
-    if net.project_store(proj['id']).one("SELECT vram FROM functions WHERE project_id=? GROUP BY vram HAVING COUNT(*)>1 LIMIT 1", proj["id"]):
+    cfg = net.cfg(proj)
+    store = net.project_store(proj['id'])
+    population = store.all('SELECT name,vram,size,rom_offset FROM functions WHERE project_id=?', proj['id'])
+    banks = cfg.get('donor_overlays') or {}
+    native_end = min(banks.values(), default=None)
+    excluded = ({r['name'] for r in population if r['rom_offset'] is not None and r['rom_offset'] >= native_end}
+                if native_end is not None else set())
+    population = [row for row in population if row['name'] not in excluded]
+    if len({row['vram'] for row in population}) != len(population):
         raise ExportError("Rebuildable export does not yet support overlapping overlay banks. "
                           "Your matches remain saved; continue working in the app until bank-aware export is available.")
-    cfg = net.cfg(proj)
+    if excluded:
+        log(f'Keeping the original cartridge overlay bytes in the rebuild. {len(excluded)} donor overlay '
+            'functions remain available in the project; this export does not rebuild their code.')
     if EXPORT not in console.features:
         raise ExportError(f"exporting a rebuildable project isn't supported for {console.name or 'this console'} yet")
     work = Path(proj["root"])
     configs = sorted(work.glob("*.yaml"))
     if not configs:
         raise ExportError("this project has no splat configuration to export from")
-    image_name = cfg["rom"]["file"]
+    image_name = cfg["rom"].get("donor_analysis_base", cfg["rom"]["file"])
     image = (work / image_name).read_bytes()
 
     if out.exists():
@@ -350,13 +362,13 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
     progress_step(log, 1, "Extracting assembly and data")
     log("writing the assembly with the project's names (splat)")
     split_config = yaml.safe_load(configs[0].read_text(encoding='utf-8'))
-    known = net.project_store(proj['id']).all('SELECT vram,size FROM functions WHERE project_id=?', proj['id'])
+    known = population
     (out / 'splat.yaml').write_text(yaml.safe_dump(_export_segments(split_config, known), sort_keys=False), encoding='utf-8')
     shutil.copyfile(work / image_name, out / image_name)
     for extra in ("reloc_addrs.txt",):
         if (work / extra).exists():
             shutil.copyfile(work / extra, out / extra)
-    (out / "symbol_addrs.txt").write_text("\n".join(_symbol_lines(net, proj)) + "\n", encoding="utf-8")
+    (out / "symbol_addrs.txt").write_text("\n".join(_symbol_lines(net, proj, population, excluded)) + "\n", encoding="utf-8")
     res = run([console_python(), "-m", "splat", "split", "splat.yaml"], out, log)
     if res.returncode != 0:
         raise ExportError("splat failed:\n" + (res.stdout + res.stderr)[-1500:])
@@ -366,7 +378,8 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
         ld.rename(out / f"splat-{ld.name}")
 
     # 2. which function is where, and which are matched
-    rows = {r["vram"]: r for r in net.project_store(proj['id']).all("SELECT * FROM functions WHERE project_id=?", proj["id"])}
+    rows = {r["vram"]: r for r in net.project_store(proj['id']).all("SELECT * FROM functions WHERE project_id=?", proj["id"])
+            if r["name"] not in excluded}
     sources = sources or {}
     rows = {address: dict(row) | ({"matched_source": sources[row['id']]['source'], "status": "matched"}
                                 if row['id'] in sources else {}) for address, row in rows.items()}
@@ -518,7 +531,7 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
     data_c = _data_in_c(net, proj, out, layout, objects, image, cfg, log)
     defined.update(d["name"] for d in data_c)
     syms = net.symbols(proj["id"])
-    absolute = {s.name: s.address for s in syms.by_name.values() if s.name not in defined}
+    absolute = {s.name: s.address for s in syms.by_name.values() if s.name not in defined and s.name not in excluded}
     # Startup assembly can retain an import-time alias after a discovered function receives an address-based
     # name. Keep those known addresses too; otherwise its named jump target is undefined in the standalone link.
     for name, address in split.named_symbols(work).items():

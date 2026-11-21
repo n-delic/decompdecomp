@@ -196,7 +196,7 @@ class ImportMixin:
         if reimport is not None:
             old_cfg = json.loads(reimport["config"])
             for key, value in old_cfg.items():
-                if key not in {"kind", "platform", "big_endian", "gp", "rom", "segments", "legal", "coverage_notes"}:
+                if key not in {"kind", "platform", "big_endian", "gp", "rom", "segments", "legal", "coverage_notes", "donor_overlays"}:
                     cfg[key] = value
             cfg["compiler"] = old_cfg.get("compiler", cfg["compiler"])
             cfg.pop("export", None)

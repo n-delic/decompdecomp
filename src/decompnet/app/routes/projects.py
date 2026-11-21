@@ -466,6 +466,30 @@ def register(app: App) -> None:
     def p_missed_functions(slug, request, data):
         return {"job": jobs.start("missed-functions", lambda log: net.find_missed_functions(slug, log), project=slug)}
 
+    def donor_recovery(slug, request, data):
+        from .. import donor_reanalysis
+
+        kinds = ('donor-code-preview', 'donor-code-apply')
+        if request.method == 'GET':
+            if job := jobs.active(kinds, project=slug):
+                return {'job': job}
+            return {'donors': donor_reanalysis.donors(net, slug)}
+        action = data.get('action')
+        donor = data.get('donor')
+        if action == 'preview':
+            work = lambda log: donor_reanalysis.preview(net, slug, donor, log)
+        elif action == 'apply':
+            work = lambda log: donor_reanalysis.apply(net, slug, donor, data.get('token'), log,
+                                                      include_overlays=data.get('include_overlays') is True)
+        else:
+            raise NetworkError('Choose Preview or Add verified functions.')
+        with jobs._lock:
+            if active := jobs.active(kinds, project=slug):
+                return {'job': active['id'], 'kind': active['kind']}
+            kind = 'donor-code-' + action
+            job = jobs.start(kind, work, project=slug, cancel_message='Donor recovery stopped.')
+            return {'job': job, 'kind': kind}
+
     def p_recover_code(slug, request, data):
         from ..reviewed_code import run
         return {"job":jobs.start('reviewed-code-recovery',lambda log:run(net,slug,data.get('changes'),log))}
@@ -1290,6 +1314,7 @@ def register(app: App) -> None:
         "/api/project-layout": (p_project_layout, ["POST"]), "/api/open": (p_open, ["POST"]),
         "/api/reimport": (p_reimport, ["GET", "POST"]), "/api/code-audit": (p_code_audit, ["POST"]),
         "/api/recover-code": (p_recover_code, ["POST"]), "/api/missed-functions": (p_missed_functions, ["POST"]),
+        "/api/donor-code": (donor_recovery, ["GET", "POST"]),
         "/api/data-regions": (p_data_regions, ["GET", "POST"]),
         "/api/agent-reviews": (g_agent_reviews, ["GET"]), "/api/agent-review": (p_agent_review, ["POST"]),
         "/api/code-audit-results": (g_code_audit, ["GET"]), "/api/code-audit-review": (p_code_audit_review, ["POST"]),

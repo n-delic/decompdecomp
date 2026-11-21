@@ -5,6 +5,7 @@
   aliases for its modules. The console gives it the MIPS code reader its audio and fonts use (`asset_regions`).
 - rom.py: the ROM file: its byte order (.z64, .v64, .n64), header and a first guess at the compiler.
 - code.py: code splat's own look misses: segments the game loads later, and code kept compressed in the ROM.
+- uso.py: bounded module directories and Yay0 text for donor-assisted coverage review.
 - loader_code.py: full-bank closed-body recovery with CPU call, callback and adjacency evidence.
 - loader_mapping.py: bank mappings corroborated by constant arguments to independent loader helpers.
 - boot_mapping.py: returning TLB boot stubs separated from code with a strongly supported later load mapping.
@@ -256,6 +257,13 @@ class Nintendo64(Console):
         from .code import add_segments
 
         return add_segments(config, workdir, image, log)
+
+    donor_layout = True
+
+    def donor_text_regions(self, image: bytes) -> list:
+        from .uso import read
+
+        return read(image)
 
     def missed_functions(self, config: Path, image: bytes, log=print) -> list[tuple[int, int, int]] | None:
         from .code import missed_functions
