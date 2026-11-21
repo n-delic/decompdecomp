@@ -725,3 +725,13 @@ def test_short_halfword_leaf_repair_reaches_kmc_deep_search():
     key = 'measured_unsigned_halfword_store'
     assert dict(route(source, asm_rows, asm))[key] == source.replace('s16', 'u16')
     assert key not in dict(route(source, asm_rows, asm, compiler='ido-5.3'))
+
+
+def test_kmc_recovers_a_missing_formal_argument_from_shifted_delay_slot_setup():
+    source = 'M2C_UNK lookup(void *); /* extern */\nvoid f(void) { lookup(&object); }'
+    rows = [(' ', 'jal lookup', 'jal lookup'), ('r', 'move $a1, $s0', 'move $a0, $s0')]
+    asm = 'jal lookup\nmove $a1, $s0'
+    fixed = dict(route(source, rows, asm))['passthrough_argument']
+    assert 'f(s32 __repair_incoming)' in fixed
+    assert 'lookup(__repair_incoming, &object);' in fixed
+    assert 'passthrough_argument' not in dict(route(source, rows, 'move $a0, $zero\n' + asm))
