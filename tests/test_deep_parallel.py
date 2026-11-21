@@ -574,3 +574,21 @@ def test_loop_float_zero_uses_the_bounded_local_lane(monkeypatch):
 
     assert search.operand_order_pass(AGENT, proj, fn, 1310, None) == 710
     assert tried == [child]
+
+
+def test_one_based_switch_repair_runs_before_broad_mutations(monkeypatch):
+    from decomprepair import targeted_switch_labels
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    proj = net.project_row('game')
+    fn = {**net.function(), 'asm': 'lw $v0, %lo(mode)($v0)'}
+    child = fn['best_source'] + '\n/* paired switch repair */'
+    monkeypatch.setattr(targeted_switch_labels, 'zero_bound_variants',
+                        lambda *args: [('switch_zero_bound', child)])
+    search = deep_permuter.Search(net, 1, 6, Log())
+    tried = []
+    monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 0)
+
+    assert search.operand_order_pass(AGENT, proj, fn, 280, None) == 0
+    assert tried == [child]

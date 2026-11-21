@@ -1,5 +1,17 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: recover a one-based switch table and an unused parameter
+
+An N64 replay with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` had
+a score of 280 with a no-op case zero and an unused volatile by-value
+parameter. The target dispatch subtracted one and used the return-address
+save in the bounds branch's delay slot. Removing case zero alone recovered
+the bound but scored 1,510 because the extra argument home store moved
+the instructions and table destinations. Dropping the unused parameter's
+qualifier in the same trial matched all 1,936 linked code bytes and the
+jump tables. An isolated Deep Permuter replay saved the exact result in
+six candidate checks.
+
 ### KMC GCC 2.7.2: retest repeated address formation with cross-block CSE disabled
 
 An isolated N64 replay used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.
