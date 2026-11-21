@@ -11121,3 +11121,12 @@ The deep permuter saved both linked matches, each from score 5 to 0.
 - A cartridge read with the same `-O2` flags matched all 148 bytes
   after restoring the diagnostic symbol addresses from the call's
   relocations. The draft had emitted inline string literals.
+
+### Recover a byte stride when the argument register already holds the base
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, an isolated
+N64 draft applied word scaling to a byte stride. The compiler put
+the scaled index in a temporary and loaded the global base into
+the argument register. Casting the table's address to a byte
+pointer preserved the stride and reduced the linked score from 10
+to 0. The deep permuter found and saved the match.
