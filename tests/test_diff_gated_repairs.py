@@ -782,3 +782,19 @@ int f(void) {
     expected = ('next_record_field_after_advance', source.replace('->field_C', '->field_0'))
     assert expected in proposals(source, 'f', '', 'mips', KMC, rows, '')
     assert expected not in proposals(source, 'f', '', 'mips', EGCS, rows, '')
+
+
+def test_commuted_global_stride_reaches_kmc_diff_dispatch():
+    source = """extern M2C_UNK table;
+void f(void *input) {
+    void *record;
+    record = (M2C_FIELD(input, s8 *, 12) * 0xe8) + &table;
+    use(M2C_FIELD(record, u8 *, 4));
+}
+"""
+    ops = ['sll $v0, $v0, 3', 'lui $v1, %hi(table)', 'addiu $v1, $v1, %lo(table)',
+           'addu $s0, $v0, $v1', 'lbu $a1, 4($s0)']
+    rows = [('i', ops[0], 'sll $v0, $v0, 5'), *[(' ', op, op) for op in ops[1:]]]
+    expected = ('measured_commuted_global_stride', source.replace('+ &table', '+ (s8 *)&table'))
+    assert expected in proposals(source, 'f', '', 'mips', KMC, rows, '')
+    assert expected not in proposals(source, 'f', '', 'mips', EGCS, rows, '')
