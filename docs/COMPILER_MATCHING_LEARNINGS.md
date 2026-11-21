@@ -12602,3 +12602,14 @@ match. In the other draft, copying a call's stack output pointer into a local
 before clearing a halfword flag improved the score from 250 to 0. Copying it
 after the flag update retained the original 250 score. These are two observed
 matches, with synthetic tests for the instruction and source guards.
+
+### KMC GCC 2.7.2: regroup a packed masked value
+
+An isolated scratch draft packed a value masked to five bits into a word
+using two shifted copies and a constant. Grouping the higher shift with the
+constant before OR-ing the lower shift recovered KMC's register schedule.
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the linked
+score improved from 225 to an exact match. Grouping the lower shift with the
+constant improved the score to 20 but swapped the two shift amounts in the
+remaining instructions. Synthetic tests cover the mask, mutations, aliasing,
+volatile and target-difference guards; the exact match is one observed example.
