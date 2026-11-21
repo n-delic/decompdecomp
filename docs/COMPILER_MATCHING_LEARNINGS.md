@@ -11931,3 +11931,32 @@ started the index shift before the nested load and allocated the global
 base to a different register. Saving that nested load in a local before
 calculating the stride preserved the target's register use and schedule.
 The deep permuter saved a byte-exact match from score 75 in 38 candidates.
+
+## An init function's table loop: literal constants and a one-shot wrapper one call earlier (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, an N64 game, one 352-instruction function)
+
+A long run of global stores and calls, then an 11-row table loop storing the constants 2, 100 and 1. The saved best
+was 120 after many agent runs: the target puts `move $s5,$zero` (the loop counter) after the `lbu` before a call and
+`li $s7,2` in that call's delay slot, `li $s6,100` after a later `lhu`, and `li $s2,1` in the next call's delay slot.
+The best had locals `c2`, `c64`, `c1` set to those constants beside `do { f(D_x); } while (0);`. Edit list (the app's
+judge-worker numbers on the step before):
+
+| # | Edit | Score | What it changes in the compiler |
+| - | ---- | ----- | -------------------------------- |
+| 0 | saved best | 120 | |
+| 1 | the later `do { g(&sym + 0x16, 0x1E); } while (0);` unwrapped, `ci = 0;` moved after the first wrapper | 60 | the constants are no longer fenced below the second wrapper's loop notes |
+| 2 | `c2`, `c64`, `c1` replaced by the literals `2`, `0x64`, `1` in the loop (`single_use_inline`) | 60, 60, 60 | the stores' constants become loop.c movables, hoisted before the loop; sched1 floats them up to the nearest loop-note fence |
+| 3 | the wrapper moved from `f(D_x);` to the call before it, `do { h(0xA); } while (0); f(D_x); ci = 0;` (`call_one_shot_scope_shift`) | 0 | the hoisted `li 2` floats above `f`, so reorg fills `f`'s slot from before with it; the fence on `h` still gives the base-relative stores the first wrapper was there for |
+
+Rules: a constant local is placed where it is set (and sinks to its use), a literal store in a loop is hoisted by
+loop.c and then floats up to the previous loop-note fence. Which call a do-while(0) wraps decides where that fence is.
+In step 3, dropping the wrapper (3815) or keeping the locals (120) both lose: the shift and the literals are needed
+together.
+
+Tried and failed: about 740 placements of the constant locals around the first wrapper and 5,700 random ones (120
+floor), constant locals inside the wrapper (180 to 470), the locals' types (1,296 combinations per base, 120 floor),
+explicit locals placed anywhere between the two calls with no first wrapper (325 floor), temporaries for the loads
+(275 to 1745), dropping both wrappers (3560: the base-relative `D_801002AE` stores become `lui`/`$at` pairs).
+
+Evidence: one function, matched (app's judge: exact). decomp-repair 0.5.269 reproduces steps 2 and 3 directly on the
+60 source (three `single_use_inline` steps at 60, then `call_one_shot_scope_shift` gives 0), scored with the
+judge-worker; no permuter run. Not controlled across other functions.
