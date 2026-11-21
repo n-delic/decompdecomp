@@ -49,6 +49,8 @@ class ClaudeCode(Agent):
     uses_accounts = True
     takes_effort = True  # `claude --effort`: the launcher sends it with the model's name ("opus#high")
     efforts = ("low", "medium", "high", "xhigh", "max")
+    focus_model = "opus"  # `claude --model opus`: the alias follows the newest Opus
+    focus_effort = "max"
 
     def models(self, path: str | None, run: bool = True) -> list[dict]:
         """Its aliases (always the newest of each kind), then each version on its own."""

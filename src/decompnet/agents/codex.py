@@ -62,6 +62,7 @@ class Codex(Agent):
     shares_quota_cooldown = False
     takes_effort = True  # Codex's model_reasoning_effort
     efforts = ("minimal", "low", "medium", "high", "xhigh", "max", "ultra")
+    focus_effort = "xhigh"  # every current model lists it; "max"/"ultra" only some (supportedReasoningEfforts)
 
     def models(self, path: str | None, run: bool = True) -> list[dict]:
         cached = _models.get(self.id)

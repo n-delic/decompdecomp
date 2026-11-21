@@ -64,6 +64,7 @@ class KimiCode(Agent):
     family = 'kimi'
     takes_effort = True
     efforts = ('low', 'high', 'max')
+    focus_effort = 'max'
 
     supports_login = True
 

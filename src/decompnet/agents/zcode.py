@@ -68,6 +68,7 @@ class Zcode(Agent):
     family = "glm"
     takes_effort = True
     efforts = ("low", "high", "max")  # Z.ai's GLM models' levels (zcode's --effort also takes auto)
+    focus_effort = "max"
 
     def models(self, path: str | None, run: bool = True) -> list[dict]:
         """The Z.ai plans' models; a user on another plan types its provider/model."""
