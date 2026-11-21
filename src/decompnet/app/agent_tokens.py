@@ -605,7 +605,10 @@ def function_view(net, agent, slug, function, section='summary', start=0, limit=
         return packet(net, agent, slug, function)
     if section=='summary':
         fn=net._function(function,slug)
+        from .stub_candidates import hint as stub_hint
+        stub_note=stub_hint(net,fn,fn['best_source'] or '')
         return (f"{fn['name']}: {fn['status']}; {fn['n_insns']} instructions; saved historical score {fn['best_score'] if fn['best_score'] is not None else 'unavailable'}.\n"
+                +(stub_note+'\n' if stub_note else '')+
                 'Use section=brief for a working packet, candidate for complete editable C, history/quality/notes for evidence, or get_assembly for instruction pages. Supporting sections accept character offsets start/limit.')
     text=_function_view(net,agent,slug,function,section)
     if section in {'candidate','source','draft','matched','brief'}:
