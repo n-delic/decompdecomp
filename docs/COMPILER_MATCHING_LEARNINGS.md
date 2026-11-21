@@ -9347,3 +9347,22 @@ linked score from 3726 to 3706 in a private replay. The other writes and
 the external declaration retained their original types. Folding the
 global's default assignment into a conditional expression instead
 raised the score to 5566.
+
+### Match the branch-likely byte flag update
+
+Four routines built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`
+scored 260 after splitting a later address expression into a temporary.
+The target sets the tested bit in the likely branch's delay slot and
+clears it on the other path. Testing the positive bit and exchanging the
+two source arms reproduced all 136 or 140 linked bytes on a copied project.
+Replacing the arms with a single XOR scored 755. The branch rewrite on
+the raw draft reduced 295 to 35 before the separate address edit.
+
+### Use the floating-point element type for an indexed return
+
+Three routines built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`
+scored 170. Their generated word pointer applied a second scaling factor to
+an already scaled offset, and the compiler converted the loaded integer
+to a float. The target shifted once by two and returned its direct float
+load in the return delay slot. An `f32[]` declaration and an unscaled
+subscript reproduced all 24, 44 or 48 linked bytes on a copied project.

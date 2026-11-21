@@ -153,7 +153,9 @@ class BriefMixin:
                 field_snapshot_copies,
                 float_matrix_identity,
                 global_pointer_local_repairs,
+                guard_inversion_repairs,
                 indexed_field_cursor,
+                kmc_cast_repairs,
                 large_stack_drafts,
                 likely_branch_cursor,
                 loop_storage_shapes,
@@ -212,6 +214,10 @@ class BriefMixin:
                 inputs.append('ordered halfword updates')
             if aligned_stack_read.applies(fn['asm'] or ''):
                 inputs.append('aligned stack read')
+            if guard_inversion_repairs.byte_toggle_applies(fn['asm'] or ''):
+                inputs.append('byte flag update branch')
+            if kmc_cast_repairs.float_table_applies(fn['asm'] or ''):
+                inputs.append('typed floating-point table return')
             if direct_mapped_address.applies(fn['asm'] or ''):
                 inputs.append('direct address range returns')
             if global_pointer_local_repairs.list_transfer_applies(fn['asm'] or ''):

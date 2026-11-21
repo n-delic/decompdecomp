@@ -10,6 +10,7 @@ from decomprepair import (
     field_snapshot_copies,
     float_matrix_identity,
     global_pointer_local_repairs,
+    guard_inversion_repairs,
     indexed_field_cursor,
     kmc_cast_repairs,
     likely_branch_cursor,
@@ -234,6 +235,10 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
             result.append(('ordered_halfword_updates', candidate_source))
         if candidate_source := aligned_stack_read.rewrite(source, name, asm or ''):
             result.append(('aligned_stack_read', candidate_source))
+        if candidate_source := guard_inversion_repairs.rewrite_byte_toggle(source, name, asm or '', header):
+            result.append(('byte_flag_branch_orientation', candidate_source))
+        if candidate_source := kmc_cast_repairs.rewrite_float_table(source, name, asm or '', header):
+            result.append(('direct_float_table_load', candidate_source))
         if candidate_source := direct_mapped_address.rewrite(source, name, asm or '', header):
             result.append(('direct_mapped_address', candidate_source))
         if candidate_source := global_pointer_local_repairs.rewrite_list_transfer(source, name, asm or '', header):

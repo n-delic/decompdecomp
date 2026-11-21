@@ -569,3 +569,17 @@ def test_kmc_proposes_unsigned_literal_stores_from_matching_byte_destinations():
             *((' ', instruction, instruction) for instruction in instructions)]
     assert dict(route(source, rows, 'asm'))['kmc_unsigned_byte_store'] == source.replace('flag =', '*(u8 *)&flag =')
     assert 'kmc_unsigned_byte_store' not in dict(route(source, rows, 'asm', compiler='ido-5.3'))
+
+
+def test_kmc_proposes_byte_flag_orientation_and_float_table_types(monkeypatch):
+    from decomprepair import guard_inversion_repairs, kmc_cast_repairs
+
+    monkeypatch.setattr(guard_inversion_repairs, 'rewrite_byte_toggle', lambda *args: 'swap byte flag arms')
+    monkeypatch.setattr(kmc_cast_repairs, 'rewrite_float_table', lambda *args: 'typed table')
+    rows = [('s', 'sll $a0, $a0, 2', 'sll $a0, $a0, 4')]
+    kmc = dict(route('void f(void) {}', rows, 'asm'))
+    assert kmc['byte_flag_branch_orientation'] == 'swap byte flag arms'
+    assert kmc['direct_float_table_load'] == 'typed table'
+    ido = dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
+    assert 'byte_flag_branch_orientation' not in ido
+    assert 'direct_float_table_load' not in ido
