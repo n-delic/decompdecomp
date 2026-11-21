@@ -176,3 +176,16 @@ def test_existing_switch_pieces_keep_their_original_unit(tmp_path):
 
 def test_a_processor_without_a_reader_does_not_refine_raw_output(tmp_path):
     assert not mixed_code.refine(tmp_path/'missing.yaml',tmp_path,'missing.bin',get('nds'))
+
+
+def test_a_call_inside_a_declared_slot_can_recover_its_own_bank(tmp_path):
+    path,console = project(tmp_path,overlap=True)
+    cfg = yaml.safe_load(path.read_text())
+    for bank in cfg['segments'][:-1]:
+        bank['exclusive_ram_id']='slot'
+    path.write_text(yaml.safe_dump(cfg))
+    raw = tmp_path/'asm/nonmatchings/unit/dropped.s'
+    lines = raw.read_text().splitlines()
+    raw.write_text('\n'.join(lines[:-1])+'\n')
+    assert mixed_code.refine(path,tmp_path,'rom.bin',console,log=lambda _:None)
+    assert any(s[0]==64 for s in yaml.safe_load(path.read_text())['segments'][0]['subsegments'])

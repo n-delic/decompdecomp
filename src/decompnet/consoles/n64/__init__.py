@@ -344,6 +344,11 @@ class Nintendo64(Console):
 
         return missed_functions(config, image, log)
 
+    def import_pointer_is_data(self, image, offset):
+        from .packed_pointers import is_data
+
+        return is_data(image, offset)
+
     def up_front_guide(self, compiler: str) -> str:
         compiler = compiler.lower()  # (a fork of a public decomp: "project", its own build's)
         if compiler in ("gcc-2.8.1-pm-sn-as", "gcc-2.8.1-pm", "gcc-egcs-2.91.66", "gcc-egcs-1.1.2-4", "gcc-4.4.0-n64"):

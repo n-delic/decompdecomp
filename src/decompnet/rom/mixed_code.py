@@ -65,7 +65,8 @@ def refine(config, workdir, image, console, log=print, *, visited=None):
     # Never use that raw extent as permission to cut an existing target.
     unowned=[]
     for start,end,segment,raw,sub in dropped:
-        if any(f.piece and segment.rom_start<=f.rom<segment.rom_end for f in known):
+        if any(f.piece and segment.rom_start<=f.rom<segment.rom_end
+               and (not raw.get('exclusive_ram_id') or f.segment == sub[2]) for f in known):
             continue  # keep existing switch pieces in their original source unit
         cursor=start
         for fn in sorted(known,key=lambda f:f.rom):
@@ -76,20 +77,31 @@ def refine(config, workdir, image, console, log=print, *, visited=None):
     dropped=unowned
     if not dropped:return False
     dropped.sort(key=lambda row:row[0]);starts=[r[0] for r in dropped]
+    scopes = {raw['start']:raw['exclusive_ram_id'] for raw in cfg['segments']
+              if isinstance(raw,dict) and raw.get('exclusive_ram_id')}
     calls=set()
     for fn in functions:
+        owners = [s for s in segments if s.rom_start <= fn.rom < s.rom_end
+                  and fn.vram-fn.rom == s.vram-s.rom_start]
+        owner = owners[0] if len(owners)==1 else None
         for line in fn.lines:
             if line.word>>26==3:
-                calls.add(((line.vram+4)&0xF0000000)|((line.word&0x3FFFFFF)<<2))
+                target = ((line.vram+4)&0xF0000000)|((line.word&0x3FFFFFF)<<2)
+                mappings = [s for s in segments if s.contains(target,4)]
+                if len(mappings)==1:
+                    segment = mappings[0]
+                elif owner in mappings and (scope := scopes.get(owner.rom_start)) and all(
+                        scopes.get(s.rom_start)==scope for s in mappings):
+                    segment = owner
+                else:
+                    continue  # a call from outside the shared slot is ambiguous
+                calls.add((segment.rom_start+target-segment.vram,target,segment.rom_start))
     probes=[]
-    for target in sorted(calls):
-        mappings=[s for s in segments if s.contains(target,4)]
-        if len(mappings)!=1:continue  # shared overlay RAM is not a unique destination
-        segment=mappings[0];offset=segment.rom_start+target-segment.vram
+    for offset,target,owner_start in sorted(calls):
         index=bisect_right(starts,offset)-1
         if index<0 or offset>=dropped[index][1]:continue
         row=dropped[index]
-        if row[2]!=segment:continue
+        if row[2].rom_start!=owner_start:continue
         if (offset,target,row[1]) not in visited:
             probes.append((offset,target,row))
     accepted=[]
@@ -98,7 +110,7 @@ def refine(config, workdir, image, console, log=print, *, visited=None):
         visited.add((offset,target,row[1]))
         size=validate(rom,offset,row[1],target,big_endian=console.big_endian,cpu=console.cpu_variant,
                       asm_check=console.asm_reason)
-        if size and not any(target<other<target+size for other in calls):
+        if size and not any(offset<other<offset+size for other,_,_ in calls):
             accepted.append((offset,offset+size,row))
     # Competing called frames must not cut through each other.
     accepted=[a for a in accepted if not any(a is not b and a[0]<b[1] and b[0]<a[1] for b in accepted)]

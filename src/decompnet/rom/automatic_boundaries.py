@@ -34,7 +34,10 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
     shared,slots=shared_slot_calls(functions,image,console,segments)
     # A stored word equal to an address in a shared slot may be any sibling overlay's table entry, and the segment's
     # own extent can run on over its siblings' images (the game above: five overlays in one segment's ROM range).
-    pointers={w for w, in struct.iter_unpack(fmt,image[:len(image)//4*4]) if w in starts and not any(s.contains(w,4) for s in slots)}
+    zero_entries = {fn.vram for fn in functions if fn.size == 4 and not fn.lines[0].word}
+    pointers={w for i,(w,) in enumerate(struct.iter_unpack(fmt,image[:len(image)//4*4]))
+              if w in starts and not any(s.contains(w,4) for s in slots)
+              and (w not in zero_entries or not console.import_pointer_is_data(image,4*i))}
     references=defaultdict(set)
     direct_calls=set()
     transfer_targets=set()
@@ -305,8 +308,12 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
             if exception_fallback:
                 transfer = previous.lines[-2]
                 target = ((transfer.vram+4)&0xf0000000)|((transfer.word&0x3ffffff)<<2)
-                if (following is None or following.vram != target or following.vram%16 or after-before > HOLE
-                        or not is_frame(following.lines[0].word)):
+                if following is None or after-before > HOLE:
+                    continue
+                adjacent = following.vram == target and not following.vram%16 and is_frame(following.lines[0].word)
+                scheduler = (not following.vram%8 and any(is_frame(line.word) for line in following.lines[:3])
+                             and calls_current_thread_dispatch(image, target, previous.vram, segments, order))
+                if not (adjacent or scheduler):
                     continue
             if looped and (following is None or following.vram not in direct_calls
                            or after-before != 4 and (after-before > HOLE or following.vram % 16)):
@@ -854,6 +861,26 @@ def terminal_data_alignment(fn, previous, image, order, segments):
             return False
         values = values[:4]
     return all(map(finite,values)) and len(set(values))>=4
+
+
+def calls_current_thread_dispatch(image, target, dispatcher, segments, order):
+    """Verify the self-destroy path from the running-thread load to its dispatch."""
+    owners = [segment for segment in segments if segment.contains(target, 0xd8)]
+    if len(owners) != 1:
+        return False
+    start = target-owners[0].vram+owners[0].rom_start
+    if not 0 <= start <= len(image)-0xd8:
+        return False
+    words = struct.unpack_from('>54I' if order == 'big' else '<54I', image, start)
+    # On a null argument it loads the current thread into s0. The matching
+    # global is loaded again just before the only conditional dispatch call.
+    if (words[0] != 0x27bdffe0 or words[2] != 0x00808021 or words[6] != 0x16000004
+            or words[8]>>16 != 0x3c10 or words[10]>>16 != 0x8e10 or words[8]&0xffff != words[41]&0xffff
+            or words[41]>>16 != 0x3c02 or words[42]>>16 != 0x8c42 or words[10]&0xffff != words[42]&0xffff
+            or words[43:45] != (0x16020003,0) or words[46] != 0 or words[-2:] != (JR_RA,0x27bd0020)):
+        return False
+    call = words[45]
+    return call>>26 == 3 and (((target+184)&0xf0000000)|((call&0x3ffffff)<<2)) == dispatcher
 
 
 def terminal_memory_ranges(fn, previous, image, order, segments):
