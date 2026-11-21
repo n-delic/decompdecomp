@@ -261,3 +261,36 @@ def test_better_historical_scores_are_rejudged_before_promotion(monkeypatch):
     assert search.better_saved_baseline(AGENT, net.project_row('game'), net.function(), State(), 40) == 20
     assert judged == [unlinked, better]
     assert net.function()['best_source'] == better
+
+
+def test_failed_ido_baseline_tries_the_switch_reply_before_saved_attempts(monkeypatch):
+    from decompnet.repair_feedback import current_trial
+    from decomprepair import ido_switch_reply
+
+    baseline = deep_permuter.Search._baseline
+    net = setup(monkeypatch)
+    monkeypatch.setattr(deep_permuter.Search, '_baseline', baseline)
+    monkeypatch.setattr(Permuter, '_baseline', lambda *args: (None, 1))
+    net.cfg = lambda proj: {'compiler': {'toolchain': 'ido-7.1', 'flags': ['-O1']}}
+    net._project = net.project_row
+    broken = 's32 f(void) { return sp34; }'
+    repaired = 's32 f(void) { return 0; }'
+    with net.store.tx() as db:
+        db.execute('UPDATE functions SET best_source=?', (broken,))
+
+    def rewrite(source, name, asm, header):
+        assert source == broken
+        return repaired
+
+    def judge(self, agent, proj, fn, source, best, fork):
+        assert source == repaired
+        assert current_trial()['family'] == ido_switch_reply.FAMILY
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET best_source=?, best_score=0, status='matched'", (source,))
+        return 0
+
+    monkeypatch.setattr(ido_switch_reply, 'rewrite', rewrite)
+    monkeypatch.setattr(Permuter, '_score', judge)
+    search = deep_permuter.Search(net, 1, 10, Log(), net.function())
+    assert search._baseline(AGENT, net.project_row('game'), net.function(), State(), None) == (0, 2)
+    assert net.function()['status'] == 'matched'
