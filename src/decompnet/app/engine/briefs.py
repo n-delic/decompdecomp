@@ -155,6 +155,7 @@ class BriefMixin:
                 global_pointer_local_repairs,
                 guard_inversion_repairs,
                 indexed_field_cursor,
+                indirect_call_drafts,
                 kmc_cast_repairs,
                 large_stack_drafts,
                 likely_branch_cursor,
@@ -181,6 +182,8 @@ class BriefMixin:
                 inputs.append('measured stack copies')
             if measured_callback_loop.applies(fn['asm'] or ''):
                 inputs.append('indexed callback loops')
+            if indirect_call_drafts.applies(fn['asm'] or ''):
+                inputs.append('typed indirect calls')
             if likely_branch_cursor.applies(fn['asm'] or ''):
                 inputs.append('shared branch-likely cursor advance')
             if relocated_byte_table.applies(fn['asm'] or ''):
