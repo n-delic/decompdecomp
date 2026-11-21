@@ -123,6 +123,7 @@ def verify(feedback, example):
             relocated_byte_table,
             relocated_global_update,
             split_dispatch_zero_case,
+            stack_read_retry,
             uncached_read_repairs,
         )
 
@@ -154,6 +155,8 @@ def verify(feedback, example):
         if candidate := relocated_global_update.rewrite_countdown(source, fn['name'], fn['asm'] or '', header,
                                                                   symbols.resolve if symbols else None):
             focused.append(('relocated_countdown', candidate))
+        if candidate := stack_read_retry.rewrite(source, fn['name'], fn['asm'] or '', header):
+            focused.append(('stack_read_retry', candidate))
         if candidate := packed_matrix_conversion.rewrite(source, fn['name'], fn['asm'] or '', header):
             focused.append(('packed_matrix_conversion', candidate))
         if candidate := byte_cursor_postincrements.rewrite(source, fn['name'], fn['asm'] or '', header):

@@ -9087,3 +9087,17 @@ Naming just the countdown word at the address verified by its three raw
 relocation pairs reproduced all 168 linked bytes. A compound decrement
 also matched in the scratch trial. The rule keeps the original countdown
 tests, adjacent halfword clear and later body.
+
+### Recovering the stack buffer and bounded read retries
+
+An archived 46-instruction N64 routine under `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`
+needed a full local buffer. The raw draft failed to compile and the closest
+compiled draft scored 346. Expanding the scalar to 32 bytes alone scored
+340. Restoring the omitted argument at the first bank-selection call
+brought it to 335.
+
+Representing both retries with the original success and early error paths
+then matched all 184 linked bytes on the copied project. The target proves
+the buffer extent with the comparison length and save offsets, and it
+establishes when each call is retried. The rewrite preserves the call
+declarations, selector and comparison operands.

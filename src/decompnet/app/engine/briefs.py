@@ -163,6 +163,7 @@ class BriefMixin:
                 relocated_global_update,
                 shared_default_drafts,
                 split_dispatch_zero_case,
+                stack_read_retry,
                 uncached_read_repairs,
             )
 
@@ -178,6 +179,8 @@ class BriefMixin:
                 inputs.append('relocated global update')
             if relocated_global_update.countdown_applies(fn['asm'] or ''):
                 inputs.append('relocated countdown')
+            if stack_read_retry.applies(fn['asm'] or ''):
+                inputs.append('stack read retry')
             if packed_matrix_conversion.applies(fn['asm'] or ''):
                 inputs.append('packed matrix conversion')
             if byte_cursor_postincrements.applies(fn['asm'] or ''):
