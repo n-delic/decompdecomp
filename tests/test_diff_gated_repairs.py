@@ -645,3 +645,23 @@ void f(s32 queue, s16 value) {
     fixed = dict(proposals(source, 'f', '', 'mips', KMC, rows, ''))[family]
     assert '__repair_stack_record.__repair_stack_record_data = value;' in fixed
     assert family not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_kmc_measured_byte_table_checks_both_relocations():
+    source = '''
+extern M2C_UNK table;
+u8 f(s32 index) {
+    return *(&table + (index & 7));
+}
+'''
+    ops = ('andi $v1, $a0, 7', *('nop',) * 6,
+           'lui $v0, %hi(table)', 'addu $v0, $v0, $v1', 'jr $ra', 'lbu $v0, %lo(table)($v0)')
+    rows = [(' ', op, op) for op in ops]
+    rows.insert(7, ('>', '', 'sll $v1, $v1, 2'))
+    rows[8] = ('i', 'lui $v0, %hi(table)', 'lui $v0, %hi(last_byte)')
+    rows[-1] = ('i', 'lbu $v0, %lo(table)($v0)', 'lbu $v0, %lo(last_byte)($v0)')
+    resolve = {'table': 0x80001200, 'last_byte': 0x80001203}.get
+    family = 'measured_byte_table_index'
+    result = dict(proposals(source, 'f', '', 'mips', KMC, rows, '', resolve=resolve))
+    assert '((u8 *)&table)[(index & 7)]' in result[family]
+    assert family not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, '', resolve=resolve))
