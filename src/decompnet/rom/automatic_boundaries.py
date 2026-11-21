@@ -80,8 +80,9 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
     tables.extend(console.import_table_ranges(image,segments))
     functions, removed = split_address_tables_after_return(functions, data, image, order, console, owner,
                                                           segments, explicit | pointers | set(references))
-    functions = split_aligned_frames(functions, data, image, order, console, owner, segments,
-                                     explicit | pointers | set(references))
+    entered = explicit | pointers | set(references)
+    functions = split_aligned_frames(functions, data, image, order, console, owner, segments, entered)
+    functions = split_alignment_after_leaf(functions, data, image, order, console, owner, segments, entered)
     gaps = multiword_alignment(functions, image, order, owner, explicit | pointers, references,
                                direct_calls, data, segments, console)
     if gaps or removed:
@@ -285,12 +286,24 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
         for before in range(fn.rom, max(-1, fn.rom-HOLE), -4):
             returned = (before, mapping) in returns_by_end
             looped = previous is not None and closes_with_back_edge(previous, before, mapping)
-            if not (returned or looped) or any(image[before:fn.rom+4]):
+            exception_fallback = (previous is not None and owner(previous)==owner(fn)
+                                  and previous.rom+previous.size==before and previous.size>=16
+                                  and [line.word for line in previous.lines[-4:-2]]==[0x42000018,0x00002021]
+                                  and previous.lines[-2].word>>26==3 and not previous.lines[-1].word)
+            if not (returned or looped or exception_fallback) or any(image[before:fn.rom+4]):
                 continue
+            index = owner(fn)[0]
+            limit = segments[index].rom_end if index >= 0 else len(image)
             after = before
-            while after < min(len(image)-3, before+LONG_ALIGNMENT+4) and image[after:after+4] == bytes(4):
+            while after < min(limit, len(image)-3, before+LONG_ALIGNMENT+4) and image[after:after+4] == bytes(4):
                 after += 4
             following = entries_by_rom.get((after, after+mapping))
+            if exception_fallback:
+                transfer = previous.lines[-2]
+                target = ((transfer.vram+4)&0xf0000000)|((transfer.word&0x3ffffff)<<2)
+                if (following is None or following.vram != target or following.vram%16 or after-before > HOLE
+                        or not is_frame(following.lines[0].word)):
+                    continue
             if looped and (following is None or following.vram not in direct_calls
                            or after-before != 4 and (after-before > HOLE or following.vram % 16)):
                 return False
@@ -314,8 +327,8 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
                 if protected[index] not in data_only and (after-before<=HOLE or protected[index]<=fn.vram):
                     return False
                 index += 1
-            owners = [s for s in segments if s.rom_start <= before-8 < after < s.rom_end
-                      and s.vram-s.rom_start == mapping and s.contains(before+mapping-8, after-before+12)]
+            owners = [s for s in segments if s.rom_start <= before-8 < after <= s.rom_end
+                      and s.vram-s.rom_start == mapping and s.contains(before+mapping-8, after-before+8)]
             return (len(owners) == 1
                     and not any(d.rom is not None and d.rom < after and before < d.rom+d.size for d in data))
         return False
@@ -379,6 +392,27 @@ def call_targets_delay_slot(word, address, image, order, segments):
     return rabbitizer.Instruction(int.from_bytes(image[offsets[0]:offsets[0]+4], order)).hasDelaySlot()
 
 
+def call_targets_stack_restore(word, address, image, order, segments):
+    """An apparent call enters a return sequence that requires an existing frame."""
+    if word >> 26 != 3:
+        return False
+    target = ((address+4) & 0xf0000000) | ((word & 0x3ffffff) << 2)
+    owners = [s for s in segments if s.contains(target, 12)]
+    if len(owners) != 1:
+        return False
+    segment = owners[0]
+    start = target-segment.vram+segment.rom_start
+    end = min(start+40, segment.rom_end, len(image))
+    for at in range(start, end-7, 4):
+        value = int.from_bytes(image[at:at+4], order)
+        if value == JR_RA and at > start:
+            pop = int.from_bytes(image[at+4:at+8], order)
+            return pop >> 16 == 0x27bd and 8 <= (pop & 0xffff) <= 0x1000 and not pop%8
+        if value >> 21 != 0x47d or (value >> 16) & 31 not in (*range(16,24), 30, 31):
+            return False
+    return False
+
+
 def split_address_tables_after_return(functions, data, image, order, console, owner, segments, entered):
     """Separate a size-prefixed address record folded between two closed bodies."""
     result = []
@@ -438,8 +472,10 @@ def split_aligned_frames(functions, data, image, order, console, owner, segments
         size = -fn.vram % 16
         start = fn.rom+size
         if (size not in (4, 8, 12) or not is_frame(fn.lines[size//4].word)
-                or size == 4 and not call_targets_delay_slot(fn.lines[0].word, fn.vram, image, order, segments)
-                or int.from_bytes(image[fn.rom-8:fn.rom-4], order) != JR_RA
+                or size == 4 and not (call_targets_delay_slot(fn.lines[0].word,fn.vram,image,order,segments)
+                                      or call_targets_stack_restore(fn.lines[0].word,fn.vram,image,order,segments))
+                or not any(image[at:at+4] == JR_RA.to_bytes(4,order) and not any(image[at+8:fn.rom])
+                           for at in range(max(segments[segment_index].rom_start, start-20), fn.rom-7, 4))
                 or any(address in entered for address in range(fn.vram, fn.vram+size, 4))
                 or any(d.rom is not None and d.rom < start and fn.rom < d.rom+d.size for d in data)
                 or not any(line.word >> 26 == 3 for line in fn.lines[:size//4])
@@ -453,6 +489,35 @@ def split_aligned_frames(functions, data, image, order, console, owner, segments
         result.append(replace(fn, lines=head, labels={label for label in fn.labels if label < split}))
         result.append(replace(fn, name=f'func_{split:08X}', vram=split, rom=start, lines=tail,
                               labels={label for label in fn.labels if label >= split}))
+    return result
+
+
+def split_alignment_after_leaf(functions, data, image, order, console, owner, segments, entered):
+    """Expose filler included in the previous record before a validated aligned leaf."""
+    starts = {(fn.rom, fn.vram):fn for fn in functions}
+    result = []
+    for fn in functions:
+        end = fn.rom+fn.size
+        address = fn.vram+fn.size
+        # A word that decodes as JAL can borrow the leaf's first instruction
+        # as its delay slot, resulting in a one-word overlap.
+        overlap = address%16 == 4
+        if overlap:
+            end -= 4
+            address -= 4
+        following = starts.get((end,address))
+        split = (end-fn.rom)//4
+        if (address%16 or split<5 or following is None or owner(fn)[0]<0 or owner(fn)!=owner(following)
+                or fn.lines[split-4].word != JR_RA
+                or not call_targets_stack_restore(fn.lines[split-1].word,address-4,image,order,segments)
+                or any(value in entered for value in (address-8,address-4))
+                or any(symbol.rom is not None and symbol.rom < end and end-8 < symbol.rom+symbol.size for symbol in data)
+                or leaf_extent(image,end,end+following.size,address,big_endian=console.big_endian,
+                               cpu=console.cpu_variant,asm_check=console.asm_reason)!=following.size):
+            result.append(fn)
+            continue
+        result.append(replace(fn,lines=fn.lines[:split-2],labels={label for label in fn.labels if label<address-8}))
+        result.append(replace(fn,name=f'func_{address-8:08X}',vram=address-8,rom=end-8,lines=fn.lines[split-2:],labels=set()))
     return result
 
 
@@ -476,7 +541,8 @@ def multiword_alignment(functions, image, order, owner, named, references, direc
                 backward_branch = (following.vram in direct_calls and word>>26 in (4,5,6,7,20,21,22,23)
                                    and word & 0x8000)
                 discarded_call = (is_frame(following.lines[0].word)
-                                  and call_targets_delay_slot(word, address, image, order, segments))
+                                  and (call_targets_delay_slot(word,address,image,order,segments)
+                                       or call_targets_stack_restore(word,address,image,order,segments)))
                 if not (backward_branch or discarded_call):
                     continue
             # Filler may decode as a branch into its own gap. Only incoming
