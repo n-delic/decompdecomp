@@ -1,0 +1,54 @@
+"""Keep RSP vector microcode out of inferred CPU code segments."""
+
+import struct
+
+from ...arch.mips import is_frame, jal_targets
+from ...arch.mips_code_recovery import called_extent, leaf_extent
+
+_MAX_PREFIX = 0x4000
+_MIN_VECTORS = 64
+
+
+def _vector(word):
+    return word >> 25 == 0x25  # RSP COP2 vector arithmetic
+
+
+def trim(image, found, known, log=print):
+    """Trim a vector-code prefix only where scalar calls establish the CPU boundary."""
+    ranges = [*known, *found]
+    result = []
+    for start, end, vram in found:
+        words = struct.unpack_from(f'>{min(end-start, _MAX_PREFIX)//4}I', image, start)
+        frame = next((i for i, word in enumerate(words) if is_frame(word)), None)
+        if frame is None or sum(map(_vector, words[:frame])) < _MIN_VECTORS:
+            result.append((start, end, vram))
+            continue
+        boundary = start+frame*4
+        address = vram+frame*4
+        scalar = [(boundary, end, address), *(r for r in ranges if r[0] != start)]
+        targets = set()
+        for lo, hi, base in scalar:
+            targets.update(jal_targets(struct.unpack_from(f'>{(hi-lo)//4}I', image, lo), base))
+        cut = _boundary(image, words, frame, start, end, vram, targets)
+        if cut > start:
+            log(f'Kept {cut-start} bytes of RSP microcode outside the inferred CPU code range.')
+        result.append((cut, end, vram+cut-start))
+    return result
+
+
+def _boundary(image, words, frame, start, end, vram, targets):
+    at = start+frame*4
+    address = vram+frame*4
+    if address not in targets or not called_extent(image, at, end, address):
+        return start
+    # A directly called leaf can be the first CPU function, before the first
+    # stack frame. Require it to end exactly at that frame.
+    for i in range(max(1, frame-16), frame):
+        if _vector(words[i-1]) and vram+4*i in targets:
+            candidate = start+4*i
+            if leaf_extent(image, candidate, at, vram+4*i) == at-candidate:
+                at, address = candidate, vram+4*i
+                break
+    if not _vector(words[(at-start)//4-1]) or any(vram <= target < address for target in targets):
+        return start
+    return at
