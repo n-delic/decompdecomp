@@ -357,11 +357,13 @@ class Console:
 
     def function_meta(self, fn) -> dict:
         """ROM mode: what a function's row must keep besides its bytes (GBA: whether it's Thumb)."""
+        if getattr(fn,'entry_aliases',None):
+            return {'asm_code': 'The closed body has an independent assembly entry inside its extent.'}
         return {}
 
     def function_status(self, fn) -> str:
         """ROM mode: the status a just-split function starts with (GBA: hand-written helpers are 'asm')."""
-        return "open"
+        return "asm" if getattr(fn,'entry_aliases',None) else "open"
 
     def instruction_size(self, fn) -> int:
         """ROM mode: how many bytes one of a function's instructions is (MIPS 4; GBA 2 in Thumb, 4 in ARM)."""

@@ -49,6 +49,7 @@ class RomFunction:
     asm_path: Path
     labels: set[int] = field(default_factory=set)
     piece: bool = False  # splat filed a switch's case on its own (merge_switch_cases puts it back)
+    entry_aliases: dict[int, str] = field(default_factory=dict)
 
     @property
     def size(self) -> int:
@@ -61,9 +62,11 @@ def split_function(fn: RomFunction, at: int, new_name: str) -> tuple[RomFunction
     if not fn.vram < at < fn.vram + fn.size or (at - fn.vram) % 4:
         raise ValueError(f"0x{at:08X} is not an instruction boundary inside {fn.name}")
     k = (at - fn.vram) // 4
-    head = RomFunction(fn.name, fn.vram, fn.rom, fn.segment, fn.lines[:k], fn.asm_path, {a for a in fn.labels if a < at})
+    head = RomFunction(fn.name, fn.vram, fn.rom, fn.segment, fn.lines[:k], fn.asm_path, {a for a in fn.labels if a < at},
+                       entry_aliases={a:n for a,n in fn.entry_aliases.items() if a < at})
     _trim_padding(head.lines)
-    tail = RomFunction(new_name, at, fn.lines[k].rom, fn.segment, fn.lines[k:], fn.asm_path, {a for a in fn.labels if a >= at})
+    tail = RomFunction(new_name, at, fn.lines[k].rom, fn.segment, fn.lines[k:], fn.asm_path, {a for a in fn.labels if a >= at},
+                       entry_aliases={a:n for a,n in fn.entry_aliases.items() if a >= at and n != new_name})
     return head, tail
 
 
@@ -493,6 +496,8 @@ def function_asm(fn: RomFunction) -> str:
     """A function's stored assembly, as the project keeps and shows it (spimdisasm's lines with their words)."""
     out = [f"glabel {fn.name}"]
     for ln in fn.lines:
+        if alias := fn.entry_aliases.get(ln.vram):
+            out.append(f'glabel {alias}')
         if ln.vram in fn.labels:
             out.append(f".L{ln.vram:08X}:")
         # Overlay labels carry a suffix in splat's input. Keep their references consistent
@@ -539,17 +544,24 @@ def draft_asm(text: str, name: str, vram: int | None = None, data_asm: str = '')
 
 def function_from_text(name: str, text: str, segment: str) -> RomFunction:
     """A function from the assembly a project stored (function_asm's form): its lines, labels and words."""
-    lines, labels = [], set()
+    lines, labels, aliases = [], set(), {}
+    alias = None
     for raw in text.splitlines():
+        label = _GLABEL.match(raw)
+        if label and label[1] != name:
+            alias = label[1]
         m = _INSN.match(raw)
         if m:
             rom, vram, word, mnem, ops = m.groups()
             lines.append(AsmLine(int(rom, 16), int(vram, 16), int(word, 16), mnem, ops))
+            if alias:
+                aliases[int(vram,16)] = alias
+                alias = None
             continue
         m = _LABEL.match(raw)
         if m:
             labels.add(int(m.group(2), 16))
-    return RomFunction(name, lines[0].vram, lines[0].rom, segment, lines, Path(), labels)
+    return RomFunction(name, lines[0].vram, lines[0].rom, segment, lines, Path(), labels, entry_aliases=aliases)
 
 
 def function_from_bytes(name: str, raw: bytes, rom: int, vram: int, segment: str,
@@ -799,4 +811,5 @@ def join_saved_functions(parts: list[RomFunction], start: int, end: int, read) -
     if sorted(lines) != list(range(start, end, 4)):
         raise ValueError("the saved layout crosses a gap in this analysis")
     return replace(parts[0], lines=[lines[address] for address in sorted(lines)],
-                   labels=set().union(*(part.labels for part in parts)))
+                   labels=set().union(*(part.labels for part in parts)),
+                   entry_aliases={a:n for part in parts for a,n in part.entry_aliases.items() if start <= a < end})

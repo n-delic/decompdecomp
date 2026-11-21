@@ -634,3 +634,24 @@ def test_called_frame_after_repeated_double_at_the_start_of_a_mapping(named):
     symbols = [f'entry_mid = 0x{BASE+20:08X};'] if named else []
     result = repair(functions,[],image,consoles.get('n64'),segments,symbols=symbols)
     assert (20 in {fn.rom for fn in result}) == named
+
+
+def test_independent_assembly_tail_is_retained_inside_a_closed_leaf():
+    from decompnet.rom.split import function_from_text
+
+    words = [0x24820001,0x24a50002,0x00c02021,0,0x00451021,0xac820000,0x03e00008,0]
+    image,functions,segments = fixture(words,cuts=(0,16,32))
+    console = consoles.get('n64')
+    data = []
+    result = repair(functions,data,image,console,segments,
+                    symbols=[f'{functions[1].name} = 0x{BASE+16:08X};'])
+    body, = result
+    asm = function_asm(body)
+    assert body.size == 32 and console.function_status(body) == 'asm'
+    assert function_from_text(body.name,asm,body.segment).entry_aliases == {BASE+16:functions[1].name}
+    alias, = data
+    assert (alias.name,alias.vram,alias.kind) == (functions[1].name,BASE+16,'func')
+    # A separately named entry deeper in the tail requires its own review.
+    assert len(repair(functions,[],image,console,segments,symbols=[
+        f'tail = 0x{BASE+16:08X};\nthird = 0x{BASE+20:08X};',
+    ])) == 2

@@ -335,12 +335,21 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
 
     recovered_data=[]
     predecessors={(fn.rom+fn.size,fn.vram+fn.size):fn for fn in result if fn.size>=8}
-    kept=[];dropped=markers=0;ordered=sorted(result,key=lambda f:(owner(f),f.rom))
+    kept=[];dropped=markers=recovered_shared=0;ordered=sorted(result,key=lambda f:(owner(f),f.rom))
     for i,fn in enumerate(ordered):
         previous=kept[-1] if kept else None;following=ordered[i+1] if i+1<len(ordered) else None
         if overlay_end_marker(fn, previous, following, image, order, segments) and not referenced(fn):
             data.append(DataSymbol(fn.name, fn.vram, fn.rom, 4, 'data'))
             markers += 1
+            continue
+        if (previous is not None and owner(previous)==owner(fn)
+                and fn.vram in (explicit | pointers)
+                and shared_entry_leaf(previous,fn,image,console,order,segments,entered)):
+            kept[-1] = replace(previous,lines=previous.lines+fn.lines,
+                               labels=previous.labels|fn.labels,
+                               entry_aliases={**previous.entry_aliases,fn.vram:fn.name})
+            data.append(DataSymbol(fn.name,fn.vram,fn.rom,0,'func'))
+            recovered_shared += 1
             continue
         predecessor=predecessors.get((fn.rom,fn.vram))
         if (leading_repeated_double(fn, following, image, order, segments, direct_calls)
@@ -381,7 +390,28 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
     if recovered_data:
         data.extend(recovered_data)
         log(f'Recovered {len(recovered_data)} referenced words as data between functions.')
-    return kept if dropped or markers or recovered_data else result if changed else functions
+    if recovered_shared:
+        log(f'Recovered {recovered_shared} closed leaves with independently entered assembly tails.')
+    return kept if dropped or markers or recovered_data or recovered_shared else result if changed else functions
+
+
+
+def shared_entry_leaf(head, tail, image, console, order, segments, entered):
+    """Close the first entry while retaining a verified alias at the assembly tail."""
+    if (tail.size != 16 or head.size < 16 or head.rom+head.size != tail.rom
+            or head.vram+head.size != tail.vram or head.entry_aliases or tail.entry_aliases
+            or any(tail.vram < address < tail.vram+tail.size for address in entered)):
+        return False
+    if sum(s.contains(head.vram,head.size+tail.size) for s in segments) != 1:
+        return False
+    end = tail.rom+tail.size
+    if not console.boundary_reason(image[head.rom:tail.rom]):
+        return False
+    if assembly_extent(image,tail.rom,end,tail.vram,console,order) != tail.size:
+        return False
+    size = leaf_extent(image,head.rom,end,head.vram,big_endian=console.big_endian,
+                       cpu=console.cpu_variant,asm_check=console.asm_reason)
+    return size == head.size+tail.size
 
 
 def call_targets_delay_slot(word, address, image, order, segments):
