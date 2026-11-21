@@ -9014,3 +9014,18 @@ both live word loads from their halfword stores, and using the addresses
 and store order verified against the seven original relocation pairs,
 reproduced all 80 linked bytes. Routing the marker store through a word
 temporary scored 50.
+
+### Indexing record fields from the loop counter
+
+A 67-instruction N64 routine under `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`
+had a draft with an untyped table read that failed compilation. The
+compilable draft scored 240 because KMC biased a separately advanced
+word cursor by 24 bytes. Computing the four word-store addresses from the
+loop counter retained the unbiased base and matched all 268 linked bytes
+on a copied project. Both the original post-tested loop and a counted
+`for` loop matched with the indexed stores.
+
+The rewrite checks the target's base, stride, backedge, word-store
+displacements, and indexed table load. It keeps the original loop and
+byte-field accesses, and supplies a word-pointer cast for the raw draft's
+untyped read.
