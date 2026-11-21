@@ -10977,3 +10977,15 @@ lookup, reusing the loaded byte and the copy index, keeping the cache
 reload inside the loop, and ordering the addressed locals matched all
 300 bytes. Both exact drafts used local record declarations derived
 from the target's stack offsets and request increment.
+
+### Recover preloaded table strides and stage a comparison load
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, three isolated
+N64 drafts reached byte-exact matches. A loop shared a word-table
+offset with a pointer based on a previously loaded relocation.
+Removing the redundant source multiplication brought the score
+from 10 to 0. A second loop passed a global record address to a
+call. Treating its stride as bytes also brought the score from 10
+to 0. In the third case, the compiler reversed two float loads
+before a comparison. Staging the left-hand field in a local
+preserved the comparison and reduced the score from 20 to 0.
