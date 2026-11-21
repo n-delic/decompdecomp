@@ -11617,3 +11617,16 @@ Library: decomp-repair 0.5.257 `arm_local_return_fold`, which offers all four
 as one child first (the steps alone are non-improving in turn, 665, 255, 765,
 so a greedy search never reaches 0); on the saved best its first child is 0.
 Unit tests only; the real proof is a Deep Permuter run in the app.
+
+## Two-move search: step at the first improvement (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`)
+
+The rotation-matrix function's store order decides its `$f20`/`$f22` choice. Measured with `fast_judge` on its saved
+85 state and on the matched source with the stores in index order (60):
+
+| start | stock (beam 40, 8,000 per round) | step at first improvement, 6-parent beam first |
+|---|---|---|
+| saved 85 | 0 after 8,000 judgments (one round) | 85 -> 70 -> 45 -> 35 -> 0 after 2,286 |
+| index order 60 | 60 -> 40 -> 20 -> 0 after 24,000 (three rounds) | 60 -> 40 -> 20 -> 0 after 7,466 |
+
+A plain greedy single-move climb stalls at 40 from the 60 state (1,038 judgments). The pass now returns at an
+improving single move, expands six parents before widening the beam to 40, and runs up to eight rounds.
