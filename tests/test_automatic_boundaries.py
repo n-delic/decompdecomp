@@ -416,6 +416,23 @@ def test_terminal_alignment_before_unmapped_float_data(case):
     assert any(fn.rom==12 for fn in result)==(case!='filler')
 
 
+@pytest.mark.parametrize('case',['terminal table','slot outside code','explicit entry','missing table','mapped remainder'])
+def test_terminal_call_fragment_cannot_borrow_the_first_memory_range_limit(case):
+    words = [0x8c820000,0x03e00008,0,0x0d000000,0x7fffffff]
+    image,functions,segments = fixture(words,cuts=(0,12,20))
+    rest = [0,0x803fffff,3,0x9fffffff,0,0xa03fffff,3]
+    if case=='missing table':
+        rest[-1] = 4
+    image += b''.join(word.to_bytes(4,'big') for word in rest)
+    if case=='slot outside code':
+        segments[0] = replace(segments[0],rom_end=16)
+    if case=='mapped remainder':
+        segments.append(Segment('other',20,48,BASE+64))
+    symbols = [f'entry = 0x{BASE+12:08X}; // type:func'] if case=='explicit entry' else ()
+    result = repair(functions,[],image,consoles.get('n64'),segments,symbols=symbols)
+    assert any(fn.rom==12 for fn in result)==(case not in ('terminal table','slot outside code'))
+
+
 def test_terminal_fp_branch_filler_can_borrow_a_word_from_the_float_table():
     import struct
 
