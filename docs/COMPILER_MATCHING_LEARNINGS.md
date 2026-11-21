@@ -11778,3 +11778,12 @@ place fixed the argument but changed the delay-slot store to use that
 argument as its base, leaving the score at 10. Assigning the corrected
 pointer a local immediately after the original base was loaded kept the
 store on its original base and produced an exact match.
+
+### Carry a corrected byte address in the incoming index
+
+With gcc-2.7.2-kmc `-G0 -mips3 -mgp32 -mfp32 -O2`, a draft applied
+its byte stride to a word pointer, scaling it twice. Casting the base
+to a byte pointer fixed the stride and moved the score from 30 to 20.
+Scaling the incoming index and accumulating the row address into it
+before the byte load and store produced the target register allocation
+and an exact match.
