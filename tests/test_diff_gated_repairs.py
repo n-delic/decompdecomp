@@ -817,3 +817,14 @@ def test_measured_kmc_input_receives_the_linked_symbol_resolver(monkeypatch):
     monkeypatch.setattr(diff_gated_repairs.measured_kmc_input, 'variants', repair)
     assert dict(proposals(source, 'f', '', 'mips', KMC, rows, '', resolve=resolve))['input_fixture'] == 'repaired'
     assert 'input_fixture' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, '', resolve=resolve))
+
+
+def test_measured_halfword_switch_is_routed_for_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    source = 'void f(void) {}'
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_halfword_switch, 'variants',
+                        lambda text, name, header, diff: [('halfword_switch_fixture', text)])
+    assert 'halfword_switch_fixture' in dict(proposals(source, 'f', '', 'mips', KMC, rows, ''))
+    assert 'halfword_switch_fixture' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))
