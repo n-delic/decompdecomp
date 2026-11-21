@@ -365,29 +365,35 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
     target = m2c_target(toolchain_id or "")
     if not target:
         return None
-    source = run_m2c(asm_text, name, target, context_header, data_asm, timeout, valid, strict, options)
-    if valid and source and toolchain_id == 'gcc-2.7.2-kmc':
-        from decomprepair import (
-            large_stack_drafts,
-            measured_callback_loop,
-            measured_mmio_polling,
-            measured_stack_drafts,
-            shared_default_drafts,
-            unaligned_stack_drafts,
-            uncached_read_repairs,
-        )
+    if not valid or toolchain_id != 'gcc-2.7.2-kmc':
+        return run_m2c(asm_text, name, target, context_header, data_asm, timeout, valid, strict, options)
 
-        if 'M2C_UNALIGNED32' in source and (draft := unaligned_stack_drafts.rewrite(
-                source, name, asm_text, context_header, resolve)):
-            return draft
-        return (measured_stack_drafts.rewrite(source, name, asm_text, context_header)
-                or large_stack_drafts.rewrite(source, name, asm_text, context_header)
-                or shared_default_drafts.rewrite(source, name, asm_text, data_asm, context_header)
-                or uncached_read_repairs.rewrite(source, name, asm_text, resolve)
-                or measured_callback_loop.rewrite(source, name, asm_text, context_header, resolve)
-                or measured_mmio_polling.rewrite(source, name, asm_text, context_header)
-                or source)
-    return source
+    from decomprepair import (
+        large_stack_drafts,
+        likely_branch_cursor,
+        measured_callback_loop,
+        measured_mmio_polling,
+        measured_stack_drafts,
+        shared_default_drafts,
+        unaligned_stack_drafts,
+        uncached_read_repairs,
+    )
+
+    draft_asm = likely_branch_cursor.draft_asm(asm_text)
+    source = run_m2c(draft_asm, name, target, context_header, data_asm, timeout, valid, strict, options)
+    if not source:
+        return None
+    if 'M2C_UNALIGNED32' in source and (draft := unaligned_stack_drafts.rewrite(
+            source, name, asm_text, context_header, resolve)):
+        return draft
+    return (measured_stack_drafts.rewrite(source, name, asm_text, context_header)
+            or large_stack_drafts.rewrite(source, name, asm_text, context_header)
+            or shared_default_drafts.rewrite(source, name, asm_text, data_asm, context_header)
+            or uncached_read_repairs.rewrite(source, name, asm_text, resolve)
+            or measured_callback_loop.rewrite(source, name, asm_text, context_header, resolve)
+            or measured_mmio_polling.rewrite(source, name, asm_text, context_header)
+            or likely_branch_cursor.rewrite(source, name, asm_text, context_header)
+            or source)
 
 
 def drop_saved_register_reads(source: str) -> str:

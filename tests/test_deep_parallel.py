@@ -344,3 +344,28 @@ def test_scaled_local_trial_runs_on_shift_size_mismatch(monkeypatch):
     assert search.operand_order_pass(AGENT, proj, fn, 130, None) == 0
     assert len(tried) == 1
     assert '__repair_scaled_size = size * 8;' in tried[0]
+
+
+def test_inline_float_scale_runs_before_broad_rewriting(monkeypatch):
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    proj = net.project_row('game')
+    fn = {**net.function(), 'name': 'f',
+          'asm': ('lwc1 $f2, 0($a0)\nmul.s $f2, $f2, $f0\n'
+                  'lwc1 $f8, 4($a0)\nmul.s $f8, $f8, $f0\n'
+                  'lwc1 $f4, 8($a0)\nmul.s $f4, $f4, $f0\n'),
+          'best_source': ('void f(f32 *v) {\n'
+                          '    f32 x = v[0] * 0.5f;\n'
+                          '    f32 y = v[1] * 0.5f;\n'
+                          '    f32 z = v[2] * 0.5f;\n'
+                          '    use(x, y, z);\n'
+                          '}')}
+    search = deep_permuter.Search(net, 1, 6, Log())
+    monkeypatch.setattr(deep_permuter.permuter_focus, 'classify', lambda *args: 'register')
+    tried = []
+    monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 0)
+
+    assert search.operand_order_pass(AGENT, proj, fn, 35, None) == 0
+    assert len(tried) == 1
+    assert '__repair_float_mul(v[2], 0.5f)' in tried[0]

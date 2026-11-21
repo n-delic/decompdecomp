@@ -7,8 +7,11 @@ function romAudioRows(report) {
     if(!asset){const clue=region.evidence?.find(e=>e.kind==='audio'&&e.confidence==='validated'&&e.size);if(clue)asset={...clue,media:'audio',samples:[{offset:clue.offset,size:clue.size,codec:clue.format||clue.label,rate:clue.rate,samples:clue.rate&&clue.seconds?Math.round(clue.rate*clue.seconds):null}]};}
     if(asset?.media!=='audio')continue;
     for(const [index,sample] of (asset.samples||[]).entries()){
-      const key=[sample.offset,sample.size,sample.book_offset,sample.rate].join(':');
-      if(!rows.has(key))rows.set(key,{key,region:region.id,index,sample,asset,name:(region.annotation?.name||asset.label||'Audio bank')+' · '+(sample.label || (sample.instrument!=null?Number(sample.instrument)+1:index+1)),codec:sample.codec,seconds:sample.samples!=null&&sample.rate?sample.samples/sample.rate:null,direct:new Set(),traced:new Set()});
+      const indexed=sample.offset==null;
+      const key=indexed?['indexed',asset.offset,index].join(':'):[sample.offset,sample.size,sample.book_offset,sample.rate].join(':');
+      const label=sample.label || (sample.instrument!=null?Number(sample.instrument)+1:index+1);
+      const location=indexed?' · 0x'+asset.offset.toString(16).toUpperCase():'';
+      if(!rows.has(key))rows.set(key,{key,region:region.id,index,sample,asset,name:(region.annotation?.name||asset.label||'Audio bank')+' · '+label+location,codec:sample.codec,seconds:sample.samples!=null&&sample.rate?sample.samples/sample.rate:null,direct:new Set(),traced:new Set()});
       const row=rows.get(key);for(const n of region.direct_function_refs||[])row.direct.add(n);for(const n of region.traced_function_refs||[])row.traced.add(n);
     }
   }

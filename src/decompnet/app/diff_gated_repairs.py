@@ -4,6 +4,7 @@ import re
 
 from decomprepair import (
     kmc_cast_repairs,
+    likely_branch_cursor,
     loop_sentinel_repairs,
     measured_address_repairs,
     measured_callback_loop,
@@ -181,6 +182,8 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
             result.append(('measured_callback_loop', candidate_source))
         if candidate_source := measured_mmio_polling.rewrite(source, name, asm or '', header):
             result.append(('measured_mmio_polling', candidate_source))
+        if candidate_source := likely_branch_cursor.rewrite(source, name, asm or '', header):
+            result.append(('likely_branch_cursor', candidate_source))
         result += measured_callback_repairs.variants(source,name,rows)
         result += measured_address_repairs.variants(source,name,header,rows,symbols)
         result += measured_pointer_scale.variants(source,name,header,rows)
