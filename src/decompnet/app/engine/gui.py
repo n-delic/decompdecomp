@@ -758,7 +758,7 @@ class GuiMixin:
                 f"WHERE project_id=? AND id>? AND COALESCE(agent_id,0) NOT IN (SELECT value FROM json_each(?)) "
                 f"ORDER BY id DESC LIMIT {LIVE_EVENTS}", proj['id'], since_event, hidden), {'agent':'agent_id'})
             attempts = label(self, store.all(
-                "SELECT t.id,t.score,t.score_before,t.score_improved,t.compiled,t.created_at,"
+                "SELECT t.id,t.score,t.score_before,t.score_improved,t.compiled,t.created_at,t.via,"
                 "f.name AS function,f.n_insns,t.agent_id FROM attempts t JOIN functions f ON f.id=t.function_id "
                 "WHERE f.project_id=? AND t.id>? AND COALESCE(t.agent_id,0) NOT IN (SELECT value FROM json_each(?)) "
                 f"ORDER BY t.id DESC LIMIT {LIVE_ATTEMPTS}", proj['id'], since_attempt, hidden), {'agent':'agent_id'})
