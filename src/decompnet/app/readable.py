@@ -30,6 +30,7 @@ from .. import scoring
 from ..forks.csource import _blank, find
 from ..forks.project import ForkProject
 from ..network import GAME_CODE, IN_BUILD, Agent, NetworkError
+from . import polish_checklist
 from .function_names import needs_name
 
 CLAIM_SECONDS = 30 * 60
@@ -341,27 +342,28 @@ class Readability:
                 return given_up + self._held_by_others(proj)
             return (given_up + "Every matched function is readable already (or has had its tries without "
                     "staying matched), and every file tidy. 🎉 Stop here: nothing is left to polish.")
-        from . import polish_automation, polish_checklist
+        from . import polish_automation
 
-        checks = polish_checklist.read(self.net, proj["id"])
+        options = polish_checklist.read(self.net, proj["id"])
+        checks = options["selected"]
         # A reused rename plan never reviews the candidate's portability.
-        if not checks and polish_automation.reuse(self, agent, proj, fn):
+        portability = any(check in checks for check in polish_checklist.PORTABILITY_CHECKS)
+        if not portability and polish_automation.reuse(self, agent, proj, fn):
             return None
         source = self._matching_c(proj, fn)
         prepared = polish_automation.safe_brief(self.net, proj, fn, source)
         counts = self.counts(proj)
         where = f" at 0x{fn['vram']:08X}" if fn["vram"] is not None else f" in {fn['unit']}"
-        names = ("- rename_symbol the function, and the globals and functions it uses, once their purpose is clear "
+        names = ("- rename_symbol the globals and other functions it uses, once their purpose is clear "
                  "(read_file and search_code show what it calls and what calls it);\n"
                  "- describe structs, enums and constants in the project's headers (edit_file) and use their names here;\n"
                  if fork else
-                 "- rename_symbol the function, and the globals and functions it uses, once their purpose is clear;\n"
+                 "- rename_symbol the globals and other functions it uses, once their purpose is clear;\n"
                  "- describe structs, enums and constants in the shared header (edit_context) and use their names here;\n")
         # helpers named two getters of class names "static data" without looking at what the globals held, and each
         # picked its own style (Shape3_Init, Shape2_init, vec3_dot_product)
         names += ("- read_data a global before you name it: what it holds (a string, a table, a constant) says what it "
-                  "is;\n- give functions descriptive camelCase names before submitting a polish. Keep existing descriptive\n"
-                  "  names and follow surrounding style for other identifiers.\n")
+                  "is; follow surrounding style for other identifiers.\n")
         start = self.preamble(source, fn["name"])
         shown, alone = source.strip(), ""
         if start:
@@ -380,7 +382,7 @@ class Readability:
                 f"claim_token: {lease}\n"
                 "Pass this claim_token to release_function if you leave this function for another helper.\n\n"
                 f"It matches today with this C:\n{alone}```c\n{shown}\n```\n\n"
-                + prepared + polish_checklist.brief(checks, pc_tool=pc_tool) + "\nMake it readable without changing what the compiler makes of it:\n" + names +
+                + prepared + polish_checklist.brief(options, pc_tool=pc_tool) + "\nMake it readable without changing what the compiler makes of it:\n" + names +
                 "- give parameters and locals meaningful names; write one comment saying what the function does;\n"
                 "- keep the statement order, casts and temporaries that matching requires.\n"
                 + ("- it's a big function: rename and comment in place, statement for statement; don't restructure it "
@@ -434,7 +436,7 @@ class Readability:
         fn = self.net._function(function, proj["slug"])
         if fn["status"] != "matched":
             raise NetworkError(f"{fn['name']} isn't matched yet: compile_and_diff it first")
-        if needs_name(fn):
+        if needs_name(fn) and polish_checklist.requires_name(self.net, proj["id"]):
             raise NetworkError(f"Give {fn['name']} a descriptive function name with rename_symbol before polishing it.")
         claim = self.net.project_store(proj['id']).one("SELECT agent_id FROM claims WHERE function_id=?", fn["id"])
         if claim is not None and claim["agent_id"] != agent.id:
@@ -523,7 +525,7 @@ class Readability:
             if (latest is None or latest['name'] != fn['name'] or latest['status'] != 'matched'
                     or self.net.is_rom(proj) and latest['matched_source'] != original):
                 raise NetworkError("The matching source changed while polishing. Read the function again and retry.")
-            if needs_name(latest):
+            if needs_name(latest) and polish_checklist.requires_name(self.net, proj["id"]):
                 raise NetworkError(f"Give {latest['name']} a descriptive function name with rename_symbol before polishing it.")
             db.execute("UPDATE functions SET unpolished_source=COALESCE(unpolished_source, ?), "
                        "matched_source=?, best_source=?, readable=1 WHERE id=?",

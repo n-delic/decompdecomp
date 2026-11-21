@@ -4,6 +4,8 @@ from fnmatch import fnmatchcase
 
 ADDRESS_PREFIXES = ('fn_', 'fun_', 'sub_', 'loc_', 'nullsub_')
 ADDRESS_CHARS = '0-9a-f_'
+CHECKLIST_KEY = 'polishing-checklist'
+REQUIRE_NAME = 'require_name'
 
 
 def generated(name: str) -> bool:
@@ -15,7 +17,8 @@ def generated(name: str) -> bool:
 
 
 def install(db):
-    if db.execute("SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='polished_name_update'").fetchone():
+    trigger = db.execute("SELECT sql FROM sqlite_master WHERE type='trigger' AND name='polished_name_update'").fetchone()
+    if trigger is not None and CHECKLIST_KEY in trigger[0]:
         return
 
     def unnamed(row):
@@ -30,13 +33,28 @@ def install(db):
                 f"({prefix} IN ({prefixes}) AND trim({address}, '_') != '' "
                 f"AND {address} NOT GLOB '*[^{ADDRESS_CHARS}]*'))")
 
-    # Install the guards and migrate existing flags together. Normal progress and
-    # map invalidation already watch writes to readable.
-    statements = [f"UPDATE functions SET readable = 0 WHERE readable = 1 AND {unnamed('')};"]
+    def naming_required(row):
+        # Missing settings and legacy list values both use the default naming requirement.
+        return f"""NOT EXISTS (
+            SELECT 1 FROM settings AS checklist
+            WHERE checklist.key = '{CHECKLIST_KEY}:' || {row}project_id
+              AND json_type(checklist.value) = 'object'
+              AND NOT EXISTS (
+                  SELECT 1 FROM json_each(checklist.value, '$.selected') WHERE value = '{REQUIRE_NAME}'
+              )
+        )"""
+
+    # Replace unconditional guards from older databases and repair invalid flags
+    # only where the naming requirement applies. Progress already watches readable.
+    statements = [
+        "DROP TRIGGER IF EXISTS polished_name_insert;",
+        "DROP TRIGGER IF EXISTS polished_name_update;",
+        f"UPDATE functions SET readable = 0 WHERE readable = 1 AND {unnamed('')} AND {naming_required('functions.')};",
+    ]
     for event in ('INSERT', 'UPDATE OF name, meta, readable'):
         statements.append(f"""
-            CREATE TRIGGER IF NOT EXISTS polished_name_{event.split()[0].lower()} AFTER {event} ON functions
-            WHEN NEW.readable = 1 AND {unnamed('NEW.')}
+            CREATE TRIGGER polished_name_{event.split()[0].lower()} AFTER {event} ON functions
+            WHEN NEW.readable = 1 AND {unnamed('NEW.')} AND {naming_required('NEW.')}
             BEGIN
                 UPDATE functions SET readable = 0 WHERE id = NEW.id;
             END;

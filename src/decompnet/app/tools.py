@@ -159,8 +159,6 @@ functions, then stop:
    Follow the game's optional polishing checklist when the claim includes it.
 2. Read the function, and get_function on the functions it calls, until you understand what it does.
 3. {names}
-   Before submitting a polish, use rename_symbol to replace the function's generated name with a descriptive
-   camelCase name, for example updateActorTarget. Keep existing descriptive names.
 4. Prefer polish_function(function, renames='{{"arg0":"value"}}', comment="What it does") for local names and comments.
    renames/types are JSON objects. Existing header type aliases can be substituted with types. The app applies the
    plan without shifting physical lines, judges it, and learns verified patterns for identical helpers. reuse=true
@@ -177,10 +175,10 @@ rename_symbol, use tidy_file(path) for another mechanical cleanup, then tidy_don
 Write C people would write. Be brief in your messages: work, don't narrate.
 """
 
-READABLE_ROM = ("rename_symbol the function, and the globals and functions it uses, once their purpose is clear.\n"
+READABLE_ROM = ("rename_symbol the globals and other functions it uses, once their purpose is clear.\n"
                 "   Describe structs, enums and constants in the shared header (get_context shows it) with\n"
                 "   edit_context, and use those names.")
-READABLE_FORK = ("rename_symbol the function, and the globals and functions it uses, once their purpose is clear\n"
+READABLE_FORK = ("rename_symbol the globals and other functions it uses, once their purpose is clear\n"
                  "   (the project's config and every file change together). Describe structs, enums and constants in\n"
                  "   the project's headers with edit_file (read_file and search_code show where), and use those names.")
 

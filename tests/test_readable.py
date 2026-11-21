@@ -39,7 +39,7 @@ def test_a_readable_rewrite_that_still_matches_is_kept(matched):
     original = net._function("clamp_s32", slug)["matched_source"]
     from decompnet.app import polish_checklist
 
-    polish_checklist.save(net, net.project_row(slug)["id"], ["compile_64bit", "pointer_casts"])
+    polish_checklist.save(net, net.project_row(slug)["id"], ["require_name", "compile_64bit", "pointer_casts"], "camelCase")
     brief = net.readability.claim(agent, slug)
     assert "Run check_for_pc with the candidate source" in brief
     assert "uintptr_t/intptr_t" in brief
@@ -94,7 +94,8 @@ def test_polish_takes_starred_then_big_functions_and_stubs_last(matched):
     assert stub["name"] in net.readability.claim(agent, slug)  # then the stub
 
 
-def test_project_mode_games_are_polished_too_through_their_own_files(tmp_path, monkeypatch):
+@pytest.mark.parametrize("require_name", [True, False])
+def test_project_mode_games_are_polished_too_through_their_own_files(tmp_path, monkeypatch, require_name):
     """A DS game at 57% had no Polish to choose: polishing was ROM projects' only. In project mode the matching C is
     the project's own file, and a rewrite is judged as any compile of a matched function is there: committed when it
     still matches, the file put back as it was when not."""
@@ -114,8 +115,10 @@ def test_project_mode_games_are_polished_too_through_their_own_files(tmp_path, m
                    "VALUES(1,'tripleValue',64,16,'matched','src/a','int tripleValue(int a) { return a * 3; }')")
     monkeypatch.setattr(ForkEngine, "_current_source", lambda self, fp, fn, comment=False: "int tripleValue(int a) { return a * 3; }")
     agent, _ = net.local_agent("claude-sonnet-5-5-1")
-    polish_checklist.save(net, net.project_row("p")["id"], ["compile_64bit"])
+    checks = ["compile_64bit", "require_name"] if require_name else ["compile_64bit"]
+    polish_checklist.save(net, net.project_row("p")["id"], checks, "snake_case")
     brief = net.readability.claim(agent, "p")
+    assert ("snake_case name such as update_actor_target" in brief) is require_name
     assert "Use the project's 64-bit PC build" in brief
     assert "check_for_pc" not in brief and "uintptr_t" not in brief
     assert "MAKE READABLE: tripleValue in src/a" in brief and "edit_file" in brief and "rename_symbol" in brief
@@ -128,17 +131,20 @@ def test_project_mode_games_are_polished_too_through_their_own_files(tmp_path, m
     monkeypatch.setattr(ForkEngine, "attempt", attempt)
     with net.store.tx() as db:
         db.execute("UPDATE functions SET name='func_02001000'")
-    with pytest.raises(NetworkError, match="rename_symbol"):
-        net.readability.submit(agent, "p", "func_02001000", "int func_02001000(int n) { return n * 3; }")
-    assert not tried
-    with net.store.tx() as db:
-        db.execute("UPDATE functions SET name='tripleValue'")
-    assert "❌" in net.readability.submit(agent, "p", "tripleValue", "int tripleValue(int x) { return x + x + x; }")
+    name = "func_02001000"
+    if require_name:
+        with pytest.raises(NetworkError, match="rename_symbol"):
+            net.readability.submit(agent, "p", name, f"int {name}(int n) {{ return n * 3; }}")
+        assert not tried
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET name='tripleValue'")
+        name = "tripleValue"
+    assert "❌" in net.readability.submit(agent, "p", name, f"int {name}(int x) {{ return x + x + x; }}")
     assert net.store.one("SELECT readable FROM functions")["readable"] == 0
-    said = net.readability.submit(agent, "p", "tripleValue", "/* triple it */\nint tripleValue(int n) { return n * 3; }")
+    said = net.readability.submit(agent, "p", name, f"/* triple it */\nint {name}(int n) {{ return n * 3; }}")
     assert "readable now" in said and net.store.one("SELECT readable FROM functions")["readable"] == 1
     assert len(tried) == 2
-    preview = net.function_preview('p','tripleValue')
+    preview = net.function_preview('p', name)
     assert preview['polished']
     assert preview['unpolished_source'] == "int tripleValue(int a) { return a * 3; }"
     assert "claim_readable" in tools.tool_names(fork=True) and "make_readable" in tools.tool_names(fork=True)
@@ -262,8 +268,37 @@ def test_generated_names_are_removed_from_existing_and_restored_polished_progres
     assert upgraded.one("SELECT readable FROM functions WHERE name='_func_00401234@4'")['readable'] == 1
 
 
-def test_default_polish_prompt_requests_descriptive_camelcase_function_names():
+def test_database_polishing_name_guard_respects_saved_opt_out(tmp_path):
+    from decompnet.store import Store
+
+    path = tmp_path / "games.db"
+    store = Store(path)
+    with store.tx() as db:
+        for pid in (1, 2):
+            db.execute("INSERT INTO projects(id,slug,name,arch,root,config) VALUES(?,?,?,'mips','','{}')",
+                       (pid, f"game-{pid}", f"Game {pid}"))
+        db.execute("DROP TRIGGER polished_name_update")
+        db.execute("""CREATE TRIGGER polished_name_update AFTER UPDATE OF readable ON functions
+                      WHEN NEW.readable=1 BEGIN UPDATE functions SET readable=0 WHERE id=NEW.id; END""")
+    store.conn.close()
+
+    upgraded = Store(path)
+    with upgraded.tx() as db:
+        db.execute("INSERT INTO settings VALUES (?, ?)",
+                   ("polishing-checklist:2", '{"selected":[],"name_format":"PascalCase"}'))
+        for pid in (1, 2):
+            db.execute("INSERT INTO functions(project_id,name,size,n_insns,status) VALUES(?,'func_80001234',32,8,'matched')",
+                       (pid,))
+        db.execute("UPDATE functions SET readable=1")
+    upgraded.conn.close()
+
+    reopened = Store(path)
+    assert [row["readable"] for row in reopened.all("SELECT readable FROM functions ORDER BY project_id")] == [0, 1]
+
+
+def test_polish_prompt_defers_naming_style_to_the_game_checklist():
     from decompnet.app.prompt_settings import defaults
 
     prompt = defaults()['initial_readable']
-    assert 'descriptive' in prompt and 'camelCase' in prompt and 'rename_symbol' in prompt
+    assert "Follow the game's optional polishing checklist" in prompt
+    assert 'camelCase' not in prompt

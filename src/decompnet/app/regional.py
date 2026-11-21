@@ -31,6 +31,7 @@ from difflib import SequenceMatcher
 
 from ..network import IN_BUILD, NetworkError
 from ..rom.symbols import AUTO_NAME
+from . import polish_checklist
 from .function_names import generated as _generated
 from .function_names import needs_name
 
@@ -861,7 +862,8 @@ def transfer(net, slug: str, job=None, log=lambda *_: None) -> dict:
         said = ''
         try:
             b = net.project_store(proj['id']).one("SELECT * FROM functions WHERE id=?", y.id)
-            if b is not None and b['status'] == 'matched' and not b['readable'] and a['readable'] and not needs_name(b):
+            if b is not None and b['status'] == 'matched' and not b['readable'] and a['readable'] \
+                    and not (needs_name(b) and polish_checklist.requires_name(net, proj['id'])):
                 with lock:
                     counts['tried'] += 1
                 said = net.readability.submit(agent, slug, b['name'], p.text(a['matched_source']), synchronize=False)

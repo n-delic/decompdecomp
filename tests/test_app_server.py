@@ -140,17 +140,31 @@ def test_polishing_checklist_is_saved_per_game(app, tmp_path):
 
     path = "/api/polishing-checklist"
     headers = {**WINDOW, "X-Decomp": "1"}
-    assert client.get(path, params={"slug": "polish-one"}).json() == {"selected": []}
+    defaults = {"selected": ["require_name"], "name_format": "camelCase"}
+    assert client.get(path, params={"slug": "polish-one"}).json() == defaults
 
-    def save(selected):
-        return client.post(path, headers=headers, json={"slug": "polish-one", "selected": selected})
+    def save(selected, name_format="snake_case"):
+        return client.post(path, headers=headers, json={
+            "slug": "polish-one", "selected": selected, "name_format": name_format,
+        })
 
-    selected = {"selected": ["compile_64bit", "pointer_casts"]}
-    assert save(["pointer_casts", "compile_64bit", "pointer_casts"]).json() == selected
+    project_id = net.project_row("polish-one", sync=False)["id"]
+    with net.project_store(project_id).tx() as db:
+        db.execute("INSERT INTO settings VALUES (?, ?)",
+                   (f"polishing-checklist:{project_id}", '["pointer_casts"]'))
+    assert client.get(path, params={"slug": "polish-one"}).json() == {
+        **defaults, "selected": ["require_name", "pointer_casts"],
+    }
+
+    selected = {"selected": ["require_name", "compile_64bit", "pointer_casts"], "name_format": "snake_case"}
+    assert save(["pointer_casts", "compile_64bit", "pointer_casts", "require_name"]).json() == selected
     assert save(["unknown"]).status_code == 400
+    assert save(["require_name"], "invalid").status_code == 400
     assert client.get(path, params={"slug": "polish-one"}).json() == selected
-    assert client.get(path, params={"slug": "polish-two"}).json() == {"selected": []}
-    assert save([]).json() == {"selected": []}
+    assert client.get(path, params={"slug": "polish-two"}).json() == defaults
+    assert save([]).json() == {"selected": [], "name_format": "snake_case"}
+    assert client.get(path, params={"slug": "polish-one"}).json()["selected"] == []
+
 
 
 def test_deep_permuter_job_can_be_found_and_stopped_from_the_function(app, monkeypatch):
