@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, field
 
 from elftools.elf.elffile import ELFFile
@@ -116,7 +117,33 @@ def _sext16(v: int) -> int:
     return v - 0x10000 if v & 0x8000 else v
 
 
-def section_target(arch: str, raw: list[dict], k: int) -> int | None:
+class MipsRelocationPairs:
+    """One object's HI16/LO16 lookup, in ELF table order even after scheduling."""
+    def __init__(self, raw):
+        self.groups = {}
+        for row in raw:
+            if row['type'] in (5, 6):
+                key = (id(row['symtab']), row['symidx'], row['type'])
+                positions, values = self.groups.setdefault(key, ([], []))
+                positions.append(row.get('order', row['off']))
+                values.append(row['value'])
+        for key, (positions, values) in self.groups.items():
+            indices = sorted(range(len(positions)), key=positions.__getitem__)
+            self.groups[key] = ([positions[i] for i in indices], [values[i] for i in indices])
+
+    def partner(self, row):
+        kind = row['type']
+        key = (id(row['symtab']), row['symidx'], 6 if kind == 5 else 5)
+        positions, values = self.groups.get(key, ((), ()))
+        order = row.get('order', row['off'])
+        if kind == 5:
+            after = bisect_right(positions, order)
+            return values[after] if after < len(values) else 0
+        before = bisect_left(positions, order)
+        return values[before - 1] if before else 0
+
+
+def section_target(arch: str, raw: list[dict], k: int, *, pairs: MipsRelocationPairs | None = None) -> int | None:
     """Offset inside the referenced section that a section-relative relocation points at."""
     r = raw[k]
     if r["rela"]:
@@ -130,6 +157,12 @@ def section_target(arch: str, raw: list[dict], k: int) -> int | None:
         return v << 2
     if t == 2:  # R_MIPS_32
         return v
+    if pairs is not None:
+        if t == 5:
+            return (v << 16) + _sext16(pairs.partner(r))
+        if t == 6:
+            return (pairs.partner(r) << 16) + _sext16(v)
+        return None
     same = [x for x in raw if x["symidx"] == r["symidx"] and x["symtab"] is r["symtab"]]
     # ELF relocation order encodes HI16/LO16 pairing. Instruction scheduling can move a
     # LUI past another pair (even reusing the same register on separate branches), so

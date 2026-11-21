@@ -102,11 +102,25 @@ class JudgeMixin:
             # the console links it (GBA: ARM/Thumb, PS3: PPC64; the rest: rom.match), against the caller's overlay (#230)
             symbols = self.symbols(proj["id"])
 
-            def link():
-                return self.console(proj).link_function(obj, fn["name"], target, symbols, self.reader(proj, fn))
+            console = self.console(proj)
 
-            res = (attempt_workers.run("rom-link", (dict(proj), dict(fn), obj, target, symbols), link)
-                   if attempt_workers.active() and "rom_offset" in fn.keys() else link())
+            def local_link():
+                read = self.reader(proj, fn)
+                session = compile_sessions.current()
+                if not (_search_evaluation.get() and link_scope is not None and session is not None):
+                    return console.link_function(obj, fn["name"], target, symbols, read)
+
+                from ...rom.link_cache import SearchLinks
+
+                if session.links is None:
+                    session.links = SearchLinks()
+                scope = (self, proj['id'], proj.get('root') if isinstance(proj, dict) else proj['root'], console,
+                         link_scope)
+                return session.links.link(scope, target, symbols, obj, read,
+                                          lambda reader: console.link_function(obj, fn["name"], target, symbols, reader))
+
+            res = (attempt_workers.run("rom-link", (dict(proj), dict(fn), obj, target, symbols), local_link)
+                   if attempt_workers.active() and "rom_offset" in fn.keys() else local_link())
         if diagnose is None:
             return res.candidate, res.exact if res.candidate is not None else None, res.problems
         if _search_evaluation.get():
