@@ -165,6 +165,33 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
     def referenced(fn):
         return (fn.vram in explicit or fn.vram in pointers or any(offset!=fn.rom for offset,_ in references.get(fn.vram,()))
                 or any(d.rom is not None and d.rom<fn.rom+fn.size and fn.rom<d.rom+d.size for d in data))
+    # A resplit can give padding its own source unit, so adjacent unit names
+    # do not establish whether an isolated nop belongs to an entry.
+    returns_by_end = {(fn.rom+fn.size, fn.vram-fn.rom) for fn in result
+                      if fn.size >= 8 and fn.lines[-2].word == JR_RA}
+    protected = sorted(entered)
+
+    def zero_alignment(fn):
+        if fn.size != 4 or fn.lines[0].word or image[fn.rom:fn.rom+4] != bytes(4):
+            return False
+        mapping = fn.vram-fn.rom
+        for before in range(fn.rom, max(-1, fn.rom-HOLE), -4):
+            if (before, mapping) not in returns_by_end or any(image[before:fn.rom+4]):
+                continue
+            after = before
+            while after < min(len(image)-3, before+HOLE+4) and image[after:after+4] == bytes(4):
+                after += 4
+            if after-before > HOLE:
+                return False
+            index = bisect_right(protected, before+mapping-1)
+            if index < len(protected) and protected[index] < after+mapping:
+                return False
+            owners = [s for s in segments if s.rom_start <= before-8 < after < s.rom_end
+                      and s.vram-s.rom_start == mapping and s.contains(before+mapping-8, after-before+12)]
+            return (len(owners) == 1
+                    and not any(d.rom is not None and d.rom < after and before < d.rom+d.size for d in data))
+        return False
+
     kept=[];dropped=markers=0;ordered=sorted(result,key=lambda f:(f.segment,f.rom))
     for i,fn in enumerate(ordered):
         previous=kept[-1] if kept else None;following=ordered[i+1] if i+1<len(ordered) else None
@@ -172,6 +199,8 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
             data.append(DataSymbol(fn.name, fn.vram, fn.rom, 4, 'data'))
             markers += 1
             continue
+        if zero_alignment(fn):
+            dropped+=1;continue
         if (filler_extent(fn.size,fn.lines[0].word) and previous is not None and following is not None
                 and previous.segment==fn.segment==following.segment
                 and previous.rom+previous.size==fn.rom and following.rom==fn.rom+4 and following.vram==fn.vram+4
