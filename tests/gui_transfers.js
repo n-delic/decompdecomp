@@ -39,6 +39,13 @@ render({slug:'target-game',kind:'rom',matched:0,cross_game:{counts:{miss:1},rece
 assert.match(list.innerHTML, /class="transfer-diagnostic"[^>]* open><summary>Check details/);
 assert.doesNotMatch(list.innerHTML, /<p class="transfer-diagnostic"/);
 list.querySelectorAll = () => [];
+const compilerLead = {...miss, outcome:'compiler', reason:'byte match with GCC; review compiler settings'};
+get('crossGameFilter').value='compiler';
+render({slug:'target-game',kind:'rom',matched:0,cross_game:{counts:{compiler:1},recent:[],compiler_leads:[compilerLead]}});
+assert.match(get('crossGameSummary').innerHTML,/Compiler leads/);
+assert.match(get('crossGameRecent').innerHTML,/Exact with alternate compiler/);
+assert.match(get('crossGameRecent').innerHTML,/Review compiler settings/);
+get('crossGameFilter').value='all';
 console.log("Transfer filters and labels passed");
 const improved = {...miss, outcome: 'improved', reason: 'Partial donor; locally checked score 20; previous score 100'};
 render({slug:'target-game',kind:'fork',matched:0,cross_game:{counts:{improved:1},recent:[improved],matches:[]}});

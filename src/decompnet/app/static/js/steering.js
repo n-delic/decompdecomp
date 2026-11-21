@@ -926,7 +926,7 @@ function renderAutopilot(ov) {
   const count = cross.counts.match || 0, tried = Object.values(cross.counts).reduce((a, b) => a + b, 0);
   $("crossGamePanel").hidden = false;
   $("crossGameEmpty").hidden = !!tried || !!run._working || logState._slug === ov.slug;
-  $("crossGameSummary").innerHTML = `<div class="deep-sweep-counts" aria-label="Cross-game results"><button type="button" class="deep-metric" data-cross-metric="matches" aria-haspopup="dialog"><b class="cross-match-count">${count.toLocaleString()}</b><span>Matched<span aria-hidden="true">↗</span></span></button><button type="button" class="deep-metric" data-cross-metric="improved" aria-haspopup="dialog"><b>${(cross.counts.improved || 0).toLocaleString()}</b><span>Improved<span aria-hidden="true">↗</span></span></button><button type="button" class="deep-metric" data-cross-metric="all" aria-haspopup="dialog"><b>${tried.toLocaleString()}</b><span>Checked<span aria-hidden="true">↗</span></span></button></div>`;
+  $("crossGameSummary").innerHTML = `<div class="deep-sweep-counts" aria-label="Cross-game results"><button type="button" class="deep-metric" data-cross-metric="matches" aria-haspopup="dialog"><b class="cross-match-count">${count.toLocaleString()}</b><span>Matched<span aria-hidden="true">↗</span></span></button><button type="button" class="deep-metric" data-cross-metric="improved" aria-haspopup="dialog"><b>${(cross.counts.improved || 0).toLocaleString()}</b><span>Improved<span aria-hidden="true">↗</span></span></button><button type="button" class="deep-metric" data-cross-metric="all" aria-haspopup="dialog"><b>${tried.toLocaleString()}</b><span>Checked<span aria-hidden="true">↗</span></span></button>${cross.counts.compiler ? `<button type="button" class="deep-metric" data-cross-metric="compiler" aria-haspopup="dialog"><b>${cross.counts.compiler.toLocaleString()}</b><span>Compiler leads<span aria-hidden="true">↗</span></span></button>` : ''}</div>`;
   $("crossGameSummary").querySelectorAll('[data-cross-metric]').forEach(button=>{button.onclick=()=>openCrossGameResults(ov,button.dataset.crossMetric);});
   if(S.dialogKind==='cross-game-results' && $('dialogBody').dataset.crossSlug===ov.slug)renderCrossGameResults(ov);
   const box = $("autopilot"), ap = ov.autopilot, tw = ov.twins, pm = ov.permuter;
@@ -1015,49 +1015,54 @@ function renderAutopilot(ov) {
   };
 }
 
-let crossGameDrawerMatches = null;
+let crossGameDrawerResults = null;
 async function openCrossGameResults(ov, filter='matches') {
   const slug=ov.slug;
-  crossGameDrawerMatches=null;
-  dialog('Matches from other games', `<p class="small muted">Saved results across searches. Only verified byte matches count toward progress.</p><label class="field"><span>Show</span><select id="crossGameFilter"><option value="matches">Verified matches</option><option value="improved">Recent improvements</option><option value="all">Recent checks</option></select></label><p id="crossGameDrawerStatus" class="small muted" role="status"></p><ol class="transfer-list" id="crossGameRecent"></ol>`, 'cross-game-results');
+  crossGameDrawerResults=null;
+  dialog('Matches from other games', `<p class="small muted">Saved results across searches. Only verified byte matches count toward progress.</p><label class="field"><span>Show</span><select id="crossGameFilter"><option value="matches">Verified matches</option><option value="improved">Recent improvements</option><option value="compiler">Compiler leads</option><option value="all">Recent checks</option></select></label><p id="crossGameDrawerStatus" class="small muted" role="status"></p><ol class="transfer-list" id="crossGameRecent"></ol>`, 'cross-game-results');
   $('dialogBody').dataset.crossSlug=slug;
   $('crossGameFilter').value=filter;
   renderCrossGameResults(ov);
   const active=()=>S.slug===slug && S.dialogKind==='cross-game-results' && $('dialogBody').dataset.crossSlug===slug;
   const status=$('crossGameDrawerStatus');
-  const finish=beginWork(status,'Loading saved matches',[], '');
+  const finish=beginWork(status,'Loading saved results',[], '');
   try {
     const data=await api(`/api/cross-game?slug=${encodeURIComponent(slug)}&all_matches=1`);
-    if(active()){ crossGameDrawerMatches=data.results.matches; $('crossGameDrawerStatus').textContent=''; renderCrossGameResults({...ov,cross_game:data.results}); }
-  } catch(error){if(active())showJobError(status,`Could not load all matches: ${error.message}`);}
+    if(active()){ crossGameDrawerResults=data.results; $('crossGameDrawerStatus').textContent=''; renderCrossGameResults({...ov,cross_game:data.results}); }
+  } catch(error){if(active())showJobError(status,`Could not load saved results: ${error.message}`);}
   finally{finish();if(status._workStatus?.dataset.state==='done')status._workStatus.hidden=true;}
 }
 function renderCrossGameResults(ov) {
   const cross = {...(ov.cross_game || {counts:{},recent:[]})};
-  if(crossGameDrawerMatches){
-    const merged=new Map([...crossGameDrawerMatches,...(cross.matches || [])].map(row=>[JSON.stringify([row.target,row.source_slug,row.source,row.created_at]),row]));
-    cross.matches=[...merged.values()].sort((a,b)=>(b.created_at || 0)-(a.created_at || 0));
+  if (crossGameDrawerResults) {
+    for (const key of ['matches', 'compiler_leads']) {
+      const rows = [...(crossGameDrawerResults[key] || []), ...(cross[key] || [])];
+      const merged = new Map(rows.map(row => [JSON.stringify([row.target,row.source_slug,row.source,row.created_at]), row]));
+      cross[key] = [...merged.values()].sort((a,b) => (b.created_at || 0) - (a.created_at || 0));
+    }
   }
   const run = $("crossGameRun"), tried = Object.values(cross.counts).reduce((a,b)=>a+b,0);
-    const filter = $("crossGameFilter").value;
-    const rows = filter === 'matches' ? (cross.matches || cross.recent.filter(r => r.outcome === 'match')) : filter === 'improved' ? cross.recent.filter(r => r.outcome === 'improved') : cross.recent;
+  const filter = $("crossGameFilter").value;
+  const rows = filter === 'matches' ? (cross.matches || cross.recent.filter(r => r.outcome === 'match'))
+    : filter === 'compiler' ? (cross.compiler_leads || cross.recent.filter(r => r.outcome === 'compiler'))
+    : filter === 'improved' ? cross.recent.filter(r => r.outcome === 'improved') : cross.recent;
     const list = $("crossGameRecent");
     const expanded = new Set([...list.querySelectorAll('details[open]')].map(d => d.dataset.transferDetail));
     list.innerHTML = rows.map((r) => {
       const detailKey = encodeURIComponent(JSON.stringify([ov.slug, r.created_at, r.target, r.source_slug, r.source, r.reason]));
-      const matched = r.outcome === 'match', improved = r.outcome === 'improved';
-      const status = matched ? 'Verified byte match' : improved ? 'Improved · not matched' : r.outcome === 'miss' ? 'Not matched' : r.outcome === 'skip' ? 'Skipped' : r.outcome === 'asm' ? 'Assembly only' : r.outcome;
+      const matched = r.outcome === 'match', improved = r.outcome === 'improved', compilerLead = r.outcome === 'compiler';
+      const status = matched ? 'Verified byte match' : compilerLead ? 'Exact with alternate compiler' : improved ? 'Improved · not matched' : r.outcome === 'miss' ? 'Not matched' : r.outcome === 'skip' ? 'Skipped' : r.outcome === 'asm' ? 'Assembly only' : r.outcome;
       const similarity = (r.reason || '').match(/similar code \((\d+)%\)/);
       const score = (r.reason || '').match(/score\s+(\d+)/);
       const previous = (r.reason || '').match(/previous score\s+(\d+|None)/);
-      const scoreText = matched ? 'Exact match' : score ? previous && previous[1] !== 'None' ? `${previous[1]} → ${score[1]}` : previous ? `First score: ${score[1]}` : `Score: ${score[1]}` : 'No score';
+      const scoreText = matched ? 'Exact match' : compilerLead ? 'Review compiler settings' : score ? previous && previous[1] !== 'None' ? `${previous[1]} → ${score[1]}` : previous ? `First score: ${score[1]}` : `Score: ${score[1]}` : 'No score';
       const targetLink = `<button class="fn" type="button" data-transfer-function="${esc(r.target)}" data-slug="${esc(ov.slug)}" title="Open target function"><b>${esc(r.target)}</b></button>`;
       const sourceLink = r.source_slug ? `<button class="fn" type="button" data-transfer-function="${esc(r.source)}" data-slug="${esc(r.source_slug)}" title="Open original function in ${esc(r.game)}">${esc(r.source)}</button>` : esc(r.source);
       const hint = similarity ? `Assembly similarity: ${similarity[1]}%` : '';
       return `<li class="transfer-row"><div class="transfer-target">${targetLink}<span class="transfer-status ${matched ? 'verified' : improved ? 'improved' : ''}">${esc(status)}</span></div>
         <div class="transfer-source"><span>From ${esc(r.game)}</span>${sourceLink}</div>
         <div class="transfer-score ${improved ? 'improved' : ''}" title="${esc(r.reason || (matched ? 'The receiving game verified identical bytes.' : 'No scored result.'))}"><strong>${esc(scoreText)}</strong><span>${matched ? 'Byte for byte' : score ? 'Mismatch score · lower is better' : hint || 'Not compiled'}</span>${score && hint ? `<span>${hint}</span>` : ''}</div>${!matched && r.reason ? `<details class="transfer-diagnostic" data-transfer-detail="${esc(detailKey)}"${expanded.has(detailKey) ? " open" : ""}><summary>Check details</summary><p>${esc(r.reason.split(';').filter(part=>part.trim()!=='transfer').join(' · '))}</p></details>` : ''}</li>`;
-    }).join('') || `<li class="transfer-empty">${filter === 'matches' ? run._working ? 'Searching indexed matches first. Candidate checks and rejection reasons appear here as they finish.' : tried ? 'No exact matches from these checks yet. Choose Recent checks to see why candidates did not pass.' : 'Start a search to check saved matches first, then other projects and local SDKs.' : filter === 'improved' ? 'No partial improvements among recent attempts.' : 'No recent transfer attempts.'}</li>`;
+    }).join('') || `<li class="transfer-empty">${filter === 'matches' ? run._working ? 'Searching indexed matches first. Candidate checks and rejection reasons appear here as they finish.' : tried ? 'No exact matches from these checks yet. Choose Recent checks to see why candidates did not pass.' : 'Start a search to check saved matches first, then other projects and local SDKs.' : filter === 'improved' ? 'No partial improvements among recent attempts.' : filter === 'compiler' ? 'No exact results under alternate compiler settings yet.' : 'No recent transfer attempts.'}</li>`;
 
   $("crossGameRecent").onclick = e => {
     const button = e.target.closest("button[data-transfer-function]");

@@ -178,6 +178,63 @@ def test_no_attempt_when_incompatible_busy_cancelled_or_over_budget(pair, monkey
     assert sm.run(pair.twins, 'destination', job) == 0
 
 
+def test_manual_search_tries_wider_donor_with_shifted_references(pair, monkeypatch):
+    new_target = bytes.fromhex('3c03123434630001') + code(61)
+    with pair.store.tx() as db:
+        db.execute("UPDATE functions SET target=?,size=40,n_insns=10,relocs='[[8,4,2147491840]]' WHERE id=2",
+                   (new_target,))
+        db.execute("UPDATE functions SET relocs='[[0,4,2147495936]]', "
+                   "matched_source='int old(int x) { return donor_callee(x); }' WHERE id=1")
+        db.execute("INSERT INTO symbols(project_id,name,address,kind) VALUES(1,'donor_callee',2147495936,'function')")
+        db.execute("INSERT INTO symbols(project_id,name,address,kind) VALUES(2,'target_callee',2147491840,'function')")
+    seen = []
+
+    def attempt(agent, proj, donor, target, source, **kwargs):
+        seen.append(source)
+        assert 'return target_callee(x);' in source
+        with pair.store.tx() as db:
+            db.execute("UPDATE functions SET status='matched',matched_source=? WHERE id=2", (source,))
+        return 'match', ''
+
+    monkeypatch.setattr(pair.twins, '_attempt_twin', attempt)
+    assert sm.run(pair.twins, 'destination', Job()) == 0
+    assert not seen
+    manual = Job()
+    manual.cross_exhaustive = True
+    assert sm.run(pair.twins, 'destination', manual) == 1
+    assert len(seen) == 1
+
+
+def test_manual_search_reserves_another_compilers_donor_and_surfaces_exact_trial(pair, monkeypatch):
+    cfg = json.loads(pair._project('source')['config'])
+    cfg['compiler']['toolchain'] = 'ido-7.1'  # The donor and destination both use -O2.
+    with pair.store.tx() as db:
+        db.execute('UPDATE projects SET config=? WHERE id=1', (json.dumps(cfg),))
+        db.execute("INSERT INTO functions(id,project_id,name,size,n_insns,target,relocs,vram,unit,status,matched_source) "
+                   "VALUES(3,2,'closer_size',32,8,?,'[]',2147491840,'','matched','int closer_size(void){return 4;}')",
+                   (code(62),))
+    monkeypatch.setattr(sm, 'MAX_POOL', 1)
+    monkeypatch.setattr(sm.toolchains, 'installed', lambda tc: tc == 'ido-7.1')
+    tested = []
+
+    def judge(proj, fn, toolchain, flags, source):
+        tested.append((toolchain, flags, source))
+        return True, None, ''
+
+    monkeypatch.setattr(pair, '_judge_with', judge)
+    monkeypatch.setattr(pair.twins, '_attempt_twin', lambda *args, **kw: ('miss', 'not close'))
+    assert sm.run(pair.twins, 'destination', Job()) == 0
+    assert not tested
+    manual = Job()
+    manual.cross_exhaustive = True
+    sm.run(pair.twins, 'destination', manual)
+    assert len(tested) == 1 and tested[0][:2] == ('ido-7.1', ['-O2'])
+    assert 'int new(int x)' in tested[0][2]
+    assert pair.twins.cross_game_results('destination')['counts']['compiler'] == 1
+    assert pair._function('new', 'destination')['status'] == 'open'
+    assert pair.cfg(pair._project('destination'))['compiler']['toolchain'] == 'gcc-2.7.2-kmc'
+
+
 def test_a_regional_constant_change_matches_with_the_real_compiler_and_link_judge(built, tmp_path, monkeypatch):  # noqa: F811
     net = RomNetwork(tmp_path / 'decomp.db', tmp_path)
     monkeypatch.setattr(net.twins, 'after_match', lambda *args: None)
@@ -203,6 +260,28 @@ def test_a_regional_constant_change_matches_with_the_real_compiler_and_link_judg
     assert 'adapted from similar verified C' in result['matched_source']
 
 
+def test_alternate_compiler_lead_uses_the_real_byte_judge(built, tmp_path, monkeypatch):  # noqa: F811
+    net = RomNetwork(tmp_path / 'decomp.db', tmp_path)
+    monkeypatch.setattr(net.twins, 'after_match', lambda *args: None)
+    slug = net.import_rom(ROM, confirmed=True, log=lambda *_: None)
+    agent, _ = net.local_agent('tester')
+    name = 'func_80000808'
+    assert net.compile_and_diff(agent, name, DAMAGE, slug).startswith('✅ MATCH')
+    pid = copy_project(net, slug, 'another-compiler')
+    with net.store.tx() as db:
+        db.execute("UPDATE projects SET config=json_set(config,'$.compiler.toolchain','ido-7.1') WHERE id=?", (pid,))
+        db.execute("UPDATE functions SET status='asm' WHERE project_id=? AND name!=?", (pid, name))
+    # Exercise the installed GCC probe without requiring IDO on this test machine.
+    monkeypatch.setattr(net.twins, '_attempt_twin', lambda *a, **kw: ('miss', 'configured build did not match'))
+    manual = Job()
+    manual.cross_exhaustive = True
+    assert sm.run(net.twins, 'another-compiler', manual) == 0
+    report = net.twins.cross_game_results('another-compiler', all_matches=True)
+    [lead] = report['compiler_leads']
+    assert lead['target'] == name and 'byte match with gcc-2.7.2-kmc' in lead['reason']
+    assert net._function(name, 'another-compiler')['status'] == 'open'
+
+
 def test_budget_leaves_work_for_next_pass_and_cancellation_stops_between_attempts(pair, monkeypatch):
     seen = []
     job = Job()
@@ -223,7 +302,7 @@ def test_full_pass_runs_similarity_after_exact_transfers(pair, monkeypatch):
     order = []
     monkeypatch.setattr(pair.twins, 'set_aside_asm', lambda p: 0)
     monkeypatch.setattr(pair.twins, 'update_boosts', lambda *a, **k: None)
-    monkeypatch.setattr(pair.twins, 'run', lambda *a: order.append('local'))
+    monkeypatch.setattr(pair.twins, 'run', lambda *a, **kw: order.append('local'))
     monkeypatch.setattr(pair.twins, 'across_games', lambda *a: order.append('exact') or 0)
     def similar(twins, slug, job):
         assert job.state == 'running'

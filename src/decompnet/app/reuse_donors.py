@@ -54,10 +54,12 @@ class Donors:
                                         "FROM main.functions WHERE id=? AND status='matched'")
         return store.one(self.queries[project_id], fid)
 
-    def candidates(self, size, low, high, fingerprint, compiler, limit, *, near=None):
+    def candidates(self, size, low, high, fingerprint, compiler, limit, *, near=None, eligible=None):
         """Preserve the previous size/distance/id ordering and limit, without reloading cached source blobs."""
         rows = self.rows[bisect_left(self.sizes, low):bisect_right(self.sizes, high)]
-        rows = [row for row in rows if row['fingerprint'] != fingerprint or row['compiler'] != compiler]
+        # Filter before the size-ordered cap, while these are still metadata rows.
+        rows = [row for row in rows if (row['fingerprint'] != fingerprint or row['compiler'] != compiler)
+                and (eligible is None or eligible(row))]
         rows.sort(key=lambda row: (abs(row['size']-size), row['function_id']))
         if near is not None and limit > 0:
             # Reserve a small local slice before the global cap; keep the rest for other projects.

@@ -23,7 +23,10 @@ and compiles it against this game's bytes. The project's **Matches from other ga
 transfer attempt and its source. A match counts only after the byte judge accepts it. **Start search** takes priority
 over Autopilot on the same project. Autopilot lets active work settle and restarts on the remaining open functions
 when the search ends. The manual search also tries verified source with the same function name in both project modes
-and a bounded set of similar verified functions in MIPS ROM projects. A manual search on a MIPS ROM
+and a bounded set of similar verified functions in MIPS ROM projects. The wider check covers larger instruction
+differences, aligns shifted references, and reserves room for verified C built with another compiler. It tries the
+destination build first. An exact result with a different installed compiler appears under **Compiler leads** and in the
+function's notes for compiler review. A manual search on a MIPS ROM
 also checks whether verified code from an imported project sits inside a larger function already mapped by
 the ROM importer. When it finds a unique span, checks the cuts, and builds the donor C to the exact bytes,
 it splits the function and submits the source to the ordinary judge. A manual search also uses the donor object’s relocation

@@ -189,7 +189,7 @@ def test_one_full_pass_at_a_time(game, monkeypatch):
 
     net, slug, _ = game
     gate, real_run, results = threading.Event(), net.twins.run, []
-    monkeypatch.setattr(net.twins, "run", lambda slug, job=None, only=None: (gate.wait(10), real_run(slug, job, only))[1])
+    monkeypatch.setattr(net.twins, "run", lambda slug, job=None, only=None, **kw: (gate.wait(10), real_run(slug, job, only, **kw))[1])
     job = net.twins.refresh(slug)
     assert net.twins.jobs[slug] is job and job.ordered.wait(10)
     waiter = threading.Thread(target=lambda: results.append(net.twins.full_pass(slug)))

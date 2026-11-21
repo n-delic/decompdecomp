@@ -1088,10 +1088,12 @@ class Twins:
         store = self.net.project_store(proj['id'])
         catalog = {r['id']:dict(r) for r in self.net.store.all('SELECT id,slug,name FROM projects')}
         donors = {}
-        def attempts(matched=False):
+        def attempts(outcome=None):
             rows = store.all("SELECT a.outcome,a.reason,a.created_at,f.name AS target,a.source_project_id,a.source_function_id "
                              "FROM cross_game_attempts a JOIN functions f ON f.id=a.function_id WHERE a.project_id=? "
-                             + ("AND a.outcome='match' " if matched else '') + 'ORDER BY a.id DESC' + ('' if matched and all_matches else ' LIMIT 30'), proj['id'])
+                             + ('AND a.outcome=? ' if outcome else '') + 'ORDER BY a.id DESC'
+                             + ('' if outcome and all_matches else ' LIMIT 30'),
+                             proj['id'], *((outcome,) if outcome else ()))
             result = []
             for row in rows:
                 pid, fid = row['source_project_id'], row['source_function_id']
@@ -1107,7 +1109,7 @@ class Twins:
                                        'source_slug':project['slug'] if project else ''}
                 result.append({k:row[k] for k in ('outcome','reason','created_at','target')} | donors[pid, fid])
             return result
-        rows, matches = attempts(), attempts(True)
+        rows, matches = attempts(), attempts('match')
         counts = store.all('SELECT outcome,COUNT(*) n FROM cross_game_attempts WHERE project_id=? GROUP BY outcome', proj['id'])
         slugs = {r['slug'] for r in catalog.values()}
         def archived_rows(matched=False):
@@ -1123,7 +1125,8 @@ class Twins:
         verified=sorted([dict(r) for r in [*matches,*archived_matches]],key=lambda r:r['created_at'],reverse=True)
         if not all_matches: verified = verified[:30]
         from .shared_reuse import summary
-        return {'counts':totals,'recent':recent,'matches':verified,'discovery':summary(self,proj)}
+        return {'counts':totals,'recent':recent,'matches':verified,'discovery':summary(self,proj),
+                'compiler_leads': attempts('compiler') if totals.get('compiler') else []}
 
     def suggestions(self, slug: str, function: str, limit: int = 5) -> list[dict]:
         """Read-only cross-game and local SDK name hints. Similar code is a lead, never a verified match."""

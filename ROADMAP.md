@@ -4625,8 +4625,11 @@ Similar-source ROM searches now have a separate bounded budget in both manual fu
 passes and automatic reuse waves. New verified matches can propagate to their own
 active project; busy projects defer their notification until the owning pass finishes.
 A bounded nearby-sibling reservation precedes the global donor shortlist cap. The
-MIPS arithmetic reader's supported reciprocal forms and the project-mode gaps above
-remain unchanged. Full discovery/adoption replay is available for self-contained
+manual MIPS ROM search also ranks donors built with different compilers, tolerates
+wider differences in function length and instructions, and aligns shifted relocations.
+An exact result under an alternate installed compiler is shown as a compiler lead for
+review. Similarity-based transfer for imported projects still needs per-file source and
+relocation adaptation. Full discovery/adoption replay is available for self-contained
 private fixtures and a synthetic real-compiler regression.
 
 The model browser also recognizes self-contained PD3V models inside embedded ZIP
