@@ -475,3 +475,12 @@ def test_float_matrix_identity_reaches_kmc_proposals(monkeypatch):
     rows = [('i', 'swc1 $f0, ($a3)', 'sw $t0, ($a3)')]
     assert ('float_matrix_identity', 'floating-point diagonal') in route('void f(void) {}', rows, 'asm')
     assert 'float_matrix_identity' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
+
+
+def test_field_snapshot_copies_reach_kmc_proposals(monkeypatch):
+    from decomprepair import field_snapshot_copies
+
+    monkeypatch.setattr(field_snapshot_copies, 'rewrite', lambda *args: 'staged halfwords')
+    rows = [('s', 'lhu $v1, 0x4($v0)', 'lhu $v1, 0x6($v0)')]
+    assert ('field_snapshot_copies', 'staged halfwords') in route('void f(void) {}', rows, 'asm')
+    assert 'field_snapshot_copies' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))

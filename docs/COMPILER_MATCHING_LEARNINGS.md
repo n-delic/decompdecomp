@@ -9150,3 +9150,22 @@ float constant and diagonal pointer. That form reproduced all 80 linked
 bytes on a copied project. The target corroborates both loop bounds,
 the branch-likely zero store, the floating diagonal store, and all
 three byte displacements.
+
+### Stage halfword snapshots before relocated stores
+
+A 12-instruction N64 leaf built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`
+scored 655 from m2c and 505 after instruction-order mutations. Its C
+interleaved three halfword reads and stores. The target loads the base
+pointer once and reads all three fields before the first store.
+
+Staging the three unsigned halfwords in target load order and writing
+them in target store order reproduced all 48 linked bytes on a copied
+project. Both the m2c draft and the permuted source matched with the same
+rewrite. Declaring a separate local for the common pointer also matched
+in the scratch trial, so the installed rule keeps the draft expressions.
+
+A 16-instruction word-copy leaf with the same flags scored 430. The
+target reads three input fields before the first relocated store, then
+interleaves two more loads with the stores. Staging all five reads at
+their observed positions reproduced all 64 linked bytes. Staging only
+the first three and inlining the last two reached a score of 650.

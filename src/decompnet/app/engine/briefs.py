@@ -149,6 +149,7 @@ class BriefMixin:
                 aligned_allocator_request,
                 aligned_stack_read,
                 byte_cursor_postincrements,
+                field_snapshot_copies,
                 float_matrix_identity,
                 indexed_field_cursor,
                 large_stack_drafts,
@@ -196,6 +197,8 @@ class BriefMixin:
                 inputs.append('indexed field cursor')
             if split_dispatch_zero_case.applies(fn['asm'] or ''):
                 inputs.append('split dispatch zero case')
+            if field_snapshot_copies.applies(fn['asm'] or ''):
+                inputs.append('staged field copies')
             if ordered_halfword_updates.applies(fn['asm'] or ''):
                 inputs.append('ordered halfword updates')
             if aligned_stack_read.applies(fn['asm'] or ''):
