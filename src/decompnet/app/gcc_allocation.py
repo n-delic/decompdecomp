@@ -20,6 +20,15 @@ def summarize(texts, name, arch=None):
         crossed = re.search(r'crosses (\d+) calls?',m[4])
         locals_[int(m[1])] = dict(references=int(m[2]),live_insns=int(m[3]),
                                  calls_crossed=int(crossed[1]) if crossed else 0)
+    local = not positions
+    if local:
+        # a function of one basic block (a straight float chain) is allocated entirely by local-alloc: greg prints
+        # no global order, and every pseudo used to be dropped, so a matrix function's 17 register swaps had no
+        # evidence at all. local-alloc assigns its quantities by the same floor_log2(refs)*refs/length priority,
+        # so rank by that (highest first), keeping the dump's own order between ties.
+        weight = lambda p: ((locals_[p]['references'].bit_length()-1)*locals_[p]['references']/locals_[p]['live_insns']
+                            if locals_.get(p) and locals_[p]['live_insns'] else 0.0)
+        positions = sorted((p for p in dispositions if p in locals_), key=lambda p: -weight(p))
     result = []
     for rank,pseudo in enumerate(positions):
         if pseudo not in dispositions or pseudo not in locals_:
@@ -30,7 +39,7 @@ def summarize(texts, name, arch=None):
         result.append(dict(pseudo=pseudo,allocation_rank=rank,hard_register=dispositions[pseudo],
                            aliases=item.get('aliases',[]),source_lines=item.get('source_lines',[])[:8],
                            legacy_weight=(refs.bit_length()-1)*refs/length if refs and length else None,
-                           **life))
+                           allocator='local' if local else 'global',**life))
     return dict(values=result[:LIMIT],truncated=len(result)>LIMIT or trace['truncated'],
                 note='Actual greg order and dispositions joined to lreg counts within this compilation. '
                      'Legacy weights are advisory; pseudos can represent conversions rather than named C locals.')
