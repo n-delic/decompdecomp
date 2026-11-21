@@ -10392,3 +10392,24 @@ app's own judge (`decomp judge-worker`, which returns exactly the app's score); 
   choices that follow from the loop counter taking `$s2` where the target has `$s5`, which is allocation priority
   (use count over live range), not statement order. The search stays in the Deep Permuter for near-matches whose
   difference is order; it is not a fix for this one.
+
+## KMC gcc 2.7.2: a status copied into `$v0` is the function's return value (N64, one 65-instruction function, exact)
+
+Compiler and flags: `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`. Evidence level: one real function, judged by the
+app (score 15 to 0). Not a controlled regression test; the rewrite has a unit test on the m2c shape.
+
+- **The signature was the blocker.** m2c wrote `void f(void)` ending `if (var_v0 == 0) { g(); }`. The target did
+  `move $v0,$a2` in the delay slot of the guard's second null check and again at the join, then `bnez $v0`. Three
+  register rows differed (the draft used `$v1`) and about 25 source shapes under the project's earlier agents, plus
+  ~20 hand-built ones (copy position, declaration order, narrower types, `register`, pointer-typed flag, inline
+  helper) never moved them: with a `void` function gcc folds `v = a; if (v == 0)` into `bnez $a2` and the early
+  copy into `move $v1,$zero`. Returning the value is what keeps the copy: the status and the callee's result share
+  one pseudo, which the allocator puts in the return register `$v0`, and the steal-from-target delay slot then
+  duplicates the join's copy.
+- **The shape that matched:** `s32 f(void)`; the flag copies `var_v0 = var_a2;` removed from every path and written
+  once at the final test; `var_v0 = g(); return var_v0;` as the tail. m2c's `goto block_9` stays as it was (the
+  label needs a `;`). Applying only the signature and tail change (copies left where m2c put them) scored 420: the
+  copy position matters as much as the return.
+- **Failed:** `if (a == 0) return g(); return a;` (the copy lands in the `bnez` delay slot, `bnez $a2`); a `void`
+  function with the copy at the join in any of 6 positions, with or without gotos (all fold to `bnez $a2`).
+- The `return_contract` family now also handles this shape (`flag_variants`).
