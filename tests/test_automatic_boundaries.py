@@ -397,3 +397,35 @@ def test_terminal_alignment_before_unmapped_float_data(case):
         segments.append(Segment('other',16,48,BASE+64))
     result=repair(functions,[],image,consoles.get('n64'),segments,symbols=symbols)
     assert any(fn.rom==12 for fn in result)==(case!='filler')
+
+
+def test_terminal_fp_branch_filler_can_borrow_a_word_from_the_float_table():
+    import struct
+
+    entry=[0x8c820000,0x03e00008,0]
+    values=struct.pack('>8f',1,2,3,4,5,6,7,8)
+    words=entry+[0x45000004]+[word for word, in struct.iter_unpack('>I',values)]
+    image,functions,segments=fixture(words,cuts=(0,12,20,48))
+    functions.pop()
+    segments[0].rom_end=16
+    assert [(fn.rom,fn.size) for fn in repair(functions,[],image,consoles.get('n64'),segments)]==[(0,12)]
+
+
+@pytest.mark.parametrize('case',['load','address_escape','branch'])
+def test_word_access_to_zero_between_return_and_entry_is_recovered_as_data(case):
+    # A plain LUI/LW pair references the retained zero word, never executes it.
+    words=[0x8c820000,0x03e00008,0,0]+BODY
+    words += [0x3c028000,0x8c42100c if case!='address_escape' else 0x2442100c,
+              0x1000fff4 if case=='branch' else 0x03e00008,0]
+    image,functions,segments=fixture(words,cuts=(0,12,16,48,64))
+    ref=functions[1].name
+    caller=functions[-1]
+    caller.lines[:2]=[replace(caller.lines[0],operands=f'$v0, %hi({ref})'),
+                     replace(caller.lines[1],operands=f'$v0, %lo({ref})($v0)')]
+    data=[]
+    result=repair(functions,data,image,consoles.get('n64'),segments)
+    if case=='load':
+        assert [(row.vram,row.rom,row.size) for row in data]==[(BASE+12,12,4)]
+        assert all(fn.rom!=12 for fn in result)
+    else:
+        assert not data and any(fn.rom==12 for fn in result)

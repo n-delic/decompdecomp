@@ -40,6 +40,7 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
     transfer_targets=set()
     shared_calls=set(shared)
     names={f.name:f.vram for f in functions}
+    lines_by_rom={line.rom:line for fn in functions for line in fn.lines}
     for fn in functions:
         for line in fn.lines:
             op=line.word>>26
@@ -216,6 +217,11 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
     returns_by_end = {(fn.rom+fn.size, fn.vram-fn.rom) for fn in result
                       if fn.size >= 8 and fn.lines[-2].word == JR_RA}
     protected = sorted(entered)
+    data_only = {
+        fn.vram for fn in result if fn.size==4 and not fn.lines[0].word
+        and fn.vram not in explicit|pointers|transfer_targets
+        and address_word_references(fn, references, lines_by_rom)
+    }
     entries_by_rom = {(fn.rom, fn.vram):fn for fn in result}
 
     def zero_alignment(fn, previous):
@@ -243,14 +249,18 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
                 if any(not match.start()%4 for match in re.finditer(b'(?=(?:'+candidates+b'))', image)):
                     return False
             index = bisect_right(protected, before+mapping-1)
-            if index < len(protected) and protected[index] < after+mapping:
-                return False
+            while index<len(protected) and protected[index]<after+mapping:
+                if protected[index] not in data_only:
+                    return False
+                index += 1
             owners = [s for s in segments if s.rom_start <= before-8 < after < s.rom_end
                       and s.vram-s.rom_start == mapping and s.contains(before+mapping-8, after-before+12)]
             return (len(owners) == 1
                     and not any(d.rom is not None and d.rom < after and before < d.rom+d.size for d in data))
         return False
 
+    recovered_data=[]
+    predecessors={(fn.rom+fn.size,fn.vram+fn.size):fn for fn in result if fn.size>=8}
     kept=[];dropped=markers=0;ordered=sorted(result,key=lambda f:(owner(f),f.rom))
     for i,fn in enumerate(ordered):
         previous=kept[-1] if kept else None;following=ordered[i+1] if i+1<len(ordered) else None
@@ -258,10 +268,15 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
             data.append(DataSymbol(fn.name, fn.vram, fn.rom, 4, 'data'))
             markers += 1
             continue
-        if (terminal_data_alignment(fn, previous, image, order, segments) and not referenced(fn)):
+        predecessor=predecessors.get((fn.rom,fn.vram))
+        if (terminal_data_alignment(fn, predecessor, image, order, segments) and not referenced(fn)):
             dropped+=1;continue
         if zero_alignment(fn, previous):
-            dropped+=1;continue
+            if fn.vram in data_only:
+                recovered_data.append(DataSymbol(fn.name,fn.vram,fn.rom,4,'data'))
+            else:
+                dropped+=1
+            continue
         if (filler_extent(fn.size,fn.lines[0].word) and previous is not None and following is not None
                 and owner(previous)==owner(fn)==owner(following)
                 and previous.rom+previous.size==fn.rom and following.rom==fn.rom+4 and following.vram==fn.vram+4
@@ -273,7 +288,10 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
         log(f'Left {dropped} alignment words out of the functions: filler between a return and the next entry, kept in the image.')
     if markers:
         log(f'Recovered {markers} overlay end markers as data.')
-    return kept if dropped or markers else result if changed else functions
+    if recovered_data:
+        data.extend(recovered_data)
+        log(f'Recovered {len(recovered_data)} referenced words as data between functions.')
+    return kept if dropped or markers or recovered_data else result if changed else functions
 
 
 def recover_segment_switch_data(functions, data, image, order, tables, protected, references, log):
@@ -334,12 +352,37 @@ def closes_with_back_edge(fn, end, mapping):
     return fn.vram <= target < branch.vram
 
 
+def address_word_references(fn, references, lines):
+    """Every symbolic use must be a matching LUI or a direct word load/store."""
+    high = ((fn.vram+0x8000)>>16)&0xffff
+    low = fn.vram&0xffff
+    has_high = has_access = False
+    for offset,_ in references.get(fn.vram,()):
+        line = lines.get(offset)
+        if line is None:
+            return False
+        word = line.word
+        if word>>26==15 and word&0xffff==high and f'%hi({fn.name})' in line.operands:
+            has_high = True
+        elif word>>26 in (35,43) and word&0xffff==low and f'%lo({fn.name})' in line.operands:
+            has_access = True
+        else:
+            return False
+    return has_high and has_access
+
+
 def terminal_data_alignment(fn, previous, image, order, segments):
     """A word of assembler filler at the aligned end of code, before float data."""
     end = fn.rom+4
-    if (fn.size!=4 or (fn.vram+4)%16 or previous is None or previous.size<8
+    # A filler that decodes as BC1 can borrow the first word of the float
+    # table as a delay slot. Its apparent destination must also be in the data.
+    word = fn.lines[0].word
+    branch_filler = (fn.size==8 and not end%16 and not (fn.vram+4)%8 and word>>21==0x228 and 1<=word&0xffff<=16
+                     and fn.lines[1].rom==end)
+    text_filler = fn.size==4 and not (fn.vram+4)%16 and image[fn.rom+1:end]==bytes((13,10,13))
+    if (not (branch_filler or text_filler) or previous is None or previous.size<8
             or previous.rom+previous.size!=fn.rom or previous.vram+previous.size!=fn.vram
-            or previous.lines[-2].word!=JR_RA or image[fn.rom+1:end]!=bytes((13,10,13))
+            or previous.lines[-2].word!=JR_RA
             or not 0<=fn.rom-8<end+32<=len(image)):
         return False
     owner = [s for s in segments if s.rom_start<=fn.rom-8 and s.rom_end==end
@@ -348,7 +391,14 @@ def terminal_data_alignment(fn, previous, image, order, segments):
         return False
     fmt = '>f' if order=='big' else '<f'
     values = [value for value, in struct.iter_unpack(fmt,image[end:end+32])]
-    return all(value==0 or 0.0001<=abs(value)<=1_000_000 for value in values) and len(set(values))>=4
+    def finite(value):
+        return value==0 or 0.0001<=abs(value)<=1_000_000
+    if branch_filler:
+        target = end+4*(word&0xffff)
+        if (target+4>len(image) or any(s.rom_start<=target<s.rom_end for s in segments)
+                or not finite(struct.unpack_from(fmt,image,target)[0])):
+            return False
+    return all(map(finite,values)) and len(set(values))>=4
 
 
 def overlay_end_marker(fn, previous, following, image, order, segments):
