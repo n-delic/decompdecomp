@@ -726,3 +726,17 @@ def test_compatibility_stack_buffers_keep_eight_byte_alignment_for_rom_calls():
   %word = load i32, ptr %hdr, align 4
 """
     assert align_stack_objects(ir) == ir.replace("}, align 4", "}, align 8").replace("align 1,", "align 8,")
+
+
+@pytest.mark.parametrize("body", [
+    "do { work(); } while (1);",
+    "do { work(); } /* keep this */ while (1);",
+    "do work(); while (1);",
+    "do do work(); while (1); while (1);",
+])
+def test_idle_rewrite_leaves_do_while_trailers_alone(body):
+    from decompnet.port.wasm.build import ido_c
+
+    assert ido_c(f"void f(void) {{ {body} }}") == f"void f(void) {{ {body} }}"
+    mixed = ido_c(f"void f(void) {{ {body} while (1); }}")
+    assert f"{body} for (;;) port_idle_forever();" in mixed
