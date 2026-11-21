@@ -357,6 +357,9 @@ class Search(Permuter):
                  (L + 'word_byte_loop_carrier.variants', (source, name, arch, asm)),
                  (L + 'counter_derived_loop_offset.masked_byte_stride_variants', (source, name, arch, asm)),
                  (L + 'counter_derived_loop_offset.variants', (source, name, arch, asm)),
+                 # m2c's byte offsets beside guarded counters, indexed by the counter again (and one shared
+                 # counter, guarded on itself), the pseudo layout GCC 2.x's strength reduction gives
+                 (L + 'guarded_offset_index.variants', (source, name, arch, asm)),
                  (L + 'stack_byte_loop_base.variants', (source, name, arch, asm, header)),
                  (L + 'unsigned_rate_division_scope.variants', (source, name, arch, asm, header)),
                  (L + 'join_initializer_sink_repairs.variants', (source, name)),
