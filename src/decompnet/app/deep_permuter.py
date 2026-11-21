@@ -340,6 +340,7 @@ class Search(Permuter):
             global_store_repairs,
             guard_xor_reuse,
             inline_float_vector_scale,
+            load_store_order_repairs,
             near_match_repairs,
             packed_word_scheduling,
             scoped_byte_read_call,
@@ -373,6 +374,7 @@ class Search(Permuter):
         if proj['arch'] == 'mips' and '%lo(' in asm:
             rename = getattr(self.net, 'rename_tokens', None)
             current_asm = rename(proj, asm) if rename else asm
+            proposals += load_store_order_repairs.component_before_resets(source, fn['name'], current_asm, header)
             proposals += global_store_repairs.scoped_byte_updates(source, fn['name'], current_asm, header)
             proposals = targeted_switch_labels.zero_bound_variants(source, fn['name'], current_asm) + proposals
             proposals += symbol_width_repairs.guarded_indexed_variants(source, fn['name'], current_asm)

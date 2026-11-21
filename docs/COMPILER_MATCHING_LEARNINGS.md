@@ -1,5 +1,16 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: move the third vector load before pointer resets
+
+An isolated N64 replay used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.
+The target loaded the third input component before clearing two pointer
+globals and stored the component into the stack vector in the bounds
+branch's delay slot. Moving the third vector assignment before the
+resets improved the linked score from 3,509 to 3,389. Qualifying the input
+load or staging it through a second scalar did not reproduce that gain.
+Deep Permuter saved the rewrite and then reached 3,349 using its existing
+result cleanup. All results are partial matches.
+
 ### KMC GCC 2.7.2: express the masked byte-table stride as shifts
 
 An isolated N64 replay with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`
