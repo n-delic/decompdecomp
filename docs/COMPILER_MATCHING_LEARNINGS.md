@@ -11053,3 +11053,12 @@ literal into the third register. The callee read both registers.
 Inserting the forwarded formal into the call and its generated
 prototype reduced the linked score from 5 to 0. The deep permuter
 reproduced and saved the exact match.
+
+### Swap float declarations for a measured register exchange
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, an isolated
+N64 draft exchanged two float registers across six instructions.
+The instruction order, input fields and arithmetic already matched.
+Swapping the positions of the two affected local declarations
+changed the register allocation and brought the linked score from
+30 to 0. The deep permuter reproduced and saved the exact match.
