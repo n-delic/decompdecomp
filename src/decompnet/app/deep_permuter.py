@@ -650,14 +650,20 @@ class Search(Permuter):
 
             store = self.net.project_store(proj['id'])
             header = self.net._context(proj['id'], fn['unit'])['header']
-            prototypes = ((candidate, 'Repaired a conflicting return type in the candidate.')
+            prototypes = ((candidate, 'Repaired a conflicting return type in the candidate.', None)
                           for candidate in variants(fn['best_source'], fn['name'], header))
-            saved = ((canonical_source(fn, source), 'Recovered a baseline from a saved attempt.')
+            saved = ((canonical_source(fn, source), 'Recovered a baseline from a saved attempt.', None)
                      for source in deep_source_recovery.saved_sources(
                          store, deep_source_recovery.saved_attempts(store, fn['id'])))
             seen = {fn['best_source']}
             attempts = measured[1]
-            for candidate, message in chain(prototypes, saved):
+            targeted = []
+            if proj['arch'] == 'mips' and compiler_for(self.net.cfg(proj), fn['vram'], fn).get('toolchain') == 'ido-7.1':
+                from decomprepair import ido_switch_reply
+
+                if candidate := ido_switch_reply.rewrite(fn['best_source'], fn['name'], fn['asm'], header):
+                    targeted.append((candidate, 'Recovered the reply record shared by switch cases.', ido_switch_reply.FAMILY))
+            for candidate, message, family in chain(targeted, prototypes, saved):
                 if candidate in seen or candidate_quality.reported_source(self.net, fn, candidate):
                     continue
                 if self.tested >= self.limit:
@@ -666,7 +672,9 @@ class Search(Permuter):
                 seen.add(candidate)
                 state.add(variants=1, repairs=1)
                 attempts += 1
-                score = self._score(agent, proj, fn, candidate, float('inf'), fork)
+                scope = repair_trial({'kind': 'deep local repair', 'family': family}) if family else nullcontext()
+                with scope:
+                    score = self._score(agent, proj, fn, candidate, float('inf'), fork)
                 fresh = self.net._function(fn['name'], proj['slug'])
                 if score is not None and fresh['status'] == 'open' and fresh['best_source'] == fn['best_source']:
                     # The old percentage described C which no longer compiles. Retain that source in
