@@ -140,11 +140,13 @@ class BriefMixin:
         inputs = [DRAFT_REVISION, self.cfg(proj).get("draft_generation", 0), hashlib.sha256((fn["asm"] or "").encode()).hexdigest(), fn["name"], target, own["toolchain"], own.get("flags", []), sorted(roots), bindings, context]
         if target.startswith('mips-') and re.search(r'\bjr\s+\$(?!(?:ra|31)\b)\w+', fn['asm'] or ''):
             inputs.append('draft jump-table aliases')
-        if own["toolchain"] == 'ido-7.1' and 'jalr' in (fn['asm'] or ''):
-            from decomprepair import ido_indirect_event
+        if own["toolchain"] == 'ido-7.1':
+            from decomprepair import ido_indirect_event, ido_strided_cursor
 
-            if ido_indirect_event.applies(fn['asm']):
+            if ido_indirect_event.applies(fn['asm'] or ''):
                 inputs.append('IDO callback event frame')
+            if ido_strided_cursor.applies(fn['asm'] or ''):
+                inputs.append('IDO strided cursor')
         if own["toolchain"] == 'gcc-2.7.2-kmc' and 'swl' in (fn['asm'] or ''):
             from decomprepair.unaligned_stack_drafts import stack_copy
 
@@ -172,6 +174,7 @@ class BriefMixin:
                 measured_callback_loop,
                 measured_mmio_polling,
                 measured_stack_drafts,
+                mips_entry_loops,
                 ordered_halfword_updates,
                 packed_matrix_conversion,
                 passthrough_argument_repairs,
@@ -189,6 +192,8 @@ class BriefMixin:
                 uncached_read_repairs,
             )
 
+            if mips_entry_loops.applies(fn['asm'] or ''):
+                inputs.append('MIPS entry loop')
             if short_leaf_drafts.applies(fn['asm'] or ''):
                 inputs.append('short leaf functions')
             if measured_stack_drafts.applies(fn['asm'] or ''):
