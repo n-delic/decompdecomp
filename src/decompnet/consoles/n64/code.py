@@ -425,6 +425,7 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
         copied_overlays,
         dma_overlays,
         indexed_overlays,
+        named_dma,
         overlays,
         raw_slots,
         resident_deflate,
@@ -469,6 +470,9 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
         resident = indexed_overlays.resident_banks(original_rom, taken, before=banks[0].start)
         copied_overlays.add(config, original_rom, found, resident + banks, log)
         return original
+    if not packed and taken and (slots := named_dma.read(original_rom, taken)):
+        if shared_dma.add(config, original_rom, taken, found, slots, log):
+            return original
     if not packed and taken and (slots := shared_dma.read(original_rom, taken, found)):
         if shared_dma.add(config, original_rom, taken, found, slots, log):
             return original

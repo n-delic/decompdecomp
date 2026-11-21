@@ -198,7 +198,8 @@ def recover_registered(image, records, resident, log):
     found = []
     for record in records:
         scope = (record.start, record.end, record.vram)
-        bodies = complete(image, [], [scope], resident, Quiet(), table_ranges=[scope], entries=(record.vram,))
+        table = dict(rom_start=record.start, rom_end=record.end, vram=record.vram)
+        bodies = complete(image, [], [scope], resident, Quiet(), table_ranges=[table], entries=(record.vram,))
         for start, end, vram in bodies:
             if (found and record.start <= found[-1][0] and start-found[-1][1] <= 16
                     and not any(image[found[-1][1]:start])):
