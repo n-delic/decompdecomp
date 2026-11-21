@@ -22,6 +22,7 @@ from decomprepair import (
     measured_control_flow,
     measured_cursor_loop_tail,
     measured_expression_repairs,
+    measured_float_grid_stores,
     measured_global_rebase,
     measured_immediate_repairs,
     measured_lifetime_shapes,
@@ -212,6 +213,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_cursor_loop_tail.variants(source, name, rows)
         result += measured_global_rebase.variants(source, name, header, rows, resolve=resolve)
         result += measured_memory_order.variants(source,name,rows,resolve=resolve,header=header)
+        result += measured_float_grid_stores.variants(source, name, rows)
         result += measured_expression_repairs.variants(source,name,header,rows)
         result += stack_byte_init_repairs.variants(source, name, header, rows)
         result += measured_temporary_repairs.variants(source,name,rows)
