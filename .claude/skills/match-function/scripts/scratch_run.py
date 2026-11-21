@@ -18,6 +18,8 @@ It removes the scratch home afterwards unless --keep.
 """
 import argparse
 import os
+import re
+import socket
 import shutil
 import subprocess
 import sys
@@ -58,6 +60,19 @@ def main():
     ap.add_argument("--keep", action="store_true", help="keep the scratch home to look at the result")
     a = ap.parse_args()
 
+    # Two mistakes this script now refuses, each of which cost a whole run: an environment that does not hold the
+    # change (a `uv run` in another state of the worktree, `git stash` included, re-syncs it to the old pin), and a
+    # port another session's scratch app already holds (every session defaults to 6484).
+    pin = re.search(r"decomp-repair/archive/refs/tags/v([\d.]+)\.tar", (Path(a.checkout) / "pyproject.toml").read_text())
+    have = subprocess.run([a.python, "-c", "import importlib.metadata as m; print(m.version('decomprepair'))"],
+                          capture_output=True, text=True).stdout.strip()
+    if pin and have != pin[1]:
+        sys.exit(f"the scratch environment has decomprepair {have or 'none'} but the checkout pins {pin[1]}: "
+                 f"run UV_PROJECT_ENVIRONMENT=<venv> uv sync in {a.checkout} first")
+    with socket.socket() as probe:
+        if probe.connect_ex(("127.0.0.1", a.port)) == 0:
+            sys.exit(f"port {a.port} is taken (another session's scratch app?): pass a free --port")
+
     scratch = Path(tempfile.mkdtemp(prefix="dd-scratch-"))
     home, fake_home = scratch / "home", scratch / "hm"
     home.mkdir()
@@ -95,6 +110,8 @@ def main():
             print(f"  {state.get('state')} {progress.get('phase')} best {progress.get('best_score')} "
                   f"tested {progress.get('tested')} {progress.get('current_family')}", flush=True)
             if state.get("state") != "running":
+                if state.get("error"):
+                    print("job error:", state["error"])  # e.g. a family's module missing from the environment
                 break
             time.sleep(20)
         state = app.job(job)

@@ -551,6 +551,24 @@ def test_word_byte_loop_carrier_runs_before_random_rewrites(monkeypatch):
     assert 'items[i] == (u8)key' in tried[0]
 
 
+def test_join_initializer_sink_runs_in_the_local_pass(monkeypatch):
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    proj = net.project_row('game')
+    fn = {**net.function(), 'name': 'f', 'asm': '',
+          'best_source': ('void f(void *a, u16 *p) {\n  s32 v;\n  v = 255;\n  if (p[0] & 2)\n  {\n'
+                          '    if (!(p[1] & 16))\n    {\n      v = 191;\n      goto L;\n    }\n'
+                          '    *((u8 *) (((char *) a) + 0x7F)) = 255;\n  }\n  else\n  {\n    L:\n'
+                          '    *((u8 *) (((char *) a) + 0x81)) = v;\n  }\n}\n')}
+    search = deep_permuter.Search(net, 1, 6, Log())
+    tried = []
+    monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 0)
+
+    assert search.operand_order_pass(AGENT, proj, fn, 60, None) == 0
+    assert '    v = 255;\n    L:' in tried[0] and '  v = 255;\n  if' not in tried[0]
+
+
 def test_scoped_byte_global_update_uses_current_relocation_names(monkeypatch):
     from tests.test_permute import AGENT
 
