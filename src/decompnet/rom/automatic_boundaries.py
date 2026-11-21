@@ -343,6 +343,9 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
             markers += 1
             continue
         predecessor=predecessors.get((fn.rom,fn.vram))
+        if (leading_repeated_double(fn, following, image, order, segments, direct_calls)
+                and not referenced(fn)):
+            dropped+=1;continue
         if (terminal_data_alignment(fn, predecessor, image, order, segments) and not referenced(fn)):
             dropped+=1;continue
         if zero_alignment(fn, previous):
@@ -372,7 +375,7 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
             continue
         kept.append(fn)
     if dropped:
-        log(f'Left {dropped} alignment words out of the functions: filler between a return and the next entry, kept in the image.')
+        log(f'Left {dropped} alignment words out of the functions: original bytes kept in the image.')
     if markers:
         log(f'Recovered {markers} overlay end markers as data.')
     if recovered_data:
@@ -757,6 +760,26 @@ def address_word_references(fn, references, lines):
         else:
             return False
     return has_high and has_access
+
+
+def leading_repeated_double(fn, following, image, order, segments, calls):
+    """Recognize the last half of a repeated double where a split starts early."""
+    start = fn.rom
+    if (fn.size != 8 or start < 12 or start%8 != 4 or following is None
+            or following.rom != start+12 or following.vram != fn.vram+12
+            or following.vram%16 or following.vram not in calls
+            or not is_frame(following.lines[0].word)
+            or fn.lines[0].word>>26 not in (4,5,6,7,20,21,22,23)
+            or any(image[start+4:start+12])):
+        return False
+    if not any(s.rom_start == start and s.vram == fn.vram
+               and following.rom+following.size <= s.rom_end for s in segments):
+        return False
+    pair = image[start-4:start+4]
+    if image[start-12:start-4] != pair:
+        return False
+    value, = struct.unpack('>d' if order == 'big' else '<d', pair)
+    return 0.0001 <= abs(value) <= 1_000_000
 
 
 def terminal_data_alignment(fn, previous, image, order, segments):

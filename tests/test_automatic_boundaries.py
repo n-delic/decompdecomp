@@ -622,3 +622,15 @@ def test_zero_alignment_can_run_to_end_of_mapping():
     image, functions, _ = fixture(words, cuts=(0, 12, 16, 24))
     result = repair(functions[:2], [], image+bytes(16), consoles.get('n64'), [Segment('code', 0, 24, BASE)])
     assert [fn.rom for fn in result] == [0]
+
+
+@pytest.mark.parametrize('named',[False,True])
+def test_called_frame_after_repeated_double_at_the_start_of_a_mapping(named):
+    call = 0x0c000000 | ((BASE+32)>>2)&0x3ffffff
+    words = [call,0,0x400921fb,0x54442d18,0x400921fb,0x54442d18,0,0,*BODY]
+    image,all_functions,_ = fixture(words,cuts=(0,8,20,28,32,64))
+    functions = [all_functions[i] for i in (0,2,4)]
+    segments = [Segment('entry',0,20,BASE),Segment('code',20,64,BASE+20)]
+    symbols = [f'entry_mid = 0x{BASE+20:08X};'] if named else []
+    result = repair(functions,[],image,consoles.get('n64'),segments,symbols=symbols)
+    assert (20 in {fn.rom for fn in result}) == named
