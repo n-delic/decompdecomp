@@ -10989,3 +10989,13 @@ call. Treating its stride as bytes also brought the score from 10
 to 0. In the third case, the compiler reversed two float loads
 before a comparison. Staging the left-hand field in a local
 preserved the comparison and reduced the score from 20 to 0.
+
+### Recover a halfword guard and a table pointer in a call delay slot
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, one isolated N64
+draft applied word scaling to two byte strides. For a zero test,
+reading the original halfword from the byte-indexed table reduced
+the linked score from 220 to 10. The other address was formed in
+a call's delay slot from a previously loaded relocation. Recovering
+that byte stride reduced the score from 10 to 0. The deep permuter
+measured and saved both edits independently.
