@@ -33,3 +33,64 @@ def test_parse_reads_the_combined_file_by_console():
     got = directory.parse({"nintendo-64": {"schema_version": 1, "projects": {"g": entry}},
                            "amiga": {"schema_version": 1, "projects": {}}})
     assert [p["platform"] for p in got] == ["n64"]
+
+
+def test_directory_rom_checksums_are_validated():
+    digest = "a1" * 20
+    entry = {"name": "G", "repository_url": "https://github.com/example/game", "project_type": "Decompilation",
+             "platforms": ["Nintendo 64"], "supported_rom_sha1": [digest.upper(), digest, "invalid", None]}
+    assert directory.parse([entry])[0]["rom_sha1s"] == [digest]
+    assert directory.parse([entry | {"supported_rom_sha1": digest}])[0]["rom_sha1s"] == []
+
+
+def test_illustrated_directory_joins_artwork_by_repository(monkeypatch):
+    import httpx
+
+    cover = "https://raw.githubusercontent.com/libretro-thumbnails/example/master/cover.png"
+    projects = [
+        {"name": "Game", "repository_url": "https://github.com/example/game",
+         "project_type": "Decompilation", "platforms": ["Nintendo 64"]},
+        {"name": "Alternate decomp", "repository_url": "https://github.com/example/alternate",
+         "project_type": "Decompilation", "platforms": ["Nintendo 64"]},
+        {"name": "Game", "repository_url": "https://github.com/example/other",
+         "project_type": "Decompilation", "platforms": ["Nintendo 64"]},
+        {"name": "Port", "repository_url": "https://github.com/example/port",
+         "project_type": "Native port", "platforms": ["Nintendo 64"]},
+        {"name": "Recomp", "repository_url": "https://github.com/example/recomp",
+         "project_type": "Static recompilation", "platforms": ["Nintendo 64"]},
+    ]
+    html = f"""
+    <table><tr><td><div class="rr-decomp-artwork"><img src="{cover}" /></div>
+    <div class="rr-decomp-name"><a href="https://github.com/example/game.git/">Game</a></div></td>
+    <td><a href="https://github.com/example/alternate">Matching decompilation</a>
+    <a href="https://github.com/example/port">Native port</a>
+    <a href="https://github.com/example/recomp">Static recompilation</a></td></tr>
+    <tr><td><div class="rr-decomp-artwork"><img src="https://untrusted.example/cover.png" /></div>
+    <a href="https://github.com/example/other">Game</a></td></tr></table>
+    """
+
+    def get(url, **kwargs):
+        request = httpx.Request("GET", url)
+        if url == directory.DIRECTORY:
+            return httpx.Response(200, json=projects, request=request)
+        return httpx.Response(200, text=html, request=request)
+
+    monkeypatch.setattr(directory.httpx, "get", get)
+    assert {p["repo_url"].rsplit("/", 1)[-1]: p.get("artwork_url") for p in directory.listing()} == {
+        "game": cover, "alternate": cover, "other": None,
+    }
+
+
+def test_directory_still_loads_when_artwork_page_is_unavailable(monkeypatch):
+    import httpx
+
+    entry = {"name": "Game", "repository_url": "https://github.com/example/game",
+             "project_type": "Decompilation", "platforms": ["Nintendo 64"]}
+
+    def get(url, **kwargs):
+        if url == directory.DIRECTORY_PAGE:
+            raise httpx.ReadTimeout("Artwork timed out")
+        return httpx.Response(200, json=[entry], request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(directory.httpx, "get", get)
+    assert directory.listing() == directory.parse([entry])

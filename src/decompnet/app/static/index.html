@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; media-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; worker-src 'self'; manifest-src 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: https://www.retroreversing.com https://raw.githubusercontent.com https://upload.wikimedia.org https://thumb.wikimedia.org https://opengraph.githubassets.com https://www.thevideogamecompany.com https://vglist.sfo2.digitaloceanspaces.com https://images.igdb.com https://s.pacn.ws https://store-images.s-microsoft.com https://i.ytimg.com https://mario.wiki.gallery https://pnpdistribution.com https://theexchange.com https://cdn11.bigcommerce.com https://images-na.ssl-images-amazon.com; media-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; worker-src 'self'; manifest-src 'self'">
 <title>decompdecomp</title>
 <link rel="manifest" href="/assets/manifest.webmanifest">
 <meta name="theme-color" content="#1d1b14">
@@ -177,11 +177,16 @@
     <p class="muted">Paste a community decomp's repository and add your own copy of its game. Before anything is cloned, decompdecomp shows what the project says about AI and contributions: every project decides that for itself. Your fork stays on this computer until you push it or enable automatic pushing in Settings. decompdecomp does not open pull requests.</p>
     <div class="row repo-row"><input id="repoUrl" class="mono" placeholder="https://github.com/owner/repo" aria-label="Repository address"><button class="primary" id="repoFork" type="button" disabled>Look at it</button></div>
     <p class="muted small" id="repoWhy" role="status"></p>
-    <details class="panel settings-disclosure" id="decompDirectory"><summary class="panel-head"><h2>Community decomps</h2><span class="disclosure-context muted small" id="decompDirectoryCount">From RetroReversing's directory</span></summary><div class="pad">
+    <details class="panel settings-disclosure" id="decompDirectory"><summary class="panel-head"><h2>Community decomps</h2><span class="disclosure-context muted small" id="decompDirectoryCount">From RetroReversing's directory</span><span class="muted small" id="decompDirectoryChecking" hidden>Checking ROM library…</span></summary><div class="pad">
       <p class="muted small">Pick a decompilation to import it: you'll see its AI policy before anything is cloned.</p>
       <div class="workbar" id="decompDirectoryWork" role="progressbar" aria-label="Loading the directory" hidden><i></i></div>
       <p class="small" id="decompDirectoryStatus" role="status"></p>
-      <div id="decompDirectoryList"></div>
+      <div class="row" id="decompDirectoryFilters" hidden>
+        <label class="field"><span>Platform</span><select id="decompDirectoryPlatform"><option value="">All platforms</option></select></label>
+        <button class="ghost small-btn" id="decompDirectoryLibrary" type="button" hidden>Check ROM library</button>
+      </div>
+      <pre class="joblog" id="decompDirectoryLibraryLog" hidden></pre>
+      <div class="compiler-table directory-table" id="decompDirectoryList"></div>
     </div></details>
     <h2>Import checked-out projects</h2>
     <p class="muted">Choose a folder of repositories, including collections arranged by platform. Review the projects before adding them. Importing runs no builds or agents.</p>
@@ -624,7 +629,12 @@
     <details class="panel settings-disclosure local-search-card" id="deepSweepPanel">
       <summary class="panel-head local-search-head" id="deepSweepQueueState">
         <div class="local-search-title"><h2>Deep permuter</h2><span class="local-search-state" id="deepSweepQueueTitle" role="status">Ready to search</span></div>
-        <div class="deep-sweep-actions"><button id="deepSweepStart" type="button" class="primary small-btn">Start search</button><button id="deepSweepStop" type="button" class="primary small-btn" hidden>Stop</button></div>
+        <div class="deep-sweep-actions">
+          <span class="local-search-state" id="deepSweepRuntime" hidden></span>
+          <button class="ghost small-btn" id="deepSweepOptions" type="button" aria-haspopup="dialog" title="Search options"><span class="sr-only">Search options </span><span id="deepSweepOptionsSummary">5 min per function</span> <span aria-hidden="true">↗</span></button>
+          <button id="deepSweepStart" type="button" class="primary small-btn">Start search</button>
+          <button id="deepSweepStop" type="button" class="primary small-btn" hidden>Stop</button>
+        </div>
       </summary>
       <div class="pad local-search-body">
         <p class="local-search-intro">Try variations of saved C to improve matches.</p>
@@ -650,7 +660,6 @@
           <span hidden><b id="deepSweepDone">0</b><b id="deepSweepLeft">0</b></span>
         </div>
         </div>
-        <div class="local-search-options-row"><span class="small muted" id="deepSweepOptionsSummary">5 min per function</span><button class="ghost small-btn" id="deepSweepOptions" type="button" aria-haspopup="dialog">Search options <span aria-hidden="true">↗</span></button></div>
         <div id="deepSweepSettingsHome" hidden>
         <fieldset class="local-search-options" id="deepSweepSettings">
           <legend class="sr-only">Search options</legend>
@@ -1148,7 +1157,7 @@
         <p id="sdkInventory" class="muted small"></p><pre class="joblog" id="sdkFolderLog" hidden></pre>
       </div></section>
       <section class="panel"><header class="panel-head"><h2>ROM library</h2></header><div class="pad">
-        <p class="muted small">Imported projects search this folder and its subfolders for a game with the expected SHA-1. N64 byte orders are normalized for matching. Files stay on this computer; archives must be extracted first.</p>
+        <p class="muted small">Imported projects and Community decomps check this folder and its subfolders for games with matching SHA-1 checksums. N64 byte orders are normalized for matching. Files stay on this computer; archives must be extracted first.</p>
         <label class="field"><span>Folder path (leave empty to disable)</span><input id="romLibrary" class="mono" placeholder="/Volumes/Data/ROMs"></label>
         <div class="row"><button class="ghost" id="romLibraryPick" type="button">Choose folder…</button><button class="primary" id="romLibrarySave" type="button">Save</button></div>
       </div></section>

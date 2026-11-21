@@ -1457,6 +1457,10 @@ details.more[open] > summary::before { content: "− "; }
 .compiler-progress[data-finished="true"] .compiler-current-label { display: none; }
 .compiler-progress[data-finished="true"] .compiler-progress-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .compiler-progress[data-finished="true"] .compiler-progress-stats > div { grid-column: auto; }
+.directory-table { max-height: none; }
+.directory-game { display: flex; align-items: center; gap: 8px; }
+.directory-game > div { min-width: 0; }
+.directory-game img { flex: none; object-fit: contain; }
 .compiler-table td button.small-btn { white-space: nowrap; }
 
 /* A selected identity must never label the previous view's data or controls. */
@@ -2296,8 +2300,9 @@ img.rom-preview-media { image-rendering:pixelated; background:var(--bg-alt); bor
 .local-search-progress .deep-sweep-bar { margin:0; }
 .local-search-progress .deep-queue-details { margin:0; gap:8px 16px; align-items:center; }
 .local-search-progress .deep-queue-details > span:not([hidden]) { border:0; padding:0; }
-.local-search-options-row { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; }
-.local-search-options-row > button { padding:4px 8px; }
+#deepSweepQueueTitle:empty { display:none; }
+#deepSweepRuntime { font-variant-numeric:tabular-nums; }
+#deepSweepOptions { white-space:normal; text-align:left; }
 .local-search-card .deep-sweep-tools { padding:0; border:0; gap:8px 16px; align-items:baseline; }
 .local-search-card .deep-sweep-tools > #deepSweepReset { margin-left:auto; }
 .local-search-card .deep-sweep-tools .deep-sweep-help { flex:initial; }

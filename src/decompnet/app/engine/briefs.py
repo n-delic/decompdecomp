@@ -146,6 +146,7 @@ class BriefMixin:
                 inputs.append('unaligned stack copy')
         if own["toolchain"] == 'gcc-2.7.2-kmc':
             from decomprepair import (
+                aligned_stack_read,
                 large_stack_drafts,
                 likely_branch_cursor,
                 measured_callback_loop,
@@ -164,6 +165,8 @@ class BriefMixin:
                 inputs.append('shared branch-likely cursor advance')
             if relocated_byte_table.applies(fn['asm'] or ''):
                 inputs.append('relocated byte table')
+            if aligned_stack_read.applies(fn['asm'] or ''):
+                inputs.append('aligned stack read')
             if measured_mmio_polling.applies(fn['asm'] or ''):
                 inputs.append('measured MMIO polling')
             if large_stack_drafts.applies(fn['asm'] or ''):

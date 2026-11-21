@@ -8870,3 +8870,28 @@ same global byte on either side of a conditional call. The target keeps the addr
 in one saved register for both loads. Capturing the address in a scoped assignment
 and scoping the call lowered the linked score from 75 to 35 in Deep Permuter. Both
 byte reads remain in the candidate. This is a measured partial improvement.
+
+### Rounding up an address inside a stack input buffer
+
+An archived 37-instruction N64 draft under
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` inferred a scalar where a read
+needed an aligned stack buffer. It also dropped the first incoming argument
+from the initial read call. Restoring the argument compiled but scored 9.
+
+The original assembly preserves that incoming argument, materializes a
+biased stack address, and rounds it down with a pair of four-bit shifts.
+The aligned address goes to the first read as its second argument, before
+a halfword load at offset 2. The interval between the unbiased address
+and the first saved register supports a 32-byte buffer. Restoring this
+storage alone left one stack offset difference. Adding the 15-byte bias to
+round the buffer's starting address up to 16 bytes matched all 148 linked
+bytes on the copied project. A 28-byte buffer also matched, so the inferred
+reservation is evidence for a usable layout rather than the original type.
+
+### Scoping a cursor initialized before a labelled loop
+
+In a scratch N64 function under `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, putting the
+cursor setup in a single-statement `do { ... } while (0)` before the loop label changed
+saved-register allocation and reduced the linked score from 130 to 110. The candidate
+keeps the label after initialization so the existing backedge retains its destination.
+Deep Permuter reproduced the improvement under the original compiler settings.
