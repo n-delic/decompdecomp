@@ -10,3 +10,8 @@ inline uint32_t port_rt64_vi_features(uint32_t status, uint32_t flags) {
     }
     return status;
 }
+
+inline bool port_rt64_incomplete_framebuffer(uint32_t width, uint32_t height, uint8_t size,
+                                             uint32_t expected_width, uint32_t expected_height, uint8_t expected_size) {
+    return width != expected_width || size != expected_size || height < expected_height;
+}

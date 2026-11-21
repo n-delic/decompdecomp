@@ -116,6 +116,23 @@ void screen(const uint8_t *rdram, uint32_t framebuffer) {
         return;
     snapshot(rdram);
     vi()->VI_ORIGIN_REG = framebuffer + origin;
+    auto &queue = *app->presentQueue;
+    const auto video = app->core.decodeVI();
+    const auto *target = video.visible() ? app->state->framebufferManager.find(video.fbAddress()) : nullptr;
+    bool use_rdram = false;
+    if (target) {
+        const auto size = video.fbSize();
+        use_rdram = port_rt64_incomplete_framebuffer(
+            target->width, target->height, target->siz, size.x, size.y, video.fbSiz());
+    }
+    if (use_rdram != queue.viewRDRAM) {
+        // The VI scans a continuous range. A smaller cached GPU target can cover only the first part of it.
+        // RT64 already presents RAM when it cannot find a GPU target. Select that path for this incomplete
+        // target, draining pending presents before switching the queue's shared setting.
+        queue.waitForPresentId(app->state->presentId);
+        queue.waitForIdle();
+        queue.viewRDRAM = use_rdram;
+    }
     app->updateScreen();
     static bool first = true;
     if (first) {
