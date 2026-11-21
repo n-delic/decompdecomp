@@ -1,5 +1,7 @@
 import struct
 
+import pytest
+
 from decompnet.consoles.n64.rsp_prefix import trim
 
 from .test_n64code import _function
@@ -21,7 +23,8 @@ def test_trim_inferred_rsp_prefix_preserves_called_cpu_leaf():
     assert trim(image, ranges, []) == ranges
 
 
-def test_audio_text_after_bootstrap_requires_vector_program():
+@pytest.mark.parametrize('entry', ['pointers', 'status'])
+def test_audio_text_after_bootstrap_requires_vector_program(entry):
     import struct
 
     from decompnet.consoles.n64.port import RSPBOOT
@@ -29,7 +32,8 @@ def test_audio_text_after_bootstrap_requires_vector_program():
 
     image = bytearray(0xd0 + 0x1000)
     image[:len(RSPBOOT)] = RSPBOOT
-    image[0xd0:0xe0] = bytes.fromhex('2018036020170f908c3c00308c3b0034')
+    image[0xd0:0xe0] = bytes.fromhex('2018036020170f908c3c00308c3b0034' if entry == 'pointers'
+                                      else '400558008c3c00308c3b003430a40001')
     for i in range(64):
         struct.pack_into('>I', image, 0x100 + 4 * i, 0x4a000000)
     for i in range(3):

@@ -16,22 +16,26 @@ def _vector(word):
 
 
 def audio_spans(image):
-    """Find an audio RSP program before the verified libultra bootstrap."""
+    """Find audio RSP programs adjacent to the verified libultra bootstrap."""
     from .port import RSPBOOT
 
     for match in re.finditer(re.escape(RSPBOOT), image):
         end = match.start()
         # Some audio tasks place the bootstrap immediately before their
-        # 4 KiB text. Its entry initializes DMEM command pointers first.
+        # 4 KiB text. Its entry initializes DMEM command pointers or reads SP status first.
         start = end + 0xd0
         stop = start + 0x1000
-        if (stop <= len(image) and start % 16 == 0
-                and image[start:start + 16] == bytes.fromhex('2018036020170f908c3c00308c3b0034')):
-            words = struct.unpack_from('>1024I', image, start)
-            branches = {word & 0x03ffffff for word in words if word >> 26 in (2, 3)}
-            if (sum(map(_vector, words)) >= _MIN_VECTORS
-                    and sum(0x01000400 <= target < 0x01000800 for target in branches) >= 3):
-                yield start, stop
+        if stop <= len(image) and start % 16 == 0:
+            status, data, size = struct.unpack_from('>3I', image, start)
+            pointers_first = image[start:start + 16] == bytes.fromhex('2018036020170f908c3c00308c3b0034')
+            status_first = (status & 0xffe0ffff == 0x40005800 and data & 0xffe0ffff == 0x8c200030
+                            and size & 0xffe0ffff == 0x8c200034)
+            if pointers_first or status_first:
+                words = struct.unpack_from('>1024I', image, start)
+                branches = {word & 0x03ffffff for word in words if word >> 26 in (2, 3)}
+                if (sum(map(_vector, words)) >= _MIN_VECTORS
+                        and sum(0x01000400 <= target < 0x01000800 for target in branches) >= 3):
+                    yield start, stop
         if end % 16:
             continue
         for start in range(max(0, end - 0x1000), end - 0x100, 16):
