@@ -548,3 +548,24 @@ def test_switch_forwarding_uses_original_rom_table_entries():
                             read_data=read_data, big_endian=True))
     assert 'effect(object, mode)' in result['passthrough_argument']
     assert 'passthrough_argument' not in dict(proposals(source, 'f', '', 'mips', KMC, rows, assembly(*ops)))
+
+
+def test_kmc_clamp_reschedules_stack_pointer_after_value_arithmetic():
+    source = '''
+void f(void) {
+    s32 value;
+    u8 buffer;
+    value = read();
+    write(&buffer, &fmt, value & ((s32) ~value >> 0x1F) & 0xFFFF);
+}
+'''
+    stack = 'addiu $a0, $sp, 0x20'
+    rows = [(' ', op, op) for op in ('jal read', 'nop')]
+    rows += [('o', '', stack)]
+    rows += [(' ', op, op) for op in ('nor $v1, $zero, $v0', 'sra $v1, $v1, 0x1f', 'and $v0, $v0, $v1')]
+    rows += [('o', stack, '')]
+    rows += [(' ', op, op) for op in ('lui $a1, %hi(fmt)', 'addiu $a1, $a1, %lo(fmt)', 'jal write',
+                                      'andi $a2, $v0, 0xffff')]
+    result = dict(proposals(source, 'f', '', 'mips', KMC, rows, ''))
+    assert 'value &= (s32) ~value >> 31;' in result['staged_call_clamp']
+    assert 'staged_call_clamp' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))
