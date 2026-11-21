@@ -11283,3 +11283,13 @@ initializer with two table-clearing `do { } while (i < 0x20)` loops and two more
 - Permuter: decomp-repair family `loop_tail_update_order` (v0.5.241) swaps the last two plain counter updates of a
   do-while body, each loop alone and all loops together; from the pre-fix saved best its combined child scored 0 with
   `fast_judge`. App wiring: decompdecomp PR 1945.
+
+### Write each selected constant to the global in its branch
+
+With gcc-2.7.2-kmc `-G0 -mips3 -mgp32 -mfp32 -O2`, a draft for an N64
+function used a temporary to select two constants and stored it to a byte
+global. The only differences were the register used for both constants and
+the store. Moving the global assignment into each branch let the compiler
+reuse the condition register and scored 15 to 0 in the byte judge. A ternary
+scored 15 with the original zero test and 225 with the inverted test.
+The guarded rule reproduced the verified match in 16 deep-permuter candidates.
