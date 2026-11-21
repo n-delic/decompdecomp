@@ -1457,6 +1457,10 @@ details.more[open] > summary::before { content: "− "; }
 .compiler-progress[data-finished="true"] .compiler-current-label { display: none; }
 .compiler-progress[data-finished="true"] .compiler-progress-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .compiler-progress[data-finished="true"] .compiler-progress-stats > div { grid-column: auto; }
+.directory-table { max-height: none; }
+.directory-game { display: flex; align-items: center; gap: 8px; }
+.directory-game > div { min-width: 0; }
+.directory-game img { flex: none; object-fit: contain; }
 .compiler-table td button.small-btn { white-space: nowrap; }
 
 /* A selected identity must never label the previous view's data or controls. */

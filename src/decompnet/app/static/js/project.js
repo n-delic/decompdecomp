@@ -1308,6 +1308,11 @@ async function installToolchain(id, proprietary, force = false) {
 /* A community decomp, forked by its repository address (decomp.dev, which listed them, is gone). */
 function showCatalog() {
   show("catalog");
+  if (S.st) {
+    if (directoryProjects) syncDirectoryLibrary();
+  } else {
+    loadState().then(() => { if (directoryProjects) syncDirectoryLibrary(); }).catch(() => {});
+  }
 }
 
 /* What's wrong with a repository address, in a sentence, or "" when it's one decompdecomp can fork: the shape the
@@ -1333,33 +1338,147 @@ $("repoFork").onclick = () => {
 };
 
 /* RetroReversing's directory of community decomps: only decompilations, each imported with a click. */
-let directoryLoading = false;
-$("decompDirectory").addEventListener("toggle", async () => {
-  if (!$("decompDirectory").open || directoryLoading || $("decompDirectoryList").childElementCount) return;
-  directoryLoading = true;
-  $("decompDirectoryWork").hidden = false;
-  $("decompDirectoryStatus").textContent = "Reading the directory…";
+let directoryLoading = false, directoryProjects = null, directoryLibraryFolder;
+let directoryLibraryJob = null, directoryLibraryBusy = false, directoryMatches = new Set();
+let directorySort = { key: "last_commit_at", direction: -1 };
+const directoryKey = (platform, repo) => JSON.stringify([platform, repo]);
+
+function renderDecompDirectory() {
+  const platform = $("decompDirectoryPlatform").value;
+  const rows = directoryProjects.filter(p => !platform || p.platform === platform);
+  const headings = [["name", "Game"], ["platform_name", "Console"], ["status", "Status"], ["last_commit_at", "Last commit"]];
+  const status = p => p.archived ? "Archived" : p.status || "";
+  const { key, direction } = directorySort;
+  const value = p => key === "status" ? status(p) : p[key] || "";
+  rows.sort((a, b) => Number(!value(a)) - Number(!value(b)) || direction * value(a).localeCompare(value(b)));
+  const count = platform ? `${rows.length} of ${directoryProjects.length}` : rows.length;
+  $("decompDirectoryCount").textContent = `${count} decompilations`;
+  const list = $("decompDirectoryList");
+  setHtml(list, rows.length ? `<table class="data"><thead><tr>${headings.map(([column, label]) =>
+    `<th scope="col" aria-sort="${column === key ? direction === 1 ? "ascending" : "descending" : "none"}"><button class="table-sort" type="button" data-dir-sort="${column}">${label}<span aria-hidden="true">${column === key ? direction === 1 ? " ↑" : " ↓" : " ↕"}</span></button></th>`).join("")}
+    <th scope="col"></th></tr></thead><tbody>${rows.map((p, i) => `<tr>
+      <td><div class="directory-game">${p.artwork_url ? `<img src="${esc(p.artwork_url)}" alt="" width="44" height="44" loading="lazy" decoding="async" referrerpolicy="no-referrer">` : ""}
+        <div><b>${esc(p.name)}</b>${directoryMatches.has(directoryKey(p.platform, p.repo_url)) ? ' <span class="small ok">ROM available</span>' : ""}<br><span class="mono small muted">${esc(p.repo_url)}</span></div>
+      </div></td>
+      <td>${esc(p.platform_name)}</td>
+      <td>${esc(status(p))}${p.ai_used === true ? " · uses AI" : p.ai_used === false ? " · no AI" : ""}</td>
+      <td>${esc((p.last_commit_at || "").slice(0, 10))}</td>
+      <td><button class="ghost small-btn" type="button" data-dir-import="${i}">Import</button></td></tr>`).join("")}</tbody></table>` : "");
+  list.querySelectorAll(".directory-game img").forEach(img => {
+    img.addEventListener("error", () => { img.hidden = true; }, { once: true });
+    if (img.complete && !img.naturalWidth) img.hidden = true;
+  });
+  list.querySelectorAll("[data-dir-sort]").forEach(b => {
+    b.onclick = () => {
+      const column = b.dataset.dirSort;
+      directorySort = { key: column, direction: column === key ? -direction : column === "last_commit_at" ? -1 : 1 };
+      renderDecompDirectory();
+      list.querySelector(`[data-dir-sort="${column}"]`).focus();
+    };
+  });
+  list.querySelectorAll("[data-dir-import]").forEach(b => {
+    const p = rows[Number(b.dataset.dirImport)];
+    b.onclick = () => openForkDialog({ name: p.repo_url.replace(/\/+$/, "").split("/").pop().replace(/\.git$/, ""), repo_url: p.repo_url, platform: p.platform, platform_name: p.platform_name, id: p.repo_url });
+  });
+}
+
+async function checkDirectoryLibrary() {
+  const button = $("decompDirectoryLibrary"), log = $("decompDirectoryLibraryLog");
+  if (directoryLibraryBusy) return;
+  directoryLibraryBusy = true;
+  $("decompDirectoryChecking").hidden = false;
+  const finish = beginWork(log, "Checking the ROM library", [button], "ROM library checked.");
+  showJobError(log, "");
+  log.hidden = true;
+  log.textContent = "";
   try {
-    const { projects } = await api("/api/fork/directory");
-    $("decompDirectoryStatus").textContent = projects.length ? "" : "The directory lists no decompilations for the consoles decompdecomp supports.";
-    $("decompDirectoryCount").textContent = `${projects.length} decompilations`;
-    setHtml($("decompDirectoryList"), `<table class="data"><thead><tr><th scope="col">Game</th><th scope="col">Console</th><th scope="col">Status</th><th scope="col">Last commit</th><th scope="col"></th></tr></thead><tbody>${projects.map((p, i) => `<tr>
-      <td><b>${esc(p.name)}</b><br><span class="mono small muted">${esc(p.repo_url)}</span></td>
-      <td class="small">${esc(p.platform_name)}</td>
-      <td class="small">${esc(p.archived ? "Archived" : p.status || "")}${p.ai_used === true ? " · uses AI" : p.ai_used === false ? " · no AI" : ""}</td>
-      <td class="small">${esc((p.last_commit_at || "").slice(0, 10))}</td>
-      <td><button class="ghost small-btn" type="button" data-dir-import="${i}">Import</button></td></tr>`).join("")}</tbody></table>`);
-    $("decompDirectoryList").querySelectorAll("[data-dir-import]").forEach((b) => {
-      const p = projects[Number(b.dataset.dirImport)];
-      b.onclick = () => openForkDialog({ name: p.repo_url.replace(/\/+$/, "").split("/").pop().replace(/\.git$/, ""), repo_url: p.repo_url, platform: p.platform, platform_name: p.platform_name, id: p.repo_url });
-    });
+    const { job } = await api("/api/fork/directory/library", { method: "POST" });
+    if (!job) {
+      log._workStatus.textContent = "Set a ROM library folder in Settings to check for games.";
+      log._workStatus.dataset.state = "done";
+      return;
+    }
+    directoryLibraryJob = job;
+    button.textContent = "Stop ROM library check";
+    button.disabled = false;
+    const result = await followJob(job);
+    if (directoryLibraryFolder !== (S.st?.settings?.rom_library || "")) return;
+    showJobError(log, "");
+    log.hidden = true;
+    directoryMatches = new Set(result.matches.map(([platform, repo]) => directoryKey(platform, repo)));
+    log._workStatus.textContent = result.message;
+    log._workStatus.dataset.state = "done";
+    renderDecompDirectory();
   } catch (e) {
-    $("decompDirectoryStatus").textContent = e.message;
+    showJobError(log, e.message);
   } finally {
-    directoryLoading = false;
-    $("decompDirectoryWork").hidden = true;
+    directoryLibraryJob = null;
+    directoryLibraryBusy = false;
+    $("decompDirectoryChecking").hidden = true;
+    button.textContent = "Check ROM library";
+    finish();
+    syncDirectoryLibrary();
   }
+}
+
+$("decompDirectoryPlatform").onchange = renderDecompDirectory;
+$("decompDirectoryLibrary").onclick = async () => {
+  if (!directoryLibraryJob) return checkDirectoryLibrary();
+  const button = $("decompDirectoryLibrary"), log = $("decompDirectoryLibraryLog");
+  const job = directoryLibraryJob;
+  button.disabled = true;
+  button.textContent = "Stopping ROM library check…";
+  try {
+    await api("/api/job/cancel", { method: "POST", body: { id: job } });
+  } catch (e) {
+    if (directoryLibraryJob !== job) return;
+    showJobError(log, e.message);
+    button.textContent = "Stop ROM library check";
+    button.disabled = false;
+  }
+};
+
+$("decompDirectory").addEventListener("toggle", async () => {
+  if (!$("decompDirectory").open || directoryLoading) return;
+  if (!directoryProjects) {
+    directoryLoading = true;
+    $("decompDirectoryWork").hidden = false;
+    $("decompDirectoryStatus").textContent = "Reading the directory…";
+    try {
+      const { projects } = await api("/api/fork/directory");
+      directoryProjects = projects;
+      const platforms = new Map(projects.map(p => [p.platform, p.platform_name]));
+      for (const [id, name] of [...platforms].sort((a, b) => a[1].localeCompare(b[1]))) {
+        $("decompDirectoryPlatform").add(new Option(name, id));
+      }
+      $("decompDirectoryFilters").hidden = !projects.length;
+      $("decompDirectoryStatus").textContent = projects.length ? "" : "The directory lists no decompilations for the consoles decompdecomp supports.";
+      renderDecompDirectory();
+    } catch (e) {
+      $("decompDirectoryStatus").textContent = e.message;
+      return;
+    } finally {
+      directoryLoading = false;
+      $("decompDirectoryWork").hidden = true;
+    }
+  }
+  syncDirectoryLibrary();
 });
+
+function syncDirectoryLibrary() {
+  if (!S.st) return;
+  const folder = S.st.settings?.rom_library || "";
+  $("decompDirectoryLibrary").hidden = !folder && !directoryLibraryBusy;
+  if (folder === directoryLibraryFolder || directoryLibraryBusy || $("catalog").hidden || !$("decompDirectory").open) return;
+  directoryLibraryFolder = folder;
+  directoryMatches.clear();
+  renderDecompDirectory();
+  const log = $("decompDirectoryLibraryLog");
+  if (log._workStatus) log._workStatus.textContent = "";
+  showJobError(log, "");
+  log.hidden = true;
+  if (folder && directoryProjects.length) void checkDirectoryLibrary();
+}
 
 /* What the project's own files say about AI, word for word, before anything is cloned. */
 function policyHtml(pol, acknowledge = true) {

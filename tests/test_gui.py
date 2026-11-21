@@ -863,3 +863,10 @@ def test_restart_all_agents_feedback_survives_polling_and_navigation():
         pytest.skip('needs node')
     subprocess.run([NODE, str(Path(__file__).with_name('gui_restart_agents.js'))], check=True,
                    cwd=Path(__file__).resolve().parents[1], timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_community_directory_filters_and_shows_rom_matches():
+    if NODE is None:
+        pytest.skip("needs node to run the GUI's scripts")
+    subprocess.run([NODE, str(Path(__file__).with_name("gui_fork_directory.js"))], check=True,
+                   capture_output=True, text=True, encoding="utf-8", timeout=GUI_TIMEOUT_SECONDS)

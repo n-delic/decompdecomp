@@ -34,15 +34,51 @@ def register(app: App) -> None:
         except NetworkError as e:
             return fail(e)
 
+    directory_projects = None
+    library_run = None
+
     @mcp.custom_route("/api/fork/directory", methods=["GET"])
     async def api_fork_directory(request: Request) -> Response:
         """Community decompilations listed by RetroReversing's directory, each one importable with a click."""
         if (bad := guard(request)):
             return bad
         from ...forks import directory
+        nonlocal directory_projects
         try:
-            return JSONResponse({"projects": await call(directory.listing)})
+            directory_projects = await call(directory.listing)
+            return JSONResponse({"projects": [
+                {k: v for k, v in p.items() if k != "rom_sha1s"} for p in directory_projects
+            ]})
         except NetworkError as e:
+            return fail(e)
+
+    @mcp.custom_route("/api/fork/directory/library", methods=["POST"])
+    async def api_directory_library(request: Request) -> Response:
+        if (bad := guard(request, write=True)):
+            return bad
+        from ..romlibrary import directory_matches
+
+        folder = str(settings.data.get("rom_library") or "")
+        projects = directory_projects
+        if not folder or projects is None:
+            return JSONResponse({"job": None})
+
+        def start():
+            nonlocal library_run
+            with jobs._lock:
+                if library_run and library_run[0] == folder:
+                    job = jobs.jobs.get(library_run[1])
+                    if job and job["state"] == "running":
+                        return job["id"]
+                job = jobs.start("community-rom-library",
+                                 lambda log: directory_matches(projects, folder, log.check_cancel),
+                                 cancel_message="ROM library check stopped.")
+                library_run = (folder, job)
+                return job
+
+        try:
+            return JSONResponse({"job": await app.control(start)})
+        except ValueError as e:
             return fail(e)
 
     @mcp.custom_route("/api/fork", methods=["POST"])

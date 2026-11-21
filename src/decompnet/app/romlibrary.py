@@ -46,7 +46,7 @@ def fingerprint(path: Path, platform: str) -> str | None:
 
 def _candidate(path: Path, platform: str) -> int:
     """Return a file's size when it is safe and plausible to hash, or zero to skip it."""
-    if path.is_symlink() or path.suffix.lower() in ARCHIVES:
+    if path.is_symlink() or path.suffix.lower() in ARCHIVES or not path.is_file():
         return 0
     try:
         size = path.stat().st_size
@@ -125,3 +125,54 @@ def find(project, needs: dict, folder: str, log=print) -> dict:
     return {'path': None, 'scanned': count, 'skipped': skipped,
             'reason': f'No matching game found in {count} files. {skipped} files or folders were skipped. '
                       'Choose a file manually if it is archived or outside this folder.'}
+
+
+def directory_matches(projects: list[dict], folder: str, check_cancel) -> dict:
+    """Scan once for the directory's declared hashes, returning only matching catalog entries."""
+    wanted = {}
+    for project in projects:
+        for digest in project['rom_sha1s']:
+            key = (project['platform'], project['repo_url'])
+            wanted.setdefault(project['platform'], {}).setdefault(digest, set()).add(key)
+    if not wanted:
+        return {'matches': [], 'message': 'The directory has no ROM checksums to compare.'}
+    root = Path(folder).expanduser()
+    if not root.is_dir():
+        return {'matches': [], 'message': 'The ROM library folder is unavailable. Check its path in Settings.'}
+
+    matches = set()
+    started = time.monotonic()
+    visited = hashed = 0
+    incomplete = False
+
+    def inaccessible(error):
+        nonlocal incomplete
+        incomplete = True
+
+    def out_of_time():
+        check_cancel()
+        return time.monotonic() - started >= MAX_SECONDS
+
+    def limited():
+        return {'matches': sorted(matches), 'message': 'ROM library check reached its search limit.'}
+
+    for parent, dirs, files in os.walk(root, followlinks=False, onerror=inaccessible):
+        if out_of_time():
+            return limited()
+        dirs[:] = sorted(d for d in dirs if not (Path(parent, d).is_symlink() or os.path.isjunction(Path(parent, d))))
+        for name in sorted(files):
+            if visited >= MAX_FILES or out_of_time():
+                return limited()
+            visited += 1
+            path = Path(parent, name)
+            for platform, expected in wanted.items():
+                size = _candidate(path, platform)
+                if not size:
+                    continue
+                if hashed + size > MAX_TOTAL_BYTES or out_of_time():
+                    return limited()
+                hashed += size
+                matches.update(expected.get(fingerprint(path, platform), ()))
+    message = ('Some ROM library folders could not be read.' if incomplete else
+               'ROM library checked against the versions listed in the directory.')
+    return {'matches': sorted(matches), 'message': message}
