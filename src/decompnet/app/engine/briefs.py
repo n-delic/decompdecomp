@@ -149,6 +149,7 @@ class BriefMixin:
                 aligned_allocator_request,
                 aligned_stack_read,
                 byte_cursor_postincrements,
+                float_matrix_identity,
                 indexed_field_cursor,
                 large_stack_drafts,
                 likely_branch_cursor,
@@ -183,6 +184,8 @@ class BriefMixin:
                 inputs.append('stack read retry')
             if stack_read_retry.inline_applies(fn['asm'] or ''):
                 inputs.append('inline stack read comparison')
+            if float_matrix_identity.applies(fn['asm'] or ''):
+                inputs.append('floating-point identity matrix')
             if packed_matrix_conversion.applies(fn['asm'] or ''):
                 inputs.append('packed matrix conversion')
             if byte_cursor_postincrements.applies(fn['asm'] or ''):

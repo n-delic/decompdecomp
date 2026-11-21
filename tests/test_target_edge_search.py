@@ -466,3 +466,12 @@ def test_measured_stack_read_inline_compare_reaches_kmc_proposals(monkeypatch):
     rows = [('s', 'addiu $sp, $sp, -56', 'addiu $sp, $sp, -32')]
     assert ('stack_read_inline_compare', 'inline stack compare') in route('void f(void) {}', rows, 'asm')
     assert 'stack_read_inline_compare' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
+
+
+def test_float_matrix_identity_reaches_kmc_proposals(monkeypatch):
+    from decomprepair import float_matrix_identity
+
+    monkeypatch.setattr(float_matrix_identity, 'rewrite', lambda *args: 'floating-point diagonal')
+    rows = [('i', 'swc1 $f0, ($a3)', 'sw $t0, ($a3)')]
+    assert ('float_matrix_identity', 'floating-point diagonal') in route('void f(void) {}', rows, 'asm')
+    assert 'float_matrix_identity' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
