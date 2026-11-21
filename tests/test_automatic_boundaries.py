@@ -829,3 +829,23 @@ def test_default_color_pointer_assigned_to_initialized_record():
     references = {data_at: {(48, 'code'), (52, 'code')}}
     assert default_color_word(data, previous, following, image, 'big', references, {following.vram})
     assert not default_color_word(data, previous, following, image, 'big', references, set())
+
+
+@pytest.mark.parametrize('case',['table','branch','explicit','unknown'])
+def test_function_pointer_array_is_data_when_no_control_flow_enters(case):
+    words=BODY*4
+    pointers=[BASE,BASE+32,BASE+64,BASE+96]
+    if case=='unknown':
+        pointers[-1]=0x8000abcd
+    words += pointers
+    if case=='branch':
+        words[0]=0x10000000|(((BASE+128-(BASE+4))//4)&0xffff)
+    image,functions,segments=fixture(words,cuts=(0,32,64,96,128,144))
+    data=[]
+    symbols=[f'entry = 0x{BASE+128:08X}; // type:func'] if case=='explicit' else ()
+    result=repair(functions,data,image,consoles.get('n64'),segments,symbols=symbols)
+    if case=='table':
+        assert [(row.rom,row.size) for row in data]==[(128,16)]
+        assert all(fn.rom!=128 for fn in result)
+    else:
+        assert any(fn.rom==128 for fn in result)

@@ -396,6 +396,15 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
             recovered_shared += 1
             continue
         predecessor=predecessors.get((fn.rom,fn.vram))
+        if (fn.size >= 16 and fn.size % 4 == 0 and owner(fn)[0] >= 0
+                and all(line.word in starts for line in fn.lines)
+                and image[fn.rom:fn.rom+fn.size] == b''.join(line.word.to_bytes(4, order) for line in fn.lines)
+                and not any(fn.vram <= address < fn.vram+fn.size for address in explicit|transfer_targets)
+                and not any(d.rom is not None and d.rom < fn.rom+fn.size and fn.rom < d.rom+d.size for d in data)):
+            # An array whose every word names a discovered entry is data even
+            # when a caller passes its address and splat creates a function.
+            recovered_data.append(DataSymbol(fn.name, fn.vram, fn.rom, fn.size, 'data'))
+            continue
         if (leading_repeated_double(fn, following, image, order, segments, direct_calls)
                 and not referenced(fn)):
             dropped+=1;continue
