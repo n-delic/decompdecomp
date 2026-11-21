@@ -1,5 +1,15 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: keep a byte loop comparison separate from its guard carrier
+
+An N64 replay built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`
+improved from 360 to 290 after widening an unsigned-byte local used by the
+initial filter to a word and explicitly narrowing the original parameter at the
+loop comparison. The target copied the incoming argument, masked it to a byte,
+and copied that masked value into the register used to compare the loaded byte.
+Widening the argument or routing every use through the local did not beat 290.
+Deep Permuter reproduced and saved the partial improvement in a 72-candidate run.
+
 ### KMC GCC 2.7.2: recover stale names from aligned relocations
 
 With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, five stale
