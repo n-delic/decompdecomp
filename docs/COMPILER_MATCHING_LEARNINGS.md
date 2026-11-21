@@ -10775,3 +10775,14 @@ the cast on an indexed zero store from word to byte brought its score from
 the table as an array and preserving the constant subtraction between the
 float-to-integer cast and index mask brought the score from 170 to 0.
 The deep permuter independently reproduced and saved both byte matches.
+
+### KMC masked slot dispatch and signed table offsets
+
+- Two N64 functions built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` matched all 412 and 424
+  linked bytes. The rewrite uses a typed slot-list header, a signed halfword offset table, and four-byte
+  mask entries. It checks the nine original table destinations and the two observed call layouts.
+- Fresh drafts scored 3353 and 3673. The bounded search reduced both scores to 1145. In the first case,
+  a typed reconstruction that loaded the signed offset before forming the 36-byte stride still scored
+  40 and exchanged the registers for the two loop advances. Computing the stride first matched.
+- The original drafts also matched through the new Deep Permuter proposal. The 226-example replay
+  increased from 30 to 32 exact matches.

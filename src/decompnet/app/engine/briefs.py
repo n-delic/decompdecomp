@@ -162,6 +162,7 @@ class BriefMixin:
                 large_stack_drafts,
                 likely_branch_cursor,
                 loop_storage_shapes,
+                masked_slot_dispatch,
                 measured_address_repairs,
                 measured_callback_loop,
                 measured_mmio_polling,
@@ -199,6 +200,8 @@ class BriefMixin:
                 inputs.append('relocated global update')
             if relocated_global_update.branch_byte_applies(fn['asm'] or ''):
                 inputs.append('separately relocated test and clear')
+            if masked_slot_dispatch.applies(fn['asm'] or ''):
+                inputs.append('masked slot dispatch')
             if switch_pointer_calls.applies(fn['asm'] or ''):
                 inputs.append('masked switch pointer calls')
             if relocated_global_update.countdown_applies(fn['asm'] or ''):
