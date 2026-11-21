@@ -26,7 +26,16 @@ from elftools.elf.relocation import RelocationSection
 
 from .. import scoring
 from ..candidate_work import elf as candidate_elf
-from ..elfobj import MASKS_BY_ARCH, FunctionObj, Reloc, canonical_symbol, section_target, symbol_at, unmangle
+from ..elfobj import (
+    MASKS_BY_ARCH,
+    FunctionObj,
+    MipsRelocationPairs,
+    Reloc,
+    canonical_symbol,
+    section_target,
+    symbol_at,
+    unmangle,
+)
 from .link import DataMismatch, LinkResult, significant  # (re-exported: callers still ask match.LinkResult)
 from .split import RomFunction
 from .symbols import AUTO_NAME, SymbolTable
@@ -234,7 +243,8 @@ class _Linker:
                          f"func_80001234), or give that address this name first with rename_symbol.")
         return addr
 
-    def address(self, raw: list[dict], k: int, fn_shndx: int, fn_start: int) -> int | None:
+    def address(self, raw: list[dict], k: int, fn_shndx: int, fn_start: int, *,
+                pairs: MipsRelocationPairs | None = None) -> int | None:
         r = raw[k]
         if r['type'] == R_MIPS_LITERAL:
             if not self.target.gp:
@@ -248,7 +258,7 @@ class _Linker:
         if r["type"] == R_MIPS_GPREL16:
             residual = r["value"] - 0x10000 if r["value"] & 0x8000 else r["value"]
         else:
-            residual = section_target("mips", raw, k)
+            residual = section_target("mips", raw, k, pairs=pairs)
         if residual is None:
             self.problem(f"relocation type {r['type']} is not supported here")
             return None
@@ -444,8 +454,9 @@ class _Linker:
         words = list(struct.unpack(fmt, code[:len(code) // 4 * 4]))
         self.words = list(words)
         relocs: list[Reloc] = []
+        pairs = MipsRelocationPairs(raw)
         for k, r in enumerate(raw):
-            addr = self.address(raw, k, shndx, start)
+            addr = self.address(raw, k, shndx, start, pairs=pairs)
             if addr is None:
                 sym = r["symtab"].get_symbol(r["symidx"])
                 relocs.append(Reloc(r["off"], r["type"], f"?{sym.name or 'local'}", 0))
