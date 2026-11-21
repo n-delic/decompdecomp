@@ -11886,3 +11886,13 @@ Evidence: one function; steps 1, 2 and 5 are reproduced by the three decomp-repa
 step before (535 -> 480, 535/480 -> 475/420, 505 -> 230), scored with the judge-worker; no permuter run. Not controlled
 across other functions. The residual at 195 is the final multiply's operand order and the register/order of the
 last block (below).
+
+### Capture the current node before advancing a linked loop
+
+With gcc-2.7.2-kmc `-G0 -mips3 -mgp32 -mfp32 -O2`, a simple N64
+linked-loop draft advanced the cursor before calling a helper. Its
+argument local carried the current node across iterations, which
+produced a register copy and a separate successor load. Capturing the
+current node in a loop-local pointer and advancing the cursor before
+calling the helper preserved the pre-call read and let the compiler use
+the call delay slot. The deep permuter saved the 180-to-0 match in 17 candidates.
