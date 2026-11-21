@@ -215,3 +215,18 @@ def test_read_only_evidence_without_compiler_and_missing_object_is_safe():
     assert allocation_search.saved(SimpleNamespace(cfg=lambda _:{}),{}, {},'source') is None
     net=object.__new__(JudgeMixin)
     assert net._search_rows({'id':1},{},object(),ROWS) is ROWS
+
+
+def test_a_local_alloc_only_function_still_ranks_its_pseudos(tmp_path):
+    # gap 1: a one-block float matrix function has no greg order (local-alloc did everything), so every pseudo was
+    # dropped and its $f20/$f22 swap had no evidence; rank by the same priority local-alloc uses
+    from tests.test_rtl_value_trace import RTL
+    (tmp_path/'func.c.rtl').write_text(RTL)
+    (tmp_path/'func.c.flow').write_text(RTL)
+    (tmp_path/'func.c.lreg').write_text(';; Function f\nRegister 72 used 4 times across 14 insns in block 0; crosses 2 calls.\n'
+                                        'Register 73 used 4 times across 9 insns in block 0; crosses 1 call.\n')
+    (tmp_path/'func.c.greg').write_text(';; Function f\n;; Register dispositions:\n72 in 54  73 in 52\n;; Hard regs used: 52 54\n')
+    values = compiler_diagnostics.phase_summary(tmp_path,'f','mips')['allocation']['values']
+    assert [(v['pseudo'], v['allocation_rank'], v['allocator']) for v in values] == [(73, 0, 'local'), (72, 1, 'local')]
+    if values[0]['aliases']:  # decomp-repair 0.5.256+ names the FPRs
+        assert values[0]['aliases'][0] == 'f20'
