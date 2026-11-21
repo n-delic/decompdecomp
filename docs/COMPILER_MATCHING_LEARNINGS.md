@@ -8716,3 +8716,18 @@ still scored 775, so that case remains open.
 The same 120-example batch now yields 72 exact matches, up from 71. The new
 match comes directly from the regenerated switch draft, and all previous
 exact matches still reproduce.
+
+### Uncached word reads guarded by a busy check
+
+A KMC draft emitted an integer uncached address as the operand of a bare
+dereference. With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` and the
+captured header, correcting only the cast left a score of 775 with the symbolic
+segment base or 815 with the numeric base. Returning `-1` immediately when the
+guard call reports busy reduced the symbolic-base candidate to 120. Combining
+that return with `*(s32 *)(addr | 0xA0000000)` reproduced the exact ROM bytes.
+
+The rule requires the target to preserve the two arguments across the call
+and to have the corresponding branch, uncached word load, and output store.
+It keeps earlier argument checks and diagnostics intact. Both fresh draft
+generation and a Deep Permuter proposal from the compilable 775-point case
+reproduced the match on a copied project with the normal ROM judge.

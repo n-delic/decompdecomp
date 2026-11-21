@@ -372,6 +372,7 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
             measured_stack_drafts,
             shared_default_drafts,
             unaligned_stack_drafts,
+            uncached_read_repairs,
         )
 
         if 'M2C_UNALIGNED32' in source and (draft := unaligned_stack_drafts.rewrite(
@@ -380,6 +381,7 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
         return (measured_stack_drafts.rewrite(source, name, asm_text, context_header)
                 or large_stack_drafts.rewrite(source, name, asm_text, context_header)
                 or shared_default_drafts.rewrite(source, name, asm_text, data_asm, context_header)
+                or uncached_read_repairs.rewrite(source, name, asm_text, resolve)
                 or source)
     return source
 

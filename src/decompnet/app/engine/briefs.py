@@ -145,7 +145,12 @@ class BriefMixin:
             if stack_copy(fn['asm']):
                 inputs.append('unaligned stack copy')
         if own["toolchain"] == 'gcc-2.7.2-kmc':
-            from decomprepair import large_stack_drafts, measured_stack_drafts, shared_default_drafts
+            from decomprepair import (
+                large_stack_drafts,
+                measured_stack_drafts,
+                shared_default_drafts,
+                uncached_read_repairs,
+            )
 
             if measured_stack_drafts.applies(fn['asm'] or ''):
                 inputs.append('measured stack copies')
@@ -153,6 +158,8 @@ class BriefMixin:
                 inputs.append('larger stack objects')
             if shared_default_drafts.applies(fn['asm'] or ''):
                 inputs.append('shared switch default')
+            if uncached_read_repairs.applies(fn['asm'] or ''):
+                inputs.append('uncached word read')
         if refresh := generation(self,fn['id'],project_id=proj['id']):
             inputs.append(('regeneration',refresh))
         key = hashlib.sha1(json.dumps(inputs).encode()).hexdigest()[:16]

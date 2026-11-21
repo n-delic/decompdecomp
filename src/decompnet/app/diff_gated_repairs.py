@@ -14,6 +14,7 @@ from decomprepair import (
     measured_pointer_scale,
     measured_temporary_repairs,
     targeted_switch_labels,
+    uncached_read_repairs,
 )
 from decomprepair import (
     observed_arithmetic_repairs as arithmetic,
@@ -168,6 +169,8 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += target_inline_storage_diff_repairs.proposals(source,name,header,rows,target,candidate,asm,
                                                              read_data=read_data,big_endian=big_endian)
         result += stack_padding_repairs.layout_candidates(source,name,header,arch,rows,symbols,flags)
+        if candidate_source := uncached_read_repairs.rewrite(source, name, asm or '', resolve):
+            result.append(('measured_uncached_word_read', candidate_source))
         result += measured_control_flow.variants(source,name,rows)
         result += measured_memory_order.variants(source,name,rows)
         result += measured_expression_repairs.variants(source,name,header,rows)

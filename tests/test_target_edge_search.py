@@ -259,3 +259,20 @@ def test_measured_float_table_scale_reaches_kmc_deep_search():
             ('o', 'lwc1 $f0, %lo(table)($at)', 'cvt.s.w $f0, $f0')]
     assert 'measured_float_table_scale' in dict(route(source, rows, ''))
     assert 'measured_float_table_scale' not in dict(route(source, rows, '', compiler='ido-5.3'))
+
+
+def test_uncached_read_repair_is_routed_for_measured_kmc_mismatches(monkeypatch):
+    from decomprepair import uncached_read_repairs
+
+    calls = []
+
+    def rewrite(source, name, asm, resolve):
+        calls.append((source, name, asm))
+        return 'repaired candidate'
+
+    monkeypatch.setattr(uncached_read_repairs, 'rewrite', rewrite)
+    rows = [('r', 'lw $v1, ($v0)', 'lw $v0, ($v1)')]
+    assert ('measured_uncached_word_read', 'repaired candidate') in route('void f(void) {}', rows, 'asm')
+    assert ('measured_uncached_word_read', 'repaired candidate') not in route(
+        'void f(void) {}', rows, 'asm', compiler='ido-5.3')
+    assert calls == [('void f(void) {}', 'f', 'asm')]
