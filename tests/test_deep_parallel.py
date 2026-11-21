@@ -714,6 +714,23 @@ def test_guarded_offset_index_runs_in_the_bounded_local_lane(monkeypatch):
     assert tried == [child]
 
 
+def test_record_init_shapes_run_in_the_bounded_local_lane(monkeypatch):
+    from decomprepair import record_init_shapes
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    proj = net.project_row('game')
+    fn = {**net.function(), 'asm': ''}
+    child = fn['best_source'] + '\n/* counter-indexed records */'
+    monkeypatch.setattr(record_init_shapes, 'variants', lambda *args: [('counter_stride_inline', child)])
+    search = deep_permuter.Search(net, 1, 6, Log())
+    tried = []
+    monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 20)
+
+    assert search.operand_order_pass(AGENT, proj, fn, 180, None) == 20
+    assert tried == [child]
+
+
 def test_guarded_offset_index_reaches_the_shared_counter_on_an_m2c_draft():
     """A 3-loop GCC 2.7.2 function's saved best (m2c's guarded do-whiles with byte offsets): the family's last
     child is the one that judged 180 -> 20 there, before the frame trim finished it."""
