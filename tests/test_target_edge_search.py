@@ -293,3 +293,20 @@ def test_callback_loop_repair_uses_measured_kmc_proposal_path(monkeypatch):
     assert ('measured_callback_loop', 'repaired callback loop') not in route(
         'void f(void) {}', rows, 'asm', compiler='ido-5.3')
     assert calls == [('void f(void) {}', 'f', 'asm', '')]
+
+
+def test_mmio_polling_repair_uses_measured_kmc_proposal_path(monkeypatch):
+    from decomprepair import measured_mmio_polling
+
+    calls = []
+
+    def rewrite(source, name, asm, header):
+        calls.append((source, name, asm, header))
+        return 'repaired polling'
+
+    monkeypatch.setattr(measured_mmio_polling, 'rewrite', rewrite)
+    rows = [('r', 'lw $v1, ($v0)', 'lw $v0, ($v1)')]
+    assert ('measured_mmio_polling', 'repaired polling') in route('void f(void) {}', rows, 'asm')
+    assert ('measured_mmio_polling', 'repaired polling') not in route(
+        'void f(void) {}', rows, 'asm', compiler='ido-5.3')
+    assert calls == [('void f(void) {}', 'f', 'asm', '')]

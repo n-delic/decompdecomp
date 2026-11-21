@@ -12,6 +12,7 @@ from decomprepair import (
     measured_expression_repairs,
     measured_immediate_repairs,
     measured_memory_order,
+    measured_mmio_polling,
     measured_pointer_scale,
     measured_temporary_repairs,
     targeted_switch_labels,
@@ -178,6 +179,8 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_temporary_repairs.variants(source,name,rows)
         if candidate_source := measured_callback_loop.rewrite(source, name, asm or '', header, resolve):
             result.append(('measured_callback_loop', candidate_source))
+        if candidate_source := measured_mmio_polling.rewrite(source, name, asm or '', header):
+            result.append(('measured_mmio_polling', candidate_source))
         result += measured_callback_repairs.variants(source,name,rows)
         result += measured_address_repairs.variants(source,name,header,rows,symbols)
         result += measured_pointer_scale.variants(source,name,header,rows)
