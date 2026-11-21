@@ -1417,6 +1417,15 @@ verified overlay matches. A controlled IDO regression exercises two calls that s
 with one placeholder. This is source recovery, with the destination's existing exact
 instruction and relocation checks still required.
 
+IDO 7.1 NCC with `-G 0 -non_shared -Wab,-r4300_mul -O2 -mips2 -32`
+reproduced the instruction bytes and lengths of all eleven C++ replacements.
+Private binding recovery passed the exact loader-relocation judge for nine
+of the eleven. Probing references in C++ inline helpers with C-linkage declarations
+resolved the last two, where one placeholder stood in for several loader symbols.
+The trial uses the donor's declared C++ replacement and the receiving function's
+relocation evidence, with the ordinary compile and link verdict required before
+saving the per-function profile.
+
 ### Observation: source layout sensitivity (IDO 5.3)
 
 The existing [IDO guide](../src/decompnet/consoles/n64/guides/ido.md) records a private same-source

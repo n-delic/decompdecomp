@@ -1430,8 +1430,9 @@ class Twins:
                 source = apply(original, names)
                 unit = units.get(a['unit'])
                 settings = build.for_unit(unit) if unit is not None else None
+                replacement = build.replacement_source(unit, donor_name) if unit is not None else None
                 known_miss = self._missed(b_id, source, project_id=proj['id'])
-                if known_miss and not settings:
+                if known_miss and not (settings or replacement):
                     continue
                 if job is not None:
                     job.cross_candidates += 1
@@ -1441,9 +1442,8 @@ class Twins:
                 report(job, 'Compiling candidate', game=other['name'], function=b['name'], donor=a['name'])
                 outcome, why = 'skip', ''
                 fallback = None
-                if settings:
+                if settings or replacement:
                     try:
-                        replacement = build.replacement_source(unit, donor_name)
                         outcome, why = donor_build.verify(
                             self.net, proj, b, other, a, names, settings, agent, job, build.headers,
                             **({'replacement': replacement} if replacement else {}))

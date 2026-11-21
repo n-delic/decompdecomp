@@ -162,6 +162,7 @@ class CompilerConfig:
     wsl: bool = False  # a Linux toolchain on Windows: runs inside WSL 2, `cmd` holds WSL paths (see wsl.py)
     intrinsics: str = ""  # module selected by the pinned toolchain, never by submitted source
     prelude: str = ""  # the toolchain's prelude (Toolchain.prelude)
+    source_extension: str = "c"
     cplusplus: bool = False  # it compiles C++ too: what doesn't compile as C is tried as C++ (Toolchain.cplusplus)
     linux_vm: bool = False  # Linux-only compiler on macOS, isolated local VM jobs
     assembly_preprocess: tuple[str, ...] = ()
@@ -414,10 +415,10 @@ def _compile_here(cfg: CompilerConfig, context_header: str, source: str, trusted
         compile_timing.add('setup', time.monotonic() - setup_started)
         root = _root(cfg, work)
         def build():
-            result = _compile_as(cfg, work, root, source, "c")
+            result = _compile_as(cfg, work, root, source, cfg.source_extension)
             # C++ for what doesn't compile as C (a class's method, new, templates): C stays C, so what matched as C
             # still compiles exactly as it did (GTA San Andreas is C++; 1,222 of its functions matched as C)
-            if not result.ok and cfg.cplusplus and not result.log.startswith("compiler timed out") and "Compiler or build process exceeded" not in result.log:
+            if not result.ok and cfg.source_extension == "c" and cfg.cplusplus and not result.log.startswith("compiler timed out") and "Compiler or build process exceeded" not in result.log:
                 cpp = _compile_as(cfg, work, root, source, "cpp")
                 if cpp.ok or _CPP.search(source):
                     result = cpp
@@ -532,15 +533,16 @@ def preprocess_donor_unit(cfg: CompilerConfig, source: str) -> str | None:
         tokens = re.compile(r'//(?:\\\r?\n|\?\?/\r?\n|[^\n])*|/\*.*?\*/|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'', re.S)
         text = tokens.sub(lambda match: re.sub(r'[^\r\n]', ' ', match[0])
                           if match[0].startswith('//') else match[0], source)
-        (work / 'unit.c').write_text(text, encoding='utf-8')
+        filename = 'unit.' + cfg.source_extension
+        (work / filename).write_text(text, encoding='utf-8')
         root = _root(cfg, work)
-        values = {'{src}': root+'/unit.c', '{obj}': root+'/unit.i', '{include}': root+'/include'}
+        values = {'{src}': root+'/'+filename, '{obj}': root+'/unit.i', '{include}': root+'/include'}
         argv = [values.get(arg, arg.replace('{include}', values['{include}'])) for arg in cfg.cmd]
         argv[argv.index('-c')] = '-E'
         try:
             with _slot():
                 result = _exec(cfg, work, argv, cfg.timeout, **(
-                    {'inputs':['unit.c'], 'outputs':['unit.i'], 'stage':root}
+                    {'inputs':[filename], 'outputs':['unit.i'], 'stage':root}
                     if _sandbox_mode(cfg) in ('wsl', 'linux-vm') else {}))
         except subprocess.TimeoutExpired:
             return None

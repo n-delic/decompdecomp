@@ -160,5 +160,32 @@ def test_replacement_source_is_literal_and_checkout_local(tmp_path):
         'variable=$(OTHER) cpp=build/src/other.cpp.o\n')
     settings = Settings(SimpleNamespace(root=root))
     unit = SimpleNamespace(base=root / 'build/non_matching/src/unit.c.o')
-    assert settings.replacement_source(unit, 'original') == source
+    assert settings.replacement_source(unit, 'original') == (source, None)
     assert all(settings.replacement_source(unit, name) is None for name in ('escape', 'traversal', 'variable', 'cpp'))
+
+def test_cpp_replacement_uses_pinned_driver_and_literal_recipe(tmp_path):
+    from types import SimpleNamespace
+
+    from decompnet import toolchains
+    from decompnet.app.donor_build import Settings
+
+    source = tmp_path / 'src' / 'replacement.cpp'
+    source.parent.mkdir()
+    source.write_text('extern "C" int entry() { return 7; }\n')
+    (tmp_path / 'Makefile').write_text(
+        'IDO_DIR := tools/ido-static-recomp/build/7.1/out\n'
+        'NCC := $(IDO_DIR)/NCC\n'
+        'FLAGS := -O2 -mips2 -32\n'
+        'OBJECT := build/src/replacement.cpp.o\n'
+        'ENTRIES := entry another\n'
+        'build/src/%.cpp.o: src/%.cpp\n'
+        '\t$(NCC) -c $(FLAGS) -o $@ $<\n'
+        'build/src/unit.c.o: private REPLACE_FUNC_BODY += $(foreach f,$(ENTRIES),$(f)=$(OBJECT))\n')
+    settings = Settings(SimpleNamespace(root=tmp_path))
+    unit = SimpleNamespace(base=tmp_path / 'build/src/unit.c.o')
+    profile = {'toolchain': 'ido-7.1-ncc', 'flags': ['-O2', '-mips2', '-32']}
+    assert settings.replacement_source(unit, 'entry') == (source, profile)
+    assert settings.replacement_source(unit, 'another') == (source, profile)
+    assert settings.replacement_source(unit, 'unlisted') is None
+    assert toolchains.path(profile['toolchain']) == toolchains.path('ido-7.1')
+    assert toolchains.get(profile['toolchain']).source_extension == 'cpp'

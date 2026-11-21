@@ -68,6 +68,8 @@ class Toolchain:
     requires_java: int = 0  # minimum Java version (Ghidra)
     prelude: str = ""  # C put before every file it compiles: works around a compiler's own bugs (see toolchains.toml)
     intrinsics: str = ""  # pinned module providing fixed compiler intrinsic templates
+    runtime_from: str = ""  # another profile of the same pinned compiler installation
+    source_extension: str = "c"
     cplusplus: bool = False  # it compiles C++ too (by the file's extension: .cpp)
     driver: str = ""  # packaged, console-owned compiler adapter, staged read-only with the tools
     build: str = ""  # native source-built tools, after checksum-verified parts are extracted
@@ -142,8 +144,10 @@ def _registry_data() -> dict:
     """toolchains.toml's entries, and the kits users bring (kits/: local toolchains, nothing to download)."""
     from . import kits
 
-    return {**tomllib.loads(resources.files("decompnet").joinpath("toolchains.toml").read_text(encoding="utf-8")),
-            **{k.id: k.toolchain() for k in kits.KITS}}
+    specs = tomllib.loads(resources.files("decompnet").joinpath("toolchains.toml").read_text(encoding="utf-8"))
+    specs["ido-7.1-ncc"] = {**specs["ido-7.1"], "name": "IDO 7.1 NCC", "runtime_from": "ido-7.1",
+                           "cc": ["{tc}/NCC", "-c"], "source_extension": "cpp"}
+    return {**specs, **{k.id: k.toolchain() for k in kits.KITS}}
 
 
 def registry() -> dict[str, Toolchain]:
@@ -234,6 +238,7 @@ def root() -> Path:
 
 def path(tid: str, linux: bool | None = None, *, vm: bool | None = None) -> Path:
     """Where a toolchain is installed; VM and WSL copies are separate from native installations."""
+    tid = _registry_data().get(tid, {}).get("runtime_from") or tid
     if vm is None:
         vm = linux is None and tid in _registry_data() and get(tid).via_vm
     if vm:
@@ -245,6 +250,7 @@ def path(tid: str, linux: bool | None = None, *, vm: bool | None = None) -> Path
 
 def installed(tid: str, linux: bool | None = None, *, vm: bool | None = None) -> dict | None:
     """Return the current installed manifest, including a user-supplied kit compiler."""
+    tid = _registry_data().get(tid, {}).get("runtime_from") or tid
     manifest = _manifest(tid, linux, vm=vm)
     if manifest is None and _own(tid) is not None:
         return {"own": True}
@@ -622,6 +628,7 @@ def remove_local(tid: str, folder: str | Path) -> None:
 
 def install(tid: str, *, accept_license: bool = False, force: bool = False, log=print, linux: bool | None = None, vm: bool | None = None, folder: str | Path | None = None) -> Path:
     """Install a pinned tool once at a time, or register a user's local compiler copy."""
+    tid = _registry_data().get(tid, {}).get("runtime_from") or tid
     tc = get(tid)
     if tc.local:
         return _link_local(tc, folder, accept_license, log)

@@ -58,12 +58,14 @@ def compiler_config(root: Path, cfg: dict) -> CompilerConfig:
     linux = False
     vm = False
     prelude, cplusplus, intrinsics = "", False, ""
+    source_extension = "c"
     if "toolchain" in c:
         try:
             tc = toolchains.get(own.like if own else c["toolchain"])  # (a copy of the user's runs as its pack does)
         except toolchains.ToolchainError:
             raise toolchains.ToolchainError(unknown_compiler_message(c["toolchain"])) from None
         prelude, cplusplus, intrinsics = tc.prelude, tc.cplusplus, tc.intrinsics
+        source_extension = tc.source_extension
         vm = tc.via_vm
         linux = tc.via_wsl  # Windows: a Linux toolchain, run inside WSL 2
         if linux and not (ok := wsl.status())[0]:
@@ -120,7 +122,7 @@ def compiler_config(root: Path, cfg: dict) -> CompilerConfig:
         linux_vm=vm,
         prelude=prelude,
         intrinsics=intrinsics,
-        cplusplus=cplusplus,
+        cplusplus=cplusplus, source_extension=source_extension,
     )
 
 

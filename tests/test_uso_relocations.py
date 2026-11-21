@@ -77,19 +77,25 @@ def test_yay0_rebuild_uses_literals_and_verifies_back_references():
     assert uso._yay0(compressed, changed[:-1] + b'q') is None
 
 
-def test_overlay_replays_distinct_loader_calls_from_one_donor_placeholder(tmp_path):
+@pytest.mark.parametrize("cpp", [False, True])
+def test_overlay_replays_distinct_loader_calls_from_one_donor_placeholder(tmp_path, cpp):
     import threading
     from unittest.mock import Mock
 
     from decompnet.app.overlay_donor_aliases import retry
 
-    if toolchains.installed('ido-5.3') is None:
-        pytest.skip('needs IDO 5.3')
-    cfg = compiler_config(tmp_path, {'compiler': {'toolchain': 'ido-5.3', 'flags': toolchains.get('ido-5.3').flags}})
+    toolchain = 'ido-7.1-ncc' if cpp else 'ido-5.3'
+    if toolchains.installed(toolchain) is None:
+        pytest.skip(f'needs {toolchain}')
+    flags = ['-O2', '-G', '0', '-non_shared', '-mips2', '-32'] if cpp else toolchains.get(toolchain).flags
+    cfg = compiler_config(tmp_path, {'compiler': {'toolchain': toolchain, 'flags': flags}})
     source = 'void example(void) { placeholder(1); placeholder(2); }'
+    header = 'extern void placeholder(int);'
+    if cpp:
+        header = 'extern "C" { void placeholder(int); }\ninline void first_call() { placeholder(1); }'
+        source = 'extern "C" void example() { first_call(); placeholder(2); }'
     section = 64
     first, second = uso_match.alias(section, 1), uso_match.alias(section, 2)
-    header = 'extern void placeholder(int);'
     original = compile_source(cfg, header, source)
     assert original.ok, original.log
     from decompnet.elfobj import extract_function
@@ -111,7 +117,7 @@ def test_overlay_replays_distinct_loader_calls_from_one_donor_placeholder(tmp_pa
     forbidden = Mock(side_effect=AssertionError('stopped probe ran'))
     assert retry(source, header, 'example', baseline.candidate, target, forbidden, stopped) is None
     rewritten, context = retry(source, header, 'example', baseline.candidate, target, measure, threading.Event())
-    assert f'{first}(1)' in rewritten and f'{second}(2)' in rewritten
+    assert f'{first}(1)' in (context if cpp else rewritten) and f'{second}(2)' in rewritten
     result = compile_source(cfg, context, rewritten)
     assert result.ok, result.log
     assert uso_match.link(result.obj, 'example', raw.code, info).exact

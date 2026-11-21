@@ -56,7 +56,7 @@ def compile_batch(cfg: compiler.CompilerConfig, header: str, sources: list[str],
     """[CompileResult or None] for `sources`, None for one that must compile alone; None for all when nothing can
     be batched (no compile session, C++, no two candidates with the same declarations)."""
     session = compile_sessions.current()
-    if session is None or cfg.cplusplus or len(sources) < 2:
+    if session is None or cfg.cplusplus or cfg.source_extension != "c" or len(sources) < 2:
         return None
     # Candidates share a run only with others whose declarations above the function compile the same (siblings
     # may differ there on purpose: a global's type). That prefix is written once; each definition then starts at
