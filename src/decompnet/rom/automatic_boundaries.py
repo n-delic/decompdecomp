@@ -359,7 +359,8 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
         if (leading_repeated_double(fn, following, image, order, segments, direct_calls)
                 and not referenced(fn)):
             dropped+=1;continue
-        if (terminal_data_alignment(fn, predecessor, image, order, segments) and not referenced(fn)):
+        if ((terminal_data_alignment(fn, predecessor, image, order, segments)
+             or terminal_memory_ranges(fn, predecessor, image, order, segments)) and not referenced(fn)):
             dropped+=1;continue
         if zero_alignment(fn, previous):
             if fn.vram in data_only:
@@ -853,6 +854,24 @@ def terminal_data_alignment(fn, previous, image, order, segments):
             return False
         values = values[:4]
     return all(map(finite,values)) and len(set(values))>=4
+
+
+def terminal_memory_ranges(fn, previous, image, order, segments):
+    """A terminal data word mistaken for a call borrowing a range-table limit."""
+    end = fn.rom+8
+    if (fn.size != 8 or fn.lines[0].word != 0x0d000000 or fn.lines[1].word != 0x7fffffff
+            or previous is None or previous.size < 8 or previous.lines[-2].word != JR_RA
+            or previous.rom+previous.size != fn.rom or previous.vram+previous.size != fn.vram
+            or not 8 <= fn.rom < end+28 <= len(image)):
+        return False
+    table = struct.unpack_from('>8I' if order == 'big' else '<8I', image, fn.rom+4)
+    if table != (0x7fffffff, 0, 0x803fffff, 3, 0x9fffffff, 0, 0xa03fffff, 3):
+        return False
+    owners = [segment for segment in segments
+              if segment.rom_start <= fn.rom-8 and segment.rom_end in (end-4, end)
+              and segment.vram-segment.rom_start == fn.vram-fn.rom]
+    return len(owners) == 1 and not any(
+        s is not owners[0] and s.rom_start < end+28 and end-4 < s.rom_end for s in segments)
 
 
 def overlay_end_marker(fn, previous, following, image, order, segments):
