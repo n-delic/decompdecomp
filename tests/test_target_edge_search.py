@@ -594,3 +594,11 @@ def test_kmc_word_index_scales_only_once_at_a_measured_table_load():
     assert 'extern M2C_UNK table[];' in candidate
     assert 'return table[i];' in candidate
     assert 'measured_duplicate_word_scale' not in dict(route(source, rows, 'asm', compiler='ido-5.3'))
+
+
+def test_kmc_prioritizes_a_live_argument_when_the_other_call_registers_shift():
+    source = 'int call();\nvoid f(int input, void *obj) { call(M2C_FIELD(obj, s32 *, 8)); }'
+    rows = [(' ', 'jal call', 'jal call'), ('r', 'lw $a1, 8($a1)', 'lw $a0, 8($a1)')]
+    asm = 'jal call\nlw $a1, 8($a1)'
+    assert 'call(input, M2C_FIELD' in dict(route(source, rows, asm))['passthrough_argument']
+    assert 'passthrough_argument' not in dict(route(source, rows, 'move $a0, $zero\n' + asm))
