@@ -146,6 +146,10 @@ wrongly: a 1000 → 680 local improvement was 1090 → 1030 in the app. Confirm 
   symbol's address is wrapped in `do { call(&sym + k); } while (0);`; without the wrapper the compiler folds them
   to absolute `lui/sb` pairs. (3185 → 1760 on one function.) The library has the wrapper (`call_one_shot_scope`)
   but not the search that pairs it with base-form stores.
+- **Literal constants in a loop, and the one-shot wrapper on the right call.** Constant locals (`c2 = 2;`) stay where
+  they are set; literal stores in a loop are hoisted by loop.c and float up to the nearest do-while(0) fence. A
+  function at 120 matched once the loop's constants were literals and its wrapper moved one call earlier (120 → 60
+  → 0). The library has both (`single_use_inline`, `call_one_shot_scope_shift`, decomp-repair 0.5.269).
 - **Natural loop forms beat m2c's gotos only when the target's registers agree.** A clean `for` loop hoisted array
   bases into registers the target recomputes with `lui $at`. Keep the form that gives the target's addressing.
 - **Recompute, don't cache.** If the target recomputes `n & 1` at the use site, a `temp = n & 1` local is wrong.
