@@ -1536,6 +1536,29 @@ class Progress:
         update("waiting")
         return self.sync(slug, force=True)
 
+    def check_for_claim(self, slug: str, *, function: str = "") -> bool:
+        """The check before a claim: check_for_judging's, but never queued behind another thread's ordinary check.
+
+        A claim reads and writes the database only. While a Deep Permuter pass ran, its improvements kept the autosave
+        worker publishing, so the manifest on disk kept changing, the narrow check missed, and every claim_function
+        fell back to a full check that queued for the project lock behind the autosave's own (60 to 245 s each on a
+        game with 17 permuter lanes busy; claims waited up to 15 minutes). The thread holding the lock is reading
+        the folder now, which is the check this claim would make, as _sync_lock already decides for ordinary checks.
+        A recheck in progress still holds claims back until its inputs are ready, as before."""
+        if slug in self.rechecking or slug in self.blocked:
+            return self.check_for_judging(slug, function=function)
+        lock = self._project_lock(slug)
+        if not lock.acquire(blocking=False):
+            self._judge_check("claim beside a running check")
+            synced = getattr(self.local, 'synced', None)
+            if synced is not None and getattr(self.local, 'deferring', False):
+                synced.add(slug)  # (the claim's own project lookups must not queue for it either)
+            return False
+        try:
+            return self.check_for_judging(slug, function=function)
+        finally:
+            lock.release()
+
     @staticmethod
     def _candidate_files_unchanged(folder, function, acknowledged):
         filename = saves._source_file(function)
