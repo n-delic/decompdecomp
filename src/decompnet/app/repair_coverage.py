@@ -101,6 +101,7 @@ def verify(feedback, example):
             aligned_allocator_request,
             aligned_stack_read,
             byte_cursor_postincrements,
+            float_matrix_identity,
             indexed_field_cursor,
             kmc_cast_repairs,
             kmc_operand_repairs,
@@ -159,6 +160,8 @@ def verify(feedback, example):
             focused.append(('stack_read_retry', candidate))
         if candidate := stack_read_retry.rewrite_inline(source, fn['name'], fn['asm'] or '', header):
             focused.append(('stack_read_inline_compare', candidate))
+        if candidate := float_matrix_identity.rewrite(source, fn['name'], fn['asm'] or '', header):
+            focused.append(('float_matrix_identity', candidate))
         if candidate := packed_matrix_conversion.rewrite(source, fn['name'], fn['asm'] or '', header):
             focused.append(('packed_matrix_conversion', candidate))
         if candidate := byte_cursor_postincrements.rewrite(source, fn['name'], fn['asm'] or '', header):

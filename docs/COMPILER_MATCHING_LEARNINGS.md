@@ -9135,3 +9135,18 @@ Restoring the buffer, retry paths and zero-based comparison reproduced
 all 196 original bytes on a copied project. Reusing the return and compare
 form from the other read-buffer example scored 2760 on this target. This
 version uses its own target evidence and preserves the call declarations.
+
+### Word steps and a floating diagonal in a matrix initializer
+
+A 20-instruction N64 initializer under `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`
+scored 775 from m2c and 425 after the permuter rearranged its branch.
+Converting byte displacements to word pointer steps took the latter to
+395. Staging the diagonal value as a float and storing it through a
+float pointer reached 205.
+
+An inner post-tested loop and the input parameter as the row cursor
+still scored 205 until the outer counter was initialized ahead of the
+float constant and diagonal pointer. That form reproduced all 80 linked
+bytes on a copied project. The target corroborates both loop bounds,
+the branch-likely zero store, the floating diagonal store, and all
+three byte displacements.
