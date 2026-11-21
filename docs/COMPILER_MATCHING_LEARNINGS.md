@@ -36,6 +36,31 @@ flags. None changed the registers.
 Library family: `loop_address_hoist` in decomp-repair 0.5.157 proposes it (every use; the uses outside the nested
 loops; one outer loop with and without its nested loops), with the assignment before the loop or up to two
 statements above it, for a global declared as a plain `extern T g;`.
+### KMC GCC 2.7.2: which loops share a counter variable (no match yet)
+
+Profile: `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`. Evidence level: measured on one real near-miss function with a
+fast local compile against the target's words; **no match came of it yet**, and it is not a controlled regression.
+
+A counter variable is one pseudo for the whole function, so the loops that share `var_s1` give one saved register to
+all of them, and which counter outranks which depends on how many loops, weighted uses and instructions each spans
+(`floor_log2(uses) * uses / live length`, uses counted once more per loop around them). m2c names a few variables for
+the registers a binary used and shares them between loops; the game's own code had its own pairing. On a 493
+instruction function the role of each of the seven later-loop counters was searched over 62,500 combinations (the
+phase-one counters, the first later loop's, the nested loop's, the outer loop's and the four loops after it, each from
+a pool of five variables): most left the differing words at the starting 22, the rest moved them to 25, 38 or
+hundreds, and none went below 22. A bounded sample through the library family below, 24 variants of the same function,
+all compiled, 16 kept the instruction count, and the differing words ranged from 22 to 151. So pairing changes what
+the allocator sees; on this function it never changed it to the target's.
+
+A counter loop is a local integer set by a plain `v = <number>;` just before a `do`, `for`, `while` or goto loop and
+stepped and tested in it; every mention of the variable must lie in such a loop (set to read), or the variable is left
+alone, as is one whose address is taken. Operations, all renames: a later loop gets its own variable of the same type;
+one loop takes another same-typed counter whose loops don't overlap it; two such counters merge; two loops trade
+counters. (`block_temp_split` in decomp-repair 0.5.161 gives every loop its own variable at once.)
+
+Library family: `loop_counter_roles` in decomp-repair 0.5.163 (`loop_counter_fresh`, `_reassign`, `_merge`, `_swap`),
+singles before pairs, capped at 24, registered with the other local repairs. Proposals only; the byte judge decides.
+
 ### KMC GCC 2.7.2: test a cursor loop at the bottom
 
 An isolated N64 replay used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.
