@@ -243,17 +243,19 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
             if looped and (after-before != 4 or following is None or following.vram not in direct_calls):
                 return False
             if after-before > HOLE:
-                # A longer zero run needs a separately called, aligned entry and no pointer anywhere into it.
-                if (after-before > LONG_ALIGNMENT or following is None or following.vram%16
+                # A pointer into a zero run can enter its suffix. Only the prefix before
+                # the earliest possible entry is unreachable from that pointer.
+                if (after-before > LONG_ALIGNMENT or following is None or following.vram%8
                         or following.vram not in direct_calls or not is_frame(following.lines[0].word)):
                     return False
                 candidates = b'|'.join(re.escape(addr.to_bytes(4,order))
                                        for addr in range(before+mapping,after+mapping,4))
-                if any(not match.start()%4 for match in re.finditer(b'(?=(?:'+candidates+b'))', image)):
+                if any(not match.start()%4 and int.from_bytes(match[1],order)<=fn.vram
+                       for match in re.finditer(b'(?=('+candidates+b'))', image)):
                     return False
             index = bisect_right(protected, before+mapping-1)
             while index<len(protected) and protected[index]<after+mapping:
-                if protected[index] not in data_only:
+                if protected[index] not in data_only and (after-before<=HOLE or protected[index]<=fn.vram):
                     return False
                 index += 1
             owners = [s for s in segments if s.rom_start <= before-8 < after < s.rom_end
@@ -280,12 +282,20 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
             else:
                 dropped+=1
             continue
-        if (filler_extent(fn.size,fn.lines[0].word) and previous is not None and following is not None
-                and owner(previous)==owner(fn)==owner(following)
-                and previous.rom+previous.size==fn.rom and following.rom==fn.rom+4 and following.vram==fn.vram+4
-                and alignment_fill(fn.vram,previous.size>=8 and previous.lines[-2].word==JR_RA,
-                                   following.vram in entered or is_frame(following.lines[0].word),
-                                   referenced(fn) and fn.vram not in data_only)):
+        if (filler_extent(fn.size,fn.lines[0].word) and following is not None
+                and owner(fn)==owner(following) and following.rom==fn.rom+4 and following.vram==fn.vram+4):
+            returned = (previous is not None and owner(previous)==owner(fn)
+                        and previous.rom+previous.size==fn.rom
+                        and previous.size>=8 and previous.lines[-2].word==JR_RA)
+            # A separately called entry can follow a return in a piece that has
+            # no standalone function record. Confirm the bytes in its mapping.
+            if not returned and following.vram in direct_calls and owner(fn)[0]>=0:
+                segment = segments[owner(fn)[0]]
+                returned = raw_return_before(fn, segment, segments, image, order)
+            if not alignment_fill(fn.vram,returned,following.vram in entered or is_frame(following.lines[0].word),
+                                  referenced(fn) and fn.vram not in data_only):
+                kept.append(fn)
+                continue
             if fn.vram in data_only:
                 recovered_data.append(DataSymbol(fn.name,fn.vram,fn.rom,4,'data'))
             else:
@@ -358,6 +368,16 @@ def closes_with_back_edge(fn, end, mapping):
     delta = branch.word & 0xffff
     target = branch.vram+4+(delta-0x10000 if delta&0x8000 else delta)*4
     return fn.vram <= target < branch.vram
+
+
+def raw_return_before(fn, segment, segments, image, order):
+    import rabbitizer
+
+    if (segment.rom_start>fn.rom-8 or image[fn.rom-8:fn.rom-4]!=JR_RA.to_bytes(4,order)
+            or any(s is not segment and s.contains(fn.vram-8,12) for s in segments)):
+        return False
+    slot = rabbitizer.Instruction(int.from_bytes(image[fn.rom-4:fn.rom],order))
+    return slot.isValid() and not slot.hasDelaySlot()
 
 
 def address_word_references(fn, references, lines):

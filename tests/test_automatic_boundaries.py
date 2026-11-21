@@ -327,16 +327,17 @@ def test_generated_source_units_do_not_interrupt_a_single_mapped_function():
     assert [(fn.segment,fn.rom,fn.size) for fn in result] == [('code',0,32)]
 
 
-@pytest.mark.parametrize('pointer',[False,True])
-def test_long_zero_padding_requires_an_aligned_called_frame_and_no_interior_pointer(pointer):
+@pytest.mark.parametrize('pointer',[None,16,20])
+def test_long_zero_padding_preserves_words_at_and_after_an_interior_pointer(pointer):
     entry = BASE+64
     words = [0x0c000000 | ((entry>>2)&0x3ffffff),0,0x03e00008,0]+[0]*12+BODY
-    image,functions,segments = fixture(words,cuts=(0,16,20,64,96))
-    functions.pop(2)
+    image,functions,segments = fixture(words,cuts=(0,16,20,24,64,96))
+    functions.pop(3)
     if pointer:
-        image += (BASE+28).to_bytes(4,'big')
+        image += (BASE+pointer).to_bytes(4,'big')
     result = repair(functions,[],image,consoles.get('n64'),segments)
-    assert any(fn.rom==16 for fn in result) == pointer
+    assert any(fn.rom==16 for fn in result) == (pointer==16)
+    assert any(fn.rom==20 for fn in result) == (pointer is not None)
 
 
 @pytest.mark.parametrize('called',[False,True])
@@ -429,3 +430,14 @@ def test_word_access_to_zero_between_return_and_entry_is_recovered_as_data(case)
         assert all(fn.rom!=12 for fn in result)
     else:
         assert not data and any(fn.rom==12 for fn in result)
+
+
+def test_raw_return_before_assembler_filler_needs_a_direct_call_to_the_next_entry():
+    entry=BASE+16
+    call=0x0c000000|((entry>>2)&0x3ffffff)
+    for called in (False,True):
+        words=[0x8c820000,0x03e00008,0,FILL]+BODY+[call if called else 0,0,0x03e00008,0]
+        image,functions,segments=fixture(words,cuts=(0,12,16,48,64))
+        functions.pop(0)
+        result=repair(functions,[],image,consoles.get('n64'),segments)
+        assert any(fn.rom==12 for fn in result) != called
