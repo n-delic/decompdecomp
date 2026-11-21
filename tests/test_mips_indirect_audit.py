@@ -1,6 +1,8 @@
 """Small homemade guarded switches and load/call traces, no game data."""
 import struct
 
+import pytest
+
 from decompnet.arch.mips_gaps import extent
 from decompnet.arch.mips_indirect import calls, consumers, jump_table
 
@@ -157,17 +159,23 @@ def test_ido_switch_reads_unique_overlay_table_with_compact_addresses():
     assert jump_table(corrupt,0,len(words)*4,vram,28,'big',[alias])['state']=='unresolved'
 
 
-def test_fp_delay_slot_bound_and_boot_mapped_compact_cases():
+@pytest.mark.parametrize('prefix', [0, 0x80000000])
+def test_fp_delay_slot_bound_and_boot_mapped_cases(prefix):
     words = [0x45000003, 0x2c620002, 0x44800800, 0x24c60001,
              0x1040000a, 0x00031080, 0x3c018000, 0x00220821, 0x8c221100, 0x00400008, 0,
              0x03e00008, 0, 0x03e00008, 0, 0x03e00008, 0]
     image = bytearray(0x1200)
     image[0x1000:0x1044] = struct.pack('>17I', *words)
-    image[0x1100:0x1108] = struct.pack('>2I', 0x102c, 0x1034)
+    image[0x1100:0x1108] = struct.pack('>2I', prefix|0x102c, prefix|0x1034)
     alias = dict(rom_start=0x1100, rom_end=0x1108, vram=0x80001100, target_prefix=0x80000000, boot_copy=True)
     def audit():
         return extent(image, 0x1000, 0x1044, 0x80001000, 'big', table_ranges=[alias])
     assert audit()['flow_closed']
+    if prefix:
+        swapped = bytearray(image)
+        swapped[0x1044:0x1088] = image[0x1000:0x1044]
+        result = extent(swapped, 0x1044, 0x1088, 0x80001000, 'big', table_ranges=[alias])
+        assert not result['flow_closed']
     # A branch-likely annuls the bound on one path.
     image[0x1000:0x1004] = struct.pack('>I', 0x45020003)
     assert not audit()['flow_closed']
