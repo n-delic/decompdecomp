@@ -125,6 +125,14 @@ def run(net, slug, name, minutes, variants, log, profiles, count):
     matched = current['status'] == 'matched'
     reason = ('Matched' if matched else 'Time limit reached' if time.monotonic() >= deadline
               else 'Variant limit reached' if result['tested'] >= variants else 'Exact diagnostic needs ordinary review' if preparation.get('diagnostic_exact') else 'Search paths finished')
+    if not matched and current['best_source']:
+        from .targeted_retry import source_key
+
+        key = source_key(current['best_source'])
+        for item in results:
+            if (residual := item.get('targeted_retry')) and residual['source'] == key:
+                result['targeted_retry'] = residual
+                break
     result['reviewed_seeds'] = preparation
     result.update(function=name, matched=matched, reason=reason, compiler_profiles=profiles,
                   threads_per_function=count, best_score=current['best_score'], starting_score=before['best_score'],

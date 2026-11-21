@@ -62,3 +62,26 @@ def test_shared_float_return_prioritizes_the_rewrite_and_explains_the_hint():
     assert not residual_trials.shared_fp_return_hint(source,'f','',rows,'ppc')
     rows[1] = ('|',target[1],'nop')
     assert not residual_trials.shared_fp_return_hint(source,'f','',rows,'mips')
+
+
+BYTE_MASK_ROWS = [
+    (' ', 'lbu $v0, 0x40($a0)', 'lbu $v0, 0x40($a0)'),
+    (' ', 'addiu $v1, $zero, 2', 'addiu $v1, $zero, 2'),
+    ('i', 'andi $v0, $v0, 0xff', 'andi $v0, $v0, 0x7f'),
+    (' ', 'bne $v0, $v1, 0x24', 'bne $v0, $v1, 0x24'),
+]
+BYTE_GUARD = """int f0(int i) {
+    if ((*(u8 *)((u8 *)&flags + (i * 16)) & 0x7f) == 2) {
+        return 1;
+    }
+    return 0;
+}
+"""
+
+
+def test_single_mask_followup_is_routed_from_linked_rows():
+    proposals = residual_trials.proposals(BYTE_GUARD, 'f0', '', BYTE_MASK_ROWS)
+    assert proposals and all(family in residual_trials.FAMILIES for family, _ in proposals)
+    assert all(family == 'last_byte_mask' for family, _ in proposals)
+    second = [*BYTE_MASK_ROWS, ('i', 'nop', 'move $a0, $a1')]
+    assert not residual_trials.proposals(BYTE_GUARD, 'f0', '', second)

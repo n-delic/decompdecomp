@@ -10,7 +10,7 @@ from contextlib import nullcontext
 
 from .. import candidate_scope, claim_stalls, scoring
 from ..network import IN_BUILD, NetworkError
-from . import agent_tokens, deep_permuter, deep_source_recovery, deep_throughput, workers
+from . import deep_permuter, deep_source_recovery, deep_throughput, targeted_retry, workers
 from .deep_activity import Activity
 from .purpose_work import Executor
 
@@ -37,19 +37,26 @@ def looking(net):
     return progress.view() if progress is not None else nullcontext()
 
 
-def signature(net, proj, fn, minutes, variants, compiler_profiles=None, shared=None):
+def signature(net, proj, fn, minutes, variants, compiler_profiles=None, shared=None, residual=None):
     sweeps = getattr(net, 'deep_sweeps', None)
     count = compiler_profiles
     if count is None:
         count = sweeps.config(proj['slug']).get('compiler_profiles', 1) if sweeps else 1
-    target = (agent_tokens.target_scope(net, fn, '') if shared is None else
-              hashlib.sha256(repr(('', candidate_scope.key(net, proj, fn, shared), claim_stalls.repair_rules())).encode()).hexdigest())
+    rules = shared.get('deep_rules') if shared is not None else None
+    if rules is None:
+        rules = claim_stalls.repair_rules()
+        if shared is not None:
+            shared['deep_rules'] = rules
+    target = hashlib.sha256(repr(('', candidate_scope.key(net, proj, fn, shared),
+                                  targeted_retry.general_rules(rules))).encode()).hexdigest()
     inputs = ('deep-pass-profiles-v1', count, target, fn['best_source'], minutes, variants)
-    # Retry the two formerly blocked states once under the new recovery rules. Keep unrelated
-    # completed passes resumable; users can explicitly repeat them to try the new search recipes.
+    fork = shared['fork'] if shared is not None and 'fork' in shared else net.fork_slug(proj['slug'])
+    if not fork and (stamp := targeted_retry.stamp(proj, fn, residual, rules)):
+        inputs += (stamp,)
+    # Retry the formerly blocked states once under their recovery rules.
     if fn['status'] == 'open' and fn['best_score'] == 0:
         inputs += ('reverify-zero-v1',)
-    elif fn['best_source'] and not (shared['fork'] if shared is not None and 'fork' in shared else net.fork_slug(proj['slug'])):
+    elif fn['best_source'] and not fork:
         from .prototype_alignment import prepare
         from .prototype_alignment import variants as align
         ctx = candidate_scope.context(net, proj, fn['unit'], shared)
@@ -197,10 +204,11 @@ class Sweeps:
         if not row:
             return {'state': 'not tried', 'completed': False}
         result = dict(row)
-        result['stale'] = row['scope'] != signature(self.net, self.net.project_row(slug), fn,
-                                                   row['minutes'], row['max_variants'])
-        result['completed'] = row['state'] == 'completed' and not result['stale']
         result['result'] = json.loads(row['result'])
+        result['stale'] = row['scope'] != signature(self.net, self.net.project_row(slug), fn,
+                                                   row['minutes'], row['max_variants'], None, None,
+                                                   result['result'].get('targeted_retry'))
+        result['completed'] = row['state'] == 'completed' and not result['stale']
         return result
 
     def improvement(self, before, score):
@@ -238,7 +246,7 @@ class Sweeps:
         """Only failures that still block this build's unchanged, eligible candidates."""
         rows = self._store(proj['id']).all(
             f'SELECT {SCOPE_COLUMNS},d.scope AS pass_scope,d.error AS pass_error,d.minutes AS pass_minutes, '
-            'd.max_variants AS pass_variants FROM functions f '
+            "d.max_variants AS pass_variants,json_extract(d.result,'$.targeted_retry') AS pass_residual FROM functions f "
             'JOIN deep_permutation_passes d ON d.function_id=f.id '
             f"WHERE f.project_id=? AND f.status='open' AND f.{IN_BUILD} AND d.state='error'",
             proj['id'])
@@ -251,7 +259,7 @@ class Sweeps:
                 continue
             if not fn['best_source'] or fn['best_score'] is None:
                 continue
-            if fn['pass_scope'] != signature(self.net, proj, fn, fn['pass_minutes'], fn['pass_variants'], profiles, shared):
+            if fn['pass_scope'] != signature(self.net, proj, fn, fn['pass_minutes'], fn['pass_variants'], profiles, shared, fn['pass_residual']):
                 continue
             error = fn['pass_error'] or 'The search stopped without recording an error message.'
             lower = error.lower()
@@ -337,7 +345,8 @@ class Sweeps:
             shared = candidate_scope.batch_context(self.net, proj)
             done_open = done_matched = rotated = blocked = 0
             rows = self._store(slug).all(f"""SELECT {SCOPE_COLUMNS},d.error AS pass_error,d.scope AS pass_scope,d.minutes AS pass_minutes,
-                d.max_variants AS pass_variants,d.state AS pass_state FROM functions f JOIN deep_permutation_passes d ON d.function_id=f.id
+                d.max_variants AS pass_variants,d.state AS pass_state,
+                json_extract(d.result,'$.targeted_retry') AS pass_residual FROM functions f JOIN deep_permutation_passes d ON d.function_id=f.id
                 WHERE f.project_id=? AND f.gone_mark IS NULL AND f.status IN ('open','matched')
                 AND d.state IN ('completed','error') AND f.best_source IS NOT NULL AND f.best_score IS NOT NULL
                 AND d.minutes=? AND d.max_variants=?""", proj['id'], cfg['minutes'], cfg['max_variants'])
@@ -347,7 +356,7 @@ class Sweeps:
                     continue
                 if (row['best_source'] and row['best_score'] is not None
                         and row['pass_minutes'] == cfg['minutes'] and row['pass_variants'] == cfg['max_variants']
-                        and row['pass_scope'] == signature(self.net, proj, row, cfg['minutes'], cfg['max_variants'], cfg.get('compiler_profiles', 1), shared)):
+                        and row['pass_scope'] == signature(self.net, proj, row, cfg['minutes'], cfg['max_variants'], cfg.get('compiler_profiles', 1), shared, row['pass_residual'])):
                     if row['pass_state'] == 'completed':
                         if row['status'] == 'open':
                             done_open += 1
@@ -446,7 +455,8 @@ class Sweeps:
         fresh = self.net._function(before['name'], slug)
         proj = self.net.project_row(slug)
         stable = build_scope == candidate_scope.key(self.net, proj, before)
-        self.record(fresh, signature(self.net, proj, fresh, minutes, variants, result.get('compiler_profiles')),
+        self.record(fresh, signature(self.net, proj, fresh, minutes, variants, result.get('compiler_profiles'),
+                                     None, result.get('targeted_retry')),
                     'completed' if stable else 'pending', minutes, variants, result)
 
     def reopen_without_randomizer(self, slug) -> int:
@@ -581,9 +591,12 @@ class Sweeps:
                     if not proj or not fn or fn['status'] != 'open' or fn['gone_mark'] is not None:
                         return
                     # Dispatch always uses fresh inputs, never the producer's shared snapshot.
+                    previous = store.one(
+                        "SELECT scope,state,json_extract(result,'$.targeted_retry') AS residual "
+                        "FROM deep_permutation_passes WHERE function_id=?", fn['id'])
                     with looking(self.net):
-                        scope = signature(self.net, proj, fn, minutes, variants)
-                    previous = self._store(slug).one('SELECT scope,state FROM deep_permutation_passes WHERE function_id=?', fn['id'])
+                        scope = signature(self.net, proj, fn, minutes, variants, None, None,
+                                          previous['residual'] if previous else None)
                     if previous and previous['scope'] == scope and (previous['state'] == 'error' or (not loop and previous['state'] == 'completed')):
                         return
                     self.search_one(slug, proj, fn, scope, minutes, variants, log, stats, lock, total, blocked)
@@ -608,7 +621,7 @@ class Sweeps:
                     ids = [r['id'] for r in identities[offset:offset + chunk]]
                     rows = {r['id']: r for r in self._store(slug).all(f"""SELECT f.id,f.project_id,f.name,f.size,f.vram,f.unit,f.status,f.best_score,
                         f.best_source,f.target,f.relocs,f.asm,f.seed,d.scope AS pass_scope,d.state AS pass_state,
-                        c.expires_at AS claim_expires FROM functions f
+                        json_extract(d.result,'$.targeted_retry') AS pass_residual,c.expires_at AS claim_expires FROM functions f
                         LEFT JOIN deep_permutation_passes d ON d.function_id=f.id
                         LEFT JOIN claims c ON c.function_id=f.id
                         WHERE f.project_id=? AND f.status='open' AND {IN_BUILD}
@@ -634,7 +647,7 @@ class Sweeps:
                                 continue
                             # Never-tried/pending candidates need no costly historical-scope comparison.
                             if (fn['pass_state'] == 'error' or (not loop and fn['pass_state'] == 'completed')) and fn['pass_scope'] == signature(
-                                    self.net, proj, fn, minutes, variants, profiles, shared):
+                                    self.net, proj, fn, minutes, variants, profiles, shared, fn['pass_residual']):
                                 continue
                         candidates.append(fn['name'])
                         if slug in self.net.links and (fn['claim_expires'] or 0) > time.time():
