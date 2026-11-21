@@ -1,5 +1,16 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: stage unsigned division before a global reset
+
+An isolated N64 replay used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.
+The target used unsigned reciprocal multiplication for division by 1000 and by
+192, with a global zero store before the second result was read from HI.
+Staging the unsigned quotient by 1000 before the reset, then keeping the division
+by 192 with the final scaled assignment, improved the linked score from 1,580 to
+1,450. Spelling the second division as an unsigned shift followed by division
+by three scored 1,460. Deep Permuter independently reproduced and saved the
+1,450 candidate. This is a partial improvement on one private function.
+
 
 ### KMC GCC 2.7.2: switch case lifetimes, widened loop indices and a staged byte update
 
