@@ -1,5 +1,19 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: reuse nonoverlapping floating-point locals
+
+In a large N64 draft, separate temporary names indicated reuse of
+the same saved floating-point register in different switch arms
+and later blocks. Coalescing the nonoverlapping locals and keeping
+their own initializations moved the first call result back into
+the target's `$f26`. Under `-G0 -mips3 -mgp32 -mfp32 -O2`, the
+linked score improved from 34,874 to 34,169. Keeping the first
+post-assignment reload as a separate local improved it to 33,408.
+Coalescing the names for a different saved register by itself
+worsened the score to 38,903. These are results on one function.
+Controlled regressions cover overlapping lifetimes, conditional
+initialization and escaping addresses.
+
 ### KMC GCC 2.7.2: group endpoint cases and a bounded middle range
 
 A compare tree in a large N64 draft sent two endpoint values to one
