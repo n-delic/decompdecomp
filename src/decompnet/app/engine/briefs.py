@@ -176,6 +176,8 @@ class BriefMixin:
                 inputs.append('relocated byte table')
             if relocated_global_update.applies(fn['asm'] or ''):
                 inputs.append('relocated global update')
+            if relocated_global_update.countdown_applies(fn['asm'] or ''):
+                inputs.append('relocated countdown')
             if packed_matrix_conversion.applies(fn['asm'] or ''):
                 inputs.append('packed matrix conversion')
             if byte_cursor_postincrements.applies(fn['asm'] or ''):

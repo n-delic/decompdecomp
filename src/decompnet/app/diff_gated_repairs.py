@@ -199,6 +199,8 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
             result.append(('relocated_byte_table', candidate_source))
         if candidate_source := relocated_global_update.rewrite(source, name, asm or '', header, resolve):
             result.append(('relocated_global_update', candidate_source))
+        if candidate_source := relocated_global_update.rewrite_countdown(source, name, asm or '', header, resolve):
+            result.append(('relocated_countdown', candidate_source))
         if candidate_source := packed_matrix_conversion.rewrite(source, name, asm or '', header):
             result.append(('packed_matrix_conversion', candidate_source))
         if candidate_source := byte_cursor_postincrements.rewrite(source, name, asm or '', header):

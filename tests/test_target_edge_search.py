@@ -439,3 +439,12 @@ def test_measured_split_dispatch_zero_case_reaches_kmc_proposals(monkeypatch):
     rows = [('i', 'beq $v1, $v0, .Lprobe', 'beq $v1, $v0, .Lother')]
     assert ('split_dispatch_zero_case', 'flat dispatch') in route('void f(void) {}', rows, 'asm')
     assert 'split_dispatch_zero_case' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
+
+
+def test_measured_relocated_countdown_reaches_kmc_proposals(monkeypatch):
+    from decomprepair import relocated_global_update
+
+    monkeypatch.setattr(relocated_global_update, 'rewrite_countdown', lambda *args: 'direct countdown')
+    rows = [('i', 'sw $v0, %lo(counter)($at)', 'sw $v0, ($a0)')]
+    assert ('relocated_countdown', 'direct countdown') in route('void f(void) {}', rows, 'asm')
+    assert 'relocated_countdown' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
