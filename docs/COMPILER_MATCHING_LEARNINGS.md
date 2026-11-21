@@ -12459,3 +12459,17 @@ judge-worker; the search below is the pass's algorithm run directly (no Deep Per
   diff rows rather than score alone, so a family's many same-diff spellings count once.
 - The init function's neutral chain (literals 60 -> 60 -> 60, then the shift) did not reappear from the rebuilt
   states: with two constant locals left the shift alone gives 0.
+
+### KMC GCC 2.7.2: keep the loaded float table value in the result local
+
+For a scratch draft with two branches that multiply values from the same
+float table, load into the result local before multiplying. In the arm
+that selects an additional coefficient, multiply the loaded result first
+by that coefficient and then by the original factor. Staging the load
+in one arm reduced the score from 30 to 20. Staging both matched byte for
+byte and preserved the order of the two multiplies.
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, the Deep Permuter
+reached score 0 in 27 trials. The v0.5.290 control stayed at score 30
+after 100 trials. Synthetic tests reject a coefficient read after the
+product, since the original assignment would still be needed.

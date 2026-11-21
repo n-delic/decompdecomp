@@ -830,6 +830,30 @@ def test_measured_halfword_switch_is_routed_for_kmc(monkeypatch):
     assert 'halfword_switch_fixture' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))
 
 
+def test_float_scale_carrier_reaches_kmc_diff_dispatch():
+    source = """extern f32 table[];
+f32 f(int key, int plain, f32 factor) {
+    f32 scale;
+    if (plain) {
+        scale = table[key] * factor;
+    } else {
+        f32 coefficient;
+        coefficient = 0.5f;
+        coefficient = table[key] * coefficient;
+        scale = coefficient * factor;
+    }
+    return scale;
+}
+"""
+    load = ('r', 'lwc1 $f2, %lo(table)($at)', 'lwc1 $f0, %lo(table)($at)')
+    multiply = ('r', 'mul.s $f2, $f2, $f4', 'mul.s $f2, $f0, $f4')
+    literal = ('r', 'mtc1 $at, $f0', 'mtc1 $at, $f2')
+    rows = [load, multiply, literal, load]
+    generated = proposals(source, 'f', '', 'mips', KMC, rows, '')
+    assert any(label == 'measured_float_scale_carrier' and 'scale *= coefficient;' in candidate
+               for label, candidate in generated)
+
+
 def test_early_float_load_reaches_kmc_diff_dispatch():
     source = """void f(void *parent) {
     void *child;
