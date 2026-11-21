@@ -1,6 +1,8 @@
 """Candidate optimizations must retain input invalidation, durable winners and final progress."""
 import threading
+import time
 from contextlib import contextmanager
+from types import SimpleNamespace
 
 import pytest
 
@@ -207,13 +209,18 @@ def test_buffer_owner_cannot_be_reused_by_a_context_copied_to_another_thread():
 
 def test_duplicate_guard_includes_repair_rules_and_compiler_identity(monkeypatch):
     from decompnet import claim_stalls, match_bundle
+
+    clock = [10.]
+    monkeypatch.setattr(deep_permuter, 'time', SimpleNamespace(monotonic=lambda: clock[0], time=time.time))
     net = FakeNet();fn = net.function();proj = net.project_row('game')
     search = deep_permuter.Search(net, 1, 100, Log(), fn)
     first = search._recent_key(proj, fn, 'int f(){return 9;}', None)
     monkeypatch.setattr(claim_stalls, 'repair_rules', lambda: ['new rules'])
+    clock[0] += 1
     assert search._recent_key(proj, fn, 'int f(){return 9;}', None) != first
     second = search._recent_key(proj, fn, 'int f(){return 9;}', None)
     monkeypatch.setattr(match_bundle, 'compiler_identity', lambda *a: 'replacement compiler')
+    clock[0] += 1
     assert search._recent_key(proj, fn, 'int f(){return 9;}', None) != second
 
 
@@ -232,6 +239,9 @@ def test_delayed_statistics_do_not_move_collection_windows_backwards(monkeypatch
 
 def test_priming_shares_advisory_fingerprints_but_judging_recaptures_them(monkeypatch):
     from decompnet import claim_stalls, match_bundle
+
+    clock = [10.]
+    monkeypatch.setattr(deep_permuter, 'time', SimpleNamespace(monotonic=lambda: clock[0], time=time.time))
     net = FakeNet();proj = net.project_row('game');fn = net.function()
     search = deep_permuter.Search(net, 1, 100, Log(), fn)
     calls = {'rules':0,'compiler':0};version = [1]
@@ -242,9 +252,11 @@ def test_priming_shares_advisory_fingerprints_but_judging_recaptures_them(monkey
     sources = [f'int f(void){{return {i};}}' for i in range(16)]
     search._prime_trials(AGENT, proj, fn, sources, None)
     assert calls == {'rules':1,'compiler':1}
+    clock[0] += 1
     prepared = search._recent_key(proj, fn, sources[0], None)
     assert prepared in search._primed_scopes
     version[0] = 2
+    clock[0] += 1
     fresh = search._recent_key(proj, fn, sources[0], None)
     assert fresh != prepared and fresh not in search._primed_scopes
     assert calls == {'rules':3,'compiler':3}

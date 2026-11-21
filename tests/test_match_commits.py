@@ -355,7 +355,7 @@ def test_later_edits_do_not_replace_the_queued_verified_source(automatic):
     original = 'void f(void) { return; }'
     # A later exact polish keeps matched status and is not another new match.
     fn = net._function('f', 'game')
-    net._record(fn, agent, 0, 'void f(void) { /* polished */ return; }', 1, matched=True)
+    net._record(fn, agent, 0, 'void f(void) { /* polished */ return; }', 1, matched=True, verified_replacement=True)
     net.add_note(agent, 'game', 'Original matching notes', 'f')
     match_commits.process(net, 'game')
     assert git(root, 'show', 'HEAD:src/f.c') == original
@@ -391,6 +391,7 @@ def test_new_saved_contributions_use_the_contributing_agents_notes(automatic, mo
     net.add_note(agent, 'game', 'The contributing agent found this match', 'f')
     monkeypatch.setattr(net, 'apply_remote_layout', lambda *args: None)
     monkeypatch.setattr(net, '_compile', lambda *args: SimpleNamespace(ok=True, obj=b'fake', log=''))
+    monkeypatch.setattr('decompnet.app.progress.toolchains.installed', lambda _: root)
     def attempt(worker, name, source, slug):
         net._record(net._function(name, slug), worker, 0, source, 1, matched=True)
         return {'matched': True}
@@ -644,7 +645,7 @@ def test_an_older_queued_source_never_replaces_a_newer_checkpointed_one(automati
     enable(automatic)
     match(automatic)
     newer = 'void f(void) { /* polished */ return; }'
-    net._record(net._function('f', 'game'), agent, 0, newer, 1, matched=True)
+    net._record(net._function('f', 'game'), agent, 0, newer, 1, matched=True, verified_replacement=True)
     head = checkpoint(automatic)
     match_commits.process(net, 'game')
     assert git(root, 'rev-parse', 'HEAD') == head
