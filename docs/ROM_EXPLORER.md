@@ -603,3 +603,8 @@ UV sound banks with paired control and wave chunks expose their samples under
 Audio. The adjacent compact MIDI music directory also offers stereo previews
 from the music bank, capped at 30 seconds. The player makes one pass through
 sequence loops and reports notes that it could not play.
+
+F3DEX meshes appear under Models when stored pointers corroborate the display
+list mapping and all triangle slots resolve to loaded vertices. The preview
+shows each list in local coordinates. A standalone compact MIDI directory
+immediately after its verified sound bank can use the same Audio player.
