@@ -9960,3 +9960,11 @@ The same function's unmodified m2c draft (score 11,654 under GCC) now reaches th
 stores), and the `sra` signal above makes the deep pass probe IDO. Through `draft_repairs.variants` it produced two
 variants, one with the draft's `|` operand order (0.71 of the instructions) and one swapped (all 164, exact in the
 judge): IDO evaluates the operand written first first, so the swapped form is offered beside the plain one.
+
+### Preserve branch-local stores and the live divisor
+
+Three reconstructed near misses matched byte for byte with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`. The archived sources compiled independently as controls.
+
+- The division target masked its third parameter in place after storing the previous value of a reused local. In-place masking alone moved the previous store and increased score 25 to 190. Preserving that store with a volatile word lvalue and masking the parameter together matched all 184 bytes.
+- A field update set or cleared a flag through a temporary also used in a sibling branch. Updating the field directly in either arm kept the sibling's earlier value intact and matched all 192 bytes from score 25.
+- An early-return mode case sits between selection of two defaults. Assigning the defaults in their own arms matched all 72 bytes from score 30.
