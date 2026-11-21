@@ -10160,3 +10160,19 @@ also matched as controls.
   non-null test matched all 76 bytes from score 60. Simplifying the loop tail without staging the mask left score 60.
 - With the same `-g3` command, forwarding the entry argument to a count helper moved the 112-byte recursive draft
   from score 280 to 245. Updating the original count after recursion and returning it on every path matched exactly.
+
+### Stage the first indexed base, preserve byte strides, and load a stack halfword
+
+All four N64 controls compiled to their archived target bytes with the original compiler.
+
+- With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, writing the comparison with the stream position first
+  and capturing the counter address only for the final guarded copy matched 128 bytes from score 50. The target
+  retained the counter address through the conditional clamp.
+- With the same flags, staging the base before calculating the index for the first byte store matched all 200 bytes
+  from score 60. The later stores continued to reference the global directly.
+- Also with those flags, the 52-byte generated draft initially failed to compile because its first store dereferenced
+  an integer. Typing the store compiled at score 60. An unsigned halfword index and an explicit load from byte two
+  of the fifth, word-sized argument matched exactly during draft generation.
+- At `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1`, passing the entry argument to the final call brought the
+  168-byte draft from score 55 to 10. Casting each relocated word address to a byte pointer before adding the
+  already-scaled index removed the remaining two-bit shift error and matched exactly.
