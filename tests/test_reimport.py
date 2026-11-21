@@ -5,6 +5,7 @@ import json
 import pytest
 
 from decompnet.app.engine import RomNetwork
+from decompnet.app.repository_git import git
 from decompnet.consoles import Console
 from decompnet.network import NetworkError
 from decompnet.rom import Picked, split
@@ -18,6 +19,20 @@ def test_reimport_replaces_analysis_and_keeps_only_unchanged_matches(tmp_path, m
     (root / "old.yaml").write_text("old split", encoding="utf-8")
     (root / "progress").mkdir()
     (root / "progress" / "save.json").write_text("saved work", encoding="utf-8")
+    repository = root / ("exports/game" if legacy_reset else "source")
+    repository.mkdir(parents=True)
+    git(repository, "init", "--initial-branch=main")
+    origin = "https://example.com/game.git"
+    git(repository, "remote", "add", "origin", origin)
+    build = repository / "build.py"
+    build.write_text("# committed build script\n", encoding="utf-8")
+    git(repository, "add", "build.py")
+    git(repository, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "Initial build")
+    head = git(repository, "rev-parse", "HEAD")
+    build.write_text("# staged change\n", encoding="utf-8")
+    git(repository, "add", "build.py")
+    build.write_text("# unstaged change\n", encoding="utf-8")
+    (repository / "local.txt").write_text("local work", encoding="utf-8")
     net = RomNetwork(tmp_path / "app.db", tmp_path)
     cfg = {
         "kind": "rom", "platform": "n64", "big_endian": True, "gp": 0,
@@ -26,6 +41,8 @@ def test_reimport_replaces_analysis_and_keeps_only_unchanged_matches(tmp_path, m
         "auto_compiler": True, "export": {"path": "old/source"}, "autopilot": {"matched": 100},
         "collab": {"open": True},
     }
+    if legacy_reset:
+        cfg["repository_sync_folder"] = str(repository)
     with net.store.tx() as db:
         pid = db.execute("INSERT INTO projects(slug,name,root,arch,config) VALUES(?,?,?,?,?)",
                          ("game", "old game", str(root), "mips", json.dumps(cfg))).lastrowid
@@ -108,6 +125,25 @@ def test_reimport_replaces_analysis_and_keeps_only_unchanged_matches(tmp_path, m
 
     monkeypatch.setattr("decompnet.app.engine.importing.split.split_rom", fake_split)
 
+    def assert_repository_preserved():
+        assert git(repository, "rev-parse", "HEAD") == head
+        assert git(repository, "remote", "get-url", "origin") == origin
+        assert git(repository, "show", ":build.py") == "# staged change"
+        assert build.read_text(encoding="utf-8") == "# unstaged change\n"
+        assert (repository / "local.txt").read_text(encoding="utf-8") == "local work"
+
+    def fail_registration(**kwargs):
+        assert_repository_preserved()
+        raise RuntimeError("registration failed")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(net, "project_registration", fail_registration)
+        with pytest.raises(RuntimeError, match="registration failed"):
+            net.reimport_rom("game", game, confirmed=True, log=lambda _: None)
+    assert_repository_preserved()
+    assert (root / "old.z64").read_bytes() == b"old"
+    assert not (root / "new.z64").exists()
+
     messages = []
     result = net.reimport_rom("game", game, confirmed=True, log=messages.append)
     assert result == {"slug": "game", "functions": 3, "matched": 1}
@@ -117,6 +153,7 @@ def test_reimport_replaces_analysis_and_keeps_only_unchanged_matches(tmp_path, m
     assert any("reimport kept 1 matched functions" in message for message in messages)
     assert messages[-1] == "Reimport complete: 3 functions; 1 still match."
     assert (root / "progress" / "save.json").read_text(encoding="utf-8") == "saved work"
+    assert_repository_preserved()
     assert (root / "new.z64").read_bytes() == b"new rom"
     assert (root / "new.yaml").read_text(encoding="utf-8") == "new split"
     assert not (root / "old.yaml").exists()
