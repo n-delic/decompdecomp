@@ -59,6 +59,7 @@ from decomprepair import (
     measured_stack_records,
     measured_storage_shapes,
     measured_temporary_repairs,
+    measured_thread_addresses,
     ordered_halfword_updates,
     packed_matrix_conversion,
     passthrough_argument_repairs,
@@ -223,6 +224,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     result += measured_scalar_updates.variants(source, name, header, toolchain, rows, asm)
     if toolchain == 'gcc-2.7.2-kmc':
         result += measured_cursor_schedule.variants(source, name, header, rows, asm or '')
+        result += measured_thread_addresses.variants(source, name, header, rows, resolve)
         result += measured_kmc_addresses.variants(source, name, header, rows, flags)
         result += measured_kmc_byte_stride.variants(source, name, header, rows)
         result += measured_kmc_branch_pointer.variants(source, name, header, rows)
