@@ -802,3 +802,23 @@ def test_loop_cursor_pass_scores_parallel_record_cursor(monkeypatch):
     assert search.loop_cursor_pass(AGENT, net.project_row('game'), fn, 35, None) == 15
     assert len(tried) == 1
     assert 'consume(*base, base[1]);' in tried[0]
+
+
+@pytest.mark.parametrize('module, family', [('case_split_combinations', 'case_temporary_split_combined'),
+                                            ('struct_store_raw_offsets', 'struct_store_raw_offset')])
+def test_case_split_combinations_and_raw_field_stores_run_in_the_local_lane(monkeypatch, module, family):
+    import importlib
+
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    proj = net.project_row('game')
+    fn = {**net.function(), 'asm': ''}
+    child = fn['best_source'] + f'\n/* {family} */'
+    monkeypatch.setattr(importlib.import_module('decomprepair.' + module), 'variants', lambda *args: [(family, child)])
+    search = deep_permuter.Search(net, 1, 6, Log())
+    tried = []
+    monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 0)
+
+    assert search.operand_order_pass(AGENT, proj, fn, 240, None) == 0
+    assert tried == [child]
