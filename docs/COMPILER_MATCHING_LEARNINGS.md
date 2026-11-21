@@ -10336,3 +10336,18 @@ truncated byte test from a left shift compared to 4 to a low-seven-bit test comp
 reduced the linked score to 10. Either edit alone scored worse than the starting draft.
 Comparing the whole byte directly dropped the target's mask instruction. The combined
 rewrite retains the original high-bit semantics and leaves one mask operand difference.
+
+## Byte table read through a word cast (N64 PS-style KMC gcc 2.7.2, `-O2`; one function, partial)
+
+A hand match of a ~0x35c-byte actor-update function (score 2225 -> 450, not yet exact; evidence level: one function).
+- A refined draft declared `extern s32 gTrackMarkerDone;` and read it as `u8 v = *(s32 *)((s8 *)&gTrackMarkerDone + i)`.
+  The word read compiled to a byte load at `%lo(gTrackMarkerDone+0x3)` (the low byte of a big-endian word) where the
+  target has `lbu %lo(gTrackMarkerDone)`. Casting the read `u8` fixed the relocation; the declaration's type did not
+  matter (`s32` and `u8` scored the same).
+- A callee called `f(x + k, y)` whose target left `$a0` alone is `f(arg0, x + k, y)`; the existing
+  `passthrough_argument` family already produces it (checked on the saved best).
+- Not matched: the target's `if (!(t & 0x10)) {0xBF stores} else {0xFF stores}` ends in an out-of-line
+  `li $v0,0xff; j tail` block. `goto` into a shared tail, a shared color variable and duplicated blocks all left that
+  block out (450); the branchless `col = 0xFF; if (...) col = 0xBF;` form was worse (1675).
+- decomp-repair v0.5.181: `symbol_width_repairs` retypes `*(T *)((s8 *)&D + i)` casts on a symbol of known type (and the
+  printed dialect with extra parentheses) when the target's loads never use T's width.
