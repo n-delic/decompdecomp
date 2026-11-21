@@ -42,7 +42,9 @@ FAMILIES = ('assignment_at_use', 'comparison_sides', 'narrow_shift_pair', 'point
             # 0.5.32
             'unsigned_switch', 'volatile_reload',
             # 0.5.35
-            'pointer_walk_index')
+            'pointer_walk_index',
+            # 0.5.151
+            'stack_unpack_loop')
 FLAGS = ['-G0', '-mips3', '-mgp32', '-mfp32', '-O2']
 HEADER = 'typedef int s32;\ntypedef unsigned int u32;\ntypedef short s16;\ntypedef float f32;\n'
 
