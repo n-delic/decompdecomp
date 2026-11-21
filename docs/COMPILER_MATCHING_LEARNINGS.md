@@ -534,6 +534,12 @@ vector's address and spilled it through `$t0`; the target used `$a3`.
 Evidence level: one new exact match. The reload and scope comparisons
 were diagnostics on the same function.
 
+The deep permuter now proposes the explicit spill slot and each nearby
+scheduling scope together. A fresh ROM replay with the saved score-10 C,
+matching header and symbol aliases, and no candidate history found and
+saved score zero. It took 16 checks from this repair family and 47
+candidate checks across the full run, under a 64-candidate budget.
+
 ### KMC GCC 2.7.2: use fixed byte offsets within a record walk
 
 An isolated N64 replay used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.

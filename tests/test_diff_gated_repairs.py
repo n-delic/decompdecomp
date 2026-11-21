@@ -1099,3 +1099,36 @@ def test_field_pointer_repairs_route_to_kmc(monkeypatch):
                         lambda text, name, header, diff: [('field_pointer_fixture', text)])
     assert 'field_pointer_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'field_pointer_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_stack_pointer_scope_routes_only_to_kmc():
+    source = """void f(void) {
+    struct {
+        f32 x;
+        void *record;
+    } frame;
+    f32 *ptr;
+    if (ready()) {
+        void *state = frame.record;
+        frame.x = 1;
+        rotate(&frame.x);
+        ptr = &frame.x;
+        consume(ptr);
+        consume(ptr);
+        state = frame.record;
+        consume(state);
+    }
+}
+"""
+    rows = [
+        ('r', 'addiu $a3, $sp, 0x10', 'addiu $t0, $sp, 0x10'),
+        ('r', 'sw $a3, 0x1c($sp)', 'sw $t0, 0x1c($sp)'),
+        (' ', 'lw $a0, 0x1c($sp)', 'lw $a0, 0x1c($sp)'),
+        (' ', 'lw $a1, 0x1c($sp)', 'lw $a1, 0x1c($sp)'),
+    ]
+    family = 'measured_kmc_stack_pointer_scope'
+    first, candidate = proposals(source, 'f', '', 'mips', KMC, rows, '')[0]
+    assert first == family
+    assert 'frame.spillPointer = state;' in candidate
+    assert 'do {' in candidate
+    assert all(label != family for label, _ in proposals(source, 'f', '', 'mips', EGCS, rows, ''))

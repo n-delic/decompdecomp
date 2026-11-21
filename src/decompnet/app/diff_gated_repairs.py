@@ -53,6 +53,7 @@ from decomprepair import (
     measured_kmc_repeated_reads,
     measured_kmc_scalar_shapes,
     measured_kmc_stack_and_call,
+    measured_kmc_stack_pointer,
     measured_kmc_vector_square,
     measured_kmc_wrappers,
     measured_lifetime_shapes,
@@ -229,6 +230,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     result += measured_lifetime_shapes.variants(source, name, header, toolchain, rows)
     result += measured_scalar_updates.variants(source, name, header, toolchain, rows, asm)
     if toolchain == 'gcc-2.7.2-kmc':
+        result += measured_kmc_stack_pointer.variants(source, name, rows)
         result += measured_cursor_schedule.variants(source, name, header, rows, asm or '')
         result += measured_thread_addresses.variants(source, name, header, rows, resolve)
         result += measured_kmc_addresses.variants(source, name, header, rows, flags)
