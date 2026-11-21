@@ -98,6 +98,7 @@ def verify(feedback, example):
     compiler = profile['toolchain']
     if proj['arch'] == 'mips' and compiler == 'gcc-2.7.2-kmc':
         from decomprepair import (
+            aligned_stack_read,
             kmc_cast_repairs,
             kmc_operand_repairs,
             kmc_type_repairs,
@@ -138,6 +139,8 @@ def verify(feedback, example):
         if candidate := relocated_byte_table.rewrite(source, fn['name'], fn['asm'] or '', header,
                                                      symbols.resolve if symbols else None):
             focused.append(('relocated_byte_table', candidate))
+        if candidate := aligned_stack_read.rewrite(source, fn['name'], fn['asm'] or ''):
+            focused.append(('aligned_stack_read', candidate))
         focused += measured_callback_repairs.variants(source, fn['name'], rows)
         focused += measured_address_repairs.variants(source, fn['name'], header, rows, symbols)
         focused += measured_pointer_scale.variants(source, fn['name'], header, rows)

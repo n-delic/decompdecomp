@@ -350,3 +350,19 @@ def test_frame_reservation_prefers_a_new_scope_when_callee_keeps_local_slot():
     assert options[0].index('send(0, &value);') < options[0].index('char __repair_stack_padding[8];')
     assert options[1].index('char __repair_stack_padding[8];') < options[1].index('send(0, &value);')
     assert 'inferred_frame_reservation' not in dict(route(source, rows, '', compiler='ido-5.3'))
+
+
+def test_aligned_stack_read_is_proposed_only_for_kmc(monkeypatch):
+    from decomprepair import aligned_stack_read
+
+    calls = []
+
+    def rewrite(source, name, asm):
+        calls.append((source, name, asm))
+        return 'aligned stack candidate'
+
+    monkeypatch.setattr(aligned_stack_read, 'rewrite', rewrite)
+    rows = [('s', 'addiu $s0, $sp, 39', 'addiu $s0, $sp, 24')]
+    assert ('aligned_stack_read', 'aligned stack candidate') in route('void f(void) {}', rows, 'asm')
+    assert 'aligned_stack_read' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
+    assert calls == [('void f(void) {}', 'f', 'asm')]

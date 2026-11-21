@@ -369,6 +369,7 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
         return run_m2c(asm_text, name, target, context_header, data_asm, timeout, valid, strict, options)
 
     from decomprepair import (
+        aligned_stack_read,
         large_stack_drafts,
         likely_branch_cursor,
         measured_callback_loop,
@@ -395,6 +396,7 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
             or measured_mmio_polling.rewrite(source, name, asm_text, context_header)
             or likely_branch_cursor.rewrite(source, name, asm_text, context_header)
             or relocated_byte_table.rewrite(source, name, asm_text, context_header, resolve)
+            or aligned_stack_read.rewrite(source, name, asm_text)
             or source)
 
 
