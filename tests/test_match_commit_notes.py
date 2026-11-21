@@ -18,6 +18,9 @@ def test_permuter_attribution_and_annotated_repair_data_are_in_commit(automatic)
     enable(automatic)
     fn = net._function('f', 'game')
     agent, _ = net.local_agent(f'permuter-{fn["id"]}-lane-2')
+    # Older records can already have annotated evidence for a permuter match.
+    with net.store.tx() as db:
+        db.execute("UPDATE agents SET origin='' WHERE id=?", (agent.id,))
     baseline = 'void f(void) {\n    int x;\n}'
     initial = {'compiler': {'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-O1']}, 'language': 'c'}
     final = {'compiler': {'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-O2']}, 'language': 'c'}

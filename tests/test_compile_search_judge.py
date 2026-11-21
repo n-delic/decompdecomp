@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from decompnet import compile_sessions
+from decompnet import compile_sessions, consoles
 from decompnet.app.engine.judging import JudgeMixin, search_evaluation
 from decompnet.rom.match import LinkResult
 from tests.test_candidate_diagnostics import object_file
@@ -20,6 +20,7 @@ def test_lean_search_uses_full_link_verdict_without_export_diagnostics(monkeypat
     monkeypatch.setattr('decompnet.app.candidate_diagnostics.export_layout',
                         lambda *a: reports.append(a) or {'ready':True})
     class Net(JudgeMixin):
+        def console(self, proj):return consoles.get("n64")
         def is_rom(self, proj):return True
         def _rom_target(self, fn):return None
         def symbols(self, pid):return None
@@ -128,6 +129,7 @@ def test_lean_search_retains_physical_register_cycles_without_relinking(monkeypa
     target = struct.pack('>III', 0x27bdffc0, 0x26f4ffff, 0x0003ac03)
     linked = struct.pack('>III', 0x27bdffc0, 0x26f5ffff, 0x0003a403)
     net = object.__new__(JudgeMixin)
+    net.console = lambda _: consoles.get("n64")
     net.is_rom = lambda _: True
     net._rom_target = lambda _: SimpleNamespace(code=target)
     net.symbols = lambda _: None
@@ -155,6 +157,7 @@ def test_winner_diagnostics_reuse_guarded_link_result(monkeypatch,changed):
     monkeypatch.setattr('decompnet.rom.match.link',lambda *a:calls.append(1) or LinkResult(candidate,True,[],{}))
     monkeypatch.setattr('decompnet.app.candidate_diagnostics.export_layout',lambda *a:{'ready':True})
     class Net(JudgeMixin):
+        def console(self, proj):return consoles.get("n64")
         def is_rom(self,proj):return True
         def _rom_target(self,fn):return None
         def symbols(self,pid):return None

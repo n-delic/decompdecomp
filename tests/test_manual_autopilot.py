@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from starlette.testclient import TestClient
 
-from decompnet.app import maintenance
+from decompnet.app import maintenance, maintenance_tasks
 from decompnet.app.engine import RomNetwork
 from decompnet.app.engine.autopilot import AutopilotMixin
 from decompnet.app.server import build
@@ -15,13 +15,26 @@ from tests.test_app_server import PORT, SECRET, WINDOW
 from tests.test_loading import tiny_game
 
 
+@pytest.fixture
+def offline_pass(monkeypatch):
+    def unavailable(*args, **kwargs):
+        raise maintenance_tasks.Unavailable()
+    monkeypatch.setattr(maintenance_tasks, 'full_pass', unavailable)
+
+
+def existing_game(net, tmp_path):
+    proj = tiny_game(net)
+    with net.store.tx() as db:
+        db.execute("UPDATE projects SET root=? WHERE id=?", (str(tmp_path), proj['id']))
+
+
 def twin():
     value=Twins.__new__(Twins)
     value._lock=threading.Lock();value.jobs={}
     return value
 
 
-def test_manual_full_pass_bypasses_busy_lane_on_a_dedicated_thread():
+def test_manual_full_pass_bypasses_busy_lane_on_a_dedicated_thread(offline_pass):
     value=twin();entered=threading.Event();ids=[]
     def execute(slug,job):
         assert maintenance.is_foreground()
@@ -36,7 +49,7 @@ def test_manual_full_pass_bypasses_busy_lane_on_a_dedicated_thread():
     assert ids and ids[0]!=threading.get_ident()
 
 
-def test_click_promotes_one_queued_automatic_pass_without_duplicating_it(monkeypatch):
+def test_click_promotes_one_queued_automatic_pass_without_duplicating_it(monkeypatch, offline_pass):
     value=twin();queued=threading.Event();entered=threading.Event();executions=[]
     original=maintenance.slot
     @contextmanager
@@ -63,14 +76,15 @@ def test_click_promotes_one_queued_automatic_pass_without_duplicating_it(monkeyp
 
 
 @pytest.mark.parametrize('imported',[False,True])
-def test_manual_autopilot_spawns_coordinator_and_compile_workers_while_lane_busy(tmp_path,monkeypatch,imported):
+def test_manual_autopilot_spawns_coordinator_and_compile_workers_while_lane_busy(tmp_path,monkeypatch,imported,offline_pass):
     net=RomNetwork(tmp_path/'app.db',tmp_path)
-    tiny_game(net)
+    existing_game(net, tmp_path)
     monkeypatch.setattr('decompnet.app.engine.autopilot.seeds.available',lambda:True)
     phases=[];compiles=[];done=threading.Event()
     def execute(slug,job):
         phases.append((threading.get_ident(),maintenance.is_foreground()))
         job.state='done';return job
+    monkeypatch.setattr(net.twins, 'order', lambda slug, job: job.ordered.set())
     monkeypatch.setattr(net.twins,'_execute_full_pass',execute)
     def compile_one(*args):
         compiles.append((threading.get_ident(),maintenance.is_foreground()))
@@ -89,7 +103,7 @@ def test_manual_autopilot_spawns_coordinator_and_compile_workers_while_lane_busy
         state=net.start_autopilot('game',workers=2,foreground=True)
         assert done.wait(3)
         assert state['_foreground'].is_set()
-    assert len(compiles)==4 and phases[0][1] and all(active for _,active in compiles)
+    assert len(compiles)==4 and phases[0][1] and all(active for _,active in compiles), (state['no_drafts'], state['total'], phases)
     assert all(tid!=threading.get_ident() and tid!=phases[0][0] for tid,_ in compiles)
     assert '_foreground' not in net.autopilot_status('game')
     assert 'stop' not in net.autopilot_status('game')
@@ -118,7 +132,7 @@ def test_explicit_autopilot_route_requests_foreground_workers(tmp_path,monkeypat
     assert response.status_code==200 and calls==[('game',{'foreground':True})]
 
 
-def test_promotion_before_twins_registration_is_not_lost():
+def test_promotion_before_twins_registration_is_not_lost(offline_pass):
     value=twin();entered=threading.Event();event=threading.Event()
     def execute(slug,job):
         assert job.foreground is event and maintenance.is_foreground()
@@ -140,7 +154,7 @@ def test_default_manual_autopilot_uses_cores_and_restores_compile_limit(tmp_path
     from decompnet.compile_admission import Admission
     from decompnet.compile_sessions import current
     net = RomNetwork(tmp_path/'app.db', tmp_path)
-    tiny_game(net)
+    existing_game(net, tmp_path)
     monkeypatch.setattr('decompnet.app.engine.autopilot.os.cpu_count', lambda: 4)
     monkeypatch.setattr('decompnet.app.engine.autopilot.seeds.available', lambda: True)
     monkeypatch.setattr(compiler, '_SLOTS', Admission(2))
@@ -183,7 +197,7 @@ def test_default_manual_autopilot_uses_cores_and_restores_compile_limit(tmp_path
 def test_autopilot_reuses_preparation_between_functions_and_closes_session(tmp_path, monkeypatch):
     from decompnet import compile_sessions
     net=RomNetwork(tmp_path/'app.db',tmp_path)
-    tiny_game(net)
+    existing_game(net, tmp_path)
     monkeypatch.setattr('decompnet.app.engine.autopilot.seeds.available', lambda: True)
     monkeypatch.setattr(net.twins,'full_pass',lambda *a,**kw:SimpleNamespace(matched=0))
     sessions=[]

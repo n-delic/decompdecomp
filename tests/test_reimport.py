@@ -204,7 +204,7 @@ def test_reimport_pairs_saved_matches_by_overlay_and_address(tmp_path, monkeypat
             functions.append(split.RomFunction(f'func_80300000_{unit}', 0x80300000, index * 4, unit,
                                                 [line], work / (unit + '.s')))
         if derived:(work/'analysis.bin').write_bytes(b'derived image')
-        return split.SplitResult(functions, [], [], {}, work / 'splat.yaml', 'KMC', '', image='analysis.bin' if derived else '')
+        return split.SplitResult(functions, [], [], {}, work / 'splat.yaml', 'KMC', '', image='analysis.bin' if derived else 'rom.z64')
     monkeypatch.setattr(split, 'split_rom', replacement)
     picked = Picked('n64', bytes(16), 'rom.z64', {'title': 'Banks', 'size': 16, 'sha1': 'same',
                     'game_code': 'DEMO', 'region': 'Test', 'compiler_guess': 'KMC'}, True)

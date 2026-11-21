@@ -15,7 +15,7 @@ def test_host_grant_reconciles_stale_local_claim_and_survives_restart(tmp_path, 
     agent,_=net.local_agent('worker');other,_=net.local_agent('other-worker')
     net.claim_row(agent,'game','old');net.claim_row(other,'game','other')
     granted=[]
-    link=SimpleNamespace(claim=lambda a,f,s:granted.append(f) or 'next',sync=lambda:None)
+    link=SimpleNamespace(claim=lambda a,f,s:granted.append(f) or ('next', ''),sync=lambda:None)
     net.links['game']=link
     if mode=='fork':
         monkeypatch.setattr(net,'fork_slug',lambda slug:'game')

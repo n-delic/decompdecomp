@@ -43,5 +43,6 @@ def test_removed_after_discovery_cancels_old_worker_and_starts_remaining_project
 def test_existing_catalog_identity_does_not_hide_owner_failures(data,monkeypatch):
     net=data;auto=Autosave(net)
     def broken(_):raise NetworkError('Cannot read project owner')
-    monkeypatch.setattr(net,'project_store',broken)
-    with pytest.raises(NetworkError,match='Cannot read project owner'):auto._projects()
+    with monkeypatch.context() as patch:
+        patch.setattr(net,'project_store',broken)
+        with pytest.raises(NetworkError,match='Cannot read project owner'):auto._projects()
