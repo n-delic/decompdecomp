@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from decompnet.app import deep_permuter, draft_repairs, permuter_local
@@ -1101,3 +1103,39 @@ def test_a_stub_baseline_is_named_before_the_tuning_passes(monkeypatch):
     assert 'it is a stub' in search.stub_note() and '40 of the target' in search.stub_note()
     search.winner_diff = ([('r', 'addu $v0, $a0, $a1', 'addu $v0, $a1, $a0')] * 240, '')
     assert search.stub_note() == ''
+
+
+# The ROM's entry point: N64 boot code that clears BSS with `addi` and sets $sp in the delay slot of its jump to main.
+BOOT_STUB = bytes.fromhex('3C08800D25087050' '3C090004252906F0' 'AD000000AD000004' '21080008' '2129FFF8' '1520FFFB' '00000000'
+                          '3C0A8000254A0460' '3C1D8010' '01400008' '27BD2CA0')
+
+
+def _boot_stub_net(monkeypatch, code):
+    from decompnet.app.twins import Twins
+    from decompnet.consoles import get as console
+    net = setup(monkeypatch)
+    net.console = lambda proj: console('n64')
+    net.is_rom = lambda proj: True
+    net.twins = Twins(net)
+    net.forks = None
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET target=?, size=?, meta=NULL", (code, len(code)))
+    return net
+
+
+def test_deep_search_sets_aside_hand_written_assembly_instead_of_searching_it(monkeypatch):
+    net = _boot_stub_net(monkeypatch, BOOT_STUB)
+    monkeypatch.setattr(deep_permuter, '_run', lambda *a, **k: pytest.fail('searched hand-written assembly'))
+    log = Log()
+    result = deep_permuter.run(net, 'game', 'f', 30, 10, log)
+    assert not result['matched'] and result['tested'] == 0 and 'addi' in result['reason']
+    row = net.function()
+    assert row['status'] == 'asm' and 'addi' in json.loads(row['meta'])['asm_code']
+
+
+def test_deep_search_leaves_a_function_the_user_gave_back_to_the_agents(monkeypatch):
+    net = _boot_stub_net(monkeypatch, BOOT_STUB)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET meta='{\"reopened\": true}'")
+    assert net.twins.set_aside_function_asm(net.project_row('game'), net.function()) is None
+    assert net.function()['status'] == 'open'

@@ -513,6 +513,30 @@ class Twins:
                 db.executemany("UPDATE functions SET boost=? WHERE id=?", [(boost, fid) for fid, boost in updates.items()])
         return sum(1 for boost in updates.values() if boost > 0)
 
+    def set_aside_function_asm(self, proj, fn) -> str | None:
+        """One open function whose code no compiler makes (Console.asm_reason: a boot stub with `addi`, a kernel
+        entry...) is set aside as assembly now, so a deep search never spends its time on it: the project-wide pass
+        only runs on its own schedule, and a project the user left idle may not have had it yet. Returns why, or None
+        when the function stays open (or the user gave it back to the agents)."""
+        row = self.net.project_store(proj['id']).one("SELECT * FROM functions WHERE id=? AND status='open'", fn['id'])
+        if row is None or '"reopened"' in (row['meta'] or ''):
+            return None
+        if self.net.fork_slug(proj['slug']):
+            why = getattr(self.prints(proj).get(row['id']), 'asm', '')
+            return why if why and self.net.forks.mark_asm(row, reason=why) else None
+        console = self.net.console(proj)
+        code = row['target'] or b''
+        why = console.asm_reason(code)
+        if not why:  # (asm_reason already refuses an incomplete target: that is not evidence of assembly)
+            return None
+        meta = json.dumps({**json.loads(row['meta'] or '{}'), 'asm_code': why})
+        with self.net.project_store(proj['id']).tx() as db:
+            if not db.execute("UPDATE functions SET status='asm', meta=? WHERE id=? AND status='open' AND meta IS ?",
+                              (meta, row['id'], row['meta'])).rowcount:
+                return None
+            db.execute("DELETE FROM claims WHERE function_id=?", (row['id'],))
+        return why
+
     def set_aside_asm(self, proj) -> int:
         """Unmatched functions whose code no compiler makes (Console.asm_reason) get status 'asm': out of agents'
         way. Returns how many."""

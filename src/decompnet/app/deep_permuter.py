@@ -1579,6 +1579,15 @@ def _full_run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, 
             reason = 'Identified and set aside as SDK library code'
             log(reason)
             return {'matched': False, 'tested': 0, 'reason': reason}
+    twins = getattr(net, 'twins', None) if slug not in net.links else None
+    if fn['status'] == 'open' and twins is not None:
+        log.check_cancel()
+        with looking(net):
+            why = twins.set_aside_function_asm(net.project_row(slug), fn)
+        if why:
+            reason = f'Set aside as assembly, no compiler makes this code: {why}'
+            log(reason)
+            return {'matched': False, 'tested': 0, 'reason': reason}
     lock = net.__dict__.setdefault('_deep_run_locks', {}).setdefault(fn['id'], threading.Lock())
     if not lock.acquire(blocking=False):
         raise NetworkError('A deep search is already running for this function.')
