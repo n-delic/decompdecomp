@@ -525,9 +525,9 @@ void port_vi_features(uint32_t f);
 void w2c_env_osViSetMode(struct w2c_env *e, u32 mode) {
     (void)e; LOG("osViSetMode(%08X)", mode); port_vi_mode(mode);
 #ifndef PORT_WEB
-    if (getenv("PORT_RT64") && (mode & 0x1FFFFFFFu) <= 0x800000u - 60) {
-        uint32_t words[14], address = 0x80000000u | (mode & 0x1FFFFFFFu);
-        for (unsigned i = 0; i < 14; i++) words[i] = be32(address + 4 + i * 4);
+    if (getenv("PORT_RT64") && (mode & 0x1FFFFFFFu) <= 0x800000u - 4 - 4 * PORT_RT64_VI_MODE_WORDS) {
+        uint32_t words[PORT_RT64_VI_MODE_WORDS], address = 0x80000000u | (mode & 0x1FFFFFFFu);
+        for (unsigned i = 0; i < PORT_RT64_VI_MODE_WORDS; i++) words[i] = be32(address + 4 + i * 4);
         port_rt64_mode(words);
     }
 #endif
@@ -586,6 +586,9 @@ static void port_audio_interrupts(void) {
 }
 static void retrace(void) {
     vi_count++;
+#ifndef PORT_WEB
+    if (getenv("PORT_RT64")) port_rt64_retrace(vi_count & 1);
+#endif
     ram_dumps("PORT_RAM_DUMPS", vi_count);
     port_timers();
     port_audio_interrupts();
