@@ -10037,6 +10037,32 @@ with `goto` has no loop depth (its references count once), and a real nested loo
 are hoisted), so that spelling is not a free choice. This is a diagnostic: it names the cause of a swap, it does not
 accept a match, and it is not a rewrite family. A priority-aware rewrite family would aim at these numbers.
 
+### KMC GCC 2.7.2: which values a function's loops keep in saved registers
+
+An N64 function with four loops (`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`) linked with the right
+instructions and 38 register-only differences. Measured on the running app's judge, each step from the
+previous best:
+
+- 1175 to 1130: the slot table declared as a struct array instead of a byte pointer plus a stride. gcc
+  stopped hoisting its address into a saved register for the first loop.
+- 1130 to 770: the probe-timer loop written as `for (i = 0; i < 2; i++)` with its volatile pointer declared
+  outside it, instead of `i = 0; do { ... } while (i < 2);`. The test is then made at the head, with no copy
+  before the loop.
+- 750 to 470: two local pointers to globals (`s16 *totals = &A; s16 *scores = &B;`, set after the memsets)
+  replaced by `(&A)[i]` and `(&B)[i]` at each use. The draft's pointers were pseudos of their own; the game's
+  code kept the globals' addresses in the registers the memset arguments used and copied them at the loop
+  (`move $s2, $s0`). The whole first loop matched.
+- 470 to 280: the slot-index temporary and a text-buffer temporary, shared by all four loops, renamed per
+  loop. A name shared across loops is one multi-block pseudo and gets one saved register; the target's
+  loops have the index in a scratch register.
+- 280 to 260: one more step by the deep search.
+
+No difference: moving each local declaration to the front or back, `bonusTable` as a local pointer, a
+`while` or `for` form of the first loop (918, worse), the totals update spelled three ways. Evidence level: a
+real game, not byte-identical; decomp-repair 0.5.162's `block_register_repairs` reproduces the first three
+steps' sources and splits the temporaries, and the deep permuter offers them first when register rows
+dominate the diff.
+
 ### Keep a conditional halfword update in the guarded arm
 
 Three fresh N64 drafts from `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` lost the first argument at a call

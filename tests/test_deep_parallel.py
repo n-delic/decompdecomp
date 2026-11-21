@@ -313,6 +313,26 @@ def test_packed_word_store_scope_runs_with_mixed_operand_evidence(monkeypatch):
     assert 'do { entry->color.word = (((0xff000000 | (shade << 16)) | (shade << 8)) | shade); }' in tried[0]
 
 
+def test_loop_register_rewrites_run_first_when_registers_dominate_the_diff(monkeypatch):
+    # An N64 function with four loops: 40 register rows and two moved ones (1175 -> 280 with these rewrites).
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    proj = net.project_row('game')
+    source = ('extern s16 Table;\nvoid f(void) {\n    s16 *table;\n    s32 i;\n\n    table = &Table;\n    i = 0;\n'
+              '    do {\n        table[i] = 0;\n        i += 1;\n    } while (i < 4);\n}\n')
+    fn = {**net.function(), 'name': 'f', 'asm': 'addu $a0, $a0, $a1', 'best_source': source}
+    search = deep_permuter.Search(net, 1, 20, Log())
+    rows = [('r', f'addu $s{n}, $v0, $a1', f'addu $s{n + 1}, $v0, $a1') for n in range(5)] + [('o', 'move $s4, $zero', '')]
+    search.winner_diff = (rows, None)
+    tried = []
+    monkeypatch.setattr(search, '_score', lambda agent, project, function, child, best, fork: tried.append(child) or 30)
+
+    assert search.operand_order_pass(AGENT, proj, fn, 95, None) == 30
+    assert '(&Table)[i] = 0;' in tried[0] and 'table' not in tried[0]
+    assert not deep_permuter.permuter_focus.register_dominant([('r', 'a', 'b'), ('o', 'c', 'd'), ('o', 'e', 'f')])
+
+
 def test_float_stack_call_reuse_runs_when_the_diff_has_extra_loads(monkeypatch):
     from tests.test_permute import AGENT
 
