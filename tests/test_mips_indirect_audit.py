@@ -171,3 +171,16 @@ def test_fp_delay_slot_bound_and_boot_mapped_compact_cases():
     # A branch-likely annuls the bound on one path.
     image[0x1000:0x1004] = struct.pack('>I', 0x45020003)
     assert not audit()['flow_closed']
+
+
+def test_switch_reuses_the_high_half_register_for_the_scaled_index():
+    vram = 0x80200000
+    words = [0x2c620002,0x10400009,0x3c088020,0x25040050,0x00034080,
+             0x01044021,0x8d090000,0x01200008,0,0x03e00008,0,0x03e00008,0]
+    image = struct.pack('>13I',*words)
+    image += bytes(0x50-len(image))+struct.pack('>2I',vram+36,vram+44)
+    ranges = [dict(rom_start=0x50,rom_end=0x58,vram=vram+0x50)]
+    result = extent(image,0,len(words)*4,vram,'big',table_ranges=ranges)
+    assert result['flow_closed'] and result['return_sites'] == 2
+    assert result['jump_tables'][0]['targets'] == [vram+36,vram+44]
+    assert not extent(image,0,len(words)*4,vram,'big')['flow_closed']
