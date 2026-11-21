@@ -5,7 +5,7 @@ from collections import defaultdict
 from itertools import pairwise
 
 from ...arch.mips import JR_RA, is_frame
-from .raw_slots import Slot, _address
+from .raw_slots import _CART, Slot, _address
 
 
 def _valid(image, slot, floor):
@@ -27,6 +27,51 @@ def _constants(words):
             or call >> 26 != 3 or delay >> 16 != 0x3c05):
         return None
     return call, Slot(_address(high_a, low_a), _address(high_b, low_b), (delay & 65535) << 16)
+
+
+def _inline_copy(words):
+    source_hi, source_lo, dest_hi, size_hi, size_lo, copy, dest_lo, entry, delay = words
+    if (source_hi>>16 != 0x3c04 or source_lo>>16 != 0x2484
+            or dest_hi>>16 != 0x3c05 or dest_lo>>16 != 0x34a5
+            or size_hi>>16 != 0x3c06 or size_lo>>16 != 0x24c6
+            or copy>>26 != 3):
+        return None
+    start = _address(source_hi,source_lo)-_CART
+    size = _address(size_hi,size_lo)
+    base = (dest_hi & 65535)<<16 | (dest_lo & 65535)
+    target = ((base & 0xf0000000) | ((entry & 0x3ffffff)<<2)) if entry>>26 == 3 and not delay else None
+    return copy, Slot(start,start+size,base), target
+
+
+def _inline_slots(image, ranges, floor):
+    groups = defaultdict(dict)
+    for lo, hi, _ in ranges:
+        words = [word for word, in struct.iter_unpack('>I', image[lo:hi])]
+        for index in range(len(words)-8):
+            if not (match := _inline_copy(words[index:index+9])):
+                continue
+            call, slot, target = match
+            if _valid(image, slot, floor):
+                entry = slot.start+target-slot.vram if target is not None else -1
+                entered = entry == slot.start
+                if slot.start < entry <= slot.end-8:
+                    word, delay = struct.unpack_from('>II', image, entry)
+                    entered = is_frame(word) or (word, delay) == (JR_RA, 0)
+                candidates = groups[call,slot.vram]
+                candidates[slot] = entered or candidates.get(slot, False)
+    records = set()
+    for candidates in groups.values():
+        entered = sorted((slot for slot in candidates if candidates[slot]), key=lambda slot: slot.start)
+        if len(entered)<3 or sum(a.end==b.start for a,b in pairwise(entered))<2:
+            continue
+        records.update(entered)
+        # A companion load may initialize through a resident helper. Its
+        # shared entry bytes and neighboring cartridge extent corroborate it.
+        for slot in candidates.keys()-set(entered):
+            if any((slot.end == other.start or other.end == slot.start)
+                   and image[slot.start:slot.start+32] == image[other.start:other.start+32] for other in entered):
+                records.add(slot)
+    return records
 
 
 def _indexed(image, words, lo, base, calls, mappings, floor):
@@ -63,7 +108,7 @@ def _indexed(image, words, lo, base, calls, mappings, floor):
     return result
 
 
-def read(image, resident, inferred):
+def read(image, resident, inferred, *, include_inline=True):
     floor = max(end for _, end, _ in resident)
     groups = defaultdict(set)
     for lo, hi, _ in resident:
@@ -73,19 +118,18 @@ def read(image, resident, inferred):
                 call, slot = match
                 if _valid(image, slot, floor):
                     groups[call, slot.vram].add(slot)
-    records = set()
+    records = _inline_slots(image, resident+inferred, floor) if include_inline else set()
     calls = set()
     for (call, _), slots in groups.items():
         if len(slots) >= 3 and any(a.end == b.start for a, b in pairwise(sorted(slots, key=lambda s: s.start))):
             calls.add(call)
             records.update(slots)
-    if not calls:
-        return []
-    # The indexed loader may itself be in an independently recovered resident range.
-    mappings = {base-lo for lo, _, base in resident+inferred}
-    for lo, hi, base in resident+inferred:
-        words = [word for word, in struct.iter_unpack('>I', image[lo:hi])]
-        records.update(_indexed(image, words, lo, base, calls, mappings, floor))
+    if calls:
+        # The indexed loader may itself be in an independently recovered resident range.
+        mappings = {base-lo for lo, _, base in resident+inferred}
+        for lo, hi, base in resident+inferred:
+            words = [word for word, in struct.iter_unpack('>I', image[lo:hi])]
+            records.update(_indexed(image, words, lo, base, calls, mappings, floor))
     banks = sorted(records, key=lambda s: s.start)
     return banks if all(a.end <= b.start for a, b in pairwise(banks)) else []
 
