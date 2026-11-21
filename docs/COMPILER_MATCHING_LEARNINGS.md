@@ -12556,3 +12556,14 @@ only those two source statements recovered both increment instructions.
 With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, the Deep Permuter
 improved score 40 to 30. The v0.5.295 control stayed at 40 after 100
 attempts. Six register differences remained after the rewrite.
+
+### KMC GCC 2.7.2: inline the float interpolation into its multiply
+
+A scratch draft stored a linear interpolation in a separate float local
+before multiplying by the gain. Inlining the grouped interpolation as
+the multiply operand retained the operation order and recovered the
+result registers for the add and its consuming multiply in a branch delay slot.
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, the Deep Permuter
+improved score 40 to 30. The v0.5.298 control stayed at 40 after 100
+attempts. The remaining differences concern two other conversions.
