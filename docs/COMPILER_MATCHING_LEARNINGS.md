@@ -10578,3 +10578,16 @@ different, dead single-precision result for the final interpolation lowered
 it to 40. Both preparations retain the original grouping and literal types.
 Using the same staging temporary for the final conversion did not reach 40.
 The deep permuter reproduced the 95 to 40 improvement from the starting draft.
+
+### KMC dispatch bounds and explicit default cases
+
+- A renamed jump-table reference can use its numeric address alias even though the table data keeps the original
+  `jtbl_` label. Giving m2c one spelling for the paired relocations and table removed 27 generation failures
+  in the same isolated 226-example replay. Six of those drafts failed compilation, 18 compiled without a match,
+  two matched from fresh generation, and one matched through the existing goto-leaf permutation. The other
+  199 outcomes were identical.
+- For the two fresh matches, `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` built identical 80-byte and
+  100-byte functions. The source needed explicit leading cases whose table entries point to the dispatch guard's
+  default destination, and a signed local for the masked selector. With the alias fixed alone, omitting the
+  leading cases left scores of 2525 and 200. The compiler used a comparison chain for the first and rebased the
+  jump table to the first explicit case for the second.

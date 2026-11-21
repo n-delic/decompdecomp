@@ -427,9 +427,11 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
         return words[0][1]
     if leaves := short_leaf_drafts.variants(source, name, asm_text, context_header):
         return leaves[0][1]
+    switch_asm = _mips_table_aliases(asm_text, data_asm) if data_asm and 'switch (' in source else asm_text
     return (measured_stack_drafts.rewrite(source, name, asm_text, context_header, resolve=resolve)
             or large_stack_drafts.rewrite(source, name, asm_text, context_header)
-            or shared_default_drafts.rewrite(source, name, asm_text, data_asm, context_header)
+            or shared_default_drafts.explicit_default_labels(source, name, switch_asm, data_asm)
+            or shared_default_drafts.rewrite(source, name, switch_asm, data_asm, context_header)
             or uncached_read_repairs.rewrite(source, name, asm_text, resolve)
             or measured_callback_loop.rewrite(source, name, asm_text, context_header, resolve)
             or indirect_call_drafts.rewrite(source, name, asm_text, context_header, resolve)
@@ -513,6 +515,27 @@ def _execute_m2c(argv, timeout):
         timeout=timeout,encoding="utf-8",errors="replace",creationflags=NO_WINDOW)
 
 
+_MIPS_TABLE_LABEL = re.compile(r"^[ \t]*dlabel[ \t]+((jtbl_|D_)([0-9A-Fa-f]{8}))[ \t]*$", re.M)
+_MIPS_DATA_RELOC = re.compile(r"(%(?:hi|lo)\()D_([0-9A-Fa-f]{8})(\))")
+
+
+def _mips_table_aliases(asm: str, data: str) -> str:
+    """Use the supplied table's name when the draft's relocation uses its address alias."""
+    aliases = {}
+    for match in _MIPS_TABLE_LABEL.finditer(data):
+        name, prefix, address = match[1], match[2], match[3].lower()
+        # A table with two spellings for the same address needs its original relocation.
+        aliases[address] = name if prefix == "jtbl_" and aliases.get(address, name) == name else None
+    if not aliases:
+        return asm
+
+    def replace(match):
+        table = aliases.get(match[2].lower())
+        return match[1] + table + match[3] if table else match[0]
+
+    return _MIPS_DATA_RELOC.sub(replace, asm)
+
+
 @compile_timing.timed('generation')
 def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", data_asm: str | None = None,
             timeout: float = 20, valid: bool = False, strict: bool = False, options: tuple[str, ...] = ()) -> str | None:
@@ -527,7 +550,7 @@ def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", dat
 
         asm_text = abi_register_names(asm_text)
         if data_asm:
-            asm_text = draft_asm(asm_text, name, data_asm=data_asm)
+            asm_text = draft_asm(_mips_table_aliases(asm_text, data_asm), name, data_asm=data_asm)
     if target.startswith("gba"):  # a public GBA decomp (pret style): function macros, pre-UAL load mnemonics
         asm_text = re.sub(r"^\s*(?:non_word_aligned_)?thumb_func_start\s+(\w+)", r"glabel \1", asm_text, flags=re.M)
         asm_text = re.sub(r"^\s*arm_func_start\s+(\w+)", r"glabel \1", asm_text, flags=re.M)
