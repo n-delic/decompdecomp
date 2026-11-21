@@ -3,9 +3,10 @@ import re
 import struct
 from types import SimpleNamespace
 
-MAX_SYMBOLS = 16
+MAX_SYMBOLS = 16  # constants and strings; jump tables don't count (below)
 MAX_BYTES = 4096
 MAX_TOTAL = 16384
+MAX_TABLES = 64
 MAX_CASES = 256
 
 
@@ -36,7 +37,11 @@ def read(net, proj, fn):
     out = ['.section .rodata']; used = 0
     instruction_addresses = {int(m,16) for m in re.findall(r'/\*\s*\w+\s+([0-9A-F]{8})\s+\w+\s*\*/', asm)}
     names = sorted(set(re.findall(r'%(?:hi|lo)\(([A-Za-z_]\w*)\)', asm)))
-    count = 0
+    # Tables first, outside the constants' limits: m2c can't decompile a function with any `jr` whose table is
+    # missing, while a missing constant only costs a named global. A large state machine (a 4,399-instruction N64
+    # function with 18 tables) got 4 of them after its constants and no draft at all.
+    names.sort(key=lambda name: not name.startswith('jtbl_'))
+    count = tables = 0
     endian = '>' if net.cfg(proj).get('big_endian', True) else '<'
     for name in names:
         symbol = syms.by_name.get(name)
@@ -53,7 +58,9 @@ def read(net, proj, fn):
         size = symbol.size or (4 if name.startswith('FLT_') else 8 if name.startswith('DBL_') else 0)
         if not (table or string or constant) or not 0 < size <= MAX_BYTES:
             continue
-        if count >= MAX_SYMBOLS or used + size > MAX_TOTAL:
+        if table and tables >= MAX_TABLES:
+            continue
+        if not table and (count >= MAX_SYMBOLS or used + size > MAX_TOTAL):
             break
         if reader is None:
             reader = net.reader(proj, fn)
@@ -64,8 +71,10 @@ def read(net, proj, fn):
             if len(data) % 4:
                 continue
             # Keep the exact symbolic name in this overlay, even if another alias shares its RAM address.
-            body = ['.word .L%08X' % w if w in instruction_addresses else '.word 0x%08X' % w
-                    for (w,) in struct.iter_unpack(endian+'I', data)]
+            words = [w for (w,) in struct.iter_unpack(endian+'I', data)]
+            while len(words) > 2 and words[-1] == 0:
+                words.pop()  # alignment padding the data file counted into the table; m2c rejects it as a case
+            body = ['.word .L%08X' % w if w in instruction_addresses else '.word 0x%08X' % w for w in words]
         elif string and b'\0' in data:
             value = data.split(b'\0',1)[0]
             if any(b < 32 or b >= 127 for b in value):
@@ -77,5 +86,9 @@ def read(net, proj, fn):
                 body.append('.byte '+', '.join('0x%02X' % b for b in tail))
         else:
             body = ['.byte '+', '.join('0x%02X' % b for b in data[i:i+16]) for i in range(0,len(data),16)]
-        out.extend(['dlabel '+name, *body]); count += 1; used += len(data)
+        out.extend(['dlabel '+name, *body])
+        if table:
+            tables += 1
+        else:
+            count += 1; used += len(data)
     return out
