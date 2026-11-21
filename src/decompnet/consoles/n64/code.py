@@ -420,7 +420,7 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
 
     import yaml
 
-    from . import overlays
+    from . import overlays, resident_deflate
 
     if result := overlays.add(config, workdir, image, log):
         return result
@@ -428,6 +428,9 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
     original = image
     rom = (workdir / image).read_bytes()
     original_rom = rom
+    taken = split.code_ranges(config)
+    if taken and (result := resident_deflate.add(config,workdir,image,rom,taken,log)):
+        return result
     packed = unpack_code(rom)
     locations = []
     if packed:
@@ -441,7 +444,6 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
         rom = bytes(work)
         kib = sum(len(d) for _, d in packed) // 1024
         log(f"unpacked {len(packed)} compressed code block{'s' if len(packed) != 1 else ''} ({kib} KiB)")
-    taken = split.code_ranges(config)
     known = split.segments_from_config(config)
     found = find_segments(rom, taken, tuple(s.rom_end for s in known), log=log,
                           declared=tuple((s.rom_start, s.rom_end, s.vram) for s in known)) if taken else []
