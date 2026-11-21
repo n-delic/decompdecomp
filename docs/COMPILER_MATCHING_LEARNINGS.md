@@ -9767,6 +9767,54 @@ The archived sources compiled as independent controls. Exact replays compiled an
 - With `ido-7.1 -O2 -mips2 -G 0 -non_shared -Xcpluscomm -Wab,-r4300_mul -woff 649,838,712`, an extra duplicate argument made the compiler use the third argument register to hold the base of the second argument. The target used the fourth as a scratch register. Removing the duplicate from the call and trimming its generated prototype moved the 40-byte function from score 10 to exact. An unprototyped callee also matched.
 - A float update reused one register for the initial read and both branch results. Using one float local for those values moved the 72-byte function from score 15 to exact with the same KMC settings. Changing only the intermediate's type left score 15.
 
+### A 189-instruction record loop: six findings, and the chain that now finds them without an agent
+
+A 756-byte N64 routine that walks a table of 0x68-byte records, then appends to a table of 0xA10-byte records, built with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, was matched by hand on a live project (a new match, accepted by the
+running app's linked-byte judge, not a controlled replay). Its m2c draft did not compile, so nothing downstream ran.
+Counts below are differing instructions out of 189 in a local comparison that masks relocations and branch offsets,
+not judge scores (the judge scored the first accepted try 580, the next 225, then exact).
+
+- **A store m2c can't type doesn't compile.** `*((*count * 0xA10) + base) = 0;` (an integer expression dereferenced) is
+  the only compile error; the target's `sh $zero, 0($v0)` gives the width. `*(u16 *)(...)` makes the draft compile
+  (42 differing). The width of each store through a register is evidence enough to try them most frequent first.
+- **A masked, carried loop index and its temporaries cost a copy.** m2c wrote `var_v1 = 0 & 0xFFFF; do { temp_a1 =
+  var_v1 * 0x68; temp_v1 = temp_a1 + base; ... var_v1 = var_s0 & 0xFFFF; }`. The original wrote `(i & 0xFFFF) * 0x68 +
+  base` at each of its three uses, and GCC shares them into one register, the one the temporary only copied from (a
+  stray `move $a1, $v1`). Writing it out at every use, offset first as m2c had it, matched the loop (6 to 0 by hand with
+  the rest in place); base first left one instruction wrong (1). An array-of-records view (`rec[i & 0xFFFF].flag`) gave the same
+  result by hand, so the types were not needed. The carried copy is only equal to the expression because both start at 0:
+  check that, or the substitution changes the program.
+- **The first loop instruction ends up in the back-branch's delay slot.** The target has `andi $v1, $s0, 0xFFFF` before
+  the loop label and the same instruction again in the `bnez` delay slot. That is the reorg pass copying the loop's first
+  instruction (and retargeting the branch past it) when its destination is dead on exit; a draft whose first instruction
+  writes a register the compare still reads (`andi $v0` before `sltu $v0`) gets a `nop` instead. The index being the first
+  statement of the pass, and in a register nothing else reads at the bottom, decided it.
+- **A frame bigger than the draft's is a local the original had.** `addiu $sp, -0x38` against the draft's 0x30, with the
+  lowest saved register at 0x18 and a 16-byte argument area, leaves 8 bytes: a `volatile u64 scratch;` (a variable the
+  compiler kept in memory) gave the frame and the matching save/restore offsets (18 to 2 with the loop).
+- **The member form of a field access fixes loads and can break a store.** Reading m2c's `M2C_FIELD` through a one-member
+  struct (`((struct { T v; } *)(base + off))->v`) moved the loop's loads to their target positions (42 to 38, and later
+  21 to 6 in the chain), but moved one `sw` in the join block one instruction late. Putting that single access back to the
+  pointer form `*(T *)(...)` took the last 2 to 0. The original used both forms in one function: try accesses one at a
+  time, stores first.
+- **Parameter width and initialisation order decide the prologue.** `u16 arg1` (m2c had `s32`) put the argument copy
+  after the three zero-initialisations as in the target; `var_s1 = 0; var_s0 = 0; var_s2 = 0;` in that order gave the
+  target's save order and `s0`/`s1` roles where m2c's `s0, s1, s2` order swapped them.
+- **A compare operand read before the store that precedes it** (`lim = *(s32 *)(p + 4); G = t; if (t == lim)`) put the
+  store in the `bne` delay slot as the target did (32 to 17 in the hand path); the automatic chain did not need it.
+
+Neutral or worse: an explicit carried variable kept in the source with the index at the bottom (17 to 33); `for` loops
+(24 to 30 differing); rewriting the same loop as a `while`; `u16` or `s32` for the loop counter and the pointer locals (no change
+across 36 type combinations); shuffling declaration and initialisation order alone (no change in 240 tries); moving the
+base-address read into a local before the index (worse once the carried index was gone); 15,000 random permuter
+mutations from the 2-instruction state did not find the single-access fix.
+
+With `integer_address_store`, `loop_index_inline`, `frame_padding` and `field_pointer_site` (decomp-repair 0.5.138 and
+0.5.140), hill-climbing the app's deterministic families from the raw draft reaches 0 in about 40 seconds: store width,
+then `field_struct_view` and the inlining and padding, `parameter_width`, `allocation_initialization_order`, and last
+`field_pointer_site`. The hill-climb stood in for the deep permuter, whose own scoring and budgets were not exercised.
+
 ### Keep the measured pointer, call and result storage
 
 The original compiler independently compiled each archived source as a control. Exact replays of the four changes used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, with `-g3` in all cases except the copy before cursor binding.
