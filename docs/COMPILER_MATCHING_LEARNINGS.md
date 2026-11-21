@@ -1,5 +1,30 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: restore measured halfword and record operations
+
+Five additional KMC drafts linked byte for byte with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`. The measured replay
+of 44 archived drafts went from 33 to 38 exact matches.
+
+- Save the halfword read in the guard, then assign the shared literal only
+  inside the successful arm. Use that local for all three stores
+  (140 to 0 over 108 bytes). The guard change alone scored 235 and
+  sharing the stores without it scored 155.
+- Capture the flag word before publishing the returned object, keeping
+  the callback store and masked write after publication
+  (150 to 0 over 124 bytes).
+- Replace four word-scaled address expressions with byte indexing of
+  the relocated table and halfword loads at the measured byte stride
+  (120 to 0 over 252 bytes). A cast on the unseparated base expression
+  scored 1,107.
+- Remove four inferred arguments and correct the local prototype when
+  the linked guard reaches the two calls with no argument preparation
+  (145 to 0 over 204 bytes).
+- In each mask arm, start with the record base and add the byte
+  displacement in a separate statement. The target loads the record
+  fields through that same sum register (130 to 0 over 644 bytes).
+  Each guard keeps its own load and the corresponding field offset.
+
 ### KMC GCC 2.7.2: expose small store and call scheduling boundaries
 
 Eight additional archived N64 drafts matched. The original compiler was

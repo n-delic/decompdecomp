@@ -30,11 +30,13 @@ from decomprepair import (
     measured_expression_repairs,
     measured_float_grid_stores,
     measured_global_rebase,
+    measured_halfword_stores,
     measured_immediate_repairs,
     measured_kmc_addresses,
     measured_kmc_byte_operations,
     measured_kmc_flow,
     measured_kmc_lifetimes,
+    measured_kmc_record_reads,
     measured_kmc_wrappers,
     measured_lifetime_shapes,
     measured_memory_order,
@@ -213,6 +215,8 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_kmc_addresses.variants(source, name, header, rows, flags)
         result += measured_kmc_byte_operations.variants(source, name, header, rows, resolve=resolve)
         result += measured_kmc_flow.variants(source, name, header, rows)
+        result += measured_halfword_stores.variants(source, name, rows, resolve)
+        result += measured_kmc_record_reads.variants(source, name, header, rows, resolve)
         result += measured_kmc_lifetimes.variants(source, name, header, rows)
         result += measured_kmc_wrappers.variants(source, name, header, rows)
         result += measured_stack_records.variants(source, name, header, rows)
