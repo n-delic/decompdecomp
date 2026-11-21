@@ -102,7 +102,7 @@ class Settings:
             profile = self._profile(declared[1], [scratch['c_flags']])
             if profile is not None:
                 defines = [*_DEFINE.findall(' '.join(groups)), *literal]
-                profile['flags'] = list(dict.fromkeys([*profile['flags'], *defines]))
+                profile['flags'].extend(defines)
             return profile
         match = _IDO.search(expand(variables.get('CC', '')).strip())
         if not match or not target:

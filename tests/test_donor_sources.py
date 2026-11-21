@@ -107,5 +107,5 @@ def test_donor_file_profile_prefers_objdiff_and_reads_literal_make_overrides(tmp
     project = Settings(SimpleNamespace(root=tmp_path))
     unit = SimpleNamespace(base=tmp_path / 'build/entry.c.o', source='entry.c', scratch=None)
     assert project.for_unit(unit) == {'toolchain': 'ido-5.3', 'flags': ['-G', '0', '-O1', '-DFILE_LIMIT=32', '-DSOURCE_MODE=1']}
-    unit.scratch = {'compiler': 'ido7.1', 'c_flags': '-O0 -mips3 -DN=1'}
-    assert project.for_unit(unit) == {'toolchain': 'ido-7.1', 'flags': ['-O0', '-mips3', '-DN=1', '-DFILE_LIMIT=32', '-DSOURCE_MODE=1']}
+    unit.scratch = {'compiler': 'ido7.1', 'c_flags': '-O0 -mips3 -DN=1 -G 0 -woff 0'}
+    assert project.for_unit(unit) == {'toolchain': 'ido-7.1', 'flags': ['-O0', '-mips3', '-DN=1', '-G', '0', '-woff', '0', '-DFILE_LIMIT=32', '-DSOURCE_MODE=1']}
