@@ -13,6 +13,7 @@ from . import function_names, source_preparation
 from .purpose_work import Executor
 
 SCHEMA = "CREATE TABLE IF NOT EXISTS reconcile_visits(function_id INTEGER PRIMARY KEY,scope TEXT,cursor INTEGER,visited REAL)"
+CURRENT_CANDIDATES = 12
 
 
 def bank(net, proj, addresses=None):
@@ -35,16 +36,34 @@ def bank(net, proj, addresses=None):
 
 
 def candidates(net, proj, fn, records, current_header=False):
-    """`current_header`: only C judged with the function's header as it is today (an automatic resume must not bring an
-    old header back over a verdict the project's own checks gave), including the match a check reopened, which it kept
-    as the best attempt."""
+    """Automatic recovery judges saved source with the active header and keeps that header on publish."""
     if current_header:
-        header=net._context(proj['id'],fn['unit'])['header']
-        kept=[(function_names.canonical_source(fn,fn['best_source']),header,'match kept as best attempt')] if fn['best_source'] else []
-        out=[]
-        for item in candidates(net,proj,fn,records)+kept:
-            if item[1]==header and not any(x[:2]==item[:2] for x in out):out.append(item)
-        return out[:8]
+        header = net._context(proj['id'], fn['unit'])['header']
+        out = {}
+
+        def keep(source, origin):
+            if source and len(source) <= 128000:
+                out.setdefault(source, (source, header, origin))
+
+        for source, saved_header, origin in candidates(net, proj, fn, records):
+            if saved_header == header:
+                keep(source, origin)
+        if fn['best_source']:
+            keep(function_names.canonical_source(fn, fn['best_source']), 'match kept as best attempt')
+
+        # New exact receipts can repeat one stale spelling. Spend compiler
+        # slots on distinct saved sources, rejudged under today's header.
+        rows = net.project_store(proj['id']).all("""
+            SELECT source FROM attempt_details WHERE id IN (
+                SELECT MAX(id) FROM main.attempts WHERE function_id=? AND score=0 AND compiled=1
+                    AND (source_hash IS NOT NULL OR source IS NOT NULL)
+                GROUP BY COALESCE(source_hash, source)
+                ORDER BY MAX(id) DESC LIMIT ?
+            ) ORDER BY id DESC
+            """, fn['id'], CURRENT_CANDIDATES)
+        for row in rows:
+            keep(function_names.canonical_source(fn, row['source']), 'distinct exact attempt, current header')
+        return list(out.values())[:CURRENT_CANDIDATES]
     current=None
     out=[]
     def add(source, header, origin):
