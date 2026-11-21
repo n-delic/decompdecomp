@@ -71,7 +71,7 @@ def _run(net, proj, fn, log, check, max_profiles):
         if source := candidate(dict(fn).get('asm', ''), fn['name']):
             ranked = prioritized(proj, fn, own)
             probes.insert(1, (ranked[0] if ranked else list(own['flags']), source))
-    from decomprepair import guarded_loop_repairs
+    from decomprepair import guarded_loop_repairs, halfword_store_scheduling
     context = net._context(proj['id'],fn['unit']) if hasattr(net,'_context') else None
     from .profile_hypotheses import float_sqrt_source
     sqrt_source = float_sqrt_source(own, dict(fn).get('asm') or '', fn['best_source'], fn['name'],
@@ -90,6 +90,9 @@ def _run(net, proj, fn, log, check, max_profiles):
             indexed = pointer_walk_index_repairs.variants(fn['best_source'], fn['name'])
             if indexed:
                 probes.insert(2, (restored[0], indexed[0][1]))
+    # Keep the complete load/store hypothesis ahead of isolated scheduling probes.
+    halfword = [(list(flags), source) for flags, source in halfword_store_scheduling.probes(dict(proj), dict(fn), own)]
+    probes[1:1] = halfword
     probes = list(dict.fromkeys((tuple(flags),source) for flags,source in probes))
     probes = [(list(flags),source) for flags,source in probes]
     candidates = [(own['toolchain'], tuple(flags)) for flags, _ in probes]
@@ -136,7 +139,8 @@ def _run(net, proj, fn, log, check, max_profiles):
                 if index == 0 and item.get('inferred'):
                     # Keep these trials when resuming a small budget, even if no live diff survives.
                     inferred = [(variant, source) for variant in item['inferred']]
-                    probes[1:] = inferred + [probe for probe in probes[1:] if probe not in inferred]
+                    probes[1:] = halfword + inferred + [probe for probe in probes[1:]
+                                                        if probe not in halfword and probe not in inferred]
                 if item.get('link'):
                     result['link'] = item['link']
                     if (set(item['link']['symbols']) <= {'sqrt', 'sqrtf'} and

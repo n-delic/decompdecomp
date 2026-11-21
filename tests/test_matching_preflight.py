@@ -299,3 +299,26 @@ def test_kmc_float_sqrt_repairs_source_and_flags_together(monkeypatch):
     assert state['calls'][1][0] == ['-O2']
     assert not state['applied']
     assert state['suggested'][0]['review_only'] and 'sqrtf(' in state['suggested'][0]['source']
+
+
+def test_signed_halfword_word_store_pair_runs_before_isolated_flags(monkeypatch):
+    from decompnet.app import profile_hypotheses
+
+    net, proj, fn, state = setup()
+    proj['arch'] = 'mips'
+    net.cfg(proj)['compiler']['toolchain'] = 'gcc-2.7.2-kmc'
+    fn.update(best_source='void f(void) { v = *(volatile s32 *)(in + i); *(s32 *)(out + j) = v; }',
+              asm='lh $v0, %lo(in)($v1)\nsw $v0, %lo(out)($at)')
+    monkeypatch.setattr(profile_hypotheses, 'kmc_priorities', lambda *args: [['-O1']])
+
+    def judge(proj, fn, toolchain, flags, source):
+        state['calls'].append((flags, source))
+        exact = ('-fno-schedule-insns' in flags and '*(s16 *)' in source and '*(volatile s32 *)(out' in source)
+        return exact, SimpleNamespace(score=0 if exact else 200, rows=[]), ''
+
+    net._judge_with = judge
+    result = preflight.run(net, proj, fn, max_profiles=2)
+    assert result['tested'] == 2 and result['best']['exact']
+    assert [flags for flags, _ in state['calls']] == [['-O2'], ['-O2', '-fno-schedule-insns']]
+    assert state['suggested'][0]['source'] == result['best']['source']
+    assert not state['applied']
