@@ -9721,3 +9721,13 @@ Two independent N64 drafts referred to an undeclared stack base. Both matched us
 ### Recognize a repeated table read in a call delay slot
 
 An independently generated 147-instruction N64 draft doubled the index scale at two reads of the same word table. The second read was in the direct call's delay slot and loaded an argument register. Accepting that load as corroborating evidence let the existing array rewrite match all 588 bytes, from score 20, with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1`. The recorded match compiled independently as a control.
+
+### Restore an incoming context from a shifted call setup
+
+Twelve independently generated N64 drafts reproduced byte-for-byte with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`. The archived sources compiled as independent controls. The original call saw the incoming first argument even though m2c had omitted it. The C changes below preserved the other arguments and their order.
+
+- Four wrappers with `-g3` had lost the context parameter entirely. Adding it to the wrapper and the generated callee prototype moved the two 84-byte wrappers from score 5 to exact and the two 36-byte wrappers from score 15 to exact.
+- A 76-byte function with `-g3` set its second argument on either side of a branch while both paths preserved the first. The same reconstruction moved its nearest draft from score 10 to exact.
+- Two 36-byte fill wrappers omitted the destination pointer. A carrier copied the fill byte, and the delay slot supplied the third argument. Restoring the destination moved both from score 15 to exact. One also used `-g3`.
+- Four audio initializers already declared the context. Forwarding it to the first call matched 176, 176, 140 and 184 bytes. The cases started at scores 25, 25, 45 and 45. The first and fourth also used `-g3`. Two drafts had nested callback declarators, and two had additional scheduling differences at a later call.
+- An 188-byte function with `-g3` already forwarded its context at every later call to the same helper. Restoring it at the one short call changed score 5 to exact.
