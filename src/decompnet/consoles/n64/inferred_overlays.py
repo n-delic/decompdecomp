@@ -9,10 +9,10 @@ _MIN_CALLS = 32
 _MAX_PAIRS = 1_000_000
 
 
-def recover(image, found, taken=(), check=lambda: None):
+def recover(image, found, taken=(), check=lambda: None, *, changed=()):
     """Return corrected inferred ranges and the starts needing independent splat scopes."""
     result = list(found)
-    changed = set()
+    changed = set(changed)
     for index, (lo, hi, vram) in enumerate(found):
         check()
         if lo < 0 or hi - lo < 4096 or hi > len(image) or (lo | hi) % 4:
@@ -60,6 +60,45 @@ def recover(image, found, taken=(), check=lambda: None):
         scoped |= overlap
     first = min(vram for lo,_,vram in result if lo in scoped)
     return result, {lo for lo,_,vram in result if vram >= first}
+
+
+def runtime_mappings(image, found, ranges, taken=()):
+    """Apply RAM-observed placements when internal calls also support them."""
+    result, changed = [], set()
+    for lo,hi,vram in found:
+        evidence = [(start,end,base) for start,end,base in ranges if start < hi and lo < end]
+        boundaries = sorted({lo,hi}|{max(lo,start) for start,_,_ in evidence}
+                            |{min(hi,end) for _,end,_ in evidence})
+        parts, corrected = [], set()
+        for start,end in zip(boundaries,boundaries[1:]):
+            old = vram+start-lo
+            candidates = {base+start-first for first,last,base in evidence if first <= start < end <= last}
+            if len(candidates) != 1 or end-start < 128 or (start|end) % 4:
+                parts.append((start,end,old))
+                continue
+            address = candidates.pop()
+            if (not 0 <= start < end <= len(image)
+                    or not 0x80000400 <= address < address+end-start <= 0x80800000
+                    or any(base < address+end-start and address < base+stop-begin for begin,stop,base in taken)):
+                parts.append((start,end,old))
+                continue
+            words = struct.unpack_from(f'>{(end-start)//4}I', image, start)
+            offsets = [4*i for i, word in enumerate(words)
+                       if is_frame(word) or i >= 2 and words[i-2] == JR_RA]
+            calls = {0x80000000 | ((word & 0x03ffffff) << 2) for word in words if word >> 26 == 3}
+            actual = len(calls & {address+offset for offset in offsets})
+            previous = len(calls & {old+offset for offset in offsets})
+            if address != old and actual >= 3 and actual > previous:
+                parts.append((start,end,address))
+                corrected.add(start)
+            else:
+                parts.append((start,end,old))
+        if corrected:
+            result.extend(parts)
+            changed.update(corrected)
+        else:
+            result.append((lo,hi,vram))
+    return result, changed
 
 
 def scope(config, found, scoped):

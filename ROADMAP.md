@@ -105,6 +105,7 @@
   cache bounds. Branches in one occupant of a shared slot cannot cut a closed function in another
   occupant. Rebuildable exports retain separate ROM placements and scoped symbols for overlapping banks.
   Strong, unambiguous self-call evidence also corrects inferred code placed over a sibling bank.
+  Byte-matched emulator RAM ranges refine smaller inferred banks when their local calls corroborate the mapping.
 - Done: N64 imports map audited inline data spans separately from executable text when their
   full surrounding fingerprints match. This prevents constants and alignment words from cutting
   otherwise closed function bodies.

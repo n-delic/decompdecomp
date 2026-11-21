@@ -115,3 +115,23 @@ def test_without_the_emulator_nothing_runs(tmp_path, monkeypatch):
     monkeypatch.setattr(emulator, "installed", lambda: None)
     found = loaded_code.find(tmp_path / "rom.z64", bytes(0x2000), [(0x1000, 0x1010, 0x80000400)], log=lambda *a: None)
     assert found["segments"] == [] and "isn't installed" in found["skipped"]
+
+
+def test_runtime_moved_segment_exposes_its_byte_verified_range(tmp_path, monkeypatch):
+    rom = _rom()
+    main = _words(FRAME, _jal(0x80201000), 0, JR_RA, 0x27BD0018)
+    rom[0x1000:0x1000 + len(main)] = main
+    overlay = _function(42)
+    rom[0x3000:0x3000 + len(overlay)] = overlay
+    ram = bytearray(0x400000)
+    ram[0x201000:0x201000 + len(overlay)] = overlay
+    _setup(tmp_path, monkeypatch, bytes(ram))
+    (tmp_path/'rom.z64').write_bytes(rom)
+    found=loaded_code.find(tmp_path/'rom.z64',bytes(rom),
+                           [(0x1000,0x1000+len(main),0x80000400)],
+                           [(0x3000,0x3000+len(overlay),0x80301000)],log=lambda *_:None)
+    assert found['segments']==[]
+    assert found['moved']==[dict(rom=0x3000,split=0x80301000,runs_at=0x80201000)]
+    (start,end,address),=found['moved_ranges']
+    assert start<=0x3000<0x3000+len(overlay)<=end
+    assert address+0x3000-start==0x80201000

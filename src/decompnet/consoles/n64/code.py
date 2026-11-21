@@ -519,6 +519,7 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
         from . import rare_overlays
         if result := rare_overlays.add(config,workdir,original,original_rom,packed,found,locations,log):
             return result
+    loaded = {}
     if taken:  # what the game loads that the search couldn't place: found by running it (when the emulator's here)
         from .loaded_code import find as run_and_find
 
@@ -550,7 +551,11 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
         cfg["sha1"] = hashlib.sha1(rom).hexdigest()
     from . import inferred_overlays
 
-    found, scoped = inferred_overlays.recover(rom, found, taken, getattr(log, 'check_cancel', lambda: None))
+    found, runtime = inferred_overlays.runtime_mappings(rom, found, loaded.get('moved_ranges', ()), taken)
+    if runtime:
+        log(f'Corrected {len(runtime)} inferred code ranges using RAM-observed bytes and their internal calls.')
+    found, scoped = inferred_overlays.recover(rom, found, taken, getattr(log, 'check_cancel', lambda: None),
+                                             changed=runtime)
     insert_segments(config, cfg, found, len(rom))
     if scoped:
         cfg = yaml.safe_load(config.read_text(encoding='utf-8'))

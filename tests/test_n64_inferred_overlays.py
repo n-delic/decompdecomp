@@ -43,3 +43,30 @@ def test_ambiguous_self_calls_leave_the_original_mapping():
         word=struct.unpack_from('>I',image,0x3000+4*i)[0]
         struct.pack_into('>I',image,0x3200+4*i,word+0x4000)
     assert inferred_overlays.recover(image,found)==(found,set())
+
+
+def test_runtime_observed_range_needs_internal_call_corroboration():
+    image,found=fixture()
+    old=(0,0x4000,0x80040000)
+    observed=(0,0x4000,0x80100000)
+    mapped,changed=inferred_overlays.runtime_mappings(image,[old],[observed])
+    assert mapped==[observed] and changed=={0}
+    assert inferred_overlays.runtime_mappings(image,[old],[observed],[(0x5000,0x6000,0x80100000)])==([old],set())
+    image[0x3000:0x3000+4*48]=bytes(4*48)
+    assert inferred_overlays.runtime_mappings(image,[old],[observed])==([old],set())
+
+
+def test_runtime_range_can_cover_only_part_of_inferred_code():
+    image,found=fixture()
+    old=(0,0x5000,0x80040000)
+    observed=(0,0x4000,0x80100000)
+    mapped,changed=inferred_overlays.runtime_mappings(image,[old],[observed])
+    assert mapped==[(0,0x4000,0x80100000),(0x4000,0x5000,0x80044000)]
+    assert changed=={0}
+
+
+def test_rejected_partial_runtime_range_does_not_split_the_inferred_segment():
+    image,found=fixture()
+    image[0x3000:0x3000+4*48]=bytes(4*48)
+    old=(0,0x5000,0x80040000)
+    assert inferred_overlays.runtime_mappings(image,[old],[(0,0x4000,0x80100000)])==([old],set())

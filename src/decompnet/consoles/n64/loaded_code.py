@@ -10,8 +10,8 @@ exactly: that stretch's ROM range and the address it's loaded at. Each segment f
 
 Only what the run loads is found (a later track's overlay needs a run that gets there), and only code the ROM holds
 as it is: code a game decodes as it loads is counted and reported (`summary`), not added. A known segment the game
-runs at another address than the split placed it is reported too, not changed (its functions keep their names and
-matches).
+runs at another address than the split placed it is reported with its verified ROM and RAM range. A fresh import
+can use the range when independent internal calls also support its mapping.
 """
 
 from __future__ import annotations
@@ -91,7 +91,7 @@ def find(rom_path: Path, rom: bytes, taken, found=(), *, log=print, stop=lambda:
         dumps = [p.read_bytes() for _, p in sorted(run.dumps.items()) if p.is_file()]
     known = list(taken) + list(found)
     added: list[tuple[int, int, int]] = []
-    moved, decoded, seen = [], set(), set()
+    moved, moved_ranges, decoded, seen = [], set(), set(), set()
     todo = _targets(rom, known)
     called = set(todo)  # every call into code no segment has, for where a segment starts
     while todo:
@@ -120,6 +120,7 @@ def find(rom_path: Path, rom: bytes, taken, found=(), *, log=print, stop=lambda:
             if kv - ks != shift and not any(m["rom"] == max(s, ks) for m in moved):
                 moved.append({"rom": max(s, ks), "split": kv + max(s, ks) - ks, "runs_at": max(s, ks) + shift})
         if any(kv - ks != shift for ks, ke, kv in overlapping):
+            moved_ranges.add((s, e, v))
             continue
         # the region is a whole overlay: what the split has of it already comes out, the rest is added
         pieces, at = [], s
@@ -149,4 +150,4 @@ def find(rom_path: Path, rom: bytes, taken, found=(), *, log=print, stop=lambda:
     if moved:
         log(f"{len(moved)} places the split puts at another address than the game runs them: " + ", ".join(
             f"ROM {m['rom']:#x} at {m['split']:#x}, run at {m['runs_at']:#x}" for m in moved[:4]))
-    return {"segments": added, "decoded": len(decoded), "moved": moved}
+    return {"segments": added, "decoded": len(decoded), "moved": moved, "moved_ranges": sorted(moved_ranges)}
