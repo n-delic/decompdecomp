@@ -562,6 +562,12 @@ The same game could line up correctly and still spin during a race or the title-
 renamed two conversion routines that its arctangent called, then the build lost their ROM addresses and stubbed
 both calls to zero. The build carries those addresses through the rename so both CPU fallbacks can run the routines.
 
+The recorded RDP commands also explained the black stippling behind the race HUD. The graphics microcode
+starts each task with alpha dither disabled. When the HUD changed only the alpha compare setting, the software
+renderer carried dither over from the preceding task and drew some fully transparent pixels. The renderer now
+starts each F3DEX2 and S2DEX2 task with the microcode's defaults for partial updates. This also fixes the image
+RT64 presents when the VI needs pixels from the software framebuffer.
+
 The build also lists what to look at before playing. Matched C is judged by one compiler, and on MIPS a call works
 whether or not its C agrees with the function it calls. So matched C can take a result from a function it declares
 void, call a variadic function through a fixed prototype, or pass a `u8` where the callee takes an `s32`. Each one is

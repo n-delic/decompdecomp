@@ -73,6 +73,7 @@ static uint32_t fill_color;
 static Color prim, env, blend, fog;
 static int fog_mul, fog_off; /* G_MW_FOG: the RSP's fog alpha is z/w * fog_mul + fog_off, 0 to 255 */
 static uint32_t combine0, combine1, mode_h, mode_l;
+static uint32_t rsp_mode_h, rsp_mode_l; /* partial G_SETOTHERMODE commands update the microcode's own copy */
 static int scissor[4] = {0, 0, 320, 240};
 static int scissor_q[4] = {0, 0, 320 * 4, 240 * 4}; /* the scissor as G_SETSCISSOR gives it, in quarter pixels */
 #define MAXW 640
@@ -1051,9 +1052,12 @@ static void rdp(uint8_t op, uint32_t w0, uint32_t w1) {
         int len = (w0 & 0xFF) + 1, shift = 32 - (int)((w0 >> 8) & 0xFF) - len;
         if (shift < 0) shift = 0;
         uint32_t mask = (len >= 32 ? 0xFFFFFFFFu : ((1u << len) - 1)) << shift;
-        if (op == 0xE2) mode_l = (mode_l & ~mask) | (w1 & mask); else mode_h = (mode_h & ~mask) | (w1 & mask);
+        if (op == 0xE2) rsp_mode_l = (rsp_mode_l & ~mask) | (w1 & mask);
+        else rsp_mode_h = (rsp_mode_h & ~mask) | (w1 & mask);
+        mode_h = rsp_mode_h;
+        mode_l = rsp_mode_l;
         break; }
-    case 0xEF: mode_h = w0 & 0xFFFFFF; mode_l = w1; break;
+    case 0xEF: mode_h = rsp_mode_h = w0 & 0xFFFFFF; mode_l = rsp_mode_l = w1; break;
     }
     if (dump_cmds && (op == 0xE2 || op == 0xE3)) record2(0xEF000000u | mode_h, mode_l);
 }
@@ -1901,7 +1905,10 @@ static void gbi1(uint8_t op, uint32_t w0, uint32_t w1) {
     case 0xBA: case 0xB9: { /* G_SETOTHERMODE_H / _L: shift and length */
         int shift = (int)(w0 >> 8) & 0xFF, len = (int)w0 & 0xFF;
         uint32_t mask = (len >= 32 ? 0xFFFFFFFFu : ((1u << len) - 1)) << (shift & 31);
-        if (op == 0xB9) mode_l = (mode_l & ~mask) | (w1 & mask); else mode_h = (mode_h & ~mask) | (w1 & mask);
+        if (op == 0xB9) rsp_mode_l = (rsp_mode_l & ~mask) | (w1 & mask);
+        else rsp_mode_h = (rsp_mode_h & ~mask) | (w1 & mask);
+        mode_h = rsp_mode_h;
+        mode_l = rsp_mode_l;
         if (dump_cmds) record2(0xEF000000u | mode_h, mode_l);
         break; }
     case 0xB7: geometry |= gbi1_geometry(w1); break;
@@ -2322,6 +2329,11 @@ void port_rdp_replay(const uint8_t *cmds, size_t bytes, const uint8_t *hidden, s
 }
 static void render_list(uint32_t task) {
     ucode = identify_ucode(rd32(task + 24)); /* the microcode's data names it */
+    /* The GBI 2 microcode starts each task with fresh other-mode registers. The RDP keeps its old mode until a
+       G_SETOTHERMODE sends the new pair. In a racing game's HUD task, a partial update was inheriting alpha
+       dither from the previous task. Dither raised transparent texels above the alpha threshold of 1. */
+    rsp_mode_h = (ucode == UC_F3DEX2 || ucode == UC_S2DEX2) ? 0x080CFFu : mode_h;
+    rsp_mode_l = (ucode == UC_F3DEX2 || ucode == UC_S2DEX2) ? 0 : mode_l;
     static long trace = -1;
     if (trace < 0) trace = getenv("PORT_DLTRACE") ? atol(getenv("PORT_DLTRACE")) : 0;
     tracing = trace > 0 && (long)render_tasks >= trace && (long)render_tasks < trace + 6;

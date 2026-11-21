@@ -53,6 +53,26 @@ def _f3dex2_start(mem: Memory, g: Gfx) -> None:
     g(0xDA380003, 0x80000000 | ident)  # model view: load
 
 
+@pytest.mark.parametrize("ucode", ["F3DEX2", "S2DEX2"])
+def test_a_tasks_partial_mode_update_uses_fresh_dither_defaults(renderer, tmp_path, ucode):
+    mem = Memory()
+    scene = Gfx(mem)
+    scene.frame().fill(0x07C1)
+    scene.othermode(0, 0)  # the preceding task leaves alpha dither enabled
+    scene(0xDF000000)
+    hud = Gfx(mem, ucode, at=0x2000, task=0x180)
+    hud(0xE2001E01, 1)  # the HUD sets alpha compare without setting the dither bits
+    hud(0xF9000000, 1)
+    hud(*TEX)
+    texels = mem.put(struct.pack(">64H", *([0x0000, 0xF801] * 32)))
+    load_texture(hud, texels)
+    hud(0xE4020020, 0)(0xE1000000, 0)(0xF1000000, 0x04000400)
+    hud(0xDF000000)
+    out, _ = run(renderer, mem, tmp_path, scene.end(), hud.end())
+    assert all(out.pixel(x, y) == ((31, 0, 0) if x % 2 else (0, 31, 0))
+               for y in range(8) for x in range(8))
+
+
 def test_f3dex2_lights_land_in_their_own_slots(renderer, tmp_path):
     """gSPSetLights1: LIGHT_1 (red, toward the viewer) at G_MOVEMEM offset 48, the ambient (dark blue) at 72, one
     light. A face toward the light is red plus the ambient; a face away from it only the ambient. The renderer once
