@@ -39,6 +39,11 @@ _BRANCH = re.compile(r"^(b|beq|bne|beqz|bnez|bgtz|blez|bltz|bgez|bltzal|bgezal|b
                      r"bltzl|bgezl|bc1t|bc1f|bc1tl|bc1fl|j)$")
 
 
+def with_m2c_macros(source: str) -> str:
+    """Add the compatibility preamble when a draft needs its names."""
+    return M2C_MACROS + '\n' + source if re.search(r'\bM2C_\w+', source) else source
+
+
 def m2c_target(toolchain_id: str) -> str | None:
     """m2c's target for C that `toolchain_id` built ("mips-ido-c"): the console that lists the compiler says m2c's
     dialect (consoles/). None when m2c can't read its code."""

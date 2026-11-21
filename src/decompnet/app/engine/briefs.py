@@ -300,7 +300,7 @@ class BriefMixin:
                         draft_reports.failure(report, 'generation', 'without_context', fallback_error)
             if report['failures']:
                 draft_reports.save(self, fn['id'], report, project_id=proj['id'])
-            text = f"{DRAFT_NOTE}\n{seeds.M2C_MACROS}\n{draft}" if draft else ""
+            text = f"{DRAFT_NOTE}\n{seeds.with_m2c_macros(draft)}" if draft else ""
             with self.project_store(proj['id']).tx() as db:
                 db.execute("UPDATE functions SET seed=?, seed_key=? WHERE id=?", (text, key, fn["id"]))
         return text
