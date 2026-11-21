@@ -149,6 +149,7 @@ class BriefMixin:
                 aligned_allocator_request,
                 aligned_stack_read,
                 byte_cursor_postincrements,
+                indexed_field_cursor,
                 large_stack_drafts,
                 likely_branch_cursor,
                 loop_storage_shapes,
@@ -180,6 +181,8 @@ class BriefMixin:
                 inputs.append('byte cursor increments')
             if aligned_allocator_request.applies(fn['asm'] or ''):
                 inputs.append('aligned allocator request')
+            if indexed_field_cursor.applies(fn['asm'] or ''):
+                inputs.append('indexed field cursor')
             if ordered_halfword_updates.applies(fn['asm'] or ''):
                 inputs.append('ordered halfword updates')
             if aligned_stack_read.applies(fn['asm'] or ''):

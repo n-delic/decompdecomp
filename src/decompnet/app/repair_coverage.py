@@ -101,6 +101,7 @@ def verify(feedback, example):
             aligned_allocator_request,
             aligned_stack_read,
             byte_cursor_postincrements,
+            indexed_field_cursor,
             kmc_cast_repairs,
             kmc_operand_repairs,
             kmc_type_repairs,
@@ -155,6 +156,8 @@ def verify(feedback, example):
             focused.append(('byte_cursor_postincrements', candidate))
         if candidate := aligned_allocator_request.rewrite(source, fn['name'], fn['asm'] or '', header):
             focused.append(('aligned_allocator_request', candidate))
+        if candidate := indexed_field_cursor.rewrite(source, fn['name'], fn['asm'] or '', header):
+            focused.append(('indexed_field_cursor', candidate))
         if candidate := ordered_halfword_updates.rewrite(source, fn['name'], fn['asm'] or '', header,
                                                         symbols.resolve if symbols else None):
             focused.append(('ordered_halfword_updates', candidate))

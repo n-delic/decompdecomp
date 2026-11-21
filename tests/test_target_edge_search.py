@@ -421,3 +421,12 @@ def test_measured_allocator_and_halfword_updates_reach_kmc(monkeypatch):
     ido = dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
     assert 'aligned_allocator_request' not in ido
     assert 'ordered_halfword_updates' not in ido
+
+
+def test_measured_indexed_field_cursor_reaches_kmc_proposals(monkeypatch):
+    from decomprepair import indexed_field_cursor
+
+    monkeypatch.setattr(indexed_field_cursor, 'rewrite', lambda *args: 'indexed fields')
+    rows = [('i', 'sw $zero, 0x58($s2)', 'sw $zero, 0x40($s2)')]
+    assert ('indexed_field_cursor', 'indexed fields') in route('void f(void) {}', rows, 'asm')
+    assert 'indexed_field_cursor' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
