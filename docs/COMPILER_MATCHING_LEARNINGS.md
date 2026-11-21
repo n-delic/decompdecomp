@@ -10855,3 +10855,15 @@ existing signature, including when another parameter was already present.
 - Introducing pointer types alone compiled but scored 29. Staging the adjustment before the indirect
   call scored 4. The stack padding around the event recovered the original frame and call schedule.
   This repair requires the full target instruction pattern and a matching source event value.
+
+### Preserve float record strides and shared word offsets
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, a machine draft
+in an isolated N64 ROM project loaded a float field through a default
+word declaration. This duplicated the byte scale and inserted an
+integer-to-float conversion after the load. A byte array plus a typed
+float load preserved the original record stride and reduced the linked
+score from 120 to 0. In another draft, one offset served several word
+reads in a guarded block. Dividing its shared constant by the word size
+reduced the score from 10 to 0. The deep permuter independently found and
+saved both exact matches.
