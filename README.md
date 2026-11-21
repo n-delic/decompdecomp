@@ -29,6 +29,10 @@ a tenth of a second (1.4 s before), and agents restart by themselves after a cra
   stand-in for a model that hands in the demo's own C; the app compiles and judges every function for real.</sub>
 </p>
 
+Packaged builds use a Rust instruction aligner when available. Source checkouts can build it with
+`uv run python packaging/build_alignment.py` and Rust installed. Set `DECOMP_NATIVE_ALIGNMENT=0`
+to use the Python aligner while retaining the same search cache.
+
 ## Polish matched code for porting
 
 In a game’s **Agents → Polishing checklist**, set the checks helpers see on their next polishing claim.

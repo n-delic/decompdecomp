@@ -23,6 +23,7 @@ mkdir -p "$OUT"
 
 # 1. decompdecomp, installed into a Python of its own
 uv run --no-project --python 3.12 "$ROOT/packaging/build_gateway.py"  # the MCP gateway, carried in the wheel
+uv run --no-project --python 3.12 "$ROOT/packaging/build_alignment.py"
 (cd "$ROOT" && uv build --wheel --out-dir "$WORK/wheel" >/dev/null)
 (cd "$ROOT" && uv export --locked --no-dev --no-emit-project --format requirements.txt \
   --output-file "$WORK/runtime-requirements.txt" >/dev/null)

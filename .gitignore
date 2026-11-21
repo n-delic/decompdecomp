@@ -62,3 +62,5 @@ launch-dev.ps1
 # the skills' own helper scripts are source, not generated output
 !.claude/skills/*/scripts/
 !.claude/skills/*/scripts/**
+
+/src/decompnet/bin/decomp-alignment.*
