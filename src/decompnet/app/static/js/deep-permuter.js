@@ -70,6 +70,9 @@ function renderDeepSearch() {
   if (active && p.variant_limit == null) $("deepProgress").removeAttribute("value");
   else $("deepProgress").value = p.variant_limit ? Math.min(100, tested / p.variant_limit * 100) : 0;
   $("deepLog").textContent = (job.log || []).join("\n");
+  const degraded = result.randomizer === false || (result.randomizer == null && p.randomizer === false);
+  $("deepNotice").hidden = !degraded;
+  $("deepNotice").textContent = degraded ? (result.notice || "decomp-permuter is not installed, so this search can only use the simple built-in rewrites. Install it from Compilers & tools; searches made without it are repeated once it is there.") : "";
   $("deepError").hidden = !job.error || job.state === "cancelled";
   $("deepError").textContent = job.error || "";
   $("deepViewDiff").disabled = best == null;

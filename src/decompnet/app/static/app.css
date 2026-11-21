@@ -1258,6 +1258,7 @@ details.more[open] > summary::before { content: "− "; }
 .deep-empty strong { color: var(--ink-2); font-size: 15px; }
 .deep-empty p { margin: 10px auto 0; max-width: 420px; line-height: 1.6; font-size: 13px; }
 #deepError { color: var(--miss); }
+#deepNotice { color: var(--warn, var(--miss)); }
 @media (max-width: 620px) {
   .deep-heading { flex-direction: column; gap: 10px; }
   .deep-controls .field { flex: 1; width: 130px; }

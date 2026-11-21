@@ -44,6 +44,7 @@ from . import (
     trial_bookkeeping,
 )
 from .permute import Permuter, State
+from .permute import available as permute_available
 from .trial_bookkeeping import buffered
 
 AFTER_RANDOM_TRIALS = 32
@@ -253,7 +254,8 @@ class Search(Permuter):
                            **self.metrics(detail=False), 'variant_limit': self.limit, 'rejected': self.rejected,
                            'seconds_left': max(0, round(self.deadline-time.monotonic())), 'refinement_rounds': self.refinement_rounds,
                            'current_family': self.current_family, 'last_outcome': self.last_outcome,
-                           'last_score': self.last_score, 'visited': self.visited})
+                           'last_score': self.last_score, 'visited': self.visited,
+                           'randomizer': permute_available()})
 
     def recipe(self, fn, source, best, score, outcome, elapsed_ms=0):
         provenance = current_trial() or {'kind': self.phase, 'family': 'unattributed'}
@@ -1500,7 +1502,22 @@ def _row(row):
     return row if isinstance(row, dict) else dict(row)
 
 
-def run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, threads_per_function=1, maximum_throughput=False, compile_slots=0):
+def run(net, slug, name, minutes, max_variants, log, *args, **kwargs):
+    """A deep search of one function. Its result says whether decomp-permuter's randomizer was there: without it
+    only the simple rewrites ran, which the drawer and the sweep's queue must not take for a full search."""
+    from . import permute
+    ready = permute.ensure_available(log)
+    if not ready:
+        log(permute.MISSING)
+    result = _full_run(net, slug, name, minutes, max_variants, log, *args, **kwargs)
+    if isinstance(result, dict):
+        result['randomizer'] = ready
+        if not ready:
+            result['notice'] = permute.NOTICE
+    return result
+
+
+def _full_run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, threads_per_function=1, maximum_throughput=False, compile_slots=0):
     from .deep_profiles import validate as validate_profiles
     from .deep_sweep import looking
 

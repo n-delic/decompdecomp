@@ -21,6 +21,7 @@ os.environ["DECOMP_HOME"] = tempfile.mkdtemp(prefix="decomp-tests-")
 # and the app looks for installed agents in the background as it starts: here it only looks where they are, and
 # never runs one (agents.detect)
 os.environ["DECOMP_DETECT_AGENTS"] = "off"
+os.environ["DECOMP_AUTO_TOOLS"] = "off"  # no test downloads a tool (permute.ensure_available)
 # nothing a test runs opens a window on the user's screen (app/window.py), a browser tab (webbrowser), or a tray icon
 os.environ["DECOMP_WINDOW"] = "0"
 # helpers connect to the app itself; tests/test_mcp_gateway.py starts the gateway by hand
