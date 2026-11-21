@@ -101,6 +101,7 @@ def verify(feedback, example):
             aligned_allocator_request,
             aligned_stack_read,
             byte_cursor_postincrements,
+            direct_mapped_address,
             field_snapshot_copies,
             float_matrix_identity,
             global_pointer_local_repairs,
@@ -188,6 +189,10 @@ def verify(feedback, example):
             focused.append(('ordered_halfword_updates', candidate))
         if candidate := aligned_stack_read.rewrite(source, fn['name'], fn['asm'] or ''):
             focused.append(('aligned_stack_read', candidate))
+        if candidate := direct_mapped_address.rewrite(source, fn['name'], fn['asm'] or '', header):
+            focused.append(('direct_mapped_address', candidate))
+        if candidate := global_pointer_local_repairs.rewrite_list_transfer(source, fn['name'], fn['asm'] or '', header):
+            focused.append(('list_node_transfer', candidate))
         if candidate := global_pointer_local_repairs.rewrite_linked_insert(source, fn['name'], fn['asm'] or '', header):
             focused.append(('linked_insert', candidate))
         if candidate := shared_return_repairs.rewrite_global_guard(source, fn['name'], fn['asm'] or ''):
