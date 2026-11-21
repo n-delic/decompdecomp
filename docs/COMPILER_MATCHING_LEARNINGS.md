@@ -11788,6 +11788,15 @@ Scaling the incoming index and accumulating the row address into it
 before the byte load and store produced the target register allocation
 and an exact match.
 
+### Clear the global before publishing the pointer and initializing the locals
+
+With gcc-2.7.2-kmc `-G0 -mips3 -mgp32 -mfp32 -O2`, an N64 loop
+preheader had two global store pairs reversed. Exchanging the stores
+in place fixed their order but lost the target's pointer copy, moving
+the score from 40 to 130. Moving just the clear above the pointer
+publication and keeping the subsequent local setup in place preserved
+both the target store order and its pointer allocation, reaching zero.
+
 ## A queued breadth-first walk: index the queue, spill naturally, `for` the middle loop, drop the parameter copy (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, an N64 game, one 159-instruction function)
 
 A walk over an object graph: three loops over a 0x80-word stack queue (write position, read position), four calls
