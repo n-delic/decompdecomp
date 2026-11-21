@@ -12,6 +12,7 @@ is the Deep Permuter's job (Search.paired_move_pass).
 from __future__ import annotations
 
 BEAM = 40  # single moves whose results are expanded by a second move
+FIRST_BEAM = 6  # parents expanded before the beam widens: most improvements come from the least different few
 JUDGMENTS = 8000  # exact judgments one pass may spend
 SPLITS = 600  # wrapped-call split candidates judged before the single moves
 GATE_REGISTER_SHARE = 0.4  # of the differing rows, at least this many are register choices (or the diff is order only)
@@ -75,10 +76,16 @@ def search(judge_many, source, name, header, base, *, beam=BEAM, budget=JUDGMENT
         elif score != base:  # a move that changed nothing leads nowhere a single move did not
             ranked.append((score, candidate))
     ranked.sort(key=lambda pair: pair[0])
+    if winner is not None:
+        # a single move already improves: take that step now and let the caller search again from it. Expanding
+        # a beam under a state about to be replaced cost a matrix function 8,000 judgments for 60 -> 40, where
+        # a greedy step, then narrow-beam pairs, reached 60 -> 40 -> 20 -> 0 in about as many (#gap 2).
+        log(f'Two-move search: a single move improves {base} to {best} ({judged} judged).')
+        return best, winner, judged
     log(f'Two-move search: {len(singles)} single moves judged ({len(ranked)} changed the output); '
         f'expanding the {min(beam, len(ranked))} least different.')
-    for _, parent in ranked[:beam]:
-        if judged >= budget:
+    for rank, (_, parent) in enumerate(ranked[:beam]):
+        if judged >= budget or (winner is not None and rank >= min(FIRST_BEAM, beam)):
             break
         children = [c for c in moves.single_moves(parent, name, header) if c not in skip][:max(0, budget - judged)]
         skip.update(children)

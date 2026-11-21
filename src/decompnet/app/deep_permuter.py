@@ -799,7 +799,7 @@ class Search(Permuter):
             self.register_focus = True
         return best
 
-    PAIRED_ROUNDS = 3
+    PAIRED_ROUNDS = 8  # each round returns at its first improvement (paired_moves.FIRST_BEAM), so rounds are cheap steps
 
     def paired_move_pass(self, agent, proj, fn, state, best, fork):
         """Two statement moves at once, judged exactly in parallel (paired_moves).
