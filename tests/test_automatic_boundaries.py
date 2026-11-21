@@ -519,3 +519,13 @@ def test_three_alignment_words_after_a_closed_back_edge():
     image, functions, segments = fixture(words, cuts=(0,20,24,28,32,44,60))
     result = repair(functions, [], image, consoles.get('n64'), segments)
     assert [fn.rom for fn in result] == [0,32,44]
+
+
+def test_long_zero_prefix_before_disassembled_inline_data():
+    words = [0x8c820000,0x03e00008,0]+[0]*17+[0x11111111]
+    image, functions, segments = fixture(words,cuts=(0,12,16,len(words)*4))
+    functions.pop()
+    inline_data = {(80,BASE+80)}
+    result = repair(functions,[],image,consoles.get('n64'),segments,inline_data=inline_data)
+    assert [fn.rom for fn in result] == [0]
+    assert [fn.rom for fn in repair(functions,[],image,consoles.get('n64'),segments)] == [0,12]

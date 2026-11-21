@@ -8,6 +8,7 @@ import hashlib
 
 CORPUS = 'N64 C runtime'
 _LINKED_IMAGE = 'd347159808f0374a93cf44cfb6135d8f56279f7b'
+_LINKED_CLEANUP_THREE_WORDS = '1824380911579424e50042d45aef4851f7ab25a7'
 _LINKED_CLEANUP_SLOT = 'eb9bacb12eb6665be9936a3e1dfd6d57b2eaabdb'
 _KNOWN = {
     _LINKED_IMAGE: {
@@ -24,6 +25,12 @@ _KNOWN = {
 # The PI manager references the EPI DMA entry. The scheduler uses linked
 # addresses for queues and OS globals when saving and restoring context.
 _LIBULTRA = {
+    _LINKED_CLEANUP_THREE_WORDS: {
+        'cb6887bd3a5941c6251ff092561b66d2fa53929becbf2cc8f3715e0972ec68fa':
+            ('__osDispatchThread', 380, False, 'os/exceptasm.s'),
+        '3b278142e6244777038334c3fe9182c3e6d5d528be3334528be8053492c444d0':
+            ('__osCleanupThread', 12, False, 'os/exceptasm.s'),
+    },
     _LINKED_CLEANUP_SLOT: {
         '49204e7bcbcbb5aa09f6bd05cc18cce5b6a108c1fad5dd19cdacafc43298981a':
             ('__osDispatchThread', 380, False, 'os/exceptasm.s'),
@@ -128,6 +135,8 @@ def split_scheduler(result, image_sha1: str) -> None:
 
 
 _CLEANUP_WITH_PADDING = {
+    _LINKED_CLEANUP_THREE_WORDS:
+        'd246ea272f63bc5f3ee83b0a97d7bb5ea38571e55607676a9ef028f414642b61',
     _LINKED_CLEANUP_SLOT:
         '5e1020780847e0662b9f6d8a5f68456a8c2cb7c2575181bd253b217024738a42',
     'aa576624f2a66034cb0d6e621ba16a0d3beaca3a':

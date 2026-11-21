@@ -716,14 +716,19 @@ def split_rom(workdir: Path, rom_name: str = "rom.z64", console=None, picked: Pi
     out += mixed_code.run(config, workdir, image, console, log)
 
     functions = []
+    inline_data = set()
     for path in sorted((workdir / "asm" / "nonmatchings").glob("*/*.s")):
         fn = parse_function(path, path.parent.name, big_endian)
         if fn is not None:
             functions.append(fn)
+        else:
+            inline_data.update((item.rom, item.vram) for item in parse_data(path) if item.rom is not None and item.size)
     for path in sorted((workdir / "asm" / "nonmatchings").glob("*/*/*.s")):  # per-file subfolders
         fn = parse_function(path, path.parent.parent.name, big_endian)
         if fn is not None:
             functions.append(fn)
+        else:
+            inline_data.update((item.rom, item.vram) for item in parse_data(path) if item.rom is not None and item.size)
     seen: dict[str, int] = {}  # name -> where it is in the image
     unique = []
     rom = (workdir / image).read_bytes()
@@ -743,7 +748,7 @@ def split_rom(workdir: Path, rom_name: str = "rom.z64", console=None, picked: Pi
     from .automatic_boundaries import repair
 
     segments = segments_from_config(config)
-    unique = repair(unique, data, rom, console, segments, symbols=symbols or (), log=log)
+    unique = repair(unique, data, rom, console, segments, symbols=symbols or (), log=log, inline_data=inline_data)
     unique = merge_switch_cases(unique, data, rom, big_endian)
     if not unique:
         raise RomError("splat found no functions; the code may be compressed or use an unusual boot layout")
