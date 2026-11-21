@@ -1,5 +1,30 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: a local pointer for a repeated `&global` argument, scoped to the outer loop
+
+Compiler and flags: `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`. One N64 function (about 490 instructions, a bit
+reader called with the same buffer address in every call), a 99% near miss of 465 in the judge. Source change:
+inside the outer loop, the repeated `&D_800E1310` argument became one local pointer assigned right before the loop;
+the nested goto loop and the call before the loop kept the constant. The judge's score went from 465 to 405 (the
+first loop's registers and the order of its setup matched; the remaining differences are elsewhere). Evidence level:
+one real function, measured in the judge. Not a controlled regression test.
+
+Why it matters: GCC 2.7's global allocation ranks pseudos by `floor_log2(n) * n / live length` (`-dl -dg` print each
+pseudo's use count, live length and register, and the order they were allocated in), where `n` counts each reference
+once more for every loop around it. A local pointer is a pseudo of its own, so where it sits in that order against
+the loop counters decides which counter gets which saved register. Written out again in a nested goto loop (which
+carries no loop notes, so it weighs less) the address is a constant the compiler rebuilds: using the local there too
+moved the counters the wrong way. Where the assignment sits matters too: two statements above the loop gave the
+matching order of the setup; right before the loop did not.
+
+Failed on the same function, so they needn't be tried again: naming the loop counters differently, giving each loop
+its own counter, `u16` counters without masks, declaring locals in another order, inlining the index and stride
+temporaries, spelling the address sums in other orders, structured loops in place of the goto loops, other compiler
+flags. None changed the registers.
+
+Library family: `loop_address_hoist` in decomp-repair 0.5.157 proposes it (every use; the uses outside the nested
+loops; one outer loop with and without its nested loops), with the assignment before the loop or up to two
+statements above it, for a global declared as a plain `extern T g;`.
 ### KMC GCC 2.7.2: test a cursor loop at the bottom
 
 An isolated N64 replay used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.
