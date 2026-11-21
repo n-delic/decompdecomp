@@ -1635,6 +1635,7 @@ planned; asset format descriptions are advisory text.
 
 BAM3 and counted big-endian TIM sprite banks expose individual textures and palettes after bounded decompression.
 Unnamed B1 relocators can establish a nearby sample-table address, including uncached cartridge addresses.
+Detached compact MIDI tables offer stereo previews when a unique validated wave bank matches the scores.
 
 Iguana resource archives now expose CI4 and CI8 bitmap banks with palette-backed previews
 and padded texture row support. Their QMesh resources also expose wireframe geometry from
@@ -2668,8 +2669,12 @@ and original RDRAM writes from the software RDP. The direct 64-bit C option and 
 
 An Apple Silicon end-to-end demo used saved C, N64Recomp and the interpreter in one run and submitted the expected
 framebuffer to RT64. A native graphics task captured in the reference emulator also reached RT64. Retail saves
-still need live playthroughs. Next: verify more microcodes and games, support RT64 export, replace the compatibility
-scheduler and device services where ModernRuntime can take them over, and add other desktop builds.
+still need live playthroughs. Raw cartridge DMA can now fill RAM and compatibility stack buffers, and local buffers
+retain the eight-byte alignment required by original loader code. Two retail boot paths still need work: one
+loads a relocated copy of libultra whose scheduler calls need to reach the host, and another calls its game entry
+through a TLB mapping after a boot helper returns. Next: verify more microcodes and games, support RT64 export,
+replace the compatibility scheduler and device services where ModernRuntime can take them over, and add other
+desktop builds.
 
 ### Ports: a native build of a finished game
 

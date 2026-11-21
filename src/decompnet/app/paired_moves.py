@@ -13,6 +13,7 @@ from __future__ import annotations
 
 BEAM = 40  # single moves whose results are expanded by a second move
 JUDGMENTS = 8000  # exact judgments one pass may spend
+SPLITS = 600  # wrapped-call split candidates judged before the single moves
 GATE_REGISTER_SHARE = 0.4  # of the differing rows, at least this many are register choices (or the diff is order only)
 
 
@@ -55,6 +56,14 @@ def search(judge_many, source, name, header, base, *, beam=BEAM, budget=JUDGMENT
             if score is not None and score < best:
                 best, winner = score, candidate
 
+    # One wrap plus coordinated constant moves is out of reach of single and pair moves (decomp-repair 0.5.207):
+    # judge those candidates too; they are few and one reached 325 to 120 on a real function.
+    splits = []
+    if hasattr(moves, 'wrapped_call_splits'):
+        splits = [c for _, c in moves.wrapped_call_splits(source, name, header, limit=SPLITS) if c not in skip]
+        skip.update(splits)
+        if splits:
+            consider(splits)
     scores = judge_many(singles, check)
     judged += len(singles)
     ranked = []

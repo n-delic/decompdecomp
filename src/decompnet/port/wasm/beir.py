@@ -16,6 +16,15 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 INT = re.compile(r"i(\d+)$")
 
 
+def align_stack_objects(text):
+    """Give local buffers the eight-byte alignment callers on the console can assume.
+
+    A rebuilt game can pass a four-byte struct to its original cartridge reader,
+    which rejects the buffer before DMA if its address isn't eight-byte aligned.
+    """
+    return re.sub(r"^( *%[^\n]+? = alloca +[^\n]+?, align )[124](?=[,\n]|$)", r"\g<1>8", text, flags=re.M)
+
+
 class Types:
     def __init__(self, text):
         self.named = {}
@@ -457,7 +466,7 @@ def main():
     report = []
     byval = {n: {i: int(m.group(1)) for i, p in enumerate(ps.split(", ")) if (m := re.search(r"#byval(\d+)", p))}
              for n, (r, ps) in signatures.items() if "#byval" in ps}
-    result = adapt("\n".join(out), report, types, byval)
+    result = align_stack_objects(adapt("\n".join(out), report, types, byval))
     if web:
         from webir import rewrite
         result = rewrite(result, fixed, re.sub(r"\W", "_", os.path.basename(dst)))

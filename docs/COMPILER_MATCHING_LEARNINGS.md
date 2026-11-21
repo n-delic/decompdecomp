@@ -10764,3 +10764,59 @@ directly removed the redundant mask and raised the linked score from 10 to
 240. The automatic follow-up tried full-byte casts and staged unsigned
 locals, including a volatile local and an instruction-free register
 constraint. The isolated replay retained score 10 after the five focused trials.
+
+### Narrow zero stores and preserve the bias in float table indexes
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, two machine drafts
+in an isolated N64 ROM project reached exact linked matches. Changing only
+the cast on an indexed zero store from word to byte brought its score from
+200 to 0. The target and draft used the same address instructions, with
+`sb` in the target and `sw` in the draft. In a float table reader, typing
+the table as an array and preserving the constant subtraction between the
+float-to-integer cast and index mask brought the score from 170 to 0.
+The deep permuter independently reproduced and saved both byte matches.
+
+### KMC masked slot dispatch and signed table offsets
+
+- Two N64 functions built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` matched all 412 and 424
+  linked bytes. The rewrite uses a typed slot-list header, a signed halfword offset table, and four-byte
+  mask entries. It checks the nine original table destinations and the two observed call layouts.
+- Fresh drafts scored 3353 and 3673. The bounded search reduced both scores to 1145. In the first case,
+  a typed reconstruction that loaded the signed offset before forming the 36-byte stride still scored
+  40 and exchanged the registers for the two loop advances. Computing the stride first matched.
+- The original drafts also matched through the new Deep Permuter proposal. The 226-example replay
+  increased from 30 to 32 exact matches.
+
+## KMC gcc 2.7.2: what the scheduler does around a one-shot loop (same function, 120 and two instructions short)
+
+Same compiler, flags and function as the previous entry; hand work with `cc1 -dS -dR` dumps.
+
+- **The first instruction after a loop note is pinned.** The dump gives it a dependence on every earlier set and use; the
+  rest of the region then depends on it. In `do { ci = 0; ... call(x); } while (0);` the counter's `move` is that
+  pinned first instruction, so it is scheduled before the argument `lbu`; the target has the `lbu` first.
+- **A load that feeds a call is forwarded into it** by combine, so it never becomes the region's first instruction
+  even when it is the first statement. Declaring the global `volatile` stops that without changing the code (the
+  load stays `lui` + `lbu $a0`): `targ = D_801002F1; ci = 0; c2 = 2; call(targ);` inside the wrapper then schedules
+  `[lbu, move, call, li2]` exactly as the target does. A `*(volatile u8 *)&sym` cast does not: it costs an address
+  register and an extra instruction.
+- **A call's delay slot is filled from before it or after it**: reorg takes the nearest single-word instruction, and
+  for a call it may take the one that follows. A constant scheduled just after a call can therefore end up in its
+  delay slot.
+- **After a load, the stall is filled by the first ready instruction**: stores of zero win it over a held constant,
+  whatever the source order, so `li c64` could not be placed right after the `lhu` as the target has it. Moving the
+  `lhu` statement to be first after the wrapper (so it is that region's pinned instruction) puts the `lhu` first but
+  sends the constant to the end of the region.
+- **Result:** the `volatile` form fixes the counter's `move` but costs the `$s6`/`$s7` order of the two constants
+  (120 became 275); no source shape reproduced both. The remaining target feature is a held constant scheduled
+  between a load and the stores that follow it.
+
+### Preserve halfword table strides across call slots and nested indexes
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, five machine drafts
+on an isolated N64 ROM project scored 30 because an indexed halfword load
+had a second word-scale multiplication and an extra two-byte relocation
+addend. A typed halfword array matched the contiguous reads. A byte array
+with an explicit halfword load preserved the original stride for records.
+The deep permuter recovered both forms, including a load in a call delay
+slot and an address calculation interrupted by a return-address spill. All
+five linked scores fell from 30 to 0.

@@ -19,6 +19,7 @@ from decomprepair import (
     loop_counter_roles_repairs,
     loop_sentinel_repairs,
     loop_storage_shapes,
+    masked_slot_dispatch,
     measured_address_repairs,
     measured_callback_loop,
     measured_callback_repairs,
@@ -212,6 +213,8 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
                                                              big_endian=big_endian,flags=flags)
     if toolchain.startswith('gcc-2.7.2-kmc'):
         result += measured_storage_shapes.variants(source, name, header, rows, asm, big_endian=big_endian)
+        result += masked_slot_dispatch.variants(source, name, asm or '', header,
+                                                read_data=read_data, big_endian=big_endian)
         result += switch_pointer_calls.variants(source, name, asm or '', header,
                                                 read_data=read_data, big_endian=big_endian)
         result += short_leaf_drafts.variants(source, name, asm, header)

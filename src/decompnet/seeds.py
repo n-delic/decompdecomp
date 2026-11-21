@@ -393,6 +393,7 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
         large_stack_drafts,
         likely_branch_cursor,
         loop_storage_shapes,
+        masked_slot_dispatch,
         measured_address_repairs,
         measured_callback_loop,
         measured_mmio_polling,
@@ -431,6 +432,7 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
     switch_asm = _mips_table_aliases(asm_text, data_asm) if data_asm and 'switch (' in source else asm_text
     return (measured_stack_drafts.rewrite(source, name, asm_text, context_header, resolve=resolve)
             or large_stack_drafts.rewrite(source, name, asm_text, context_header)
+            or masked_slot_dispatch.rewrite(source, name, switch_asm, data_asm, context_header)
             or switch_pointer_calls.rewrite(source, name, switch_asm, data_asm, context_header)
             or shared_default_drafts.explicit_default_labels(source, name, switch_asm, data_asm)
             or shared_default_drafts.rewrite(source, name, switch_asm, data_asm, context_header)

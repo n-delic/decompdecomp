@@ -33,6 +33,7 @@
 uint8_t *port_memory(void);
 uint64_t port_io_load(uint64_t addr);
 uint64_t port_io_store(uint64_t addr, uint64_t value);
+uint32_t port_stack_bus(uint32_t addr);
 void port_safe_point(void);
 /* host.c's: park the running thread for good (its code jumps to itself); a build without threads spins on */
 __attribute__((weak)) void port_idle_forever(void) {}
@@ -172,7 +173,7 @@ uint32_t port_mips_slot(const uint64_t *r, int n) {
 
 /* ---------------------------------------------------------------- the interpreter */
 
-typedef struct { uint64_t r[32], hi, lo; uint32_t f[32], fcr31, status; } Cpu;
+typedef struct { uint64_t r[32], hi, lo; uint32_t f[32], fcr31, status, entry_hi, tlb_index, entry_lo[2], page_mask; } Cpu;
 static int tracing = -1;
 
 HOT int64_t sx32(uint32_t v) { return (int64_t)(int32_t)v; }
@@ -314,10 +315,23 @@ static int step(Cpu *c, uint32_t pc, uint32_t op, uint32_t *target) {
     case 13: r[rt] = r[rs] | uimm; break;
     case 14: r[rt] = r[rs] ^ uimm; break;
     case 15: r[rt] = sx32(uimm << 16); break;
-    case 16: /* COP0: the status register (interrupts on or off) and Count; the rest reads as 0 */
-        if (rs == 0 || rs == 1) r[rt] = rd == 9 ? sx32(w2c_env_0x5F_builtin_mips_read_count(0)) : rd == 12 ? sx32(c->status) : 0;
-        else if (rs == 4 || rs == 5) { if (rd == 12) c->status = (uint32_t)r[rt]; }
-        break; /* (eret, tlb: none in a game's own functions) */
+    case 16: { /* COP0 */
+        uint32_t *reg = rd == 12 ? &c->status : rd == 10 ? &c->entry_hi : rd == 0 ? &c->tlb_index :
+                        rd == 5 ? &c->page_mask : rd == 2 || rd == 3 ? &c->entry_lo[rd - 2] : NULL;
+        if (rs == 0 || rs == 1)
+            r[rt] = rd == 9 ? sx32(w2c_env_0x5F_builtin_mips_read_count(0)) : reg ? sx32(*reg) : 0;
+        else if ((rs == 4 || rs == 5) && reg) *reg = (uint32_t)r[rt];
+        /* The raw PI routine probes the TLB if its buffer lives on a compatibility stack.
+           Expose a pair of 4 KB pages on the compatibility host’s PI bus. */
+        else if (op == 0x42000008u) c->tlb_index = port_stack_bus(c->entry_hi & ~0x1FFFu) ? 0 : 0x80000000u;
+        else if (op == 0x42000001u && c->tlb_index == 0) {
+            uint32_t bus = port_stack_bus(c->entry_hi & ~0x1FFFu);
+            c->page_mask = 0;
+            c->entry_lo[0] = bus ? (bus >> 6) | 2 : 0;
+            c->entry_lo[1] = bus ? c->entry_lo[0] + (0x1000u >> 6) : 0;
+        }
+        break;
+    }
     case 17: { /* COP1 */
         int fmt = rs, ft = rt, fsr = rd, fdr = sa, fn = op & 63;
         switch (fmt) {
@@ -416,11 +430,9 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
     port_note_entry(entry);
     if (tracing) fprintf(stderr, "interpreter: %08X (%08X, %08X, %08X, %08X)\n", entry, (uint32_t)regs[4],
                          (uint32_t)regs[5], (uint32_t)regs[6], (uint32_t)regs[7]);
-    Cpu c;
+    Cpu c = {0};
     memcpy(c.r, regs, sizeof c.r);
     memcpy(c.f, fregs, sizeof c.f);
-    c.hi = c.lo = 0;
-    c.fcr31 = 0;
     c.status = 0x2000FF01u;
     uint32_t pc = entry;
     unsigned long steps = 0;
