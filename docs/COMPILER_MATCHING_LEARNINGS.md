@@ -10341,3 +10341,13 @@ Five N64 drafts failed on undeclared stack slots. Independently compiled archive
 - At the `-g3` flags, the typed reply aggregate alone left scores 245 and 365 in two 180-byte routines.
   Using a symbol at the loop-bound byte's resolved address let KMC reload it within each iteration and matched
   both targets. The input byte cursor retained the separately evidenced relocation and offset.
+
+### Copy the search result at the join and simplify its truncated byte test
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, a scratch N64 draft scored 220. The
+target writes the no-hit sentinel before copying the index into the key at the shared exit. Its
+later byte comparison has no left shift. Moving the copy to the exit and rewriting the
+truncated byte test from a left shift compared to 4 to a low-seven-bit test compared to 2
+reduced the linked score to 10. Either edit alone scored worse than the starting draft.
+Comparing the whole byte directly dropped the target's mask instruction. The combined
+rewrite retains the original high-bit semantics and leaves one mask operand difference.

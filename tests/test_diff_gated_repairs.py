@@ -347,3 +347,35 @@ void f(void *ptr) {
     ]
     assert 'word &= ~252;' in dict(proposals(source, 'f', '', 'mips', KMC, rows, ''))['staged_field_mask']
     assert 'staged_field_mask' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_measured_search_sentinel_and_byte_guard():
+    source = """void f(s32 key) {
+    u32 index;
+    index = 0;
+    do {
+        if (matches(index, key)) {
+            key = index;
+            goto found;
+        }
+        ++index;
+    } while (index < 4U);
+    key = index;
+    index = -1U;
+found:
+    if (key != -1) {
+        if ((u8)(*(u8 *)((u8 *)&levels + (key * 16)) << 1) == 4) hit(key);
+    }
+}
+"""
+    rows = [
+        ('<', 'addiu $a0, $zero, -1', ''),
+        (' ', 'move $s0, $a0', 'move $s0, $a0'),
+        (' ', 'lbu $v0, 8($s0)', 'lbu $v0, 8($s0)'),
+        ('i', 'addiu $v1, $zero, 2', 'addiu $v1, $zero, 4'),
+        ('>', '', 'sll $v0, $v0, 1'),
+        (' ', 'andi $v0, $v0, 0xff', 'andi $v0, $v0, 0xff'),
+    ]
+    assert 'found:\n    key = index;' in dict(proposals(source, 'f', '', 'mips', KMC, rows, ''))[
+        'search_sentinel_byte_guard']
+    assert 'search_sentinel_byte_guard' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))

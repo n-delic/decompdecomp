@@ -128,7 +128,7 @@ def main(argv):
         print("baseline score", result.get("score"), "- the draft is now the saved best" if result.get("score") else "")
     elif command == "permute" and len(args) == 4:
         slug, name, minutes, variants = args
-        result = app.call("/api/deep-permuter", {"slug": slug, "function": name, "minutes": int(minutes),
+        result = app.call("/api/permuter/function", {"slug": slug, "function": name, "minutes": int(minutes),
                                                    "max_variants": int(variants), "compiler_profiles": 1})
         print(result.get("job") or result)
     elif command == "job" and len(args) == 1:
