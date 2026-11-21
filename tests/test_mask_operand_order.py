@@ -1,6 +1,6 @@
 """A mask that must be the first operand of `and`: KMC GCC's cse swaps a known constant second, so the search hides it.
 
-decomp-repair 0.5.196 (`kmc_operand_repairs`, family `mask_operand_order`) proposes `((x & mask) | mask)` when the diff
+decomp-repair 0.5.201 (`kmc_operand_repairs`, family `mask_operand_order`) proposes `((x & mask) | mask)` when the diff
 has an `and` with reversed source registers. These tests check the app's side of it: the pinned library has the family,
 the focused path the Deep Permuter uses reaches it, and (with the real compiler) the rewrite is what flips the order."""
 import io

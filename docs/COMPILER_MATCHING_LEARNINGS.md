@@ -10656,6 +10656,11 @@ controlled** (compile only, then the app's judge: byte-identical).
 - The rule, not the spelling: **a known constant is always the second operand of a commutative instruction; to get it
   first, make it unknown to cse and let combine recover it.**
 
-What the permuter has for this: `mask_operand_order` in decomp-repair 0.5.196 (`kmc_operand_repairs`), proposed when the
-diff has an `and` whose source registers are reversed and the mask needs a register. The same reasoning probably applies
+What the permuter has for this: `mask_operand_order` in decomp-repair 0.5.201 (`kmc_operand_repairs`), proposed when the
+diff has an `and` whose source registers are reversed, or the target's own `and` has a negative mask register first
+(0.5.201: every register in the diff may differ), and the mask needs a register. It reads m2c's `M2C_FIELD` as a pure
+read, so it applies to the untouched draft: on a fresh import the draft (score 10, the other allocation cluster, only
+the load and mask registers differing) gets exactly one proposal, `(s32) (((R & -0x1C1) | -0x1C1) & R)`, which compiles
+byte-identical. The first version (0.5.196) needed the swapped `and` row and never fired in a real run from the
+draft: a reminder that a rewrite proven on a hand-picked source is not proven. The same reasoning probably applies
 to other commutative instructions with a constant (`or`, `xor`, `add`), not yet seen.
