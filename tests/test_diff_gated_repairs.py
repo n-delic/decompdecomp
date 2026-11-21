@@ -569,3 +569,23 @@ void f(void) {
     result = dict(proposals(source, 'f', '', 'mips', KMC, rows, ''))
     assert 'value &= (s32) ~value >> 31;' in result['staged_call_clamp']
     assert 'staged_call_clamp' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_kmc_indexed_context_uses_byte_pointer_and_stages_the_offset():
+    source = '''
+extern s32 state;
+s32 f(s32 index) {
+    return M2C_FIELD((state + ((index & 0xFF) * 24)), s32 *, 96) == 1;
+}
+'''
+    rows = [('o', '', 'andi $a0, $a0, 255')]
+    rows.extend((' ', op, op) for op in (
+        'lui $v1, %hi(state)', 'lw $v1, %lo(state)($v1)', 'andi $a0, $a0, 255',
+        'sll $v0, $a0, 1', 'addu $v0, $v0, $a0', 'sll $v0, $v0, 3',
+        'addu $v1, $v1, $v0', 'lw $v0, 96($v1)', 'xori $v0, $v0, 1',
+        'jr $ra', 'sltiu $v0, $v0, 1',
+    ))
+    fixed = dict(proposals(source, 'f', '', 'mips', KMC, rows, ''))['staged_indexed_context']
+    assert 'extern s8 *state;' in fixed
+    assert '__repair_address_offset = (index & 0xFF) * 24;' in fixed
+    assert 'staged_indexed_context' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))
