@@ -263,10 +263,13 @@ def test_better_historical_scores_are_rejudged_before_promotion(monkeypatch):
     assert net.function()['best_source'] == better
 
 
-def test_failed_ido_baseline_tries_the_switch_reply_before_saved_attempts(monkeypatch):
-    from decompnet.repair_feedback import current_trial
-    from decomprepair import ido_switch_reply
+@pytest.mark.parametrize('rule', ['ido_switch_reply', 'ido_stack_iterators'])
+def test_failed_ido_baseline_tries_stack_repairs_before_saved_attempts(monkeypatch, rule):
+    from importlib import import_module
 
+    from decompnet.repair_feedback import current_trial
+
+    repair = import_module(f'decomprepair.{rule}')
     baseline = deep_permuter.Search._baseline
     net = setup(monkeypatch)
     monkeypatch.setattr(deep_permuter.Search, '_baseline', baseline)
@@ -284,12 +287,12 @@ def test_failed_ido_baseline_tries_the_switch_reply_before_saved_attempts(monkey
 
     def judge(self, agent, proj, fn, source, best, fork):
         assert source == repaired
-        assert current_trial()['family'] == ido_switch_reply.FAMILY
+        assert current_trial()['family'] == repair.FAMILY
         with net.store.tx() as db:
             db.execute("UPDATE functions SET best_source=?, best_score=0, status='matched'", (source,))
         return 0
 
-    monkeypatch.setattr(ido_switch_reply, 'rewrite', rewrite)
+    monkeypatch.setattr(repair, 'rewrite', rewrite)
     monkeypatch.setattr(Permuter, '_score', judge)
     search = deep_permuter.Search(net, 1, 10, Log(), net.function())
     assert search._baseline(AGENT, net.project_row('game'), net.function(), State(), None) == (0, 2)

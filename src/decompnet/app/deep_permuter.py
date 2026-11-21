@@ -659,10 +659,11 @@ class Search(Permuter):
             attempts = measured[1]
             targeted = []
             if proj['arch'] == 'mips' and compiler_for(self.net.cfg(proj), fn['vram'], fn).get('toolchain') == 'ido-7.1':
-                from decomprepair import ido_switch_reply
+                from decomprepair import draft_call_recovery
 
-                if candidate := ido_switch_reply.rewrite(fn['best_source'], fn['name'], fn['asm'], header):
-                    targeted.append((candidate, 'Recovered the reply record shared by switch cases.', ido_switch_reply.FAMILY))
+                targeted = [(candidate, 'Recovered stack records in the saved IDO draft.', family)
+                            for family, candidate in draft_call_recovery.stack_variants(
+                                fn['best_source'], fn['name'], fn['asm'], header)]
             for candidate, message, family in chain(targeted, prototypes, saved):
                 if candidate in seen or candidate_quality.reported_source(self.net, fn, candidate):
                     continue
