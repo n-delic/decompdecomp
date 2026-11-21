@@ -10498,3 +10498,20 @@ index local, declaring the score separately after its original declaration
 group, and inlining the second loop's halfword load as the left operand of the
 equality brought the linked score to 0. Leaving the score in its declaration
 group left score 40. The deep permuter reproduced and saved the byte match.
+
+### KMC fixed Huffman lengths and controller-write stack objects
+
+- A fixed Huffman draft compiled with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` matched
+  all 452 bytes once both builders shared the 288-word table and the same variable held the fill
+  index and each builder result. Restoring the array alone scored 1368. Using ordinary indexed loops
+  without the shared result variable scored 993.
+- A controller write compiled with the same flags matched all 360 bytes after restoring a separate
+  four-byte status buffer and a 12-byte unaligned reply aggregate. The draft reads a halfword from
+  the status buffer, polls a byte in that buffer, and extracts a byte from the copied reply. Restoring
+  both objects without reshaping the control flow scored 1135. Reversing their declarations in the
+  otherwise exact candidate scored 11 and changed the stack layout.
+- The 38-example isolated stack-slot replay rose from 15 to 17 byte-exact drafts, with 21 compilation
+  failures remaining.
+- Across the same 226 inputs as the earlier v0.5.148 replay, fresh byte-exact drafts increased from
+  8 to 25. The 17 changes were all prior compilation failures. There were still 161 compilation
+  failures and 40 generation failures.
