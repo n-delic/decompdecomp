@@ -241,12 +241,14 @@ class Console:
         return False
 
     def import_game(self, net, file: bytes | Path, *, toolchain: str | None = None, flags: list[str] | None = None,
-                    name: str = "", log=print, scope: str | None = None, options: dict | None = None) -> str:
+                    name: str = "", log=print, scope: str | None = None, options: dict | None = None,
+                    on_new_rom=None) -> str:
         """Start a project from the user's own copy of the game; returns its slug. The mode's way by default.
         `scope`: what the project covers, where the console sets library code aside (`sets_aside`); else ignored.
         `options`: answers to `import_options` (others are ignored)."""
         if self.mode == ROM:
-            return net.import_split(self, self.read_game(file, name), toolchain=toolchain, flags=flags, log=log)
+            return net.import_split(self, self.read_game(file, name), toolchain=toolchain, flags=flags, log=log,
+                                    on_new_rom=on_new_rom)
         if self.mode == PROJECT:
             path = Path(file) if isinstance(file, (str, Path)) else net.saved_file(file, name or self.upload_name(file))
             known = toolchain if toolchain in {c.id for c in self.compilers} else None  # (a ROM console's id: not ours)

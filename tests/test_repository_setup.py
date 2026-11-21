@@ -790,3 +790,28 @@ def test_repository_creation_backs_up_conflicting_build_files_together(project, 
     tracked = set(git(root, 'ls-files').splitlines())
     assert previous.keys() <= tracked
     assert not any(name.startswith('.decomp-repository-backups/') for name in tracked)
+
+
+
+def test_repo_init_retries_git_without_exporting_the_tree_again(project, monkeypatch):
+    net, _, _ = project
+    original_git = repository_setup.git
+
+    def fail_init(root, *args, **kwargs):
+        if args[0] == "init":
+            raise NetworkError("Git could not start.")
+        return original_git(root, *args, **kwargs)
+
+    monkeypatch.setattr(repository_setup, "git", fail_init)
+    with pytest.raises(NetworkError, match="Git could not start"):
+        repository_setup.run(net, "game", "init", "", lambda _: None)
+    state = repository_setup.status(net, "game")
+    assert state["rebuildable"] and not state["repository"]
+
+    def no_export(*args, **kwargs):
+        pytest.fail("Retry should use the already verified export")
+
+    monkeypatch.setattr(net.console(net.project_row("game")), "export_project", no_export)
+    monkeypatch.setattr(repository_setup, "git", original_git)
+    state = repository_setup.run(net, "game", "init", "", lambda _: None)
+    assert state["rebuildable"] and state["repository"]

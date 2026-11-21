@@ -190,7 +190,12 @@ def run(net, slug, action, origin, log, *, github_name="", visibility="private")
                 path, proj = moved, net.project_row(slug)
             root = root_at(path)
             if action in ('init', 'checkpoint', 'github') and net.is_rom(proj):
-                if not rebuildable_repository.full(root):
+                build = root
+                # A failed Git init can leave an already verified export ready to initialize.
+                if root is None and action == 'init' and path.name == 'progress':
+                    if (path.parent/rebuildable_repository.MARKER).is_file():
+                        build = path.parent
+                if not rebuildable_repository.full(build):
                     # prepare verifies the authoritative folder itself. Only a separate backup
                     # needs binding (and its contribution/ownership checks) before that verification.
                     if (path/saves.MANIFEST).is_file() and path != saves.default_folder(net, slug).resolve():
