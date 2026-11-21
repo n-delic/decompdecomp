@@ -270,7 +270,7 @@ def test_adjacent_recovered_mappings_keep_a_called_scheduled_prologue():
     base = 0x80001000
     seam = 32
     call = 0x0c000000 | (((base+seam-8)>>2)&0x03ffffff)
-    body = struct.pack('>12I', call, 0, 0, 0, JR_RA, 0, 0x3c028009, 0x90422724,
+    body = struct.pack('>12I', call, 0, 0, 0, JR_RA, 0, 0x3c078001, 0x90e70420,
                        0x27bdffe8, 0, JR_RA, 0x27bd0018)
     ranges = [(0, seam, base), (seam, len(body), base+seam)]
     assert recover_scheduled_mapping_entries(body, ranges, []) == [
