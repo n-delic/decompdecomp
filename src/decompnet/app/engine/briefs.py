@@ -168,6 +168,7 @@ class BriefMixin:
                 shared_default_drafts,
                 shared_return_repairs,
                 split_dispatch_zero_case,
+                stack_fill_drafts,
                 stack_read_retry,
                 uncached_read_repairs,
             )
@@ -184,6 +185,10 @@ class BriefMixin:
                 inputs.append('relocated global update')
             if relocated_global_update.countdown_applies(fn['asm'] or ''):
                 inputs.append('relocated countdown')
+            if stack_fill_drafts.applies(fn['asm'] or ''):
+                inputs.append('descending stack buffer fill')
+            if relocated_global_update.reload_applies(fn['asm'] or ''):
+                inputs.append('direct global reload before calls')
             if stack_read_retry.applies(fn['asm'] or ''):
                 inputs.append('stack read retry')
             if stack_read_retry.inline_applies(fn['asm'] or ''):

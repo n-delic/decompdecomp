@@ -9290,3 +9290,27 @@ In the other five examples, with `-O2` or `-O2 -g3`, an unsigned word
 local held the shift and its subsequent mask. This reproduced all 76
 linked bytes on each copied project, with the mask in the branch delay
 slot.
+
+### Descending byte fills in one outgoing stack buffer
+
+Four N64 functions built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`
+(with `-g3` for one) scored 10. The draft used separate scalars for the
+end of the byte fill and the start of the buffer passed to a call. The
+target's two stack addresses, fill count and first saved register bound a
+single 32-byte allocation.
+
+An eight-word array restored the measured extent and alignment.
+Filling its bytes with a descending index reproduced all 100 linked bytes
+per example on copied projects. A descending pointer emitted the same
+bytes in a scratch trial. The indexed loop stays within the array.
+
+### Direct global loads before successive calls
+
+Eight N64 wrappers built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`
+scored 658 because KMC kept the draft's field address in a saved register.
+The target instead uses a direct relocation before each of two calls. Both
+pairs of machine words independently resolve to the same data address.
+
+Replacing the two field expressions with a direct word declaration
+preserved the reload after the first call and reproduced all 64 linked
+bytes for each example on a copied project.

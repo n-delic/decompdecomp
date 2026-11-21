@@ -533,3 +533,17 @@ def test_kmc_proposes_staging_a_shift_and_mask_after_a_call():
     ]
     assert 'measured_staged_shift_mask' in dict(route(source, rows, 'asm'))
     assert 'measured_staged_shift_mask' not in dict(route(source, rows, 'asm', compiler='ido-5.3'))
+
+
+def test_kmc_proposes_stack_buffer_fills_and_direct_global_reloads(monkeypatch):
+    from decomprepair import relocated_global_update, stack_fill_drafts
+
+    monkeypatch.setattr(stack_fill_drafts, 'rewrite', lambda *args: 'indexed buffer')
+    monkeypatch.setattr(relocated_global_update, 'rewrite_reload_wrapper', lambda *args: 'direct reload')
+    rows = [('s', 'addiu $sp, $sp, -48', 'addiu $sp, $sp, -32')]
+    kmc = dict(route('void f(void) {}', rows, 'asm'))
+    assert kmc['descending_stack_fill'] == 'indexed buffer'
+    assert kmc['direct_global_reload'] == 'direct reload'
+    ido = dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
+    assert 'descending_stack_fill' not in ido
+    assert 'direct_global_reload' not in ido
