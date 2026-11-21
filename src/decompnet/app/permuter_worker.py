@@ -54,7 +54,8 @@ def _library() -> Path:
 def revision() -> tuple:
     root = Path(__file__).resolve().parents[1]
     library = _library()
-    result = []
+    from . import library_skew
+    result = [('library', library_skew.installed_versions())]  # any upgrade replaces the child, not only a watched file's
     for name in sorted(WATCHED):
         # the permuter's rewrites live in decomprepair now: their names here are aliases, so watch the library's file
         path = library / Path(name).name if (library / Path(name).name).exists() else root / name

@@ -292,25 +292,32 @@ class _ProposalDeadline(TimeoutError):
 def _worker_batch(request, check):
     import time
 
+    from . import library_skew
     from .deep_proposals import Worker
 
+    library_skew.ensure()
     check()
     while not _WORKER_SLOTS.acquire(timeout=0.05):
         check()
     try:
         now = time.monotonic()
         with _IDLE_LOCK:
-            stale = [worker for worker in _IDLE_WORKERS if now - worker.idle_since > IDLE_WORKER_SECONDS]
+            stale = [worker for worker in _IDLE_WORKERS
+                     if now - worker.idle_since > IDLE_WORKER_SECONDS or getattr(worker, 'epoch', 0) != library_skew.EPOCH]
             _IDLE_WORKERS[:] = [worker for worker in _IDLE_WORKERS if worker not in stale]
             worker = _IDLE_WORKERS.pop() if _IDLE_WORKERS else None
         for expired in stale:
             expired.close()
         if worker is None or worker.closed.is_set():
             worker = Worker()
+            worker.epoch = library_skew.EPOCH
         result = worker.run(request, check)
         with _IDLE_LOCK:
             worker.idle_since = time.monotonic()
-            _IDLE_WORKERS.append(worker)
+            if getattr(worker, 'epoch', 0) == library_skew.EPOCH:
+                _IDLE_WORKERS.append(worker)
+            else:
+                worker.close()  # started before the library was reloaded
         return result
     finally:
         _WORKER_SLOTS.release()

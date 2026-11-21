@@ -85,7 +85,7 @@ def validate_limits(minutes, max_variants):
 def validate(net, slug, name, minutes, max_variants):
     validate_limits(minutes, max_variants)
     from . import library_skew
-    library_skew.check()
+    library_skew.ensure(force=True)
     proj = net.project_row(slug)
     fn = net._function(name, slug)
     from .boundary_repairs import blocked
