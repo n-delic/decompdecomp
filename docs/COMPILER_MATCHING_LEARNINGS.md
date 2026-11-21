@@ -10908,3 +10908,13 @@ the load inside the loop.
   A typed cast with the counter assignment, cursor assignment and
   `do` on one source line matched all 64 linked bytes. The split-line
   form scored 20.
+
+### Recover pointer units independently at two calls
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, an isolated
+N64 machine draft scaled two call arguments twice. Casting the address
+of a global record table to a byte pointer preserved the indexed byte
+stride and brought the linked score from 20 to 10. Converting the byte
+displacement on a loaded halfword pointer to one element brought the
+score to 0. The deep permuter found each edit from its own relocation
+and argument-setup evidence and saved the linked match.
