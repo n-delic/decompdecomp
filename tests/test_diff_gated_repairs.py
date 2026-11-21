@@ -134,3 +134,32 @@ def test_cursor_loop_tail_routes_the_measured_branch_likely_edge():
                   if family == 'measured_cursor_loop_tail']
     assert '} while (cursor != NULL);' in repaired
     assert 'continue;' not in repaired
+
+
+def test_measured_float_grid_routes_store_offset_and_product_trials():
+    source = """void f(struct Input *p, float out[3][3]) {
+    volatile double pad[1];
+    float x = p->x;
+    float y = p->y;
+    float xy = x * y;
+    float s = x + xy;
+    float t = y + xy;
+    float u = x - xy;
+    float v = y - xy;
+    out[0][0] = s;
+    out[0][1] = t;
+    out[1][0] = u;
+    out[0][2] = v;
+    out[1][1] = x;
+    out[1][2] = y;
+    out[2][0] = xy;
+    out[2][1] = x;
+    out[2][2] = xy;
+}
+"""
+    rows = [('i', 'swc1 $f4, 8($a1)', 'swc1 $f4, 0xc($a1)')]
+    candidates = [candidate for family, candidate in proposals(source, 'f', '', 'mips', KMC, rows, '')
+                  if family == 'measured_float_grid_stores']
+    assert len(candidates) == 2
+    assert 'out[0][2] = (y - xy);\n    out[1][0] = (x - xy);' in candidates[0]
+    assert 'float xy = y * x;' in candidates[1]

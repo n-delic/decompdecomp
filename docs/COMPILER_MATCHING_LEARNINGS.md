@@ -1,5 +1,16 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: shorten expression lifetimes in a 3-by-3 float grid
+
+An isolated N64 replay used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.
+Writing the grid in row-major source order, inlining its single-use
+addition and subtraction temporaries, and removing an unused double
+array moved the linked score from 432 to 110. The compiler then saved
+all five floating-point register pairs observed in the target. Swapping
+the operands of one remaining shared multiply brought the score to zero.
+Each of the three normalization changes scored worse on its own. The
+normalized draft with the unused array still present scored 140.
+
 ### KMC GCC 2.7.2: a local pointer for a repeated `&global` argument, scoped to the outer loop
 
 Compiler and flags: `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`. One N64 function (about 490 instructions, a bit
