@@ -389,3 +389,12 @@ def test_measured_relocated_global_update_reaches_kmc_proposals(monkeypatch):
     rows = [('r', 'lui $v0, %hi(state)', 'lui $a0, %hi(state)')]
     assert ('relocated_global_update', 'direct global') in route('void f(void) {}', rows, 'asm')
     assert 'relocated_global_update' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
+
+
+def test_measured_packed_matrix_conversion_reaches_kmc_proposals(monkeypatch):
+    from decomprepair import packed_matrix_conversion
+
+    monkeypatch.setattr(packed_matrix_conversion, 'rewrite', lambda *args: 'matrix candidate')
+    rows = [('r', 'sw $a0, ($t1)', 'sw $a0, ($t3)')]
+    assert ('packed_matrix_conversion', 'matrix candidate') in route('void f(void) {}', rows, 'asm')
+    assert 'packed_matrix_conversion' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))

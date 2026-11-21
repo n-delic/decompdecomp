@@ -18,6 +18,7 @@ from decomprepair import (
     measured_mmio_polling,
     measured_pointer_scale,
     measured_temporary_repairs,
+    packed_matrix_conversion,
     passthrough_argument_repairs,
     relocated_byte_table,
     relocated_global_update,
@@ -193,6 +194,8 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
             result.append(('relocated_byte_table', candidate_source))
         if candidate_source := relocated_global_update.rewrite(source, name, asm or '', header, resolve):
             result.append(('relocated_global_update', candidate_source))
+        if candidate_source := packed_matrix_conversion.rewrite(source, name, asm or '', header):
+            result.append(('packed_matrix_conversion', candidate_source))
         if candidate_source := aligned_stack_read.rewrite(source, name, asm or ''):
             result.append(('aligned_stack_read', candidate_source))
         if candidate_source := passthrough_argument_repairs.missing_entry_argument(source, name, asm or '', header):

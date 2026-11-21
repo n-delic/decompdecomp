@@ -114,6 +114,7 @@ def verify(feedback, example):
             measured_mmio_polling,
             measured_pointer_scale,
             measured_temporary_repairs,
+            packed_matrix_conversion,
             passthrough_argument_repairs,
             relocated_byte_table,
             relocated_global_update,
@@ -145,6 +146,8 @@ def verify(feedback, example):
         if candidate := relocated_global_update.rewrite(source, fn['name'], fn['asm'] or '', header,
                                                         symbols.resolve if symbols else None):
             focused.append(('relocated_global_update', candidate))
+        if candidate := packed_matrix_conversion.rewrite(source, fn['name'], fn['asm'] or '', header):
+            focused.append(('packed_matrix_conversion', candidate))
         if candidate := aligned_stack_read.rewrite(source, fn['name'], fn['asm'] or ''):
             focused.append(('aligned_stack_read', candidate))
         if candidate := passthrough_argument_repairs.missing_entry_argument(source, fn['name'], fn['asm'] or '', header):
