@@ -830,6 +830,33 @@ def test_measured_halfword_switch_is_routed_for_kmc(monkeypatch):
     assert 'halfword_switch_fixture' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))
 
 
+def test_label_loop_cursor_reaches_kmc_diff_dispatch():
+    source = """void f(void *base) {
+    void *cursor;
+    cursor = base;
+    first_loop:
+    write_halfword(cursor);
+    cursor += 2;
+    if (more()) goto first_loop;
+
+    cursor = base;
+    next_loop:
+    write_word(cursor);
+    cursor += 4;
+    if (more()) goto next_loop;
+}
+"""
+    rows = [
+        ('r', 'move $v1, $s5', 'move $s1, $s5'),
+        ('r', 'sh $zero, 0x1bc($v1)', 'sh $zero, 0x1bc($s1)'),
+        ('r', 'sh $v0, 0x1bc($v1)', 'sh $v0, 0x1bc($s1)'),
+        ('r', 'addiu $v1, $v1, 2', 'addiu $s1, $s1, 2'),
+    ]
+    generated = proposals(source, 'f', '', 'mips', KMC, rows, '')
+    assert any(label == 'measured_label_loop_cursor' and 'write_halfword(__repair_first_loop_cursor)' in candidate
+               for label, candidate in generated)
+
+
 def test_byte_subtraction_carrier_reaches_kmc_diff_dispatch():
     source = """void f(void *obj, void *child) {
     short result;

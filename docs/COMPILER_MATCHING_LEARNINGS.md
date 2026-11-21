@@ -12510,3 +12510,15 @@ With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, the Deep Permuter
 went from score 50 to 0 in 22 trials. The v0.5.291 control stayed at 50
 after 100 trials. Synthetic tests cover the measured loads, sign test,
 and pointer lifetime guard.
+
+### KMC GCC 2.7.2: split a cursor across backward-goto loops
+
+A scratch draft assigned the same pointer local before two loops.
+The first loop's target used a different register for the initial copy,
+halfword stores, and two-byte advance. Giving the first loop its own
+pointer removed four register differences and left six.
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, 100 attempts
+improved score 50 to 30. The v0.5.293 control stayed at 50. This is a
+partial linked-byte improvement. The rewrite requires the original
+pointer to be reset before its next use.
