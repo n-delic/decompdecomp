@@ -146,6 +146,14 @@ wrongly: a 1000 → 680 local improvement was 1090 → 1030 in the app. Confirm 
 - **Loop constants** (`li $s7,2` hoisted) land where the scheduler's priorities put them, not where you assign
   them; reordering or moving the assignments changed nothing. Unsolved: what makes the target's scheduler put them
   early. If you solve it, write it down here.
+- **m2c's shared colour/flag block (`v = K; if (c) { ..; v = D; goto L; } else { L: use(v) }`)**, KMC gcc 2.7.2: the
+  value belongs where the *join* is, not before the `if`. The early assignment gives `v` its own register and
+  removes the `li` from the branch delay slot; sunk to the label, written as its literal (not a search-made constant
+  local) with `u8` stores (an `s8` store of 0xFF is `li -1`), it was exact. The polarity of the `if` (which arm holds the
+  `goto`) decides which arm is out of line: read it from the target's delay slots. Library: `join_initializer_sink`,
+  `branch_polarity`.
+- **Several changes that are each no better alone** are the normal shape of a late match. Offer the combination as
+  one child, and keep non-improving children for a second step (`operand_order_pass`'s combined step).
 - Declaration order, `register` and integer width hints often produce identical RTL: test one, don't grid them.
 - **IDO bit-packed unpackers** (an N64 audio-header function, `ido-7.1`, exact; the evidence is in
   COMPILER_MATCHING_LEARNINGS.md). The shape that matched: a `u8 *` parameter; stack arrays declared highest frame
