@@ -12386,3 +12386,16 @@ removed (2300) the all-sites `(s16)` child scores 0 in one step, the single-site
 the point. Not offered by the family yet: the volatile struct-pointer reads, the variable sharing per component and the
 pointer read hoisted above the packing (all done by hand here). Not run through the Deep Permuter.
 
+
+### KMC GCC 2.7.2: stage a parent float after reading the child pointer
+
+A scratch draft initialized a child's integer fields before evaluating a
+floating-point subtraction that read the parent. The target scheduled the
+parent load immediately after the child pointer load. Capturing the parent
+field in an `f32` local there let KMC schedule the subtraction earlier
+and keep the child store in place.
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, the Deep Permuter
+reached score 0 from 120 in 38 attempts. The v0.5.286 control stayed at
+120 after 100 attempts. This is one linked-byte scratch replay, with
+synthetic tests that reject different field offsets and intervening calls.
