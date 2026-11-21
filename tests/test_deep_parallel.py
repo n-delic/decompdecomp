@@ -320,3 +320,27 @@ def test_float_stack_call_reuse_runs_when_the_diff_has_extra_loads(monkeypatch):
 
     assert search.operand_order_pass(AGENT, proj, fn, 235, None) == 0
     assert tried == ['shared float loads']
+
+
+def test_scaled_local_trial_runs_on_shift_size_mismatch(monkeypatch):
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    proj = net.project_row('game')
+    fn = {**net.function(), 'name': 'f',
+          'asm': 'addiu $s0, $zero, 0x4000\n.Ljoin:\nsll $s0, $s0, 3\n',
+          'best_source': ('void f(void) {\n'
+                          '    short size;\n'
+                          '    size = 0x800;\n'
+                          '    if (expanded != 0) { size = 0x4000; }\n'
+                          '    size *= 8;\n'
+                          '    buffer = allocate(size, 0);\n'
+                          '}')}
+    search = deep_permuter.Search(net, 1, 6, Log())
+    monkeypatch.setattr(deep_permuter.permuter_focus, 'classify', lambda *args: 'operand')
+    tried = []
+    monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 0)
+
+    assert search.operand_order_pass(AGENT, proj, fn, 130, None) == 0
+    assert len(tried) == 1
+    assert '__repair_scaled_size = size * 8;' in tried[0]
