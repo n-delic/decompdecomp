@@ -651,3 +651,19 @@ def test_kmc_repairs_repeated_word_table_scaling_with_other_differences():
     candidate = dict(route(source, rows, 'asm'))[family]
     assert 'return table[i] + table[j];' in candidate
     assert family not in dict(route(source, rows, 'asm', compiler='ido-5.3'))
+
+
+def test_kmc_uses_relocated_string_only_when_the_rom_confirms_the_literal():
+    source = 'void f(void) { format(out, "%s %s", a, b); }'
+    rows = [
+        ('i', 'lui $a1, %hi(D_80001000)', 'lui $a1, %hi(?local)'),
+        ('i', 'addiu $a1, $a1, %lo(D_80001000)', 'addiu $a1, $a1, %lo(?local)'),
+    ]
+    family = 'verified_rom_string_symbol'
+
+    def check(data):
+        return dict(proposals(source, 'f', '', 'mips', 'gcc-2.7.2-kmc', rows, '',
+                              read_data=lambda symbol, width: data[:width] if symbol == 'D_80001000' else None))
+
+    assert 'format(out, D_80001000,' in check(b'%s %s\0')[family]
+    assert family not in check(b'%d %s\0')
