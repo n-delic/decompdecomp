@@ -169,6 +169,8 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    assert.ok(buttons.includes(t.c.$('portExportMenu')),'Export remains in the Play step');
    assert.ok(!buttons.includes(t.c.$('portRecompile')),'no manual recompile action even when supported');
    const html=fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/index.html'),'utf8');
+   assert.match(html,/<button id="portExportApp"[^>]*>Standalone app \(opens in your browser\)<\/button>/);
+   assert.match(html,/<button id="portExportWindow"[^>]*>Standalone app \(opens in its own Mac window via SDL3\)<\/button>/);
    assert.doesNotMatch(html,/id="portRecompile"/,'the manual button is removed from the page');}
   {const t=setup();t.c.S.tab='porting';const followed=[];t.c.followJob=async(job)=>{followed.push(job);};
    t.c.reply=async url=>url==='/api/rename-calls'?{job:'r1'}:report;

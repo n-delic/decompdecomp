@@ -308,14 +308,14 @@ The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`)
   from it. Both files are committed (those paths alone) and never pushed. What a runner can't make it leaves out:
   the handhelds' packs have no ROM (the player puts theirs in it), and the apps have no C recompiled from the ROM:
   a function with no C yet runs from the player's ROM, interpreted ("Functions with no C yet", below).
-  - *Standalone app for this computer*: the native program with a launcher. On macOS a universal app (`Game.app`,
+  - *Standalone app (opens in your browser)*: the native program with a launcher. On macOS a universal app (`Game.app`,
     macOS 11 and up, for Apple Silicon and Intel Macs alike, whichever kind exported it) that asks for the ROM once, keeps its saves in its own Application Support folder and opens the game
     in the browser; quitting it stops the game. Its program is a small compiled universal launcher that runs
     `Resources/play.sh`, and the bundle has an ad-hoc signature, so a zipped or AirDropped copy stays whole; without an
     Apple Developer ID another Mac still asks once (Control-click > Open, or Privacy & Security > Open Anyway), which
     `How to open on a Mac.txt` beside the app tells the player. On Linux and Windows the program with `play.sh` / `play.bat`
     (they take the ROM's path and remember it).
-  - *Standalone app with its own window (Mac)*: the game in an SDL3 window instead of the browser. The app is the
+  - *Standalone app (opens in its own Mac window via SDL3)*: the game in an SDL3 window instead of the browser. The app is the
     game itself (`Contents/MacOS/game`), with no script and no AppleScript: opened with no ROM named, it reads
     `Contents/Resources/port.env` (`PORT_WINDOW`, `PORT_TITLE`, `PORT_APP`), keeps its saves, the ROM's path and its
     log in `~/Library/Application Support/<PORT_APP>`, and asks for the ROM in SDL3's own file dialog, again until the
