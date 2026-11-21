@@ -10929,3 +10929,26 @@ in 32-bit integer units before casting back to a pointer brought the
 linked score from 5 to 0. Typed array indexing and byte-pointer
 addition retained the original operand order and the score of 5.
 The deep permuter reproduced and saved the exact match.
+
+### Rebuild an IDO reply record and move the shared switch tail
+
+An isolated N64 replay used
+`ido-7.1 -O1 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul -DNON_MATCHING`.
+The draft passed one stack slot by address and read an undeclared word
+from inside the same record. The target exposed the byte count, a byte
+and halfword store, and a word load. Rebuilding an aligned 76-byte
+record and moving the shared reply block past its two switch cases
+matched all 328 linked bytes. The explicit early break, reply field
+assignment order, and compound update preserved IDO's schedule.
+An aligned byte buffer with casts at the field offsets compiled but
+scored 640.
+
+### Stage the subtracted product to match floating-point scheduling
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, one isolated N64
+machine draft emitted two load-and-multiply pairs in the reverse of
+the target order. Computing the right-hand product in a separate
+float local before evaluating the subtraction preserved the operand
+order of the subtraction and brought the linked score from 30 to 0.
+Moving the load statements alone retained score 30. Expressing the
+subtraction as addition of a negated product raised the score to 375.
