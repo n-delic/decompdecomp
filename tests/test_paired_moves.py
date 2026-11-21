@@ -218,3 +218,33 @@ def test_a_function_without_movable_statements_costs_one_cheap_look(monkeypatch)
     net, proj, fn, search = search_for(monkeypatch, source='void f(void) { a = 1; }')
     monkeypatch.setattr(search, '_score', lambda *a: pytest.fail('nothing to adopt'))
     assert search.paired_move_pass(AGENT, proj, fn, None, 100, None) == 100
+
+
+HELD = '''extern int a;
+extern void g(int);
+void f(void) {
+    char c1, c2;
+    c1 = 1;
+    c2 = 2;
+    a = 5;
+    g(1);
+    a = c1;
+    g(2);
+}'''
+
+
+def test_the_search_judges_wrapped_call_splits_and_returns_a_winner():
+    """One wrap plus constants moved past it: no single or pair move reaches it, the split generator does."""
+    pytest.importorskip('decomprepair.paired_statement_moves')
+    from decomprepair import paired_statement_moves as moves
+    if not hasattr(moves, 'wrapped_call_splits'):
+        pytest.skip('needs decomp-repair 0.5.207')
+    winners = {c for _, c in moves.wrapped_call_splits(HELD, 'f', limit=200)
+               if 'do { g(1); } while (0);' in c and c.index('c2 = 2;') > c.index('do { g(1); } while (0);')}
+    assert winners
+
+    def judge(candidates, check=lambda: None):
+        return [50 if c in winners else 120 for c in candidates]
+
+    score, winner, judged = paired_moves.search(judge, HELD, 'f', '', 100)
+    assert score == 50 and winner in winners and judged > 0
