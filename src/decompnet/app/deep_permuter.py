@@ -565,7 +565,8 @@ class Search(Permuter):
         """One bounded lane before broad mutation, charged to the same global limit/deadline."""
         diagnosis = allocation_evidence.diagnose(rows,proj['arch'])
         floating = allocation_search.floating_only(rows, proj['arch'])
-        allowance=max(allocation_search.allowance(diagnosis), allocation_search.CHAIN_LIMIT if floating else 0)
+        swap = allocation_search.saved_register_swap(rows, proj['arch'])
+        allowance = max(allocation_search.allowance(diagnosis), allocation_search.CHAIN_LIMIT if floating or swap else 0)
         if not allowance or self.allocation_trials >= allowance:
             return choices,set()
         self.log(allocation_evidence.text(rows,proj['arch']))

@@ -88,13 +88,34 @@ def capture(net, proj, fn, source, *, on_compile, rows=()):
     return evidence
 
 
+_SAVED_STORE = re.compile(r'sw\s+\$(s[0-7]),\s*(?:0x[0-9a-f]+|[0-9]+)\(\$sp\)')
+
+
+def saved_register_swap(rows, arch):
+    """Allow a pair of reordered prologue saves for an otherwise coherent swap."""
+    if arch != 'mips' or not rows or any(not isinstance(row, (list, tuple)) or len(row) != 3
+                                        or not all(isinstance(field, str) for field in row) for row in rows):
+        return False
+    stores = [(left, right) for mark, left, right in rows if mark == 'i']
+    if stores and (len(stores) != 2 or stores[0] != stores[1][::-1]
+                   or any(not _SAVED_STORE.fullmatch(left) for left, _ in stores)):
+        return False
+    body = [row for row in rows if row[0] != 'i']
+    diagnosis = allocation_evidence.diagnose(body, arch)
+    cycles = diagnosis['register_cycles']
+    return (diagnosis['register_only'] and len(cycles) == 1 and len(cycles[0]) == 2
+            and all(re.fullmatch(r'\$s[0-7]', register) for register in cycles[0])
+            and (not stores or {left.split(',')[0].split()[-1] for left, _ in stores} == set(cycles[0])))
+
+
 def proposals(source, name, arch, rows, choices, labels, evidence=None, header=''):
     """Use conservative existing generators; no new padding identities or assembly renaming."""
     floating = floating_proposals(source,name,header,rows,arch)
     for family,candidate in floating:
         labels[candidate] = family
     diagnosis = allocation_evidence.diagnose(rows,arch)
-    budget=allowance(diagnosis)
+    swap = saved_register_swap(rows, arch)
+    budget = max(allowance(diagnosis), CHAIN_LIMIT if swap else 0)
     if not budget:
         return floating
     if diagnosis['return_copy_rotation']:
@@ -102,12 +123,18 @@ def proposals(source, name, arch, rows, choices, labels, evidence=None, header='
         selected=prepared_call_repairs.variants(source,name,header,arch)
         for family,candidate in selected:labels[candidate]=family
         return selected[:budget]
-    from decomprepair import identity_lifetime_repairs, later_local_repairs, pointer_address_lifetime
+    from decomprepair import (
+        identity_lifetime_repairs,
+        later_local_repairs,
+        mutable_parameter_local,
+        pointer_address_lifetime,
+    )
 
     from . import value_trace_repairs
     pointer_captures = (pointer_address_lifetime.variants(source,name,header)
                         if arch == 'mips' and diagnosis['register_only'] and diagnosis['register_chains'] else [])
-    extra = pointer_captures + later_local_repairs.variants(source,name,header,arch,evidence)
+    mutable_copies = mutable_parameter_local.variants(source, name, header) if swap else []
+    extra = mutable_copies + pointer_captures + later_local_repairs.variants(source,name,header,arch,evidence)
     extra += identity_lifetime_repairs.variants(source,name,header,arch) if arch in {'mips','ppc','x86','arm','thumb'} else []
     trace = (evidence or {}).get('value_trace',{})
     extra += value_trace_repairs.variants(source,name,trace,rows,header)
@@ -143,7 +170,7 @@ def proposals(source, name, arch, rows, choices, labels, evidence=None, header='
     # Reserve its finite prefix inside this lane's existing compile allowance.
     scratch=[(labels[c],c) for c in choices if labels.get(c)=='scratch_role_reuse'] if diagnosis['register_only'] else []
     predicates=[(labels[c],c) for c in choices if labels.get(c)=='inline_bit_predicate'][:7]
-    return list(dict.fromkeys(floating+pointer_captures[:1]+predicates+scratch+selected))[:budget]
+    return list(dict.fromkeys(floating+mutable_copies+pointer_captures[:1]+predicates+scratch+selected))[:budget]
 
 
 def brief(net, proj, fn, source, rows):

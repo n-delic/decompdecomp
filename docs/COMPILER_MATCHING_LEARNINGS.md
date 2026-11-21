@@ -9513,3 +9513,14 @@ existing passthrough rule priority when the measured difference is the
 argument-register shift reproduced their original bytes. Across the
 twelve examples, the exact matches span 32 to 152 linked bytes on copied
 projects.
+
+### Separate a reassigned room pointer from the incoming argument
+
+With GCC 2.7.2 KMC and `-G0 -mips3 -mgp32 -mfp32 -O2`, a 680-byte
+N64 portal-traversal routine linked with the right instructions but a swap of
+`$s0` and `$s1` and two reordered save instructions. Renaming the incoming
+pointer and initializing a same-type mutable local before the first statement
+retained the swap but restored the original save order in two declaration
+placements. The official judge improved from 115 to 95 (99.32% to 99.44%).
+An earlier insertion worsened the output. This is an isolated real-game
+experiment. Neither version was byte-identical.
