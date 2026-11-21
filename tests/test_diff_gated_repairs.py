@@ -747,3 +747,20 @@ def test_measured_kmc_repairs_route_is_compiler_specific(monkeypatch, module_nam
     monkeypatch.setattr(getattr(diff_gated_repairs, module_name), 'variants', repair)
     assert dict(proposals(source, 'f', '', 'mips', KMC, rows, ''))['cursor_fixture'] == 'repaired'
     assert 'cursor_fixture' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_byte_offset_scale_reaches_the_deep_permuter_diff_dispatch():
+    source = """void f(void) {
+    s32 off;
+    s32 reload;
+    off = key * 4;
+    use(*(s32 *)((s8 *)&first + off));
+    reload = key * 4;
+    use(*(s32 *)((s8 *)&second + reload));
+}
+"""
+    rows = [('i', 'sll $v1, $v0, 4', 'sll $v1, $v0, 2'),
+            ('i', 'sll $v0, $v0, 4', 'sll $v0, $v0, 2')]
+    expected = ('measured_byte_offset_scale', source.replace('key * 4', 'key * 16'))
+    assert expected in proposals(source, 'f', '', 'mips', KMC, rows, '')
+    assert expected not in proposals(source, 'f', '', 'mips', EGCS, rows, '')
