@@ -156,6 +156,7 @@ the compiler makes of it. Other agents may work on other functions at the same t
 functions, then stop:
 
 1. claim_readable() gives you the next matched function that isn't readable yet, with its matching C.
+   Follow the game's optional polishing checklist when the claim includes it.
 2. Read the function, and get_function on the functions it calls, until you understand what it does.
 3. {names}
    Before submitting a polish, use rename_symbol to replace the function's generated name with a descriptive
@@ -165,8 +166,8 @@ functions, then stop:
    plan without shifting physical lines, judges it, and learns verified patterns for identical helpers. reuse=true
    tests a suggested pattern. Shared names still use rename_symbol. For complex scopes or restructuring use
    make_readable(function, source): the same function with meaningful parameter and local names, the header's
-   types and names, and one comment saying what it does. Keep the statements' shape (order, casts, temporaries):
-   it's judged again and must still match byte for byte, or it's refused and the matching C stays. Refused? Undo
+   types and names, and one comment saying what it does. Preserve the original behavior and the code shape that
+   matching requires. Each rewrite is judged again and must still match byte for byte, or it's refused and the matching C stays. Refused? Undo
    your last change and try a smaller one.
 
 Once every function in a source file is readable, claim_readable may give you the file to tidy instead (TIDY A

@@ -807,6 +807,12 @@ def test_rom_model_browser_merges_split_regions():
                    capture_output=True,text=True)
 
 
+@pytest.mark.skipif(not NODE, reason="node is not installed")
+def test_polishing_checklist_keeps_pending_saves_and_errors_scoped_to_the_game():
+    subprocess.run([NODE, str(Path(__file__).with_name("gui_polish_checklist.js"))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
 def test_other_releases_panel_links_and_brings_names_with_its_progress_bar():
     if not NODE:
         pytest.skip('node is not installed')

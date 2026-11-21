@@ -131,6 +131,28 @@ def app(tmp_path_factory):
 WINDOW = {"User-Agent": f"Mozilla/5.0 AppleWebKit/605.1.15 {window.TOKEN_AGENT}{SECRET}"}
 
 
+def test_polishing_checklist_is_saved_per_game(app, tmp_path):
+    client, net, _ = app
+    for slug in ("polish-one", "polish-two"):
+        with net.project_registration(slug=slug, name=slug, description="", arch="mips",
+                                      big_endian=True, root=tmp_path, config={"kind": "rom"}):
+            pass
+
+    path = "/api/polishing-checklist"
+    headers = {**WINDOW, "X-Decomp": "1"}
+    assert client.get(path, params={"slug": "polish-one"}).json() == {"selected": []}
+
+    def save(selected):
+        return client.post(path, headers=headers, json={"slug": "polish-one", "selected": selected})
+
+    selected = {"selected": ["compile_64bit", "pointer_casts"]}
+    assert save(["pointer_casts", "compile_64bit", "pointer_casts"]).json() == selected
+    assert save(["unknown"]).status_code == 400
+    assert client.get(path, params={"slug": "polish-one"}).json() == selected
+    assert client.get(path, params={"slug": "polish-two"}).json() == {"selected": []}
+    assert save([]).json() == {"selected": []}
+
+
 def test_deep_permuter_job_can_be_found_and_stopped_from_the_function(app, monkeypatch):
     """The function's view finds its running deep search (`deep_job`), asking again joins it, and Stop cancels it
     with what it found kept in the job's progress."""

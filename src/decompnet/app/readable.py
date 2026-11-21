@@ -341,8 +341,11 @@ class Readability:
                 return given_up + self._held_by_others(proj)
             return (given_up + "Every matched function is readable already (or has had its tries without "
                     "staying matched), and every file tidy. 🎉 Stop here: nothing is left to polish.")
-        from . import polish_automation
-        if polish_automation.reuse(self, agent, proj, fn):
+        from . import polish_automation, polish_checklist
+
+        checks = polish_checklist.read(self.net, proj["id"])
+        # A reused rename plan never reviews the candidate's portability.
+        if not checks and polish_automation.reuse(self, agent, proj, fn):
             return None
         source = self._matching_c(proj, fn)
         prepared = polish_automation.safe_brief(self.net, proj, fn, source)
@@ -369,14 +372,17 @@ class Readability:
                      "alone: it goes back under them, on the same line.)\n")
         from ..release_receipts import current
         lease = current(self.net, fn, agent)
+        from .tools import project_tools
+        pc_tool = ("compile_64bit" in checks and not fork
+                   and "check_for_pc" in project_tools(self.net, slug, agent))
         return (f"{given_up}MAKE READABLE: {fn['name']}{where}, {fn['n_insns']} instructions "
                 f"({counts['readable']} of {counts['matched']} matched functions are readable so far).\n"
                 f"claim_token: {lease}\n"
                 "Pass this claim_token to release_function if you leave this function for another helper.\n\n"
                 f"It matches today with this C:\n{alone}```c\n{shown}\n```\n\n"
-                + prepared + "\nMake it readable without changing what the compiler makes of it:\n" + names +
+                + prepared + polish_checklist.brief(checks, pc_tool=pc_tool) + "\nMake it readable without changing what the compiler makes of it:\n" + names +
                 "- give parameters and locals meaningful names; write one comment saying what the function does;\n"
-                "- keep the statements' shape: the order, the casts and the temporaries that make it match.\n"
+                "- keep the statement order, casts and temporaries that matching requires.\n"
                 + ("- it's a big function: rename and comment in place, statement for statement; don't restructure it "
                    "(one slip anywhere in it and the rewrite is refused).\n" if fn["n_insns"] > BIG_INSNS else "") +
                 "Prefer polish_function with a JSON local rename map and a one-line comment; it keeps physical lines intact. "

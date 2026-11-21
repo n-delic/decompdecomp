@@ -1351,6 +1351,61 @@ function renderProjectFacts(ov) {
   renderScope(ov);
 }
 
+function renderPolishChecklist(slug, fork) {
+  const panel = $("polishChecklist");
+  if (panel.dataset.slug === slug) return;
+  panel.dataset.slug = slug;
+  $("polishChecklistPc").hidden = !fork;
+  // Give pending requests their own elements when the user switches games.
+  const oldForm = $("polishChecklistForm");
+  panel.checklistForms ||= new Map();
+  const existing = panel.checklistForms.get(slug);
+  if (existing) {
+    oldForm.replaceWith(existing.form);
+    panel.ontoggle = existing.open;
+    existing.open();
+    return;
+  }
+  const form = oldForm.cloneNode(false);
+  form.innerHTML = (panel.checklistTemplate ||= oldForm.innerHTML);
+  oldForm.replaceWith(form);
+  const log = form.querySelector("[data-checklist-log]");
+  const checks = [...form.querySelectorAll("input")];
+  const controls = [...checks, form.querySelector("button")];
+  let loaded = false, pending = false;
+
+  async function updateOptions(save) {
+    if (pending || (save && !loaded)) return;
+    pending = true;
+    const selected = checks.filter(input => input.checked).map(input => input.name);
+    showJobError(log, "");
+    log.hidden = true;
+    const finish = beginWork(log, save ? "Saving checklist" : "Loading checklist", controls,
+      save ? "Checklist saved." : "");
+    try {
+      const options = await api(save ? "/api/polishing-checklist" : `/api/polishing-checklist?slug=${encodeURIComponent(slug)}`,
+        save ? {method: "POST", body: {slug, selected}} : undefined);
+      checks.forEach(input => { input.checked = options.selected.includes(input.name); });
+      loaded = true;
+    } catch (error) {
+      const retry = save ? "" : " Close and reopen the checklist to try again.";
+      showJobError(log, (error.message || String(error)) + retry);
+    } finally {
+      finish();
+      controls.forEach(control => { control.disabled = !loaded; });
+      pending = false;
+    }
+  }
+
+  panel.ontoggle = () => { if (panel.open && !loaded) updateOptions(false); };
+  form.onsubmit = event => {
+    event.preventDefault();
+    if (S.slug === slug) updateOptions(true);
+  };
+  panel.checklistForms.set(slug, {form, open: panel.ontoggle});
+  panel.ontoggle();
+}
+
 async function renderProjectSettings(keepRemoved = false) {
   const ov = S.ov;
   if (!ov) return;
@@ -1358,6 +1413,7 @@ async function renderProjectSettings(keepRemoved = false) {
   $("reimportGame").hidden = ov.kind === "fork" && !ov.reimports;
   refreshReimport();
   renderProjectFacts(ov);
+  renderPolishChecklist(S.slug, ov.kind === "fork");
   loadDataRegions();
   loadBlockerReviews();
   $("codeAuditPanel").hidden = !S.ov?.code_audit;
