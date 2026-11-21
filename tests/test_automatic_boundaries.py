@@ -462,3 +462,21 @@ def test_conditional_filler_cannot_create_an_entry_inside_a_called_leaf():
     image,functions,segments=fixture(words,cuts=(0,12,16,20,32,48))
     result=repair(functions,[],image,consoles.get('n64'),segments)
     assert [(fn.rom,fn.size) for fn in result]==[(0,12),(16,16),(32,16)]
+
+
+@pytest.mark.parametrize('writer',[False,True])
+def test_zero_address_passed_to_a_direct_setter_is_data(writer):
+    setter=BASE+48
+    call=0x0c000000|((setter>>2)&0x3ffffff)
+    words=[0x8c820000,0x03e00008,0,0]+BODY
+    words.extend([0x03e00008,0xac850000 if writer else 0x8c850000,
+                  0x3c048000,call,0x2484100c,0x03e00008,0])
+    image,functions,segments=fixture(words,cuts=(0,12,16,48,56,76))
+    reference=functions[1].name
+    caller=functions[-1]
+    caller.lines[0]=replace(caller.lines[0],operands=f'$a0, %hi({reference})')
+    caller.lines[2]=replace(caller.lines[2],operands=f'$a0, $a0, %lo({reference})')
+    data=[]
+    result=repair(functions,data,image,consoles.get('n64'),segments)
+    assert any(fn.rom==12 for fn in result) != writer
+    assert [(row.vram,row.rom,row.size) for row in data]==([(BASE+12,12,4)] if writer else [])

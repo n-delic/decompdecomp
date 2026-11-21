@@ -41,6 +41,7 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
     shared_calls=set(shared)
     names={f.name:f.vram for f in functions}
     lines_by_rom={line.rom:line for fn in functions for line in fn.lines}
+    reference_bodies={}
     for fn in functions:
         for line in fn.lines:
             op=line.word>>26
@@ -56,17 +57,21 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
                 references[dest].add((line.rom,fn.segment))
                 transfer_targets.add(dest)
             for token in re.findall(r'[\w.]+',line.operands):
-                if token in names:references[names[token]].add((line.rom,fn.segment))
+                if token in names:
+                    references[names[token]].add((line.rom,fn.segment))
+                    reference_bodies[line.rom]=fn
     for dest,offset,segment in shared:
         references[dest].discard((offset,segment))
         if not references[dest]:del references[dest]
     functions = recover_inline_tables(functions, data, image, order, explicit | pointers, references, segments, log)
+    buffer_written = buffer_write_evidence(functions, image, console, check=getattr(log,'check_cancel',lambda:None))
     data_only = {
         fn.vram for fn in functions if fn.size==4
         and image[fn.rom:fn.rom+4]==fn.lines[0].word.to_bytes(4,order)
         and fn.vram not in explicit|pointers|transfer_targets
         and not any(d.rom is not None and d.rom<fn.rom+4 and fn.rom<d.rom+d.size for d in data)
-        and address_word_references(fn, references, lines_by_rom)
+        and (address_word_references(fn, references, lines_by_rom)
+             or not fn.lines[0].word and buffer_written(fn, references, reference_bodies))
     }
     destinations=sorted(references)
     entered_addresses=explicit|pointers|set(destinations)
@@ -416,6 +421,66 @@ def raw_return_before(fn, segment, segments, image, order):
         return False
     slot = rabbitizer.Instruction(int.from_bytes(image[fn.rom-4:fn.rom],order))
     return slot.isValid() and not slot.hasDelaySlot()
+
+
+def buffer_write_evidence(functions, image, console, *, check):
+    """Prove referenced address producers reach a direct straight-line buffer writer."""
+    from functools import lru_cache
+
+    import rabbitizer
+
+    from ..arch.mips import rabbitizer_category
+    from ..arch.mips_assets import read
+
+    order='big' if console.big_endian else 'little'
+    targets=defaultdict(list)
+    bodies={}
+    for fn in functions:
+        targets[fn.vram].append(fn)
+        bodies[fn.rom]=fn
+
+    @lru_cache(maxsize=64)
+    def trace(rom):
+        fn=bodies[rom]
+        return read(fn.vram,image[rom:rom+fn.size],big_endian=console.big_endian,
+                    cpu=console.cpu_variant,check=check)
+
+    @lru_cache(maxsize=128)
+    def writers(address):
+        candidates=targets.get(address,())
+        if len(candidates)!=1:
+            return set()
+        fn=candidates[0]
+        if (not 8<=fn.size<=64 or fn.lines[-2].word!=JR_RA
+                or image[fn.rom:fn.rom+fn.size]!=b''.join(line.word.to_bytes(4,order) for line in fn.lines)):
+            return set()
+        category=rabbitizer_category(console.cpu_variant)
+        if any((not ins.isValid() or ins.hasDelaySlot()) for ins in
+               (rabbitizer.Instruction(line.word,0,category) for line in (*fn.lines[:-2],fn.lines[-1]))):
+            return set()
+        return {event['place']['value'] for event in trace(fn.rom)['events']
+                if event['kind']=='store' and event['place'] and event['place']['kind']=='argument'}
+
+    def verified(fn, references, referrers):
+        offsets={offset for offset,_ in references.get(fn.vram,())}
+        if not offsets or not offsets<=referrers.keys():
+            return False
+        covered=set()
+        for rom in {referrers[offset].rom for offset in offsets}:
+            caller=bodies[rom]
+            delta=caller.vram-rom
+            for event in trace(rom)['events']:
+                if (event['kind']!='call'
+                        or int.from_bytes(image[event['instruction']-delta:event['instruction']-delta+4],
+                                          order)>>26!=3):
+                    continue
+                for i in writers(event['target']):
+                    arg=event['args'][i]
+                    if arg and arg['kind']=='constant' and arg['value']==fn.vram:
+                        covered.update(at-delta for at in arg['evidence'])
+        return offsets<=covered
+
+    return verified
 
 
 def address_word_references(fn, references, lines):
