@@ -10264,3 +10264,18 @@ entry bound before the reset lowered the linked diff score from 350 to
 slot and lowered the score to 0. The loop's back edge still reads the
 bound directly. The deep permuter reproduced the linked byte match
 starting from the original scratch draft.
+
+### Preserve a record scan, stage layout fields, and recover a formatted stack buffer
+
+All three N64 drafts were verified with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`; independently
+archived sources compiled as controls.
+
+- A counted record scan matched all 108 bytes from score 670 when its cursors moved in bytes, the successful
+  store had its own return path, and the key was assigned to a local before entering the loop. Keeping the
+  key in the parameter still left score 55.
+- Staging one literal for four layout updates and capturing the field value before a global reset matched the
+  schedule. Restoring the forwarded context argument at the final call matched all 236 bytes from score 65.
+  Staging the literal and restoring the argument alone left score 60.
+- The 256-byte formatter draft initially failed compilation because two stack-byte names had no declarations.
+  Recovering a four-byte buffer compiled at score 60; staging the signed clamp before the call matched exactly
+  during draft generation. The target passes the buffer address and later loads three consecutive bytes from it.
