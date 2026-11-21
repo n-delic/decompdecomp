@@ -11970,3 +11970,26 @@ masking the return value. Assigning the packed word back to the same
 unsigned local before returning its low 16 bits preserved the target
 allocation. The deep permuter saved an exact match from score 25 in
 30 candidates.
+
+## A global updated through m2c's shared temporary: store it on each arm (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, an N64 game, one 227-instruction switch function)
+
+A menu function with a nine-case switch; two cases step a byte global by +1 or -1 depending on a call's result. m2c
+wrote `T = g + 1;` / `T = g - 1;` on the arms and `g = T;` at a label (the other case jumped there with `goto`), `T`
+being the function's call-crossing temporary (`temp_s1`, also holding `payload + 0x28`). Saved best 30; the diff was
+only `lui/lbu/addiu $v0` against `$s1` on those rows (the target keeps the byte in `$v0` and shares the `lui $at; sb`
+tail). Edit list (each scored with the app's judge):
+
+| # | Edit | Score |
+| - | ---- | ----- |
+| 0 | saved best | 30 |
+| 1 | a fresh `u8`/`s32` local for the new value instead of `temp_s1`, at each of the four sites in 15 combinations | 575 to 2813 (never below 575) |
+| 2 | `g = c ? g + 1 : g - 1;` in the first case, ternary or `if` in the second | 560 |
+| 3 | first case `if (c) { g = g + 1; } else { g = g - 1; }`, second case the same (or `g++`/`g--`) with its own copy of the tail call, no gotos | 0 |
+
+Rules: the saved-register temporary pulls the byte's add into `$s1`; a local of its own re-shapes the jumps (cross-
+jumping no longer shares the store) instead of freeing `$v0`; only the direct `g = g +- k` on each arm gives the
+target. Keeping the other case's `goto` into the label made it 1750: that arm needs the two stores and the tail
+written out. A ternary in the first case lost (560).
+
+decomp-repair 0.5.272 `join_store_split` does steps 1-3 as one child; run on the 30 source it scores 0 with the
+judge-worker (no permuter run). One function, not controlled across others.
