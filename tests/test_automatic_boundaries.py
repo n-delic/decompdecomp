@@ -761,3 +761,29 @@ def test_closed_worker_keeps_its_compiler_epilogue(case):
     result = repair(functions, [], image, consoles.get('n64'), segments)
     actual = [(fn.rom, fn.size) for fn in result]
     assert ((16,40) in actual) == (case == 'worker')
+
+
+@pytest.mark.parametrize('protected', [False, True])
+def test_long_zero_alignment_before_called_cache_leaf(protected):
+    entry = BASE + 112
+    call = 0x0c000000 | ((entry >> 2) & 0x3ffffff)
+    tail = [0x10800003, 0, 0xbd190000, 0, 0x03e00008, 0]
+    words = [*BODY, *([0]*20), *tail, call, 0, 0x03e00008, 0]
+    image, functions, segments = fixture(words, cuts=(0, 32, 36, 112, 136, len(words)*4))
+    symbols = [f'entered = 0x{BASE+32:08X};'] if protected else []
+    result = repair([functions[i] for i in (0,1,3,4)], [], image, consoles.get('n64'), segments, symbols=symbols)
+    assert (32 in {fn.rom for fn in result}) == protected
+
+
+@pytest.mark.parametrize('case', ['directory', 'damaged directory', 'named entry'])
+def test_terminal_scalar_alignment_before_halfword_data(case):
+    data = [0, 0, 0x8000, 0x8000, 0x4000, 0x4000, 0, 27, 0xff800000, 0, 0, 0, *range(1,9)]
+    if case == 'damaged directory':
+        data[-1] += 4
+    image, functions, _ = fixture([0, *BODY, 0x2d6b1919, *data], cuts=(4, 36, 40))
+    segments = [Segment('code', 4, 40, BASE+12)]
+    functions = [replace(fn, vram=fn.vram+8, lines=[replace(line,vram=line.vram+8) for line in fn.lines])
+                 for fn in functions]
+    symbols = [f'entered = 0x{BASE+44:08X};'] if case == 'named entry' else []
+    result = repair(functions, [], image, consoles.get('n64'), segments, symbols=symbols)
+    assert (36 in {fn.rom for fn in result}) == (case != 'directory')
