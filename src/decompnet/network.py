@@ -2354,6 +2354,9 @@ class Network:
                        (fn["id"], agent.id, score, compiled, ctx_version, source, now, via, handoff_inputs)).lastrowid
             self.repair_feedback.attempt(db, current, attempt, ctx_version, effective_settings,
                                          mismatch_rows if score and score > 0 else ())
+            if mismatch_rows or matched:
+                from .app.stub_candidates import record as record_stub
+                record_stub(db, fn["id"], source, () if matched else mismatch_rows)
             if matched and not stale:
                 from .match_bundle import capture as capture_bundle
                 capture_bundle(db,current,attempt,source,ctx_version,effective_settings)

@@ -44,8 +44,34 @@ def text(rows):
     return result+('\n'+hint if hint else '')
 
 
+STUB_SHARE = 0.5   # the candidate emits under this share of the target's instructions
+STUB_MIN = 32      # smaller functions: a short candidate is an ordinary near miss, not a stub
+
+
+def stub(rows):
+    """(candidate instructions, target instructions) when the candidate is a fraction of the target, else None.
+
+    A 2,122-instruction function sat for 66 attempts at a candidate that emitted 146 of them: every pass that tunes
+    registers or operand order measures an already wrong body. Counted from the judge's own rows, so it needs the
+    compile that already happened and never a new one."""
+    report=summarize(rows)
+    candidate,target=report['candidate_instructions'],report['target_instructions']
+    if target>=STUB_MIN and candidate<target*STUB_SHARE and not report['counts']['unknown']:
+        return candidate,target
+    return None
+
+
+def stub_message(found):
+    candidate,target=found
+    return (f'This candidate emits {candidate:,} of the target\'s {target:,} instructions: it is a stub, so rebuild '
+            'the missing control flow (loops, branches, calls) from the target assembly or a fresh redraft before '
+            'tuning registers, operand order or scheduling. Those changes cannot be judged on a body that is not there.')
+
+
 def advice(rows):
     """Suggest a bounded next experiment from rendered evidence, never infer byte equality."""
+    if found:=stub(rows):
+        return stub_message(found)
     report=summarize(rows);counts=report['counts']
     shifted = [(i,row) for i,row in enumerate(rows or []) if len(row)==3 and row[0] in {'>','<'}]
     if len(shifted)==1 and (shifted[0][1][1] or shifted[0][1][2]).strip()=='nop' and counts['branch_target']>=2:

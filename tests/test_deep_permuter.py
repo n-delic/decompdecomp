@@ -1090,3 +1090,14 @@ def test_loop_vector_shape_pass_composes_shapes_that_only_help_together(monkeypa
     monkeypatch.setattr(search, '_score', score)
     assert search.loop_vector_shape_pass(AGENT, proj, dict(fn, best_source=source), 50, None) == 0
     assert any('const Bone *bone' in c and 'bones[k]' in c for c in seen) and len(seen) <= 15
+
+
+def test_a_stub_baseline_is_named_before_the_tuning_passes(monkeypatch):
+    net = setup(monkeypatch)
+    fn = net.function()
+    search = deep_permuter.Search(net, 1, 8, Log(), fn)
+    assert search.stub_note() == ''
+    search.winner_diff = ([(' ', 'nop', 'nop')] * 40 + [('<', 'sw $v0, 0($a0)', '')] * 200, '')
+    assert 'it is a stub' in search.stub_note() and '40 of the target' in search.stub_note()
+    search.winner_diff = ([('r', 'addu $v0, $a0, $a1', 'addu $v0, $a1, $a0')] * 240, '')
+    assert search.stub_note() == ''

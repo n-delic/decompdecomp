@@ -77,6 +77,8 @@ def brief(net, fn, agent, header):
 
         if repeat := repeated_hint(net, proj, fn, source):
             lines.append(repeat)
+    from .stub_candidates import hint as stub_hint
+    if note := stub_hint(net, fn, source):lines.append(note)
     from ..candidate_quality import source_hint as quality_hint
     if note := quality_hint(net, fn, source):lines.append(note)
     diagnostic = summary(read(net,fn['id'],project_id=fn['project_id']))
