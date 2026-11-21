@@ -665,3 +665,23 @@ u8 f(s32 index) {
     result = dict(proposals(source, 'f', '', 'mips', KMC, rows, '', resolve=resolve))
     assert '((u8 *)&table)[(index & 7)]' in result[family]
     assert family not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, '', resolve=resolve))
+
+
+def test_kmc_measured_halfword_limit_follows_coordinate_stores():
+    source = '''
+void f(void *out, void *in) {
+    M2C_FIELD(out, s16 *, 4) = 511;
+    M2C_FIELD(out, s16 *, 0) = (s16) (M2C_FIELD(in, s16 *, 8) * 2);
+    M2C_FIELD(out, s16 *, 2) = (s16) (M2C_FIELD(in, s16 *, 10) * 2);
+    M2C_FIELD(out, s16 *, 6) = 0;
+}
+'''
+    moved = ('addiu $a2, $zero, 511', 'sh $a2, 4($a0)')
+    middle = ('lh $v0, 8($a1)', 'sll $v0, $v0, 1', 'sh $v0, ($a0)', 'lh $v0, 10($a1)')
+    tail = ('sh $zero, 6($a0)', 'sll $v0, $v0, 1', 'sh $v0, 2($a0)', *('nop',) * 13)
+    rows = [('o', '', op) for op in moved] + [(' ', op, op) for op in middle]
+    rows += [('o', op, '') for op in moved] + [(' ', op, op) for op in tail]
+    family = 'measured_late_halfword_limit'
+    fixed = dict(proposals(source, 'f', '', 'mips', KMC, rows, ''))[family]
+    assert fixed.index('M2C_FIELD(out, s16 *, 2)') < fixed.index('= 511;')
+    assert family not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))

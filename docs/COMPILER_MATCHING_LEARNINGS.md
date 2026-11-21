@@ -1,5 +1,28 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: expose small store and call scheduling boundaries
+
+Eight additional archived N64 drafts matched. The original compiler was
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`. The linked byte judge
+verified these candidate changes with the original build settings:
+
+- With `-g3`, put a constant halfword limit after the two coordinate
+  stores (120 to 0 over 96 bytes). A store after only the first coordinate
+  did not match.
+- With `-g3`, restore a structured conditional around a shared store
+  tail (120 to 0 over 164 bytes). Reuse the existing forward-goto
+  rewrite so the store still executes once on each incoming path.
+- With `-g3`, write the two double products, float call and final
+  multiplication as separate statements using the same float local.
+  Two conversions went from 125 to 0 over 100 bytes. Collapsing the
+  staged statements onto one source line scored 100.
+- With `-g3`, capture an integer call result before calculating the
+  address at which to store it (120 to 0 over 208 bytes). Retyping the
+  base pointer too left a score of 5.
+- Move a local decrement after an indirect call, keeping the memory and
+  argument reads in place. Three 432-byte cases went from 120 to 0. One
+  used `-g3` and the other two used the base flags.
+
 ### KMC GCC 2.7.2: confirm byte addressing and argument width in the linked diff
 
 Six more archived N64 drafts matched with the original linker and byte
