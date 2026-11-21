@@ -647,3 +647,16 @@ def test_region_can_preview_two_detected_assets_at_the_same_offset(tmp_path, mon
     row['evidence'].remove(texture)
     with pytest.raises(NetworkError, match='no detected asset'):
         rom_explorer.asset_preview(net, 'game', request | dict(asset_view='image'))
+
+
+def test_scoped_splat_data_symbols_only_cover_their_matching_overlay():
+    segments = [mapping('bank_a', 0, 32), mapping('bank_b', 32, 64)]
+    symbols = [dict(name='D_80000008_bank_b',address=0x80000008,size=4,kind='data'),
+               dict(name='D_80000000_bank_b',address=0x80000010,size=4,kind='data')]
+    report = analyse(bytes(64), segments, [], symbols)
+    scoped = [(row['start'],symbol['ambiguous']) for row in report['regions']
+              for symbol in row['symbols'] if symbol['name'] == symbols[0]['name']]
+    ambiguous = [(row['start'],symbol['ambiguous']) for row in report['regions']
+                 for symbol in row['symbols'] if symbol['name'] == symbols[1]['name']]
+    assert scoped == [(40,False)]
+    assert ambiguous == [(16,True),(48,True)]
