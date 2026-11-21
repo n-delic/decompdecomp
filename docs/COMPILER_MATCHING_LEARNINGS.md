@@ -1,5 +1,22 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: lift a shared switch default tail
+
+In one 12,136-byte N64 function, the decompiler placed the shared
+continuation in an early `default` with incoming jumps from later
+cases. The target directs those cases and out-of-range values past
+the last case. With `-G0 -mips3 -mgp32 -mfp32 -O2`, moving the
+default to the end scored 45,481 from 57,118. Lifting its body after
+the switch scored 39,693. The repair leaves a jump at the original
+default and preserves breaks that bypassed the shared tail. Its
+emitted candidate reproduced 39,693 with the standalone linked judge.
+
+The same draft's first `0x410000` test also loaded an unsigned halfword
+where the target used a word. Widening that load alone worsened the
+score to 57,287. Widening it after lifting the tail improved 39,693
+to 39,687. These are measurements on one function. The branch and
+break behavior also has controlled rewrite regressions.
+
 ### KMC GCC 2.7.2: loop header supplies a null-guard delay slot
 
 In one N64 function, rewriting a zero-initialized counter loop from
