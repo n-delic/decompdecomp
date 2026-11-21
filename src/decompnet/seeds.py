@@ -370,6 +370,7 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
 
     from decomprepair import (
         aligned_stack_read,
+        byte_cursor_postincrements,
         large_stack_drafts,
         likely_branch_cursor,
         loop_storage_shapes,
@@ -402,6 +403,7 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
             or relocated_byte_table.rewrite(source, name, asm_text, context_header, resolve)
             or relocated_global_update.rewrite(source, name, asm_text, context_header, resolve)
             or packed_matrix_conversion.rewrite(source, name, asm_text, context_header)
+            or byte_cursor_postincrements.rewrite(source, name, asm_text, context_header)
             or aligned_stack_read.rewrite(source, name, asm_text)
             or passthrough_argument_repairs.missing_entry_argument(source, name, asm_text, context_header)
             or loop_storage_shapes.measured_copy_setup(source, name, asm_text, context_header)

@@ -147,6 +147,7 @@ class BriefMixin:
         if own["toolchain"] == 'gcc-2.7.2-kmc':
             from decomprepair import (
                 aligned_stack_read,
+                byte_cursor_postincrements,
                 large_stack_drafts,
                 likely_branch_cursor,
                 loop_storage_shapes,
@@ -173,6 +174,8 @@ class BriefMixin:
                 inputs.append('relocated global update')
             if packed_matrix_conversion.applies(fn['asm'] or ''):
                 inputs.append('packed matrix conversion')
+            if byte_cursor_postincrements.applies(fn['asm'] or ''):
+                inputs.append('byte cursor increments')
             if aligned_stack_read.applies(fn['asm'] or ''):
                 inputs.append('aligned stack read')
             if passthrough_argument_repairs.entry_wrapper_applies(fn['asm'] or ''):
