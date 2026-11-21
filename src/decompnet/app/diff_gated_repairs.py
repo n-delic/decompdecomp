@@ -11,6 +11,7 @@ from decomprepair import (
     float_matrix_identity,
     global_pointer_local_repairs,
     guard_inversion_repairs,
+    guard_reset_scheduling,
     indexed_field_cursor,
     kmc_cast_repairs,
     likely_branch_cursor,
@@ -215,6 +216,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_control_flow.variants(source,name,rows)
         result += measured_cursor_loop_tail.variants(source, name, rows)
         result += measured_cursor_publish.variants(source, name, rows)
+        result += guard_reset_scheduling.variants(source, name, header, rows)
         result += global_pointer_local_repairs.scoped_field_reads(source, name, rows)
         result += measured_global_rebase.variants(source, name, header, rows, resolve=resolve)
         result += measured_memory_order.variants(source,name,rows,resolve=resolve,header=header)
