@@ -181,6 +181,8 @@ class BriefMixin:
                 inputs.append('relocated countdown')
             if stack_read_retry.applies(fn['asm'] or ''):
                 inputs.append('stack read retry')
+            if stack_read_retry.inline_applies(fn['asm'] or ''):
+                inputs.append('inline stack read comparison')
             if packed_matrix_conversion.applies(fn['asm'] or ''):
                 inputs.append('packed matrix conversion')
             if byte_cursor_postincrements.applies(fn['asm'] or ''):

@@ -9111,3 +9111,17 @@ then matched all 184 linked bytes on the copied project. The target proves
 the buffer extent with the comparison length and save offsets, and it
 establishes when each call is retried. The rewrite preserves the call
 declarations, selector and comparison operands.
+
+### Inlined byte comparison after a stack read
+
+A 49-instruction N64 routine under `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`
+scored 756 as a fresh draft and 376 after merging two error locals.
+Expanding the scalar to the 32-byte buffer alone scored 750. The target
+clears the bank flag before a call, retries the read only for one error
+code, and compares from byte zero. m2c placed the index increment before
+the comparison even though the target increments in the branch delay slot.
+
+Restoring the buffer, retry paths and zero-based comparison reproduced
+all 196 original bytes on a copied project. Reusing the return and compare
+form from the other read-buffer example scored 2760 on this target. This
+version uses its own target evidence and preserves the call declarations.
