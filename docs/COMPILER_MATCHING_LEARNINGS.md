@@ -1,5 +1,13 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: address queue and thread stack with linked symbols
+
+A 128-byte archived thread setup matched after using the independently
+relocated message buffer and stack symbols. Their resolved addresses
+equal the original base-plus-offset expressions. The linked score
+improved from 220 to zero with
+`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
+
 ### KMC GCC 2.7.2: update a flag in both branches
 
 Two archived drafts matched after replacing a temporary flag value and

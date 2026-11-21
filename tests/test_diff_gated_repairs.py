@@ -930,3 +930,18 @@ def test_direct_flag_update_routes_to_kmc(monkeypatch):
                         lambda text, name, header, diff: [('flag_update_fixture', text)])
     assert 'flag_update_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'flag_update_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_thread_addresses_receive_symbol_resolver(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    resolve = {'table': 32}.get
+
+    def repair(text, name, header, diff, resolver):
+        assert resolver('table') == 32
+        return [('thread_address_fixture', text)]
+
+    monkeypatch.setattr(diff_gated_repairs.measured_thread_addresses, 'variants', repair)
+    assert 'thread_address_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, '', resolve=resolve))
+    assert 'thread_address_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, '', resolve=resolve))
