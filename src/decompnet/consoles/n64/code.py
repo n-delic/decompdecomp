@@ -403,7 +403,9 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
         found = sorted(complete_gaps(rom, taken, found, tuple((s.rom_start, s.rom_end, s.vram) for s in known),
                                      runtime_entries(workdir), log=log))
     from .boot_mapping import recover
+    from .rsp_prefix import trim
 
+    found = trim(rom, found, taken, log)
     recover(config, rom, found, log)
     if not found:
         return original
