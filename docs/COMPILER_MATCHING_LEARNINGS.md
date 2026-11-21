@@ -8812,3 +8812,12 @@ reproduced the original 184 linked bytes on a copied project. The compiler
 emitted the shared move in both original delay slots. The rule requires the
 same source and destination saved registers in both slots, a matching
 next-node load and loop backedge, and a final argumentless call.
+
+### Inlining an adjacent three-float scale
+
+Under `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, a three-component float transform
+scored 35 with a direct multiply in each initializer. The native permuter found a
+byte-exact draft by introducing an inline float multiply. A controlled replay needed
+the helper only for the three initial component multiplies. Deep Permuter's targeted
+trial matched all 360 linked bytes after six total trials, compared with 199 trials
+in the earlier scratch run. Both runs used the existing compiler flags.
