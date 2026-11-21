@@ -8751,3 +8751,12 @@ Both raw draft generation and the Deep Permuter proposal reproduced the exact
 linked bytes on the copied project with the captured header. The rewrite
 requires the corresponding table and argument registers, stack record, loop
 backedge, and store from the saved address register.
+
+### Packed-word store scope and shift order
+
+A four-term packed color store on N64 under `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` scored 95.
+Wrapping the store in a single `do { ... } while (0)` block lowered the score to 45 by
+changing the allocation of two saved registers. Swapping the two shifts inside that block
+to match the target's 16-bit then 8-bit shift order lowered the score to 30. These are
+linked partial improvements on a real function. A target sequence with both shifts from
+the same register and a source expression over a single unsigned local identifies the trial.
