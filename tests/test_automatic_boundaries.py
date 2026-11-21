@@ -325,3 +325,25 @@ def test_generated_source_units_do_not_interrupt_a_single_mapped_function():
     functions[1] = replace(functions[1],segment='generated_next_unit')
     result = repair(functions,[],image,consoles.get('n64'),segments)
     assert [(fn.segment,fn.rom,fn.size) for fn in result] == [('code',0,32)]
+
+
+@pytest.mark.parametrize('pointer',[False,True])
+def test_long_zero_padding_requires_an_aligned_called_frame_and_no_interior_pointer(pointer):
+    entry = BASE+64
+    words = [0x0c000000 | ((entry>>2)&0x3ffffff),0,0x03e00008,0]+[0]*12+BODY
+    image,functions,segments = fixture(words,cuts=(0,16,20,64,96))
+    functions.pop(2)
+    if pointer:
+        image += (BASE+28).to_bytes(4,'big')
+    result = repair(functions,[],image,consoles.get('n64'),segments)
+    assert any(fn.rom==16 for fn in result) == pointer
+
+
+@pytest.mark.parametrize('called',[False,True])
+def test_single_zero_after_a_closed_back_edge_requires_a_called_next_entry(called):
+    entry = BASE+16
+    caller = 0x0c000000 | ((entry>>2)&0x3ffffff) if called else 0
+    words = [0x8c820000,0x1000fffe,0,0,0x8c820000,0x03e00008,0,caller,0,0x03e00008,0]
+    image,functions,segments = fixture(words,cuts=(0,12,16,28,44))
+    result = repair(functions,[],image,consoles.get('n64'),segments)
+    assert any(fn.rom <= 12 < fn.rom+fn.size for fn in result) != called
