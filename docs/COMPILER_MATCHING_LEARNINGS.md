@@ -12259,3 +12259,14 @@ decomp-repair 0.5.281 `entry_parameter_copy` (step 10), `store_value_first` (ste
 (steps 3-4) run on the source before each step reach it (40 to 0, 815 to 90, 8535 to 6105; judge-worker, no permuter
 run). Not yet in the permuter: the typed-array rewrite of step 5 (a global pointer's array element accessed in place of
 m2c's `temp = sRenderState + off` locals), and the operand/store-order choices of steps 6, 8 and 9.
+
+### KMC GCC 2.7.2: retain the byte stride in index-first global addresses
+
+A scratch draft added a scaled field read to the address of an unknown
+word-sized global. KMC emitted a shift two bits larger than the target,
+while the table relocations and record load agreed. Casting the address
+to `s8 *` before addition removed the extra factor of four. With
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, the Deep Permuter
+reached score 0 from 10 in 38 attempts. The released control stayed at
+10 after 100 attempts. This is one linked-byte scratch replay, with
+synthetic tests for the relocation and stride checks.
