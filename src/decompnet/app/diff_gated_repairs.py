@@ -34,6 +34,7 @@ from decomprepair import (
     shared_return_repairs,
     split_dispatch_zero_case,
     stack_fill_drafts,
+    stack_header_buffer,
     stack_read_retry,
     targeted_switch_labels,
     uncached_read_repairs,
@@ -190,7 +191,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     if toolchain.startswith('gcc-2.7.2-kmc'):
         result += target_inline_storage_diff_repairs.proposals(source,name,header,rows,target,candidate,asm,
                                                              read_data=read_data,big_endian=big_endian)
-        result += stack_padding_repairs.layout_candidates(source,name,header,arch,rows,symbols,flags)
+        result += stack_padding_repairs.layout_candidates(source,name,header,arch,rows,symbols,flags,asm=asm)
         if candidate_source := uncached_read_repairs.rewrite(source, name, asm or '', resolve):
             result.append(('measured_uncached_word_read', candidate_source))
         result += measured_control_flow.variants(source,name,rows)
@@ -211,6 +212,10 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
             result.append(('relocated_countdown', candidate_source))
         if candidate_source := stack_fill_drafts.rewrite(source, name, asm or '', header):
             result.append(('descending_stack_fill', candidate_source))
+        if candidate_source := stack_fill_drafts.rewrite_ascending(source, name, asm or '', header):
+            result.append(('ascending_stack_fill', candidate_source))
+        if candidate_source := stack_header_buffer.rewrite(source, name, asm or '', header):
+            result.append(('stack_header_buffer', candidate_source))
         if candidate_source := relocated_global_update.rewrite_reload_wrapper(source, name, asm or '', header, resolve):
             result.append(('direct_global_reload', candidate_source))
         if candidate_source := stack_read_retry.rewrite(source, name, asm or '', header):

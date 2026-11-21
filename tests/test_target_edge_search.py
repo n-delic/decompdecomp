@@ -536,16 +536,22 @@ def test_kmc_proposes_staging_a_shift_and_mask_after_a_call():
 
 
 def test_kmc_proposes_stack_buffer_fills_and_direct_global_reloads(monkeypatch):
-    from decomprepair import relocated_global_update, stack_fill_drafts
+    from decomprepair import relocated_global_update, stack_fill_drafts, stack_header_buffer
 
     monkeypatch.setattr(stack_fill_drafts, 'rewrite', lambda *args: 'indexed buffer')
+    monkeypatch.setattr(stack_fill_drafts, 'rewrite_ascending', lambda *args: 'ascending buffer')
+    monkeypatch.setattr(stack_header_buffer, 'rewrite', lambda *args: 'serialized header')
     monkeypatch.setattr(relocated_global_update, 'rewrite_reload_wrapper', lambda *args: 'direct reload')
     rows = [('s', 'addiu $sp, $sp, -48', 'addiu $sp, $sp, -32')]
     kmc = dict(route('void f(void) {}', rows, 'asm'))
     assert kmc['descending_stack_fill'] == 'indexed buffer'
+    assert kmc['ascending_stack_fill'] == 'ascending buffer'
+    assert kmc['stack_header_buffer'] == 'serialized header'
     assert kmc['direct_global_reload'] == 'direct reload'
     ido = dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
     assert 'descending_stack_fill' not in ido
+    assert 'ascending_stack_fill' not in ido
+    assert 'stack_header_buffer' not in ido
     assert 'direct_global_reload' not in ido
 
 
@@ -602,3 +608,17 @@ def test_kmc_prioritizes_a_live_argument_when_the_other_call_registers_shift():
     asm = 'jal call\nlw $a1, 8($a1)'
     assert 'call(input, M2C_FIELD' in dict(route(source, rows, asm))['passthrough_argument']
     assert 'passthrough_argument' not in dict(route(source, rows, 'move $a0, $zero\n' + asm))
+
+
+def test_kmc_prioritizes_existing_buffer_sizes_for_stack_only_growth():
+    asm = 'addiu $sp, $sp, -48\nsw $ra, 40($sp)'
+    source = 'void f(void) {\n    M2C_UNK sp18;\n    write_bytes(&sp18);\n}'
+    rows = [('s', 'addiu $sp, $sp, -48', 'addiu $sp, $sp, -32'),
+            ('s', 'sw $ra, 40($sp)', 'sw $ra, 24($sp)'),
+            ('s', 'lw $ra, 40($sp)', 'lw $ra, 24($sp)'),
+            ('s', 'addiu $sp, $sp, 48', 'addiu $sp, $sp, 32')]
+    proposals = dict(route(source, rows, asm))
+    assert 'u8 sp18[0x10];' in proposals['stack_object_size']
+    assert list(proposals).index('stack_object_size') < list(proposals).index('inferred_frame_reservation')
+    assert 'stack_object_size' not in dict(route(source, rows + [('r', 'move $a0, $a1', 'move $a0, $a2')], asm))
+    assert 'stack_object_size' not in dict(route(source, [(m, b, a) for m, a, b in rows], asm))
