@@ -4,6 +4,8 @@ ROM stands in for a game."""
 
 import struct
 
+import pytest
+
 from decompnet.consoles.n64.code import find_segments
 
 NOP, JR_RA = 0, 0x03E00008
@@ -70,7 +72,8 @@ def test_nothing_but_data_finds_nothing():
     assert find_segments(rom, [(0x1000, 0x2000, 0x80000400)]) == []
 
 
-def test_packed_code_at_a_tlb_address_is_unpacked_and_placed():
+@pytest.mark.parametrize(("marker", "size_bytes"), [(b"\x11\x73", 3), (b"\x11\x72", 4)])
+def test_packed_code_at_a_tlb_address_is_unpacked_and_placed(marker, size_bytes):
     """Perfect Dark keeps its code packed (0x1173, the unpacked size, a deflate stream) and runs it at 0x7F000000
     through the TLB: unpacked, appended, and placed at its address."""
     import zlib
@@ -79,7 +82,7 @@ def test_packed_code_at_a_tlb_address_is_unpacked_and_placed():
 
     code = _code(0x7F000000, 160)  # its calls are 0x7F... addresses: a jal keeps the top four bits
     packer = zlib.compressobj(9, zlib.DEFLATED, -15)
-    packed = b"\x11\x73" + len(code).to_bytes(3, "big") + packer.compress(code) + packer.flush()
+    packed = marker + len(code).to_bytes(size_bytes, "big") + packer.compress(code) + packer.flush()
     rom = bytearray(0x100000)
     main = _code(0x80000400, 40)
     rom[0x1000:0x1000 + len(main)] = main
@@ -206,3 +209,56 @@ def test_terminal_display_list_word_stays_in_data_and_a_called_entry_stays_code(
     result.named.clear()
     recover_terminal_display_lists(result,image)
     assert not result.functions and [(d.rom,d.size) for d in result.data] == [(12,8)]
+
+
+def test_paired_deflate_uses_proven_runtime_slot_and_excludes_data(tmp_path):
+    import zlib
+
+    import yaml
+
+    from decompnet.consoles.n64 import rare_overlays
+
+    core1 = 0x80201000
+    core2 = 0x80210000
+    limit = 0x80301000
+    data = bytes(16)
+    text = _code(core2,32)
+    control_start = 0x1000
+    core1_size = len(text)
+    linked = control_start+core1_size+len(data)
+
+    def constant(reg, value):
+        return [0x3c000000 | reg<<16 | value>>16, 0x34000000 | reg<<21 | reg<<16 | value&0xffff]
+
+    values = (0,core2,limit,linked,linked+len(text)+len(data),core2,core2+len(text),core2+len(text))
+    words = [0]*16
+    for index,value in enumerate(values):
+        reg = index+4
+        words.extend(constant(reg,value))
+        if index >= 4:
+            words.append(0xafa00000 | reg<<16 | index*4)
+    words.extend((0x0c000000|((core1>>2)&0x03ffffff),0))
+    first = b''.join(word.to_bytes(4,'big') for word in words)
+    first += _code(core1,32)[len(first):]
+    assert len(first) == core1_size
+    assert rare_overlays.slot(first,core1,core2,linked,len(text),len(data)) == limit
+    assert rare_overlays.slot(first,core1,core2,linked,len(text)+16,len(data)) is None
+
+    def pack(blob):
+        stream = zlib.compressobj(wbits=-15)
+        return b'\x11\x72'+len(blob).to_bytes(4,'big')+stream.compress(blob)+stream.flush()
+
+    rom = bytearray(control_start)
+    packed = []
+    for blob in (first,text,text,text):
+        packed.append((len(rom),blob))
+        rom.extend(pack(blob)+pack(data))
+        rom.extend(bytes(-len(rom)%16))
+    cfg = tmp_path/'rom.yaml'
+    cfg.write_text(yaml.safe_dump({'options':{'target_path':'rom.z64'},'segments':[[len(rom)]]}))
+    placed = [(0x20000,0x20000+len(first),core1),(0x30000,0x30000+len(text),core2)]
+    assert rare_overlays.add(cfg,tmp_path,'rom.z64',rom,packed,placed,[0x20000,0x30000],lambda _:None)
+    segments = [s for s in yaml.safe_load(cfg.read_text())['segments'] if isinstance(s,dict) and s['type']=='code']
+    assert [s['vram'] for s in segments] == [core1,core2,limit,limit]
+    assert segments[2]['exclusive_ram_id'] == segments[3]['exclusive_ram_id']
+    assert all(s['subsegments'][1][:2] == [s['start']+len(text),'data'] for s in segments)
