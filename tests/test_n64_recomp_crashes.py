@@ -207,11 +207,26 @@ def test_bad_generated_c_is_retranslated_as_an_explicit_stub(tmp_path, monkeypat
         (folder/'funcs/unit.c').write_text('RECOMP_FUNC void listed(void) {\n goto missing;\n}\n')
     def check(folder, include, stop):
         errors = [] if calls[-1] else [f'{folder}/funcs/unit.c:2:2: error: use of undeclared label']
-        return [], set(), errors
+        return [], set(), errors, {"listed"} if not errors else set()
     monkeypatch.setattr(recomp, '_translate', translate)
     monkeypatch.setattr(recomp, 'check', check)
     summary = recomp.recompile(Path('tool'), image, SEGMENTS, SPLIT, out, log=lambda *a:None)
     assert len(calls) == 2 and 'listed' in calls[-1]
-    assert summary['error_count'] == 0
+    assert summary['error_count'] == summary['succeeded'] == 0
     assert summary['refused'][0]['name'] == 'listed'
     assert 'generated C does not compile' in summary['refused'][0]['why']
+
+
+def test_c_check_only_counts_bodies_in_successful_files(tmp_path, monkeypatch):
+    folder = tmp_path / "funcs"
+    folder.mkdir()
+    (folder / "passing.c").write_text("RECOMP_FUNC void usable(void) {}\n")
+    (folder / "failing.c").write_text("RECOMP_FUNC void unverified(void) {}\n")
+
+    def compile_file(args, **kwargs):
+        good = args[-1].endswith("passing.c")
+        return subprocess.CompletedProcess(args, 0 if good else 1, "", "")
+
+    monkeypatch.setattr(recomp.subprocess, "run", compile_file)
+    _, _, _, passed = recomp.check(tmp_path, tmp_path)
+    assert passed == {"usable"}

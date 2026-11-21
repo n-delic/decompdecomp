@@ -796,3 +796,15 @@ void f(int context, int value) {
     asm = '\n'.join(row[1] for row in rows)
     fixed = dict(route(source, rows, asm))['frame_reservation_with_forwarded_argument']
     assert 'get(context, value);' in fixed and 'volatile u64 scratch;' in fixed
+
+
+def test_ido_routes_a_measured_global_byte_decrement():
+    source = 'extern u8 timer;\nvoid f(void) { timer -= 8; }\n'
+    target = ['lui $v1, %hi(timer)', 'addiu $v1, $v1, %lo(timer)', 'lbu $v0, 0($v1)',
+              'addiu $v0, $v0, -8', 'jr $ra', 'sb $v0, 0($v1)']
+    asm = '\n'.join(f'/* {i*4:06X} {0x80000000+i*4:08X} 00000000 */ {line}'
+                    for i, line in enumerate(target))
+    rows = [(' ', line, line) if line == 'jr $ra' else ('r', line, 'other') for line in target]
+    fixed = dict(route(source, rows, asm, compiler='ido-5.3'))
+    assert '__repair_byte_value -= 8;' in fixed['staged_global_byte_decrement']
+    assert 'staged_global_byte_decrement' not in dict(route(source, rows, asm, compiler='ido-7.1'))

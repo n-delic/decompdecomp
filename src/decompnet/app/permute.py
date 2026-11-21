@@ -156,10 +156,15 @@ def generator_argv() -> list[str]:
 
 class TracedVariant(str):
     """A generated source with the randomizer's successful rewrite history."""
-    def __new__(cls, source, lineage):
+    def __new__(cls, source, lineage=()):
         value = super().__new__(cls, source)
         value.lineage = lineage
         return value
+
+    def __getnewargs__(self):
+        # Copying or pickling a variant (it crosses worker boundaries) rebuilt it from the text alone and failed with
+        # "missing 1 required positional argument: 'lineage'", stopping a long Deep Permuter run.
+        return (str(self), self.lineage)
 
 
 class GenerationStopped(Exception):

@@ -6,6 +6,9 @@ Use **Recompile It** early to check the ROM split. The results include functions
 N64Recomp set aside, and generated C that failed to compile. Review those findings before spending time matching
 functions. Builds that use N64Recomp also prepare its output on demand.
 
+The step's meter counts functions whose generated C passed the compiler's syntax check, including discoveries.
+Functions replaced by stubs contribute only to the total. Run N64Recomp again to measure an older report.
+
 The **Missing functions** list shows every discovery, including its ROM offset, proposed size and discovery evidence.
 Open **Review assembly** to inspect the proposed entry and end. Select the entries you want and choose **Add selected to split**. Added entries become ordinary ROM functions for
 review and matching; the judge still checks submitted C against the original bytes. Entries that overlap live

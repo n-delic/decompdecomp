@@ -24,3 +24,19 @@ def test_only_an_unchanged_aligned_span_splits_executable_text(tmp_path, monkeyp
     assert code_ranges(config) == [(0,12,0x80000000),(16,len(image),0x80000010)]
     segments = yaml.safe_load(config.read_text())['segments'][0]['subsegments']
     assert segments[1][:2] == [12, 'rodata']
+
+
+def test_verified_microcode_tail_ends_cpu_text_at_the_same_rom_offset(tmp_path, monkeypatch):
+    context = b'padding!' + bytes.fromhex('090004194a01086ce8411800')
+    signature = (context[:12].hex(), len(context), len(context)-8, hashlib.sha256(context).hexdigest())
+    monkeypatch.setattr(inline_data, '_LITERALS', (signature,))
+    image = b'head' + context
+    config = tmp_path / 'game.yaml'
+    config.write_text(yaml.safe_dump(dict(segments=[
+        dict(type='code', start=0, vram=0x80000000, subsegments=[[0, 'c', 'program']]),
+        [len(image)],
+    ])))
+    inline_data.apply(config, image, lambda _: None)
+    assert code_ranges(config) == [(0, 12, 0x80000000)]
+    spans = yaml.safe_load(config.read_text())['segments'][0]['subsegments']
+    assert spans[-1][:2] == [12, 'rodata']

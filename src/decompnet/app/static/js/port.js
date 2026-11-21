@@ -2,38 +2,81 @@
    with how far along it is and the button that does it. Read-only; asked for only while the tab is open. */
 let portEpoch = 0;
 let portRenderedSlug = null;
-let portRuntime = null;  // the runtime chosen in the Play step, kept across refreshes of the same report
+let portBuild = {slug: null, mode: "compatibility", runtime: "wasm"};
 
-/* What a runtime still waits for, in a sentence (port/readiness.py, runtimes). */
-function runtimeStatus(r) {
-  if (r.playable) return "Ready: plays your last save.";
-  const needs = r.missing.length ? `Needs: ${r.missing.join(", ")}.` : "";
-  if (r.built) return needs;
-  return r.missing.length ? `${needs} Then decompdecomp builds and plays it on ${r.name} (planned, ROADMAP.md).`
-    : `The steps it needs are done; building and playing on ${r.name} isn't in decompdecomp yet (planned, ROADMAP.md).`;
+function portBuildRequest() {
+  const {mode, runtime} = portBuild.slug === S.slug ? portBuild : {mode: "compatibility", runtime: "wasm"};
+  return {build_mode: mode, runtime};
 }
 
-/* The Play step's choice of runtime: one radio each, only a playable one can be chosen. */
-function runtimeChoice(runtimes) {
-  if (!runtimes.some((r) => r.id === portRuntime && r.playable)) portRuntime = (runtimes.find((r) => r.playable) || {}).id || null;
-  const set = document.createElement("fieldset"); set.className = "port-runtimes";
-  const legend = document.createElement("legend"); legend.className = "small muted"; legend.textContent = "Run it on";
-  set.append(legend);
-  for (const r of runtimes) {
-    const label = document.createElement("label"); label.className = "port-runtime" + (r.playable ? "" : " unavailable");
-    const radio = document.createElement("input");
-    radio.type = "radio"; radio.name = "portRuntime"; radio.value = r.id;
-    radio.disabled = !r.playable; radio.checked = r.id === portRuntime;
-    radio.addEventListener("change", () => { if (radio.checked) portRuntime = r.id; });
-    const text = document.createElement("span");
-    const name = document.createElement("b"); name.textContent = r.name;
-    const summary = document.createElement("span"); summary.className = "small muted"; summary.textContent = r.summary;
-    const status = document.createElement("span"); status.className = "small port-runtime-status"; status.textContent = runtimeStatus(r);
-    text.append(name, summary, status);
-    label.append(radio, text);
-    set.append(label);
+function portBuildAvailable() {
+  return !!portBuildRequest().runtime;
+}
+
+function updatePortBuildActions() {
+  $("portPlay").disabled = !!playJob || !portBuildAvailable();
+  if (exportState?.slug === S.slug) renderExportControls(exportState);
+}
+
+function portRadio(group, option, value, onChange) {
+  const disabled = option.playable === false;
+  const label = document.createElement("label");
+  label.className = "port-runtime" + (disabled ? " unavailable" : "");
+  const radio = document.createElement("input");
+  radio.type = "radio"; radio.name = group; radio.value = option.id;
+  radio.disabled = disabled; radio.checked = option.id === value;
+  radio.addEventListener("change", () => { if (radio.checked && !radio.disabled) onChange(option.id); });
+  const text = document.createElement("span");
+  const name = document.createElement("b"); name.textContent = option.name;
+  const summary = document.createElement("span"); summary.className = "small muted"; summary.textContent = option.summary;
+  text.append(name, summary);
+  if (option.status) {
+    const status = document.createElement("span"); status.className = "small port-runtime-status";
+    status.textContent = option.status;
+    text.append(status);
   }
-  return set;
+  label.append(radio, text);
+  return label;
+}
+
+function renderPortBuildChoices(modes) {
+  const panel = $("portBuildChoices"), pickers = $("portBuildPickers");
+  panel.hidden = !modes.length;
+  if (!modes.length) {
+    pickers.replaceChildren();
+    updatePortBuildActions();
+    return;
+  }
+  if (!modes.some((mode) => mode.id === portBuild.mode)) portBuild.mode = modes[0].id;
+  const modePicker = document.createElement("fieldset"); modePicker.className = "port-runtimes";
+  const modeLegend = document.createElement("legend"); modeLegend.textContent = "Build mode";
+  modePicker.append(modeLegend);
+  const runtimePicker = document.createElement("fieldset"); runtimePicker.className = "port-runtimes";
+  const runtimeLegend = document.createElement("legend"); runtimeLegend.textContent = "Runtime";
+  function renderRuntimePicker() {
+    const options = modes.find((mode) => mode.id === portBuild.mode).runtimes;
+    if (!options.some((r) => r.id === portBuild.runtime && r.playable)) {
+      portBuild.runtime = options.find((r) => r.playable)?.id ?? null;
+    }
+    runtimePicker.replaceChildren(runtimeLegend, ...options.map((r) => {
+      const needs = r.missing.length ? `Needs ${r.missing.join(", ")}.` : "";
+      const status = r.playable ? "Available for Play and Export."
+        : [r.built ? "" : "Planned for this build mode.", needs].filter(Boolean).join(" ");
+      return portRadio("portRuntime", {...r, status}, portBuild.runtime, (id) => {
+        portBuild.runtime = id;
+        updatePortBuildActions();
+      });
+    }));
+    updatePortBuildActions();
+  }
+  for (const mode of modes) {
+    modePicker.append(portRadio("portBuildMode", mode, portBuild.mode, (id) => {
+      portBuild.mode = id;
+      renderRuntimePicker();
+    }));
+  }
+  pickers.replaceChildren(modePicker, runtimePicker);
+  renderRuntimePicker();
 }
 
 function portRow(label, value) {
@@ -124,6 +167,7 @@ function renderPortReadiness(report) {
     + (assets.extracted && assets.extracted.current
       ? `; extracted: ${assets.extracted.mapped} of ${assets.extracted.total} are the ROM's bytes` : "")));
   renderPortSteps(report);
+  renderPortBuildChoices(report.build_modes || []);
   renderRecompileDiscoveries(report.recomp);
   portRenderedSlug = S.slug;
   attachPlay(report.play);
@@ -141,10 +185,15 @@ const pct = (part, whole) => (whole > 0 ? Math.max(0, Math.min(100, Math.round(1
 
 function recompileStep(report) {
   const result = report.recomp;
+  const success = result?.succeeded != null;
+  const share = success && result.total > 0 ? Math.floor(100 * result.succeeded / result.total) : null;
   return {
-    title: "Recompile It", pct: null, diagnostic: true,
+    title: "Recompile It", pct: share, diagnostic: true,
+    emptyMeter: report.recomp_available && !success,
+    count: success ? `${result.succeeded.toLocaleString()} of ${result.total.toLocaleString()} functions recompiled successfully`
+      : result ? "Run N64Recomp again to measure how many functions recompile successfully." : "",
     status: recompileRun?.slug === S.slug ? (recompileRun.adding ? "Adding functions…" : "Recompiling…")
-      : result ? "Checked" : null,
+      : null,
     unavailable: !report.recomp_available,
     detail: report.recomp_available
       ? "Run N64Recomp early to check how the ROM was split. It translates ROM instructions to C and looks for "
@@ -199,10 +248,8 @@ function portSteps(report) {
       detail: assets ? `${assets.resources} resources mapped` + (assets.extracted && assets.extracted.current
         ? `, ${assets.extracted.mapped} of ${assets.extracted.total} extracted` : assets.written ? ", not extracted yet" : ", map not written yet")
         : "map not written yet", buttons: ["portAssets", "portExtract"], logs: ["portAssetsLog", "portExtractLog"] },
-    { title: "Play it", pct: null, play: true, runtimes: report.runtimes || [],
-      detail: (report.runtimes || []).length > 1
-        ? "Your last save, played on the runtime you choose: WebAssembly now, the native runtimes once the steps they need are done"
-        : "The WebAssembly build of your last save, in the browser: no native port needed",
+    { title: "Play it", pct: null, play: true,
+      detail: "Play your last save using the selected build mode and runtime.",
       buttons: ["portPlay", "portStop"],
       logs: ["portPlayLog"] },
   ];
@@ -220,7 +267,6 @@ function portSteps(report) {
     if (!code.total) steps[0].detail = "Finish setup and choose Check again to measure the project's functions.";
     steps[3].detail = `${report.addresses.literals} in ${report.addresses.functions} inspected functions. ${limits.addresses}`;
     if (code.unread || !code.total || report.addresses.checked === false) steps[3].pct = null;
-    steps[9].runtimes = report.runtimes || [];
     steps[6].detail = "Call checks need a project port build.";
   }
   return [recompileStep(report), ...steps];
@@ -238,7 +284,7 @@ function renderPortSteps(report, steps = portSteps(report)) {
     "portBehaviourLog", "portRecompileLog", "portDiscoveries"]) {
     if (parked && $(id)) parked.append(...withWork($(id)));
   }
-  const shown = steps.filter((s) => s.pct != null);
+  const shown = steps.filter((s) => !s.diagnostic && s.pct != null);
   const totalSteps = report.mode === "project" ? steps.filter((s) => !s.diagnostic).length : shown.length;
   const overall = totalSteps ? Math.round(shown.reduce((a, s) => a + s.pct, 0) / totalSteps) : 0;
   $("portOverall").textContent = overall + "%";
@@ -258,10 +304,21 @@ function renderPortSteps(report, steps = portSteps(report)) {
     head.append(title, share);
     const detail = document.createElement("p"); detail.className = "small muted"; detail.textContent = step.detail;
     body.append(head);
-    if (step.pct != null) {
+    if (step.pct != null || step.emptyMeter) {
       const meter = document.createElement("div"); meter.className = "meter";
-      const fill = document.createElement("i"); fill.style.width = step.pct + "%"; meter.append(fill);
+      if (step.count && step.pct != null) {
+        meter.setAttribute("role", "meter");
+        meter.setAttribute("aria-label", "Successfully recompiled functions");
+        meter.setAttribute("aria-valuenow", String(step.pct));
+        meter.setAttribute("aria-valuetext", step.count);
+      } else if (step.emptyMeter) meter.setAttribute("aria-hidden", "true");
+      const fill = document.createElement("i"); fill.style.width = (step.pct ?? 0) + "%"; meter.append(fill);
       body.append(meter);
+    }
+    if (step.count) {
+      const count = document.createElement("p"); count.className = "small muted";
+      count.textContent = step.count;
+      body.append(count);
     }
     body.append(detail);
     if (step.summary) {
@@ -270,7 +327,6 @@ function renderPortSteps(report, steps = portSteps(report)) {
       summary.textContent = step.summary;
       body.append(summary);
     }
-    if (step.runtimes && step.runtimes.length) body.append(runtimeChoice(step.runtimes));
     const actions = document.createElement("div"); actions.className = "row port-actions";
     for (const id of step.buttons || []) if ($(id)) actions.append($(id));
     if (actions.children.length) body.append(actions);
@@ -283,6 +339,10 @@ function renderPortSteps(report, steps = portSteps(report)) {
 async function loadPortReadiness() {
   if (!$("portPanel") || S.tab !== "porting" || !S.slug) return;
   const slug = S.slug, epoch = ++portEpoch, log = $("portWork");
+  if (portBuild.slug !== slug) {
+    portBuild = {slug, mode: "compatibility", runtime: "wasm"};
+    $("portBuildChoices").hidden = true;
+  }
   showJobError(log, "");
   const exportOptions = loadPortExportOptions(slug);
   const recompileStatus = loadRecompileStatus(slug, epoch);
@@ -610,7 +670,7 @@ function playStopLabel() {
 }
 
 async function playGame(existing = null) {
-  if (playJob) return;
+  if (playJob || (!existing && !portBuildAvailable())) return;
   const slug = S.slug, log = $("portPlayLog");
   playJob = existing ? existing.id : "starting";
   log.hidden = false; log._showJobProgress = true;
@@ -621,7 +681,7 @@ async function playGame(existing = null) {
   let playing = false;
   try {
     let result = existing ? { job: existing.id }
-      : await api("/api/play", { method: "POST", body: { slug, runtime: portRuntime || "wasm" } });
+      : await api("/api/play", { method: "POST", body: { slug, ...portBuildRequest() } });
     if (result.job) { playJob = result.job; result = await followJob(result.job, log, null, () => S.slug === slug); }
     if (result && result.url) {
       const link = document.createElement("a");
@@ -634,6 +694,7 @@ async function playGame(existing = null) {
     showJobError(log, error.message);
   } finally {
     playJob = null; finish();
+    updatePortBuildActions();
     $("portStop").hidden = !playing; $("portStop").disabled = false; playStopLabel();
   }
 }
@@ -671,7 +732,9 @@ function currentExport(state) {
 }
 
 function renderExportControls(state) {
-  const busy = !!state.job || !state.ready;
+  const unavailable = !portBuildAvailable();
+  const busy = !!state.job || !state.ready || unavailable;
+  $("portExportBuildHint").hidden = !unavailable;
   $("portExportWindowChoice").hidden = !state.mac;
   for (const input of exportChoices()) {
     input.checked = state.targets.includes(input.value);
@@ -793,7 +856,7 @@ async function exportGame(existing = null) {
   if (existing?.progress) updateWorkProgress(log, existing.progress);
   try {
     if (!existing) {
-      const result = await api("/api/play-export", {method: "POST", body: {slug: state.slug, targets}});
+      const result = await api("/api/play-export", {method: "POST", body: {slug: state.slug, targets, ...portBuildRequest()}});
       if (!active()) return;
       state.job = result.job;
       stop.disabled = false;

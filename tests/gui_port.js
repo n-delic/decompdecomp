@@ -163,7 +163,7 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    assert.ok(!t.calls.includes('/api/behaviour-check'));}
   {const t=setup();t.c.S.tab='porting';
    t.c.reply=async()=>({...report,recomp_available:true,recomp:{functions:2125,found:12,
-     stubs:14,runtime:4,errors:1,error_examples:['generated.c: invalid operand'],files:42,at:1,folder:'/p/build/recomp',stub_examples:['func_8008AE70 (cop0)'],
+     succeeded:2100,total:2137,stubs:14,runtime:4,errors:1,error_examples:['generated.c: invalid operand'],files:42,at:1,folder:'/p/build/recomp',stub_examples:['func_8008AE70 (cop0)'],
      found_examples:['func_80000400 (the ROM\'s entry point)']}});
    await t.run('loadPortReadiness()');
    const rows=t.c.$('portFacts').children.map(r=>r.children[0].textContent+r.children[1].textContent);
@@ -177,8 +177,11 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    const [first, second]=t.c.$('portSteps').children;
    assert.equal(first.children[0].textContent,'1');
    assert.equal(first.children[1].children[0].children[0].textContent,'Recompile It');
-   assert.match(first.children[1].children[1].textContent,/functions the split missed/);
-   assert.match(first.children[1].children[2].textContent,/12 functions found outside the split/);
+   assert.equal(first.children[1].children[0].children[1].textContent,'98%');
+   assert.equal(first.children[1].children[1].children[0].style.width,'98%');
+   assert.equal(first.children[1].children[2].textContent,'2,100 of 2,137 functions recompiled successfully');
+   assert.match(first.children[1].children[3].textContent,/functions the split missed/);
+   assert.match(first.children[1].children[4].textContent,/12 functions found outside the split/);
    assert.ok(first.children[1].children.some(row=>row.children.includes(t.c.$('portRecompile'))));
    assert.equal(second.children[0].textContent,'2');
    assert.equal(second.children[1].children[0].children[0].textContent,"The game's code in C");
@@ -197,6 +200,7 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    t.c.recompileStatus=async url=>url.includes('preview=')?{assembly:'80001000  jr $ra'}:{recomp_available:true};
    await t.run('loadPortReadiness()');
    assert.equal(t.c.$('portDiscoveries').hidden,false);
+   assert.match(t.c.$('portSteps').children[0].children[1].children[2].textContent,/again to measure/);
    const list=t.c.$('portDiscoveryList');
    assert.equal(list.children[0].children.length,13,'all discoveries are available for review');
    const [first, second]=list.children[0].children;
@@ -328,7 +332,7 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    assert.equal(t.c.$('portExportStart').disabled,true);
    assert.equal(t.c.$('portExportSteamDeck').disabled,true);
    assert.equal(t.c.$('portExportStop').hidden,false);
-   assert.equal(JSON.stringify(t.bodies.at(-1)),'{"slug":"a","targets":["ios","steamdeck"]}');
+   assert.equal(JSON.stringify(t.bodies.at(-1)),'{"slug":"a","targets":["ios","steamdeck"],"build_mode":"compatibility","runtime":"wasm"}');
    await t.c.$('portExportStart').onclick();
    assert.equal(t.calls.filter(url=>url==='/api/play-export').length,1,'duplicate start suppressed');
    request.resolve({job:'e1'});
@@ -360,21 +364,43 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    assert.match(t.c.$('portExportLog')._errorBox.textContent,/Export stopped/);
    readiness.resolve(report);await loading;}
   {const t=setup();t.c.S.tab='porting';t.c.followJob=async()=>({url:'http://127.0.0.1:5/',window:true});
-   const runtimes=[{id:'wasm',name:'WebAssembly',summary:'Plays now.',built:true,missing:[],playable:true},
-     {id:'libultraship',name:'libultraship',summary:'Native.',built:false,missing:['Compiles for a PC','Assets extracted'],playable:false},
-     {id:'n64modernruntime',name:'N64ModernRuntime',summary:'Native.',built:false,missing:[],playable:false}];
-   t.c.reply=async url=>url==='/api/play'?{job:'p3'}:{...report,runtimes};
+   const builtin={id:'wasm',name:'decompdecomp runtime',summary:'Built-in host.',built:true,missing:[],playable:true};
+   const ship={id:'libultraship',name:'libultraship',summary:'Fast3D.',built:false,missing:[],playable:false};
+   const modern={id:'n64modernruntime',name:'N64ModernRuntime',summary:'RT64.',built:false,missing:[],playable:false};
+   const build_modes=[
+     {id:'compatibility',name:'N64 compatibility (32-bit game memory)',summary:'N64 layouts.',runtimes:[builtin,ship,modern]},
+     {id:'direct',name:'Direct 64-bit C port',summary:'Native pointers.',runtimes:[
+       {...ship,missing:['Compiles for a PC','Assets extracted']},modern]}];
+   t.c.exportOptions=async()=>({available:true,mac:true,targets:['web']});
+   t.c.reply=async url=>url==='/api/play'?{job:'p3'}:{...report,build_modes};
    await t.run('loadPortReadiness()');
-   const play=t.c.$('portSteps').children[10].children[1];
-   const choice=play.children.find(c=>c.className==='port-runtimes');
-   assert.ok(choice,'the Play step offers its runtimes');
-   const options=choice.children.slice(1).map(l=>({radio:l.children[0],status:l.children[1].children[2].textContent}));
-   assert.deepEqual(options.map(o=>[o.radio.value,o.radio.checked,o.radio.disabled]),
-     [['wasm',true,false],['libultraship',false,true],['n64modernruntime',false,true]],'only a playable runtime can be chosen');
-   assert.match(options[0].status,/^Ready/);
-   assert.match(options[1].status,/Needs: Compiles for a PC, Assets extracted\. Then .*planned/);
-   assert.match(options[2].status,/steps it needs are done; .*isn't in decompdecomp yet/);
+   const pickers=t.c.$('portBuildPickers');
+   const [modes,runtime]=pickers.children;
+   const labels=group=>group.children.slice(1).map(row=>row.children[1].children[0].textContent);
+   const choose=option=>{option.checked=true;option.listeners.change();};
+   assert.equal(modes.children[0].textContent,'Build mode');
+   assert.deepEqual(labels(modes),['N64 compatibility (32-bit game memory)','Direct 64-bit C port']);
+   assert.deepEqual(labels(runtime),['decompdecomp runtime','libultraship','N64ModernRuntime']);
+   assert.equal(runtime.children[1].children[0].checked,true);
+   assert.equal(runtime.children[2].children[0].disabled,true);
+   assert.match(runtime.children[2].children[1].children[2].textContent,/Planned/);
+   assert.doesNotMatch(runtime.children[2].children[1].children[2].textContent,/Compiles for a PC/);
+   assert.equal(t.c.$('portExportStart').disabled,false);
+   choose(modes.children[2].children[0]);
+   assert.deepEqual(labels(runtime),['libultraship','N64ModernRuntime']);
+   assert.match(runtime.children[1].children[1].children[2].textContent,/Needs Compiles for a PC, Assets extracted/);
+   assert.equal(t.c.$('portPlay').disabled,true);
+   assert.equal(t.c.$('portExportStart').disabled,true);
+   assert.equal(t.c.$('portExportBuildHint').hidden,false);
+   await t.run('playGame()');await t.run('exportGame()');
+   assert.ok(!t.calls.includes('/api/play')&&!t.calls.includes('/api/play-export'));
+   await t.run('loadPortReadiness()');
+   assert.equal(pickers.children[0].children[2].children[0].checked,true,'refresh keeps the build mode');
+   choose(pickers.children[0].children[1].children[0]);
+   assert.equal(t.c.$('portExportStart').disabled,false);
+   assert.equal(t.c.$('portExportWeb').checked,true,'switching modes preserves export targets');
    await t.run('playGame()');
-   assert.equal(t.bodies[t.calls.indexOf('/api/play')].runtime,'wasm','Play asks for the chosen runtime');}
+   assert.deepEqual(JSON.parse(JSON.stringify(t.bodies[t.calls.indexOf('/api/play')])),
+     {slug:'a',build_mode:'compatibility',runtime:'wasm'});}
   console.log('Port readiness panel: closed, read, stale reply, failure, asset map, extraction, link, suspicious calls, check behaviour, recompile, renamed calls, play, runtimes, the build bar, Stop, reattaching and export passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});
