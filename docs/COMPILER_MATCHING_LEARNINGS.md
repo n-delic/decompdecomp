@@ -10809,3 +10809,13 @@ Same compiler, flags and function as the previous entry; hand work with `cc1 -dS
 - **Result:** the `volatile` form fixes the counter's `move` but costs the `$s6`/`$s7` order of the two constants
   (120 became 275); no source shape reproduced both. The remaining target feature is a held constant scheduled
   between a load and the stores that follow it.
+
+### IDO adjusted indirect callback and address-taken event word
+
+- Four N64 functions built with `ido-7.1 -O2 -mips2 -G 0 -non_shared -Xcpluscomm -Wab,-r4300_mul -woff 649,838,712`
+  matched all 80 bytes each. The generated draft had an integer dereference where the receiver was loaded.
+  The repair restores the typed record access, the signed 16-bit receiver adjustment, and the event
+  initialized at stack offset 44 and passed by address.
+- Introducing pointer types alone compiled but scored 29. Staging the adjustment before the indirect
+  call scored 4. The stack padding around the event recovered the original frame and call schedule.
+  This repair requires the full target instruction pattern and a matching source event value.

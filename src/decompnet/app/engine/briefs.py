@@ -140,6 +140,11 @@ class BriefMixin:
         inputs = [DRAFT_REVISION, self.cfg(proj).get("draft_generation", 0), hashlib.sha256((fn["asm"] or "").encode()).hexdigest(), fn["name"], target, own["toolchain"], own.get("flags", []), sorted(roots), bindings, context]
         if target.startswith('mips-') and re.search(r'\bjr\s+\$(?!(?:ra|31)\b)\w+', fn['asm'] or ''):
             inputs.append('draft jump-table aliases')
+        if own["toolchain"] == 'ido-7.1' and 'jalr' in (fn['asm'] or ''):
+            from decomprepair import ido_indirect_event
+
+            if ido_indirect_event.applies(fn['asm']):
+                inputs.append('IDO callback event frame')
         if own["toolchain"] == 'gcc-2.7.2-kmc' and 'swl' in (fn['asm'] or ''):
             from decomprepair.unaligned_stack_drafts import stack_copy
 
