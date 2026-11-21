@@ -160,7 +160,7 @@ def test_member_address_cast_with_optional_parentheses(pointer, wrapped):
 def test_member_rule_excludes_calls_and_increments():
     for expr in ['get()->base', 'obj[i++].base', 'obj->base++']:
         src = f'int f(int i) {{ return *(int *)(((u8 *) {expr}) + i); }}'
-        assert all('side();' in out and (f'result={expr};' in out or (expr=='result + x' and ('result = result; result += x;' in out or 'result= (x) + (result);' in out))) for out in variants(src, 'f', 'mips'))
+        assert all(f'((u8 *) {expr}) + i' in out for out in variants(src, 'f', 'mips'))
 
 
 @pytest.mark.parametrize('imported', [False,True])
@@ -295,3 +295,25 @@ def test_progress_movement_abandons_stale_repair_snapshot_without_caching(monkey
     monkeypatch.setattr(perm, '_score', ScriptedPermuter._score.__get__(perm))
     perm._repair_round(AGENT, net.project_row('game'), State())
     assert len(perm.judged) == 2
+
+
+@pytest.mark.parametrize('arch', ['mips', 'ppc', 'x86', 'arm'])
+def test_shared_switch_default_tail_reaches_permuter_candidates(arch):
+    source = """\
+void f(int x) {
+    switch (x) {
+        case 0: start();
+        default:
+        joined:
+            finish();
+            break;
+        case 1: goto joined;
+        case 2: break;
+    }
+}
+"""
+    labels = {}
+    choices = variants(source, 'f', arch, labels=labels)
+    [lifted] = [choice for choice in choices if labels[choice] == 'switch_default_tail']
+    assert lifted.index('case 2: break;') < lifted.index('joined:\n')
+    assert lifted.index('goto after_switch_tail;') < lifted.index('joined:\n')
