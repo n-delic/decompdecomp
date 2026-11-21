@@ -10715,3 +10715,29 @@ either way), so the test here covers the proposal, not the byte effect.
   branch delay slots that supply the call's arguments before changing the source.
 - Both repairs also reproduced their matches from compiled drafts through the Deep Permuter proposal path.
   The same 226-example replay rose from 28 to 30 exact matches, with 29 from fresh drafts and one after search.
+
+## KMC gcc 2.7.2: shared counters, scheduling regions and integer bases (N64, the same 352-instruction function: 785 to 120)
+
+Compiler and flags: `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`. Evidence level: one real function, hand work with the
+app's exact judge and the compiler's own RTL dumps (`cc1 -dS -dR -dL -dg`); not a controlled regression test.
+
+- **Reuse the counters across loops (785 to 550).** The target used one counter for loop 1 and loop 3's outer loop
+  (`$s5`) and another for loop 2 and loop 3's inner loop (`$s2`). m2c's drafts give every loop its own variable; two
+  shared `u16`-style counters changed use counts and live ranges enough to give the allocator the target's order.
+- **Keep bases in registers the target does, by declaring them (550 to 325).** `b1 = D_80117428; b3 = b1 + 0x150;
+  b2 = D_800BFC38;` before the nested loop reproduced the three hoisted bases (`$s6`, `$s7`, `$fp`). Typing the first
+  two `unsigned int` made the address adds put the integer operand first, as the target does (`addu a0,s0,s6`):
+  a pointer-typed base is sorted first by the compiler.
+- **A `do { call } while (0);` is a scheduling barrier (325 to 120).** The scheduler places a loop-invariant constant
+  as late as it can inside its region, and loop notes bound regions. A wrapper around `func_8000A18C` put all three loop
+  constants before that call; assigning `c2` before the wrapper and `c64`, `c1` after it split them the way the target
+  has them (325 to 120). Which call is wrapped decides where constants land, and wrapping is the only source-level
+  lever found for it. Position and declaration order of the assignments did not matter.
+- **Delay slots come from the nearest single-word instruction before the call** (reorg), so a constant that is
+  scheduled earlier than a macro-expanded store or load can still end up in a call's delay slot.
+- **What did not work:** `int` for a loop constant (it merges with an earlier word constant of the same value);
+  assigning the constants after the stores; wrapping any single non-call statement in the region; a second wrapper
+  ending at `func_80007160` (it reproduced the constants' order and scrambled the stores).
+- **Left at 120:** two instructions out of place: the counter's `move` (the target has it after the `lbu` that
+  loads the call's argument) and the `0x64` constant (the target has it right after the `lhu`). Both are scheduler
+  ordering; no source position or wrapper tried changes them.
