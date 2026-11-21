@@ -2874,6 +2874,8 @@ snapshots local source/header/build inputs (at most 10,000 files / 32 MiB).
 Cross-game transfer results use compact, responsive rows with separate provenance, result labels and score changes; recent partial improvements can be filtered independently.
 
 Deep Permuter tries matched same-game twins before search and can rejudge a better ROM draft on an open twin.
+Project-wide passes can fill missing scored C by recompiling saved attempts, then trying Machine Drafts where
+available. Room members receive recovered candidates through the host.
 Compiler preflight pairs a corrected single-precision square-root call with narrowly scoped profile trials.
 Exact fast-math results require per-function review. Register-only diffs get bounded operand-order and lifetime
 trials. Boundary review highlights overlapping entries and corroborated PC-relative halfword table reads.

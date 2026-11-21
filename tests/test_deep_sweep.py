@@ -1011,3 +1011,87 @@ def test_deep_search_tries_matched_twin_and_rejudges_improved_partial(tmp_path, 
     assert result['tested'] == 2
     assert judged[-1][0] == 'other' and 'int other(void) {return 3;}' in judged[-1][1]
     assert net._function('other', 'game')['best_score'] == 10
+
+
+def test_rejudges_saved_candidates_before_search(sweep, monkeypatch):
+    obj, net, calls, _ = sweep
+    fn = net._function('f0', 'game')
+    agent = net.attribution_agent('autopilot')
+    bad = 'int f0(void) { return 2; }'
+    good = 'int f0(void) { return 3; }'
+    with net.store.tx() as db:
+        db.execute('UPDATE functions SET best_source=NULL,best_score=1 WHERE id=?', (fn['id'],))
+        db.execute("INSERT INTO context_versions(project_id,version,header,unit) VALUES(?,1,'','')", (fn['project_id'],))
+        db.executemany('INSERT INTO attempts(function_id,agent_id,source,compiled,score) VALUES(?,?,?,1,?)',
+                       [(fn['id'], agent.id, bad, 1), (fn['id'], agent.id, bad, 2), (fn['id'], agent.id, good, 3)])
+    tried = []
+
+    def compile_source(proj, header, source, fn):
+        tried.append(source)
+        return SimpleNamespace(ok=source == good, log='undeclared name', obj=b'object')
+
+    monkeypatch.setattr(net, '_compile', compile_source)
+    monkeypatch.setattr(net, '_evaluate', lambda *args: (object(), False, []))
+    monkeypatch.setattr(net, '_score_candidate', lambda *args: SimpleNamespace(score=36, bytes_match=False))
+    monkeypatch.setattr(net, 'can_draft', lambda proj: True)
+    monkeypatch.setattr(net, '_autopilot_one', lambda *args, **kw: pytest.fail('History yielded a baseline'))
+    original = deep_permuter.run
+
+    def search(net, slug, name, *args):
+        if name == 'f0':
+            current = net._function(name, slug)
+            assert current['best_score'] == 36
+            assert current['best_source'] == good
+        return original(net, slug, name, *args)
+
+    monkeypatch.setattr(deep_permuter, 'run', search)
+    obj.run('game', 1, 10, Log())
+    assert tried == [bad, good]
+    assert calls == ['f0', 'f1']
+    assert not net.store.one('SELECT 1 FROM claims WHERE function_id=?', fn['id'])
+
+
+def test_failed_recovery_uses_drafts_and_waits_for_new_inputs(sweep, monkeypatch):
+    obj, net, _, _ = sweep
+    from decompnet.app.deep_source_recovery import prepare
+
+    proj = net.project_row('game')
+    fn = net._function('f0', 'game')
+    with net.store.tx() as db:
+        db.execute('UPDATE functions SET best_source=NULL,best_score=NULL WHERE id=?', (fn['id'],))
+    monkeypatch.setattr(net, 'can_draft', lambda proj: True)
+    calls = []
+
+    def draft(agent, proj, fid, *, retry_draft):
+        assert retry_draft
+        calls.append(fid)
+        if len(calls) == 1:
+            return 'fail'
+        with net.store.tx() as db:
+            db.execute('UPDATE functions SET best_source=?,best_score=80 WHERE id=?', ('int f0(void) { return 4; }', fid))
+        return 'far'
+
+    monkeypatch.setattr(net, '_autopilot_one', draft)
+    assert prepare(net, proj, fn, Log())['best_source'] is None
+    assert prepare(net, proj, fn, Log())['best_source'] is None
+    assert calls == [fn['id']]
+    assert obj.status('game')['attention'][0]['function'] == 'f0'
+    with net.store.tx() as db:
+        db.execute("INSERT INTO settings(key,value) VALUES(?, '1')", (f'machine-draft-generation:{fn["id"]}',))
+    assert prepare(net, proj, fn, Log())['best_score'] == 80
+    assert len(calls) == 2
+
+
+def test_claimed_function_defers_source_recovery(sweep, monkeypatch):
+    _, net, _, _ = sweep
+    from decompnet.app.deep_source_recovery import prepare
+
+    proj = net.project_row('game')
+    fn = net._function('f0', 'game')
+    agent = net.attribution_agent('helper')
+    with net.store.tx() as db:
+        db.execute('UPDATE functions SET best_source=NULL,best_score=NULL WHERE id=?', (fn['id'],))
+        db.execute("INSERT INTO claims VALUES(?,?,0,unixepoch()+600)", (fn['id'], agent.id))
+    monkeypatch.setattr(net, 'can_draft', lambda proj: pytest.fail('The helper owns this function'))
+    assert prepare(net, proj, fn, Log())['best_source'] is None
+    assert net.store.one('SELECT agent_id FROM claims WHERE function_id=?', fn['id'])['agent_id'] == agent.id

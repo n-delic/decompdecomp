@@ -10,7 +10,7 @@ from contextlib import nullcontext
 
 from .. import candidate_scope, claim_stalls, scoring
 from ..network import IN_BUILD, NetworkError
-from . import agent_tokens, deep_permuter, deep_throughput, workers
+from . import agent_tokens, deep_permuter, deep_source_recovery, deep_throughput, workers
 from .deep_activity import Activity
 from .purpose_work import Executor
 
@@ -324,7 +324,7 @@ class Sweeps:
                                       "WHERE f.project_id=? AND d.state='completed'", proj['id'])['n']
 
         improvements = self.improvements(proj['id'])
-        attention = self.attention(proj)
+        attention = self.attention(proj) + deep_source_recovery.issues(self._store(slug), proj['id'])
         errors = len(attention)
         # Matching the current build can inspect project files. Cache the result briefly so opening
         # details or polling a running pass does not repeatedly hash every completed function.
@@ -396,9 +396,10 @@ class Sweeps:
             if repeat:
                 self.queue_cache.clear()
                 with self._store(slug).tx() as db:
+                    pid = self.net.project_row(slug)['id']
                     db.execute("DELETE FROM deep_permutation_passes WHERE function_id IN "
-                               "(SELECT id FROM functions WHERE project_id=? AND status='open')",
-                               (self.net.project_row(slug)['id'],))
+                               "(SELECT id FROM functions WHERE project_id=? AND status='open')", (pid,))
+                    deep_source_recovery.reset(db, pid)
             self.save(slug, {'runtime_seconds': self.config(slug).get('runtime_seconds', 0),
                              'enabled': True, 'minutes': minutes, 'max_variants': max_variants, 'threads': threads, 'threads_per_function': threads_per_function, 'compiler_profiles': compiler_profiles, 'metrics_started': True, 'loop': loop, **throughput})
             job = self.jobs.start('deep-permutation-pass', lambda log: self.timed_run(slug, minutes, max_variants, log, threads, loop),
@@ -588,6 +589,13 @@ class Sweeps:
                             continue
                         with looking(self.net):
                             fn = deep_permuter.prepare_source(self.net, proj, fn)
+                            if not fn['best_source'] or fn['best_score'] is None:
+                                fn = {**dict(fn), **dict(deep_source_recovery.prepare(self.net, proj, fn, log))}
+                                if fn['status'] == 'matched':
+                                    with lock:
+                                        stats['matched'] += 1
+                            if fn['status'] != 'open' or dict(fn).get('gone_mark') is not None:
+                                continue
                             if not fn['best_source'] or fn['best_score'] is None:
                                 waiting += 1
                                 continue
