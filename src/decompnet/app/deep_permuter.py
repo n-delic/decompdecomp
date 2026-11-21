@@ -338,6 +338,7 @@ class Search(Permuter):
             inline_float_vector_scale,
             near_match_repairs,
             packed_word_scheduling,
+            scoped_byte_read_call,
             widen_scaled_local,
         )
         from decomprepair.target_local_repairs import value_lifetimes
@@ -350,6 +351,12 @@ class Search(Permuter):
         proposals += widen_scaled_local.variants(source, fn['name'], proj['arch'], asm, header)
         proposals += inline_float_vector_scale.variants(source, fn['name'], proj['arch'], asm, header)
         proposals += guard_xor_reuse.variants(source, fn['name'], proj['arch'], asm, header)
+        # Existing saved drafts can still use their original address-based entry name.
+        proposals += scoped_byte_read_call.variants(source, fn['name'], proj['arch'], asm, header)
+        if proj['arch'] == 'mips' and (vram := dict(fn).get('vram')) is not None:
+            alias = f'func_{vram:08X}'
+            if alias != fn['name']:
+                proposals += scoped_byte_read_call.variants(source, alias, proj['arch'], asm, header)
         if permuter_focus.classify(rows, proj['arch']) == 'register':
             proposals += near_match_repairs.bitwise_operand_order(source, fn['name'], header)
             proposals += near_match_repairs.float_update_order(source, fn['name'], header)

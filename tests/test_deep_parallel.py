@@ -393,3 +393,27 @@ def test_guard_xor_trial_runs_on_an_opcode_near_miss(monkeypatch):
     assert search.operand_order_pass(AGENT, proj, fn, 410, None) == 215
     assert len(tried) == 1
     assert 'different = changed != 0;' in tried[0]
+
+
+def test_scoped_byte_read_trial_recognizes_a_saved_address_named_draft(monkeypatch):
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    proj = net.project_row('game')
+    fn = {**net.function(), 'name': 'renamed', 'vram': 0x80001000,
+          'asm': ('lui $s2, %hi(options)\naddiu $s2, $s2, %lo(options)\n'
+                  'lbu $v0, 0($s2)\nbeqz $v0, .Lskip\nmove $a0, $s1\n'
+                  'jal send\nnop\nlbu $v0, 0($s2)\n'),
+          'best_source': ('extern u8 options[];\nvoid func_80001000(int channel) {\n'
+                          '    if (options[0] != 0) {\n'
+                          '        send(channel);\n'
+                          '        if (options[0] >= 2U) { reset(channel); }\n'
+                          '    }\n}\n')}
+    search = deep_permuter.Search(net, 1, 6, Log())
+    monkeypatch.setattr(deep_permuter.permuter_focus, 'classify', lambda *args: 'operand')
+    tried = []
+    monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 35)
+
+    assert search.operand_order_pass(AGENT, proj, fn, 75, None) == 35
+    assert len(tried) == 1
+    assert tried[0].count('__repair_byte_table[0]') == 2
