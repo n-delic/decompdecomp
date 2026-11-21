@@ -830,6 +830,22 @@ def test_measured_halfword_switch_is_routed_for_kmc(monkeypatch):
     assert 'halfword_switch_fixture' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))
 
 
+def test_cursor_advance_order_reaches_kmc_diff_dispatch():
+    source = """void f(void) {
+    s32 *left;
+    u8 *middle;
+    s32 *right;
+    left = (s32 *) (((u8 *) left) + 0x20);
+    middle += 32;
+    right = (s32 *) (((u8 *) right) + 32);
+}
+"""
+    a, b, c = (f'addiu ${reg}, ${reg}, 0x20' for reg in ('s3', 's5', 's4'))
+    generated = proposals(source, 'f', '', 'mips', KMC, [('r', a, c), (' ', b, b), ('r', c, a)], '')
+    assert any(label == 'measured_cursor_advance_order' and candidate.index('    right =') < candidate.index('    left =')
+               for label, candidate in generated)
+
+
 def test_label_loop_cursor_reaches_kmc_diff_dispatch():
     source = """void f(void *base) {
     void *cursor;
