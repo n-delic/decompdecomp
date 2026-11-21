@@ -11787,3 +11787,12 @@ to a byte pointer fixed the stride and moved the score from 30 to 20.
 Scaling the incoming index and accumulating the row address into it
 before the byte load and store produced the target register allocation
 and an exact match.
+
+### Clear the global before publishing the pointer and initializing the locals
+
+With gcc-2.7.2-kmc `-G0 -mips3 -mgp32 -mfp32 -O2`, an N64 loop
+preheader had two global store pairs reversed. Exchanging the stores
+in place fixed their order but lost the target's pointer copy, moving
+the score from 40 to 130. Moving just the clear above the pointer
+publication and keeping the subsequent local setup in place preserved
+both the target store order and its pointer allocation, reaching zero.
