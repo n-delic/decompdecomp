@@ -529,3 +529,22 @@ def test_forwarded_stack_output_resolves_the_callee_in_raw_assembly():
                             resolve={'distance': 0x80002000}.get))
     assert 'distance(item, &marker)' in result['passthrough_argument']
     assert 'passthrough_argument' not in dict(proposals(source, 'f', '', 'mips', KMC, rows, asm))
+
+
+def test_switch_forwarding_uses_original_rom_table_entries():
+    source = ('s32 effect(u8); /* extern */\n'
+              'void f(void *object) { switch (kind) { case 1: effect(mode); break; } }')
+    ops = ['sltiu $v0, $v1, 2', 'beqz $v0, .Lend', 'sll $v0, $v1, 2',
+           'lui $at, %hi(jtbl_80003000)', 'addu $at, $at, $v0',
+           'lw $v0, %lo(jtbl_80003000)($at)', 'jr $v0', 'nop',
+           'jal effect', 'lbu $a1, 8($s0)', 'sb $zero, 8($s0)', '.Lend:', 'jr $ra', 'nop']
+    rows = [('r', op, op.replace('$a1', '$a0')) if i == 9 else (' ', op, op)
+            for i, op in enumerate(ops) if not op.endswith(':')]
+    table = b''.join(address.to_bytes(4, 'big') for address in (0x80001020, 0x80001030))
+    def read_data(name, width):
+        return table if (name, width) == ('jtbl_80003000', len(table)) else None
+
+    result = dict(proposals(source, 'f', '', 'mips', KMC, rows, assembly(*ops),
+                            read_data=read_data, big_endian=True))
+    assert 'effect(object, mode)' in result['passthrough_argument']
+    assert 'passthrough_argument' not in dict(proposals(source, 'f', '', 'mips', KMC, rows, assembly(*ops)))

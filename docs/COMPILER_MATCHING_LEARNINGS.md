@@ -11130,3 +11130,13 @@ the scaled index in a temporary and loaded the global base into
 the argument register. Casting the table's address to a byte
 pointer preserved the stride and reduced the linked score from 10
 to 0. The deep permuter found and saved the match.
+
+### Prove a forwarded argument through a guarded jump table
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, one isolated N64
+draft placed a byte load in the first argument register. The target
+loaded that byte into the second register and forwarded the entry
+argument unchanged in the first. The deep permuter read every entry
+of the original jump table, confirmed the incoming first argument
+on every route that reached the call, and widened the generated
+prototype. The linked score fell from 5 to 0.
