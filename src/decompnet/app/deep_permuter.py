@@ -336,6 +336,7 @@ class Search(Permuter):
         from decomprepair import (
             counter_derived_loop_offset,
             float_stack_call_reuse,
+            float_zero_local_repairs,
             global_store_repairs,
             guard_xor_reuse,
             inline_float_vector_scale,
@@ -356,6 +357,7 @@ class Search(Permuter):
         header = self.net._context(proj['id'], fn['unit'])['header']
         asm = dict(fn).get('asm') or ''
         proposals = packed_word_scheduling.variants(source, fn['name'], proj['arch'], asm, header)
+        proposals += float_zero_local_repairs.loop_variants(source, fn['name'], asm, header)
         proposals += float_stack_call_reuse.variants(source, fn['name'], proj['arch'], asm, header)
         proposals += widen_scaled_local.variants(source, fn['name'], proj['arch'], asm, header)
         proposals += inline_float_vector_scale.variants(source, fn['name'], proj['arch'], asm, header)

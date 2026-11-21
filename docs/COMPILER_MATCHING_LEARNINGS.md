@@ -1,5 +1,15 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: share a float zero across repeated loop-local vector clears
+
+An isolated N64 replay used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.
+The target stored the same FPU zero into the three stack array slots at
+three points in a loop. Declaring one float zero at the start of that
+loop body and using it at all three sites improved the linked score from
+1,310 to 710. Function-scoped or pre-loop initialization did not reproduce
+the improvement. Deep Permuter saved and independently reverified the
+710 candidate in a 96-trial run. This is a partial match.
+
 ### KMC GCC 2.7.2: retain a stack-byte buffer base through a guarded loop
 
 An isolated N64 replay used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.

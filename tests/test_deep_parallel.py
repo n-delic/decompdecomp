@@ -557,3 +557,20 @@ def test_stack_byte_loop_base_runs_in_the_bounded_lane(monkeypatch):
 
     assert search.operand_order_pass(AGENT, proj, fn, 705, None) == 630
     assert tried == [child]
+
+
+def test_loop_float_zero_uses_the_bounded_local_lane(monkeypatch):
+    from decomprepair import float_zero_local_repairs
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    proj = net.project_row('game')
+    fn = {**net.function(), 'asm': ''}
+    child = fn['best_source'] + '\n/* loop-local float clear */'
+    monkeypatch.setattr(float_zero_local_repairs, 'loop_variants', lambda *args: [('loop_float_zero', child)])
+    search = deep_permuter.Search(net, 1, 6, Log())
+    tried = []
+    monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 710)
+
+    assert search.operand_order_pass(AGENT, proj, fn, 1310, None) == 710
+    assert tried == [child]
