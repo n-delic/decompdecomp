@@ -412,13 +412,13 @@ def fill_gaps(placed: list[tuple[int, int, str]]) -> list[tuple[int, str]]:
             if vram > pos:
                 raw = image[seg["start"] + pos - seg["vram"]:seg["start"] + vram - seg["vram"]]
                 if raw.strip(b"\0"):
-                    src = ROOT / "build" / "gaps" / f"{pos:08X}.s"
+                    src = ROOT / "build" / "gaps" / f"{seg['start']:08X}_{pos:08X}.s"
                     src.parent.mkdir(parents=True, exist_ok=True)
                     src.write_text(".section .data\n" + "".join(f".byte {', '.join(str(b) for b in raw[i:i + 16])}\n"
                                                               for i in range(0, len(raw), 16)), encoding="utf-8")
-                    obj = f"build/gaps/{pos:08X}.o"
+                    obj = f"build/gaps/{seg['start']:08X}_{pos:08X}.o"
                     run([binutils("as"), *B["as_flags"], "-o", obj, src.relative_to(ROOT).as_posix()])
-                    extra.append((pos, obj))
+                    extra.append((seg["start"], pos, obj))
             pos = max(pos, vram + size)
     return extra
 
@@ -476,7 +476,7 @@ def linker_script(provides: dict[str, str], placed: list[tuple[int, int, str]], 
         vram, start = seg["vram"], seg["start"]
         end = seg["end"] if seg["end"] is not None else 1 << 32
         items = [(p["vram"], f"{p['obj']}(.text .data .rodata .sdata .rdata)") for p in seg["pieces"]]
-        items += [(v, f"{obj}(.data)") for v, obj in gaps if vram <= v < vram + end - start]
+        items += [(v, f"{obj}(.data)") for bank, v, obj in gaps if bank == start]
         items += [(v, f"{obj}(.text)") for v, _, obj in placements(start, end)]
         lines += [f"    .{seg['name']} 0x{vram:08X} : AT(0x{start:X}) SUBALIGN({seg.get('subalign', 4)})", "    {"]
         lines += [f"        . = 0x{v - vram:X}; {what}" for v, what in sorted(items)]
@@ -514,7 +514,7 @@ def linker_script(provides: dict[str, str], placed: list[tuple[int, int, str]], 
                 if symbol["st_shndx"] != "SHN_UNDEF":
                     continue
                 name = symbol.name
-                address = AUTO_NAME.match(name) or re.fullmatch(r"\.L([0-9A-Fa-f]{8})", name)
+                address = AUTO_NAME.match(name) or re.fullmatch(r"\.L([0-9A-Fa-f]{8})(?:_[\w]+)?", name)
                 if address:
                     auto_addresses[name] = int(address.group(1), 16)
     lines += [f'PROVIDE("{name}" = 0x{address:08X});' for name, address in sorted(auto_addresses.items())]
@@ -524,11 +524,12 @@ def linker_script(provides: dict[str, str], placed: list[tuple[int, int, str]], 
     # local to another object, so give them their addresses (which their names spell out)
     labels = set()
     for path in (ROOT / "asm" / "data").glob("**/*.s"):
-        labels.update(re.findall(r"\.word\s+\.L([0-9A-Fa-f]{8})\b", path.read_text(errors="replace", encoding="utf-8")))
+        labels.update(re.findall(r"\.word\s+\.L([0-9A-Fa-f]{8}(?:_[\w]+)?)\b", path.read_text(errors="replace", encoding="utf-8")))
     for path in (ROOT / "asm" / "nonmatchings").glob("**/*.s"):
         text = path.read_text(errors="replace", encoding="utf-8")
-        labels.update(set(re.findall(r"\.L([0-9A-Fa-f]{8})\b(?!:)", text)) - set(re.findall(r"\.L([0-9A-Fa-f]{8}):", text)))
-    lines += [f'".L{label}" = 0x{label};' for label in sorted(labels)]
+        labels.update(set(re.findall(r"\.L([0-9A-Fa-f]{8}(?:_[\w]+)?)\b(?!:)", text))
+                      - set(re.findall(r"\.L([0-9A-Fa-f]{8}(?:_[\w]+)?):", text)))
+    lines += [f'".L{label}" = 0x{label[:8]};' for label in sorted(labels)]
     # the segment symbols splat projects use (start-up code clears .bss with them)
     image_size = (ROOT / B["image"]).stat().st_size
     original = segment_addresses()
@@ -571,7 +572,7 @@ def build() -> bool:
     report_build(5, 'Linking and comparing the exported image')
     gaps = fill_gaps(placed)
     (ROOT / "build" / "game.ld").write_text(linker_script(provides, placed, gaps), encoding="utf-8")
-    objs = sorted({obj for _, _, obj in todo} | {obj for _, obj in gaps})
+    objs = sorted({obj for _, _, obj in todo} | {obj for _, _, obj in gaps})
     # the objects in a response file: a PSP game with its modules has 48,000 functions, past the command line's limit
     (ROOT / "build" / "objects.txt").write_text("\n".join(objs) + "\n", encoding="utf-8")
     run([binutils("ld"), "--no-keep-memory", *B["ld_flags"], "-T", "build/game.ld", "-o", "build/game.elf", "@build/objects.txt"],

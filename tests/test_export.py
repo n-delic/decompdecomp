@@ -546,3 +546,78 @@ def test_export_preserves_bss_extent_when_text_owns_its_labels(tmp_path):
     )
     remove_shadowed_bss(tmp_path, [{'name': 'entry'}])
     assert bss.read_text() == '    .space 4\n    .space 16\ndlabel real_data\n    .space 8\nenddlabel real_data\n'
+
+
+def test_export_symbols_use_rom_scopes_for_overlapping_banks():
+    from decompnet.rom.export import _symbol_lines
+
+    class Symbols:
+        by_name = {}
+
+    class Network:
+        def symbols(self, project):
+            return Symbols()
+
+    base=0x80001000
+    rows=[dict(name='first',vram=base,size=8,rom_offset=0x100),
+          dict(name='second',vram=base,size=12,rom_offset=0x200)]
+    banks=[dict(name='bank_a',type='code',start=0x100,end=0x140,vram=base,exclusive_ram_id='slot'),
+           dict(name='bank_b',type='code',start=0x200,end=0x240,vram=base,exclusive_ram_id='slot')]
+    assert _symbol_lines(Network(),{'id':1},rows,segments=banks)==[
+        'first = 0x80001000; // type:func size:0x8 rom:0x100 segment:bank_a',
+        'second = 0x80001000; // type:func size:0xC rom:0x200 segment:bank_b',
+    ]
+
+
+def test_export_gap_objects_are_scoped_to_their_rom_bank(tmp_path):
+    import runpy
+
+    from decompnet.rom import export
+
+    shutil.copyfile(Path(export.__file__).with_name('export_build.py'), tmp_path/'build.py')
+    config={'image':'base.z64','as_flags':[], 'segments':[
+        dict(name='first',kind='code',start=0,end=4,vram=0x80001000,pieces=[]),
+        dict(name='second',kind='code',start=4,end=8,vram=0x80001000,pieces=[]),
+    ]}
+    (tmp_path/'build.json').write_text(json.dumps(config))
+    (tmp_path/'base.z64').write_bytes(b'ABCDEFGH')
+    script=runpy.run_path(str(tmp_path/'build.py'))
+    fn=script['fill_gaps']
+    fn.__globals__['run']=lambda command: None
+    fn.__globals__['binutils']=lambda tool: tool
+    gaps=fn([])
+    assert gaps==[(0,0x80001000,'build/gaps/00000000_80001000.o'),
+                  (4,0x80001000,'build/gaps/00000004_80001000.o')]
+    assert '65, 66, 67, 68' in (tmp_path/'build/gaps/00000000_80001000.s').read_text()
+    assert '69, 70, 71, 72' in (tmp_path/'build/gaps/00000004_80001000.s').read_text()
+
+
+def test_overlapping_banks_link_to_separate_rom_offsets(tmp_path):
+    import runpy
+
+    from decompnet.rom import export
+
+    if toolchains.installed('binutils-mips') is None:
+        pytest.skip('needs pinned MIPS binutils')
+    shutil.copyfile(Path(export.__file__).with_name('export_build.py'), tmp_path/'build.py')
+    base=0x80001000
+    functions=[dict(name='first',vram=base,rom=0),dict(name='second',vram=base,rom=8)]
+    segments=[dict(name='bank_a',kind='code',start=0,end=8,vram=base,pieces=[],bss=[]),
+              dict(name='bank_b',kind='code',start=8,end=16,vram=base,pieces=[],bss=[])]
+    (tmp_path/'build.json').write_text(json.dumps(dict(image='base.z64',symbols={},functions=functions,segments=segments)))
+    original=bytes.fromhex('03e0000824020001 03e0000824020002')
+    (tmp_path/'base.z64').write_bytes(original)
+    assembler=toolchains.binary('binutils-mips').parent/'mips-ps2-decompals-as'
+    linker=toolchains.binary('binutils-mips').parent/'mips-ps2-decompals-ld'
+    objcopy=toolchains.binary('binutils-mips').parent/'mips-ps2-decompals-objcopy'
+    for name,value in [('first',1),('second',2)]:
+        (tmp_path/f'{name}.s').write_text(f'.text\n.set noreorder\n.globl {name}\n{name}:\njr $31\nli $2,{value}\n')
+        subprocess.run([str(assembler),'-EB','-mips2','-no-pad-sections','-o',f'{name}.o',f'{name}.s'],
+                       cwd=tmp_path,check=True,capture_output=True)
+    script=runpy.run_path(str(tmp_path/'build.py'))
+    placed=[(base,0,'first.o'),(base,8,'second.o')]
+    (tmp_path/'game.ld').write_text(script['linker_script']({'first':'first.o','second':'second.o'},placed,[]))
+    subprocess.run([str(linker),'-EB','--no-check-sections','-T','game.ld','-o','game.elf','first.o','second.o'],
+                   cwd=tmp_path,check=True,capture_output=True)
+    subprocess.run([str(objcopy),'-O','binary','game.elf','game.z64'],cwd=tmp_path,check=True,capture_output=True)
+    assert (tmp_path/'game.z64').read_bytes()==original

@@ -103,7 +103,7 @@
 
 - Done: N64 imports recover shared overlay slots from indexed DMA tables and adjacent loaders'
   cache bounds. Branches in one occupant of a shared slot cannot cut a closed function in another
-  occupant. Rebuildable exports for overlapping overlay banks remain planned.
+  occupant. Rebuildable exports retain separate ROM placements and scoped symbols for overlapping banks.
 - Done: N64 imports map audited inline data spans separately from executable text when their
   full surrounding fingerprints match. This prevents constants and alignment words from cutting
   otherwise closed function bodies.
@@ -760,7 +760,7 @@ on Apple Silicon; physical Intel Mac and retail-game checks remain planned.
   module data rebuilds and functions without closed boundaries remain planned.
 - Startup-registered N64 overlay directories now supply scoped banks for imports, including
   a reserved index between populated records. The directory and its loader establish the ROM
-  bounds and shared RAM base. Rebuildable export for overlapping raw banks remains planned.
+  bounds and shared RAM base. Rebuildable exports preserve each bank's ROM placement.
 - Resident N64 directory copy loops now establish overlay ROM bounds and instruction-cache
   ranges. Banks that reuse a RAM range keep separate symbols and function boundaries.
 

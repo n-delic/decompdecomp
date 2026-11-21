@@ -99,17 +99,29 @@ def _first_address(path: Path) -> tuple[int | None, int | None]:
     return None, None
 
 
-def _symbol_lines(net, proj, rows=None, excluded=()) -> list[str]:
+def _symbol_lines(net, proj, rows=None, excluded=(), segments=()) -> list[str]:
     """symbol_addrs.txt entries for every function and every named symbol, so splat writes the project's names. A
     function's size too: spimdisasm ends a function with a switch at its first return, and the import put the cases
     back (split.merge_switch_cases: a PSP game's GCC and EE-GCC 3.2 load jump tables that way), so splat must too."""
     syms = net.symbols(proj["id"])
     if rows is None:
         rows = net.project_store(proj['id']).all("SELECT name, vram, size FROM functions WHERE project_id=?", proj["id"])
-    funcs = {r["vram"]: r for r in rows}
+    funcs = {r["vram"] for r in rows}
+    counts = {}
+    for row in rows:
+        counts[row["vram"]] = counts.get(row["vram"], 0) + 1
     lines = []
-    for vram, r in sorted(funcs.items()):
-        lines.append(f"{r['name']} = 0x{vram:08X}; // type:func size:0x{r['size']:X}")
+    for row in sorted(rows, key=lambda r: (r["vram"], dict(r).get("rom_offset") or -1)):
+        vram = row["vram"]
+        suffix = ""
+        rom = dict(row).get("rom_offset")
+        owner = next((s for s in segments if s.get("type") == "code" and s["start"] <= rom < s["end"]
+                      and s["vram"] + rom - s["start"] == vram), None) if rom is not None else None
+        if counts[vram] > 1 and (owner is None or not owner.get("exclusive_ram_id")):
+            raise ExportError("An overlapping function has no matching scoped ROM bank.")
+        if owner is not None and owner.get("exclusive_ram_id"):
+            suffix = f" rom:0x{rom:X} segment:{owner['name']}"
+        lines.append(f"{row['name']} = 0x{vram:08X}; // type:func size:0x{row['size']:X}{suffix}")
     # One name per address: splat refuses two ("Duplicate symbol detected", an N64 game whose agents gave one address
     # two names). The table's own name for the address labels it; the other names still link, from build.json.
     named = set(funcs)
@@ -335,9 +347,6 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
     excluded = ({r['name'] for r in population if r['rom_offset'] is not None and r['rom_offset'] >= native_end}
                 if native_end is not None else set())
     population = [row for row in population if row['name'] not in excluded]
-    if len({row['vram'] for row in population}) != len(population):
-        raise ExportError("Rebuildable export does not yet support overlapping overlay banks. "
-                          "Your matches remain saved; continue working in the app until bank-aware export is available.")
     if EXPORT not in console.features:
         raise ExportError(f"exporting a rebuildable project isn't supported for {console.name or 'this console'} yet")
     work = Path(proj["root"])
@@ -367,7 +376,7 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
     for extra in ("reloc_addrs.txt",):
         if (work / extra).exists():
             shutil.copyfile(work / extra, out / extra)
-    (out / "symbol_addrs.txt").write_text("\n".join(_symbol_lines(net, proj, population, excluded)) + "\n", encoding="utf-8")
+    (out / "symbol_addrs.txt").write_text("\n".join(_symbol_lines(net, proj, population, excluded, _segments(split_config))) + "\n", encoding="utf-8")
     res = run([console_python(), "-m", "splat", "split", "splat.yaml"], out, log)
     if res.returncode != 0:
         raise ExportError("splat failed:\n" + (res.stdout + res.stderr)[-1500:])
@@ -377,7 +386,7 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
         ld.rename(out / f"splat-{ld.name}")
 
     # 2. which function is where, and which are matched
-    rows = {r["vram"]: r for r in net.project_store(proj['id']).all("SELECT * FROM functions WHERE project_id=?", proj["id"])
+    rows = {(r["vram"], r["rom_offset"]): r for r in net.project_store(proj['id']).all("SELECT * FROM functions WHERE project_id=?", proj["id"])
             if r["name"] not in excluded}
     sources = sources or {}
     rows = {address: dict(row) | ({"matched_source": sources[row['id']]['source'], "status": "matched"}
@@ -418,13 +427,13 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
 
     objects, private, as_fallback = [], [], []
     check = getattr(log, 'check_cancel', lambda: None)
-    candidates = (matched_rows[f["vram"]] for f in functions if f["vram"] in matched_rows)
+    candidates = (matched_rows[(f["vram"], f["rom"])] for f in functions if (f["vram"], f["rom"]) in matched_rows)
     with export_workers.ordered(compile_match, candidates, check) as results:
         for index, f in enumerate(functions):
             check()
             progress_step(log, 2, 'Checking exported functions', done=index, total=len(functions), function=f['name'])
             f["obj_asm"] = f"build/{Path(f['asm']).with_suffix('.o').as_posix()}"
-            if f["vram"] not in matched_rows:
+            if (f["vram"], f["rom"]) not in matched_rows:
                 f["kind"] = "asm"
                 continue
             row, unit, hdr, compiled, error = next(results)
@@ -577,7 +586,7 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
                     absolute.setdefault(m.group(1), int(m.group(2), 16))
     # automatic names matched C uses that no symbol has (a twin's data, D_088EA738): the judge reads their address
     # from the name (SymbolTable.resolve), and so does the link
-    for name, address in _auto_addresses((rows[f["vram"]]["matched_source"] for f in functions if f["kind"] == "c"),
+    for name, address in _auto_addresses((rows[(f["vram"], f["rom"])]["matched_source"] for f in functions if f["kind"] == "c"),
                                          defined).items():
         absolute.setdefault(name, address)
     # automatic names the assembly points at but nothing defines: splat names a data word that looks like an
@@ -595,10 +604,10 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
         if f["kind"] == "c":
             entry["c"] = f["src"]
             # Splitter filenames can retain an old name after the C entry was renamed.
-            if rows[f["vram"]]["name"] != f["name"]:
-                entry['symbol'] = rows[f["vram"]]["name"]
-            if rows[f['vram']]['id'] in sources:
-                entry['shared_instance'] = rows[f['vram']]['id']
+            if rows[(f["vram"], f["rom"])]["name"] != f["name"]:
+                entry['symbol'] = rows[(f["vram"], f["rom"])]["name"]
+            if rows[(f['vram'], f['rom'])]['id'] in sources:
+                entry['shared_instance'] = rows[(f['vram'], f['rom'])]['id']
             if f.get('entry_only'):
                 entry['entry_only']=True
             entry["own"] = {sec: base for (obj, sec, base) in private if obj == f["obj"]}
