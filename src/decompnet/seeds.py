@@ -375,7 +375,7 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
         if not valid:
             return source
         if target.startswith('mips'):
-            return _compilable(source, name, asm_text, context_header, toolchain_id)
+            return _compilable(source, name, asm_text, context_header, toolchain_id, resolve=resolve)
         return _compilable(source)
 
     from decomprepair import mips_entry_loops
@@ -424,7 +424,7 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
 
     draft_asm = likely_branch_cursor.draft_asm(asm_text)
     source = _compilable(run_m2c(draft_asm, name, target, context_header, data_asm, timeout, valid, strict, options),
-                         name, asm_text, context_header, toolchain_id)
+                         name, asm_text, context_header, toolchain_id, resolve=resolve)
     if not source:
         return None
     if 'M2C_UNALIGNED32' in source and (draft := unaligned_stack_drafts.rewrite(
@@ -479,7 +479,7 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
             or source)
 
 
-def _compilable(source: str | None, name='', asm='', header='', toolchain=None) -> str | None:
+def _compilable(source: str | None, name='', asm='', header='', toolchain=None, *, resolve=None) -> str | None:
     """Repair generated C before the first compiler trial, using the target when available."""
     if not source:
         return source
@@ -488,7 +488,7 @@ def _compilable(source: str | None, name='', asm='', header='', toolchain=None) 
     if asm:
         from decomprepair import draft_call_recovery
 
-        if repaired := draft_call_recovery.variants(source, name, asm, header, toolchain):
+        if repaired := draft_call_recovery.variants(source, name, asm, header, toolchain, resolve=resolve):
             return repaired[0][1]
     return source
 
