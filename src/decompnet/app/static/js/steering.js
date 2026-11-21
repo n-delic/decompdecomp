@@ -1371,7 +1371,9 @@ function renderPolishChecklist(slug, fork) {
   oldForm.replaceWith(form);
   const log = form.querySelector("[data-checklist-log]");
   const checks = [...form.querySelectorAll("input")];
-  const controls = [...checks, form.querySelector("button")];
+  const format = form.querySelector("select");
+  const naming = checks.find(input => input.name === "require_name");
+  const controls = [...checks, format, form.querySelector("button")];
   let loaded = false, pending = false;
 
   async function updateOptions(save) {
@@ -1384,8 +1386,9 @@ function renderPolishChecklist(slug, fork) {
       save ? "Checklist saved." : "");
     try {
       const options = await api(save ? "/api/polishing-checklist" : `/api/polishing-checklist?slug=${encodeURIComponent(slug)}`,
-        save ? {method: "POST", body: {slug, selected}} : undefined);
+        save ? {method: "POST", body: {slug, selected, name_format: format.value}} : undefined);
       checks.forEach(input => { input.checked = options.selected.includes(input.name); });
+      format.value = options.name_format;
       loaded = true;
     } catch (error) {
       const retry = save ? "" : " Close and reopen the checklist to try again.";
@@ -1394,9 +1397,11 @@ function renderPolishChecklist(slug, fork) {
       finish();
       controls.forEach(control => { control.disabled = !loaded; });
       pending = false;
+      naming.onchange();
     }
   }
 
+  naming.onchange = () => { format.disabled = pending || !loaded || !naming.checked; };
   panel.ontoggle = () => { if (panel.open && !loaded) updateOptions(false); };
   form.onsubmit = event => {
     event.preventDefault();
@@ -1413,7 +1418,6 @@ async function renderProjectSettings(keepRemoved = false) {
   $("reimportGame").hidden = ov.kind === "fork" && !ov.reimports;
   refreshReimport();
   renderProjectFacts(ov);
-  renderPolishChecklist(S.slug, ov.kind === "fork");
   loadDataRegions();
   loadBlockerReviews();
   $("codeAuditPanel").hidden = !S.ov?.code_audit;

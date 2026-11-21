@@ -808,9 +808,9 @@ def register(app: App) -> None:
     def p_polish_checklist(slug, request, data):
         from .. import polish_checklist
         project_id = net.project_row(slug, sync=False)["id"]
-        selected = (polish_checklist.read(net, project_id) if request.method == "GET"
-                    else polish_checklist.save(net, project_id, data.get("selected")))
-        return {"selected": selected}
+        if request.method == "GET":
+            return polish_checklist.read(net, project_id)
+        return polish_checklist.save(net, project_id, data.get("selected"), data.get("name_format"))
 
     def p_source_preparation(slug, request, data):
         from .. import source_preparation

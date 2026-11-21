@@ -31,9 +31,10 @@ a tenth of a second (1.4 s before), and agents restart by themselves after a cra
 
 ## Polish matched code for porting
 
-In a game’s **Settings → Polishing checklist**, choose whether helpers should check 64-bit PC compilation,
-fix casts between pointers and 32-bit integers, or both. Helpers see the checklist on their next polishing
-claim. The built-in 64-bit compiler check is available in ROM mode. In project mode, helpers depend on
+In a game’s **Agents → Polishing checklist**, set the checks helpers see on their next polishing claim.
+A human-readable function name is required by default, with camelCase for new names. You can change the
+format or turn off the requirement. Optionally check 64-bit PC compilation and fix casts between pointers
+and 32-bit integers. The built-in 64-bit compiler check is available in ROM mode. In project mode, helpers depend on
 the project’s own 64-bit build. Polishing still verifies each rewrite against the original game.
 
 ## Explore the rest of a ROM
