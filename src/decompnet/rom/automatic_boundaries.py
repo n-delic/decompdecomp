@@ -419,16 +419,40 @@ def multiword_alignment(functions, image, order, owner, named, references, direc
                          if (start+offset, address+offset) in entries]
             if not fragments:
                 continue
-            if (following.vram not in direct_calls and not is_frame(following.lines[0].word)
-                    and called_extent(image, following.rom, following.rom+following.size, following.vram,
-                                      big_endian=console.big_endian, cpu=console.cpu_variant,
-                                      asm_check=console.asm_reason) != following.size):
-                continue
+            if following.vram not in direct_calls and not is_frame(following.lines[0].word):
+                options = dict(big_endian=console.big_endian, cpu=console.cpu_variant, asm_check=console.asm_reason)
+                args = (image, following.rom, following.rom + following.size, following.vram)
+                if (called_extent(*args, **options) != following.size
+                        and leaf_extent(*args, **options) != following.size):
+                    continue
             if any(owner(fn) != owner(following) or fn.rom+fn.size > following.rom+4
                    or any(line.word & 0xfc1fffff == 8 for line in fn.lines)
                    for fn in fragments):
                 continue
             gaps.update((fn.rom, fn.vram) for fn in fragments)
+    for tail in functions:
+        index, _ = owner(tail)
+        if index < 0 or tail.size not in (4, 8, 12):
+            continue
+        segment = segments[index]
+        end = tail.rom + tail.size
+        if (end != segment.rom_end or (tail.vram + tail.size) % 16 or end + 64 > len(image)
+                or any(image[end:end+64]) or any(s.rom_start < end+64 and end < s.rom_end for s in segments)):
+            continue
+        if tail.rom - 8 < segment.rom_start or int.from_bytes(image[tail.rom-8:tail.rom-4], order) != JR_RA:
+            continue
+        if any(address in named or any(not tail.rom <= source < end
+                                      for source, _ in references.get(address, ()))
+               for address in range(tail.vram, tail.vram + tail.size, 4)):
+            continue
+        if any(symbol.rom is not None and symbol.rom < end and tail.rom < symbol.rom + symbol.size
+               for symbol in data):
+            continue
+        if any(line.word & 0xfc1fffff == 8 for line in tail.lines):
+            continue
+        # A prolonged zero run outside the code mapping corroborates the
+        # alignment. Keep the unentered suffix in the original rebuild bytes.
+        gaps.add((tail.rom, tail.vram))
     return gaps
 
 
