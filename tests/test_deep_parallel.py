@@ -805,7 +805,8 @@ def test_loop_cursor_pass_scores_parallel_record_cursor(monkeypatch):
 
 
 @pytest.mark.parametrize('module, family', [('case_split_combinations', 'case_temporary_split_combined'),
-                                            ('struct_store_raw_offsets', 'struct_store_raw_offset')])
+                                            ('struct_store_raw_offsets', 'struct_store_raw_offset'),
+                                            ('arm_local_return_fold', 'packed_return_fold')])
 def test_case_split_combinations_and_raw_field_stores_run_in_the_local_lane(monkeypatch, module, family):
     import importlib
 

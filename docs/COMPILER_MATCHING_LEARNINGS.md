@@ -11585,3 +11585,35 @@ mid-body steps written `n -= 4; src += 4;` and 0 the other way. `loop_tail_updat
 two steps of a do-while, so it proposed nothing; decomp-repair 0.5.258 swaps any two adjacent constant steps of
 different names (mid-body, for/while tails, before an m2c `if (...) goto` close, and a `for` header's `a++, b += n`)
 and proposes the 0 source. Controlled perturbation of a matched function. Not done: gating by cc1 sched dumps.
+
+### A float clamp's last four steps: split zero stores, per-arm locals, a barrier, a reassigned return
+
+With gcc-2.7.2-kmc `-G0 -mips3 -mgp32 -mfp32 -O2`, an N64 collision-span
+function (two float ranges normalised, swapped, clamped to 0..7 in volatile
+globals, packed into a mask) sat at 525 with only register and order rows
+left. One function, not a controlled set. Steps from the saved best, each
+score as the app judges it:
+- `A = (B = 0.0f);` on two volatile globals written as two stores: 525 -> 665
+  alone (the chain reads the inner store back in the jump's delay slot; the
+  game stores both). With the next step, the target's two stores appear:
+  with one register for both arms' result, gcc cross-jumps the identical
+  trailing `swc1` and drops one.
+- A float temporary m2c names `x` in both arms, given a block local in the
+  first arm (`x`, `y`): 665 -> 255. One name across arms is one pseudo, so
+  the arms' results got the second arm's registers.
+- The leftover `if (arg) return E; else return E;` collapsed to `return E;`:
+  255 -> 765 alone (it moved the tail's registers: the leftover test kept the
+  argument live to the end and cost a `move`).
+- `do { } while (0);` before the final expression: 765 -> 370 (keeps the
+  scheduler from hoisting `andi/sll` over the second half's loads).
+- `high = (high & 0xFF) << 8; return high | (low & 0xFF);` instead of one
+  expression: 370 -> 0. The second set of `high` is not tied by local
+  allocation to the shift's result, which gave the game's `$a3`/`$v0`/`$v1`.
+  Without the `& 0xFF` on `low` it was 100.
+Failed: integer width of `high`/`low` (s16/u8/u16/u32 all 370), putting the
+barrier between the two halves (565 or a compile error), inlining either half
+(650, 960), a `& 0xFF` fold written as `+=`-style compound steps (570).
+Library: decomp-repair 0.5.257 `arm_local_return_fold`, which offers all four
+as one child first (the steps alone are non-improving in turn, 665, 255, 765,
+so a greedy search never reaches 0); on the saved best its first child is 0.
+Unit tests only; the real proof is a Deep Permuter run in the app.
