@@ -9,6 +9,20 @@ bottom-tested loop let GCC use the target's branch-likely back edge, with
 the cursor update in its delay slot. The linked score moved from 350 to
 zero. The same byte test in the original infinite loop scored 410.
 
+### KMC GCC 2.7.2: preserve a call setup's allocation with an initialized guard
+
+An isolated N64 replay used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.
+Duplicating the same straight-line call setup in two branches controlled by an
+initialized scalar parameter recovered eight saved-register differences and
+took the linked score from 40 to byte-exact. Both arms perform the same
+operations. Reordering declarations or adding `register` hints tied at 40.
+A randomized exact candidate used an uninitialized condition and was discarded.
+
+On another draft, using subtraction of a negated narrow scaled offset
+restored the order of the two `addu` operands and improved 205 to 200.
+The remaining difference was one `bne` versus `bnel` with the same delay
+slot. The focused zero-exit shapes did not recover it.
+
 ### KMC GCC 2.7.2: retain a separately relocated record base
 
 An isolated N64 replay used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.

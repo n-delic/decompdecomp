@@ -826,6 +826,7 @@ class Search(Permuter):
         layout_probes=0
         expanded = set()
         residual_bursts = 0
+        residual_frame_followups = 0
         counters = {'compile_failed': 0, 'frontier_pruned': 0, 'depth_limit': 0}
         self.local_status = {'reason': 'searching', **counters}
         while best > 0:
@@ -890,6 +891,11 @@ class Search(Permuter):
                     resolve=resolve_symbol, symbols=symbol_table,
                     read_data=read_data if hasattr(self.net,'reader') and resolve_symbol else None)
                     if child not in self.local_seen]
+            from . import residual_trials
+            if not fork and proj['arch'] == 'mips' and self.measured_winner(fn, source):
+                targeted = residual_trials.proposals(source,fn['name'],header,rows,net=self.net,proj=proj,fn=fn)
+                observed_choices = [(family,child) for family,child in targeted
+                                    if child not in self.local_seen] + observed_choices
             observed_order = {child:index for index,(_,child) in enumerate(observed_choices)}
             focused_choices = observed_choices + buffer_choices + store_choices + frame_choices
             focused_pass = bool(focused_choices)
@@ -1011,7 +1017,8 @@ class Search(Permuter):
                 frame_prefix=[c for _,c in progressed if c in frame_sources]
                 dispatch_prefix=[c for family,c in progressed if family in {'effectful_dispatch_specialization','narrow_snapshot_branches'}][:4]
                 cross_prefix = [c for family,c in progressed if family in cross_function_repairs.FAMILIES]
-                queue = list(dict.fromkeys(cross_prefix+frame_prefix+complete+dispatch_prefix+[c for _,c in progressed]))
+                residual_prefix = [c for family,c in progressed if family in residual_trials.FAMILIES]
+                queue = list(dict.fromkeys(residual_prefix+cross_prefix+frame_prefix+complete+dispatch_prefix+[c for _,c in progressed]))
                 if loan:queue=feedback.continuation(source,queue,labels,self.local_seen)
                 lane = getattr(self, "parallel_lane", None)
                 if lane is not None:
@@ -1127,6 +1134,17 @@ class Search(Permuter):
                                          else repair_ranking.evidence(self.net, fn['id'], agent.id))
                         if getattr(self, '_trial_reused', False) and not measured_rows:
                             continue
+                        if (labels.get(candidate) == residual_trials.residual_source_repairs.FRAME
+                                and residual_frame_followups < 2 and score <= best*2):
+                            for family,child in residual_trials.followups(candidate,fn['name'],header,parent_rows,measured_rows):
+                                if child in self.local_seen or child in queue:
+                                    continue
+                                labels[child] = family
+                                parents[child] = (candidate,measured_rows,parent_path+[labels[candidate]])
+                                queue.insert(0,child)
+                                residual_frame_followups += 1
+                                if residual_frame_followups == 2:
+                                    break
                         alternatives.offer(candidate, score, measured_rows, arch=proj['arch'], baseline=parent_rows, baseline_score=best)
                         if not any(n['source'] == candidate for n in alternatives.nodes):
                             counters['frontier_pruned'] += 1
