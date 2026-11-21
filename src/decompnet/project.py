@@ -19,6 +19,20 @@ def compiler_for(cfg: dict, vram: int | None) -> dict:
     return cfg["compiler"]
 
 
+def function_settings(cfg: dict, fn, settings: dict | None = None) -> dict:
+    """Apply a function's processor mode to its compiler flags, shared by attempts and compiler trials."""
+    from . import consoles
+
+    settings = compiler_for(cfg, fn["vram"]) if settings is None else settings
+    console = consoles.of(cfg)
+    if type(console).function_flags is consoles.Console.function_flags:
+        return settings  # preserve custom commands and implicit defaults on consoles with no per-function flags
+    flags = settings.get("flags")
+    if flags is None:
+        flags = toolchains.get(settings["toolchain"]).flags if settings.get("toolchain") else []
+    return {**settings, "flags": console.function_flags(fn, list(flags))}
+
+
 def unknown_compiler_message(toolchain: str) -> str:
     """What a project whose config names a compiler decompdecomp doesn't have says wherever it surfaces (compiling,
     autopilot): what's wrong and the one thing to do about it. The registry's own "known: ..." list named 50 ids and

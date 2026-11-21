@@ -206,6 +206,38 @@ def test_a_file_with_flags_of_its_own_is_built_with_them(tmp_path, monkeypatch):
     assert scratch_pe.file_flags(root, "T") == {}
 
 
+def test_fork_autopilot_counts_the_drafts_it_tried_and_the_candidates_that_built():
+    """#248: the autopilot panel said "0 candidates compiled" for every game started from scratch, because only the
+    ROM judge counted them. A draft that builds counts as compiled; one that doesn't, only as drafted."""
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    from decompnet.app.forkengine import ForkEngine
+
+    class Db:
+        def execute(self, sql, args=()):
+            row = {"id": 1, "status": "open", "name": "f", "unit": "u"} if sql.startswith("SELECT * FROM functions") \
+                else None
+            return SimpleNamespace(fetchone=lambda: row)
+
+    @contextmanager
+    def tx():
+        yield Db()
+
+    state = {"drafted": 0, "compiled": 0}
+    drafts_made = [("", "int f(void) { return 0; }"), ("", "int f(void) { return 1; }"), ("", "int f(void) { oops }")]
+    fake = SimpleNamespace(
+        net=SimpleNamespace(store=SimpleNamespace(tx=tx, one=lambda *a: None), _expire_claims=lambda db: None,
+                            autopilots={"demo": state}),
+        get=lambda slug: (None, SimpleNamespace(unit=lambda name: SimpleNamespace(source="src/u.c")), {}),
+        _meta=lambda fn: {}, _names=lambda meta, fn: ["f"], _find=lambda code, names: (None, (0, len(code))),
+        _autopilot_drafts=lambda *args: iter(drafts_made),
+        attempt=lambda agent, slug, name, code, keep, prelude: {
+            "matched": False, "score": None if "oops" in code else 5, "percent": 50, "text": ""})
+    assert ForkEngine.autopilot_one(fake, SimpleNamespace(id=1), {"slug": "demo"}, 1) == "far"
+    assert state == {"drafted": 3, "compiled": 2}
+
+
 # ---------------------------------------------------------------------------------------------------- end to end
 
 from .test_pc import DEMO, EXE, _addresses, _tiny_exe, needs_tools  # noqa: E402

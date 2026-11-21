@@ -121,6 +121,7 @@ No whole game has been decompiled yet. The export uses matched C and assembly fo
 | Xbox | Beta | `default.xbe`, `.xiso` or Redump `.iso` |
 | Nintendo DS | Beta | ROM (`.nds`) |
 | Game Boy Advance | Beta | ROM (`.gba`) |
+| Android | Beta | Your `.apk` or `.xapk`, or an ARMv7 shared `.so` |
 | 3DS, Switch, Xbox 360 | Public decomps only | Community decomp fork |
 
 Read [ROADMAP.md](ROADMAP.md#what-works-where) for each feature and console. Proprietary compilers (IDO, CodeWarrior, SN Systems, Visual C++) install only after
@@ -128,6 +129,9 @@ you accept their licenses in Setup. Visual C++ 2017 needs [wine](https://www.win
 PS4 projects need the Linux x86-64 app, including inside WSL 2; the native Windows and macOS apps cannot build them. They use the free pinned
 Clang 5.0.2 pack and strict objdiff, tested on leaf functions and same-file, cross-file and import calls. decompdecomp includes no Sony SDK
 and no game files. Many other features are still gaps; encrypted SELF, PKG and PRX modules are not supported.
+Android projects decompile the largest ARMv7 shared library in your APK or XAPK. The library must have sized ELF symbols.
+They use the pinned NDK r10e compilers (Clang 3.5, GCC 4.8 or 4.9; Apple Silicon needs Rosetta) and Ghidra for drafts.
+DEX/Java code, other libraries, ARM64 and rebuilding or signing an APK are not supported yet.
 
 ## Other tasks
 **Update.** It tells you when a new version is available; one click installs and restarts it. See [Installation details](docs/GUIDE.md#installation-details).

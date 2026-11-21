@@ -1,6 +1,6 @@
 """The connector: how decompdecomp talks to a console. Every console is a package in this folder (consoles/n64/,
-consoles/ps1/, consoles/ps2/, consoles/ps3/, consoles/ps4/, consoles/psp/, consoles/gba/, consoles/gc_wii/, consoles/pc/, consoles/xbox/,
-consoles/nds/) whose
+consoles/ps1/, consoles/ps2/, consoles/ps3/, consoles/ps4/, consoles/psp/, consoles/gba/, consoles/android/, consoles/gc_wii/,
+consoles/pc/, consoles/xbox/, consoles/nds/) whose
 `__init__.py` makes a `Console`
 below and fills in its parts; the list at the end of this file registers them. The rest of the app (the engine, briefs, twins, the agents' tools
 and prompts, the export, the GUI's API) asks the console of a project, `consoles.get(platform)`, and never compares
@@ -9,8 +9,9 @@ console names. A person or an agent working on PS2 support reads consoles/ps2/ a
 A console works in one of two modes:
 - ROM: decompdecomp splits the game itself (splat, rom/split.py), and the judge links each compiled candidate at the
   function's real address and compares the bytes (rom/match.py). The console reads its file (`read_game`), names its
-  compilers and flags, and may add code splat's own look misses (`add_code`). N64, PS1, PS2, PS3, PSP and GBA (whose
-  splitter and judge are still being ported: ROADMAP.md).
+  compilers and flags, and may add code splat's own look misses (`add_code`). N64, PS1, PS2, PS3, PSP, GBA (whose
+  splitter and judge are still being ported: ROADMAP.md) and Android (a native ARMv7 library from an APK, split by
+  its ELF symbols, consoles/android/).
 - PROJECT: decompdecomp generates the community's kind of project for the game (a git tree with an objdiff.json),
   and objdiff judges each function in the project's own build (forks/, app/forkengine.py). The console makes the
   project (`create_project`) and points its build at the pinned tools (`tool_args`). PS4, GameCube, Wii, PC, Xbox and DS.
@@ -219,6 +220,10 @@ class Console:
 
     # flags search_flags tries on its games beyond what its compiler family's search does ("-mminimal-toc")
     flag_extras: tuple[str, ...] = ()
+
+    def function_flags(self, fn, flags: list[str]) -> list[str]:
+        """Flags implied by this function's instruction set, after compiler/range choices (Android: ARM or Thumb)."""
+        return flags
 
     def game_flags(self, cfg: dict, toolchain: str) -> list[str]:
         """More flags a game of it was built with, as its import read them from the program (cfg["rom"]): a PS3 game
@@ -608,6 +613,27 @@ class Console:
         the path written, for a commit, or None."""
         return None
 
+    # ROM consoles can provide drafts where m2c has no suitable target. The engine owns caching and judging.
+    draft_provider = ""
+    draft_version = 0
+
+    def drafts_ready(self) -> bool:
+        return False
+
+    def draft_help(self) -> str:
+        return f"No machine draft provider is available for {self.name}."
+
+    def machine_draft(self, net, proj, fn, context: str, *, valid: bool = False) -> str | None:
+        return None
+
+    def exact_rom_drafts(self, fn, context: str) -> list[str]:
+        """Cheap C candidates for tiny instruction shapes, judged before the machine draft (ROM mode)."""
+        return []
+
+    def link_target(self, target, program: bytes):
+        """Attach the original program's linking facts when this console needs dynamic relocations."""
+        return target
+
     def exact_drafts(self, fp, symbol: str, known: str = "") -> list[tuple[str, str]]:
         """C for a function of one of the tiny shapes its compiler makes from a line of C, read from its code, as
         [(prelude, definition)]: autopilot tries them first. `known`: the header and file's text."""
@@ -646,6 +672,7 @@ class Console:
 
 
 def _registry() -> list[Console]:
+    from .android import ANDROID
     from .gba import GBA
     from .gc_wii import GAMECUBE, WII
     from .n64 import N64
@@ -662,7 +689,7 @@ def _registry() -> list[Console]:
     # the order sniff is asked in: a file is the first console's that says it's its own (the PSP and the PS1 before
     # the PS2, whose sniff takes any ISO 9660 disc and any MIPS ELF; the Xbox before them all: a full Xbox disc dump
     # starts with a DVD video partition; the PS3 before the PS2 too, though the PS2 takes only 32-bit MIPS ELFs)
-    return [N64, XBOX, PSP, PS1, PS3, PS2, PS4_CONSOLE, GBA, GAMECUBE, WII, PC, NDS, *PUBLIC_ONLY]
+    return [ANDROID, N64, XBOX, PSP, PS1, PS3, PS2, PS4_CONSOLE, GBA, GAMECUBE, WII, PC, NDS, *PUBLIC_ONLY]
 
 
 CONSOLES: list[Console] = _registry()

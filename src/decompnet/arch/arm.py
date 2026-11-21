@@ -200,6 +200,8 @@ class ArmTarget:
     thumb: bool = True
     # (offset, kind, address) of what its code refers to, for xrefs and twins; the judge reads the original bytes
     relocs: list[tuple[int, int, int]] = field(default_factory=list)
+    thumb2: bool = False  # ARMv7: branch relocation encodings extend Thumb-1 with J1/J2 bits
+    image: object | None = None  # original linked ELF GOT/PLT facts (arm_image.Image)
 
     def to_json(self) -> list:
         return [list(r) for r in self.relocs]
@@ -228,6 +230,26 @@ def thumb_bl_dest(code: bytes, at: int, pc: int) -> int | None:
     return (pc + 4 + (hi << 12) + ((h2 & 0x7FF) << 1)) & 0xFFFFFFFF
 
 
+def thumb2_bl_dest(code: bytes, at: int, pc: int) -> int | None:
+    """Decode ARMv7's BL/BLX immediate, including J1/J2 and BLX's aligned ARM destination."""
+    if at < 0 or at + 4 > len(code):
+        return None
+    first = int.from_bytes(code[at:at + 2], "little")
+    second = int.from_bytes(code[at + 2:at + 4], "little")
+    if first & 0xF800 != 0xF000 or second & 0xC000 != 0xC000:
+        return None
+    sign = (first >> 10) & 1
+    imm = (sign << 24 | ((~((second >> 13) ^ sign) & 1) << 23)
+           | ((~((second >> 11) ^ sign) & 1) << 22) | ((first & 0x3FF) << 12) | ((second & 0x7FF) << 1))
+    if sign:
+        imm -= 1 << 25
+    if not second & 0x1000:  # BLX immediate: bit 0 of the second halfword is reserved
+        if second & 1:
+            return None
+        return (((pc + 4) & ~3) + imm) & 0xFFFFFFFF
+    return (pc + 4 + imm) & 0xFFFFFFFF
+
+
 def arm_b_dest(code: bytes, at: int, pc: int) -> int | None:
     """Destination of an ARM `b`/`bl` word at code[at:at+4] located at address pc."""
     word = int.from_bytes(code[at:at + 4], "little")
@@ -236,7 +258,8 @@ def arm_b_dest(code: bytes, at: int, pc: int) -> int | None:
     imm = word & 0xFFFFFF
     if imm & 0x800000:
         imm -= 0x1000000
-    return (pc + 8 + (imm << 2)) & 0xFFFFFFFF
+    halfword = ((word >> 24) & 1) << 1 if word >> 28 == 0xF else 0  # BLX immediate's H bit
+    return (pc + 8 + (imm << 2) + halfword) & 0xFFFFFFFF
 
 
 def _sym_name(elf: ELFFile, symtab, idx: int):
@@ -255,6 +278,8 @@ def link(obj: bytes, name: str, target: ArmTarget, symbols, read) -> LinkResult:
     from ..elfobj import FunctionObj, Reloc, _function_symbols
 
     elf = ELFFile(BytesIO(obj))
+    if target.thumb2 and (elf.elfclass != 32 or not elf.little_endian or elf["e_machine"] != "EM_ARM"):
+        return LinkResult(None, False, ["the candidate must be a little-endian ARM32 object"])
     found = _function_symbols(elf).get(name)
     if found is None:
         return LinkResult(None, False, [f"the object has no function named `{name}`"])
@@ -293,7 +318,13 @@ def link(obj: bytes, name: str, target: ArmTarget, symbols, read) -> LinkResult:
             if at + 4 > len(tcode):
                 problem("your function is longer than the original")
                 continue
-            if rtype == R_ARM_ABS32:
+            from .arm_relocs import DATA_RELOCS, MOV_RELOCS, data_relocation, mov_relocation
+
+            if target.image is not None and rtype in DATA_RELOCS | MOV_RELOCS:
+                apply = data_relocation if rtype in DATA_RELOCS else mov_relocation
+                apply(rtype, code=code, at=at, pc=pc, target=target, sym=sym, name=sname, is_section=is_section,
+                      symbols=symbols, place=place, problem=problem)
+            elif rtype == R_ARM_ABS32:
                 addend = int.from_bytes(code[at:at + 4], "little")
                 original = int.from_bytes(tcode[at:at + 4], "little")
                 if _defined(sym) and sym["st_shndx"] == shndx:  # a pointer into this function (a switch's jump table)
@@ -306,32 +337,78 @@ def link(obj: bytes, name: str, target: ArmTarget, symbols, read) -> LinkResult:
                         problem(f"`{sname}` is not a known symbol. Use the name the assembly shows (like sub_08001234 "
                                 f"or gUnknown_03001234), or give that address this name first with rename_symbol.")
                         continue
-                    if (base + addend) & 0xFFFFFFFF != original and ((base + addend) | 1) & 0xFFFFFFFF != original:
+                    if target.image is not None and _defined(sym):
+                        place((sym["st_shndx"], sym["st_value"] + addend), original)
+                    expected = target.image.pointer(sname, symbols, addend) if target.image is not None else None
+                    if (expected is not None and expected != original) or (expected is None and
+                            (base + addend) & 0xFFFFFFFF != original and ((base + addend) | 1) & 0xFFFFFFFF != original):
                         problem(f"a pointer to {sname}{f'+0x{addend:X}' if addend else ''} where the original has "
                                 f"0x{original:08X} ({symbols.label(original)})")
                 else:  # data this function defines itself (a string, a table): the original's copy is at `original`
                     place((sym["st_shndx"], addend + (0 if is_section else sym["st_value"])), original)
                 code[at:at + 4] = tcode[at:at + 4]
+            elif rtype == 30 and target.thumb2:
+                from .arm_relocs import thumb_jump
+                thumb_jump(code, at, pc, target, sname, symbols, problem)
             elif rtype in (R_ARM_THM_CALL,):
-                dest = thumb_bl_dest(tcode, at, pc)
+                decode = thumb2_bl_dest if target.thumb2 else thumb_bl_dest
+                dest = decode(tcode, at, pc)
+                original_dest = dest
+                if target.image is not None and dest is not None:
+                    dest = target.image.through_veneer(dest)
                 base = symbols.resolve(sname)
+                if target.image is not None:
+                    choices = target.image.destinations(sname, symbols)
+                    base = next((v for v in choices if dest is not None and (v & ~1) == (dest & ~1)), base)
                 if base is None:
                     problem(f"`{sname}` is not a known function. Call it by the name the assembly shows (like "
                             f"sub_08001234), or give that address this name first with rename_symbol.")
                     continue
-                if dest is None or (dest & ~1) != (base & ~1):
+                addend = decode(bytes(code), at, 0) if target.thumb2 else 0
+                if addend is not None and addend & 0x80000000:
+                    addend -= 1 << 32
+                if dest is None or addend is None or (dest & ~1) != ((base + addend) & 0xFFFFFFFE):
                     problem(f"you call {sname} where the original calls "
                             f"{symbols.label(dest) if dest is not None else 'something else'}")
                     continue
-                code[at:at + 4] = tcode[at:at + 4]
+                if target.thumb2:
+                    # Only displacement bits belong to the linker. BL versus BLX and all opcode bits must agree.
+                    mask = 0x2FFF07FF
+                    mine = int.from_bytes(code[at:at + 4], "little")
+                    original = int.from_bytes(tcode[at:at + 4], "little")
+                    if target.image is not None and original_dest == dest:
+                        # AAELF32 permits BL/BLX interworking relaxation for a known destination mode.
+                        mine = (mine | (1 << 28)) if base & 1 else (mine & ~(1 << 28))
+                    code[at:at + 4] = ((mine & ~mask) | (original & mask)).to_bytes(4, "little")
+                else:
+                    code[at:at + 4] = tcode[at:at + 4]
             elif rtype in (R_ARM_PC24, R_ARM_CALL, R_ARM_JUMP24):
                 dest = arm_b_dest(tcode, at, pc)
+                original_dest = dest
+                if target.image is not None and dest is not None:
+                    dest = target.image.through_veneer(dest)
                 base = symbols.resolve(sname)
-                if base is None or dest is None or (dest & ~1) != (base & ~1):
+                if target.image is not None:
+                    choices = target.image.destinations(sname, symbols)
+                    base = next((v for v in choices if dest is not None and (v & ~1) == (dest & ~1)), base)
+                addend = arm_b_dest(bytes(code), at, 0) if target.thumb2 else 0
+                if addend is not None and addend & 0x80000000:
+                    addend -= 1 << 32
+                if base is None or dest is None or addend is None or (dest & ~1) != ((base + addend) & 0xFFFFFFFE):
                     problem(f"you branch to {sname} where the original goes to "
                             f"{symbols.label(dest) if dest is not None else 'something else'}")
                     continue
-                code[at:at + 4] = tcode[at:at + 4]
+                if target.thumb2:
+                    mine = int.from_bytes(code[at:at + 4], "little")
+                    original = int.from_bytes(tcode[at:at + 4], "little")
+                    if rtype == R_ARM_CALL and target.image is not None and original_dest == dest:
+                        if mine & 0xFF000000 == 0xEB000000 and base & 1:
+                            mine = (mine & 0xFFFFFF) | 0xFA000000 | ((original_dest & 2) << 23)
+                        elif mine & 0xFE000000 == 0xFA000000 and not base & 1:
+                            mine = (mine & 0xFFFFFF) | 0xEB000000
+                    code[at:at + 4] = ((mine & 0xFF000000) | (original & 0xFFFFFF)).to_bytes(4, "little")
+                else:
+                    code[at:at + 4] = tcode[at:at + 4]
             else:
                 problem(f"relocation type {rtype} isn't supported yet")
 
@@ -365,15 +442,19 @@ def _verify_own(elf: ELFFile, symtab, name: str, fn_shndx: int, fn_start: int, t
 
     def extent(sec_idx: int, off: int) -> int:
         size = elf.get_section(sec_idx)["sh_size"]
+        sizes = [s["st_size"] for s in symtab.iter_symbols() if s["st_shndx"] == sec_idx
+                 and s["st_value"] == off and s["st_size"] > 0]
         bounds = {s["st_value"] for s in symtab.iter_symbols() if s["st_shndx"] == sec_idx
                   and s["st_info"]["type"] not in ("STT_SECTION", "STT_FILE") and not s.name.startswith("$")}
         bounds |= {o for (i, o) in own if i == sec_idx}
-        return next((b for b in sorted(bounds) if b > off), size) - off
+        return min(next((b for b in sorted(bounds) if b > off), size) - off, min(sizes) if sizes else size)
 
     def pointee(s, value: int) -> tuple[int | None, tuple[int, int] | None]:
         sname = elf.get_section(s["st_shndx"]).name if s["st_info"]["type"] == "STT_SECTION" else s.name
         if not _defined(s) or (s["st_info"]["type"] != "STT_SECTION" and symbols.resolve(sname) is not None):
-            base = symbols.resolve(sname)
+            base = (target.image.pointer(sname, symbols) if target.image is not None else None)
+            if base is None:
+                base = symbols.resolve(sname)
             return (None if base is None else (base + value) & 0xFFFFFFFF), None
         in_sec = value + (0 if s["st_info"]["type"] == "STT_SECTION" else s["st_value"])
         if s["st_shndx"] == fn_shndx:
@@ -382,6 +463,29 @@ def _verify_own(elf: ELFFile, symtab, name: str, fn_shndx: int, fn_start: int, t
 
     def in_rom(sec_idx: int) -> bool:
         return elf.get_section(sec_idx)["sh_type"] != "SHT_NOBITS"
+
+    dynamic = target.image.dynamic if target.image is not None else {}
+
+    def slots_in(addr: int, length: int) -> list[int]:
+        """The original's dynamic slots inside [addr, addr + length): words the loader writes a pointer into."""
+        return [a for a in dynamic if addr <= a <= addr + length - 4]
+
+    def slot_label(slot: int) -> str:
+        name, value = dynamic[slot]
+        return name or (symbols.label(value) if value is not None else "a pointer")
+
+    def agrees(slot: int, s, stored: int, dest: int | None) -> bool:
+        """Whether the candidate's pointer (symbol `s`, the word `stored` before relocation, `dest` where it resolves)
+        is the one the original's loader writes into `slot`: the same import with the same addend, or the same
+        address (a Thumb function's low bit aside, which the function's own symbol decides)."""
+        name, value = dynamic[slot]
+        if value is None:
+            original = read(slot, 4)
+            return (s["st_info"]["type"] != "STT_SECTION" and not _defined(s) and s.name == name
+                    and original is not None and int.from_bytes(original, "little") == stored)
+        if dest is None:
+            return False
+        return dest == value or ((dest & ~1) == (value & ~1) and (value & ~1) in target.image.functions)
 
     todo = list(own)
     while todo:  # pointers inside the data lead to more of it
@@ -395,7 +499,10 @@ def _verify_own(elf: ELFFile, symtab, name: str, fn_shndx: int, fn_start: int, t
             _, key = pointee(s, int.from_bytes(data[at:at + 4], "little"))
             if key is None or key in own or (word := read(addr + at - off, 4)) is None:
                 continue
-            own[key] = int.from_bytes(word, "little")
+            # where the original's pointer points: the loader's value for a dynamic slot (an ABS32 against a
+            # preemptible symbol leaves 0 in the file), else the file word
+            slot = dynamic.get(addr + at - off)
+            own[key] = slot[1] if slot is not None and slot[1] is not None else int.from_bytes(word, "little")
             todo.append(key)
 
     def next_start(lo: int) -> int | None:
@@ -404,20 +511,57 @@ def _verify_own(elf: ELFFile, symtab, name: str, fn_shndx: int, fn_start: int, t
 
     for (sec_idx, off), addr in sorted(own.items()):
         if not in_rom(sec_idx):
+            if target.image is not None:
+                length = extent(sec_idx, off)
+                original = read(addr, length)
+                if original is None:
+                    if not any(lo <= addr and addr + length <= hi for lo, hi in target.image.bss):
+                        problem(f"your zero-initialized data at 0x{addr:08X} cannot be verified in the original")
+                elif original.count(0) != len(original):
+                    problem(f"your zero-initialized data differs from the original's data at 0x{addr:08X}")
+                elif found := slots_in(addr, length):
+                    # zeros in the file, but the loader writes pointers there: `{ 0 }` is not `{ external }`
+                    problem(f"your zero-initialized data at 0x{addr:08X} has no pointer where the original's "
+                            f"loader writes one ({slot_label(found[0])} at 0x{found[0]:08X})")
             continue
         length = extent(sec_idx, off)
         sec = elf.get_section(sec_idx)
         mine = bytearray(sec.data()[off:off + length])
         if not mine:
+            problem(f"your data at {sec.name}+0x{off:X} is outside its section")
             continue
         unplaced = False
+        relocated = set()
         for at, rtype, s in relocs_in(sec_idx):
             at -= off
-            if rtype != R_ARM_ABS32 or not 0 <= at <= length - 4:
+            if not 0 <= at <= length - 4:
                 continue
-            dest, key = pointee(s, int.from_bytes(mine[at:at + 4], "little"))
+            if rtype != R_ARM_ABS32:
+                problem(f"relocation type {rtype} inside your data cannot be verified yet")
+                unplaced = True
+                break
+            relocated.add(addr + at)
+            stored = int.from_bytes(mine[at:at + 4], "little")
+            dest, key = pointee(s, stored)
             if key is not None:
                 dest = own.get(key)
+            if addr + at in dynamic:
+                # The original's loader writes this word: compare what it resolves to, then take the file's word
+                # (0, an addend or a local address, whatever the linker left for the loader).
+                file_word = read(addr + at, 4)
+                if file_word is None or not agrees(addr + at, s, stored, dest):
+                    problem(f"your pointer at {sec.name}+0x{off + at:X} is not the original's "
+                            f"({slot_label(addr + at)} at 0x{addr + at:08X})")
+                    unplaced = True
+                    break
+                mine[at:at + 4] = file_word
+                continue
+            if (dest is None and not _defined(s) and target.image is not None
+                    and int.from_bytes(mine[at:at + 4], "little") == 0
+                    and target.image.slot_matches(addr + at, s.name, symbols)):
+                original = read(addr + at, 4)
+                if original is not None:
+                    dest = int.from_bytes(original, "little")
             if dest is None:
                 problem(f"can't place a pointer inside your data at {sec.name}+0x{off + at:X}")
                 unplaced = True
@@ -428,9 +572,19 @@ def _verify_own(elf: ELFFile, symtab, name: str, fn_shndx: int, fn_start: int, t
             mine[at:at + 4] = (dest & 0xFFFFFFFF).to_bytes(4, "little")
         if unplaced:
             continue
+        # Every word the original's loader writes needs the candidate's own pointer there: the file holds 0 under an
+        # import's slot, so without this a table of zeros would compare equal to a table of imports.
+        missing = [a for a in slots_in(addr, length) if a not in relocated]
+        if missing:
+            problem(f"your {sec.name} data at +0x{missing[0] - addr + off:X} has no pointer where the original's "
+                    f"loader writes one ({slot_label(missing[0])} at 0x{missing[0]:08X})")
+            continue
         n = significant(bytes(mine), addr, None, next_start)
         rom = read(addr, n)
-        if rom is not None and rom != bytes(mine[:n]):
+        if rom is None or len(rom) != n:
+            problem(f"the original data at 0x{addr:08X} cannot be read, so this candidate cannot be verified")
+            continue
+        if rom != bytes(mine[:n]):
             problem(f"your {sec.name} data at +0x{off:X} differs from the original's at 0x{addr:08X} "
                     f"({symbols.label(addr)}): yours {bytes(mine[:min(n, 24)]).hex(' ')}"
                     f"{'…' if n > 24 else ''}, original {rom[:24].hex(' ')}{'…' if n > 24 else ''}")
