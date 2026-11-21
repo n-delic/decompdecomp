@@ -1588,7 +1588,8 @@ planned; asset format descriptions are advisory text.
 ### ROM Explorer
 
 Iguana resource archives now expose CI4 and CI8 bitmap banks with palette-backed previews
-and padded texture row support.
+and padded texture row support. Their QMesh resources also expose wireframe geometry from
+validated vertex and triangle commands.
 
 Audio browser now prepares selected samples without autoplay. Native libmus pointer
 banks validate tuning/loop/book graphs and uniquely fitting marked wave tables, with
