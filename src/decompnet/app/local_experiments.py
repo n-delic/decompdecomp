@@ -31,6 +31,7 @@ from decomprepair import (
     register_repairs,
     register_reuse_repairs,
     store_address_repairs,
+    switch_arm_store_repairs,
 )
 
 from ..network import NetworkError
@@ -54,8 +55,8 @@ from .repair_generation import call as _generated
 
 EXPERIMENTAL = ('experimental_bitfield_frame',)
 COUNTER_ROLES = (loop_counter_roles_repairs.FRESH, loop_counter_roles_repairs.REASSIGN, loop_counter_roles_repairs.MERGE,
-                 loop_counter_roles_repairs.SWAP)  # which loops share a counter variable (decomp-repair 0.5.163)
-FAMILIES = ('inferred_frame_reservation','frame_branch_tail_sequence','value_trace_bundle','verified_unit_helpers') + independent_address_repairs.FAMILIES + focused_lifetime_repairs.FAMILIES + (prototype_reuse.FAMILY, 'learned_expression', 'address_association', 'loop_address_hoist', *COUNTER_ROLES, 'call_initialization', *EXPERIMENTAL, 'masked_value_reuse', 'cfg_integer_lifetimes', 'table_slot_lifetime', 'unsigned_assignment_reuse', 'guard_forward_jump', 'constant_register_reuse', 'copy_register_reuse', 'last_shift_reuse', 'signedness','declaration_order','typed_temporary','branch_orientation','narrowing','source_lines',
+                 loop_counter_roles_repairs.SWAP)  # which loops share a counter variable (decomp-repair 0.5.163; goto loops and guarded counters 0.5.170)
+FAMILIES = ('inferred_frame_reservation','frame_branch_tail_sequence','value_trace_bundle','verified_unit_helpers') + independent_address_repairs.FAMILIES + focused_lifetime_repairs.FAMILIES + (prototype_reuse.FAMILY, 'learned_expression', 'address_association', 'loop_address_hoist', *COUNTER_ROLES, switch_arm_store_repairs.FAMILY, 'call_initialization', *EXPERIMENTAL, 'masked_value_reuse', 'cfg_integer_lifetimes', 'table_slot_lifetime', 'unsigned_assignment_reuse', 'guard_forward_jump', 'constant_register_reuse', 'copy_register_reuse', 'last_shift_reuse', 'signedness','declaration_order','typed_temporary','branch_orientation','narrowing','source_lines',
             'address_temporary','operand_temporary','constant_local','comparison_load','stack_array','loop_induction',
             'parameter_width','value_lifetime','sum_shape','call_result_inline','comparison_reuse','integer_address_order','mmio_address','call_arity','struct_byte_offset','switch_call','paired_load_order','array_index_width','split_scalar_lifetime','pointer_before_store','store_address_lifetime','stack_padding','local_width','pointer_cast_inline',
             'local_widening','callee_parameter_width','callee_return_width','split_integer_lifetime','merge_integer_lifetimes','branch_call','goto_leaf','switch_layout') + ('mapped_spill_storage','mapped_register_lifetime','hazard_statement_lines','floating_initializer_order') + draft_repairs.AGENT_FAMILIES
@@ -291,7 +292,7 @@ def _available(net, agent, slug, fn, source, revision, requested):
         for family, candidate in _generated(copy_lifetime_repairs.variants, source, fn['name'], copy_header):
             if family in pools:
                 pools[family].append(candidate)
-    for module in (address_association_repairs, loop_address_hoist_repairs, loop_counter_roles_repairs, call_initialization_repairs, masked_reuse_repairs, callee_prototype_repairs, integer_lifetime_repairs, branch_layout_repairs, register_reuse_repairs, focused_lifetime_repairs):
+    for module in (address_association_repairs, loop_address_hoist_repairs, loop_counter_roles_repairs, switch_arm_store_repairs, call_initialization_repairs, masked_reuse_repairs, callee_prototype_repairs, integer_lifetime_repairs, branch_layout_repairs, register_reuse_repairs, focused_lifetime_repairs):
         for family, candidate in _generated(module.variants, source, fn['name']):
             if family in pools:
                 pools[family].append(candidate)
