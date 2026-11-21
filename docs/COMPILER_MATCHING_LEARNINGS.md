@@ -1,5 +1,12 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: square each vector field at its store
+
+A 68-byte archived draft matched after expressing each of three
+integer squares directly at its corresponding store. The linked
+score improved from 220 to zero with
+`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
+
 ### KMC GCC 2.7.2: recover a stack array and call scheduling
 
 Two archived drafts matched using `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
