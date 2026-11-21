@@ -65,7 +65,7 @@ def register(app: App) -> None:
                         return fn(slug, request, data)  # Metadata is published by autosave, without another recheck here.
                     if request.method == "POST" and request.url.path in (
                         '/api/try', '/api/cross-game/run', '/api/reconcile-matches', '/api/reimport',
-                        '/api/permuter/function', '/api/deep-permuter', '/api/play-export', '/api/port-export-options', '/api/recompile',
+                        '/api/permuter/function', '/api/deep-permuter', '/api/play', '/api/play-export', '/api/port-export-options', '/api/recompile',
                     ):
                         return fn(slug, request, data)  # The worker synchronizes; return its job without waiting.
                     if request.method == "GET" or request.url.path == "/api/permuter/pass":
@@ -335,12 +335,20 @@ def register(app: App) -> None:
         from ...port.wasm import play
         if data.get("stop"):
             return {"stopped": play.stop(slug)}
-        require_port_build(data)
-        if (url := play.running(slug)):
-            return {"url": url}
+        runtime = data.get("runtime", "wasm")
+        if data.get("build_mode", "compatibility") != "compatibility":
+            require_port_build(data)
+        adapter = play.native_adapter(net, slug, runtime) if runtime != "wasm" else None
+        if (view := play.running_result(slug)):
+            if bool(adapter) == view.get("native", False):
+                return view
+            raise NetworkError("Stop the running game before switching runtimes.")
         if (building := jobs.active(("play",), project=slug)):  # a second click, or another window: the same build
             return {"job": building["id"]}
-        return {"job": jobs.start("play", lambda log: play.play(net, slug, log), project=slug)}
+        def launch(log):
+            return play.play(net, slug, log, adapter=adapter) if adapter else play.play(net, slug, log)
+
+        return {"job": jobs.start("play", launch, project=slug)}
 
     def port_export_options(slug, request, data):
         """Save export targets in the project database and discover an active export before port readiness scans."""

@@ -157,9 +157,10 @@ def test_the_boot_values_follow_the_games_country():
     assert boot_globals({})[0x80000318][1:] == ("uint32_t", 4, 0x400000)  # osMemSize: 4 MB, no Expansion Pak
 
 
-def test_the_play_step_offers_each_runtime_with_what_it_still_needs(project):
+def test_the_play_step_offers_each_runtime_with_what_it_still_needs(project, monkeypatch):
     """WebAssembly plays now; the native runtimes wait for the checklist's steps, and stay closed while
     decompdecomp can't build on them."""
+    monkeypatch.setenv("DECOMPNET_RT64_ADAPTER", "/missing/rt64.dylib")
     net, _ = project
     with net.progress.view():
         report = readiness(net, "game")
@@ -174,9 +175,27 @@ def test_the_play_step_offers_each_runtime_with_what_it_still_needs(project):
     assert compatibility["id"] == "compatibility" and direct["id"] == "direct"
     first, ship, modern = compatibility["runtimes"]
     assert first["name"] == "decompdecomp runtime" and first["playable"]
-    assert all(not runtime["playable"] and not runtime["missing"] for runtime in (ship, modern))
+    assert not ship["playable"] and not ship["missing"]
+    assert not modern["playable"] and "local macOS RT64 adapter" in modern["missing"][0]
     assert direct["runtimes"] == [runtimes["libultraship"], runtimes["n64modernruntime"]]
 
+
+
+def test_a_local_rt64_adapter_enables_only_compatibility_play(project, monkeypatch, tmp_path):
+    import sys
+
+    if sys.platform != "darwin":
+        pytest.skip("The adapter currently uses Metal and a Cocoa window")
+    library = tmp_path / "rt64.dylib"
+    library.touch()
+    monkeypatch.setenv("DECOMPNET_RT64_ADAPTER", str(library))
+    net, _ = project
+    with net.progress.view():
+        modes = readiness(net, "game")["build_modes"]
+    compatibility, direct = [next(r for r in mode["runtimes"] if r["id"] == "n64modernruntime") for mode in modes]
+    assert compatibility["playable"] and not compatibility["exportable"]
+    assert "Metal" in compatibility["summary"]
+    assert not direct["playable"] and not direct["exportable"]
 
 
 def test_a_native_runtime_is_closed_until_decompdecomp_builds_on_it():

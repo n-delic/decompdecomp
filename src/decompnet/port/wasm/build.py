@@ -109,8 +109,9 @@ class _Files:
                 data = path.read_bytes()
             except OSError:
                 data = None
-            self.seen[path] = _digest(data) if data is not None else "missing"
             self.included[path] = _INCLUDE.findall(data.decode("utf-8", "replace")) if data else []
+            # Parallel callers treat a published hash as proof that the include list is ready.
+            self.seen[path] = _digest(data) if data is not None else "missing"
         return self.seen[path]
 
     def key(self, source: Path, dirs, *inputs) -> str:

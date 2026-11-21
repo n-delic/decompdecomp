@@ -895,6 +895,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | What stops the C linking for a PC (Porting, from Compile for PC's objects, docs/PORTING.md phase 3) | ✓ (undefined and twice-defined symbols, sorted by what fixes each; nothing linked yet) | — no port kit yet | — no port kit yet | — | — | — no port kit yet | — | — project mode not read yet | — project mode not read yet | — | — project mode not read yet | — |
 | Port fixes judged twice (Start agents → Fix C for the PC, `fix_for_pc`, docs/PORTING.md phase 4) | ✓ (console match by the function judge, PC build by the pinned Zig's clang) | — no port kit yet | — no port kit yet | — | — | — no port kit yet | — | — project mode not read yet | — project mode not read yet | — | — project mode not read yet | — |
 | Port: a native build of a finished game (docs/PORTING.md) | — planned: libultraship, Torch | — planned: PsyCross | — | — | — | — | — | — | — | — | — | — |
+| RT64 compatibility Play (Porting → N64ModernRuntime) | ✓ macOS preview, verified on a partial demo; — retail validation, exports and other systems | — | — | — | — | — | — | — | — | — | — | — |
 | iPhone/iPad Xcode export (Porting; offline browser port, touch controls; device playthrough pending) | ✓ wrapper compiles; packaging and input tested | — no browser port kit | — no browser port kit | — | — | — no browser port kit | — | — project mode not read yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — project mode not read yet |
 | Verified Git export sync (explicit Settings action) | build.json export | shared export adapter | shared export adapter | — | — | shared export adapter | — | source already in checkout | source already in checkout | — | source already in checkout | source already in checkout |
 | Commit and push bound portable progress | ✓ | ✓ | ✓ | — | — | ✓ | — | — own checkout UI planned | — own checkout UI planned | — | — own checkout UI planned | — own checkout UI planned |
@@ -2657,18 +2658,15 @@ Line Tools; queues that never wait, so decompdecomp's thread glue) or N64ModernR
 queues and timers; the RT64 renderer, complete S2DEX; reads the ROM at run time, so no extraction; RT64 needs full
 Xcode on macOS for its Metal shaders). The kit becomes a list per console (`Console.port_kits`), the readiness report
 and link check read the chosen one, and Port readiness shows the choice with what each needs on this computer.
-Porting separates the build mode from the runtime. The N64 compatibility build preserves the game's 32-bit memory
-layout and can play or export with decompdecomp's runtime today. libultraship and N64ModernRuntime are listed for
-both modes as planned integrations. The direct 64-bit C port shows the remaining checklist steps for each runtime.
-Integrate N64ModernRuntime with the compatibility build first, so programs can keep using N64Recomp and the
-interpreter for functions without decompiled C. The desktop host needs to bridge graphics tasks and VI state into
-RT64, whose RDRAM layout reverses the bytes in each 32-bit word relative to the compatibility build. Verify display
-list submission, framebuffer synchronization and input on a partially decompiled demo before enabling Play.
+Porting separates the build mode from the runtime. The N64 compatibility build preserves the game's 32-bit
+memory layout. Play can use the local macOS RT64 adapter when configured. The adapter uses ModernRuntime's VI
+registers and presents in an SDL3 Metal window. It keeps the compatibility host's scheduler, input, audio, saves,
+and original RDRAM writes from the software RDP. The direct 64-bit C option and libultraship remain planned.
 
-On Apple Silicon, an isolated build of N64ModernRuntime (`e4342ae0`) and RT64 (`d9817c68`) passed a synthetic RDP
-Full Sync probe with Metal and ModernRuntime's VI registers. Xcode's downloaded Metal toolchain needed explicit
-selection through `TOOLCHAINS` during the shader build. On macOS the probe supplied the native Cocoa window and
-Metal layer explicitly, since RT64's fallback passed an SDL window where its Cocoa wrapper expects an NSWindow.
+An Apple Silicon end-to-end demo used saved C, N64Recomp and the interpreter in one run and submitted the expected
+framebuffer to RT64. A native graphics task captured in the reference emulator also reached RT64. Retail saves
+still need live playthroughs. Next: verify more microcodes and games, support RT64 export, replace the compatibility
+scheduler and device services where ModernRuntime can take them over, and add other desktop builds.
 
 ### Ports: a native build of a finished game
 

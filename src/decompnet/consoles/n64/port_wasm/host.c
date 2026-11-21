@@ -25,6 +25,7 @@
 #include <unistd.h>
 
 #include "game.h"
+#include "rt64/adapter.h"
 #define SP_STATUS 0xA4040010u /* the RSP's status register: libultra waits for its halt bit */
 #include "wasm-rt-exceptions.h"
 #include "wasm-rt-impl.h"
@@ -482,12 +483,31 @@ void w2c_env_osViSetEvent(struct w2c_env *e, u32 mq, u32 msg, u32 every) {
 void port_vi_mode(uint32_t mode);
 void port_vi_yscale(float s);
 void port_vi_features(uint32_t f);
-void w2c_env_osViSetMode(struct w2c_env *e, u32 mode) { (void)e; LOG("osViSetMode(%08X)", mode); port_vi_mode(mode); }
-void w2c_env_osViSetYScale(struct w2c_env *e, f32 s) { (void)e; port_vi_yscale(s); }
+void w2c_env_osViSetMode(struct w2c_env *e, u32 mode) {
+    (void)e; LOG("osViSetMode(%08X)", mode); port_vi_mode(mode);
+#ifndef PORT_WEB
+    if (getenv("PORT_RT64") && (mode & 0x1FFFFFFFu) <= 0x800000u - 60) {
+        uint32_t words[14], address = 0x80000000u | (mode & 0x1FFFFFFFu);
+        for (unsigned i = 0; i < 14; i++) words[i] = be32(address + 4 + i * 4);
+        port_rt64_mode(words);
+    }
+#endif
+}
+void w2c_env_osViSetYScale(struct w2c_env *e, f32 s) {
+    (void)e; port_vi_yscale(s);
+#ifndef PORT_WEB
+    if (getenv("PORT_RT64")) port_rt64_yscale(s);
+#endif
+}
 void w2c_env_osViBlack(struct w2c_env *e, u32 on) { (void)e; (void)on; }
 void w2c_env_osViSetSpecialFeatures(struct w2c_env *e, u32 f) { (void)e; port_vi_features(f); }
 void port_frame_shown(uint32_t fb, unsigned long n); /* render.c: saves it when asked */
-void port_vi_swap(uint32_t fb) { frame_buffer = fb; swaps++; port_frame_shown(fb, swaps); } /* (games/: a game's own name) */
+void port_vi_swap(uint32_t fb) { /* (games/: a game's own name) */
+    frame_buffer = fb; swaps++; port_frame_shown(fb, swaps);
+#ifndef PORT_WEB
+    if (getenv("PORT_RT64")) port_rt64_screen(M + 0x80000000u, fb);
+#endif
+}
 void w2c_env_osViSwapBuffer(struct w2c_env *e, u32 fb) { (void)e; port_vi_swap(fb); }
 u32 w2c_env_osViGetCurrentFramebuffer(struct w2c_env *e) { (void)e; return frame_buffer; }
 u32 w2c_env_osViGetNextFramebuffer(struct w2c_env *e) { (void)e; return frame_buffer; }
@@ -584,7 +604,13 @@ void w2c_env_osSpTaskStartGo(struct w2c_env *e, u32 task) {
     uint32_t type = be32(task);
     if (type == 1) gfx_tasks++; else audio_tasks++;
     if (type == 1) ram_dumps("PORT_FRAME_DUMPS", gfx_tasks);
-    if (type == 1) port_render_task(task);
+    if (type == 1) {
+#ifndef PORT_WEB
+        if (getenv("PORT_RT64"))
+            port_rt64_task(M + 0x80000000u, be32(task + 16), be32(task + 24), be32(task + 48));
+#endif
+        port_render_task(task);
+    }
     if (type == 2) port_audio_task(task);
     if (gfx_tasks + audio_tasks <= 4) LOG("RSP task type %u: data %08X, %X bytes", type, be32(task + 48), be32(task + 52));
     if (type == 1 && gfx_tasks == 2 && getenv("PORT_TASK")) {

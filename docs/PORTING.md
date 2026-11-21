@@ -191,8 +191,18 @@ RT64) is to be the user's choice per game (ROADMAP.md, "A choice of runtime for 
 
 The Porting picker separates **N64 compatibility (32-bit game memory)** from **Direct 64-bit C port**. The former
 uses WebAssembly in the browser and wasm2c for desktop builds. It can play and export with decompdecomp's runtime
-today. libultraship and N64ModernRuntime are shown in the runtime picker for both modes as planned integrations.
+today. **N64ModernRuntime** also offers experimental desktop Play with RT64 on macOS when the adapter is installed.
 The direct C mode shows each runtime's outstanding 64-bit port prerequisites.
+
+For a source checkout on a Mac, install full Xcode and its Metal Toolchain in Components, then run
+`uv run python tools/build_rt64_adapter.py` and refresh Porting. The script builds pinned public source revisions
+and saves the adapter under the decompdecomp toolchains directory. A local macOS bundle can carry those files
+when built with `DECOMP_RT64_BUNDLE_DIR`. In Porting, select **N64 compatibility**, then **N64ModernRuntime**,
+and click **Play**. The adapter uses N64ModernRuntime's VI state and RT64's Metal renderer. The compatibility host
+continues to run game threads, input, audio and saves. It sends RT64 a word-swapped RDRAM snapshot and retains the
+software RDP's writes to the game's memory. Decompilation, N64Recomp and MIPS interpretation share the same
+execution path as the built-in runtime. Desktop Play is verified on a partially decompiled demo on Apple Silicon.
+Retail compatibility, RT64 exports, and other desktop platforms remain open.
 
 ROM offsets the game uses as numbers (where an archive starts in the cartridge) and the values the N64's boot leaves
 in low memory for libultra are defined by Compile for PC too (`port/fixed_symbols.py`): offsets as symbols at those

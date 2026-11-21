@@ -153,3 +153,33 @@ def test_play_lists_the_addresses_the_game_ran_that_no_function_starts(tmp_path)
     (tmp_path / "runtime-entries.txt").write_text("80001000\n80001020\n80002000\n")
     # 80001020: inside func_80001000 (two functions run together); 80002000: in no function (the split's data)
     assert play.unlisted_entries(net, "game") == [0x80001020, 0x80002000]
+
+
+def test_parallel_build_keys_never_publish_a_hash_before_its_includes(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from decompnet.port.wasm.build import _Files
+
+    source = tmp_path / "unit.c"
+    source.write_text('#include "shared.h"\n')
+    (tmp_path / "shared.h").write_text("extern int counter;")
+    waiting, release = Event(), Event()
+
+    class Includes(dict):
+        def __setitem__(self, key, value):
+            if key == source and not waiting.is_set():
+                waiting.set()
+                assert release.wait(5)
+            super().__setitem__(key, value)
+
+    files = _Files()
+    files.included = Includes()
+    with ThreadPoolExecutor() as pool:
+        first = pool.submit(files.key, source, [])
+        try:
+            assert waiting.wait(5)
+            second = pool.submit(files.key, source, []).result(timeout=5)
+        finally:
+            release.set()
+        assert first.result(timeout=5) == second

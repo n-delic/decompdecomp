@@ -63,6 +63,8 @@ class PortRuntime:
     needs: tuple = ()  # the readiness steps it waits for: "code", "compiles", "links", "assets" (port/readiness.py)
     modes: tuple[str, ...] = ("direct",)  # Build modes offered in the runtime picker
     built_for: tuple[str, ...] = ()  # Build modes currently supported by decompdecomp
+    native_adapter: object = None  # () -> path to the optional desktop adapter, or None when unavailable
+    compatibility_summary: str = ""  # Host services used only by the compatibility build
 
 
 @dataclass(frozen=True)

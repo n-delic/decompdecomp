@@ -2,10 +2,10 @@
    with how far along it is and the button that does it. Read-only; asked for only while the tab is open. */
 let portEpoch = 0;
 let portRenderedSlug = null;
-let portBuild = {slug: null, mode: "compatibility", runtime: "wasm"};
+let portBuild = {slug: null, mode: "compatibility", runtime: "wasm", exportable: true};
 
 function portBuildRequest() {
-  const {mode, runtime} = portBuild.slug === S.slug ? portBuild : {mode: "compatibility", runtime: "wasm"};
+  const {mode, runtime} = portBuild.slug === S.slug ? portBuild : {mode: "compatibility", runtime: "wasm", exportable: true};
   return {build_mode: mode, runtime};
 }
 
@@ -58,12 +58,14 @@ function renderPortBuildChoices(modes) {
     if (!options.some((r) => r.id === portBuild.runtime && r.playable)) {
       portBuild.runtime = options.find((r) => r.playable)?.id ?? null;
     }
+    portBuild.exportable = options.some((r) => r.id === portBuild.runtime && (r.exportable ?? r.playable));
     runtimePicker.replaceChildren(runtimeLegend, ...options.map((r) => {
       const needs = r.missing.length ? `Needs ${r.missing.join(", ")}.` : "";
-      const status = r.playable ? "Available for Play and Export."
+      const status = r.playable ? (r.exportable === false ? "Available for desktop Play." : "Available for Play and Export.")
         : [r.built ? "" : "Planned for this build mode.", needs].filter(Boolean).join(" ");
       return portRadio("portRuntime", {...r, status}, portBuild.runtime, (id) => {
         portBuild.runtime = id;
+        portBuild.exportable = r.exportable ?? r.playable;
         updatePortBuildActions();
       });
     }));
@@ -340,7 +342,7 @@ async function loadPortReadiness() {
   if (!$("portPanel") || S.tab !== "porting" || !S.slug) return;
   const slug = S.slug, epoch = ++portEpoch, log = $("portWork");
   if (portBuild.slug !== slug) {
-    portBuild = {slug, mode: "compatibility", runtime: "wasm"};
+    portBuild = {slug, mode: "compatibility", runtime: "wasm", exportable: true};
     $("portBuildChoices").hidden = true;
   }
   showJobError(log, "");
@@ -683,7 +685,10 @@ async function playGame(existing = null) {
     let result = existing ? { job: existing.id }
       : await api("/api/play", { method: "POST", body: { slug, ...portBuildRequest() } });
     if (result.job) { playJob = result.job; result = await followJob(result.job, log, null, () => S.slug === slug); }
-    if (result && result.url) {
+    if (result?.native) {
+      log.append("\nThe game opened in the RT64 window.");
+      playing = true;
+    } else if (result && result.url) {
       const link = document.createElement("a");
       link.href = result.url; link.target = "_blank"; link.rel = "noopener"; link.textContent = result.url;
       if (result.window) log.append("\nThe game opened in its own window; closing it stops the game. Or play in the browser at ", link, ".");
@@ -732,7 +737,7 @@ function currentExport(state) {
 }
 
 function renderExportControls(state) {
-  const unavailable = !portBuildAvailable();
+  const unavailable = !portBuildAvailable() || (portBuild.slug === S.slug && !portBuild.exportable);
   const busy = !!state.job || !state.ready || unavailable;
   $("portExportBuildHint").hidden = !unavailable;
   $("portExportWindowChoice").hidden = !state.mac;
