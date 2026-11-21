@@ -11960,3 +11960,13 @@ explicit locals placed anywhere between the two calls with no first wrapper (325
 Evidence: one function, matched (app's judge: exact). decomp-repair 0.5.269 reproduces steps 2 and 3 directly on the
 60 source (three `single_use_inline` steps at 60, then `call_one_shot_scope_shift` gives 0), scored with the
 judge-worker; no permuter run. Not controlled across other functions.
+
+### Pack bytes into the existing accumulator before narrowing the return
+
+With gcc-2.7.2-kmc `-G0 -mips3 -mgp32 -mfp32 -O2`, a draft packed a
+word's low two bytes and narrowed the result in one return expression.
+The target reused the incoming accumulator register for the OR before
+masking the return value. Assigning the packed word back to the same
+unsigned local before returning its low 16 bits preserved the target
+allocation. The deep permuter saved an exact match from score 25 in
+30 candidates.
