@@ -517,3 +517,16 @@ def test_copied_word_index_repair_runs_during_valid_kmc_draft_generation(monkeyp
     assert 'table[arg]' in seeds.generate_from_asm('asm', 'f', 'gcc-2.7.2-kmc', 'header', valid=True)
     assert seeds.generate_from_asm('asm', 'f', 'gcc-2.7.2-kmc', 'header') == raw
     assert calls == [(raw, 'f', 'asm', 'header')]
+
+
+def test_larger_stack_recovery_is_used_by_valid_kmc_drafts(monkeypatch):
+    from decomprepair import large_stack_drafts
+
+    raw = 'void f(void) { cursor = sp; }'
+    monkeypatch.setattr(seeds, 'run_m2c', lambda *args: raw)
+    monkeypatch.setattr(seeds, 'intrinsic_leaf', lambda *args: None)
+    monkeypatch.setattr(seeds, 'm2c_target', lambda *args: 'mips-gcc-c')
+    monkeypatch.setattr(large_stack_drafts, 'rewrite', lambda *args: 'void f(void) { u8 buffer[48]; }')
+    assert 'buffer[48]' in seeds.generate_from_asm('asm', 'f', 'gcc-2.7.2-kmc', valid=True)
+    assert seeds.generate_from_asm('asm', 'f', 'gcc-2.7.2-kmc') == raw
+    assert seeds.generate_from_asm('asm', 'f', 'ido-5.3', valid=True) == raw

@@ -8677,3 +8677,22 @@ Rerunning the same 120 examples with the original search budget raised exact
 matches from 63 to 69. Four former compile failures matched as regenerated
 drafts, and both word-scale cases matched in the bounded permuter search.
 Every prior exact match still reproduced.
+
+### Larger stack bases recovered from the same batch
+
+Two more raw m2c drafts failed compilation because the stack base was emitted
+as an undeclared `sp`. With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` and
+each captured header, their regenerated drafts now match the linked ROM bytes:
+
+- One 48-byte frame contains a 42-byte aggregate copy. The instructions show
+  aligned and unaligned 16-byte lanes and a 10-byte tail. The draft now uses an
+  aggregate assignment into a local byte buffer. Testing the fallback index
+  first, in the raw draft's branch orientation, compiled but scored 220.
+  Testing the unshifted index first matched exactly.
+- One 64-byte frame holds a 4×4 float matrix. Keeping a full local matrix and
+  copying it to the output only after accumulation matches exactly and preserves
+  the behavior when output aliases an input. The rewrite keeps the draft's
+  original parameter declaration and uses typed local views for indexing.
+
+The same 120-example replay rose from 69 to 71 exact matches. Both additions
+matched as regenerated drafts, and every earlier exact result reproduced.
