@@ -1050,3 +1050,13 @@ def test_vector_square_repairs_route_to_kmc(monkeypatch):
                         lambda text, name, header, diff: [('vector_square_fixture', text)])
     assert 'vector_square_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'vector_square_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_byte_and_message_repairs_route_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_kmc_byte_and_message, 'variants',
+                        lambda text, name, header, diff: [('byte_message_fixture', text)])
+    assert 'byte_message_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'byte_message_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))

@@ -12567,3 +12567,15 @@ result registers for the add and its consuming multiply in a branch delay slot.
 With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, the Deep Permuter
 improved score 40 to 30. The v0.5.298 control stayed at 40 after 100
 attempts. The remaining differences concern two other conversions.
+
+### KMC GCC 2.7.2: unsigned byte arrays and message pointer scheduling
+
+Two independently judged scratch drafts matched their linked targets with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`. An indexed array
+was declared `char` but the target omitted the signed-byte extension after
+its load; declaring it `unsigned char` improved the difference score from
+230 to 0. Signed declarations and changes to a nearby integer local did not
+match. In the other draft, copying a call's stack output pointer into a local
+before clearing a halfword flag improved the score from 250 to 0. Copying it
+after the flag update retained the original 250 score. These are two observed
+matches, with synthetic tests for the instruction and source guards.
