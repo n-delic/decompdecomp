@@ -10754,6 +10754,17 @@ four bytes into a halfword record and the initial halfword separately. Applying 
 displacement as bytes brought its score from 10 to 0. The deep permuter reproduced
 all three matches using the measured shift, relocation and call-delay-slot evidence.
 
+### Full-byte mask after a sentinel repair
+
+On an isolated N64 ROM project, KMC GCC 2.7.2 with
+`-G0 -mips3 -mgp32 -mfp32 -O2` left one differing operand after a sentinel
+repair. The target used `lbu`, loaded the comparison constant, then applied
+`andi ..., 0xff` before the branch. The draft used `0x7f`. Using `0xff`
+directly removed the redundant mask and raised the linked score from 10 to
+240. The automatic follow-up tried full-byte casts and staged unsigned
+locals, including a volatile local and an instruction-free register
+constraint. The isolated replay retained score 10 after the five focused trials.
+
 ### KMC masked slot dispatch and signed table offsets
 
 - Two N64 functions built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` matched all 412 and 424

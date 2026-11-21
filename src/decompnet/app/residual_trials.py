@@ -4,6 +4,7 @@ import re
 from decomprepair import (
     allocation_repairs,
     call_lifetime_repairs,
+    last_byte_mask_repairs,
     residual_source_repairs,
     shared_fp_return_repairs,
 )
@@ -14,7 +15,7 @@ from .cross_function_repairs import argument_reads
 
 FAMILIES = (residual_source_repairs.ADDRESS, residual_source_repairs.BRANCH, residual_source_repairs.CALL,
             residual_source_repairs.ENTRY, residual_source_repairs.FRAME, 'residual_call_buffer',
-            shared_fp_return_repairs.FAMILY)
+            shared_fp_return_repairs.FAMILY, last_byte_mask_repairs.FAMILY)
 
 
 def prologue_rotation(rows):
@@ -92,6 +93,8 @@ def proposals(source, name, header, rows, *, net=None, proj=None, fn=None):
     changed = [(i,a,b) for i,(mark,a,b) in enumerate(rows) if mark != ' ']
     if not changed:
         return []
+    if candidates := last_byte_mask_repairs.variants(source, name, rows, header):
+        return candidates
     if shared_fp_return_evidence(rows):
         if candidates := shared_fp_return_repairs.variants(source,name,header):
             return candidates

@@ -1970,6 +1970,9 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
         from . import deep_handoff
         current = net._function(name, slug)
         if search.measured_winner(current, current['best_source']):
+            if proj['arch'] == 'mips' and not fork:
+                from . import targeted_retry
+                result['targeted_retry'] = targeted_retry.snapshot(search.winner_source, search.winner_diff[0])
             if deep_handoff.save(net, proj, current, search.winner_source, search.winner_diff[0]):
                 log('Saved the measured residual for the next agent claim.')
     result['compiler_profiles'] = compiler_profiles
