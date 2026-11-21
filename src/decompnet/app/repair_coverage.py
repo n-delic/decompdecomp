@@ -98,17 +98,23 @@ def verify(feedback, example):
     compiler = profile['toolchain']
     if proj['arch'] == 'mips' and compiler == 'gcc-2.7.2-kmc':
         from decomprepair import (
+            aligned_stack_read,
             kmc_cast_repairs,
             kmc_operand_repairs,
             kmc_type_repairs,
+            likely_branch_cursor,
             measured_address_repairs,
+            measured_callback_loop,
             measured_callback_repairs,
             measured_control_flow,
             measured_expression_repairs,
             measured_immediate_repairs,
             measured_memory_order,
+            measured_mmio_polling,
             measured_pointer_scale,
             measured_temporary_repairs,
+            relocated_byte_table,
+            uncached_read_repairs,
         )
 
         from . import stack_padding_repairs
@@ -116,10 +122,25 @@ def verify(feedback, example):
         symbols = net.symbols(proj['id']) if hasattr(net,'symbols') else None
         focused = stack_padding_repairs.layout_candidates(source, fn['name'], header, proj['arch'],
                                                          rows, symbols, profile['flags'])
+        if candidate := uncached_read_repairs.rewrite(source, fn['name'], fn['asm'] or '',
+                                                      symbols.resolve if symbols else None):
+            focused.append(('measured_uncached_word_read', candidate))
         focused += measured_control_flow.variants(source, fn['name'], rows)
         focused += measured_memory_order.variants(source, fn['name'], rows)
         focused += measured_expression_repairs.variants(source, fn['name'], header, rows)
         focused += measured_temporary_repairs.variants(source, fn['name'], rows)
+        if candidate := measured_callback_loop.rewrite(source, fn['name'], fn['asm'] or '', header,
+                                                       symbols.resolve if symbols else None):
+            focused.append(('measured_callback_loop', candidate))
+        if candidate := measured_mmio_polling.rewrite(source, fn['name'], fn['asm'] or '', header):
+            focused.append(('measured_mmio_polling', candidate))
+        if candidate := likely_branch_cursor.rewrite(source, fn['name'], fn['asm'] or '', header):
+            focused.append(('likely_branch_cursor', candidate))
+        if candidate := relocated_byte_table.rewrite(source, fn['name'], fn['asm'] or '', header,
+                                                     symbols.resolve if symbols else None):
+            focused.append(('relocated_byte_table', candidate))
+        if candidate := aligned_stack_read.rewrite(source, fn['name'], fn['asm'] or ''):
+            focused.append(('aligned_stack_read', candidate))
         focused += measured_callback_repairs.variants(source, fn['name'], rows)
         focused += measured_address_repairs.variants(source, fn['name'], header, rows, symbols)
         focused += measured_pointer_scale.variants(source, fn['name'], header, rows)

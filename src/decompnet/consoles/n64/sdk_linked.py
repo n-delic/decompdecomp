@@ -8,6 +8,8 @@ import hashlib
 
 CORPUS = 'N64 C runtime'
 _LINKED_IMAGE = 'd347159808f0374a93cf44cfb6135d8f56279f7b'
+_LINKED_CLEANUP_THREE_WORDS = '1824380911579424e50042d45aef4851f7ab25a7'
+_LINKED_CLEANUP_SLOT = 'eb9bacb12eb6665be9936a3e1dfd6d57b2eaabdb'
 _KNOWN = {
     _LINKED_IMAGE: {
         'dd2ba42627dae6bc53ff6e61ca8ca0cfbe7f38149db59f304e22c4f9b5fa0897': ('atan2', 364),
@@ -23,6 +25,30 @@ _KNOWN = {
 # The PI manager references the EPI DMA entry. The scheduler uses linked
 # addresses for queues and OS globals when saving and restoring context.
 _LIBULTRA = {
+    _LINKED_CLEANUP_THREE_WORDS: {
+        'cb6887bd3a5941c6251ff092561b66d2fa53929becbf2cc8f3715e0972ec68fa':
+            ('__osDispatchThread', 380, False, 'os/exceptasm.s'),
+        '3b278142e6244777038334c3fe9182c3e6d5d528be3334528be8053492c444d0':
+            ('__osCleanupThread', 12, False, 'os/exceptasm.s'),
+    },
+    _LINKED_CLEANUP_SLOT: {
+        '49204e7bcbcbb5aa09f6bd05cc18cce5b6a108c1fad5dd19cdacafc43298981a':
+            ('__osDispatchThread', 380, False, 'os/exceptasm.s'),
+        '0a995ca509a00083c2fedae1bb36d2e75c8fbd76e8fe38802abe620e4bd0f343':
+            ('__osCleanupThread', 8, False, 'os/exceptasm.s'),
+    },
+    '70d08c55952d61fdb1e52a04836bd75b5bc2a428': {
+        'f5183d7de6c4f9af7e9cbef377ed73e3777aded4aca8c731517b942ae3b0eb22':
+            ('__osDispatchThread', 380, False, 'os/exceptasm.s'),
+        '7293df9a83f05c62098c262ee68f059973d64519cae0ca9dd53cef242eeb8ff9':
+            ('__osCleanupThread', 12, False, 'os/exceptasm.s'),
+    },
+    'd2fb7f03a895a0c2c61de58c63af9b2db2439c75': {
+        '05a713617290f417c521b3ad4a4fe7e1761e262782152541310369bda7666e4a':
+            ('__osDispatchThread', 380, False, 'os/exceptasm.s'),
+        'eab6c45cb505ba249cd0c3b8d90e65e1f92aef7b49df5deba3d7bde755739565':
+            ('__osCleanupThread', 12, False, 'os/exceptasm.s'),
+    },
     _LINKED_IMAGE: {
         '6df5833b52a06e452920791e169336c96b19c5fb45c111dca9b4950e844bb6bf':
             ('__osEPiRawStartDma', 492, True, 'io/epirawdma.c'),
@@ -88,6 +114,9 @@ _MERGED_SCHEDULER = '7d564e31a6368dd0ec8d03a12c38dbf239fd9295dcf26a9f4bdcf3c4fcc
 
 def split_scheduler(result, image_sha1: str) -> None:
     """Split a specifically verified merged scheduler target during ROM analysis."""
+    if digest := _CLEANUP_WITH_PADDING.get(image_sha1):
+        _split_cleanup_padding(result,digest)
+        return
     if image_sha1 != _LINKED_IMAGE:
         return
     from ...rom.split import split_function
@@ -102,4 +131,34 @@ def split_scheduler(result, image_sha1: str) -> None:
         dispatch, tail = split_function(fn, cleanup, f'func_{cleanup:08X}')
         cleanup_fn, mask_fn = split_function(tail, mask, f'func_{mask:08X}')
         result.functions[index:index + 1] = [dispatch, cleanup_fn, mask_fn]
+        return
+
+
+_CLEANUP_WITH_PADDING = {
+    _LINKED_CLEANUP_THREE_WORDS:
+        'd246ea272f63bc5f3ee83b0a97d7bb5ea38571e55607676a9ef028f414642b61',
+    _LINKED_CLEANUP_SLOT:
+        '5e1020780847e0662b9f6d8a5f68456a8c2cb7c2575181bd253b217024738a42',
+    'aa576624f2a66034cb0d6e621ba16a0d3beaca3a':
+        '68cdef5461e1450d4fadc5c4fc480fc9e828e9a874925593bfd890aa18583e53',
+    '4f1b8635322190bb3d0c6fc7d3ba844941f05574':
+        '3eaf77212e85954523bcb217d98360d57d19247e28009cf659932a27399d7db0',
+}
+
+
+def _split_cleanup_padding(result,digest):
+    from ...rom.split import split_function
+
+    for index, (fn, padding) in enumerate(zip(result.functions, result.functions[1:])):
+        if (fn.size not in (388, 392) or padding.size != 4 or padding.rom != fn.rom+fn.size
+                or padding.vram != fn.vram+fn.size or padding.vram in result.named.values()):
+            continue
+        code = b''.join(line.word.to_bytes(4, 'big') for line in (*fn.lines, *padding.lines))
+        if hashlib.sha256(code).hexdigest() != digest:
+            continue
+        # The dispatcher ends at ERET. The following cleanup stub destroys its
+        # own thread and cannot return to the alignment word after its call.
+        cleanup = fn.vram+380
+        head, tail = split_function(fn, cleanup, f'func_{cleanup:08X}')
+        result.functions[index:index+2] = [head, tail]
         return

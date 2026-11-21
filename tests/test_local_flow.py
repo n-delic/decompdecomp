@@ -81,9 +81,11 @@ def test_nested_switch_and_loop_edges_keep_a_value_live_on_continue():
 
 def test_machine_draft_hints_are_shown_in_briefs_without_editing_saved_source(tmp_path, monkeypatch):
     from tests.test_claims import _game
-    net, _ = _game(tmp_path, [('f',10,'open')])
+    net, pid = _game(tmp_path, [('f',10,'open')])
+    net._update_cfg('game', lambda cfg: cfg.update(compiler={'toolchain': 'gcc-2.7.2-kmc', 'flags': []}))
     source='int f(int n){int temp_s0;int temp_s0_2;temp_s0=read();use(temp_s0);while(n--){temp_s0_2=read();use(temp_s0_2);}return 0;}'
     with net.store.tx() as db:
+        db.execute("INSERT INTO context_versions(project_id,unit,version,header) VALUES(?,'a',1,'')", (pid,))
         db.execute('UPDATE functions SET best_source=?,best_score=20 WHERE name=?',(source,'f'))
     monkeypatch.setattr('decompnet.app.compiler_preflight.warnings',lambda *args:'')
     monkeypatch.setattr('decompnet.network.Network._brief',lambda *args:'normal brief')

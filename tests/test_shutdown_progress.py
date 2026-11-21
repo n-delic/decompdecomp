@@ -86,12 +86,15 @@ def test_quit_reports_stages_and_failed_project_saves_before_exit(tmp_path,monke
         return {'example-game':'folder is read-only'}
     monkeypatch.setattr(net.progress,'flush',flush)
     monkeypatch.setattr(server.wine,'stop',lambda:calls.append('wine'))
+    deadlines = []
+    monkeypatch.setattr(server, 'exit_after', deadlines.append)
     monkeypatch.setattr(server.os,'_exit',lambda code:calls.append(('exit',code)))
     # The fake shutdown above must not leave this test's real services behind.
     monkeypatch.setattr(manager,'_strays',lambda:set())
     try:quit_app()
     finally:
         for stop in originals:stop()
+    assert deadlines == [server.QUIT_DEADLINE_SECONDS]
     assert calls==['Stopping startup maintenance','Stopping project autosave workers','window',
                    'Stopping deep searches and queued repairs','Stopping the permuter process',
                    'Saving agent recovery and releasing claims','flush','wine',('exit',0)]

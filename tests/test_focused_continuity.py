@@ -20,7 +20,7 @@ def test_focused_budget_removes_old_rotation_registration():
 
 def test_focused_prompt_has_no_batch_exit():
     text = focused_agents.prompt(NS(options={'focus_function':'test_function'}))
-    assert 'one long conversation' in text and 'compaction' in text
+    assert 'Work continuously on only the assigned function' in text and 'compaction' in text
     assert 'current best candidate' in text and 'failed experiments' in text
 
 

@@ -47,10 +47,9 @@ def test_pending_compact_handshake_does_not_wait_for_saved_sync(tmp_path, monkey
     assert not entered.is_set() and not net._pending_tool_handshakes
     assert bool(authenticated) == (transport=='mcp')
     assert not net.progress.viewing  # no view scope leaks into subsequent work
-    # Ordinary compact reads and the first real work request still synchronize.
+    # Metadata reads stay on the database. The first work request still synchronizes.
     tools.call(net,agent,'game','project_info',{'detail':False})
-    assert entered.is_set()
-    entered.clear()
+    assert not entered.is_set()
     monkeypatch.setitem(tools.HANDLERS,'claim_function',lambda *a,**kw:'synthetic work')
     assert tools.call(net,agent,'game','claim_function',{}) == 'synthetic work'
     assert entered.is_set()
@@ -73,15 +72,15 @@ def test_failed_real_handshake_keeps_gate_and_project_checks(tmp_path,monkeypatc
     assert not net.progress.viewing
 
 
-def test_detailed_pending_handshake_still_uses_normal_project_reads(tmp_path,monkeypatch):
+def test_detailed_pending_handshake_uses_saved_project_metadata(tmp_path,monkeypatch):
     net,agent,_ = game(tmp_path)
     net._pending_tool_handshakes = {(agent.id,'game')}
     synchronized = []
     monkeypatch.setattr(net.progress,'sync',lambda *a,**kw:synchronized.append(True))
     monkeypatch.setattr(tools,'_project_info',lambda *a,**kw:'Detailed facts')
     monkeypatch.setattr(net,'overview',lambda *a:{})
-    tools.call(net,agent,'game','project_info',{'detail':True})
-    assert synchronized and not net._pending_tool_handshakes
+    assert tools.call(net,agent,'game','project_info',{'detail':True}) == 'Detailed facts'
+    assert not synchronized and not net._pending_tool_handshakes
 
 
 @pytest.mark.parametrize('work', ['owned claim','focus','readable','boundary'])

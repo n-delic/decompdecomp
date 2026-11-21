@@ -843,7 +843,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Pause and resume automatic rechecks of saved matches | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — | ✓ ROM | ✓ ROM | — uses project build | — uses project build | — uses project build | — uses project build | — uses project build |
 | Saved README preserves notes, with completion bar and function map | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Reimport: a new split, matched work kept (Settings) | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | — | ✓ (Ghidra again, the newest rules) | ✓ | — | — |
-| Rebuildable export | ✓ | ✓ | ✓ | — | — | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project (`ninja rebuild` writes your default.xbe back, byte for byte) | the project | the project |
+| Rebuildable export (ROM modes also create a verified local Git repository on new import) | ✓ | ✓ | ✓ | — | — | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project (`ninja rebuild` writes your default.xbe back, byte for byte) | the project | the project |
 | Set up as a project folder (import checkbox or Export panel; guessed `units.json`; edits to `src/<segment>/<function>.c` judged by the ROM judge on Refresh) | ✓ demo: 14 of 16 files found | ✓ demo: 1 of 18 files found (no padding between objects) | ✓ demo: 1 of 18 files found (functions padded like files) | — | — | — offered; demo not run (no PSP compiler build for Apple Silicon) | — | the project | the project | — | the project | the project |
 | The reversing emulator for agents (`watch_in_emulator`: which code writes an address, what a function is called with, on the user's ROM) | ✓ mupenRE (Linux, macOS) | — no emulator pinned yet | — no emulator pinned yet | — | — | — no emulator pinned yet | — | — no emulator pinned yet | — no emulator pinned yet | — | — no emulator pinned yet | — no ROM to run |
 | Code the game loads, found by running it (import and Reimport, consoles/n64/loaded_code.py) | ✓ when mupenRE is installed | — no emulator pinned yet | — no emulator pinned yet | — | — | — no emulator pinned yet | — | — no emulator pinned yet | — no emulator pinned yet | — | — no emulator pinned yet | — no ROM to run |
@@ -1587,10 +1587,18 @@ planned; asset format descriptions are advisory text.
 
 ### ROM Explorer
 
+Iguana resource archives now expose CI4 and CI8 bitmap banks with palette-backed previews
+and padded texture row support. Their QMesh resources also expose wireframe geometry from
+validated vertex and triangle commands. The same archive directory pairs relocated B1 wave
+banks with compact MIDI sequences and locates DEAN commentary clips for bounded playback.
+Packed archive directories also support playback using codebooks recovered from the
+checksummed program output.
+
 Audio browser now prepares selected samples without autoplay. Native libmus pointer
 banks validate tuning/loop/book graphs and uniquely fitting marked wave tables, with
-explicitly editable preview rates because the banks store none. Archived channel-table
-sequences are tentative metadata only; synthesis and additional bank adapters remain planned.
+explicitly editable preview rates because the banks store none. Validated raw libmus
+tracks with a uniquely resolved wave bank have bounded stereo previews. Archived
+channel-table playback and additional bank adapters remain planned.
 
 The byte strip also has a rounded-square region type map using the function map renderer,
 with image/audio evidence and local 3D model classifications. Evidence-based grouping joins

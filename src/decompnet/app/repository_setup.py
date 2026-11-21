@@ -104,7 +104,8 @@ def bind(net, slug, path, proj, log=lambda line:None):
     if path == saves.default_folder(net, slug).resolve():
         net._update_cfg(slug, lambda cfg: cfg.update(progress_folder=str(path)))
         return
-    if net.cfg(proj).get('auto_commit_matches') or net.cfg(proj).get('auto_commit_polished'):
+    cfg = net.cfg(proj)
+    if cfg.get('auto_commit_folder') and (cfg.get('auto_commit_matches') or cfg.get('auto_commit_polished')):
         raise NetworkError('Turn off automatic commits before moving the progress folder.')
     previous = saves._read_owned(path)
     receipt = net.cfg(proj).get('progress_save_receipt') or {}
@@ -190,7 +191,12 @@ def run(net, slug, action, origin, log, *, github_name="", visibility="private")
                 path, proj = moved, net.project_row(slug)
             root = root_at(path)
             if action in ('init', 'checkpoint', 'github') and net.is_rom(proj):
-                if not rebuildable_repository.full(root):
+                build = root
+                # A failed Git init can leave an already verified export ready to initialize.
+                if root is None and action == 'init' and path.name == 'progress':
+                    if (path.parent/rebuildable_repository.MARKER).is_file():
+                        build = path.parent
+                if not rebuildable_repository.full(build):
                     # prepare verifies the authoritative folder itself. Only a separate backup
                     # needs binding (and its contribution/ownership checks) before that verification.
                     if (path/saves.MANIFEST).is_file() and path != saves.default_folder(net, slug).resolve():

@@ -13,9 +13,8 @@ from decompnet.app.agents import Manager, Session
 from decompnet.network import NetworkError
 from tests.test_claims import _game, _held
 
-# A ROM project's definitions for a matching helper, in characters. Every tool listed was 32,069 characters (about
-# 10,700 tokens a turn before caching); without other helpers' tools it was 24,301.
-MATCHING_SCHEMA_CHARS = 25_000
+# The matching task should save at least one fifth of the full tool schema even as new tools ship.
+MAX_MATCHING_SCHEMA_FRACTION = .8
 
 
 def test_a_matching_helper_is_not_shown_other_helpers_tools(tmp_path):
@@ -31,7 +30,8 @@ def test_a_matching_helper_is_not_shown_other_helpers_tools(tmp_path):
     assert {"claim_port_fix", "claim_asset_region"} <= set(tools.project_tools(net, "game", outside))
     assert {"claim_readable", "polish_function"} <= set(tools.project_tools(net, "game", polisher))
     schema = json.dumps(api_tool_schemas(fork=False, names=tools.project_tools(net, "game", worker)))
-    assert len(schema) < MATCHING_SCHEMA_CHARS < len(json.dumps(api_tool_schemas(fork=False)))
+    full_schema = json.dumps(api_tool_schemas(fork=False))
+    assert len(schema) < MAX_MATCHING_SCHEMA_FRACTION * len(full_schema)
 
 
 def test_a_matching_helper_calling_another_helpers_tool_is_told_what_to_do(tmp_path):

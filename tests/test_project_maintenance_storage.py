@@ -82,5 +82,5 @@ def test_export_symbols_and_focused_status_use_project_file(scoped):
     manager = SimpleNamespace(net=net)
     assert focused_agents.completion(manager,session) is None
     with stores[2].tx() as db:db.execute("UPDATE functions SET status='matched'")
-    assert 'matched' in focused_agents.completion(manager,session)
+    assert 'Verified match' in focused_agents.completion(manager,session)
     assert stores[1].one('SELECT status FROM functions')['status'] == 'open'

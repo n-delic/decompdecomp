@@ -15,6 +15,6 @@ def test_app_keep_alive_outlasts_every_gateway_connection_pool():
                                        (ROOT / 'gateway' / 'src' / name).read_text(encoding='utf-8'))]
     assert pools, 'the gateway names its connection pools idle timeouts'
     assert cli.server_config(lambda *a: None).timeout_keep_alive > max(pools)
-    reader = (ROOT / 'src' / 'decompnet' / 'app' / 'tool_reader.py').read_text(encoding='utf-8')
+    reader = (ROOT / 'src' / 'decompnet' / 'app' / 'tool_reader_worker.py').read_text(encoding='utf-8')
     keep = int(re.search(r'timeout_keep_alive=(\d+)', reader).group(1))
     assert keep > max(pools)

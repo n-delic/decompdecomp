@@ -34,7 +34,7 @@ function renderRepositoryInit() {
     button.textContent = run.stopping ? "Stopping…" : "Stop";
     return;
   }
-  button.hidden = !!state?.rebuildable || !state?.portable;
+  button.hidden = !!(state?.rebuildable && state?.repository) || !state?.portable;
   button.disabled = repositorySetupBusy || !!(state?.portable && $("saveFolder").value.trim() !== state.folder);
   button.textContent = state?.repository ? "Upgrade to rebuildable repository" : "Create rebuildable repository";
 }
@@ -54,7 +54,7 @@ function renderRepositorySetup(state) {
   $("repositoryAutoPush").disabled = repositorySetupBusy || unsaved || (!$("repositoryAutoPush").checked && (!state.repository || !state.checkpoint || !state.origin));
   $("repositorySetupState").textContent = unsaved ? "Save now to apply the new location before changing its Git settings." : !state.repository
     ? (state.portable ? "Keep saving normally, or create a full rebuildable decompilation repository with saved app progress." : "This source folder is not a Git repository. Source checkout setup is planned.")
-    : !state.checkpoint ? (state.portable ? "Enable automatic commits to create the first rebuildable project checkpoint, or commit saved progress now." : "Commit your source files with Git before pushing.")
+    : !state.checkpoint ? (state.portable ? "Commit saved progress to create the first checkpoint for automatic commits." : "Commit your source files with Git before pushing.")
     : !state.linked && state.portable ? "Enable automatic commits to use this folder for ongoing saves. The first checkpoint is prepared for you."
     : `Git repository: ${state.root}`;
   const build = state.build_folder || "";

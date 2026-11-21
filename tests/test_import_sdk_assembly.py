@@ -253,3 +253,29 @@ def test_builtin_register_helpers_are_scoped_to_their_linked_image():
     for name, size, from_c, _ in entries.values():
         if name in names:
             assert size in N64.sdk_linked_sizes and not from_c
+
+
+@pytest.mark.parametrize('stub', [[0x0c000040, 0x24040000], [0x24040000, 0x0c000040, 0]])
+def test_scheduler_cleanup_preserves_delay_slot_and_explicit_padding_entry(monkeypatch, tmp_path, stub):
+    from types import SimpleNamespace
+
+    from decompnet.consoles.n64 import sdk_linked
+
+    start = 0x80001000
+    words = [0x24020001] * 94 + [0x42000018, *stub, 0]
+    raw = b''.join(word.to_bytes(4, 'big') for word in words)
+    image = '3' * 40
+    monkeypatch.setitem(sdk_linked._CLEANUP_WITH_PADDING, image, hashlib.sha256(raw).hexdigest())
+    lines = [split.AsmLine(i*4, start+i*4, word, '', '') for i, word in enumerate(words)]
+    fn = split.RomFunction('dispatcher', start, 0, 'code', lines[:-1], tmp_path/'toy.s')
+    end = 4*(len(words)-1)
+    padding = split.RomFunction('padding', start+end, end, 'alignment', lines[-1:], tmp_path/'toy.s')
+    result = SimpleNamespace(functions=[fn, padding], named={'entry':padding.vram})
+    sdk_linked.split_scheduler(result, image)
+    assert result.functions == [fn, padding]
+    result.named.clear()
+    sdk_linked.split_scheduler(result, '2' * 40)
+    assert result.functions == [fn, padding]
+    sdk_linked.split_scheduler(result, image)
+    assert [(f.rom, f.size) for f in result.functions] == [(0,380),(380,len(stub)*4)]
+    assert [line.word for f in result.functions for line in f.lines] == words[:-1]

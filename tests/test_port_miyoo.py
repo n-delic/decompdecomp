@@ -59,6 +59,8 @@ def test_the_pc_build_never_compiles_the_miyoo_host():
 
 def test_the_miyoo_host_compiles_for_32_bit_arm(tmp_path):
     """mem32.c and miyoo.c built as the export builds them (the pinned Zig, glibc 2.28, Cortex-A7)."""
+    if toolchains.installed("zig") is None:
+        pytest.skip("needs the pinned Zig and WABT")
     zig, wabt = toolchains.binary("zig"), toolchains.root() / "wabt"
     if not zig.is_file() or not (wabt / "include" / "wasm-rt.h").is_file():
         pytest.skip("needs the pinned Zig and WABT")

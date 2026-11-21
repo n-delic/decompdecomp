@@ -133,6 +133,7 @@ def test_missing_saved_drive_is_not_created_on_launch(locations,monkeypatch):
     dirs.remember(target,selected=True)
     target.rmdir()
     monkeypatch.delenv('DECOMP_HOME',raising=False)
+    monkeypatch.delenv('DECOMP_SERVE',raising=False)
     monkeypatch.setattr(cli,'use_own_wine_prefix',lambda:None)
     messages=[]
     monkeypatch.setattr(cli.window,'tell_desktop',lambda *args:messages.append(args))

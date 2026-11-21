@@ -59,12 +59,13 @@ def pair_old_functions(rows, functions) -> dict:
 class ImportMixin:
     def import_rom(self, data: bytes | Path, *, toolchain: str | None = None, flags: list[str] | None = None,
                    confirmed: bool = False, name: str = "", log=print, scope: str | None = None,
-                   options: dict | None = None, project_layout: bool = False) -> str:
+                   options: dict | None = None, project_layout: bool = False, on_new_rom=None) -> str:
         """Import a game the user owns (ROM bytes, or a file such as a disc image): split it, store every function
         as a target. Returns the slug. `scope`: what the project covers, where its console sets library code aside
         ("game", the default, or "program": forks/project.py SCOPES). `options`: answers to the console's
         import_options. `project_layout`: a ROM-mode game also gets its project folder (setup_project_layout);
-        if that fails the import still stands, and the project page can set it up again."""
+        if that fails the import still stands, and the project page can set it up again.
+        `on_new_rom` receives the slug only when the ROM split created a project."""
         if not confirmed:
             raise NetworkError("confirm that this is your own legally obtained copy of the game")
         if isinstance(data, Path) and data.is_dir():  # a game that is a folder (a PC game: its .exe and DLLs)
@@ -72,7 +73,7 @@ class ImportMixin:
             log(f"the game's program in that folder: {data.name}")
         console = consoles.identify(data)
         slug = console.import_game(self, data, toolchain=toolchain, flags=flags, name=name, log=log, scope=scope,
-                                   options=options)
+                                   options=options, on_new_rom=on_new_rom)
         if project_layout and not self.fork_slug(slug):  # a project-mode game is a project folder already
             from ...rom.export import ExportError
             try:
@@ -93,10 +94,12 @@ class ImportMixin:
         return path
 
     def import_split(self, console: consoles.Console, picked: Picked, *, toolchain: str | None = None,
-                     flags: list[str] | None = None, log=print, reimport_slug: str | None = None) -> str:
+                     flags: list[str] | None = None, log=print, reimport_slug: str | None = None,
+                     on_new_rom=None) -> str:
         """ROM mode: split the program `console` read from the user's file, store every function as a target."""
         if reimport_slug is None:
-            return self._import_split(console, picked, toolchain=toolchain, flags=flags, log=log)
+            return self._import_split(console, picked, toolchain=toolchain, flags=flags, log=log,
+                                      on_new_rom=on_new_rom)
         with self.progress.rebuilding(reimport_slug):
             return self._reimport_split(console, picked, toolchain=toolchain, flags=flags, log=log,
                                         reimport_slug=reimport_slug)
@@ -120,7 +123,7 @@ class ImportMixin:
             shutil.rmtree(stage, ignore_errors=True)
 
     def _import_split(self, console: consoles.Console, picked: Picked, *, toolchain: str | None = None,
-                      flags: list[str] | None = None, log=print, reimport=None, workdir: Path | None = None) -> str:
+                      flags: list[str] | None = None, log=print, reimport=None, workdir: Path | None = None, on_new_rom=None) -> str:
         rom, info = picked.data, picked.info
         check_cancel = getattr(log, "check_cancel", lambda: None)
         check_cancel()
@@ -477,6 +480,8 @@ class ImportMixin:
         log(f"ready: {len(res.functions)} functions to decompile")
         if reimport is not None and rejudge:
             self._reimport_rejudge = rejudge
+        if reimport is None and on_new_rom is not None:
+            on_new_rom(slug)
         return slug
 
     def reimport_rom(self, slug: str, data: bytes | Path, *, confirmed: bool = False, name: str = "",

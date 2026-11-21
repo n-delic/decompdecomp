@@ -62,7 +62,7 @@ def test_automatic_evidence_chooses_closest_failed_candidate_and_retains_origina
     assert data['after']['settings']['compiler']['flags'] == ['-O2']
     assert data['judge'] == 'linked byte-identical' and data['target_sha256']
     # Polishing neither duplicates cases nor changes the earlier winning attempt.
-    net._record(fn(net, fid), winner, 0, 'int target(void) { return 3; } /* polished */', 1, matched=True)
+    net._record(fn(net, fid), winner, 0, 'int target(void) { return 3; } /* polished */', 1, matched=True, verified_replacement=True)
     assert len(net.repair_feedback.listing('demo')['examples']) == 1
     assert 'polished' not in net.repair_feedback.detail('demo', case)['evidence']['after']['source']
 
@@ -100,7 +100,8 @@ def test_inline_note_only_survives_a_new_verified_match(setup, monkeypatch):
     assert 'explanation saved' in result
     row = net.repair_feedback.listing('demo')['examples'][0]
     assert row['explanation'] == 'Fixed argument type.'
-    tools._compile(net, winner, 'demo', 'target', 'good', 'Polished.', 'other')
+    with pytest.raises(NetworkError, match='already matched'):
+        tools._compile(net, winner, 'demo', 'target', 'good', 'Polished.', 'other')
     assert net.repair_feedback.listing('demo')['examples'][0]['explanation'] == 'Fixed argument type.'
 
 

@@ -232,7 +232,7 @@ def test_a_file_whose_functions_are_all_readable_is_tidied_next(tmp_path, monkey
     agent, _ = net.local_agent("claude-sonnet-5-5-1")
     other, _ = net.local_agent("claude-sonnet-5-5-2")
     brief = net.readability.claim(agent, slug)
-    assert "read_data a global before you name it" in brief and "style the names around them" in brief
+    assert "read_data a global before you name it" in brief and "follow surrounding style" in brief
     net.release(agent, brief.split()[2], "", slug)
     brief = net.readability.claim(other, slug)
     assert "TIDY" not in brief  # a function of the file isn't readable yet

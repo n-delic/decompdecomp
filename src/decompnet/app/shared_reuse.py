@@ -30,13 +30,14 @@ def compatible(net, proj, *, active_only=False):
         if active_only:
             from .project_activity import active
             if not active(net, catalog['slug']):continue
-        other = net.project_store(catalog['id']).one('SELECT * FROM projects WHERE id=?', catalog['id'])
+        store = net.project_store(catalog['id'])
+        other = store.one('SELECT * FROM projects WHERE id=?', catalog['id'])
         if other is None:raise NetworkError('A donor project is missing from its database. Restore it before searching.')
         if other['slug'] in net.links:
             continue
         try:
             if machine(net, other) == wanted:
-                totals = net.project_store(other['id']).one('SELECT matched FROM project_totals WHERE project_id=?', other['id'])
+                totals = store.one('SELECT matched FROM project_totals WHERE project_id=?', other['id'])
                 candidates.append((int(totals['matched']) if totals else 0, other))
         except (NetworkError, ValueError, KeyError):
             continue

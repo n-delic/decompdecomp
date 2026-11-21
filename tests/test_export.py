@@ -314,8 +314,8 @@ def test_export_requires_a_single_constant_pool_base():
 
 
 def test_export_detects_extra_function_definitions():
-    from decompnet.arch.mips_image import linked_object
     from decompnet.rom.export import _single_definition
+    from tests.mips_elf_fixture import linked_object
     obj = linked_object('target', 0x80001000, bytes(8))
     assert _single_definition(obj, 'target')
     assert not _single_definition(obj, 'other')
@@ -361,8 +361,8 @@ def test_export_preserves_judged_constant_address_despite_object_alignment(tmp_p
 
 @pytest.mark.parametrize('symbol',['target__4Mathi','_ZN4Math6targetEi'])
 def test_cpp_single_definition_uses_judge_symbol_mapping(symbol):
-    from decompnet.arch.mips_image import linked_object
     from decompnet.rom.export import _single_definition
+    from tests.mips_elf_fixture import linked_object
     obj=linked_object(symbol,0x80001000,bytes(8))
     assert _single_definition(obj,'target')
     assert not _single_definition(obj,'unrelated')
@@ -372,8 +372,8 @@ def test_cpp_overloads_are_not_hidden_by_export_name_mapping():
     import struct
     from io import BytesIO
 
-    from decompnet.arch.mips_image import linked_object
     from decompnet.rom.export import _single_definition
+    from tests.mips_elf_fixture import linked_object
     first,second='target__4Mathi','target__4Mathf'
     obj=bytearray(linked_object(first+'\0'+second,0x80001000,bytes(16)))
     elf=ELFFile(BytesIO(obj));symtab=elf.get_section_by_name('.symtab')

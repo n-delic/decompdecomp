@@ -332,18 +332,37 @@ class Search(Permuter):
     def operand_order_pass(self, agent, proj, fn, best, fork):
         """Spend a few of the ordinary trials on a measured operand/register near miss."""
         rows = self.winner_diff[0] if self.winner_diff else repair_ranking.evidence(self.net, fn['id'], agent.id)
-        if permuter_focus.classify(rows, proj['arch']) != 'register':
-            return best
-        from decomprepair import near_match_repairs
+        from decomprepair import (
+            float_stack_call_reuse,
+            guard_xor_reuse,
+            inline_float_vector_scale,
+            near_match_repairs,
+            packed_word_scheduling,
+            scoped_byte_read_call,
+            widen_scaled_local,
+        )
         from decomprepair.target_local_repairs import value_lifetimes
 
         source = _candidate_source(fn, best)
         header = self.net._context(proj['id'], fn['unit'])['header']
-        proposals = near_match_repairs.bitwise_operand_order(source, fn['name'], header)
-        proposals += near_match_repairs.float_update_order(source, fn['name'], header)
-        proposals += [(family, child) for family, child in near_match_repairs.variants(source, fn['name'])
-                      if family == 'arithmetic_operand_order']
-        proposals += value_lifetimes(source, fn['name'])
+        asm = dict(fn).get('asm') or ''
+        proposals = packed_word_scheduling.variants(source, fn['name'], proj['arch'], asm, header)
+        proposals += float_stack_call_reuse.variants(source, fn['name'], proj['arch'], asm, header)
+        proposals += widen_scaled_local.variants(source, fn['name'], proj['arch'], asm, header)
+        proposals += inline_float_vector_scale.variants(source, fn['name'], proj['arch'], asm, header)
+        proposals += guard_xor_reuse.variants(source, fn['name'], proj['arch'], asm, header)
+        # Existing saved drafts can still use their original address-based entry name.
+        proposals += scoped_byte_read_call.variants(source, fn['name'], proj['arch'], asm, header)
+        if proj['arch'] == 'mips' and (vram := dict(fn).get('vram')) is not None:
+            alias = f'func_{vram:08X}'
+            if alias != fn['name']:
+                proposals += scoped_byte_read_call.variants(source, alias, proj['arch'], asm, header)
+        if permuter_focus.classify(rows, proj['arch']) == 'register':
+            proposals += near_match_repairs.bitwise_operand_order(source, fn['name'], header)
+            proposals += near_match_repairs.float_update_order(source, fn['name'], header)
+            proposals += [(family, child) for family, child in near_match_repairs.variants(source, fn['name'])
+                          if family == 'arithmetic_operand_order']
+            proposals += value_lifetimes(source, fn['name'])
         seen = {source}
         limit = min(6, (self.limit - self.tested) // 2)
         for family, child in proposals:

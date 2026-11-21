@@ -3,17 +3,23 @@
 import re
 
 from decomprepair import (
+    aligned_stack_read,
     kmc_cast_repairs,
+    likely_branch_cursor,
     loop_sentinel_repairs,
     measured_address_repairs,
+    measured_callback_loop,
     measured_callback_repairs,
     measured_control_flow,
     measured_expression_repairs,
     measured_immediate_repairs,
     measured_memory_order,
+    measured_mmio_polling,
     measured_pointer_scale,
     measured_temporary_repairs,
+    relocated_byte_table,
     targeted_switch_labels,
+    uncached_read_repairs,
 )
 from decomprepair import (
     observed_arithmetic_repairs as arithmetic,
@@ -168,10 +174,22 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += target_inline_storage_diff_repairs.proposals(source,name,header,rows,target,candidate,asm,
                                                              read_data=read_data,big_endian=big_endian)
         result += stack_padding_repairs.layout_candidates(source,name,header,arch,rows,symbols,flags)
+        if candidate_source := uncached_read_repairs.rewrite(source, name, asm or '', resolve):
+            result.append(('measured_uncached_word_read', candidate_source))
         result += measured_control_flow.variants(source,name,rows)
         result += measured_memory_order.variants(source,name,rows)
         result += measured_expression_repairs.variants(source,name,header,rows)
         result += measured_temporary_repairs.variants(source,name,rows)
+        if candidate_source := measured_callback_loop.rewrite(source, name, asm or '', header, resolve):
+            result.append(('measured_callback_loop', candidate_source))
+        if candidate_source := measured_mmio_polling.rewrite(source, name, asm or '', header):
+            result.append(('measured_mmio_polling', candidate_source))
+        if candidate_source := likely_branch_cursor.rewrite(source, name, asm or '', header):
+            result.append(('likely_branch_cursor', candidate_source))
+        if candidate_source := relocated_byte_table.rewrite(source, name, asm or '', header, resolve):
+            result.append(('relocated_byte_table', candidate_source))
+        if candidate_source := aligned_stack_read.rewrite(source, name, asm or ''):
+            result.append(('aligned_stack_read', candidate_source))
         result += measured_callback_repairs.variants(source,name,rows)
         result += measured_address_repairs.variants(source,name,header,rows,symbols)
         result += measured_pointer_scale.variants(source,name,header,rows)

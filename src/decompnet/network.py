@@ -532,6 +532,8 @@ class Network:
         Reimports select the existing owner. Legacy library callers retain their
         original one-file atomic transaction until app startup upgrades them.
         """
+        if existing is None and config.get('kind') == 'rom':
+            config = {'auto_commit_matches': True, **config}
         if existing is None and self._project_files is not None:
             values = (slug,name,description,arch,int(big_endian),str(root),json.dumps(config))
             with self._project_files.create(values) as result:yield result
@@ -2298,6 +2300,8 @@ class Network:
             if before_record is not None:
                 before_record()  # scoped callers can reject revoked or stale work before any writes
             current = db.execute("SELECT * FROM functions WHERE id=?", (fn["id"],)).fetchone()
+            if current is None:
+                raise NetworkError("The target inputs changed during compilation. Recheck the updated project.")
             already_matched = current['status'] == 'matched'
             if already_matched and (matched or fn['status'] != 'matched') and not verified_replacement:
                 raise NetworkError(f"{current['name']} is already matched. Call claim_function for the next function.")

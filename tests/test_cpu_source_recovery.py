@@ -361,7 +361,8 @@ def test_budget_limited_deep_exact_is_reverified_without_another_profile_search(
     net.suggest=lambda *a,**k:pytest.fail('The original budget cannot afford promotion')
     search=deep_permuter.Search(net,1,1,Log(),fn)
     profile={'toolchain':'saved-toolchain','flags':['-O2']}
-    assert deep_profiles.probe(search,AGENT,proj,fn,'exact source',profile) is None
+    with pytest.raises(deep_permuter.SearchLimit, match='reverify and apply'):
+        deep_profiles.probe(search,AGENT,proj,fn,'exact source',profile)
     monkeypatch.setattr(prep,'settings',lambda *a:{'auto_exact':False})
     assert bundles.auto_existing(net,proj,fn,AGENT) is None
     monkeypatch.setattr(prep,'settings',lambda *a:{'auto_exact':True})

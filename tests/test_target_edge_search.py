@@ -259,3 +259,110 @@ def test_measured_float_table_scale_reaches_kmc_deep_search():
             ('o', 'lwc1 $f0, %lo(table)($at)', 'cvt.s.w $f0, $f0')]
     assert 'measured_float_table_scale' in dict(route(source, rows, ''))
     assert 'measured_float_table_scale' not in dict(route(source, rows, '', compiler='ido-5.3'))
+
+
+def test_uncached_read_repair_is_routed_for_measured_kmc_mismatches(monkeypatch):
+    from decomprepair import uncached_read_repairs
+
+    calls = []
+
+    def rewrite(source, name, asm, resolve):
+        calls.append((source, name, asm))
+        return 'repaired candidate'
+
+    monkeypatch.setattr(uncached_read_repairs, 'rewrite', rewrite)
+    rows = [('r', 'lw $v1, ($v0)', 'lw $v0, ($v1)')]
+    assert ('measured_uncached_word_read', 'repaired candidate') in route('void f(void) {}', rows, 'asm')
+    assert ('measured_uncached_word_read', 'repaired candidate') not in route(
+        'void f(void) {}', rows, 'asm', compiler='ido-5.3')
+    assert calls == [('void f(void) {}', 'f', 'asm')]
+
+
+def test_callback_loop_repair_uses_measured_kmc_proposal_path(monkeypatch):
+    from decomprepair import measured_callback_loop
+
+    calls = []
+
+    def rewrite(source, name, asm, header, resolve):
+        calls.append((source, name, asm, header))
+        return 'repaired callback loop'
+
+    monkeypatch.setattr(measured_callback_loop, 'rewrite', rewrite)
+    rows = [('r', 'lw $v1, ($v0)', 'lw $v0, ($v1)')]
+    assert ('measured_callback_loop', 'repaired callback loop') in route('void f(void) {}', rows, 'asm')
+    assert ('measured_callback_loop', 'repaired callback loop') not in route(
+        'void f(void) {}', rows, 'asm', compiler='ido-5.3')
+    assert calls == [('void f(void) {}', 'f', 'asm', '')]
+
+
+def test_mmio_polling_repair_uses_measured_kmc_proposal_path(monkeypatch):
+    from decomprepair import measured_mmio_polling
+
+    calls = []
+
+    def rewrite(source, name, asm, header):
+        calls.append((source, name, asm, header))
+        return 'repaired polling'
+
+    monkeypatch.setattr(measured_mmio_polling, 'rewrite', rewrite)
+    rows = [('r', 'lw $v1, ($v0)', 'lw $v0, ($v1)')]
+    assert ('measured_mmio_polling', 'repaired polling') in route('void f(void) {}', rows, 'asm')
+    assert ('measured_mmio_polling', 'repaired polling') not in route(
+        'void f(void) {}', rows, 'asm', compiler='ido-5.3')
+    assert calls == [('void f(void) {}', 'f', 'asm', '')]
+
+
+def test_shared_cursor_branch_uses_measured_kmc_proposal_path(monkeypatch):
+    from decomprepair import likely_branch_cursor
+
+    monkeypatch.setattr(likely_branch_cursor, 'rewrite', lambda source, name, asm, header: 'shared advance')
+    rows = [('r', 'beql $v0, $zero, .Ljoin', 'bnez $v0, .Lactive')]
+    assert ('likely_branch_cursor', 'shared advance') in route('void f(void) {}', rows, 'asm')
+    assert 'likely_branch_cursor' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
+
+
+def test_relocated_byte_table_is_proposed_only_for_kmc(monkeypatch):
+    from decomprepair import relocated_byte_table
+
+    calls = []
+
+    def rewrite(source, name, asm, header, resolve):
+        calls.append((source, name, asm, header, resolve))
+        return 'byte table candidate'
+
+    monkeypatch.setattr(relocated_byte_table, 'rewrite', rewrite)
+    rows = [('i', 'lbu $v0, ($v0)', 'lbu $v0, 3($v0)')]
+    resolve = {'slot': 0x80001000}.get
+    assert ('relocated_byte_table', 'byte table candidate') in route('void f(void) {}', rows, 'asm', resolve=resolve)
+    assert 'relocated_byte_table' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
+    assert calls == [('void f(void) {}', 'f', 'asm', '', resolve)]
+
+
+def test_frame_reservation_prefers_a_new_scope_when_callee_keeps_local_slot():
+    source = 'void f(void) { short value; value = 7; send(0, &value); }'
+    target = ('addiu $sp, $sp, -40|addiu $a1, $sp, 16|sw $ra, 32($sp)|jal send|'
+              'sh $v0, 16($sp)|lw $ra, 32($sp)|jr $ra|addiu $sp, $sp, 40')
+    old = target.replace('-40', '-32').replace('32($sp)', '24($sp)').replace('$sp, 40', '$sp, 32')
+    rows = [(' ' if a == b else 's', a, b) for a, b in zip(target.split('|'), old.split('|'))]
+    options = [text for family, text in route(source, rows, '') if family == 'inferred_frame_reservation']
+
+    assert len(options) == 2
+    assert options[0].index('send(0, &value);') < options[0].index('char __repair_stack_padding[8];')
+    assert options[1].index('char __repair_stack_padding[8];') < options[1].index('send(0, &value);')
+    assert 'inferred_frame_reservation' not in dict(route(source, rows, '', compiler='ido-5.3'))
+
+
+def test_aligned_stack_read_is_proposed_only_for_kmc(monkeypatch):
+    from decomprepair import aligned_stack_read
+
+    calls = []
+
+    def rewrite(source, name, asm):
+        calls.append((source, name, asm))
+        return 'aligned stack candidate'
+
+    monkeypatch.setattr(aligned_stack_read, 'rewrite', rewrite)
+    rows = [('s', 'addiu $s0, $sp, 39', 'addiu $s0, $sp, 24')]
+    assert ('aligned_stack_read', 'aligned stack candidate') in route('void f(void) {}', rows, 'asm')
+    assert 'aligned_stack_read' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
+    assert calls == [('void f(void) {}', 'f', 'asm')]

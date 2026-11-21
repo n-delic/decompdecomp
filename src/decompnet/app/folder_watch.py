@@ -200,6 +200,7 @@ _FILE_EVENTS, _NO_DEFER, _WATCH_ROOT = 0x10, 0x02, 0x04
 _HISTORY_DONE = 0x10  # (an event flag: the replay of what happened before the stream started is over)
 _CALLBACK = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p,
                              ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint64))
+_DISPATCH_CALLBACK = ctypes.CFUNCTYPE(None, ctypes.c_void_p)
 _mac = None
 _mac_lock = threading.Lock()
 
@@ -226,11 +227,24 @@ class _MacLibraries:
         cs.FSEventStreamSetDispatchQueue.argtypes = (ctypes.c_void_p, ctypes.c_void_p)
         system.dispatch_queue_create.restype = ctypes.c_void_p
         system.dispatch_queue_create.argtypes = (ctypes.c_char_p, ctypes.c_void_p)
+        system.dispatch_sync_f.restype = None
+        system.dispatch_sync_f.argtypes = (ctypes.c_void_p, ctypes.c_void_p, _DISPATCH_CALLBACK)
         self.cs, self.cf = cs, cf
+        self.dispatch_sync = system.dispatch_sync_f
+        self.queue_marker = _DISPATCH_CALLBACK(lambda _: None)
         self.array_callbacks = ctypes.addressof(ctypes.c_void_p.in_dll(cf, 'kCFTypeArrayCallBacks'))
         self.queue = system.dispatch_queue_create(b'decompdecomp.folder-watch', None)
         self.streams = set()
         atexit.register(self.stop_all)  # no callback may reach a finalizing interpreter
+
+    def release_stream(self, stream, *, started):
+        if started:
+            self.cs.FSEventStreamStop(stream)
+        self.cs.FSEventStreamInvalidate(stream)
+        # Invalidation unschedules the stream. Wait for work already submitted
+        # to the serial queue before releasing the native stream and its Python callback.
+        self.dispatch_sync(self.queue, None, self.queue_marker)
+        self.cs.FSEventStreamRelease(stream)
 
     def stop_all(self):
         for watch in list(self.streams):
@@ -276,8 +290,7 @@ class FSEventsWatch(FolderWatch):
             raise OSError('FSEventStreamCreate failed')
         lib.cs.FSEventStreamSetDispatchQueue(self.stream, lib.queue)
         if not lib.cs.FSEventStreamStart(self.stream):
-            lib.cs.FSEventStreamInvalidate(self.stream)
-            lib.cs.FSEventStreamRelease(self.stream)
+            lib.release_stream(self.stream, started=False)
             self.stream = None
             raise OSError('FSEventStreamStart failed')
         lib.streams.add(self)
@@ -338,9 +351,7 @@ class FSEventsWatch(FolderWatch):
         with _mac_lock:
             stream, self.stream = getattr(self, 'stream', None), None
             if stream:
-                self.lib.cs.FSEventStreamStop(stream)
-                self.lib.cs.FSEventStreamInvalidate(stream)
-                self.lib.cs.FSEventStreamRelease(stream)
+                self.lib.release_stream(stream, started=True)
         self.lib.streams.discard(self)
         with self.lock:
             self.arrived.notify_all()

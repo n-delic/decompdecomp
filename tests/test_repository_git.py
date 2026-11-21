@@ -179,7 +179,9 @@ def test_configured_upstream_is_respected_with_multiple_remotes(checkout):
     assert git(root,'config','--get',f'branch.{branch}.remote')=='destination'
 
 
-def test_missing_identity_has_actionable_error(checkout):
+def test_missing_identity_has_actionable_error(checkout, monkeypatch):
+    for key in ('GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL', 'EMAIL'):
+        monkeypatch.delenv(key, raising=False)
     root,_=checkout
     git(root,'config','user.name','')
     with pytest.raises(NetworkError,match='user.name and user.email'):

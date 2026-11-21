@@ -221,3 +221,70 @@ def test_manual_search_finds_imported_code_inside_a_merged_rom_function(built, t
     assert original['target'].startswith(head['target'])
     assert original['target'].endswith(recovered['target'])
     assert not any(original['target'][head['size']:-recovered['size']])  # alignment padding
+
+
+def test_manual_search_tries_donor_when_relocation_layouts_differ(built, tmp_path, monkeypatch):  # noqa: F811
+    from decompnet.app.twins import Job, Print, _key
+    from decompnet.elfobj import Reloc, mask_relocs
+
+    net = RomNetwork(tmp_path / 'decomp.db', tmp_path)
+    slug = net.import_rom(ROM, confirmed=True, log=lambda *_: None)
+    agent, _ = net.local_agent('autopilot')
+    net.split_function(agent, slug, 'func_800007C4', '0x800007D0')
+    copy_project(net, slug, 'imported-library')
+    proj, donor = net._project(slug), net._project('imported-library')
+    b = net._function('func_800007D0', slug)
+    a = net._function(b['name'], donor['slug'])
+    with net.project_store(donor['id']).tx() as db:
+        db.execute("UPDATE functions SET status='matched' WHERE id=?", (a['id'],))
+    # Model an expected object with an additional linker-marked operand. The destination retains its own bytes
+    # and relocations, and the actual judge must still accept its independently compiled source.
+    layout = [(0, 5)]
+    code = mask_relocs(b['target'], [Reloc(0, 5, '', 0)], 'mips', True)
+    fingerprint = Print(_key(code, layout), ['donor_symbol'], len(code), layout=layout)
+    mine = net.twins.prints(proj)
+    assert mine[b['id']].key != fingerprint.key
+    monkeypatch.setattr(net.forks, 'get', lambda _: (donor, object(), {'platform': 'n64'}))
+    monkeypatch.setattr(net.forks, 'is_asm', lambda *_: False)
+    monkeypatch.setattr(net.twins, '_fork_prints', lambda _, **kwargs: {a['id']: fingerprint})
+    job = Job()
+    job.cross_exhaustive = True
+    monkeypatch.setattr(net.forks, '_current_source', lambda *_: 'int func_800007D0(void) { return 123; }')
+    assert net.twins._fork_to_rom(agent, proj, donor, {}, mine, job) == 0
+    assert net._function(b['name'], slug)['status'] == 'open'
+    monkeypatch.setattr(net.forks, '_current_source', lambda *_: CLAMP)
+    assert net.twins._fork_to_rom(agent, proj, donor, {}, mine, job) == 1
+    matched = net._function(b['name'], slug)
+    assert matched['status'] == 'matched'
+    assert matched['target'] == b['target'] and matched['relocs'] == b['relocs']
+
+
+def test_donor_build_retains_profile_and_header_only_after_exact_verdict(built, tmp_path, monkeypatch):  # noqa: F811
+    from decompnet.app import donor_build, donor_sources
+    from decompnet.app.twins import Job
+    from decompnet.project import compiler_for
+
+    net = RomNetwork(tmp_path / 'decomp.db', tmp_path)
+    slug = net.import_rom(ROM, confirmed=True, log=lambda *_: None)
+    agent, _ = net.local_agent('autopilot')
+    net.split_function(agent, slug, 'func_800007C4', '0x800007D0')
+    proj = net._project(slug)
+    fn = net._function('func_800007D0', slug)
+    own = compiler_for(net.cfg(proj), fn['vram'], fn)
+    settings = {'toolchain': own['toolchain'], 'flags': [*own['flags'], '-g', '-DKEEP_DONOR_VALUE=1']}
+    header = '#if !KEEP_DONOR_VALUE\n#error missing file define\n#endif\ntypedef int s32;\n#define KEEP_VALUE(x) (x)\n'
+    donor = {'name': fn['name']}
+    job = Job()
+    wrong = 's32 func_800007D0(s32 x) { return KEEP_VALUE(x + 2); }'
+    monkeypatch.setattr(donor_sources, 'imported', lambda *_: [(wrong, header, '')])
+    assert donor_build.verify(net, proj, fn, proj, donor, {}, settings, agent, job, {})[0] == 'miss'
+    assert net._function(fn['name'], slug)['unit'] == fn['unit']
+    assert compiler_for(net.cfg(net._project(slug)), fn['vram'], fn) == own
+
+    source = CLAMP.replace('return v;', 'return KEEP_VALUE(v);')
+    monkeypatch.setattr(donor_sources, 'imported', lambda *_: [(source, header, '')])
+    assert donor_build.verify(net, proj, fn, proj, donor, {}, settings, agent, job, {})[0] == 'match'
+    matched = net._function(fn['name'], slug)
+    assert net._context(matched['project_id'], matched['unit'])['header'] == header
+    assert compiler_for(net.cfg(net._project(slug)), matched['vram'], matched)['flags'] == settings['flags']
+    assert matched['status'] == 'matched'

@@ -91,3 +91,18 @@ def test_only_scratch_loads_and_arithmetic_may_come_before_the_frame(lead):
 def test_a_loop_back_into_scheduled_loads_is_no_entry():
     words=[LUI_V0,FRAME,0x1000fffd,0,0x8fbf0014,POP,RETURN,0]  # the branch at 8 goes back to the lui
     assert called_extent(image(words),0,32,BASE) is None
+
+
+@pytest.mark.parametrize('last_store', [0xafa7000c, 0xafa70010])
+def test_only_the_complete_o32_argument_home_sequence_can_precede_the_frame(last_store):
+    words = [0xafa50004, 0xafa60008, last_store, FRAME, 0xafbf0014, 0x8fbf0014, POP, RETURN, 0]
+    data = image(words)
+    expected = len(data) if last_store == 0xafa7000c else None
+    assert called_extent(data, 0, len(data), BASE) == expected
+
+
+def test_cache_maintenance_can_have_a_closed_frameless_extent():
+    from decompnet.arch.mips_code_recovery import leaf_extent
+
+    data = image([0xbd150000, 0x25080010, RETURN, 0])
+    assert leaf_extent(data, 0, len(data), BASE) == len(data)

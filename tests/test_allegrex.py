@@ -55,7 +55,7 @@ def test_a_diff_sees_one_vfpu_instruction_changed():
 def test_vfpu_code_is_hand_written_on_the_psp_only():
     vfpu = le(VADD_S, JR_RA, NOP)
     assert "VFPU" in mips.asm_reason(vfpu, False, cpu=mips.ALLEGREX)
-    assert mips.asm_reason(vfpu, False) is None  # daddi zero, zero, 0 elsewhere: nothing a compiler can't make
+    assert "daddi" in mips.asm_reason(vfpu, False)  # The same word decodes as trapping arithmetic on plain MIPS.
     psp = consoles.Console(arch="mips", cpu_variant=mips.ALLEGREX)  # the connector passes the console's variant
     assert "VFPU" in psp.asm_reason(le(LV_Q, JR_RA, NOP))
 

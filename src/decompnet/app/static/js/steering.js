@@ -155,7 +155,9 @@ function renderRepositoryAutoCommit(state = {}) {
   $("repositoryAutoCommitDetails").hidden = !state.pending;
   $("repositoryAutoCommitDetails").textContent = `Pending commits (${state.pending || 0})`;
   const status = $("repositoryAutoCommitState");
-  status.textContent = state.error || (state.enabled || state.polished_enabled
+  status.textContent = state.error || (state.awaiting_checkout
+    ? `${state.pending || 0} pending · Automatic commits start once a Git checkpoint is linked.`
+    : state.enabled || state.polished_enabled
     ? `${state.pending || 0} pending · ${state.last_commit ? "Last commit: " + state.last_commit.slice(0, 8) : "Waiting for new matches or polished functions."}`
     : "Off. Matches and polished functions will not be committed automatically.");
   status.classList.toggle("err", !!state.error);

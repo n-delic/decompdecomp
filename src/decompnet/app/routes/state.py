@@ -8,6 +8,7 @@ import json
 import platform
 import secrets
 import shutil
+import subprocess
 import time
 import uuid
 from pathlib import Path
@@ -21,7 +22,8 @@ from ...agents.api import API_PRESETS
 from ...forks.project import SCOPES
 from ...network import NetworkError
 from ...read_cache import ReadPending
-from .. import build_info, cleanup, edition, picker, saves, updates, window
+from ...rom.export import ExportError
+from .. import build_info, cleanup, edition, picker, repository_setup, saves, updates, window
 from ..app_repair import KIND as APP_REPAIR_KIND
 from ..app_repair import available as repair_available
 from ..app_repair import desktop
@@ -450,18 +452,28 @@ def register(app: App) -> None:
         uploaded = isinstance(game, Path) and game.parent.parent == home / "uploads"
 
         def work(log):
+            new_roms = []
             try:
                 slug = net.import_rom(game, toolchain=toolchain, confirmed=True, name=name, log=log, scope=scope,
-                                     options=options, project_layout=project_layout)
+                                     options=options, project_layout=project_layout, on_new_rom=new_roms.append)
             finally:
                 if uploaded:
                     shutil.rmtree(game.parent, ignore_errors=True)
             if all_compilers:
                 net.install_compilers(slug, accept, retest=toolchain is None, log=log)
+            result = {"slug": slug}
+            if new_roms and consoles.EXPORT in net.console(net.project_row(slug, sync=False)).features:
+                try:
+                    repository_setup.run(net, slug, "init", "", log)
+                except (NetworkError, ExportError, OSError, subprocess.SubprocessError, toolchains.ToolchainError) as e:
+                    warning = (f"Imported the game, but repository setup failed. {job_error(e)} "
+                               "Retry from Settings → Save your progress.")
+                    log(warning)
+                    result["repository_warning"] = warning
             settings.data["last_project"] = slug
             settings.save()
             autopilot(slug)
-            return {"slug": slug}
+            return result
         try:
             return JSONResponse({"job": await app.control(lambda: jobs.start("import", work))})
         except ValueError as e:

@@ -9,7 +9,7 @@ from tests.test_agent_addresses_and_retries import game
 
 
 def arguments(text):
-    call=ast.parse(text,mode='eval').body
+    call=ast.parse(text.partition('). ')[0] + ')',mode='eval').body
     assert isinstance(call,ast.Call) and call.func.id=='release_function'
     return {kw.arg:ast.literal_eval(kw.value) for kw in call.keywords}
 
@@ -18,7 +18,7 @@ def test_release_guidance_handles_reclaim_and_cannot_release_a_later_lease(tmp_p
     net,agent,fn=game(tmp_path)
     net.claim_row(agent,'game','f')
     first=arguments(instruction(net,fn['id'],agent.id))
-    net.release_function(agent,project='game',move_on=True,**first)
+    net.release_function(agent,project='game',move_on=True,notes='The stack layout still differs.',**first)
     net.claim_row(agent,'game','f')
     second=arguments(instruction(net,fn['id'],agent.id))
     assert second['claim_token']!=first['claim_token']
@@ -26,7 +26,7 @@ def test_release_guidance_handles_reclaim_and_cannot_release_a_later_lease(tmp_p
         net.release_function(agent,project='game',move_on=True,**dict(first,notes='Older delayed findings'))
     assert net.store.one('SELECT agent_id FROM claims WHERE function_id=?',fn['id'])['agent_id']==agent.id
     # The exact suggested arguments work on the first release of the new lease.
-    net.release_function(agent,project='game',move_on=True,**second)
+    net.release_function(agent,project='game',move_on=True,notes='Changing the declaration kept the difference.',**second)
     assert not net.store.one('SELECT 1 FROM claims WHERE function_id=?',fn['id'])
     assert net._function('f','game')['abandons']==2
 
@@ -37,9 +37,9 @@ def test_move_on_note_contains_executable_current_release_instruction(tmp_path,m
     action=instruction(net,fn['id'],agent.id)
     note=net.stall_note(fn['id'],agent.id)
     assert action in note
-    assert 'first release and on retries' in note
+    assert 'include notes on the remaining difference' in note
     monkeypatch.undo()
-    net.release_function(agent,project='game',move_on=True,**arguments(action))
+    net.release_function(agent,project='game',move_on=True,notes='The stack layout still differs.',**arguments(action))
     assert not net.store.one('SELECT 1 FROM claims WHERE function_id=?',fn['id'])
 
 

@@ -517,3 +517,55 @@ def test_copied_word_index_repair_runs_during_valid_kmc_draft_generation(monkeyp
     assert 'table[arg]' in seeds.generate_from_asm('asm', 'f', 'gcc-2.7.2-kmc', 'header', valid=True)
     assert seeds.generate_from_asm('asm', 'f', 'gcc-2.7.2-kmc', 'header') == raw
     assert calls == [(raw, 'f', 'asm', 'header')]
+
+
+def test_larger_stack_recovery_is_used_by_valid_kmc_drafts(monkeypatch):
+    from decomprepair import large_stack_drafts
+
+    raw = 'void f(void) { cursor = sp; }'
+    monkeypatch.setattr(seeds, 'run_m2c', lambda *args: raw)
+    monkeypatch.setattr(seeds, 'intrinsic_leaf', lambda *args: None)
+    monkeypatch.setattr(seeds, 'm2c_target', lambda *args: 'mips-gcc-c')
+    monkeypatch.setattr(large_stack_drafts, 'rewrite', lambda *args: 'void f(void) { u8 buffer[48]; }')
+    assert 'buffer[48]' in seeds.generate_from_asm('asm', 'f', 'gcc-2.7.2-kmc', valid=True)
+    assert seeds.generate_from_asm('asm', 'f', 'gcc-2.7.2-kmc') == raw
+    assert seeds.generate_from_asm('asm', 'f', 'ido-5.3', valid=True) == raw
+
+
+def test_shared_default_draft_recovery_receives_the_original_table(monkeypatch):
+    from decomprepair import shared_default_drafts
+
+    raw = 'void f(void) { case 1: return; }'
+    monkeypatch.setattr(seeds, 'run_m2c', lambda *args: raw)
+    monkeypatch.setattr(seeds, 'intrinsic_leaf', lambda *args: None)
+    monkeypatch.setattr(seeds, 'm2c_target', lambda *args: 'mips-gcc-c')
+    calls = []
+
+    def repair(*args):
+        calls.append(args)
+        return 'void f(void) { switch (1) { case 1: return; } }'
+
+    monkeypatch.setattr(shared_default_drafts, 'rewrite', repair)
+    assert 'switch' in seeds.generate_from_asm('asm', 'f', 'gcc-2.7.2-kmc', 'header', 'table', valid=True)
+    assert seeds.generate_from_asm('asm', 'f', 'ido-5.3', 'header', 'table', valid=True) == raw
+    assert calls == [(raw, 'f', 'asm', 'table', 'header')]
+
+
+def test_valid_kmc_draft_expands_shared_cursor_branch_and_repairs_source(monkeypatch):
+    from decompnet import seeds
+    from decomprepair import likely_branch_cursor
+
+    seen = []
+    monkeypatch.setattr(seeds, 'intrinsic_leaf', lambda *args: None)
+    monkeypatch.setattr(seeds, 'm2c_target', lambda *args: 'mips')
+    monkeypatch.setattr(seeds, 'run_m2c', lambda asm, *args: seen.append(asm) or 'void f(void) {}')
+    monkeypatch.setattr(likely_branch_cursor, 'draft_asm', lambda asm: 'expanded ' + asm)
+
+    def rewrite(source, name, asm, header):
+        assert (source, name, asm, header) == ('void f(void) {}', 'f', 'original', 'header')
+        return 'repaired draft'
+
+    monkeypatch.setattr(likely_branch_cursor, 'rewrite', rewrite)
+    assert seeds.generate_from_asm('original', 'f', 'gcc-2.7.2-kmc', 'header', valid=True) == 'repaired draft'
+    assert seeds.generate_from_asm('original', 'f', 'ido-5.3', valid=True) == 'void f(void) {}'
+    assert seen == ['expanded original', 'original']

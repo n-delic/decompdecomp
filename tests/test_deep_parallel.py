@@ -281,3 +281,139 @@ void f(void) {
     assert len(tried) == 1
     assert 'consume(items[i]);' in tried[0]
     assert '__repair_frame' not in tried[0]
+
+
+def test_packed_word_store_scope_runs_with_mixed_operand_evidence(monkeypatch):
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    proj = net.project_row('game')
+    fn = {**net.function(),
+          'name': 'f',
+          'asm': 'sll $v1, $a1, 16\nsll $v0, $a1, 8\n',
+          'best_source': ('void f(Entry *entry, s16 value) {\n'
+                          '    u32 shade = (s32)value;\n'
+                          '    entry->color.word = (((0xff000000 | (shade << 8)) | (shade << 16)) | shade);\n'
+                          '}')}
+    search = deep_permuter.Search(net, 1, 6, Log())
+    monkeypatch.setattr(deep_permuter.permuter_focus, 'classify', lambda *args: 'operand')
+    tried = []
+    monkeypatch.setattr(search, '_score', lambda agent, project, function, child, best, fork: tried.append(child) or 30)
+
+    assert search.operand_order_pass(AGENT, proj, fn, 95, None) == 30
+    assert len(tried) == 1
+    assert 'do { entry->color.word = (((0xff000000 | (shade << 16)) | (shade << 8)) | shade); }' in tried[0]
+
+
+def test_float_stack_call_reuse_runs_when_the_diff_has_extra_loads(monkeypatch):
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    proj = net.project_row('game')
+    fn = {**net.function(), 'asm': 'lwc1 $fa0, 0($s0)'}
+    search = deep_permuter.Search(net, 1, 6, Log())
+    monkeypatch.setattr(deep_permuter.permuter_focus, 'classify', lambda *args: 'instruction')
+    monkeypatch.setattr('decomprepair.float_stack_call_reuse.variants',
+                        lambda *args: [('float_stack_call_reuse', 'shared float loads')])
+    tried = []
+    monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 0)
+
+    assert search.operand_order_pass(AGENT, proj, fn, 235, None) == 0
+    assert tried == ['shared float loads']
+
+
+def test_scaled_local_trial_runs_on_shift_size_mismatch(monkeypatch):
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    proj = net.project_row('game')
+    fn = {**net.function(), 'name': 'f',
+          'asm': 'addiu $s0, $zero, 0x4000\n.Ljoin:\nsll $s0, $s0, 3\n',
+          'best_source': ('void f(void) {\n'
+                          '    short size;\n'
+                          '    size = 0x800;\n'
+                          '    if (expanded != 0) { size = 0x4000; }\n'
+                          '    size *= 8;\n'
+                          '    buffer = allocate(size, 0);\n'
+                          '}')}
+    search = deep_permuter.Search(net, 1, 6, Log())
+    monkeypatch.setattr(deep_permuter.permuter_focus, 'classify', lambda *args: 'operand')
+    tried = []
+    monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 0)
+
+    assert search.operand_order_pass(AGENT, proj, fn, 130, None) == 0
+    assert len(tried) == 1
+    assert '__repair_scaled_size = size * 8;' in tried[0]
+
+
+def test_inline_float_scale_runs_before_broad_rewriting(monkeypatch):
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    proj = net.project_row('game')
+    fn = {**net.function(), 'name': 'f',
+          'asm': ('lwc1 $f2, 0($a0)\nmul.s $f2, $f2, $f0\n'
+                  'lwc1 $f8, 4($a0)\nmul.s $f8, $f8, $f0\n'
+                  'lwc1 $f4, 8($a0)\nmul.s $f4, $f4, $f0\n'),
+          'best_source': ('void f(f32 *v) {\n'
+                          '    f32 x = v[0] * 0.5f;\n'
+                          '    f32 y = v[1] * 0.5f;\n'
+                          '    f32 z = v[2] * 0.5f;\n'
+                          '    use(x, y, z);\n'
+                          '}')}
+    search = deep_permuter.Search(net, 1, 6, Log())
+    monkeypatch.setattr(deep_permuter.permuter_focus, 'classify', lambda *args: 'register')
+    tried = []
+    monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 0)
+
+    assert search.operand_order_pass(AGENT, proj, fn, 35, None) == 0
+    assert len(tried) == 1
+    assert '__repair_float_mul(v[2], 0.5f)' in tried[0]
+
+
+def test_guard_xor_trial_runs_on_an_opcode_near_miss(monkeypatch):
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    proj = net.project_row('game')
+    fn = {**net.function(), 'name': 'f',
+          'asm': 'xori $v0, $s1, 0x20\nsltu $v0, $zero, $v0\n',
+          'best_source': ('void f(void) {\n'
+                          '    s32 key;\n'
+                          '    s32 changed;\n'
+                          '    key = read_key();\n'
+                          '    changed = key ^ 0x20;\n'
+                          '    if (key == 0x26) { different = key != 0x20; }\n'
+                          '}')}
+    search = deep_permuter.Search(net, 1, 6, Log())
+    monkeypatch.setattr(deep_permuter.permuter_focus, 'classify', lambda *args: 'instruction')
+    tried = []
+    monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 215)
+
+    assert search.operand_order_pass(AGENT, proj, fn, 410, None) == 215
+    assert len(tried) == 1
+    assert 'different = changed != 0;' in tried[0]
+
+
+def test_scoped_byte_read_trial_recognizes_a_saved_address_named_draft(monkeypatch):
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    proj = net.project_row('game')
+    fn = {**net.function(), 'name': 'renamed', 'vram': 0x80001000,
+          'asm': ('lui $s2, %hi(options)\naddiu $s2, $s2, %lo(options)\n'
+                  'lbu $v0, 0($s2)\nbeqz $v0, .Lskip\nmove $a0, $s1\n'
+                  'jal send\nnop\nlbu $v0, 0($s2)\n'),
+          'best_source': ('extern u8 options[];\nvoid func_80001000(int channel) {\n'
+                          '    if (options[0] != 0) {\n'
+                          '        send(channel);\n'
+                          '        if (options[0] >= 2U) { reset(channel); }\n'
+                          '    }\n}\n')}
+    search = deep_permuter.Search(net, 1, 6, Log())
+    monkeypatch.setattr(deep_permuter.permuter_focus, 'classify', lambda *args: 'operand')
+    tried = []
+    monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 35)
+
+    assert search.operand_order_pass(AGENT, proj, fn, 75, None) == 35
+    assert len(tried) == 1
+    assert tried[0].count('__repair_byte_table[0]') == 2

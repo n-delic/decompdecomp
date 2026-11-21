@@ -209,10 +209,13 @@ def test_quit_exits_after_blocked_recovery_without_racing_a_final_folder_sync(tm
     monkeypatch.setattr(net.progress,'flush',lambda **kwargs:pytest.fail('incomplete cleanup must not race a final sync'))
     monkeypatch.setattr(window,'close_app',lambda:None)
     monkeypatch.setattr(server.wine,'stop',lambda:None)
+    deadlines = []
+    monkeypatch.setattr(server, 'exit_after', deadlines.append)
     monkeypatch.setattr(server.os,'_exit',lambda code:exited.append(code))
     try:
         quit_app()
         assert exited==[0] and manager._down and net.shutting_down
+        assert deadlines == [server.QUIT_DEADLINE_SECONDS]
         assert sorted(releases)==[('room-one',('POST','/collab/leave')),('room-two',('POST','/collab/leave'))]
         assert 'Deferring final progress-folder sync' in output.getvalue()
         assert 'blocked project' in output.getvalue()

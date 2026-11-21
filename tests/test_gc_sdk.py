@@ -262,5 +262,5 @@ def test_projects_without_sdk_evidence_never_open_target_objects(tmp_path, monke
                    ('demo','Demo',str(tmp_path),json.dumps({'kind':'rom','platform':'n64'})))
     monkeypatch.setattr(net.twins,'prints',lambda _:pytest.fail('no corpus or binary evidence'))
     assert identify(net,net.project_row('demo'),{}) == {}
-    monkeypatch.setattr(net,'fork_slug',lambda _:pytest.fail('do not synchronize a project without SDK evidence'))
+    monkeypatch.setattr(net.forks, 'get', lambda *_: pytest.fail('no imported project objects to read'))
     assert sdk_names.name_functions(net,'demo') == 0

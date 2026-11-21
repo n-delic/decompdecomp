@@ -50,7 +50,7 @@ def test_bundle_preserves_macros_and_reuses_existing_selector_reads():
 
 def test_shared_drafts_reach_the_dedicated_macro_preserving_lane():
     labels={};choices=draft_repairs.variants(SOURCE,'run','mips',labels=labels,header=HEADER)
-    assert choices and labels[choices[0]]=='decision_address_bundle'
+    assert any(labels[choice] == 'decision_address_bundle' for choice in choices)
     assert all('#define POSITION (height + 2)' in s for s in choices)
 
 

@@ -104,5 +104,5 @@ def test_compact_claim_carries_previous_repair_notes(tmp_path):
     with net.store.tx() as db:
         db.execute('DELETE FROM claims WHERE function_id=?', (function['id'],))
     result = tools.call(net, worker, 'game', 'claim_function', {'function': 'f0'})
-    assert 'Recent handoff notes:' in result
+    assert 'Handoff notes:' in result
     assert 'Declaration order produced the same register moves.' in result

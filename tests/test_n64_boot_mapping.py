@@ -91,3 +91,19 @@ def test_the_established_mapping_can_come_from_newly_discovered_code(tmp_path):
     path.write_text(yaml.safe_dump(cfg,sort_keys=False))
     assert recover(path,rom,[(later['start'],len(rom),later['vram'])],log=lambda _:None)
     assert any(s.rom_start==start and s.rom_end==end for s in segments_from_config(path))
+
+
+@pytest.mark.parametrize('named_entry', [False, True])
+def test_startup_break_belongs_to_the_boot_stub_before_a_called_helper(tmp_path, named_entry):
+    from decompnet.consoles.n64.boot_mapping import extend_startup_trap
+
+    path, rom, _, _ = layout(tmp_path)
+    rom = bytearray(rom)
+    call = lambda address: 0x0c000000 | (address>>2)&0x3ffffff
+    struct.pack_into('>I',rom,0x1000,call(0x80000480 if named_entry else 0x80000488))
+    struct.pack_into('>4I',rom,0x1078,call(0x800004c0),0,0x0000000d,0)
+    assert extend_startup_trap(path,rom) != named_entry
+    entry, main, *_ = segments_from_config(path)
+    boundary = 0x1080 if named_entry else 0x1088
+    assert entry.rom_end == main.rom_start == boundary
+    assert main.vram == boundary+0x7ffff400

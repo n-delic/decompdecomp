@@ -6,7 +6,7 @@ from decompnet.app import saves
 from decompnet.store import Store
 
 
-def test_manifest_flags_agree_with_full_rows_without_decoding_sources(tmp_path):
+def test_manifest_flags_agree_with_full_rows_without_decoding_sources(tmp_path, monkeypatch):
     store = Store(tmp_path/'db')
     large = 'void synthetic(void) { /* '+('saved source '*100)+' */ }'
     values = [(1,'packed','matched',large,large), (2,'inline','open','short match','short best'),
@@ -20,11 +20,11 @@ def test_manifest_flags_agree_with_full_rows_without_decoding_sources(tmp_path):
     net = SimpleNamespace(project_store=lambda _:store)
     full = [dict(r) for r in saves._function_rows(net, 1, sources=True)]
     calls = []
+    unpack = payload_storage.unpack
     def read(digest, blob):
         calls.append(digest)
-        return payload_storage.unpack(digest, blob)
-    for conn in (store.conn, store._reader()):
-        conn.create_function('payload_read',2,read,deterministic=True)
+        return unpack(digest, blob)
+    monkeypatch.setattr(payload_storage, 'unpack', read)
     metadata = [dict(r) for r in saves._function_rows(net, 1, sources=False)]
     assert metadata == [{k:v for k,v in r.items() if k not in {'matched_source','best_source'}} for r in full]
     assert [(r['name'],r['has_matched'],r['has_best']) for r in metadata] == [

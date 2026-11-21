@@ -38,9 +38,9 @@ log = logging.getLogger("decompdecomp")
 IDENT = re.compile(r"^[A-Za-z_]\w*$")
 _MACHINE = {"EM_PPC": ("ppc", "big"), "EM_PPC64": ("ppc64", "big"), "EM_MIPS": ("mips", None), "EM_ARM": ("arm", "little"),
             "EM_X86_64": ("x86_64", "little")}
-_CACHE_VERSION = 8  # of twins.json: 2 added why code is hand-written assembly, 3 ARM's BIOS call stubs, 4 ARM's
+_CACHE_VERSION = 9  # of twins.json: 2 added why code is hand-written assembly, 3 ARM's BIOS call stubs, 4 ARM's
 # system instructions, 5 COFF objects (PC) and the C names of their symbols, 6 MIPS NOP-only targets, 7 x86-64 ELF
-# objects (PS4), 8 stores the masked prefix for locating donor code inside a ROM function.
+# objects (PS4), 8 stores the masked prefix for locating donor code inside a ROM function; 9 stores the ELF relocation layout.
 # A twin's code that didn't match isn't tried again for this long while neither function's code changes (the
 # same source gives the same result): every agent start's pass would otherwise redo hundreds of compiles (Mario
 # Party 6: about 900, 15 minutes beside the agents). After a while it's tried again: a header can have changed.
@@ -74,6 +74,7 @@ class Print:
     asm: str = ""  # why no compiler makes this code (asm_reason: consoles/, arch/), or ""
     name: str = ""  # how C writes the function's own name, where its symbol isn't that (Visual C++'s _f@8: f)
     prefix: str = ""  # first eight masked bytes, for finding a function inside a merged ROM entry
+    layout: list[tuple[int, int]] | None = None  # ELF relocation offsets and types
 
 
 def _mask(code: bytearray, relocs: list[tuple[int, int]], arch: str, order: str) -> None:
@@ -167,7 +168,7 @@ def object_prints(data: bytes) -> dict[str, Print]:
                 facts["thumb"] = True if s["st_value"] & 1 else (at[-1] if at else None)
             out[s.name] = Print(_key(bytes(code[lo:lo + s["st_size"]]), [(o, t) for o, t, _ in mine]),
                                 [n for _, _, n in mine], s["st_size"],
-                                prefix=code[lo:lo + 8].hex(),
+                                prefix=code[lo:lo + 8].hex(), layout=[(o, t) for o, t, _ in mine],
                                 asm=(reason(raw[lo:lo + s["st_size"]], order == "big", **facts) or "") if reason else "")
     return out
 
@@ -385,8 +386,8 @@ class Twins:
         from .metadata_rows import rows as metadata_rows
         rows = metadata_rows(self.net.project_store(proj['id']), ('id','name','unit','meta'), "SELECT id, name, unit, meta FROM functions WHERE project_id=?"
                                   + (" AND status='matched'" if matched_only else "")
-                                  + (" AND id IN (SELECT value FROM json_each(?))" if function_ids is not None else ""),
-                                  proj["id"], *([json.dumps(function_ids)] if function_ids is not None else []))
+                                  + (" AND id IN (SELECT value FROM json_each(?))" if function_ids is not None else "")
+                                  + " ORDER BY id", proj["id"], *([json.dumps(function_ids)] if function_ids is not None else []))
         by_unit: dict[str, list] = defaultdict(list)
         for r in rows:
             by_unit[r["unit"]].append(r)
@@ -414,14 +415,14 @@ class Twins:
                     prints = object_prints(unit.target.read_bytes())
                 except Exception:  # an object pyelftools can't read: no twins for it
                     prints = {}
-                entry = {"mtime": mtime, "prints": {k: [p.key, p.refs, p.size, p.asm, p.name, p.prefix] for k, p in prints.items()}}
+                entry = {"mtime": mtime, "prints": {k: [p.key, p.refs, p.size, p.asm, p.name, p.prefix, p.layout] for k, p in prints.items()}}
                 cache[uname] = entry
                 changed = True
             for r in urows:
                 sym = json.loads(r["meta"] or "{}").get("symbol") or r["name"].split("@")[0]
                 p = entry["prints"].get(sym)
                 if p:
-                    out[r["id"]] = Print(p[0], p[1], p[2], asm=p[3], name=p[4], prefix=p[5])
+                    out[r["id"]] = Print(p[0], p[1], p[2], asm=p[3], name=p[4], prefix=p[5], layout=p[6])
         if changed:
             try:
                 cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1288,8 +1289,8 @@ class Twins:
     def _fork_to_rom(self, agent, proj, other, wanted, mine, job) -> int:
         """Try imported, verified C against identical ROM fingerprints; only the ROM judge accepts it.
 
-        Donor headers are deliberately not installed in the ROM project. Self-contained functions and
-        declarations already available in its context work; missing dependencies remain ordinary misses.
+        Manual searches can verify a donor's per-file compiler and private header before falling back
+        to the destination context.
         """
         from .. import consoles
 
@@ -1302,9 +1303,14 @@ class Twins:
         report(job, 'Reading imported target objects', game=other['name'])
         theirs = self._fork_prints(other, matched_only=True, job=job)
         matched = 0
+        from . import donor_build, donor_relocations
         from .donor_boundaries import merged_candidates, recover
-        merged = (merged_candidates(self.net, proj, theirs.values(), job) if
-                  getattr(job, 'cross_exhaustive', False) else {})
+        manual = getattr(job, 'cross_exhaustive', False)
+        build = donor_build.Settings(fp) if manual and hasattr(fp, 'root') else None
+        units = {unit.name: unit for unit in fp.units()} if build else {}
+        merged = merged_candidates(self.net, proj, theirs.values(), job) if manual else {}
+        relaxed = donor_relocations.candidates(self.net, proj, theirs.values(), job) if manual else {}
+        label = self.net.symbols(proj['id']).label if relaxed else None
         for a in self.net.project_store(other['id']).all("SELECT id,project_id,name,unit,meta FROM functions WHERE project_id=? AND status='matched'", other["id"]):
             pa = theirs.get(a["id"])
             if pa is None or pa.asm:
@@ -1321,7 +1327,8 @@ class Twins:
                     mine[row['id']] = fingerprint
                     wanted.setdefault(pa.key, []).append(row['id'])
                     found.append(row['id'])
-            for b_id in found:
+            extra = relaxed.get(pa.key, ())
+            for b_id in dict.fromkeys([*found, *extra]):
                 if job is not None and (job.stop.is_set() or (bounded and (
                         job.reuse_attempts >= job.reuse_limit or time.monotonic() >= job.reuse_deadline))):
                     return matched
@@ -1330,14 +1337,20 @@ class Twins:
                     continue
                 if b["size"] != pa.size:  # A recovered boundary can shorten an entry from the initial index.
                     continue
-                names = renames(pa, mine[b_id], pa.name or a["name"].split("@")[0], b["name"])
+                target = (mine[b_id] if b_id in found else donor_relocations.donor_refs(pa, b, label))
+                if target is None:
+                    continue
+                names = renames(pa, target, pa.name or a["name"].split("@")[0], b["name"])
                 if names is None or self.net.forks.is_asm(other, a):
                     continue
                 original = self.net.forks._current_source(fp, a)
                 if not original:
                     continue
                 source = apply(original, names)
-                if self._missed(b_id, source, project_id=proj['id']):
+                unit = units.get(a['unit'])
+                settings = build.for_unit(unit) if unit is not None else None
+                known_miss = self._missed(b_id, source, project_id=proj['id'])
+                if known_miss and not settings:
                     continue
                 if job is not None:
                     job.cross_candidates += 1
@@ -1345,14 +1358,25 @@ class Twins:
                 if bounded:
                     job.reuse_attempts += 1
                 report(job, 'Compiling candidate', game=other['name'], function=b['name'], donor=a['name'])
-                outcome, why = self._attempt_twin(agent, proj, a, b, source, origin=f" in {other['name']}", mapping=names)
+                outcome, why = 'skip', ''
+                fallback = None
+                if settings:
+                    try:
+                        outcome, why = donor_build.verify(self.net, proj, b, other, a, names, settings, agent, job, build.headers)
+                    except (NetworkError, OSError, ValueError) as error:
+                        outcome, why = 'skip', str(error)
+                if outcome != 'match' and not known_miss and not (job and job.stop.is_set()):
+                    fallback, detail = self._attempt_twin(
+                        agent, proj, a, b, source, origin=f" in {other['name']}", mapping=names)
+                    if fallback == 'match' or not why:
+                        outcome, why = fallback, detail
                 with self.net.project_store(proj['id']).tx() as db:
                     db.execute("INSERT INTO cross_game_attempts(project_id,function_id,source_project_id,"
                                "source_function_id,outcome,reason,created_at) VALUES(?,?,?,?,?,?,?)",
                                (proj["id"], b_id, other["id"], a["id"], outcome, why[:WHY_CHARS], time.time()))
-                    if outcome == "miss":
+                    if fallback == "miss":
                         db.execute("INSERT OR REPLACE INTO twin_misses(function_id,source_hash,project_id,at,why) "
-                                   "VALUES(?,?,?,?,?)", (b_id, self._miss_key(source), proj["id"], time.time(), why))
+                                   "VALUES(?,?,?,?,?)", (b_id, self._miss_key(source), proj["id"], time.time(), detail))
                 if outcome == "match":
                     if bounded:
                         job.reuse_matched += 1

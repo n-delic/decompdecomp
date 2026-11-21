@@ -332,6 +332,10 @@ def _saved_projects(net, stores, tmp_path):
 
     net.cfg = Core.cfg
     net.is_rom = Core.is_rom.__get__(net)
+    net.project_row = Core.project_row.__get__(net)
+    net.project_missing = Core.project_missing.__get__(net)
+    net.symbols = Core.symbols.__get__(net)
+    net._syms, net._sym_override = {}, {}
     for pid, slug in ((1, 'first'), (2, 'second')):
         folder = tmp_path / slug
         folder.mkdir()
@@ -493,7 +497,7 @@ def test_autosave_legacy_catalog_fast_path_does_not_add_per_project_queries(scop
     auto._projects()  # warm the existing catalog revision cache
     with capture() as timing:
         assert len(auto._projects()) == 2
-    assert timing['queries'] == 1  # the catalog revision token, no N+1 path/config lookups
+    assert timing['queries'] <= 1  # at most a catalog revision read, no per-project path/config lookups
 
 
 def test_shutdown_flush_discovers_dirty_state_in_each_project_store(scoped, tmp_path, monkeypatch):

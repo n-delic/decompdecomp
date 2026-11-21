@@ -6,10 +6,10 @@ from io import BytesIO
 import pytest
 from elftools.elf.elffile import ELFFile
 
-from decompnet.arch.mips_image import linked_object
 from decompnet.elfobj import _function_symbols
 from decompnet.rom import export_entry
 from decompnet.rom.link import LinkResult
+from tests.mips_elf_fixture import linked_object
 
 
 def object_file():

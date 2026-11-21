@@ -18,8 +18,10 @@ from .source_preparation import Reader, declarations
 
 MAX_HEADER = 2 * 1024 * 1024
 MAX_CONTEXT = 128 * 1024
-INCLUDE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*[<"]([^>"\n]+)[>"][ \t]*$',re.M)
+INCLUDE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*[<"]([^>"\n]+)[>"][ \t]*'
+                     r'(?://[^\n]*|/\*[^\n]*?\*/[ \t]*)?$', re.M)
 ID = r'[A-Za-z_]\w*'
+_ASSEMBLY_MARKER = re.compile(r'^\s*(?:GLOBAL_ASM|INCLUDE_ASM|INCLUDE_RODATA)\([^\n]*\);?[ \t]*$', re.M)
 
 
 class DonorReader(Reader):
@@ -34,9 +36,13 @@ class DonorReader(Reader):
         text=self.file(path)
         def include(hit):
             name=Path(hit[1])
-            if name.is_absolute() or '..' in name.parts:
+            if name.is_absolute():
                 raise NetworkError('Donor includes must remain within the imported checkout.')
-            found=next((p for p in [path.parent/name,*[root/name for root in self.roots]] if p.is_file()),None)
+            checkout = self.root
+            choices = [(base / name).resolve() for base in (path.parent, *self.roots)]
+            found = next((p for p in choices if p.is_relative_to(checkout) and p.is_file()), None)
+            if found is None and ('..' in name.parts or any(not p.is_relative_to(checkout) for p in choices)):
+                raise NetworkError('A donor include leaves the selected checkout; keep includes within it.')
             # A header used only by assembly or another compiler may legitimately be absent.
             return self.flatten(found,seen) if found else '#error donor_header_missing\n'
         text=INCLUDE.sub(include,text)
@@ -51,7 +57,7 @@ def build_hints(root):
     include=[]
     definitions={}
     path=root/'Makefile'
-    text=path.read_text(errors='replace') if path.resolve().is_relative_to(root) and path.is_file() and path.stat().st_size<256*1024 else ''
+    text=path.read_text(errors='replace') if path.resolve().is_relative_to(root) and path.is_file() and path.stat().st_size<1024*1024 else ''
     depth=0
     for line in text.splitlines():
         if re.match(r'\s*(?:ifeq|ifneq|ifdef|ifndef)\b',line):
@@ -75,16 +81,24 @@ def build_hints(root):
     return include,defines
 
 
-def imported(net, proj, fn):
+def imported(net, proj, fn, cache=None):
     root=Path(proj['root']).resolve()
     unit=ForkProject(root).unit(fn['unit'])
     from ..forks.source_paths import readable
     path=readable(root,unit)
     if path is None:
         raise NetworkError('The named donor has no unambiguous source file.')
-    roots,defines=build_hints(root)
-    reader=DonorReader({'root':str(root),'include_roots':'\n'.join(map(str,roots))})
-    original=reader.file(path)
+    if cache is not None and path in cache:
+        original, header, defines = cache[path]
+    else:
+        roots, defines = build_hints(root)
+        reader = DonorReader({'root': str(root), 'include_roots': '\n'.join(map(str, roots))})
+        original = reader.file(path)
+        header = declarations(_ASSEMBLY_MARKER.sub('', reader.flatten(path)))
+        if cache is not None:
+            if len(cache) >= 4:
+                cache.pop(next(iter(cache)))
+            cache[path] = original, header, defines
     # Imported symbol spelling can differ from its C spelling (e.g. COFF leading underscores).
     spellings=net.forks._names(net.forks._meta(fn),fn)
     symbol,span=next(((symbol,csource.find(original,symbol)) for symbol in spellings if csource.find(original,symbol)),(fn['name'],None))
@@ -92,7 +106,6 @@ def imported(net, proj, fn):
         raise NetworkError('The named donor has no ordinary C definition under its recorded name.')
     from .twins import apply
     body=apply(original[span[0]:span[1]],{symbol:fn['name']})
-    header=declarations(reader.flatten(path))
     prelude=''.join(f'#define {k} {v}\n' for k,v in sorted(defines.items()))
     variants=[(body,prelude+header,'donor defaults')]
     # Try one actual version boundary present in this body and explicitly defined by its headers.

@@ -139,3 +139,35 @@ def test_a_switch_whose_scale_sits_in_the_guards_delay_slot_is_followed():
     assert jump_table(image,0x1000,0x1038,0x80001000,0x1018,'big',ranges)['state']=='validated'
     result=extent(image,0x1000,0x1038,0x80001000,'big',table_ranges=ranges)
     assert result['flow_closed'] and result['return_sites']==3 and not result['unresolved_transfers']
+
+
+def test_ido_switch_reads_unique_overlay_table_with_compact_addresses():
+    # sltiu, beqz, LUI in the branch slot, ADDIU, index scale, ADDU, raw LW, JR.
+    vram = 0x80200000
+    words = [0x2c620002,0x10400009,0x3c020020,0x24420050,0x00031880,
+             0x00621821,0x8c620000,0x00400008,0,0x03e00008,0,0x03e00008,0]
+    image = b''.join(word.to_bytes(4,'big') for word in words)
+    image += bytes(0x50-len(image))+bytes.fromhex('002000240020002c')
+    alias = dict(rom_start=0x50,rom_end=0x58,vram=0x200050,target_prefix=0x80000000,code_delta=vram)
+    result = jump_table(image,0,len(words)*4,vram,28,'big',[alias])
+    assert result['state']=='validated' and result['targets']==[vram+36,vram+44]
+    wrong = dict(alias,code_delta=vram+4)
+    assert jump_table(image,0,len(words)*4,vram,28,'big',[wrong])['state']=='unresolved'
+    corrupt = image[:-4]+bytes.fromhex('00200010')
+    assert jump_table(corrupt,0,len(words)*4,vram,28,'big',[alias])['state']=='unresolved'
+
+
+def test_fp_delay_slot_bound_and_boot_mapped_compact_cases():
+    words = [0x45000003, 0x2c620002, 0x44800800, 0x24c60001,
+             0x1040000a, 0x00031080, 0x3c018000, 0x00220821, 0x8c221100, 0x00400008, 0,
+             0x03e00008, 0, 0x03e00008, 0, 0x03e00008, 0]
+    image = bytearray(0x1200)
+    image[0x1000:0x1044] = struct.pack('>17I', *words)
+    image[0x1100:0x1108] = struct.pack('>2I', 0x102c, 0x1034)
+    alias = dict(rom_start=0x1100, rom_end=0x1108, vram=0x80001100, target_prefix=0x80000000, boot_copy=True)
+    def audit():
+        return extent(image, 0x1000, 0x1044, 0x80001000, 'big', table_ranges=[alias])
+    assert audit()['flow_closed']
+    # A branch-likely annuls the bound on one path.
+    image[0x1000:0x1004] = struct.pack('>I', 0x45020003)
+    assert not audit()['flow_closed']

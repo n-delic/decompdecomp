@@ -79,3 +79,33 @@ def test_same_name_preprocessing_and_context_compile_with_pinned_compiler(tmp_pa
     assert candidate.ok,candidate.log
     assert control.ok,control.log
     assert extract_function(candidate.obj,'f').code==extract_function(control.obj,'f').code
+
+
+def test_relative_include_with_comment_stays_in_the_checkout(tmp_path):
+    folder = tmp_path / 'src'
+    folder.mkdir()
+    (tmp_path / 'types.h').write_text('typedef int Word;\n')
+    path = folder / 'entry.c'
+    path.write_text('#include "../types.h" /* relative to this file */\nWord f(void);\n')
+    reader = ds.DonorReader({'root': str(tmp_path)})
+    assert 'typedef int Word;' in reader.flatten(path)
+
+
+def test_donor_file_profile_prefers_objdiff_and_reads_literal_make_overrides(tmp_path):
+    from types import SimpleNamespace
+
+    from decompnet.app.donor_build import Settings
+
+    (tmp_path / 'Makefile').write_text(
+        'CC := tools/ido-static-recomp/build/7.1/out/cc\n'
+        'OPT_FLAGS := -O2\nCFLAGS := -G 0 -I include\n'
+        'build/entry.c.o: CC := tools/ido-static-recomp/build/5.3/out/cc\n'
+        'build/entry.c.o: OPT_FLAGS := -O1\n'
+        'build/entry.c.o: private CPPFLAGS += -DFILE_LIMIT=32 -I src -o /tmp/ignored\n'
+        'build/%.c.o: %.c\n\t$(CC) -c -DSOURCE_MODE=1 -o $@ $<\n'
+    )
+    project = Settings(SimpleNamespace(root=tmp_path))
+    unit = SimpleNamespace(base=tmp_path / 'build/entry.c.o', source='entry.c', scratch=None)
+    assert project.for_unit(unit) == {'toolchain': 'ido-5.3', 'flags': ['-G', '0', '-O1', '-DFILE_LIMIT=32', '-DSOURCE_MODE=1']}
+    unit.scratch = {'compiler': 'ido7.1', 'c_flags': '-O0 -mips3 -DN=1 -G 0 -woff 0'}
+    assert project.for_unit(unit) == {'toolchain': 'ido-7.1', 'flags': ['-O0', '-mips3', '-DN=1', '-G', '0', '-woff', '0', '-DFILE_LIMIT=32', '-DSOURCE_MODE=1']}

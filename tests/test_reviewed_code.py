@@ -18,7 +18,9 @@ def test_reviewed_extension_reduces_raw_tail_and_keeps_parent_mapping():
     before=config();after=extend_config(before,[{'vram':0x80000000,'size':24}])
     assert before['segments'][1]['start']==24
     assert after['segments'][1]['start']==40
-    assert _export_segments(before,[{'vram':0x80000000,'size':24}])==after
+    exported = _export_segments(before,[{'vram':0x80000000,'size':24}])
+    assert exported['segments'] == after['segments']
+    assert exported['options']['create_bss_pads'] is False
     assert extend_config(before,[{'vram':0x80000000,'size':32}])['segments'][-1]==[48]
 
 
