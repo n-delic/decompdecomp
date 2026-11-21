@@ -101,6 +101,10 @@
   use existing background source-restoration locks. Hosts accept legacy permutation
   claim/release requests without leases, and startup clears only legacy permutation claims.
 
+- Done: N64 imports recover gzip-compressed boot programs using loader addresses and verified
+  text/data member boundaries. Rebuildable exports check the linked bytes against those members
+  before retaining the cartridge's original gzip encoding. Audited embedded tables use full-span
+  fingerprints to keep their bytes out of the function inventory.
 - Done: N64 imports recover a whole gap between two code segments that share a mapping
   when the game's data stores the gap's start as a pointer and the gap is one balanced
   frame (a racing game's command handlers, 3.5 and 8 KB, called only through a table).
