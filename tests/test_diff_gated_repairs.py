@@ -685,3 +685,29 @@ void f(void *out, void *in) {
     fixed = dict(proposals(source, 'f', '', 'mips', KMC, rows, ''))[family]
     assert fixed.index('M2C_FIELD(out, s16 *, 2)') < fixed.index('= 511;')
     assert family not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_kmc_record_repairs_receive_the_project_resolver(monkeypatch):
+    from decompnet.app.diff_gated_repairs import measured_halfword_stores, measured_kmc_record_reads
+
+    source = 'void f(void) {}'
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    resolve = {'state': 0x80001200}.get
+
+    def halfwords(text, name, diff, resolver):
+        assert (text, name, diff) == (source, 'f', rows)
+        assert resolver is resolve
+        return [('halfword_fixture', 'halfwords')]
+
+    def records(text, name, header, diff, resolver):
+        assert (text, name, header, diff) == (source, 'f', '', rows)
+        assert resolver is resolve
+        return [('record_fixture', 'records')]
+
+    monkeypatch.setattr(measured_halfword_stores, 'variants', halfwords)
+    monkeypatch.setattr(measured_kmc_record_reads, 'variants', records)
+    kmc = dict(proposals(source, 'f', '', 'mips', KMC, rows, '', resolve=resolve))
+    assert kmc['halfword_fixture'] == 'halfwords'
+    assert kmc['record_fixture'] == 'records'
+    egcs = dict(proposals(source, 'f', '', 'mips', EGCS, rows, '', resolve=resolve))
+    assert 'halfword_fixture' not in egcs and 'record_fixture' not in egcs
