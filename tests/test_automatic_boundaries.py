@@ -721,3 +721,15 @@ def test_five_scheduled_entry_instructions_are_kept_with_their_frame():
     image, functions, segments = fixture(lead + BODY, cuts=(0, 32, 52))
     result = repair(functions, [], image, consoles.get('n64'), segments)
     assert [(fn.rom, fn.size) for fn in result] == [(0, 52)]
+
+
+@pytest.mark.parametrize('protected', [False, True])
+def test_branch_from_wide_padding_does_not_split_the_preceding_frame(protected):
+    calls = [0x0c000000 | ((address >> 2) & 0x3ffffff) for address in (BASE, BASE+64)]
+    body = [*BODY[:-2], 0, *BODY[-2:]]
+    fill = [0, 0, 0, 0, 0x1440fffa, 0, 0]
+    words = [*body, *fill, *BODY, calls[0], 0, calls[1], 0, 0x03e00008, 0]
+    image, functions, segments = fixture(words, cuts=(0,16,64,96,len(words)*4))
+    symbols = [f'entry = 0x{BASE+52:08X};'] if protected else ()
+    result = repair(functions, [], image, consoles.get('n64'), segments, symbols=symbols)
+    assert [(fn.rom, fn.size) for fn in result[:2]] == ([(0,16),(16,48)] if protected else [(0,36),(64,32)])
