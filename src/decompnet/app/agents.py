@@ -957,7 +957,8 @@ class Manager:
         proj = self.net.project_row(slug)
         if task == "readable":
             return self.net.readability.left(proj)
-        row = self.net.store.one("SELECT COUNT(*) AS n FROM functions WHERE project_id=? AND status='open'", proj["id"])
+        row = self.net.store.one("SELECT COUNT(*) AS n FROM functions WHERE project_id=? AND status='open' "
+                                 "AND (size IS NULL OR size > 0)", proj["id"])
         return row["n"]
 
     def _ruled_out(self, slug: str, agent_name: str) -> int:

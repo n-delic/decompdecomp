@@ -471,6 +471,8 @@ class Console:
     # an attempt that writes an unnamed function as a C++ constructor or destructor (CFoo::CFoo) gives it that real
     # name (rename_symbol), which its build pairs with the original's symbol, calls to it included
     names_structors = False
+    # its symbols may name a CodeWarrior this-adjust thunk, @N@<mangled member>, which no source spells (rename_symbol)
+    thunk_names = False
 
     def real_names(self, fp, version: str) -> dict[str, str]:
         """The report's name of a function (the original's symbol, renames_in_report False) -> the real name
