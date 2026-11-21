@@ -14,12 +14,20 @@ ATTEMPTS = 8
 PREFIX = 'deep-source-recovery:'
 
 
-def _saved_attempts(store, fid):
+def saved_attempts(store, fid):
     return store.all("""SELECT id FROM main.attempts
         WHERE function_id=? AND compiled=1 AND score IS NOT NULL
           AND (source_hash IS NOT NULL OR source IS NOT NULL)
         GROUP BY COALESCE(source_hash, source)
         ORDER BY MIN(score), MAX(id) DESC LIMIT ?""", fid, ATTEMPTS)
+
+
+def saved_sources(store, attempts):
+    """Load the bounded, distinct attempt sources in their measured score order."""
+    for row in attempts:
+        attempt = store.one('SELECT source FROM attempt_details WHERE id=?', row['id'])
+        if attempt and attempt['source'] and attempt['source'].strip():
+            yield attempt['source']
 
 
 @contextmanager
@@ -121,7 +129,7 @@ def prepare(net, proj, fn, log):
     if claimed():
         return fn
     fork = net.fork_slug(slug)
-    attempts = _saved_attempts(store, fid)
+    attempts = saved_attempts(store, fid)
     can_draft = net.can_draft(proj)
     newest = store.one("""SELECT MAX(id) AS id FROM main.attempts WHERE function_id=? AND compiled=1
                           AND score IS NOT NULL AND (source_hash IS NOT NULL OR source IS NOT NULL)""", fid)['id']
@@ -135,11 +143,7 @@ def prepare(net, proj, fn, log):
     if previous and json.loads(previous['value']).get('scope') == signature:
         return fn
 
-    sources = [fn['best_source']]
-    for row in attempts:
-        attempt = store.one('SELECT source FROM attempt_details WHERE id=?', row['id'])
-        if attempt:
-            sources.append(attempt['source'])
+    sources = [fn['best_source'], *saved_sources(store, attempts)]
     sources = [source for source in dict.fromkeys(sources) if source and source.strip()]
 
     log(f"{fn['name']}: Preparing scored C from saved attempts and machine drafts.")

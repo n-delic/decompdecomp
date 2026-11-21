@@ -533,9 +533,31 @@ class Search(Permuter):
             measured = super()._baseline(agent, proj, fn, state, fork)
             if measured[0] is not None or fork:
                 return measured
+            from itertools import chain
+
+            from .. import candidate_quality
+            from . import deep_source_recovery
+            from .function_names import canonical_source
             from .prototype_alignment import variants
+
+            store = self.net.project_store(proj['id'])
             header = self.net._context(proj['id'], fn['unit'])['header']
-            for candidate in variants(fn['best_source'], fn['name'], header):
+            prototypes = ((candidate, 'Repaired a conflicting return type in the candidate.')
+                          for candidate in variants(fn['best_source'], fn['name'], header))
+            saved = ((canonical_source(fn, source), 'Recovered a baseline from a saved attempt.')
+                     for source in deep_source_recovery.saved_sources(
+                         store, deep_source_recovery.saved_attempts(store, fn['id'])))
+            seen = {fn['best_source']}
+            attempts = measured[1]
+            for candidate, message in chain(prototypes, saved):
+                if candidate in seen or candidate_quality.reported_source(self.net, fn, candidate):
+                    continue
+                if self.tested >= self.limit:
+                    break
+                self.check()
+                seen.add(candidate)
+                state.add(variants=1, repairs=1)
+                attempts += 1
                 score = self._score(agent, proj, fn, candidate, float('inf'), fork)
                 fresh = self.net._function(fn['name'], proj['slug'])
                 if score is not None and fresh['status'] == 'open' and fresh['best_source'] == fn['best_source']:
@@ -555,10 +577,9 @@ class Search(Permuter):
                                        (candidate, score, agent.id, fn['id']))
                     fresh = self.net._function(fn['name'], proj['slug'])
                 if score is not None and (fresh['best_source'] == candidate or fresh['status'] == 'matched'):
-                    self.log('Repaired a conflicting return type in the candidate; shared header unchanged. '
-                             'The broken draft is retained in history; the new baseline may have a lower percentage.')
-                    return score, measured[1]+1
-            return measured
+                    self.log(message + ' The broken draft is retained in history.')
+                    return score, attempts
+            return None, attempts
         finally:
             self.measuring_baseline = False
 
@@ -1497,8 +1518,7 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
                 if baseline is None:
                     raise NetworkError('The saved C does not compile in the current context; fix its declarations before deep search.')
                 measured_baseline = baseline
-                if getattr(search, 'relinked_baseline', None):
-                    fn = net._function(name, slug)
+                fn = net._function(name, slug)
                 relabel = baseline and not fork and search.can_relabel_switch(fn)
                 if baseline and not fork and not relabel and (lane is None or lane.index == 0):
                     if profile := deep_profiles.tail_dispatch(net, proj, fn):
