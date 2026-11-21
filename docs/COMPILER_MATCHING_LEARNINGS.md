@@ -14,6 +14,17 @@ restored the order of the two `addu` operands and improved 205 to 200.
 The remaining difference was one `bne` versus `bnel` with the same delay
 slot. The focused zero-exit shapes did not recover it.
 
+### KMC GCC 2.7.2: retain a separately relocated record base
+
+An isolated N64 replay used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.
+The draft based a group of writes on a nearby byte global. The target
+instead relocated the record's own address and loaded the byte at a
+negative displacement. Using the record symbol directly made GCC fold its
+address into each store and worsened the linked score from 290 to 1,480.
+Capturing the record's address with cancelling unsigned arithmetic around
+an initialized local kept the address in a register and scored zero.
+The exact result was verified with the linked ROM judge.
+
 ### KMC GCC 2.7.2: use fixed byte offsets within a record walk
 
 An isolated N64 replay used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`.

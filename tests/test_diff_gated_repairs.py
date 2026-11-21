@@ -83,3 +83,24 @@ def test_source_repairs_require_the_measured_diff(family, toolchain, source, row
     assert not proposals(source, 'f','', 'mips',toolchain,[(' ', a,a) for _,a,_ in rows],asm)
     assert not proposals(source, 'f','', 'arm',toolchain,rows,asm)
     assert not proposals(source, 'f','', 'mips','ido-5.3',rows,asm)
+
+
+def test_relocated_record_base_uses_project_symbols():
+    source = """extern s8 low;
+extern s32 high;
+s32 f(void) {
+    s8 *base;
+    s32 *record;
+    s32 ok;
+    base = &low;
+    ok = 1;
+    (*base) = 0;
+    record = (s32 *)(base + 0x24);
+    *record = 0;
+    return ok;
+}
+"""
+    rows = case_rows('lui $v1, %hi(high)', 'addiu $v1, $v1, %lo(high)', 'lbu $v0, -0x24($v1)')
+    results = proposals(source, 'f', '', 'mips', KMC, rows, '', resolve={'low': 0x100, 'high': 0x124}.get)
+    assert ('measured_global_rebase', source.replace('(s32 *)(base + 0x24)',
+                                                     '(s32 *)((((u32)&high) + ok) - ok)')) in results
