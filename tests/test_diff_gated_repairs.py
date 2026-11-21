@@ -449,3 +449,23 @@ def test_repeated_float_products_routed_for_kmc(monkeypatch):
     rows = [('r', 'mul.s $f0, $f6, $f2', 'mul.s $f2, $f6, $f2')]
     assert 'repeated_float_product_staging' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'repeated_float_product_staging' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_measured_boolean_byte_carrier():
+    source = """void f(void) {
+    s32 flag;
+    s32 value;
+    flag = 0;
+    if (ready) {
+        value = state != 7;
+        flag = (u8)value;
+    }
+    if (flag & 0xff) work();
+}
+"""
+    rows = [
+        (' ', 'sltu $v0, $zero, $v0', 'sltu $v0, $zero, $v0'),
+        ('|', 'move $s0, $v0', 'andi $s0, $v0, 0xff'),
+    ]
+    assert 'u8 flag;' in dict(proposals(source, 'f', '', 'mips', KMC, rows, ''))['boolean_byte_carrier']
+    assert 'boolean_byte_carrier' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))
