@@ -298,7 +298,8 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
             result.append(('guarded_global_return', candidate_source))
         if candidate_source := passthrough_argument_repairs.missing_entry_argument(source, name, asm or '', header):
             result.append(('entry_wrapper_argument', candidate_source))
-        result += passthrough_argument_repairs.shifted_call_variants(source, name, header, asm or '', rows, resolve=resolve)
+        result += passthrough_argument_repairs.shifted_call_variants(
+            source, name, header, asm or '', rows, resolve=resolve, read_data=read_data, big_endian=big_endian)
         if candidate_source := loop_storage_shapes.measured_copy_setup(source, name, asm or '', header):
             result.append(('measured_copy_loop_setup', candidate_source))
         result += measured_callback_repairs.variants(source,name,rows)
