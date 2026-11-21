@@ -8862,3 +8862,11 @@ Moving the outer declaration before the local stayed two stack offsets away.
 The new trial requires a uniform frame and save gap, an unchanged local slot,
 and a final direct call passing that slot's address in the matching argument
 register.
+
+### Keeping a byte-table address across a conditional call
+
+A scratch N64 draft built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` reread the
+same global byte on either side of a conditional call. The target keeps the address
+in one saved register for both loads. Capturing the address in a scoped assignment
+and scoping the call lowered the linked score from 75 to 35 in Deep Permuter. Both
+byte reads remain in the candidate. This is a measured partial improvement.
