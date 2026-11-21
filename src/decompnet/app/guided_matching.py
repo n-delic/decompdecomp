@@ -48,7 +48,7 @@ def recovery(rows, recent, measured, best_score, arch):
 def packet(net, agent, slug, name):
     """Use already measured evidence. Reading this packet starts no compiler."""
     from ..release_receipts import current
-    from . import agent_evidence, agent_tokens, search_evidence
+    from . import agent_evidence, agent_tokens, deep_handoff, search_evidence
 
     proj, fn = net.project_row(slug, sync=False), net._function(name, slug)
     store = net.project_store(fn['project_id'])
@@ -75,6 +75,8 @@ def packet(net, agent, slug, name):
     lines = [f'{name} · candidate revision {revision}', f'claim_token: {current(net, fn, agent)}',
              'Objective for this claim. ' + GOALS.get(goal, 'Resolve one ' + goal.lower() + ' mismatch.'),
              recovery(rows, recent, measured, fn['best_score'], proj['arch'])]
+    if handoff := deep_handoff.brief(net, proj, fn, source):
+        lines.append(handoff)
     if rows:
         lines.append(efficiency_feedback.mismatch(rows))
     if anchors := measured.get('anchors'):

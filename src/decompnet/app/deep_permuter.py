@@ -961,6 +961,11 @@ class Search(Permuter):
                 for family, candidate in permuter_local.variants(source, fn['name']):
                     labels.setdefault(candidate, family)
                     choices.append(candidate)
+            from . import cross_function_repairs
+            cross = cross_function_repairs.variants(self.net, proj, fn, source, header) if not fork else []
+            for family, candidate in cross:
+                labels[candidate] = family
+                choices.append(candidate)
             def prepare_choices(choices,labels=labels,feedback=feedback,source=source,rows=rows,
                                 proj=proj,fn=fn,lineage=lineage,path=path,header=header,
                                 source_locations=source_locations,branch_frames=branch_frames,loan=loan,bit_pass=bit_pass):
@@ -995,7 +1000,8 @@ class Search(Permuter):
                 frame_sources={c for _,c in branch_frames}
                 frame_prefix=[c for _,c in progressed if c in frame_sources]
                 dispatch_prefix=[c for family,c in progressed if family in {'effectful_dispatch_specialization','narrow_snapshot_branches'}][:4]
-                queue = list(dict.fromkeys(frame_prefix+complete+dispatch_prefix+[c for _,c in progressed]))
+                cross_prefix = [c for family,c in progressed if family in cross_function_repairs.FAMILIES]
+                queue = list(dict.fromkeys(cross_prefix+frame_prefix+complete+dispatch_prefix+[c for _,c in progressed]))
                 if loan:queue=feedback.continuation(source,queue,labels,self.local_seen)
                 lane = getattr(self, "parallel_lane", None)
                 if lane is not None:
@@ -1811,6 +1817,12 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
     result = {'function': name, 'reason': reason, 'tested': search.tested, 'skipped': search.skipped,
               'rejected': search.rejected, 'refinement_rounds': search.refinement_rounds,
               'matched': net._function(name, slug)['status'] == 'matched', **search.metrics()}
+    if not result['matched'] and search.tested and search.winner_diff:
+        from . import deep_handoff
+        current = net._function(name, slug)
+        if search.measured_winner(current, current['best_source']):
+            if deep_handoff.save(net, proj, current, search.winner_source, search.winner_diff[0]):
+                log('Saved the measured residual for the next agent claim.')
     result['compiler_profiles'] = compiler_profiles
     if sweeps:
         sweeps.completed(slug, fn, minutes, max_variants, result, build_scope)
