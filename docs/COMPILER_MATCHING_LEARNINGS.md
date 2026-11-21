@@ -10568,3 +10568,13 @@ A second route to the same bytes is the measured `shared_result_copy` family (0.
 the early copy and moves the label. It needs the diff rows, and the app that held this function had library 0.5.166
 installed, so it had never been offered either. First thing to check on a stuck near-match: the app's library
 version.
+
+### Stage repeated interpolation products in one single-precision temporary
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, a scratch N64 function
+had a linked score of 95. Staging a recurring interpolation and its products
+in one unused single-precision local lowered the score to 60. Reusing a
+different, dead single-precision result for the final interpolation lowered
+it to 40. Both preparations retain the original grouping and literal types.
+Using the same staging temporary for the final conversion did not reach 40.
+The deep permuter reproduced the 95 to 40 improvement from the starting draft.

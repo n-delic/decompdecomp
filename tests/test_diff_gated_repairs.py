@@ -435,3 +435,17 @@ def test_byte_backedge_routed_for_kmc(monkeypatch):
     rows = [('r', 'lbu $a0, ($t0)', 'lbu $v0, ($t0)')]
     assert 'byte_backedge_carrier' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'byte_backedge_carrier' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_repeated_float_products_routed_for_kmc(monkeypatch):
+    from decompnet.app.diff_gated_repairs import float_intermediate_repairs
+
+    def candidate(source, name, rows):
+        assert (source, name) == ('void f(void) {}', 'f')
+        assert rows == [('r', 'mul.s $f0, $f6, $f2', 'mul.s $f2, $f6, $f2')]
+        return [('repeated_float_product_staging', 'void f(void) { work(); }')]
+
+    monkeypatch.setattr(float_intermediate_repairs, 'repeated_products', candidate)
+    rows = [('r', 'mul.s $f0, $f6, $f2', 'mul.s $f2, $f6, $f2')]
+    assert 'repeated_float_product_staging' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'repeated_float_product_staging' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
