@@ -1069,3 +1069,24 @@ def test_targeted_register_pass_compiles_bitwise_and_float_lifetime_candidates(m
     search.winner_diff = ([('r', 'add.s $f2, $f2, $f0', 'add.s $f0, $f0, $f2')], '')
     assert search.operand_order_pass(AGENT, proj, dict(fn, best_source=draft), 5, None) == 5
     assert any('float repair_float_increment' in candidate for candidate in seen)
+
+
+def test_loop_vector_shape_pass_composes_shapes_that_only_help_together(monkeypatch):
+    net = setup(monkeypatch)
+    source = ('void f(Obj *obj, Bone *bones) {\n    Bone *bone;\n    int k;\n'
+              '    for (k = 0, bone = bones; bone->idx >= 0; k++, bone++) {\n        obj->out[k] = bone->a;\n    }\n}\n')
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_score=50,best_source=? WHERE name='f'", (source,))
+    fn, proj = net.function(), net.project_row('game')
+    search = deep_permuter.Search(net, 1, 30, Log(), fn)
+    seen = []
+
+    def score(agent, proj, fn, candidate, best, fork):
+        seen.append(candidate)
+        search.tested += 1
+        # neither shape alone helps; the pair is exact
+        return 0 if 'const Bone *bone' in candidate and 'bones[k]' in candidate else 50
+
+    monkeypatch.setattr(search, '_score', score)
+    assert search.loop_vector_shape_pass(AGENT, proj, dict(fn, best_source=source), 50, None) == 0
+    assert any('const Bone *bone' in c and 'bones[k]' in c for c in seen) and len(seen) <= 15

@@ -407,6 +407,37 @@ class Search(Permuter):
                 return score
         return best
 
+    def loop_vector_shape_pass(self, agent, proj, fn, best, fork):
+        """Climb through the loop and vector-update shapes that only help together (decomp-repair 0.5.130).
+
+        Indexed element access, `const` on read-only locals and sums-then-stores for a vector's components each
+        left a 2,122-instruction function's score nearly unchanged alone and gained a hundred instructions in
+        combination, so a greedy pass that stops at the first non-improvement never finds them. A small beam keeps
+        the three best children of each level, inside the ordinary trial budget; every child is judged normally."""
+        from decomprepair import loop_vector_shapes
+
+        source = _candidate_source(fn, best)
+        budget = min(24, max(0, (self.limit - self.tested) // 2))
+        frontier, seen, lowest = [(best, source)], {source}, best
+        while frontier and budget > 0:
+            children = []
+            for _, parent in frontier:
+                for family, child in loop_vector_shapes.variants(parent, fn['name'], proj['arch']):
+                    if child in seen or budget <= 0:
+                        continue
+                    seen.add(child)
+                    budget -= 1
+                    self.check()
+                    with repair_trial({'kind': 'deep local repair', 'family': family}):
+                        score = self._score(agent, proj, fn, child, best, fork)
+                    if score == 0:
+                        return 0
+                    if score is not None:
+                        lowest = min(lowest, score)
+                        children.append((score, child))
+            frontier = sorted(children, key=lambda item: item[0])[:3]
+        return lowest
+
     def indexed_loop_frame_pass(self, agent, proj, fn, best, fork):
         """Measure the indexed loop and padding cleanup together under the current settings."""
         from decomprepair.pointer_walk_index_repairs import frame_variants
@@ -1591,6 +1622,11 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
                         fn = net._function(name, slug)
                         if baseline == 0:
                             reason = 'Matched'
+                        if baseline:
+                            baseline = search.loop_vector_shape_pass(agent, proj, fn, baseline, fork)
+                            fn = net._function(name, slug)
+                            if baseline == 0:
+                                reason = 'Matched'
                     jump_profile = getattr(search, 'jump_table_profile', None)
                     if baseline and not fork and not relabel and (jump_profile or baseline == measured_baseline):
                         from . import profile_climb
