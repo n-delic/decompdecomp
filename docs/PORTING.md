@@ -281,12 +281,10 @@ The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`)
   first controller's buttons and stick from a given frame on) and the serial bus the game may drive itself (the
   first controller, no Controller Pak, and a 4 Kbit save EEPROM kept in a file: `PORT_SAVE=path`, else `game.eep`
   in the folder the game runs from, written as the game saves);
-- the sound (`audio.c`): libultra's audio tasks (the "ABI 1" command list: ADPCM, resampling, envelopes, mixing; or
-  n_audio's, the `n_al*` synthesizer's, told apart by ABI 1's segment and buffer commands, which n_audio never
-  sends) run in software, and each buffer the game gives the audio interface is played in the live view (its Sound button)
-  and, with `PORT_AUDIO=file.wav`, saved. The interface's registers answer in real time at the game's rate, so the
-  game paces its sound as on the console. Not yet: the resampler's exact taps (linear for now), and n_audio's
-  A_POLEF (no game has sent it here, so its buffers aren't known);
+- the sound (`audio.c`, `audio_musyx.c`): the port runs libultra ABI 1 and n_audio command lists, and
+  MusyX v1 subframe descriptors, in software. The audio interface plays each submitted buffer in the live
+  view, can save it with `PORT_AUDIO=file.wav`, and signals the game when a DMA buffer completes. The
+  libultra resampler still uses linear interpolation, and n_audio's A_POLEF remains unimplemented.
 - the app's **Play in browser** (Porting): builds the game from the project's last save, starts it with
   `PORT_LIVE` on a free port and opens it in a window of its own (the app window's program; the browser where no
   window can open); closing the window, Stop the game or quitting the app ends it.

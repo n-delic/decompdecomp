@@ -538,3 +538,43 @@ int main(void) { script_input(); printf("%04X\\n", buttons); return 0; }
             want = "1000"
         done = subprocess.run([str(tmp_path / "t")], env=env, check=True, capture_output=True, text=True)
         assert done.stdout.strip() == want
+
+
+def test_cartridge_dma_accepts_offsets_and_bus_addresses(tmp_path):
+    cc = shutil.which("cc") or shutil.which("clang")
+    if not cc:
+        pytest.skip("no C compiler")
+    harness = tmp_path / "dma.c"
+    harness.write_text(r"""
+#include <assert.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+typedef uint32_t u32;
+struct w2c_env;
+static uint8_t memory[128], cartridge[] = {0x10, 0x20, 0x30, 0x40};
+static uint8_t *M = memory, *rom = cartridge;
+static size_t rom_size = sizeof cartridge;
+#define LOG(...) ((void)0)
+static unsigned long dmas;
+static void port_trace(void) {}
+static int put(u32 mq, u32 msg, int flag, int jam) {
+    (void)flag;
+    (void)jam;
+    assert(mq == 32 && msg == 64);
+    return 0;
+}
+""" + _function(HOST.read_text(), "wbe32") + "\n"
+        + _function(HOST.read_text(), "w2c_env_osPiStartDma") + r"""
+int main(void) {
+    w2c_env_osPiStartDma(NULL, 64, 0, 0, 1, 0, 2, 32);
+    w2c_env_osPiStartDma(NULL, 64, 0, 0, 0xB0000001, 2, 2, 32);
+    assert(memcmp(memory, "\x20\x30\x20\x30", 4) == 0);
+    assert(memcmp(memory + 76, "\xB0\x00\x00\x01", 4) == 0);
+    return 0;
+}
+""")
+    program = tmp_path / "dma"
+    subprocess.run([cc, str(harness), "-o", str(program)], check=True, capture_output=True, timeout=30)
+    subprocess.run([str(program)], check=True, timeout=10)

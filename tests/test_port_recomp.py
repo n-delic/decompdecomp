@@ -245,3 +245,22 @@ def test_a_nan_is_reported_not_asserted():
     a camera not set up yet), so the port says so once a function and goes on."""
     text = recomp.header(_header().read_text())
     assert "assert(val == val)" not in text and "port_recomp_nan(__func__)" in text
+
+
+def test_link_branches_set_ra_before_the_condition_and_delay_slot():
+    from decompnet.port.wasm.recomp import link_branches
+
+    generated = """    // 0x80012380: bltzal      $zero, L_80012400
+    if (SIGNED(0) < 0) {
+        // 0x80012384: nop
+        target(rdram, ctx);
+    }
+    // 0x80012388: bgezal      $zero, L_80012410
+    if (SIGNED(0) >= 0) {
+        // 0x8001238C: nop
+        other(rdram, ctx);
+    }
+"""
+    fixed = link_branches(generated)
+    assert "ctx->r31 = (gpr)(int32_t)0x80012388u;\n    if (SIGNED(0) < 0)" in fixed
+    assert "ctx->r31 = (gpr)(int32_t)0x80012390u;\n    if (SIGNED(0) >= 0)" in fixed

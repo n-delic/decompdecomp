@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 AUDIO = Path(__file__).resolve().parents[1] / "src/decompnet/consoles/n64/port_wasm/audio.c"
+MUSYX = AUDIO.with_name("audio_musyx.c")
 TASK, LIST, STATE, SAVED, SAMPLES = 0x80100000, 0x80101000, 0x80300000, 0x80310000, 0x80320000
 
 HARNESS = r"""
@@ -55,14 +56,15 @@ def run(tmp_path_factory):
     folder = tmp_path_factory.mktemp("audio")
     (folder / "harness.c").write_text(HARNESS)
     program = folder / "audio"
-    done = subprocess.run([cc, "-O1", "-o", str(program), str(folder / "harness.c"), str(AUDIO)],
+    done = subprocess.run([cc, "-O1", "-pthread", "-o", str(program), str(folder / "harness.c"), str(AUDIO), str(MUSYX)],
                           capture_output=True, text=True, timeout=120)
     if done.returncode:
         pytest.skip(f"the harness doesn't build here: {done.stderr[-300:]}")
 
     def go(commands: list[tuple[int, int]], memory: dict[int, int], *read: int) -> list[int]:
         words = dict(memory)
-        words[TASK + 48], words[TASK + 52] = LIST, 8 * len(commands)  # OSTask's data_ptr, data_size
+        words.setdefault(TASK + 48, LIST)
+        words.setdefault(TASK + 52, 8 * len(commands))  # OSTask's data_ptr, data_size
         for i, (w0, w1) in enumerate(commands):
             words[LIST + 8 * i], words[LIST + 8 * i + 4] = w0, w1
         (folder / "memory.bin").write_bytes(b"".join(struct.pack("<II", a, v) for a, v in words.items()))
@@ -116,3 +118,65 @@ def test_n_audio_clears_and_mixes_one_sub_frame(run):
                 (0x0D000000, 0), (0x062E0000, SAVED & 0xFFFFFF)]
     first, last = run(commands, {**samples, SAVED: SENTINEL}, SAVED, SAVED + 0x2DC)
     assert first == 0x3FFF0000 and last == 0x3FFF0000  # left mixed (0x4000 * 0x7FFF >> 15), right cleared
+
+
+def test_ai_interrupts_follow_each_dma_completion(tmp_path):
+    cc = shutil.which("cc") or shutil.which("clang")
+    if not cc:
+        pytest.skip("no C compiler")
+    harness = tmp_path / "ai.c"
+    harness.write_text(r"""
+#include <assert.h>
+#include <sys/mman.h>
+#include <time.h>
+static struct timespec tick;
+static int fake_clock(clockid_t id, struct timespec *out) { (void)id; *out = tick; return 0; }
+#define clock_gettime fake_clock
+#include "audio.c"
+static uint8_t *memory;
+static unsigned buffers;
+uint8_t *port_memory(void) { return memory; }
+void port_live_audio(const int16_t *samples, int frames, int rate) {
+    (void)samples;
+    assert(rate == 8000);
+    assert(frames == 800 || frames == 400);
+    buffers++;
+}
+int main(void) {
+    memory = mmap(NULL, 1ull << 32, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
+    assert(memory != MAP_FAILED);
+    uint32_t status;
+    port_ai_frequency(8000);
+    port_ai_register(0xA4500000u, 1, 0x10000, NULL);
+    port_ai_register(0xA4500004u, 1, 3200, NULL);
+    port_ai_register(0xA4500004u, 1, 1600, NULL);
+    port_ai_register(0xA4500004u, 1, 1600, NULL); /* The full FIFO rejects a third buffer. */
+    port_ai_register(0xA450000Cu, 0, 0, &status);
+    assert(buffers == 2 && (status & 0xC0000000u) == 0xC0000000u);
+    assert(port_ai_completions() == 0);
+    tick.tv_nsec = 110000000;
+    port_ai_register(0xA450000Cu, 0, 0, &status); /* Polling must not consume the interrupt. */
+    assert(status == 0x40000000u && port_ai_completions() == 1 && port_ai_completions() == 0);
+    tick.tv_nsec = 160000000;
+    assert(port_ai_completions() == 1 && port_ai_completions() == 0);
+    return 0;
+}
+""")
+    program = tmp_path / "ai"
+    subprocess.run([cc, "-pthread", "-I", str(AUDIO.parent), str(harness), str(MUSYX), "-o", str(program)],
+                   check=True, capture_output=True, timeout=30)
+    subprocess.run([str(program)], check=True, timeout=10)
+
+
+def test_musyx_uses_subframe_count_instead_of_command_byte_count(run):
+    ucode, output = 0x80102000, SAVED
+    memory = {
+        TASK + 24: ucode, TASK + 28: 0x800, TASK + 52: 1, ucode: 0x00010010, ucode + 0x10: 1,
+        LIST + 8: STATE,
+        LIST + 0x10 + 0x44: output,
+        STATE + 0x108: 0x0100FF00,
+        STATE + 0x100: 0x0000FFFF,
+        output: SENTINEL,
+    }
+    # A subframe with no voices still emits the mixer state's decaying left and right base gains.
+    assert run([], memory, output, output + 4) == [0x00F8FF07, 0x00F8FF07]

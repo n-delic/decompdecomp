@@ -111,6 +111,21 @@ def loops(text: str) -> str:
                     if where.get(m.group(1), len(text)) < m.start() else m.group(0), text)
 
 
+_LINK_BRANCH = re.compile(r"^([ \t]*)// 0x([0-9A-F]{8}): (?:bal|b(?:gez|ltz)all?)\b[^\n]*", re.M)
+
+
+def link_branches(text: str) -> str:
+    """Keep the link register for assembly that uses a branch-and-link to get its own PC.
+
+    N64Recomp models the branch as a C call and omits the architectural link. The R4300 writes $ra even
+    when the condition is false, which code uses to locate a local jump target before the next call.
+    """
+    return _LINK_BRANCH.sub(
+        lambda branch: f"{branch[0]}\n{branch[1]}ctx->r31 = (gpr)(int32_t)0x{int(branch[2], 16) + 8:08X}u;",
+        text,
+    )
+
+
 def stores(text: str) -> str:
     """N64Recomp's stores, `MEM_W(o, r) = v;`, as calls: the port's memory is big-endian, not an lvalue."""
     return STORE.sub(lambda m: f"{m.group(1)}STORE_{m.group(2)}({m.group(3)}, {m.group(4)});", text)
@@ -395,7 +410,7 @@ def prepare(folder: Path, out: Path, game_h: str, fixed: list[str], hosts: list[
     for f, text in sources.items():
         text = only(text, drop & set(DEFINED.findall(text)))
         target = out / f"rec_{f.stem}.c"
-        _write(target, stores(rename(loops(text))))
+        _write(target, stores(rename(loops(link_branches(text)))))
         units.append(target)
     for f in list(out.glob("rec_*.c")):
         if f not in units:
