@@ -115,6 +115,27 @@ def test_saved_match_recheck_pause_is_validated_saved_and_applied_live(app, monk
     assert not net.progress.matched_rechecks_paused
 
 
+def test_two_cli_sessions_claim_different_open_functions(app):
+    """match-function: a session with no function named claims an open one under its own holder, so two sessions
+    working at once never get the same function; release gives it back to the queue."""
+    from .test_loading import tiny_game
+    client,net,_=app
+    tiny_game(net,'parallel-claims',functions=3)
+    h={'X-Decomp':'1'}
+    first=client.post('/api/claim',headers=h,json={'slug':'parallel-claims','holder':'claude-a'})
+    second=client.post('/api/claim',headers=h,json={'slug':'parallel-claims','holder':'claude-b'})
+    assert first.status_code==200 and second.status_code==200,(first.text,second.text)
+    a,b=first.json()['name'],second.json()['name']
+    assert a!=b and {a,b}<={'func_0','func_1','func_2'}
+    # asking again while holding one is that same claim, renewed
+    assert client.post('/api/claim',headers=h,json={'slug':'parallel-claims','holder':'claude-a'}).json()['name']==a
+    assert client.post('/api/claim',headers=h,json={'slug':'parallel-claims','holder':'bad holder!'}).status_code==400
+    assert client.post('/api/release',headers=h,json={'slug':'parallel-claims','name':a,'holder':'claude-a'}).status_code==200
+    held={r['name'] for r in net.project_store(net._project('parallel-claims')['id']).all(
+        'SELECT f.name FROM claims c JOIN functions f ON f.id=c.function_id')}
+    assert held=={b}
+
+
 @pytest.fixture(scope="module")
 def app(tmp_path_factory):
     home = tmp_path_factory.mktemp("home")

@@ -720,7 +720,7 @@ def register(app: App) -> None:
             name = str(data.get('name', ''))
             observer = watch(name, log.progress) if log is not None else nullcontext()
             with observer, net.progress.foreground():
-                agent, _ = net.local_agent("you")
+                agent, _ = net.local_agent(_holder(data))
                 res = net.attempt(agent, name, str(data.get("source", "")), slug, publish=False)
                 return {"score": res["score"], "matched": res["matched"], "exact": res.get('exact',False),
                         "new_match": res.get('new_match',False), "adopted": res.get('adopted',False),
@@ -747,8 +747,28 @@ def register(app: App) -> None:
                 if snapshot['state']!='running':raise NetworkError(snapshot.get('error') or 'Attempt ended without a result.')
             time.sleep(.05)
 
+    def _holder(data):
+        """Who a CLI judges as: "you" (the window), or a named holder such as one match-function session
+        ("claude-<id>"), so two sessions working at once each hold their own claim instead of sharing yours."""
+        holder = str(data.get("holder") or "")
+        if not holder:
+            return "you"
+        if len(holder) > 40 or not all(c.isalnum() or c in "-_." for c in holder):
+            raise NetworkError("A holder is up to 40 letters, digits, '-', '_' or '.'.")
+        return holder
+
+    def p_claim(slug, request, data):
+        """A CLI claims a function, as "you" or a named holder (_holder): the named one, or with no name an open
+        function nobody holds, picked by `strategy` (random by default), so parallel sessions never share one."""
+        agent, _ = net.local_agent(_holder(data))
+        name = str(data.get("name") or "") or None
+        fn = net.claim_row(agent, slug, name, str(data.get("strategy") or "random"))
+        if fn is None:
+            raise NetworkError("No open function is left to claim in this project.")
+        return {"name": fn["name"], "holder": agent.name}
+
     def p_release(slug, request, data):
-        agent, _ = net.local_agent("you")
+        agent, _ = net.local_agent(_holder(data))
         try:
             net.release(agent, str(data.get("name", "")), "", slug)
         except NetworkError:
@@ -1394,7 +1414,7 @@ def register(app: App) -> None:
         "/api/code-audit-results": (g_code_audit, ["GET"]), "/api/code-audit-review": (p_code_audit_review, ["POST"]),
         "/api/delete": (p_delete, ["POST"]),
         "/api/try/status": (g_try_status, ["GET"]),
-        "/api/try": (p_try, ["POST"]), "/api/release": (p_release, ["POST"]), "/api/claim/handover": (p_claim_handover, ["POST"]), "/api/reopen": (p_reopen, ["POST"]), "/api/setaside": (p_set_aside, ["POST"]),
+        "/api/try": (p_try, ["POST"]), "/api/release": (p_release, ["POST"]), "/api/claim": (p_claim, ["POST"]), "/api/claim/handover": (p_claim_handover, ["POST"]), "/api/reopen": (p_reopen, ["POST"]), "/api/setaside": (p_set_aside, ["POST"]),
         "/api/recheck": (p_recheck, ["POST"]),
         "/api/finish-near": (p_finish_near, ["POST"]),
         "/api/reconcile-matches": (p_reconcile_matches, ["POST"]),
