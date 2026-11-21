@@ -1592,24 +1592,11 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
                         if baseline == 0:
                             reason = 'Matched'
                     jump_profile = getattr(search, 'jump_table_profile', None)
-                    if baseline and not fork and not relabel and jump_profile:
+                    if baseline and not fork and not relabel and (jump_profile or baseline == measured_baseline):
                         from . import profile_climb
-                        search.phase = 'jump-table relocation repair'
-                        profile = {key: jump_profile[key] for key in ('toolchain', 'flags')}
-                        if profile_climb.climb(search, agent, proj, fn, jump_profile['source'], profile,
-                                               jump_profile['score'], require_clean=True) == 0:
-                            reason = PROFILE_LEAD
-                    elif not fork and baseline == measured_baseline and not relabel:
-                        # A productive source pass continues under its measured compiler.
-                        # (code built with other settings: before the local repairs spend their half of the time,
-                        # measure the profiles its habits point to and climb under one that scores the C better than
-                        # the function's own; profile_climb. At most a few compiles when none does.)
-                        from . import profile_climb
-                        search.phase = 'other compiler profiles'
-                        found = profile_climb.lead(search, agent, proj, fn, fn['best_source'], baseline)
-                        if found is not None and profile_climb.climb(search, agent, proj, fn, fn['best_source'], *found) == 0:
-                            # (exact only under another profile: a compiler suggestion waits; the function isn't
-                            # matched under its own settings, so the matched-only steps below must not run)
+                        search.phase = 'jump-table relocation repair' if jump_profile else 'other compiler profiles'
+                        if profile_climb.explore(search, agent, proj, fn, baseline, jump_profile):
+                            # The usual exact suggestion path verifies the alternate settings.
                             reason = PROFILE_LEAD
                 if baseline != 0 and reason not in ('Matched', PROFILE_LEAD):
                     search.phase = 'local repairs'
