@@ -421,3 +421,17 @@ def test_shared_halfword_index_routed_for_kmc(monkeypatch):
     rows = [('r', 'lh $a0, ($v0)', 'lh $v1, ($v0)')]
     assert 'shared_halfword_index' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'shared_halfword_index' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_byte_backedge_routed_for_kmc(monkeypatch):
+    from decompnet.app.diff_gated_repairs import measured_narrow_use
+
+    def candidate(source, name, rows):
+        assert (source, name) == ('void f(void) {}', 'f')
+        assert rows == [('r', 'lbu $a0, ($t0)', 'lbu $v0, ($t0)')]
+        return [('byte_backedge_carrier', 'void f(void) { work(); }')]
+
+    monkeypatch.setattr(measured_narrow_use, 'byte_backedge_variants', candidate)
+    rows = [('r', 'lbu $a0, ($t0)', 'lbu $v0, ($t0)')]
+    assert 'byte_backedge_carrier' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'byte_backedge_carrier' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))

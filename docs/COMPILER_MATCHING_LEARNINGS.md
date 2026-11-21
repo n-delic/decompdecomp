@@ -10498,3 +10498,12 @@ index local, declaring the score separately after its original declaration
 group, and inlining the second loop's halfword load as the left operand of the
 equality brought the linked score to 0. Leaving the score in its declaration
 group left score 40. The deep permuter reproduced and saved the byte match.
+
+### Reuse the entry byte carrier at a dispatch loop's back edge
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, a scratch N64 bytecode dispatch
+draft scored 140. Reusing the existing entry temporary for the back-edge byte load,
+sentinel comparison and opcode mask lowered the linked score to 125. The target
+and candidate then use the same register for all three operations. Using the
+narrowed opcode as both the sentinel and switch value did not improve the score.
+The deep permuter reproduced and saved the partial improvement.
