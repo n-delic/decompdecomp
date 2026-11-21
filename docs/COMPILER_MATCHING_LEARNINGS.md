@@ -1,5 +1,32 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: preserve value lifetimes and stack buffer shape
+
+Two archived replays through the linked judge went from 18 to 23 exact
+matches in 36 drafts and from 38 to 39 in 44 drafts. The base command
+for all six new matches was `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32`.
+
+- With `-O2 -g3`, carry the zero-extended halfword in a word local
+  through the comparison and the word and byte stores. This removes a
+  separate mask in the 72-byte target (155 to 0).
+- With `-O2 -g3`, use one five-byte signed buffer for two calls and write
+  its terminator at offset four. This matches the byte store in the
+  first call's delay slot in a 116-byte target (160 to 0).
+- With `-O2 -g3`, express the 52-byte counted byte copy as a compact
+  `for` with two postincrements (160 to 0). The same loop with a
+  multiline body still scored 160 because the stack adjustment and
+  return were scheduled differently.
+- With `-O2`, capture the global record pointer after the first call
+  and reuse it for all the record fields and the final call. The
+  88-byte target has no second global load (200 to 0).
+- With `-O1`, spell the record field in both operands of the linear
+  interpolation while retaining the original assignment to the float
+  temporary. This schedules the load after the constant setup in a
+  236-byte target (170 to 0). Two similar drafts still scored 170.
+- With `-O2 -g3`, cache the bound before assigning the table cursor
+  and use the same bound at entry and on the back edge. The 92-byte
+  target keeps the bound in one register (130 to 0).
+
 ### KMC GCC 2.7.2: recover cursor advances, switch initializers and call arguments
 
 The same 36-case measured replay went from 12 to 18 exact matches.
