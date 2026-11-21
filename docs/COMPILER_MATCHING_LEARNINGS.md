@@ -9213,3 +9213,16 @@ the first three and inlining the last two reached a score of 650.
 
 All measurements use copied projects and the original judge. Fresh
 drafts and Deep Permuter proposals matched in all ten cases.
+
+### Unsigned byte arrays under KMC at O1
+
+Six N64 functions built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1`
+scored 200 because a generated `extern char[]` declaration made KMC
+emit `lb` at the target's `lbu`. The register and address operand were
+identical. Declaring the loaded array as `unsigned char[]` reproduced
+all 48 to 100 linked bytes for each function on a copied project.
+
+One routine had two byte arrays. Changing the address passed to a
+callee left the score at 200. Changing the array used in the measured
+byte read took it to zero. The proposal requires either the read's
+relocation or a unique relocated source array with one read.

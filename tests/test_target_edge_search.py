@@ -498,3 +498,10 @@ def test_short_leaf_repairs_reach_kmc_proposals(monkeypatch):
     ido = dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
     assert 'linked_insert' not in ido
     assert 'guarded_global_return' not in ido
+
+
+def test_kmc_proposes_an_unsigned_array_for_a_single_byte_load_mismatch():
+    source = 'extern char data[];\ns32 f(s32 i) { return *(data + i); }'
+    rows = [('|', 'lbu $v0, %lo(data)($at)', 'lb $v0, %lo(data)($at)')]
+    assert dict(route(source, rows, 'asm'))['kmc_unsigned_byte_array'] == source.replace('char', 'unsigned char')
+    assert 'kmc_unsigned_byte_array' not in dict(route(source, rows, 'asm', compiler='ido-5.3'))
