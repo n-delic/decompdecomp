@@ -9470,3 +9470,28 @@ load and broke a store-then-pass site; a `volatile` cast materialized the
 address in a register; a user label on the shared exit call changed tail
 merging in five unrelated cases (6 to 26); passing a float argument through a
 local added `mtc1`/`mfc1` pairs.
+
+### Apply one scale for relocated word table loads
+
+Three N64 functions built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32`
+(two with `-O1` and one with `-O2 -g3`) scored 10 because a scaled address
+was applied to a word pointer. Using typed arrays and reducing the source
+scale by two bits reproduced all 36, 80 or 172 linked bytes on copied
+projects. One loop held the relocated table base across iterations. In a
+separate case, seven adjacent word loads shared the same scaled index.
+
+Three other functions with `-O2 -g3` scored 30. They needed both a byte
+offset from a generated global and a word-scaled subscript. The target
+adds the index between the high and low relocation operands. Performing
+both additions on a byte pointer and restoring the word dereference
+reproduced all 68, 108 or 148 linked bytes. Two also matched from fresh
+drafts.
+
+### Forward an untouched argument before a relocated address
+
+Two N64 wrappers built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`
+scored 10. The target set the second argument through a paired address
+relocation, with its low half in the call's delay slot. The draft placed
+the address in the first argument register. Restoring the incoming
+argument reproduced all 32 or 40 linked bytes on a copied project, even
+when another no-argument call followed.
