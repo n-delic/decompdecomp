@@ -138,6 +138,8 @@ class BriefMixin:
         bindings = [(name,self.symbols(proj['id']).resolve(name)) for name in sorted(roots)]
         from ..draft_reports import generation
         inputs = [DRAFT_REVISION, self.cfg(proj).get("draft_generation", 0), hashlib.sha256((fn["asm"] or "").encode()).hexdigest(), fn["name"], target, own["toolchain"], own.get("flags", []), sorted(roots), bindings, context]
+        if target.startswith('mips-') and re.search(r'\bjr\s+\$(?!(?:ra|31)\b)\w+', fn['asm'] or ''):
+            inputs.append('draft jump-table aliases')
         if own["toolchain"] == 'gcc-2.7.2-kmc' and 'swl' in (fn['asm'] or ''):
             from decomprepair.unaligned_stack_drafts import stack_copy
 
@@ -300,7 +302,7 @@ class BriefMixin:
                         draft_reports.failure(report, 'generation', 'without_context', fallback_error)
             if report['failures']:
                 draft_reports.save(self, fn['id'], report, project_id=proj['id'])
-            text = f"{DRAFT_NOTE}\n{seeds.M2C_MACROS}\n{draft}" if draft else ""
+            text = f"{DRAFT_NOTE}\n{seeds.with_m2c_macros(draft)}" if draft else ""
             with self.project_store(proj['id']).tx() as db:
                 db.execute("UPDATE functions SET seed=?, seed_key=? WHERE id=?", (text, key, fn["id"]))
         return text

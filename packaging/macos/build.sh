@@ -51,6 +51,14 @@ cat > "$CONTENTS/Info.plist" <<EOF
 </dict></plist>
 EOF
 
+# Preview builds can carry a locally built, relocatable RT64 adapter.
+if [ -n "${DECOMP_RT64_BUNDLE_DIR:-}" ]; then
+  mkdir -p "$CONTENTS/Frameworks/rt64"
+  cp "$DECOMP_RT64_BUNDLE_DIR/libdecompnet-rt64.dylib" "$DECOMP_RT64_BUNDLE_DIR/libSDL2-2.0.0.dylib" "$CONTENTS/Frameworks/rt64/"
+  ditto "$DECOMP_RT64_BUNDLE_DIR/licenses" "$CONTENTS/Resources/rt64-licenses"
+  "$CONTENTS/Runtime/bin/python3.12" -c 'import ctypes; from decompnet.consoles.n64.port import rt64_adapter; ctypes.CDLL(str(rt64_adapter())).decompnet_rt64_adapter'
+fi
+
 # Test the path that Finder invokes before archiving. It must work after moving the app.
 "$CONTENTS/MacOS/decompdecomp" --help >/dev/null
 "$CONTENTS/Runtime/bin/python3.12" -c 'import Cocoa, WebKit, decompnet.app.server'

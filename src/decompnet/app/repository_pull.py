@@ -128,10 +128,10 @@ def _merge(net, slug, root, head, target, ahead, name, commits, destination, sel
         output.progress({'phase': phase, 'queued': False})
         try:
             prepared = repository_pull_progress.prepare(net, slug, root, head, target, preview, check)
-        except repository_pull_progress.NeedsReview:
-            saved = ' Your progress is saved in a local commit.' if checkpoint else ''
-            raise NetworkError('Some changes need manual review. Open this checkout in your Git client, '
-                               f'merge {name}, and resolve the conflicts there.' + saved) from None
+        except repository_pull_progress.NeedsReview as exc:
+            saved = ('Your progress is saved in a local commit.' if checkpoint
+                     else 'Your local branch still contains your saved work.')
+            raise NetworkError(f'Some changes need manual review before merging {name}. {saved}\n{exc}') from None
         check()
         if (destination() != selected or git(root, 'rev-parse', 'HEAD') != head
                 or git(root, 'status', '--porcelain', '--untracked-files=no')):

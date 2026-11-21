@@ -25,6 +25,7 @@ from ...network import NetworkError
 
 STARTING = "Starting the game"  # the progress bar's last step, after the build's
 _running: dict[str, tuple[subprocess.Popen, str]] = {}
+_native: set[str] = set()
 _windows: dict[str, subprocess.Popen] = {}  # each game's own window, closed when the game stops
 _lock = threading.Lock()
 
@@ -52,19 +53,38 @@ def _answers(url_port: int) -> bool:
         return False
 
 
-def running(slug: str) -> str | None:
-    """The live view's address of the project's game, while it runs."""
+def running_result(slug: str) -> dict | None:
+    """The live view and window type of a running game."""
     with _lock:
         entry = _running.get(slug)
         if entry and entry[0].poll() is None:
-            return entry[1]
+            return {"url": entry[1], "native": True} if slug in _native else {"url": entry[1]}
         _running.pop(slug, None)
+        _native.discard(slug)
         return None
+
+
+def running(slug: str) -> str | None:
+    result = running_result(slug)
+    return result["url"] if result else None
+
+
+def native_adapter(net, slug: str, runtime_id: str) -> Path:
+    project = net.project_row(slug, sync=False)
+    kit = net.console(project).port_kit
+    if kit and net.is_rom(project):
+        for runtime in kit.runtimes:
+            if runtime.id == runtime_id and "compatibility" in runtime.modes and runtime.native_adapter:
+                if path := runtime.native_adapter():
+                    return path
+                raise NetworkError("Configure the macOS RT64 adapter before playing with N64ModernRuntime.")
+    raise NetworkError("Choose N64 compatibility and the decompdecomp runtime to play or export today.")
 
 
 def stop(slug: str) -> bool:
     with _lock:
         entry = _running.pop(slug, None)
+        _native.discard(slug)
         win = _windows.pop(slug, None)
     if win is not None and win.poll() is None:
         win.terminate()
@@ -238,14 +258,13 @@ def library_c(net, slug: str) -> dict:
     return ultralib.units(net, slug)
 
 
-def play(net, slug: str, log=print) -> dict:
+def play(net, slug: str, log=print, *, adapter: Path | None = None) -> dict:
     """Build the project's game for the PC if anything changed, start it with its live view, and return its address
     once it answers: {"url": ...}."""
     from . import build
 
-    if (url := running(slug)):
-        log(f"already running at {url}")
-        return {"url": url}
+    if view := running_result(slug):
+        return view
     repo, cfg, rom = game(net, slug)
     steps = (*build.STEPS, STARTING)
     program = build.build(repo, console=cfg.get("platform", "n64"), log=log, steps=steps,
@@ -257,26 +276,52 @@ def play(net, slug: str, log=print) -> dict:
     from ...consoles.n64.code import RUNTIME_ENTRIES
     env = {**os.environ, "PORT_LIVE": str(port), "PORT_SAVE": str(out / "game.eep"),
            "PORT_ENTRIES": str(rom.parent / RUNTIME_ENTRIES)}
+    env.pop("PORT_RT64", None)
+    if adapter:
+        from ... import toolchains
+
+        toolchains.ensure("sdl3", log=log)
+        env.update(PORT_RT64=str(adapter), PORT_WINDOW="1", PORT_SDL=str(toolchains.binary("sdl3")),
+                   PORT_TITLE=cfg["rom"].get("title") or slug)
     if (unlisted := unlisted_entries(net, slug)):
         log(f"playing has found {len(unlisted)} addresses the game runs that no function starts "
             f"({', '.join(f'{a:08X}' for a in unlisted[:4])}{'…' if len(unlisted) > 4 else ''}): Add missed functions "
             "(the project's Code coverage review) adds them as functions, without a reimport")
-    log_file = open(out / "play.log", "w", encoding="utf-8")
-    proc = subprocess.Popen([str(program), str(rom), "0"], cwd=out, env=env, stdout=log_file, stderr=subprocess.STDOUT,
-                            stdin=subprocess.DEVNULL)
-    log_file.close()
+    log_path = out / "play.log"
+    with log_path.open("w", encoding="utf-8") as log_file:
+        proc = subprocess.Popen([str(program), str(rom), "0"], cwd=out, env=env, stdout=log_file,
+                                stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
     url = f"http://127.0.0.1:{port}/"
-    for _ in range(100):  # the host listens before the game boots
-        if proc.poll() is not None:
-            raise NetworkError(f"the game stopped as it started: see {out / 'play.log'}")
-        if _answers(port):
-            break
-        time.sleep(0.1)
-    else:
-        proc.terminate()
-        raise NetworkError(f"the game didn't start its live view: see {out / 'play.log'}")
+    try:
+        with log_path.open(encoding="utf-8", errors="replace") as startup:
+            ready = not adapter
+            marker = "RT64 compatibility frame submitted"
+            tail = ""
+            for _ in range(250 if adapter else 100):
+                getattr(log, "check_cancel", lambda: None)()
+                if proc.poll() is not None:
+                    raise NetworkError(f"the game stopped as it started: see {log_path}")
+                if not ready:
+                    chunk = tail + startup.read()
+                    ready = marker in chunk
+                    tail = chunk[-len(marker):]
+                if ready and _answers(port):
+                    break
+                time.sleep(0.1)
+            else:
+                explanation = "RT64 did not receive a frame from the game" if adapter else "the game didn't start"
+                raise NetworkError(f"{explanation}: see {log_path}")
+    except BaseException:
+        if proc.poll() is None:
+            proc.terminate()
+        raise
     with _lock:
         _running[slug] = (proc, url)
+        if adapter:
+            _native.add(slug)
+    if adapter:
+        log("Playing in the RT64 Metal window.")
+        return {"url": url, "native": True}
     log(f"playing at {url}")
     return {"url": url, "window": _open_window(slug, url, proc.pid, f"{cfg['rom'].get('title') or slug} (PC port)")}
 

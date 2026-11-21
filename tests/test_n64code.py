@@ -262,3 +262,19 @@ def test_paired_deflate_uses_proven_runtime_slot_and_excludes_data(tmp_path):
     assert [s['vram'] for s in segments] == [core1,core2,limit,limit]
     assert segments[2]['exclusive_ram_id'] == segments[3]['exclusive_ram_id']
     assert all(s['subsegments'][1][:2] == [s['start']+len(text),'data'] for s in segments)
+
+
+def test_adjacent_recovered_mappings_keep_a_called_scheduled_prologue():
+    from decompnet.consoles.n64.code import recover_scheduled_mapping_entries
+
+    base = 0x80001000
+    seam = 32
+    call = 0x0c000000 | (((base+seam-8)>>2)&0x03ffffff)
+    body = struct.pack('>12I', call, 0, 0, 0, JR_RA, 0, 0x3c078001, 0x90e70420,
+                       0x27bdffe8, 0, JR_RA, 0x27bd0018)
+    ranges = [(0, seam, base), (seam, len(body), base+seam)]
+    assert recover_scheduled_mapping_entries(body, ranges, []) == [
+        (0, 24, base), (24, len(body), base+24),
+    ]
+    assert recover_scheduled_mapping_entries(body+(base+seam).to_bytes(4,'big'), ranges, []) == ranges
+    assert recover_scheduled_mapping_entries(bytes(4)+body[4:], ranges, []) == ranges

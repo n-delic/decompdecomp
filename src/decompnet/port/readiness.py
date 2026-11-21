@@ -289,9 +289,14 @@ def runtimes(kit, report: dict, mode: str | None = None) -> list[dict]:
         if report.get("mode") == "project":
             missing.append("A port-build adapter for the project's source tree")
         built = mode in runtime.built_for if mode else bool(runtime.built_for)
+        native_play = mode == "compatibility" and runtime.native_adapter is not None
+        if native_play and not runtime.native_adapter():
+            missing.append("A local macOS RT64 adapter (see docs/PORTING.md)")
         name = "decompdecomp runtime" if mode == "compatibility" and runtime.id == "wasm" else runtime.name
-        out.append({"id": runtime.id, "name": name, "summary": runtime.summary, "built": built,
-                    "missing": missing, "playable": built and not missing})
+        summary = runtime.compatibility_summary if mode == "compatibility" and runtime.compatibility_summary else runtime.summary
+        out.append({"id": runtime.id, "name": name, "summary": summary, "built": built or native_play,
+                    "missing": missing, "playable": (built or native_play) and not missing,
+                    "exportable": built and not missing})
     return out
 
 

@@ -473,7 +473,7 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
     if not packed and taken and (slots := named_dma.read(original_rom, taken)):
         if shared_dma.add(config, original_rom, taken, found, slots, log):
             return original
-    if not packed and taken and (slots := shared_dma.read(original_rom, taken, found)):
+    if not packed and taken and (slots := shared_dma.read(original_rom, taken, found, include_inline=False)):
         if shared_dma.add(config, original_rom, taken, found, slots, log):
             return original
     if not packed and taken and (banks := dma_overlays.banks(original_rom)):
@@ -490,13 +490,18 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
         found = sorted(found + loaded["segments"])
         found = sorted(complete_gaps(rom, taken, found, tuple((s.rom_start, s.rom_end, s.vram) for s in known),
                                      runtime_entries(workdir), log=log))
-    from .boot_mapping import extend_startup_data, extend_startup_trap, recover
+    from .boot_mapping import extend_startup_data, extend_startup_trap, mark_boot_version, recover
     from .rsp_prefix import trim
 
     found = trim(rom, found, taken, log)
+    found = recover_scheduled_mapping_entries(rom, found, taken, log)
     recover(config, rom, found, log)
     extend_startup_trap(config, rom, log)
     extend_startup_data(config, rom, log)
+    mark_boot_version(config, rom, log)
+    if not packed and taken and (slots := shared_dma.read(original_rom, taken, found)):
+        if shared_dma.add(config, original_rom, taken, found, slots, log):
+            return original
     if not packed and taken and (slots := raw_slots.read(original_rom,taken)):
         if raw_slots.add(config,original_rom,found,slots,log):
             return original
@@ -511,6 +516,42 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
     kib = sum(en - st for st, en, _ in found) // 1024
     log(f"found {len(found)} more code segment{'s' if len(found) != 1 else ''} the game loads later ({kib} KiB)")
     return image
+
+
+def recover_scheduled_mapping_entries(image, found, taken, log=print):
+    """Move an inferred split from a stack allocation to its independently called prologue."""
+    from ...arch.mips_code_recovery import _lead
+
+    original = sorted(found)
+    result = list(original)
+    for index, (left, right) in enumerate(zip(original, original[1:])):
+        start, end, first_address = left
+        seam, stop, address = right
+        if end != seam or seam-start < 16 or address != first_address+seam-start:
+            continue
+        if not is_frame(int.from_bytes(image[seam:seam+4], 'big')):
+            continue
+        for lead in (4, 8):
+            entry = seam-lead
+            if (image[entry-8:entry] != JR_RA.to_bytes(4, 'big') + bytes(4)
+                    or _lead(image, entry, stop, 'big', 'vr4300') != lead):
+                continue
+            candidates = range(address-lead, address+4, 4)
+            targets = {0x0c000000 | ((target>>2)&0x03ffffff):target for target in candidates}
+            called = set()
+            for lo, hi, vram in (*taken, *original):
+                if lo%4 or hi%4 or not 0 <= lo < hi <= len(image) or (vram>>28) != address>>28:
+                    continue
+                words = (word for word, in struct.iter_unpack('>I', memoryview(image)[lo:hi]))
+                called.update(targets[word] for word in words if word in targets)
+            if (called != {address-lead}
+                    or any(target.to_bytes(4,'big') in image for target in range(address-lead+4,address+4,4))):
+                continue
+            result[index] = (result[index][0], entry, result[index][2])
+            result[index+1] = (entry, stop, address-lead)
+            log('Kept a directly called scheduled prologue with its recovered code range.')
+            break
+    return result
 
 
 def insert_segments(config: Path, cfg: dict, found, size: int) -> None:

@@ -529,7 +529,7 @@ def test_multiword_alignment_between_a_return_and_an_aligned_frame(protect, fill
 def test_long_alignment_before_a_directly_called_entry(protect):
     call = 0x0c000000 | ((BASE+32) >> 2) & 0x3ffffff
     words = [0x8c820000, 0x03e00008, 0, 0,
-             0xa0850000, 0x2463ffff, 0x0461fffd, 0x2484ffff,
+             0xa0a60004, 0x24e7ffff, 0x04e1fffd, 0x24a5fffe,
              *BODY, call, 0, 0x03e00008, 0]
     image, functions, segments = fixture(words, cuts=(0,16,32,32+len(BODY)*4,len(words)*4))
     symbols = [f'entry = 0x{BASE+16:08X};'] if protect else ()
@@ -733,3 +733,31 @@ def test_branch_from_wide_padding_does_not_split_the_preceding_frame(protected):
     symbols = [f'entry = 0x{BASE+52:08X};'] if protected else ()
     result = repair(functions, [], image, consoles.get('n64'), segments, symbols=symbols)
     assert [(fn.rom, fn.size) for fn in result[:2]] == ([(0,16),(16,48)] if protected else [(0,36),(64,32)])
+
+
+@pytest.mark.parametrize('protect', [False, True])
+def test_zero_reservation_corroborates_alignment_after_a_return(protect):
+    call = 0x0c000000 | (((BASE+128)>>2)&0x3ffffff)
+    words = [*BODY, 0x24040002, 0x00851821, 0xac830030, 0x24460008,
+             *([0]*20), *BODY, call, 0, 0x03e00008, 0]
+    image, functions, segments = fixture(words, cuts=(0,32,48,128,160,len(words)*4))
+    symbols = [f'entry = 0x{BASE+40:08X};'] if protect else ()
+    result = repair(functions, [], image, consoles.get('n64'), segments, symbols=symbols)
+    assert any(fn.rom == 32 for fn in result) == protect
+    assert any(fn.rom == 128 for fn in result)
+    if not protect:
+        assert not any(32 <= fn.rom < 128 for fn in result)
+
+
+@pytest.mark.parametrize('case', ['worker', 'wrong restore', 'no incoming reference'])
+def test_closed_worker_keeps_its_compiler_epilogue(case):
+    entry = BASE+16
+    call = 0x0c000000 | ((entry>>2)&0x03ffffff) if case != 'no incoming reference' else 0
+    back = 0x08000000 | (((entry+12)>>2)&0x03ffffff)
+    restore = 0x8fb00010 if case != 'wrong restore' else 0x8fb10010
+    words = [call, 0, 0x03e00008, 0, 0x27bdffe8, 0xafbf0014, 0xafb00010, 0x26100001,
+             back, 0, restore, 0x8fbf0014, 0x03e00008, 0x27bd0018]
+    image, functions, segments = fixture(words, cuts=(0,16,32,56))
+    result = repair(functions, [], image, consoles.get('n64'), segments)
+    actual = [(fn.rom, fn.size) for fn in result]
+    assert ((16,40) in actual) == (case == 'worker')

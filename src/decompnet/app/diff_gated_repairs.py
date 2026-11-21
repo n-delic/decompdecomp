@@ -8,6 +8,7 @@ from decomprepair import (
     byte_cursor_postincrements,
     direct_mapped_address,
     field_snapshot_copies,
+    float_intermediate_repairs,
     float_matrix_identity,
     global_pointer_local_repairs,
     guard_inversion_repairs,
@@ -15,6 +16,7 @@ from decomprepair import (
     indexed_field_cursor,
     kmc_cast_repairs,
     likely_branch_cursor,
+    loop_counter_roles_repairs,
     loop_sentinel_repairs,
     loop_storage_shapes,
     measured_address_repairs,
@@ -49,6 +51,7 @@ from decomprepair import (
     stack_fill_drafts,
     stack_header_buffer,
     stack_read_retry,
+    symbol_width_repairs,
     target_string_repairs,
     targeted_switch_labels,
     uncached_read_repairs,
@@ -224,7 +227,9 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_memory_order.variants(source,name,rows,resolve=resolve,header=header)
         result += measured_memory_order.staged_field_masks(source, name, rows, header)
         result += search_exit_loop_repairs.sentinel_byte_guard_variants(source, name, rows)
+        result += loop_counter_roles_repairs.guarded_reuse_variants(source, name, rows)
         result += measured_float_grid_stores.variants(source, name, rows)
+        result += float_intermediate_repairs.repeated_products(source, name, rows)
         result += measured_expression_repairs.variants(source,name,header,rows)
         result += stack_byte_init_repairs.variants(source, name, header, rows)
         result += measured_temporary_repairs.variants(source,name,rows)
@@ -295,6 +300,10 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += target_string_repairs.verified_variants(source, name, header, rows, read_data)
         result += measured_immediate_repairs.variants(source,name,rows)
         result += measured_narrow_use.variants(source, name, rows)
+        result += symbol_width_repairs.signed_halfword_load_variants(source, name, rows)
+        result += measured_narrow_use.boolean_byte_carriers(source, name, rows)
+        result += measured_narrow_use.byte_backedge_variants(source, name, rows)
+        result += measured_narrow_use.shared_halfword_index_variants(source, name, rows)
         result += kmc_cast_repairs.variants(source,name,header,rows,flags)
         result += measured_null_iteration_store.variants(source, name, rows)
         result += target_guard_width_diff_repairs.proposals(source,name,header,rows,target,candidate,asm,

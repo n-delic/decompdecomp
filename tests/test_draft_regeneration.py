@@ -221,6 +221,7 @@ def test_regeneration_bypasses_cached_seed_and_generates_once(network,monkeypatc
     monkeypatch.setattr(net,'_seed_for',lambda *a:pytest.fail('Regeneration must not reuse cached generation'))
     text=draft_regeneration.generate(net,proj,fn,False)
     assert len(generated)==1 and 'int fresh' in text
+    assert seeds.M2C_MACROS not in text
     assert net._function(fn['name'],proj['slug'])['seed']==text
 
 
@@ -236,3 +237,10 @@ def test_imported_regeneration_submits_only_the_raw_draft_once(network,monkeypat
     outcome,report=draft_regeneration.trial(net,agent,proj,fn['id'],'raw imported C',True)
     assert len(calls)==1 and calls[0][0][-1]=='raw imported C' and calls[0][1]=={'keep':False}
     assert outcome=='near' and report['trials']==1 and report['compiled']
+
+
+def test_machine_draft_supplies_only_needed_m2c_compatibility_macros():
+    plain = 'unsigned int read_word(void) { return 3; }'
+    with_field = 'int read_word(void *p) { return M2C_FIELD(p, int *, 0); }'
+    assert seeds.with_m2c_macros(plain) == plain
+    assert seeds.with_m2c_macros(with_field) == seeds.M2C_MACROS + '\n' + with_field

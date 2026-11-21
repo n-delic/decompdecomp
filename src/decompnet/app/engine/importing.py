@@ -615,7 +615,7 @@ class ImportMixin:
             draft = seeds.generate_from_asm(self._asm_text(fn, proj), fn["name"], current, header, data_asm, valid=True,
                                             resolve=lambda symbol: self.symbols(proj['id']).resolve(symbol))
             if draft:
-                drafts.append((fn, f"{seeds.M2C_MACROS}\n{draft}\n"))
+                drafts.append((fn, seeds.with_m2c_macros(draft) + "\n"))
         log(f"testing {len(tcs)} compilers on {len(drafts)} small functions")
 
         def matches(job) -> bool:

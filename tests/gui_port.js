@@ -402,5 +402,22 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    await t.run('playGame()');
    assert.deepEqual(JSON.parse(JSON.stringify(t.bodies[t.calls.indexOf('/api/play')])),
      {slug:'a',build_mode:'compatibility',runtime:'wasm'});}
+  {const t=setup();t.c.S.tab='porting';
+   t.c.followJob=async()=>({url:'http://127.0.0.1:5/',native:true});
+   const builtin={id:'wasm',name:'decompdecomp runtime',summary:'Built-in host.',built:true,missing:[],playable:true,exportable:true};
+   const rt64={id:'n64modernruntime',name:'N64ModernRuntime',summary:'RT64.',built:true,missing:[],playable:true,exportable:false};
+   const build_modes=[{id:'compatibility',name:'Compatibility',runtimes:[builtin,rt64]}];
+   t.c.exportOptions=async()=>({available:true,mac:true,targets:['web']});
+   t.c.reply=async url=>url==='/api/play'?{job:'native1'}:{...report,build_modes};
+   await t.run('loadPortReadiness()');
+   const original=t.c.$('portBuildPickers').children[1].children[2].children[0];
+   original.checked=true;original.listeners.change();
+   assert.equal(t.c.$('portPlay').disabled,false);
+   assert.equal(t.c.$('portExportStart').disabled,true);
+   await t.c.$('portPlay').onclick();
+   assert.deepEqual(JSON.parse(JSON.stringify(t.bodies.at(-1))),
+     {slug:'a',build_mode:'compatibility',runtime:'n64modernruntime'});
+   assert.equal(t.c.$('portStop').hidden,false);
+   assert.match(t.c.$('portPlayLog').children.join(' '),/opened in the RT64 window/);}
   console.log('Port readiness panel: closed, read, stale reply, failure, asset map, extraction, link, suspicious calls, check behaviour, recompile, renamed calls, play, runtimes, the build bar, Stop, reattaching and export passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});
