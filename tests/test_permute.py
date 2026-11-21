@@ -586,7 +586,7 @@ def test_decomp_permuter_reads_an_sdk_local_and_a_macro_with_a_type():
         variants = gen.batch(job)
     finally:
         gen.close()
-    assert variants and all(" Widget::Count(int k)\n" in v for v in variants)
+    assert variants and all(re.search(r" Widget::Count\([^)]*\bk\)\n", v) for v in variants)
 
 
 @needs_tool
@@ -658,8 +658,8 @@ def test_decomp_permuter_reads_a_function_among_msvcs_macros(header, head):
     finally:
         gen.close()
     # the macros are put in where the function uses them, and its convention kept (the randomizer may retype what
-    # it returns: `__declspec(dllexport) volatile unsigned int f(int a)`)
-    convention = r"__declspec\(dllexport\) [^;{]*\bf\(int a\)" if "DLLEXPORT" in head else r"\b__stdcall f\(int a\)"
+    # it returns or a parameter’s type). Test restoration rather than a particular random rewrite sequence.
+    convention = r"__declspec\(dllexport\) [^;{]*\bf\([^)]*\ba\)" if "DLLEXPORT" in head else r"\b__stdcall f\([^)]*\ba\)"
     assert variants and all(re.search(convention, v) for v in variants)
 
 
@@ -801,3 +801,19 @@ def test_a_source_the_project_refuses_is_one_line_in_the_log(tmp_path, caplog, m
     assert caplog.records[-1].exc_info is None
     # the same best attempt is refused every time: its other turns go too
     assert net.store.one("SELECT permuted FROM functions WHERE id=1")["permuted"] == permute.MAX_TURNS
+
+
+def test_library_ordering_candidates_precede_random_batches_and_keep_the_judge(monkeypatch):
+    source = 'void f(Item *p) {\n  p->y = 0;\n  p->x = 0;\n}\n'
+    candidate = source.replace('  p->y = 0;\n  p->x = 0;', '  p->x = 0;\n  p->y = 0;')
+    net = FakeNet()
+    with net.store.tx() as db:
+        db.execute('UPDATE functions SET best_source=?',(source,))
+    generated = batches(monkeypatch,['unrelated random candidate'])
+    search = ScriptedPermuter(net,{candidate:0})
+    state = State()
+    search._permute(AGENT,net.project_row('game'),net.function(),state)
+    assert search.judged==[candidate]
+    assert state.matched==1 and state.variants==1
+    assert generated==[]
+    assert not net.store.one('SELECT 1 FROM claims')

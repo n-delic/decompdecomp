@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 import time
 from collections import OrderedDict
 
@@ -27,6 +28,9 @@ def max_searches() -> int:
     for its whole length, so one worker is always left for the automatic permuter and the drafts (a fixed 2 took
     every worker of a machine with 2). With a single worker there's nothing to leave, and one search may still run."""
     return max(1, min(2, workers.WORKERS - 1))
+
+
+_SEARCH_SLOTS = threading.BoundedSemaphore(max_searches())
 
 
 class SearchLimit(Exception):
@@ -197,7 +201,14 @@ class Search(Permuter):
 
 def run(net, slug: str, name: str, minutes: int, max_variants: int, log):
     """Use the same limited, lower-priority worker pool as automatic permutation."""
-    return workers.pool().submit(_run, net, slug, name, minutes, max_variants, log).result()
+    while not _SEARCH_SLOTS.acquire(timeout=0.1):
+        log.check_cancel()
+        log.progress({'phase':'Waiting for a shared search worker'})
+    try:
+        log.check_cancel()
+        return workers.pool().submit(_run, net, slug, name, minutes, max_variants, log).result()
+    finally:
+        _SEARCH_SLOTS.release()
 
 
 def _run(net, slug: str, name: str, minutes: int, max_variants: int, log):

@@ -27,7 +27,7 @@ from .. import hostenv, wine
 from ..network import NetworkError
 from . import agents, collab, routes, saves, tools, updates, window
 from .engine import RomNetwork
-from .routes import forks, life, pages, projects, rooms, setup, state
+from .routes import forks, life, matching, pages, projects, rooms, setup, state
 from .support import Jobs, Settings, session_options
 
 START_PAUSE_SECONDS = 0.02  # between projects in the console work at start (consoles_start)
@@ -213,7 +213,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
     app = routes.App(net, mcp, home, port, secret, mcp_url, build_id, manager, jobs, settings, allowed_hosts,
                      guard, body, call, fail, updater=updates.Updater(before_restart, port, secret),
                      busy=busy, quit_app=quit_app)
-    for part in (pages, state, projects, forks, setup, life, rooms):
+    for part in (pages, state, projects, matching, forks, setup, life, rooms):
         part.register(app)
 
     security = TransportSecuritySettings(enable_dns_rebinding_protection=True, allowed_hosts=sorted(allowed_hosts),

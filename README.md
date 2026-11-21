@@ -179,3 +179,27 @@ must give its full source under the same license. So must anyone who runs a chan
 The code from decomp.wtf was released under the MIT license by Sam Wolfs; its notice is in [LICENSE-decomp.wtf](LICENSE-decomp.wtf).
 
 <p align="center"><sub>Not related to Nintendo, Sony or Microsoft. Platform names are trademarks of their owners.</sub></p>
+
+## Local matching rewrites
+
+Deep permuter and the background permuter use [decomp-repair](https://github.com/RetroReversing/decomp-repair)
+for local C rewrite proposals and the guarded generator that calls the separately installed
+[decomp-permuter](https://github.com/simonlindholm/decomp-permuter). The library is pinned to one commit's source
+archive in `pyproject.toml`, with its SHA-256 in `uv.lock`; the installer checks that hash before it installs the
+archive, and installation needs no Git checkout.
+The library only proposes source. decompdecomp still compiles and judges each candidate with the game's
+original compiler, using the unchanged linked-byte or objdiff checks. Existing source and claims stay here.
+
+### Explicit project-wide searches
+
+The project-wide search API processes eligible saved C until the queue finishes or you stop it. Each function
+gets its own time and candidate limits, using the same deep-search judge as the function drawer. Completed ROM
+turns resume across restarts while their compiler, header, target and source agree. Changed inputs are retried.
+Imported builds are freshly judged on each explicit pass because their build dependencies live outside the app.
+Busy functions and shared worker slots wait with progress and cancellation. Status reads do not import or scan
+idle projects. Resetting totals keeps saved C, matches and completed turns.
+
+Cross-game searches use upstream's existing identical-function twins, on the room host. They retain result
+metadata and links to both functions locally; game data is not uploaded. This first upstream series does not
+add the fork's SDK-source catalogue, alternate compiler-profile search, per-function thread splitting or
+maximum-throughput compiler pool. Those need their own validated adapters (ROADMAP.md).
