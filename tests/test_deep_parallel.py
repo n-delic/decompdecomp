@@ -442,3 +442,21 @@ def test_scoped_cursor_entry_runs_before_broad_rewriting(monkeypatch):
     assert search.operand_order_pass(AGENT, proj, fn, 130, None) == 110
     assert len(tried) == 1
     assert 'do { cursor = (u16 **) (base + 0xC); } while (0);' in tried[0]
+
+
+def test_global_reset_trials_try_the_combination_before_the_scope_only_variant(monkeypatch):
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    proj = net.project_row('game')
+    fn = {**net.function(), 'asm': ''}
+    search = deep_permuter.Search(net, 1, 6, Log())
+    monkeypatch.setattr(deep_permuter.permuter_focus, 'classify', lambda *args: 'operand')
+    monkeypatch.setattr('decomprepair.scoped_global_reset.variants', lambda *args: [
+        ('scoped_global_reset', 'combined reset'), ('scoped_global_reset', 'scoped reset'),
+    ])
+    tried = []
+    monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 395)
+
+    assert search.operand_order_pass(AGENT, proj, fn, 855, None) == 395
+    assert tried == ['combined reset']
