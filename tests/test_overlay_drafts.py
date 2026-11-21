@@ -173,3 +173,35 @@ def test_recovered_overlay_drafts_compile_through_autopilot(network):
     row = net.store.one('SELECT seed,best_source,best_score FROM functions WHERE id=?', fn['id'])
     assert row['seed'] and row['best_source'] and row['best_score'] is not None
     assert net.store.one('SELECT compiled FROM attempts WHERE function_id=?', fn['id'])['compiled'] == 1
+
+
+def test_mips_draft_relocations_follow_the_supplied_table_alias(monkeypatch):
+    import subprocess
+    from pathlib import Path
+
+    table = '.section .rodata\ndlabel jtbl_8000a000\n.word .L80001008\n.word .L80001010\n'
+    text = ASSEMBLY.replace(OLD_NAME, NAME).replace(
+        'beqz $a0, .L80001010_overlay_001',
+        'lui $at, %hi(D_8000A000)\nlw $t0, %lo(D_8000A000)($at)',
+    )
+    text += '\nlui $at, %hi(D_8000A004)\njal D_8000A000\n'
+
+    def run(argv, **kwargs):
+        asm = next(Path(arg).read_text() for arg in argv if arg.endswith(f'{NAME}.s'))
+        assert 'lui $at, %hi(jtbl_8000a000)' in asm
+        assert 'lw $t0, %lo(jtbl_8000a000)($at)' in asm
+        assert 'lui $at, %hi(D_8000A004)' in asm
+        assert 'jal D_8000A000' in asm
+        assert Path(argv[-1]).read_text() == table
+        return subprocess.CompletedProcess(argv, 0, f'int {NAME}(void) {{ return 1; }}', '')
+
+    monkeypatch.setattr(seeds, 'available', lambda: True)
+    monkeypatch.setattr(seeds.subprocess, 'run', run)
+    assert seeds.run_m2c(text, NAME, 'mips-gcc-c', data_asm=table)
+
+
+def test_mips_table_aliases_leave_ambiguous_and_non_table_relocations_alone():
+    asm = 'lui $at, %hi(D_8000AB00)'
+    assert seeds._mips_table_aliases(asm, 'dlabel RO_8000AB00') == asm
+    assert seeds._mips_table_aliases(asm, 'dlabel jtbl_8000AB00\ndlabel jtbl_8000ab00') == asm
+    assert seeds._mips_table_aliases(asm, 'dlabel jtbl_8000AB00\ndlabel D_8000AB00') == asm
