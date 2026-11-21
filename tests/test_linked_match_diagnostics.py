@@ -55,6 +55,33 @@ def test_floating_register_lane_prioritizes_only_independent_float_load_orders()
     assert not allocation_search.floating_only(rows,'arm')
 
 
+def test_floating_register_lane_tries_the_two_arm_float_rewrites_first():
+    # A function whose both arms set one float field, six $f0/$f2 operands from exact (KMC GCC 2.7.2).
+    source = ('''void f(void *o, s32 k, f32 limit, f32 y) {
+    f32 old;
+    f32 r;
+    f32 s;
+
+    if (k == 2) {
+        r = (limit - y) * 30.0f;
+        old = M2C_FIELD(o, f32 *, 0xCC);
+        r = (f32)((f64)(r - old) * K + (f64)old);
+    } else {
+        s = M2C_FIELD(o, f32 *, 0x90);
+        r = s * 15.0f;
+    }
+    M2C_FIELD(o, f32 *, 0xCC) = r;
+}
+''')
+    rows = [('r','mul.s $f2, $f2, $f0','mul.s $f0, $f2, $f0'),('r','lwc1 $f0, 0xcc($s2)','lwc1 $f2, 0xcc($s2)')]
+    labels = {}
+    proposals = allocation_search.proposals(source,'f','mips',rows,[],labels)
+    assert proposals[0][0] == 'float_arm_roles'
+    assert 'M2C_FIELD(o, f32 *, 0xCC) += ' in proposals[0][1]
+    assert allocation_search.floating_proposals(source.replace('M2C_FIELD(o, f32 *, 0xCC) = r;','M2C_FIELD(o, f32 *, 0xCC) = r;\n#include "x.h"'),'f','',rows,'mips') == []
+    assert not allocation_search.floating_proposals(source,'f','',[('r','addu $a0, $a1, $a2','addu $a0, $a1, $a3')],'mips')
+
+
 def test_proven_indexed_dispatch_checks_past_first_word():
     from decompnet.rom.match import R_MIPS_32, RomTarget, _Linker
 
