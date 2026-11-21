@@ -1,5 +1,28 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: recover indexed stores and loop and call scheduling
+
+The linked judge reproduced 32 of 36 archived drafts, up from 27.
+The base command was `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32`.
+
+- With `-O2 -g3`, cast the four indexed global addresses to byte
+  pointers before adding the stride. Format the function on one line
+  to put the final store in the return delay slot (170 to 0 over
+  88 bytes). The multiline byte-stride spelling still missed the
+  return delay slot.
+- With `-O2 -g3`, remove the inferred argument from an early-exit
+  call and correct its lone draft prototype. The guard already sets
+  the register and the call's delay slot is a nop (200 to 0 over
+  404 bytes).
+- With `-O1`, spell both reads in the first interpolation using
+  the destination field while retaining the original temporary
+  assignment. That schedules its load after the constant setup
+  (170 to 0 in each of two 268-byte targets).
+- With `-O1`, compute the masked counter at the top of the loop
+  before passing it to the repeated call. Splitting the computation
+  between the entry and back edge replaced the first mask with
+  a move from zero (200 to 0 over 372 bytes).
+
 ### KMC GCC 2.7.2: recover call argument setup and a stack payload
 
 The linked replay went from 23 to 27 exact matches in 36 archived
