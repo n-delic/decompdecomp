@@ -288,3 +288,52 @@ def test_donor_build_retains_profile_and_header_only_after_exact_verdict(built, 
     assert net._context(matched['project_id'], matched['unit'])['header'] == header
     assert compiler_for(net.cfg(net._project(slug)), matched['vram'], matched)['flags'] == settings['flags']
     assert matched['status'] == 'matched'
+
+
+def test_saved_whole_donor_unit_reverifies_and_exports_only_its_entry(built, tmp_path):  # noqa: F811
+    from decompnet.app import donor_build, saves
+    from decompnet.app.twins import Job
+    from decompnet.project import compiler_for
+
+    net = RomNetwork(tmp_path / 'decomp.db', tmp_path)
+    slug = net.import_rom(ROM, confirmed=True, log=lambda *_: None)
+    agent, _ = net.local_agent('autopilot')
+    net.split_function(agent, slug, 'func_800007C4', '0x800007D0')
+    proj = net._project(slug)
+    fn = net._function('func_800007D0', slug)
+    own = compiler_for(net.cfg(proj), fn['vram'], fn)
+
+    root = tmp_path / 'donor'
+    (root / 'build').mkdir(parents=True)
+    (root / 'words.h').write_text('typedef int s32;\n')
+    whole = '#include "words.h"\nint other_body(int x) { return x + 31; }\n' + CLAMP
+    (root / 'unit.c').write_text(whole)
+    (root / 'build/unit.c').write_text(whole)
+    (root / 'objdiff.json').write_text(json.dumps({'units': [
+        {'name': 'unit', 'base_path': 'build/unit.c.o', 'metadata': {'source_path': 'unit.c'}}
+    ]}))
+    donor = {'name': fn['name'], 'unit': 'unit', 'meta': None}
+    settings = {'toolchain': own['toolchain'], 'flags': own['flags']}
+    status, reason = donor_build.verify(net, proj, fn, {'root': str(root)}, donor, {}, settings, agent, Job(), {})
+    assert status == 'match', reason
+    assert reason == 'Verified from a saved donor translation unit.'
+    saved = net._function(fn['name'], slug)
+    assert 'other_body' in net._context(proj['id'], saved['unit'])['header']
+    assert 'other_body' not in saved['matched_source']
+
+    folder = tmp_path / 'saved'
+    saves.save(net, slug, folder)
+    shutil.rmtree(root)  # finished matches carry the C and include text independently of the donor checkout
+    net.recheck(slug, log=lambda *_: None)
+    assert net._function(fn['name'], slug)['status'] == 'matched'
+    with net.progress.judging(slug, synchronize=False):
+        assert net._verify_saved_match(
+            proj['id'], fn['name'], saved['matched_source'], agent, False, lambda: None,
+            previous_source=saved['matched_source'], removed_status=None,
+        )
+    out = net.export_rom(slug, log=lambda *_: None)
+    assert out['identical'], out['log']
+    assert not out['fallback']
+    manifest = json.loads((Path(out['path']) / 'build.json').read_text())
+    entry = next(row for row in manifest['functions'] if row['vram'] == fn['vram'])
+    assert entry['entry_only']

@@ -119,6 +119,8 @@ def setup() -> None:
             text = path.read_text(encoding="utf-8")
             if (raw := console.export_asm(text)) != text:
                 path.write_text(raw, encoding="utf-8")
+    from decompnet.rom.export import remove_shadowed_bss
+    remove_shadowed_bss(ROOT, B['functions'])
     for seg in B["segments"]:
         if seg.get("incbin"):
             stub = ROOT / seg["stub"]

@@ -528,3 +528,21 @@ def test_assembly_naming_an_address_outside_the_game_links():
     text = ".word func_8C000000\n.word D_80001000\nglabel D_80001000\n.word .L80001234\n"
     found = export._auto_addresses([text], {"D_80001000"})
     assert found["func_8C000000"] == 0x8C000000 and "D_80001000" not in found
+
+
+def test_export_preserves_bss_extent_when_text_owns_its_labels(tmp_path):
+    from decompnet.rom.export import remove_shadowed_bss
+
+    data = tmp_path / 'asm' / 'data'
+    text = tmp_path / 'asm' / 'nonmatchings'
+    data.mkdir(parents=True)
+    text.mkdir()
+    (text / 'unit.s').write_text('dlabel target_label\n    nop\n    nop\n')
+    bss = data / 'layout.bss.s'
+    bss.write_text(
+        'nonmatching target_label, 4\ndlabel target_label\n    .space 4\nenddlabel target_label\n'
+        'glabel entry\n    .space 16\nenddlabel entry\n'
+        'dlabel real_data\n    .space 8\nenddlabel real_data\n'
+    )
+    remove_shadowed_bss(tmp_path, [{'name': 'entry'}])
+    assert bss.read_text() == '    .space 4\n    .space 16\ndlabel real_data\n    .space 8\nenddlabel real_data\n'

@@ -25,7 +25,7 @@ _ASSEMBLY_MARKER = re.compile(r'^\s*(?:GLOBAL_ASM|INCLUDE_ASM|INCLUDE_RODATA)\([
 
 
 class DonorReader(Reader):
-    def flatten(self, path, seen=None):
+    def flatten(self, path, seen=None, *, original_parent=None):
         seen=set() if seen is None else seen
         path=path.resolve()
         if path in seen:
@@ -39,7 +39,8 @@ class DonorReader(Reader):
             if name.is_absolute():
                 raise NetworkError('Donor includes must remain within the imported checkout.')
             checkout = self.root
-            choices = [(base / name).resolve() for base in (path.parent, *self.roots)]
+            parents = (path.parent, original_parent) if original_parent is not None else (path.parent,)
+            choices = [(base / name).resolve() for base in (*parents, *self.roots)]
             found = next((p for p in choices if p.is_relative_to(checkout) and p.is_file()), None)
             if found is None and ('..' in name.parts or any(not p.is_relative_to(checkout) for p in choices)):
                 raise NetworkError('A donor include leaves the selected checkout; keep includes within it.')

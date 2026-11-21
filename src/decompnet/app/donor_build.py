@@ -8,7 +8,7 @@ import time
 from .. import arch, toolchains
 from ..network import NetworkError
 from ..permuter_claims import nonexclusive
-from . import donor_sources, exact_match_inputs, prepared_evidence, source_symbol_recovery
+from . import donor_sources, donor_unit, exact_match_inputs, prepared_evidence, source_symbol_recovery
 from .compiler_context import acceptable, single_source
 
 _ASSIGNMENT = re.compile(r'([A-Za-z_]\w*)\s*(:=|\?=|\+=|=)\s*(.*)')
@@ -134,7 +134,6 @@ def verify(net, proj, fn, other, donor, names, settings, agent, job, cache):
 
     if not settings or toolchains.installed(settings['toolchain']) is None:
         return 'skip', 'The donor file compiler is unavailable.'
-    candidates = donor_sources.imported(net, other, donor, cache)
     if not net.permuter._hold(agent, fn, count_turn=False, seconds=120):
         return 'skip', 'The function is being worked on.'
     try:
@@ -142,7 +141,17 @@ def verify(net, proj, fn, other, donor, names, settings, agent, job, cache):
         current = store.one('SELECT * FROM projects WHERE id=?', proj['id'])
         private = {**dict(current), 'config': json.dumps(prepared_evidence.scoped_config(current, fn, settings))}
         reason = 'Donor source did not reproduce the original bytes.'
-        for body, header, _ in candidates:
+        if proj['arch'] == 'mips':
+            try:
+                _, invocation = net._invocation(private, fn)
+                whole = donor_unit.candidate(other, donor, {**names, donor['name']: fn['name']}, invocation, cache)
+            except (NetworkError, OSError, ValueError):
+                whole = None
+            if whole:
+                accepted, reason = _try(net, current, private, fn, *whole, agent, job)
+                if accepted:
+                    return 'match', 'Verified from a saved donor translation unit.'
+        for body, header, _ in donor_sources.imported(net, other, donor, cache):
             if job.stop.is_set():
                 return 'skip', 'Search stopped.'
             aliases = {**names, donor['name']: fn['name']}
@@ -166,7 +175,7 @@ def _try(net, proj, private, fn, source, header, agent, job):
             lines = result.log.splitlines()
             detail = next((line for line in lines if 'error' in line.lower()), None)
             return False, detail or (result.log or 'Donor source did not build.').strip()[-300:]
-        if not acceptable(net, proj, fn, result.obj):
+        if not donor_unit.is_unit(header, proj) and not acceptable(net, proj, fn, result.obj):
             smaller = single_source(source, header, fn['name'], result.obj) if not reduced else None
             if smaller is None:
                 return False, 'Donor context did not emit a standalone function.'

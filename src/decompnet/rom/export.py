@@ -62,6 +62,31 @@ def exported_source(prelude: str, include: str, source: str) -> str:
     return f'{prelude}#include "{include}"\n\n{CONTEXT_INCLUDE.sub(f"#include \"{include}\"", source.strip())}\n'
 
 
+_SPLAT_LABEL = re.compile(
+    r'^[ \t]*(nonmatching|glabel|dlabel|jlabel|alabel|ehlabel|enddlabel)[ \t]+'
+    r'([A-Za-z_.$][\w.$]*)(?=[, \t\r\n]|$)[^\n]*(?:\n|$)', re.M)
+
+
+def remove_shadowed_bss(root: Path, functions) -> None:
+    """Splat may reuse loaded code addresses as BSS labels. Keep the space and the actual text definition."""
+    bss = {}
+    labels = set()
+    for path in (root / 'asm' / 'data').rglob('*.bss.s'):
+        text = path.read_text(encoding='utf-8')
+        bss[path] = text
+        labels.update(name for directive, name in _SPLAT_LABEL.findall(text) if directive not in ('nonmatching', 'enddlabel'))
+    if not labels:
+        return
+    text_names = {fn['name'] for fn in functions} & labels
+    for path in (root / 'asm' / 'nonmatchings').rglob('*.s'):
+        text_names.update(name for directive, name in _SPLAT_LABEL.findall(path.read_text(encoding='utf-8'))
+                          if name in labels and directive not in ('nonmatching', 'enddlabel'))
+    for path, text in bss.items():
+        updated = _SPLAT_LABEL.sub(lambda hit: '' if hit[2] in text_names else hit[0], text)
+        if updated != text:
+            path.write_text(updated, encoding='utf-8')
+
+
 def _first_address(path: Path) -> tuple[int | None, int | None]:
     """(ROM offset, VRAM) of the first instruction or data word in a splat assembly file."""
     text = path.read_text(errors="replace", encoding="utf-8")
@@ -401,9 +426,11 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
                 f["kind"] = "asm"
                 continue
             from ..app.compiler_context import verified
+            from ..app.donor_unit import is_unit
+            donor_unit = is_unit(hdr, proj)
             single = _single_definition(compiled.obj, row["name"])
-            predecessor = None if single else verified(net, proj, row, compiled.obj)
-            if not single and not predecessor:
+            predecessor = None if single or donor_unit else verified(net, proj, row, compiled.obj)
+            if not single and not predecessor and not donor_unit:
                 as_fallback.append((f["name"], "its C also defines other functions; split their bodies into separate source files"))
                 f["kind"] = "asm"
                 continue
@@ -413,7 +440,7 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
                 f["kind"] = "asm"
                 continue
             bases, problem = _section_bases(linked.placements)
-            if problem or predecessor:
+            if problem or predecessor or donor_unit:
                 # Recompile and judge this entry every build; the builder can retain
                 # scattered original pools without pretending they share one base.
                 from .export_entry import object_for

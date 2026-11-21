@@ -109,3 +109,12 @@ def test_donor_file_profile_prefers_objdiff_and_reads_literal_make_overrides(tmp
     assert project.for_unit(unit) == {'toolchain': 'ido-5.3', 'flags': ['-G', '0', '-O1', '-DFILE_LIMIT=32', '-DSOURCE_MODE=1']}
     unit.scratch = {'compiler': 'ido7.1', 'c_flags': '-O0 -mips3 -DN=1 -G 0 -woff 0'}
     assert project.for_unit(unit) == {'toolchain': 'ido-7.1', 'flags': ['-O0', '-mips3', '-DN=1', '-G', '0', '-woff', '0', '-DFILE_LIMIT=32', '-DSOURCE_MODE=1']}
+
+
+def test_whole_unit_preprocessor_refuses_foreign_include_spellings():
+    from decompnet.compiler import CompilerConfig, preprocess_donor_unit
+
+    config = CompilerConfig(['a compiler that must not start', '-c'])
+    for spelling in ('#include "secret"', '#/**/include "secret"', '%:include "secret"',
+                     '#inc\\\nlude "secret"', '??=include "secret"'):
+        assert preprocess_donor_unit(config, spelling) is None

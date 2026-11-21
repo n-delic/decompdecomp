@@ -29,6 +29,8 @@ from .compile_admission import Admission
 from .request_timing import span
 
 MAX_SOURCE_BYTES = 64 * 1024
+DONOR_UNIT_HEADER = "/* decompdecomp donor translation unit v1 */\n"
+MAX_DONOR_UNIT_BYTES = 2 * 1024 * 1024
 # Per-compile resource caps (address space, CPU seconds, output file size) and a global
 # concurrency cap, so a hostile submission can't take the host down with it.
 LIMITS = ["--as=2147483648", "--cpu=30", "--fsize=67108864"]
@@ -135,11 +137,11 @@ class SourceRejected(ValueError):
     pass
 
 
-def check_source(source: str) -> None:
+def check_source(source: str, *, max_bytes: int = MAX_SOURCE_BYTES) -> None:
     """Refuse C that could match without being C (inline asm, asm-include macros, pragmas) or reach outside the
     sandbox (absolute or `..` includes): what the judge accepts must come from a compiler."""
-    if len(source.encode()) > MAX_SOURCE_BYTES:
-        raise SourceRejected(f"source too large (max {MAX_SOURCE_BYTES} bytes)")
+    if len(source.encode()) > max_bytes:
+        raise SourceRejected(f"source too large (max {max_bytes} bytes)")
     for inc in _INCLUDE.findall(source):
         if inc.startswith("/") or ".." in inc.split("/"):
             raise SourceRejected(f"include path not allowed: {inc}")
@@ -384,7 +386,10 @@ def _compile_here(cfg: CompilerConfig, context_header: str, source: str, trusted
     if check := _CANCEL_CHECK.get():check()
     if not trusted:
         try:
-            check_source(source)
+            if context_header.startswith(DONOR_UNIT_HEADER):
+                check_source(context_header + source, max_bytes=MAX_DONOR_UNIT_BYTES)
+            else:
+                check_source(source)
         except SourceRejected as e:
             return CompileResult(False, None, f"rejected: {e}")
 
@@ -505,6 +510,42 @@ def _compile_as(cfg: CompilerConfig, work: Path, root: str, source: str, ext: st
     if proc.returncode != 0 or not obj.exists():
         return CompileResult(False, None, log[-4000:] or f"compiler exited with {proc.returncode}")
     return CompileResult(True, obj.read_bytes(), log[-2000:], "c++" if ext == "cpp" else "c")
+
+
+def preprocess_donor_unit(cfg: CompilerConfig, source: str) -> str | None:
+    """Resolve the donor's conditional C before applying the normal source guards."""
+    if '-c' not in cfg.cmd or len(source.encode()) > MAX_DONOR_UNIT_BYTES:
+        return None
+    # Check the directives after the compiler's continuations and comment removal.
+    directives = source.replace('??/', '\\').replace('??=', '#').replace('%:', '#')
+    directives = re.sub(r'\\\r?\n', '', directives)
+    directives = _COMMENTS_AND_STRINGS.sub(
+        lambda match: ' ' + '\n' * match[0].count('\n') if match[0].startswith('/') else match[0], directives)
+    if re.search(r'(?im)^[ \t]*#[ \t]*(include(?:_next)?|import|embed|pragma)\b', directives):
+        return None
+    with _workspace('decompnet-donor-') as tmp:
+        work = Path(tmp)
+        (work / 'include').mkdir()
+        (work / 'unit.c').write_text(source, encoding='utf-8')
+        root = _root(cfg, work)
+        values = {'{src}': root+'/unit.c', '{obj}': root+'/unit.i', '{include}': root+'/include'}
+        argv = [values.get(arg, arg.replace('{include}', values['{include}'])) for arg in cfg.cmd]
+        argv[argv.index('-c')] = '-E'
+        try:
+            with _slot():
+                result = _exec(cfg, work, argv, cfg.timeout, **(
+                    {'inputs':['unit.c'], 'outputs':['unit.i'], 'stage':root}
+                    if _sandbox_mode(cfg) in ('wsl', 'linux-vm') else {}))
+        except subprocess.TimeoutExpired:
+            return None
+        if result.returncode:
+            return None
+        output = work / 'unit.i'
+        if output.is_file():
+            if output.stat().st_size > MAX_DONOR_UNIT_BYTES:
+                return None
+            return output.read_text(encoding='utf-8', errors='replace')
+        return result.stdout if len(result.stdout.encode()) <= MAX_DONOR_UNIT_BYTES else None
 
 
 def compile_assembly(cfg: CompilerConfig, prelude: str, source: str) -> CompileResult:
