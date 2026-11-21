@@ -9587,3 +9587,11 @@ relocation error and scored 73225 under the linked judge with the same C.
 The clean profile provides a separate search starting point. The function
 still needs an exact match before the compiler setting can be applied
 automatically. The pinned compiler rejects `-fno-jump-tables`.
+
+### Recovering stack buffers from call and loop bounds
+
+Four archived N64 targets reproduced byte-for-byte from independently generated drafts, with the archived match serving as a control. The compiler was `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, with `-g3` on the two cases identified below. Scores are linked instruction diffs against the same target.
+
+- An ascending byte fill passed the base to a call and compared the cursor with the address of the first saved register. The target's two offsets bounded a 32-byte array. Filling it with a zero-based index removed an undeclared stack-byte reference from the fresh draft. The nearest compiling draft had used two views of a synthetic frame union, and moved from score 7 to exact (76 bytes).
+- A block read took 42 bytes, then four decoders took addresses inside that span. The target's call arguments showed that the draft's separate word locals were views of one serialized byte array. A byte array and byte offsets, with opaque pointers on the generated extern declarations, moved score 7 to exact (100 bytes, `-g3`). Sizing each separate local with the existing rule gave no improvement.
+- A string/copy wrapper and a matrix pipeline had all their remaining differences in stack operands. Sizing the address-taken locals from the target's offsets with the existing rule moved scores 4 and 12 to exact (52 bytes with `-g3`, and 116 bytes respectively). Inferred padding made the string/copy wrapper worse.

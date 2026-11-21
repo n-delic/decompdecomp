@@ -95,14 +95,18 @@ def measured(source, name, arch, rows, *, evidence=None):
     return [('inferred_frame_reservation',source[:last]+note+source[last:])]
 
 
-def layout_candidates(source, name, header, arch, rows, symbols=None, flags=()):
+def layout_candidates(source, name, header, arch, rows, symbols=None, flags=(), *, asm=None):
     """Share the measured KMC layout pass with exact replay."""
-    from decomprepair import measured_layout_repairs
+    from decomprepair import measured_layout_repairs, stack_object_size_repairs
 
     from .stack_layout import diagnose
 
     report = diagnose(arch,rows) or {}
-    result = measured_layout_repairs.unused_frame_array(source,name,rows,report)
+    result = []
+    # A named buffer explains a larger frame when every changed row is a stack difference.
+    if asm and (report.get('frame_delta') or 0) > 0 and all(marker in (' ', 's') for marker, _, _ in rows):
+        result += stack_object_size_repairs.variants(source, name, asm)
+    result += measured_layout_repairs.unused_frame_array(source,name,rows,report)
     if scoped := measured_layout_repairs.scoped_frame_array(source, name, rows, report):
         result.append(('inferred_frame_reservation', scoped))
     result += measured(source,name,arch,rows,evidence=report)

@@ -130,6 +130,7 @@ def verify(feedback, example):
             shared_return_repairs,
             split_dispatch_zero_case,
             stack_fill_drafts,
+            stack_header_buffer,
             stack_read_retry,
             uncached_read_repairs,
         )
@@ -138,7 +139,7 @@ def verify(feedback, example):
 
         symbols = net.symbols(proj['id']) if hasattr(net,'symbols') else None
         focused = stack_padding_repairs.layout_candidates(source, fn['name'], header, proj['arch'],
-                                                         rows, symbols, profile['flags'])
+                                                         rows, symbols, profile['flags'], asm=fn['asm'])
         if candidate := uncached_read_repairs.rewrite(source, fn['name'], fn['asm'] or '',
                                                       symbols.resolve if symbols else None):
             focused.append(('measured_uncached_word_read', candidate))
@@ -164,6 +165,10 @@ def verify(feedback, example):
             focused.append(('relocated_countdown', candidate))
         if candidate := stack_fill_drafts.rewrite(source, fn['name'], fn['asm'] or '', header):
             focused.append(('descending_stack_fill', candidate))
+        if candidate := stack_fill_drafts.rewrite_ascending(source, fn['name'], fn['asm'] or '', header):
+            focused.append(('ascending_stack_fill', candidate))
+        if candidate := stack_header_buffer.rewrite(source, fn['name'], fn['asm'] or '', header):
+            focused.append(('stack_header_buffer', candidate))
         if candidate := relocated_global_update.rewrite_reload_wrapper(
                 source, fn['name'], fn['asm'] or '', header, symbols.resolve if symbols else None):
             focused.append(('direct_global_reload', candidate))

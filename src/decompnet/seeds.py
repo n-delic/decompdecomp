@@ -396,6 +396,7 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
         shared_return_repairs,
         split_dispatch_zero_case,
         stack_fill_drafts,
+        stack_header_buffer,
         stack_read_retry,
         unaligned_stack_drafts,
         uncached_read_repairs,
@@ -420,6 +421,8 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
             or relocated_global_update.rewrite_reload_wrapper(source, name, asm_text, context_header, resolve)
             or relocated_global_update.rewrite_countdown(source, name, asm_text, context_header, resolve)
             or stack_fill_drafts.rewrite(source, name, asm_text, context_header)
+            or stack_fill_drafts.rewrite_ascending(source, name, asm_text, context_header)
+            or stack_header_buffer.rewrite(source, name, asm_text, context_header)
             or stack_read_retry.rewrite(source, name, asm_text, context_header)
             or stack_read_retry.rewrite_inline(source, name, asm_text, context_header)
             or float_matrix_identity.rewrite(source, name, asm_text, context_header)
