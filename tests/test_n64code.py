@@ -176,3 +176,13 @@ def test_ipl3_dma_proves_the_initial_cartridge_mapping():
              target_prefix=0x80000000, boot_copy=True)]
     image[0x100+len(_BOOT_DMA)-1] ^= 1
     assert not boot_switch_range(image, segments)
+
+
+def test_discovery_rejects_an_empty_range_at_the_first_plausible_entry(monkeypatch):
+    from decompnet.consoles.n64 import code
+
+    rom = bytearray(0x5000)
+    rom[0x1000:0x1800] = _code(0x80000400, 64)
+    rom[0x3000:0x3100] = _code(0x80002400, 8)
+    monkeypatch.setattr(code, 'place', lambda *_: (0x3100, 0x3100, 0x80002500, 8))
+    assert find_segments(rom, [(0x1000,0x1800,0x80000400)]) == []
