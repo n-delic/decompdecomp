@@ -9645,3 +9645,12 @@ Three independently generated N64 drafts were each 60 points from their archived
 ### Pass a matrix wrapper's output pointer to its initializer
 
 Three independently generated N64 matrix wrappers appeared to differ only in where a saved register was stored relative to the floating-point argument saves. The target also kept the output pointer in `$a0` through the initialization call. Passing that pointer explicitly to the call corrected the frame save schedule without editing it directly. With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` all three moved from score 60 to byte-identical matches (84, 96, and 96 bytes). The archived matches compiled as independent controls.
+
+### Halfword records traversed with a byte cursor
+
+With GCC 2.7.2 KMC and `-G0 -mips3 -mgp32 -mfp32 -O2`, a 2,692-byte N64
+collision routine used a byte pointer to read the first halfword of a
+three-halfword record. The candidate advanced 3 bytes in the loop branch
+delay slot while the original advanced 6. Changing the source step from 3
+to 6 produced the original stride and improved the score from 2,599 to
+2,589 on the real-game scratch judge. The function remains unmatched.

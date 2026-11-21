@@ -691,3 +691,23 @@ def test_measured_earlier_load_uses_the_project_resolver_for_field_aliases():
     actual = dict(route(source, rows, 'asm', resolve={'base': 0x1000, 'field': 0x1004}.get))[family]
     assert actual.index('__repair_before_publish = ') < actual.index('M2C_FIELD(&base')
     assert family not in dict(route(source, rows, 'asm', resolve={'base': 0x1000, 'field': 0x1008}.get))
+
+
+def test_kmc_repairs_a_byte_cursor_using_the_measured_halfword_loop():
+    source = """int f(void *record) {
+    char *cursor;
+    cursor = (*(u16 **)((char *)record + 4));
+    do {
+        use(*(u16 *)cursor);
+        cursor += 3;
+    } while (again());
+}"""
+    rows = [
+        (' ', 'move $s4, $a0', 'move $s4, $a0'),
+        (' ', 'lhu $a0, ($s4)', 'lhu $a0, ($s4)'),
+        ('|', 'bnez $v0, 4 [bytes 1440fffe]', 'bnez $v0, 4 [bytes 1440fffd]'),
+        ('i', 'addiu $s4, $s4, 6', 'addiu $s4, $s4, 3'),
+    ]
+    family = 'measured_halfword_byte_cursor'
+    assert 'cursor += 6;' in dict(route(source, rows, 'asm'))[family]
+    assert family not in dict(route(source, rows, 'asm', compiler='ido-5.3'))
