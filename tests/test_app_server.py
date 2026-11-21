@@ -3870,3 +3870,43 @@ def test_repair_examples_route_accepts_vote_sort(app, tmp_path):
     second = client.get(route + f'&sort=upvotes&before={ids[0]}&before_votes=1')
     assert [row['id'] for row in second.json()['examples']] == [ids[1]]
     assert client.get(route + '&sort=invalid').status_code == 400
+
+
+def test_community_directory_reports_matching_library_roms(app, tmp_path, monkeypatch):
+    import hashlib
+
+    from decompnet.forks import directory
+
+    client, _, _ = app
+    headers = {"X-Decomp": "1"}
+    library = tmp_path / "library"
+    nested = library / "cartridges"
+    nested.mkdir(parents=True)
+    rom = b"\x80\x37\x12\x40" + bytes(0x40000 - 4)
+    (nested / "renamed.v64").write_bytes(b"".join(bytes((b, a)) for a, b in zip(rom[::2], rom[1::2])))
+    (library / "different.z64").write_bytes(rom[:-1] + b"\x01")
+    archived = rom[:-1] + b"\x02"
+    (library / "ignored.zip").write_bytes(archived)
+    repo = "https://github.com/example/game"
+    projects = [
+        {"repo_url": repo, "platform": "n64", "rom_sha1s": [hashlib.sha1(rom).hexdigest()]},
+        {"repo_url": repo + "-archived", "platform": "n64", "rom_sha1s": [hashlib.sha1(archived).hexdigest()]},
+        {"repo_url": repo + "-unknown", "platform": "n64", "rom_sha1s": []},
+    ]
+    monkeypatch.setattr(directory, "listing", lambda: projects)
+
+    assert client.get("/api/fork/directory").json()["projects"] == [
+        {"repo_url": p["repo_url"], "platform": p["platform"]} for p in projects
+    ]
+    assert client.post("/api/fork/directory/library", headers=headers).json() == {"job": None}
+    assert client.post("/api/settings", headers=headers, json={"rom_library": str(library)}).status_code == 200
+    started = client.post("/api/fork/directory/library", headers=headers)
+    assert started.status_code == 200
+    for _ in range(100):
+        job = client.get("/api/job", params={"id": started.json()["job"]}).json()
+        if job["state"] != "running":
+            break
+        time.sleep(.01)
+    assert job["state"] == "done", job
+    assert job["result"]["matches"] == [["n64", repo]]
+    assert str(library) not in str(job)
