@@ -11293,3 +11293,45 @@ the store. Moving the global assignment into each branch let the compiler
 reuse the condition register and scored 15 to 0 in the byte judge. A ternary
 scored 15 with the original zero test and 225 with the inverted test.
 The guarded rule reproduced the verified match in 16 deep-permuter candidates.
+
+### Permuter gaps from two hand matches, closed or measured
+
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, the two N64 functions above (a
+3-loop record function and a four-case switch). Scores from the app's own
+judge worker (`fast_judge`) on saved history states and on states rebuilt
+from the matched source; the saved matches were not changed. decomp-repair
+0.5.242.
+
+- Mixed guarded loops: from the indexed child (60) of the 3-loop function no
+  loop had an offset left, so `guarded_offset_index` offered nothing. Plain
+  counted loops now take the counter guard and the shared counter: 60 to 20
+  in one step (the frame trim then finishes it). A counter read after its loop
+  now keeps its name while the other loops share, instead of dropping the
+  shared child.
+- Reused m2c names: `split_integer_phase` already splits a dominated phase,
+  but `local_flow` refused the whole function over m2c's block-scoped
+  `struct Vec { ... };` tag. Accepted now; the split of the counter name
+  reused for a call result appears (alone 180 to 350, as the earlier entry
+  found: it only helps with the shared counter). Floats and pointers are still
+  outside `locals_for`, so their reuse is not split yet.
+- Case split + fold together (`case_temporary_split_combined`): twelve
+  states with the switch's case temporaries merged back (330 to 1520). The
+  split alone gave 240 from each, the fold alone 0 from four of them and
+  nothing from the rest; the combined child is 0 from all twelve.
+- Selective raw stores (`struct_store_raw_offset`): the matched source with
+  the two cursor stores after the global flag store written as fields scored
+  180; the family's children (both, each alone) are all 0.
+- Not closed: allocation-priority-guided edits. The `.lreg/.greg` table names
+  pseudos, not C variables; the only lever measured on these functions (the
+  counter guard: 193 alone) needs the shared counter with it, which the
+  family already emits. Next step: map pseudos to source lines through
+  `gcc_allocation.summarize`'s `source_lines` and offer one use more or less
+  for the variable on those lines.
+- Not closed: frame growth from the guards' dead compare pseudos was fixed by
+  shrinking m2c's frame union or by separate locals; a source with no union
+  has nothing to trim, and no other shape that removes the dead pseudos was
+  found (the `for` spelling is the same RTL).
+- Not closed: restructuring the goto-heavy draft (1135) into a clean switch.
+  The 1135 source threads three cases through one `do { ... } while (0)` with
+  labels; the hand rewrite (240) changed every case at once. No existing
+  family moved it, and a rewrite needs a CFG-to-switch reconstruction.
