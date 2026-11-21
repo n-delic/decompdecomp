@@ -8,10 +8,9 @@ repeat the same call" while it keeps running. A repeat attaches to the call alre
 twice. Behind the gateway the app's MCP server is stateless (no tool uses an MCP session), so either side can
 restart without breaking the other.
 
-The gateway is optional. Packages carry its program (packaging/build_gateway.py); an install from source gets the
-release's copy from `decomp setup` (install below). Without it (a checkout that hasn't run `cargo build --release` in
-`gateway/`, a platform with no build) or with DECOMP_MCP_GATEWAY=0 the helpers connect to the app's /mcp as before.
-DECOMP_MCP_GATEWAY=<path> names the program. The app holds the gateway's standard input open: when the app ends,
+Packages carry the gateway (packaging/build_gateway.py). Source installs download a checksum-verified release
+build during setup or on first start. If it can't start, the app stops before starting helpers.
+DECOMP_MCP_GATEWAY=0 explicitly uses the app's own MCP endpoint; DECOMP_MCP_GATEWAY=<path> names a build. The app holds the gateway's standard input open: when the app ends,
 for any reason, the gateway sees end-of-file and ends too. If the gateway ends while the app runs, it's started
 again on the same port, so the helpers' MCP settings stay right.
 
@@ -26,7 +25,6 @@ import json
 import logging
 import os
 import subprocess
-import sys
 import threading
 import time
 from pathlib import Path
@@ -58,15 +56,34 @@ class StartError(RuntimeError):
         self.code = code
 
 
+DISABLED = ("0", "off", "false", "no")
+AUTOMATIC = ("", "1", "on", "true", "yes")
+
+
 def program() -> Path | None:
     """The gateway's program, or None when the helpers should use the app's own endpoint."""
     chosen = os.environ.get("DECOMP_MCP_GATEWAY", "").strip()
-    if chosen.lower() in ("0", "off", "false", "no"):
+    if chosen.lower() in DISABLED:
         return None
-    if chosen and chosen.lower() not in ("1", "on", "true", "yes"):
+    if chosen.lower() not in AUTOMATIC:
         path = Path(chosen).expanduser()
         return path if path.is_file() else None
     return built()
+
+
+def startup_program() -> Path | None:
+    """Resolve or provision the gateway before opening the app, unless explicitly disabled."""
+    chosen = os.environ.get("DECOMP_MCP_GATEWAY", "").strip()
+    if chosen.lower() in DISABLED:
+        return None
+    if exe := program():
+        return exe
+    if chosen.lower() not in AUTOMATIC:
+        raise RuntimeError(f"MCP gateway executable not found at {chosen}. Correct DECOMP_MCP_GATEWAY.")
+    if exe := install(log=log.info):
+        return exe
+    raise RuntimeError("No MCP gateway build is available. Install a packaged decompdecomp release, "
+                       "or set DECOMP_MCP_GATEWAY to a gateway executable.")
 
 
 def built() -> Path | None:
@@ -142,7 +159,7 @@ def install(log=print, repo: str | None = None, version: str | None = None) -> P
             part.unlink(missing_ok=True)
         log(f"MCP gateway: installed {target}")
         return target
-    log("MCP gateway: no release build for this computer; helpers use the app's own endpoint")
+    log("MCP gateway: no release build available for this computer")
     return built()
 
 
@@ -379,14 +396,14 @@ def _saved_port(path: Path | None, *taken: int) -> int:
 
 
 def start(app_port: int, log_path: Path | None = None, port_file: Path | None = None, reader=None,
-          window: bool = False) -> Gateway | None:
-    """Start the gateway in front of the app's /mcp, or None when the helpers should connect to the app itself.
+          window: bool = False, *, executable: Path | None = None) -> Gateway | None:
+    """Start the gateway in front of the app's /mcp. Return None when it is explicitly disabled.
 
     `port_file` keeps the gateway's port across app starts: helpers connected by hand keep a working address.
     `reader` (app/tool_reader.py) answers the read-only tools it can before the app is asked. `window`: listen for
     the app's window too (its port kept beside `port_file`, so the page's origin, and what it keeps in the browser's
     storage, stays the same across starts)."""
-    exe = program()
+    exe = executable or startup_program()
     if exe is None:
         return None
     from .tool_reader import READER_TOOLS
@@ -407,7 +424,7 @@ def start(app_port: int, log_path: Path | None = None, port_file: Path | None = 
         if window_file and gateway.window_port:
             window_file.write_text(str(gateway.window_port), encoding="utf-8")
     except (OSError, RuntimeError, ValueError) as error:
-        log.warning("MCP gateway unavailable, helpers use the app's own endpoint: %s", error)
-        print(f"MCP gateway unavailable: {error}", file=sys.stderr)
-        return None
+        gateway.stop()
+        hint = f" See {log_path} for details." if log_path else ""
+        raise RuntimeError(f"MCP gateway could not start: {error}.{hint}") from error
     return gateway

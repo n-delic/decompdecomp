@@ -66,10 +66,10 @@ def test_up_to_date_downloads_only_the_checksum(release):
     assert fetched and all(url.endswith(".sha256") for url in fetched)
 
 
-def test_no_release_build_keeps_the_app_endpoint(release):
+def test_no_release_build_reports_unavailable(release):
     lines = []
     assert mcp_gateway.install(log=lines.append, repo="o/r", version="9.9.9") is None
-    assert "app's own endpoint" in lines[-1]
+    assert "no release build available" in lines[-1]
 
 
 def test_a_packaged_gateway_needs_no_download(release, tmp_path, monkeypatch):
@@ -81,3 +81,44 @@ def test_a_packaged_gateway_needs_no_download(release, tmp_path, monkeypatch):
     monkeypatch.setattr(mcp_gateway, "_local", lambda: (packaged, tmp_path / "none"))
     assert mcp_gateway.install(log=lambda _: None, repo="o/r", version="9.9.9") == packaged
     assert fetched == []
+
+
+def test_startup_provisions_a_missing_gateway(release, monkeypatch):
+    publish, fetched = release
+    publish("latest/download")
+    monkeypatch.delenv("DECOMP_MCP_GATEWAY")
+    from decompnet.app import updates
+    monkeypatch.setattr(updates, "installed", lambda: {"repo": "o/r"})
+    assert mcp_gateway.startup_program() == mcp_gateway.downloaded()
+    assert fetched
+    fetched.clear()
+    assert mcp_gateway.startup_program() == mcp_gateway.downloaded()
+    assert fetched == []
+
+
+def test_startup_requires_a_gateway_when_no_build_is_available(release, monkeypatch):
+    monkeypatch.delenv("DECOMP_MCP_GATEWAY")
+    with pytest.raises(RuntimeError, match="No MCP gateway build is available"):
+        mcp_gateway.start(1234)
+
+
+def test_startup_respects_an_explicit_gateway_path(release, monkeypatch, tmp_path):
+    _, fetched = release
+    executable = tmp_path / "custom-gateway"
+    monkeypatch.setenv("DECOMP_MCP_GATEWAY", str(executable))
+    with pytest.raises(RuntimeError, match="Correct DECOMP_MCP_GATEWAY"):
+        mcp_gateway.startup_program()
+    executable.write_bytes(PROGRAM)
+    assert mcp_gateway.startup_program() == executable
+    assert fetched == []
+
+
+def test_failed_gateway_launch_stops_the_gateway(monkeypatch, tmp_path):
+    from unittest.mock import Mock
+
+    gateway = Mock()
+    gateway.start.side_effect = OSError("cannot execute")
+    monkeypatch.setattr(mcp_gateway, "Gateway", Mock(return_value=gateway))
+    with pytest.raises(RuntimeError, match="MCP gateway could not start: cannot execute"):
+        mcp_gateway.start(1234, executable=tmp_path / "gateway")
+    gateway.stop.assert_called_once()
