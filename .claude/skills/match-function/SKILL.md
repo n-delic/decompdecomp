@@ -228,6 +228,36 @@ For each manual step that moved the score, answer: **could the permuter have don
 Step 5 is merged *before* you continue hunting, not saved for the end. If you still cannot match the function
 afterwards, leave its note with the evidenced blocker.
 
+## 5b. Mistakes this method has already made (each cost a run or an hour)
+
+- **Decode the target's own assembly before writing shapes.** The project's `asm/nonmatchings/**/FUNC.s` has the
+  offsets and delay slots; `judge.py diff` rows do not. Reading delay slots (`bnez` with `li` in its slot, a `j` whose
+  slot is the other path's value) gave the branch *polarity* in minutes after an hour of spelling variants that all
+  had it backwards. Do this in step 1 whenever the diff is a layout difference, not only when stuck.
+- **A search's own scaffolding is part of the diff.** `__repair_constant`-style locals and `s8 *` stores of constants
+  above 0x7F (`li -1`, not `li 0xff`) look like m2c output and are not the game's: write literals, `u8` stores.
+- **Never `git stash`, `git checkout` or `uv run` in a worktree whose venv a run uses.** `uv run` re-syncs the
+  environment to whatever `pyproject.toml` says at that moment: a stash that reverted the pin silently downgraded
+  the library, and the proof run failed at its first step with "No module named". `scratch_run.py` now checks
+  the pin; also run `python -c "import decomprepair.<your module>"` in the run's own interpreter before starting.
+  Resolve merge conflicts in a separate `--detach` worktree, not the one a run is using; never remove that worktree.
+- **A run's first minute is where it fails.** Read its log once, at 30 seconds, then go back to step 0's work.
+  "error checking baseline" means the search never started: read the job error, don't wait for it.
+- **Other sessions share the machine.** The scratch port, the tags in the library (`git ls-remote --tags` right
+  before tagging; main's version may already be ahead) and the library's `main` all move under you. Use a free
+  `--port`; kill a run by its pid, never `pkill -f scratch_run.py` (it kills other sessions' runs and your own
+  `Monitor` loops, whose command lines contain the name).
+- **The app you judge through can disappear** (the user quits it). Don't start one. Score locally with
+  `compile_snippet.py` (it needs the file's own typedefs: `f32` is not in its prelude) against the project's
+  `asm/nonmatchings` file; a candidate that scores the same as a known-exact source is exact. Judge in the app when
+  it is back.
+- **One manual step is often several permuter gaps.** Here the match needed three changes at once (sink, literal, `u8`);
+  each alone left the score unchanged or worse, so a one-step-at-a-time search cannot see them. The rewrite should
+  emit the whole combination as one child, and its test should assert the combination, not the parts.
+- **Check what already exists before writing a rewrite.** `passthrough_argument` already did the argument fix and
+  `symbol_width_repairs` was one regex away from the cast fix; ten minutes of grep over the library's docstrings
+  found both. Run the existing families on the saved best first: what they don't produce is the gap.
+
 ## 6. Finishing (the goal is met)
 
 The goal from the top of this file is met only when **both** hold:
