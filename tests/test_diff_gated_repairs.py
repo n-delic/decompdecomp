@@ -249,3 +249,25 @@ void f(void) {
     assert ('measured_cursor_publish', source.replace('stream = cursor;', 'stream = cursor + 8;')) in proposals(
         source, 'f', '', 'mips', KMC, rows, '',
     )
+
+
+def test_kmc_routes_a_scoped_relocated_field_capture():
+    source = """extern void *state;
+void f(void) {
+    void *local;
+    int field;
+    field = (*(s32 *)((char *)(state) + 8));
+    consume(field);
+    local = state;
+    consume(local);
+}
+"""
+    rows = [
+        (' ', 'lui $a1, %hi(state)', 'lui $v1, %hi(state)'),
+        (' ', 'lw $a1, %lo(state)($a1)', 'lw $v1, %lo(state)($v1)'),
+        ('<', 'addiu $a0, $zero, 4', ''),
+        (' ', 'lw $v1, 8($a1)', 'lw $v1, 8($v1)'),
+    ]
+    [candidate] = [text for family, text in proposals(source, 'f', '', 'mips', KMC, rows, '')
+                   if family == 'measured_scoped_global_field']
+    assert 'do {\n        local = state;\n    } while (0);' in candidate

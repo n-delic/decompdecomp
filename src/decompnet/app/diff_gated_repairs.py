@@ -215,6 +215,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_control_flow.variants(source,name,rows)
         result += measured_cursor_loop_tail.variants(source, name, rows)
         result += measured_cursor_publish.variants(source, name, rows)
+        result += global_pointer_local_repairs.scoped_field_reads(source, name, rows)
         result += measured_global_rebase.variants(source, name, header, rows, resolve=resolve)
         result += measured_memory_order.variants(source,name,rows,resolve=resolve,header=header)
         result += measured_float_grid_stores.variants(source, name, rows)
