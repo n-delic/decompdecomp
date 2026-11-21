@@ -63,7 +63,8 @@ def extent(image, start, end, vram, order, cpu="", *, table_ranges=(), mapping_c
             unknown=True;target_table['state']='unresolved'
             target_table['reason']='a table edge bypasses this guard'
     return {'decoded_instructions':len(seen),'return_sites':returns,'direct_flow_closed':bool(returns and not unknown and not pending and not tables),
-            'flow_closed':bool(returns and not unknown and not pending),'jump_tables':tables,
+            'flow_closed':bool(returns and not unknown and not pending),'flow_bounded':not unknown and not pending,
+            'jump_tables':tables,
             'extent_bytes':highest-start,'step_limit':bool(pending),'unresolved_transfers':indirect}
 
 

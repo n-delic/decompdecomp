@@ -747,3 +747,17 @@ def test_zero_reservation_corroborates_alignment_after_a_return(protect):
     assert any(fn.rom == 128 for fn in result)
     if not protect:
         assert not any(32 <= fn.rom < 128 for fn in result)
+
+
+@pytest.mark.parametrize('case', ['worker', 'wrong restore', 'no incoming reference'])
+def test_closed_worker_keeps_its_compiler_epilogue(case):
+    entry = BASE+16
+    call = 0x0c000000 | ((entry>>2)&0x03ffffff) if case != 'no incoming reference' else 0
+    back = 0x08000000 | (((entry+12)>>2)&0x03ffffff)
+    restore = 0x8fb00010 if case != 'wrong restore' else 0x8fb10010
+    words = [call, 0, 0x03e00008, 0, 0x27bdffe8, 0xafbf0014, 0xafb00010, 0x26100001,
+             back, 0, restore, 0x8fbf0014, 0x03e00008, 0x27bd0018]
+    image, functions, segments = fixture(words, cuts=(0,16,32,56))
+    result = repair(functions, [], image, consoles.get('n64'), segments)
+    actual = [(fn.rom, fn.size) for fn in result]
+    assert ((16,40) in actual) == (case == 'worker')
