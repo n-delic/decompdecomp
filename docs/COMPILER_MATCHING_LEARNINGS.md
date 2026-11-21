@@ -12835,3 +12835,12 @@ byte load, second update and second byte load recovered the target sequence.
 With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, the linked score
 improved from 230 to an exact match. This is one observed match; synthetic
 tests cover the target instructions, cursor offset and draft guards.
+
+### KMC GCC 2.7.2: retain a byte global's address
+
+An isolated draft decremented an unsigned-byte global and called a helper.
+Storing the global's address in a byte pointer caused the compiler to reuse
+that address for the load and store. With
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1`, the linked difference score
+improved from 225 to an exact match. This is one observed match; synthetic
+tests cover the instruction sequence, declaration and source guards.
