@@ -13,7 +13,7 @@ import json
 import mmap
 import re
 import time
-from importlib.metadata import version
+from importlib.metadata import distribution
 from pathlib import Path
 
 from ..network import IN_BUILD, NetworkError
@@ -136,7 +136,10 @@ def _run(net, slug, log):
     revision = _revision(net,proj)
     worker_source = rom_scan.WORKER_SOURCE.read_bytes()
     worker_revision = hashlib.sha256(worker_source).hexdigest()
-    asset_revision = version('decompassets')
+    assets = distribution('decompassets')
+    # Tagged archive installs can change independently of the package version.
+    source_record = assets.read_text('direct_url.json')
+    asset_revision = hashlib.sha256(f'{assets.version}\n{source_record or ""}'.encode()).hexdigest()
     previous=_read(net,proj)['report']
     if (previous and previous.get('revision')==revision and 'loader_flow' in previous
             and previous.get('worker_revision') == worker_revision
