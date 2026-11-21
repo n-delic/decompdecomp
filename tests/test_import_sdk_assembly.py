@@ -279,3 +279,53 @@ def test_scheduler_cleanup_preserves_delay_slot_and_explicit_padding_entry(monke
     sdk_linked.split_scheduler(result, image)
     assert [(f.rom, f.size) for f in result.functions] == [(0,380),(380,len(stub)*4)]
     assert [line.word for f in result.functions for line in f.lines] == words[:-1]
+
+
+# The cartridge's entry stub: BSS clear with `addi`, then a jump to main with $sp set in the delay slot. Another
+# game's copy differs in its addresses only.
+ENTRY_STUB = bytes.fromhex('3C08800D25087050' '3C090004252906F0' 'AD000000AD000004' '21080008' '2129FFF8' '1520FFFB' '00000000'
+                           '3C0A8000254A0460' '3C1D8010' '01400008' '27BD2CA0')
+
+
+def test_entry_stub_is_told_by_its_shape_not_its_addresses():
+    other_game = bytearray(ENTRY_STUB)
+    other_game[2:4] = b'\x80\x2a'  # a different BSS address
+    other_game[0x32:0x34] = b'\x80\x20'  # a different stack top
+    for code in (ENTRY_STUB, ENTRY_STUB + bytes(36), bytes(other_game)):
+        assert pack.identify(code)['name'] == 'entrypoint'
+    swapped = bytearray(ENTRY_STUB)
+    swapped[0x18:0x1c] = bytes.fromhex('25080008')  # addiu where the boot code has addi
+    assert pack.identify(bytes(swapped)) is None
+    assert pack.identify(ENTRY_STUB[:-8]) is None
+    assert pack.identify(ENTRY_STUB, big_endian=False) is None
+
+
+def test_deep_search_labels_the_entry_stub_as_sdk_code(monkeypatch, tmp_path):
+    from decompnet.app import deep_permuter
+    from decompnet.app.source_assembly import detail
+
+    net = RomNetwork(tmp_path / 'db', tmp_path)
+    body = ENTRY_STUB
+    def fake_split(workdir, *args, **kwargs):
+        lines = [split.AsmLine(i, 0x80000400 + i, int.from_bytes(body[i:i + 4], 'big'), 'nop', '') for i in range(0, len(body), 4)]
+        fn = split.RomFunction('func_80000400', 0x80000400, 0, 'code', lines, workdir / 'toy.s')
+        return split.SplitResult([fn], [], [split.Segment('code', 0, len(body), 0x80000400)], {}, 0, '', '', '')
+    monkeypatch.setattr(N64, 'split_game', fake_split)
+    monkeypatch.setattr(N64, 'debug_info', lambda *a: None)
+    info = {'title': 'Toy', 'size': len(body), 'game_code': 'TEST', 'region': 'US', 'compiler_guess': 'KMC', 'sha1': 'toy',
+            'entrypoint': 0x80000400}
+    slug = net.import_split(N64, Picked('n64', body, 'toy.z64', info, True), toolchain='gcc-2.7.2-kmc', flags=['-O2'], log=lambda s: None)
+    proj = net.project_row(slug)
+    assert not (detail(proj, net._function('func_80000400', slug)) or {}).get('verified')  # import only set it aside as assembly
+    with net.project_store(proj['id']).tx() as db:  # as in a project imported before that rule: still open
+        db.execute("UPDATE functions SET status='open', meta=NULL WHERE name='func_80000400'")
+
+    class Log:
+        def __call__(self, line): pass
+        def check_cancel(self): pass
+    monkeypatch.setattr(deep_permuter, '_run', lambda *a, **k: pytest.fail('searched the boot stub'))
+    result = deep_permuter.run(net, slug, 'func_80000400', 1, 10, Log())
+    assert result['reason'] == 'Identified and set aside as SDK library code'
+    row = net._function('func_80000400', slug)
+    assert row['status'] == 'asm' and detail(proj, row)['kind'] == 'sdk'
+    assert net.function_detail(slug, row['name'], include_hints=False)['display_name'] == 'entrypoint'

@@ -49,7 +49,32 @@ _MTX_CAT_ASM = {
 SIZES = tuple(sorted({size for _, size, _, _ in KNOWN.values()} | {size for size, _ in _MTX_CAT_ASM}))
 
 
+# The cartridge's entry stub (libultra's makerom boot code, which the port replaces with its own start-up): clear BSS
+# with paired stores and signed `addi`, then jump to the game's `main` with $sp set in the delay slot. Only the
+# addresses (BSS start and size, main, the stack top) differ between games, so a game's copy is told by its shape:
+# the 16-bit immediates of lui/addiu are masked, everything else must be exactly this.
+_ENTRY_SHAPE = (0x3C080000, 0x25080000, 0x3C090000, 0x25290000, 0xAD000000, 0xAD000004, 0x21080008, 0x2129FFF8,
+                0x1520FFFB, 0x00000000, 0x3C0A0000, 0x254A0000, 0x3C1D0000, 0x01400008, 0x27BD0000)
+_ADDRESS_OPCODES = (0x0F, 0x09)  # lui, addiu
+
+
+def identify_entry(code):
+    """The entry stub (see _ENTRY_SHAPE) with its alignment padding, or None."""
+    words = [int.from_bytes(code[at:at + 4], 'big') for at in range(0, len(code) - 3, 4)]
+    while words and words[-1] == 0:
+        words.pop()
+    if len(code) % 4 or len(words) != len(_ENTRY_SHAPE):
+        return None
+    if any((w & 0xFFFF0000 if w >> 26 in _ADDRESS_OPCODES else w) != shape for w, shape in zip(words, _ENTRY_SHAPE)):
+        return None
+    return {'name': 'entrypoint', 'names': ['entrypoint'], 'corpus': 'N64 boot code (makerom entry)', 'bytes': len(code),
+            'target_sha256': hashlib.sha256(code).hexdigest(), 'reference': '',
+            'variant': "clears BSS, sets the stack and jumps to main; a port starts the game its own way",
+            'evidence': 'The cartridge entry stub: its instructions are the SDK boot code\'s, only its addresses are the game\'s.'}
+
+
 def identify(code,big_endian=True):
+    if big_endian and (entry := identify_entry(code)):return entry
     if not big_endian or len(code) not in SIZES:return None
     digest=hashlib.sha256(code).hexdigest()
     found=KNOWN.get(digest)
