@@ -10132,12 +10132,20 @@ previous best:
 - 470 to 280: the slot-index temporary and a text-buffer temporary, shared by all four loops, renamed per
   loop. A name shared across loops is one multi-block pseudo and gets one saved register; the target's
   loops have the index in a scratch register.
-- 280 to 260: one more step by the deep search.
+- 280 to 260 to 80: two more steps by the deep search (`temp_s1` as `unsigned short` among them).
+- 80 to 20: the probe-timer loop's counter init left as its own statement before the loop's pointer declaration
+  (`i = 0; { volatile u8 *m = ...; for (; (u16)i < 2; i++) ... }`), not in the `for` header.
+- 20 to 0 (byte-identical): every `if (v != 0)` written as `if (inline_fn(v))` with
+  `static inline int inline_fn(s32 a) { return a != 0; }`. After `beqz v` gcc's CSE knows `v == 0` on the else
+  path and replaced `v` in `else if (v < n)` by the counter register that also held zero (`slt $v0, $s4, $v0`);
+  through the helper the byte kept its own register (`slt $v0, $v1, $v0`). The deep permuter's random
+  `perm_inline` found it after 1,704 candidates.
 
 No difference: moving each local declaration to the front or back, `bonusTable` as a local pointer, a
 `while` or `for` form of the first loop (918, worse), the totals update spelled three ways. Evidence level: a
-real game, not byte-identical; decomp-repair 0.5.162's `block_register_repairs` reproduces the first three
-steps' sources and splits the temporaries, and the deep permuter offers them first when register rows
+real game, byte-identical in the end; decomp-repair 0.5.185's `block_register_repairs` has the rewrites for
+steps one to three, the split of the temporaries, the init left in place and the inline test (two of its
+variants took the score-20 source to exact), and the deep permuter offers them first when register rows
 dominate the diff.
 
 ### Keep a conditional halfword update in the guarded arm
