@@ -147,6 +147,7 @@ class BriefMixin:
         if own["toolchain"] == 'gcc-2.7.2-kmc':
             from decomprepair import (
                 large_stack_drafts,
+                likely_branch_cursor,
                 measured_callback_loop,
                 measured_mmio_polling,
                 measured_stack_drafts,
@@ -158,6 +159,8 @@ class BriefMixin:
                 inputs.append('measured stack copies')
             if measured_callback_loop.applies(fn['asm'] or ''):
                 inputs.append('indexed callback loops')
+            if likely_branch_cursor.applies(fn['asm'] or ''):
+                inputs.append('shared branch-likely cursor advance')
             if measured_mmio_polling.applies(fn['asm'] or ''):
                 inputs.append('measured MMIO polling')
             if large_stack_drafts.applies(fn['asm'] or ''):
