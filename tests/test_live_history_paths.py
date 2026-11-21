@@ -35,6 +35,8 @@ def test_new_attempt_annotations_do_not_recount_old_history(tmp_path):
 
 def test_map_reads_only_changed_rows_and_retains_previous_snapshot(tmp_path, monkeypatch):
     net, _ = _game(tmp_path, [(f'f{i}', 40, 'open') for i in range(10)])
+    from decompnet.app.sdk_builtin import ensure
+    ensure(net)
     first = incremental_map(net, 'game')
     calls = []
     original = net.function_map
@@ -64,7 +66,7 @@ def test_sdk_identity_ignores_score_updates_but_refreshes_inventory(tmp_path, mo
         db.execute('UPDATE functions SET best_score=10 WHERE id=1')
     assert identify(net, proj, {})[1]['names'] == ['helper'] and len(calls) == 1
     with net.store.tx() as db:
-        db.execute("UPDATE sdk_signatures SET name='other'")
+        db.execute("UPDATE sdk_signatures SET name='other' WHERE corpus='lib'")
     assert identify(net, proj, {})[1]['names'] == ['other'] and len(calls) == 2
     # Recorded identities are merged at call time, not captured from another caller's dictionary.
     assert identify(net, proj, {99: {'names': ['recorded']}})[99]['names'] == ['recorded']

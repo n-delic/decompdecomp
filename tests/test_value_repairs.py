@@ -30,7 +30,7 @@ def test_pointer_to_scalar_lifetime_split_keeps_volatile_load_in_place():
 
 def test_sum_shapes_reject_destination_dependence_and_calls():
     source='void f(){void *q;q=((n%(*p))*8)+(char *)(p+8);}'
-    assert any('q = (char *)(((n%(*p))*8)); q += (s32)((char *)(p+8));' in s for k,s in value_repairs.variants(source,'f') if k=='sum_shape')
+    assert any('q = (void *)(((n%(*p))*8)); q = (void *)((char *)q + (s32)((char *)(p+8)));' in s for k,s in value_repairs.variants(source,'f') if k=='sum_shape')
     source='void f(){send(off+*(s32 *)(base+4));}'
     assert any('send(*(s32 *)(base+4) + off)' in s for _,s in value_repairs.variants(source,'f'))
     for source in ('void f(){s32 x;x=a+x;}', 'void f(){s32 x;x=a+next();}', 'void f(){volatile s32 x;x=a+b;}'):

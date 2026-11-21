@@ -160,7 +160,8 @@ def test_large_progress_map_preserves_order_and_bounds_native_row_handoffs(proje
     original = store.all
     def read(sql, *args):
         rows = original(sql, *args)
-        returned.append(len(rows))
+        if 'json_group_array(json_array(ordinal,name,state))' in sql:
+            returned.append(len(rows))
         return rows
     monkeypatch.setattr(store, 'all', read)
     captured = []

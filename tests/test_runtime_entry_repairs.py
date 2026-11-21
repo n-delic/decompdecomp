@@ -124,9 +124,15 @@ def test_correct_runtime_profile_still_checks_a_wrong_width_draft(monkeypatch):
         seen.append(source);exact='unsigned long long' in source
         return exact,SimpleNamespace(score=0 if exact else 50),''
     net._judge_with=judge
+    verified = []
+    def recheck(agent, project, function, source, *, synchronize, exact_only):
+        assert not synchronize and exact_only and 'unsigned long long' in source
+        verified.append(source)
+        fn['status'] = 'matched'
+    net.try_quietly = recheck
     r=matching_preflight.run(net,proj,fn,max_profiles=2)
     assert r['tested']==2 and r['best']['exact'] and len(seen)==2
-    assert state['suggested'][0]['flags']=='-O1 -mips3 -32'
+    assert r['applied'] and verified == [seen[1]] and not state['suggested']
 
 
 def test_changed_runtime_target_and_source_require_fresh_judgments(monkeypatch):

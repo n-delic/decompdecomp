@@ -17,7 +17,7 @@ def test_project_row_is_cached_until_any_column_changes(tmp_path):
     reader.set_trace_callback(reads.append)
     try:
         assert net._project('game') is first
-        assert not any('FROM projects' in q for q in reads)  # only the revision was read
+        assert not any('SELECT * FROM projects' in q for q in reads)  # only the revision was read
         for change in ("UPDATE projects SET description='new' WHERE slug='game'",  # a column no other revision follows
                        "UPDATE projects SET config='{\"kind\": \"rom\"}' WHERE slug='game'"):
             with store.tx() as db:

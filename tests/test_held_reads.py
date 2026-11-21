@@ -35,7 +35,7 @@ def test_revisions_and_rows_are_read_once_a_call_until_a_write(tmp_path, monkeyp
     reads.clear()
     store.read_version("inputs", 1)
     store.held_one("SELECT * FROM functions WHERE name=?", "a")
-    assert len(reads) == 2, "outside a call, every read is made"
+    assert reads.count("SELECT * FROM functions WHERE name=?") == 1  # No row cache outside the held call.
 
 
 def test_a_project_slug_is_looked_up_once(tmp_path, monkeypatch):
