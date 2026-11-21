@@ -1,5 +1,19 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: group endpoint cases and a bounded middle range
+
+A compare tree in a large N64 draft sent two endpoint values to one
+label and ran the same body for the two values between them. The
+target compares the endpoints before the middle range body. A switch
+with the endpoint cases grouped, preserving evaluation of the lower
+case's duplicate-jump condition, reduced the standalone linked score
+from 36,771 to 36,111 using `-G0 -mips3 -mgp32 -mfp32 -O2`. Reversing the
+case order scored 36,981. Matching the earlier order of three float
+updates lowered the score to 36,016, confirmed as the saved best by
+the live judge. The function remains open. This is one real function;
+controlled tests cover the rewrite's branch and scope handling.
+
+
 ### KMC GCC 2.7.2: a nested identical-arm float guard
 
 In one N64 function, an existing identical-arm guard tested an
