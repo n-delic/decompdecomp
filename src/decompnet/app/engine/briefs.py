@@ -176,6 +176,7 @@ class BriefMixin:
                 stack_fill_drafts,
                 stack_header_buffer,
                 stack_read_retry,
+                stack_word_index_drafts,
                 uncached_read_repairs,
             )
 
@@ -199,6 +200,10 @@ class BriefMixin:
                 inputs.append('descending stack buffer fill')
             if stack_fill_drafts.ascending_applies(fn['asm'] or ''):
                 inputs.append('ascending stack buffer fill')
+            if stack_fill_drafts.word_clear_applies(fn['asm'] or ''):
+                inputs.append('stack word clear')
+            if stack_word_index_drafts.applies(fn['asm'] or ''):
+                inputs.append('indexed stack word copy')
             if stack_header_buffer.applies(fn['asm'] or ''):
                 inputs.append('serialized stack header buffer')
             if relocated_global_update.reload_applies(fn['asm'] or ''):

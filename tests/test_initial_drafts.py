@@ -595,3 +595,43 @@ void f(void *arg, s32 i) {
     assert expected in draft
     assert expected not in seeds.generate_from_asm(asm.replace('jalr $v0', 'jalr $v1'),
                                                    'f', 'gcc-2.7.2-kmc', valid=True)
+
+
+def test_kmc_recovers_stack_base_for_a_word_clear_in_fresh_and_recovery_drafts(monkeypatch):
+    asm = '''
+addiu $sp, $sp, -32
+move $v1, $sp
+addiu $v0, $zero, 4
+.Lfill:
+sw $zero, ($v1)
+addiu $v0, $v0, -1
+bnez $v0, .Lfill
+addiu $v1, $v1, 4
+addiu $v0, $zero, 1
+.Lidle:
+bnez $v0, .Lidle
+nop
+jr $ra
+addiu $sp, $sp, 32
+'''
+    raw = '''
+void f(void) {
+    s32 *ptr;
+    s32 count;
+    ptr = sp;
+    count = 4;
+    do {
+        *ptr = 0;
+        count -= 1;
+        ptr += 4;
+    } while (count != 0);
+    do {} while (1 != 0);
+}
+'''
+    monkeypatch.setattr(seeds, 'run_m2c', lambda *args, **kwargs: raw)
+    expected = 's32 __repair_clear_words[8];'
+    assert expected in seeds.generate_from_asm(asm, 'f', 'gcc-2.7.2-kmc', valid=True)
+    choices = repairs.recovery_drafts(raw, 'f', asm, 'mips', 'gcc-2.7.2-kmc', '', None, {'failures': []})
+    family, draft = next(choices)
+    assert family == 'initial_stack_word_clear'
+    assert expected in draft
