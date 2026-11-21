@@ -146,6 +146,14 @@ class Lanes:
 
     def search(self, slug, name, minutes, variants, function_log, **options):
         """deep_permuter.run(...) for one function in a lane; raises Unavailable when no lane can take it."""
+        return self._request(function_log, action='search', slug=slug, name=name, minutes=minutes,
+                             variants=variants, **options)
+
+    def donors(self, slug, function_ids, function_log):
+        return self._request(function_log, action='donors', slug=slug, function_ids=function_ids)
+
+    def _request(self, function_log, **payload):
+        function_log.check_cancel()
         if self.failed:
             raise Unavailable()
         lane = self._take(function_log.check_cancel)
@@ -156,8 +164,7 @@ class Lanes:
         metrics = getattr(pool, 'metrics', None)
         keep = False
         try:
-            lane.send({'action': 'search', 'ident': ident, 'slug': slug, 'name': name, 'minutes': minutes,
-                       'variants': variants, 'slots': self.slots, 'maximum': self.maximum, **options})
+            lane.send({'ident': ident, 'slots': self.slots, 'maximum': self.maximum, **payload})
             cancelled = None
             deadline = None
             while True:
@@ -279,7 +286,7 @@ def child(db_path, workspace, background):
 
     def run(message):
         ident = message['ident']
-        stop = cancels[ident] = threading.Event()
+        stop = cancels[ident]
         pool = pool_for(message['slots'], message['maximum'])
         sent = dict(pool.metrics.values)
         finished = threading.Event()
@@ -347,6 +354,22 @@ def child(db_path, workspace, background):
         finally:
             cancels.pop(ident, None)
 
+    def run_donors(message):
+        from .similar_phase import search_partition
+        ident = message['ident']
+        stop = cancels[ident]
+        try:
+            def report(value):
+                emit({'kind': 'progress', 'ident': ident, 'value': value})
+            result = search_partition(net, message['slug'], message['function_ids'], stop, report)
+            emit({'kind': 'reply', 'ident': ident, 'result': result})
+        except Exception as error:
+            log.exception('Cross-game search lane failed')
+            emit({'kind': 'reply', 'ident': ident, 'error': str(error),
+                  'type': 'NetworkError' if isinstance(error, NetworkError) else type(error).__name__})
+        finally:
+            cancels.pop(ident, None)
+
     requests = queue.Queue()
 
     def read():
@@ -356,13 +379,19 @@ def child(db_path, workspace, background):
                 if stop := cancels.get(message.get('ident')):
                     stop.set()
             else:
+                if message.get('action') in ('search', 'donors'):
+                    cancels[message['ident']] = threading.Event()
                 requests.put(message)
+        for stop in list(cancels.values()):
+            stop.set()
         requests.put(None)
     threading.Thread(target=read, daemon=True, name='deep-lane-input').start()
     try:
         while (message := requests.get()) is not None and message.get('action') != 'shutdown':
             if message.get('action') == 'search':
                 run(message)
+            elif message.get('action') == 'donors':
+                run_donors(message)
     finally:
         for stop in list(cancels.values()):
             stop.set()

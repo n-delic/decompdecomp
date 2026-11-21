@@ -28,6 +28,9 @@ MAX_POOL = 400
 MANUAL_SIZE_RATIO = .75
 MANUAL_SIMILARITY = .76
 OTHER_COMPILER_POOL = 80
+MANUAL_CANDIDATES = 8
+MANUAL_OTHER_COMPILERS = 3
+MANUAL_REPAIRS = 16
 MAX_ATTEMPTS = 128
 MAX_SECONDS = 120
 MAX_REPAIRS = 8
@@ -207,7 +210,7 @@ def repair_variants(source: str, feedback: dict | None = None) -> list[str]:
     return result
 
 
-def deeper_variants(source, header, settings, function, deadline):
+def deeper_variants(source, header, settings, function, deadline, count=MAX_REPAIRS // 2):
     """Use the already-installed full permuter for a small batch, inside this pass's time budget."""
     from .. import seeds
     from .permute import GENERATOR_SECONDS, Generator, available, weight_family
@@ -220,7 +223,7 @@ def deeper_variants(source, header, settings, function, deadline):
         return generator.batch({'header': seeds.c_only(header), 'source': source, 'function': function,
                                 'family': weight_family({'compiler': settings}, None, False),
                                 'seed': int(hashlib.sha256(source.encode()).hexdigest()[:7], 16),
-                                'count': MAX_REPAIRS // 2}) or []
+                                'count': count}) or []
     except OSError:
         return []  # the small built-in rewrites remain available when the optional tool cannot start
     finally:
@@ -306,29 +309,37 @@ def compiler_trial(net, agent, proj, fn, candidate, settings):
             db.execute('DELETE FROM claims WHERE function_id=? AND agent_id=?', (fn['id'], agent.id))
 
 
-def run(twins, slug: str, job) -> int:
+def destination_supported(net, proj):
+    # Project mode still needs object-relocation alignment and per-file source adaptation.
+    slug = proj['slug']
+    return not net.fork_slug(slug) and net.is_rom(proj) and proj['arch'] == 'mips' and slug not in net.links
+
+
+def donor_projects(net, proj):
+    from .shared_reuse import compatible
+    return {p['id']: p for p in [*compatible(net, proj), proj] if net.is_rom(p)}
+
+
+def run(twins, slug: str, job, *, function_ids=None) -> int:
     """Try a few close candidates per function after exact transfers, with a pass-wide time/compile budget."""
     from .twins import _declared, apply, rom_renames
 
     net = twins.net
     proj = net.project_row(slug)
-    # Project mode needs alignment of object relocations and file-context adaptation, not ROM addresses.
-    # Other processors need their own instruction reader before mnemonic ranking is meaningful.
-    if net.fork_slug(slug) or not net.is_rom(proj) or proj['arch'] != 'mips' or slug in net.links:
+    if not destination_supported(net, proj):
         return 0
     cfg = net.cfg(proj)
     manual = getattr(job, 'cross_exhaustive', False)
     supported_compilers = {c.id for c in net.console(proj).compilers} if manual else set()
-    from .shared_reuse import compatible
-    others = {p['id']:p for p in compatible(net, proj) if net.is_rom(p)}
-    others[proj['id']] = proj  # Matched siblings are donors too, without another imported region.
+    others = donor_projects(net, proj)
     from . import free_candidates
     free_candidates.budget(job, MAX_SECONDS, MAX_ATTEMPTS)
     deadline = job.reuse_deadline
-    for other in others.values():
-        if job.stop.is_set() or time.monotonic() >= deadline:
-            return 0
-        twins.index_project(other)
+    if function_ids is None:  # The coordinator refreshes the indexes before launching separate lanes.
+        for other in others.values():
+            if job.stop.is_set() or time.monotonic() >= deadline:
+                return 0
+            twins.index_project(other)
     agent, _ = net.local_agent('autopilot')
     mine = twins.prints(proj)
     syms_b = net.symbols(proj['id'])
@@ -339,11 +350,15 @@ def run(twins, slug: str, job) -> int:
     donors = reuse_donors.Donors(net, proj, include_self=True)
     layouts = {pid: regional_layouts.learn(net, proj, other) for pid, other in others.items()}
     maps = {pid: regional_names(twins, proj, other) for pid, other in others.items()}
-    saved = net.project_store(proj['id']).one('SELECT function_id FROM reuse_cursors WHERE project_id=?', proj['id'])
-    cursor = saved['function_id'] if saved else 0
+    cursor = 0
+    if not manual:
+        saved = net.project_store(proj['id']).one('SELECT function_id FROM reuse_cursors WHERE project_id=?', proj['id'])
+        cursor = saved['function_id'] if saved else 0
+
     def resume(fid):
-        with net.project_store(proj['id']).tx() as db:
-            db.execute('INSERT OR REPLACE INTO reuse_cursors VALUES(?,?)', (proj['id'], fid))
+        if not manual:
+            with net.project_store(proj['id']).tx() as db:
+                db.execute('INSERT OR REPLACE INTO reuse_cursors VALUES(?,?)', (proj['id'], fid))
     attempted = matched = 0
     repairs = {}
 
@@ -398,7 +413,8 @@ def run(twins, slug: str, job) -> int:
     # Keep a quarter of the remaining budget for close misses. Previously a large transfer queue could
     # consume every pass, leaving hundreds of eligible cached misses with no repair attempts at all.
     transfer_deadline = time.monotonic() + max(0, deadline - time.monotonic()) * .75
-    transfer_limit = job.reuse_attempts + max(1, int((job.reuse_limit - job.reuse_attempts) * .75))
+    transfer_limit = (job.reuse_attempts + max(1, int((job.reuse_limit - job.reuse_attempts) * .75))
+                      if job.reuse_limit != float('inf') else job.reuse_limit)
     incomplete = False
 
     def transfers_exhausted():
@@ -407,8 +423,11 @@ def run(twins, slug: str, job) -> int:
     store = net.project_store(proj['id'])
     # Most open functions have no usable fingerprint or are already claimed.
     # Do not inflate all their source payloads before testing those cheap gates.
+    selected = ' AND id IN (SELECT value FROM json_each(?))' if function_ids is not None else ''
+    params = (json.dumps(function_ids),) if function_ids is not None else ()
     targets = metadata_rows(store, ('id', 'name'),
-                            "SELECT id,name FROM main.functions WHERE project_id=? AND status='open' ORDER BY id", proj['id'])
+                            "SELECT id,name FROM main.functions WHERE project_id=? AND status='open'" + selected
+                            + " ORDER BY id", proj['id'], *params)
     # Manual searches widen each target before moving on. An entire project of
     # cheap misses should not use up the budget before the wider search starts.
     work = [(phase, b) for phase in (0, 1) for b in targets]
@@ -472,9 +491,8 @@ def run(twins, slug: str, job) -> int:
 
         big = bool(proj['big_endian'])
         ranked = _rank_donors(rows, ops, ops_cache, b, layout, big, floor)
-        # Give a strong other-compiler lead one slot after the narrow search.
-        extra = _rank_donors(alternate, ops, ops_cache, b, layout, big, floor) if alternate else []
-        ranked = extra[:1] + ranked[:MAX_CANDIDATES - bool(extra)]
+        extra = _rank_donors(alternate, ops, ops_cache, b, layout, big, floor)[:MANUAL_OTHER_COMPILERS] if alternate else []
+        ranked = extra + ranked[:(MANUAL_CANDIDATES if wide else MAX_CANDIDATES) - len(extra)]
         for key, score in ranked:
             a = by_id[key]
             # Re-read authoritative source after ranking: donors can be polished during a pass.
@@ -555,10 +573,15 @@ def run(twins, slug: str, job) -> int:
     # Cached trials regenerate this deterministic queue, so a later pass resumes even after an app restart.
     # Concrete address evidence goes before speculative cast/order mutations within the repair allowance.
     known = {name for name, _ in symbol_state}
-    prepared = [(address_repairs.variants(r[5] + r[6], r[10], r[2], bool(proj['big_endian']), known), r)
-                for r in repairs.values()]
+    prepared = []
+    for r in repairs.values():
+        if exhausted():
+            return matched
+        prepared.append((address_repairs.variants(r[5] + r[6], r[10], r[2], bool(proj['big_endian']), known), r))
     prepared.sort(key=lambda item: (not item[0], item[1][0]))
+    repair_limit = MANUAL_REPAIRS if manual else MAX_REPAIRS
     for address_variants, (_, a, b, other, score, prelude, source, settings, names, header, report) in prepared:
+        publish_progress(job, 'Repairing similar donor code', function=b['name'])
         if exhausted():
             if not incomplete:
                 resume(0)
@@ -570,10 +593,10 @@ def run(twins, slug: str, job) -> int:
             compiled = {'target': bytes.fromhex(report['candidate_target']), 'relocs': report.get('candidate_relocs', '[]')}
             guided.extend(literal_variants(prelude + source, compiled, b, bool(proj['big_endian'])))
         simple = repair_variants(source, report)
-        deep = deeper_variants(source, header + '\n' + prelude, settings, b['name'], deadline)
-        variants = [*guided, *(prelude + v for v in (simple[:MAX_REPAIRS // 2] if deep else simple)),
+        deep = deeper_variants(source, header + '\n' + prelude, settings, b['name'], deadline, repair_limit // 2)
+        variants = [*guided, *(prelude + v for v in (simple[:repair_limit // 2] if deep else simple)),
                     *(prelude + v for v in deep)]
-        for variant in list(dict.fromkeys(variants))[:MAX_REPAIRS]:
+        for variant in list(dict.fromkeys(variants))[:repair_limit]:
             if exhausted():
                 if not incomplete:
                     resume(0)

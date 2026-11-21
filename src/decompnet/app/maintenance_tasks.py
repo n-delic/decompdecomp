@@ -217,11 +217,12 @@ def _run_full_pass(net, payload, stop, promote, status):
 
 
 def _run_cross_game(net, payload, stop, promote, status):
-    from . import maintenance
+    from . import deep_lanes, maintenance
     from .twins import Job
 
     job = Job(stop=stop, foreground=promote)
     job.promote()
+    job._parallel_donors = deep_lanes.enabled()
     done = threading.Event()
     _ticker(stop, done, lambda: status({"progress": job.progress}))
     try:

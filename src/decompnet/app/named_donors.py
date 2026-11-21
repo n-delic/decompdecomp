@@ -30,19 +30,16 @@ def meaningful(name):
             and not re.match(r'(?:FUN_|sub_|nullsub_|thunk_|loc_)[0-9A-Fa-f]+$',name))
 
 
-def targets(net,proj,only=None):
-    # Keep target/source/assembly blobs out of candidate discovery. Load only the bounded
-    # meaningful-name window after cursor rotation and any caller restriction.
-    rows=[r for r in net.project_store(proj['id']).all("SELECT id,name FROM functions WHERE project_id=? AND status='open' ORDER BY id",proj['id'])
-          if meaningful(r['name']) and (only is None or r['id'] in only)]
-    key='named-donor-cursor:'+str(proj['id'])
-    cursor=net.project_store(proj['id']).one('SELECT value FROM settings WHERE key=?',key)
-    after=int(cursor['value']) if cursor else -1
-    selected=([r for r in rows if r['id']>after]+[r for r in rows if r['id']<=after])[:MAX_FUNCTIONS]
-    if not selected:return []
-    full={r['id']:r for r in net.project_store(proj['id']).all("SELECT * FROM functions WHERE project_id=? AND status='open' "
-          "AND id IN (SELECT value FROM json_each(?))",proj['id'],json.dumps([r['id'] for r in selected]))}
-    return [full[r['id']] for r in selected if r['id'] in full]
+def targets(net, proj, only=None, *, manual=False):
+    # Keep payloads out of discovery. Read a function body only once it has a donor.
+    store = net.project_store(proj['id'])
+    rows = [r for r in store.all("SELECT id,name FROM main.functions WHERE project_id=? AND status='open' ORDER BY id",
+                                 proj['id']) if meaningful(r['name']) and (only is None or r['id'] in only)]
+    if manual:
+        return rows
+    cursor = store.one('SELECT value FROM settings WHERE key=?', 'named-donor-cursor:' + str(proj['id']))
+    after = int(cursor['value']) if cursor else -1
+    return ([r for r in rows if r['id'] > after] + [r for r in rows if r['id'] <= after])[:MAX_FUNCTIONS]
 
 
 def raw(net,other,a,proj,b):
@@ -114,36 +111,69 @@ def run(twins,slug,job=None,*,only=None):
         return 0
     job=job if job is not None else Job()
     free_candidates.budget(job)
-    deadline=min(job.reuse_deadline,time.monotonic()+MAX_SECONDS)
-    ceiling=min(job.reuse_limit,job.reuse_attempts+MAX_ATTEMPTS)
+    manual = getattr(job, 'cross_exhaustive', False)
+    deadline = job.reuse_deadline if manual else min(job.reuse_deadline, time.monotonic() + MAX_SECONDS)
+    ceiling = job.reuse_limit if manual else min(job.reuse_limit, job.reuse_attempts + MAX_ATTEMPTS)
     def exhausted():
         return free_candidates.exhausted(job) or time.monotonic()>=deadline or job.reuse_attempts>=ceiling
-    others=list(shared_reuse.compatible(net,proj))[:64]
+    others = list(shared_reuse.compatible(net, proj))
+    if not manual:
+        others = others[:64]
     worker=Permuter(net)
     agent,_=net.local_agent('autopilot-named-donors')
     matched=0
-    eligible=targets(net,proj,only)
+    store = net.project_store(proj['id'])
+    eligible = targets(net, proj, only, manual=manual)
     from .cross_game_progress import report as publish_progress
-    for index, b in enumerate(eligible[:MAX_FUNCTIONS]):
-        publish_progress(job, 'Checking same-name source candidates', function=b['name'], done=index, total=len(eligible[:MAX_FUNCTIONS]))
-        if exhausted():break
-        if only is not None and b['id'] not in only:continue
-        with net.project_store(proj['id']).tx() as db:
-            db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',('named-donor-cursor:'+str(proj['id']),str(b['id'])))
-        if net.project_store(proj['id']).one('SELECT 1 FROM claims WHERE function_id=? AND expires_at>?',b['id'],time.time()):continue
-        donors=[]
-        for other in others:
-            donors.extend((other,a) for a in net.project_store(other['id']).all("SELECT * FROM functions WHERE project_id=? AND status='matched' AND name=? ORDER BY id LIMIT ?",other['id'],b['name'],MAX_DONORS))
-        # A failed pair must not permanently hide a useful third project.
-        cursor_key='named-donor-project-cursor:'+str(b['id'])
-        old_cursor=net.project_store(proj['id']).one('SELECT value FROM settings WHERE key=?',cursor_key)
-        offset=int(old_cursor['value'])%len(donors) if old_cursor and donors else 0
-        donors=donors[offset:]+donors[:offset]
-        if donors:
-            with net.project_store(proj['id']).tx() as db:
-                db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',(cursor_key,str((offset+MAX_DONORS)%len(donors))))
-        for other,a in donors[:MAX_DONORS]:
-            if exhausted():break
+    if manual and eligible:
+        names = json.dumps([row['name'] for row in eligible])
+        from collections import defaultdict
+        by_name = defaultdict(list)
+        for index, other in enumerate(others):
+            if exhausted():
+                return matched
+            publish_progress(job, 'Indexing same-name donors', game=other['name'], done=index, total=len(others))
+            for row in net.project_store(other['id']).all(
+                "SELECT id,name FROM main.functions WHERE project_id=? AND status='matched' AND "
+                "name IN (SELECT value FROM json_each(?)) ORDER BY id", other['id'], names):
+                by_name[row['name']].append((other, row['id']))
+    for index, selected in enumerate(eligible):
+        publish_progress(job, 'Checking same-name source candidates', function=selected['name'], done=index, total=len(eligible))
+        if exhausted():
+            break
+        fid = selected['id']
+        if not manual:
+            with store.tx() as db:
+                db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)', ('named-donor-cursor:' + str(proj['id']), str(fid)))
+        if store.one('SELECT 1 FROM claims WHERE function_id=? AND expires_at>?', fid, time.time()):
+            continue
+        if manual:
+            donors = by_name[selected['name']]
+        else:
+            donors = [(other, row['id']) for other in others for row in net.project_store(other['id']).all(
+                "SELECT id FROM main.functions WHERE project_id=? AND status='matched' AND name=? ORDER BY id LIMIT ?",
+                other['id'], selected['name'], MAX_DONORS)]
+            if donors:
+                # A failed pair must not permanently hide a useful third project.
+                cursor_key = 'named-donor-project-cursor:' + str(fid)
+                old_cursor = store.one('SELECT value FROM settings WHERE key=?', cursor_key)
+                offset = int(old_cursor['value']) % len(donors) if old_cursor else 0
+                donors = donors[offset:] + donors[:offset]
+                with store.tx() as db:
+                    db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)', (cursor_key, str((offset + MAX_DONORS) % len(donors))))
+                donors = donors[:MAX_DONORS]
+        if not donors:
+            continue
+        b = store.one("SELECT * FROM functions WHERE id=? AND status='open' AND name=?", fid, selected['name'])
+        if b is None:
+            continue
+        for other, donor_id in donors:
+            if exhausted():
+                break
+            a = net.project_store(other['id']).one("SELECT * FROM functions WHERE id=? AND status='matched' AND name=?",
+                                                  donor_id, b['name'])
+            if a is None:
+                continue
             try:
                 choices=raw(net,other,a,proj,b)
             except (NetworkError,OSError,ValueError,toolchains.ToolchainError) as error:
@@ -158,7 +188,7 @@ def run(twins,slug,job=None,*,only=None):
                     record(net,proj,b,other,a,'skip',str(error))
                     continue
                 # No claims or shared-header edits merely to discover or preprocess a donor.
-                if not worker._hold(agent,b,count_turn=False,seconds=max(1,deadline-time.monotonic())):
+                if not worker._hold(agent,b,count_turn=False,seconds=min(300, max(1, deadline-time.monotonic()))):
                     continue
                 try:
                     origin=f"{a['name']} in {other['name']}; {label}".replace('*/','* /').replace('\n',' ')
@@ -168,7 +198,7 @@ def run(twins,slug,job=None,*,only=None):
                     for family,candidate in queue:
                         if exhausted():break
                         current=net.project_store(proj['id']).one('SELECT * FROM functions WHERE id=?',b['id'])
-                        if current['status']!='open':break
+                        if not current or current['status']!='open':break
                         fresh=net.project_row(slug)
                         fork=net.fork_slug(slug)
                         scope=destination_scope(net,fresh,current)
@@ -216,5 +246,5 @@ def run(twins,slug,job=None,*,only=None):
                             queue.extend((labels.get(s,'local_repair'),s) for s in variants[:MAX_REPAIRS])
                 finally:
                     worker._let_go(agent,b)
-            if net.project_store(proj['id']).one('SELECT status FROM functions WHERE id=?',b['id'])['status']=='matched':break
+            if not store.one("SELECT 1 FROM functions WHERE id=? AND status='open'", b['id']):break
     return matched

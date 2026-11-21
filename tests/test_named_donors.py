@@ -174,3 +174,28 @@ def test_failed_first_donors_do_not_starve_a_third_project(same,monkeypatch):
     monkeypatch.setattr(named.source_preparation,'attempt',judge(same,calls))
     named.run(same.twins,'destination',Job());named.run(same.twins,'destination',Job())
     assert any('x + 4' in c[0] for c in calls)
+
+
+def test_manual_search_checks_named_targets_past_the_automatic_window(same, monkeypatch):
+    from decompnet.app.free_candidates import budget
+
+    with same.store.tx() as db:
+        db.execute("INSERT INTO functions(id,project_id,name,status,matched_source) "
+                   "VALUES(3,1,'secondCompute','matched','int secondCompute(void){return 7;}')")
+        db.execute("INSERT INTO functions(id,project_id,name,status) VALUES(4,2,'secondCompute','open')")
+    monkeypatch.setattr(named, 'MAX_FUNCTIONS', 1)
+    calls = []
+
+    def attempt(worker, proj, fn, source, header, agent, fork, **kwargs):
+        score = 0 if fn['name'] == 'secondCompute' else 20
+        return judge(same, calls, score)(worker, proj, fn, source, header, agent, fork, **kwargs)
+
+    monkeypatch.setattr(named.source_preparation, 'attempt', attempt)
+    assert named.run(same.twins, 'destination', Job()) == 0
+    assert len(calls) == 1 and 'sdkCompute' in calls[0][0]
+    manual = Job()
+    manual.cross_exhaustive = True
+    budget(manual, seconds=float('inf'), attempts=float('inf'))
+    assert named.run(same.twins, 'destination', manual) == 1
+    assert len(calls) == 2 and 'secondCompute' in calls[1][0]
+    assert not same.store.one('SELECT 1 FROM claims WHERE function_id=4')

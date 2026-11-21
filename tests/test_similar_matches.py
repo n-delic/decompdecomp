@@ -235,7 +235,8 @@ def test_manual_search_reserves_another_compilers_donor_and_surfaces_exact_trial
     assert pair.cfg(pair._project('destination'))['compiler']['toolchain'] == 'gcc-2.7.2-kmc'
 
 
-def test_a_regional_constant_change_matches_with_the_real_compiler_and_link_judge(built, tmp_path, monkeypatch):  # noqa: F811
+@pytest.mark.parametrize('parallel', [False, True])
+def test_a_regional_constant_change_matches_with_the_real_compiler_and_link_judge(built, tmp_path, monkeypatch, parallel):  # noqa: F811
     net = RomNetwork(tmp_path / 'decomp.db', tmp_path)
     monkeypatch.setattr(net.twins, 'after_match', lambda *args: None)
     slug = net.import_rom(ROM, confirmed=True, log=lambda *_: None)
@@ -254,7 +255,33 @@ def test_a_regional_constant_change_matches_with_the_real_compiler_and_link_judg
         db.execute('UPDATE functions SET target=? WHERE id=?', (bytes(target), fn['id']))
         db.execute("UPDATE functions SET status='asm' WHERE project_id=? AND id!=?", (pid, fn['id']))
     assert net.twins.across_games('another-region') == 0
-    assert sm.run(net.twins, 'another-region', Job()) == 1
+    if parallel:
+        from decompnet import compiler
+        from decompnet.app import deep_lanes, similar_phase, workers
+
+        from .test_speed import twin
+
+        sibling = twin(net, 'another-region', fn['name'], 0x80401000)
+        children = []
+        original_start = deep_lanes.Lane.__init__
+
+        def start(lane, *args, **kwargs):
+            original_start(lane, *args, **kwargs)
+            children.append(lane.process)
+
+        monkeypatch.setattr(deep_lanes.Lane, '__init__', start)
+        monkeypatch.setattr(workers, 'WORKERS', 2)
+        monkeypatch.setattr(compiler, 'concurrency_limit', lambda: 2)
+        job = Job(cross_tried=4)
+        job.cross_exhaustive = job._parallel_donors = True
+        assert similar_phase.run(net.twins, 'another-region', job) == 2
+        assert len({process.pid for process in children}) == 2
+        assert all(process.poll() is not None for process in children)
+        assert net._function(sibling, 'another-region')['status'] == 'matched'
+        assert job.progress['total'] == job.progress['done'] == 4
+        assert job.cross_matched == 2 and job.cross_tried == 4 + job.similar_attempts
+    else:
+        assert sm.run(net.twins, 'another-region', Job()) == 1
     result = net._function(fn['name'], 'another-region')
     assert result['status'] == 'matched' and '= 61;' in result['matched_source']
     assert 'adapted from similar verified C' in result['matched_source']

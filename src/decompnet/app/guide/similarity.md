@@ -22,8 +22,11 @@ Autopilot finds identical relocated code built with the same compiler and flags,
 and compiles it against this game's bytes. The project's **Matches from other games** panel shows every
 transfer attempt and its source. A match counts only after the byte judge accepts it. **Start search** takes priority
 over Autopilot on the same project. Autopilot lets active work settle and restarts on the remaining open functions
-when the search ends. The manual search also tries verified source with the same function name in both project modes
-and a bounded set of similar verified functions in MIPS ROM projects. The wider check covers larger instruction
+when the search ends. The manual search checks every eligible same-name verified donor in both project modes and
+searches every eligible MIPS ROM function for similar verified source. For local projects the similar-code stage
+uses worker subprocesses, sized by the background worker setting and available compiler slots. It tries up to eight
+wider donors per function, with up to three slots for different compiler builds, and checks more repair variants on
+close misses. The wider check covers larger instruction
 differences, aligns shifted references, and reserves room for verified C built with another compiler. It tries the
 destination build first. An exact result with a different installed compiler appears under **Compiler leads** and in the
 function's notes for compiler review. A manual search on a MIPS ROM

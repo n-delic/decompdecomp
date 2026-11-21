@@ -41,6 +41,25 @@ def test_similar_phase_survives_general_exhaustion_and_reports_its_own_limits(mo
     assert free_candidates.exhausted(seen[0])
 
 
+def test_manual_phase_can_pass_the_automatic_trial_limit(monkeypatch):
+    job = Job(cross_tried=5)
+    job.cross_exhaustive = True
+
+    def run(twins, slug, phase):
+        phase.reuse_attempts = similar_matches.MAX_ATTEMPTS + 1
+        phase.cross_tried += phase.reuse_attempts
+        assert not free_candidates.exhausted(phase)
+        from decompnet.app.cross_game_progress import report
+        report(phase, 'Checking similar matched functions')
+        return 0
+
+    monkeypatch.setattr(similar_matches, 'run', run)
+    similar_phase.run(None, 'project', job)
+    assert job.similar_attempts == similar_matches.MAX_ATTEMPTS + 1
+    assert job.progress['attempts'] == job.cross_tried
+    assert job.progress['attempt_limit'] == job.progress['second_limit'] == 0
+
+
 def test_nearby_local_sibling_is_reserved_before_global_shortlist_limit(pair):
     from decompnet.app.reuse_donors import Donors
 
@@ -162,3 +181,26 @@ def test_autopilot_discovers_compiles_and_adopts_a_real_sibling_without_a_select
     assert result['exact'] and result['destination_status']=='matched'
     assert result['similar_attempts']==1
     assert any(e['outcome']=='match' and 'parameter transfer' in e['reason'] for e in result['evidence'])
+
+
+def test_cancelling_parallel_search_does_not_retry_stopped_partitions(pair, monkeypatch):
+    from decompnet import compiler
+    from decompnet.app import deep_lanes, workers
+
+    with pair.store.tx() as db:
+        db.execute("INSERT INTO functions(id,project_id,name,size,status) VALUES(3,2,'another',32,'open')")
+    job = Job()
+    job.cross_exhaustive = job._parallel_donors = True
+    closed = []
+
+    def stopped(*args):
+        job.stop.set()
+        raise deep_lanes.Unavailable()
+
+    monkeypatch.setattr(workers, 'WORKERS', 2)
+    monkeypatch.setattr(compiler, 'concurrency_limit', lambda: 2)
+    monkeypatch.setattr(deep_lanes.Lanes, 'donors', stopped)
+    monkeypatch.setattr(deep_lanes.Lanes, 'close', lambda lanes: closed.append(lanes.started))
+    monkeypatch.setattr(similar_phase, 'search_partition', lambda *a: pytest.fail('retried cancelled work'))
+    assert similar_phase.run(pair.twins, 'destination', job) == 0
+    assert job.stop.is_set() and closed == [0]

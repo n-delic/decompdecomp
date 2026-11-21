@@ -4625,7 +4625,8 @@ Similar-source ROM searches now have a separate bounded budget in both manual fu
 passes and automatic reuse waves. New verified matches can propagate to their own
 active project; busy projects defer their notification until the owning pass finishes.
 A bounded nearby-sibling reservation precedes the global donor shortlist cap. The
-manual MIPS ROM search also ranks donors built with different compilers, tolerates
+manual MIPS ROM search covers the eligible queue in subprocesses and ranks more donors
+and repair variants per function, including donors built with different compilers. It tolerates
 wider differences in function length and instructions, and aligns shifted relocations.
 An exact result under an alternate installed compiler is shown as a compiler lead for
 review. Similarity-based transfer for imported projects still needs per-file source and
