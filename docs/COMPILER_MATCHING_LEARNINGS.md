@@ -11079,3 +11079,15 @@ changed the register allocation and brought the linked score from
   Their drafts read undeclared stack bytes. A union with bitfields at
   the witnessed offsets matched all 132 and 148 bytes. Declaring the
   assigned third field unsigned scored 200 on the longer writer.
+
+### Follow an indirect loop cursor and an aliased call label
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, two isolated
+N64 drafts reached exact linked matches. A cursor loaded record
+pointers and cleared two fields through them. Changing the cursor
+step from four pointer elements to one matched the target's
+four-byte advance and reduced the score from 10 to 0. In a
+guarded wrapper, resolving the source callee name to the assembly
+label let the deep permuter prove that the first argument was
+forwarded unchanged. Restoring that argument reduced the score
+from 15 to 0.
