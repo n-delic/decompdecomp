@@ -3,6 +3,7 @@
 import functools
 import os
 import plistlib
+import re
 import shlex
 import shutil
 import subprocess
@@ -180,10 +181,14 @@ def test_mac_installer_skips_linux_packages_and_tracks_upstream(tmp_path):
     bindir = tmp_path / "test bin"
     bindir.mkdir()
     calls = tmp_path / "calls"
+    installer = (Path(__file__).resolve().parents[1] / "site/public/install.sh").read_text()
+    pinned = re.search(r'DECOMPREPAIR_SHA256="([0-9a-f]{64})"', installer).group(1)
     scripts = {
         "uname": 'case "$1" in -s) echo Darwin;; -m) echo arm64;; esac',
         "uv": 'case "$*" in --version) echo "uv 0.13.5";; "tool dir --bin") echo ' + shlex.quote(str(bindir)) + ';; esac',
-        "curl": 'echo \'{"sha":"' + "a" * 40 + '"}\'',
+        # (the GitHub API's answer; the decomp-repair archive, downloaded with -o, and its pinned SHA-256)
+        "curl": 'case "$*" in *" -o "*) : ;; *) echo \'{"sha":"' + "a" * 40 + '"}\';; esac',
+        "sha256sum": f'echo "{pinned}  $1"',
         "decomp": 'printf "%s\\n" "$*" >> ' + shlex.quote(str(calls)),
     }
     for name, text in scripts.items():

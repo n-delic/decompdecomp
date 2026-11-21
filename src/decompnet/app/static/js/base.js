@@ -2,12 +2,12 @@
 /* decompdecomp GUI. Plain JS, no build step. Everything shown from agents or ROMs is untrusted text:
    it only ever reaches the page through textContent or esc().
 
-   The GUI is twelve classic scripts sharing one global scope, loaded by index.html in this order: base (helpers,
+   The GUI is classic scripts sharing one global scope, loaded by index.html in this order: base (helpers,
    theme, state and routing, bug reports), sidebar (the project list, New project, the notification centre), home,
    project (overview, decompiling together, public decomps), map, prompt-settings, tool-catalog, tool-settings,
    agents (who's working, the launcher, what
    happens), function (the drawer, the function list), steering (drawers and keys, instructions, export, project
-   settings and the compiler), pages (the app's own pages, updates, and starting the app). Functions can be called
+   settings and the compiler), local-matching (explicit CPU jobs and their drawers), pages (the app's own pages, updates, and starting the app). Functions can be called
    across files once all have loaded; code that runs while a file loads may only use what this file or an earlier
    one defines. Not ES modules: they would need an import for every name used across files. */
 
@@ -261,9 +261,8 @@ const S = {
   gen: 0, primed: false, openedAt: 0,  // which opening of a project polls belong to, its first poll done, and when
 };
 const VIEWS = ["home", "catalog", "project", "agentsPage", "toolsPage", "settingsPage"];
-/* A project's views. Activity is in Agents now, Team and Source are the header's Decompile together and Export:
-   seven tabs were too many to tell apart. */
-const TABS = ["overview", "functions", "agents", "settings"];
+/* Project views: explicit local CPU searches have their own tab; configuration stays in Settings. */
+const TABS = ["overview", "functions", "matching", "agents", "settings"];
 
 /* The project folder in the computer's file manager (decompdecomp in Docker says where it is instead). */
 function openFolder() {

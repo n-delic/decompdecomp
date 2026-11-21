@@ -17,6 +17,8 @@ dependencies = [
     "splat64[mips]>=0.50.1",
     "spimdisasm>=1.42.4",
     "rabbitizer>=1.16.2",
+    # Shared rewrite proposals; compiling and accepting candidates stay in this app.
+    "decomprepair @ https://github.com/RetroReversing/decomp-repair/archive/28ef8c8967f050a9513e2e64e43a72ac2017f663.tar.gz",
     "httpx>=0.28",
     "uvicorn>=0.30",
     "ninja>=1.11",  # builds GameCube/Wii (dtk) and other ninja-based decomp projects
@@ -55,7 +57,7 @@ extend-exclude = ["site", "src/decompnet/consoles/*/project_template/tools/ninja
 select = ["F", "I", "E9", "B006", "B008", "B023"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["decompnet"]
+known-first-party = ["decompnet", "decomprepair"]
 
 [tool.pytest.ini_options]
 # the room tests drive the room server through Starlette's TestClient, which warns about the timeouts real clients use.

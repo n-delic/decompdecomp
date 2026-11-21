@@ -165,6 +165,14 @@ def _missing(console) -> list[str]:
         except toolchains.ToolchainError:  # a program on PATH, not a toolchain
             return shutil.which(tool) is not None
     missing = [t for t in console.demo_tools if not there(t)]
+    for tool in console.demo_tools:
+        if tool in missing:
+            continue
+        try:
+            if problem := toolchains.runtime_error(tool):
+                missing.append(f"{tool} runtime: {problem}")
+        except toolchains.ToolchainError:
+            pass  # A PATH tool has no toolchain runtime to inspect.
     # Read the demo's own prerequisites, including consoles added after this test.
     build = ROOT / "projects" / getattr(console, "demo", "") / "build.py"
     if build.is_file() and "zlib-n64" in build.read_text() and not ZLIB.exists():
