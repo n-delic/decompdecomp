@@ -667,3 +667,27 @@ def test_kmc_uses_relocated_string_only_when_the_rom_confirms_the_literal():
 
     assert 'format(out, D_80001000,' in check(b'%s %s\0')[family]
     assert family not in check(b'%d %s\0')
+
+
+def test_measured_earlier_load_uses_the_project_resolver_for_field_aliases():
+    source = """void f(void *arg) {
+    void *p;
+    p = lookup(arg);
+    M2C_FIELD(&base, void **, 4) = p;
+    M2C_FIELD(p, s32 *, 16) = (s32) (M2C_FIELD(p, s32 *, 16) | 4);
+}"""
+    load = 'lw $v1, 16($v0)'
+    rows = [
+        (' ', 'jal lookup', 'jal lookup'),
+        (' ', 'nop', 'nop'),
+        ('o', load, ''),
+        (' ', 'lui $at, %hi(field)', 'lui $at, %hi(field)'),
+        (' ', 'sw $v0, %lo(field)($at)', 'sw $v0, %lo(field)($at)'),
+        ('o', '', load),
+        (' ', 'ori $v1, $v1, 4', 'ori $v1, $v1, 4'),
+        (' ', 'sw $v1, 16($v0)', 'sw $v1, 16($v0)'),
+    ]
+    family = 'measured_earlier_word_load'
+    actual = dict(route(source, rows, 'asm', resolve={'base': 0x1000, 'field': 0x1004}.get))[family]
+    assert actual.index('__repair_before_publish = ') < actual.index('M2C_FIELD(&base')
+    assert family not in dict(route(source, rows, 'asm', resolve={'base': 0x1000, 'field': 0x1008}.get))

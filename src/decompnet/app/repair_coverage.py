@@ -144,7 +144,8 @@ def verify(feedback, example):
                                                       symbols.resolve if symbols else None):
             focused.append(('measured_uncached_word_read', candidate))
         focused += measured_control_flow.variants(source, fn['name'], rows)
-        focused += measured_memory_order.variants(source, fn['name'], rows)
+        focused += measured_memory_order.variants(source, fn['name'], rows, header=header,
+                                                   resolve=symbols.resolve if symbols else None)
         focused += measured_expression_repairs.variants(source, fn['name'], header, rows)
         focused += measured_temporary_repairs.variants(source, fn['name'], rows)
         if candidate := measured_callback_loop.rewrite(source, fn['name'], fn['asm'] or '', header,

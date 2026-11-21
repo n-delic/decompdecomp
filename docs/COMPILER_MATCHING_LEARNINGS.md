@@ -9636,3 +9636,12 @@ Reading the symbol through the caller’s ROM mapping confirmed the literal
 and its terminator. Using an extern array at both call sites resolved the
 string relocation and moved the judge from 6,384 to 6,344 in the scratch
 real-game trial. The switch table still differs.
+
+
+### Snapshot word reads before intervening stores
+
+Three independently generated N64 drafts were each 60 points from their archived targets with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`. The target moved only one word load earlier. Taking a snapshot of the old list link before two halfword clears matched all 56 bytes. Taking the snapshot between the clears left a scheduling difference. In two other functions, reading a returned object's flags before publishing its pointer to an aliasable global matched 112 bytes each. The global field address was verified against the target relocation. Both groups were verified against archived controls.
+
+### Pass a matrix wrapper's output pointer to its initializer
+
+Three independently generated N64 matrix wrappers appeared to differ only in where a saved register was stored relative to the floating-point argument saves. The target also kept the output pointer in `$a0` through the initialization call. Passing that pointer explicitly to the call corrected the frame save schedule without editing it directly. With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` all three moved from score 60 to byte-identical matches (84, 96, and 96 bytes). The archived matches compiled as independent controls.
