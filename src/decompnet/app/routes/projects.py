@@ -53,6 +53,9 @@ def register(app: App) -> None:
             started = time.monotonic()
             try:
                 def perform():
+                    if request.url.path == "/api/polishing-checklist":
+                        with net.progress.view():
+                            return fn(slug, request, data)
                     if request.url.path in ('/api/knowledge/merge', '/api/knowledge/profile'):
                         # Finding metadata is independent of saved code and its compiler.
                         with net.progress.view():
@@ -802,6 +805,13 @@ def register(app: App) -> None:
         net.resolve_boundary(slug, int(data.get("id", 0)), data.get("action") == "apply")
         return net.overview(slug)
 
+    def p_polish_checklist(slug, request, data):
+        from .. import polish_checklist
+        project_id = net.project_row(slug, sync=False)["id"]
+        selected = (polish_checklist.read(net, project_id) if request.method == "GET"
+                    else polish_checklist.save(net, project_id, data.get("selected")))
+        return {"selected": selected}
+
     def p_source_preparation(slug, request, data):
         from .. import source_preparation
         from ..permute import State
@@ -1293,6 +1303,7 @@ def register(app: App) -> None:
         "/api/permuter/pass": (p_deep_sweep, ["GET", "POST"]),
         "/api/permuter/function": (p_deep_permuter, ["POST"]),
         "/api/deep-permuter": (p_deep_search, ["GET", "POST"]),
+        "/api/polishing-checklist": (p_polish_checklist, ["GET", "POST"]),
         "/api/source-preparation": (p_source_preparation, ["GET", "POST"]),
         "/api/drafts": (p_machine_drafts, ["GET", "POST"]), "/api/autopilot": (p_autopilot, ["POST"]), "/api/instructions": (p_instructions, ["POST"]), "/api/title": (p_title, ["POST"]),
         "/api/cross-game": (lambda s, r, d: {"results": net.twins.cross_game_results(s, all_matches=r.query_params.get("all_matches") == "1"),

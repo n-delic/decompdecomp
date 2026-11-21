@@ -892,6 +892,19 @@
         </div>
       </section>
       <div class="stack-col">
+        <details class="panel settings-disclosure" id="polishChecklist">
+          <summary class="panel-head"><h2>Polishing checklist</h2></summary>
+          <div class="pad">
+            <p class="small muted">Choose optional portability checks for this game. Helpers see them on their next polishing claim.</p>
+            <p class="small muted" id="polishChecklistPc" hidden>The 64-bit compile check depends on the project’s build setup.</p>
+            <form id="polishChecklistForm">
+              <label class="check"><input type="checkbox" name="compile_64bit" disabled><span>Compile for a 64-bit PC</span></label>
+              <label class="check"><input type="checkbox" name="pointer_casts" disabled><span>Fix casts between pointers and 32-bit integers</span></label>
+              <button class="primary small-btn" type="submit" disabled>Save checklist</button>
+              <pre class="joblog" data-checklist-log hidden></pre>
+            </form>
+          </div>
+        </details>
         <section class="panel" id="scopePanel" hidden>
           <header class="panel-head"><h2>What this project covers</h2></header>
           <div class="pad">

@@ -37,7 +37,12 @@ def matched(built, tmp_path):  # noqa: F811
 def test_a_readable_rewrite_that_still_matches_is_kept(matched):
     net, slug, agent = matched
     original = net._function("clamp_s32", slug)["matched_source"]
+    from decompnet.app import polish_checklist
+
+    polish_checklist.save(net, net.project_row(slug)["id"], ["compile_64bit", "pointer_casts"])
     brief = net.readability.claim(agent, slug)
+    assert "Run check_for_pc with the candidate source" in brief
+    assert "uintptr_t/intptr_t" in brief
     assert "clamp_s32" in brief and "must still match byte for byte" in brief
     assert net.readability.submit(agent, slug, "clamp_s32", BROKEN).startswith("❌ It no longer matches")
     tries = net.store.one("SELECT COUNT(*) AS n FROM attempts a JOIN functions f ON f.id=a.function_id "
@@ -95,7 +100,7 @@ def test_project_mode_games_are_polished_too_through_their_own_files(tmp_path, m
     still matches, the file put back as it was when not."""
     import json
 
-    from decompnet.app import tools
+    from decompnet.app import polish_checklist, tools
     from decompnet.app.engine import RomNetwork
     from decompnet.app.forkengine import ForkEngine
 
@@ -109,7 +114,10 @@ def test_project_mode_games_are_polished_too_through_their_own_files(tmp_path, m
                    "VALUES(1,'tripleValue',64,16,'matched','src/a','int tripleValue(int a) { return a * 3; }')")
     monkeypatch.setattr(ForkEngine, "_current_source", lambda self, fp, fn, comment=False: "int tripleValue(int a) { return a * 3; }")
     agent, _ = net.local_agent("claude-sonnet-5-5-1")
+    polish_checklist.save(net, net.project_row("p")["id"], ["compile_64bit"])
     brief = net.readability.claim(agent, "p")
+    assert "Use the project's 64-bit PC build" in brief
+    assert "check_for_pc" not in brief and "uintptr_t" not in brief
     assert "MAKE READABLE: tripleValue in src/a" in brief and "edit_file" in brief and "rename_symbol" in brief
     tried = []
 

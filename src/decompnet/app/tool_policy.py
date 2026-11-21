@@ -19,7 +19,7 @@ PRESETS = {'full': ('All tools', None), 'matching': ('Matching essentials', MATC
                'get_boundary_evidence','suggest_boundary','get_data_unit','compile_data','watch_in_emulator','compare_behaviour','compare_candidate_behaviour'}),
            'polishing': ('Polishing and names', REQUIRED | {'claim_readable','make_readable','polish_function','tidy_file','read_data','tidy_done','rename_symbol',
                'get_claims','guide','get_context','edit_context','read_file','edit_file','file_status','search_code','add_note','find_similar',
-               'port_readiness'})}
+               'port_readiness','check_for_pc'})}
 # Tools whose work queue belongs to another kind of helper the app starts: asset discovery, boundary review, data,
 # PC port fixes and polishing. A matching helper's tool definitions carried all of them on every turn, about a
 # quarter of a ROM project's 32,000 characters of definitions, for tools that refuse it (the asset ones and

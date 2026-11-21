@@ -735,6 +735,10 @@ on Apple Silicon; physical Intel Mac and retail-game checks remain planned.
 
 ## What works where
 
+Polishing can ask helpers to check 64-bit PC compilation and repair casts between pointers and 32-bit integers.
+ROM projects can use the built-in compiler check. A built-in check for project mode is planned. Until then,
+helpers use the project's own 64-bit build where available.
+
 Each feature and the platforms it covers today. A — is a gap: pick one up (the notes under the table say where to
 start). Keep this table true when a feature ships or reaches another platform. Each column's code is its console's
 folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTING.md, "Consoles").
@@ -837,6 +841,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Shared knowledge (two models agree) | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Tidy each source file once it's polished (shared types in one header, names, dead declarations) | — | — | — | — | — | — | — | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Polish matched code (still matching) | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Per-game portability checklist for polishing | ✓ | ✓ | ✓ | ✓ | — polishing support pending | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Small polish plans, prepared evidence and verified identical-helper reuse | ✓ shared path | ✓ shared path | ✓ shared path | — | — | ✓ shared path | — | ✓ shared path | ✓ shared path | — | ✓ shared path | ✓ shared path |
 | Real names for the game's symbols (`rename_symbol`) | ✓ | ✓ | ✓ | ✓ | ✓ functions | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | dtk and ds-decomp projects |
 | Save and restore (`progress/`, Open a saved project); remember each project's save destination | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | partly: the project's git, best attempts saved; a new copy starts without them | partly: the project's git, best attempts saved; a new copy starts without them | the project's git; best attempts saved; the PE view made again from your XBE or disc | partly: the project's git, best attempts saved; a new copy starts without them | the project's git; best attempts saved |
