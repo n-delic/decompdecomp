@@ -18,7 +18,8 @@ def relocation_profiles(net, proj, fn, profile, problems):
     current = profile['flags']
     return [[flag for flag in current if flag != enable] + [disable]
             for enable, disable in (('-fschedule-insns', '-fno-schedule-insns'),
-                                    ('-fschedule-insns2', '-fno-schedule-insns2'))
+                                    ('-fschedule-insns2', '-fno-schedule-insns2'),
+                                    ('-fdelayed-branch', '-fno-delayed-branch'))
             if disable not in current]
 
 

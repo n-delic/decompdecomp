@@ -9664,3 +9664,14 @@ Seven independently generated N64 drafts failed to compile because m2c treated a
 - A message dispatch loop matched all 108 bytes after taking the invariant table address before the loop and placing the boundary before queue setup. The typed expression on its own scored 549. Hoisting without the boundary scored 60, and switching to a structured loop produced additional register differences.
 - A list handler loop needed the byte index staged at the head of its existing loop. That moved the typed draft from score 579 to 10. The existing measured frame rule then reserved eight bytes and matched all 112 bytes. Adding padding before staging the index left the scheduling difference.
 - The four remaining typed dispatch drafts compile and enter ordinary search. Their linked scores still range from 1125 to 1723.
+
+### Branch-delay scheduling and jump-table placement
+
+
+Disabling branch-delay scheduling is a separate KMC probe. In a scratch
+replay of a 592-byte N64 routine under
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, the same C gave an
+advisory score of 2230 with an unplaced jump table. Adding
+`-fno-delayed-branch` cleared the linker error and gave a linked score of
+4720. The repair keeps this profile as a search lead. The function still
+needs an exact verdict before automatic compiler settings can change.
