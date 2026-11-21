@@ -206,7 +206,9 @@ def analyse(image, segments, functions, symbols, *, big_endian=True, progress=la
         sample = image[lo:min(hi,lo+SAMPLE_BYTES)]
         counts = Counter(sample)
         entropy = round(-sum((n/len(sample))*math.log2(n/len(sample)) for n in counts.values()), 2) if sample else 0
-        evidence = sorted([clues[i] for i in active['clue']],key=lambda c:c['confidence']!='validated')
+        # A validated child can start inside another asset's source range. Give it its own usable preview.
+        evidence = sorted((clues[i] for i in sorted(active['clue'])),
+                          key=lambda c: (c['confidence']!='validated', c['offset']!=lo))
         for i in sorted(active['transfer']):
             transfer=ranges[i]
             evidence.append(dict(label='Loader source range',confidence='inferred',reason=f"Call arguments describe ROM {transfer['start']:#x}–{transfer['end']:#x} (exclusive); may contain code or assets."))

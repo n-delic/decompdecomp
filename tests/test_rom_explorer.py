@@ -611,3 +611,12 @@ def test_dialogue_preview_links_open_verified_targets_only():
     assert all(not row['links'] for row in result['table']['rows'][1:])
     assert result['links'] == [dict(label='Translation', region='10', offset=10)]
     assert result['cutscene_links'] == [dict(label='intro.ncs', region='40', offset=40, inspect=True)]
+
+
+def test_validated_preview_at_a_nested_resource_start_takes_precedence():
+    texture = dict(offset=8,size=80,kind='image',media='image',confidence='validated',preview_settings={})
+    model = dict(offset=24,size=12,kind='3d model',media='model',confidence='validated',preview_settings={})
+    for assets in ([texture,model],[model,texture]):
+        rows = analyse(bytes(128),[],[],[],assets=assets)['regions']
+        assert next(row for row in rows if row['start']==8)['detected_asset']==texture
+        assert next(row for row in rows if row['start']==24)['detected_asset']==model
