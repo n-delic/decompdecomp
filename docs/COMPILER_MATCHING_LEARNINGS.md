@@ -10842,7 +10842,9 @@ argument unchanged into the first. Restoring the forward fixed one
 register difference. Recovering the halfword table and, where present,
 the separate word table eliminated the remaining scaled-address
 differences. The normal deep permuter measured the combined improvements
-from scores 35 and 45 to exact linked matches.
+from scores 35 and 45 to exact linked matches. Two further wrappers at score 45
+matched after reusing the caller's typed first parameter alongside its
+existing signature, including when another parameter was already present.
 
 ### IDO adjusted indirect callback and address-taken event word
 
