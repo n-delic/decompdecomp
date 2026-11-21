@@ -1,5 +1,28 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: confirm byte addressing and argument width in the linked diff
+
+Six more archived N64 drafts matched with the original linker and byte
+judge. The same 44-case replay went from 19 to 25 exact matches.
+
+- With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1`, index a byte
+  table through `u8 *` when the candidate adds a shift by two and
+  loads the last byte of a word. Score 120 to 0 over 48 bytes. A
+  second wrapper also had the same fourfold scaling on a companion
+  byte buffer. Giving it a byte declaration matched (135 to 0 over
+  68 bytes); no change to the call prototype was needed.
+- Same flags with `-O2`: accumulate the clamped row contribution
+  in the halfword column local before indexing the byte table
+  (150 to 0 over 92 bytes). The byte cast alone scored 30.
+- Same flags with `-O2 -g3`: widen a local between the byte mask,
+  byte store and call to `s32`. GCC then computes the value directly
+  in the argument register. The prototypes and byte store stay in
+  place. Two 84-byte functions went from 115 to 0.
+- Same `-O1` flags: convert a signed halfword to a Boolean in a
+  small inline helper before comparing it with an unsigned byte in
+  the caller (130 to 0 over 52 bytes). A direct nonzero comparison
+  scored 825.
+
 ### KMC GCC 2.7.2 and IDO 7.1: recover small call and store lifetimes
 
 The linked byte judge replayed 44 archived N64 drafts with their original
