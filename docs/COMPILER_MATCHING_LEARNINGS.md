@@ -8935,3 +8935,12 @@ Naming a single signed 32-bit object at the address verified in both raw
 relocation pairs reproduced all 52 linked bytes on the copied project.
 An unsigned word also matched. A volatile alias scored 120, so the rule
 keeps the unqualified type and the existing arithmetic and return mask.
+
+### Byte width in a renamed indexed zero test
+
+Under `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, a scratch N64 draft compared an
+indexed word load against zero when the target used an unsigned byte load. Replacing
+the outer word cast with an unsigned byte cast left the byte-address calculation
+intact and lowered the linked score from 1310 to 1110. Resolving the stored relocation
+name through the project's current symbol table enabled Deep Permuter to verify
+the improvement with the original compiler settings.
