@@ -8821,3 +8821,20 @@ byte-exact draft by introducing an inline float multiply. A controlled replay ne
 the helper only for the three initial component multiplies. Deep Permuter's targeted
 trial matched all 360 linked bytes after six total trials, compared with 199 trials
 in the earlier scratch run. Both runs used the existing compiler flags.
+
+### Relocated byte lookup tables in remainder loops
+
+An archived 17-instruction N64 draft failed to compile because m2c inferred
+an integer table expression and dereferenced it. With
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` and the captured header, casting
+the table to a byte pointer made the original draft compile but left a score
+of 350. The best prior compilable draft scored 10 because narrowing a word
+load addressed the fourth byte of each value.
+
+The target materializes the buffer with LUI/ADDIU, loads a separate table
+pointer with LUI/LW, then uses the unsigned division remainder for a
+zero-displacement byte load. Resolving both relocated addresses as separate
+typed objects recovered all 68 linked bytes on the copied project. The
+original draft and the previous 10-point candidate both matched after the
+repair. The rule checks the addresses computed from the target instruction
+words as well as the source symbols and offsets.
