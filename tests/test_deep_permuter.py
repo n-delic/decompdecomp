@@ -1120,6 +1120,29 @@ def test_loop_vector_shape_pass_reaches_the_scheduling_boundary_that_matched_a_d
     assert any('do {' in c and 'repair_scope_1' not in c for c in seen) or len(seen) < 64
 
 
+def test_loop_vector_shape_pass_reaches_the_guard_initializer_scope_that_matched_a_timer_loop(monkeypatch):
+    """A guard's `i = 0;` hoisted before it in a one-shot scope, the copy before the guard sunk: 10 -> 0 in one child."""
+    net = setup(monkeypatch)
+    source = ('extern int D_800C078C;\nvoid f(int arg0) {\n  int slot;\n  unsigned count;\n  unsigned i;\n  int saved;\n'
+              '  slot = arg0 << 4;\n  count = *((volatile unsigned *) (slot + ((unsigned) (&D_800C078C))));\n'
+              '  saved = slot;\n  if (count != 0)\n  {\n    i = 0;\n    do\n    {\n      i += 1;\n    }\n'
+              '    while (i < count);\n  }\n}\n')
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_score=10,best_source=? WHERE name='f'", (source,))
+    fn, proj = net.function(), net.project_row('game')
+    search = deep_permuter.Search(net, 1, 30, Log(), fn)
+    seen = []
+
+    def score(agent, proj, fn, candidate, best, fork):
+        seen.append(candidate)
+        search.tested += 1
+        # the bare hoist alone is worse; the hoist with the copy sunk into the guard is exact
+        return 0 if 'while (0);' in candidate and 'saved = slot;\n    do' in candidate.replace('  saved', 'saved') else 60
+
+    monkeypatch.setattr(search, '_score', score)
+    assert search.loop_vector_shape_pass(AGENT, proj, dict(fn, best_source=source, name='f'), 10, None) == 0
+
+
 def test_a_stub_baseline_is_named_before_the_tuning_passes(monkeypatch):
     net = setup(monkeypatch)
     fn = net.function()

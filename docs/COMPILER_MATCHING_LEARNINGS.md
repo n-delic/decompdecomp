@@ -1,5 +1,26 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: recover byte cursors and input record setup
+
+The linked judge reproduced 35 of 36 archived drafts in one replay,
+up from 32, and 3 of 69 in the next score band, up from zero. All six
+new matches used `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
+
+- In three 40-, 72-, and 76-byte routines, type the incoming pointer as
+  a byte cursor and postincrement for all three reads (230 to 0 each).
+  Keep the optional signed floating-point conversion of the last byte
+  and return the updated cursor.
+- In a 200-byte wrapper, forward its context to the first call and
+  use a byte parameter for the fourth argument forwarded to the second
+  call (200 to 0). Forwarding the context alone scored 60.
+- In a 120-byte routine, preserve the word index through the address
+  calculation, capture the table before the callback stores, and
+  resolve the table symbol against the archived address (165 to 0).
+  Retaining a byte index in the same staged lookup scored 100.
+- In a 284-byte mask builder, read the global base before masking the
+  index, stage the first two words, and reuse a separate pointer for
+  three later fields (200 to 0).
+
 ### KMC GCC 2.7.2: recover indexed stores and loop and call scheduling
 
 The linked judge reproduced 32 of 36 archived drafts, up from 27.
@@ -12275,3 +12296,30 @@ to `s8 *` before addition removed the extra factor of four. With
 reached score 0 from 10 in 38 attempts. The released control stayed at
 10 after 100 attempts. This is one linked-byte scratch replay, with
 synthetic tests for the relocation and stride checks.
+
+### KMC GCC 2.7.2: a guard's constant initializer needs its own one-shot scope to reach the branch delay slot
+
+A private N64 timer-update loop (two nested loops over a table of records, the inner loop guarded by a volatile
+count, `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`) sat at score 10: all 74 instructions present, only two register
+moves swapped. The target had `lw count; lw objects; beqz count; (delay slot) move $s1,$zero; move $s4,$s2;
+move $s0,$a0`, so the inner counter's `= 0` filled the guard's delay slot and the two copies followed it.
+
+What the compiler does (read from `cc1 -dS -dd`, the pinned cc1 run by hand): the first scheduler keeps constant
+initializers independent of the loads and floats `i = 0` to the start of its block, or between the two volatile
+loads when it stands right before the `if`; a copy such as `saved = slot;` before the `if` stays last and takes the
+delay slot instead. Statements inside the guard body are never filled into the slot (the filler found every callee-
+saved register live at the loop's exit label), so the slot can only come from before the branch. The loop notes of
+a `do { } while (0)` are scheduling boundaries and nothing else survives, so `do { i = 0; } while (0);` right before
+the `if` keeps `i = 0` as the block's last instruction.
+
+| Edit (from the saved best, score 10) | Score |
+| --- | --- |
+| Sink the preceding copy `innerOffset = var_s2;` to the top of the guard body (the copy leaves the slot) | 60 |
+| Also hoist `var_s1 = 0;` bare before the `if` | 120 |
+| Wrap the hoisted `var_s1 = 0;` in `do { } while (0);` | 0 (app: "matched best 0", linked bytes identical) |
+
+The three source orders of the two statements and a grid of 40 pre/post-branch placements of the three assignments
+(count load, objects load, counter, two copies) never reached 0 without the scope. Controlled result for one
+function; the new decomp-repair family `branch_slot_scope` (0.5.284) reproduces the 10 -> 0 step in one child from
+the saved best (`variants` returned 2 proposals, scores 205 and 0), and the existing families on the same best
+(47 variants, all scoring 10 or worse) did not. Not shown: that it helps functions whose slot filler differs.
