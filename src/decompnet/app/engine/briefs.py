@@ -153,6 +153,7 @@ class BriefMixin:
                 measured_callback_loop,
                 measured_mmio_polling,
                 measured_stack_drafts,
+                packed_matrix_conversion,
                 passthrough_argument_repairs,
                 relocated_byte_table,
                 relocated_global_update,
@@ -170,6 +171,8 @@ class BriefMixin:
                 inputs.append('relocated byte table')
             if relocated_global_update.applies(fn['asm'] or ''):
                 inputs.append('relocated global update')
+            if packed_matrix_conversion.applies(fn['asm'] or ''):
+                inputs.append('packed matrix conversion')
             if aligned_stack_read.applies(fn['asm'] or ''):
                 inputs.append('aligned stack read')
             if passthrough_argument_repairs.entry_wrapper_applies(fn['asm'] or ''):

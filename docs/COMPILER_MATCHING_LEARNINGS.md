@@ -8944,3 +8944,18 @@ the outer word cast with an unsigned byte cast left the byte-address calculation
 intact and lowered the linked score from 1310 to 1110. Resolving the stored relocation
 name through the project's current symbol table enabled Deep Permuter to verify
 the improvement with the original compiler settings.
+
+### Packed fixed-point matrix conversion
+
+A 38-instruction N64 draft under `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`
+scored 260. A prior byte-pointer candidate scored 90. Changing the order of
+the row pointer and counter initializers alone made the score 240. Swapping
+the local declarations had no measured effect.
+
+A typed four-float row view, nested row and pair loops, and two word
+cursors reproduced all 152 linked bytes from both drafts. The target
+establishes adjacent float reads, scaling by 65536, signed truncation,
+integer and fractional stores separated by 32 bytes, and the pair and row
+latches. The source keeps the same function signature and uses unsigned
+shifts for the bit packing. The normal ROM judge confirmed the repair on
+the copied project.
