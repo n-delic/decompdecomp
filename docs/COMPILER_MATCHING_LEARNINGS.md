@@ -12323,3 +12323,47 @@ The three source orders of the two statements and a grid of 40 pre/post-branch p
 function; the new decomp-repair family `branch_slot_scope` (0.5.284) reproduces the 10 -> 0 step in one child from
 the saved best (`variants` returned 2 proposals, scores 205 and 0), and the existing families on the same best
 (47 variants, all scoring 10 or worse) did not. Not shown: that it helps functions whose slot filler differs.
+
+### KMC GCC 2.7.2: byte clamps that the target computes twice, and the volatile reads that keep its reloads
+
+A 516-byte N64 function (`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, 129 instructions) with seven `x - 0x20` clamps
+(`t = x - 0x20; t < 0 ? 0 : t < max + 1 ? x - 0x20 : max`) over the bytes of two colour words, then one clamp stored
+into six records. The saved best was an m2c repair at 1465 (register choices and loads); matched to 0 in the app.
+Controlled on one function only; the edit list is what each change did, scored with the app's judge-worker (no
+permuter run):
+
+| # | Edit | Score |
+| - | ---- | ----- |
+| 0 | saved best (m2c repair, `lbu` where the target has `lw`+`srl`, cse'd reloads) | 1465 |
+| 1 | clean source from the semantics, struct pointers read through a `volatile` lvalue and the colour words through `volatile u16`/`u32` | 4650 |
+| 2 | guard byte and word read into locals before the branch (`lbu 0x11; lw 0x10; beqz`) | 2340 |
+| 3 | `(x & 0xFF) - 0x20` for the halfword and the middle byte of the word | 2340 (halfword, word shapes right) |
+| 4 | `(s16) x - 0x20` for the byte loads and the top byte: no more `move v,t` in a branch-likely arm | 2070 |
+| 5 | one pointer local per use (the long-lived pointer held `$a1`) | 1115 |
+| 6 | clamps in place (`h = h - 0x20`), `u16` holder for the halfword, first pointer read in the colour word's own variable | 995 |
+| 7 | byte loads non-volatile, pointer reads volatile (the reloads stay, the `andi` after a volatile byte read goes) | 335 |
+| 8 | one variable per colour component across both blocks, fresh temporaries for the middle byte, the guard in `t`, the last clamp as `if (t >= 256) 255 else x - 0x20`, the mask in its own local | 205 |
+| 9 | `q = PTR(0x10);` before the mask: the scheduler now hoists the pointer load above the packing | 0 |
+
+Compiler facts, from `cc1 -dl -dg`:
+
+* cse merges `t = x - 0x20` with `v = x - 0x20` (the arm becomes `move v,t`). The target keeps two `addiu`s, the second in
+  the branch's delay slot. Any spelling that cse cannot equate with the first keeps them apart: `(s16) x`, `(s8) x` (byte
+  loads) or `(x & 0xFF)` (a byte of a wider word; the mask stays in the target as `andi v0,a1,255`). A byte load held in
+  a `u8` pseudo gets an `andi` before a `!= 0` test; a `u32` holder from a non-volatile `lbu` does not.
+* Volatile accesses are what make cse forget memory: reading `arg0->p` through a volatile lvalue gives the target's
+  `lw v0,4(a3)` before every clamp, and a volatile word is never narrowed to `lbu` (the target's `lw`+`srl 24`).
+* GCC 2.x allocates global pseudos by `uses * floor_log2(uses) / live length`, lowest free register first. The target's
+  `v1,a0,a2` for the three colour components and `a1` for the middle byte follow from sharing one variable per component
+  across both blocks (more uses, longer range, so highest priority) and keeping the short temporaries separate so they
+  take `a1` between the pointer reload and the packing. Reusing the one `t` for a clamp result in the last block kept it
+  from `$v0`; a separate local for the mask (`andi` into a new pseudo) let the packing temporaries take `$v1,$a0`.
+* Scheduling: a volatile pointer read written after the arithmetic that feeds the store is scheduled after it; written
+  first it comes first (`lw a1` before `andi`), and only then do the packing temporaries take the target's registers.
+
+decomp-repair 0.5.285 `clamp_difference_barrier` (module `clamp_barrier_repairs`) offers the barrier at every clamp at
+once in each style (`(s16)`, mask, `(s8)`, and a mixed one), then one site at a time. From the source with the barriers
+removed (2300) the all-sites `(s16)` child scores 0 in one step, the single-site children 1282 to 2300: the combination is
+the point. Not offered by the family yet: the volatile struct-pointer reads, the variable sharing per component and the
+pointer read hoisted above the packing (all done by hand here). Not run through the Deep Permuter.
+
