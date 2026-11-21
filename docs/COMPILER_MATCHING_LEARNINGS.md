@@ -9042,3 +9042,16 @@ The rewrite checks the target's base, stride, backedge, word-store
 displacements, and indexed table load. It keeps the original loop and
 byte-field accesses, and supplies a word-pointer cast for the raw draft's
 untyped read.
+
+### Restoring a return-zero case in split dispatch
+
+An archived 46-instruction N64 dispatch compiled with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` scored 330. m2c split the
+first of three consecutive command values out of the switch. The target's
+early edge returns zero on commands below that series, and the three
+recognized commands converge on the same result store and notification.
+
+A flat switch with only the three recognized commands and a default
+scored 550. Adding the adjacent explicit return-zero case reproduced all
+184 linked bytes on the copied project. The extra case preserves the
+default result and restores the compiler's original dispatch layout.

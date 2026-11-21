@@ -26,6 +26,7 @@ from decomprepair import (
     passthrough_argument_repairs,
     relocated_byte_table,
     relocated_global_update,
+    split_dispatch_zero_case,
     targeted_switch_labels,
     uncached_read_repairs,
 )
@@ -206,6 +207,8 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
             result.append(('aligned_allocator_request', candidate_source))
         if candidate_source := indexed_field_cursor.rewrite(source, name, asm or '', header):
             result.append(('indexed_field_cursor', candidate_source))
+        if candidate_source := split_dispatch_zero_case.rewrite(source, name, asm or '', header):
+            result.append(('split_dispatch_zero_case', candidate_source))
         if candidate_source := ordered_halfword_updates.rewrite(source, name, asm or '', header, resolve):
             result.append(('ordered_halfword_updates', candidate_source))
         if candidate_source := aligned_stack_read.rewrite(source, name, asm or ''):

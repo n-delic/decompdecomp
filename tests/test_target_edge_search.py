@@ -430,3 +430,12 @@ def test_measured_indexed_field_cursor_reaches_kmc_proposals(monkeypatch):
     rows = [('i', 'sw $zero, 0x58($s2)', 'sw $zero, 0x40($s2)')]
     assert ('indexed_field_cursor', 'indexed fields') in route('void f(void) {}', rows, 'asm')
     assert 'indexed_field_cursor' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
+
+
+def test_measured_split_dispatch_zero_case_reaches_kmc_proposals(monkeypatch):
+    from decomprepair import split_dispatch_zero_case
+
+    monkeypatch.setattr(split_dispatch_zero_case, 'rewrite', lambda *args: 'flat dispatch')
+    rows = [('i', 'beq $v1, $v0, .Lprobe', 'beq $v1, $v0, .Lother')]
+    assert ('split_dispatch_zero_case', 'flat dispatch') in route('void f(void) {}', rows, 'asm')
+    assert 'split_dispatch_zero_case' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
