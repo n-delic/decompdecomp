@@ -24,6 +24,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import queue
 import random
 import re
@@ -86,6 +87,50 @@ def weight_family(cfg: dict, vram: int | None, fork: bool, function=None) -> str
 
 def available() -> bool:
     return toolchains.installed(TOOL) is not None
+
+
+MISSING = ('decomp-permuter is not installed (Compilers & tools): random rewrites use the simple '
+           'built-in rewrites only.')
+NOTICE = ('decomp-permuter is not installed, so this search could only use the simple built-in rewrites. '
+          'Install it from Compilers & tools; searches made without it are repeated once it is there.')
+RETRY_AFTER = 600  # seconds before a failed download is tried again
+_auto = {'lock': threading.Lock(), 'failed': 0.0}
+
+
+def installed_at() -> float | None:
+    """When the tool was installed here (its manifest's time), None when it isn't."""
+    try:
+        return (toolchains.path(TOOL) / toolchains.MANIFEST).stat().st_mtime
+    except OSError:
+        return None
+
+
+def ensure_available(report=None) -> bool:
+    """`available()`, after installing the pinned, free tool when it's missing (as objdiff-cli and wibo are):
+    without it every deep search silently ran only the simple rewrites. A failed download is reported to `report`
+    (the job's log) and tried again after RETRY_AFTER seconds, not on every function."""
+    if available():
+        return True
+    if os.environ.get('DECOMP_AUTO_TOOLS', 'on') == 'off':
+        return False
+    with _auto['lock']:
+        if available():
+            return True
+        if time.monotonic() - _auto['failed'] < RETRY_AFTER and _auto['failed']:
+            return False
+        if not toolchains.get(TOOL).supported:
+            return False
+        try:
+            if report:
+                report('Installing decomp-permuter (MIT, pinned download), the random rewrites of the deep search.')
+            toolchains.ensure(TOOL, log=lambda *_: None)
+        except Exception as e:  # the search goes on with the simple rewrites, and says so
+            _auto['failed'] = time.monotonic()
+            log.warning('permuter: could not install decomp-permuter: %s', e)
+            if report:
+                report(f'decomp-permuter could not be installed ({str(e)[:200]}).')
+            return False
+    return available()
 
 
 def permuter_header(header: str, source: str) -> str:
@@ -652,10 +697,10 @@ class Permuter:
                 # that ran out meanwhile, the function an agent's now, ends the turn)
                 if not self._renew(agent, fn, seconds):
                     return
-            if not available() and callable(getattr(self, 'log', None)):
+            if not ensure_available(self.log if callable(getattr(self, 'log', None)) else None) \
+                    and callable(getattr(self, 'log', None)):
                 # (the deep pass reports to its panel: without the generator only the simple rewrites run)
-                self.log('decomp-permuter is not installed (Compilers & tools): random rewrites use the simple '
-                         'built-in rewrites only.')
+                self.log(MISSING)
             if available():
                 # (a C function's as m2c reads it: what's only for C++ made pycparser refuse a PC game's whole
                 # header; a C++ function's with its C++ branch, where its classes are)

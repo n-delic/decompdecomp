@@ -1134,3 +1134,67 @@ def test_sweep_recovers_exact_candidates_before_search(sweep, monkeypatch):
     monkeypatch.setattr(match_reconciliation, 'run', recover)
     assert obj.run('game', 1, 10, Log())['matched'] == 1
     assert calls == ['f1']
+
+
+def _record_pass(obj, net, name, state, result, completed_at):
+    cfg, proj = obj.config('game'), net.project_row('game')
+    fn = net._function(name, 'game')
+    obj.record(fn, deep_sweep.signature(net, proj, fn, cfg['minutes'], cfg['max_variants']), state,
+               cfg['minutes'], cfg['max_variants'], result)
+    with net.store.tx() as db:
+        db.execute('UPDATE deep_permutation_passes SET completed_at=? WHERE function_id=?', (completed_at, fn['id']))
+    return fn['id']
+
+
+def test_passes_made_without_the_randomizer_are_repeated_once_it_is_installed(sweep, monkeypatch):
+    """Without decomp-permuter a deep pass only ran the simple rewrites yet counted as finished; installing it
+    sends those passes (recorded as such, or older than the install) back to pending, and keeps the others."""
+    from decompnet.app import permute
+    obj, net, _, _ = sweep
+    flagged = _record_pass(obj, net, 'f0', 'completed', {'randomizer': False}, 500.0)
+    older = _record_pass(obj, net, 'f1', 'completed', {}, 500.0)
+    newer = _record_pass(obj, net, 'f2', 'completed', {}, 2000.0)
+    full = _record_pass(obj, net, 'f3', 'completed', {'randomizer': True}, 500.0)
+    monkeypatch.setattr(permute, 'installed_at', lambda: None)
+    assert obj.reopen_without_randomizer('game') == 0
+    monkeypatch.setattr(permute, 'installed_at', lambda: 1000.0)
+    assert obj.reopen_without_randomizer('game') == 2
+    states = {r['function_id']: r['state'] for r in net.store.all('SELECT function_id,state FROM deep_permutation_passes')}
+    assert states == {flagged: 'pending', older: 'pending', newer: 'completed', full: 'completed'}
+    assert obj.reopen_without_randomizer('game') == 0
+
+
+def test_deep_search_result_says_when_the_randomizer_was_missing(monkeypatch):
+    from decompnet.app import permute
+    monkeypatch.setattr(permute, 'ensure_available', lambda report=None: False)
+    monkeypatch.setattr(deep_permuter, '_full_run', lambda *a, **k: {'matched': False, 'tested': 3})
+    lines = []
+    result = deep_permuter.run(None, 'game', 'f0', 1, 10, lines.append)
+    assert result['randomizer'] is False and 'not installed' in result['notice']
+    assert any('not installed' in line for line in lines)
+    monkeypatch.setattr(permute, 'ensure_available', lambda report=None: True)
+    result = deep_permuter.run(None, 'game', 'f0', 1, 10, lines.append)
+    assert result['randomizer'] is True and 'notice' not in result
+
+
+def test_missing_randomizer_is_installed_once_and_a_failure_is_reported(monkeypatch):
+    from decompnet.app import permute
+    monkeypatch.setenv('DECOMP_AUTO_TOOLS', 'on')
+    state = {'installed': False, 'calls': 0}
+    monkeypatch.setattr(permute, 'available', lambda: state['installed'])
+    monkeypatch.setitem(permute._auto, 'failed', 0.0)
+
+    def ensure(tid, log=None):
+        state['calls'] += 1
+        if state['calls'] == 1:
+            raise OSError('offline')
+        state['installed'] = True
+    monkeypatch.setattr(permute.toolchains, 'ensure', ensure)
+    monkeypatch.setattr(permute.toolchains, 'get', lambda tid: SimpleNamespace(supported=True))
+    said = []
+    assert permute.ensure_available(said.append) is False
+    assert any('could not be installed' in line for line in said)
+    assert permute.ensure_available(said.append) is False and state['calls'] == 1  # backed off, not retried per function
+    monkeypatch.setitem(permute._auto, 'failed', 0.0)
+    assert permute.ensure_available(said.append) is True and state['calls'] == 2
+    assert permute.ensure_available(said.append) is True and state['calls'] == 2

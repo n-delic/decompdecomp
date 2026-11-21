@@ -449,6 +449,23 @@ class Sweeps:
         self.record(fresh, signature(self.net, proj, fresh, minutes, variants, result.get('compiler_profiles')),
                     'completed' if stable else 'pending', minutes, variants, result)
 
+    def reopen_without_randomizer(self, slug) -> int:
+        """Passes that finished with only the simple rewrites go back to pending once decomp-permuter is here:
+        those that say so in their result, and older ones (no such record) that finished before it was installed."""
+        from . import permute
+        installed = permute.installed_at()
+        if installed is None:
+            return 0
+        with self._store(slug).tx() as db:
+            cur = db.execute("UPDATE deep_permutation_passes SET state='pending',completed_at=NULL WHERE state='completed' "
+                             "AND (json_extract(result,'$.randomizer')=0 OR (json_extract(result,'$.randomizer') IS NULL "
+                             "AND completed_at<?))", (installed,))
+            count = cur.rowcount if cur is not None and cur.rowcount and cur.rowcount > 0 else 0
+        if count:
+            with self.lock:
+                self.queue_cache.clear()
+        return count
+
     def record(self, fn, scope, state, minutes, variants, result=None, error=''):
         with self.lock:
             self.queue_cache.clear()
@@ -465,6 +482,13 @@ class Sweeps:
         Blocked functions never occupy a worker. Sleep only when no useful turn is available.
         """
         self.recover_room_transport(slug)
+        from . import permute
+        if permute.ensure_available(log):
+            reopened = self.reopen_without_randomizer(slug)
+            if reopened:
+                log(f'Repeating {reopened} deep searches that finished before decomp-permuter was installed.')
+        else:
+            log(permute.MISSING + ' Install it from Compilers & tools: searches made without it are repeated afterwards.')
         from .sdk_assembly import discover_known
         log.check_cancel()
         with looking(self.net):
