@@ -9595,3 +9595,12 @@ Four archived N64 targets reproduced byte-for-byte from independently generated 
 - An ascending byte fill passed the base to a call and compared the cursor with the address of the first saved register. The target's two offsets bounded a 32-byte array. Filling it with a zero-based index removed an undeclared stack-byte reference from the fresh draft. The nearest compiling draft had used two views of a synthetic frame union, and moved from score 7 to exact (76 bytes).
 - A block read took 42 bytes, then four decoders took addresses inside that span. The target's call arguments showed that the draft's separate word locals were views of one serialized byte array. A byte array and byte offsets, with opaque pointers on the generated extern declarations, moved score 7 to exact (100 bytes, `-g3`). Sizing each separate local with the existing rule gave no improvement.
 - A string/copy wrapper and a matrix pipeline had all their remaining differences in stack operands. Sizing the address-taken locals from the target's offsets with the existing rule moved scores 4 and 12 to exact (52 bytes with `-g3`, and 116 bytes respectively). Inferred padding made the string/copy wrapper worse.
+
+### Duplicated scaling in typed MIPS pointer arithmetic
+
+Five archived N64 targets reproduced byte-for-byte from independently generated drafts. Each target was linked and compared with the original function using `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32`. The archived matches served as controls. Scores below are linked instruction diffs against the same targets.
+
+- With `-O2 -g3`, a word update loop had a single mismatch. The delay slot advanced the cursor by 16 bytes instead of 4. The nearest draft already used a word pointer, so changing the increment from 4 elements to 1 moved the linked score from 10 to exact (56 bytes). The fresh draft still differed in its frame and scheduling.
+- With `-O2 -g3`, two signed halfword lookups scaled by 8 bytes instead of 2 and pointed at shifted relocations. Declaring the external symbol as a signed halfword array and indexing it in elements moved score 30 to exact for both (24 and 40 bytes).
+- With `-O1`, a masked index selected one byte at a 100-byte stride. The inferred word pointer added a second scale to that stride. A byte array preserved the explicit stride and moved score 30 to exact (120 bytes).
+- With `-O1`, two sentinel scans through an existing unsigned halfword pointer each shifted the index one bit too far. Removing the explicit multiplier from both reads moved score 20 to exact (124 bytes).
