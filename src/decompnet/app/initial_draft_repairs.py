@@ -201,15 +201,24 @@ def recovery_drafts(draft, name, asm, processor, toolchain, context, data, repor
     from . import draft_reports
     generate = generate or seeds.generate_from_asm
     if toolchain == 'gcc-2.7.2-kmc':
-        from decomprepair import indirect_call_drafts, stack_fill_drafts, stack_word_index_drafts
+        from decomprepair import (
+            indirect_call_drafts,
+            stack_fill_drafts,
+            stack_word_index_drafts,
+            unaligned_stack_drafts,
+            uncached_read_repairs,
+        )
 
         for family, rewrite in (
+            ('initial_unaligned_stack_copy', unaligned_stack_drafts.rewrite),
             ('initial_typed_indirect_call', indirect_call_drafts.rewrite),
             ('initial_stack_word_clear', stack_fill_drafts.rewrite_word_clear),
             ('initial_indexed_stack_words', stack_word_index_drafts.rewrite),
         ):
             if candidate := rewrite(draft, name, asm, context):
                 yield family, candidate
+        if candidate := uncached_read_repairs.rewrite(draft, name, asm):
+            yield 'initial_uncached_read', candidate
     if toolchain == 'gcc-2.7.2-kmc':
         from decomprepair import integer_address_store_drafts, measured_word_drafts
 
