@@ -15933,3 +15933,6 @@ three jump tables remain. A float-only typed view and qualifying
 the same late float clear were neutral. The repair requires two
 agreed jump-and-zero-store tails and a labeled source clear at
 the exact observed field offset.
+### KMC GCC 2.7.2 magnitude conversion
+
+A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` initialized a magnitude from a phase, negated it only when negative and staged a double-to-float conversion before multiplication. Its machine draft assigned an unused local and left the magnitude uninitialized on the nonnegative path. Initializing the magnitude alone changed the diff score from 235 to 300; staging the final conversion as well produced an exact linked match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the measured floating-point instructions and generated record shape.
