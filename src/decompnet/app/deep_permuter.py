@@ -446,6 +446,10 @@ class Search(Permuter):
         # a 205-instruction line-segment test (decomp-repair 0.5.584): the final guarded zero return as one labelled return,
         # the later zero returns and the guard-then-return forms jumping to it (20 -> 0 from the saved best, as a chain)
         calls.append((L + 'zero_exit_label_repairs.variants', (source, name)))
+        # a 359-instruction N64 route function (decomprepair 0.5.592): a parameter's volatile slot dropped, the goto tails of
+        # a call copied into their arms, a call sum as one expression and a one-shot copy forwarded (985 -> 0 from the
+        # saved best as one child; no single step better than 265 until all four)
+        calls.append((L + 'argument_spill_tail.variants', (source, name)))
         # a 34-instruction object placer (decomp-repair 0.5.589): the masked flag word with a byte stored over it as
         # bit-fields, the volatile pointer dropped, the literal store first (15 -> 0 from the saved best, as a chain)
         calls.append((L + 'flag_word_bitfield_repairs.variants', (source, name)))

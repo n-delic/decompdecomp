@@ -17324,3 +17324,47 @@ Families: decomp-repair `shared_shift_zero_use` (0.5.591: `shared_shift_chain`, 
 with no change of shape between stages (`tests/test_shared_shift_zero_use.py`); wired into the draft repairs, the deep pass
 and the local lane through `draft_repairs.AGENT_FAMILIES`. Not covered: a shift with other writes between its reads, a sum
 inside a larger expression with side effects, and shifts the compiler cannot prove zero in the low bits.
+
+## A 359-instruction route function matched by four edits that only pay off together: parameter slots, goto tails, a call sum, a one-shot copy (KMC GCC 2.7.2, N64)
+
+Evidence level: one function (an obstacle-avoiding route chooser: a ray test, eight box corners, two selection loops and
+three calls of one helper at the tails; matched, judge 0 in the app). `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2
+-fno-strength-reduce` (the function's per-function profile, unchanged), scored with the app's judge-worker, no Deep
+Permuter run, current scoring. Compiler explanations are hypotheses (nothing here was confirmed in the compiler source or
+its dumps); the numbers are controlled for this one function.
+
+The saved best (985 in the current scoring, 565 historically) carried an earlier agent's frame arithmetic: `volatile s32
+padFC; volatile s32 spFC; s32 sp104;` with `spFC = arg2;` at entry and the `lw $a1, 0xFC($sp)` reloads read through it,
+and m2c's `goto block_25;` joins. The target has every saved register in use, so it spills the parameters `$a2` and `$a3`
+itself (`sw $a2, 0xFC($sp)`, `sw $a3, 0x104($sp)`) and reloads them in each arm before the shared `jal`.
+
+| edit | alone | with the others |
+| --- | --- | --- |
+| saved best | 985 | |
+| `call_result_sum_fold`: `t = f(a); t = t + g(b);` as `t = f(a) + g(b);` | 720 | |
+| `argument_slot_drop`: the volatile slots, their padding and the dead `sp104` removed, `arg2`/`arg3` used | 965 | |
+| `goto_call_tail_copy`: each `goto block_N;` becomes a copy of the statements to the next return | 365 | |
+| slots + sum | | 700 |
+| slots + tails | | 265 |
+| slots + tails + `one_shot_copy_forward` (`do { x = f(); v = arg2; } while (0);` loses its wrapper and the call reads `arg2`) | | 80 |
+| all four (`argument_spill_tail`) | | 0 |
+
+What each edit changes (hypotheses): a volatile slot is a memory object whose store the scheduler keeps in order against
+the other stores, so the two entry stores came out as `$a3` then `$a2`, the reverse of the target; as plain parameters the
+allocator's own spill stores them in the target's order and sizes the frame to 0x148 without padding. Two blocks that end
+in the same call but set up different arguments (`lw $a1, 0xFC($sp)` and `lw $a1, 0x104($sp)`) are merged by m2c's goto
+and the volatile reads; copying the tail into each arm lets the second jump pass cross-jump the identical `jal` and leaves
+the set-up in the arms. The sum in one expression keeps the first call's result copy (`mov.s $f20, $f0`) until the second
+call's argument moves are placed, so it lands in that call's delay slot as in the target; the two-statement form copies it
+right after the call and the argument move takes the slot. The `do { } while (0)` around the first arm's call was a
+scheduling boundary that put `addiu $v0, $sp, 0x98` after `addiu $a0, $s2, 0x24`.
+
+Failed or neutral: forwarding the first result through a separately declared local (290 with the other three), keeping
+the volatile slot while copying tails (365), the existing repair families on the saved best (best 545 from
+`statement_group_order`, none of them touching the slots or the tails).
+
+Families: decomp-repair `argument_spill_tail` (0.5.592: `argument_slot_drop`, `goto_call_tail_copy`,
+`call_result_sum_fold`, `one_shot_copy_forward`, and the chain `argument_spill_tail`). From the saved best the chain child
+scores 0 in one proposal (`tests/test_argument_spill_tail_wiring.py` checks it on a synthetic function through the draft
+repairs and the local lane). Not covered: a slot assigned from an expression rather than a parameter, a tail longer than
+four statements or containing a branch, and a sum whose operands are not both calls.
