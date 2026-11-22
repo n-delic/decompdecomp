@@ -791,7 +791,10 @@ def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels
     for family,text in _generated(initializer_clusters.variants, source,name,header):
         proposals.append(text)
         labels[text] = family
-    for module in (callee_prototype_repairs, integer_lifetime_repairs, block_accumulator_repairs, branch_layout_repairs):
+    for family, text in _generated(integer_lifetime_repairs.variants, source, name, header):
+        proposals.append(text)
+        labels[text] = family
+    for module in (callee_prototype_repairs, block_accumulator_repairs, branch_layout_repairs):
         for family, text in _generated(module.variants, source, name):
             proposals.append(text)
             labels[text] = family
@@ -800,10 +803,10 @@ def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels
         return _finish(source,name,proposals,labels,allocation_candidates,limit)
     # Two disjoint lifetime merges can be useful together even when either allocation is worse.
     # Keep the bundle tiny; each merge retains the existing conservative liveness boundaries.
-    merges = [text for family, text in _generated(integer_lifetime_repairs.variants, source, name)
+    merges = [text for family, text in _generated(integer_lifetime_repairs.variants, source, name, header)
               if family == 'merge_integer_lifetimes']
     for first in merges[:2]:
-        second = next((text for family, text in _generated(integer_lifetime_repairs.variants, first, name)
+        second = next((text for family, text in _generated(integer_lifetime_repairs.variants, first, name, header)
                        if family == 'merge_integer_lifetimes' and text != source), None)
         if second:
             proposals.append(second)
