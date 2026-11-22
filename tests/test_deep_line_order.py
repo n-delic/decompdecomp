@@ -161,3 +161,119 @@ def test_thin_keeps_every_marked_candidate_and_a_share_of_the_rest_only_for_a_wi
     assert order.thin(PARENT, others[:5] + marked[:2], focus)[:2] == marked[:2] and len(order.thin(PARENT, others[:5] + marked[:2], focus)) == 7
     assert order.thin(PARENT, others, focus) == others  # none marked: left in order
     assert order.thin(PARENT, others + marked, {}) == others + marked
+
+
+LAYOUT = 'int f(int a) {\n  int c = a * 3; /* scale */\n  if (a > c)\n  {\n    c = g(a) + 1;\n  }\n  return c;\n}\n'
+REPRINT = 'int f(int a)\n{\n    int c = a * 3;\n    if (a > c) {\n        c = g(a) + 1;\n    }\n    return c;\n}\n'
+
+
+def test_touched_lines_ignore_the_layout_the_permuter_reprints_with():
+    assert order.touched_lines(LAYOUT, REPRINT) == set()
+    assert order.touched_lines(LAYOUT, REPRINT.replace('a * 3', 'a << 1')) == {2}
+    assert order.touched_lines(LAYOUT, REPRINT.replace('g(a) + 1', 'g(a) + 2')) == {5}
+    # so the thinning no longer counts a re-indented candidate as touching every line
+    reprinted = [REPRINT.replace('+ 1', f'+ {n}') for n in range(2, 12)] + [REPRINT] * 2
+    assert len(order.thin(LAYOUT, reprinted, {5: order.DIFFERENT})) == 11  # 10 edit line 5, one in 4 of the 2 that edit nothing
+
+
+def test_two_edits_on_different_lines_merge_and_overlapping_or_wholesale_ones_do_not():
+    left, right = REPRINT.replace('a * 3', 'a << 1'), REPRINT.replace('g(a) + 1', 'g(a) + 2')
+    merged = order.merge(LAYOUT, left, right)
+    assert 'a << 1' in merged and 'g ( a ) + 2' in merged and merged.count('\n') >= 5
+    assert order.merge(LAYOUT, left, REPRINT.replace('a * 3', 'a * 5')) is None  # the same statement
+    assert order.merge(LAYOUT, left, LAYOUT) is None and order.merge(LAYOUT, left, left.replace('a << 1', 'a << 1')) is None
+    tried = set()
+    assert order.crossovers(LAYOUT, [left, right, LAYOUT], 3, tried) == [merged]
+    assert order.crossovers(LAYOUT, [left, right], 3, tried) == []  # (each pair once)
+
+
+def test_widen_follows_the_variables_on_a_marked_line_back_to_where_they_are_set():
+    source = 'int f(int a, int b) {\n  int c;\n  int d;\n  c = a * 3;\n  d = b + 1;\n  return c + g(d);\n}\n'
+    assert order.widen(source, {6: order.DIFFERENT}, 1) == {6: 2, 4: 1, 5: 1}
+    assert order.widen(source, {5: order.DIFFERENT}, 2) == {5: 2}  # b is a parameter: nothing sets it
+    assert order.widen(source, {}, 1) == {} and order.widen(source, {99: 1}, 1) == {99: 1}
+
+
+def test_shape_says_what_the_marked_statements_are_made_of():
+    source = 'void f(S *s, int a) {\n  s->x = g(a) * 3;\n  if (a > 2) {\n    s->y[a] = a << 2;\n  }\n}\n'
+    assert order.shape(source, [2]) == 'call+mul+field'
+    assert order.shape(source, [3]) == 'cond'
+    assert order.shape(source, [99]) == '' and order.shape('void f(void) {\n  x = y;\n}\n', [2]) == 'plain'
+
+
+def test_outcomes_tell_whether_marked_lines_pay_and_which_rewrites_change_nothing():
+    for name in ('_seen', '_parent_output', '_dead', '_alive', 'stats'):
+        getattr(order, name).clear()
+    marked, other = REPRINT.replace('a * 3', 'a << 1'), REPRINT.replace('g(a) + 1', 'g(a) + 2')
+    focus = {2: order.DIFFERENT}
+    key = order._key(LAYOUT)
+    order._parent_output[key] = 'same'
+    from decompnet.app.permute import TracedVariant
+    tagged = [TracedVariant(marked + f'/*{n}*/', ['perm_x']) for n in range(order.DEAD_AFTER)]
+    order.register(LAYOUT, [*tagged, other], focus)
+    assert order.stats['written_marked'] == order.DEAD_AFTER and order.stats['written_other'] == 1
+    order.outcome(other, True, 'changed')
+    for candidate in tagged:
+        assert not order.dead(LAYOUT, candidate)
+        order.outcome(candidate, False, 'same')  # compiled to the parent's own code, and no better
+    assert order.stats['compiled_marked'] == order.DEAD_AFTER and order.stats['compiled_other'] == 1
+    assert order.dead(LAYOUT, TracedVariant(marked, ['perm_x'])) and not order.dead(LAYOUT, TracedVariant(marked, ['perm_y']))
+    assert order.stats['no_effect'] == order.DEAD_AFTER
+    assert order.summary() == '' or 'improved' in order.summary()
+    order.stats['compiled_marked'] = 40
+    assert 'on marked lines improved' in order.summary() and 'elsewhere' in order.summary()
+    for name in ('_seen', '_parent_output', '_dead', '_alive', 'stats'):
+        getattr(order, name).clear()
+
+
+def test_the_order_widens_a_stalled_parent_and_leaves_dead_rewrites_out(monkeypatch):
+    for name in ('_seen', '_parent_output', '_dead', '_alive', 'stats'):
+        getattr(order, name).clear()
+    source = 'int f(int a) {\n  int c;\n  c = a * 3;\n  return g(c);\n}\n'
+    notes = []
+    after = order.for_function(fake_net(), {}, {}, notes.append, finder=lambda *a: ({4: order.DIFFERENT}, 'out'))
+    assert after.focus(source) == [4] and after.shape(source) == 'call'
+    assert after.focus(source) == [4] and after.focus(source) == [3, 4]  # (the third batch from it with no improvement)
+    assert any('following the variables' in note for note in notes)
+    assert after(source, [source]) == [source]
+
+
+def test_prefixed_batches_yield_the_merges_first_and_close_what_they_wrap():
+    class Stream:
+        closed = False
+
+        def __iter__(self):
+            return iter(['c', 'd'])
+
+        def close(self):
+            self.closed = True
+    stream = Stream()
+    prefixed = order.Prefixed(['a', 'b'], stream)
+    assert list(prefixed) == ['a', 'b', 'c', 'd']
+    prefixed.close()
+    assert stream.closed
+
+
+def test_a_sweep_takes_near_misses_first_and_keeps_the_shuffled_order_among_equals():
+    from decompnet.app.deep_sweep import closeness_order
+    details = {1: {'best_score': 900, 'n_insns': 40}, 2: {'best_score': 4, 'n_insns': 200}, 3: {'best_score': None, 'n_insns': 0},
+               4: {'best_score': 6, 'n_insns': 200}, 5: {'best_score': 60, 'n_insns': 100}}
+    rows = [{'id': n} for n in (1, 2, 3, 4, 5)]
+    assert [r['id'] for r in closeness_order(rows, details)] == [2, 3, 4, 5, 1]
+    assert [r['id'] for r in closeness_order(rows[::-1], details)] == [4, 3, 2, 5, 1]
+    assert closeness_order([], details) == [] and [r['id'] for r in closeness_order([{'id': 9}], {})] == [9]
+
+
+def test_the_policy_scales_boosts_by_a_shape_key_and_counts_a_trial_once(monkeypatch):
+    from decompnet.app import adaptive_repairs
+    seen = []
+    monkeypatch.setattr(adaptive_repairs, 'profile', lambda *a: 'p')
+    monkeypatch.setattr(adaptive_repairs, 'factors', lambda net, key, focus: seen.append(focus) or {'perm_x': 2.0})
+    boosted = adaptive_repairs.with_shape(None, {}, {}, {'perm_x': 1.5, 'perm_y': 1.0}, 'register', 'call+field')
+    assert seen == ['register@call+field'] and boosted == {'perm_x': 3.0, 'perm_y': 1.0}
+    calls = []
+    monkeypatch.setattr(adaptive_repairs, 'prepare', lambda net: None)
+    monkeypatch.setattr(adaptive_repairs.trial_bookkeeping, 'count', lambda *a, **k: calls.append(a[1].split()[2]))
+    adaptive_repairs.record(SimpleNamespace(store=None), 'p', 'register@call', 'perm_x', 5, 3, 10, coverage=False)
+    adaptive_repairs.record(SimpleNamespace(store=None), 'p', 'register', 'perm_x', 5, 3, 10)
+    assert calls == ['repair_policy', 'repair_policy', 'repair_policy_coverage']

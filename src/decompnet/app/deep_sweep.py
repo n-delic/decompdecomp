@@ -2,6 +2,7 @@
 import hashlib
 import json
 import logging
+import math
 import random
 import threading
 import time
@@ -35,6 +36,17 @@ def looking(net):
     triggers."""
     progress = getattr(net, 'progress', None)
     return progress.view() if progress is not None else nullcontext()
+
+
+def closeness_order(rows, details):
+    """`rows` (already shuffled; `details` maps an id to its best_score and n_insns) with the near misses first. A function a few instructions from matching is much
+    cheaper to finish than one that differs everywhere, and a sweep that runs out of time should have spent it on
+    those. Coarse buckets of score per instruction (a factor of two apart), so functions about as close keep their
+    shuffled order; a function without a score has no say, the baselines come first anyway."""
+    def bucket(row):
+        score, size = (details.get(row['id']) or {}).get('best_score'), (details.get(row['id']) or {}).get('n_insns') or 0
+        return int(math.log2(1 + 8 * score / max(8, size))) if score else 0
+    return sorted(rows, key=bucket)
 
 
 def signature(net, proj, fn, minutes, variants, compiler_profiles=None, shared=None, residual=None, *, rank_candidates=None):
@@ -589,6 +601,8 @@ class Sweeps:
                 identities=[r for r in identities if r["id"] not in held]
                 if not order:
                     random.shuffle(identities)
+                    identities = closeness_order(identities, {r['id']: dict(r) for r in self._store(slug).all(
+                        f"SELECT id,best_score,n_insns FROM functions WHERE project_id=? AND status='open' AND {IN_BUILD}", proj['id'])})
                     # Restore missing baselines before the bounded search queue fills.
                     identities.sort(key=lambda row: row['id'] not in unscored)
                     order.extend(r["id"] for r in identities)

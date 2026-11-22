@@ -47,7 +47,7 @@ from ..network import NetworkError
 from ..permuter import MUTATIONS, mutate
 from ..project import compiler_for
 from ..repair_feedback import trial as repair_trial
-from . import draft_repairs, local_claims, switch_tables, workers
+from . import deep_line_order, draft_repairs, local_claims, switch_tables, workers
 from .trial_bookkeeping import buffered
 
 log = logging.getLogger("decompdecomp")
@@ -778,6 +778,8 @@ class Permuter:
             frontier.offer(best_src, best, rows, arch=proj['arch'])
             self._start_random_window()
             batches = misses = 0
+            crossed = set()  # pairs of frontier candidates already merged (deep_line_order.crossovers)
+            shape = ''
             refused, taken = None, 0  # the last refusal of a variant (NetworkError), variants the project took
             while time.monotonic() < deadline and best > 0 and not st.stop.is_set() and self._random_budget_available():
                 if gen is not None:
@@ -813,16 +815,22 @@ class Permuter:
                     base = (best_src if reseed else frontier.choose(batches//3, best_src) if batches % 3 == 2
                             else best_src if batches % 2 else start_src)
                     batches += 1
+                    if batches % 25 == 0 and (line_note := deep_line_order.summary()):
+                        (getattr(self, 'log', None) or log.info)(line_note)
                     if batches % 2 == 0:
                         boosts = adaptive_repairs.boosts(self.net, proj, fn, rows, permuter_focus.boosts(rows))
                     # Alternate upstream defaults with focused weights: preserve an exploratory lane when
                     # the advisory mismatch category is incomplete or points at the wrong repair.
-                    job = {"header": gen_header, "source": base, "function": name, "family": family,
-                           "seed": rng.randrange(MAX_SEED), "count": BATCH, "weight_boosts": boosts if batches % 2 == 0 else {},
-                           "trace": True}
+                    ordering = getattr(self, 'candidate_order', None)
                     # C lines the compiler ties to the differing instructions (deep_line_order.py): the generator keeps
                     # most rewrites there, and writes extra variants that the batch order then thins to those that do
-                    lines = getattr(getattr(self, 'candidate_order', None), 'focus', lambda _: [])(base)
+                    lines = getattr(ordering, 'focus', lambda _: [])(base)
+                    # what is on those lines (a call, a multiply by a constant...) is a second key for the measured policy
+                    shape = getattr(ordering, 'shape', lambda _: '')(base) if lines else ''
+                    job_boosts = adaptive_repairs.with_shape(self.net, proj, fn, boosts, focus, shape) if shape and batches % 2 == 0 else boosts
+                    job = {"header": gen_header, "source": base, "function": name, "family": family,
+                           "seed": rng.randrange(MAX_SEED), "count": BATCH, "weight_boosts": job_boosts if batches % 2 == 0 else {},
+                           "trace": True}
                     if lines:
                         job['focus_lines'] = lines
                         job['count'] = BATCH * LINE_FOCUS_OVERGENERATION
@@ -853,6 +861,12 @@ class Permuter:
                         break
                     written = list(dict.fromkeys(cand for cand in written if cand))
                     batch = self._stream_variants((chunk for chunk in [written]), agent, proj, fn, fork, parent=base) if written else []
+                # Two frontier candidates that edit different lines of the best source: their merge is one compile and
+                # may carry both repairs, where the frontier only ever offers them as competing parents.
+                merged = deep_line_order.crossovers(
+                    best_src, [n['source'] for n in frontier.nodes if n['source'] != best_src and n['score'] <= best * 2], 3, crossed)
+                if merged:
+                    batch = deep_line_order.Prefixed([TracedVariant(text, ['line_crossover']) for text in merged], batch)
                 for cand in batch:
                     if cand is None or time.monotonic() >= deadline or st.stop.is_set() or not self._random_budget_available():
                         break
@@ -881,9 +895,14 @@ class Permuter:
                         refused = e
                         continue
                     taken += 1
+                    deep_line_order.outcome(cand, score is not None and score < best, getattr(self, '_trial_output', None))
                     if not getattr(self, 'trace_variants', False) and getattr(self, '_trial_outcome', '') != 'no_edit':
                         adaptive_repairs.record(self.net, adaptive_repairs.profile(self.net, proj, fn), focus,
                                                 provenance['family'], best, score, (time.monotonic()-started)*1000, origin="background random")
+                        if shape and gen:
+                            adaptive_repairs.record(self.net, adaptive_repairs.profile(self.net, proj, fn), f'{focus}@{shape}',
+                                                    provenance['family'], best, score, (time.monotonic()-started)*1000,
+                                                    origin="background random", coverage=False)
                     if score is None:
                         continue
                     measured_rows = repair_ranking.evidence(self.net, fn['id'], agent.id)

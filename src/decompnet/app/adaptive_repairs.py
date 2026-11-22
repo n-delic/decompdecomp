@@ -43,7 +43,7 @@ def prepare(net):
         net._repair_policy_ready = True
 
 
-def record(net, key, focus, family, baseline, score, elapsed_ms=0, origin="local experiments", *, exact=None):
+def record(net, key, focus, family, baseline, score, elapsed_ms=0, origin="local experiments", *, exact=None, coverage=True):
     """Called once per measured trial; unknown/failed results count as spent work, not wins."""
     if not family or not isinstance(baseline, (int, float)) or not math.isfinite(baseline):
         return
@@ -57,6 +57,8 @@ def record(net, key, focus, family, baseline, score, elapsed_ms=0, origin="local
         elapsed_ms=elapsed_ms+excluded.elapsed_ms""",
         (key, focus, family, 1, int(improved), int(matched), int(score is None), max(0, int(elapsed_ms))),
         3, lambda old, new: trial_bookkeeping.sums(old, new, 3))
+    if not coverage:  # (a second key for the same trial, such as the statement's shape: one trial in the coverage totals)
+        return
     trial_bookkeeping.count(net.store,
         "INSERT INTO repair_policy_coverage VALUES(?,?,?,?,?,?,?) ON CONFLICT(origin) DO UPDATE SET first_at=MIN(first_at,excluded.first_at),last_at=MAX(last_at,excluded.last_at),attempted=attempted+excluded.attempted,improved=improved+excluded.improved,matched=matched+excluded.matched,elapsed_ms=elapsed_ms+excluded.elapsed_ms",
         (origin, now, now, 1, int(improved), int(matched), max(0, int(elapsed_ms))),
@@ -101,6 +103,14 @@ def boosts(net, proj, fn, rows, defaults):
         measured[family] = min(measured.get(family,1),factor)
     return {family: max(MIN_FACTOR, min(MAX_FACTOR, defaults.get(family, 1) * measured.get(family, 1)))
             for family in defaults.keys() | measured.keys()}
+
+
+def with_shape(net, proj, fn, boosts, focus, shape):
+    """`boosts` scaled by what has worked for this mismatch kind on statements of this shape (`call+field`), learnt under
+    the key `focus@shape`; no change until a family has MIN_TRIALS of its own on it."""
+    measured = factors(net, profile(net, proj, fn), f'{focus}@{shape}')
+    return {family: max(MIN_FACTOR, min(MAX_FACTOR, boosts.get(family, 1) * measured.get(family, 1)))
+            for family in boosts.keys() | measured.keys()}
 
 
 def order(net, proj, fn, rows, families):
