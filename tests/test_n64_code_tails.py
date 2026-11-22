@@ -97,3 +97,18 @@ def test_complete_tail_can_overlap_only_an_inferred_bank_when_scoped():
     assert complete(rom, [first, other])[0] == first
     assert complete(rom, [first, other], allow_inferred_overlap=True)[0] == (0, len(body), 0x80001000)
     assert complete(rom, [first], [other], allow_inferred_overlap=True)[0] == first
+
+
+def test_detected_code_removes_old_bin_marker_inside_its_extent(tmp_path):
+    import yaml
+
+    from decompnet.consoles.n64.code import insert_segments
+
+    cfg={'segments':[{'name':'main','type':'code','start':0,'vram':0x80000400,
+                      'subsegments':[[0,'c','main']]},
+                     {'type':'bin','start':48},[128]]}
+    path=tmp_path/'synthetic.yaml';path.write_text(yaml.safe_dump(cfg))
+    insert_segments(path,cfg,[(32,96,0x80001000)],128)
+    segments=yaml.safe_load(path.read_text())['segments']
+    starts=[s[0] if isinstance(s,list) else s['start'] for s in segments]
+    assert starts == [0,32,96,128]
