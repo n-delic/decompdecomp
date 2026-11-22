@@ -604,8 +604,10 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
 
     before_mapping = found
     found, runtime = inferred_overlays.runtime_mappings(rom, found, loaded.get('moved_ranges', ()), taken)
+    found = inferred_overlays.extend_adjacent_frame(rom, found)
+    found, banks = inferred_overlays.split_concatenated(rom, found, getattr(log, 'check_cancel', lambda: None))
     found, scoped = inferred_overlays.recover(rom, found, taken, getattr(log, 'check_cancel', lambda: None),
-                                             changed=runtime)
+                                             changed=runtime | banks)
     # Corrected addresses can expose a called prologue whose frame lies beyond
     # the scanner's original alignment tail.
     from .code_tails import complete as complete_tails
@@ -725,7 +727,8 @@ def insert_segments(config: Path, cfg: dict, found, size: int) -> None:
     segs = [s for s in cfg["segments"] if not (isinstance(s, dict) and s.get("type") == "bin" and start_of(s) in starts)
             and not isinstance(s, list)]  # the end marker comes back at the image's end
     for st, en, vram in found:
-        name = f"code_{vram:08X}"
+        duplicate = sum(base == vram for _, _, base in found) > 1
+        name = f"code_{vram:08X}_{st:X}" if duplicate else f"code_{vram:08X}"
         segs.append({"name": name, "type": "code", "start": st, "vram": vram, "subsegments": [[st, "c", name]]})
         if en < size and en not in starts and not any(start_of(s) == en for s in segs if not isinstance(s, list)):
             segs.append({"type": "bin", "start": en})

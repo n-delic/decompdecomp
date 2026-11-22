@@ -136,3 +136,56 @@ def test_nearby_mapping_requires_closed_entries_and_internal_and_external_calls(
     assert result == [(lo,hi,correct)] and lo in scoped
     image[:16] = bytes(16)
     assert inferred_overlays.recover(bytes(image),found,taken)[0] == found
+
+
+def test_concatenated_banks_require_distinct_self_calls_and_data_gap():
+    image = bytearray(0xb000)
+    lo, boundary, hi = 0x1000, 0x5000, 0xb000
+    old, alternate = 0x80100000, 0x80104000
+    # Closed functions in each bank, and calls to their own placements.
+    first = [lo + i*0x100 for i in range(8)]
+    second = [boundary + i*0x100 for i in range(8)]
+    for at in first + second:
+        struct.pack_into('>6I', image, at, 0x27bdffe0, 0xafbf001c, 0x8fbf001c,
+                         0x27bd0020, 0x03e00008, 0)
+    struct.pack_into('>2I', image, 0x3ff8, 0x03e00008, 0)
+    for i, at in enumerate(first + second):
+        target = at + (alternate-lo if at < boundary else old-lo)
+        call = 0x3000 + 4*i if i < 8 else 0x9000 + 4*(i-8)
+        struct.pack_into('>I', image, call, 0x0c000000 | ((target >> 2) & 0x3ffffff))
+    found = [(lo, hi, old)]
+    assert inferred_overlays.split_concatenated(image, found) == (
+        [(lo, 0x4000, alternate), (boundary, hi, alternate)], {lo, boundary})
+    # Without enough independent entries the original map remains untouched.
+    image[0x3000:0x3020] = bytes(0x20)
+    assert inferred_overlays.split_concatenated(image, found) == (found, set())
+
+
+def test_truncated_terminal_frame_extends_only_to_a_closed_next_boundary():
+    image = bytearray(0x400)
+    struct.pack_into('>2I', image, 0x1ec, 0x03e00008, 0)
+    struct.pack_into('>7I', image, 0x1f4, 0x27bdffe0, 0xafbf001c, 0, 0x8fbf001c,
+                     0x27bd0020, 0x03e00008, 0)
+    found = [(0x100, 0x200, 0x80100000), (0x210, 0x300, 0x80110000)]
+    assert inferred_overlays.extend_adjacent_frame(image, found) == [
+        (0x100, 0x210, 0x80100000), found[1]]
+    image[0x208:0x20c] = bytes(4)
+    assert inferred_overlays.extend_adjacent_frame(image, found) == found
+
+
+def test_same_address_banks_get_distinct_segment_names(tmp_path, monkeypatch):
+    import yaml
+
+    from decompnet.consoles.n64.code import insert_segments
+    from decompnet.rom import split
+
+    config = tmp_path / 'game.yaml'
+    config.write_text('segments: []\n')
+    monkeypatch.setattr(split, 'segments_from_config', lambda _: [])
+    cfg = {'segments': [[0x4000]]}
+    banks = [(0x1000, 0x1800, 0x80100000), (0x2000, 0x3000, 0x80100000)]
+    insert_segments(config, cfg, banks, 0x4000)
+    rows = [row for row in yaml.safe_load(config.read_text())['segments']
+            if isinstance(row, dict) and row.get('type') == 'code']
+    assert len(rows) == 2 and len({row['name'] for row in rows}) == 2
+    assert all(row['subsegments'][0][2] == row['name'] for row in rows)
