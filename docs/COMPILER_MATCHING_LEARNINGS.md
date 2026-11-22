@@ -16119,3 +16119,7 @@ A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` fre
 ### KMC GCC 2.7.2 forwarded entry pointer
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` wrote a command and passed its context pointer to a helper. The generated draft instead passed the command constant as the helper's argument. Forwarding the pointer and correcting the local prototype changed the linked difference score from 325 to an exact match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the target control flow to prove the incoming pointer reaches the unique call unchanged, and rejects ambiguous prototypes and pointer mutations.
+
+### KMC GCC 2.7.2 unused frame in a leaf loop
+
+A saved MIPS byte-fill example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` reserved an eight-byte stack frame but otherwise matched a frameless generated draft. Declaring an unused two-word local changed the linked difference score from 320 to an exact match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires an otherwise identical leaf instruction stream, matching frame entry and return restoration, and branch destinations shifted only by the extra entry instruction.
