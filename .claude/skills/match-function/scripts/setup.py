@@ -72,6 +72,7 @@ TMP = Path(os.environ.get("DD_SESSIONS_DIR", "/tmp"))
 STILL_RUNNING = "still running"  # the gateway's answer while the app works: repeat the identical call
 STILL_RUNNING_RETRIES = 60
 CLAIMED = re.compile(r"^## CLAIMED: [^/\s]+/(\S+)", re.M)
+UNCHANGED = re.compile(r"You still hold the unchanged claim: [^/\s]+/(\S+?)\.?(?:\s|$)")
 CLAIMED_BY = re.compile(r"is claimed by (.+?)(?: for another|$)", re.M)
 RENEW_RETRIES = 4  # a failed renewal is tried again at once this many times, RETRY_SECONDS apart
 RETRY_SECONDS = 10
@@ -155,6 +156,9 @@ def claim(gateway, function="", strategy="random", max_insns=0):
         if text is None:
             raise McpError("claim_function refused every claim order this script knows")
     found = CLAIMED.search(text)
+    if not found and function:
+        # the app answers a renewal that changes nothing "You still hold the unchanged claim: slug/FUNC": still held
+        found = UNCHANGED.search(text)
     if not found:
         raise McpError(f"claim_function didn't claim anything: {text[:400]}")
     return found[1]

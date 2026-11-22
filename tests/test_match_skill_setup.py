@@ -589,3 +589,23 @@ def test_the_long_helpers_warn_when_the_session_marker_exists(world, capsys, mon
         assert sys.modules["claimlost"].warn() and "claude-other" in capsys.readouterr().err
     finally:
         setup.main(["stop", "claude-l5"])
+
+
+def test_an_unchanged_claim_reply_counts_as_still_held_not_as_a_failed_renewal():
+    """The app answers a renewal that changes nothing with "You still hold the unchanged claim", not "## CLAIMED"; the
+    renewal took it for a failure and wrote a LOST warning for a function the session still held."""
+    setup = load("setup")
+
+    class Gateway:
+        def __init__(self, text):
+            self.text = text
+
+        def call(self, tool, arguments):
+            return self.text
+
+    assert setup.claim(Gateway("You still hold the unchanged claim: demo/func_8001. No new functions were claimed.\nx"), "func_8001") == "func_8001"
+    assert setup.claim(Gateway("## CLAIMED: demo/func_8002\nclaim_token: a\n"), "func_8002") == "func_8002"
+    with pytest.raises(setup.McpError, match="didn't claim anything"):
+        setup.claim(Gateway("nothing"), "func_8001")
+    with pytest.raises(setup.McpError, match="didn't claim anything"):  # a claim by strategy has no function to keep
+        setup.claim(Gateway("You still hold the unchanged claim: demo/func_8001. x"), "", "nearest")
