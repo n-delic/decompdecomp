@@ -13319,3 +13319,17 @@ base. On a retail N64 function the linked score went from 968 to 0;
 the old dispatcher produced no candidate and the new rule produced one
 byte-exact candidate.
 On that same function, deriving the defined zero from the already loaded count as `(unsigned short) count ^ ((unsigned int) count & 0xFFFF)` improved the scoped seed from 85 to 75. Both expressions have the same low 16 bits, so their XOR is zero; the generated child retains the existing load and adds no pointer read. Direct self-XOR, self-subtraction and masking by zero all stayed at 85. The exact judge reports 15 remaining register differences; this is one function, not a match. decomp-repair 0.5.339 offers the identity only for the guarded stable-local shape, with synthetic generation and safety tests.
+
+### A chain load scheduled ahead of the branch operand's load (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, an N64 game, one 302-instruction menu function)
+
+Saved best 210: after the first call the function reads `var = **(entry + 0x10)` (kept in a saved register for a use after the next branch) and then tests `*(u8 *)(gMenuState + 0x2D)`. The target read the global pointer first (`lw $v0,0x10($s0); lui/lw $v1,gMenuState; lw $s1,($v0); lbu $v0,0x2d($v1)`); every variant scored 210-235 with the chain load first. One function, judged with the app's judge-worker; the result was exact (0).
+
+cc1's `-dS` dump (the first scheduler works backwards, `T-n`) shows why. In the saved source m2c's identical `if (slot) { X } else { X }` (a condition on an unset local) left the chain load in its own basic block, ahead of the block holding the global pointer load, so no ordering inside the block could change it. With the arms written once (`-dS` of that variant: one block) the load is in the same block, but it has the same priority as the `lbu` (an anti-dependence on the branch makes it 11, like the `lbu`) and fills the `lbu` -> `beq` load-use slot, after the `lbu`. The target has it before the `lbu`.
+
+Edit list from the saved 210 (scores alone and combined):
+1. identical arms written once: 220 alone (330 when the second identical pair, later in the function, is also collapsed: that pair stays as m2c wrote it).
+2. `tmpA = *(u8 *)(gMenuState + 0x2D);` read into a local before the chain load: 235 alone.
+3. the double dereference split, `ptr = *(entry + 0x10);` first and the last load as `do { var = *ptr; } while (0);` (the loop notes are scheduling boundaries): 235-80 depending on order; with the local in 2 first, 80 (the chain's address load lands after the global's `lw`); with `ptr` read first as its own statement, ahead of `tmpA`, exact.
+Together (1 then 2 then 3, `ptr`, `tmpA`, `do { var = *ptr; } while (0);`, then `temp_s3 = entry + 0x28;`): 210 -> 0. Without the wrapper, the same split and local scored 220-235; the wrapper alone on the unsplit chain 210.
+
+decomp-repair 0.5.340 `chain_load_scope` proposes the combination (and `identical_arm_collapse` the collapse); from the saved 210 source `variants()` emits the exact child (collapse of the first identical pair, then the scope). Evidence level: one function; the rewrite is covered by unit tests, and the app's beam (`loop_vector_shape_pass`) offers it.
