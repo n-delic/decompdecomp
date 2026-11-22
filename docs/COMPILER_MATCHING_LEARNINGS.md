@@ -16292,3 +16292,8 @@ The `reused_temp_split` family also offered an unsafe candidate on that saved so
 branch and the read after the join, leaving the new local undefined on the other branch. Reaching-definition
 checks now reject such splits and splits that leave a read outside the renamed span using an older value. A
 controlled regression covers both joins and confirms that a branch-local split remains available.
+
+
+### KMC GCC 2.7.2 field-store pointer lifetimes
+
+A saved MIPS setup function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` loaded a global pointer, stored fields through it and passed it to calls. Keeping the measured pointer for the later store and call changed the generated draft's linked difference score from 300 to 20; also retaining the earlier measured pointer for its store and call produced an exact match. This is one saved example, not a controlled cross-compiler experiment. The candidates check the relevant load/store/call instructions and offer the two lifetime changes separately and together for the judge to evaluate.

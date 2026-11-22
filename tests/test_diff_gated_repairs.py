@@ -2547,3 +2547,14 @@ def test_indexed_setup_receives_target_flags_and_symbol_resolver(monkeypatch):
                                                      flags=flags, resolve=resolve))
     assert 'indexed_setup_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, '',
                                                          flags=flags, resolve=resolve))
+
+
+def test_field_base_lifetimes_route_only_to_kmc_mips(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'lw $v0, 0($a0)', 'lw $v1, 0($a0)')]
+    monkeypatch.setattr(diff_gated_repairs.measured_field_base_lifetimes, 'variants',
+                        lambda text, name, header, diff: [('field_base_fixture', text)])
+    assert 'field_base_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'field_base_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+    assert not proposals('void f(void) {}', 'f', '', 'arm', KMC, rows, '')
