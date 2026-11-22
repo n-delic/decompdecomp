@@ -745,7 +745,10 @@ def insert_segments(config: Path, cfg: dict, found, size: int) -> None:
             bss_ends[seg.rom_start] = seg.vram + seg.rom_end - seg.rom_start + raw["bss_size"]
 
     starts = {st for st, _, _ in found}
-    segs = [s for s in cfg["segments"] if not (isinstance(s, dict) and s.get("type") == "bin" and start_of(s) in starts)
+    # A discovered code span can straddle an old bin marker created by splat.
+    # Keeping it would cut the verified span and truncate an otherwise complete function.
+    segs = [s for s in cfg["segments"] if not (isinstance(s, dict) and s.get("type") == "bin"
+            and start_of(s) is not None and any(st <= start_of(s) < en for st, en, _ in found))
             and not isinstance(s, list)]  # the end marker comes back at the image's end
     for st, en, vram in found:
         duplicate = sum(base == vram for _, _, base in found) > 1
