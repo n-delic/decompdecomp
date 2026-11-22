@@ -196,3 +196,62 @@ def test_worker_applies_background_priority_once_and_keeps_metadata_out_of_repai
     assert priorities == ([True] if background else [])
     assert len(received) == 2 and all('_background' not in options for options in received)
     assert all('error' not in json.loads(line) for line in output.getvalue().splitlines())
+
+
+def _kill_when_asked(monkeypatch, deaths):
+    """Workers that start a real subprocess which exits (as if killed) after reading the first request, `deaths` times."""
+    import sys
+    original = deep_proposals.subprocess.Popen
+    started = []
+
+    def process(command, **kwargs):
+        if len(started) < deaths:
+            started.append(1)
+            return original([sys.executable, '-c', 'import os,signal,sys; sys.stdin.readline(); '
+                             'sys.stderr.write("boom: out of memory\\n"); sys.stderr.flush(); os.kill(os.getpid(), signal.SIGKILL)'], **kwargs)
+        return original(command, **kwargs)
+    monkeypatch.setattr(deep_proposals.subprocess, 'Popen', process)
+    return started
+
+
+@pytest.mark.skipif(deep_proposals.os.name == 'nt', reason='signals')
+def test_a_worker_that_dies_mid_request_says_how_and_the_pool_asks_a_fresh_one(monkeypatch, caplog):
+    """A pass failed with 'Local proposal generator stopped' when every worker was replaced at once (tennis, 14:37)."""
+    args, kwargs = request()
+    expected = draft_repairs.variants(*args, **kwargs)
+    started = _kill_when_asked(monkeypatch, deaths=2)
+    pool = deep_proposals.Pool(1)
+    try:
+        with caplog.at_level('INFO', logger='decompdecomp'):
+            choices, _, _ = pool.generate(args, kwargs, lambda: None)
+    finally:
+        pool.close()
+    assert choices == expected and len(started) == 2
+    text = caplog.text
+    assert 'killed by signal 9' in text and 'boom: out of memory' in text and 'Asking a fresh proposal worker again' in text
+
+
+@pytest.mark.skipif(deep_proposals.os.name == 'nt', reason='signals')
+def test_a_request_that_keeps_killing_its_worker_fails_after_the_retries_with_the_cause(monkeypatch):
+    args, kwargs = request()
+    started = _kill_when_asked(monkeypatch, deaths=10)
+    pool = deep_proposals.Pool(1)
+    try:
+        with pytest.raises(deep_proposals.WorkerStopped, match=r'killed by signal 9.*Retry the repair'):
+            pool.generate(args, kwargs, lambda: None)
+    finally:
+        pool.close()
+    assert len(started) == deep_proposals.RETRIES + 1
+
+
+@pytest.mark.skipif(deep_proposals.os.name == 'nt', reason='signals')
+def test_the_draft_worker_batch_asks_a_fresh_worker_when_the_idle_one_died(monkeypatch):
+    import json
+    args, kwargs = request()
+    started = _kill_when_asked(monkeypatch, deaths=1)
+    monkeypatch.setattr(draft_repairs, '_IDLE_WORKERS', [])
+    payload = json.dumps([args, kwargs], sort_keys=True, ensure_ascii=False, separators=(',', ':')).encode()
+    result = draft_repairs._worker_batch(payload, lambda: None)
+    assert result['candidates'] and len(started) == 1
+    for worker in draft_repairs._IDLE_WORKERS:
+        worker.close()
