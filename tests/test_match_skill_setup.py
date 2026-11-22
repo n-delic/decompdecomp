@@ -124,13 +124,13 @@ def test_a_session_claims_once_over_mcp_and_is_removed_by_stop(world, capsys):
     assert connection["gateway_url"].endswith(f":{app.servers[1].server_port}/mcp")
     assert oct((root / "connection.json").stat().st_mode & 0o777) == "0o600"
     assert app.creates == [{"action": "create", "slug": "demo"}]  # the window API only makes the connection
-    assert app.claims == [{"strategy": "random"}]  # the random claim, asked for once, over MCP
+    assert app.claims == [{"strategy": "nearest", "max_insns": 800}]  # the default pick: nearest, at most 800 instructions, asked once over MCP
     out = capsys.readouterr().out
     assert "UV_PROJECT_ENVIRONMENT=" + str(root / "venv") in out and "bearer-s3cret" not in out
     pid = int((root / "renew.pid").read_text())
     assert wait_for(lambda: len(app.claims) >= 2)
     assert app.claims[1] == {"function": "func_8001", "fallback": False}  # renewed by name, never swapped
-    assert app.claims.count({"strategy": "random"}) == 1
+    assert app.claims.count({"strategy": "nearest", "max_insns": 800}) == 1
     assert setup.alive(pid)
     assert setup.main(["stop", "claude-t1"]) == 0
     assert app.revokes == [{"action": "revoke", "id": 7}]  # frees the connection's claim, with or without a compile
@@ -138,6 +138,20 @@ def test_a_session_claims_once_over_mcp_and_is_removed_by_stop(world, capsys):
     assert wait_for(lambda: not setup.alive(pid), 10)
     listing = subprocess.run(["git", "-C", str(primary), "worktree", "list"], capture_output=True, text=True).stdout
     assert str(root) not in listing
+
+
+def test_random_and_size_options_shape_the_one_automatic_claim(world):
+    setup, app, home, primary = world
+    assert start(setup, home, primary, "--holder", "claude-t9", "--random", "--max-size", "0") == 0
+    try:
+        assert app.claims[0] == {"strategy": "random"}  # a plain random claim stays available, any size
+    finally:
+        setup.main(["stop", "claude-t9"])
+    assert start(setup, home, primary, "--holder", "claude-t10", "--max-size", "300") == 0
+    try:
+        assert {"strategy": "nearest", "max_insns": 300} in app.claims
+    finally:
+        setup.main(["stop", "claude-t10"])
 
 
 def test_a_named_function_is_claimed_by_name_without_a_replacement(world):
@@ -155,7 +169,7 @@ def test_a_still_running_answer_repeats_the_identical_call(world, monkeypatch):
     app.busy = 2
     assert start(setup, home, primary, "--holder", "claude-t6") == 0
     try:
-        assert app.claims[:3] == [{"strategy": "random"}] * 3
+        assert app.claims[:3] == [{"strategy": "nearest", "max_insns": 800}] * 3
     finally:
         setup.main(["stop", "claude-t6"])
 
@@ -173,7 +187,7 @@ def test_the_renewal_ends_by_itself_once_the_function_matches(world):
 def test_a_failed_claim_revokes_the_connection_and_leaves_nothing_behind(world, monkeypatch):
     setup, app, home, primary = world
 
-    def refuse(gateway, function=""):
+    def refuse(gateway, function="", *_):
         raise setup.McpError("claim_function: someone holds it")
     monkeypatch.setattr(setup, "claim", refuse)
     with pytest.raises(SystemExit, match="someone holds it"):

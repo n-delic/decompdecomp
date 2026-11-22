@@ -3,7 +3,9 @@
 
 Standard library only: it reads the app's own connection file and calls the same local API the window does.
 
-    judge.py claim SLUG [FUNC]           claim FUNC, or with none a random open function nobody holds; prints its name
+    judge.py claim SLUG [FUNC] [--nearest] [--max-size N]
+                                         claim FUNC, or with none a random open function nobody holds (--nearest: the
+                                         lowest saved score first; --max-size: at most N instructions); prints its name
     judge.py release SLUG FUNC           give the claim back
     judge.py best SLUG FUNC OUT.c        the function's saved best C, to a file
     judge.py diff SLUG FUNC              the diff of the saved best (rows), and the app's verdict
@@ -61,8 +63,8 @@ class App:
     def function(self, slug, name):
         return self.call("/api/function?" + urllib.parse.urlencode({"slug": slug, "name": name}))
 
-    def claim(self, slug, name=""):
-        return self.call("/api/claim", {"slug": slug, "name": name})
+    def claim(self, slug, name="", strategy="random", max_insns=0):
+        return self.call("/api/claim", {"slug": slug, "name": name, "strategy": strategy, "max_insns": int(max_insns or 0)})
 
     def release(self, slug, name):
         return self.call("/api/release", {"slug": slug, "name": name})
@@ -109,8 +111,19 @@ def main(argv):
     if not argv:
         sys.exit(__doc__)
     app, (command, *args) = App(options["--home"], options["--holder"]), argv
-    if command == "claim" and len(args) in (1, 2):
-        result = app.claim(*args)
+    if command == "claim":
+        strategy, cap, plain = "random", 0, []
+        while args:
+            word, args = args[0], args[1:]
+            if word == "--nearest":
+                strategy = "nearest"
+            elif word == "--max-size" and args:
+                cap, args = int(args[0]), args[1:]
+            else:
+                plain.append(word)
+        if len(plain) not in (1, 2):
+            sys.exit(__doc__)
+        result = app.claim(*plain, strategy=strategy, max_insns=cap)
         if "name" not in result:
             sys.exit(f"no claim: {result.get('error') or result}")
         print(result["name"])

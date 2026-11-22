@@ -759,10 +759,13 @@ def register(app: App) -> None:
 
     def p_claim(slug, request, data):
         """A CLI claims a function, as "you" or a named holder (_holder): the named one, or with no name an open
-        function nobody holds, picked by `strategy` (random by default), so parallel sessions never share one."""
+        function nobody holds, picked by `strategy` (random by default) and at most `max_insns` instructions when given,
+        so parallel sessions never share one."""
+        from ...network import claim_size_cap
         agent, _ = net.local_agent(_holder(data))
         name = str(data.get("name") or "") or None
-        fn = net.claim_row(agent, slug, name, str(data.get("strategy") or "random"))
+        with claim_size_cap(data.get("max_insns")):
+            fn = net.claim_row(agent, slug, name, str(data.get("strategy") or "random"))
         if fn is None:
             raise NetworkError("No open function is left to claim in this project.")
         return {"name": fn["name"], "holder": agent.name}

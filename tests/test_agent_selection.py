@@ -375,3 +375,26 @@ def test_startup_availability_honors_own_release_cooldown_and_its_exceptions(net
         assert net.claim_row(agent, 'game')['id'] == fn['id']
     else:
         assert net.claim_row(agent, 'game', function='small')['name'] == 'small'
+
+
+def test_nearest_takes_the_lowest_saved_score_and_a_size_cap_limits_the_pick(net):
+    from decompnet.network import claim_size_cap
+    a, _ = net.local_agent('claude-near')
+    assert net.claim_row(a, 'game', strategy='nearest')['name'] == 'small'  # score 100 before 5000, unscored last
+    net.release(a, 'small', '', 'game')
+    b, _ = net.local_agent('claude-cap')
+    with claim_size_cap(50):
+        assert net.claim_row(b, 'game', strategy='hardest')['name'] == 'small'  # 'large' (500) is over the cap
+    c, _ = net.local_agent('claude-none')
+    with claim_size_cap(5):
+        assert net.claim_row(c, 'game', strategy='random') is None
+    with pytest.raises(NetworkError, match='max_insns'):
+        with claim_size_cap('lots'):
+            pass
+
+
+def test_claim_function_passes_max_insns_to_the_queue(net):
+    from decompnet.app import tools
+    a, _ = net.local_agent('claude-tool')
+    text = tools.call(net, a, 'game', 'claim_function', {'strategy': 'hardest', 'max_insns': 150})
+    assert 'middle' in text and 'large' not in text.split('\n', 1)[0]

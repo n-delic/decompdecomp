@@ -1,6 +1,6 @@
 ---
 name: match-function
-description: Match one function by hand against the running decompdecomp app, then turn what the manual work taught into a decomp-repair family or app improvement so the next such function is matched automatically. Use for "get func_X in PROJECT to match", a stuck near-match, or just a project ("match a function in PROJECT"), when it claims a random open function nobody else holds.
+description: Match one function by hand against the running decompdecomp app, then turn what the manual work taught into a decomp-repair family or app improvement so the next such function is matched automatically. Use for "get func_X in PROJECT to match", a stuck near-match, or just a project ("match a function in PROJECT"), when it claims the nearest open function nobody else holds (lowest saved score, at most 800 instructions).
 ---
 
 # Match a function by hand, then teach the permuter
@@ -67,7 +67,8 @@ checkout: `git fetch -q origin && git archive origin/main .claude/skills/match-f
 (`mkdir -p` it first), then run `python3 /tmp/dd-skill/.claude/skills/match-function/scripts/setup.py SLUG [FUNC]
 --repo <primary checkout>`. It picks a holder, builds `/tmp/dd-<holder>/` with a worktree off origin/main (`repo/`, detached:
 `git switch -c <type>/<name>` there) and a private venv (synced to that worktree's lock file; after you `git pull`/rebase there, run `setup.py sync <holder>`; never `uv sync` the primary checkout), creates the project-scoped MCP connection (token in
-`connection.json`, mode 0600, never printed), claims once (a random open function when none is given) and renews the claim
+`connection.json`, mode 0600, never printed), claims once (when none is given: the nearest open function, lowest saved score first, of at most 800 instructions;
+`--max-size N` changes the cap, 0 for any size; `--random` takes a random one instead) and renews the claim
 every 5 minutes until it matches. It prints the environment; use that worktree's own `scripts/` and venv python from then
 on. Add the connection to your client as `connection.json` says. Finish with `setup.py stop <holder>`: it stops the renewal,
 revokes the connection (that frees the claim even with no compile yet) and removes the whole folder. Release with notes
@@ -114,7 +115,11 @@ The gateway deduplicates pending calls by connection, tool and arguments.
   function, resume it. If it holds unrelated work, use a separate project connection. A newly
   created connection that has made no claim can go straight to the first claim.
 - `setup.py` makes the first claim (once) and renews it. By hand: with your own holder name; **only a project given**:
-  call the random claim (`claim_function(strategy="random")`) exactly once and use the name the app returns; never loop on it.
+  call the near-match claim (`claim_function(strategy="nearest", max_insns=800)`) exactly once and use the name the app
+  returns; never loop on it. Near-misses are where a hand session finishes and leaves a family behind; take a random one
+  (`strategy="random"`, `setup.py --random`) only when asked to, or when nothing under the cap is left (the claim answers
+  that nothing is left: raise `max_insns` once). `judge.py claim SLUG --nearest --max-size 800` is the same for a window
+  holder.
 - **The claim is renewed at least every 10 minutes** (`setup.py` does it every 5; by hand, `claim_function(function=FUNC)`
   again). A lapsed claim lets other agents take the function.
 - **An enormous function** (well over ~1000 instructions, or a best in the thousands with no near-miss rows) may be
