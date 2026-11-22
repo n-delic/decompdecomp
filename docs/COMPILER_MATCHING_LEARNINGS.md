@@ -1,5 +1,13 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: isolate a narrow record store
+
+Wrapping a halfword assignment between adjacent stores to the same record
+in `do { ... } while (0)` improved a private N64 scratch draft from 7,052
+to 7,037 with `-G0 -mips3 -mgp32 -mfp32 -O2`. The same rewrite at another
+site raised the score to 7,282. Deep Permuter offers each site separately
+and judges the result. The function remains unmatched.
+
 ### KMC GCC 2.7.2: share repeated unsigned offsets through an inline helper
 
 Factoring two copies of a shift, stride, and bias calculation into a
