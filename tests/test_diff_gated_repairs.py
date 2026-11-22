@@ -1984,3 +1984,14 @@ def test_packing_stage_routes_to_kmc(monkeypatch):
     assert 'packing_stage_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'packing_stage_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
     assert 'packing_stage_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-7.1', rows, ''))
+
+
+def test_zero_record_pairs_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'nop', 'nop')]
+    monkeypatch.setattr(diff_gated_repairs.measured_zero_record_pairs, 'variants',
+                        lambda text, name, header, diff, resolve=None: [('zero_record_fixture', text)])
+    assert 'zero_record_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'zero_record_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+    assert 'zero_record_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-7.1', rows, ''))

@@ -15621,3 +15621,6 @@ instruction differences. Keeping the unused integer member in the
 pointer union scored the same. The automatic proposal checks direct
 member uses, disjoint liveness, and a dominating write before every
 read. This is a single saved example.
+### KMC GCC 2.7.2 paired zero initializers
+
+A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` initialized three adjacent word pairs as 64-bit zeros. Its machine draft emitted six separate zero stores. Combining the global pair alone changed the diff score from 230 to 20; combining all three pairs produced an exact linked match. This is one saved example, not a controlled cross-compiler experiment. The proposal checks the relocated global addresses, the generated record's word layout and the target stores; the normal judge checks the resulting candidate. The 64-bit pointer accesses assume their addresses meet the source type's alignment requirements.
