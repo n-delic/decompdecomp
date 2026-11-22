@@ -16975,3 +16975,24 @@ Measured children of the 1825 source: `display_cursor_record` 11270, `display_cu
 Next step for functions like this one: start the chain from m2c's own draft (its stores follow the program), not from
 an agent's saved best, and have the agents' saves keep that draft; on a correct draft `display_cursor_record` with the
 other families gave the 1825 -> 0 chain recorded earlier.
+
+### KMC GCC 2.7.2: a `goto` into a nested arm, written as the else arm (`goto_nested_entry_else`)
+
+Evidence level: one N64 function, a controlled measurement (exact judge, same source apart from this edit), not a
+regression suite. `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, a 284-instruction function standing at 290.
+
+m2c wrote `v = e; if (v != 0) { goto L; } y = alloc(); if (y != NULL) { A... L: B... } else { N: C... }`, the label a
+statement of the next `if`'s then arm. The target had `lw $a0; bnel $a0, $zero, L; sw $a0, v($sp)`: a branch-likely
+whose delay slot holds the store. The source that gave it is `t = e; if (t == 0) { y = alloc(); if (y == NULL) { goto N; }
+A... } else { v = t; } B... N: C...`. Every path of B ended in `goto N`, so B falls into C.
+
+- Measured: 290 -> 80 from that edit alone (rows left: a size expression and a temporary's register, both separate
+  open problems). The same source with the store left above the test gives `bnez` with the store in the slot.
+- Hypothesis, not confirmed in the compiler source: the second scheduler (reorg) fills a branch-likely slot from the
+  branch's target thread, which needs the store to exist as the first instruction of an out-of-line arm; a store
+  before the test is only ever a from-above filler, giving `bnez`.
+- Failed shapes: `t = e; if (t != 0) { v = t; goto L; }` (1260: the label stays inside the nest) and the else arm
+  placed after the function's last statement with a backward `goto` (625: the join moved the allocation of other
+  saved registers).
+- Library: `goto_nested_entry_else` in decomprepair 0.5.580 (`goto_structure_repairs`), offered by the draft repairs and
+  the deep pass (it is in `AGENT_FAMILIES`); `tests/test_goto_nested_entry_else.py`.
