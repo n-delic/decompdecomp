@@ -1,5 +1,14 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: flip repeated flag branches together
+
+Three branches in a private N64 draft tested the same negated bitmask.
+Swapping the arms and flipping the sense at all three sites improved
+the linked score from 24,139 to 22,719 with `-G0 -mips3 -mgp32 -mfp32 -O2`.
+Single-site scores ranged from 23,924 to 23,929. A separate float
+conversion change regressed by itself but improved the grouped draft
+to 22,498. The function remains unmatched.
+
 ### KMC GCC 2.7.2: isolate a narrow record store
 
 Wrapping a halfword assignment between adjacent stores to the same record
