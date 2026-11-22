@@ -1780,3 +1780,13 @@ def test_branch_halfword_store_routes_to_kmc(monkeypatch):
                         lambda text, name, header, diff: [('branch_halfword_fixture', text)])
     assert 'branch_halfword_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'branch_halfword_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_guarded_index_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_guarded_index, 'variants',
+                        lambda text, name, header, diff: [('guarded_index_fixture', text)])
+    assert 'guarded_index_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'guarded_index_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))

@@ -15168,3 +15168,8 @@ agree with the target and only the OR operand order to differ at each
 identified staged predicate. It uses the exact float bound to associate
 the measured sites with source and skips groups whose counts differ.
 Synthetic tests verify the gates.
+
+
+### Materialize an inverted guard before indexed address calculation
+
+In a saved N64 list pass built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a direct `count >= 2` test omitted the target's `slti`/`xori` boolean sequence. Staging `(count < 2) ^ 1` in a signed local improved the linked score from 335 to 5. Expressing the following indexed address as a 32-bit integer addition with the scaled index first also matched the target's `addu` operand order and reproduced the linked target exactly (score 0). Evidence: one saved example and synthetic source, target and routing tests. The candidate is limited to the measured 32-bit MIPS compiler and instruction shape and is checked by the byte judge.
