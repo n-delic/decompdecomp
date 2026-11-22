@@ -495,11 +495,12 @@ class Permuter:
                 continue
             # Autopilot's deterministic pass must reach joint hypotheses too, before
             # source-only scores discard their corrected loop exit. No claim is held yet.
-            from decomprepair import guarded_loop_repairs
+            from decomprepair import guarded_loop_repairs, strided_table_loop
 
             from . import matching_preflight
+            own = compiler_for(self.net.cfg(proj),fn['vram'],fn)
             if (not fork and hasattr(self.net,'_comparison_digest')
-                    and guarded_loop_repairs.probes(proj,fn,compiler_for(self.net.cfg(proj),fn['vram'],fn),header)):
+                    and (guarded_loop_repairs.probes(proj,fn,own,header) or strided_table_loop.probes(proj,fn,own,header))):
                 try:
                     paired=matching_preflight.run(self.net,proj,fn,log.info,
                         lambda:not st.stop.is_set() and time.monotonic()<deadline,

@@ -438,3 +438,30 @@ def test_jump_table_preflight_combines_case_order_with_scheduling(monkeypatch):
     assert preflight.run(net, proj, fn)['jump_table_profile']['source'] == child
     assert (['-O2', '-fno-schedule-insns'], child) in calls
     assert not state['applied']
+
+
+def test_poll_loop_without_strength_reduction_is_probed_with_its_spellings(monkeypatch):
+    """The profile alone ties while the source indexes by element, so it is judged joined with the byte offsets."""
+    from decompnet.app import repair_ranking
+
+    net, proj, fn, state = setup()
+    proj['arch'] = 'mips'
+    net.cfg(proj)['compiler'] = {'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-O2']}
+    source = ('extern s16 D_80100004;\nextern s16 D_80100006;\nvoid f(void)\n{\n  s32 off;\n  s32 i;\n  off = 0;\n  i = 0;\n'
+              '  do\n  {\n    *((&D_80100004) + off) = 1;\n    *((&D_80100006) + off) = 2;\n    off += 8;\n    i++;\n  }\n'
+              '  while (i < 4);\n}\n')
+    one = ('lui $at, %hi(D_80100004)\naddu $at, $at, $s4\nsh $v0, %lo(D_80100004)($at)\n'
+           'lui $at, %hi(D_80100006)\naddu $at, $at, $s4\nsh $v0, %lo(D_80100006)($at)\naddiu $s4, $s4, 0x8\n')
+    fn.update(asm=one + one, best_source=source, name='f', n_insns=20)
+    monkeypatch.setattr(repair_ranking, 'evidence', lambda *a: [])
+
+    def judge(proj, fn, toolchain, flags, source):
+        state['calls'].append((flags, source))
+        exact = '-fno-strength-reduce' in flags and '(s8 *) (&D_80100004)) + off' in source
+        return exact, SimpleNamespace(score=0 if exact else 400, rows=[]), ''
+
+    net._judge_with = judge
+    result = preflight.run(net, proj, fn, max_profiles=3)
+    assert result['best']['exact'] and '-fno-strength-reduce' in result['best']['flags']
+    assert state['calls'][0] == (['-O2'], source)
+    assert all(flags == ['-O2', '-fno-strength-reduce'] for flags, _ in state['calls'][1:3])
