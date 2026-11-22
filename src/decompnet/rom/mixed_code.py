@@ -6,6 +6,8 @@ from bisect import bisect_right
 import yaml
 
 from .. import arch
+from ..arch.mips import is_frame
+from ..arch.mips_references import references
 
 MAX_PASSES = 3
 MAX_CANDIDATES = 512
@@ -84,18 +86,22 @@ def refine(config, workdir, image, console, log=print, *, visited=None):
         owners = [s for s in segments if s.rom_start <= fn.rom < s.rom_end
                   and fn.vram-fn.rom == s.vram-s.rom_start]
         owner = owners[0] if len(owners)==1 else None
-        for line in fn.lines:
-            if line.word>>26==3:
-                target = ((line.vram+4)&0xF0000000)|((line.word&0x3FFFFFF)<<2)
-                mappings = [s for s in segments if s.contains(target,4)]
-                if len(mappings)==1:
-                    segment = mappings[0]
-                elif owner in mappings and (scope := scopes.get(owner.rom_start)) and all(
-                        scopes.get(s.rom_start)==scope for s in mappings):
-                    segment = owner
-                else:
-                    continue  # a call from outside the shared slot is ambiguous
-                calls.add((segment.rom_start+target-segment.vram,target,segment.rom_start))
+        # A function reached only through a pointer the code builds (lui/addiu: a callback, a handler table's entry)
+        # is as independently referenced as a called one; the raw chunk it hides in was never probed (a tank game's
+        # 372 bodies, 62 KB, stayed `.word` lines).
+        targets = [((line.vram+4)&0xF0000000)|((line.word&0x3FFFFFF)<<2) for line in fn.lines if line.word>>26==3]
+        if fn.rom+fn.size<=len(rom):
+            targets += [t for t,_,kind in references(rom,fn.rom,fn.rom+fn.size,fn.vram) if kind=='address']
+        for target in targets:
+            mappings = [s for s in segments if s.contains(target,4)]
+            if len(mappings)==1:
+                segment = mappings[0]
+            elif owner in mappings and (scope := scopes.get(owner.rom_start)) and all(
+                    scopes.get(s.rom_start)==scope for s in mappings):
+                segment = owner
+            else:
+                continue  # a call from outside the shared slot is ambiguous
+            calls.add((segment.rom_start+target-segment.vram,target,segment.rom_start))
     probes=[]
     for offset,target,owner_start in sorted(calls):
         index=bisect_right(starts,offset)-1
@@ -104,6 +110,22 @@ def refine(config, workdir, image, console, log=print, *, visited=None):
         if row[2].rom_start!=owner_start:continue
         if (offset,target,row[1]) not in visited:
             probes.append((offset,target,row))
+    # Quiet code: a framed body nobody calls or points at, inside a raw chunk, is accepted when it saves and restores
+    # $ra and itself calls a function the project already has (loader_code's linked_frame). A data table seldom does.
+    entry_vrams={}
+    for fn in functions:
+        entry_vrams.setdefault(fn.vram-fn.rom,set()).add(fn.vram)
+    for start,end,segment,raw,_ in dropped:
+        mapping=segment.vram-segment.rom_start
+        known_entries=entry_vrams.get(mapping,())
+        if not known_entries:continue
+        for at in range(start,end-8,4):
+            if not is_frame(int.from_bytes(rom[at:at+4],'big')) or (at,at+mapping,end) in visited:continue
+            if any(at==o for o,_,_ in probes):continue
+            words=[int.from_bytes(rom[x:x+4],'big') for x in range(at,min(at+0x400,end),4)]
+            if not ({w&0xffff for w in words if w&0xffff0000==0xafbf0000}&{w&0xffff for w in words if w&0xffff0000==0x8fbf0000}):continue
+            if any(w>>26==3 and (((at+mapping)&0xF0000000)|((w&0x3FFFFFF)<<2)) in known_entries for w in words):
+                probes.append((at,at+mapping,next(r for r in dropped if r[0]<=at<r[1])))  # visited is set when probed
     accepted=[]
     for offset,target,row in probes[:MAX_CANDIDATES]:
         check_cancel()
