@@ -369,3 +369,100 @@ def test_recent_identity_cache_preserves_keys_and_invalidates_every_capture(monk
         for index in range(80):search._recent_key(net.project_row('game'),fn,f'int f(){{return {index};}}',None)
         assert len(search._recent_keys)<=64
     finally:search.compile_pool.close()
+
+
+def test_compile_runs_are_labelled_by_what_asked_for_them():
+    from decompnet import compile_timing, repair_feedback
+    assert compile_timing.run_origin() == 'runs_direct_untagged'
+    for kind, name in [('deep local repair', 'runs_direct_local'), ('random rewrite', 'runs_direct_random'),
+                       ('deterministic draft repair', 'runs_direct_draft'), ('something new', 'runs_direct_other')]:
+        with repair_feedback.trial({'kind': kind}):
+            assert compile_timing.run_origin() == name
+    token = compile_timing.ORIGIN.set('batch')
+    try:
+        with repair_feedback.trial({'kind': 'deep local repair'}):
+            assert compile_timing.run_origin() == 'runs_batch'  # (a worker's compile is named by the worker)
+    finally:
+        compile_timing.ORIGIN.reset(token)
+    assert all(name in compile_timing.RUN_ORIGINS for name in ('runs_ticket', 'runs_batch', 'runs_direct_local'))
+    assert [deep_compilation._bucket('group', n) for n in (1, 2, 3, 4, 5, 8)] == [
+        'group_1', 'group_2', 'group_3_4', 'group_3_4', 'group_5_8', 'group_5_8']
+
+
+def pool_with_fake_batches(monkeypatch):
+    """A lane's pool whose compile just records how the tickets were grouped."""
+    monkeypatch.setattr(compiler, 'concurrency_limit', lambda: 4)
+    pool = deep_compilation.Pool(4, remote=False)
+    groups = []
+    class Net:
+        def _compile_batch(self, proj, header, sources, fn):
+            groups.append(len(sources))
+            return [compiler.CompileResult(True, s.encode(), '') for s in sources]
+    net = Net()
+    def ticket(index, key=('f',)):
+        item = deep_compilation.Ticket(('key', index), None, lambda: compiler.CompileResult(True, b'alone', ''), lambda: None)
+        item.batch = (key, net, {}, '', {})
+        item.batch_source = f'candidate {index}'
+        return item
+    return pool, groups, ticket
+
+
+def test_a_window_submitted_as_a_group_compiles_in_one_run(monkeypatch):
+    pool, groups, ticket = pool_with_fake_batches(monkeypatch)
+    try:
+        tickets = [ticket(i) for i in range(6)]
+        pool.submit_group(tickets)
+        assert [item.future.result(timeout=5).obj for item in tickets] == [f'candidate {i}'.encode() for i in range(6)]
+    finally:
+        pool.close()
+    assert groups == [6]  # not six runs, and not the idle workers taking one each
+
+
+def test_a_group_is_split_at_the_batch_limit_and_a_cancelled_ticket_is_skipped(monkeypatch):
+    pool, groups, ticket = pool_with_fake_batches(monkeypatch)
+    try:
+        tickets = [ticket(i) for i in range(11)]
+        assert tickets[3].cancel()
+        pool.submit_group(tickets)
+        done = [item for item in tickets if not item.future.cancelled()]
+        for item in done:item.future.result(timeout=5)
+    finally:
+        pool.close()
+    assert sum(groups) == 10 and max(groups) <= pool.batching and len(done) == 10
+
+
+def test_candidates_that_cannot_share_a_run_are_taken_one_each_by_the_workers(monkeypatch):
+    pool, groups, ticket = pool_with_fake_batches(monkeypatch)
+    pool.unbatchable.add(('f',))
+    try:
+        tickets = [ticket(i) for i in range(5)]
+        pool.submit_group(tickets)
+        assert [item.future.result(timeout=5).obj for item in tickets] == [b'alone'] * 5
+    finally:
+        pool.close()
+    assert groups == []  # (no batch run)
+
+
+def test_candidates_a_batch_cannot_take_are_compiled_alone_by_the_lanes_workers(monkeypatch):
+    pool, groups, ticket = pool_with_fake_batches(monkeypatch)
+    threads = []
+    class Net:
+        def _compile_batch(self, proj, header, sources, fn):
+            groups.append(len(sources))
+            return [None if i % 2 else compiler.CompileResult(True, s.encode(), '') for i, s in enumerate(sources)]
+    net = Net()
+    def alone():
+        threads.append(threading.current_thread().name)
+        time.sleep(.05)
+        return compiler.CompileResult(True, b'alone', '')
+    tickets = []
+    for i in range(7):
+        item = ticket(i);item.batch = (('f',), net, {}, '', {});item.run = alone
+        tickets.append(item)
+    try:
+        pool.submit_group(tickets)
+        results = [item.future.result(timeout=5).obj for item in tickets]
+    finally:
+        pool.close()
+    assert results == [b'candidate 0', b'alone', b'candidate 2', b'alone', b'candidate 4', b'alone', b'candidate 6']
+    assert groups == [7] and len(set(threads)) > 1  # (three candidates compiled alone, on more than one worker)
