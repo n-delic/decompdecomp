@@ -230,3 +230,23 @@ def test_branches_to_a_function_named_address_inside_the_function_get_a_local_la
     assert split.draft_asm(far, NAME, ADDRESS) == far
     own = ASSEMBLY.replace(OLD_NAME, NAME).replace('.L80001010_overlay_001', NAME)
     assert split.draft_asm(own, NAME, ADDRESS) == own
+
+
+def test_a_label_m2c_finds_on_a_delay_slot_gets_the_nop_it_asks_for_and_m2c_runs_again(monkeypatch):
+    # "Label ._m2c_.L80001010before refers to a delay slot ... add a nop": 48 functions had no draft for that.
+    seen = []
+
+    def once(asm, *args):
+        seen.append(asm)
+        if len(seen) == 1:
+            raise seeds.DraftError('Decompilation failure:\n\nLabel ._m2c_.L80001010before refers to a delay slot; '
+                                   'this is currently not supported.')
+        return 'int f(void) { return 1; }'
+    monkeypatch.setattr(seeds, '_run_m2c', once)
+    text = split.draft_asm(ASSEMBLY.replace('_overlay_001', ''), NAME, ADDRESS)
+    assert seeds.run_m2c(text, NAME, 'mips-gcc-c', strict=True) == 'int f(void) { return 1; }'
+    assert 'nop\n.L80001010:' not in seen[0] and '\nnop\n.L80001010:' in seen[1]
+    # Any other failure, or a label that isn't in the text, is raised as before.
+    monkeypatch.setattr(seeds, '_run_m2c', lambda *a: (_ for _ in ()).throw(seeds.DraftError('Cannot find branch target x')))
+    with pytest.raises(seeds.DraftError):
+        seeds.run_m2c(text, NAME, 'mips-gcc-c', strict=True)

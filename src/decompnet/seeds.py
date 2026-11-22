@@ -546,10 +546,34 @@ def _mips_table_aliases(asm: str, data: str) -> str:
     return _MIPS_DATA_RELOC.sub(replace, asm)
 
 
+_DELAY_SLOT_LABEL = re.compile(r"Label \._m2c_(\.?L[0-9A-Fa-f]{8}\w*?)before refers to a delay slot")
+
+
 @compile_timing.timed('generation')
 def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", data_asm: str | None = None,
             timeout: float = 20, valid: bool = False, strict: bool = False, options: tuple[str, ...] = ()) -> str | None:
-    """Run m2c for one function with an explicit target triple (e.g. ppc-mwcc-c++)."""
+    """Run m2c for one function with an explicit target triple (e.g. ppc-mwcc-c++).
+
+    m2c refuses a label that a branch-likely handling puts on a delay slot ("refers to a delay slot: add a nop").
+    A `nop` before that label is what it asks for and changes nothing the draft shows, so it is added and m2c runs
+    again (a function can have several such labels)."""
+    for _ in range(8):
+        try:
+            return _run_m2c(asm_text, name, target, context_header, data_asm, timeout, valid, strict, options)
+        except DraftError as error:
+            found = _DELAY_SLOT_LABEL.search(str(error))
+            if not found:
+                raise
+            label = re.escape(found[1])
+            padded = re.sub(rf"^([ \t]*{label}:[ \t]*)$", r"nop\n\1", asm_text, count=1, flags=re.M)
+            if padded == asm_text:
+                raise
+            asm_text = padded
+    return _run_m2c(asm_text, name, target, context_header, data_asm, timeout, valid, strict, options)
+
+
+def _run_m2c(asm_text: str, name: str, target: str, context_header: str = "", data_asm: str | None = None,
+             timeout: float = 20, valid: bool = False, strict: bool = False, options: tuple[str, ...] = ()) -> str | None:
     if any(option not in ('--no-switches', '--no-stack-spill', '--gotos-only', '--stack-structs') for option in options):
         raise ValueError('Unsupported machine-draft option.')
     if not available():

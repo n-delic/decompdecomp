@@ -17768,6 +17768,30 @@ instruction. Family: decomp-repair `argument_weight_scope` (0.5.603), wired into
 (`tests/test_argument_weight_scope_wiring.py`); from the saved best it emits the 0 child.
 
 
+## A scheduling barrier at the function head: `entry_scheduling_scope` (851-instruction ray test)
+
+The same N64 ray test (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, scoring 2) spills three parameters across its calls.
+The target has the three stores first, in parameter order (`sw a0; sw a2; sw a3`), then the first float loads; every source
+order of the opening statements put one store at its first use instead (`sw a0; sw a3; ...; sw a2`), and 500 random
+permutations of the nine opening statements never gave the target's order. Compiled with `-fno-schedule-insns` the stores
+come first in order, so the first scheduler was moving them. The loop notes of a `do { } while (0)` are scheduling barriers
+(see `scheduling_scope`, for the second scheduler at the end of a function); wrapping the opening run in one keeps the
+copies ahead of it (hypothesis, not confirmed in the compiler source).
+
+| edit | score |
+| --- | --- |
+| state with arm_variable_share, the plane arms and the scaffolding removed | 565 |
+| the nine opening statements wrapped in `do { } while (0);` | 250 |
+| the `u8` stack parameter read through a local assigned after the run's first statement, declared first | 155 |
+| statement order inside the run re-searched (hill climb) | 140 |
+
+Controlled result in this function: the parameter stores, the `lbu`/`sb` of the flag and the multiplies take the target's
+order; nothing else moved. Failed: the copy first in the run (459), the local declared after the others (its slot 0x1af
+instead of 0x107: spill slots follow declaration order).
+
+Family: decomp-repair `entry_scheduling_scope` (0.5.606): the wrap, and the wrap with the copies in either place. It reproduces
+565 -> 155 exactly from the saved best. `tests/test_entry_scheduling_scope_wiring.py` checks the draft repairs and the local lane.
+
 ## A continuation written out in each arm, with a table pointer of each arm's own: `goto_run_copy` (save-slot state machine)
 
 A KMC GCC 2.7.2 N64 function (`-G8 -mips3 -mgp32 -mfp32 -O2`; `-G0` gives the same bytes, the function has no small-data symbols;
