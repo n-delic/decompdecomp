@@ -434,3 +434,27 @@ int f(void) {
     [cleaned] = [candidate for candidate in proposals if labels[candidate] == 'common_scalar_tail']
     assert 'if (scratch)' not in cleaned
     assert cleaned.count('setup();') == 1
+
+
+def test_draft_repairs_offer_a_separate_float_clamp_lifetime():
+    from decompnet.app import draft_repairs
+
+    source = """
+float f(float x, float y, int enabled) {
+    float value;
+    if (enabled) {
+        value = x / y;
+        if (value < -1.0f) value = -1.0f;
+        else if (value > 1.0f) value = 1.0f;
+        return value * x;
+    }
+    value = x + y;
+    return value;
+}
+"""
+    asm = 'div.s $f4, $f2, $f0\nc.lt.s $f4, $f6\nc.lt.s $f2, $f4'
+    labels = {}
+    proposals = draft_repairs.variants(source, 'f', 'mips', asm=asm, labels=labels)
+    [clamp] = [candidate for candidate in proposals if labels[candidate] == 'split_float_clamp_lifetime']
+    assert 'float __repair_clamped_float = x / y;' in clamp
+    assert 'value = x + y;' in clamp
