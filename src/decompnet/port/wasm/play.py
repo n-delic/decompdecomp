@@ -221,11 +221,18 @@ def relative_bank_code(net, slug: str, log=print) -> set[str]:
     if classify is None:
         return set()
     rows = net.project_store(proj["id"]).all(
-        "SELECT name, rom_offset FROM functions WHERE project_id=? AND rom_offset IS NOT NULL", proj["id"])
-    functions = [{"name": r["name"], "rom": r["rom_offset"]} for r in rows]
-    names = {_source_file(f["name"]) for f in classify(net.cfg(proj).get("segments") or [], functions)}
+        "SELECT name, rom_offset, size FROM functions WHERE project_id=? AND rom_offset IS NOT NULL", proj["id"])
+    functions = [{"name": r["name"], "rom": r["rom_offset"], "size": r["size"]} for r in rows]
+    cfg = net.cfg(proj)
+    rom = cfg.get("rom") or {}
+    image_name = rom.get("donor_analysis_base") or rom.get("file")
+    image_path = Path(proj["root"]) / image_name if image_name else None
+    if image_path and not image_path.is_file() and rom.get("file"):
+        image_path = Path(proj["root"]) / rom["file"]
+    image = image_path.read_bytes() if image_path and image_path.is_file() else None
+    names = {_source_file(f["name"]) for f in classify(cfg.get("segments") or [], functions, image)}
     if names:
-        log(f"leaving out C for {len(names)} relative overlay-bank functions until their runtime addresses are known")
+        log(f"leaving out C for {len(names)} relocatable overlay functions until their runtime addresses are known")
     return names
 
 

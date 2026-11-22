@@ -373,6 +373,16 @@ def _defines_left_out(path: Path, leave_out) -> bool:
 EMPTY_UNIT = "port_no_game_c.c"
 
 
+def _empty_unit(out: Path) -> Path:
+    empty = out / "src" / EMPTY_UNIT
+    _write(empty, "/* no game C: recompiled code or the interpreter runs the original functions */\n"
+                  "void osCreateThread(int, int, int, int, int, int);\n"
+                  "void port_no_game_c(void (*use)(char *)) {\n"
+                  "    char buffer[16];\n    use(buffer);\n"
+                  "    if (!use) osCreateThread(0, 0, 0, 0, 0, 0);\n}\n")
+    return empty
+
+
 def _save_manifest(repo: Path) -> dict:
     progress = repo / "progress"
     path = progress / "decompdecomp.json"
@@ -426,14 +436,8 @@ def gather(repo: Path, out: Path, leave_out=(), function_headers=None, *, ensure
     # By name in any case: on a case-insensitive disk (macOS, Windows) a file an old save wrote as SelectStateReset.c
     # is the one just written as selectStateReset.c, and deleting it as stale deleted that function's C
     if not chosen or ensure_host_import:  # standalone leaves may have no host imports of their own
-        empty = out / "src" / EMPTY_UNIT
-        # its one function (never called) uses the stack and imports one of the host's functions, so the module
-        # keeps the stack pointer the host sets and is instantiated with the host's environment (host.c)
-        _write(empty, "/* no function of the game has C yet: its recompiled C (recomp.py) runs them all */\n"
-                      "void osCreateThread(int, int, int, int, int, int);\n"
-                      "void port_no_game_c(void (*use)(char *)) {\n"
-                      "    char buffer[16];\n    use(buffer);\n    if (!use) osCreateThread(0, 0, 0, 0, 0, 0);\n}\n")
-        chosen[EMPTY_UNIT] = empty
+        # Keep a stack and host import even when every game function runs from original code.
+        chosen[EMPTY_UNIT] = _empty_unit(out)
     kept = {name.casefold() for name in chosen}
     for stale in (out / "src").glob("*.c"):
         if stale.name.casefold() not in kept:
@@ -626,6 +630,49 @@ def _parallel(jobs, work, log, what: str, step=None) -> list[str]:
     if failed:
         log(f"{len(failed)} {what} failed: " + "; ".join(failed[:5]))
     return failed
+
+
+def fallback_failed_sources(failed: list[str], sources: dict[str, Path], repo: Path, out: Path,
+                            fixed: list[str]) -> set[str]:
+    """Saved game C with a known console address may run as original code if clang rejects it.
+
+    Port overrides and library sources must compile: they may replace hardware behavior. A failed file may also
+    contain other definitions; do not discard an unaddressed helper still needed by a successful compilation.
+    """
+    from ..csource import defined
+
+    addresses = {n: int(a, 16) for n, a, kind in (row.split() for row in fixed) if kind == "func"}
+    root = (repo / "progress" / "src").resolve()
+    names = set()
+    extra = set()
+    for failure in failed:
+        name, sep, _ = failure.partition(": ")
+        path = sources.get(name)
+        addr = addresses.get(name.removesuffix(".c"))
+        if (not sep or path is None or Path(path).resolve().parent != root
+                or addr is None or not 0x80000000 <= addr < 0x80800000):
+            return set()
+        code = (out / "src" / name).read_text(encoding="utf-8")
+        own = defined(code)
+        # C++ linkage declarations can reach this C-only compiler; the saved function still has original code.
+        if name[:-2] not in own and not re.search(r'extern\s*"C"\s+[^;{}]*\b' + re.escape(name[:-2])
+                                                   + r'\s*\([^;{}]*\)\s*\{', code):
+            return set()
+        extra.update(own - addresses.keys())
+        names.add(name)
+    if extra:
+        defined_elsewhere, declared = set(), set()
+        pattern = re.compile(r"^(define|declare) [^@\n]*@([\w.$]+)\(", re.M)
+        for name in sources.keys() - names:
+            ll = out / "ll" / (name[:-2] + ".ll")
+            if not ll.is_file() or not ll.with_name(ll.name + ".key").is_file():
+                continue
+            for kind, symbol in pattern.findall(ll.read_text(encoding="utf-8", errors="replace")):
+                if symbol in extra:
+                    (defined_elsewhere if kind == "define" else declared).add(symbol)
+        if declared - defined_elsewhere:
+            return set()
+    return names
 
 
 class Progress:
@@ -917,8 +964,19 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
         _stamp(ll, key)
         return None
     if failed := _parallel(sorted({*sources, *library}), ir, log, "files", progress.files):
-        raise NetworkError(f"{len(failed)} of the game's files don't compile for the WebAssembly build: "
-                           + "; ".join(failed[:3]))
+        all_sources = sources | {name: out / "ultralib" / name for name in library}
+        fallback = fallback_failed_sources(failed, all_sources, repo, out, fixed)
+        if not fallback:
+            raise NetworkError(f"{len(failed)} of the game's files don't compile for the WebAssembly build: "
+                               + "; ".join(failed[:3]))
+        for name in fallback:
+            sources.pop(name)
+        if not sources and not library:
+            sources[EMPTY_UNIT] = _empty_unit(out)
+            if error := ir(EMPTY_UNIT):
+                raise NetworkError(f"Preparing the original-code fallback failed: {error}")
+        log(f"{len(fallback)} saved C files could not compile for this port; their original functions use "
+            "N64Recomp or the interpreter: " + ", ".join(sorted(fallback)[:8]))
     compiled = {name.casefold() for name in (*sources, *library)}
     for stale in (out / "ll").glob("*.ll"):
         if (stale.name[:-3] + ".c").casefold() not in compiled:

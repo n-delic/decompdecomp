@@ -2691,9 +2691,9 @@ framebuffer to RT64. A native graphics task captured in the reference emulator a
 still need live playthroughs. Raw cartridge DMA can now fill RAM and compatibility stack buffers, and local buffers
 retain the eight-byte alignment required by original loader code. Two retail boot paths still need work: one
 loads a relocated copy of libultra whose scheduler calls need to reach the host, and another calls its game entry
-through a TLB mapping after a boot helper returns. Relative USO and UV analysis-bank functions are left out of
-static port builds until their runtime addresses and relocations can be resolved; loaded code can still run through
-the interpreter. Next: support those banked C functions, verify more microcodes and games, support RT64 export,
+through a TLB mapping after a boot helper returns. Relative USO and UV analysis-bank functions and uncompressed USO
+text are left out of static port builds until their runtime addresses and relocations can be resolved; loaded code
+can still run through the interpreter. Next: support those banked C functions, verify more microcodes and games, support RT64 export,
 replace the compatibility scheduler and device services where ModernRuntime can take them over, and add other
 desktop builds.
 

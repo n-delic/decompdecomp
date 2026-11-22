@@ -600,15 +600,19 @@ right while the function still matches makes the C say what the console does.
 
 ## Port compiler compatibility and recompiler failures
 
-Recovered USO and UV analysis banks use bank-relative offsets, not fixed runtime addresses. Recompile and the
-compatibility build leave their functions and saved C out until the bank's runtime load address and relocations
-can be associated with them. The interpreter remains available for code the game loads into memory.
+Recovered USO and UV analysis banks use bank-relative offsets, and uncompressed USO text can have provisional
+analysis addresses before the loader relocates it. Recompile and the compatibility build leave their functions and
+saved C out until their runtime load addresses and relocations can be associated with them. The interpreter remains
+available for code the game loads into memory.
 
 The WebAssembly compiler can reject a redundant scalar `extern int g;` when the shared header already declares
 `g` as `volatile int` (including a typedef of it). The generated build may retry without that redundant line only
 when clang reports the same canonical scalar type with additional shared `const`/`volatile` qualifiers. It keeps
 the stronger shared declaration. Pointer/array type changes, narrower types, conditionals and source-only
-qualifiers are not removed. Saved and judged C stays unchanged; other errors still stop compilation.
+qualifiers are not removed. Saved and judged C stays unchanged. When saved game C still fails to compile and its
+function has a usable fixed console address, the compatibility build can leave that file out and run the original
+function through N64Recomp or the interpreter. It reports those files in the build log. A port override, library
+source, or a file whose other required helpers cannot be resolved still stops with its compiler errors.
 
 A native N64Recomp crash is reported with its signal. Before setting a body aside, the app checks that disabling
 all bodies avoids the crash, narrows the affected subset and confirms the individual body reproduces a native

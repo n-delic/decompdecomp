@@ -393,9 +393,44 @@ def analysis_banks(segments: list[dict]) -> list[dict]:
     return [s for s in segments if s.get("vram") == 0 and s.get("name", "").startswith(("donor_uso_", "donor_uv_"))]
 
 
-def banked_functions(segments: list[dict], functions: list[dict]) -> list[dict]:
+def module_ranges(image: bytes) -> list[tuple[int, int]]:
+    """Validated uncompressed USO text still needs loader relocation before it can execute."""
+    from . import uso
+
+    return [(r.offset, r.offset + len(r.data)) for r in uso.read(image) if not r.compressed]
+
+
+def banked_functions(segments: list[dict], functions: list[dict], image: bytes | None = None) -> list[dict]:
     banks = analysis_banks(segments)
-    return [f for f in functions if any(s["rom_start"] <= f["rom"] < s["rom_end"] for s in banks)]
+    ranges = [(s["rom_start"], s["rom_end"]) for s in banks] + (module_ranges(image) if image is not None else [])
+    return [f for f in functions if any(f["rom"] < end and start < f["rom"] + max(f.get("size") or 0, 1)
+                                        for start, end in ranges)]
+
+
+def runtime_segments(segments: list[dict], ranges: list[tuple[int, int]]) -> list[dict]:
+    """Remove module text from fixed-address sections, preserving either side of a partial overlap."""
+    result = []
+    for s in segments:
+        spans = [(s["rom_start"], s["rom_end"])]
+        for lo, hi in ranges:
+            spans = [(a, b) for x, y in spans for a, b in ((x, min(y, lo)), (max(x, hi), y)) if a < b]
+        for start, end in spans:
+            part = dict(s, rom_start=start, rom_end=end, vram=s["vram"] + start - s["rom_start"])
+            if start != s["rom_start"]:
+                part["name"] = f"{s['name']}_{start:X}"
+            result.append(part)
+    return result
+
+
+def needs_recompile(summary: dict, cfg: dict, root: Path) -> bool:
+    if summary.get("bank_filter_version", 0) >= 2:
+        return False
+    if cfg.get("donor_overlays"):
+        return True
+    info = cfg.get("rom") or {}
+    name = info.get("donor_analysis_base") or info.get("file")
+    image = Path(root) / name if name else None
+    return bool(image and image.is_file() and module_ranges(image.read_bytes()))
 
 
 def recompile(program: Path, rom_path: Path, segments: list[dict], functions: list[dict], out: Path, log=print,
@@ -404,12 +439,14 @@ def recompile(program: Path, rom_path: Path, segments: list[dict], functions: li
     summary."""
     rom = Path(rom_path).read_bytes()
     banks = analysis_banks(segments)
-    banked = {f["name"] for f in banked_functions(banks, functions)}
-    segments = [s for s in segments if s["rom_end"] > s["rom_start"] and s not in banks]
+    ranges = [(s["rom_start"], s["rom_end"]) for s in banks] + module_ranges(rom)
+    banked = {f["name"] for f in functions if any(f["rom"] < end and start < f["rom"] + max(f.get("size") or 0, 1)
+                                                  for start, end in ranges)}
+    segments = runtime_segments(segments, ranges)
     usable = [f for f in functions if f["name"] not in banked and f["size"] > 0 and not f["vram"] & 3
               and not f["size"] & 3 and not f["rom"] & 3]
     if banked:
-        log(f"leaving {len(banked)} relative overlay-bank functions for runtime loading and interpretation")
+        log(f"leaving {len(banked)} relocatable overlay functions for runtime loading and interpretation")
     # a function between the split's segments (code the split left as data, matched C the project has for it
     # anyway) is a section of its own
     outside = sorted((f for f in usable if _segment(segments, f["vram"]) is None), key=lambda f: f["rom"])
@@ -447,7 +484,7 @@ def recompile(program: Path, rom_path: Path, segments: list[dict], functions: li
     translated = {name if name in known else name.removesuffix("_recomp") for name in passed - refused.keys()}
     succeeded = len((translated & known) - refused.keys())
     written = len(list((out / "funcs").glob("*.c")))
-    summary = {"at": time.time(), "image_sha1": hashlib.sha1(rom).hexdigest(), "functions": len(usable),
+    summary = {"at": time.time(), "bank_filter_version": 2, "image_sha1": hashlib.sha1(rom).hexdigest(), "functions": len(usable),
                "found": found, "succeeded": succeeded,
                "refused": [{"name": n, "why": w} for n, w in refused.items()], "renamed": sorted(renamed),
                "runtime": provided, "errors": errors[:40], "error_count": len(errors),

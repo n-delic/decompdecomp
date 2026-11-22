@@ -64,7 +64,9 @@ def ready(net, slug, proj, recompiler, log, stop=lambda: False):
     root = Path(proj["root"])
     folder = recompiler.folder(root)
     with build_turn(folder, log, stop, slug=slug):
-        if recompiler.load(root) is None:
+        saved = recompiler.load(root)
+        needs_recompile = getattr(recompiler, "needs_recompile", None)
+        if saved is None or (needs_recompile and needs_recompile(saved, net.cfg(proj), root)):
             log("Recompiling the game with N64Recomp for the functions with no C yet")
             _run(net, slug, log, stop)
         yield folder

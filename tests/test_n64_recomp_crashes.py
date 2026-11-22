@@ -265,3 +265,24 @@ def test_previous_recompile_with_analysis_banks_is_rebuilt_on_demand(tmp_path):
     assert recomp.load(tmp_path) is None
     symbols.write_text('[[section]]\nname = "main"\nvram = 0x80000400\n')
     assert recomp.load(tmp_path) == {'succeeded': 1}
+
+
+def test_uncompressed_relocatable_module_is_not_a_fixed_runtime_section(monkeypatch):
+    segment = {'name': 'main', 'rom_start': 0x1000, 'rom_end': 0x2000, 'vram': 0x80001000}
+    functions = [{'name': 'boot', 'rom': 0x1100}, {'name': 'module', 'rom': 0x1500},
+                 {'name': 'after', 'rom': 0x1900}]
+    monkeypatch.setattr(recomp, 'module_ranges', lambda image: [(0x1400, 0x1800)])
+    assert recomp.banked_functions([segment], functions, b'rom') == [functions[1]]
+    parts = recomp.runtime_segments([segment], [(0x1400, 0x1800)])
+    assert [(p['rom_start'], p['rom_end'], p['vram']) for p in parts] == [
+        (0x1000, 0x1400, 0x80001000), (0x1800, 0x2000, 0x80001800)]
+    assert recomp.needs_recompile({'bank_filter_version': 1}, {'donor_overlays': {'1': 2}}, Path('.'))
+    assert not recomp.needs_recompile({'bank_filter_version': 2}, {'donor_overlays': {'1': 2}}, Path('.'))
+
+
+def test_old_cache_with_native_overlay_is_rebuilt_without_analysis_banks(tmp_path, monkeypatch):
+    image = tmp_path / 'game.z64'
+    image.write_bytes(b'owned cartridge')
+    monkeypatch.setattr(recomp, 'module_ranges', lambda data: [(0x100, 0x200)] if data else [])
+    assert recomp.needs_recompile({}, {'rom': {'file': image.name}}, tmp_path)
+    assert not recomp.needs_recompile({'bank_filter_version': 2}, {'rom': {'file': image.name}}, tmp_path)
