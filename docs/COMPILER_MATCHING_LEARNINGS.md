@@ -1,5 +1,15 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: swap adjacent arrays after measured stack shifts
+
+Two adjacent equal-size local arrays in an N64 draft had word accesses
+displaced by the same 16 bytes. Swapping their declarations restored the
+first array's target slot and reduced the linked score from 479 to 455
+with `-G0 -mips3 -mgp32 -mfp32 -O2`. Broader declaration permutations
+found no further gain. The Deep Permuter uses the numeric stack names
+and a repeated offset difference across both ranges to propose the swap
+for ordinary compilation and byte comparison.
+
 ### KMC GCC 2.7.2: spell a boolean guard with short-circuit AND
 
 An N64 draft combined a comparison-only local and an ordinary pointer
