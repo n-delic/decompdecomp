@@ -182,6 +182,12 @@ def _ido_register_guard(image,start,at,order):
     return None
 
 
+def _guard_slot(word, index, condition):
+    # A stack spill or an unrelated register move can fill a scheduler slot.
+    return (not word or word >> 21 == 0x57d
+            or word & 0xfc1f07ff in (33, 37) and (word >> 11) & 31 not in (index, condition))
+
+
 def jump_table(image,start,end,vram,at,order,ranges=(),mappings=(),*,reader=None, allow_saved_base=False):
     """Recognize one exact guard/scale/LUI/add/load/JR idiom (its scale in the guard's delay slot or after it),
     with no interior entry. Import data classification may also follow an early saved-register base."""
@@ -205,13 +211,20 @@ def jump_table(image,start,end,vram,at,order,ranges=(),mappings=(),*,reader=None
                     and bound == step):
                 guard -= 8
                 bound = candidate
+        if bound >> 26 != 11:
+            previous = max(start, guard - 12)
+            words = [int.from_bytes(image[p:p+4], order) for p in range(previous, guard, 4)] + [bound]
+            for offset in range(len(words) - 2, -1, -1):
+                prior = words[offset]
+                if prior >> 26 == 11 and all(_guard_slot(word, (prior >> 21) & 31, (prior >> 16) & 31)
+                                             for word in words[offset + 1:]):
+                    guard, bound = previous + offset * 4, prior
+                    break
         index=(bound>>21)&31;condition=(bound>>16)&31;count=bound&0xffff
         dest=(jump>>21)&31;base=(hi>>16)&31;scaled=(scale>>11)&31
         if bound>>26!=11 or not 0<count<=MAX_ENTRIES or not index or not condition or condition==index:continue
         if branch>>26!=4 or {(branch>>21)&31,(branch>>16)&31}!={0,condition}:continue
-        # The guard's delay slot can be NOP or clearing an unrelated register.
-        clear=delay>>26==0 and delay&63 in (33,37) and not delay&0x03ff0000 and ((delay>>11)&31) not in (index,condition)
-        if delay and not clear:continue
+        if not _guard_slot(delay, index, condition):continue
         if scale>>26 or scale&63 or (scale>>6)&31!=2 or (scale>>16)&31!=index or (scale>>21)&31:continue
         if hi>>26!=15 or not base or not scaled or base==scaled:continue
         if add>>26 or add&63!=33 or (add>>11)&31!=base or {(add>>21)&31,(add>>16)&31}!={base,scaled}:continue

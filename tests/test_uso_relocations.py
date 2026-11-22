@@ -681,3 +681,80 @@ def test_overlay_probes_cover_a_larger_aligned_caller(tmp_path):
     rebuilt = compile_source(cfg, context, text)
     assert rebuilt.ok, rebuilt.log
     assert uso_match.link(rebuilt.obj, 'entry', body.code, info).exact
+
+
+def test_overlay_relocates_bounded_compiler_jump_table(tmp_path):
+    import json
+
+    from elftools.elf.elffile import ELFFile
+    from elftools.elf.relocation import RelocationSection
+
+    from decompnet.candidate_work import elf as candidate_elf
+    from decompnet.elfobj import _function_symbols, extract_function
+
+    if not toolchains.installed('ido-7.1'):
+        pytest.skip('needs IDO 7.1')
+    cfg = compiler_config(tmp_path, {'compiler': {
+        'toolchain': 'ido-7.1', 'flags': ['-O2', '-G', '0', '-non_shared', '-mips2'],
+    }})
+    body = """switch (index) {
+    case 0: *out = 5; break;
+    case 1: *out += 3; break;
+    case 2: *out &= 7; break;
+    case 3: *out = *out * 2; break;
+    case 4: *out -= 19; break;
+    case 5: *out |= 128; break;
+    default: break;
+    }"""
+    built = compile_source(cfg, '', 'void entry(int index, volatile int *out) { ' + body + ' }')
+    assert built.ok, built.log
+    compiler = candidate_elf(built.obj, ELFFile)
+    _, entry, _ = _function_symbols(compiler)['entry']
+    fn = extract_function(built.obj, 'entry')
+    high, low = fn.relocs
+    assert (high.type, low.type) == (5, 6)
+    rodata = compiler.get_section_by_name('.rodata')
+    pointers = next(section for section in compiler.iter_sections()
+                    if isinstance(section, RelocationSection) and section.name == '.rel.rodata')
+    locations = [r['r_offset'] for r in pointers.iter_relocations()]
+    offsets = [int.from_bytes(rodata.data()[at:at + 4], 'big') - entry for at in locations]
+    assert len(offsets) == 6
+    start, table_offset = 144, 64
+    target = fn.code[:low.offset + 2] + table_offset.to_bytes(2, 'big') + fn.code[low.offset + 4:]
+
+    def record(kind, content):
+        return struct.pack('>III', kind, len(content), 0x10000000) + content
+
+    def cartridge(cases, missing=False):
+        symbols = struct.pack('>9I', 0x520000, start, 0, 0x740000, 0, 0, 0x540000, 0, 0)
+        shifts = struct.pack('>6I', 0x13, start + high.offset, 0, 0x12, start + low.offset, 0)
+        links = b''.join(struct.pack('>III', 0x24, table_offset + i * 4, 0)
+                         for i in range(len(cases) - missing))
+        data = bytes(table_offset) + b''.join(struct.pack('>I', start + offset) for offset in cases)
+        return (bytes(64) + struct.pack('>III', 0x12345678, 1, 1) + b'table.uso\0'
+                + struct.pack('>IIII', 0x12345678, 0, 0, 0)
+                + record(1, symbols) + record(2, shifts) + record(4, links)
+                + record(5, bytes(start) + target) + record(7, data) + record(11, b''))
+
+    image = cartridge(offsets)
+    region, = uso.read(image)
+    relocs = uso.function_relocations(region, start, len(target))
+    info = {'section': region.offset, 'start': start, 'size': len(target), 'relocs': relocs, 'native': True}
+    row = {'id': 1, 'rom_offset': region.offset + start, 'target': target, 'meta': json.dumps({'uso': info})}
+    _, updated = next(uso.metadata_updates(image, {}, [row]))
+    refreshed = json.loads(updated)['uso']
+    assert refreshed['jump_tables'] == [[low.offset, 1, offsets]]
+    assert not uso_match.link(built.obj, 'entry', target, info).exact
+    assert uso_match.link(built.obj, 'entry', target, refreshed).exact
+    assert uso.rebuild(image, [('entry', refreshed, built.obj)]) == image
+
+    changed = [offsets[1], offsets[0], *offsets[2:]]
+    wrong_image = cartridge(changed)
+    wrong_region, = uso.read(wrong_image)
+    assert not uso_match.link(built.obj, 'entry', target, refreshed | {
+        'jump_tables': uso.function_jump_tables(wrong_region, start, len(target), relocs),
+    }).exact
+    with pytest.raises(ValueError, match='jump table metadata'):
+        uso.rebuild(wrong_image, [('entry', refreshed, built.obj)])
+    incomplete, = uso.read(cartridge(offsets, missing=True))
+    assert not uso.function_jump_tables(incomplete, start, len(target), relocs)

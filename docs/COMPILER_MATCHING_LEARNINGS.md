@@ -1821,6 +1821,20 @@ that word. Two other functions compiled to the original 64 and 1332 bytes
 with their static declarations intact, but the resulting section-relative
 BSS references could not be identified using their loader records alone.
 
+### Relocate IDO overlay jump tables within the compiled caller
+
+An isolated N64 replay with IDO 7.1 at
+`-O2 -G 0 -mips2 -32 -non_shared` found that a switch table's compiler
+object held section-relative text pointers. The cartridge's loader data
+held the same destinations relative to the entire overlay. The linker
+now uses the bounded switch dispatch to establish the table size and
+checks each word's text relocation and function-relative destination.
+The dispatch can schedule up to three stack spills or unrelated moves
+between the bound and branch. Changing a tested register still rejects
+the guard. Seventeen recovered functions recompiled and reconstructed
+the cartridge byte for byte. Controlled fixtures reject a changed
+destination and a missing table relocation.
+
 ### Observation: source layout sensitivity (IDO 5.3)
 
 The existing [IDO guide](../src/decompnet/consoles/n64/guides/ido.md) records a private same-source
