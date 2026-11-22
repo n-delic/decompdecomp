@@ -42,6 +42,23 @@ def test_guarded_switch_allows_only_safe_immediate_delay_slots(word, valid):
     assert (result is not None and result['state'] == 'validated') is valid
 
 
+def test_branch_likely_switch_with_intervening_fp_arithmetic():
+    image, ranges = fixture()
+    code = [int.from_bytes(image[at:at + 4], 'big') for at in range(0x1000, 0x103C, 4)]
+    code.insert(1, 0x46000002)  # mul.s f0, f0, f0 between bound and branch
+    code[2] = 0x5040000B  # beql v0, zero, default
+    code[3] = 0x46000006  # mov.s f0, f0 in the likely delay slot
+    image[0x1000:0x1040] = b''.join(word.to_bytes(4, 'big') for word in code)
+    image[0x1100:0x1108] = struct.pack('>II', 0x80001028, 0x80001030)
+    result = jump_table(image, 0x1000, 0x1040, 0x80001000, 0x1020, 'big', ranges)
+    assert result['state'] == 'validated' and result['entry_count'] == 2
+    for at, word in ((0x1004, 0x44031000),  # mfc1 changes the table index
+                     (0x1008, 0x5440000B)):  # bnel reverses the guard
+        changed = bytearray(image)
+        changed[at:at + 4] = word.to_bytes(4, 'big')
+        assert jump_table(changed, 0x1000, 0x1040, 0x80001000, 0x1020, 'big', ranges) is None
+
+
 def test_bad_bounds_targets_guard_bypass_and_conflicting_mappings_stay_unresolved():
     image,ranges=fixture()
     image[0x1104:0x1108]=(0x80002000).to_bytes(4,'big')

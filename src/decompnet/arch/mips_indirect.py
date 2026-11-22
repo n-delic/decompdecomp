@@ -183,10 +183,12 @@ def _ido_register_guard(image,start,at,order):
 
 
 def _guard_slot(word, index, condition):
-    # Unrelated nontrapping arithmetic can also fill an IDO scheduler slot.
+    # Unrelated integer and FP operations can fill an IDO scheduler slot.
     return (not word or word >> 21 == 0x57d
             or word & 0xfc1f07ff in (33, 37) and (word >> 11) & 31 not in (index, condition)
-            or word >> 26 in (9, 10, 11, 12, 13, 14) and (word >> 16) & 31 not in (index, condition))
+            or word >> 26 in (9, 10, 11, 12, 13, 14) and (word >> 16) & 31 not in (index, condition)
+            # FP multiply and move cannot change either general-purpose guard register.
+            or word & 0xffe0003f in (0x46000002, 0x46000006))
 
 
 def jump_table(image,start,end,vram,at,order,ranges=(),mappings=(),*,reader=None, allow_saved_base=False):
@@ -224,7 +226,7 @@ def jump_table(image,start,end,vram,at,order,ranges=(),mappings=(),*,reader=None
         index=(bound>>21)&31;condition=(bound>>16)&31;count=bound&0xffff
         dest=(jump>>21)&31;base=(hi>>16)&31;scaled=(scale>>11)&31
         if bound>>26!=11 or not 0<count<=MAX_ENTRIES or not index or not condition or condition==index:continue
-        if branch>>26!=4 or {(branch>>21)&31,(branch>>16)&31}!={0,condition}:continue
+        if branch>>26 not in (4,20) or {(branch>>21)&31,(branch>>16)&31}!={0,condition}:continue
         if not _guard_slot(delay, index, condition):continue
         if scale>>26 or scale&63 or (scale>>6)&31!=2 or (scale>>16)&31!=index or (scale>>21)&31:continue
         if hi>>26!=15 or not base or not scaled or base==scaled:continue
