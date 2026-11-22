@@ -1,5 +1,15 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: order independent loads inside a comma guard
+
+Moving a nested field read before two local vector loads and placing the
+zero store after both loads reduced one N64 linked score from 455 to 265
+with `-G0 -mips3 -mgp32 -mfp32 -O2`. Moving only the zero store scored
+740. Splitting the nested pointer temporary alone scored 455. The ordered
+chain scored 265 with or without the introduced pointer temporary. The
+rule checks the measured relative load order, the ordinary local array
+and a read-only pointer helper before proposing the shorter rewrite.
+
 ### KMC GCC 2.7.2: swap adjacent arrays after measured stack shifts
 
 Two adjacent equal-size local arrays in an N64 draft had word accesses

@@ -24,6 +24,7 @@ from decomprepair import (
     float_matrix_identity,
     global_pointer_local_repairs,
     guard_inversion_repairs,
+    guard_load_order,
     guard_reset_scheduling,
     halfword_before_float_store,
     indexed_field_cursor,
@@ -302,6 +303,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += shared_projection_lifetime.variants(source, name, rows, header=header)
         result += allocation_repairs.measured_slot_orders(source, name, rows, header)
         result += allocation_repairs.measured_array_orders(source, name, rows, header)
+        result += guard_load_order.variants(source, name, rows, header)
         result += clamp_saved_argument_lifetime.variants(source, name, rows, header=header)
         result += balanced_clamp_argument_stage.variants(source, name, rows, header=header)
         result += trig_axis_reuse.variants(source, name, rows, header=header)

@@ -1666,3 +1666,13 @@ def test_route_measured_equal_size_array_stack_shift():
     expected = 'void f(void) { float sp50[3]; float sp40[3]; sink(sp40, sp50); }'
     assert ('spill_declaration_order', expected) in proposals(source, 'f', '', 'mips', KMC, rows, '')
     assert all(label != 'spill_declaration_order' for label, _ in proposals(source, 'f', '', 'mips', KMC, rows[:-1], ''))
+
+
+def test_kmc_routes_measured_guard_load_order(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('o', '', 'lwc1 $f0, 0x34($v0)')]
+    monkeypatch.setattr(diff_gated_repairs.guard_load_order, 'variants',
+                        lambda text, name, diff, header: [('guard_load_order', text)])
+    assert 'guard_load_order' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'guard_load_order' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
