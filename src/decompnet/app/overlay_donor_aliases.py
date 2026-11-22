@@ -121,6 +121,55 @@ def local_functions(source, header, name, obj, candidate, target):
     return rename(body, aliases), rename('\n'.join(declarations), aliases)
 
 
+def cpp_methods(source, header, name, candidate, target, separate):
+    """Try explicit this arguments for unresolved, non-virtual C++ method calls.
+
+    The compiler's mangled references identify the methods and the target's
+    relocation sites identify their loader bindings. The ordinary compiler and
+    exact judge still decide whether this ABI-preserving rewrite is valid.
+    """
+    if candidate is None or target.arch != 'mips' or not comparable_overlay_code(candidate, target):
+        return None
+    span = csource.find(source, name)
+    if not span:
+        return None
+    expected = {(r.offset, r.type): r for r in target.relocs}
+    methods = defaultdict(set)
+    for reloc in candidate.relocs:
+        match = re.fullmatch(r'([A-Za-z_]\w*)__\d+[A-Za-z_]\w*F\w*', reloc.symbol)
+        wanted = expected.get((reloc.offset, reloc.type))
+        if match and reloc.type == JUMP and not reloc.addend and wanted and not wanted.addend:
+            methods[match[1]].add((reloc.symbol, wanted.symbol))
+    body = source[slice(*span)]
+    clean = csource._blank(body)
+    edits, declarations, used = [], [], set()
+    for method, bindings in methods.items():
+        if len(bindings) != 1:
+            continue
+        _, destination = next(iter(bindings))
+        if not re.fullmatch(r'[A-Za-z_]\w*', destination):
+            continue
+        occurrences = list(re.finditer(r'(?<![\w.>:])' + re.escape(method) + r'\s*\(', clean))
+        if not occurrences:
+            continue
+        alias = next((alias for i in range(1, 1000)
+                      if (alias := separate(destination, i)) != destination and alias not in used
+                      and not re.search(r'\b' + re.escape(alias) + r'\b', source + header)), None)
+        if not alias:
+            continue
+        used.add(alias)
+        declarations.append(f'extern "C" int {alias}(void *, ...);')
+        for occurrence in occurrences:
+            # A call with no explicit arguments must not leave a trailing comma.
+            rest = clean[occurrence.end():].lstrip()
+            edits.append((occurrence.start(), occurrence.end(), alias + '(this' + ('' if rest.startswith(')') else ', ')))
+    if not edits:
+        return None
+    for start, end, text in sorted(edits, reverse=True):
+        body = body[:start] + text + body[end:]
+    return source[:span[0]] + body + source[span[1]:], header + '\n' + '\n'.join(declarations) + '\n'
+
+
 def retry(source, header, name, candidate, target, measure, stop, *, separate=None):
     """Return one rewrite, supported by compiler probes, for the ordinary exact judge."""
     if not comparable_overlay_code(candidate, target):

@@ -16309,3 +16309,7 @@ This is one function's measurement, not a controlled compiler regression.
 ### KMC GCC 2.7.2 shared slot and forwarded call argument
 
 A saved MIPS setup function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` stored two pointers into adjacent globals before a conditional call. Its generated draft omitted the incoming first call argument. Restoring that argument, holding the shared slot address in a local, and making the conditional store volatile to reproduce its position before the call changed the draft's linked difference score from 845 to an exact match. This is one saved example, not a controlled cross-compiler experiment. The candidate requires the complete source pattern, matching resolved slot addresses, the 32-bit ABI and the target's call and delay-slot instructions.
+
+### IDO C++ implicit method calls in overlays
+
+An isolated N64 overlay donor built with IDO 7.1 using `-O2 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul -DNON_MATCHING` produced 696 bytes identical to the target, but two calls still referred to a mangled C++ method instead of the loader's symbol. Replacing the two implicit method calls with C-linkage calls that pass `this` explicitly preserved all 696 bytes and satisfied both loader relocations. This is one observed candidate, not a cross-compiler result. A compiler-backed regression also checks that a different loader binding is rejected; every proposed rewrite still needs the exact judge.

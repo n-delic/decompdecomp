@@ -380,7 +380,7 @@ def verify(net, proj, fn, other, donor, names, settings, agent, job, cache, *, r
 @donor_declaration_cache()
 def _try(net, proj, private, fn, source, header, agent, job, *, compiled_literals=False):
     """Offer one reduced translation unit and one relocation-based retry when the object supports it."""
-    reduced = rebound = localized = literal_changed = False
+    reduced = rebound = localized = literal_changed = methods_rebound = False
     evidence = exact_match_inputs.capture(net, private, fn, {'header': header}, source)
     while not job.stop.is_set():
         result = net._compile(private, header, source, fn)
@@ -455,13 +455,25 @@ def _try(net, proj, private, fn, source, header, agent, job, *, compiled_literal
                 bindings = (recover(result.obj, fn['name'], fn['target'], fn['vram'], net.symbols(proj['id']).resolve)
                             if recover else [])
                 variants = source_symbol_recovery.variants(source, header, {'symbol_bindings': bindings})
+        if not variants and not methods_rebound and candidate is not None:
+            console = net.console(proj)
+            if console.export_overlay(net._rom_target(fn)) is not None:
+                from . import overlay_donor_aliases
+
+                rewritten = overlay_donor_aliases.cpp_methods(
+                    source, header, fn['name'], candidate, net._target_obj(fn, proj),
+                    console.separate_overlay_reference)
+                if rewritten:
+                    variants = [('overlay-cpp-methods', *rewritten)]
         if not variants:
             if candidate is not None and len(candidate.code) != fn['size']:
                 length = f"{LENGTH_MISS}: {len(candidate.code)} bytes compiled, {fn['size']} bytes expected."
                 return False, ' '.join([length, *problems])
             return False, '; '.join(problems) or 'Donor source did not reproduce the original bytes.'
         family, source, header = variants[0]
-        if family == 'overlay-local-functions':
+        if family == 'overlay-cpp-methods':
+            methods_rebound = True
+        elif family == 'overlay-local-functions':
             localized = True
         else:
             rebound = True
