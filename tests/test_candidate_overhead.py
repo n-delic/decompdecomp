@@ -312,3 +312,42 @@ def test_background_threads_reuse_the_repair_rule_stamp_for_a_few_seconds(monkey
     assert claim_stalls.repair_rules() == first and len(calls) == 1
     clock[0] += claim_stalls._RECENT_SECONDS + 1  # an edit shows up once the stamp is a few seconds old
     assert claim_stalls.repair_rules() != first and len(calls) == 2
+
+
+def saved_history(net, fn):
+    import json
+    row = net.store.one("SELECT value FROM settings WHERE key=?", 'agent-output-history:' + str(fn['id']))
+    return json.loads(row['value']) if row else None
+
+
+def test_a_search_batches_its_output_history_and_saves_the_same_list(monkeypatch):
+    from decompnet.app import search_evidence
+    search_evidence._HISTORY.clear()
+    net = FakeNet();fn = net.function();calls = counted_transactions(net.store)
+    entry = lambda n: {'output': f'out-{n % 3}', 'family': 'fam'}
+    with trial_bookkeeping.scope():
+        for n in range(40):search_evidence._remember_fingerprint(net, fn, 'scope-a', f'digest-{n}', entry(n))
+        assert not calls and saved_history(net, fn) is None  # nothing written one candidate at a time
+    assert len(calls) == 1  # one transaction at the end of the search
+    saved = saved_history(net, fn)
+    assert saved['scope'] == 'scope-a' and [r[0] for r in saved['history']] == [f'digest-{n}' for n in range(16, 40)]
+    # the same list the unbatched path writes
+    search_evidence._HISTORY.clear()
+    other = FakeNet();other_fn = other.function()
+    for n in range(40):search_evidence._remember_fingerprint(other, other_fn, 'scope-a', f'digest-{n}', entry(n))
+    assert saved_history(other, other_fn) == saved
+
+
+def test_the_batched_history_starts_from_the_saved_one_and_a_new_scope_starts_over(monkeypatch):
+    from decompnet.app import search_evidence
+    search_evidence._HISTORY.clear()
+    net = FakeNet();fn = net.function()
+    search_evidence._remember_fingerprint(net, fn, 'scope-a', 'old', {'output': 'o', 'family': 'f'})
+    search_evidence._HISTORY.clear()  # (another process, or a restart)
+    with trial_bookkeeping.scope():
+        search_evidence._remember_fingerprint(net, fn, 'scope-a', 'new', {'output': 'o2', 'family': 'f'})
+        search_evidence._remember_fingerprint(net, fn, 'scope-a', 'old', {'output': 'o3', 'family': 'f'})
+    assert [r[0] for r in saved_history(net, fn)['history']] == ['new', 'old'] and saved_history(net, fn)['history'][1][1] == 'o3'
+    with trial_bookkeeping.scope():
+        search_evidence._remember_fingerprint(net, fn, 'scope-b', 'other', {'output': 'o', 'family': 'f'})
+    assert saved_history(net, fn) == {'scope': 'scope-b', 'history': [['other', 'o', 'f']]}

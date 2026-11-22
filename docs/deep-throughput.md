@@ -130,3 +130,14 @@ the one helper not named in it; they now write `thread-cpu-lane-<pid>`. Add ever
 location, `app/x.py:f < app/y.py:g < app/z.py:h`, to read the report as call paths. `DECOMP_THREAD_CPU=0` turns the
 sampler off. It reads kernel CPU time, so a thread waiting on a lock or a pipe is not charged: only code that
 used the processor appears.
+
+## Where an 18-lane pass spends its Python CPU (measured, steady state)
+
+Two snapshots of the helpers' CPU reports (thread_cpu) two and a half minutes apart, processes alive in both: the lanes
+used 4.2 cores, the proposal workers 0.6 (1.5 before counted_loop_shapes was fixed). Largest lane entries:
+the per-candidate compile bookkeeping (`network._attempt_compilation`, `deep_compilation.work`,
+`compiler._exec_driver`, about 33% together); `search_evidence._remember_fingerprint` inside the writer gate (11%: it
+read, rewrote and committed a function's output history for every candidate that missed; it now updates that list in
+memory and queues one row per function per batch, so the gate is taken once a batch); `adaptive_repairs.factors`
+(3%) and `experiment_evidence.factors` (2%), which flush the batch before every policy read, which still costs a
+transaction per read.

@@ -11,10 +11,16 @@ from . import (
     permuter_focus,
     region_repairs,
     repair_ranking,
+    trial_bookkeeping,
 )
 
 LIMIT = 64
 _POOL_LOCK = threading.Lock()
+HISTORY = 24  # source variants kept per function in the saved output history
+# This process's copy of each function's saved history, newest last, while a search batches its writes (see
+# _remember_fingerprint): (store, function id) -> {'scope', 'history'}.
+_HISTORY = {}
+_HISTORY_LOCK = threading.Lock()
 
 
 def remember(net, agent, proj, fn, source, score, *, output=None):
@@ -53,13 +59,32 @@ def _remember_fingerprint(net, fn, scope, source_digest, entry):
     store = net.project_store(fn['project_id'])
     key = 'agent-output-history:' + str(fn['id'])
     record = [source_digest, entry['output'], entry['family']]
+    if trial_bookkeeping.current() is not None:
+        # A search remembers every candidate that missed. Reading the saved list, rewriting it and committing took
+        # the project's single writer (and its cross-process gate) once per candidate: 11% of a lane's CPU on a
+        # running 18-lane pass, and the 0.5 s writer waits in its log. The list is kept here and only its newest
+        # state is queued, one row per function per batch.
+        with _HISTORY_LOCK:
+            held = _HISTORY.get((id(store), fn['id']))
+            if held is None or held['scope'] != scope:
+                row = store.one('SELECT value FROM settings WHERE key=?', key)
+                saved = json.loads(row['value']) if row else {}
+                held = _HISTORY[id(store), fn['id']] = {
+                    'scope': scope, 'history': saved.get('history', []) if saved.get('scope') == scope else []}
+                while len(_HISTORY) > 256:
+                    del _HISTORY[next(iter(_HISTORY))]
+            held['history'] = ([item for item in held['history'] if item[0] != source_digest] + [record])[-HISTORY:]
+            value = json.dumps({'scope': scope, 'history': held['history']})
+        trial_bookkeeping.count(store, 'INSERT OR REPLACE INTO settings VALUES(?,?)', (key, value), 1,
+                                lambda old, new: new)
+        return
     with store.tx() as db:
         row = db.execute('SELECT value FROM settings WHERE key=?', (key,)).fetchone()
         saved = json.loads(row['value']) if row else {}
         history = saved.get('history', []) if saved.get('scope') == scope else []
         history = [item for item in history if item[0] != source_digest] + [record]
         db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',
-                   (key, json.dumps({'scope': scope, 'history': history[-24:]})))
+                   (key, json.dumps({'scope': scope, 'history': history[-HISTORY:]})))
 
 
 def repeated_hint(net, proj, fn, source):
