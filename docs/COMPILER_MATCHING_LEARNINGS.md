@@ -1,5 +1,14 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: schedule unsigned float branches together
+
+In a private N64 draft, flipping the first unsigned conversion branch
+and putting another branch's high-bit assignment in a one-shot scope
+improved the linked score from 15,341 to 14,906 with `-G0 -mips3 -mgp32 -mfp32 -O2`.
+Individual scores were 15,051 and 15,196. The repair keeps the original
+float threshold and casts. A separate threshold-expression experiment
+scored 14,721. The function remains unmatched.
+
 ### KMC GCC 2.7.2: retain a two-word command cursor
 
 The target of a private N64 draft used one cursor load for two command
