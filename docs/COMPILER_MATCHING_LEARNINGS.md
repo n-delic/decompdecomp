@@ -14484,3 +14484,19 @@ function remains unmatched. The repair requires aligned add and store
 evidence, the same destination symbol or address, and no read of the
 original address before its next unconditional overwrite. Evidence is
 one scratch replay and synthetic tests for the source and diff guards.
+
+### Assign a mode default on the branches that use it
+
+In a private N64 function built with GCC 2.7.2 KMC and
+`-G0 -mips3 -mgp32 -mfp32 -O2`, the target loaded the same integer
+default into a saved register in two branch delay slots. The draft
+initialized it before the outer test and again before the inner tests.
+Putting the default inside the two exclusive arms let the compiler
+recover both target slots. The remaining arm already assigned the
+default before any use, so its definition stayed in place.
+
+Moving only the outer assignment scored 11,405 from 11,605. Moving
+the inner assignment as well scored 11,265 with all jump-table
+relocations still resolved. The library-generated source
+reproduced the exact linked score. Synthetic tests cover a missing
+definition and reads of the default before the new assignment sites.
