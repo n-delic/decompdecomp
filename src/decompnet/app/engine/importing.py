@@ -307,7 +307,7 @@ class ImportMixin:
                     arch=console.arch,big_endian=picked.big_endian,root=workdir,config=cfg,
                     existing=reimport["id"] if reimport is not None else None) as (db,pid):
                 if reimport is None:
-                    old_functions, gone, old_names = {}, {}, []
+                    old_functions, gone, old_names, old_types = {}, {}, [], {}
                 else:
                     rows = db.execute("SELECT * FROM functions WHERE project_id=?", (pid,)).fetchall()
                     # A bank and address identify renamed functions. A bare address is safe only when
@@ -329,6 +329,9 @@ class ImportMixin:
                     old_names = [(r["address"], r["name"], r["size"], r["kind"]) for r in db.execute(
                         "SELECT name, address, size, kind FROM symbols WHERE project_id=? ORDER BY rowid", (pid,))
                                  if not AUTO_NAME.match(r["name"])]
+                    # the types given to data (by address: its name may change), restored below
+                    old_types = {r["address"]: (r["c_type"], r["type_source"]) for r in db.execute(
+                        "SELECT address, c_type, type_source FROM symbols WHERE project_id=? AND c_type IS NOT NULL", (pid,))}
                     db.execute("UPDATE projects SET description=?, arch=?, big_endian=?, config=? WHERE id=?",
                                (f"{info['game_code']} · {info['region']} · {len(res.functions)} functions",
                                 console.arch, int(picked.big_endian), json.dumps(cfg), pid))
@@ -490,6 +493,9 @@ class ImportMixin:
                     preview = previews.get(s.address)
                     db.execute("INSERT INTO symbols(project_id,name,address,size,kind,preview) VALUES(?,?,?,?,?,?)",
                                (pid, s.name, s.address, s.size, s.kind, preview))
+                for address, (c_type, type_source) in old_types.items():
+                    db.execute("UPDATE symbols SET c_type=?, type_source=? WHERE project_id=? AND address=? AND kind<>'func'",
+                               (c_type, type_source, pid, address))
                 if reimport is None:
                     db.execute("INSERT INTO context_versions(project_id,version,header,agent_id,message,created_at,unit) "
                                "VALUES(?,?,?,?,?,?,?)", (pid, 1, header, None, "basic types" + (

@@ -665,6 +665,9 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                            message=st("why", True))),
         "rename_symbol": ("Give a function or data address a real name.",
                           s(old=st("current name", True), new=st("new name", True), message=st("why"))),
+        "set_global_type": ("Record the C type of a data symbol, shown in the Globals tab; empty clears it.",
+                            s(name=st("name, D_ name or hex address", True), c_type=st("C type like s32, f32, u8[16], struct Actor *", True),
+                              source=st("agent (default), emulator or user"))),
         "split_function": ("Split a merged function at an address.",
                            s(function=st("function", True), at=st("address like 0x80001234", True), new_name=st("name"))),
         "report_boundary": ("Report that a function really ends earlier: what follows is padding, leftovers or data "

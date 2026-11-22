@@ -420,10 +420,10 @@
   <!-- globals: the game's data symbols, by their name now and the D_ address name they started as -->
   <section class="ptab panel" data-pane="globals" id="globalsView" hidden>
     <div class="list-tools">
-      <input id="globalsSearch" class="search" type="search" placeholder="Find a global by name, D_ name, address or value" aria-label="Find a global" autocomplete="off" spellcheck="false">
+      <input id="globalsSearch" class="search" type="search" placeholder="Find a global by name, D_ name, address, type or value" aria-label="Find a global" autocomplete="off" spellcheck="false">
       <div class="seg" id="globalsFilter" role="radiogroup" aria-label="Show"></div>
     </div>
-    <p class="muted small list-hint">Variables, tables and strings in the game. Names agents have given appear beside the address name they started as (D_800A4DFC → sDirectKey).</p>
+    <p class="muted small list-hint">Variables, tables and strings in the game. Names agents have given appear beside the address name they started as (D_800A4DFC → sDirectKey). Types are filled in by agents (set_global_type) and by emulator runs that see every write to a variable use one kind of store.</p>
     <p class="notice" id="globalsNote" hidden></p>
     <div class="fn-table-wrap">
       <table class="fn-table globals-table">

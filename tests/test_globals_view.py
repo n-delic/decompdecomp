@@ -51,3 +51,48 @@ def test_the_tab_is_wired_into_the_page():
     html = (STATIC / "index.html").read_text()
     assert 'data-ptab="globals"' in html and 'data-pane="globals"' in html and "/assets/js/globals.js" in html
     assert '"globals"' in (STATIC / "js/base.js").read_text()
+
+
+def test_a_type_is_recorded_listed_and_cleared(tmp_path):
+    import pytest
+
+    from decompnet.app.globals_view import set_type
+    from decompnet.network import NetworkError
+    net, store = _net(tmp_path)
+    assert "✅" in set_type(net, "g", "D_800A4DFC", "s32 ", "agent")  # by its address name, though renamed
+    row = [dict(zip(globals_list(net, "g")["keys"], r)) for r in globals_list(net, "g")["rows"]][0]
+    assert (row["name"], row["type"], row["type_source"]) == ("sDirectKey", "s32", "agent")
+    for bad in ("s32; rm", "struct {int a;}", "x" * 90):
+        with pytest.raises(NetworkError):
+            set_type(net, "g", "sDirectKey", bad)
+    with pytest.raises(NetworkError):
+        set_type(net, "g", "main", "s32")  # a function is not a global
+    set_type(net, "g", "0x800A4E00", "u8[8]", "emulator")
+    set_type(net, "g", "sDirectKey", "")
+    rows = {r[0]: r for r in globals_list(net, "g")["rows"]}
+    assert rows["sDirectKey"][6] == "" and rows["D_800A4E00"][6] == "u8[8]"
+    store.close_readers(); store.conn.close()
+
+
+def test_an_emulator_run_types_a_variable_its_stores_agree_on(tmp_path):
+    from types import SimpleNamespace
+
+    from decompnet.app import emulator_watch
+    net, store = _net(tmp_path)
+    proj = net._project("g")
+    proj = dict(proj) | {"big_endian": 1}
+    sym = SimpleNamespace(size=4)
+    net.symbols = lambda _: SimpleNamespace(by_addr={0x800A4DFC: sym})
+    swc1 = (0x39 << 26).to_bytes(4, "big")
+    net.reader = lambda _: (lambda addr, n: swc1)
+    run = SimpleNamespace(hits=[SimpleNamespace(kind="watch", pc=0x80001000)] * 2)
+    assert emulator_watch.infer_type(net, proj, run, 0x800A4DFC) == "f32"
+    text = emulator_watch.record_type(net, "g", proj, run, 0x800A4DFC)
+    assert "f32" in text
+    assert store.one("SELECT type_source FROM symbols WHERE name='sDirectKey'")["type_source"] == "emulator"
+    from decompnet.app.globals_view import set_type
+    set_type(net, "g", "sDirectKey", "Vec3f", "agent")
+    assert emulator_watch.record_type(net, "g", proj, run, 0x800A4DFC) == ""  # an agent's type stays
+    sym.size = 8  # a store of another width than the symbol says nothing
+    assert emulator_watch.infer_type(net, proj, run, 0x800A4DFC) is None
+    store.close_readers(); store.conn.close()

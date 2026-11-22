@@ -320,6 +320,8 @@ MIGRATIONS = [
     ("functions", "gone_mark", "TEXT"),                        # meta's gone (network.IN_BUILD)
     ("functions", "last_checked", "REAL"),                    # latest attempt, including failed compiles
     ("functions", "last_improved", "REAL"),                   # latest compiled attempt that improved the score
+    ("symbols", "c_type", "TEXT"),                            # a data symbol's C type, once known (app/globals_view.py)
+    ("symbols", "type_source", "TEXT"),                       # who said so: "agent", "emulator", ...
 ]
 
 # What the counts ask of each function's meta, copied into columns of their own: an index can hold a column, and

@@ -898,7 +898,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Per-game portability checklist for polishing | ✓ | ✓ | ✓ | ✓ | — polishing support pending | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Small polish plans, prepared evidence and verified identical-helper reuse | ✓ shared path | ✓ shared path | ✓ shared path | — | — | ✓ shared path | — | ✓ shared path | ✓ shared path | — | ✓ shared path | ✓ shared path |
 | Real names for the game's symbols (`rename_symbol`) | ✓ | ✓ | ✓ | ✓ | ✓ functions | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | dtk and ds-decomp projects |
-| Globals tab: the game's data symbols beside their `D_` address names | ✓ | ✓ shared path | ✓ shared path | — | — | ✓ shared path | ✓ shared path | — | — | — | — | — |
+| Globals tab: the game's data symbols beside their `D_` address names, with a Type column (agents' `set_global_type`; emulator stores) | ✓ | ✓ shared path | ✓ shared path | — | — | ✓ shared path | ✓ shared path | — | — | — | — | — |
 | Save and restore (`progress/`, Open a saved project); remember each project's save destination | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | partly: the project's git, best attempts saved; a new copy starts without them | partly: the project's git, best attempts saved; a new copy starts without them | the project's git; best attempts saved; the PE view made again from your XBE or disc | partly: the project's git, best attempts saved; a new copy starts without them | the project's git; best attempts saved |
 | Pause and resume automatic rechecks of saved matches | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — | ✓ ROM | ✓ ROM | — uses project build | — uses project build | — uses project build | — uses project build | — uses project build |
 | Saved README preserves notes, with completion bar and function map | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -2098,6 +2098,9 @@ reuse the saved map. See [ROM Explorer](docs/ROM_EXPLORER.md) for support and li
   installations show a labelled work bar beside their logs. The bar clears on completion or failure; saved-project
   cancellation clears it too. Each action says when it starts and finishes, or why it stopped. Upload percentages
   still measure bytes transferred.
+- **Globals types in saves and project mode.** A global's type is kept in the project database and across reimport,
+  but not yet in the saved progress files, so Open a saved project starts without them. The emulator records a type
+  only from MIPS stores of the symbol's whole size (floats exactly; integers as the unsigned type of that width).
 - **Globals tab in project mode.** The Globals tab lists a ROM project's data symbols from its symbols table; a
   project-mode game (GameCube, Wii, Windows PC, DS, Xbox) keeps its data in the project's own files, so its tab says so
   and lists nothing yet. It needs a reader for dtk's and ds-decomp's symbols and for the PC project's data.
