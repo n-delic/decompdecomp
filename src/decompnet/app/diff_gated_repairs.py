@@ -185,6 +185,7 @@ from decomprepair import (
     oscillator_phase_hold,
     packed_matrix_conversion,
     passthrough_argument_repairs,
+    phase_projection_holders,
     projection_argument_before_store,
     projection_gain,
     quadratic_sign_holder,
@@ -389,6 +390,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += projection_argument_before_store.variants(source, name, rows, header=header)
         result += balanced_signed_selector_increment.variants(source, name, rows, header=header)
         result += balanced_selector_zero.variants(source, name, rows, header=header, max_bytes=MAX_SOURCE_BYTES)
+        result += phase_projection_holders.variants(source, name, rows, header=header, max_bytes=MAX_SOURCE_BYTES)
         result += balanced_float_predicate_return.variants(source, name, rows, header=header)
         result += clamped_field_reload.variants(source, name, rows, header=header)
         result += saved_range_probe.variants(source, name, rows, header=header)
