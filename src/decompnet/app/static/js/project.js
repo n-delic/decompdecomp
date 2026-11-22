@@ -275,6 +275,7 @@ function setTab(tab) {
   document.querySelectorAll("[data-pane]").forEach((p) => { p.hidden = p.dataset.pane !== tab; });
   if (tab === "overview") { if (S.map.length) layoutMap(); renderOverview(); }
   if (tab === "functions") renderList();
+  if (tab === "globals") loadGlobals(S.slug);
   if (tab === "rom") loadRomExplorer();
   if (tab === "porting" && typeof loadPortReadiness === "function") loadPortReadiness();
   if (tab === "agents") {

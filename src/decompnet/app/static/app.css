@@ -2366,3 +2366,8 @@ img.rom-preview-media { image-rendering:pixelated; background:var(--bg-alt); bor
  #deepSweepCounts > button:nth-child(odd) { border-left:0; padding-left:0; }
  .local-search-option-pair { grid-template-columns:1fr; }
 }
+.globals-table th { padding: 0; }
+.globals-table .sort-btn { all: unset; box-sizing: border-box; display: block; width: 100%; padding: 10px 16px; cursor: pointer; font: inherit; letter-spacing: inherit; text-transform: inherit; color: inherit; }
+.globals-table th[aria-sort="ascending"], .globals-table th[aria-sort="descending"] { color: var(--ink); }
+.globals-table th.r .sort-btn { text-align: right; }
+.globals-table .sort-btn:focus-visible { outline: 2px solid var(--accent, currentColor); outline-offset: -2px; }
