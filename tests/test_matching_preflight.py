@@ -467,6 +467,31 @@ def test_poll_loop_without_strength_reduction_is_probed_with_its_spellings(monke
     assert all(flags == ['-O2', '-fno-strength-reduce'] for flags, _ in state['calls'][1:3])
 
 
+def test_stepped_induction_loop_is_probed_as_counter_multiples_without_the_flag(monkeypatch):
+    """A profile carrying -fno-strength-reduce and m2c's stepped pointers: the rewrite and the profile are judged together."""
+    from decompnet.app import repair_ranking
+
+    net, proj, fn, state = setup()
+    proj['arch'] = 'mips'
+    net.cfg(proj)['compiler'] = {'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-O2', '-fno-strength-reduce']}
+    source = ('void f(char *list, s32 *out)\n{\n  s32 i;\n  s32 off;\n  char *cursor;\n  i = 0;\n  off = 0;\n'
+              '  cursor = list;\n  do\n  {\n    out[i] = *(s32 *) cursor + off;\n    i += 1;\n    cursor += 0x20;\n'
+              '    off += 0xC;\n  }\n  while (*(s16 *) cursor >= 0);\n}\n')
+    fn.update(asm='', best_source=source, name='f', n_insns=20)
+    monkeypatch.setattr(repair_ranking, 'evidence', lambda *a: [])
+
+    def judge(proj, fn, toolchain, flags, source):
+        state['calls'].append((flags, source))
+        exact = '-fno-strength-reduce' not in flags and 'i * 0x20' in source and 'cursor +=' not in source
+        return exact, SimpleNamespace(score=0 if exact else 400, rows=[]), ''
+
+    net._judge_with = judge
+    result = preflight.run(net, proj, fn, max_profiles=3)
+    assert result['best']['exact'] and '-fno-strength-reduce' not in result['best']['flags']
+    assert state['calls'][0] == (['-O2', '-fno-strength-reduce'], source)
+    assert state['calls'][1][0] == ['-O2'] and 'i * 0x20' in state['calls'][1][1]
+
+
 def test_nearby_match_proposes_its_entry_specific_compiler_flags():
     net, proj, fn, state = setup()
     address = fn['vram'] + 4

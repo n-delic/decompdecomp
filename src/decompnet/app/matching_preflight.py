@@ -96,6 +96,11 @@ def _run(net, proj, fn, log, check, max_profiles):
             indexed = pointer_walk_index_repairs.variants(fn['best_source'], fn['name'])
             if indexed:
                 probes.insert(2, (restored[0], indexed[0][1]))
+    if own['toolchain'] == 'gcc-2.7.2-kmc' and '-fno-strength-reduce' in own['flags']:
+        # m2c's stepped induction variables written as the counter's multiples, judged with strength reduction back on
+        # (one function went 244 -> exact: neither the source nor the profile alone changes the score).
+        from decomprepair import stepped_induction_index
+        probes[1:1] = [(list(flags), source) for flags, source in stepped_induction_index.probes(dict(proj), dict(fn), own)]
     # Keep the complete load/store hypothesis ahead of isolated scheduling probes.
     halfword = [(list(flags), source) for flags, source in halfword_store_scheduling.probes(dict(proj), dict(fn), own)]
     probes[1:1] = halfword

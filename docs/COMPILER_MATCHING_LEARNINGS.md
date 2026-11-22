@@ -16769,10 +16769,7 @@ What decided them (GCC 2.7.2):
   m2c prelude macros and steps by any literal.
 - The wrapper's loop notes are scheduling barriers as well: the preheader splits into regions, so the same four
   statements land in other orders. 459 is the best of all 24 orders times every wrapper/grouping tried (1296).
-- Open at 459: the hoisted `addiu $s7,$sp,0x90` of the matrix pointer comes last of the preheader in the compiler's
-  order where the target has it first (the target's order is hoisted insns, then the counter and pointer copies); and
-  a table entry loaded into `$v0` and copied to `$s0` in the branch's delay slot (cse merges the copy of the test's
-  value; no source spelling of the copy kept it). Both are 2 to 6 rows.
+- (Both rows left at 459 are solved below: the copy by step 6, the preheader order by step 7.)
 
 decomp-repair 0.5.569: `reused_counter_split_scope`, `preheader_run_order`, `loop_weight_scope` (M2C macros, literal strides).
 
@@ -16835,3 +16832,28 @@ move $s2,$a3` ahead of the call and every build of the saved best had `move $s6,
   the saved best it reproduces the whole chain in one child (60 to 0); it reaches the draft repair path and the Deep
   Permuter's local/beam lane through `draft_repairs.variants` (`tests/test_entry_copy_store_first.py`). Not yet
   explored: a parameter that is narrow or float, or whose copy must pass a call's argument setup further into the body.
+
+| 6 | in the branch's guard, `temp_gc = temp; temp = NULL;` and the block's uses on `temp_gc` (`guard_copy_cse_barrier`) | 244 |
+| 7 | the loop's stepped pointers and offsets written as the counter's multiples (`(char *)temp_v0_2 + i * 0x20`, `i * 0xC`, `(char *)spA6C + i * 0xC`), and the function's profile without `-fno-strength-reduce` (`stepped_induction_index`) | 0 |
+
+What decided steps 6 and 7 (GCC 2.7.2):
+- cse's first pass leaves `B = A` alone (loop.c wants the pseudos as written); the second, after loop.c, replaces
+  every later use of `B` by `A`, so the pointer that lives across a call took the saved register by itself
+  (`lw $s0,($v0)`) where the game kept the load in `$v0` and copied it in the branch's delay slot. Assigning `A` again
+  after the copy ends the equivalence (the dead store is deleted by flow, no instruction). A `do { } while (0)` or a
+  label in the guard changed the whole allocation instead (2200+: a nested loop inside the loop).
+- Strength reduction explained every unexplained row at once. loop.c emits the reduced variables' starting values
+  after the invariants it hoists, so `addiu $s7,$sp,0x90` (the hoisted address) comes before `move $s5,$v1` and
+  `move $s6,$zero`, which no spelling of the stepped form reaches (a real outer loop whose back-edge cse deletes
+  reproduced the order but doubled every weight in the loop). The profile's `-fno-strength-reduce` had come from a flag
+  search on the stepped form and was wrong for the function: the game indexed by the counter. The per-function profile
+  was changed to the project's default flags (this function only) for the match.
+- The one-shot start of step 4 (`do { var_s6 = 0; } while (0);`) was the weight a strength-reduced giv gets from the
+  counter's loop depth; step 7 makes it unnecessary and the final source has neither it nor the preheader order.
+
+Failed: statement-order grids of the setup (1296 orders and groupings: 459 best), declaration-order shuffles (no change),
+a user pointer for the matrix address (frees a loop.c hoist slot, which takes the `0xDA380003` constant: 2700 to 3000),
+`goto` loops (no loop notes, no hoisting: 3344), the outer real loop (439 to 509 from the weights).
+
+decomp-repair 0.5.574: `guard_copy_cse_barrier`, `stepped_induction_index` (and `probes`, which pairs the rewrite with the profile
+without `-fno-strength-reduce`).
