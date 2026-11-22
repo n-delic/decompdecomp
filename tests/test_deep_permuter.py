@@ -1400,3 +1400,28 @@ def test_switch_temporary_restore_gets_an_early_local_trial(monkeypatch):
     assert family == RESTORE_FAMILY
     assert 'value = 1;' in candidate
     assert 'value_b1' not in candidate
+
+
+@pytest.mark.parametrize('header,expected', [('', 35), ('#define setup() use(counter)', 155)])
+def test_counter_reset_pass_uses_header_when_moving_across_setup(monkeypatch, header, expected):
+    net = setup(monkeypatch)
+    monkeypatch.setattr(net, '_context', lambda *args: {'header': header})
+    source = """int f(void) {
+    int counter;
+    counter = 0;
+    setup();
+    do {
+        observe(counter);
+        counter += 1;
+    } while (counter < 4);
+    return counter;
+}"""
+    fn, proj = net.function(), net.project_row('game')
+    search = deep_permuter.Search(net, 1, 30, Log(), fn)
+
+    def score(agent, proj, fn, candidate, best, fork):
+        search.tested += 1
+        return 35 if 'setup();\n    counter = 0;' in candidate else 155
+
+    monkeypatch.setattr(search, '_score', score)
+    assert search.loop_vector_shape_pass(AGENT, proj, dict(fn, best_source=source), 155, None) == expected

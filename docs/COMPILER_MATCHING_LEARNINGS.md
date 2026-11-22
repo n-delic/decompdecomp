@@ -1151,6 +1151,17 @@ Keep this file updated when a verified match explains a reusable compiler behavi
 summaries live in `src/decompnet/consoles/*/guides/`; this is the evidence ledger, including failed ideas.
 Do not treat an instruction similarity score as proof of a match.
 
+## Initialize a loop counter after its setup calls
+
+An N64 draft built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32
+-O2 -fno-cse-skip-blocks` initialized a loop counter before three
+unrelated setup calls. Moving the reset past those calls lowered the
+linked score from 155 to 35. The first generated variant reproduced
+the result, and a full Deep Permuter replay saved it. The rewrite
+requires a local in scope, rejects escaped counters and calls that
+reference the counter, and uses the shared header to avoid macros.
+The function remains unmatched.
+
 ## Prove call-result splits across conditional overwrites
 
 An N64 scratch draft built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32

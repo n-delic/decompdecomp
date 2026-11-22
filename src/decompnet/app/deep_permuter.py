@@ -520,6 +520,7 @@ class Search(Permuter):
         from . import generation_calls
 
         source = _candidate_source(fn, best)
+        header = self.net._context(proj['id'], fn['unit'])['header']
         # Interleaving two runs of statements took about 600 compiles to find by beam on a large function, so this
         # pass may spend more of the budget than the other targeted ones; it stops at the first exact match.
         budget = min(96, max(0, (self.limit - self.tested) // 2))
@@ -529,7 +530,7 @@ class Search(Permuter):
             for _, parent in frontier:
                 proposals = [pair for result in generation_calls.library([
                     ('decomprepair.loop_vector_shapes.variants', (parent, fn['name'], proj['arch'])),
-                    ('decomprepair.statement_interleave.variants', (parent, fn['name'], proj['arch'])),
+                    ('decomprepair.statement_interleave.variants', (parent, fn['name'], proj['arch']), {'header': header}),
                     # a do { } while (0) boundary in the last straight-line run (decomp-repair 0.5.187): a display
                     # list function stuck at 60 under every source order matched once split, only with its call's
                     # global hoisted first, so the proposals are the pair, not two steps a beam would drop
