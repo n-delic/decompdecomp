@@ -1151,6 +1151,16 @@ Keep this file updated when a verified match explains a reusable compiler behavi
 summaries live in `src/decompnet/consoles/*/guides/`; this is the evidence ledger, including failed ideas.
 Do not treat an instruction similarity score as proof of a match.
 
+## Keep temporary writes that feed a switch join
+
+In a private N64 draft built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32
+-mfp32 -O2 -fno-strength-reduce`, a split renamed one switch arm's
+assignment while the code after the switch still read the original local.
+Restoring the shared assignment lowered the linked score from 1,957 to
+1,537. The split generator now skips proposals that carry no use into
+the new local. Evidence is one scratch replay and a synthetic switch
+regression. The function remains unmatched.
+
 ## Read verified compiler overrides from nearby matched entries
 
 A private N64 draft scored 525 with `gcc-2.7.2-kmc -G0 -mips3 -mgp32
