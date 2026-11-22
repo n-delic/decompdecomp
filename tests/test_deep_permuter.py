@@ -1731,3 +1731,12 @@ def test_a_run_that_keeps_improving_spends_the_extended_budget(monkeypatch):
     result = deep_permuter.run(net, 'game', 'f', 1, 2, Log())
     assert result['reason'] == 'Variant limit reached'
     assert result['tested'] > 2  # extended while still improving, then stopped at the cap
+
+
+def test_extensions_are_reported_in_the_progress_metrics(monkeypatch):
+    search = _budget_search(monkeypatch)
+    assert (search.metrics()['extensions'], search.metrics()['extension_max']) == (0, deep_permuter.EXTEND_MAX)
+    search.tested, search.improved_at = 100, (95, time.monotonic())
+    search.check()
+    assert search.metrics()['extensions'] == 1
+    assert _budget_search(monkeypatch, extendable=False).metrics()['extension_max'] == 0

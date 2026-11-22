@@ -65,6 +65,7 @@ function renderDeepSearch() {
   $("deepGain").textContent = gain == null ? "" : gain > 0 ? `+${gain.toFixed(2)} percentage points` : active ? "No improvement yet" : "No improvement this run";
   $("deepTested").textContent = tested.toLocaleString();
   $("deepLimit").textContent = (p.variant_limit ? `of ${p.variant_limit.toLocaleString()} allowed` : "")
+    + (p.extensions ? ` · extended ${p.extensions}/${p.extension_max} (still improving)` : "")
     + (p.skipped ? ` · ${p.skipped.toLocaleString()} repeats skipped` : "");
   $("deepTiming").textContent = p.elapsed == null ? "" : `${deepDuration(p.elapsed)} elapsed${active && p.seconds_left != null ? ` · ${deepDuration(p.seconds_left)} left` : ""}`;
   if (active && p.variant_limit == null) $("deepProgress").removeAttribute("value");
