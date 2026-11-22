@@ -562,6 +562,28 @@ def _mips_table_aliases(asm: str, data: str) -> str:
 _DELAY_SLOT_LABEL = re.compile(r"Label \._m2c_(\.?L[0-9A-Fa-f]{8}\w*?)before refers to a delay slot")
 
 
+_ENTRY_BRANCH = re.compile(r"Cannot find branch target (\w+)")
+_BRANCH_LINE = re.compile(r"^[ \t]*(?:/\*.*?\*/[ \t]*)?(?:b[a-z]*|j)[ \t]")
+
+
+def entry_label(asm_text: str, name: str) -> str:
+    """A loop that branches back to the function's own entry (a string compare's `bnez $a2, func_8006AA00`) names the
+    function itself as a branch target, which m2c can't find. A local label after the entry (and a `nop`, so the loop
+    keeps the registers it changed rather than starting from the arguments again), and the branches pointed at
+    it, say the same thing."""
+    label = f".L{name}_entry"
+    lines, out, placed = asm_text.split("\n"), [], False
+    for line in lines:
+        if _BRANCH_LINE.match(line):
+            line = re.sub(rf"\b{re.escape(name)}\b", label, line)
+        out.append(line)
+        if not placed and re.match(rf"^[ \t]*glabel[ \t]+{re.escape(name)}[ \t]*$", line):
+            out.append("nop")  # the loop's state is then a join of the entry and the branch, not the arguments again
+            out.append(f"{label}:")
+            placed = True
+    return "\n".join(out) if placed else asm_text
+
+
 @compile_timing.timed('generation')
 def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", data_asm: str | None = None,
             timeout: float = 20, valid: bool = False, strict: bool = False, options: tuple[str, ...] = ()) -> str | None:
@@ -574,6 +596,12 @@ def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", dat
         try:
             return _run_m2c(asm_text, name, target, context_header, data_asm, timeout, valid, strict, options)
         except DraftError as error:
+            if (entry := _ENTRY_BRANCH.search(str(error))) and entry[1] == name:
+                looped = entry_label(asm_text, name)
+                if looped == asm_text:
+                    raise
+                asm_text = looped
+                continue
             found = _DELAY_SLOT_LABEL.search(str(error))
             if not found:
                 raise

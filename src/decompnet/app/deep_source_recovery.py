@@ -130,6 +130,11 @@ def prepare(net, proj, fn, log):
     if claimed():
         return fn
     fork = net.fork_slug(slug)
+    twins = getattr(net, 'twins', None) if not fork else None
+    if twins is not None and (why := twins.set_aside_function_asm(proj, fn)):
+        # Code no compiler makes has no C to recover: set aside now, not after a machine draft fails on it.
+        log(f"{fn['name']}: Set aside as assembly, no compiler makes this code: {why}")
+        return store.one('SELECT * FROM functions WHERE id=?', fid) or fn
     attempts = saved_attempts(store, fid)
     can_draft = net.can_draft(proj)
     newest = store.one("""SELECT MAX(id) AS id FROM main.attempts WHERE function_id=? AND compiled=1
