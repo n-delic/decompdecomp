@@ -6,6 +6,23 @@ KMC = 'gcc-2.7.2-kmc'
 EGCS = 'gcc-egcs-2.91.66'
 
 
+def test_case_float_sign_route_requires_both_measured_changes():
+    source = ('extern float step; void f(int kind) { switch (kind) {'
+              'case 1: step = 0.1f; break; case 2: step = -0.1f; break; } }')
+    rows = [
+        ('i', 'lui $at, 0xbdcc', 'lui $at, 0x3dcc'),
+        (' ', 'ori $at, $at, 0xcccd', 'ori $at, $at, 0xcccd'),
+        (' ', 'mtc1 $at, $f0', 'mtc1 $at, $f0'),
+        ('i', 'lui $at, 0x3dcc', 'lui $at, 0xbdcc'),
+        (' ', 'ori $at, $at, 0xcccd', 'ori $at, $at, 0xcccd'),
+        (' ', 'mtc1 $at, $f0', 'mtc1 $at, $f0'),
+    ]
+    options = dict(proposals(source, 'f', '', 'mips', 'gcc-2.7.2-kmc', rows, ''))
+    assert 'case 1: step = -0.1f; break; case 2: step = 0.1f;' in options['measured_case_float_sign']
+    options = dict(proposals(source, 'f', '', 'mips', 'gcc-2.7.2-kmc', rows[:3], ''))
+    assert 'measured_case_float_sign' not in options
+
+
 def case_rows(*ops):
     return [(' ', '', '')] + [('<', op, '') for op in ops]
 

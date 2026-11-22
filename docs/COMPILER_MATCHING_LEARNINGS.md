@@ -1,5 +1,14 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: restore opposite float constants in two switch cases
+
+A private N64 draft scored 120 under `-G0 -mips3 -mgp32 -mfp32 -O2`.
+Two aligned float materializations had the same low halves as the
+target, with both sign bits reversed. Exchanging the signs in the two
+cases that set the same float scored 100 through the normal judge.
+The rule requires the paired instruction evidence and a unique source
+pair. The example remains unmatched.
+
 ### KMC GCC 2.7.2: hoist a counter start without a one-shot scope
 
 A private N64 draft scored 11,072 under `-G0 -mips3 -mgp32 -mfp32 -O2`.
