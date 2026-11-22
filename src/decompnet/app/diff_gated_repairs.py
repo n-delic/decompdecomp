@@ -59,6 +59,7 @@ from decomprepair import (
     measured_callback_loop,
     measured_callback_repairs,
     measured_carried_loop_test,
+    measured_case_float_sign,
     measured_command_record_cursor,
     measured_command_word_schedule,
     measured_conditional_call_stage,
@@ -653,6 +654,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_pointer_scale.variants(source,name,header,rows)
         result += target_string_repairs.verified_variants(source, name, header, rows, read_data)
         result += measured_immediate_repairs.variants(source,name,rows)
+        result += measured_case_float_sign.variants(source, name, rows)
         result += measured_narrow_use.variants(source, name, rows)
         result += symbol_width_repairs.signed_halfword_load_variants(source, name, rows)
         if big_endian:
