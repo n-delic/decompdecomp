@@ -15476,3 +15476,8 @@ and no uninitialized warnings. The individual edits scored 3,370 and
 3,380. Other holder choices were neutral or only recovered two operands.
 The Deep Permuter requires linked witnesses, compatible selectors and
 a dead, unescaped local before proposing the combined rewrite.
+
+
+### Share repeated signed offset calculations through an inline helper
+
+A saved N64 controller routine built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` repeated a signed `index * 0x68 + 0x18C` offset. The draft added the constant to the global base, while the target added it to the scaled index before combining the two. Factoring both offset expressions through a small inline helper reproduced the linked target exactly (score 275 to 0). Evidence: one saved example and synthetic source, target and routing tests. The rule requires the measured instruction sequence, repeated expression and unchanged parameter, then the byte judge verifies the candidate.
