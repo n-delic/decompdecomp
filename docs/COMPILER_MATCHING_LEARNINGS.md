@@ -13193,3 +13193,16 @@ Compiler facts behind them:
 Not found by the permuter: the per-arm split and the fresh-local-for-address rewrites have no family. A library family
 should offer, for a joined pointer set by loads from dying addresses, the per-arm split (with the join's store
 duplicated), and, for a parameter reused as a frame address, the fresh local. Neither is written yet.
+
+### Retain a zero register through CSE (KMC GCC 2.7.2)
+
+On one N64 function with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`,
+writing an initialized local's zero as `(u32)p & ~(u32)p`, where `p` is an
+already initialized pointer, changed a delay-slot copy from the zero register
+to the desired register. The exact isolated judge went from 5 to 0. Compiler
+RTL showed CSE retained the expression and the combiner folded it to zero;
+the identity leaves the value unchanged. Simple XOR or subtraction identities
+remained at 5, as did several redundant back-edge variants. A volatile local
+scored 2084 and moving the copy scored 30. The generated child and Deep repair
+lane were tested; this is one observed function, not a controlled cross-game
+result.
