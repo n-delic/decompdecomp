@@ -2614,3 +2614,14 @@ def test_private_record_padding_reaches_kmc_router(monkeypatch):
                         lambda text, name, diff, header: [('private_record_fixture', text)])
     assert 'private_record_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'private_record_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_adjacent_field_stores_route_for_supported_mips_compilers(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('o', 'sh $v0, 8($a2)', 'sw $s2, 12($a2)')]
+    monkeypatch.setattr(diff_gated_repairs.measured_adjacent_field_stores, 'variants',
+                        lambda text, name, header, diff: [('adjacent_field_fixture', text)])
+    for compiler in (KMC, EGCS, 'ido-5.3', 'ido-7.1'):
+        assert 'adjacent_field_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', compiler, rows, ''))
+    assert not proposals('void f(void) {}', 'f', '', 'arm', KMC, rows, '')
