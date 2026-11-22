@@ -15240,3 +15240,8 @@ flow check allows an accumulator read only when the incoming value is
 proven positive zero on every path, including the KMC zero-word union
 form. Synthetic tests cover a branch bypass, later change, back edge
 and escaped storage.
+
+
+### Restore the previous head in a list insertion
+
+A saved N64 list insertion built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` assigned the new node to the global head before reading that head for the node's link, making the draft self-link. The target loaded the old head first and stored the new head after the other node fields. Capturing the head address, storing the old head into the node, then publishing the node reproduced the linked target exactly (score 315 to 0). Merely changing the order without capturing the address scored 520. Evidence: one saved example and synthetic source, target and routing tests. The candidate corrects the draft's behavior and requires the measured target sequence before the byte judge evaluates it.
