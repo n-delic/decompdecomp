@@ -104,6 +104,24 @@ def test_passes_requests_through(gateway):
         assert notification.status_code == 202
 
 
+def test_forwards_review_only_compiler_trial_schema_and_argument(gateway):
+    from decompnet.app import tools
+
+    calls = []
+    server = tools.build_mcp(None, lambda ctx: None,
+                             reader=lambda ctx, name, args: calls.append((name, args)) or 'queued')
+    upstream = App(gateway.app_port)
+    upstream.server.config.app = server.streamable_http_app(stateless_http=True, json_response=True)
+    with upstream:
+        definitions = rpc(gateway.url, 'tools/list')['result']['tools']
+        suggest = next(item for item in definitions if item['name'] == 'suggest')
+        assert suggest['inputSchema']['properties']['review_only']['type'] == 'boolean'
+        reply = rpc(gateway.url, 'tools/call', {'name': 'suggest', 'arguments': {
+            'function': 'f', 'trial_id': 'exact', 'review_only': True}}, id=2)
+        assert 'queued' in text(reply)
+    assert calls[0][0] == 'suggest' and calls[0][1]['review_only'] is True
+
+
 def test_slow_call_answers_in_time_and_never_runs_twice(gateway):
     with App(gateway.app_port) as app:
         call = {"name": "slow", "arguments": {"seconds": 2.5}, "_meta": {"progressToken": 1}}

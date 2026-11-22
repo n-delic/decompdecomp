@@ -139,7 +139,7 @@ def retrieve(net,agent,slug,function,trial_id,include_header=False):
     return json.dumps(compact,ensure_ascii=False)
 
 
-def suggest_trial(net, agent, slug, function, trial_id, text):
+def suggest_trial(net, agent, slug, function, trial_id, text, *, review_only=False):
     """Submit frozen diagnostic inputs through the same fresh judge and approval as a manual suggestion."""
     from . import reviewed_search_seeds
 
@@ -153,5 +153,6 @@ def suggest_trial(net, agent, slug, function, trial_id, text):
         raise NetworkError('Choose a trial with a verified exact diagnostic result.')
     if record.get('seed_scope') != reviewed_search_seeds.scope(net, proj, fn, record['source']):
         raise NetworkError('This compiler trial is stale. Run a fresh experiment before proposing the match.')
+    options = {'review_only': True} if review_only else {}
     return net.suggest(agent, slug, text or 'Reverify the exact compiler trial.',
-                       record['compiler'], record['flags'], fn['name'], source=record['source'])
+                       record['compiler'], record['flags'], fn['name'], source=record['source'], **options)

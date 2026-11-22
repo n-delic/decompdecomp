@@ -1,9 +1,10 @@
 import json
 from types import SimpleNamespace
 
+import anyio
 import pytest
 
-from decompnet.app import compiler_context
+from decompnet.app import compiler_context, compiler_experiments, reviewed_search_seeds, tools
 from decompnet.app import function_profile_suggestions as profiles
 from decompnet.app.engine.compilers import CompilerMixin
 from decompnet.app.permute import Permuter
@@ -81,6 +82,49 @@ def test_disabled_auto_retains_bundle_and_manual_apply_rejudges_it(monkeypatch):
     net.resolve_suggestion('game',1,True)
     assert net._function('f','game')['matched_source']=='chosen source'
     assert not net.store.one('SELECT 1 FROM claims WHERE function_id=1')
+
+
+def test_review_only_exact_trial_stays_pending_with_auto_apply_enabled(monkeypatch):
+    net, agent = fixture(monkeypatch, auto=True)
+    net.links = {}
+    fn = net._function('f', 'game')
+    proj = net.project_row('game')
+    source = 'int f(void) { return 2; }'
+    before = compiler_for(net.cfg(proj), fn['vram'], fn)
+    before_source = fn['best_source']
+    receipt = {'agent': agent.id, 'source': source, 'flags': '-O2 -ffast-math', 'compiler': 'gcc',
+               'result': {'exact': True}, 'seed_scope': reviewed_search_seeds.scope(net, proj, fn, source)}
+    compiler_experiments.save_trial(net, fn, 'exact-review', receipt)
+    said = tools._suggest(net, agent, 'game', function='f', trial_id='exact-review', review_only=True)
+    current = net._function('f', 'game')
+    cfg = net.cfg(net.project_row('game'))
+    assert 'Review and apply' in said
+    assert current['status'] == 'open' and current['best_source'] == before_source
+    assert compiler_for(cfg, current['vram'], current) == before
+    assert cfg['suggestions'][0]['status'] == 'open'
+    assert cfg['suggestions'][0]['function_match']['source'] == source
+    assert net.store.one('SELECT 1 FROM claims WHERE function_id=1')
+
+
+def test_review_only_requires_a_frozen_trial(monkeypatch):
+    net, agent = fixture(monkeypatch)
+    with pytest.raises(NetworkError, match='exact trial_id'):
+        tools._suggest(net, agent, 'game', text='review', review_only=True)
+    with pytest.raises(NetworkError, match='boolean'):
+        tools._suggest(net, agent, 'game', function='f', trial_id='exact', review_only='false')
+
+
+def test_mcp_suggest_forwards_review_only(monkeypatch):
+    net, agent = fixture(monkeypatch)
+    calls = []
+    mcp = tools.build_mcp(net, lambda ctx: (agent, 'game'),
+                          reader=lambda ctx, name, args: calls.append((name, args)) or 'accepted')
+
+    async def invoke():
+        return await mcp.call_tool('suggest', {'function': 'f', 'trial_id': 'exact', 'review_only': True})
+
+    assert 'accepted' in str(anyio.run(invoke))
+    assert calls[0][0] == 'suggest' and calls[0][1]['review_only'] is True
 
 
 @pytest.mark.parametrize('mode',['miss','compile','stale','overlap','busy'])

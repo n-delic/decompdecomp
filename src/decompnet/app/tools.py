@@ -514,11 +514,15 @@ def _claim(net: RomNetwork, agent: Agent, slug: str, function: str, strategy: st
         return packet(str(e) + '\n\n' + agent_tokens.brief(net, net.claim(agent, slug, None, strategy), slug, agent))
 
 
-def _suggest(net, agent, slug, text='', compiler='', flags='', function='', ranges='', source='', trial_id=''):
+def _suggest(net, agent, slug, text='', compiler='', flags='', function='', ranges='', source='', trial_id='', review_only=False):
+    if type(review_only) is not bool:
+        raise NetworkError('Choose whether to keep the trial for review with a boolean.')
     if trial_id:
         if not function or any((compiler, flags, ranges, source)):
             raise NetworkError('Give the function and trial_id for a saved trial. Its compiler, flags and C come from the receipt.')
-        return compiler_experiments.suggest_trial(net, agent, slug, function, trial_id, text)
+        return compiler_experiments.suggest_trial(net, agent, slug, function, trial_id, text, review_only=review_only)
+    if review_only:
+        raise NetworkError('Review-only compiler suggestions need an exact trial_id and its function.')
     return net.suggest(agent, slug, text, compiler, flags, function or None, ranges, source)
 
 
@@ -1757,7 +1761,7 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
 
     @tool
     async def suggest(ctx: Context, text: str = "", compiler: str = "", flags: str = "", function: str = "",
-                      ranges: str = "", source: str = "", trial_id: str = "") -> str:
+                      ranges: str = "", source: str = "", trial_id: str = "", review_only: bool = False) -> str:
         """Suggest a change to the project's setup you can't make yourself, for the user to apply: above all a
         different compiler or flags, when C that is right can't match (the code's style says another compiler built
         it). Test it with try_compiler first: a suggestion whose function doesn't match with it is refused. Say what
@@ -1772,9 +1776,10 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
             ranges: when only parts of the game were built with it: "0x10BFD0-0x10CD40, 0x1106C0-0x1107C0"
             source: the C to check it with (default: the function's best attempt)
             trial_id: exact local ROM compiler_experiments receipt. Give function and omit compiler, flags, ranges and source.
+            review_only: keep an exact trial as a pending suggestion even when automatic compiler changes are enabled.
         """
         return await run(ctx, "suggest", text=text, compiler=compiler, flags=flags, function=function, ranges=ranges,
-                         source=source, trial_id=trial_id)
+                         source=source, trial_id=trial_id, review_only=review_only)
 
     @tool
     async def try_compiler(ctx: Context, function: str, compiler: str, flags: str = "", source: str = "") -> str:
