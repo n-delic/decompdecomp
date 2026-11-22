@@ -191,3 +191,28 @@ void f(void)
     chained = [text for text in out if labels.get(text) == 'arm_switch_volatile_chain']
     assert chained and all('extern volatile u16 gAction;' in text and 'switch (state)' in text for text in chained)
     assert 'arm_switch_volatile_chain' in draft_repairs.AGENT_FAMILIES
+
+
+def test_loop_counter_value_split_is_proposed_and_known_to_agents():
+    """A table initialiser's first loop counter, reused after the loop for the loaded count, went 20 -> 0 by splitting it,
+    weighting the count's statements and sinking the next counter's init; drafts and the beam offer the chain."""
+    source = """\
+extern u8 n; extern char t[]; extern u8 a[];
+void f(void) {
+ u32 p,q,i;
+ for (i = 0; i < n; i++) {
+   a[i] = i - 1;
+ }
+ i=n;
+ g=0;
+ h=i-1;
+ i &= 0xFF; p=0;
+ if(i!=0){do{*(u16 *)(t+p)=0;p+=4;}while((s32)p<(u32)(i*4));}
+ q=0; do {a[q]=0xFF;q+=1;}while(q<0x100U);
+}
+"""
+    labels = {}
+    out = draft_repairs.variants(source, 'f', 'mips', labels=labels, limit=None)
+    assert 'loop_counter_value_split' in set(labels.values())
+    assert any('i_loop' in text and 'do{do{i=n;' in text and 'if(i!=0){\n      p=0;' in text for text in out)
+    assert 'loop_counter_value_split' in draft_repairs.AGENT_FAMILIES
