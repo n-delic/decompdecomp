@@ -138,6 +138,7 @@ from decomprepair import (
     symbol_width_repairs,
     target_string_repairs,
     targeted_switch_labels,
+    trig_axis_reuse,
     uncached_read_repairs,
 )
 from decomprepair import (
@@ -284,6 +285,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     result += measured_lifetime_shapes.variants(source, name, header, toolchain, rows)
     result += measured_scalar_updates.variants(source, name, header, toolchain, rows, asm)
     if toolchain == 'gcc-2.7.2-kmc':
+        result += trig_axis_reuse.variants(source, name, rows, header=header)
         result += smoothing_call_before_read.variants(source, name, rows, header=header)
         result += balanced_signed_selector_increment.variants(source, name, rows, header=header)
         result += balanced_float_predicate_return.variants(source, name, rows, header=header)
