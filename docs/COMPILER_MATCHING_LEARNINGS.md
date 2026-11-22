@@ -13107,3 +13107,13 @@ asm and cc1 dumps (`-dl -dg`, `-dd`):
 Failed: volatile casts on the adjacent read, nested/continue forms, `register`/`const` on `one` (const: worse).
 Permuter gap: no family chooses between pointer-variable and direct-cast spellings of the same global, or
 moves a `++` across a branch to change a delay slot.
+
+### Separate a guarded record read and a color clamp into their own locals (KMC GCC 2.7.2)
+
+With `-G0 -mips3 -mgp32 -mfp32 -O2`, a retail N64 draft used the same
+pointer local for its initial guarded read and later field stores. Give
+the first read its own local and require each later field access to
+follow its own reload. The linked score went from 85 to 65. A second
+rewrite stages the signed color clamp in a separate local before packing
+the byte, taking the score to 55. The dispatcher reproduced both steps.
+The function remains unmatched.
