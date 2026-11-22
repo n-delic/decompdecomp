@@ -14585,3 +14585,15 @@ bound, both record offsets and any other entry to the erased label.
 
 
 In one N64 global-swap wrapper built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a draft passed an inferred callback pointer as its own argument. The target loaded that pointer into `$a0` and used `jalr $a0` with a `nop` delay slot. Treating the callback as a no-argument function reproduced the linked target exactly (score 265 to 0). The target also leaves the pointer in the first argument register, so it does not prove the original C prototype; the rule offers a judged hypothesis only after verifying the pointer relocation. Evidence: one saved example and synthetic generation and routing tests.
+
+### Stage the first field read of a float difference
+
+In a private N64 function built with GCC 2.7.2 KMC and
+`-G0 -mips3 -mgp32 -mfp32 -O2`, the target loaded the two record
+fields in the same order as their operands in the float subtraction.
+The draft had captured the second field before reading the first.
+Staging the first field before that assignment retained the original
+arithmetic and recovered both load instructions. The exact linked
+score moved from 9,965 to 9,945. Reusing the difference result local
+for the field instead scored 9,955. Synthetic tests require the
+measured operand and offset swap and both ordinary field reads.

@@ -9,6 +9,7 @@ from decomprepair import (
     counted_switch_advance,
     direct_mapped_address,
     field_snapshot_copies,
+    float_delta_load_order,
     float_intermediate_repairs,
     float_matrix_identity,
     global_pointer_local_repairs,
@@ -266,6 +267,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     result += measured_lifetime_shapes.variants(source, name, header, toolchain, rows)
     result += measured_scalar_updates.variants(source, name, header, toolchain, rows, asm)
     if toolchain == 'gcc-2.7.2-kmc':
+        result += float_delta_load_order.variants(source, name, rows, header=header)
         result += counted_switch_advance.variants(source, name, rows, header=header)
         result += oscillator_phase_hold.variants(source, name, rows, header=header)
         result += halfword_before_float_store.variants(source, name, rows, header=header)
