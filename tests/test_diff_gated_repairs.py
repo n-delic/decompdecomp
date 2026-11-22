@@ -2430,3 +2430,14 @@ def test_branch_byte_tail_routes_to_kmc(monkeypatch):
     assert 'byte_tail_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'byte_tail_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
     assert 'byte_tail_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-7.1', rows, ''))
+
+
+def test_packed_quad_routes_to_kmc_with_abi_evidence(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'nop', 'nop')]
+    monkeypatch.setattr(diff_gated_repairs.measured_packed_quad, 'variants',
+                        lambda text, name, header, diff, flags, big: [('packed_quad_fixture', text)] if big else [])
+    assert 'packed_quad_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, '', big_endian=True))
+    assert 'packed_quad_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, '', big_endian=False))
+    assert 'packed_quad_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, '', big_endian=True))

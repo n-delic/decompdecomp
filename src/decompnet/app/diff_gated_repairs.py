@@ -166,6 +166,7 @@ from decomprepair import (
     measured_narrow_use,
     measured_nibble_tables,
     measured_null_iteration_store,
+    measured_packed_quad,
     measured_packing_stage,
     measured_parameter_clock_load,
     measured_pointer_displacement,
@@ -554,6 +555,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_saved_pointer_copy.variants(source, name, header, rows)
         result += measured_forward_entry_pointer.variants(source, name, header, rows, asm)
         result += measured_frameless_padding.variants(source, name, header, rows)
+        result += measured_packed_quad.variants(source, name, header, rows, flags, big_endian)
         result += measured_record_pointer_update.variants(source, name, header, rows)
         result += measured_record_ramp.variants(source, name, header, rows)
         result += measured_region_search.variants(source, name, header, rows)
