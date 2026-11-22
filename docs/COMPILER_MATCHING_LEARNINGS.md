@@ -15830,3 +15830,6 @@ uninitialized values. A new capture local scored 2,425, and
 sharing the gain local with the capture shifted the final table.
 The trial checks liveness and reaching definitions before
 reusing a snapshot local.
+### KMC GCC 2.7.2 byte normalization fallback
+
+A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` normalized a byte in a range and returned a replacement for one exceptional byte. Its machine draft used integer masks and a shared result local. Expressing the masks as byte conversions, retaining the fallback byte in a `u8` local and returning directly changed the diff score from 240 to an exact linked match; changing only the range conversion and byte local scored 135. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the measured instruction sequence and complete source shape.
