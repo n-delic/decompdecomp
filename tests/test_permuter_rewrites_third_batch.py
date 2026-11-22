@@ -153,3 +153,22 @@ def test_braced_early_return_reaches_guard_inversion():
     labels = {}
     texts = draft_repairs.variants(source, 'f', 'mips', '', FLAGS, labels, limit=None, header=HEADER)
     assert any(labels.get(text) == 'guard_inversion' and 'if (p != NULL)' in text for text in texts)
+
+
+def test_mixed_call_arity_repair_reaches_draft_search():
+    source = '''extern void *state;
+int g();
+void f(int value) {
+    int saved = g(1);
+    g(saved, state);
+}'''
+    asm = '''addiu $a0, $zero, 1
+jal g
+nop
+move $a0, $s0
+jal g
+nop
+'''
+    labels = {}
+    texts = draft_repairs.variants(source, 'f', 'mips', asm, FLAGS, labels, limit=None, header=HEADER)
+    assert any(labels.get(text) == 'target_call_arity' and 'g(saved);' in text for text in texts)
