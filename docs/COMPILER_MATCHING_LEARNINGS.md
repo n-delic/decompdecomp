@@ -16882,3 +16882,37 @@ match touched.
 
 decomp-repair 0.5.572: `statement_group_order`, `counter_derived_offset_unwrapped`, and `retry_goto_scope` for any
 constant step.
+
+## The voice-table function's last two rows as two greedy steps, and why rectangle arguments aren't a staging lever (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, an N64 game)
+
+Evidence level: two matched functions; before-states rebuilt from the saved matches (no saved match touched), every
+score from the app's own judge (`fast_judge.py`).
+
+719-instruction voice-table function (the 5060 -> 0 entry above), rows 1 and 9 undone in m2c's shapes: the first link
+through a temporary `t = (*p >> 7);` with the record's next two loads between it and `acc = t * X;` (row 1), and the
+accumulator's shift written back into the product after the `if` that picks the table offset (row 9).
+
+| state | score | child | after |
+| --- | --- | --- | --- |
+| row 9 undone | 1280 | `product_shift_hoist` (`s = acc >> 7;` plain, right after the accumulator's last write) | 0 |
+| row 1 undone | 205 | `accumulator_chain` (now across up to four independent statements) | 0 |
+| both undone | 2120 | `product_shift_hoist`, then `accumulator_chain` (greedy, through `draft_repairs.variants`) | 205, then 0 |
+
+- Before 0.5.575 no family moved the 2120 state: `product_shift_stage`'s `do { } while (0)` stage at the product gave
+  1260 from the row-9 state, the plain stage at the product 1280; only the plain stage after the last write is 0 (the
+  shift is then ahead of the loads between in the first scheduler's order). `accumulator_chain` required the
+  temporary and its product to be adjacent.
+- In the matched source the block's load order doesn't matter (five reorders all 0), so `statement_group_order` is not
+  what this function needed once rows 1 and 9 are right. The 1375 state of the earlier library descent was not rebuilt
+  exactly (it came from a search, not an edit list); this is the same two rows' gap.
+
+318-instruction display-list function: staging one rectangle's three non-constant `FILLRECT` arguments as locals before
+the macro, in each of the six orders, scores 6408-8458 (`u32` locals) and 10608-13008 (`s32`) against 0 inline; the
+target computes them inside the macro's expression, so an argument-staging family would only move away from it. The
+~190-row stall of the earlier entry came from a hand-cleaned draft that isn't stored; the saved best before the match
+(1825, an agent's source with `volatile` cursors and raw stores) gets nothing from `display_cursor_record`,
+`or_chain_order`, `volatile_global_plain`, the one-shot families or `statement_group_order` (best child 1825). Next step: a
+family that recognises raw `cursor + 8n` stores as the macro's command form directly from that shape.
+
+decomp-repair 0.5.575: `product_shift_hoist`, `accumulator_chain` across statements, `retry_goto_scope` with a shared
+join label, `volatile_state_unwrap` for `volatile struct` and every local struct.
