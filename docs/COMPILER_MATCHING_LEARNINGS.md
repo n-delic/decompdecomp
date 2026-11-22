@@ -13350,6 +13350,23 @@ the same center, loads from one base register, and comparisons of the
 results. It generates a candidate only across local statements that preserve
 the inputs. Evidence is one partial live match and synthetic tests.
 
+### KMC GCC 2.7.2: order three carried vector updates
+
+On a large N64 function, two horizontal updates and one vertical
+update consume the components of an output vector in the target
+order 0, 1, 2. Staging the first update separately from its earlier
+oscillator term got from 16,695 to 16,525. Reordering the independent
+updates to target order then improved the linked score to 15,835
+with `-G0 -mips3 -mgp32 -mfp32 -O2`. Putting the vertical update
+first scored 16,272. Moving the earlier horizontal addition before
+the vector call scored 16,495 or worse in the order trials.
+
+The `vector_component_order` repair applies after staging. It checks
+the three stack offsets, the add or subtract that uses each load,
+and the write back to the same saved register. It moves any leading
+scalar addition along with its accumulator. Evidence is one partial
+match and synthetic checks for aliases, unrelated calls and clobbers.
+
 ### KMC GCC 2.7.2: recover a saved float in a call delay slot
 
 A large N64 draft computed the difference of two float fields, one
