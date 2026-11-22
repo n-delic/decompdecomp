@@ -14929,3 +14929,19 @@ that the two values never need to coexist.
 ### Advance the cursor between big-endian byte reads
 
 In a private N64 stream reader built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the target loaded the high byte, advanced the cursor and then loaded the low byte before writing a halfword and clearing a neighboring field. The draft indexed the bytes in an expression and advanced the returned pointer at the end. Staging the reads through a byte cursor reproduced the linked target exactly (score 385 to 0). The rule requires the measured load sequence, nonoverlapping destination fields and no conflicting function declaration. Evidence: one saved function and synthetic generation and routing tests.
+
+### Stage the scale in the axis that is overwritten after the clamp
+
+In a private N64 function built with GCC 2.7.2 KMC and
+`-G0 -mips3 -mgp32 -mfp32 -O2`, the target kept a sampled float's scale
+in the same saved register as the unscaled input. The candidate used
+a scratch float for the product. Both clamp arms were followed by a
+full overwrite of the axis with the clamped value.
+
+Staging the product in the reloaded axis before reading the previous
+field restored the in-place multiplication and the subtraction's
+operand. The exact linked score moved from 7,540 to 7,530 with all
+three table relocations and no warning. Capturing the product in the
+blend result instead scored 7,540. The extended rule checks both words
+of the float literal, the same receiver and field on each arm, and the
+unconditional reload.
