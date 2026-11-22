@@ -316,3 +316,31 @@ def test_compact_drops_unrelated_redeclarations_for_ido(tmp_path):
     reference = compile_source(cfg, required, source)
     assert reference.ok, reference.log
     assert extract_function(rebuilt.obj, 'entry') == extract_function(reference.obj, 'entry')
+
+
+def test_cpp_replacement_can_try_the_resident_optimization_without_replacing_its_compiler(tmp_path):
+    from decompnet import toolchains
+    from decompnet.app.donor_build import replacement_profiles
+    from decompnet.compiler import compile_source
+    from decompnet.elfobj import extract_function
+    from decompnet.project import compiler_config
+
+    if not toolchains.installed('ido-7.1-ncc'):
+        pytest.skip('needs IDO 7.1 NCC')
+    path = tmp_path / 'replacement.cpp'
+    source = 'extern "C" int entry(int x) { int y = x + 2; return y * 3; }'
+    replacement = {'toolchain': 'ido-7.1-ncc', 'flags': ['-O2', '-G', '0', '-mips2', '-non_shared']}
+    resident = {'toolchain': 'ido-7.1', 'flags': ['-O0', '-G', '8', '-DNON_MATCHING']}
+    declared, alternate = replacement_profiles(path, replacement, resident)
+    assert declared == replacement
+    assert alternate == {'toolchain': 'ido-7.1-ncc', 'flags': ['-O0', '-G', '0', '-mips2', '-non_shared']}
+    expected = replacement | {'flags': ['-O0', *replacement['flags'][1:]]}
+
+    def instruction_bytes(profile):
+        built = compile_source(compiler_config(tmp_path, {'compiler': profile}), '', source)
+        assert built.ok, built.log
+        return extract_function(built.obj, 'entry').code
+
+    assert instruction_bytes(alternate) == instruction_bytes(expected)
+    assert instruction_bytes(alternate) != instruction_bytes(declared)
+    assert replacement_profiles(path, replacement, resident | {'flags': ['-O0', '-O1']}) == [replacement]

@@ -234,6 +234,25 @@ class Settings:
         return {'toolchain': 'ido-' + version, 'flags': flags}
 
 
+def replacement_profiles(path, replacement, resident):
+    """Try the declared replacement profile, then the resident object's optimization."""
+    primary = replacement or resident
+    if not primary or not resident or primary == resident:
+        return [primary]
+    if path.suffix == '.c':
+        return [primary, resident]
+    if not primary['toolchain'].endswith('-ncc'):
+        return [primary]
+
+    optimization = re.compile(r'-O[0-3]')
+    resident_levels = [flag for flag in resident.get('flags', ()) if optimization.fullmatch(flag)]
+    replacement_levels = [flag for flag in primary.get('flags', ()) if optimization.fullmatch(flag)]
+    if len(resident_levels) != 1 or len(replacement_levels) != 1 or resident_levels == replacement_levels:
+        return [primary]
+    flags = [resident_levels[0] if flag == replacement_levels[0] else flag for flag in primary['flags']]
+    return [primary, {**primary, 'flags': flags}]
+
+
 def verify(net, proj, fn, other, donor, names, settings, agent, job, cache, *, replacement=None, adapt=None, compiled_literals=False):
     """Compile in private and retain this exact header and profile only with a fresh byte verdict."""
 
@@ -268,10 +287,7 @@ def verify(net, proj, fn, other, donor, names, settings, agent, job, cache, *, r
         whole_reason = ''
         if replacement is not None:
             path, replacement_settings = replacement
-            profiles = [replacement_settings or settings]
-            if path.suffix == '.c' and settings and settings != profiles[0]:
-                profiles.append(settings)
-            for profile in profiles:
+            for profile in replacement_profiles(path, replacement_settings, settings):
                 if not profile or toolchains.installed(profile['toolchain']) is None or job.stop.is_set():
                     continue
                 trial = {**dict(current), 'config': json.dumps(prepared_evidence.scoped_config(current, fn, profile))}

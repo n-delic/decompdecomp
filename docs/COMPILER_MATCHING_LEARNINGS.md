@@ -1539,6 +1539,21 @@ previous profile and verifier matched those same 23 under a read-only control
 replay, so this sample does not measure a new match-rate gain from recipe
 parsing.
 
+### IDO C++ replacement bodies can use the resident optimization level
+
+A controlled IDO 7.1 NCC replacement with
+`-G 0 -mips2 -non_shared` emits different bytes at `-O0` and `-O2`. A
+resident C object can declare `-O0` while the explicit replacement recipe
+uses the pinned NCC compiler with `-O2`. The retry changes only the
+optimization flag, retaining the replacement compiler and its other flags.
+
+An isolated N64 replay recovered seven exact matches via this fallback.
+These seven pairs failed with the fallback disabled and passed a fresh
+compile and exact verification. Their overlay entries also reproduced the
+original cartridge. Broader exploratory trials
+with other IDO optimization levels saved another ten exact matches.
+Those levels did not follow from this resident-profile rule.
+
 ### IDO 7.1 donor translation units with unrelated redeclarations
 
 A controlled IDO 7.1 `-O2 -G 0` compile rejects two incompatible declarations
