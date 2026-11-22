@@ -124,6 +124,7 @@ from decomprepair import (
     measured_kmc_vector_square,
     measured_kmc_wrappers,
     measured_lifetime_shapes,
+    measured_list_head_insert,
     measured_list_selection,
     measured_masked_halfword_read,
     measured_matrix_products,
@@ -362,6 +363,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_indexed_clear.variants(source, name, header, rows)
         result += measured_global_offset_reuse.variants(source, name, header, rows, asm or '')
         result += measured_list_selection.variants(source, name, header, rows)
+        result += measured_list_head_insert.variants(source, name, header, rows)
         result += measured_be16_cursor.variants(source, name, header, rows)
         result += measured_forwarded_counter.variants(source, name, header, rows, asm or '')
         result += measured_flag_reload.variants(source, name, header, rows)

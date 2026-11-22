@@ -1819,3 +1819,13 @@ def test_byte_clear_base_routes_to_kmc(monkeypatch):
                         lambda text, name, header, diff: [('byte_clear_base_fixture', text)])
     assert 'byte_clear_base_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'byte_clear_base_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_list_head_insert_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_list_head_insert, 'variants',
+                        lambda text, name, header, diff: [('list_head_insert_fixture', text)])
+    assert 'list_head_insert_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'list_head_insert_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
