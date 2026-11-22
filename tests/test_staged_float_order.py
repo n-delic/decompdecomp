@@ -66,3 +66,40 @@ void f(void *p, float x) {
                for family, candidate in options)
     options = proposals(source, 'f', '', 'mips', 'gcc-egcs', rows, '')
     assert not any(family == 'measured_staged_float_order' for family, _ in options)
+
+
+def test_crossed_stack_capture_splits_reads_and_adds_in_the_kmc_repair_lane():
+    source = """
+extern float bias;
+static inline float adjust(float *field, float delta) { return *field + delta; }
+void f(void *p) {
+    struct {
+        volatile float speed;
+    } frame;
+    float x;
+    float first;
+    float second;
+    float third;
+    float fourth;
+    x = 1.0f;
+    frame.speed = 0.0f;
+    second = adjust((float *) (((char *) p) + 0x8), x);
+    first = (float) ((*(float *) (((char *) p) + 0x4)) + bias);
+    fourth = adjust((float *) (((char *) p) + 0x10), x);
+    third = adjust((float *) (((char *) p) + 0xC), frame.speed);
+    *((float *) (((char *) p) + 0x4)) = first;
+    *((float *) (((char *) p) + 0x8)) = second;
+    *((float *) (((char *) p) + 0xC)) = third;
+    *((float *) (((char *) p) + 0x10)) = fourth;
+}
+"""
+    rows = [
+        ('i', 'lwc1 $f6, 0x10($s2)', 'lwc1 $f2, 0x3c($sp)'),
+        ('i', 'lwc1 $f16, 0x3c($sp)', 'lwc1 $f6, 0x10($s2)'),
+        ('i', 'swc1 $f4, 0x4($s2)', 'swc1 $f4, 0x8($s2)'),
+    ]
+    candidates = proposals(source, 'f', '', 'mips', 'gcc-2.7.2-kmc', rows, '')
+    assert any(family == 'measured_staged_float_order'
+               and candidate.index('third = *') < candidate.index('fourth = *')
+               and 'first = (float) (first + bias);' in candidate
+               for family, candidate in candidates)

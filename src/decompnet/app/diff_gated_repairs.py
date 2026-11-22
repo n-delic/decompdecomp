@@ -416,6 +416,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += balanced_selector_zero.variants(source, name, rows, header=header, max_bytes=MAX_SOURCE_BYTES)
         result += phase_projection_holders.variants(source, name, rows, header=header, max_bytes=MAX_SOURCE_BYTES)
         result += scoped_phase_initializer.variants(source, name, rows, header=header, max_bytes=MAX_SOURCE_BYTES)
+        result += scoped_phase_initializer.shared_zero_variants(source, name, rows, header)
         result += balanced_inline_writeback.variants(source, name, rows, header=header, max_bytes=MAX_SOURCE_BYTES)
         result += balanced_reset_copy.variants(source, name, rows, header=header, max_bytes=MAX_SOURCE_BYTES)
         result += balanced_float_predicate_return.variants(source, name, rows, header=header)
