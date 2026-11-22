@@ -446,6 +446,10 @@ class Search(Permuter):
         # a 205-instruction line-segment test (decomp-repair 0.5.584): the final guarded zero return as one labelled return,
         # the later zero returns and the guard-then-return forms jumping to it (20 -> 0 from the saved best, as a chain)
         calls.append((L + 'zero_exit_label_repairs.variants', (source, name)))
+        # a 95-instruction plane routine (decomp-repair 0.5.588): the pointers it only reads made const with the vector
+        # differences written in the products and one kept as a local (480 -> 0 from the saved best, as one child)
+        calls.append((L + 'const_read_inline.variants', (source, name)))
+        calls.append((L + 'const_read_repairs.variants', (source, name)))
         # an 84-instruction N64 initialiser (decomp-repair 0.5.585): the second loop's starts and steps wrapped together,
         # the induction pointer three deep, after the union and reused-offset splits (30 -> 0 from the saved best)
         calls.append((L + 'loop_weight_set_repairs.variants', (source, name)))

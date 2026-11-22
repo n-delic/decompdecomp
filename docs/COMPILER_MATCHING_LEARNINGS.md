@@ -17199,6 +17199,33 @@ branch targets, spill slots and register differences keep their old costs. Match
   reordered states lost (the display-list history went from 10 to 24 "meaning" rows). Charging only instructions the
   other side lacks fixed that.
 
+### KMC GCC 2.7.2: const input vectors, the differences written in the products, one kept local (22 November 2026)
+
+Evidence level: one N64 function (a 95-instruction plane from three points, `f32` vectors, one `jal` to a square
+root), KMC GCC 2.7.2 `-G0 -mips3 -mgp32 -mfp32 -O2`, judged with the isolated judge worker (the app's score) on a
+read-only copy of the project data; a new match, 480 -> 0. The synthetic regression is in
+`tests/test_const_read_inline_wiring.py`, not the game's code. Compiler explanations below are hypotheses read from
+the scheduler dump, not from the compiler's source.
+
+The target's body was already exact in the best source; only the prologue differed: the target loads the first input
+(`lwc1 $f0, 4($a2)`) before `addiu $sp`, interleaves the three `sdc1` saves with the loads, and loads the second
+input's z before the third's. Edit list (score after each, from the saved best 480):
+
+| edit | alone | cumulative | what it changes |
+| --- | --- | --- | --- |
+| input vector pointers `const` (`V3 *p1` -> `const V3 *p1`, all three) | 240 | 240 | loads from read-only memory may be lifted among the prologue's saves (`const_read`; it never fired here because it treated every `p->field` read as a write) |
+| the nine named differences/copies written in the products (`(p2->y - p1->y) * (p3->z - p2->z)`, `p1->x` at the end) | 7323 without `const` | 10 | the loads are expanded where the products are, which sets the first load (`p2->y`, `$f0`) ahead of the saves; without `const` every use reloads, since the stores through `out` may alias a plain `p1` |
+| one difference kept as a local, `f32 dz1 = p2->z - p1->z;` | 10 (kept `dy1`), 280 (`dz2`) | 0 | the order of the second and third input's z loads (`$f2` before `$f8`) |
+
+Failed: reordering the nine declarations (hill climb over legal orders) stopped at 205 (the `p2->y` load stayed
+fourth); `py = ...` assigned inside the first difference was 205-215; swapping the factors of the six products
+(64 combinations) was never better than 10. Only the combination reaches 0: the inlining alone is 7323, the
+`const` alone 240, and the kept local has no effect without them.
+
+The family is decomp-repair `const_read_inline` (0.5.588), wired into the draft repair path, the beam and the Deep
+Permuter's local lane. Its aliasing assumption (the stores through `out` do not change what `p1` reads) is the one
+`const` states; it is a source-level assumption, not proved from the game.
+
 ## A table search as the counted loop that re-reads its field, then two register-level edits (KMC GCC 2.7.2, N64)
 
 Evidence level: one function (a 126-instruction text-measuring routine; matched, judge 0 in the app), each step scored
