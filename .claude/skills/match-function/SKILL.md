@@ -355,7 +355,10 @@ the shape is decided by a compiler pass, not by how you spell the C. Stop writin
    a constant is a CONST_INT in a register or an operand, a variable's `REG_USERVAR_P`), and that is the C you
    must write. The app installs each free compiler's source with it, in the toolchains folder as `<id>-source`
    (`toolchains.source_for("<compiler>")` gives the path, and `compiler_passes` prints it); IDO, Metrowerks, SN's own
-   builds and Visual C++ have none. Don't search the whole filesystem for `sched.c`/`loop.c`/`cse.c`.
+   builds and Visual C++ have none. That one shared folder (macOS `~/Library/Application Support/decompnet/toolchains`,
+   Linux `~/.local/share/decompnet/toolchains`) is the only copy: read it there, read-only. Never install a scratch copy;
+   if a source you need is missing, say so in your report instead. Don't search the whole filesystem for
+   `sched.c`/`loop.c`/`cse.c`.
 3. **Turn the finding into a rewrite.** The pass's rule is the permuter's guide: a family in decomp-repair that
    produces the source shape the rule needs (step 5). Record the rule, not only the spelling, in
    a `docs/learnings/` finding ("jump.c inverts `if (x) goto A; goto B;` unless an insn sits between them" is
