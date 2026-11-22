@@ -173,10 +173,10 @@ def test_maximum_mode_uses_detected_cores_without_multiplying_budget(monkeypatch
     initial=compiler._SLOTS.limit
     log=Log()
     result=deep_permuter.run(net,'game','f',1,11,log,maximum_throughput=True)
-    assert len(paths)==4 and result['tested']==11
+    assert len(paths)==8 and result['tested']==11  # one thread per compile slot
     assert sum(n for _,n,_ in paths)==11
     assert len({id(pool) for _,_,pool in paths})==1
-    assert paths[0][2].count==4 and paths[0][2].maximum
+    assert paths[0][2].count==8 and paths[0][2].maximum  # two compile slots per core
     assert compiler._SLOTS.limit==initial and log.compile_pool is None
 
 

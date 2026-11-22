@@ -111,13 +111,14 @@ def test_bookkeeping_flushes_at_size_and_time_boundaries(monkeypatch):
     calls = counted_transactions(net.store)
     with trial_bookkeeping.scope():
         # Each family and origin has a distinct counter. Repeating a key would merge its statements.
-        for index in range(32):
+        limit = trial_bookkeeping.Batch().max_statements
+        for index in range(limit // 2):
             adaptive_repairs.record(net, 'profile', 'focus', f'family-{index}', 40, None, origin=f'origin-{index}')
-        assert len(calls) == 1  # 64 distinct counter updates
-        clock[0] = .6
+        assert len(calls) == 1  # as many distinct counter updates as a batch holds
+        clock[0] = trial_bookkeeping.Batch().seconds + .1
         adaptive_repairs.record(net, 'profile', 'focus', 'family-0', 40, None)
         assert len(calls) == 2
-    assert net.store.one("SELECT sum(attempted) AS attempted FROM repair_policy")['attempted'] == 33
+    assert net.store.one("SELECT sum(attempted) AS attempted FROM repair_policy")['attempted'] == limit // 2 + 1
 
 
 def test_progress_is_throttled_but_winners_phase_changes_and_final_are_immediate(monkeypatch):
@@ -182,9 +183,10 @@ def test_buffered_misses_still_skip_duplicate_imported_candidates(monkeypatch):
 def test_large_bookkeeping_payload_flushes_without_an_unbounded_queue(monkeypatch):
     net = FakeNet();monkeypatch.setattr(trial_bookkeeping.time, 'monotonic', lambda: 0.)
     with trial_bookkeeping.scope():
-        trial_bookkeeping.submit(net.store, [('INSERT OR REPLACE INTO settings VALUES(?,?)', ('large', 'x'*(1024*1024)))])
+        size = trial_bookkeeping.current().max_bytes
+        trial_bookkeeping.submit(net.store, [('INSERT OR REPLACE INTO settings VALUES(?,?)', ('large', 'x'*size))])
         assert not trial_bookkeeping.current().pending and trial_bookkeeping.current().bytes == 0
-        assert len(net.store.one("SELECT value FROM settings WHERE key='large'")['value']) == 1024*1024
+        assert len(net.store.one("SELECT value FROM settings WHERE key='large'")['value']) == size
 
 
 def test_failed_batch_rolls_back_without_masking_the_original_failure(monkeypatch):

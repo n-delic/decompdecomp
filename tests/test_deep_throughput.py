@@ -14,7 +14,8 @@ from decompnet.network import NetworkError
 
 def test_cpu_defaults_and_validation(monkeypatch):
     monkeypatch.setattr(deep_throughput.os, 'cpu_count', lambda:10)
-    assert deep_throughput.width(True,0)==10
+    assert deep_throughput.width(True,0)==20  # two compiles in flight per core: the slots were 15% busy at one
+    assert deep_throughput.lanes(True)==15  # one and a half functions per core
     assert deep_throughput.width(True,7)==7
     monkeypatch.setattr(deep_throughput.compiler, 'concurrency_limit', lambda:17)
     assert deep_throughput.width(False,0)==17  # balanced uses the machine, not a fixed 4

@@ -57,4 +57,12 @@ def test_lookahead_shrinks_on_unused_work_and_grows_on_consumed_work(monkeypatch
         window.ensure(['new','c','d'])
         for ticket in search._ahead.values():ticket.counted=True
         window.ensure(['next','c','d'])
-    assert widths==[2,1,2]
+    assert widths==[3,2,3]  # starts at three, shrinks on unused work, grows on consumed work
+    assert deep_lookahead.MAXIMUM_DEPTH==8
+    widths.clear()
+    search.compile_pool=SimpleNamespace(count=12)
+    with deep_lookahead.Window(search,None,None,None,False) as window:
+        for _ in range(12):
+            window.ensure([f's{len(widths)}-{i}' for i in range(10)])
+            for ticket in search._ahead.values():ticket.counted=True
+    assert widths==[3,4,5,6,7,8,8,8,8,8,8,8]  # grows while every ticket is used, never past eight

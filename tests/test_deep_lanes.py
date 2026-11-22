@@ -92,8 +92,8 @@ def test_lanes_are_off_when_disabled(monkeypatch):
 
 def test_each_lane_gets_its_share_of_the_machine(net, monkeypatch):
     monkeypatch.setattr(deep_lanes.os, 'cpu_count', lambda: 18)
-    assert deep_lanes.Lanes(net, 24, 256).slots == 2  # not 256 // 24 = 10 compile threads each
-    assert deep_lanes.Lanes(net, 4, 256).slots == 9
+    assert deep_lanes.Lanes(net, 24, 256).slots == 4  # not 256 // 24 = 10 compile threads each
+    assert deep_lanes.Lanes(net, 4, 256).slots == 18
     assert deep_lanes.Lanes(net, 4, 8).slots == 2  # a smaller configured total still wins
 
 
@@ -178,3 +178,10 @@ def test_remote_metrics_are_forwarded_and_gauges_clear_when_turn_ends(net, monke
     assert [v['active_compiles'] for v in snapshots] == [2, 0]
     assert [v['compiler_waiting_search'] for v in snapshots] == [1, 0]
     assert [v['rank_literals_cpu_seconds'] for v in snapshots] == [.001, .001]
+
+
+def test_lanes_share_four_compile_slots_per_core_unless_a_number_is_set(net, monkeypatch):
+    monkeypatch.setattr(deep_lanes.os, 'cpu_count', lambda: 18)
+    assert deep_lanes.Lanes(net, 12, 0, maximum=True).slots == 6  # automatic: the lane window can reach its depth
+    assert deep_lanes.Lanes(net, 27, 0, maximum=True).slots == 4
+    assert deep_lanes.Lanes(net, 12, 24, maximum=True).slots == 2  # a number the user chose is split between lanes

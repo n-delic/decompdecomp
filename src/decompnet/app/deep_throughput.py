@@ -20,7 +20,15 @@ def options(maximum=False, slots=0):
 def width(maximum, slots):
     # Balanced searches use the shared compiler limit (cores less one, kept for interactive compiles), like a
     # sweep already did. A fixed 4 left an 18-core machine three-quarters idle on a single function's search.
-    return slots or (min(256,max(1, os.cpu_count() or 1)) if maximum else compiler.concurrency_limit())
+    return slots or (min(256, 2*max(1, os.cpu_count() or 1)) if maximum else compiler.concurrency_limit())
+
+
+def lanes(maximum):
+    """How many functions a maximum-throughput pass searches at once when nothing is set: a lane spends most of its
+    time waiting for its compiles (a 12-lane search used 30-60% of a core per lane on 18 cores), so about one and a
+    half per core keep the machine busy. Each lane is an interpreter of its own: this uses memory, not the lock."""
+    cores = max(1, os.cpu_count() or 1)
+    return -(-3*cores//2) if maximum else compiler.concurrency_limit()
 
 
 LIVE_COMPILER_COUNTERS = ('executing', 'waiting_search', 'waiting_background', 'waiting_shared')

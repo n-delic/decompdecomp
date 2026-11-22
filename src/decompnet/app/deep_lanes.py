@@ -100,7 +100,9 @@ class Lanes:
         # Each lane's share of the machine: compiles mostly wait on the compiler, so about two in flight per core
         # keep every core busy. An equal slice of a large configured slot count (256 over 24 lanes) gave each lane
         # 10 compile threads and as many helper processes, hundreds in all on 18 cores, mostly idle.
-        share = max(2, -(-2 * (os.cpu_count() or 1) // self.count))
+        # (Measured with two per core and a lookahead of two to four: the slots were 15% busy, the lanes waiting
+        # on each other's candidates; four per core lets a lane's window reach eight.)
+        share = max(4, -(-4 * (os.cpu_count() or 1) // self.count))
         self.slots = max(2, min(256, share, slots // self.count if slots else share))
         self.idle = queue.Queue()
         self.started = 0

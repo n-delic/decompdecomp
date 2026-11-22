@@ -6,12 +6,14 @@ import logging
 import os
 import shutil
 import threading
+import time
 from collections import OrderedDict
 from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from pathlib import Path
 
 _current = ContextVar('compile_session', default=None)
+RECHECK_SECONDS = 0.5  # how long a session trusts the headers it just read and staged (see Session.prepare)
 
 
 def current():
@@ -39,13 +41,24 @@ class Session:
         self.comparisons = OrderedDict()
         self.comparison_sizes = {}
         self.comparison_bytes = 0
+        self.header_check = None  # (include dirs, when read, their files, (the set staged, when))
+        self.staged_work = None
 
     def prepare(self, cfg, header):
         from . import compile_headers
         from .compiler import _workspace
-        # Read exact bytes each time, including same-size edits with restored mtimes.
-        files=compile_headers.read(cfg.include_dirs)
-        if files is None:return None
+        # Exact bytes (a same-size edit with the modification time restored included) are re-read at most every
+        # RECHECK_SECONDS: a search compiles hundreds of candidates a second, and walking and stat-ing every header
+        # of a game for each was a tenth of a lane's CPU. A header edited meanwhile reaches the next window of
+        # candidates a moment later; every result is keyed by the exact bytes it was built with, so none is stale.
+        now=time.monotonic()
+        seen=self.header_check
+        if seen is not None and seen[0]==cfg.include_dirs and now-seen[1]<RECHECK_SECONDS:base=seen[2]
+        else:
+            base=compile_headers.read(cfg.include_dirs)
+            if base is None:return None
+            seen=self.header_check=(cfg.include_dirs,now,base,None)
+        files=dict(base)
         files['context.h']=header.encode()
         if len({name.casefold() for name in files})!=len(files):return None
         if self.work is None:
@@ -56,7 +69,13 @@ class Session:
             if path.name != 'include':
                 if path.is_dir() and not path.is_symlink():shutil.rmtree(path)
                 else:path.unlink()
-        self.staged_files=compile_headers.stage(work/'include',files,getattr(self,'staged_files',None))
+        staged=self.header_check[3]
+        if staged is not None and staged[0]==files and now-staged[1]<RECHECK_SECONDS and self.staged_work is work:
+            pass  # (this very set was staged moments ago; the compiler writes only beside the include folder)
+        else:
+            self.staged_files=compile_headers.stage(work/'include',files,getattr(self,'staged_files',None))
+            self.staged_work=work
+            self.header_check=self.header_check[:3]+((files,now),)
         if files!=self.headers:
             self.staged=[(name.encode(),data) for name,data in sorted(files.items())]
             self.headers=files

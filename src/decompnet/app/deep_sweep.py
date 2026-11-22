@@ -592,7 +592,7 @@ class Sweeps:
                     if twin_trials:
                         log(f'Tried matched twins for {twin_trials} functions without scored C; {twin_matches} matched.')
         maximum = getattr(log.compile_pool, 'maximum', False)
-        count = deep_throughput.width(True,0) if maximum and not threads else workers.clamp(threads) if threads != 1 else 1
+        count = deep_throughput.lanes(True) if maximum and not threads else workers.clamp(threads) if threads != 1 else 1
         stats = {'visited': twin_trials + recovered_matches, 'tested': twin_trials + recovery_trials, 'matched': twin_matches + recovered_matches, 'rotated':0, 'activity': Activity(log)}
         visited_turns = set()
         lock = threading.Lock()  # (the counters are shared by every thread's function)
@@ -605,7 +605,9 @@ class Sweeps:
         # host confirms matches through this engine's room connection).
         from . import deep_lanes
         compile_pool = getattr(log, 'compile_pool', None)
-        log.deep_lanes = (deep_lanes.Lanes(self.net, count, getattr(compile_pool, 'count', 0), maximum=maximum)
+        # A maximum pass with no slot count set sizes each lane itself (deep_lanes.Lanes); a number the user chose is split.
+        lane_slots = int(self.config(slug).get('compile_slots', 0) or 0) if maximum else getattr(compile_pool, 'count', 0)
+        log.deep_lanes = (deep_lanes.Lanes(self.net, count, lane_slots, maximum=maximum)
                           if count > 1 and slug not in self.net.links and deep_lanes.enabled() else None)
         if log.deep_lanes is not None:
             compile_pool.metrics.remote_slots = log.deep_lanes.count * log.deep_lanes.slots
