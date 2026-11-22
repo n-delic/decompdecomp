@@ -16297,9 +16297,15 @@ controlled regression covers both joins and confirms that a branch-local split r
 ### KMC GCC 2.7.2 field-store pointer lifetimes
 
 A saved MIPS setup function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` loaded a global pointer, stored fields through it and passed it to calls. Keeping the measured pointer for the later store and call changed the generated draft's linked difference score from 300 to 20; also retaining the earlier measured pointer for its store and call produced an exact match. This is one saved example, not a controlled cross-compiler experiment. The candidates check the relevant load/store/call instructions and offer the two lifetime changes separately and together for the judge to evaluate.
+
 A follow-up on the same N64 function reused an earlier unsigned local for the first packed-color phase,
 then moved the shade sum into its guard: the exact standalone judge measured 15 → 25 → 10, and the running
 app recorded 10. The two remaining differences use `$a2` instead of `$a0` for an earlier load and shift.
 `guard_temp_sink` now emits the second step for an attached brace, placing the assignment after safe C89
 body declarations. On the score-25 seed its generated child measured 10 in the exact standalone judge.
 This is one function's measurement, not a controlled compiler regression.
+
+
+### KMC GCC 2.7.2 shared slot and forwarded call argument
+
+A saved MIPS setup function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` stored two pointers into adjacent globals before a conditional call. Its generated draft omitted the incoming first call argument. Restoring that argument, holding the shared slot address in a local, and making the conditional store volatile to reproduce its position before the call changed the draft's linked difference score from 845 to an exact match. This is one saved example, not a controlled cross-compiler experiment. The candidate requires the complete source pattern, matching resolved slot addresses, the 32-bit ABI and the target's call and delay-slot instructions.
