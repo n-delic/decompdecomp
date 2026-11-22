@@ -3,42 +3,116 @@
 
 Parallel agents kept stepping on each other (a shared venv re-synced under a run, a claim that lapsed during a long
 probe, two agents claiming one function). This makes every session self-contained under /tmp/dd-<holder>/ and
-undoes all of it in one step.
+undoes all of it in one step. Claims go through the app's MCP gateway on a project-scoped connection of their own (the
+skill's rule: never through the window API); the window API is used only to create and revoke that connection and to
+read a function's status.
 
     setup.py SLUG [FUNC] [--holder NAME] [--home DIR]   build the session, claim FUNC (a random open function when
                                                         none is given: asked for exactly once), start the renewal
-    setup.py stop HOLDER                                release the claim, stop the renewal, remove /tmp/dd-HOLDER/
+    setup.py stop HOLDER                                stop the renewal, revoke the connection (that frees its
+                                                        claim, even with no compile yet), remove /tmp/dd-HOLDER/
 
 What it makes in /tmp/dd-HOLDER/:
     repo/              a git worktree (detached) at the latest origin/main; `git switch -c <type>/<name>` there
     venv/              a private environment (UV_PROJECT_ENVIRONMENT), so `uv sync` never touches anyone else's
-    connection.json    home, port, slug, holder, function, paths (no secret: judge.py reads it from the app's home)
+    connection.json    mode 0600: the project-scoped MCP connection (url, bearer token, ids), slug, function, paths.
+                       The token is a secret: never print it. A client reads it from here, e.g.
+                       claude mcp add --transport http dd-HOLDER URL --header "Authorization: Bearer $(jq -r .token connection.json)"
     renew.pid, renew.log   the background process that renews the claim every 5 minutes until the function matches
-It prints the environment to use. Run `stop` from anywhere outside that folder when the work is done; it works from
-the primary checkout too because it only ever *adds* a worktree there (never pulls, checks out or syncs).
+It prints the environment to use. Release with notes through MCP (`release_function`) first when you learned something;
+`stop` frees whatever is left. Run `stop` from outside that folder; it works from the primary checkout too because it only
+ever *adds* a worktree there (never pulls, checks out or syncs).
 """
 import argparse
 import json
 import os
+import re
 import secrets
 import shutil
 import signal
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import judge  # noqa: E402  (the claim and release calls, and the app's connection file)
+import judge  # noqa: E402  (the app's connection file, and its window API for creating a connection)
 
 RENEW_SECONDS = 300  # a claim lapses after about ten minutes; renewing at half that leaves room for one miss
 HOLDER_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
 HOLDER_MAX = 40
 TMP = Path(os.environ.get("DD_SESSIONS_DIR", "/tmp"))
+STILL_RUNNING = "still running"  # the gateway's answer while the app works: repeat the identical call
+STILL_RUNNING_RETRIES = 60
+CLAIMED = re.compile(r"^## CLAIMED: [^/\s]+/(\S+)", re.M)
+SUPPORTED_MCP_VERSION = "2025-06-18"
+
+
+class McpError(Exception):
+    pass
+
+
+class Gateway:
+    """A minimal MCP client for the app's gateway: JSON-RPC over HTTP, one bearer token, a fresh request id each call."""
+
+    def __init__(self, url, token):
+        self.url, self.token, self.next_id = url, token, 1
+
+    def rpc(self, method, params=None, notification=False, timeout=120):
+        body = {"jsonrpc": "2.0", "method": method, "params": params or {}}
+        if not notification:
+            body["id"], self.next_id = self.next_id, self.next_id + 1
+        request = urllib.request.Request(self.url, data=json.dumps(body).encode(), method="POST", headers={
+            "Authorization": f"Bearer {self.token}", "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream"})
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as reply:
+                raw, kind = reply.read().decode(), reply.headers.get("Content-Type", "")
+        except urllib.error.HTTPError as error:
+            raise McpError(f"{method}: HTTP {error.code} {error.read().decode()[:300]}") from None
+        except OSError as error:
+            raise McpError(f"{method}: the gateway isn't answering ({error})") from None
+        if notification or not raw.strip():
+            return {}
+        if "event-stream" in kind:
+            raw = next((line[5:].strip() for line in raw.splitlines() if line.startswith("data:")), "{}")
+        message = json.loads(raw)
+        if "error" in message:
+            raise McpError(f"{method}: {message['error'].get('message') or message['error']}")
+        return message.get("result") or {}
+
+    def start(self):
+        self.rpc("initialize", {"protocolVersion": SUPPORTED_MCP_VERSION, "capabilities": {},
+                                "clientInfo": {"name": "match-function-setup", "version": "1"}})
+        self.rpc("notifications/initialized", notification=True)
+
+    def call(self, tool, arguments):
+        """The tool's text. A "still running" answer means repeat the same call (it never runs twice); a tool error raises."""
+        for _ in range(STILL_RUNNING_RETRIES):
+            result = self.rpc("tools/call", {"name": tool, "arguments": arguments})
+            text = "\n".join(part.get("text", "") for part in result.get("content", []))
+            if result.get("isError"):
+                raise McpError(f"{tool}: {text[:500]}")
+            if STILL_RUNNING in text.lower() and "repeat" in text.lower():
+                time.sleep(1)
+                continue
+            return text
+        raise McpError(f"{tool} was still running after {STILL_RUNNING_RETRIES} repeats; check the app")
+
+
+def claim(gateway, function=""):
+    """Claim FUNC by name (never swapped for another), or a random open function when none is named: one call."""
+    text = gateway.call("claim_function", {"function": function, "fallback": False} if function else {"strategy": "random"})
+    found = CLAIMED.search(text)
+    if not found:
+        raise McpError(f"claim_function didn't claim anything: {text[:400]}")
+    return found[1]
 
 
 def holder_name(wanted=None):
-    """A holder the app accepts (judge.py: up to 40 of [A-Za-z0-9._-]); a fresh `claude-xxxxxx` when none is given."""
+    """A holder label for the folder and the log (up to 40 of [A-Za-z0-9._-]); a fresh `claude-xxxxxx` when none is given."""
     name = wanted or "claude-" + secrets.token_hex(3)
     if not name or len(name) > HOLDER_MAX or set(name) - HOLDER_CHARS:
         sys.exit(f"holder {name!r}: use up to {HOLDER_MAX} letters, digits, '.', '_' or '-'")
@@ -75,6 +149,27 @@ def write_connection(root, data):
     path.chmod(0o600)
 
 
+def gateway_url(home):
+    """The Rust gateway's MCP address: the port the app keeps in its data home (the app's own address is not for helpers)."""
+    port_file = Path(home or "").expanduser() / ".decomp" / "mcp-gateway.port"
+    if not home or not port_file.exists():
+        sys.exit("the app's MCP gateway isn't running (no .decomp/mcp-gateway.port in its data home): start it from the app "
+                 "and try again; read-only work can go on meanwhile")
+    return f"http://127.0.0.1:{port_file.read_text().strip()}/mcp"
+
+
+def create_connection(app, slug):
+    """A project-scoped MCP connection through the app's local configuration endpoint (the one use of the window API)."""
+    reply = app.call("/api/manual-mcp", {"action": "create", "slug": slug})
+    if "token" not in reply:
+        sys.exit(f"the app wouldn't make a connection for {slug!r}: {reply.get('error') or reply}")
+    return reply
+
+
+def revoke_connection(app, connection_id):
+    return app.call("/api/manual-mcp", {"action": "revoke", "id": connection_id})
+
+
 def start_renewal(root, interval):
     """Detached, so it outlives this command; its pid file is what `stop` (and the loop itself) goes by."""
     log = open(root / "renew.log", "a")
@@ -85,21 +180,23 @@ def start_renewal(root, interval):
 
 
 def renew_loop(root, interval):
-    """Claim the same function again every `interval` seconds (that is how a claim is renewed), until it matches,
-    the session folder is removed, or this process is told to stop."""
+    """Claim the same function again every `interval` seconds (an own claim claimed again is renewed), until it
+    matches, the session folder is removed, or this process is told to stop. Errors are logged and retried."""
     root = Path(root)
     info = json.loads((root / "connection.json").read_text())
-    app = judge.App(info["home"], info["holder"])
+    app = judge.App(info["home"])
+    gateway = Gateway(info["gateway_url"], info["token"])
     stop = []
     signal.signal(signal.SIGTERM, lambda *_: stop.append(1))
     while not stop and (root / "renew.pid").exists():
-        state = app.function(info["slug"], info["function"])
-        if state.get("status") == "matched":
-            print(f"{info['function']} matched; the claim needs no renewing", flush=True)
-            break
-        result = app.claim(info["slug"], info["function"])
-        print(time.strftime("%H:%M:%S"), "renewed" if result.get("name") else f"not renewed: {result.get('error') or result}",
-              flush=True)
+        try:
+            if app.function(info["slug"], info["function"]).get("status") == "matched":
+                print(f"{info['function']} matched; the claim needs no renewing", flush=True)
+                break
+            claim(gateway, info["function"])
+            print(time.strftime("%H:%M:%S"), "renewed", flush=True)
+        except (McpError, SystemExit) as error:
+            print(time.strftime("%H:%M:%S"), f"not renewed: {error}", flush=True)
         for _ in range(int(interval)):  # short sleeps so a stop is prompt
             if stop or not (root / "renew.pid").exists():
                 break
@@ -117,7 +214,7 @@ def alive(pid):
 
 
 def stop_session(holder, remote_ok=True):
-    """Everything `start` made, undone: renewal killed, claim released, worktree and folder removed."""
+    """Everything `start` made, undone: renewal killed, connection revoked (its claim freed), worktree and folder removed."""
     root = session_dir(holder)
     if not root.is_dir():
         sys.exit(f"no session folder {root}")
@@ -131,18 +228,18 @@ def stop_session(holder, remote_ok=True):
                 os.kill(pid, signal.SIGTERM)
             except OSError:
                 pass
-    released = None
-    if remote_ok and info.get("function"):
+    revoked = None
+    if remote_ok and info.get("connection_id") is not None:
         try:
-            released = judge.App(info["home"], info["holder"]).release(info["slug"], info["function"])
-        except SystemExit as error:  # the app is gone: nothing to release to
-            released = {"error": str(error)}
+            revoked = revoke_connection(judge.App(info["home"]), info["connection_id"])
+        except SystemExit as error:  # the app is gone: nothing to revoke
+            revoked = {"error": str(error)}
     primary = info.get("primary")
     if primary and (root / "repo").exists():
         subprocess.run(["git", "-C", primary, "worktree", "remove", "--force", str(root / "repo")], capture_output=True)
         subprocess.run(["git", "-C", primary, "worktree", "prune"], capture_output=True)
     shutil.rmtree(root, ignore_errors=True)
-    print(f"stopped {holder}: claim release {released}; removed {root}" if released is not None
+    print(f"stopped {holder}: connection revoke {revoked}; removed {root}" if revoked is not None
           else f"stopped {holder}; removed {root}", flush=True)
     return 0
 
@@ -152,32 +249,38 @@ def start(args):
     root = session_dir(holder)
     if root.exists():
         sys.exit(f"{root} exists: pick another --holder, or `setup.py stop {holder}` first")
-    app = judge.App(args.home, holder)  # fails early, before anything is built, when no app is running
+    home = str(Path(args.home).expanduser()) if args.home else next(
+        (str(Path(h).expanduser()) for h in judge.HOMES if (Path(h).expanduser() / ".decomp" / "server.json").exists()), "")
+    app = judge.App(home or None)  # fails early, before anything is built, when no app is running
+    url = gateway_url(home)
     repo = Path(args.repo) if args.repo else checkout_of(__file__)
     root.mkdir(parents=True)
     root.chmod(0o700)
-    info = {"holder": holder, "slug": args.slug, "function": args.function or "", "home": args.home or "",
-            "port": app.c["port"], "primary": str(repo), "repo": str(root / "repo"),
+    info = {"holder": holder, "slug": args.slug, "function": args.function or "", "home": home,
+            "port": app.c["port"], "gateway_url": url, "primary": str(repo), "repo": str(root / "repo"),
             "venv": str(root / "venv"), "python": str(root / "venv" / "bin" / "python")}
     try:
         make_worktree(repo, root)
         if not args.no_sync:
             make_venv(root, root / "sync.log")
+        connection = create_connection(app, args.slug)
+        info.update(connection_id=connection["id"], connection_name=connection["name"], token=connection["token"])
+        write_connection(root, info)  # at once: a failure below must still be able to revoke it
         # Claimed last so the claim's ten minutes are not spent on the build; exactly one claim call is made.
-        result = app.claim(args.slug, args.function or "")
-        if "name" not in result:
-            raise SystemExit(f"no claim: {result.get('error') or result}")
-        info["function"] = result["name"]
+        gateway = Gateway(url, connection["token"])
+        gateway.start()
+        info["function"] = claim(gateway, args.function or "")
         write_connection(root, info)
         info["renew_pid"] = start_renewal(root, args.interval)
     except BaseException as error:
-        info_text = f"setup failed ({error}); removing {root}"
+        message = f"setup failed ({error}); removing {root}"
         write_connection(root, info)
-        stop_session(holder, remote_ok=False)
-        sys.exit(info_text)
+        stop_session(holder)
+        sys.exit(message)
     print(f"holder   {holder}\nfunction {info['function']}\nworktree {root / 'repo'}\nvenv     {root / 'venv'}")
     print(f"export UV_PROJECT_ENVIRONMENT={root / 'venv'}")
-    print(f"python   {info['python']}   (judge: {Path(__file__).parent}/judge.py --holder {holder} ...)")
+    print(f"mcp      {url} (connection {info['connection_name']}, scoped to {args.slug}; token in {root / 'connection.json'}, mode 0600)")
+    print(f"python   {info['python']}   (fast_judge.py, passes.py and prove_chain.py: {Path(__file__).parent})")
     print(f"renewal  pid {info['renew_pid']} (every {args.interval // 60} min); end with: setup.py stop {holder}")
     return 0
 
