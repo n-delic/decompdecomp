@@ -61,9 +61,10 @@ def _callee_rows(store, project_id, names, max_source_chars=None):
                      'AND name IN (SELECT value FROM json_each(?))'+bound+' ORDER BY name',*args)
 
 
-def callees(net, proj, fn, source, max_source_chars=None):
+def callees(net, proj, fn, source, max_source_chars=None, *, names=None):
     """Only referenced matched helpers can supply new signature/write-footprint evidence."""
-    return _callee_rows(net.project_store(proj['id']),proj['id'],_callee_names(fn,source),max_source_chars)
+    names = _callee_names(fn, source) if names is None else sorted(set(names) - {fn['name']})
+    return _callee_rows(net.project_store(proj['id']), proj['id'], names, max_source_chars)
 
 
 def _callee_evidence(net, proj, fn, source, shared, store):

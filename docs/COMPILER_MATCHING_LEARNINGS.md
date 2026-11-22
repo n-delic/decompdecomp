@@ -15504,3 +15504,23 @@ A saved N64 controller routine built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp3
 ### Return the old value when advancing a relocated pool
 
 Three saved N64 pool allocators built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` advanced an indexed entry but their drafts declared `void` and omitted the old value returned by the target. The existing relocated-pool rule corrected the global addresses but stopped at score 40. Declaring an unconstrained `s32` return and returning the entry's prior value reproduced all three linked targets exactly (each score 235 to 0). Evidence: three saved examples and synthetic target, address and declaration tests. The candidate requires both addresses to resolve to the source offsets and no external declaration constraining the return type; the byte judge verifies it.
+
+### Use the matched no-input call and retain the scan flag copy
+
+A private linked N64 function built with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` passed an unrelated
+local to a helper. The helper's selected matched definition took no
+arguments and returned a word from a global. The target put the scan
+flag assignment in the call delay slot and later copied that flag to
+the register for a zero test. The candidate occupied the call slot with
+an argument move and tested the flag directly at the join.
+
+Use the helper's verified prototype and preserve the existing
+word-to-pointer conversion at the call. Copy the flag into the dead
+pointer-sized local at the join. Together the edits preserve the
+instruction count and all three jump tables and lower the linked score
+from 3,360 to 3,055, with clean uninitialized diagnostics. Either edit
+alone lost the final table relocation. Moving the flag assignment
+across the call while retaining the extra argument scored 3,660.
+Deep Permuter reads the matched callee from the caller's project only
+when it observes both linked instruction differences.

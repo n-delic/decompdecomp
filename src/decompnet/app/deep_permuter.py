@@ -1232,7 +1232,8 @@ class Search(Permuter):
                     if child not in self.local_seen]
             from . import residual_trials
             if not fork and proj['arch'] == 'mips' and self.measured_winner(fn, source):
-                targeted = residual_trials.proposals(source,fn['name'],header,rows,net=self.net,proj=proj,fn=fn)
+                targeted = residual_trials.proposals(source, fn['name'], header, rows,
+                                                    net=self.net, proj=proj, fn=fn, profile=settings)
                 observed_choices = [(family,child) for family,child in targeted
                                     if child not in self.local_seen] + observed_choices
             observed_order = {child:index for index,(_,child) in enumerate(observed_choices)}
