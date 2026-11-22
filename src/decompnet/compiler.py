@@ -28,7 +28,9 @@ from . import compile_cache, compile_sessions, compile_timing, limits, linuxvm, 
 from .compile_admission import Admission
 from .request_timing import span
 
-MAX_SOURCE_BYTES = 64 * 1024
+# A guard on what agents submit, not a build limit: one real game function is 35 KB of machine code and its machine
+# draft 113 KB compacted (188 KB as m2c writes it), which gcc 2.7.2 compiles in well under a second.
+MAX_SOURCE_BYTES = 256 * 1024
 DONOR_UNIT_HEADER = "/* decompdecomp donor translation unit v1 */\n"
 MAX_DONOR_UNIT_BYTES = 2 * 1024 * 1024
 # Per-compile resource caps (address space, CPU seconds, output file size) and a global
