@@ -50,3 +50,8 @@ def test_the_skill_names_the_grid_tool_and_its_marker_syntax():
 def test_the_skill_names_the_look_alike_tool_in_orientation():
     text = (SKILL / "SKILL.md").read_text()
     assert "similar.py SLUG FUNC" in text and "find_similar" in text and "--sources" in text
+
+
+def test_the_skill_names_the_symptom_search_of_the_learnings():
+    text = (SKILL / "SKILL.md").read_text()
+    assert 'learnings.py search "register swap"' in text and "delay slot" in text

@@ -9,6 +9,7 @@ lines, and nothing generated is committed (a committed index would conflict agai
     learnings.py index [QUERY ...]                                               one line per entry, filtered
     learnings.py check                                                           every entry is well formed (CI test)
     learnings.py render                                                          all entries as one markdown document
+    learnings.py search "register swap" [--top N] [--per-file] [--library DIR]   rank entries by a symptom
 
 KIND is `function` (one function's match: the compiler and flags, the source change, the measured result), `finding`
 (a reusable compiler behaviour, with its rule) or `experiment` (a failed or negative result worth not repeating).
@@ -18,6 +19,7 @@ COMPILER_MATCHING_LEARNINGS.md, whose sections other files cite by title.
 """
 import argparse
 import datetime
+import importlib.util
 import re
 import subprocess
 import sys
@@ -135,6 +137,164 @@ def index_lines(root, words=()):
     return lines
 
 
+# ---------------------------------------------------------------- search by symptom
+# A symptom is a few words from what the diff shows ("register swap", "store too early", "frame size"). Entries say the
+# same thing in other words, so each known phrase or word also looks for its synonyms (a plain substring, lowercase).
+SYNONYMS = {
+    "register swap": ["swapped register", "registers swapped", "register exchange", "exchanged", "swap of saved",
+                      "allocation priorit", "priority", "$s1/$s2", "live range"],
+    "swap": ["swapped", "exchanged", "exchange"],
+    "register": ["registers", "allocat", "saved register", "greg", "lreg"],
+    "delay slot": ["delay-slot", "branch delay", "delay slots", "nop", "filled", "reorg"],
+    "store too early": ["early store", "store early", "stores early", "store before", "scheduler", "sched1", "sched2",
+                        "schedule", "hoists the store", "moved before"],
+    "too early": ["early", "before the", "hoist", "scheduler"],
+    "frame size": ["stack frame", "frame layout", "addiu $sp", "frame", "spill", "stack slot", "locals take"],
+    "hoisted constant": ["hoist", "hoisted", "loop-invariant", "invariant", "constant", "literal", "lui"],
+    "load order": ["order of the loads", "loads reordered", "load before", "loads"],
+    "branch": ["jump", "beq", "bne", "goto", "inverted", "inversion"],
+    "inline": ["inlined", "helper", "macro"],
+}
+STOP = {"too", "very", "a", "an", "the", "of", "in", "on", "is", "it", "to", "and", "or", "with", "for", "at", "by", "my", "this", "that"}
+FIX_VERBS = re.compile(r"\b(replac|mov(?:e|ed|ing)|split|rewr|chang|spell|hoist|sink|swap|reorder|declar|add(?:ed|ing)?|"
+                       r"remov|insert|wrap|merge|copy|cast|scored|scores?|made|make|use[ds]?|using|write|written)", re.I)
+TITLE_WEIGHT = 4
+BODY_CAP = 4  # a word repeated forty times in one long entry is not forty times as relevant
+EXCERPT = 420
+
+
+def groups_for(query):
+    """The query's search groups: each non-trivial word (with its plural-less stem) and each known phrase, every one
+    with the synonyms it brings. A group matches an entry when any of its terms occurs; more groups matched ranks higher."""
+    text = " ".join(query.lower().split())
+    words = [w for w in re.findall(r"[a-z0-9$_]+", text) if w not in STOP]
+    groups = []
+    for phrase, extra in SYNONYMS.items():
+        if " " in phrase and phrase in text:
+            groups.append({"label": phrase, "terms": [phrase, *extra], "weight": 2})
+    for word in dict.fromkeys(words):
+        stem = word[:-1] if word.endswith("s") and len(word) > 3 else word
+        groups.append({"label": word, "terms": [word, stem, *SYNONYMS.get(word, [])], "weight": 1})
+    return groups
+
+
+def count_term(term, text):
+    """Occurrences of `term` in lowercase `text`: a whole word for plain words, a substring for anything else."""
+    if re.fullmatch(r"[a-z0-9_]+", term):
+        return len(re.findall(rf"\b{re.escape(term)}", text))
+    return text.count(term)
+
+
+def legacy_sections(root):
+    """(title, body) of each `### ` section of the older COMPILER_MATCHING_LEARNINGS.md."""
+    path = Path(root) / "docs" / "COMPILER_MATCHING_LEARNINGS.md"
+    if not path.exists():
+        return []
+    found, title, lines = [], None, []
+    for line in path.read_text().splitlines():
+        if line.startswith("### ") or line.startswith("## "):
+            if title is not None:
+                found.append((title, "\n".join(lines).strip()))
+            title, lines = (line[4:].strip() if line.startswith("### ") else None), []
+        elif title is not None:
+            lines.append(line)
+    if title is not None:
+        found.append((title, "\n".join(lines).strip()))
+    return found
+
+
+def known_families(root, library=None):
+    """The decomp-repair library's family names (the skill's families.py reads the installed copy), or None when it
+    isn't installed in this python."""
+    script = Path(root) / ".claude" / "skills" / "match-function" / "scripts" / "families.py"
+    if not script.exists():
+        return None
+    try:
+        spec = importlib.util.spec_from_file_location("learnings_families", script)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return {row[0] for row in module.catalogue(module.library_dir(library))}
+    except (SystemExit, Exception):  # no library, or one this script can't read: fall back to what the text says
+        return None
+
+
+def families_in(text, known):
+    """The family names an entry mentions: the library's own names when known, else backticked snake_case words."""
+    if known:
+        return sorted(name for name in known if re.search(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])", text))
+    return sorted(set(re.findall(r"`([a-z][a-z0-9]*(?:_[a-z0-9]+)+)`", text)))
+
+
+def fix_excerpt(body, groups):
+    """The paragraph that most likely says what changed: the one with the most symptom words, and fix verbs."""
+    best, best_score = "", -1
+    for paragraph in re.split(r"\n\s*\n", body):
+        flat = " ".join(paragraph.split())
+        if not flat or flat.startswith("```") or flat.startswith("|"):
+            continue
+        low = flat.lower()
+        score = sum(2 for g in groups if any(count_term(t, low) for t in g["terms"])) + (3 if FIX_VERBS.search(flat) else 0)
+        if score > best_score:
+            best, best_score = flat, score
+    if len(best) > EXCERPT:
+        cut = best.rfind(". ", 0, EXCERPT)
+        best = best[:cut + 1] if cut > EXCERPT // 2 else best[:EXCERPT].rstrip() + "..."
+    return best
+
+
+def search(root, query, top=5, known=None):
+    """Ranked hits [{score, groups, where, title, fix, families, note}] over the per-entry files and the older document."""
+    groups = groups_for(query)
+    if not groups:
+        return []
+    pool = []
+    for path in entries(root):
+        try:
+            meta, body = parse(path)
+        except ValueError:
+            continue
+        pool.append((str(path.relative_to(root)), meta.get("title", path.stem), body,
+                     f"[{meta.get('evidence', '?')}] {meta.get('compiler', '?')}"))
+    pool += [(f"docs/COMPILER_MATCHING_LEARNINGS.md  ### {title}", title, body, "[older entry]")
+             for title, body in legacy_sections(root)]
+    hits = []
+    for where, title, body, note in pool:
+        low_title, low_body = title.lower(), body.lower()
+        matched, score = [], 0.0
+        for group in groups:
+            in_title = sum(count_term(t, low_title) for t in group["terms"])
+            in_body = sum(count_term(t, low_body) for t in group["terms"])
+            if in_title or in_body:
+                matched.append(group["label"])
+                score += group["weight"] * (TITLE_WEIGHT * min(in_title, 2) + min(in_body, BODY_CAP))
+        if matched:
+            hits.append({"score": score, "groups": len(matched), "matched": matched, "where": where, "title": title,
+                         "note": note})
+    hits.sort(key=lambda h: (-h["groups"], -h["score"], h["where"]))
+    bodies = {where: body for where, _, body, _ in pool}
+    out = []
+    for hit in hits[:max(1, top)]:
+        body = bodies[hit["where"]]
+        hit["fix"] = fix_excerpt(body, groups)
+        hit["families"] = families_in(body, known)
+        out.append(hit)
+    return out
+
+
+def render_search(hits):
+    if not hits:
+        return "no entry matches; try fewer or different words (e.g. the rows' register, `sched`, `frame`, `hoist`)"
+    lines = []
+    for number, hit in enumerate(hits, 1):
+        lines += [f"{number}. {hit['title']}   {hit['note']}", f"   {hit['where']}",
+                  f"   matched: {', '.join(hit['matched'])}  (score {hit['score']:g})",
+                  f"   fix: {hit['fix']}"]
+        if hit["families"]:
+            lines.append(f"   families: {', '.join(hit['families'])}")
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
 def render(root):
     out = ["# Compiler matching evidence (per-entry files)", ""]
     for kind in KINDS:
@@ -160,6 +320,10 @@ def main(argv=None):
     n.add_argument("--compiler", default="")
     n.add_argument("--evidence", default="observation")
     sub.add_parser("index").add_argument("query", nargs="*")
+    q = sub.add_parser("search")
+    q.add_argument("query", nargs="+", help="the symptom, in a few words")
+    q.add_argument("--top", type=int, default=5)
+    q.add_argument("--library", help="the decomp-repair package folder, to know which names are families")
     sub.add_parser("check")
     sub.add_parser("render")
     a = ap.parse_args(argv)
@@ -168,6 +332,8 @@ def main(argv=None):
         print(new(root, a.kind, a.name, a.title, a.compiler, a.evidence))
     elif a.command == "index":
         print("\n".join(index_lines(root, a.query)))
+    elif a.command == "search":
+        print(render_search(search(root, " ".join(a.query), a.top, known_families(root, a.library))))
     elif a.command == "render":
         print(render(root))
     else:

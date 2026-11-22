@@ -84,7 +84,7 @@ The other scripts, run with that venv's python (`$UV_PROJECT_ENVIRONMENT/bin/pyt
 --function F [--diff [--rows N|all]]` (score, and the app's differing rows: 60 by default, then a "... N more rows" line; `--rows all` shows every row; a session's worktree off an older origin/main may lack `--rows`: `git pull --rebase` there and `setup.py sync <holder>`), `passes.py FILE.c --slug S --function F` (allocation
 priorities, register preferences, scheduler orders), `prove_chain.py --slug S --function F --families a,b|all` (greedy
 chain of library families, scored), `families.py [words]` (the library's families, one line each), `similar.py SLUG FUNC` (matched look-alikes and their saved C; step 1), `grid.py FILE.c --slug S --function F` (every combination of marked alternatives and statement orders, scored; step 2), `regions.py` (a large function region by region, step 2),
-`tools/learnings.py` (evidence entries).
+`tools/learnings.py` (evidence entries; `search "<symptom>"` ranks them by symptom, step 3).
 
 ## Connect through the Rust MCP gateway
 
@@ -258,6 +258,11 @@ regions that already match and the first one to fix; `--show N` prints one regio
    one) does it (`prove_chain.py` on the before/after, step 4), so the large function's fixes become permuter steps.
 
 ## 3. What has worked (extend this list when you learn more; it is the permuter's to-do list)
+
+**Search the recorded evidence by symptom before reading this list:** `python tools/learnings.py search "register swap"` (also "delay slot",
+"store too early", "frame size", "hoisted constant", ...) ranks every `docs/learnings/` entry and the older
+`COMPILER_MATCHING_LEARNINGS.md` sections by those words (with synonyms) and prints each one's title, the paragraph that
+says the fix and the library families it names; try those families with `prove_chain.py --families`.
 
 - **Base-relative stores.** `*(s8 *)((char *)&sym + off) = v` stays `off($sN)` only when the first use of the
   symbol's address is wrapped in `do { call(&sym + k); } while (0);`; without the wrapper the compiler folds them

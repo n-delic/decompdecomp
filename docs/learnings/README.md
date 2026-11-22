@@ -9,8 +9,8 @@ One file per entry: `docs/learnings/<kind>/<name>.md`, where the kind is
 - `experiment/`: a failed or negative result that would otherwise be repeated.
 
 Make one with `python tools/learnings.py new function one-shot-scope-before-loop --compiler "KMC GCC 2.7.2 -O2"`,
-fill it in, and commit it with the change it records. `python tools/learnings.py index [words]` lists and searches the
-entries, `check` validates them (tests/test_learnings.py runs it), `render` joins them into one document.
+fill it in, and commit it with the change it records. `python tools/learnings.py index [words]` lists and filters the
+entries, `search "register swap"` ranks them (and the older sections) by a symptom, `check` validates them (tests/test_learnings.py runs it), `render` joins them into one document.
 
 Why files and not a section of `docs/COMPILER_MATCHING_LEARNINGS.md`: every matching agent appended to that one file,
 so every pull request that recorded evidence conflicted with the others. Separate files never touch the same lines, and
