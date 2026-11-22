@@ -2094,3 +2094,14 @@ def test_indexed_mode_tail_routes_to_kmc(monkeypatch):
     assert 'indexed_mode_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'indexed_mode_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
     assert 'indexed_mode_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-7.1', rows, ''))
+
+
+def test_byte_search_loop_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'nop', 'nop')]
+    monkeypatch.setattr(diff_gated_repairs.measured_byte_search_loop, 'variants',
+                        lambda text, name, header, diff: [('byte_search_fixture', text)])
+    assert 'byte_search_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'byte_search_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+    assert 'byte_search_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-7.1', rows, ''))
