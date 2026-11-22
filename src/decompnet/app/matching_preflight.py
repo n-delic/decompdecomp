@@ -72,7 +72,7 @@ def _run(net, proj, fn, log, check, max_profiles):
         if source := candidate(dict(fn).get('asm', ''), fn['name']):
             ranked = prioritized(proj, fn, own)
             probes.insert(1, (ranked[0] if ranked else list(own['flags']), source))
-    from decomprepair import guarded_loop_repairs, halfword_store_scheduling
+    from decomprepair import guarded_loop_repairs, halfword_store_scheduling, strided_table_loop
     context = net._context(proj['id'],fn['unit']) if hasattr(net,'_context') else None
     from .profile_hypotheses import float_sqrt_source
     sqrt_source = float_sqrt_source(own, dict(fn).get('asm') or '', fn['best_source'], fn['name'],
@@ -82,6 +82,11 @@ def _run(net, proj, fn, log, check, max_profiles):
         if '-ffast-math' not in own['flags']:
             probes.insert(2, ([*own['flags'], '-ffast-math'], sqrt_source))
     paired = guarded_loop_repairs.probes(proj,fn,own,context['header'] if context else '')
+    # A poll loop the target compiled without strength reduction: the profile alone ties while the source indexes
+    # by element, so it is probed joined with the byte-offset, record-field and one-step spellings.
+    rename = getattr(net, 'rename_tokens', None)  # the source names symbols as the project renamed them
+    named = dict(fn) | {'asm': rename(proj, dict(fn).get('asm') or '') if rename else dict(fn).get('asm') or ''}
+    paired = [*paired, *strided_table_loop.probes(proj, named, own, context['header'] if context else '')]
     # Preserve this tiny joint frontier independently of isolated source scores.
     probes[1:1] = [(list(flags),source) for flags,source in paired]
     if (own['toolchain'] == 'gcc-2.7.2-kmc' and '-fno-strength-reduce' in own['flags']):

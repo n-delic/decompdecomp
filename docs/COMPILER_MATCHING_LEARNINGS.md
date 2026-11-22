@@ -14030,3 +14030,41 @@ formal-to-local assignment after the first call scored 625 to 540 with the prima
 left both scores unchanged. The dispatcher generated the delayed copy from the stack-slot and
 conditional delay-slot evidence. The function remains unmatched. Evidence is one real improvement
 and synthetic gating tests.
+
+A controller-poll loop of an N64 game (405 instructions, `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, saved best
+4,435) matched under the same flags plus `-fno-strength-reduce` after nine source edits. Controlled result for the
+chain on that function's saved best (the exact judge, one function): every step but the first is a tie or a loss
+under the default profile, because GCC 2.x strength-reduces `&table + offset` into a pointer when the source indexes
+by element; the target's `lui $at,%hi(table); addu $at,$at,$offset` for every access is the profile's output for a
+byte offset. cc1 `-dL` shows the cause: every address giv of one symbol is "not worth while" alone and reduced once
+two or more combine (`giv at 462 combined with giv at 516`), and `biv 74 can be eliminated`, the counter the target
+keeps. Under `-fno-strength-reduce` (this project already assigns it to 12 functions) the same chain scores
+4,435 -> 3,825 -> 2,753 -> 2,683 -> 2,288 -> 2,228 -> 2,138 -> 795 -> 605 -> 0:
+
+| edit | what it changes |
+|---|---|
+| a word extern the target only touches with `lhu`/`lh` declared `u16` (also its casts) | width of the access; a `lw` read where the target has `lhu` |
+| `(&half) + off` written `((s16 *)((s8 *)&half + off))` | the counter is a byte offset (stepping 8, 6, 2): m2c scaled it by the element size, the target adds it unscaled |
+| neighbouring symbols as fields of one record (`((Rec *)((s8 *)&D_8010D430 + off))->f2`), pad table reads as fields too | a member reference is MEM_IN_STRUCT_P: the first scheduler left `lbu` of the second field behind the first store (a plain `*(T *)` was hoisted above it), and cse reloaded the pad word after a store to the record (`lhu` three times) instead of reusing it |
+| m2c's `goto block_N` join, with a copy of `p += 4` on each path that skipped it, as one `p += 4` before the loop's other increments; the `goto` out of `do {} while (0)` as the guard's else arm | the increment sits where loop.c puts a biv's single step, and the delay-slot filler copies it into each branch itself |
+| `if (x & 0x8000)` as `if ((s16) x < 0)` | the target's `sll 16; bgez` |
+| `t = *p; r = (a ^ t) & t;` as `r = (a ^ *p) & *p;` | two loads cse merges, one after a store it reloads |
+| each switch case's `i = f(); g = i;` as `g = f();` where `i` is the loop counter | one live range for the counter: the saved registers (`$s0` for the pointer, `$s1` for the counter) swap otherwise, and the frame grows a word |
+| the base address of a table read at the counter's offset held in a local set before the loop, added as `i + (u32) base` | the target's saved-register base (`lui $s7; addiu`) and its `addu $v0,$s1,$s7` operand order (a pointer plus index writes `$s7,$s1`) |
+| the loop's initializations in the target's order (counter, base, pointer, offsets by descending step) | 220 -> 0: the initialization order decides which pseudo gets which saved register |
+
+Failed or insufficient: `volatile` on the byte reads and the halfword (no change in order, and `lhu` plus `sll/sra`
+for an `s16`); declaring the externs as arrays (no change); `-fno-schedule-insns` (2,679 vs 831 for the loop, but the
+switch's stack-argument loads need the first scheduler); `-g3` variants (3,738); the pad loads as struct fields in the
+same record as the stores (605: cse then keeps one load); starting the record at the lowest accessed field instead of
+the declared neighbour below it (605: the store's constant offset changes).
+
+Added to the permuter (decomp-repair 0.5.363, `strided_table_loop`), one family per row (`narrow_symbol_width`,
+`byte_offset_table_index`, `record_field_table_access`, `loop_join_increment`, `halfword_sign_test`,
+`repeated_load_expression`, `call_result_direct`, `loop_base_pointer`, `loop_init_order`), offered by
+`deep_permuter._local_proposals`; and `strided_table_loop.probes`, which `matching_preflight` judges as the joint
+(`-fno-strength-reduce`, spelled source) child, since the profile alone ties on the unspelled source and the preflight
+discards ties. Run in order from the saved best, the families reproduce the whole chain to exact (the record family's
+subset and the declared-neighbour base both mattered: variant 3 of 16). The families that stay open: choosing among
+the record variants needs the judge (all sixteen tie until the last steps), and `-fno-strength-reduce` is still found
+only by the probe's evidence (two or more symbols addressed `lui; addu` with a stepped saved register).

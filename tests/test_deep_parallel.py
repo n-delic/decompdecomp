@@ -941,3 +941,21 @@ def test_nested_float_guard_is_offered_for_register_differences(monkeypatch):
     proposals, _ = search._local_proposals(source, proj, fn, rows)
     assert any(family == 'initialized_nested_float_guard' and 'if (scale)' in child
                for family, child in proposals)
+
+
+def test_table_loop_chain_is_offered_to_the_deep_permuter(monkeypatch):
+    """A poll loop's byte-offset, record-field and one-step spellings (decomp-repair 0.5.363) reach the local lane."""
+    net = setup(monkeypatch)
+    proj = net.project_row('game')
+    source = ('extern s16 D_80100004;\nextern s16 D_80100006;\nvoid f(void)\n{\n  s32 off;\n  s32 i;\n  off = 0;\n  i = 0;\n'
+              '  do\n  {\n    *((&D_80100004) + off) = 1;\n    *((&D_80100006) + off) = 2;\n    off += 8;\n    i++;\n  }\n'
+              '  while (i < 4);\n}\n')
+    asm = ('lui $at, %hi(D_80100004)\naddu $at, $at, $s4\nsh $v0, %lo(D_80100004)($at)\n'
+           'lui $at, %hi(D_80100006)\naddu $at, $at, $s4\nsh $v0, %lo(D_80100006)($at)\naddiu $s4, $s4, 0x8\n')
+    fn = {**net.function(), 'name': 'f', 'asm': asm, 'best_source': source}
+    search = deep_permuter.Search(net, 1, 6, Log())
+    proposals, _ = search._local_proposals(source, proj, fn, [])
+    families = [family for family, _ in proposals]
+    assert 'byte_offset_table_index' in families
+    first = next(child for family, child in proposals if family == 'byte_offset_table_index')
+    assert '((s16 *) (((s8 *) (&D_80100004)) + off))' in first

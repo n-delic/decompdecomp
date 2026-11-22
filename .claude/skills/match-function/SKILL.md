@@ -226,6 +226,13 @@ seed they came from and keep the earlier control so the effect of a questionable
   the operand written first first (`(p[0] & 0xF) << 2 | (p[1] >> 6) & 3` is not `(p[1] >> 6) & 3 | ...`). IDO refuses
   `void *` arithmetic; GCC accepts it. Bit-field structs never produced `lbu`/`sra` at all.
 
+- **A loop whose every access is `lui $at,%hi(sym); addu $at,$at,$sN` (no pointer per table).** The target was built
+  with `-fno-strength-reduce` (this project's per-function profile) and the source indexes by byte offset; under the
+  default profile the same source is strength-reduced and every step scores worse, so profile and source must be
+  changed together (cc1 `-dL` prints the givs "not worth while" alone and reduced once combined). Measure each step
+  under the profile, not the default. decomp-repair `strided_table_loop` (0.5.363) has the nine steps and `probes()`
+  the joint child; the notes in COMPILER_MATCHING_LEARNINGS.md give the order.
+
 ## 3b. Out of hand-written shapes? Trace the compiler instead of guessing
 
 Three or four structurally different sources landing on the same score (or the same missing/extra instruction) means

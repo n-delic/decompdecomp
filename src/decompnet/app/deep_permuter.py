@@ -398,6 +398,16 @@ class Search(Permuter):
             current_asm = rename(proj, asm) if rename else asm
             calls += [(L + 'load_store_order_repairs.component_before_resets', (source, name, current_asm, header)),
                       (L + 'global_store_repairs.scoped_byte_updates', (source, name, current_asm, header))]
+            # a poll loop's chain: words named at the target's halfword width, element-indexed addresses written as
+            # byte offsets, neighbouring symbols as fields of one record, m2c's goto join collapsed to one pointer
+            # step, a sign test, a repeated load, call results stored directly, the loop's base address in a local
+            # and the registers initialized in the target's order (decomp-repair 0.5.363). Each is a tie or a loss
+            # alone under the default profile; see matching_preflight for the profile that makes them gains.
+            calls += [(L + 'strided_table_loop.' + family, (source, name, arch, current_asm))
+                      for family in ('narrow_symbol_variants', 'byte_offset_variants', 'record_field_variants',
+                                     'join_increment_variants', 'sign_test_variants', 'repeated_load_variants',
+                                     'call_result_direct_variants', 'loop_base_pointer_variants',
+                                     'loop_init_order_variants')]
             zero_bound = len(calls)
             calls += [(L + 'targeted_switch_labels.zero_bound_variants', (source, name, current_asm)),
                       (L + 'symbol_width_repairs.guarded_indexed_variants', (source, name, current_asm))]
