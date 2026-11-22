@@ -245,6 +245,12 @@ seed they came from and keep the earlier control so the effect of a questionable
   one remaining row difference, 1140 in a save-slot state machine). Write the continuation the arms jump to out in each
   arm, each with a pointer of its own; cross-jumping after allocation merges the identical tails again (1140 -> 0).
   decomp-repair `goto_run_copy` (0.5.604) copies a label's run per goto and splits the pointer by assignment web.
+- **A store that should sit between two loads of a pointer chain, and a float add with its operands' registers
+  swapped** (KMC 2.7.2, both read in the source): the insn after a loop note depends on everything before it
+  (`sched.c`), so end the opening `do { } while (0)` between the two loads, the copy whose store belongs between them
+  last inside; and `flow.c` weights references by loop depth while `local-alloc.c` breaks equal priorities by birth
+  order, so stage the product and put the add (with a neighbouring copy) in a scope of its own. 70 -> 10 -> 0 on an
+  851-instruction ray test; decomp-repair `entry_scope_split` (0.5.614).
 - **`local_flow` declined on any `volatile` in the text** until 0.5.604, so a saved best with `*(volatile T *)&global`
   reads had no variants from the ~40 flow-based families. Only a volatile local still declines; check
   `local_flow.analyze(source, name)` is not None before concluding the permuter has nothing.
