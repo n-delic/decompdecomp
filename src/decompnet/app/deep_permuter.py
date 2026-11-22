@@ -442,6 +442,7 @@ class Search(Permuter):
                   (L + 'triangle_arm_calls.variants', (source, name)),
                   (L + 'argument_weight_scope.variants', (source, name)),  # decomp-repair 0.5.603: a parameter's first call in a one-shot scope with the table pointer local written out
                   (L + 'arm_variable_share.variants', (source, name)),  # decomp-repair 0.5.601: the counters of sibling arms' loops and their derived indices as one variable
+                  (L + 'entry_scheduling_scope.variants', (source, name)),  # decomp-repair 0.5.606: the opening run wrapped in do { } while (0), narrow stack parameters through locals
                   (L + 'declaration_scope_hoist.variants', (source, name)),  # decomp-repair 0.5.596: block-level spXX locals back in the function's declarations, by offset
                   (L + 'compare_load_stage.variants', (source, name)),  # decomp-repair 0.5.598: the compared load read into a local before the store of the compared result
                   (L + 'allocation_lever_repairs.field_store_swaps', (source, name))]
