@@ -2352,6 +2352,24 @@ def test_word_byte_packing_routes_to_kmc(monkeypatch):
     assert 'word_byte_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-7.1', rows, ''))
 
 
+def test_balanced_signed_reset_copy_routes_only_for_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    source = 'void update(void) {}'
+    rows = [('r', 'move $v0, $v1', 'move $v1, $v0')]
+    trial = diff_gated_repairs.balanced_reset_copy
+
+    def variant(text, name, received, *, header, max_bytes):
+        assert (text, name, received, header) == (source, 'update', rows, '')
+        assert max_bytes == diff_gated_repairs.MAX_SOURCE_BYTES
+        return [(trial.FAMILY, 'void update(void) { return; }')]
+
+    monkeypatch.setattr(trial, 'variants', variant)
+    for compiler in (KMC, EGCS, 'ido-7.1'):
+        labels = dict(proposals(source, 'update', '', 'mips', compiler, rows, ''))
+        assert (trial.FAMILY in labels) == (compiler == KMC)
+
+
 def test_balanced_inline_field_writeback_is_routed_for_kmc(monkeypatch):
     from decompnet.app import diff_gated_repairs
 

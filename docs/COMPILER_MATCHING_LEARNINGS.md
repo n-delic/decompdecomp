@@ -16091,6 +16091,24 @@ A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` cop
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` split a word into four byte stores. The generated draft declared its value as an unsigned byte, causing the compiler to store zero for the upper bytes. Widening the parameter to an unsigned word changed the linked difference score from 315 to an exact match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the complete source, all measured shifts and store offsets, and no conflicting function declaration.
 
+### Compare the signed reset through its saved copy
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, a private N64 function
+copied a signed byte into a signed halfword for its conditional increment.
+Making the comparison use that copy too, and writing the reset byte after
+the local comparison, restored seven instructions with their original
+registers. The comparison alone needed a larger frame and scored 1,114.
+A now-unused final scratch word in the private frame could be removed to
+restore the original offsets. That pairing reduced the linked score from
+1,115 to 1,080 and retained 3,034 instructions and all three jump tables.
+Removing the scratch word alone reduced the frame below its original size
+and scored 1,149.
+
+The proposal needs the linked reset, load, compare and increment flow,
+the same source field offsets and signed widths, and an unused final
+scratch word in a local record. The compiler evidence comes from one
+private replay, with synthetic tests for the rule's guards.
+
 ### Balance a signed countdown with inline field sums
 
 In a private N64 function built with
