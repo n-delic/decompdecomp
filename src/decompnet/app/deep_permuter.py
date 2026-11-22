@@ -458,6 +458,9 @@ class Search(Permuter):
         # a 178-instruction ray and triangle test (decomp-repair 0.5.593): the float locals written through a float/integer
         # union as plain floats, the later scalar declarations moved before them (275 -> 100 -> 0 from the saved best)
         calls.append((L + 'float_pun_depun.variants', (source, name)))
+        # the same ray and triangle test from its plain source (decomp-repair 0.5.595): a local record's fields staged in
+        # scalars and the direction vector's repeated reads cached (7935 -> 650, then two statement moves to 0)
+        calls.append((L + 'field_scalar_stage.variants', (source, name)))
         # a texture-loader-sized N64 function (decomp-repair 0.5.593, counted_loop_shapes): counted loops as for loops over
         # one counter, each step and the chain (99 -> 0 from the saved best)
         calls.append((L + 'counted_loop_shapes.variants', (source, name)))

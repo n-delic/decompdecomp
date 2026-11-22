@@ -194,3 +194,34 @@ def test_counting_work_reaches_the_report(tmp_path):
     sampler.write_data()
     counts = json.loads((tmp_path / "thread-cpu-x-1.json").read_text())["counts"]
     assert counts["probe"] == before.get("probe", 0) + 3
+
+
+def test_timed_blocks_add_microseconds_of_this_threads_processor_time():
+    before = thread_cpu._counts.get("probe_us", 0)
+    with thread_cpu.timed("probe"):
+        end = time.thread_time() + .02
+        while time.thread_time() < end:
+            sum(range(1000))
+    spent = thread_cpu._counts["probe_us"] - before
+    assert 15_000 <= spent < 500_000
+
+
+def test_helpers_are_sampled_less_often_than_the_server():
+    assert thread_cpu.WORKER_INTERVAL >= 2.0
+    import inspect
+    assert inspect.signature(thread_cpu.start_worker).parameters["interval"].default == thread_cpu.WORKER_INTERVAL
+    assert inspect.signature(thread_cpu.Sampler).parameters["interval"].default == .5
+
+
+def test_the_report_shows_what_one_request_costs_inside_the_helper(tmp_path):
+    import json
+    (tmp_path / "thread-cpu-proposal-1.json").write_text(json.dumps({
+        "role": "proposal", "pid": 1, "wall": 100, "cpu": 10, "places": [["main", "app/deep_proposal_worker.py:main", 10.0]],
+        "counts": {"requests": 100, "decode_us": 200_000, "encode_us": 1_000_000, "request_bytes": 5_000_000,
+                   "result_bytes": 20_000_000, "proposal_requests": 100}}))
+    report = thread_cpu.merged(tmp_path)
+    assert "Inside the helpers' own loop" in report
+    assert "0.2 s  proposal decode: 2.00 ms of processor per request" in report
+    assert "1.0 s  proposal encode: 10.00 ms of processor per request" in report
+    assert "20.0 MB  proposal result: 200.0 KB per request" in report
+    assert "100  proposal proposal_requests: 100.0 ms of processor each" in report and "requests: 100.0 ms" in report
