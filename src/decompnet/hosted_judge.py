@@ -14,7 +14,8 @@ Requests:
   {"error": ...} when it can't be judged here. That happens when the project isn't here, or its function's target
   bytes differ from the hosted ones (another build of the game). With "diff": true the reply also carries "diff", the
   app's own side-by-side rows for the candidate, the first "rows" of them (default 60; the last line counts the rest)
-  (DiffResult.render: the same normalisation compile_and_diff shows).
+  (DiffResult.render: the same normalisation compile_and_diff shows). With "raw_rows": true it carries "rows", every
+  (marker, target, candidate) row of that diff, unrendered (the skill's region view, regions.py).
 - {"op": "function", "slug", "name", "vram" (optional, for overlays)} -> {"name", "vram", "target" (hex), "unit",
   "arch", "asm" (the target's assembly text), "header" (the project's typedefs and externs the judge prepends),
   "compiler": {"toolchain", "flags"} (this function's own profile)}: everything a local search needs to judge without being told the function's bytes
@@ -94,6 +95,8 @@ def judge(net, request: dict) -> dict:
     shown = {}
     if request.get("diff") and diff is not None:
         shown = {"diff": diff.render(max_rows=rows if isinstance(rows, int) and rows > 0 else 60, more_hint=False)}
+    if request.get("raw_rows") and diff is not None:
+        shown["rows"] = [list(row) for row in diff.rows]
     if matched:
         return {"score": 0, "detail": "byte-identical", **shown}
     if diff is None:
