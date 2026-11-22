@@ -24,6 +24,9 @@ def read(image, taken):
             imm = load1 & 0xffff
             addr = ((hi1 & 0xffff) << 16) + (imm if imm < 0x8000 else imm - 0x10000)
             at = start + addr - vram
+            stride32 = any((w >> 26) == 0 and (w & 0x3f) == 0 and ((w >> 11) & 31) == index
+                           and ((w >> 6) & 31) == 5 for w in words[max(0,i-12):i])
+            stride = 0x20 if stride32 else 0x54
             for j in range(i+6, min(i+18, len(words)-1)):
                 high, low = words[j:j+2]
                 reg = (high >> 16) & 31
@@ -34,17 +37,18 @@ def read(image, taken):
                 if not 0x80000400 <= target < 0x80800000 or target % 16:
                     continue
                 records = []
-                for pos in range(at, min(at+64*0x54, len(image)-15), 0x54):
+                for pos in range(at, min(at+64*stride, len(image)-15), stride):
                     if pos < 0 or pos % 4:
                         break
-                    lo, hi, ram_end, entry = struct.unpack_from('>4I', image, pos)
+                    lo, hi, ram_end = struct.unpack_from('>3I', image, pos)
+                    entry = target if stride32 else struct.unpack_from('>I', image, pos+12)[0]
                     if not (floor <= lo < hi <= len(image) and not (lo | hi) % 16
                             and target+hi-lo <= ram_end <= 0x80800000
                             and target <= entry < target+hi-lo and not entry % 4
                             and b'\x03\xe0\x00\x08' in image[lo:hi]):
                         break
                     records.append(Slot(lo, hi, target))
-                records.sort(key=lambda r: r.start)
+                records = sorted(set(records), key=lambda r: r.start)
                 if len(records) >= 4 and all(a.end == b.start for a, b in zip(records, records[1:])):
                     return records
     return []
@@ -53,6 +57,7 @@ def read(image, taken):
 def companion(image, taken, slots):
     """Find the separately copied helper immediately before the bank directory's ROM range."""
     first = min(slot.start for slot in slots)
+    last = max(slot.end for slot in slots)
     for start, end, vram in taken:
         words = struct.unpack_from(f'>{(end-start)//4}I', image, start)
         for i in range(len(words)-10):
@@ -67,7 +72,8 @@ def companion(image, taken, slots):
                 imm = low & 0xffff
                 return ((high & 0xffff) << 16) + (imm if imm < 0x8000 else imm - 0x10000)
             hi, lo = value(h1, l1), value(h2, l2)
-            if not (max(x[1] for x in taken) <= lo < hi == first and not (lo | hi) % 16):
+            if not (max(x[1] for x in taken) <= lo < hi <= len(image) and (hi == first or lo == last)
+                    and not (lo | hi) % 16):
                 continue
             for j in range(i+5, min(i+14, len(words)-2)):
                 high, call, low = words[j:j+3]

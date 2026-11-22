@@ -47,3 +47,21 @@ def test_adjacent_companion_requires_explicit_copy(damage):
     assert (result is not None) == (damage is None)
     if result:
         assert (result.start, result.end, result.vram) == (0x2000, 0x3000, 0x801da800)
+
+
+def test_reused_banks_in_32_byte_level_records_are_deduplicated():
+    data = image()
+    data[0x1800:0x1a00] = bytes(0x200)
+    struct.pack_into('>I', data, 0x10f0, 0x00049940)  # sll s3, a0, 5
+    for i, bank in enumerate((0, 1, 2, 1, 3, 0)):
+        lo = 0x3000+bank*0x1000
+        struct.pack_into('>3I', data, 0x1800+i*0x20, lo, lo+0x1000, 0x80114920)
+    copy = [0x3c020001, 0x24428000, 0x3c040000, 0x24847000, 0x00443023,
+            0x10c00004, 0xafbf0010, 0x3c05801e, 0x0c000100, 0x24a5a800]
+    struct.pack_into(f'>{len(copy)}I', data, 0x1180, *copy)
+    struct.pack_into('>I', data, 0x7010, 0x03e00008)
+    taken = [(0x1000, 0x2000, 0x80000400)]
+    slots = read(data, taken)
+    assert len(slots) == 4
+    helper = companion(data, taken, slots)
+    assert helper and (helper.start,helper.end) == (0x7000,0x8000)
