@@ -65,6 +65,7 @@ from decomprepair import (
     measured_forwarded_pointer,
     measured_global_offset_reuse,
     measured_global_rebase,
+    measured_guarded_flag_value,
     measured_guarded_index,
     measured_halfword_index,
     measured_halfword_stores,
@@ -391,6 +392,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_be16_cursor.variants(source, name, header, rows)
         result += measured_forwarded_counter.variants(source, name, header, rows, asm or '')
         result += measured_flag_reload.variants(source, name, header, rows)
+        result += measured_guarded_flag_value.variants(source, name, header, rows)
         result += measured_byte_global_branch.variants(source, name, header, rows)
         result += measured_byte_clear_base.variants(source, name, header, rows)
         result += measured_float_argument_pair.variants(source, name, header, rows)
