@@ -135,6 +135,7 @@ from decomprepair import (
     measured_lifetime_shapes,
     measured_list_head_insert,
     measured_list_selection,
+    measured_loop_search_target,
     measured_masked_halfword_read,
     measured_matrix_products,
     measured_memory_order,
@@ -493,6 +494,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += guard_reset_scheduling.variants(source, name, header, rows)
         result += global_pointer_local_repairs.scoped_field_reads(source, name, rows)
         result += measured_global_rebase.variants(source, name, header, rows, resolve=resolve)
+        result += measured_loop_search_target.variants(source, name, header, rows)
         result += measured_saved_global.variants(source, name, header, rows, resolve=resolve)
         result += measured_memory_order.variants(source,name,rows,resolve=resolve,header=header)
         result += measured_memory_order.staged_field_masks(source, name, rows, header)
