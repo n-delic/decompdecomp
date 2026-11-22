@@ -13293,6 +13293,23 @@ the same center, loads from one base register, and comparisons of the
 results. It generates a candidate only across local statements that preserve
 the inputs. Evidence is one partial live match and synthetic tests.
 
+### KMC GCC 2.7.2: stage an entry pointer around a signed flag
+
+In one large N64 function, the target read two pointers and a signed
+global flag, spilled the first pointer to a local frame slot, then
+read a signed byte through the second pointer. The draft stored the
+first pointer immediately and delayed the global read until the guard.
+
+With `-G0 -mips3 -mgp32 -mfp32 -O2`, capturing the flag as a byte
+and staging the frame store scored 19,427 from 19,622. Holding the
+flag in an integer preserved the signed load and scored 19,232.
+Moving the pointer store into a comma expression at the guard
+scored 19,502 with the integer local.
+
+The `entry_pointer_capture` repair requires the six target operations,
+a local frame member and a trivial signed-byte read helper. Evidence is
+one observed partial match with synthetic source and target tests.
+
 ### KMC GCC 2.7.2: widen a mode assigned only small constants
 
 A large N64 draft held a mode in a byte even though every assignment
