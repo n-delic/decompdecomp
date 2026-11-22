@@ -92,10 +92,17 @@ def extend_startup_trap(config: Path, rom: bytes, log=print) -> bool:
     vram = main['vram']
     entry_words = [word for word, in struct.iter_unpack('>I',rom[lo:at])]
     callers = set(jal_targets(entry_words,entry['vram']))
-    if (call>>26 != 3 or delay or trap&0xfc00003f != 0xd or padding or vram+8 not in callers
-            or vram in callers or vram+4 in callers):
+    if call >> 26 != 3 or delay or trap & 0xfc00003f != 0xd or vram in callers:
         return False
-    main.update(start=at+8,vram=vram+8,subsegments=[[at+8,'c','main']])
+    if not padding and vram + 8 in callers and vram + 4 not in callers:
+        skip = 8
+    elif (padding >> 26 == 15 and (padding >> 16) & 31 and vram + 4 not in callers
+          and any(vram + 4 < target < vram + 0x100 for target in callers)):
+        # A separate helper immediately follows the trap; keep its first instruction.
+        skip = 4
+    else:
+        return False
+    main.update(start=at+skip,vram=vram+skip,subsegments=[[at+skip,'c','main']])
     config.write_text(yaml.safe_dump(cfg,sort_keys=False,default_flow_style=None),encoding='utf-8')
     log('Kept the trap after the startup call in the boot assembly.')
     return True
