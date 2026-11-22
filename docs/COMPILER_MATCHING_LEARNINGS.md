@@ -16183,3 +16183,9 @@ A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` sca
 ### KMC GCC 2.7.2 zero initialization after a guard call
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` initialized a loop counter after a guard call. The generated draft initialized it before the call. Moving the non-escaped local initialization into the guarded block changed the linked difference score from 390 to an exact match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the measured call and branch sequence and rejects observable uses outside the block.
+
+### C89 byte-mask retry candidates
+
+On an N64 function, GCC 2.7.2 KMC (`-G0 -mips3 -mgp32 -mfp32 -O2`) left one operand difference: the target had `andi 0xff` after `lbu`, while a saved source with `& 0x7f` scored 10. That mask is not behaviorally equivalent for values with bit 7 set, so it is a search seed, not evidence of correct source. Explicit `& 0xff` or an unsigned-char cast eliminated the redundant instruction and scored 240. Twenty-five additional cast, arithmetic and bitwise spellings likewise scored 240–380, and conditional intermediate forms scored 350–1455; none matched. These are observations on one function, not controlled regression results.
+
+The `last_byte_mask` family previously produced five candidates from that seed: two scored 240 and three were rejected, two because declarations followed statements under C89 and one because it used forbidden inline assembly. Moving declarations to function entry and omitting inline assembly produced four compiling candidates, scoring 240, 240, 240 and 330 in the standalone app judge. This improves valid search coverage; it does not improve the function's score. The library regression checks declaration placement and excludes inline assembly.
