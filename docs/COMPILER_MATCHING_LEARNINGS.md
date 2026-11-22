@@ -15558,3 +15558,16 @@ also passed the table check, but changed stack accesses and scored
 2,327. The repair generator uses the target's sign-extension
 instruction pair and requires both test polarities on a known integer
 local. This is a saved example, with no cross-compiler measurement.
+
+### Retain an oscillation product for a store and later addition
+
+On a private linked N64 function with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, the target's oscillation
+multiply used a different saved output register from its input. That
+output survived a call and fed both a relocated global store and an
+accumulator addition. The candidate overwrote the input register.
+Reusing a witnessed dead float local restored all three operands,
+leaving the instruction count and three jump tables intact. The
+linked score moved from 3,030 to 3,015, with no uninitialized warnings.
+Three alternate locals were neutral. The repair requires a verified
+scaled sample in the same register and both linked product uses.
