@@ -173,6 +173,7 @@ from decomprepair import (
     relocated_pointer_reloads,
     sampled_phase_axis_stage,
     saved_range_probe,
+    scaled_blend_input,
     search_exit_loop_repairs,
     shared_projection_lifetime,
     shared_return_repairs,
@@ -358,6 +359,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += quadratic_sign_holder.variants(source, name, rows, header=header)
         result += smoothing_call_before_read.variants(source, name, rows, header=header)
         result += conditional_smoothing_gain.variants(source, name, rows, header=header)
+        result += scaled_blend_input.variants(source, name, rows, header=header)
         result += projection_argument_before_store.variants(source, name, rows, header=header)
         result += balanced_signed_selector_increment.variants(source, name, rows, header=header)
         result += balanced_float_predicate_return.variants(source, name, rows, header=header)

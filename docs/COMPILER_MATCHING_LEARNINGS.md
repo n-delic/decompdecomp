@@ -15637,3 +15637,22 @@ of its row and column arithmetic. The linked score fell from 372 to
 table references did not reproduce the improvement. The proposal
 keeps each index evaluation once and derives both strides from the
 array's declared type using `sizeof`. This is one saved example.
+
+### Retain a scaled input before blending with a field
+
+On a private linked N64 function using
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, two field blends used
+the same saved register for a scaled input before the subtraction.
+The candidate used the scratch result instead. Hold the converted
+integer in the saved local before scaling it at one site, and stage
+the scaled sampling result in that local at the other. The local's
+saved register is confirmed by an earlier field load and global
+subtraction, and the old value is dead at both sites.
+
+Staging the scaled integer expression as one assignment scored 2,965,
+and staging only the sampled value scored 2,960 from 2,970. Staging
+both without separating the integer conversion scored 2,955. The
+separate conversion and multiplication with the staged sample scored
+2,940, recovering six register operands without changing any other
+linked instruction or the three jump tables. An alternate holder was
+neutral, and the selected source passed uninitialized diagnostics.
