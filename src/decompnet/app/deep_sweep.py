@@ -583,7 +583,8 @@ class Sweeps:
                 activity.prepare(scanned, total, candidates, waiting)
 
                 failed = threading.Event()
-                def execute(item, blocked, pid=proj['id'], total=total):
+                def execute(item, blocked, pid=proj['id'], total=total, minutes=minutes, variants=variants,
+                            expanded_budget=cycle > 1):
                     log.check_cancel()
                     store = self._store(slug)
                     proj = store.one('SELECT * FROM projects WHERE id=?', pid)
@@ -599,7 +600,8 @@ class Sweeps:
                                           previous['residual'] if previous else None)
                     if previous and previous['scope'] == scope and (previous['state'] == 'error' or (not loop and previous['state'] == 'completed')):
                         return
-                    self.search_one(slug, proj, fn, scope, minutes, variants, log, stats, lock, total, blocked)
+                    self.search_one(slug, proj, fn, scope, minutes, variants, log, stats, lock, total, blocked,
+                                    expanded_budget=expanded_budget)
                     previous = self._store(slug).one('SELECT state FROM deep_permutation_passes WHERE function_id=?', fn['id'])
                     if previous and (previous['state'] == 'rotated' or (loop and previous['state'] == 'completed')):
                         with lock:
@@ -666,11 +668,13 @@ class Sweeps:
                         order.append(fid)
                         submitted += 1
                 activity.prepare(scanned, total, candidates, waiting, done=True)
-                if loop and visited_turns and not submitted:
+                if loop and visited_turns and not submitted and not futures:
                     cycle += 1
+                    minutes *= 2
+                    variants *= 2
                     visited_turns.clear()
                     stats['activity'].publish({'cycle': cycle}, force=True)
-                    log(f'Starting deep pass {cycle} with the same settings.')
+                    log(f'Starting deep pass {cycle} with up to {minutes} minutes and {variants:,} variants per function.')
                     continue
                 if getattr(log, 'deep_lanes', None) is not None:
                     # (lanes left without a turn hold processes: close the ones idle for a while, all when waiting)
@@ -700,7 +704,7 @@ class Sweeps:
                 log.deep_lanes.close()
                 log.deep_lanes = None
 
-    def search_one(self, slug, proj, fn, scope, minutes, variants, log, stats, lock, total, blocked):
+    def search_one(self, slug, proj, fn, scope, minutes, variants, log, stats, lock, total, blocked, *, expanded_budget=False):
         """One function's bounded turn, on whichever thread is free."""
         log.check_cancel()
         activity = stats["activity"]
@@ -726,6 +730,8 @@ class Sweeps:
             per_function = self.config(slug).get('threads_per_function', 1)
             options = ({'compiler_profiles': count, 'threads_per_function': per_function} if per_function > 1 else
                        {} if count == 1 else {'compiler_profiles': count})
+            if expanded_budget:
+                options['expanded_budget'] = True
             lanes = getattr(log, 'deep_lanes', None)
             result = None
             if lanes is not None:

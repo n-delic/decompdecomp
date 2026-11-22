@@ -27,7 +27,7 @@ class Lane:
 
 def run(net, slug, name, minutes, variants, log, profiles, count):
     from . import deep_permuter, workers
-    proj, before = deep_permuter.validate(net, slug, name, minutes, variants)
+    proj, before = deep_permuter.validate_function(net, slug, name)
     from ..candidate_scope import key
     sweeps = getattr(net, 'deep_sweeps', None)
     scope = key(net, proj, before) if sweeps else None

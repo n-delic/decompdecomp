@@ -334,7 +334,7 @@ def child(db_path, workspace, background):
                 if stop.is_set():
                     raise _Cancelled('Deep pass stopped')
         try:
-            options = {key: message[key] for key in ('compiler_profiles', 'threads_per_function') if key in message}
+            options = {key: message[key] for key in ('compiler_profiles', 'threads_per_function', 'expanded_budget') if key in message}
             result = deep_permuter.run(net, message['slug'], message['name'], message['minutes'], message['variants'],
                                        Log(), **options)
             finished.set()

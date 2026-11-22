@@ -84,6 +84,10 @@ def validate_limits(minutes, max_variants):
 
 def validate(net, slug, name, minutes, max_variants):
     validate_limits(minutes, max_variants)
+    return validate_function(net, slug, name)
+
+
+def validate_function(net, slug, name):
     from . import library_skew
     library_skew.ensure(force=True)
     proj = net.project_row(slug)
@@ -1803,12 +1807,13 @@ def run(net, slug, name, minutes, max_variants, log, *args, **kwargs):
     return result
 
 
-def _full_run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, threads_per_function=1, maximum_throughput=False, compile_slots=0):
+def _full_run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, threads_per_function=1, maximum_throughput=False, compile_slots=0, *, expanded_budget=False):
     from .deep_profiles import validate as validate_profiles
     from .deep_sweep import looking
 
     validate_profiles(compiler_profiles)
-    validate_limits(minutes, max_variants)
+    if not expanded_budget:
+        validate_limits(minutes, max_variants)
     deep_throughput.options(maximum_throughput, compile_slots)
     if maximum_throughput and getattr(log, 'compile_pool', None) is None and threads_per_function == 1:threads_per_function = min(max_variants, deep_throughput.width(True, compile_slots))
     from .deep_parallel import validate_threads
@@ -1904,7 +1909,7 @@ def _full_run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, 
 @claim_stalls.snapshot_rules  # one function's search is one operation: its lane fingerprints the repair code once
 def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, lane=None):
     """Visit the supported local repairs, then spend the remaining budget on random permutations."""
-    proj, fn = validate(net, slug, name, minutes, max_variants)
+    proj, fn = validate_function(net, slug, name)
     sweeps = getattr(net, 'deep_sweeps', None) if lane is None else None
     if sweeps:
         from ..candidate_scope import key

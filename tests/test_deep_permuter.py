@@ -48,7 +48,8 @@ def setup(monkeypatch, imported=False):
 
 
 @pytest.mark.parametrize('imported', [False, True])
-def test_one_function_deep_search_uses_normal_judge_and_keeps_improvements(monkeypatch, imported):
+@pytest.mark.parametrize('minutes, variants, options', [(30, 10, {}), (240, 1_200_000, {'expanded_budget': True})])
+def test_one_function_deep_search_uses_normal_judge_and_keeps_improvements(monkeypatch, imported, minutes, variants, options):
     net = setup(monkeypatch, imported)
     seen = []
     def judge(self, agent, proj, fn, source, best, fork):
@@ -63,7 +64,7 @@ def test_one_function_deep_search_uses_normal_judge_and_keeps_improvements(monke
     monkeypatch.setattr(Permuter, '_score', judge)
     batches(monkeypatch, ['local', 'random', 'never tested'])
     log = Log()
-    result = deep_permuter.run(net, 'game', 'f', 30, 10, log)
+    result = deep_permuter.run(net, 'game', 'f', minutes, variants, log, **options)
     assert not capture_suppressed()
     assert result['matched'] and result['tested'] == 2 and result['skipped'] == 1
     assert seen == [('local','fork' if imported else None), ('random','fork' if imported else None)]
