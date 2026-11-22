@@ -161,15 +161,19 @@ class Restorer:
         # a reference, where only a declaration can have it: after a type, before the name it declares
         text = re.sub(rf"\b((?:{typed})\s*(?:\bconst\b\s*)?)&\s*([A-Za-z_]\w*)(?=\s*[,)=;\[])", r"\1*DDref_\2", text)
         depths = _body_depths(text)
-        out, last = [], 0
+        out, last, prototype_end = [], 0, 0
         # in a body: `T t(args);` builds a local, `T(args)` is a temporary (sizeof(T), (T *) and `T x` aren't these)
         for m in re.finditer(rf"(?<![\w.>])({typed})(\s+[A-Za-z_]\w*)?\s*\(", text):
+            if m.start() < prototype_end:  # a prototype's parameter list: `T (*cb)(...)`, `T(x)` are declarators
+                continue
             if depths[m.start()] < 1 or m.group(1) in C_TYPE_WORDS and not m.group(2):
                 continue
             head = text[max(0, m.start() - 1):m.start()].strip()
             if m.group(2) and head not in ("", ";", "{", "}"):
                 continue
             if m.group(2) and _prototype(text, m, types):  # #301: a prototype isn't a constructor call
+                call = _call_args(text, m.end() - 1)
+                prototype_end = call[1] if call else len(text)
                 continue
             out.append(text[last:m.start()])
             out.append(f"{m.group(1)}{m.group(2)} = DDctor(" if m.group(2) else f"DDnew_{m.group(1)}(")
@@ -433,8 +437,8 @@ def _prototype(text: str, match: re.Match, types: set[str]) -> bool:
     m2c-derived C has prototypes in a body (`extern s32 OSDisableInterrupts(void);`, `void fn_8011176C(void **,
     void *, void *)`), which this took for `T t = DDctor(...)`: one such line made the permuter unable to read the
     whole function."""
-    line = text[text.rfind("\n", 0, match.start()) + 1:match.start()]
-    if match.group(1) == "void" or re.match(r"\s*extern\b", line):
+    statement = text[max(text.rfind(c, 0, match.start()) for c in ";{}") + 1:match.start()]
+    if match.group(1) == "void" or re.match(r"\s*extern\b", statement):
         return True
     call = _call_args(text, match.end() - 1)
     return call is not None and _parameter_list(call[0], types)
