@@ -433,8 +433,13 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
             # when a caller passes its address and splat creates a function.
             recovered_data.append(DataSymbol(fn.name, fn.vram, fn.rom, fn.size, 'data'))
             continue
-        if (leading_repeated_double(fn, following, image, order, segments, direct_calls)
-                and not referenced(fn)):
+        if (leading_constant_padding(fn, following, image, order, segments, direct_calls, entered-{fn.vram})
+                and fn.vram not in explicit|pointers|transfer_targets
+                and string_address_references(fn, references, lines_by_rom, reference_bodies)
+                and not any(d.rom is not None and d.rom < fn.rom+fn.size and fn.rom < d.rom+d.size for d in data)):
+            recovered_data.append(DataSymbol(fn.name, fn.vram, fn.rom, fn.size, 'data'))
+            continue
+        if leading_repeated_double(fn, following, image, order, segments, direct_calls) and not referenced(fn):
             dropped+=1;continue
         if (fn.vram in data_only and predecessor is not None and owner(fn)==owner(predecessor)
                 and predecessor.lines[-2].word==JR_RA
@@ -448,6 +453,7 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
             continue
         if ((terminal_data_alignment(fn, predecessor, image, order, segments)
              or terminal_halfword_data_alignment(fn, predecessor, image, order, segments)
+             or terminal_descending_halfwords(fn, predecessor, image, order, segments)
              or terminal_memory_ranges(fn, predecessor, image, order, segments)
              or terminal_display_modes(fn, predecessor, image, order, segments)) and not referenced(fn)):
             dropped+=1;continue
@@ -1035,6 +1041,62 @@ def leading_repeated_double(fn, following, image, order, segments, calls):
     value, = struct.unpack('>d' if order == 'big' else '<d', pair)
     return 0.0001 <= abs(value) <= 1_000_000
 
+
+
+
+def string_address_references(fn, references, lines, bodies):
+    """Allow address materialization of a short string, but never an indirect jump through its register."""
+    uses = {offset for offset,_ in references.get(fn.vram, ())}
+    while uses:
+        start = min(uses)
+        first, second = lines.get(start), lines.get(start+4)
+        if first is None or second is None or start+4 not in uses:
+            return False
+        reg = (first.word>>16)&31
+        if (not reg or first.word>>26 != 15 or first.word&0xffff != ((fn.vram+0x8000)>>16)&0xffff
+                or second.word != (0x24000000 | reg<<21 | reg<<16 | fn.vram&0xffff)):
+            return False
+        body = bodies.get(start)
+        if body is None or any(line.word>>26 == 0 and (line.word&63) in (8,9)
+                               and (line.word>>21)&31 == reg for line in body.lines):
+            return False
+        uses.difference_update((start,start+4))
+    return True
+
+def leading_constant_padding(fn, following, image, order, segments, calls, entered):
+    """A harmless instruction-shaped word and zero alignment after a floating constant."""
+    start = fn.rom
+    if (fn.size != 4 or fn.lines[0].word != 0x30000000 or start < 8 or following is None
+            or following.rom != start+16 or following.vram != fn.vram+16 or following.vram%16
+            or following.vram not in calls or not is_frame(following.lines[0].word)
+            or any(image[start+4:start+16]) or any(fn.vram <= address < following.vram for address in entered)):
+        return False
+    if not any(s.rom_start == start and s.vram == fn.vram and following.rom+following.size <= s.rom_end
+               for s in segments):
+        return False
+    value, = struct.unpack('>d' if order == 'big' else '<d', image[start-8:start])
+    return 0.0001 <= abs(value) <= 1_000_000_000
+
+
+def terminal_descending_halfwords(fn, previous, image, order, segments):
+    """A branch-shaped final word before a smooth signed halfword lookup table."""
+    end = fn.rom+4
+    word = fn.lines[0].word
+    if (fn.size != 8 or word>>26 not in (4,5,6,7,20,21,22,23) or not 1 <= word&0xffff < 0x8000
+            or end%16 or previous is None or previous.size < 8 or previous.lines[-2].word != JR_RA
+            or previous.rom+previous.size != fn.rom or previous.vram+previous.size != fn.vram
+            or fn.lines[1].rom != end or not 8 <= fn.rom < end+64 <= len(image)):
+        return False
+    owners = [s for s in segments if s.rom_start <= fn.rom-8 and s.rom_end == end
+              and s.vram-s.rom_start == fn.vram-fn.rom]
+    target = end+4*(word&0xffff)
+    if len(owners) != 1 or any(s.rom_start < end+64 and end < s.rom_end for s in segments) or any(
+            s.rom_start <= target < s.rom_end for s in segments):
+        return False
+    values = struct.unpack_from('>32h' if order == 'big' else '<32h', image, end)
+    steps = [a-b for a,b in zip(values,values[1:])]
+    return (all(v < 0 for v in values) and all(0 < step <= 512 for step in steps)
+            and all(b <= a+2 for a,b in zip(steps,steps[1:])))
 
 def terminal_data_alignment(fn, previous, image, order, segments):
     """A word of assembler filler at the aligned end of code, before float data."""
