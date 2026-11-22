@@ -2101,6 +2101,8 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
     if rank_candidates:
         from .deep_candidate_order import for_function
         search.candidate_order = for_function(proj, fn, log)
+    from . import deep_line_order
+    search.candidate_order = deep_line_order.for_function(net, proj, fn, log, then=search.candidate_order if rank_candidates else None)
     if lane is not None:
         search.deadline = lane.deadline
         search.random_salt = f"-lane-{lane.index}"

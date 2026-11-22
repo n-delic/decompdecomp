@@ -567,7 +567,7 @@ class GuiMixin:
                 from ..source_diagnostics import hints as source_hints
                 from ..stack_layout import text as stack_text
                 out = {"rows": [list(r) for r in d.rows], "score": d.score,
-                       "source_map": source_mismatches(result.obj, fn["name"], d.rows, source,
+                       "source_map": source_mismatches(self.line_object(proj, ctx["header"], source, fn, result) or result.obj, fn["name"], d.rows, source,
                                                        filename="func.cpp" if result.language == "c++" else "func.c"),
                        "stack_diagnostic": stack_text(proj['arch'],d.rows),
                        "mismatch_summary": summary_text(d.rows),

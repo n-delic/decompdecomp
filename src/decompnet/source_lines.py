@@ -133,6 +133,39 @@ def locations(data, name, filename='func.c'):
         return []
 
 
+def debug_twin_cmd(cmd, toolchain=''):
+    """`cmd` with -g added before the source, for a GCC that can say which line made each instruction; else None.
+
+    Only GCC: IDO's -g turns the optimizer off, CodeWarrior's is -sym. An old GCC's debug labels can still change
+    what its assembler schedules, so the twin is never trusted until `same_code` agrees (neutral_object)."""
+    from . import toolchains
+    gcc = toolchain.startswith(('gcc', 'ee-gcc')) or toolchains.compiler_family(toolchain) == 'gcc'
+    if not gcc or '{src}' not in cmd or any(re.fullmatch(r'-g[0-3]?', arg) for arg in cmd):
+        return None
+    at = cmd.index('{src}')
+    return [*cmd[:at], '-g', *cmd[at:]]
+
+
+def same_code(a, b, name):
+    """Both objects hold byte-identical code for `name`, with the same relocations."""
+    try:
+        one, two = extract_function(a, name), extract_function(b, name)
+    except (ELFError, ValueError, KeyError):
+        return False
+    return one is not None and two is not None and one.code == two.code and one.fingerprint() == two.fingerprint()
+
+
+def neutral_object(obj, name, filename, twin):
+    """The object to read C lines from: `obj` when it carries them, else `twin()`'s -g build of the same C, but only
+    when its code for `name` is exactly `obj`'s (a twin that changed the code says nothing about it). None: no lines."""
+    if locations(obj, name, filename):
+        return obj
+    built = twin()
+    if built and same_code(obj, built, name) and locations(built, name, filename):
+        return built
+    return None
+
+
 def annotate(rows, offsets, spans, source, first_line=1):
     """Align only candidate instructions; target-only gaps have no invented C line."""
     lines, unmapped, candidate = {}, 0, 0

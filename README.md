@@ -1662,10 +1662,11 @@ compiled instructions; yellow lines have operand differences. Click a marked lin
 number to see the target and compiled instructions. Editing the source clears these
 marks until another comparison. Agent compile responses include bounded C-line evidence too.
 
-These are compiler debug locations from the exact compiled object. Optimization can
-associate several statements with one location, so the marks are advisory. No compiler
-flags are changed to manufacture a map. Missing target-only instructions have no
-compiled C location. ELF DWARF 1/2+ and ECOFF are supported; absent, ambiguous or
+These are compiler debug locations from the exact compiled object. When that object has
+none (the game was built without `-g`), a GCC build gets a second, `-g` compile of the same
+C, used only if its code for the function is byte-identical to the scored one; the judge and
+scores never see it. Optimization can associate several statements with one location, so
+the marks are advisory. Missing target-only instructions have no compiled C location. ELF DWARF 1/2+ and ECOFF are supported; absent, ambiguous or
 unsupported information is labelled unavailable, including COFF/CodeView for now.
 
 ### Investigate near misses before broad permutation
