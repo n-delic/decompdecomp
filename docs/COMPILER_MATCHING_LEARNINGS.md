@@ -13252,6 +13252,24 @@ the same center, loads from one base register, and comparisons of the
 results. It generates a candidate only across local statements that preserve
 the inputs. Evidence is one partial live match and synthetic tests.
 
+### KMC GCC 2.7.2: capture a vector result before another store
+
+On a large N64 function, the target loaded all three floats from an
+output buffer immediately after a call, then stored through another
+pointer. The source postponed each load until it needed the component.
+Under `-G0 -mips3 -mgp32 -mfp32 -O2`, staging the three values in float
+locals before the store improved the exact linked score from 24,525 to
+23,885. The warning check was clean. Independently moving two calls and
+staging one earlier component reduced the combined candidate to 22,686.
+Moving both earlier horizontal accumulator updates together instead
+put the saved registers in a different order and scored 25,165 or
+worse in the corresponding trials.
+
+The `vector_output_capture` repair requires the same output call count,
+a stack argument, the three adjacent loads, and an ensuing non-stack
+store in the target. Tests cover source escapes and absent evidence.
+Evidence is one observed partial match plus synthetic tests.
+
 ### KMC GCC 2.7.2: reuse two float lifetimes with guarded labels
 
 In a large N64 function built with `-G0 -mips3 -mgp32 -mfp32 -O2`,
