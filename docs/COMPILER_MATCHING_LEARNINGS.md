@@ -13337,6 +13337,20 @@ the same center, loads from one base register, and comparisons of the
 results. It generates a candidate only across local statements that preserve
 the inputs. Evidence is one partial live match and synthetic tests.
 
+### KMC GCC 2.7.2: restore a two-value switch with empty low cases
+
+In a large N64 function, the draft combined a nonnegative check and
+the interval `2 <= mode < 4`. The target issued three branches, while
+the draft collapsed the interval to an unsigned check. A switch with
+empty cases 0 and 1 and a shared arm for 2 and 3 recovered the target
+shape. Under `-G0 -mips3 -mgp32 -mfp32 -O2` it moved the linked score
+from 18,356 to 17,741 and aligned the following jump table relocation.
+
+Plain cases 2 and 3 scored 18,101, and separate explicit gotos scored
+18,251. A signed selector spelling of the new switch scored 17,656 in a
+separate trial. The automated form preserves the local's declared type.
+Evidence is one partial match and synthetic guard tests.
+
 ### KMC GCC 2.7.2: stage a vector component in its saved accumulator
 
 An N64 draft waited to consume a component from a stack vector until
