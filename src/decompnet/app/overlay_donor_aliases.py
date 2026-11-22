@@ -41,8 +41,19 @@ def _empty_c_stub(declarations, symbol):
     return None
 
 
+def _external_prototype(definition, symbol):
+    if prototype := _stub_prototype(definition, symbol):
+        return prototype
+    clean = csource._blank(definition)
+    signature, brace, _ = clean.partition('{')
+    if (not brace or not re.fullmatch(r'[A-Za-z_][\w\s*]*\b' + re.escape(symbol) + r'\s*\([^;{}]*\)', signature.strip())
+            or re.search(r'\b(?:static|inline|__inline|__inline__|typedef)\b', signature)):
+        return None
+    return definition[:len(signature)].rstrip() + ';'
+
+
 def named_bindings(source, header, candidate, aliases):
-    """Give calls to empty donor stubs undefined symbols so the loader resolves them."""
+    """Declare a named direct donor call so the overlay loader can resolve it."""
     uses = defaultdict(set)
     for reloc in candidate.relocs:
         if reloc.symbol in aliases:
@@ -52,7 +63,7 @@ def named_bindings(source, header, candidate, aliases):
         for symbol, kinds in uses.items():
             if kinds == {(JUMP, 0)} and (span := csource.find(text, symbol)):
                 start, end = span
-                prototype = _stub_prototype(text[start:end], symbol)
+                prototype = _external_prototype(text[start:end], symbol)
                 if prototype:
                     text = text[:start] + prototype + text[end:]
         return rename(text, aliases)
