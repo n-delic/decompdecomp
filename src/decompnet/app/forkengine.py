@@ -2697,7 +2697,8 @@ class ForkEngine:
                 lines.append('claim_token: '+lease)
         from .. import candidate_quality
         if fn["status"] != "matched":
-            lines.append(move_on_brief(fn, self.net.agent_stall_budget(fn, agent)))
+            kept = self.net._last_diffs.get((agent.id, fn["id"])) if agent else None
+            lines.append(move_on_brief(fn, self.net.agent_stall_budget(fn, agent), kept[0] if kept else None))
             lines += self.net.tried_at_best(fn)
         if meta.get("demangled"):
             lines.append(f"C++ name: {meta['demangled']}")
