@@ -35,3 +35,44 @@ def test_deep_permuter_routes_the_witnessed_sample_order_for_kmc():
     assert 'result = sample(input, 2, 3) * 0.2f;\n    old =' in candidate
     for arch, compiler in [('arm', 'gcc-2.7.2-kmc'), ('mips', 'gcc-egcs'), ('mips', 'ido-5.3')]:
         assert all(label != FAMILY for label, _ in proposals(SOURCE, 'adjust', HEADER, arch, compiler, ROWS, ''))
+
+
+RECORD_SOURCE = '''
+float cosine(float angle);
+void adjust(void *object, float phase)
+{
+    void *record;
+    float z;
+    z = 0.0f;
+    record = *((void **) (((char *) object) + 20));
+    z += phase * cosine(*((float *) (((char *) object) + 8)));
+    if (!((*((unsigned short *) (((char *) record) + 4))) & 0x20)) {
+        emit(z);
+    }
+}
+'''
+RECORD_ROWS = [
+    (' ', 'lwc1 $f12, 8($s2)', 'lwc1 $f12, 8($s2)'),
+    ('>', '', 'lw $s0, 20($s2)'),
+    (' ', 'nop', 'nop'),
+    (' ', 'jal cosine', 'jal cosine'),
+    (' ', 'nop', 'nop'),
+    (' ', 'nop', 'nop'),
+    (' ', 'mul.s $f0, $f26, $f0', 'mul.s $f0, $f26, $f0'),
+    ('<', 'lw $a0, 20($s2)', ''),
+    (' ', 'mtc1 $s6, $f16', 'mtc1 $s6, $f16'),
+    ('r', 'lhu $v0, 4($a0)', 'lhu $v0, 4($s0)'),
+    (' ', 'add.s $f16, $f16, $f0', 'add.s $f16, $f16, $f0'),
+    (' ', 'andi $v0, $v0, 0x20', 'andi $v0, $v0, 0x20'),
+    (' ', 'mfc1 $s6, $f16', 'mfc1 $s6, $f16'),
+    (' ', 'nop', 'nop'),
+]
+
+
+def test_deep_permuter_reads_the_record_after_the_projection_for_kmc():
+    family = 'record_read_after_projection'
+    [candidate] = [text for label, text in proposals(RECORD_SOURCE, 'adjust', '', 'mips',
+                                                    'gcc-2.7.2-kmc', RECORD_ROWS, '') if label == family]
+    assert candidate.index('z += phase * cosine') < candidate.index('record = *((void **)')
+    assert all(label != family for label, _ in proposals(RECORD_SOURCE, 'adjust', '', 'mips',
+                                                          'ido-5.3', RECORD_ROWS, ''))
