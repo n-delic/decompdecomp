@@ -16997,6 +16997,34 @@ A... } else { v = t; } B... N: C...`. Every path of B ended in `goto N`, so B fa
 - Library: `goto_nested_entry_else` in decomprepair 0.5.580 (`goto_structure_repairs`), offered by the draft repairs and
   the deep pass (it is in `AGENT_FAMILIES`); `tests/test_goto_nested_entry_else.py`.
 
+### KMC GCC 2.7.2: four edits that only pay off together (`allocation_weight_combination`)
+
+A 284-instruction N64 function (`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, a pointer chain whose first link m2c copied into
+a stack local) stood at 80 with only the chain's register wrong (`$a3` where the target has `$t0`). Controlled result on one
+function (exact judge, no permuter run); the explanations are hypotheses from `cc1 -dl -dg` dumps, not confirmed in the
+compiler source. Four edits, each alone no better than 80, reach 65 only together:
+
+| edit | alone | what it is |
+|---|---|---|
+| D `spill_slot_copy_collapse` | 1596 | `temp = &b[n]; next = &temp[n]; ...; slot = temp;` written through `slot` (copy dropped) |
+| U `weight_scope_unwrap` | 320 | the function-body `do { } while (0);` (it holds m2c's labels and gotos, all inside) made a plain block |
+| I inner call scopes | 160 | the inner `do { call(); } while (0);` removed |
+| S `init_sink_into_guard` | 80 | `v = NULL;` before `if (arg0 != NULL) {` moved to the block's first statement |
+
+Pairs and triples: DU 230, DUI 115, DUS 190, UIS 155, DI/DIS 1675, DS 1596, UI 205, US 280, IS 160; all four 65.
+Hypotheses: (1) flow.c counts a reference once per loop depth, so inside a one-shot `do { } while (0);` every use doubles and
+global.c's `floor_log2(uses) * uses / length` ranking changes: with the wrapper the stack slot's pseudo (6 uses, length 44,
+0.27) outranked the call-crossing pointer (10 uses, 117, 0.26) and took `$fp`; without it the slot's 3 references rank
+below (0.07 against 0.085) and the slot stays in memory; (2) a stack local that is itself the spilled pseudo gets its
+chain's first add through the reload register ($t0), while a copy keeps a local-alloc pseudo ($a3); (3) the
+init moved into the guard leaves the prologue's save order to the second scheduler as the target has it. What did not work:
+changing the size expression (`A*8 + t + t + C`) in every form tried left 65 (the chain is merged by combine unless a third
+use of the product exists, still unsolved).
+- Library: decomprepair 0.5.586 (`allocation_weight_combination`: `weight_scope_unwrap`, `spill_slot_copy_collapse`,
+  `init_sink_into_guard`, `weight_combination` with every subset of the edits that apply), offered by the draft repairs,
+  `deep_permuter` children and the local lane (all call `draft_repairs.variants`; the families are in `AGENT_FAMILIES`);
+  `tests/test_allocation_weight_combination.py`.
+
 ### KMC GCC 2.7.2: an N64 effect spawner, 1397 to 0 in six edits (decomprepair 0.5.581, 0.5.582)
 
 A 374-instruction N64 effect spawner (`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, eleven parameters, a switch over seven
