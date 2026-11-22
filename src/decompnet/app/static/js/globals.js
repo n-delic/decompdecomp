@@ -2,7 +2,7 @@
    as (D_800A4DFC → sDirectKey). Read-only, like the Functions list; renames happen through the agents' rename_symbol. */
 const G = { slug: null, rows: [], supported: true, reason: "", q: "", filter: "all", sort: "address", dir: 1, limit: 500, request: 0 };
 const GLOBAL_ROWS = 500;
-const GLOBAL_COLUMNS = [["address", "Address"], ["name", "Name"], ["original", "Address name"], ["size", "Size", "r"], ["kind", "Kind"], ["preview", "Value"]];
+const GLOBAL_COLUMNS = [["address", "Address"], ["name", "Name"], ["original", "Address name"], ["type", "Type"], ["size", "Size", "r"], ["kind", "Kind"], ["preview", "Value"]];
 
 async function loadGlobals(slug) {
   if (!slug) return;
@@ -32,7 +32,7 @@ function renderGlobals() {
   const q = G.q.trim().toLowerCase();
   let rows = G.rows.filter((r) => (G.filter === "all" || (G.filter === "named") === named(r)) &&
     (!q || r.name.toLowerCase().includes(q) || r.original.toLowerCase().includes(q) || hex8(r.address).toLowerCase().includes(q.replace(/^0x/, ""))
-      || (r.preview || "").toLowerCase().includes(q)));
+      || (r.preview || "").toLowerCase().includes(q) || (r.type || "").toLowerCase().includes(q)));
   rows.sort((a, b) => {
     const x = a[G.sort], y = b[G.sort];
     const missing = (v) => v === "" || v == null;
@@ -43,9 +43,9 @@ function renderGlobals() {
   $("globalsHead").innerHTML = `<tr>${GLOBAL_COLUMNS.map(([k, label, cls]) =>
     `<th scope="col" class="${cls || ""}" aria-sort="${G.sort === k ? (G.dir > 0 ? "ascending" : "descending") : "none"}"><button type="button" class="sort-btn" data-gsort="${k}">${label}${G.sort === k ? (G.dir > 0 ? " ↑" : " ↓") : ""}</button></th>`).join("")}</tr>`;
   $("globalsRows").innerHTML = rows.slice(0, G.limit).map((r) =>
-    `<tr><td class="mono dim">${hex8(r.address)}</td><td class="mono name">${esc(r.name)}</td><td class="mono dim">${named(r) ? esc(r.original) : ""}</td>
+    `<tr><td class="mono dim">${hex8(r.address)}</td><td class="mono name">${esc(r.name)}</td><td class="mono dim">${named(r) ? esc(r.original) : ""}</td><td class="mono" title="${r.type_source ? `recorded by ${esc(r.type_source)}` : ""}">${r.type ? esc(r.type) : `<span class="dim">–</span>`}</td>
       <td class="r mono">${r.size ? r.size.toLocaleString() : `<span class="dim">–</span>`}</td><td>${esc(r.kind)}</td><td class="mono dim">${esc(r.preview || "")}</td></tr>`).join("")
-    || `<tr class="none"><td colspan="6">${G.rows.length ? `No global matches${q ? ` “${esc(G.q)}”` : ""}.` : "No data symbols recorded for this project."}</td></tr>`;
+    || `<tr class="none"><td colspan="7">${G.rows.length ? `No global matches${q ? ` “${esc(G.q)}”` : ""}.` : "No data symbols recorded for this project."}</td></tr>`;
   $("globalsShown").textContent = rows.length > G.limit ? `${G.limit.toLocaleString()} of ${rows.length.toLocaleString()} shown` : plural(rows.length, "global");
   $("globalsMore").hidden = rows.length <= G.limit;
   $("gTabCount").textContent = G.rows.length ? G.rows.length.toLocaleString() : "";

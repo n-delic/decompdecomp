@@ -123,4 +123,49 @@ def watch(net, slug: str, target: str, kind: str = "write", vis: int = 600, from
                 "again with the same arguments for the result; meanwhile work on something else.")
     if entry.get("error"):
         raise NetworkError(entry["error"])
-    return describe(net, proj, entry["run"], kind, label, vis, from_vi)
+    text = describe(net, proj, entry["run"], kind, label, vis, from_vi)
+    if kind == "write" and (typed := record_type(net, slug, proj, entry["run"], address)):
+        text += "\n" + typed
+    return text
+
+
+# MIPS stores: opcode -> (bytes written, the C type the store says). A float store (swc1, sdc1) says the type; an
+# integer store says its width, and the unsigned type of that width is the least it claims.
+STORES = {0x28: (1, "u8"), 0x29: (2, "u16"), 0x2B: (4, "u32"), 0x3F: (8, "u64"), 0x39: (4, "f32"), 0x3D: (8, "f64")}
+
+
+def infer_type(net, proj, run, address: int) -> str | None:
+    """The C type the watched writes agree on: every hit's store instruction writes the symbol's whole size with one
+    opcode. A symbol of another size, a write by two kinds of store, or no hit says nothing."""
+    symbols = net.symbols(proj["id"])
+    sym = symbols.by_addr.get(address)
+    hits = [h for h in run.hits if h.kind == "watch"]
+    read = net.reader(proj)
+    if sym is None or not sym.size or not hits:
+        return None
+    kinds = set()
+    for h in hits:
+        raw = read(h.pc, 4)
+        if raw is None or len(raw) < 4:
+            return None
+        word = int.from_bytes(raw, "big" if proj["big_endian"] else "little")
+        kinds.add(STORES.get(word >> 26))
+    if len(kinds) != 1 or None in kinds:
+        return None
+    width, c_type = kinds.pop()
+    return c_type if width == sym.size else None
+
+
+def record_type(net, slug: str, proj, run, address: int) -> str:
+    """Give the watched data symbol the type its writes agree on, unless an agent or the user typed it already."""
+    c_type = infer_type(net, proj, run, address)
+    if c_type is None:
+        return ""
+    store = net.project_store(proj["id"])
+    row = store.one("SELECT name, c_type, type_source FROM symbols WHERE project_id=? AND address=? AND kind<>'func' LIMIT 1",
+                    proj["id"], address)
+    if row is None or (row["c_type"] and row["type_source"] != "emulator"):
+        return ""
+    from .globals_view import set_type
+    set_type(net, slug, row["name"], c_type, "emulator")
+    return f"Every write is a {c_type} store: {row['name']} is recorded as `{c_type}` in the Globals tab."

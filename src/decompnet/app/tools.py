@@ -453,6 +453,11 @@ def _get_call_hints(net: RomNetwork, slug: str, *args) -> str:
     return answer(net, slug, *args)
 
 
+def _set_global_type(net, slug: str, name: str, c_type: str, source: str) -> str:
+    from .globals_view import set_type
+    return set_type(net, slug, name, c_type, source)
+
+
 def _watch_in_emulator(net: RomNetwork, slug: str, *args) -> str:
     from .emulator_watch import watch
     return watch(net, slug, *args)
@@ -743,6 +748,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "edit_context": lambda net, agent, slug, old, new, message, function="":
         net.edit_context(agent, slug, old, new, message, function or None),
     "rename_symbol": lambda net, agent, slug, old, new, message="": net.rename_symbol(agent, slug, old, new, message),
+    "set_global_type": lambda net, agent, slug, name, c_type, source="agent": _set_global_type(net, slug, name, c_type, source),
     "split_function": lambda net, agent, slug, function, at, new_name="":
         net.split_function(agent, slug, function, at, new_name),
     "report_boundary": lambda net, agent, slug, function, end, reason:
@@ -830,7 +836,7 @@ REPAIR_CAPTURE_TOOLS = frozenset({'compile_and_diff', 'compile_patch', 'compile_
                                  'edit_file', 'edit_context', 'redraft'})
 
 
-ROM_ONLY = {"watch_in_emulator","get_call_hints","compare_behaviour","compare_candidate_behaviour","get_data_unit","compile_data","claim_data","release_data","claim_port_fix","release_port_fix","check_for_pc","fix_for_pc","claim_asset_region","inspect_asset_region","preview_asset_region","propose_asset_region","defer_asset_region","review_search_seed","get_boundary_evidence", "suggest_boundary", "get_context", "edit_context", "split_function", "redraft", "search_flags",
+ROM_ONLY = {"set_global_type","watch_in_emulator","get_call_hints","compare_behaviour","compare_candidate_behaviour","get_data_unit","compile_data","claim_data","release_data","claim_port_fix","release_port_fix","check_for_pc","fix_for_pc","claim_asset_region","inspect_asset_region","preview_asset_region","propose_asset_region","defer_asset_region","review_search_seed","get_boundary_evidence", "suggest_boundary", "get_context", "edit_context", "split_function", "redraft", "search_flags",
             # GCC pass dumps and the standalone judge worker are ROM-mode (compiler_passes.py, score_permutations.py)
             "compiler_passes", "score_permutations", "prove_chain"}
 FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions", "tidy_done", "tidy_file",
@@ -1560,6 +1566,14 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         uses the name changes with it (ROM: the assembly, matched sources, the header; a project: the game's
         symbols in its config and every source and header file); never breaks a match."""
         return await run(ctx, "rename_symbol", old=old, new=new, message=message)
+
+    @tool
+    async def set_global_type(ctx: Context, name: str, c_type: str, source: str = "agent") -> str:
+        """Record the C type of a data symbol (a name, a D_ name or a hex address), shown in the project's Globals
+        tab: `s32`, `f32`, `u8[16]`, `struct Actor *`. Do it once the accesses, a struct layout or an emulator run
+        (watch_in_emulator) make the type known; a type an emulator run recorded can be replaced the same way. An
+        empty c_type clears it. It does not change the header: declare the variable there with edit_context."""
+        return await run(ctx, "set_global_type", name=name, c_type=c_type, source=source)
 
     @tool
     async def split_function(ctx: Context, function: str, at: str, new_name: str = "") -> str:
