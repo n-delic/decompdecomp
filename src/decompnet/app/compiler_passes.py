@@ -40,13 +40,13 @@ def run(net, agent, slug, function, revision, passes=None):
     return render(result, passes, revision) + source_line(result.get('toolchain') or profile.get('toolchain'))
 
 
-def diagnose(net, proj, fn, source, passes, excerpt_chars=compiler_diagnostics.EXCERPT_CHARS):
+def diagnose(net, proj, fn, source, passes, excerpt_chars=compiler_diagnostics.EXCERPT_CHARS, extra_flags=()):
     """The isolated diagnostic compile of `source` under the function's own profile (the tool's and the skill's
     passes.py share it): (result, profile)."""
     header = net._context(proj['id'], fn['unit'])['header']
     profile = compiler_for(net.cfg(proj), fn['vram'], fn)
     result = compiler_diagnostics.diagnose(profile, header, source, fn['name'], root=proj['root'], excerpts=passes,
-                                           excerpt_chars=excerpt_chars)
+                                           excerpt_chars=excerpt_chars, extra_flags=extra_flags)
     if result.get('skipped'):
         raise NetworkError(f"{result['skipped']} compiler_passes needs a pinned, installed GCC-family compiler "
                            f"(this function's is {profile.get('toolchain') or 'a custom command'}); use compile_variants "
@@ -80,10 +80,25 @@ def schedule_order(result, phase):
             re.findall(r'^\((?:insn|jump_insn|call_insn) (\d+) .*?\{(\w+)\}', text, re.M | re.S)]
 
 
-def report(net, proj, fn, source, passes=SKILL_PASSES):
+SCHED_VERBOSE = '-fsched-verbose-2'
+
+
+def verbose_schedule(result):
+    """The first scheduler's `-fsched-verbose-2` notes (the `;;` lines the pass writes into the sched dump: each ready
+    list with its launch priorities, the insns launched, the set-count rule), apart from the insns themselves."""
+    text = ((result.get('phases') or {}).get('sched') or {}).get('excerpt', '')
+    return [line for line in text.splitlines() if line.startswith(';;')]
+
+
+def report(net, proj, fn, source, passes=SKILL_PASSES, sched_verbose=False):
     """What the skill's passes.py prints: the allocation priority table, register preferences, scheduling orders and
-    where the compiler's source is. Diagnostic only, like the tool: nothing is recorded or judged."""
-    result, profile = diagnose(net, proj, fn, source, passes, SKILL_EXCERPT_CHARS)
+    where the compiler's source is. Diagnostic only, like the tool: nothing is recorded or judged. `sched_verbose`
+    adds -fsched-verbose-2 to the dump compile (agents patched this flag in by hand to read the launch priorities) and
+    prints the first scheduler's notes."""
+    if sched_verbose and 'sched' not in passes:
+        passes = (*passes, 'sched')
+    result, profile = diagnose(net, proj, fn, source, passes, SKILL_EXCERPT_CHARS,
+                               extra_flags=(SCHED_VERBOSE,) if sched_verbose else ())
     out = [render(result, (), 'candidate', rows=None)]
     if prefs := preferences(result):
         out += ['', 'Register preferences (greg):', *prefs]
@@ -92,6 +107,10 @@ def report(net, proj, fn, source, passes=SKILL_PASSES):
             order = schedule_order(result, phase)
             out += ['', f"Scheduling order, {phase} ({'first' if phase == 'sched' else 'second'} scheduler), "
                         f"{len(order)} insns:", '  ' + '  '.join(order) if order else '  (not written by this compiler build)']
+    if sched_verbose:
+        notes = verbose_schedule(result)
+        out += ['', f'First scheduler, {SCHED_VERBOSE} ({len(notes)} lines):',
+                *(notes or ['  (this compiler build wrote no verbose notes into its sched dump)'])]
     return '\n'.join(out) + source_line(result.get('toolchain') or profile.get('toolchain'))
 
 

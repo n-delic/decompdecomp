@@ -87,7 +87,7 @@ STUB = textwrap.dedent("""\
     for line in sys.stdin:
         r = json.loads(line)
         out = ({{"name": "f", "vram": 1, "target": "00", "header": "", "compiler": {{"toolchain": "t", "flags": []}}}}
-               if r["op"] == "function" else {{"text": "passes for " + ",".join(r.get("passes", ["default"]))}})
+               if r["op"] == "function" else {{"text": "passes for " + ",".join(r.get("passes", ["default"])) + (" verbose" if r.get("sched_verbose") else "")}})
         print(json.dumps(out), flush=True)
 """)
 
@@ -104,6 +104,8 @@ def test_passes_py_asks_the_worker_and_prints_its_text(tmp_path, monkeypatch, ca
     (tmp_path / "c.c").write_text("int f(void){return 0;}")
     module.main([str(tmp_path / "c.c"), "--slug", "g", "--function", "f", "--passes", "greg,sched2"])
     assert capsys.readouterr().out.strip() == "passes for greg,sched2"
+    module.main([str(tmp_path / "c.c"), "--slug", "g", "--function", "f", "--passes", "sched", "--sched-verbose"])
+    assert capsys.readouterr().out.strip() == "passes for sched verbose"
 
 
 def test_the_skills_report_lists_every_pseudo_not_just_the_first_sixteen():
@@ -113,3 +115,28 @@ def test_the_skills_report_lists_every_pseudo_not_just_the_first_sixteen():
     text = compiler_passes.render({"allocation": {"values": values}}, (), "candidate", rows=None)
     assert "pseudo 119" in text and "pseudo 200 (temp) -> spilled to the stack" in text
     assert "pseudo 119" not in compiler_passes.render({"allocation": {"values": values}}, (), "candidate")
+
+
+VERBOSE = SCHED + """
+;; ready list (t = 3): 58:2 4:1
+;; launching insn 58 (priority 2)
+;; set-count rule: insn 4 first
+"""
+
+
+def test_the_verbose_scheduler_dump_adds_the_flag_and_prints_only_its_notes(tmp_path, monkeypatch):
+    net = project(tmp_path)
+    seen = {}
+
+    def diagnose(net, proj, fn, source, passes, excerpt_chars=None, extra_flags=()):
+        seen.update(passes=passes, extra_flags=extra_flags)
+        return result() | {"toolchain": "gcc-2.7.2-kmc", "phases": {"sched": {"excerpt": VERBOSE}}}, {}
+    monkeypatch.setattr(compiler_passes, "diagnose", diagnose)
+    plain = hosted_judge.passes_report(net, {"slug": "game", "name": "f1", "source": "int f1(void){return 0;}"})["text"]
+    assert seen["extra_flags"] == () and "-fsched-verbose-2" not in plain
+    text = hosted_judge.passes_report(net, {"slug": "game", "name": "f1", "source": "int f1(void){return 0;}",
+                                            "passes": ["greg"], "sched_verbose": True})["text"]
+    assert seen["extra_flags"] == ("-fsched-verbose-2",) and "sched" in seen["passes"]  # asked for it, so dumped
+    assert "First scheduler, -fsched-verbose-2 (3 lines):" in text
+    assert ";; launching insn 58 (priority 2)" in text and ";; set-count rule: insn 4 first" in text
+    assert compiler_passes.verbose_schedule({"phases": {}}) == []

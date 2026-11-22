@@ -99,7 +99,7 @@ def phase_summary(work, name=None, arch=None, excerpts=(), excerpt_chars=EXCERPT
                 'allocation':gcc_allocation.summarize(texts,name,arch)} if name else {})}
 
 
-def diagnose(profile, header, source, name, *, root='.', baseline_obj=None, on_compile=lambda: None, excerpts=(), excerpt_chars=EXCERPT_CHARS):
+def diagnose(profile, header, source, name, *, root='.', baseline_obj=None, on_compile=lambda: None, excerpts=(), excerpt_chars=EXCERPT_CHARS, extra_flags=()):
     tid = profile.get('toolchain','')
     if not tid or 'cmd' in profile or not toolchains.installed(tid):
         return {'skipped':'Diagnostics require an already installed pinned compiler; nothing is downloaded.'}
@@ -120,7 +120,7 @@ def diagnose(profile, header, source, name, *, root='.', baseline_obj=None, on_c
         captured.update(phase_summary(work,name,tc.arch,excerpts,excerpt_chars))
     with capture_artifacts(collect):
         on_compile()
-        diagnostic = compile_source(replace(cfg,cmd=[*cfg.cmd,'-da']),header,source)
+        diagnostic = compile_source(replace(cfg,cmd=[*cfg.cmd,'-da',*extra_flags]),header,source)
     if not diagnostic.ok:
         return {'skipped':'This GCC build did not accept phase capture.','error':diagnostic.log[:500]}
     try:
@@ -137,7 +137,7 @@ def diagnose(profile, header, source, name, *, root='.', baseline_obj=None, on_c
         from .rtl_value_trace import anchors
         anchors(captured['value_trace'],source)
         captured['value_trace']['profile_sha256']=hashlib.sha256(json.dumps(profile,sort_keys=True,default=str).encode()).hexdigest()
-    return {'toolchain':tid,'original_flags':profile.get('flags',[]),'diagnostic_flags':['-da'],
+    return {'toolchain':tid,'original_flags':profile.get('flags',[]),'diagnostic_flags':['-da',*extra_flags],
             'output_unchanged':equal,**captured,
             'note':'Isolated diagnostic compilation; no settings or progress changed. Removed pseudos and empty conflict lists are investigation leads, not proof of a spill cause. Phase evidence is comparable only when output_unchanged is true.'}
 

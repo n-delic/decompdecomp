@@ -22,7 +22,8 @@ Requests:
   tables, as switch_tables.read), "callees" (its callees' matched C, capture_followup_repairs.callee_evidence) and
   "entry_scope" (promoted_entry_repairs.scope): the context the app's draft path hands draft_repairs.variants}: everything a local search needs to judge without being told the function's bytes
   (the match-function skill's fast_judge.py).
-- {"op": "passes", "slug", "name", "source", "passes" (optional)} -> {"text"}: the compiler's allocation priority
+- {"op": "passes", "slug", "name", "source", "passes" (optional), "sched_verbose" (optional: the first scheduler's
+  -fsched-verbose-2 notes too)} -> {"text"}: the compiler's allocation priority
   table, register preferences and scheduling orders for that C under the function's profile (compiler_passes.report,
   the code behind the compiler_passes tool; the skill's passes.py).
 
@@ -160,7 +161,7 @@ def passes_report(net, request: dict) -> dict:
         return {"error": "no source"}
     passes = tuple(request.get("passes") or compiler_passes.SKILL_PASSES)
     try:
-        return {"text": compiler_passes.report(net, proj, fn, source, passes)}
+        return {"text": compiler_passes.report(net, proj, fn, source, passes, sched_verbose=bool(request.get("sched_verbose")))}
     except NetworkError as error:
         return {"error": str(error)}
 
