@@ -358,6 +358,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += trig_axis_reuse.variants(source, name, rows, header=header)
         result += projection_gain.variants(source, name, rows, header=header)
         result += quadratic_sign_holder.variants(source, name, rows, header=header)
+        result += quadratic_sign_holder.arm_variants(source, name, rows, header=header)
         result += smoothing_call_before_read.variants(source, name, rows, header=header)
         result += conditional_smoothing_gain.variants(source, name, rows, header=header)
         result += scaled_blend_input.variants(source, name, rows, header=header)

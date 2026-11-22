@@ -15671,3 +15671,20 @@ with exact jump-table data. An earlier linear address form scored
 1,347 and 192 respectively. The proposal verifies the byte field
 views and the column helper's single read, then derives the strides
 with `sizeof`. The candidate still has instruction differences.
+
+### Inline a shared square into its two signed branches
+
+In a private linked N64 function compiled with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, two response curves saved a
+square in a temporary before selecting a multiplier and offset. The
+target squared the same input in the branch delay slot, but exchanged
+the square and multiplier registers with the candidate.
+
+Place the same square expression in each mutually exclusive arm.
+KMC still emits one square. Both factors and the offset remain
+unchanged, and ten register operands match after applying the two
+independent rewrites. The linked score fell from 2,940 to 2,890.
+Each single rewrite scored 2,915. Commuting the multiply or changing
+the temporary was neutral. Precomputing the square in the axis local
+and retaining its sign separately scored 3,150. The selected source
+kept all three jump tables and passed uninitialized diagnostics.
