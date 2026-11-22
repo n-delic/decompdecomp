@@ -17766,3 +17766,51 @@ Controlled result in this function: byte-identical, one function (the explanatio
 confirmed in the compiler source). The match relies on one scaffold: the `do { } while (0)` round the call, which costs no
 instruction. Family: decomp-repair `argument_weight_scope` (0.5.603), wired into the drafts and the deep local lane
 (`tests/test_argument_weight_scope_wiring.py`); from the saved best it emits the 0 child.
+
+
+## A continuation written out in each arm, with a table pointer of each arm's own: `goto_run_copy` (save-slot state machine)
+
+A KMC GCC 2.7.2 N64 function (`-G8 -mips3 -mgp32 -mfp32 -O2`; `-G0` gives the same bytes, the function has no small-data symbols;
+624 instructions) is a state machine: a status word picks one of five labelled arms by a `switch` of gotos, and each arm
+submits commands to a slot table (`saveSubmitCommand(cmd, table + slot * 104, slot, 0, 0, 0, 0, 0)`), waits, and goes on.
+The saved best (3565 in the judge) kept m2c's shape: one `base` pointer, reads of the slot through an `idx` local, two
+reads through `(volatile T *)` casts, one `a1` reused for a status word and a loop counter.
+
+Edit list from the saved best (the app's judge; each step on top of the previous one):
+
+| edit | score |
+| --- | --- |
+| the slot read where it is used (`ENT(gSaveSlot), gSaveSlot`) instead of an `idx` local; the volatile slot read gone | 3565 -> 2560 |
+| `a1` split into one local per use (status words) | 2520 |
+| the table pointer set at each arm head (`base = gSaveSlotTable;` where the target has a `lui $s0`) and read by every submit | 1500 |
+| a status word as its own local, the callee's `unsigned short` parameter as `s32` | 1405 |
+| the pointer cast `(u32)base` in the address sum (operand order of the final `addu`) | 1395 |
+| the slot read in place of the second `idx` | 1370 |
+| the loop's index copied into a local (`s32 i16 = a1;`, the pointer after it) | 1140 |
+| **the continuation copied into each arm that reaches it, each arm with a pointer of its own** | **0** |
+| `extern volatile s32 gSaveCmdResult;` instead of the volatile cast on one read; the `(u32)` cast was no longer needed | 0 |
+
+Why the last step: the target has `lui $s0` five times (the entry and four arm heads) and its first instructions read
+`lui $a2; lh $a2; li $a0; move $a3; sw $s0; lui $s0`. With `base` one variable set at every arm head (several sets) the
+`lui` came first in every block (the row order is the only difference that remained, 1140). With a pointer per arm, set
+once and read by its arm's copy of the continuation, the `lui` sits beside the first use, exactly like a single set in a
+small function (`b = tbl; f(.., slot * 104 + b, ..); w(); f(..)`, the minimal test that showed it). Hypothesis, not
+confirmed in the 2.7.2 source: the first scheduler raises the priority of an instruction that gives a pseudo its only set
+(the `birthing_insn_p` rule of the 2.95 `sched.c`), so a single-set pointer is placed late and a multi-set one by its own
+priority. Observed: cross-jumping after register allocation merges the two arms' identical tails even though their
+pseudos differ (a minimal test with two arms each calling `getp()` into a local then the same three calls ended in a
+single `j` into one tail), so the copies cost no instructions; the target's `j .L80010DA4` into a shared `jal` is that.
+
+Controlled result in this function: byte-identical, 0. One function; the evidence for the rewrite is the judge's 1150 -> 0
+from the draft with the pointer set at each arm head (`tests/test_goto_run_copy.py` checks the route with a synthetic function).
+Failed: the pointer written as a copy of a per-arm constant (`t = gSaveSlotTable; base = t;`: cse folds the copy back to
+the constant); `base` assigned inside the call expression (`(base = gSaveSlotTable)`, comma forms): the evaluation order moved
+nothing the scheduler reads; one single-set pointer used everywhere (the compiler recomputes the `lui` at every join); a
+separate pointer only at the first copy (540: the pairs of labels are one child).
+
+Family: decomp-repair `goto_run_copy` (0.5.604), in `join_tail_arm_split_repairs`: a top-level label that two or more places
+reach has its run copied in place of each `goto` and the locals the copies read split by assignment web; the pairs of such
+labels are offered as one child (`after_c` + the shared block copy: 1150 -> 0 in the judge, 540 with one of them). The
+`volatile` gate of `local_flow` also changed (0.5.604): a `volatile` declaration outside the function or a cast of a global's
+address inside it no longer makes the flow give no advice, so the families built on it (about forty) run on a saved best that
+reads status words that way (that saved best went from no variants to 157, best 2985).
