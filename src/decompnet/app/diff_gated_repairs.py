@@ -100,6 +100,7 @@ from decomprepair import (
     measured_kmc_vector_square,
     measured_kmc_wrappers,
     measured_lifetime_shapes,
+    measured_matrix_products,
     measured_memory_order,
     measured_mmio_polling,
     measured_narrow_use,
@@ -304,6 +305,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_kmc_call_stores.variants(source, name, header, rows, resolve)
         result += measured_carried_loop_test.variants(source, name, header, rows)
         result += measured_byte_clamp.variants(source, name, header, rows)
+        result += measured_matrix_products.variants(source, name, header, rows)
         result += measured_after_call_reload.variants(source, name, header, asm or '', resolve)
         result += measured_indirect_self_call.variants(source, name, header, rows, asm or '', resolve)
         result += measured_kmc_command.variants(source, name, header, rows)

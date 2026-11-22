@@ -14762,3 +14762,7 @@ Combining both restored all three table relocations and the original
 instruction count, improving the exact linked score from 9,110 to
 8,355 with no warning. Synthetic tests require both assembly witnesses
 and check through control flow that the reused float is dead.
+
+### Stage repeated fixed-point products
+
+In a private N64 matrix function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the draft multiplied each halfword directly by a word before shifting and storing. The target kept the product in a different register and scheduled the stores after the next halfword load. Staging each load and product in one shared signed word local, with the load, multiply and store on one source line, reproduced the linked target exactly (score 395 to 0). Putting the store on the next source line scored 320; staging only the product scored 620. The candidate requires matching instruction evidence and ordinary nonvolatile pointer fields. Evidence: one saved function and synthetic generation and routing tests.
