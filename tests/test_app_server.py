@@ -2776,6 +2776,32 @@ def test_background_work_routes_are_guarded(app, monkeypatch):
     assert client.post(endpoint,json={'kind':'service','key':'x'},headers={'X-Decomp':'1'}).status_code==400
 
 
+def test_app_repair_screen_lookup_and_start_share_scope(app, monkeypatch):
+    from decompnet.app.routes import life
+
+    client, *_ = app
+    calls = []
+    repair = {"source": "failed-build", "task": "build", "started": 1, "state": "running"}
+    screen = "#/p/game/settings"
+
+    def start(self, source, diagnostics, screen):
+        calls.append((source, diagnostics, screen))
+        return "repair-job"
+
+    def lookup(jobs, *, screen):
+        calls.append(screen)
+        return [repair]
+
+    monkeypatch.setattr(life.AppRepair, "start", start)
+    monkeypatch.setattr(life, "recent_repairs", lookup)
+    endpoint = "/api/app-repair"
+    assert client.post(endpoint, headers={"X-Decomp": "1"}, json={
+        "action": "start", "id": "failed-build", "log": "Reviewed diagnostics", "screen": screen,
+    }).json() == {"job": "repair-job"}
+    assert client.get(endpoint, params={"screen": screen}).json() == {"repairs": [repair]}
+    assert calls == [("failed-build", "Reviewed diagnostics", screen), screen]
+
+
 def test_brief_project_list_skips_progress_summaries(app, monkeypatch, tmp_path):
     client, net, _ = app
     with net.store.tx() as db:

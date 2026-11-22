@@ -169,6 +169,7 @@ a.ghost, a.primary { text-decoration: none; }
 .nav-shade { position: fixed; inset: 0; z-index: 25; background: rgba(8, 8, 6, .45); }
 .main { min-width: 0; }
 .mbar { display: none; }
+.app-repair-shortcuts { max-width: 1480px; margin: 12px auto 0; padding: 0 clamp(16px, 3vw, 32px); flex-wrap: wrap; }
 
 /* ------------------------------------------------------------------ pages */
 .view { padding: 26px 32px 64px; max-width: 1480px; margin: 0 auto; }

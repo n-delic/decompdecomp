@@ -6,8 +6,8 @@
   search of one function, but any number of functions may each run one.
 
 - Done: the app repair dialog shows Codex messages as they arrive and accepts guidance for
-  the next turn in the same repair session. Background work lists app repairs so you can
-  reopen the conversation after leaving the original screen.
+  the next turn in the same repair session. Reopen the conversation from the screen that
+  started it or from the App repairs list in Background work.
 
 - Done: single-toolchain metadata lookup avoids rebuilding the whole catalogue; macOS
   compiler watchdogs coalesce recent OS process scans while preserving per-tree limits.

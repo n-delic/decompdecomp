@@ -491,6 +491,7 @@ async function copyText(text) {
 }
 
 async function loadState() {
+  const hadAppRepair = S.st?.app_repair;
   S.st = await api("/api/state"); $("navVersion").textContent = `v${S.st.version} · ${S.st.fork || "RetroReversing fork"} · ${S.st.build || "build unknown"}`;
   const i = S.st.install || {}, branch = !S.st.dev && i.channel === "branch";
   $("navBranch").hidden = !branch;
@@ -498,6 +499,7 @@ async function loadState() {
     $("navBranch").textContent = `⑂ ${i.branch} @ ${(i.commit || "?").slice(0, 7)}`;
     $("navBranch").title = `Installed from the ${i.branch} branch, not a release: it can break, and a problem you report should say so (Report a problem does). Settings switches back to releases.`;
   }
+  if (S.st.app_repair !== hadAppRepair && typeof refreshScreenRepairs === "function") refreshScreenRepairs();
   markPlatforms(); agentsFound(); reportLink(); renderBridgesNotice(); return S.st;
 }
 /* The app looks for installed agents in the background (it runs each one's CLI: seconds): ask again until it's done,
@@ -514,6 +516,7 @@ function agentsFound() {
 
 function route() {
   const h = location.hash;
+  if (typeof refreshScreenRepairs === "function") refreshScreenRepairs();
   const m = h.match(/^#\/p\/([\w-]+)(?:\/(\w+))?/);
   closeAll();
   closeNav();

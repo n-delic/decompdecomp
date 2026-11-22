@@ -89,13 +89,15 @@ def desktop(request, app):
     return secrets.compare_digest(window.request_token(request), app.secret)
 
 
-def recent_repairs(jobs):
+def recent_repairs(jobs, *, screen=None):
     """Expose the latest repair for each failed job without loading its transcript or patch."""
     with jobs._lock:
         repairs = {}
         for job in reversed(jobs.jobs.values()):
             source = job.get("repair_source")
             if not source or job["kind"] != KIND or source in repairs:
+                continue
+            if screen is not None and job.get("repair_screen") != screen:
                 continue
             repairs[source] = {
                 "source": source, "task": jobs.jobs[source]["kind"], "started": job["t"],
@@ -134,7 +136,7 @@ class AppRepair:
         return {"log": log, "repair": next((job["id"] for job in reversed(self.jobs.jobs.copy().values())
                                           if job.get("repair_source") == source), None)}
 
-    def start(self, source, diagnostics):
+    def start(self, source, diagnostics, screen=None):
         from ..agents import get
 
         root = checkout()
@@ -144,19 +146,25 @@ class AppRepair:
             raise NetworkError("Install and sign in to Codex CLI to repair app source.")
         if not isinstance(diagnostics, str) or not diagnostics.strip() or len(diagnostics) > LOG_LIMIT:
             raise NetworkError("Enter a diagnostic excerpt of up to 16,000 characters.")
+        if screen is not None and (not isinstance(screen, str) or not screen.startswith("#/") or len(screen) > 512):
+            raise NetworkError("The screen for this repair is invalid. Reopen the repair dialog and try again.")
         self.preview(source)  # Validate the failed job and check the checkout before reserving work.
         with self.jobs._lock:
             existing = next((job["id"] for job in reversed(self.jobs.jobs.values())
                              if job.get("repair_source") == source), None)
-            if existing and self.jobs.jobs[existing]["state"] in {"running", "done"}:
-                return existing
+            if existing:
+                previous = self.jobs.jobs[existing]
+                screen = previous.get("repair_screen") or screen
+                if previous["state"] in {"running", "done"}:
+                    previous["repair_screen"] = screen
+                    return existing
             conversation = RepairConversation()
             jid = self.jobs.start(
                 KIND, lambda log: propose(root, connector, exe, diagnostics, log, conversation),
                 include_recent_log=False, cancel_message="App repair cancelled.",
             )
             self.conversations[jid] = conversation
-            self.jobs.jobs[jid]["repair_source"] = source
+            self.jobs.jobs[jid].update(repair_source=source, repair_screen=screen)
             return jid
 
     def message(self, jid, message):

@@ -14,7 +14,7 @@ from starlette.responses import JSONResponse, Response
 
 from ...network import NetworkError
 from .. import updates, window
-from ..app_repair import AppRepair, desktop
+from ..app_repair import AppRepair, desktop, recent_repairs
 from . import App
 
 page_log = logging.getLogger("decompdecomp.page")
@@ -96,11 +96,13 @@ def register(app: App) -> None:
             return fail(NetworkError("Open the desktop window to repair app source."), 403)
         try:
             if request.method == "GET":
+                if (screen := request.query_params.get("screen")) is not None:
+                    return JSONResponse({"repairs": await call(lambda: recent_repairs(app.jobs, screen=screen))})
                 return JSONResponse(await call(repair.preview, request.query_params.get("id", "")))
             data = await body(request)
             jid = str(data.get("id") or "")
             if data.get("action") == "start":
-                return JSONResponse({"job": await call(repair.start, jid, data.get("log"))})
+                return JSONResponse({"job": await call(repair.start, jid, data.get("log"), data.get("screen"))})
             if data.get("action") == "apply":
                 await call(repair.apply, jid)
                 return JSONResponse({"applied": True})

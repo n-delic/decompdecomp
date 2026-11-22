@@ -1,3 +1,31 @@
+let screenRepairRead = 0;
+
+function appRepairScreen() {
+  const hash = location.hash;
+  const project = hash.match(/^#\/p\/([\w-]+)(?:\/(\w+))?/);
+  if (project) return `#/p/${project[1]}/${project[2] || "overview"}`;
+  return ["#/catalog", "#/agents", "#/tools", "#/settings", "#/background"].includes(hash) ? hash : "#/";
+}
+
+async function refreshScreenRepairs() {
+  const screen = appRepairScreen(), read = ++screenRepairRead;
+  const shortcuts = $("appRepairShortcuts");
+  if (shortcuts.dataset.screen !== screen || !S.st?.app_repair) shortcuts.hidden = true;
+  if (!S.st?.app_repair) return;
+  try {
+    const {repairs} = await api(`/api/app-repair?screen=${encodeURIComponent(screen)}`);
+    if (read !== screenRepairRead || screen !== appRepairScreen()) return;
+    shortcuts.dataset.screen = screen;
+    setHtml(shortcuts, repairs.map((repair, index) => `<button class="ghost small-btn" type="button" data-screen-repair="${index}">Open repair conversation · ${esc(repair.task)}</button>`).join(""));
+    shortcuts.querySelectorAll("[data-screen-repair]").forEach(button => {
+      button.onclick = () => openAppRepair(repairs[Number(button.dataset.screenRepair)].source, screen);
+    });
+    shortcuts.hidden = !repairs.length;
+  } catch {
+    // A shortcut lookup should never interrupt the page it belongs to.
+  }
+}
+
 /* Failed jobs carry their server ID so the repair can be reattached to the original log. */
 function attachAppRepair(log, source) {
   frameJoblog(log);
@@ -6,12 +34,12 @@ function attachAppRepair(log, source) {
   button.type = "button";
   button.className = "joblog-copy joblog-repair";
   button.textContent = "Ask agent to fix";
-  button.onclick = () => openAppRepair(source);
+  button.onclick = () => openAppRepair(source, appRepairScreen());
   log._appRepairButton = button;
   log._frame.append(button);
 }
 
-function openAppRepair(source) {
+function openAppRepair(source, screen = null) {
   const dialog = document.createElement("dialog");
   dialog.className = "transcript-dialog repair-dialog";
   dialog.setAttribute("aria-labelledby", "appRepairTitle");
@@ -25,7 +53,7 @@ function openAppRepair(source) {
         <p class="small muted">Remove private details before sending. Codex CLI uses AI tokens to investigate and test a patch in a separate worktree and saves the session locally so it can receive follow-up messages.</p>
         <button type="button" class="primary" data-start>Start repair</button>
       </div>
-      <p class="small muted" data-reopen hidden>Find this conversation under Background work → App repairs.</p>
+      <p class="small muted" data-reopen hidden>Reopen this conversation from the screen that started it or from Background work → App repairs.</p>
       <button type="button" class="ghost" data-stop hidden>Stop</button>
       <pre class="joblog" data-work hidden></pre>
       <section data-conversation hidden>
@@ -141,7 +169,8 @@ function openAppRepair(source) {
     const finish = beginWork(work, "Starting app repair", [start, textarea], "");
     let starting = true;
     try {
-      const data = await api("/api/app-repair", {method: "POST", body: {action: "start", id: source, log: textarea.value}});
+      const data = await api("/api/app-repair", {method: "POST", body: {action: "start", id: source, log: textarea.value, screen}});
+      refreshScreenRepairs();
       if (!closed) {
         finish();
         starting = false;
