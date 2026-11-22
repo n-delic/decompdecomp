@@ -15765,3 +15765,22 @@ A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`
 ### KMC GCC 2.7.2 guarded lookup owner
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` passed the enclosing object and a loaded neighbor to a guarded lookup. Its machine draft supplied only the neighbor and stored the returned pointer in a second local. Adding the missing owner alone left a diff score of 210; also representing the neighbor as a pointer and reusing that local for the result produced an exact linked match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the measured call setup and source shape and declines conflicting helper declarations.
+
+### Keep a vector snapshot ahead of the record pointer read
+
+In a private N64 function built with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, the target copied
+three float components from consecutive stack slots after an
+output call and then loaded a record pointer. The draft already
+listed those reads in that order, but the compiler hoisted the word
+load ahead of all three floats.
+
+Qualifying those four existing accesses as volatile restored their
+exact order, kept all three jump tables and 3,034 instructions, and
+lowered the linked score from 2,245 to 2,185. It changed only those
+four instructions' order and compiled cleanly with uninitialized
+diagnostics. Qualifying only the pointer or only the vector loads
+was neutral. Using a typed record for the link without the
+qualifiers was also neutral. The hypothesis requires the same
+call, stack offsets and pointer instruction on both sides of the
+diff, with just the pointer's position changed.

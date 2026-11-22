@@ -1,4 +1,5 @@
 from decompnet.app import draft_repairs
+from decompnet.app.diff_gated_repairs import proposals
 
 SOURCE = '''
 void f(void *context) {
@@ -38,3 +39,37 @@ def test_mips_draft_repairs_offer_capturing_vector_output():
     [candidate] = [text for text in children if labels[text] == 'vector_output_capture']
     assert candidate.index('repair_vector_2 =') < candidate.index('*((float *) context) =')
     assert 'y = repair_vector_1;' in candidate
+
+
+def test_measured_kmc_route_orders_the_vector_snapshot_before_a_pointer_read():
+    source = '''
+void measure(void *context) {
+    float vector[3];
+    float x, y, z;
+    void *record;
+    load_vector(vector, 3);
+    x = vector[0];
+    y = vector[1];
+    z = vector[2];
+    record = *((void **) (((char *) context) + 0x68));
+    *((float *) (((char *) record) + 0x34)) = 0.0f;
+    use(x, y, z);
+}
+'''
+    pointer = 'lw $v1, 0x68($s2)'
+    equal = ('jal load_vector', 'addiu $a0, $sp, 0x20')
+    stack = ('lwc1 $f0, 0x20($sp)', 'lwc1 $f2, 0x24($sp)', 'lwc1 $f4, 0x28($sp)')
+    store = 'sw $zero, 0x34($v1)'
+    rows = [
+        *((' ', op, op) for op in equal),
+        ('o', '', pointer),
+        *((' ', op, op) for op in stack),
+        ('o', pointer, ''),
+        (' ', store, store),
+    ]
+    family = 'vector_output_load_order'
+    [candidate] = [text for label, text in proposals(source, 'measure', '', 'mips',
+                                                    'gcc-2.7.2-kmc', rows, '') if label == family]
+    assert 'z = ((volatile float *) vector)[2];' in candidate
+    assert 'record = *((void * volatile *)' in candidate
+    assert family not in {label for label, _ in proposals(source, 'measure', '', 'mips', 'ido-7.1', rows, '')}
