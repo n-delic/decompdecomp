@@ -68,3 +68,29 @@ def test_neutral_object_trusts_a_twin_only_when_its_code_is_identical(monkeypatc
     assert source_lines.neutral_object(b'plain', 'f', 'func.c', lambda: None) is None
     spans[b'plain'] = [(0, 4, 1)]
     assert source_lines.neutral_object(b'plain', 'f', 'func.c', lambda: 1 / 0) == b'plain'
+
+
+def test_line_object_compiles_the_twin_with_the_project_flags_plus_g_and_keeps_failures_quiet(monkeypatch):
+    from decompnet import network, source_lines
+    from decompnet.compiler import CompilerConfig
+    seen = []
+
+    Invocation = CompilerConfig(cmd=['gcc', '-O2', '-c', '{src}', '-o', '{obj}'], identity=('shared',))
+
+    def fake_compile(invocation, header, source):
+        seen.append((invocation.cmd, invocation.identity))
+        return SimpleNamespace(ok=True, obj=b'twin')
+
+    monkeypatch.setattr(network.Network, '_invocation', staticmethod(lambda proj, fn: ({'compiler': {'toolchain': 'gcc-2.7.2'}}, Invocation)))
+    monkeypatch.setattr(network, 'compile_source', fake_compile)
+    monkeypatch.setattr(source_lines, 'locations', lambda data, name, filename: [(0, 4, 1)] if data == b'twin' else [])
+    monkeypatch.setattr(source_lines, 'same_code', lambda a, b, name: True)
+    scored = SimpleNamespace(obj=b'scored', language='c')
+    got = network.Network.line_object(None, {}, 'h', 'c', {'name': 'f'}, scored)
+    assert got == b'twin'
+    assert seen == [(['gcc', '-O2', '-c', '-g', '{src}', '-o', '{obj}'], None)]
+    monkeypatch.setattr(network, 'compile_source', lambda *a: (_ for _ in ()).throw(RuntimeError('boom')))
+    assert network.Network.line_object(None, {}, 'h', 'c', {'name': 'f'}, scored) is None
+    monkeypatch.setattr(source_lines, 'same_code', lambda a, b, name: False)
+    monkeypatch.setattr(network, 'compile_source', fake_compile)
+    assert network.Network.line_object(None, {}, 'h', 'c', {'name': 'f'}, scored) is None  # code differs: no map

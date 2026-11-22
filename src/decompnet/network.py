@@ -2276,7 +2276,9 @@ class Network:
             warn += "\nwhen linking your code at the function's address:\n" + "\n".join(f"- {p}" for p in problems)
         from .source_lines import mismatches as source_mismatches
         from .source_lines import render as render_source_lines
-        mapped = source_mismatches(result.obj, fn["name"], d.rows, source,
+        # (a -g twin only for a miss, and only when its code is byte-identical to this compile: source_lines.neutral_object)
+        lines_from = (self.line_object(proj, ctx["header"], source, fn, result) if any(r[0] != " " for r in d.rows) else None) or result.obj
+        mapped = source_mismatches(lines_from, fn["name"], d.rows, source,
                                    filename="func.cpp" if getattr(result,"language","c") == "c++" else "func.c",arch=proj['arch'])
         text = f"{head}\n{d.render()}{render_source_lines(mapped, source)}{warn}"
         if not scratch:
