@@ -99,6 +99,7 @@ from decomprepair import (
     measured_indexed_clear,
     measured_indexed_mode_tail,
     measured_indexed_record_layout,
+    measured_indexed_setup,
     measured_indirect_command_records,
     measured_indirect_self_call,
     measured_interpolation_calls,
@@ -540,6 +541,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     result += target_memory_schedule_diff_repairs.proposals(source,name,header,toolchain,rows,target,candidate,asm,
                                                              big_endian=big_endian,flags=flags)
     if toolchain.startswith('gcc-2.7.2-kmc'):
+        result += measured_indexed_setup.variants(source, name, header, rows, flags, resolve)
         result += measured_flag_count_loop.variants(source, name, header, rows, resolve)
         result += fixed_blend_staging.variants(source, name, rows, header=header)
         result += measured_storage_shapes.variants(source, name, header, rows, asm, big_endian=big_endian)
