@@ -16494,3 +16494,7 @@ With `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a saved split-helper draft scored 210; 
 ### Float literal in the first argument register (GCC 2.7.2 KMC)
 
 With `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a saved draft passed the integer bits `0x3f800000` to an unknown single-argument prototype and scored 265. The target loads those bits into `$f12`; changing the prototype to `f32` and the argument to `1.0f` matched exactly with the original compiler and linked byte comparison. This is one saved example; the target-guided search checks both the float-register setup and the draft's integer-register setup before prioritizing the existing float-bit repair.
+
+### A consumed argument register before a call (GCC 2.7.2 KMC)
+
+With `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, one saved draft scored 270 after passing an extra integer literal to a call. The target used that register for an earlier OR and did not set it up again for the call; dropping the trailing argument and correcting the local prototype matched exactly. This is a saved example verified with the original compiler and linked-byte judge. The target-guided search only offers this drop for literal arguments, whose removal cannot discard evaluation side effects.

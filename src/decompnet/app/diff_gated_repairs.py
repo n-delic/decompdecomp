@@ -243,6 +243,7 @@ from decomprepair import (
     stored_float_zero_repairs,
     switch_pointer_calls,
     symbol_width_repairs,
+    target_call_arity_repairs,
     target_string_repairs,
     targeted_switch_labels,
     trig_axis_reuse,
@@ -396,6 +397,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     result += measured_lifetime_shapes.variants(source, name, header, toolchain, rows)
     result += measured_scalar_updates.variants(source, name, header, toolchain, rows, asm)
     if toolchain == 'gcc-2.7.2-kmc':
+        result += target_call_arity_repairs.measured_variants(source, name, asm, rows)
         result += float_bit_argument_repairs.target_variants(source, name, header, arch, flags, rows)
         result += boolean_guard_operands.variants(source, name, rows, header)
         result += balanced_projection_scale.variants(source, name, rows, header=header)

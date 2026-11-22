@@ -2687,3 +2687,15 @@ def test_float_bit_argument_route_uses_target_float_register():
     result = dict(proposals(source, 'f', '', 'mips', KMC, rows, '', flags=('-mgp32',)))
     assert 'scale(1.0f)' in result['float_argument_bits']
     assert 'float_argument_bits' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, '', flags=('-mgp32',)))
+
+
+def test_measured_call_arity_route_removes_consumed_literal():
+    source = 's32 convert(s32, s32);\nvoid f(s32 *p) { *p = convert(*p, 0x1000040); }\n'
+    target = ['lui $a1, 0x100', 'ori $a1, $a1, 0x40', 'or $v0, $v0, $a1',
+              'jal convert', 'addu $a0, $a0, $v0']
+    candidate = ['lui $a1, 0x100', 'ori $a1, $a1, 0x40', 'or $v0, $v0, $a2',
+                 'jal convert', 'addu $a0, $a0, $v0']
+    rows = [('o', a, b) for a, b in zip(target, candidate)]
+    result = dict(proposals(source, 'f', '', 'mips', KMC, rows, '\n'.join(target)))
+    assert 'convert(*p)' in result['target_call_arity']
+    assert 'target_call_arity' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, '\n'.join(target)))
