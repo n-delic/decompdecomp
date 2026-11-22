@@ -16170,3 +16170,7 @@ A saved big-endian MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp
 ### KMC GCC 2.7.2 indexed allocation loop
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` allocated and cleared buffers using a count array and a pointer array. Its generated draft advanced two cursors, while the target corresponded to one index with separate two-byte and four-byte strides. Restoring the indexed form changed the linked difference score from 300 to an exact match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the complete generated loop and the measured branch, stride, count and pointer-store evidence.
+
+### KMC GCC 2.7.2 stack vector output reused across calls
+
+A saved MIPS wrapper built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` called the same callee twice with one stack output. The original draft subtracted each component from itself after the second call. Saving each component before that call changed the linked score from 972 to a byte match with the original frame extent. The rule requires two calls using the same output slot, three preserved float loads, and subtraction against three matching reloads. This is evidence from one saved function.

@@ -221,6 +221,7 @@ from decomprepair import (
     stack_fill_drafts,
     stack_header_buffer,
     stack_read_retry,
+    stack_vector_call_reload,
     stored_float_zero_repairs,
     switch_pointer_calls,
     symbol_width_repairs,
@@ -575,6 +576,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_lookup_owner.variants(source, name, header, rows)
         result += measured_branch_byte_stores.variants(source, name, header, rows)
         result += measured_branch_byte_tail.variants(source, name, header, rows)
+        result += stack_vector_call_reload.variants(source, name, asm)
         result += measured_word_byte_packing.variants(source, name, header, rows)
         result += measured_wide_division_stride.variants(source, name, header, rows)
         result += measured_slot_flip_copy.variants(source, name, header, rows, resolve=resolve)
