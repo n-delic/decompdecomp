@@ -1247,3 +1247,13 @@ def test_relocated_pool_cursor_routes_to_kmc(monkeypatch):
     monkeypatch.setattr(diff_gated_repairs.measured_kmc_relocated_pool, 'variants', repair)
     assert 'relocated_pool_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, '', resolve=resolve))
     assert 'relocated_pool_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, '', resolve=resolve))
+
+
+def test_call_counter_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_kmc_call_counter, 'variants',
+                        lambda text, name, header, diff: [('call_counter_fixture', text)])
+    assert 'call_counter_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'call_counter_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))

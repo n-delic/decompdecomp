@@ -13015,3 +13015,13 @@ on the wrong side of the instructions materializing 1.0f. Moving the float
 reset ahead of the pointer reload and leaving the disjoint zero stores in
 place took the linked score from 60 to 0. The old dispatcher produced no
 candidate and the new rule generated one byte-exact candidate.
+
+### KMC GCC 2.7.2: initialize a loop counter after a guard call
+
+An isolated draft initialized a local loop counter before a guard call.
+Moving the initialization into the call's success branch placed it in the
+target's branch delay slot and freed the call's delay slot for its argument.
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the linked score
+improved from 250 to an exact match. This is one observed match; tests cover
+instruction evidence and ensure the counter is neither escaped nor used on
+the path where initialization is omitted.

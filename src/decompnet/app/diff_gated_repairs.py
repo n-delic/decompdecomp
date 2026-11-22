@@ -40,6 +40,7 @@ from decomprepair import (
     measured_kmc_byte_index_local,
     measured_kmc_byte_operations,
     measured_kmc_byte_stride,
+    measured_kmc_call_counter,
     measured_kmc_call_setup,
     measured_kmc_call_stores,
     measured_kmc_carriers,
@@ -250,6 +251,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_kmc_byte_global_pointer.variants(source, name, header, rows)
         result += measured_kmc_byte_index_local.variants(source, name, header, rows)
         result += measured_kmc_byte_operations.variants(source, name, header, rows, resolve=resolve)
+        result += measured_kmc_call_counter.variants(source, name, header, rows)
         result += measured_kmc_call_setup.variants(source, name, header, rows)
         result += measured_kmc_call_stores.variants(source, name, header, rows, resolve)
         result += measured_kmc_command.variants(source, name, header, rows)
