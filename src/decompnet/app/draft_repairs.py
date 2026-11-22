@@ -195,6 +195,7 @@ from decomprepair import (
     narrow_call_repairs,
     narrow_count_copy_repairs,
     narrow_expression_repairs,
+    narrow_param_clamp_repairs,
     narrow_shift_repairs,
     narrow_store_repairs,
     narrow_test_share_repairs,
@@ -376,7 +377,8 @@ AGENT_FAMILIES = constant_store_bracket.FAMILIES + statement_group_orders.FAMILI
 
 AGENT_FAMILIES += (guarded_pointer_copy.FAMILY,) + shifted_byte_lifetime.FAMILIES
 AGENT_FAMILIES += (arm_label_share_repairs.FAMILIES + declaration_scope_sink_repairs.FAMILIES + element_update_repairs.FAMILIES
-                   + narrow_test_share_repairs.FAMILIES + phase_storage_split_repairs.FAMILIES)
+                   + narrow_test_share_repairs.FAMILIES + phase_storage_split_repairs.FAMILIES
+                   + narrow_param_clamp_repairs.FAMILIES)
 
 LIMIT = 20
 _IDENT = r'[A-Za-z_]\w*'
@@ -809,6 +811,13 @@ def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels
         for family, text in _generated(module.variants, source, name):
             proposals.append(text)
             labels[text] = family
+    # What a 231-instruction N64 key/velocity dispatch needed after its saved best (500; decomprepair 0.5.583), each a
+    # family the permuter lacked: `((u16) x) >> 16` (the constant 0) as `x >> 16`, the id local as a halfword, a word
+    # parameter read only through byte masks as a `u8` (with the static helper it is passed to), the range test computed
+    # before a clamp's sign test, and all of them as one child (500 -> 0 from the saved best).
+    for family, text in _generated(narrow_param_clamp_repairs.variants, source, name):
+        proposals.append(text)
+        labels[text] = family
     for family, text in _generated(indexed_record_repairs.variants, source, name, header, arch, asm):
         proposals.append(text)
         labels[text] = family
