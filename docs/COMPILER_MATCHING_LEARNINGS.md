@@ -13132,3 +13132,13 @@ local passed to calls).
 Library (decomp-repair 0.5.331): `macro_scope_weight` (unwrap, rewrap), `compare_operand_stage`,
 `condition_table_anchor`; a greedy hill-climb over their variants alone reproduces 487 -> 0 from the saved best.
 Not covered: choosing the number of re-wrapped uses from the allocation table (the family offers singles and pairs).
+
+### Separate a guarded record read and a color clamp into their own locals (KMC GCC 2.7.2)
+
+With `-G0 -mips3 -mgp32 -mfp32 -O2`, a retail N64 draft used the same
+pointer local for its initial guarded read and later field stores. Give
+the first read its own local and require each later field access to
+follow its own reload. The linked score went from 85 to 65. A second
+rewrite stages the signed color clamp in a separate local before packing
+the byte, taking the score to 55. The dispatcher reproduced both steps.
+The function remains unmatched.
