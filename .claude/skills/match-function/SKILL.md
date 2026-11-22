@@ -66,7 +66,7 @@ Scripts live in `.claude/skills/match-function/scripts/`; read the latest from o
 checkout: `git fetch -q origin && git archive origin/main .claude/skills/match-function/scripts | tar -x -C /tmp/dd-skill`
 (`mkdir -p` it first), then run `python3 /tmp/dd-skill/.claude/skills/match-function/scripts/setup.py SLUG [FUNC]
 --repo <primary checkout>`. It picks a holder, builds `/tmp/dd-<holder>/` with a worktree off origin/main (`repo/`, detached:
-`git switch -c <type>/<name>` there) and a private venv, creates the project-scoped MCP connection (token in
+`git switch -c <type>/<name>` there) and a private venv (synced to that worktree's lock file; after you `git pull`/rebase there, run `setup.py sync <holder>`; never `uv sync` the primary checkout), creates the project-scoped MCP connection (token in
 `connection.json`, mode 0600, never printed), claims once (a random open function when none is given) and renews the claim
 every 5 minutes until it matches. It prints the environment; use that worktree's own `scripts/` and venv python from then
 on. Add the connection to your client as `connection.json` says. Finish with `setup.py stop <holder>`: it stops the renewal,
@@ -74,7 +74,7 @@ revokes the connection (that frees the claim even with no compile yet) and remov
 through MCP first when you learned something.
 
 The other scripts, run with that venv's python (`$UV_PROJECT_ENVIRONMENT/bin/python`): `fast_judge.py FILE.c --slug S
---function F [--diff]` (score, and the app's differing rows), `passes.py FILE.c --slug S --function F` (allocation
+--function F [--diff [--rows N|all]]` (score, and the app's differing rows: 60 by default, then a "... N more rows" line), `passes.py FILE.c --slug S --function F` (allocation
 priorities, register preferences, scheduler orders), `prove_chain.py --slug S --function F --families a,b|all` (greedy
 chain of library families, scored), `families.py [words]` (the library's families, one line each),
 `tools/learnings.py` (evidence entries).
@@ -221,7 +221,7 @@ settings, and verify `get_function(section="summary")` after an approved applica
 **For a search, use the app's own judge standalone.** `decomp judge-worker` returns exactly the app's score (a
 source judged 1090 in the app judged 1090 here) in about 0.1 s, needs no claim, runs beside the app without touching
 its state. `scripts/fast_judge.py FILE.c --slug S --function F --diff` needs no ROM path or offsets (it takes the target, the
-project header and the function's own compiler from the app) and prints the app's differing rows after the score; in a
+project header and the function's own compiler from the app) and prints the app's differing rows after the score (the first 60; `--rows all` or `--rows N` with it for more); in a
 loop, reuse one `Judge(slug, name)` worker (`.score(source)`, `.judge(source, diff=True)`).
 **Do not search on an approximation**: a home-made scorer (opcode alignment plus register counts) ranked candidates
 wrongly: a 1000 → 680 local improvement was 1090 → 1030 in the app. Confirm any result once with `compile_and_diff`.

@@ -4,12 +4,12 @@
 It returns exactly the score the app gives (a candidate judged 1090 in the app judged 1090 here), in about 0.1 s,
 needs no claim, and opens the project attach-only so it runs beside the app without changing its state.
 
-    fast_judge.py FILE.c [FILE.c ...] --slug twine --function func_8002D240 [--diff] [--header]
+    fast_judge.py FILE.c [FILE.c ...] --slug twine --function func_8002D240 [--diff [--rows N|all]] [--header]
 
 Only the project and the function are needed: the worker's `function` op supplies the target bytes, the function's
 own compiler profile and the project's header (typedefs and externs, which the judge prepends to every candidate:
 a source needs none of its own). `--diff` prints the rows that differ, the app's own normalisation (the same text
-`compile_and_diff` shows), after the score. `--header` prints the header, for compiling a candidate outside the judge.
+`compile_and_diff` shows), after the score: the first 60, then a "... (N more rows not shown ...)" line; `--diff --rows all` (or N) changes that. `--header` prints the header, for compiling a candidate outside the judge.
 
     # as a library in a search loop (one worker process per search process; run several in parallel):
     from fast_judge import Judge
@@ -26,6 +26,17 @@ import os
 import subprocess
 
 DEFAULT_HOME = "~/Decomp-RetroReversing-dev"
+DIFF_ROWS = 60  # rows --diff prints unless told otherwise; the worker counts what it leaves out
+ALL_ROWS = 10**9
+
+
+def rows_wanted(rows):
+    """`--rows N|all` as the row count the worker renders (`all`: no cap)."""
+    if rows == "all":
+        return ALL_ROWS
+    if not str(rows).isdigit() or int(rows) < 1:
+        raise SystemExit("--rows takes a positive number or `all`")
+    return int(rows)
 
 
 def find_decomp(explicit=None):
@@ -66,9 +77,11 @@ class Judge:
             raise SystemExit(reply["error"])
         return reply
 
-    def judge(self, source, diff=False):
-        """The worker's whole reply: score, detail and (with diff) the app's rows for this candidate."""
-        return self.ask(dict(self.request, source=source, **({"diff": True} if diff else {})))
+    def judge(self, source, diff=False, rows=None):
+        """The worker's whole reply: score, detail and (with diff) the app's rows for this candidate: the first `rows`
+        (default 60; ALL_ROWS for every one), then a line counting the rows left out."""
+        extra = {"diff": True, **({"rows": rows} if rows else {})} if diff else {}
+        return self.ask(dict(self.request, source=source, **extra))
 
     def score(self, source):
         return self.judge(source).get("score")
@@ -84,10 +97,13 @@ def main(argv=None):
     ap.add_argument("--slug", required=True)
     ap.add_argument("--function", required=True)
     ap.add_argument("--diff", action="store_true", help="print the differing rows after each score")
+    ap.add_argument("--rows", default=str(DIFF_ROWS), metavar="N|all",
+                    help=f"with --diff: print the first N rows (default {DIFF_ROWS}) or `all`; the rest is counted")
     ap.add_argument("--header", action="store_true", help="print the project header the judge prepends, and exit")
     ap.add_argument("--vram", type=int, help="the address, when the name is shared by overlays")
     ap.add_argument("--home")
     a = ap.parse_args(argv)
+    limit = rows_wanted(a.rows)
     judge = Judge(a.slug, a.function, vram=a.vram, home=a.home)
     try:
         if a.header:
@@ -95,7 +111,7 @@ def main(argv=None):
             return
         for path in a.source:
             with open(path) as f:
-                reply = judge.judge(f.read(), diff=a.diff)
+                reply = judge.judge(f.read(), diff=a.diff, rows=limit)
             print(reply.get("score") if len(a.source) == 1 else f"{path}: {reply.get('score')}")
             if a.diff:
                 print(reply.get("diff") or reply.get("detail") or "")

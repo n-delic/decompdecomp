@@ -248,12 +248,12 @@ class DiffResult:
             return 100.0
         return max(0.0, 100.0 * (1 - self.score / self.max_score)) if self.max_score else 0.0
 
-    def render(self, context: int = 2, max_rows: int = 60) -> str:
+    def render(self, context: int = 2, max_rows: int = 60, more_hint: bool = True) -> str:
         """Compact side-by-side diff: a count of each kind of mismatch, then only mismatches with a little context.
         Long runs of missing or extra instructions are shortened (a half-written function would otherwise spend
         every row on code that isn't there yet), so each compile costs the agent little context."""
         from .diff_summary import text
-        return text(self.rows)+"\n"+render_rows(self.rows, context, max_rows)
+        return text(self.rows)+"\n"+render_rows(self.rows, context, max_rows, more_hint=more_hint)
 
 
 def first_mismatch(rows: list[tuple[str, str, str]]) -> tuple[int, int, tuple[str, str, str] | None]:

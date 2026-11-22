@@ -13,7 +13,8 @@ Requests:
   "source"} -> {"score": 0 for a match, the difference otherwise, null when it didn't compile; "detail"}, or
   {"error": ...} when it can't be judged here. That happens when the project isn't here, or its function's target
   bytes differ from the hosted ones (another build of the game). With "diff": true the reply also carries "diff", the
-  app's own side-by-side rows for the candidate (DiffResult.render: the same normalisation compile_and_diff shows).
+  app's own side-by-side rows for the candidate, the first "rows" of them (default 60; the last line counts the rest)
+  (DiffResult.render: the same normalisation compile_and_diff shows).
 - {"op": "function", "slug", "name", "vram" (optional, for overlays)} -> {"name", "vram", "target" (hex), "unit",
   "arch", "asm" (the target's assembly text), "header" (the project's typedefs and externs the judge prepends),
   "compiler": {"toolchain", "flags"} (this function's own profile)}: everything a local search needs to judge without being told the function's bytes
@@ -89,7 +90,10 @@ def judge(net, request: dict) -> dict:
     if not toolchain:
         return {"error": "no compiler named"}
     matched, diff, log = net._judge_with(proj, fn, toolchain, list(flags), source)
-    shown = {"diff": diff.render()} if request.get("diff") and diff is not None else {}
+    rows = request.get("rows")  # how many rows the diff shows (default 60); the rest is counted in its last line
+    shown = {}
+    if request.get("diff") and diff is not None:
+        shown = {"diff": diff.render(max_rows=rows if isinstance(rows, int) and rows > 0 else 60, more_hint=False)}
     if matched:
         return {"score": 0, "detail": "byte-identical", **shown}
     if diff is None:

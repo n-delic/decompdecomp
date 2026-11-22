@@ -219,3 +219,32 @@ def test_an_event_stream_reply_is_read_like_a_json_one(world, monkeypatch):
 
     monkeypatch.setattr(setup.urllib.request, "urlopen", lambda *a, **k: Reply())
     assert setup.claim(setup.Gateway("http://x/mcp", "t"), "f_1") == "f_1"
+
+
+def test_the_venv_is_synced_inside_the_worktree_into_the_private_environment_only(world, monkeypatch, capsys):
+    """The worktree is off the latest origin/main, so an older pin in a stale venv failed tests until `uv sync` by hand:
+    setup syncs it, `sync HOLDER` repeats that, and the primary checkout's .venv is never the target."""
+    setup, app, home, primary = world
+    calls = []
+
+    real_run = subprocess.run
+
+    def fake_run(cmd, **kwargs):
+        if cmd[:2] != ["uv", "sync"]:
+            return real_run(cmd, **kwargs)  # git and ps run for real
+        calls.append((cmd, kwargs["cwd"], kwargs["env"]["UV_PROJECT_ENVIRONMENT"]))
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert setup.main(["demo", "--home", str(home), "--repo", str(primary), "--interval", "1", "--holder", "claude-t2"]) == 0
+    root = setup.session_dir("claude-t2")
+    uv = [c for c in calls if c[0][:2] == ["uv", "sync"]]
+    assert uv == [(["uv", "sync"], (root / "repo").resolve(), str((root / "venv").resolve()))]
+    assert uv[0][1] != primary and not str(uv[0][2]).startswith(str(primary))
+    calls.clear()
+    assert setup.main(["sync", "claude-t2"]) == 0
+    assert [c[:2] for c in calls] == [(["uv", "sync"], (root / "repo").resolve())]
+    assert "synced" in capsys.readouterr().out
+    with pytest.raises(SystemExit):
+        setup.main(["sync", "no-such-holder"])
+    assert setup.main(["stop", "claude-t2"]) == 0

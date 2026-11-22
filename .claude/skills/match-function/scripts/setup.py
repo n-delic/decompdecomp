@@ -9,12 +9,15 @@ read a function's status.
 
     setup.py SLUG [FUNC] [--holder NAME] [--home DIR]   build the session, claim FUNC (a random open function when
                                                         none is given: asked for exactly once), start the renewal
+    setup.py sync HOLDER                                `uv sync` the private venv to the worktree's pyproject/uv.lock
+                                                        (after `git pull` or a rebase there: the pins may have moved)
     setup.py stop HOLDER                                stop the renewal, revoke the connection (that frees its
                                                         claim, even with no compile yet), remove /tmp/dd-HOLDER/
 
 What it makes in /tmp/dd-HOLDER/:
     repo/              a git worktree (detached) at the latest origin/main; `git switch -c <type>/<name>` there
-    venv/              a private environment (UV_PROJECT_ENVIRONMENT), so `uv sync` never touches anyone else's
+    venv/              a private environment (UV_PROJECT_ENVIRONMENT), synced to the worktree's pyproject/uv.lock at
+                       setup (and by `setup.py sync`), so `uv sync` never touches anyone else's
     connection.json    mode 0600: the project-scoped MCP connection (url, bearer token, ids), slug, function, paths.
                        The token is a secret: never print it. A client reads it from here, e.g.
                        claude mcp add --transport http dd-HOLDER URL --header "Authorization: Bearer $(jq -r .token connection.json)"
@@ -138,9 +141,27 @@ def make_worktree(repo, root, remote="origin"):
 
 
 def make_venv(root, log):
-    env = dict(os.environ, UV_PROJECT_ENVIRONMENT=str(root / "venv"))
+    """`uv sync` inside the session's worktree into the session's own venv, so the pins (decomprepair above all) are the
+    worktree's, never an older checkout's. The environment is always the private one: the primary's .venv is never synced."""
+    venv, repo = (root / "venv").resolve(), (root / "repo").resolve()
+    if not repo.is_dir():
+        sys.exit(f"no worktree at {repo}")
+    env = dict(os.environ, UV_PROJECT_ENVIRONMENT=str(venv))
     with open(log, "w") as out:
-        subprocess.run(["uv", "sync"], cwd=root / "repo", env=env, stdout=out, stderr=subprocess.STDOUT, check=True)
+        subprocess.run(["uv", "sync"], cwd=repo, env=env, stdout=out, stderr=subprocess.STDOUT, check=True)
+
+
+def sync_session(holder):
+    """Re-sync the private venv to the worktree as it is now (after `git pull`/rebase there)."""
+    root = session_dir(holder)
+    if not (root / "repo").is_dir():
+        sys.exit(f"no session worktree {root / 'repo'}")
+    try:
+        make_venv(root, root / "sync.log")
+    except subprocess.CalledProcessError:
+        sys.exit(f"uv sync failed; see {root / 'sync.log'}")
+    print(f"synced {root / 'venv'} to {root / 'repo'}", flush=True)
+    return 0
 
 
 def write_connection(root, data):
@@ -289,6 +310,10 @@ def main(argv):
     if argv[:1] == ["_renew"]:
         renew_loop(argv[1], int(argv[2]))
         return 0
+    if argv[:1] == ["sync"]:
+        if len(argv) != 2:
+            sys.exit(__doc__)
+        return sync_session(argv[1])
     if argv[:1] == ["stop"]:
         if len(argv) != 2:
             sys.exit(__doc__)
@@ -300,7 +325,7 @@ def main(argv):
     parser.add_argument("--home")
     parser.add_argument("--repo", help="the checkout to add the worktree to (default: the one this script is in)")
     parser.add_argument("--interval", type=int, default=RENEW_SECONDS)
-    parser.add_argument("--no-sync", action="store_true", help="skip `uv sync` (tests)")
+    parser.add_argument("--no-sync", action="store_true", help="skip the venv's `uv sync` (tests)")
     return start(parser.parse_args(argv))
 
 

@@ -19,3 +19,8 @@ def test_the_skill_leaves_tagging_and_the_pin_to_the_workflows_and_evidence_to_p
     assert "Never tag the library or bump its pin yourself" in text
     assert "git tag" not in text and "right before tagging" not in text
     assert "learnings.py new" in text and "setup.py" in text and "prove_chain.py" in text and "families.py" in text
+
+
+def test_the_skill_documents_the_row_limit_and_the_venv_sync():
+    text = (SKILL / "SKILL.md").read_text()
+    assert "--rows" in text and "setup.py sync" in text
