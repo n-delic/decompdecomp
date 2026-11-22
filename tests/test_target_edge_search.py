@@ -875,3 +875,13 @@ def test_halfword_count_loop_reaches_kmc_proposals(monkeypatch):
     rows = [('r', 'sll $v0, $v0, 1', 'sll $v0, $v0, 3')]
     assert ('recover_halfword_count_loop', 'fixed') in route('void f(void) {}', rows, 'asm')
     assert 'recover_halfword_count_loop' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
+
+
+def test_indirect_self_call_hypothesis_reaches_kmc_proposals(monkeypatch):
+    from decomprepair import measured_indirect_self_call
+
+    monkeypatch.setattr(measured_indirect_self_call, 'variants',
+                        lambda *args: [('indirect_self_call_void_hypothesis', 'fixed')])
+    rows = [('|', 'nop', 'move $a0, $v1')]
+    assert ('indirect_self_call_void_hypothesis', 'fixed') in route('void f(void) {}', rows, 'asm')
+    assert 'indirect_self_call_void_hypothesis' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
