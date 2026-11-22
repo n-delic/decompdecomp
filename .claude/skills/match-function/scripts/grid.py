@@ -37,6 +37,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import claimlost  # noqa: E402
 
 ALT = re.compile(r"/\*\{\*/(.*?)/\*\}\*/", re.S)
 SEPARATOR = "/*|*/"
@@ -220,6 +221,7 @@ def main(argv=None, make_judge=None):
     ap.add_argument("--stop-on-match", action="store_true", help="stop scoring once a candidate scores 0")
     ap.add_argument("--home")
     a = ap.parse_args(argv)
+    claimlost.warn()  # a lost claim is said first, before minutes of scoring
     try:
         template = Template(Path(a.source).read_text())
         total, where = breakdown(template)

@@ -80,6 +80,17 @@ app's verdict. Use it for every submit and confirmation; do not write your own g
 in a session (its claim belongs to the connection, so it answers HTTP 400). `judge.py try` is for a claim made with
 `judge.py claim` only.
 
+**Check the claim: `setup.py check <holder>`** (also `status`) asks the app now whether this session still holds its function
+and exits 1 when it does not. Run it **every 20 minutes** and **before any long isolated work** (a `grid.py` or
+`prove_chain.py` run, a long `fast_judge` search): a claim lapses when the app is slow, another session then claims and
+matches the function, and isolated scoring never notices. The renewal retries a failed renewal within seconds and, when
+the app says someone else holds the function (or it is matched), writes a `LOST` file in the session folder; from then on
+every `setup.py` command, `fast_judge.py`, `prove_chain.py` and `grid.py` print a boxed **CLAIM LOST** warning, and
+`setup.py try` refuses to submit. **On a lost claim stop working on that function**: if `check` says it is free,
+`setup.py reclaim <holder> FUNC` (reread the saved best first: someone may have changed it); if someone else holds it or
+it is matched, `release` your notes through `add_note`, then `setup.py release <holder>` and `setup.py reclaim <holder>`
+for another function. Never keep working "in the isolated judge" on a function you no longer hold.
+
 **Any other MCP tool: `mcp.py <holder> <tool> ['{"json":"args"}']`** (`get_function`, `get_candidate`, `get_assembly`,
 `last_diff`, `report_repair`, `add_note`, ...) over the same connection, printing the result. `mcp.py <holder> --list` lists
 the tools; `mcp.py <holder> <tool> --help` shows a tool's arguments with their allowed values (for `report_repair`, the valid

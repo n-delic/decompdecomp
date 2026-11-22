@@ -24,6 +24,11 @@ import argparse
 import json
 import os
 import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import claimlost  # noqa: E402
 
 DEFAULT_HOME = "~/Decomp-RetroReversing-dev"
 DIFF_ROWS = 60  # rows --diff prints unless told otherwise; the worker counts what it leaves out
@@ -112,6 +117,7 @@ def main(argv=None):
     ap.add_argument("--vram", type=int, help="the address, when the name is shared by overlays")
     ap.add_argument("--home")
     a = ap.parse_args(argv)
+    claimlost.warn()  # a lost claim is said first, before minutes of scoring
     limit = rows_wanted(a.rows)
     judge = Judge(a.slug, a.function, vram=a.vram, home=a.home)
     try:

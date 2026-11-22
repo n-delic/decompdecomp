@@ -17,6 +17,10 @@ read a function's status.
     setup.py try HOLDER CAND.c [FUNC]                   submit a candidate to the app as this session (compile_and_diff over
                                                         the session's own MCP connection, which holds the claim) and print
                                                         the app's verdict; FUNC defaults to the claimed function
+    setup.py check HOLDER                               ask the app now whether this session still holds its function (also
+                                                        `status`); exit 1 and a loud warning when not. Run it every 20 minutes
+                                                        and before long isolated work. Every command here (and fast_judge,
+                                                        prove_chain, grid) prints the same warning while a LOST file exists
     setup.py env HOLDER                                 print `export UV_PROJECT_ENVIRONMENT=... DECOMP_HOME=... DECOMP_PORT=...`
                                                         for the session (eval it; the token is never printed)
     mcp.py HOLDER TOOL [JSON]                           (its own script) call any app MCP tool over this session's connection
@@ -36,6 +40,7 @@ What it makes in /tmp/dd-HOLDER/:
     connection.json    mode 0600: the project-scoped MCP connection (url, bearer token, ids), slug, function, paths.
                        The token is a secret: never print it. A client reads it from here, e.g.
                        claude mcp add --transport http dd-HOLDER URL --header "Authorization: Bearer $(jq -r .token connection.json)"
+    LOST               written by the renewal when the claim is lost (someone else holds the function, or it is matched)
     renew.pid, renew.log   the background process that renews the claim every 5 minutes until the function matches
 It prints the environment to use. Release with notes through MCP (`release_function`) first when you learned something;
 `stop` frees whatever is left. Run `stop` from outside that folder; it works from the primary checkout too because it only
@@ -57,6 +62,7 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import claimlost  # noqa: E402
 import judge  # noqa: E402  (the app's connection file, and its window API for creating a connection)
 
 RENEW_SECONDS = 300  # a claim lapses after about ten minutes; renewing at half that leaves room for one miss
@@ -66,6 +72,10 @@ TMP = Path(os.environ.get("DD_SESSIONS_DIR", "/tmp"))
 STILL_RUNNING = "still running"  # the gateway's answer while the app works: repeat the identical call
 STILL_RUNNING_RETRIES = 60
 CLAIMED = re.compile(r"^## CLAIMED: [^/\s]+/(\S+)", re.M)
+CLAIMED_BY = re.compile(r"is claimed by (.+?)(?: for another|$)", re.M)
+RENEW_RETRIES = 4  # a failed renewal is tried again at once this many times, RETRY_SECONDS apart
+RETRY_SECONDS = 10
+CLAIM_LAPSE_SECONDS = 600  # without a renewal this long the claim has lapsed whatever the app says now
 SUPPORTED_MCP_VERSION = "2025-06-18"
 
 
@@ -267,25 +277,70 @@ def renew_loop(root, interval):
     gateway = Gateway(info["gateway_url"], info["token"])
     stop = []
     signal.signal(signal.SIGTERM, lambda *_: stop.append(1))
+    last_good = time.time()
     while not stop and (root / "renew.pid").exists():
+        pause = interval
         try:
             current = json.loads((root / "connection.json").read_text())
             function = current.get("function") or ""
             if not function or function in current.get("released", []):
                 print(time.strftime("%H:%M:%S"), "no claimed function; nothing to renew", flush=True)
-            elif app.function(current["slug"], function).get("status") == "matched":
-                print(f"{function} matched; the claim needs no renewing", flush=True)
-                break
             else:
-                claim(gateway, function)
-                print(time.strftime("%H:%M:%S"), "renewed", function, flush=True)
-        except (McpError, SystemExit, OSError, ValueError) as error:
+                outcome = renew_once(root, current, app, gateway, last_good, stop)
+                if outcome == "matched":
+                    break
+                if outcome == "renewed":
+                    last_good = time.time()
+                elif outcome == "failed":
+                    pause = min(interval, RETRY_SECONDS * 3)  # try again soon, not after a whole interval
+        except (SystemExit, OSError, ValueError) as error:
             print(time.strftime("%H:%M:%S"), f"not renewed: {error}", flush=True)
-        for _ in range(int(interval)):  # short sleeps so a stop is prompt
+        for _ in range(int(pause)):  # short sleeps so a stop is prompt
             if stop or not (root / "renew.pid").exists():
                 break
             time.sleep(1)
     (root / "renew.pid").unlink(missing_ok=True)
+
+
+def renew_once(root, current, app, gateway, last_good, stop=(), pause=None):
+    """One renewal of the session's function, retried promptly when the app is slow or errors. Returns "renewed",
+    "matched", "lost" (someone else holds it: recorded in LOST, never claimed again by retrying) or "failed" (the app
+    never answered; LOST is written once the claim must have lapsed). A claim that comes back after a lapse clears LOST.
+    A renewal never takes a released function: the caller only passes the current one (#2758)."""
+    function, pause = current["function"], RETRY_SECONDS if pause is None else pause
+    error = None
+    for attempt in range(RENEW_RETRIES):
+        try:
+            if app.function(current["slug"], function).get("status") == "matched":
+                claimlost.write(root, function, "matched", matched=True)
+                print(f"{function} matched; the claim needs no renewing", flush=True)
+                return "matched"
+            claim(gateway, function)
+            claimlost.clear(root)
+            print(time.strftime("%H:%M:%S"), "renewed", function, flush=True)
+            return "renewed"
+        except McpError as problem:
+            error = str(problem)
+            holder = CLAIMED_BY.search(error)
+            if holder:
+                owner = holder[1].strip()[:80]
+                claimlost.write(root, function, error[:300], holder=owner)
+                print(time.strftime("%H:%M:%S"), f"CLAIM LOST: {function} is held by {owner}", flush=True)
+                return "lost"
+            if "already matched" in error:
+                claimlost.write(root, function, error[:300], matched=True)
+                print(f"{function} is matched; the claim needs no renewing", flush=True)
+                return "matched"
+        except (SystemExit, OSError, ValueError) as problem:
+            error = str(problem)
+        print(time.strftime("%H:%M:%S"), f"not renewed (try {attempt + 1}/{RENEW_RETRIES}): {error}", flush=True)
+        for _ in range(int(pause)):
+            if stop:
+                return "failed"
+            time.sleep(1)
+    if time.time() - last_good >= CLAIM_LAPSE_SECONDS:
+        claimlost.write(root, function, f"not renewed for {int((time.time() - last_good) // 60)} min: {error}"[:300])
+    return "failed"
 
 
 def release_session(holder):
@@ -297,6 +352,7 @@ def release_session(holder):
         info["released"] = sorted({*info.get("released", []), function})
     info["function"] = ""
     write_connection(root, info)
+    claimlost.clear(root)  # nothing is claimed any more, so nothing is lost
     print(f"{holder}: {function or 'no function'} released; the renewal no longer renews it", flush=True)
     return 0
 
@@ -319,6 +375,7 @@ def reclaim_session(holder, function="", strategy="nearest", max_insns=NEAREST_M
     info = read_session(root)  # fresh: the claim took a while
     info["function"], info["started"] = claimed, time.time()
     write_connection(root, info)
+    claimlost.clear(root)
     print(f"{holder}: claimed {claimed}; the renewal now renews it", flush=True)
     return 0
 
@@ -341,6 +398,9 @@ def try_candidate(holder, path, function=""):
     name = function or info.get("function")
     if not name:
         sys.exit("the session has no claimed function; name it: setup.py try HOLDER CAND.c FUNC")
+    marker = claimlost.read(root)
+    if claimlost.taken(marker) and marker.get("function") == name:
+        sys.exit(claimlost.warning(root) + "not submitted: someone else holds this function now.")
     try:
         source = Path(path).read_text()
     except OSError as error:
@@ -352,6 +412,37 @@ def try_candidate(holder, path, function=""):
     except McpError as error:
         sys.exit(f"not submitted: {error}")
     return 0
+
+
+def check_claim(holder):
+    """Ask the app now (not the marker) whether this session holds its function: `get_claims` over the session's
+    connection, which claims nothing. Exit status 0 held, 1 not held (and LOST is written, so the other commands warn)."""
+    root = session_dir(holder)
+    info = read_session(root)
+    function = info.get("function") or ""
+    if not function:
+        print(f"{holder}: no function is claimed (released); `setup.py reclaim {holder}` takes the next one")
+        return 1
+    try:
+        status = judge.App(info["home"]).function(info["slug"], function)
+        gateway = Gateway(info["gateway_url"], info["token"])
+        gateway.start()
+        held = json.loads(gateway.call("get_claims", {})).get("claims", [])
+    except (McpError, SystemExit, OSError, ValueError) as error:
+        print(f"{holder}: could not ask the app whether {function} is still claimed ({error}); try again in a minute")
+        return 1
+    if any(entry.get("function") == function for entry in held):
+        claimlost.clear(root)
+        print(f"{holder}: {function} is claimed by this session (until {time.strftime('%H:%M', time.localtime(max(e.get('expires_at') or 0 for e in held)))})"
+              if any(e.get("expires_at") for e in held) else f"{holder}: {function} is claimed by this session")
+        return 0
+    if status.get("status") == "matched":
+        claimlost.write(root, function, "matched", matched=True)
+    else:
+        owner = next((status[key] for key in ("claimed_by", "claim_holder", "holder") if isinstance(status.get(key), str)), "")
+        claimlost.write(root, function, "the app no longer lists the claim as this session's", holder=owner)
+    print(claimlost.warning(root) + f"{holder}: {function} is NOT claimed by this session.")
+    return 1
 
 
 def session_gateway(slug="", holder=""):
@@ -481,6 +572,12 @@ def main(argv):
     if argv[:1] == ["_renew"]:
         renew_loop(argv[1], int(argv[2]))
         return 0
+    if argv[:1] in (["check"], ["status"]):
+        if len(argv) != 2:
+            sys.exit(__doc__)
+        return check_claim(holder_name(argv[1]))
+    if len(argv) > 1 and argv[0] in ("sync", "try", "env", "release", "reclaim") and not argv[1].startswith("-"):
+        claimlost.warn(session_dir(argv[1]))  # loud, before whatever the command prints
     if argv[:1] == ["sync"]:
         if len(argv) != 2:
             sys.exit(__doc__)

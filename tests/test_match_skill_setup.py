@@ -30,6 +30,7 @@ class FakeApp:
 
     def __init__(self, home):
         self.claims, self.revokes, self.status, self.creates, self.busy = [], [], "open", [], 0
+        self.owner = ""  # when set, claim_function refuses: someone else holds the function
         self.calls, self.answers = [], ["ok"]  # the other tools' calls, and what they answer (the last repeats)
         self.tools = [
             {"name": "add_note", "description": "Add a note.", "inputSchema": {"type": "object", "properties": {}}},
@@ -80,6 +81,10 @@ class FakeApp:
                     text = outer.answers.pop(0) if len(outer.answers) > 1 else outer.answers[0]
                     return self.reply({"jsonrpc": "2.0", "id": body["id"], "result": {"content": [{"type": "text", "text": text}]}})
                 outer.claims.append(args)
+                if outer.owner:
+                    text = f"claim_function: {args.get('function')} is claimed by {outer.owner} for another 7 min"
+                    return self.reply({"jsonrpc": "2.0", "id": body["id"], "result": {
+                        "isError": True, "content": [{"type": "text", "text": text}]}})
                 if outer.busy:
                     outer.busy -= 1
                     text = "claim_function is still running; repeat exactly the same call"
@@ -469,3 +474,118 @@ def test_env_prints_evalable_lines_without_the_token_and_setup_ends_with_them(wo
         setup.main(["stop", "claude-e1"])
     with pytest.raises(SystemExit, match="no session"):
         setup.main(["env", "claude-e1"])
+
+
+def lost_world(world, holder, capsys):
+    setup, app, home, primary = world
+    assert start(setup, home, primary, "--holder", holder, "func_8001") == 0
+    capsys.readouterr()
+    return setup, app, setup.session_dir(holder)
+
+
+def test_the_renewal_records_a_lost_claim_and_every_command_warns_loudly(world, capsys, tmp_path):
+    setup, app, root = lost_world(world, "claude-l1", capsys)
+    claimlost = sys.modules["claimlost"]
+    try:
+        app.owner = "claude-other"
+        assert wait_for(lambda: (root / "LOST").exists())
+        marker = json.loads((root / "LOST").read_text())
+        assert marker["holder"] == "claude-other" and marker["function"] == "func_8001" and not marker["matched"]
+        assert "claude-other" in (root / "renew.log").read_text()
+        setup.main(["env", "claude-l1"])  # a command prints the warning (stderr) before its own output
+        err = capsys.readouterr().err
+        assert "CLAIM LOST" in err and "claude-other" in err and "reclaim claude-l1" in err
+        cand = tmp_path / "c.c"
+        cand.write_text("int f(void){return 0;}")
+        app.calls.clear()
+        with pytest.raises(SystemExit, match="someone else holds"):
+            setup.main(["try", "claude-l1", str(cand)])
+        assert not [c for c in app.calls if c[0] == "compile_and_diff"]  # refused before anything is submitted
+        # the helpers print the same warning from the folder their venv lives in
+        capsys.readouterr()
+        assert claimlost.warn(root) and "CLAIM LOST" in capsys.readouterr().err
+        setup.main(["release", "claude-l1"])
+        assert not (root / "LOST").exists() and claimlost.warning(root) == ""
+    finally:
+        setup.main(["stop", "claude-l1"])
+
+
+def test_a_failed_renewal_is_retried_at_once_and_lost_only_when_the_claim_must_have_lapsed(world, capsys):
+    setup, app, root = lost_world(world, "claude-l2", capsys)
+    claimlost = sys.modules["claimlost"]
+    try:
+        info = json.loads((root / "connection.json").read_text())
+        gateway = setup.Gateway(info["gateway_url"], info["token"])
+        flaky = setup.Gateway(info["gateway_url"], info["token"])
+        calls = []
+
+        class Slow:
+            def function(self, slug, name):
+                calls.append(name)
+                if len(calls) < 3:
+                    raise setup.McpError("timed out")
+                return {"status": "open"}
+
+        assert setup.renew_once(root, info, Slow(), gateway, time.time(), pause=0) == "renewed"
+        assert len(calls) == 3  # two timeouts, then the renewal went through within the same cycle
+        assert not (root / "LOST").exists()
+
+        class Down:
+            def function(self, slug, name):
+                raise OSError("connection refused")
+
+        assert setup.renew_once(root, info, Down(), flaky, time.time(), pause=0) == "failed"
+        assert not (root / "LOST").exists()  # a miss of a few seconds is not a loss
+        assert setup.renew_once(root, info, Down(), flaky, time.time() - 700, pause=0) == "failed"
+        assert "OSError" not in (root / "LOST").read_text() and claimlost.read(root)["holder"] == ""
+        assert "could not be renewed" in claimlost.warning(root)
+        # a transient loss does not stop `try`: only a function someone else holds does
+        assert not claimlost.taken(claimlost.read(root))
+        assert setup.renew_once(root, info, Slow(), gateway, time.time(), pause=0) == "renewed"
+        assert not (root / "LOST").exists()  # the claim came back: the warning goes
+    finally:
+        setup.main(["stop", "claude-l2"])
+
+
+def test_a_matched_function_is_recorded_and_a_released_one_is_never_claimed_to_renew_it(world, capsys):
+    setup, app, root = lost_world(world, "claude-l3", capsys)
+    try:
+        info = json.loads((root / "connection.json").read_text())
+        app.status = "matched"
+        before = len(app.claims)
+        gateway = setup.Gateway(info["gateway_url"], info["token"])
+        assert setup.renew_once(root, info, setup.judge.App(info["home"]), gateway, time.time(), pause=0) == "matched"
+        assert len(app.claims) == before and json.loads((root / "LOST").read_text())["matched"] is True
+        assert "MATCHED" in setup.sys.modules["claimlost"].warning(root)
+    finally:
+        setup.main(["stop", "claude-l3"])
+
+
+def test_check_asks_the_app_now_and_exits_nonzero_when_the_claim_is_not_the_sessions(world, capsys):
+    setup, app, root = lost_world(world, "claude-l4", capsys)
+    try:
+        app.answers = [json.dumps({"claims": [{"function": "func_8001", "expires_at": time.time() + 500}]})]
+        assert setup.main(["check", "claude-l4"]) == 0
+        assert "claimed by this session" in capsys.readouterr().out and not (root / "LOST").exists()
+        app.answers = [json.dumps({"claims": []})]
+        assert setup.main(["status", "claude-l4"]) == 1
+        out = capsys.readouterr()
+        assert "CLAIM LOST" in out.err + out.out and (root / "LOST").exists()
+        app.answers = [json.dumps({"claims": [{"function": "func_8001"}]})]
+        assert setup.main(["check", "claude-l4"]) == 0 and not (root / "LOST").exists()  # reclaimed: cleared
+    finally:
+        setup.main(["stop", "claude-l4"])
+
+
+def test_the_long_helpers_warn_when_the_session_marker_exists(world, capsys, monkeypatch):
+    setup, app, root = lost_world(world, "claude-l5", capsys)
+    try:
+        sys.modules["claimlost"].write(root, "func_8001", "x", holder="claude-other")
+        monkeypatch.setenv("UV_PROJECT_ENVIRONMENT", str(root / "venv"))
+        for name in ("fast_judge", "prove_chain", "grid"):
+            text = (SCRIPTS / f"{name}.py").read_text()
+            assert "claimlost.warn()" in text
+        capsys.readouterr()
+        assert sys.modules["claimlost"].warn() and "claude-other" in capsys.readouterr().err
+    finally:
+        setup.main(["stop", "claude-l5"])

@@ -35,6 +35,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import claimlost  # noqa: E402
 import fast_judge  # noqa: E402
 
 from decompnet.app import row_coverage  # noqa: E402
@@ -217,6 +218,7 @@ def main(argv=None):
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--home")
     a = ap.parse_args(argv)
+    claimlost.warn()  # a lost claim is said first, before minutes of scoring
     if a.source:
         source = Path(a.source).read_text()
     else:
