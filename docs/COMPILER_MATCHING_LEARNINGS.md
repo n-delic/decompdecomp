@@ -13707,6 +13707,44 @@ negative generation tests.
 
 One N64 linked-list walk built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` had been drafted as returning `void`, while the target initialized the return register to zero and incremented it on each iteration. Restoring a counter and returning it reproduced the linked target exactly (score 400 to 0). The repair requires both target counter instructions and the simple list-walk shape. Evidence: one saved example and synthetic generation and routing tests.
 
+## A record search and an edge-linking loop: the counter's priority sits between two registers (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, an N64 game, one 181-instruction function, 155 -> 0)
+
+Controlled result for one function (181 instructions); each step measured with the app's judge-worker.
+
+| step | edit | score |
+|---|---|---|
+| 0 | saved best (m2c's goto/pointer-walk loops, a carried `id`, `volatile unsigned short pad`, a duplicate-arm `if (edge)`) | 155 |
+| 1 | search loop reads the entry where it compares: `do { if (*entry == key) {...} entry += 4; map += 8; } while (*entry != sentinel);` (the `id` copy dropped, entry on the left of `==`) | 135 |
+| 2 | row address `sSearchEntries[i]` for the byte-offset sum, `for`-shaped `i < pointCount` | 125 |
+| 3 | edge loop as two natural `for (j = 0; j < 16; j++) { if (rows[a].links[j] == 0) { ...; break; } }` loops under `if (edgeCount > 0) do { ... k++ } while (k < edgeCount)`, no duplicate arm | 114 |
+| 4 | the edge loop's induction pointer is `edges[k]` (a giv loop.c makes: its copy lands after the count copy in the preheader, as the target's does) | 114 (registers only) |
+| 5 | `i * sizeof(SearchRow) + (s32) sSearchEntries` (the base register second, as the target adds them) | 109 |
+| 6 | drop the unreferenced `volatile unsigned short pad` (measured on the pointer-walk form of the edge loop, with the start wrapped in place) | 35 |
+| 7 | on the `edges[k]` form without the pad: the counter start `do { do { do { k = 0; } while (0); } while (0); } while (0);` placed before the `if (edgeCount > 0)` that guards the loop | 0 |
+
+Steps 3-5 were measured as one state (109-114 across the spellings), not as separate gains; steps 6 and 7 were measured on the two forms of the edge loop named in the rows.
+
+What decided step 7 is the allocator, read with `cc1 -dl -dg`: each temporary gets registers in order of
+`floor_log2(refs) * refs / live length`, a reference counting once per loop it sits in. The target gives the counter the
+first temporary, the induction pointer the second, the row base the third; the natural source had the pointer
+(9 references, length 57, 0.474) above the counter (7, 59, 0.237) above nothing it should outrank. Three loops around
+the start make ten references and the guard in front lengthens its range to just under the halfword `a` (0.5): 0.49,
+between `a` and the pointer, which is the target's order. One loop (nine references, 0.458) was still under the pointer;
+an extra reference to `a` instead raised the pointer too, since its load shared the statement. Failed: the start
+wrapped in place (35), a for-loop with the init in its header (154-384), pointer form with the initialisers reordered
+(preheader insns in a different order: the target's copy of the base comes last because loop.c writes it), wrapping the
+loads of `a`/`b` (raises the induction pointer), temporaries for the two row addresses (109-2234), spelling `rows[a]` as
+`rows + a`, `(u8 *) rows + a * 24` or `a * 24 + (s32) rows` (all 120). With the `volatile` pad kept the same source stayed
+at 49-59: a `volatile` anywhere in the function switched the loop-weight family off.
+
+Permuter: no existing family (library walk over the saved source, one child each) improved the saved 155.
+decomp-repair 0.5.353 adds `loaded_search_fold` (step 1: 155 -> 135 on its own), `loop_weight_scope` for a counter's
+constant start in place or ahead of its guard (step 7), and tolerates an unreferenced volatile scratch, with
+`unused_frame_padding_drop` (step 6). From the natural-loop source with the pad kept, the family's children reach 59; with
+the drop one child scores 0. Not yet offered: m2c's forward/reverse goto link loops rewritten as the two `for` loops
+(step 3), `sSearchEntries[i]` for the byte-offset row address (step 2), the base-register-second spelling (step 5), the
+giv form of the induction pointer (step 4). The edit list is the to-do list for them.
+
 In one N64 byte-reader built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the draft read from a cursor and returned `cursor + 1` after a conditional field copy. Expressing the read as `*cursor++` and returning the cursor reproduced the linked target exactly (score 310 to 0). The candidate is offered only when the cursor has no intervening source uses and the target shows the advance and return schedule. Evidence: one saved example, plus synthetic generation and routing tests.
 
 ## KMC GCC 2.7.2, an N64 game's 400-instruction state-machine switch (one function; 2825 -> 10, evidence level: one function, controlled by the app's judge)
