@@ -16633,3 +16633,34 @@ What decided each step (GCC 2.7.2):
   orders of the four preheader assignments, `while`/`for`/`goto`-join loop forms.
 
 decomp-repair 0.5.563: `clamp_arm_stores`, `adjacent_array_store_order`, `global_field_load_stage`.
+
+## A scene-stack search: the stepped byte offset written off the counter, and the do-while(0) wrapper dropped (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, an N64 game, one 86-instruction function with a stack byte argument)
+
+Evidence level: one function, controlled chain (each step scored with the app's own judge from the saved best; the
+decomp-repair 0.5.564 family `counter_derived_offset` with the existing `one_shot_unwrap` reproduce 115 -> 20 -> 0 from
+the saved source).
+
+| step | edit | alone | combined |
+| --- | --- | --- | --- |
+| 0 | saved best (`s32 offset = 0; for (i = 0; i < n; i++, offset += 4)`, the flag test and both calls in `do { ... return r; } while (0);`) | 115 | 115 |
+| A | `offset` removed, the table indexed by the counter, `*(char **)((char *) table + (i << 2))` (`counter_derived_offset`) | 20 | 20 |
+| B | the `do { ... } while (0)` wrapper around the flag test removed (`one_shot_unwrap`) | 190 | 0 |
+
+What decided each step (GCC 2.7.2):
+- The target kept the fifth argument (a stack byte, loaded at entry) in `$a2`. The global allocator gives a pseudo that
+  copies another's value the register that one already holds, and takes `$a2` only when the byte does not overlap the
+  loop's offset (`move $a2,$zero`). With an explicit `offset = 0` the init comes before the loop guard, ahead of the
+  hoisted zero-extends of the parameters, so the byte (live until its zero-extend) conflicts with it. Indexing by the
+  counter lets loop.c make the `i * 4` induction variable itself and emit its init after the hoisted invariants: no
+  overlap, the byte goes to `$a2` and the prologue's copies keep the target's order. Written `i * 4` the same edit stays
+  at 790 (cse folds the product into a stepped pointer); `i << 2` is what keeps the address a `lui; addu` with the
+  `i * 4` giv.
+- `do { ... } while (0)` adds a loop depth in the compiler's loop notes: every use inside it counts four times, so the
+  flag's zero-extend outranked the sub-id's and took the register the target gives the sub-id. Without the wrapper the
+  allocation order was the target's (`;; N regs to allocate`, `-dl -dg`). Alone it is worse (190) because the prologue
+  is still wrong; with step A it matches.
+- Failed: `-fno-strength-reduce` with natural `table[i]` indexing (1195), two-test `if (!flag) lock(); call(); if
+  (!flag) unlock();` (2398), guarding the offset's init inside an explicit `if (i < n) { offset = 0; do { ... } }` (190,
+  unchanged).
+
+decomp-repair 0.5.564: `counter_derived_offset`.
