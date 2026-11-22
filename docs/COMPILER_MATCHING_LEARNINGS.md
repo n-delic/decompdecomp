@@ -14565,3 +14565,19 @@ scored 11,875. A hand edit that also reused a known zero accumulator
 for the initial subtraction scored 10,500. The automated proposal
 retains the existing initializer and checks the later full definition
 before reusing the saved float.
+
+### Keep a wrapping counter store in the advance branch delay slot
+
+In a private N64 function built with GCC 2.7.2 KMC and
+`-G0 -mips3 -mgp32 -mfp32 -O2`, the target incremented an unsigned byte
+and compared its old value as signed. It took the advancing branch
+when the old byte was below the threshold and stored the wrapped result
+in that branch's delay slot. The draft's nested jump took the reset
+path and laid both case exits out in the opposite order.
+
+Letting the reset fall through and jumping to the advancing statement
+kept both case exits and restored the target slot. The exact linked
+score moved from 10,515 to 9,965, with all jump tables still linked.
+Moving the advance into an ordinary nested block or duplicating the
+reset scored 10,515. Synthetic tests cover the old byte, its signed
+bound, both record offsets and any other entry to the erased label.
