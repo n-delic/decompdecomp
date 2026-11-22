@@ -351,7 +351,9 @@ class Search(Permuter):
         asm = dict(fn).get('asm') or ''
         arch, name = proj['arch'], fn['name']
         L = 'decomprepair.'
-        calls = [(L + 'packed_word_scheduling.variants', (source, name, arch, asm, header)),
+        # Offer a masked phase merge and guarded sink together before the general proposal cap.
+        calls = [(L + 'integer_lifetime_repairs.masked_phase_reuse', (source, name)),
+                 (L + 'packed_word_scheduling.variants', (source, name, arch, asm, header)),
                  (L + 'float_zero_local_repairs.loop_variants', (source, name, asm, header)),
                  (L + 'float_stack_call_reuse.variants', (source, name, arch, asm, header)),
                  (L + 'widen_scaled_local.variants', (source, name, arch, asm, header)),
