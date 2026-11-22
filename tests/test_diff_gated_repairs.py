@@ -1790,3 +1790,12 @@ def test_guarded_index_routes_to_kmc(monkeypatch):
                         lambda text, name, header, diff: [('guarded_index_fixture', text)])
     assert 'guarded_index_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'guarded_index_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_route_signed_byte_table_base_only_on_big_endian_mips():
+    source = ('extern char D_1000[]; static inline s8 narrow(s8 x) { return x; } '
+              's8 f(int i) { s8 value; value = narrow(*((u16 *) (D_1000 + i))); return value; }')
+    rows = [('i', 'lb $v1, %lo(D_1000)($v1)', 'lb $v0, %lo(D_1001)($v0)')]
+    expected = source.replace('(u16 *)', '(s8 *)')
+    assert ('relocated_signed_byte_load', expected) in proposals(source, 'f', '', 'mips', KMC, rows, '', big_endian=True)
+    assert all(label != 'relocated_signed_byte_load' for label, _ in proposals(source, 'f', '', 'mips', KMC, rows, ''))

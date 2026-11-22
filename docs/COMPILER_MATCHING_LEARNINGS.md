@@ -1,5 +1,15 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: correct the byte selected from a table
+
+A big-endian N64 draft loaded a halfword through a signed-byte identity
+helper. GCC narrowed it to a byte at the symbol plus one, while the
+target read a signed byte at the symbol base. Changing the source cast
+from `u16 *` to `s8 *` restored the target relocation and improved the
+linked score from 9,720 to 9,710 with `-G0 -mips3 -mgp32 -mfp32 -O2`.
+Keeping the existing 232-byte stride was required. Dropping the inline
+helper regressed to 10,330.
+
 ### KMC GCC 2.7.2: give the last table comparison its own pointer
 
 A pointer reused for several table lookups in an N64 draft allocated

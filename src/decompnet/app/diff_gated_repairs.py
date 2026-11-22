@@ -537,6 +537,8 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_immediate_repairs.variants(source,name,rows)
         result += measured_narrow_use.variants(source, name, rows)
         result += symbol_width_repairs.signed_halfword_load_variants(source, name, rows)
+        if big_endian:
+            result += symbol_width_repairs.signed_byte_base_variants(source, name, rows, header)
         result += measured_narrow_use.boolean_byte_carriers(source, name, rows)
         result += measured_narrow_use.byte_backedge_variants(source, name, rows)
         result += measured_narrow_use.shared_halfword_index_variants(source, name, rows)
