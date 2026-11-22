@@ -15541,3 +15541,6 @@ All jump tables and instruction counts remained exact. The compiler
 reported no uninitialized reads. Two alternate carriers were neutral
 and one scored 3,125. The recipe limits the lifetime to a region without
 incoming labels and requires the observed calls to consume the snapshot.
+### KMC GCC 2.7.2 previous global pointer
+
+A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` loaded a global pointer before installing a replacement and saving the old value. Its machine draft instead read an uninitialized local and loaded the global after overwriting it. Moving the load earlier while retaining the draft's base-plus-offset expression changed the diff score from 220 to 445; using the directly relocated global symbol as well produced an exact linked match (score 0). The proposal verifies that the symbol resolves to the original base plus the field offset and checks the observed loads and stores. This is one saved example rather than a controlled cross-compiler experiment.
