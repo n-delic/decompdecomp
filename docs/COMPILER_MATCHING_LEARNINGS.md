@@ -14160,6 +14160,54 @@ instruction shape, distinct offsets and volatile input rejection.
 
 Two saved N64 variable-byte decoders built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` had drafts that returned an accumulator without initializing it on the single-byte path. Initializing it from the first explicitly byte-sized read and using byte-sized subsequent reads reproduced both linked targets exactly (score 320 to 0). The repair requires the measured byte-mask differences and the full decoder shape. Evidence: two saved examples and synthetic generation and routing tests.
 
+## An N64 voice-table update function: a 5060 -> 0 chain of twelve edits (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, one 719-instruction function)
+
+Evidence level: one function, judged by the app (byte-identical after linking, recorded as matched with best 0), every
+step measured with the app's own judge on the same source. The function loops over a table of 0x1A0-byte voice
+records (ticking, easing volume and pitch, clamping the results into five call arguments), then over a table of
+0x28-byte fade records. The saved best sat at 5060 with 192 differing rows, almost all registers: the table pointer
+and a loaded byte had swapped `$s4`/`$s5`, and that swap carried through the whole function.
+
+The edit list, in the order it was made. Each row says which compiler fact it changes; the score is the whole
+function's after that edit (several rows only pay off together, so a row can raise the score).
+
+| # | edit | compiler fact | score |
+|---|---|---|---|
+| 1 | the `-0x92` load and two table multiplies written straight into the accumulator (`acc = *p; acc = (acc >> 7) * x;`) before the two byte loads, not through a temporary | one pseudo for the chain; the byte's live range starts later, so its priority (`floor_log2(uses) * uses / live length`, 8 uses / 57 insns) passes the table pointer's (39 uses / 468 insns): `$s4` byte, `$s5` table | 5060 -> 5420 -> 3865 |
+| 2 | the second loop's counter and a late accumulator renamed to the first loop's counter (`var_s2_2`, `var_s2_4`) | one pseudo for the loops; a counter's priority passes the loop-local offsets' | 5420 -> 5390 -> 5205 |
+| 3 | the `volatile` temporary dropped, then the compound test compares the memory just stored (`*(u32 *)(p-0x2E) < x`, not the temporary) | `fold_truth_andor` joins two comparisons of simple operands into one non-short-circuit AND; a memory operand keeps the two branches | 5205 -> 5910 -> 4405 |
+| 4 | an unused local array `s32 pad[2];` | the frame's extra 8 bytes, which the `volatile` spill had been reserving | 4102 -> 4080 |
+| 5 | `do { v = 0x7F0000; } while (0);` in the two default-then-override clamps | the loop notes stop the jump pass folding the arm into `bnez L; lui; L:`: the target's `bnez L; lui (slot); j L2; move (slot)` | 4080 -> 3620, 3655 -> 3255 |
+| 6 | the three clamp temporaries of one value and an accumulator's three names written as one variable (`var_a3`, `var_s0_2`) | pseudos per source variable; a result computed in place lands in the dying operand's register | 3255 -> 3075, 1765 -> 1750 |
+| 7 | the sign test's temporary computed inside its `if` | the subtract overwrites the dying operand's register (`addiu $v1,$v1,-0x2000`) | 1750 -> 1735 |
+| 8 | the loop's second table counter reset (`i = 0;`) before the loop that reuses it | the strength-reduced giv starts from a constant (`move $s0,$zero`), not `sll; addu; sll` of the unknown counter | 2880 -> 2335 |
+| 9 | the shifted value feeding the first product hoisted into its own statement, the later multiplies' operand order reversed | the first scheduler's order of the two loads and the shift; `sw` order of two stores | 3865 -> 3615 -> ... -> 1020 |
+| 10 | `n = count; if (n > 0)` for a `u8` global compared `((s32) count) > 0` | combine turns a signed test of a zero-extended byte into `!= 0` (`beqz`); a copied `s32` stays `blez` | 1020 -> 830 |
+| 11 | the derived pointer `sp = base + 0xC2` defined at the head of the loop body, not before the loop and again at the tail | the giv reduces to `addiu $s1,$s1,0x1A0` beside `addiu $s5,$s5,0x1A0`; set at the tail it is a recomputation | 830 -> 605 |
+| 12 | `temp_v0_7` (the shifted value of one block) renamed from the loop-2 difference that reused it; then the loop-2 shift staged in `do { s = t >> 8; } while (0);` | local-alloc ranks the shift result (2 insns, 4 refs) above the loaded factor (6 insns), so the shift took `$v0`; the loop note barrier makes the shift come first in the first scheduler's order | 605 -> 435 -> 400 |
+| 13 | `var_s3 = 0` / `var_a3 = 0` written in `else` arms, not as defaults before their `if` | jump threading plus delay-slot filling: the arm's lone insn moves into the first test's slot and the then-arm keeps its `j L; move (slot)` | 400 -> 335 -> 0 |
+
+Found by the compiler's own dumps, not by guessing: row 1 (`cc1 -dl -dg`: the table pointer's 0.411 against the byte's 0.414/0.400), row 12
+(`-dl`: which of two locals the first allocation pass takes, ordered by life 2 against 6) and row 13 (the sched2/dbr
+dumps showed the then-arm's `j` and the else block the first beq's slot had absorbed, which only exists when no earlier
+jump threads past it).
+
+Failed or insufficient: the second pointer as a biv (`var_s1 += 0x1A0`: 3036-7351, the offsets move by the biv's
+initial value); the table pointer as a giv of the counter (`&table + i * 0x1A0` at the loop head: 7571, a spill and
+`sw $zero,0x24($sp)`); `volatile` on the count (no change); a `do { } while (0)` around the last plain clamp (no
+change, the `j` needs an `else` arm to exist); the default and the `else` both written (cse deletes the redundant
+`a3 = 0`: 400); a copy of the tested byte for the second test (still threaded: 335); duplicating the call into both
+arms (925); statement and declaration permutations of the second loop (no change); `do { } while (0)` around the two byte
+loads (1275, superseded once the shift was hoisted).
+
+Added to the permuter (decomp-repair 0.5.371), one family per row: `volatile_local_drop`, `accumulator_chain`,
+`disjoint_local_merge`, `stored_value_compare`, `clamp_default_scope`, `guard_temp_sink`, `loop_entry_counter_reset`,
+`product_shift_stage`, `narrow_count_copy`, `loop_head_pointer_giv`, `reused_temp_split` and `default_into_else` /
+`else_into_default`; offered by `draft_repairs` and listed in `AGENT_FAMILIES`. What the permuter still cannot do, after
+those: choose the order of three independent loads in a block (the order that gives the byte the lower register is
+found only by scoring all six), and judge a merge before its partner (the counter merges raise the score alone and pay
+off with the loads' order). Run from the saved best with no permuter job (the library's own `propose`, every child judged by the app's judge): a greedy descent over every family stalls at 2615; the twelve families applied once each in the order above, each family's best child kept, reach 2280, and a greedy descent from there stalls at 1375. The distance left is the statement orders and operand orders of rows 1 and 9.
+
 With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, an N64 routine hoisted its switch-table base
 into a saved register after the early-return checks. The straight-line recognizer missed the table
 because a branch preceded the base load. Validating the early exits and checking for a clobber
