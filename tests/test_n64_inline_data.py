@@ -148,3 +148,12 @@ def test_startup_stack_zero_region_rejects_control_flow_into_it():
     assert list(inline_data._stack_padding(image, ranges)) == [(0x1100, 0x1180)]
     struct.pack_into('>I', image, 0x1008, 0x0c000400)
     assert not list(inline_data._stack_padding(image, ranges))
+
+
+def test_verified_data_span_keeps_its_trailing_words_out_of_text(monkeypatch):
+    context = b'precede!' + b'data' + bytes(12) + b'following code!!'
+    signature = (context[:12].hex(), len(context), 16, hashlib.sha256(context).hexdigest())
+    monkeypatch.setattr(inline_data, '_LITERALS', (signature,))
+    assert list(inline_data.spans(context)) == [(8, 24)]
+    changed = context[:20] + b'?' + context[21:]
+    assert not list(inline_data.spans(changed))
