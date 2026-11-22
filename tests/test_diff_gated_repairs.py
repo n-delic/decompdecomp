@@ -1482,3 +1482,22 @@ def test_split_pointer_displacement_is_kmc_diff_gated():
     assert 'split_pointer_displacement' in families(KMC, rows)
     assert 'split_pointer_displacement' not in families('ido-7.1', rows)
     assert 'split_pointer_displacement' not in families(KMC, [])
+
+
+def test_relocated_word_address_writeback_reaches_target_guided_search():
+    source = """extern u32 slot;
+void f(void) {
+    u32 address;
+    address = *((u32 *) ptr);
+    slot = address + ((used + 1) << 6);
+}"""
+    rows = [
+        ('|', 'addu $v1, $v1, $v0', 'addu $v0, $v1, $v0'),
+        (' ', 'lui $at, %hi(target_slot)', 'lui $at, %hi(target_slot)'),
+        ('|', 'sw $v1, %lo(target_slot)($at)', 'sw $v0, %lo(target_slot)($at)'),
+    ]
+    resolve = {'slot': 0x1000, 'target_slot': 0x1000}.get
+    label = 'measured_word_address_writeback'
+    result = dict(proposals(source, 'f', '', 'mips', KMC, rows, '', resolve=resolve))
+    assert 'address += ((used + 1) << 6); slot = address;' in result[label]
+    assert label not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, '', resolve=resolve))

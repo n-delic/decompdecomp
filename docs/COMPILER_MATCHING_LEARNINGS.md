@@ -14470,3 +14470,17 @@ table relocations resolved. The rewrite emits one candidate only when
 all three assembly patterns and their source shapes are present.
 Synthetic tests cover missing witnesses and unsafe lookalikes.
 In one N64 block initializer built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, computing `(base + size) - constant` in one assignment put the subtraction in a different register. Saving the addition to the same local pointer and subtracting the byte displacement in a second assignment reproduced the linked target exactly (score 255 to 0). The repair requires the measured add/subtract register difference, matching displacement and non-escaping typed operands. Evidence: one saved example and synthetic generation and routing tests.
+
+
+### Reuse a loaded address for a relocated word store
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, a rendering
+routine's target added a shifted stride into the loaded address register
+and stored from that register. The draft added into the stride register
+and stored from it. Updating the dead `u32` address local with `+=`
+before assigning it to the global reproduced the target's add and store
+registers. The normal ROM judge score fell from 146 to 136 and the
+function remains unmatched. The repair requires aligned add and store
+evidence, the same destination symbol or address, and no read of the
+original address before its next unconditional overwrite. Evidence is
+one scratch replay and synthetic tests for the source and diff guards.
