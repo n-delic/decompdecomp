@@ -28,7 +28,7 @@ def test_bundle_changes_storage_and_scope_together():
     assert 'p=*(void**)((char*)base+12);\ndo {' in out[0]
     assert out[0].count('while(0);') == 2
     labels = {}
-    assert out[0] in draft_repairs.variants(SOURCE, 'f', 'mips', flags=['-g3'], labels=labels)
+    assert out[0] in draft_repairs.variants(SOURCE, 'f', 'mips', flags=['-g3'], labels=labels, limit=None)
     assert labels[out[0]] == 'pointer_storage_scope'
 
 
