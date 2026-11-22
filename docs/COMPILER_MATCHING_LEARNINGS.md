@@ -14581,3 +14581,7 @@ score moved from 10,515 to 9,965, with all jump tables still linked.
 Moving the advance into an ordinary nested block or duplicating the
 reset scored 10,515. Synthetic tests cover the old byte, its signed
 bound, both record offsets and any other entry to the erased label.
+
+
+
+In one N64 global-swap wrapper built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a draft passed an inferred callback pointer as its own argument. The target loaded that pointer into `$a0` and used `jalr $a0` with a `nop` delay slot. Treating the callback as a no-argument function reproduced the linked target exactly (score 265 to 0). The target also leaves the pointer in the first argument register, so it does not prove the original C prototype; the rule offers a judged hypothesis only after verifying the pointer relocation. Evidence: one saved example and synthetic generation and routing tests.
