@@ -227,7 +227,7 @@ def test_live_metrics_count_only_verified_strict_improvements_and_keep_starting_
     assert metrics.pop('history') == [{'tested':0,'score':50},{'tested':2,'score':30},{'tested':5,'score':20},
                                       {'tested':7,'score':0}]
     assert metrics == {'starting_score':50,'starting_percent':95.0,'best_score':0,
-                                'best_percent':100.0,'improvements':3,'local_search':{},
+                                'best_percent':100.0,'improvements':3,'extensions':0,'extension_max':deep_permuter.EXTEND_MAX,'local_search':{},
                                 'allocation_trials':0,'allocation_diagnostic_compiles':0,'reviewed_seeds':{}}
     assert search.log.updates[-1]['improvements'] == 3
 
