@@ -462,11 +462,16 @@ For each manual step that moved the score, answer: **could the permuter have don
 - No: write the rewrite or the search guide. Smallest useful form: a function in decomp-repair that takes source
   and returns variants, with a test that fails without it (see `call_scope_repairs.py` for the shape). Prove it by
   running it on the function you just matched: starting from the state *before* your fix, it must reach the fix.
-- **Every step the permuter couldn't find becomes a decomp-repair family wired into BOTH the draft repair path
-  (`app/draft_repairs.py`) and the deep permuter's local/beam lane** (`tests/test_library_family_wiring.py` fails on
-  unwired modules). Offer steps that only pay off together as one combined child. Before releasing, check the family
-  returns the same `(family, source)` shape the app expects (run the app's related test), and prove the chain from
-  the saved best where possible. A docs entry alone doesn't finish the goal.
+- **Every step the permuter couldn't find becomes a decomp-repair family that declares itself** with a `REPAIR` dict at
+  the end of its module (`REPAIR = {'families': FAMILIES, 'variants': variants, 'needs': ('source', 'name', 'header')}`,
+  optional `order`, `lanes`, `archs`; `decomprepair/registry.py`). The app runs every declared module in the draft repair
+  path, the Deep Permuter's beam and its local lane (`app/library_registry.py`) and lists its families for the agents, so
+  **there is no app wiring to write**: the library PR is enough (the library's `tests/test_registry.py` fails for a module
+  with `variants` and no `REPAIR`). `needs` are `variants` parameters by name: `source`, `name`, `header`, `arch`, `asm`,
+  `flags`. Offer steps that only pay off together as one combined child. Before releasing, check the family returns
+  `[(family, source)]` (or `[source]`) and prove the chain from the saved best where possible. A docs entry alone doesn't
+  finish the goal. The ~700 older modules are still wired by hand in `app/draft_repairs.py` and `deep_permuter.py`
+  (`tests/registry_legacy.txt` in the library); change those calls only to fix their behaviour.
 - **Label compiler explanations not confirmed in the compiler source as hypotheses**, in docstrings and docs.
 - Test the specific repair on the saved source and, when relevant, the draft. The saved source can
   spell the same operation differently from m2c. Add a unit test, verify that the permuter lane
@@ -480,10 +485,9 @@ For each manual step that moved the score, answer: **could the permuter have don
   Say in the PR which features you ran and how. **Never tag the library or bump its pin yourself.** Merge the library PR
   with no version bump and no tag; its release workflow tags the merge (it runs on every merge, and `gh workflow run
   release -R RetroReversing/decomp-repair` starts it at once), and the library-pin workflow here opens and merges the pin
-  PR (`gh workflow run library-pin`). Wait until `pyproject.toml` on origin/main pins a release containing your module
-  (`git fetch -q origin && git show origin/main:pyproject.toml | grep decomprepair`, and check the module is in
-  the archive), then wire it in a PR of its own. A new family the app doesn't call turns that workflow's run red until
-  it is wired (tests/test_library_family_wiring.py). While CI runs, keep the next independent local experiment ready
+  PR (`gh workflow run library-pin`); once the pin is on origin/main the app runs the module by itself
+  (`git fetch -q origin && git show origin/main:pyproject.toml | grep decomprepair`). Run the module in the app's own
+  paths from your worktree after `setup.py sync`. While CI runs, keep the next independent local experiment ready
   without changing a worktree used by an active judge. A run's "No module named decomprepair.<x>" means the pinned
   release predates your module.
 - After the first 0, read `get_function(section="summary")` again and verify the function is recorded as matched

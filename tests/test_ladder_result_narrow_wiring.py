@@ -45,7 +45,7 @@ def test_it_runs_in_the_bounded_local_lane(monkeypatch):
     fn = {**net.function(), 'asm': ''}
     child = fn['best_source'] + '\n/* ladder_result_narrow */'
     monkeypatch.setattr(importlib.import_module('decomprepair.ladder_result_narrow'), 'variants',
-                        lambda *args: [('ladder_result_narrow', child)])
+                        lambda *args, **kwargs: [('ladder_result_narrow', child)])
     search = deep_permuter.Search(net, 1, 6, Log())
     tried = []
     monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 20)

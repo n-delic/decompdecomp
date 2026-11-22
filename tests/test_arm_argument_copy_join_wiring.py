@@ -57,7 +57,7 @@ def test_it_runs_in_the_bounded_local_lane(monkeypatch):
     fn = {**net.function(), 'asm': ''}
     child = fn['best_source'] + '\n/* arm_argument_copy_join */'
     monkeypatch.setattr(importlib.import_module('decomprepair.arm_argument_copy_join'), 'variants',
-                        lambda *args: [('arm_argument_copy_join', child)])
+                        lambda *args, **kwargs: [('arm_argument_copy_join', child)])
     search = deep_permuter.Search(net, 1, 6, Log())
     tried = []
     monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 20)

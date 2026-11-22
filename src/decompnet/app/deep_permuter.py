@@ -32,6 +32,7 @@ from . import (
     deep_resume,
     deep_throughput,
     draft_repairs,
+    library_registry,
     permuter_focus,
     permuter_local,
     repair_ranking,
@@ -431,35 +432,6 @@ class Search(Permuter):
                  # an associative chain grouped another way, only where the regrouping is the same value in C
                  (L + 'temporary_hoist_repairs.variants', (source, name, header)),
                  (L + 'reassociation_repairs.variants', (source, name, header)),
-                 # a loop's compared byte constant as an entry local, and a one-line temp written into the store reading it
-                 # (decomprepair 0.5.631)
-                 (L + 'entry_constant_local.variants', (source, name)),
-                 (L + 'store_temp_inline.variants', (source, name)),
-                 # a float sum's first add swapped and a one-shot scope inside the store run between its two adds
-                 (L + 'float_sum_store_fence.variants', (source, name)),
-                 # a local m2c assigned one expression in several places, written where it is read (an extra reference swapped two
-                 # saved registers)
-                 (L + 'shared_assignment_inline.variants', (source, name)),
-                 # stray trailing pointer arguments dropped and a reused pointer local split, as one child (each half alone worse)
-                 (L + 'call_carrier_pointer_split.variants', (source, name)),
-                 # a hand-edited source's pointer phases (declarator lists, a local-reading macro) split, and chained as one child
-                 (L + 'normalized_phase_split.variants', (source, name, header)),
-                 # an identical-arm guard on an unassigned local collapsed and two integer locals merged, as one child (each half alone worse)
-                 (L + 'collapsed_guard_lifetime_merge.variants', (source, name)),
-                 # a byte-cursor table walk, its shared offset local and a void tail as the indexed loop, one child (each piece alone worse)
-                 (L + 'walked_table_index_repairs.variants', (source, name)),
-                 # a call's first argument copied on two paths of the switch before it, with the masked store value in its own local, one child (each half alone worse)
-                 (L + 'arm_argument_copy_join.variants', (source, name)),
-                 # a byte string walked by a pointer written as the index loop it came from (the pointer's start moves after the jump table's address)
-                 (L + 'string_walk_index.variants', (source, name)),
-                 # a row-major table's pointer walks and a parallel byte table's word reads as `D[row][column]` over `s32 D[][K]` (one child for every access)
-                 (L + 'row_major_table.variants', (source, name)),
-                 # a bit-test ladder's result as the else-if chain, in a u8, in a function returning s32 (one child; each piece alone worse)
-                 (L + 'ladder_result_narrow.variants', (source, name)),
-                 # a loop's entry guard as the counter's compare (an unaccessed 8-byte spill slot) with each local merge as one child
-                 (L + 'loop_guard_counter_compare.variants', (source, name)),
-                 # a later phase's clamp variable, record pointer and product through the earlier phase's dead locals, one child
-                 (L + 'phase_donor_repairs.variants', (source, name)),
                  (L + 'join_clamp_sum_repairs.variants', (source, name)),
                  (L + 'crossing_scope_unwrap.variants', (source, name)),
                  (L + 'caller_save_slot_drop.variants', (source, name)),
@@ -573,6 +545,11 @@ class Search(Permuter):
             alias = f'func_{vram:08X}'
             if alias != name:
                 calls.append((L + 'scoped_byte_read_call.variants', (source, alias, arch, asm, header)))
+        # the library's self-declared modules (decomprepair.registry), each called with the context it needs
+        flags = ()
+        if any('flags' in item.needs for item in library_registry.runnable('local', arch)):
+            flags = [] if self.net.fork_slug(proj['slug']) else compiler_for(self.net.cfg(proj), fn['vram'], fn).get('flags', [])
+        calls += library_registry.local_calls(library_registry.draft_context(source, name, header, arch, asm, flags))
         register = permuter_focus.classify(rows, arch) == 'register'
         if register:
             calls.append((L + 'identical_float_guard.variants', (source, name, header, arch)))

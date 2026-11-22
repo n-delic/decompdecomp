@@ -60,7 +60,7 @@ def test_each_runs_in_the_bounded_local_lane(monkeypatch, module, family):
     child = fn['best_source'] + f'\n/* {family} */'
     for other in ('entry_constant_local', 'store_temp_inline'):
         monkeypatch.setattr(importlib.import_module('decomprepair.' + other), 'variants',
-                            (lambda *args: [(family, child)]) if other == module else (lambda *args: []))
+                            (lambda *args, **kwargs: [(family, child)]) if other == module else (lambda *args, **kwargs: []))
     search = deep_permuter.Search(net, 1, 6, Log())
     tried = []
     monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 20)

@@ -59,7 +59,7 @@ def test_it_runs_in_the_bounded_local_lane(monkeypatch):
     fn = {**net.function(), 'asm': ''}
     child = fn['best_source'] + '\n/* phase_donor */'
     monkeypatch.setattr(importlib.import_module('decomprepair.phase_donor_repairs'), 'variants',
-                        lambda *args: [('phase_donor', child)])
+                        lambda *args, **kwargs: [('phase_donor', child)])
     search = deep_permuter.Search(net, 1, 6, Log())
     tried = []
     monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 20)

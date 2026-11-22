@@ -65,7 +65,7 @@ def test_it_runs_in_the_bounded_local_lane(monkeypatch):
     fn = {**net.function(), 'asm': ''}
     child = fn['best_source'] + '\n/* collapsed_guard_lifetime_merge */'
     monkeypatch.setattr(importlib.import_module('decomprepair.collapsed_guard_lifetime_merge'), 'variants',
-                        lambda *args: [('collapsed_guard_lifetime_merge', child)])
+                        lambda *args, **kwargs: [('collapsed_guard_lifetime_merge', child)])
     search = deep_permuter.Search(net, 1, 6, Log())
     tried = []
     monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 20)
