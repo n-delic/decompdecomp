@@ -15915,3 +15915,21 @@ product of two ordinary word locals.
 ### KMC GCC 2.7.2 command-word scheduling
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` packed command words and returned the advanced buffer pointer. Its machine draft scheduled the masked stride early, grouped the flag word differently and calculated the return pointer at the end. Reusing the unchanged stride expression at its two uses, regrouping the bitwise OR and staging the end pointer changed the diff score from 205 to an exact linked match. Staging the end pointer alone scored 100. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the measured instruction and source patterns and retains multiplication instead of introducing a signed left shift.
+
+### Keep identical positive-zero store tails separate
+
+In a private linked N64 function built with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, two block tails
+jumped to the same continuation and stored positive zero to the
+same field in their delay slots. The draft redirected an
+unconditional branch and a floating-point branch to the earlier
+copy. The target sends both to the later copy.
+
+Writing the existing positive zero through a word member of a
+record view at the same field offset keeps the two edges
+distinct. The linked score goes from 2,115 to 2,095 with only
+the two destinations corrected. All 3,034 instructions and
+three jump tables remain. A float-only typed view and qualifying
+the same late float clear were neutral. The repair requires two
+agreed jump-and-zero-store tails and a labeled source clear at
+the exact observed field offset.
