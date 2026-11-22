@@ -1540,3 +1540,29 @@ def test_masked_phase_merge_and_guard_sink_reach_focused_lane(monkeypatch):
     assert any(family == 'merge_integer_lifetimes' and 'earlier = color;' in candidate
                and 'int copy = input;\n        phase = input;' in candidate
                for family, candidate in proposals)
+
+
+def test_guarded_split_scope_reaches_focused_lane(monkeypatch):
+    from decompnet.app import generation_calls
+    from decomprepair.reused_temp_split_repairs import guarded_scope_variants
+
+    net = setup(monkeypatch)
+    fn, proj = net.function(), net.project_row('game')
+    source = '''int f(int *p) {
+    int value;
+    if (p != 0) {
+        value = *p;
+        sink(value);
+        value = p[1];
+        sink(value);
+    }
+    return 0;
+}'''
+    monkeypatch.setattr(generation_calls, 'library', lambda calls: [
+        guarded_scope_variants(*args) if name == 'decomprepair.reused_temp_split_repairs.guarded_scope_variants' else []
+        for name, args, *_ in calls
+    ])
+    search = deep_permuter.Search(net, 1, 10, Log(), fn)
+    proposals, _ = search._local_proposals(source, proj, fn, [])
+    assert any(family == 'reused_temp_split' and 'value_b1 = p[1];' in candidate
+               and '} while (0);' in candidate for family, candidate in proposals)

@@ -352,7 +352,8 @@ class Search(Permuter):
         arch, name = proj['arch'], fn['name']
         L = 'decomprepair.'
         # Offer a masked phase merge and guarded sink together before the general proposal cap.
-        calls = [(L + 'integer_lifetime_repairs.masked_phase_reuse', (source, name)),
+        calls = [(L + 'reused_temp_split_repairs.guarded_scope_variants', (source, name)),
+                 (L + 'integer_lifetime_repairs.masked_phase_reuse', (source, name)),
                  (L + 'packed_word_scheduling.variants', (source, name, arch, asm, header)),
                  (L + 'float_zero_local_repairs.loop_variants', (source, name, asm, header)),
                  (L + 'float_stack_call_reuse.variants', (source, name, arch, asm, header)),
