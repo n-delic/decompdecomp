@@ -200,6 +200,7 @@ from decomprepair import (
     measured_staged_float_order,
     measured_storage_shapes,
     measured_strided_halfword_copy,
+    measured_teardown_pointer_order,
     measured_temporary_repairs,
     measured_thread_addresses,
     measured_two_list_allocation,
@@ -553,6 +554,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     result += target_memory_schedule_diff_repairs.proposals(source,name,header,toolchain,rows,target,candidate,asm,
                                                              big_endian=big_endian,flags=flags)
     if toolchain.startswith('gcc-2.7.2-kmc'):
+        result += measured_teardown_pointer_order.variants(source, name, header, rows, flags, resolve)
         result += measured_loop_count_pointer.variants(source, name, header, rows, flags, resolve)
         result += measured_loop_key_copy.variants(source, name, header, rows, flags)
         result += measured_child_slot_update.variants(source, name, header, rows, flags, resolve)

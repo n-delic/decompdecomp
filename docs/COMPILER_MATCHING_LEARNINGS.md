@@ -16471,3 +16471,7 @@ Another isolated function built with the same IDO profile placed a floating-poin
 ### KMC GCC 2.7.2 linked-list count pointer
 
 Three saved MIPS list walks built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` loaded the list count around a node advance and a masked counter increment. Replacing the draft's base-plus-offset pointer spelling with its verified global name, expressing the count through an inline pointer helper and removing a generated no-op loop wrapper changed two partially repaired drafts from linked difference score 120 to exact. The third changed from 120 to 40 and became exact with an existing loop-shape follow-up. These are three saved examples, not controlled cross-compiler experiments. The candidate requires the measured target and candidate instruction orders, a matching symbol address and the 32-bit ABI.
+
+### KMC GCC 2.7.2 teardown pointer order
+
+A saved MIPS teardown function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` updated callbacks and cleared a flag through two global pointers. Staging the flag pointer before the callback stores changed the generated draft's linked difference score from 120 to 40. Expressing the remaining work as identical branches around an ordinary pointer test and retaining the callback base produced an exact match. This is one saved example, not a controlled cross-compiler experiment. The candidate checks the complete source shape, target pointer and callback instructions, the resolved global address and the 32-bit ABI.
