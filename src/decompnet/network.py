@@ -1078,6 +1078,27 @@ class Network:
                                      'language':getattr(result,'language','unknown'), 'settings_source':'compile invocation snapshot'}
         return result
 
+    def line_object(self, proj, header: str, source: str, fn, result):
+        """The compiled object to read C lines from for `result` (source_lines.neutral_object): its own, or a -g
+        twin of the same C whose code is byte-identical. The judge and the scores never see the twin."""
+        from dataclasses import replace
+
+        from .source_lines import debug_twin_cmd, neutral_object
+        filename = "func.cpp" if getattr(result, "language", "c") == "c++" else "func.c"
+
+        def twin():
+            cfg, invocation = Network._invocation(proj, fn)
+            compiler = cfg['compiler'] if isinstance(cfg['compiler'], dict) else {}
+            cmd = debug_twin_cmd(list(invocation.cmd), compiler.get('toolchain', ''))
+            if cmd is None:
+                return None
+            try:
+                built = compile_source(replace(invocation, cmd=cmd, identity=None), header, source)
+            except Exception:  # (advice only: a twin that fails must never break the comparison it decorates)
+                return None
+            return built.obj if built.ok else None
+        return neutral_object(result.obj, fn['name'], filename, twin)
+
     def _compile_batch(self, proj, header: str, sources: list[str], fn):
         """[CompileResult or None] for several candidates of `fn` in one compiler run (batch_compile.py), None
         where a candidate must compile alone; None when the batch can't be used at all."""
