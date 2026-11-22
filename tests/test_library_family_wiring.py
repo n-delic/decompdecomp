@@ -45,3 +45,51 @@ void f(int *p, int a, int b)
     draft_repairs.variants(source, 'f', 'mips', labels=labels, limit=None)
     assert {'allocation_lever', 'identical_arm_collapse'} <= set(labels.values())
     assert {'allocation_lever', 'indexed_record_base', 'identical_arm_collapse'} <= set(draft_repairs.AGENT_FAMILIES)
+
+
+def test_crossing_scope_unwrap_is_proposed_and_known_to_agents():
+    """A scope that a goto jumps into came off by hand and took a register swap from 20 to 0; drafts and the beam offer it."""
+    source = """\
+s32 pick(void *actor, Rec *recs, s32 count)
+{
+  u32 index;
+  u32 threshold;
+  u32 limit;
+  u8 *entry;
+  u16 id;
+  threshold = rnd(count);
+  do
+  {
+    limit = count - 1;
+    do
+    {
+      entry = (u8 *) recs;
+      scan:
+      if (entry[4] < threshold)
+      {
+        index++;
+        goto advance;
+      }
+      id = *((u16 *) (entry + 2));
+    }
+    while (0);
+    if (id == 0)
+    {
+      return 0;
+    }
+    use(actor, id);
+    advance:
+    entry += 4;
+    if (index < limit)
+    {
+      goto scan;
+    }
+  }
+  while (0);
+  return 0;
+}
+"""
+    labels = {}
+    draft_repairs.variants(source, 'pick', 'mips', labels=labels, limit=None)
+    assert 'crossing_scope_unwrap' in set(labels.values())
+    assert 'crossing_scope_unwrap' in draft_repairs.AGENT_FAMILIES
