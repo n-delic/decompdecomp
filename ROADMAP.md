@@ -844,6 +844,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Experimental CPU constant ranking in Deep Permuter | ✓ MIPS pairs | ✓ MIPS pairs | ✓ MIPS pairs | — | — | ✓ MIPS pairs | — | — | — | — | — | ✓ with MIPS target bytes |
 | Agents read compiler passes and allocation priorities (`compiler_passes`) | ✓ GCC (IDO —: no pass dumps) | — GCC unchecked | — GCC unchecked | — | — | — GCC unchecked | — | — Metrowerks prints none | — MSVC prints none | — | — | — own build |
 | Agents grid statement orders and edit combinations with the exact judge (`score_permutations`) | ✓ ROM | ✓ ROM | ✓ ROM | — | — | ✓ ROM | — | — judge worker is ROM-only | — judge worker is ROM-only | — | — judge worker is ROM-only | — judge worker is ROM-only |
+| Agents search the recorded matching evidence by symptom (`search_learnings`) | ✓ checkout | ✓ checkout | ✓ checkout | ✓ checkout | ✓ checkout | ✓ checkout | ✓ checkout | ✓ checkout | ✓ checkout | ✓ checkout | ✓ checkout | ✓ checkout |
 | Hand-written assembly set aside | ✓ | ✓ | ✓ | ✓ (`sc` stubs) | — | ✓ | ✓ (`_call_via` helpers, `svc`/`swi` stubs) | ✓ | Visual C++'s exception-handling stubs (64-bit: the funclets its exception data names) | Visual C++'s exception-handling stubs | BIOS call stubs, pieces of functions | MIPS, PowerPC, ARM's BIOS stubs and pieces of functions |
 | Source splitting (`split_file`) | — | — | — | — | — | — | — | ✓ | ✓ | ✓ | ✓ | by project |
 | Pieces of functions joined to their function | — | — | — | — | — | — | — | — | ✓ (`scratch.merge_pieces`; 64-bit: .pdata's extents, none to join) | ✓ (`scratch.merge_pieces`) | ✓ (`recover.merge_pieces`) | — |
@@ -2127,6 +2128,10 @@ reuse the saved map. See [ROM Explorer](docs/ROM_EXPLORER.md) for support and li
   gets the copy's secure area checksum (of the area encrypted, which a dump no longer is; dsd left it 0). The game
   that differed rebuilds identical, its 1,784 recovered functions included. Projects made before get their build
   fixed at start (`scratch.write_tools`, kept unless an identical rebuild stops being one).
+- **The matching evidence in installed copies.** `search_learnings` reads `docs/learnings/` and
+  `COMPILER_MATCHING_LEARNINGS.md` from the checkout the app runs from; an installed wheel carries only the package,
+  so there it answers that the evidence is missing. Ship the entries (or a built index of them) as package data
+  (`app/learnings_search.py`).
 - **Near-match tools in project mode and on other GCC consoles.** `compiler_passes` runs only where the app's own
   compiler adapter compiles a native GCC driver (checked on N64 KMC GCC); PS1/PS2/PSP GCC builds need a run each, and
   project-mode units compile through their own build. `score_permutations` needs a standalone objdiff judge worker
