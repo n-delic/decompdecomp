@@ -16239,3 +16239,7 @@ A combined multiply/shift/add expression also scored 10, fixing the load registe
 to the shift destination and following addition. Staging the loads, adding unused wide locals, and the existing
 allocation-schedule bridge did not improve the score. `-fno-schedule-insns` and `-fno-schedule-insns2` scored
 1045 and 460 respectively; disabling CSE follow-jumps, peephole or strength reduction retained 10.
+
+### KMC GCC 2.7.2 counted flag walk
+
+A saved MIPS record-counting function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` tested two flag masks while walking a globally sized array. Its generated draft addressed the count as an offset from another symbol and used nested labels. Resolving the exact count symbol and simplifying the equivalent branches changed the linked difference score from 710 to an exact match. This is one saved example, not a controlled cross-compiler experiment. The candidate checks the original and target symbol addresses, the complete source shape, and the measured halfword load and record stride.

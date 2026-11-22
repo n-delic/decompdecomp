@@ -2514,3 +2514,18 @@ def test_fixed_blend_routes_only_to_kmc_mips(monkeypatch):
     assert 'fixed_blend_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'fixed_blend_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
     assert not proposals('void f(void) {}', 'f', '', 'arm', KMC, rows, '')
+
+
+def test_flag_count_loop_receives_project_symbol_resolver(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'lw $v0, 0($a0)', 'lw $v1, 0($a0)')]
+    resolve = lambda name: {'bound': 0x1000}.get(name)
+
+    def candidate(text, name, header, diff, resolver):
+        assert resolver is resolve
+        return [('flag_count_fixture', text)]
+
+    monkeypatch.setattr(diff_gated_repairs.measured_flag_count_loop, 'variants', candidate)
+    assert 'flag_count_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, '', resolve=resolve))
+    assert 'flag_count_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, '', resolve=resolve))

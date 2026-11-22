@@ -74,6 +74,7 @@ from decomprepair import (
     measured_cursor_schedule,
     measured_event_frame_capture,
     measured_expression_repairs,
+    measured_flag_count_loop,
     measured_flag_reload,
     measured_float_argument_pair,
     measured_float_grid_stores,
@@ -538,6 +539,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     result += target_memory_schedule_diff_repairs.proposals(source,name,header,toolchain,rows,target,candidate,asm,
                                                              big_endian=big_endian,flags=flags)
     if toolchain.startswith('gcc-2.7.2-kmc'):
+        result += measured_flag_count_loop.variants(source, name, header, rows, resolve)
         result += fixed_blend_staging.variants(source, name, rows, header=header)
         result += measured_storage_shapes.variants(source, name, header, rows, asm, big_endian=big_endian)
         result += masked_slot_dispatch.variants(source, name, asm or '', header,
