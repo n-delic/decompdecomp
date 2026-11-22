@@ -15671,3 +15671,13 @@ with exact jump-table data. An earlier linear address form scored
 1,347 and 192 respectively. The proposal verifies the byte field
 views and the column helper's single read, then derives the strides
 with `sizeof`. The candidate still has instruction differences.
+
+### Sink a common global reset past a local assignment
+
+In one private N64 example built with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, both branch arms reset
+the same global before assigning a literal to a local loop index.
+Moving the reset to their join improved the linked score from 460
+to 390. The text remains inexact. The proposal requires flat arms,
+an ordinary declared global, a distinct scalar local and no macro
+or control transfer in the arms.
