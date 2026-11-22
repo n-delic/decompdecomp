@@ -81,3 +81,28 @@ def test_the_workflow_fails_loudly_when_a_family_is_not_wired_but_not_when_smoke
     assert "continue-on-error" not in smoke  # a smoke failure stops the pin
     order = [s.get("name") or s.get("id") or s.get("run", "")[:20] for s in steps]
     assert order.index(smoke["name"]) < order.index("Open and merge the pin pull request")
+
+
+TAGS = "\n".join(f"{'a' * 40}\trefs/tags/v0.5.{n}" for n in (640, 641, 642))
+
+
+def test_a_tag_whose_archive_is_not_downloadable_yet_is_skipped_not_pinned():
+    """v0.5.642 was listed by git ls-remote seconds before codeload served its archive; uv lock then failed on a 404."""
+    asked = []
+    ready = lambda version: asked.append(version) or version != "0.5.642"
+    assert bump.pick(TAGS, "0.5.639", ready) == "0.5.641" and asked == ["0.5.642", "0.5.641"]
+    assert bump.pick(TAGS, "0.5.641", lambda version: False) is None
+    assert bump.pick(TAGS, "0.5.642", ready) is None
+
+
+def test_downloadable_waits_for_the_archive_and_gives_up_after_its_attempts():
+    answers = iter([404, 404, 200])
+    slept = []
+    assert bump.downloadable("0.5.642", attempts=5, wait=7, fetch=lambda url: next(answers), sleep=slept.append)
+    assert slept == [7, 7]
+    slept.clear()
+    assert not bump.downloadable("0.5.642", attempts=3, wait=7, fetch=lambda url: 404, sleep=slept.append)
+    assert slept == [7, 7]
+    urls = []
+    bump.downloadable("0.5.642", attempts=1, fetch=lambda url: urls.append(url) or 200)
+    assert urls == ["https://github.com/RetroReversing/decomp-repair/archive/refs/tags/v0.5.642.tar.gz"]
