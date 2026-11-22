@@ -27,3 +27,11 @@ def test_masked_copy_is_offered_as_one_repair():
     proposals = draft_repairs.variants(SOURCE, 'f', 'mips', labels=labels, limit=None)
     assert any(labels.get(text) == 'compare_into_arms' and 'u8 copy;' in text
                and text.count('if (!equal_byte(copy, value))') == 2 for text in proposals)
+
+
+def test_masked_copy_offers_reversed_second_arm_comparison():
+    labels = {}
+    proposals = draft_repairs.variants(SOURCE, 'f', 'mips', labels=labels, limit=None)
+    assert any(labels.get(text) == 'compare_into_arms'
+               and '!equal_byte(copy, value)' in text and '!equal_byte(value, copy)' in text
+               for text in proposals)
