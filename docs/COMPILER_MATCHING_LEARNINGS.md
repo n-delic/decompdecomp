@@ -16810,3 +16810,28 @@ What decided them (GCC 2.7.2):
   global pointer's load (`lw rs`) is placed above the constant store only when written above it (185 -> 50).
 
 decomp-repair 0.5.571: `arm_private_rename`, `join_tail_arm_split`, `goto_body_copy`, `phase_union_unshare`.
+
+### KMC GCC 2.7.2: overwrite the parameter after its entry copy so the copy's `move` leaves the entry block
+
+An N64 effect spawner (150 instructions, `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, seven parameters, the first call
+`spawn(0x50)`) was one reorder away from exact: the target has `move $s6,$a0; li $a0,0x50; sw $s2,0x18($sp);
+move $s2,$a3` ahead of the call and every build of the saved best had `move $s6,$a0; sw $s2; move $s2,$a3; li $a0`
+(score 60, one row pair). Controlled result on that one function, judge-worker, no permuter run.
+
+- Edit list: (1) saved best, 60. (2) `arg3 = arg3_in;` before the call alone (the plain `entry_parameter_copy`), 60, the
+  stream unchanged. (3) the same copy plus `arg3_in = 0;` right after it (or after the call), 0.
+- Flags tried and unchanged or worse: `-fno-schedule-insns`/`-insns2`, `-fno-delayed-branch`, `-O1`, `-fcaller-saves`
+  and about sixty other flags; the other pinned toolchains (gcc 2.8.1, EGCS, SN builds) scored 630 to 10148. Narrowing a
+  parameter to `u8`/`u16` also changes the order (`cc1 -dS -dR`: the narrow copy is emitted after the function's first
+  note and so enters the first scheduler's region) but adds an `andi` and takes another register (245).
+- Compiler facts (cc1 dumps; hypotheses, not confirmed in the compiler source): the parameter copies `move $s6,$a0` and
+  `move $s2,$a3` are emitted before `NOTE_INSN_FUNCTION_BEG` and stay ahead of the first scheduler's region. The second
+  scheduler works backwards and breaks ties by the later original position, so `li $a0` (emitted at the call) is placed
+  after the `move $s2,$a3`. A local copy of the parameter does not change that: cse replaces the local by the parameter
+  and the parameter's own entry copy stays. With the parameter overwritten after the copy cse has no later use to
+  propagate, the local keeps its own `move` after the first note, and the schedulers put it after the `li`. The store
+  is dead and is deleted, so nothing else changes.
+- Permuter: decomp-repair 0.5.573 `entry_parameter_clobber` (a child of `entry_parameter_copy`) offers the pair. From
+  the saved best it reproduces the whole chain in one child (60 to 0); it reaches the draft repair path and the Deep
+  Permuter's local/beam lane through `draft_repairs.variants` (`tests/test_entry_copy_store_first.py`). Not yet
+  explored: a parameter that is narrow or float, or whose copy must pass a call's argument setup further into the body.
