@@ -2753,3 +2753,13 @@ def test_direct_relocated_call_base_routes_only_for_kmc(monkeypatch):
     args = ('void f(void) {}', 'f', '', 'mips')
     assert 'direct_call_base_fixture' in dict(proposals(*args, KMC, rows, ''))
     assert 'direct_call_base_fixture' not in dict(proposals(*args, EGCS, rows, ''))
+
+
+def test_measured_symbol_halfword_update_route():
+    source = 'extern char fields[];\nvoid f(int i) { *(fields + i) = *(fields + i) & 0xFFEF; }\n'
+    asm = 'lhu $v1, %lo(fields)($v1)\nsh $v1, %lo(fields)($at)'
+    rows = [('|', 'lhu $v1, %lo(fields)($v1)', 'lbu $v1, %lo(fields)($v1)'),
+            ('|', 'sh $v1, %lo(fields)($at)', 'sb $v1, %lo(fields)($at)')]
+    result = dict(proposals(source, 'f', '', 'mips', KMC, rows, asm))
+    assert result['symbol_access_width'].count('*(u16 *)(fields + i)') == 2
+    assert 'symbol_access_width' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, asm))
