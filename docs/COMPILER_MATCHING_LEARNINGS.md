@@ -17503,3 +17503,29 @@ Family: decomp-repair `array_declaration_scope_sink` (0.5.594, in `declaration_s
 whose every reference lies in one block (a switch body included) is declared at the start of that block, and a child
 moves the unused `volatile` scratch with it. `tests/test_array_declaration_scope_sink_wiring.py` checks the draft repairs
 and the local lane. From the saved best the combined child scores 10702 in the isolated judge.
+
+
+## Spill slots numbered in the order of the declarations: block-level `spXX` locals back at the top (851-instruction ray test)
+
+An 851-instruction N64 ray test (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, scoring 2) keeps the addresses of its
+scratch vectors (`sp164`, `sp16C`, `sp174`, ... m2c names them after their stack slots) in spilled pseudos. An earlier
+session had declared two of them (`sp174`, `sp194`) at the top of the block that uses them, so the six addresses of the
+room section took the slots 0x174, 0x17c, 0x184, 0x1ac, 0x1a4, 0x19c where the target has 0x174 to 0x194 and 0x1ac in
+the order of the names. This is the reverse of `declaration_scope_sink`: the pseudo of a block-level declaration is
+numbered when the block opens (hypothesis from the numbering seen in the dumps, not confirmed in the compiler source),
+reload hands out slots in pseudo-number order, so the two came after every other `spXX` local.
+
+| edit | score |
+| --- | --- |
+| saved best (5943 here under scoring 2; the app's cached 5103 was scoring 1) | 5943 |
+| `sp174` declared with the other function-level locals after `sp16C`, `sp194` after `sp18C` | 5920 |
+
+Controlled result: 151 -> 128 differing rows (the 24 `s` rows of the slot offsets among them), nothing else moved. One
+function, not a regression test of the compiler. Failed here: `spEC = arg0;` dropped for the parameter itself puts the
+first spill store (`sw $a0`) where the target has it but moves a delay-slot store elsewhere (5920 -> 6060); permuting the
+order of the five parameter copies at the top changes nothing (they are pseudo copies; sched1 decides the order).
+
+Family: decomp-repair `declaration_scope_hoist` (0.5.596): scalar and pointer locals declared in inner blocks, not in a
+record body, whose name appears once, are moved to the function's declarations by their offset name; one child moves them
+all. It reproduces the edit exactly from the saved best. `tests/test_declaration_scope_hoist_wiring.py` checks the draft
+repairs and the local lane.
