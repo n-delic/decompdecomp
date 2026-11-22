@@ -13238,6 +13238,18 @@ the same center, loads from one base register, and comparisons of the
 results. It generates a candidate only across local statements that preserve
 the inputs. Evidence is one partial live match and synthetic tests.
 
+### KMC GCC 2.7.2: reuse two float lifetimes with guarded labels
+
+In a large N64 function built with `-G0 -mips3 -mgp32 -mfp32 -O2`,
+two saved-floating-register temporaries had disjoint initialized values.
+Gotos in each interval could only reach labels after the assignment in
+that interval. Reusing the nearest earlier float declaration moved the
+linked score from 26,824 to 26,664. Reusing two other eligible declarations
+left the score unchanged, and one alternative scored 27,014. The existing
+`mips_float_local_reuse` candidate family now covers these guarded label
+entries. Evidence is one observed partial match and synthetic control-flow
+tests, including external jumps and case labels.
+
 ### Retain a zero register through CSE (KMC GCC 2.7.2)
 
 On one N64 function with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`,
