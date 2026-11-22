@@ -56,6 +56,14 @@ def test_preferences_name_the_pseudo_and_what_it_got():
     assert lines[1] == "pseudo 73 (temp) prefers hard reg 5"  # not in the allocation table: nothing to compare
 
 
+def test_conflicts_name_the_hard_registers_a_pseudo_is_live_with():
+    greg = ";; 2 regs to allocate: 80 77\n;; 77 conflicts: 77 80 2 4 29\n;; 80 conflicts: 77 80 4 5 6\n;; 80 preferences: 2 7\n"
+    lines = compiler_passes.conflicts({"phases": {"greg": {"excerpt": greg}}, "allocation": {"values": [
+        {"pseudo": 80, "aliases": ["a3"]}]}})
+    assert lines == ["pseudo 77 (temp) is live with hard regs 2 4 29", "pseudo 80 (a3) is live with hard regs 4 5 6"]
+    assert compiler_passes.conflicts({}) == []
+
+
 def test_the_scheduling_order_lists_insns_in_the_dumps_order_without_notes():
     assert compiler_passes.schedule_order(result(), "sched") == ["4 movsi_internal2", "58 branch_zero"]
     assert compiler_passes.schedule_order(result(), "sched2") == []
@@ -66,6 +74,7 @@ def test_the_worker_answers_a_passes_request_and_reports_a_missing_compiler(tmp_
     monkeypatch.setattr(compiler_passes, "diagnose", lambda *a, **k: (result() | {"toolchain": "gcc-2.7.2-kmc"}, {}))
     reply = hosted_judge.passes_report(net, {"slug": "game", "name": "f1", "source": "int f1(void){return 0;}"})
     assert "prefers hard reg 4" in reply["text"] and "Scheduling order, sched" in reply["text"]
+    assert "is live with hard regs" in reply["text"]
     assert hosted_judge.passes_report(net, {"slug": "game", "name": "f1", "source": " "}) == {"error": "no source"}
     assert "no project" in hosted_judge.passes_report(net, {"slug": "x", "name": "f1", "source": "a"})["error"]
 

@@ -72,6 +72,23 @@ def preferences(result):
     return lines
 
 
+def conflicts(result):
+    """The hard registers each global pseudo is live alongside (greg's `;; N conflicts:` lines minus the other
+    pseudos): the registers the allocator cannot give it, so what a preference can and cannot win. A pseudo whose
+    preferred register is absent here has that register free; one that still lands elsewhere lost it to an earlier
+    pseudo or to a stronger (copy) preference (global.c find_reg)."""
+    text = ((result.get('phases') or {}).get('greg') or {}).get('excerpt', '')
+    order = re.search(r'^;; \d+ regs to allocate:\s*([\d ]*)$', text, re.M)
+    pseudos = set(order[1].split()) if order else set()
+    values = {v['pseudo']: v for v in (result.get('allocation') or {}).get('values') or []}
+    lines = []
+    for pseudo, rest in re.findall(r'^;; (\d+) conflicts:([\d ]*)$', text, re.M):
+        hard = [n for n in rest.split() if n not in pseudos]
+        names = ','.join(values.get(int(pseudo), {}).get('aliases') or []) or 'temp'
+        lines.append(f"pseudo {pseudo} ({names}) is live with hard reg{'s' if len(hard) != 1 else ''} {' '.join(hard) or 'none'}")
+    return lines
+
+
 def schedule_order(result, phase):
     """A scheduling pass's instruction order, `uid pattern` per insn (the pass's dump lists them in the order it
     chose): compare `sched` (first scheduler) with `sched2` and with the target's order."""
@@ -102,6 +119,8 @@ def report(net, proj, fn, source, passes=SKILL_PASSES, sched_verbose=False):
     out = [render(result, (), 'candidate', rows=None)]
     if prefs := preferences(result):
         out += ['', 'Register preferences (greg):', *prefs]
+    if lines := conflicts(result):
+        out += ['', 'Hard registers each pseudo is live with (it cannot take these):', *lines]
     for phase in ('sched', 'sched2'):
         if phase in passes:
             order = schedule_order(result, phase)
