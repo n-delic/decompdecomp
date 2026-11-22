@@ -1,5 +1,20 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: an early ordinary store and the first scheduler
+
+On one private N64 function, the saved source scored 15 under both `-G0 -mips3 -mgp32 -mfp32 -O2` and those
+flags plus `-fno-schedule-insns`. An experimental source moved an ordinary scale-field store before a flag read
+and a volatile coordinate store; it scored 15 with the default flags and 0 with `-fno-schedule-insns`, including
+in the app's diagnostic judge. The candidate also changes that scale access from volatile to nonvolatile. This is
+a source/profile diagnostic, not evidence that the original source used those flags or a saved match.
+
+The public GCC 2.7.2 `local-alloc.c` confirms that local allocation tries hard-register suggestions first, then
+orders other quantities by references and lifetime; the saved source's coordinate is allocated to v0. The first
+scheduler changes the allocation input, while the second can still schedule the early ordinary store into the
+target order. A general rewrite must not remove volatile qualification or reorder a store across a volatile access
+when storage provenance or external observation is uncertain. Other matched functions in this project use the
+alternate profile, but applying it to this function still requires the user's authorization.
+
 ### KMC GCC 2.7.2: split a reassigned incoming parameter
 
 In a controlled N64 experiment with `-G0 -mips3 -mgp32 -mfp32 -O2`, a source variant reused an incoming
