@@ -13072,3 +13072,16 @@ uses on the original local and introduce the copy inside the non-null
 branch for the field accesses. The linked judge went from 70 to 0.
 The previous dispatcher generated no candidate and the new rule
 generated one byte-exact candidate.
+candidate, and the new rewrite produced one byte-exact candidate.
+
+### Spell a scalar call argument as the first array element (KMC GCC 2.7.2)
+
+On one N64 function compiled with `gcc-2.7.2-kmc -G0 -mips3 -mgp32
+-mfp32 -O2`, declaring a word global as an array and passing `global[0]`
+instead of the scalar `global` changed load scheduling. The isolated exact
+judge scored the saved candidate 125 and the equivalent first-element child 5;
+the remaining difference is a branch-delay-slot register, so this is not a
+match. Hoisting the result copy scored 30, and making it volatile scored 2084.
+The `global_first_element` repair offers the measured change for a single call
+argument read; unit tests cover its shape and reject other uses. This is one
+observed near-match, not a controlled compiler regression.
