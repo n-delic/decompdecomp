@@ -1,5 +1,16 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: spell a boolean guard with short-circuit AND
+
+An N64 draft combined a comparison-only local and an ordinary pointer
+null test with bitwise AND. Replacing the AND with logical AND restored
+the target null test and register AND, improving the linked score from
+869 to 479 with `-G0 -mips3 -mgp32 -mfp32 -O2`. Reversing the two
+loads earlier in the guard scored 1,099 alone and 709 with the change.
+Staging the earlier pointer load alone kept the score at 869. The
+repair uses the measured branch and mask difference and verifies that
+the source guard has boolean input and no qualified pointer read.
+
 ### KMC GCC 2.7.2: swap declarations for reciprocal spill offsets
 
 In an N64 scratch draft, two word stores from the same register had

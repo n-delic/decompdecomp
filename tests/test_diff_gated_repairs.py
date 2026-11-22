@@ -1634,3 +1634,14 @@ def test_be16_cursor_routes_to_kmc(monkeypatch):
                         lambda text, name, header, diff: [('be16_cursor_fixture', text)])
     assert 'be16_cursor_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'be16_cursor_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_route_proven_boolean_outer_guard():
+    source = ('void f(void *value) { int flag; void *ptr; ptr = fetch(); '
+              'if ((flag = value != NULL, ready()) && (flag & (ptr != NULL))) { sink(); } }')
+    rows = [('|', 'sltu $v1, $zero, $s2', 'beqz $s2, 0x50'),
+            ('|', 'and $v0, $v0, $v1', 'andi $v0, $a0, 1')]
+    expected = source.replace('flag & (ptr', 'flag && (ptr')
+    assert ('boolean_guard_operands', expected) in proposals(source, 'f', '', 'mips', KMC, rows, '')
+    assert all(label != 'boolean_guard_operands' for label, _ in
+               proposals(source, 'f', '', 'mips', EGCS, rows, ''))

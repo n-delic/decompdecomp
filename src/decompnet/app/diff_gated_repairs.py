@@ -9,6 +9,7 @@ from decomprepair import (
     balanced_clamp_argument_stage,
     balanced_float_predicate_return,
     balanced_signed_selector_increment,
+    boolean_guard_operands,
     byte_cursor_postincrements,
     clamp_return_local,
     clamp_saved_argument_lifetime,
@@ -292,6 +293,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     result += measured_lifetime_shapes.variants(source, name, header, toolchain, rows)
     result += measured_scalar_updates.variants(source, name, header, toolchain, rows, asm)
     if toolchain == 'gcc-2.7.2-kmc':
+        result += boolean_guard_operands.variants(source, name, rows, header)
         result += shared_projection_lifetime.variants(source, name, rows, header=header)
         result += allocation_repairs.measured_slot_orders(source, name, rows, header)
         result += clamp_saved_argument_lifetime.variants(source, name, rows, header=header)
