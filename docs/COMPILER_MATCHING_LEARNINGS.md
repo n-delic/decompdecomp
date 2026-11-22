@@ -17869,3 +17869,21 @@ Compiler facts (each checked in the dumps; the cause in the source is noted wher
   broke the cross-jumping of two arms' identical call tails.
 Scaffolding left: the identity helper `inline_fn23` on the red and green products (step 10). Family:
 decomp-repair `guarded_increment_sink` (0.5.607) emits step 1 as one child; steps 3-10 are not yet families.
+
+## KMC GCC 2.7.2 (`-G0 -mips3 -mgp32 -mfp32 -O2`): a search's "not found" value on the exit path, and a call-argument loop's own variable
+
+A 219-instruction N64 function with four table searches (`while (WORD(e) != -1) { found = e; if (HALF(e+4) == key) break;
+e += WORD(e); found = 0; }` inside a loop over a key list), saved best 285, 57 register-only rows: the key in `$a0`, `found` in `$v1`,
+the `-1` in `$a2` where the target has `$v1`, `$v0`, `$a0`. Edit list, each scored with the app's judge:
+1. `found` set only on the exits (`if (T) { found = e; goto L; }` in the loop, `found = 0; L:;` after it): 285 -> 180. The
+   `-dg` conflict table showed `found` conflicting with hard register 2 because it was live across the loop's loaded word;
+   the target shares `$v0` and fills both exits' delay slots with the two assignments. Controlled (all four loops).
+2. The variable `lookup` is also the argument of another loop's call (`f(lookup, table)`): the copy into `$a0` leaves a
+   preference for `$a0` on the pseudo (`82 preferences: 4`); a separate local for that loop: 180 -> 20. Hypothesis for the
+   mechanism, measured effect.
+3. The group's `(u32)WORD(g + 12) + (u32)g` operand order: 20 -> 15. 4. A local of its own for the last block's
+   pointer (`tail`, written `inline_fn((u16 *)(...))` as the saved best did) in place of the loop's `entry`: 15 -> 0.
+Failed: `for (;;)` with the zero on the exit (3450), `if (found-ness)` after the loop (4912, 2735), a ternary after the loop (4955),
+`found = 0` before the loop with none at the bottom (2985), the break form without the goto (1805), `tail` as a plain sum (600).
+Families: decomp-repair `loop_exit_value_block` and `argument_loop_split` (0.5.608), both reproduced from the saved best
+(285 -> 180 -> 20). Steps 3 and 4 are not yet families.
