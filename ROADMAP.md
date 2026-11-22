@@ -5,6 +5,9 @@
   shared worker on a small machine; ours limits CPU through the shared compile pool and refuses a second
   search of one function, but any number of functions may each run one.
 
+- Done: the app repair dialog shows Codex messages as they arrive and accepts guidance for
+  the next turn in the same repair session. Reopening the dialog restores the conversation.
+
 - Done: single-toolchain metadata lookup avoids rebuilding the whole catalogue; macOS
   compiler watchdogs coalesce recent OS process scans while preserving per-tree limits.
 - Done: agent start/stop requests use reserved control workers; stopping one helper

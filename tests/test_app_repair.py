@@ -38,7 +38,7 @@ def test_repair_keeps_source_untouched_until_review(repair, monkeypatch):
     patched = threading.Event()
     finish = threading.Event()
 
-    def fake_agent(self, exe, worktree, home, diagnostics, cancel):
+    def fake_agent(self, exe, worktree, home, diagnostics, cancel, on_message, next_prompt):
         assert worktree != root and home.parent == worktree
         assert diagnostics == "Reviewed diagnostic."
         assert (worktree / "app.py").read_text() == "bug\n"
@@ -46,8 +46,11 @@ def test_repair_keeps_source_untouched_until_review(repair, monkeypatch):
         (worktree / "app.py").write_text("fix\n")
         (worktree / "test_app.py").write_text("assert True\n")
         (home / "scratch-data").write_text("private\n")
+        on_message("I reproduced the failure.")
         patched.set()
         assert finish.wait(10)
+        assert next_prompt() == "Run the focused regression."
+        assert next_prompt() is None
         return "Regression test passed."
 
     monkeypatch.setattr("decompnet.agents.codex.Codex.repair_source", fake_agent)
@@ -58,6 +61,11 @@ def test_repair_keeps_source_untouched_until_review(repair, monkeypatch):
         assert patched.wait(10)
         assert service.start("failed", "Reviewed diagnostic.") == jid
         assert service.preview("failed")["repair"] == jid
+        assert service.jobs.jobs[jid]["progress"]["repair_messages"] == ["Codex: I reproduced the failure."]
+        service.message(jid, "Run the focused regression.")
+        assert service.jobs.jobs[jid]["progress"]["repair_pending"]
+        with pytest.raises(NetworkError, match="cannot accept"):
+            service.message(jid, "Duplicate message.")
         assert (root / "app.py").read_text() == "bug\n"
         with pytest.raises(NetworkError, match="Review a completed"):
             service.apply(jid)
@@ -68,6 +76,9 @@ def test_repair_keeps_source_untouched_until_review(repair, monkeypatch):
     while job["state"] == "running" and time.monotonic() < deadline:
         time.sleep(.01)
     assert job["state"] == "done", job.get("error")
+    assert "You: Run the focused regression." in job["progress"]["repair_messages"]
+    with pytest.raises(NetworkError, match="no longer taking messages"):
+        service.message(jid, "Too late.")
     assert "+fix" in job["result"]["patch"] and "test_app.py" in job["result"]["patch"]
     assert "scratch-data" not in job["result"]["patch"]
     assert job["result"]["summary"] == "Regression test passed."
@@ -113,12 +124,27 @@ from pathlib import Path
 
 assert "--ignore-user-config" in sys.argv and "workspace-write" in sys.argv
 assert "sandbox_workspace_write.network_access=false" in sys.argv
-assert json.dumps("Edited excerpt.") in sys.stdin.read()
+prompt = sys.stdin.read()
+session = "b1ed0b1a-9649-4eca-b0fb-6a8645dc9ce3"
+if "resume" in sys.argv:
+    assert sys.argv[sys.argv.index("resume") + 1] == session
+    assert "Check the edge case." in prompt
+    text = "Checked the edge case."
+else:
+    assert json.dumps("Edited excerpt.") in prompt
+    text = "I found the bug."
+print(json.dumps(dict(type="thread.started", thread_id=session)), flush=True)
+print(json.dumps(dict(type="item.completed", item=dict(type="agent_message", text=text))), flush=True)
 Path("regression.py").write_text("assert 2 + 2 == 4")
 exec(Path("regression.py").read_text())
 Path(sys.argv[sys.argv.index("-o") + 1]).write_text("regression.py passed.")
 """)
     executable.chmod(0o700)
-    result = Codex().repair_source(str(executable), worktree, home, "Edited excerpt.", threading.Event())
+    messages = []
+    guidance = iter(["Check the edge case.", None])
+    result = Codex().repair_source(
+        str(executable), worktree, home, "Edited excerpt.", threading.Event(), messages.append, lambda: next(guidance),
+    )
+    assert messages == ["I found the bug.", "Checked the edge case."]
     assert result == "regression.py passed."
     assert (worktree / "regression.py").is_file()

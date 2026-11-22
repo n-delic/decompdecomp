@@ -12,6 +12,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+from uuid import UUID
 
 from . import (
     MODELS_CACHE,
@@ -189,13 +190,13 @@ class Codex(Agent):
     def investigation_command(self, exe: str, prompt: str) -> list[str]:
         return [exe, prompt]
 
-    def repair_source(self, exe, worktree, home, diagnostics, cancel):
+    def repair_source(self, exe, worktree, home, diagnostics, cancel, on_message, next_prompt):
         """Run a coding session without game tools, using an isolated test home."""
         from ..limits import attach_job, capped, stop_group
         from ..network import NetworkError
 
         report = home / "summary.txt"
-        command = [exe, "exec", "--ephemeral", "--ignore-user-config", "-C", str(worktree), "-s", "workspace-write",
+        command = [exe, "exec", "--json", "--ignore-user-config", "-C", str(worktree), "-s", "workspace-write",
                    "-c", 'approval_policy="never"', "-c", 'web_search="disabled"',
                    "-c", "sandbox_workspace_write.writable_roots=[]",
                    "-c", "sandbox_workspace_write.network_access=false",
@@ -207,7 +208,7 @@ class Codex(Agent):
                            "DECOMP_WINDOW": "0", "DECOMP_TRAY": "0", "DECOMPNET_TOOLCHAINS": str(home / "tools"),
                            "DECOMP_DETECT_AGENTS": "off", "UV_PROJECT_ENVIRONMENT": str(worktree / ".venv")}.items():
             command += ["-c", f"shell_environment_policy.set.{key}={json.dumps(value)}"]
-        command += ["-o", str(report), "-"]
+        command += ["-o", str(report)]
         prompt = (
             "Diagnose this decompdecomp application failure. Change only app source and regression tests "
             "in this worktree. Leave the proposed changes in the working tree. Run the relevant tests in "
@@ -221,26 +222,60 @@ class Codex(Agent):
         env = {key: value for key, value in os.environ.items() if not key.startswith(("DECOMP", "GIT_"))}
         for key in ("PYTHONHOME", "PYTHONPATH", "UV_PROJECT", "UV_PROJECT_ENVIRONMENT", "VIRTUAL_ENV"):
             env.pop(key, None)
-        with tempfile.TemporaryFile() as request:
-            request.write(prompt.encode())
-            request.seek(0)
-            with subprocess.Popen(capped(cli_argv(command)), cwd=worktree, env=env, stdin=request,
-                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=NO_WINDOW,
-                                  start_new_session=os.name != "nt") as proc:
-                attach_job(proc)
-                try:
-                    deadline = time.monotonic() + 1200
-                    while proc.poll() is None:
-                        if cancel.wait(.25):
-                            raise NetworkError("App repair cancelled.")
-                        if time.monotonic() >= deadline:
-                            raise NetworkError("Codex exceeded 20 minutes. Try a shorter diagnostic excerpt.")
-                finally:
-                    stop_group(proc)
-        if proc.returncode or not report.is_file() or report.resolve() != report:
-            raise NetworkError("Codex could not complete the repair. Check its sign-in and sandbox setup, then retry.")
+        deadline = time.monotonic() + 1200
+        conversation = None
+        while prompt:
+            if cancel.is_set():
+                raise NetworkError("App repair cancelled.")
+            report.unlink(missing_ok=True)
+            args = [*command, "resume", conversation, "-"] if conversation else [*command, "-"]
+            with tempfile.TemporaryFile() as request:
+                request.write(prompt.encode())
+                request.seek(0)
+                with subprocess.Popen(capped(cli_argv(args)), cwd=worktree, env=env, stdin=request,
+                                      stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=NO_WINDOW,
+                                      start_new_session=os.name != "nt") as proc:
+                    attach_job(proc)
+                    thread_ids = []
+                    reader = threading.Thread(
+                        target=self._repair_output, args=(proc.stdout, on_message, thread_ids), daemon=True,
+                    )
+                    reader.start()
+                    try:
+                        while proc.poll() is None:
+                            if cancel.wait(.25):
+                                raise NetworkError("App repair cancelled.")
+                            if time.monotonic() >= deadline:
+                                raise NetworkError("Codex exceeded 20 minutes. Try a shorter diagnostic excerpt.")
+                    finally:
+                        stop_group(proc)
+                        reader.join(timeout=2)
+            if proc.returncode or not report.is_file() or report.resolve() != report:
+                raise NetworkError("Codex could not complete the repair. Check its sign-in and sandbox setup, then retry.")
+            if thread_ids:
+                conversation = thread_ids[-1]
+            prompt = next_prompt()
+            if prompt:
+                if not conversation:
+                    raise NetworkError("Codex did not return a session ID. Update Codex CLI and retry.")
+                prompt = (
+                    "Continue the same repair with this user guidance. Keep the existing worktree and test "
+                    "scope and include the final test report. Do not develop exploits or probe live services.\n\n"
+                    + prompt
+                )
         with report.open(encoding="utf-8", errors="replace") as output:
             return output.read(16000)
+
+    def _repair_output(self, output, on_message, thread_ids):
+        for line in output:
+            try:
+                for kind, value in self.parse(json.loads(line), {}):
+                    if kind == "conversation":
+                        thread_ids[:] = [str(UUID(value))]
+                    elif kind == "text" and value:
+                        on_message(value)
+            except (ValueError, TypeError, AttributeError):
+                continue
 
     def session_command(self, exe: str, workdir: Path, mcp_url: str, token: str, model: str) -> tuple[list[str], dict]:
         # The helper's own server; the user's MCP servers are switched off for the run (`-c` settings merge into the

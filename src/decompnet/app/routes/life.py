@@ -104,7 +104,10 @@ def register(app: App) -> None:
             if data.get("action") == "apply":
                 await call(repair.apply, jid)
                 return JSONResponse({"applied": True})
-            raise NetworkError("Choose Start repair or Apply patch.")
+            if data.get("action") == "message":
+                await call(repair.message, jid, data.get("message"))
+                return JSONResponse({"queued": True})
+            raise NetworkError("Choose Start repair, Send message or Apply patch.")
         except (NetworkError, ValueError, OSError, subprocess.SubprocessError) as error:
             return fail(error)
 
