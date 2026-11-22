@@ -107,7 +107,7 @@ def local_functions(source, header, name, obj, candidate, target):
     return rename(body, aliases), rename('\n'.join(declarations), aliases)
 
 
-def retry(source, header, name, candidate, target, measure, stop):
+def retry(source, header, name, candidate, target, measure, stop, *, separate=None):
     """Return one rewrite, supported by compiler probes, for the ordinary exact judge."""
     if not comparable_overlay_code(candidate, target):
         if target.arch != 'mips' or not comparable_overlay_code(candidate, target, masked=_data_fields(target)):
@@ -123,9 +123,14 @@ def retry(source, header, name, candidate, target, measure, stop):
         r.symbol for site, r in before.items()
         if target.arch == 'mips' and r.type in (HIGH, LOW) and r.addend != after[site].addend
     }
+    # A placeholder can split across destinations while other declarations share one of them.
+    bindings = {(symbol, expected[site]): expected[site] for site, symbol in actual.items()}
+    if separate:
+        bindings = separate(bindings)
+    destinations = {site: bindings[symbol, expected[site]] for site, symbol in actual.items()}
     replacements = defaultdict(set)
     for site, symbol in actual.items():
-        replacements[symbol].add(expected[site])
+        replacements[symbol].add(destinations[site])
     if not data_changes and not any(len(names) > 1 for names in replacements.values()):
         return None
     span = csource.find(source, name)
@@ -216,7 +221,7 @@ def retry(source, header, name, candidate, target, measure, stop):
             continue  # a source occurrence optimized away
         if any(actual[site] != symbol or current[site] != probe for site in changed):
             return None
-        aliases = {expected[site] for site in changed}
+        aliases = {destinations[site] for site in changed}
         if len(aliases) != 1:
             return None
         alias = aliases.pop()
@@ -231,7 +236,7 @@ def retry(source, header, name, candidate, target, measure, stop):
         if not in_header:
             source = source[:start] + alias + source[end:]
     header_edits = [(start, end, alias) for in_header, start, end, alias in edits if in_header]
-    return (rename(source, direct), rename(with_declarations(header_edits), direct)) if edits else None
+    return named_bindings(source, with_declarations(header_edits), candidate, direct) if edits else None
 
 
 _DATA = re.compile(

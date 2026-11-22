@@ -1723,6 +1723,18 @@ The controlled fixture recompiles both forms and requires the original
 instruction bytes and relocation sites, and it also checks that a
 nonempty helper remains defined.
 
+One overlay donor under IDO 7.1 at
+`-O2 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul -DNON_MATCHING`
+emitted all 280 original instruction bytes. The call-site probes identified
+two source declarations for the same loader record, an external integer
+array and an external character. Combining those names produced a C
+redeclaration error. Keeping a distinct compiler name per declaration
+and loader binding preserved their original types. Both undefined
+references then resolved to the same checked loader record, and the
+function passed the exact judge. A controlled fixture reproduces this
+collision and rejects the same compiled instructions with a different
+loader binding.
+
 ### Externalizing IDO overlay constant pools and BSS can change instructions
 
 An isolated N64 replay found compiler-emitted, unnamed section references even
