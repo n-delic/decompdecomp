@@ -15095,3 +15095,19 @@ that would observe the change.
 ### Recover a full-width variable-byte lookup index
 
 In a private N64 rate-table reader built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a draft truncated a two-byte index to one byte, advanced a separate cursor before its first read and omitted an unchanged first call argument. Widening and staging the index and cursor improved the linked score from 340 to 15; also restoring the argument using the existing entry-register proof reproduced the target exactly (score 0). The candidate requires the measured byte-load and shift sequence and a matching source shape. Evidence: one saved function and synthetic generation and routing tests.
+
+### Reuse a guarded field local for later paired projections
+
+Under GCC 2.7.2 KMC with `-G0 -mips3 -mgp32 -mfp32 -O2`, an earlier
+guard loaded a float field in the same saved register the target used for
+a later reload and two projection products. The draft had the earlier
+register right, but used a different saved register in the projection.
+Reusing the completed guard local corrected all three instructions and
+changed the linked score from 6,630 to 6,615 on one private N64 function.
+The three jump tables still linked, with no uninitialized warnings.
+Using a different nearby local scored 6,630 or worse.
+
+The projection-axis repair accepts this earlier guard when the matched
+load, comparison and store identify the saved register and both source
+loads name the same field. Synthetic tests exercise raw and parenthesized
+products and reject cases where the old guard value is still live.
