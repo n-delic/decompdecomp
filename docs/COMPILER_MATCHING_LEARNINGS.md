@@ -17078,6 +17078,36 @@ Edit list (score after each, from the saved best; "alone" is the edit applied to
   covered: the cast shape only for `>> 16`, the narrowing only for a parameter read through masks of at most a byte (or
   passed whole to a static helper that masks it), and the flag only for the three-arm clamp whose sign test is `x < 0`.
 
+## KMC GCC 2.7.2: the zero return that kept its own branch (decomprepair 0.5.584, `zero_exit_label`)
+
+Evidence level: one N64 function (a 205-instruction line-segment test), `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`,
+the isolated judge-worker, no permuter run. Controlled regression is the synthetic test in
+`tests/test_zero_exit_label_wiring.py`; the 20 -> 0 is one function.
+
+The saved best was 20, four register rows: the final `if (!(a | b)) goto L; return var_condition_bit; L:` kept the
+returned bit alive into `$a1`, so the first `or` read `$a1` where the game reads `$v1`. Returning the second compare's
+bit (`$v1`) gave 5 (`move $v0,$v1` where the game has `move $v0,$zero`); a literal `return 0;` gave 520, because the
+guard was then one inverted `bnel` to the shared zero return instead of the game's `beqz; nop; j; move $v0,$zero`.
+Hypothesis from the cc1 dumps (not confirmed in jump.c): the second jump pass cross-jumps identical `v0 = 0; goto end`
+tails into the first copy, and the guard directly before the final zero return is then inverted. In a minimal copy of
+the function the inversion appears as soon as two plain `return 0;` exits (or one plus a returned zero-only variable)
+exist; one plain `return 0;` and any non-constant return does not trigger it.
+
+Three edits, none of which moved the score alone (each pair stayed at 520, the first alone at 520), together gave 0:
+1. the final return becomes the one labelled zero return (`__zero_exit: return 0;`);
+2. the trailing returns of variables that only ever hold 0 (`return __repair_phase_...;`) become `goto __zero_exit;`;
+3. both bounding guards `if (c) { return 0; } goto next;` become `if (!(c)) goto next; goto __zero_exit;`.
+
+Failed attempts worth not repeating: a single variable shared by every zero return, `goto` for every exit (the two
+guards' compares then merged their tails, 1400), moving the trailing returns before the body (1400, the layout
+changed), `-f` flags (`-fno-thread-jumps`, `-fno-crossjumping` do not exist or change nothing), and the existing
+`shared_return` family (it needs two to four literal returns of one value and never sees a returned zero variable or
+the guard form). The family offers the label alone, with the trailing exits, with the guards, and the chain; it is in
+the draft repairs, the beam (`draft_repairs.variants`), `deep_permuter._local_proposals` and `AGENT_FAMILIES`
+(`tests/test_zero_exit_label_wiring.py` checks all three). From the saved best the chain child scores 0; the other
+three score 520. Not covered: only a final return that is `return 0;` or a variable an earlier guard on a copy of it
+forced to 0, and only guards whose body is a bare zero return followed by `goto`.
+
 ## Scoring: a different program costs more than a different schedule (`scoring.PENALTY_MEANING`, score version 2)
 
 Evidence level: measured on one N64 game's history (KMC GCC 2.7.2), every attempt recompiled with the app's judge
