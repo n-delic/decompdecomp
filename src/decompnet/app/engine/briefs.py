@@ -481,7 +481,7 @@ class BriefMixin:
         from ..wrapper_contracts import brief as wrapper_hint
         advice=wrapper_hint(self,proj,fn,fn['matched_source'] or fn['best_source'] or fn['seed'] or '')
         if advice:review+='\n\n'+advice
-        from .. import steering
+        from ... import steering
         scaffolding=steering.lines_for(self,fn,fn['matched_source'] or fn['best_source'] or '')
         if scaffolding:review+='\n\nDead-looking code in this C, as recorded: '+' '.join(scaffolding)
         if self.cfg(proj).get('kind') == 'fork':

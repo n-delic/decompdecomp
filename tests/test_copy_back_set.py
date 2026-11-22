@@ -20,7 +20,7 @@ void f(void *arg0, s32 k) {
 }
 '''
     labels = {}
-    proposals = draft_repairs.variants(source, 'f', 'mips', labels=labels)
+    proposals = draft_repairs.variants(source, 'f', 'mips', labels=labels, limit=None)
     assert any(labels.get(candidate) == 'copy_back_set'
                and 'entry = (void *) (((char *) ((void *) (*((s8 *) arg0 + 0xE) * 0xE8))) + ((s32) base));' in candidate
                and 'entry = cur;' in candidate for candidate in proposals)

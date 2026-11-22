@@ -84,7 +84,7 @@ def test_reuse_full_passes_share_one_global_lane(monkeypatch):
             first.set();assert release.wait(2)
         else:second.set()
         return slug
-    twin._lock=threading.RLock();twin.jobs={}
+    twin._lock=threading.RLock();twin.jobs={};twin.manual_jobs={}
     twin._execute_full_pass=full
     a=threading.Thread(target=lambda:twin.full_pass('first'))
     b=threading.Thread(target=lambda:twin.full_pass('second'))
@@ -99,7 +99,7 @@ def test_duplicate_reuse_waits_without_occupying_the_lane(monkeypatch):
 
     from decompnet.app.twins import Job, Twins
     twin=Twins.__new__(Twins)
-    twin._lock=threading.RLock();job=Job();twin.jobs={'game':job}
+    twin._lock=threading.RLock();job=Job();twin.jobs={"game":job};twin.manual_jobs={}
     attempted=threading.Event();waiting=threading.Event();release=threading.Event()
     def wait_for_owner(_):
         waiting.set()
@@ -294,7 +294,7 @@ def test_claim_order_does_not_wait_for_another_games_pass(monkeypatch):
 
     from decompnet.app.twins import Twins
     twin=Twins.__new__(Twins)
-    twin._lock=threading.RLock();twin.jobs={}
+    twin._lock=threading.RLock();twin.jobs={};twin.manual_jobs={}
     ordered=[]
     twin.net=SimpleNamespace(links={},recheck=lambda *a,**k:None)
     monkeypatch.setattr(twin,'set_aside_asm',lambda proj:ordered.append(proj) or 0)
@@ -324,7 +324,7 @@ def test_claim_order_after_an_update_does_not_wait_for_the_recheck(monkeypatch):
 
     from decompnet.app.twins import Twins
     twin=Twins.__new__(Twins)
-    twin._lock=threading.RLock();twin.jobs={}
+    twin._lock=threading.RLock();twin.jobs={};twin.manual_jobs={}
     steps=[]
     twin.net=SimpleNamespace(links={},project_row=lambda slug,**k:{'slug':slug},
                              recheck=lambda *a,**k:steps.append('recheck') or 'pieces joined')
@@ -372,7 +372,7 @@ def test_existing_autopilot_pass_orders_before_waiting_for_the_lane(monkeypatch)
 
     twins = Twins.__new__(Twins)
     twins._lock = threading.Lock()
-    twins.jobs = {}
+    twins.jobs = {}; twins.manual_jobs = {}
     twins.net = SimpleNamespace(links={}, project_row=lambda slug, **kwargs: {"slug": slug})
     ordering = threading.Event()
     monkeypatch.setattr(twins, "set_aside_asm", lambda proj: 0)

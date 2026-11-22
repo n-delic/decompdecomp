@@ -24,7 +24,8 @@ def test_every_wrong_order_has_the_target_order_as_one_labelled_child():
             labels = {}
             found = draft_repairs.variants(walk(order), 'walk', 'mips', labels=labels, limit=None)
             assert target in found and labels[target] in {'statement_group_order', 'preloop_assignment_swap',
-                                                          'allocation_lever'}
+                                                          'allocation_lever', 'store_run_move'}
+            # (a child several families find keeps the first family's label, draft_repairs; store_run_move finds this one)
     assert 'statement_group_order' in draft_repairs.AGENT_FAMILIES
 
 

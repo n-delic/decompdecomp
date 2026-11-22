@@ -724,7 +724,10 @@ def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels
     if arch == "mips":
         early = _generated(shifted_byte_lifetime.variants, source, name, header) + early
     for family,text in early:
-        proposals.append(text);labels[text]=family
+        # The same text from two families keeps the first's label: `scoped` (the evidence-gated families, which read the
+        # target's assembly) comes first, and the generic order families (statement_group_orders) found the same child
+        # and relabelled it, so the vector-order family never showed (test_vector_component_order_integration).
+        proposals.append(text);labels.setdefault(text,family)
     for family,text in _generated(copy_shape_repairs.variants, source,name,header) + _generated(capture_followup_repairs.variants, source,name,header,callees):
         proposals.append(text)
         labels[text] = family
@@ -941,8 +944,10 @@ def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels
         proposals.append(text)
         labels[text] = family
     for family, text in _generated(statement_group_orders.variants, source, name):
+        # Every order of small groups also reaches children an evidence-gated family (vector_component_order) already
+        # labelled; the earlier, more specific label stays.
         proposals.append(text)
-        labels[text] = family
+        labels.setdefault(text, family)
     # Library families no lane called, so neither drafts nor the Deep Permuter's beam (which runs this function with
     # limit=None) ever proposed them: register levers (commutative operand order, two independent statements swapped,
     # a declaration moved) and the indexed-record copies; tests/test_library_family_wiring.py keeps every library
