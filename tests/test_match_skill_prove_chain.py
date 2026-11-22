@@ -111,3 +111,12 @@ def test_the_generator_passes_the_functions_jump_tables_and_context_to_the_repai
     assert prove_chain.generator(judge, "f")("int f(void){return 1;}") == [("switch_gap_goto", "child")]
     assert seen["tables"] == [(1, [0x80000010])] and seen["callees"] == "int g(void){return 0;}"
     assert seen["entry_scope"] == {"language": "c"} and seen["header"] == "h"
+
+
+def test_children_cut_off_by_the_cap_are_reported_and_a_larger_cap_scores_them():
+    lines = []
+    prove_chain.prove("xyz", generate, score, None, steps=1, children=1, log=lines.append)
+    assert any("cut off by --children 1" in line for line in lines)
+    lines.clear()
+    prove_chain.prove("xyz", generate, score, None, steps=1, children=50, log=lines.append)
+    assert not any("cut off" in line for line in lines)

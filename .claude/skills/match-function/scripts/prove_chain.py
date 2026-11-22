@@ -44,6 +44,10 @@ def prove(source, generate, score, families, steps=DEFAULT_STEPS, children=DEFAU
             if (families is None or family in families) and child not in seen:
                 seen.add(child)
                 options.append((family, child))
+        cut = len(options) - children
+        if cut > 0:
+            log(f"step {step}  note: {cut} of {len(options)} children cut off by --children {children}; "
+                f"raise it (or name --families) if the right child may be among them")
         scored = []
         for family, child in options[:children]:
             result = score(child)
