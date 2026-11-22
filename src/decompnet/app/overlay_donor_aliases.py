@@ -27,13 +27,37 @@ def _cpp_declaration(header, clean, symbol):
     return None
 
 
+def _stub_prototype(text, symbol):
+    pattern = re.compile(r'(?:(int|void)\s+)?' + re.escape(symbol) + r'\s*\(\s*\)\s*\{\s*\}')
+    match = pattern.fullmatch(csource._blank(text).strip())
+    return f'extern {match[1] or "int"} {symbol}();' if match else None
+
+
 def _empty_c_stub(declarations, symbol):
     """Use the signature of a C89 placeholder without duplicating its empty body."""
-    pattern = re.compile(r'(?:(int|void)\s+)?' + re.escape(symbol) + r'\s*\(\s*\)\s*\{\s*\}')
     for decl in declarations:
-        if symbol in decl.names and (match := pattern.fullmatch(csource._blank(decl.text).strip())):
-            return f'extern {match[1] or "int"} {symbol}();'
+        if symbol in decl.names and (prototype := _stub_prototype(decl.text, symbol)):
+            return prototype
     return None
+
+
+def named_bindings(source, header, candidate, aliases):
+    """Give calls to empty donor stubs undefined symbols so the loader resolves them."""
+    uses = defaultdict(set)
+    for reloc in candidate.relocs:
+        if reloc.symbol in aliases:
+            uses[reloc.symbol].add((reloc.type, reloc.addend))
+
+    def externalize(text):
+        for symbol, kinds in uses.items():
+            if kinds == {(JUMP, 0)} and (span := csource.find(text, symbol)):
+                start, end = span
+                prototype = _stub_prototype(text[start:end], symbol)
+                if prototype:
+                    text = text[:start] + prototype + text[end:]
+        return rename(text, aliases)
+
+    return externalize(source), externalize(header)
 
 
 def local_functions(source, header, name, obj, candidate, target):

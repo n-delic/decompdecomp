@@ -550,3 +550,39 @@ def test_refresh_adds_wider_pool_read_to_existing_metadata(monkeypatch):
     assert json.loads(refreshed)['uso']['pool_loads'] == [old_load, [8, 1, '08090a0b0c0d0e0f']]
     stale = info | {'pool_loads': [[4, 1, '00010204']]}
     assert list(uso.metadata_updates(b'', {}, [row | {'meta': json.dumps({'uso': stale})}])) == []
+
+
+def test_overlay_named_binding_externalizes_only_empty_direct_call_stubs(tmp_path):
+    from decompnet.app.overlay_donor_aliases import named_bindings
+    from decompnet.app.source_symbol_recovery import relocation_aliases
+    from decompnet.elfobj import extract_function
+
+    if not toolchains.installed('ido-7.1'):
+        pytest.skip('needs IDO 7.1')
+    cfg = compiler_config(tmp_path, {'compiler': {
+        'toolchain': 'ido-7.1', 'flags': ['-O2', '-G', '0', '-non_shared', '-mips2'],
+    }})
+    header = 'placeholder() { }\nint real(void) { return 9; }\n'
+    source = 'int entry(int value) { return placeholder(value); }'
+    built = compile_source(cfg, header, source)
+    assert built.ok, built.log
+    body = extract_function(built.obj, 'entry')
+    reloc, = body.relocs
+    info = {'section': 64, 'relocs': [[reloc.offset, reloc.type, 1]]}
+    target = uso_match.symbolic_target(uso_match.Target('entry', 0, body.code, [], uso=info))
+    baseline = uso_match.link(built.obj, 'entry', body.code, info)
+    aliases = relocation_aliases(baseline.candidate, target)
+    assert aliases == {'placeholder': uso_match.alias(64, 1)}
+    renamed = compile_source(cfg, header.replace('placeholder', aliases['placeholder']),
+                             source.replace('placeholder', aliases['placeholder']))
+    assert renamed.ok, renamed.log
+    assert not uso_match.link(renamed.obj, 'entry', body.code, info).exact
+
+    rewritten, context = named_bindings(source, header, baseline.candidate, aliases)
+    assert 'int real(void) { return 9; }' in context
+    rebuilt = compile_source(cfg, context, rewritten)
+    assert rebuilt.ok, rebuilt.log
+    assert uso_match.link(rebuilt.obj, 'entry', body.code, info).exact
+
+    _, context = named_bindings(source, 'int placeholder(void) { return 9; }', baseline.candidate, aliases)
+    assert '{ return 9; }' in context
