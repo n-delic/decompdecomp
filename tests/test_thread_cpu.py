@@ -62,7 +62,8 @@ def test_the_location_is_the_innermost_decompnet_frame(tmp_path):
         holder["frame"] = sys._getframe()
         return {}
     thread_cpu.Sampler(tmp_path / "unused.log", read=read).start().close()
-    assert thread_cpu._location(holder["frame"]) == "thread_cpu.py:start"
+    # the stdlib or test code beneath it is noted, not mistaken for the location
+    assert thread_cpu._location(holder["frame"]) == "thread_cpu.py:start (in test_thread_cpu.py:read)"
 
 
 def test_the_stall_report_lists_processor_time_by_thread(tmp_path):
@@ -128,3 +129,18 @@ def test_old_helper_reports_are_forgotten(tmp_path):
     os.utime(old, (time.time() - 3 * 86400,) * 2)
     thread_cpu._forget_old(tmp_path)
     assert not old.exists() and new.exists()
+
+
+def test_a_database_call_is_named_by_the_code_that_asked(tmp_path):
+    """payload_storage's wrapper holds every query's CPU; the report names the callers instead (live run: 80 of 340 s)."""
+    forwarder = tmp_path / "payload_storage.py"
+    forwarder.write_text("import sys\ndef call(inner):\n    return inner()\n")
+    (tmp_path / "decomprepair").mkdir()
+    asker = tmp_path / "decomprepair" / "asks.py"
+    asker.write_text("def ask(run):\n    return run()\n")
+    namespace, wrapper = {}, {}
+    exec(compile(forwarder.read_text(), str(thread_cpu._PACKAGE + "payload_storage.py"), "exec"), wrapper)
+    exec(compile(asker.read_text(), str(asker), "exec"), namespace)
+    import sys
+    seen = namespace["ask"](lambda: wrapper["call"](lambda: thread_cpu._location(sys._getframe())))
+    assert seen == "sql: decomprepair/asks.py:ask"

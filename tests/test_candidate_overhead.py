@@ -296,3 +296,17 @@ def test_judging_scope_never_inherits_advisory_preparation_memo():
         assert candidate_work.current() is batch
         assert candidate_work.remember('compiler', lambda:'wrong') == 'prepared'
     assert candidate_work.current() is None
+
+
+def test_background_threads_reuse_the_repair_rule_stamp_for_a_few_seconds(monkeypatch):
+    """A thread with no session or snapshot used to list and stamp ~120 files on every claim."""
+    from decompnet import claim_stalls
+    calls = []
+    clock = [100.0]
+    monkeypatch.setattr(claim_stalls, '_recent', None)
+    monkeypatch.setattr(claim_stalls.time, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr(claim_stalls, '_repair_rules', lambda: calls.append(1) or [('rule', str(len(calls)))])
+    first = claim_stalls.repair_rules()
+    assert claim_stalls.repair_rules() == first and len(calls) == 1
+    clock[0] += claim_stalls._RECENT_SECONDS + 1  # an edit shows up once the stamp is a few seconds old
+    assert claim_stalls.repair_rules() != first and len(calls) == 2
