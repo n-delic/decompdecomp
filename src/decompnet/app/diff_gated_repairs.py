@@ -180,6 +180,7 @@ from decomprepair import (
     measured_slot_flip_copy,
     measured_square_loads,
     measured_stack_records,
+    measured_staged_float_order,
     measured_storage_shapes,
     measured_strided_halfword_copy,
     measured_temporary_repairs,
@@ -575,6 +576,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += search_exit_loop_repairs.sentinel_byte_guard_variants(source, name, rows)
         result += loop_counter_roles_repairs.guarded_reuse_variants(source, name, rows)
         result += measured_float_grid_stores.variants(source, name, rows)
+        result += measured_staged_float_order.variants(source, name, rows, header)
         result += measured_forwarded_pointer.variants(source, name, header, asm or '')
         result += float_intermediate_repairs.repeated_products(source, name, rows)
         result += measured_expression_repairs.variants(source,name,header,rows)
