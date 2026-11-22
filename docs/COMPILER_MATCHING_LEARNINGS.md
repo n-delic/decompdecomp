@@ -15265,3 +15265,22 @@ a zero bit field and reject a path that mutates either value.
 ### Keep a byte global's address through a conditional update
 
 A saved N64 byte update built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1` set a default local then conditionally incremented a global byte. Capturing the global's address improved the linked score from 345 to 35; expressing the same default and increment in explicit `if`/`else` arms reproduced the target exactly (score 0). Evidence: one saved example and synthetic source, target and routing tests. The candidate requires the measured unsigned byte load, comparison, increment and store sequence and is checked by the byte judge.
+
+### Read a guarded record after a projection call
+
+Under GCC 2.7.2 KMC `-G0 -mips3 -mgp32 -mfp32 -O2`, the target read a
+record pointer after the angle call and its float product. The draft
+read the pointer before the call, so the compiler kept it in a saved
+integer register and used that register for subsequent field tests.
+
+Moving only the pointer read after the projection let the compiler
+use the intended argument register, and restored the form of a later
+branch. It improved the linked score from 6,055 to 5,450 in one
+privately judged N64 function, preserving all three jump tables and
+compiling without uninitialized warnings. Repeating the field access
+inline also scored 5,450.
+
+The proposed edit requires the measured earlier and later pointer
+loads, the same call, the same pointer and flag offsets, and the
+measured mask. It has synthetic coverage for the escaped pointer and
+for calls that already use the old pointer value.
