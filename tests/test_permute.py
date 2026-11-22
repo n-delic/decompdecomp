@@ -652,7 +652,10 @@ def test_decomp_permuter_reads_a_c_function_among_cxx_headers():
         variants = gen.batch(job)
     finally:
         gen.close()
-    assert variants and all("int __fastcall Count(Widget *w, Id id)" in v for v in variants)
+    # (decomp-permuter's perm_randomize_internal_type reaches parameters too, whatever its docstring says: a variant may
+    # read `Count(Widget *w, short id)`. What's checked is that the C function was read among the C++ header and kept
+    # its convention, return type, name and pointer parameter, as in the neighbouring tests)
+    assert variants and all(re.search(r"int __fastcall Count\(Widget \*w, [\w ]*\bid\)", v) for v in variants)
 
 
 def test_msvcs_words_leave_a_macros_name_its_value_and_strings_alone():
