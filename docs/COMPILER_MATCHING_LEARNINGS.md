@@ -16665,11 +16665,12 @@ What decided each step (GCC 2.7.2):
 
 decomp-repair 0.5.564: `counter_derived_offset`.
 
-## A registration and a nested record loop: five loop and reload steps (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, an N64 game, one 180-instruction function, 1110 -> 501 by hand, open)
+## A registration and a nested record loop: eight steps, matched (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, an N64 game, one 180-instruction function, 1110 -> 0)
 
 Evidence level: one function, controlled chain (each step scored with the app's own judge from the saved best; the
-decomp-repair 0.5.565 families reproduce 1110 -> 1041 -> 831 -> 620 -> 600 from the saved source, tested one family at a
-time and chained in `tests/test_kmc_reload_hoist_wiring.py`'s shapes).
+decomp-repair 0.5.565 and 0.5.567 families with the existing `guard_temp_sink` and `loop_constant_stage` reproduce
+1110 -> 700 -> 490 -> 370 -> 250 -> 230 -> 221 -> 25 -> 15 -> 0 greedily from the saved source, one variant per step,
+`tests/test_kmc_reload_hoist_wiring.py` checks the lane offers each family).
 
 | step | edit | alone | combined |
 | --- | --- | --- | --- |
@@ -16681,7 +16682,10 @@ time and chained in `tests/test_kmc_reload_hoist_wiring.py`'s shapes).
 | E | `base = &D_table;` assigned at the entry; `last = base - 1;` stays where m2c read it (`entry_base_init`) | 1110 | 600 |
 | F | `var_s4 = arg1;` moved into the `if (arg2 != 0)` guard (`guard_temp_sink`, existing) | 1210 | 491 |
 | G | `volatile` dropped from the serial counter (`volatile_global_plain`, existing) | 1210 | 491 |
-| H | the identical-arm `if (temp)` on an uninitialised pointer removed | 1125 | 501 |
+| H | the found flag's copy written through the loop-bound local, not through `low`, the call's argument (`live_range_retarget`) | 501 | 285 |
+| I | the identical-arm `if (temp)` on an uninitialised pointer removed (`identical_arm_collapse`) | 1125 | 285 -> 15 after H, 25 -> 15 greedily |
+| J | the element pointer and the picked object written as one variable (`pointer_local_merge`) | 285 | 15 -> 270 -> 0 |
+| K | the loop's `4.0f` as a local set before the base address (`loop_constant_stage`, existing) | 270 | 0 |
 
 What decided each step (GCC 2.7.2):
 - loop.c moves an invariant out of a loop only when its pseudo is set once. `arg1 + n * 8` in the test is one set, so it
@@ -16697,8 +16701,22 @@ What decided each step (GCC 2.7.2):
   basic block, which is why the draft's read-before-write (`last = base - 1; base = &D;`) compiled to the target's three
   instructions and its valid spelling (assigned beside the read) scored 605. Assigned at the function's entry, before every
   label, cse does not know it inside the loop and the shape is the target's with valid C.
+- A copy `p = found` followed by the test of `p` survives cse when `p` is a multi-set user variable, and the target's
+  `move $v0,$a0; bnez $v0` needs the allocator to keep `p` and `found` in different registers. A pseudo that is copied into
+  an argument register for a call prefers it (`low` feeds `func_8000A4F4(low)`): global-alloc gave the copy `$a0`, the
+  register of `found`, and deleted the move. Any other multi-set integer local that is no call argument (the loop-bound
+  local, 285; the loop counter, 295) keeps the move; one set only is replaced by its source in cse and loses it.
+- Two names for one value's role are two pseudos with half the uses; the target's element and picked object share a
+  register because the original used one variable. The pass over `-dl -dg` (`;; N regs to allocate`, the conflicts table)
+  shows the element, which ranks first with priority 9.0, taking `$a0` ahead of everything and moving the flag and the count
+  one register along; written as the picked object's variable (disjoint ranges in one loop body) it takes `$v0`.
+- The hoisted `4.0f` goes before the loop's other preheader insns when its set comes first in the source; as a local set
+  just before the base address it matched where the compiler's own hoist put it behind them.
 - The saved registers come out right once the pseudos are the target's: the argument copies in `$s5`, `$s6`, `$fp`, the
   record cursor in `$s4`, the entry copy in `$s3`, the field pointer in `$s0`, the bound's base in `$s7`.
+- Failed: drop the `__base` assignment next to its read (605); the element merged into `entry` (1831); the natural
+  `D_table[n - 1]` index with the table an array (the base folds into `lui; addiu -4` held in `$fp`, arg2 in `$s7`, 285);
+  the base subtracted inside the loop (1923, the base takes `$fp`); a `for` form of the search loop (872, a pointer walk).
 
 decomp-repair 0.5.565: `counter_append_scope`, `loop_limit_reassign`, `outer_cursor_entry_copy`, `loaded_pointer_reuse`,
-`entry_base_init`.
+`entry_base_init`. 0.5.567: `live_range_retarget`, `pointer_local_merge`, `identical_arm_collapse`.
