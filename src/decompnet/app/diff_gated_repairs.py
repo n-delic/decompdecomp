@@ -148,6 +148,7 @@ from decomprepair import (
     oscillator_phase_hold,
     packed_matrix_conversion,
     passthrough_argument_repairs,
+    projection_argument_before_store,
     rejected_branch_default,
     relocated_byte_table,
     relocated_global_update,
@@ -333,6 +334,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += balanced_clamp_argument_stage.variants(source, name, rows, header=header)
         result += trig_axis_reuse.variants(source, name, rows, header=header)
         result += smoothing_call_before_read.variants(source, name, rows, header=header)
+        result += projection_argument_before_store.variants(source, name, rows, header=header)
         result += balanced_signed_selector_increment.variants(source, name, rows, header=header)
         result += balanced_float_predicate_return.variants(source, name, rows, header=header)
         result += clamped_field_reload.variants(source, name, rows, header=header)

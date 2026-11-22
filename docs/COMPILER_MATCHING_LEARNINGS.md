@@ -15289,3 +15289,20 @@ for calls that already use the old pointer value.
 ### Apply record offsets in bytes to word globals
 
 A saved N64 initializer built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` multiplied a record index by `0x184` and added it to word-global pointers, unintentionally scaling the byte offset by four. Casting those bases to byte pointers before addition fixed the scaling but scored 315; also inlining the pure offset at both uses reproduced the linked target exactly (score 320 to 0). Evidence: one saved example and synthetic source, target and routing tests. The candidate corrects the draft's address calculation only for the measured record stride and target symbols and is verified by the byte judge.
+
+### Capture the next projection argument before storing the first result
+
+Under GCC 2.7.2 KMC `-G0 -mips3 -mgp32 -mfp32 -O2`, two projections read
+the same global input. The target loaded the second input before its
+call and wrote the first projection's component in the call delay slot.
+The draft wrote the component first and used the delay slot to load the
+second input.
+
+Capture the first computed component and then the shared argument in
+scoped float locals, between the first computation and its store.
+This preserved the order of the stores and restored the target call
+sequence. One private N64 function improved from 5,450 to 5,330 with
+all three jump tables and no uninitialized warnings. Reusing existing
+locals scored 6,575. The measured rule requires both calls, the shared
+global read and the same pair of output offsets. Synthetic tests cover
+the emitted order and missing evidence.
