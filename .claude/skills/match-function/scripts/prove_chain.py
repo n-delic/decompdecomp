@@ -60,10 +60,23 @@ def prove(source, generate, score, families, steps=DEFAULT_STEPS, children=DEFAU
     return current, best, chain
 
 
+def current_name(source, name, vram):
+    """A source saved before a rename defines `func_<VRAM>`, and the families look the function up by `name`: they
+    propose nothing (13 of 34 stalls in the whole-path audit). Rename it, as the app's canonical_source does."""
+    from decompnet.app.function_names import rename_identifiers
+    from decompnet.forks.csource import find
+    old = f"func_{vram:08X}" if isinstance(vram, int) else None
+    if old and old != name and find(source, name) is None and find(source, old) is not None:
+        return rename_identifiers(source, {old: name})
+    return source
+
+
 def generator(judge, name):
     from decompnet.app import draft_repairs
+    vram = (getattr(judge, "request", None) or {}).get("function", {}).get("vram")
 
     def generate(source):
+        source = current_name(source, name, vram)
         labels = {}
         texts = draft_repairs.variants(source, name, judge.arch, judge.asm, judge.compiler["flags"], labels,
                                        limit=None, header=judge.header)
