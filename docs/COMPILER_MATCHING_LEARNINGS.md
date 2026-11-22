@@ -1151,6 +1151,17 @@ Keep this file updated when a verified match explains a reusable compiler behavi
 summaries live in `src/decompnet/consoles/*/guides/`; this is the evidence ledger, including failed ideas.
 Do not treat an instruction similarity score as proof of a match.
 
+## Prove call-result splits across conditional overwrites
+
+An N64 scratch draft built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32
+-mfp32 -O2 -fno-cse-skip-blocks` scored 835 after splitting a call
+result and adjusting a call scope. The split left the original scalar
+uninitialized when the first call returned nonzero and the conditional
+fallback was skipped. Restoring the missing assignment gave 965, and
+the 835 candidate was withdrawn. The verified 855 draft was retained.
+The generator now checks reaching definitions for both moved and unmoved
+reads. Evidence is a scratch replay and straight-line and branch regressions.
+
 ## Probe cross-block CSE when relocated stores repeat an address
 
 With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, an N64
