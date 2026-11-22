@@ -13243,3 +13243,19 @@ disjoint fields recovered the target sequence. With `gcc-2.7.2-kmc -G0
 -mips3 -mgp32 -mfp32 -O2` (one example also used `-g3`), both linked scores
 improved from 120 to exact matches. These are two observed matches;
 synthetic tests cover the target order, disjoint offsets and source guards.
+
+### KMC GCC 2.7.2: a per-iteration 32-bit constant is hoisted out of `do`/`while`/`for` loops, not out of a goto loop
+
+On one N64 display-list function (`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`), a second loop stored a 32-bit
+command word (`li 0xDA380003`, then `sw`) and `x - 0x80000000` each iteration. As a `do { } while` with the exact
+literals, loop.c hoisted both `li`s into saved registers before the loop (the first block's identical constant merged
+with it): frame 0x40 against the target's 0x38 and an extra `$s3`/`$s4`, scored 1554 (1024 with the earlier search's
+`(float)0xDA380003` and `(char)0x80000000` scaffolding, which only hid the constants). Earlier agents tried staged
+cursors, volatile casts, `-fno-strength-reduce`, `-fno-cse-follow-jumps` and others without moving it. cc1's `-dL`
+dump showed the constants as separate pseudos moved before NOTE_INSN_LOOP_BEG; gcc runs loop.c only on loops written
+`while`/`do`/`for`, so the same body as `loop_N: ... if ((node = node->next) != NULL) goto loop_N;` (the `break` as
+`goto done;`) left the constants in the body, in the target's order: exact (score 0, the judge's verdict).
+decomp-repair 0.5.334 `loop_goto_form` offers the rewrite for each loop (the opposite of `goto_backward_loop`); it
+reproduces the exact child from the 1554 state. Evidence level: one function; the loop shape is controlled by a unit test.
+Not covered: the 1024 -> 1554 step (replacing the cast scaffolding with literals) is a search-scaffolding cleanup, no
+new family.
