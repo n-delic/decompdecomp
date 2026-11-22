@@ -48,6 +48,9 @@ from .permute import available as permute_available
 from .trial_bookkeeping import buffered
 
 AFTER_RANDOM_TRIALS = 32
+RANDOM_TRIAL_WINDOW = 64
+RANDOM_SECONDS_WINDOW = 30
+LOCAL_PAUSES = {'phase_budget', 'burst_budget'}
 
 
 class SearchLimit(Exception):
@@ -145,6 +148,7 @@ class Search(Permuter):
         self.record_improvement = lambda score: None
         self.recorded_best = None
         self.local_seen = set()
+        self.weak_trials = {}
         self.refinement_rounds = 0
         self.winner_diff = None
         self.winner_source = None
@@ -223,8 +227,6 @@ class Search(Permuter):
             raise SearchLimit('Time limit reached')
         if self.tested >= self.limit:
             raise SearchLimit('Variant limit reached')
-        if self.phase == 'random rewrites' and self.tested >= getattr(self, 'random_register_limit', float('inf')):
-            raise SearchLimit('Focused register search completed')
 
     def _chart(self, score):
         """A point on the run chart; past 200 every other middle point goes, the first and latest stay."""
@@ -267,6 +269,8 @@ class Search(Permuter):
     def recipe(self, fn, source, best, score, outcome, elapsed_ms=0):
         provenance = current_trial() or {'kind': self.phase, 'family': 'unattributed'}
         family = provenance.get('family') or 'unattributed'
+        phase = {'random rewrite': 'random rewrites',
+                 'local order before permutation': 'local repairs'}.get(provenance.get('kind'), self.phase)
         if outcome in ('tested', 'skipped'):
             pool=getattr(self,'compile_pool',None)
             if score==0 and outcome=='tested' and pool is not None:pool.metrics.exact()
@@ -285,7 +289,7 @@ class Search(Permuter):
         counts = self.recipe_counts.setdefault(family, [0, 0, 0, 0, 0, 0])
         counts[{'tested': 0, 'skipped': 1, 'rejected': 2}[outcome]] += 1
         if outcome == 'tested':
-            values = self.measurement_counts.setdefault((family, self.phase), [0, 0, 0, 0, 0, 0, 0, 0, 0])
+            values = self.measurement_counts.setdefault((family, phase), [0, 0, 0, 0, 0, 0, 0, 0, 0])
             values[0] += 1
             if score is None:
                 values[1 if getattr(self, '_trial_outcome', '') == 'compile_failed' else 2] += 1
@@ -304,7 +308,7 @@ class Search(Permuter):
             counts[4] += int(score == 0)
             counts[5] += best - score
             info = dict(provenance) | {'source_sha256': hashlib.sha256(source.encode()).hexdigest(),
-                                      'phase': self.phase}
+                                      'phase': phase}
             self.recipe_wins.append((family, best, score, json.dumps(info), time.time()))
             self.flush_recipes()
             self.log(f'Improved with {family}: score {best:,} → {score:,}; verified and saved.')
@@ -330,9 +334,13 @@ class Search(Permuter):
             self.log('Using the room host compiler settings; compiler changes stay on the host.')
             return {'tested': 0}
         from .matching_preflight import run
+        previous = self.phase
         self.phase = 'compiler preflight'
-        self.report()
-        result = run(self.net, proj, fn, self.log, self.check, max_profiles=self.limit-self.tested)
+        try:
+            self.report()
+            result = run(self.net, proj, fn, self.log, self.check, max_profiles=self.limit-self.tested)
+        finally:
+            self.phase = previous
         self.tested += result['tested']
         self.relinked_baseline = result.get('relinked')
         self.jump_table_profile = result.get('jump_table_profile')
@@ -528,6 +536,8 @@ class Search(Permuter):
         # Interleaving two runs of statements took about 600 compiles to find by beam on a large function, so this
         # pass may spend more of the budget than the other targeted ones; it stops at the first exact match.
         budget = min(96, max(0, (self.limit - self.tested) // 2))
+        diff = self.winner_diff[0] if self.winner_diff else ()
+        priority = repair_ranking.evidence_priority(diff)
         frontier, seen, lowest = [(best, source)], {source}, best
         while frontier and budget > 0:
             children = []
@@ -554,6 +564,7 @@ class Search(Permuter):
                     # one child, 314, 310 and 455 as its parts, so the beam has to keep the weaker ones
                     ('decomprepair.halfword_countdown_shapes.variants', (parent, fn['name'], proj['arch']))])
                     for pair in generation_calls.pairs(result)]
+                proposals.sort(key=lambda proposal: priority.get(proposal[0], len(priority)))
                 for family, child in proposals:
                     if child in seen or budget <= 0:
                         continue
@@ -734,12 +745,10 @@ class Search(Permuter):
                 and allocation_evidence.diagnose(self.winner_diff[0],proj['arch'])['register_cycles']):
             self.log('Measured linked register cycle; keeping the current compiler profile during lifetime search.')
             return best
-        previous = self.phase
         self._let_go(agent, fn)  # settings application requires an unclaimed function
         try:
             self._compiler_preflight(proj, fn, None, self.deadline)
         finally:
-            self.phase = previous
             fresh = self.net._function(fn['name'], proj['slug'])
             if fresh['status'] == 'open' and not self._hold(agent, fresh, count_turn=False):
                 raise NetworkError('Another worker claimed this function during the flag check; saved progress is preserved.')
@@ -1367,6 +1376,8 @@ class Search(Permuter):
                 cross_prefix = [c for family,c in progressed if family in cross_function_repairs.FAMILIES]
                 residual_prefix = [c for family,c in progressed if family in residual_trials.FAMILIES]
                 queue = list(dict.fromkeys(residual_prefix+cross_prefix+frame_prefix+complete+dispatch_prefix+[c for _,c in progressed]))
+                priority = repair_ranking.evidence_priority(rank_rows)
+                queue.sort(key=lambda candidate: priority.get(labels.get(candidate), len(priority)))
                 if loan:queue=feedback.continuation(source,queue,labels,self.local_seen)
                 lane = getattr(self, "parallel_lane", None)
                 if lane is not None:
@@ -1374,6 +1385,8 @@ class Search(Permuter):
                 return queue,allocation_lane,cursor
             queue,allocation_lane,cursor=prepare_choices(choices)
             parents = {}
+            weak_limits = repair_ranking.weak_limits(rows, proj['arch'])
+
             from .deep_lookahead import Window
             with Window(self,agent,proj,fn,fork) as ahead:
                 while queue or incoming is not None:
@@ -1397,16 +1410,21 @@ class Search(Permuter):
                         continue
                     if phase_deadline is not None and time.monotonic() >= phase_deadline:
                         self.local_status = {'reason': 'phase_budget', **counters}
-                        self.log('Local phase budget reached; reserving the remaining search for random rewrites.')
+                        self.log('Local phase budget reached; saving time for a random rewrite probe.')
                         return self._saved_result(proj, fn, best)
                     if candidate in self.local_seen:
+                        continue
+                    family = labels.get(candidate)
+                    if family in weak_limits and self.weak_trials.get(family, 0) >= weak_limits[family]:
                         continue
                     if max_trials is not None and trials >= max_trials:
                         self.local_status = {'reason': 'burst_budget', **counters}
                         self.log(f'Local search paused at its burst budget; {trials} proposals visited.')
                         return self._saved_result(proj, fn, best)
                     lookahead=min(4,max_trials-trials) if max_trials is not None else 4
-                    ahead.ensure([candidate]+queue[:max(0,lookahead-1)])
+                    # Do not compile ahead past a low-yield family's allowance.
+                    ahead.ensure([candidate] + [child for child in queue[:lookahead-1]
+                                               if labels.get(child) not in weak_limits])
                     if candidate in allocation_lane:
                         self.phase = 'register allocation lifetimes'
                         self.allocation_trials += 1
@@ -1420,6 +1438,7 @@ class Search(Permuter):
                     self._trial_parent_output=parent_proof.get('output')
                     self._trial_parent_granularity=parent_proof.get('granularity')
                     sequence_started=time.monotonic()
+                    tested_before = self.tested
                     try:
                         with repair_trial({'kind': 'deep local repair', 'family': labels.get(candidate, 'local_repair'),
                                            'lineage': parent_path+[labels.get(candidate, 'local_repair')],
@@ -1428,6 +1447,8 @@ class Search(Permuter):
                     finally:
                         del self._parent_rows
                         self._trial_parent_output = self._trial_parent_granularity = None
+                    if family in weak_limits and self.tested > tested_before:
+                        self.weak_trials[family] = self.weak_trials.get(family, 0) + 1
                     if score == 0:
                         # The judge has finished this function. Do not generate more
                         # feedback/paired proposals after publishing its exact result.
@@ -1581,6 +1602,18 @@ class Search(Permuter):
         source = _candidate_source(fresh, best)
         return (0 if fresh['status'] == 'matched' else best), source
 
+    def _start_random_window(self):
+        self.random_trial_limit = self.tested + RANDOM_TRIAL_WINDOW
+        self.random_deadline = time.monotonic() + RANDOM_SECONDS_WINDOW
+
+    def _random_trials_remaining(self):
+        limit = min(self.random_trial_limit, getattr(self, 'random_register_limit', self.limit))
+        return max(0, limit - self.tested)
+
+    def _random_budget_available(self):
+        self.check()
+        return self._random_trials_remaining() > 0 and time.monotonic() < self.random_deadline
+
     def _after_improvement(self, agent, proj, fn, state, fork, best, source):
         previous = self.phase
         self.phase = 'local repairs after random improvement'
@@ -1603,6 +1636,7 @@ class Search(Permuter):
                     self.net._agent_outcomes[agent.id, fn['id']] = {
                         'source': self.winner_source, 'score': self.best, 'rows': self.winner_diff[0]}
             self.phase = previous
+            self._start_random_window()
 
     @deep_compilation.prepared
     def _score(self, agent, proj, fn, source, best, fork):
@@ -2029,6 +2063,7 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
     # invalidate each other or the background permuter, even outside rooms.
     agent, _ = net.local_agent(f'permuter-{fn["id"]}'+(f'-lane-{lane.index}' if lane is not None else ''))
     reason = 'Current candidate families finished'
+    resume_local = False
     if slug in net.links:
         log('Room search: permutation does not reserve functions; exact matches require host confirmation. '
             + ('The host builds imported-project drafts.' if net.fork_slug(slug) else 'Candidates compile locally; improvements are shared with the host.'))
@@ -2037,7 +2072,7 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
     if warning:
         log('Compiler preflight (advisory): '+warning)
     log(f'Searching {name}: {minutes} minutes, up to {max_variants:,} compiled candidates. Checking the saved baseline first.')
-    log('Local repairs use at most half the remaining time and compile allowance; random rewrites receive the rest. A single in-flight compile may cross the phase time boundary.')
+    log('Targeted repairs run first. A bounded random probe continues while it finds improvements.')
     from .source_diagnostics import hints
     source = _candidate_source(fn, fn['best_score'])
     for hint in hints(source, name, fn['asm'], proj['arch'], repair_ranking.evidence(net, fn['id'], agent.id)):
@@ -2152,11 +2187,13 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
                     search.phase = 'local repairs'
                     search.log('Baseline measured; trying targeted local repairs before random rewriting.')
                     remaining = max(0, search.deadline-time.monotonic())
-                    local_deadline = time.monotonic()+remaining/2
-                    local_trials = max(1, (search.limit-search.tested)//2)
+                    remaining_trials = search.limit - search.tested
+                    local_deadline = search.deadline - min(RANDOM_SECONDS_WINDOW, remaining / 4)
+                    local_trials = max(1, remaining_trials - min(RANDOM_TRIAL_WINDOW, max(1, remaining_trials // 4)))
                     best, _ = search.local_repairs(agent, proj, net._function(name, slug), baseline, fork,
                                                    max_trials=local_trials, phase_deadline=local_deadline)
-                    if best and (lane is None or lane.index == 0) and not relabel:
+                    resume_local = search.local_status.get('reason') in LOCAL_PAUSES
+                    if best and not resume_local and (lane is None or lane.index == 0) and not relabel:
                         search.phase = 'neutral steps'
                         best = search.neutral_plateau_pass(agent, proj, net._function(name, slug), best, fork)
                     if best == 0:
@@ -2170,7 +2207,7 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
                     and allocation_search.near_registers(search.winner_diff[0], proj['arch'])):
                 search.random_register_limit = search.tested + 24
             search.log('Local repairs finished; generating random rewrites and judging each compiled candidate.')
-            search.seconds = max(1, search.deadline-time.monotonic())
+            search.seconds = max(0, search.deadline-time.monotonic())
             current = net._function(name, slug)
             if current['status'] == 'matched':
                 reason = 'Matched'
@@ -2178,11 +2215,26 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
                 # _permute ignores the normal size/turn queue filters; the user selected this function.
                 search._permute(agent, proj, current, state)
                 if state.tried == 0:
+                    search.check()
                     raise NetworkError('This function was claimed meanwhile; try again after it is released.')
                 if net._function(name, slug)['status'] == 'matched':
                     reason = 'Matched'
-                elif time.monotonic() >= search.deadline:
-                    reason = 'Time limit reached'
+                elif resume_local or (search.local_status.get('reason') == 'burst_budget' and state.improved):
+                    search.check()
+                    current = net._function(name, slug)
+                    if not search._hold(agent, current, count_turn=False):
+                        raise NetworkError('This function was claimed meanwhile; saved progress is preserved.')
+                    try:
+                        search.phase = 'local repairs'
+                        search.log('Returning the remaining budget to targeted repairs.')
+                        best, _ = search.local_repairs(agent, net.project_row(slug), current, current['best_score'], fork,
+                                                       max_trials=search.limit-search.tested, phase_deadline=search.deadline)
+                        if best == 0:
+                            reason = 'Matched'
+                    finally:
+                        search._let_go(agent, current)
+                else:
+                    search.check()
     except SearchLimit as error:
         reason = str(error)
         if search.local_status.get('reason') == 'searching':

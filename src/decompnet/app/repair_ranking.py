@@ -74,6 +74,36 @@ TOPIC_REPAIRS = {
 }
 
 
+def evidence_priority(rows):
+    """Put high-yield repairs early when supported by the current mismatch."""
+    from .permuter_focus import scheduling_only
+
+    topics = matching_topics(rows)
+    preferred = []
+    if 'Load width and indexing' in topics:
+        preferred += ['symbol_access_width']
+    if 'Call signatures' in topics:
+        preferred += ['float_argument_bits']
+    if scheduling_only(rows):
+        preferred += ['statement_interleave']
+    # Its generator already requires draft decompiler markers or generic arguments.
+    preferred += ['m2c_refinement']
+    return {family: index for index, family in enumerate(preferred)}
+
+
+def weak_limits(rows, arch):
+    """Keep a few exploratory trials and allow more when the diff supports the family."""
+    from .permuter_focus import classify
+
+    changed = [(left, right) for marker, left, right in instruction_rows(rows) if marker != ' ']
+    focus = classify(rows, arch)
+    storage = focus in ('stack', 'register')
+    globals_differ = any('%hi(' in cell or '%lo(' in cell for pair in changed for cell in pair)
+    return {'global_scalar_type': 8 if globals_differ else 2,
+            'local_storage': 8 if storage else 2,
+            'local_declaration_order': 8 if storage or focus == 'scheduling' else 2}
+
+
 def guarded_first(candidates, labels=None):
     """Finite target-backed proposals precede generic learned or localisation hypotheses."""
     family=lambda c:labels.get(c,'') if labels is not None else c

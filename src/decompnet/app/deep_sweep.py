@@ -171,12 +171,16 @@ class Sweeps:
         return [dict(row) for row in rows]
 
     def measurements(self, project_id):
-        rows = self._store(project_id).all("""SELECT m.family,m.phase,SUM(m.attempted) attempted,
+        rows = self._store(project_id).all("""SELECT m.family,
+            CASE WHEN m.phase='compiler preflight' AND
+                 (m.family='random_rewrite_unattributed' OR m.family GLOB 'perm_*')
+                 THEN 'random rewrites' ELSE m.phase END AS phase,
+            SUM(m.attempted) attempted,
             SUM(m.compile_failed) compile_failed,SUM(m.unscored) unscored,SUM(m.unchanged) unchanged,
             SUM(m.worse) worse,SUM(m.improved) improved,SUM(m.matched) matched,SUM(m.elapsed_ms) elapsed_ms,
             SUM(m.score_gain) score_gain
             FROM deep_permutation_measurements m JOIN functions f ON f.id=m.function_id
-            WHERE f.project_id=? GROUP BY m.family,m.phase ORDER BY improved DESC,attempted DESC""", project_id)
+            WHERE f.project_id=? GROUP BY 1,2 ORDER BY improved DESC,attempted DESC""", project_id)
         return [dict(row) for row in rows]
 
     def recipe_wins(self, project_id):
@@ -184,7 +188,13 @@ class Sweeps:
             f.name AS function FROM deep_permutation_recipe_wins w JOIN functions f ON f.id=w.function_id
             WHERE f.project_id=? AND w.id>COALESCE((SELECT CAST(value AS INTEGER) FROM settings WHERE key=?),0)
             ORDER BY w.id DESC LIMIT 50""", project_id, f'deep-metrics-reset:{project_id}')
-        return [dict(row) | {'provenance': json.loads(row['provenance'])} for row in rows]
+        wins = []
+        for row in rows:
+            provenance = json.loads(row['provenance'])
+            if provenance.get('kind') == 'random rewrite':
+                provenance['phase'] = 'random rewrites'
+            wins.append(dict(row) | {'provenance': provenance})
+        return wins
 
     def config(self, slug):
         with looking(self.net):  # (its settings row: no saved files needed)
