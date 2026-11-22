@@ -5,6 +5,7 @@ import re
 from decomprepair import (
     aligned_allocator_request,
     aligned_stack_read,
+    allocation_repairs,
     balanced_clamp_argument_stage,
     balanced_float_predicate_return,
     balanced_signed_selector_increment,
@@ -32,6 +33,7 @@ from decomprepair import (
     masked_slot_dispatch,
     measured_address_repairs,
     measured_after_call_reload,
+    measured_be16_cursor,
     measured_byte_clamp,
     measured_callback_loop,
     measured_callback_repairs,
@@ -291,6 +293,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     result += measured_scalar_updates.variants(source, name, header, toolchain, rows, asm)
     if toolchain == 'gcc-2.7.2-kmc':
         result += shared_projection_lifetime.variants(source, name, rows, header=header)
+        result += allocation_repairs.measured_slot_orders(source, name, rows, header)
         result += clamp_saved_argument_lifetime.variants(source, name, rows, header=header)
         result += balanced_clamp_argument_stage.variants(source, name, rows, header=header)
         result += trig_axis_reuse.variants(source, name, rows, header=header)
@@ -321,6 +324,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_kmc_call_stores.variants(source, name, header, rows, resolve)
         result += measured_carried_loop_test.variants(source, name, header, rows)
         result += measured_byte_clamp.variants(source, name, header, rows)
+        result += measured_be16_cursor.variants(source, name, header, rows)
         result += measured_forwarded_counter.variants(source, name, header, rows, asm or '')
         result += measured_flag_reload.variants(source, name, header, rows)
         result += measured_reset_loops.variants(source, name, header, rows)

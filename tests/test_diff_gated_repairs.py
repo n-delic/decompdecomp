@@ -1614,3 +1614,23 @@ def test_forwarded_counter_routes_to_kmc(monkeypatch):
                         lambda text, name, header, diff, asm: [('forwarded_counter_fixture', text)])
     assert 'forwarded_counter_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'forwarded_counter_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_route_reciprocal_named_spill_stores():
+    source = 'void f(void) { int sp34; int pad[2]; void *sp3C; sink(sp34, sp3C); }'
+    rows = [('s', 'sw $t0, 0x34($sp)', 'sw $t0, 0x3c($sp)'),
+            ('s', 'sw $t0, 0x3c($sp)', 'sw $t0, 0x34($sp)')]
+    expected = 'void f(void) { void *sp3C; int pad[2]; int sp34; sink(sp34, sp3C); }'
+    assert ('spill_declaration_order', expected) in proposals(source, 'f', '', 'mips', KMC, rows, '')
+    assert all(label != 'spill_declaration_order' for label, _ in
+               proposals(source, 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_be16_cursor_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_be16_cursor, 'variants',
+                        lambda text, name, header, diff: [('be16_cursor_fixture', text)])
+    assert 'be16_cursor_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'be16_cursor_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
