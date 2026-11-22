@@ -9,6 +9,7 @@ import re
 import threading
 
 from decomprepair import (
+    accumulation_run_scope,
     accumulator_chain_repairs,
     address_association_repairs,
     address_param_copy_repairs,
@@ -269,6 +270,7 @@ from decomprepair import (
     sdk_io_repairs,
     sdk_shape_repairs,
     search_exit_loop_repairs,
+    search_loop_field_reload,
     search_loop_repairs,
     shared_constant_store_repairs,
     shared_offset_repairs,
@@ -382,7 +384,7 @@ AGENT_FAMILIES += (guarded_pointer_copy.FAMILY,) + shifted_byte_lifetime.FAMILIE
 AGENT_FAMILIES += loop_weight_set_repairs.FAMILIES
 AGENT_FAMILIES += (arm_label_share_repairs.FAMILIES + declaration_scope_sink_repairs.FAMILIES + element_update_repairs.FAMILIES
                    + narrow_test_share_repairs.FAMILIES + phase_storage_split_repairs.FAMILIES
-                   + narrow_param_clamp_repairs.FAMILIES)
+                   + narrow_param_clamp_repairs.FAMILIES + search_loop_field_reload.FAMILIES + accumulation_run_scope.FAMILIES)
 
 LIMIT = 20
 _IDENT = r'[A-Za-z_]\w*'
@@ -870,6 +872,16 @@ def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels
     for family, text in _generated(frame_padding_repairs.drop_variants, source, name):
         proposals.append(text)
         labels[text] = family
+    # a four-word scratch shortened (a kerning-table search function: 53 -> 30, decomprepair 0.5.587)
+    for family, text in _generated(frame_padding_repairs.shrink_variants, source, name):
+        proposals.append(text)
+        labels[text] = family
+    # m2c's `for (;;)` table search as the counted loop that re-reads its table field, and a value with its totals in
+    # one one-shot scope: the two edits and the shorter scratch took a 126-instruction text measurer from 105 to 0
+    for module in (search_loop_field_reload, accumulation_run_scope):
+        for family, text in _generated(module.variants, source, name):
+            proposals.append(text)
+            labels[text] = family
     for family, text in _generated(loop_index_inline_repairs.variants, source, name):
         proposals.append(text)
         labels[text] = family
