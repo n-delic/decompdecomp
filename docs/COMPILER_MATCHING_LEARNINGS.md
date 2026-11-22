@@ -16523,3 +16523,6 @@ The linked score moved from 155 to 150 with the same frame,
 3,034 instructions and three jump tables. Placing the copy before
 the call instead scored 210 because it changed the stack store's
 schedule. This is one private function under this profile.
+### Null-guard return layout (GCC 2.7.2 KMC)
+
+With `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, one saved draft returned zero immediately for a null pointer and scored 400. Moving the remaining work inside the non-null branch and returning zero afterward reproduced the target's ordinary branch and separate zero-return jump exactly. This is one saved example verified with its original compiler and linked-byte judge; the target-guided search uses that branch-layout difference to prioritize the existing guard inversion.
