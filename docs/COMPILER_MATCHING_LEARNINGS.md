@@ -16664,3 +16664,41 @@ What decided each step (GCC 2.7.2):
   unchanged).
 
 decomp-repair 0.5.564: `counter_derived_offset`.
+
+## A registration and a nested record loop: five loop and reload steps (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, an N64 game, one 180-instruction function, 1110 -> 501 by hand, open)
+
+Evidence level: one function, controlled chain (each step scored with the app's own judge from the saved best; the
+decomp-repair 0.5.565 families reproduce 1110 -> 1041 -> 831 -> 620 -> 600 from the saved source, tested one family at a
+time and chained in `tests/test_kmc_reload_hoist_wiring.py`'s shapes).
+
+| step | edit | alone | combined |
+| --- | --- | --- | --- |
+| 0 | saved best (m2c's draft after earlier agents: a typed slot table, `var_s4 - arg1 < n * 8`, an uninitialised `__base` read) | 1110 | 1110 |
+| A | registration: `off = G * 8;` shared by both stores, `cnt = G;` before the second store, `G = cnt + 1;` in the `do { } while (0)` (`counter_append_scope`) | 1041 | 1041 |
+| B | loop bound `while (limit = n * 8 + (u32) base, (u32) cursor < limit)` with `limit = 0;` before the loop (`loop_limit_reassign`) | 900 | 831 |
+| C | the inner loop reads `entry = cursor;` taken at the head of its guard (`outer_cursor_entry_copy`) | 700 | 620 |
+| D | the second and third loads of a field's pointer go through the first load's local (`loaded_pointer_reuse`) | 1090 | 600 |
+| E | `base = &D_table;` assigned at the entry; `last = base - 1;` stays where m2c read it (`entry_base_init`) | 1110 | 600 |
+| F | `var_s4 = arg1;` moved into the `if (arg2 != 0)` guard (`guard_temp_sink`, existing) | 1210 | 491 |
+| G | `volatile` dropped from the serial counter (`volatile_global_plain`, existing) | 1210 | 491 |
+| H | the identical-arm `if (temp)` on an uninitialised pointer removed | 1125 | 501 |
+
+What decided each step (GCC 2.7.2):
+- loop.c moves an invariant out of a loop only when its pseudo is set once. `arg1 + n * 8` in the test is one set, so it
+  was hoisted into a saved register (2913 with the pointer form alone, the bound spilled to the frame); the target's tail
+  keeps `sll; addu; sltu` in the loop. A local assigned before the loop and again in the test (a comma expression) is
+  set twice and stays there. The initial value is irrelevant (`0` and `arg1` scored the same).
+- Every address built from the outer loop's induction variable is a derived induction variable to loop.c: the inner loop
+  got `s3 = s6 + 4` and `lhu 2($s3)` where the target reads `lhu 6($s4)` and copies `move $s3,$s4` at the head of its
+  guard. A copy taken there is a plain invariant of the inner loop.
+- A pseudo set once and equivalent to a symbol's address is never given a register when it is cheaper to rematerialise:
+  reload substitutes the constant at each use, so `lui; addiu` appears at every use and a `base - 1` computed from it
+  becomes `lui; addiu; addiu -4`. cse folds `base - 1` into one constant when `base`'s assignment is in the same extended
+  basic block, which is why the draft's read-before-write (`last = base - 1; base = &D;`) compiled to the target's three
+  instructions and its valid spelling (assigned beside the read) scored 605. Assigned at the function's entry, before every
+  label, cse does not know it inside the loop and the shape is the target's with valid C.
+- The saved registers come out right once the pseudos are the target's: the argument copies in `$s5`, `$s6`, `$fp`, the
+  record cursor in `$s4`, the entry copy in `$s3`, the field pointer in `$s0`, the bound's base in `$s7`.
+
+decomp-repair 0.5.565: `counter_append_scope`, `loop_limit_reassign`, `outer_cursor_entry_copy`, `loaded_pointer_reuse`,
+`entry_base_init`.
