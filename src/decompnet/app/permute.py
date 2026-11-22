@@ -1084,8 +1084,8 @@ class Permuter:
                 self._trial_locations=res.get('repair_locations')
             return res.get("score")
         ctx = self.net._context(proj["id"], fn["unit"])
-        from decomprepair.repair_preflight import invalid_call
-        if source != fn['best_source'] and invalid_call(source, fn['name'], ctx['header']):
+        from .random_safety import invalid_candidate_call
+        if source != fn['best_source'] and invalid_candidate_call(source, fn['name'], ctx['header']):
             return None
         guard = None
         if getattr(self, "parallel_claims", False):

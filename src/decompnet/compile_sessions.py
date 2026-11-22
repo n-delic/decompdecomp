@@ -33,6 +33,9 @@ class Session:
         self.instructions = OrderedDict()
         self.alignments = OrderedDict()
         self.metrics = {}
+        self.candidate_shapes = OrderedDict()
+        self.candidate_calls = OrderedDict()
+        self.candidate_header = None
         self.comparisons = OrderedDict()
         self.comparison_sizes = {}
         self.comparison_bytes = 0

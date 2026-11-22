@@ -65,7 +65,7 @@ def ranked_replay(rows, variants, backend, helper):
     return proposals, {**metrics, 'rank_seconds_with_verification': time.monotonic()-started}
 
 
-def benchmark(root, functions, variants, workers, slots, declarations, full_search=False, balanced=False, profile=False, search_seconds=60, replay_order=None, ranker=None):
+def benchmark(root, functions, variants, workers, slots, declarations, full_search=False, balanced=False, profile=False, search_seconds=60, replay_order=None, ranker=None, source_statements=0):
     if full_search:
         # Load the legacy module alias before worker threads can import it concurrently.
         importlib.import_module('decompnet.arch.mips_runtime')
@@ -76,6 +76,13 @@ def benchmark(root, functions, variants, workers, slots, declarations, full_sear
     result = compiler.compile_source(compiler_config(root, cfg), '', 'int f(int x){return x+999999;}')
     if not result.ok:raise RuntimeError(result.log)
     target = elfobj.extract_function(result.obj, 'f')
+    # Volatile-free but nontrivial C gives the source scanners a representative body.
+    statements = ''.join(f'x ^= {i}; x ^= {i}; /* neutral edit */\n'
+                         for i in range(1, source_statements+1))
+
+    def source(name, constant):
+        return f'int {name}(int x){{{statements}return x+{constant};}}'
+
     with net.store.tx() as db:
         db.execute("INSERT INTO projects(id,slug,name,arch,big_endian,root,config) VALUES(1,'bench','Synthetic','mips',1,?,?)",
                    (str(root),json.dumps(cfg)))
@@ -86,7 +93,7 @@ def benchmark(root, functions, variants, workers, slots, declarations, full_sear
             name = f'f_{i}'
             db.execute("INSERT INTO functions(project_id,name,status,n_insns,size,target,relocs,asm,best_source,best_score,vram,rom_offset) "
                        "VALUES(1,?,'open',4,?,?,'[]','',?,400,?,0)",
-                       (name,len(target.code),target.code,f'int {name}(int x){{return x+1;}}',0x80001000+i*256))
+                       (name,len(target.code),target.code,source(name, 1),0x80001000+i*256))
     # These functions contain no data references: the real linker needs no backing image reads.
     net._roms[1] = (b'', [])
     agent, _ = net.local_agent('permuter-benchmark')
@@ -114,16 +121,16 @@ def benchmark(root, functions, variants, workers, slots, declarations, full_sear
         search = deep_permuter.Search(net, 10, variants*2, log, fn);search.compile_pool = pool
         name = fn['name']
         constants = proposals[fn['id']] if replay_order else range(2, variants+2)
-        sources = [f'int {name}(int x){{return x+{constant};}}' for constant in constants]
+        sources = [source(name, constant) for constant in constants]
         scores = []
         entered = time.monotonic()
         with deep_throughput.scope(pool), compile_sessions.session(), trial_bookkeeping.scope(maximum=True):
             chunks = (sources[i:i+slots*2] for i in range(0,len(sources),slots*2))
             stream = search._stream_variants(chunks, agent, proj, fn, None)
             try:
-                for source in stream:
+                for candidate in stream:
                     with trial({'kind':'random rewrite','family':'benchmark'}):
-                        score = search._score(agent, proj, fn, source, 1, None)
+                        score = search._score(agent, proj, fn, candidate, 1, None)
                     if score is None or (score <= 0 and not replay_order):
                         raise RuntimeError('Synthetic candidate did not reach the ordinary judge.')
                     scores.append(score)
@@ -145,7 +152,7 @@ def benchmark(root, functions, variants, workers, slots, declarations, full_sear
         history = net.store.one('SELECT COUNT(*) AS n FROM reuse_trials')['n']
         digest_rows = [(row['matched'], row['tested']) for row in results] if replay_order else results
         return dict(functions=functions, variants=variants, workers=workers, slots=slots,
-                    header_bytes=len(header.encode()), seconds=seconds,
+                    header_bytes=len(header.encode()), source_statements=source_statements, seconds=seconds,
                     compiler_invocations=metrics['pool_compiler_invocations'],
                     compiles_per_second=metrics['pool_compiler_invocations']/seconds,
                     history_rows=history, scores_sha256=hashlib.sha256(json.dumps(digest_rows).encode()).hexdigest(),
@@ -170,6 +177,7 @@ def main():
     parser.add_argument('--declarations', type=int, default=3000)
     parser.add_argument('--replay-order', choices=('current', 'cpu', 'metal'),
                         help='Replay a fixed synthetic proposal pool with one known exact variant per function.')
+    parser.add_argument('--source-statements', type=int, default=0, help='Neutral statement pairs per function body.')
     parser.add_argument('--ranker', type=Path, help='Compiled deep_candidate_metal helper.')
     args = parser.parse_args()
     if args.replay_order and args.full_search:
@@ -179,8 +187,8 @@ def main():
     if args.ranker:
         args.ranker = args.ranker.resolve()
     if not (1<=args.functions<=256 and 1<=args.variants<=256 and 1<=args.workers<=256
-            and 1<=args.slots<=256 and 0<=args.declarations<=10000 and 1<=args.search_seconds<=7200):
-        parser.error('Use 1–256 functions, variants, workers and slots; 0–10000 declarations.')
+            and 1<=args.slots<=256 and 0<=args.declarations<=10000 and 0<=args.source_statements<=500 and 1<=args.search_seconds<=7200):
+        parser.error('Use 1–256 functions, variants, workers and slots; 0–10000 declarations and 0–500 statement pairs.')
     if not toolchains.installed('gcc-2.7.2-kmc'):
         parser.error('Install the pinned gcc-2.7.2-kmc compiler first; this tool never downloads it.')
     # Repair-outcome analysis runs asynchronously, outside the measured search.

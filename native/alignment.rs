@@ -1,4 +1,6 @@
+mod candidate_checks;
 mod rank_literals;
+mod source_lex;
 
 use std::slice;
 

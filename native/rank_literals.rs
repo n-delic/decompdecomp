@@ -1,21 +1,9 @@
 // Match the ASCII integer-token behavior of decomprepair.repair_tokens.
 // The caller keeps Python as the fallback for non-ASCII or malformed text.
+use super::source_lex::{non_code, MAX_SOURCE};
 use std::{slice, str};
 
 const REJECTED: usize = usize::MAX;
-const MAX_SOURCE: usize = 256 * 1024;
-
-fn quoted_end(bytes: &[u8], quote: u8) -> Option<usize> {
-    let mut index = 1;
-    while index < bytes.len() {
-        match bytes[index] {
-            byte if byte == quote => return Some(index + 1),
-            b'\\' => index += 2,
-            _ => index += 1,
-        }
-    }
-    None
-}
 
 fn integer(bytes: &[u8]) -> (usize, Option<u32>) {
     let hex = matches!(bytes, [b'0', b'x' | b'X', digit, ..] if digit.is_ascii_hexdigit());
@@ -43,10 +31,11 @@ fn integer(bytes: &[u8]) -> (usize, Option<u32>) {
 fn extract(mut bytes: &[u8], out: &mut [u32]) -> Option<usize> {
     let mut count = 0;
     while let Some(&byte) = bytes.first() {
-        let advance = match bytes {
-            [b'/', b'/', rest @ ..] => 2 + rest.iter().position(|&b| b == b'\n').unwrap_or(rest.len()),
-            [b'/', b'*', rest @ ..] => 4 + rest.windows(2).position(|pair| pair == b"*/")?,
-            [b'\'' | b'"', ..] => quoted_end(bytes, byte)?,
+        if let Some(length) = non_code(bytes).ok()? {
+            bytes = &bytes[length..];
+            continue;
+        }
+        let advance = match byte {
             _ if byte.is_ascii_alphabetic() || byte == b'_' => {
                 1 + bytes[1..].iter().take_while(|b| b.is_ascii_alphanumeric() || **b == b'_').count()
             }

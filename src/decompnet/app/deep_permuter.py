@@ -1830,9 +1830,9 @@ class Search(Permuter):
             self.report()
             return duplicate[0]
         if not fork and not self.measuring_baseline and source != fn['best_source']:
-            from decomprepair.repair_preflight import invalid_call
+            from .random_safety import invalid_candidate_call
             header = self.net._context(proj['id'], fn['unit'])['header']
-            if invalid_call(source, fn['name'], header):
+            if invalid_candidate_call(source, fn['name'], header):
                 self.rejected += 1
                 self.recipe(fn, source, best, None, 'rejected')
                 self.report()

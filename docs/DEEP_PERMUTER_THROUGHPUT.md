@@ -189,3 +189,42 @@ For a source checkout, run `uv run --locked python packaging/build_alignment.py`
 with Rust installed. Restart after building the library. To compare against
 Python with the same ranking option enabled, start the app with
 `DECOMP_NATIVE_RANK_LITERALS=0`.
+
+## Candidate source checks
+
+A compile session reuses source-shape and call-arity results between admission
+and judging. The bounded caches use exact source text, function spelling and
+header as applicable. The Rust scanner counts nested compound updates and
+empty constant `do` loops for supported ASCII inputs. Non-ASCII text, raw
+strings, unterminated comments or strings, oversized inputs and unavailable
+native libraries use the Python checks. Call-arity analysis still uses the
+existing Python implementation.
+
+On an Apple M5 Max, the isolated source-shape scan took 5.2 µs in Rust versus
+230 µs in Python at the median for a synthetic body with 80 neutral statement
+pairs. The compile-path benchmark produced these results across five runs per
+configuration, alternating configurations with four workers and four slots.
+
+| Candidate checks | Median compiler invocations/s | Range |
+| --- | ---: | ---: |
+| Before the change | 92.3 | 79.4–103.0 |
+| Session caches with Python scanner | 94.7 | 75.0–100.5 |
+| Session caches with Rust scanner | 94.8 | 84.9–114.5 |
+
+Each run made 192 compiler invocations, wrote 192 history rows, and produced
+the same score digest. Run-to-run variation was larger than the change in
+median throughput. The benchmark uses fixed proposals through compile
+admission and the real KMC compiler and judge. It excludes candidate generation
+and does not establish a match-rate gain on real projects.
+
+With the pinned compiler installed and scratch data and temporary directories,
+build the native library first and then run:
+
+```sh
+uv run --locked python packaging/build_alignment.py
+PYTHONPATH=src uv run --locked python tools/benchmark_deep_pipeline.py \
+  --functions 12 --variants 16 --workers 4 --slots 4 --declarations 600 --source-statements 80
+```
+
+Set `DECOMP_NATIVE_CANDIDATE_CHECKS=0` for the cache-only run. For the baseline,
+use the same benchmark fixture with the application code from before this change.

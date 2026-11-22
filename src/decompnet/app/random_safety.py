@@ -3,12 +3,19 @@
 This is not a C equivalence checker. Near misses remain exploratory and only the normal
 exact judge can accept a match. A checkpoint's functionality is explicitly unverified.
 """
+import ctypes
 import hashlib
 import json
+import os
 import re
 import time
+from functools import lru_cache
 
+from decomprepair.repair_preflight import invalid_call
+
+from ..compile_sessions import current
 from ..forks.csource import _COMMENT_OR_STRING, _blank
+from ..instruction_alignment import native_symbol
 
 PREFIX = 'permuter-checkpoint:'
 
@@ -32,9 +39,69 @@ def empty_do_loops(source):
     return len(re.findall(pattern, clean))
 
 
+class _Counts(ctypes.Structure):
+    _fields_ = [('nested', ctypes.c_size_t), ('empty_do', ctypes.c_size_t)]
+
+
+@lru_cache(maxsize=1)
+def _kernel():
+    if os.environ.get('DECOMP_NATIVE_CANDIDATE_CHECKS') == '0':
+        return None
+    try:
+        scan = native_symbol('dd_candidate_checks_v1')
+    except (OSError, AttributeError):
+        return None
+    scan.argtypes = [ctypes.c_char_p, ctypes.c_size_t, ctypes.POINTER(_Counts)]
+    scan.restype = ctypes.c_uint8
+    return scan
+
+
+def _native_counts(source):
+    if len(source) <= 256 * 1024 and source.isascii() and (scan := _kernel()) is not None:
+        result = _Counts()
+        if scan(source.encode('ascii'), len(source), ctypes.byref(result)):
+            return result.nested, result.empty_do
+    return None
+
+
+def _counts(source):
+    if (result := _native_counts(source)) is not None:
+        return result
+    return nested_updates(source), empty_do_loops(source)
+
+
+def _remember(cache, key, calculate, *args):
+    if key not in cache:
+        cache[key] = calculate(*args)
+        if len(cache) > 32:
+            cache.popitem(last=False)
+    else:
+        cache.move_to_end(key)
+    return cache[key]
+
+
+def _shapes(source, session):
+    if session is not None and len(source) <= 32 * 1024:
+        return _remember(session.candidate_shapes, source, _counts, source)
+    return _counts(source)
+
+
 def unsafe_update(parent, candidate):
-    return (nested_updates(candidate)>nested_updates(parent)
-            or empty_do_loops(candidate)>empty_do_loops(parent))
+    session = current()
+    baseline = _shapes(parent, session)
+    changed = _shapes(candidate, session)
+    return changed[0] > baseline[0] or changed[1] > baseline[1]
+
+
+def invalid_candidate_call(source, name, header):
+    """Reuse an arity verdict only with the same function spelling, C and header."""
+    session = current()
+    if session is None or len(source) > 32 * 1024 or len(header) > 1024 * 1024:
+        return invalid_call(source, name, header)
+    if header != session.candidate_header:
+        session.candidate_header = header
+        session.candidate_calls.clear()
+    return _remember(session.candidate_calls, (source, name), invalid_call, source, name, header)
 
 
 def checkpoint(net, fn):

@@ -53,3 +53,64 @@ def test_empty_do_detection_masks_raw_string_quotes_without_hiding_real_code():
     literal = 'void f(void){puts(R"tag(" do {} while(0); ")tag");}'
     assert not random_safety.unsafe_update(original, literal)
     assert random_safety.unsafe_update(original, literal[:-1]+'do {} while(0);}')
+
+
+def test_search_session_reuses_shape_and_arity_checks_by_exact_inputs(monkeypatch):
+    from decompnet.compile_sessions import session
+
+    shape_calls = []
+    checks = []
+    counts = random_safety._counts
+
+    def count(source):
+        shape_calls.append(source)
+        return counts(source)
+
+    def invalid(source, name, header):
+        checks.append((source, name, header))
+        return header
+
+    monkeypatch.setattr(random_safety, '_counts', count)
+    monkeypatch.setattr(random_safety, 'invalid_call', invalid)
+    with session() as state:
+        for _ in range(3):
+            assert random_safety.unsafe_update('a += 1;', 'a += b += 1;')
+            assert random_safety.invalid_candidate_call('a();', 'f', 'one') == 'one'
+        assert shape_calls == ['a += 1;', 'a += b += 1;']
+        assert checks == [('a();', 'f', 'one')]
+        assert random_safety.invalid_candidate_call('a();', 'g', 'one') == 'one'
+        assert random_safety.invalid_candidate_call('a();', 'g', 'two') == 'two'
+        assert len(state.candidate_calls) == 1
+        for index in range(40):
+            candidate = str(index)
+            random_safety.unsafe_update('a += 1;', candidate)
+            random_safety.invalid_candidate_call(candidate, 'g', 'two')
+        assert len(state.candidate_shapes) == len(state.candidate_calls) == 32
+        assert shape_calls.count('a += 1;') == 1
+    with session():
+        assert random_safety.invalid_candidate_call('a();', 'f', 'one') == 'one'
+    assert checks.count(('a();', 'f', 'one')) == 2
+
+
+def test_native_source_scan_preserves_python_checks():
+    from random import Random
+
+    import pytest
+
+    if random_safety._kernel() is None:
+        pytest.skip('native candidate checks library has not been built')
+    assert random_safety._native_counts('a += b <<= 5; do /*empty*/ { ; } while(0x0U);') == (1, 1)
+    for source in ('"unterminated', '/* unterminated', 'R"(raw)"', 'é', ' ' * (256 * 1024 + 1)):
+        assert random_safety._native_counts(source) is None
+        assert random_safety._counts(source) == (random_safety.nested_updates(source), random_safety.empty_do_loops(source))
+
+    tokens = ['do', 'undo', ' do ', 'while', '0', '0x0L', '0X000U', 'x', '(', ')', '{', '}', ';', ' ',
+              '\x1c', '\v', '\n', '+=', '<<=', '>>=', '&=', '/=', '-==', '>>==', '// fake +=\n',
+              '/* do; while(0); */', '"do; while(0);"', "';'", '"', '/*', '*/', 'do;while(0);']
+    rng = Random(49)
+    cases = [''.join(rng.choices(tokens, k=rng.randrange(32))) for _ in range(4000)]
+    cases += ['do'+gap+'{;;}'+gap+'while(00'+suffix+');'
+              for gap in ('', '\r\t', '\x1d', '/* gap */') for suffix in ('', 'UL', 'X0', 'x', 'U U')]
+    for source in cases:
+        expected = random_safety.nested_updates(source), random_safety.empty_do_loops(source)
+        assert random_safety._counts(source) == expected, repr(source)

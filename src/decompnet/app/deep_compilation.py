@@ -187,8 +187,6 @@ def chunk(search, agent, proj, fn, sources, fork):
     if (pool is None or fork or not hasattr(search.net, 'compiled_ahead')
             or len(getattr(search, 'compiler_profiles', [])) > 1):
         yield;return
-    from decomprepair.repair_preflight import invalid_call
-
     from . import random_safety
     header = search.net._context(proj['id'], fn['unit'])['header']
     tickets = {}
@@ -206,7 +204,7 @@ def chunk(search, agent, proj, fn, sources, fork):
             for source in sources:
                 if len(tickets) >= min(share, search.limit-search.tested):break
                 if source in tickets or source == fn['best_source']:continue
-                if random_safety.unsafe_update(fn['best_source'], source) or invalid_call(source, fn['name'], header):continue
+                if random_safety.unsafe_update(fn['best_source'], source) or random_safety.invalid_candidate_call(source, fn['name'], header):continue
                 key = search._recent_key(proj, fn, source, fork)
                 if key is None:continue  # External includes/custom compilers need ordinary fresh capture.
                 recent=getattr(search,'_recent_candidates',{}).get(key)
