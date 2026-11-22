@@ -448,6 +448,10 @@ enum { EV_SP = 4, EV_SI = 5, EV_AI = 6, EV_VI = 7, EV_PI = 8, EV_DP = 9 };
 int port_ai_register(uint32_t addr, int write, uint32_t value, uint32_t *read); /* audio.c */
 static int si_register(uint32_t addr, int write, uint32_t value, uint32_t *read); /* below, with the PIF */
 static uint32_t rom32(size_t o); /* below, with the boot */
+/* A CPU write to cartridge ROM holds its bus value while PI I/O is busy. Until instruction-level PI timing is
+   available, release it on the next retrace; the ROM itself remains read-only. */
+static uint32_t cart_io_last;
+static int cart_io_busy;
 /* Raw PI transfers bypass the libultra host imports. The bootstrap wasm stack is in the
    first 64 KiB (build.py's stack-first), so give it a bus address outside console RAM. */
 #define BOOT_STACK_SIZE 0x10000u
@@ -467,7 +471,7 @@ static int pi_register(uint32_t addr, int write, uint32_t value, uint32_t *read)
     switch (addr) {
     case 0xA4600000u: if (write) dram = value; else *read = dram; return 1;
     case 0xA4600004u: if (write) cart = value; else *read = cart; return 1;
-    case 0xA4600010u: if (!write) *read = 0; return 1; /* synchronous: never busy */
+    case 0xA4600010u: if (!write) *read = cart_io_busy ? 2u : 0u; return 1;
     case 0xA4600008u: if (!write) *read = 0; return 1; /* cartridge writes are ignored */
     case 0xA460000Cu: {
         if (!write) { *read = 0; return 1; }
@@ -492,13 +496,18 @@ uint64_t port_io_load(uint64_t addr) {
     uint32_t v;
     if (port_ai_register((uint32_t)addr, 0, 0, &v) || si_register((uint32_t)addr, 0, 0, &v) || pi_register((uint32_t)addr, 0, 0, &v)) { wbe32(IO_SCRATCH, v); return IO_SCRATCH; }
     if (addr >= 0xB0000000u && addr < 0xBFC00000u) { /* the cartridge, read directly (a racing game checks its own word) */
-        wbe32(IO_SCRATCH, rom32((size_t)((addr - 0xB0000000u) & ~3u)));
+        wbe32(IO_SCRATCH, cart_io_busy ? cart_io_last : rom32((size_t)((addr - 0xB0000000u) & ~3u)));
         return IO_SCRATCH + (addr & 3);
     }
     return IO_FAR(addr);
 }
 uint64_t port_io_store(uint64_t addr, uint64_t value) {
     if (addr < 0xA0800000u) return addr - 0x20000000u;
+    if (addr >= 0xB0000000u && addr < 0xBFC00000u) {
+        cart_io_last = (uint32_t)value;
+        cart_io_busy = 1;
+        return IO_SCRATCH + 4;
+    }
     if (addr == SP_STATUS) return IO_SCRATCH + 4; /* a command (clear halt, set a signal): nothing to keep */
     if (port_ai_register((uint32_t)addr, 1, (uint32_t)value, NULL) || si_register((uint32_t)addr, 1, (uint32_t)value, NULL)
             || pi_register((uint32_t)addr, 1, (uint32_t)value, NULL))
@@ -586,6 +595,7 @@ static void port_audio_interrupts(void) {
 }
 static void retrace(void) {
     vi_count++;
+    cart_io_busy = 0;
 #ifndef PORT_WEB
     if (getenv("PORT_RT64")) port_rt64_retrace(vi_count & 1);
 #endif

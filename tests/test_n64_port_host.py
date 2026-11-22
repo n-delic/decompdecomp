@@ -290,21 +290,28 @@ def test_the_cartridge_reads_as_the_rom(tmp_path):
 #define IO_SCRATCH 0x000A0000u
 #define IO_FAR(a) (a)
 static uint8_t M[0xA0010], rom[0x1000]; static size_t rom_size = sizeof rom;
+static uint32_t cart_io_last; static int cart_io_busy;
 static void wbe32(uint32_t a, uint32_t v) { M[a] = v >> 24; M[a + 1] = v >> 16; M[a + 2] = v >> 8; M[a + 3] = v; }
 static int port_ai_register(uint32_t a, int w, uint32_t v, uint32_t *r) { (void)a; (void)w; (void)v; (void)r; return 0; }
 static int si_register(uint32_t a, int w, uint32_t v, uint32_t *r) { (void)a; (void)w; (void)v; (void)r; return 0; }
 static int pi_register(uint32_t a, int w, uint32_t v, uint32_t *r) { (void)a; (void)w; (void)v; (void)r; return 0; }
-""" + _function(HOST.read_text(), "rom32") + "\n" + _function(HOST.read_text(), "port_io_load") + """
+""" + _function(HOST.read_text(), "rom32") + "\n" + _function(HOST.read_text(), "port_io_load") + "\n" + _function(HOST.read_text(), "port_io_store") + """
 int main(void) {
     rom[0x578] = 0x34; rom[0x579] = 0x21; rom[0x57A] = 0x89; rom[0x57B] = 0x65;
     uint64_t w = port_io_load(0xB0000578u), h = port_io_load(0xB000057Au), b = port_io_load(0xB0000579u);
     printf("%02X%02X%02X%02X %02X%02X %02X\\n", M[w], M[w + 1], M[w + 2], M[w + 3], M[h], M[h + 1], M[b]);
+    port_io_store(0xB0000580u, 0xE4CD7BFDu);
+    w = port_io_load(0xB0000578u);
+    printf("%02X%02X%02X%02X ", M[w], M[w+1], M[w+2], M[w+3]);
+    cart_io_busy = 0;
+    w = port_io_load(0xB0000578u);
+    printf("%02X%02X%02X%02X\\n", M[w], M[w+1], M[w+2], M[w+3]);
     return 0;
 }
 """)
     subprocess.run([cc, "-o", str(tmp_path / "t"), str(source)], check=True, capture_output=True)
     done = subprocess.run([str(tmp_path / "t")], capture_output=True, text=True, check=True)
-    assert done.stdout.split() == ["34218965", "8965", "21"]
+    assert done.stdout.split() == ["34218965", "8965", "21", "E4CD7BFD", "34218965"]
 
 
 def test_the_host_names_no_one_games_functions(tmp_path):
@@ -593,6 +600,7 @@ def test_raw_pi_reads_rom_into_console_ram_and_compatibility_stack(tmp_path):
 static uint8_t *M;
 static uint8_t rom[] = {0, 1, 2, 3, 4, 5};
 static size_t rom_size = sizeof rom;
+static int cart_io_busy;
 static int interrupts;
 enum { EV_PI = 8 };
 static void post_event(int event) { assert(event == EV_PI); interrupts++; }
@@ -615,6 +623,9 @@ int main(void) {
     assert(pi_register(0xA460000Cu, 1, 4, NULL));
     assert(M[0x1403FE94u] == 0);
     assert(pi_register(0xA4600010u, 0, 0, &read) && read == 0);
+    cart_io_busy = 1;
+    assert(pi_register(0xA4600010u, 0, 0, &read) && read == 2);
+    cart_io_busy = 0;
     assert(pi_register(0xA4600000u, 1, port_stack_bus(0xFF00u), NULL));
     assert(pi_register(0xA460000Cu, 1, 3, NULL));
     assert(!memcmp(M + 0xFF00u, rom + 2, 4));

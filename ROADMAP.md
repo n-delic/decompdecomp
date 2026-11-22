@@ -1397,7 +1397,8 @@ Left:
   credits), and a race started from its menus (Arcade, car selection, the start line, driving). It plays in a browser
   with the keyboard or a gamepad, and its sound (`PORT_LIVE`); its saves go to an EEPROM file. SRAM through extended
   PI DMA is supported; raw PI SRAM access, the Controller Pak, the 16 Kbit EEPROM and flash saves remain planned, as
-  does automatic detection of saved C that relies on adjacent stack objects. Also planned are the
+  does automatic detection of saved C that relies on adjacent stack objects. Cartridge CPU-write bus latching
+  clears at the next retrace; instruction-level PI busy timing remains planned. Also planned are the
   resampler's exact taps, and a run of the host and its live view on Windows (they compile for it, untried);
 - the 19 switches with wrong case labels corrected in the racing game's decomp (the judge now catches them: Check
   again unmatches them, and the port's overrides are the corrected C), then their overrides go;
