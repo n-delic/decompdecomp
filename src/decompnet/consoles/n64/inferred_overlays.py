@@ -266,3 +266,75 @@ def drop_pointer_fragments(image, found, taken=()):
         if not referenced:
             remove.update(start for start,_,_ in group)
     return [segment for segment in found if segment[0] not in remove]
+
+
+def split_concatenated(image, found, check=lambda: None):
+    """Split adjacent banks when two called entries share an address and a data gap."""
+    from ...arch.mips_code_recovery import called_extent
+
+    result, changed = [], set()
+    for lo, hi, vram in found:
+        check()
+        if lo < 0 or hi > len(image) or hi-lo < 8192 or (lo | hi) % 4:
+            result.append((lo, hi, vram))
+            continue
+        words = struct.unpack_from(f'>{(hi-lo)//4}I', image, lo)
+        targets = {0x80000000 | ((word & 0x3ffffff) << 2) for word in words if word >> 26 == 3}
+        entries = [lo+i*4 for i, word in enumerate(words)
+                   if is_frame(word) or i >= 2 and words[i-2] == JR_RA]
+        candidates = []
+        for target in targets:
+            delta = target - vram
+            boundary = lo + delta
+            if delta < 4096 or boundary + 4096 > hi or delta % 16:
+                continue
+            if not called_extent(image, lo, hi, target, cpu='vr4300'):
+                continue
+            stops = [at+8 for at in range(max(lo, boundary-0x2000), boundary-72, 4)
+                     if image[at:at+4] == b'\x03\xe0\x00\x08' and not any(image[at+8:at+72])]
+            if not stops:
+                continue
+            end = stops[-1]
+            if end <= lo or boundary - end < 64:
+                continue
+            early = [at for at in entries if at < end]
+            late = [at for at in entries if at >= boundary]
+            new_shift, old_shift = target-lo, vram-lo
+            first_words = struct.unpack_from(f'>{(end-lo)//4}I', image, lo)
+            second_words = struct.unpack_from(f'>{(hi-boundary)//4}I', image, boundary)
+            first_calls = {0x80000000 | ((word & 0x3ffffff) << 2) for word in first_words if word >> 26 == 3}
+            second_calls = {0x80000000 | ((word & 0x3ffffff) << 2) for word in second_words if word >> 26 == 3}
+            before = sum(at + new_shift in first_calls for at in early)
+            before_old = sum(at + old_shift in first_calls for at in early)
+            after = sum(at + old_shift in second_calls for at in late)
+            if before >= 8 and before >= 4*max(1, before_old) and after >= 8:
+                candidates.append((end, boundary, target))
+        if len(candidates) != 1:
+            result.append((lo, hi, vram))
+            continue
+        end, boundary, target = candidates[0]
+        result.extend(((lo, end, target), (boundary, hi, vram + boundary-lo)))
+        changed.update((lo, boundary))
+    return sorted(result), changed
+
+
+def extend_adjacent_frame(image, found):
+    """Extend an inferred bank through a closed frame cut at its tail."""
+    from ...arch.mips_code_recovery import called_extent
+
+    result = list(sorted(found))
+    for index, (lo, hi, vram) in enumerate(result[:-1]):
+        next_start = result[index + 1][0]
+        if not hi < next_start <= len(image) or (hi | next_start) % 4:
+            continue
+        candidates = []
+        for at in range(max(lo + 8, hi - 32), hi, 4):
+            if (int.from_bytes(image[at-8:at-4], 'big') != JR_RA
+                    or not is_frame(int.from_bytes(image[at:at+4], 'big'))):
+                continue
+            length = called_extent(image, at, next_start, vram + at-lo, cpu='vr4300')
+            if length and at + length == next_start:
+                candidates.append(at)
+        if len(candidates) == 1:
+            result[index] = (lo, next_start, vram)
+    return result
