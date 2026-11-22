@@ -16720,3 +16720,36 @@ What decided each step (GCC 2.7.2):
 
 decomp-repair 0.5.565: `counter_append_scope`, `loop_limit_reassign`, `outer_cursor_entry_copy`, `loaded_pointer_reuse`,
 `entry_base_init`. 0.5.567: `live_range_retarget`, `pointer_local_merge`, `identical_arm_collapse`.
+
+## A rejection loop's retry goto pinned in `do { } while (0)` (N64, `gcc-2.7.2-kmc`, 154 instructions, 475 -> 0)
+
+Compiler and flags: `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`. Evidence level: one function matched exactly
+(the app's judge, "matched best 0"), the four rows below measured with the standalone judge worker; the reason in the
+last paragraph is a hypothesis, not read from the compiler's source.
+
+The function picks a random table entry and compares it with every slot except the owner's own; when one is closer than
+a constant it starts over from the pick. m2c's draft (475, after earlier agents) had a skip-join: `if (V == CUR) { T = V + 1;
+goto next; } T = V + 1; if (!(!(dist < 3.0f))) goto retry; next: V = T; if (T >= n) break;`. All 154 instructions
+matched except the loop head and the loop test: the target has `beql V, CUR` whose slot is `addiu T,V,1`, the call,
+`bc1t retry` with the same `addiu` in its slot, one `move V,T` and the test on `T`; the draft compiled to `bne` over the
+call, a `j` and the increment folded into `V`.
+
+| step | edit | alone | combined |
+| --- | --- | --- | --- |
+| 0 | saved best | 475 | 475 |
+| A | skip-join as `if (V != CUR) { if (dist < 3.0f) goto retry; }  T = V + 1; V = T;`, label removed (`do {} while` or `for (;;)` with `break`, a float temp or the call inline: all the same) | 480 | 480 |
+| B | the retry `goto` pinned: `if (dist < 3.0f) { do { goto retry; } while (0); }` | 475 (on the draft) | 0 with A |
+
+Neither step helps alone; the second loop of the same function, which has no retry branch, already matched with form A.
+After A the diff was only the delay slots: the draft's `beq` took `sll $v0,$v0,2` from the fall-through for its slot and the
+`bc1t`'s slot stayed a `nop`; the target's `beql` took the increment from the label (annulled), which freed the label
+so the `bc1t` could take the increment from the fall-through. Failed variants (all 480): the call inline in the `if`,
+the `for (;;)` form, a `do { } while`, and `do { goto retry; } while (0)` around the whole call and test (480), around the
+increment (540); a reversed compare `if (d >= 3.0f) {} else goto retry;` gave 820.
+
+Why (hypothesis): a branch to a label outside the innermost loop is rated "very unlikely" by reorg.c's
+`mostly_true_jump`, and the loop notes a `do { } while (0)` leaves behind are what make the retry label look outside it;
+`beq`, rated unlikely too, then fills its slot from the target thread. Only the matching result is evidenced.
+
+decomp-repair 0.5.566: `retry_goto_scope` proposes A with B as one child, A alone and B alone (the draft's `goto` is
+not touched by B when it is already inside `do { }`). Reproduced from the saved best: child 0 scores 0, the others 480 and 475.
