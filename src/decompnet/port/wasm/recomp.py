@@ -540,6 +540,10 @@ def _write(path: Path, text: str) -> None:
 BRIDGE_RUNTIME = r'''
 /* the MIPS stack recompiled code runs on: one per host thread, handed down as it calls into the game's C and back */
 __thread uint32_t port_recomp_sp;
+/* C called by the interpreter can call back into recompiled code. Its next frame must be below the
+   interpreter's live frames, rather than the older stack pointer saved by the recompiled caller. */
+uint32_t port_recomp_stack_enter(uint32_t sp) { uint32_t saved = port_recomp_sp; port_recomp_sp = sp; return saved; }
+void port_recomp_stack_leave(uint32_t saved) { port_recomp_sp = saved; }
 void port_recomp_thread(int number) { port_recomp_sp = 0x%(stacks)Xu + (uint32_t)(number + 2) * 0x%(size)Xu - 0x100u; }
 static void port_recomp_frame(recomp_context *c, int words) {
     memset(c, 0, sizeof *c);
