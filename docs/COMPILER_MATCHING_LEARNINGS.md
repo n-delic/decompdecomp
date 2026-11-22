@@ -13837,3 +13837,10 @@ reproduces its step from the saved source (3685 -> 3015, 2245 -> 1285 -> 1245, 1
 In one N64 function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, inverting a braced null-return guard around a field store reproduced the linked target exactly (score 400 to 0). The existing guard inversion had missed the draft because it treated the guard's closing brace as the function end. Evidence: one saved example plus library and app generation regressions.
 
 In one N64 variable-length byte decoder built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, the draft narrowed the accumulator and return type to `u8`. Widening both to `u32` reproduced the linked target exactly (score 400 to 0); widening only the accumulator left a 200-point difference. The repair requires the target's full-width accumulation and return instructions. Evidence: one saved example plus synthetic generation and routing tests.
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, an N64 display-list routine had the order of
+two adjacent word stores reversed. Moving the literal command word before the zero payload word at
+the next offset reduced the linked-byte judge score from 450 to 410. Both stores use the same local
+pointer and disjoint word offsets. The target-guided rule reproduced the improvement from the saved
+draft. Evidence is one measured improvement and synthetic cases for volatile, overlapping, and
+separated stores. The function remains unmatched.
