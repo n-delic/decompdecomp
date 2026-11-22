@@ -15784,3 +15784,14 @@ was neutral. Using a typed record for the link without the
 qualifiers was also neutral. The hypothesis requires the same
 call, stack offsets and pointer instruction on both sides of the
 diff, with just the pointer's position changed.
+
+### Write a selected byte directly in its branch
+
+In one private N64 example built with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, replacing a volatile
+local halfword spill with direct branch stores recovered the target
+frame size and reduced the linked score from 391 to 185. The proposal
+preserves the source predicates and any intervening reads. Correcting
+a separate branch operand using its target relocation reduced the
+score another 20 points, from 185 to 165. The remaining differences
+are in register allocation and index scheduling.
