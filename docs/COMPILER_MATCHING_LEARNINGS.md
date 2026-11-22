@@ -1711,6 +1711,18 @@ identified by tracing missing declarations. All six pairs failed when the
 empty-stub signature recovery was disabled. All six saved matches passed a
 fresh compile and reconstructed the same cartridge together.
 
+For an overlay call with one destination, IDO 7.1 can emit the same
+pre-relocation bytes after renaming an empty C89 placeholder. The ELF
+relocation still points to the placeholder's defined text symbol. In an
+isolated N64 replay, replacing the placeholder definition with an external
+prototype preserved the original implicit `int` and argument promotions,
+and the compiler emitted an undefined reference that the loader could bind.
+The recovered candidates used
+`-O2 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul -DNON_MATCHING`.
+The controlled fixture recompiles both forms and requires the original
+instruction bytes and relocation sites, and it also checks that a
+nonempty helper remains defined.
+
 ### Externalizing IDO overlay constant pools and BSS can change instructions
 
 An isolated N64 replay found compiler-emitted, unnamed section references even
@@ -14330,3 +14342,5 @@ cumulative children, 345, 325 and 265 alone). From the saved best the three appl
 (`tests/test_byte_pair_compare_arms.py` checks they are offered and compile; the library's `test_byte_pair_chain.py`
 checks they compose). What the permuter still cannot do: choose the pin (`key = 0; key = y;`) without the shape that
 needs it, or find the first arm's polarity change by score, since written alike it measures 755 against the best's 380.
+
+In one N64 byte-mask routine built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, complementing one byte and ORing it with another and a constant made the compiler materialize a negative word mask. Narrowing the intermediate OR to `u8` before combining the constant reproduced the linked target exactly (score 330 to 0). The diff-gated candidate keeps the final byte assignment and requires the measured immediate difference. Evidence: one saved example and synthetic generation and routing tests.
