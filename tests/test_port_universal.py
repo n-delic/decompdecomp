@@ -28,6 +28,7 @@ def test_the_app_export_asks_for_a_universal_build_and_play_does_not(tmp_path, m
     monkeypatch.setattr(play, "unverified", lambda net, slug, log=print: set())  # (the save is whole)
     monkeypatch.setattr(play, "library_c", lambda net, slug: {})  # (no ultralib units: port/ultralib.py)
     monkeypatch.setattr(play, "library_names", lambda net, slug: {})  # (no library names to rename)
+    monkeypatch.setattr(play, "relative_bank_code", lambda net, slug, log=print: set())  # (no banked overlays)
     monkeypatch.setattr(play, "recompiled", lambda net, slug, log=print: None)  # (no recompiled C)
     monkeypatch.setattr(play, "function_headers", lambda net, slug: {})  # (headers as the save names them)
     monkeypatch.setattr(build, "build", lambda *a, **k: asked.update(k) or program)
