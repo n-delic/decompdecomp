@@ -1405,3 +1405,14 @@ def test_masked_rank_counter_routes_to_kmc(monkeypatch):
                         lambda text, name, header, diff: [('masked_rank_fixture', text)])
     assert 'masked_rank_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'masked_rank_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+
+def test_varbyte_initialization_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_kmc_varbyte_initialization, 'variants',
+                        lambda text, name, header, diff: [('varbyte_initialization_fixture', text)])
+    assert 'varbyte_initialization_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'varbyte_initialization_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))

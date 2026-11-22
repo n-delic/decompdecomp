@@ -14149,3 +14149,5 @@ wrapping decrement and lowered the exact linked score from 13,090 to
 Staging only the final call arguments did not improve the result. This
 is private linked compiler evidence. Synthetic tests cover the measured
 instruction shape, distinct offsets and volatile input rejection.
+
+Two saved N64 variable-byte decoders built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` had drafts that returned an accumulator without initializing it on the single-byte path. Initializing it from the first explicitly byte-sized read and using byte-sized subsequent reads reproduced both linked targets exactly (score 320 to 0). The repair requires the measured byte-mask differences and the full decoder shape. Evidence: two saved examples and synthetic generation and routing tests.
