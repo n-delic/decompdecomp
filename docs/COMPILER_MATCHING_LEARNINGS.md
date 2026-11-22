@@ -17572,3 +17572,24 @@ only these variants: 2820, 870 (chain), 595, 535, 30 (the store moves, each an i
 0 (the all-copies child). `tests/test_walk_shape_wiring.py` checks the draft repairs and the Deep Permuter's local lane.
 Not covered: the position of the node copy in the free-list arm (the chain takes the fourth statement, one function's
 answer; the single children offer the five), and the move of a statement more than five places in a run.
+
+
+## A compared load read before the store of the compared result: `compare_load_stage` (851-instruction ray test)
+
+The same N64 ray test (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, scoring 2) has two near-identical loops. In the first,
+a helper's distance is stored to a local record and compared with a float held in a register; in the second it is compared
+with a radius read through a pointer (`if (dist < M2C_FIELD(obj, f32 *, 0x4C))`). The first loop matched: `c.lt.s`,
+two `nop`, `bc1f`, the store in the delay slot. The second had the store first and an empty delay slot, because the radius
+load follows the store in program order and gcc cannot move a load above a store that may touch the same memory
+(hypothesis, not confirmed in the compiler source). The target loads the radius before the store.
+
+| edit | score |
+| --- | --- |
+| saved best with the first-round `dead_local_stage` child (the plane arm's product staged) | 5060 |
+| the radius read into a local before the store, the compare uses the local | 4810 |
+| `if (dist < X && (store, 1))` and `if ((store = dist) < X)` (comma and assignment-in-test forms) | 5060, 5060 |
+
+Controlled result: the six rows of the hunk (store position, `bc1f` delay slot) equal; one function, not a regression test.
+
+Family: decomp-repair `compare_load_stage` (0.5.598). `tests/test_compare_load_stage_wiring.py` checks the draft repairs
+and the local lane. It reproduces the 5060 -> 4810 step exactly from the saved best.
