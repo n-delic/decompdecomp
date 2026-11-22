@@ -15,8 +15,8 @@ Requests:
   bytes differ from the hosted ones (another build of the game). With "diff": true the reply also carries "diff", the
   app's own side-by-side rows for the candidate (DiffResult.render: the same normalisation compile_and_diff shows).
 - {"op": "function", "slug", "name", "vram" (optional, for overlays)} -> {"name", "vram", "target" (hex), "unit",
-  "header" (the project's typedefs and externs the judge prepends), "compiler": {"toolchain", "flags"} (this
-  function's own profile)}: everything a local search needs to judge without being told the function's bytes
+  "arch", "asm" (the target's assembly text), "header" (the project's typedefs and externs the judge prepends),
+  "compiler": {"toolchain", "flags"} (this function's own profile)}: everything a local search needs to judge without being told the function's bytes
   (the match-function skill's fast_judge.py).
 - {"op": "passes", "slug", "name", "source", "passes" (optional)} -> {"text"}: the compiler's allocation priority
   table, register preferences and scheduling orders for that C under the function's profile (compiler_passes.report,
@@ -127,6 +127,7 @@ def function_info(net, request: dict) -> dict:
     proj, fn = found
     profile = compiler_for(net.cfg(proj), fn["vram"], fn)
     return {"name": fn["name"], "vram": fn["vram"], "target": bytes(fn["target"] or b"").hex(), "unit": fn["unit"],
+            "arch": proj["arch"], "asm": fn["asm"] or "",
             "header": net._context(proj["id"], fn["unit"])["header"],
             "compiler": {"toolchain": profile.get("toolchain"), "flags": list(profile.get("flags") or [])}}
 

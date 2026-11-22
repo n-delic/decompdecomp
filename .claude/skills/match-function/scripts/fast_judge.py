@@ -43,13 +43,13 @@ class Judge:
         self.env = dict(os.environ, DECOMP_HOME=home or os.environ.get("DECOMP_HOME") or os.path.expanduser(DEFAULT_HOME),
                         DECOMP_WINDOW="0", DECOMP_TRAY="0")
         self.proc = None
-        self.header = ""
+        self.header, self.arch, self.asm = "", "mips", ""
         if vram is None or target_hex is None or toolchain is None:
             info = self.ask({"op": "function", "slug": slug, "name": name, **({"vram": vram} if vram is not None else {})})
             vram, target_hex = info["vram"], info["target"]
             toolchain = toolchain or info["compiler"]["toolchain"]
             flags = flags if flags is not None else info["compiler"]["flags"]
-            self.header = info.get("header") or ""
+            self.header, self.arch, self.asm = info.get("header") or "", info.get("arch") or "mips", info.get("asm") or ""
         self.compiler = {"toolchain": toolchain, "flags": list(flags if flags is not None else
                                                               ("-G0", "-mips3", "-mgp32", "-mfp32", "-O2"))}
         self.request = {"op": "judge", "slug": slug, "function": {"name": name, "vram": vram, "target": target_hex},
