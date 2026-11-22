@@ -1711,6 +1711,18 @@ identified by tracing missing declarations. All six pairs failed when the
 empty-stub signature recovery was disabled. All six saved matches passed a
 fresh compile and reconstructed the same cartridge together.
 
+For an overlay call with one destination, IDO 7.1 can emit the same
+pre-relocation bytes after renaming an empty C89 placeholder. The ELF
+relocation still points to the placeholder's defined text symbol. In an
+isolated N64 replay, replacing the placeholder definition with an external
+prototype preserved the original implicit `int` and argument promotions,
+and the compiler emitted an undefined reference that the loader could bind.
+The recovered candidates used
+`-O2 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul -DNON_MATCHING`.
+The controlled fixture recompiles both forms and requires the original
+instruction bytes and relocation sites, and it also checks that a
+nonempty helper remains defined.
+
 ### Externalizing IDO overlay constant pools and BSS can change instructions
 
 An isolated N64 replay found compiler-emitted, unnamed section references even

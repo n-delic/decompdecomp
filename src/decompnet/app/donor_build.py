@@ -436,8 +436,8 @@ def _try(net, proj, private, fn, source, header, agent, job, *, compiled_literal
                     variants = [('overlay-local-functions', *local)]
                 elif aliases:
                     aliases = separate(aliases)
-                    variants = [('overlay-symbols', source_symbol_recovery.rename(source, aliases),
-                                 source_symbol_recovery.rename(header, aliases))]
+                    rebound_source = overlay_donor_aliases.named_bindings(source, header, candidate, aliases)
+                    variants = [('overlay-symbols', *rebound_source)]
                 else:
                     def measure(probe, context, private=private, fn=fn, proj=proj):
                         built = net._compile(private, context, probe, fn)
