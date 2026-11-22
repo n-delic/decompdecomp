@@ -15869,3 +15869,14 @@ A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`
 ### KMC GCC 2.7.2 zero-terminated byte search
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` searched a zero-terminated byte sequence and returned the matching position, including when the requested byte was zero. Its machine draft used a shared pointer result and duplicated return path. Using a byte-sized search key and a single loop with the zero check before advancing changed the diff score from 245 to an exact linked match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the complete source and instruction patterns and preserves handwritten comments by declining to rewrite them.
+
+### Split a clamped float from later uses of the local
+
+In one private N64 function built with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, a divided value was
+clamped to a symmetric float range and consumed entirely inside one
+branch. Giving that value its own local improved the linked score
+from 260 to 240. Splitting the other clamped value alone did not
+improve the score. The proposal checks the clamped value is
+initialized on entry and dead at the exits. The draft remains
+inexact.
