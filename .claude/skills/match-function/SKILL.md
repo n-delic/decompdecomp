@@ -92,7 +92,7 @@ DECOMP_PORT=...` (the token is never printed); `eval "$(setup.py env <holder>)"`
 The other scripts, run with that venv's python (`$UV_PROJECT_ENVIRONMENT/bin/python`): `fast_judge.py FILE.c --slug S
 --function F [--diff [--rows N|all]]` (score, and the app's differing rows: 60 by default, then a "... N more rows" line; `--rows all` shows every row; a session's worktree off an older origin/main may lack `--rows`: `git pull --rebase` there and `setup.py sync <holder>`), `passes.py FILE.c --slug S --function F` (allocation
 priorities, register preferences, scheduler orders), `prove_chain.py --slug S --function F --families a,b|all` (greedy
-chain of library families, scored), `families.py [words]` (the library's families, one line each), `similar.py SLUG FUNC` (matched look-alikes and their saved C; step 1), `grid.py FILE.c --slug S --function F` (every combination of marked alternatives and statement orders, scored; step 2), `shared_types.py list|add SLUG` (the shared header's types; propose or add one, step 2), `regions.py` (a large function region by region, step 2),
+chain of library families, scored), `families.py [words]` (the library's families, one line each), `similar.py SLUG FUNC` (matched look-alikes and their saved C; step 1), `callers.py SLUG FUNC` (every call site with the instructions around it, and whether the callers read a result: the return type; step 1), `grid.py FILE.c --slug S --function F` (every combination of marked alternatives and statement orders, scored; step 2), `shared_types.py list|add SLUG` (the shared header's types; propose or add one, step 2), `regions.py` (a large function region by region, step 2),
 `tools/learnings.py` (evidence entries; `search "<symptom>"` ranks them by symptom, step 3).
 
 ## Connect through the Rust MCP gateway
@@ -202,6 +202,10 @@ and write it to a scratch file for local probes. Use `get_assembly` for the targ
 - **Look at matched look-alikes first**: `similar.py SLUG FUNC` (a session's python) lists matched functions with
   similar instruction patterns (the app's `find_similar`) with their similarity and prints the saved C of the best
   three (`--sources N`, `--out DIR` writes files, `--all` adds unmatched ones). Their spelling is a lead to adapt; judge it.
+- **When the return type or the arguments are unclear, read the callers**: `callers.py SLUG FUNC` (the app's
+  `get_callers`) lists each call site with the instructions around it and a verdict. A caller that reads `$v0`/`$f0`
+  after the call proves the function returns a value (a void function leaves it unread); a matched caller's C is
+  exact; callers that all drop the result only weakly say `void`. Write that result type, then judge.
 - Read the function's notes and history with the corresponding `get_function` sections. Earlier agents' dead ends are
   evidence; repeat none of them.
 - Keep a newly improved candidate as a private search seed even if it contains a suspicious read.

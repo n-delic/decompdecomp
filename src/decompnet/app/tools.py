@@ -782,6 +782,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
         net.try_compiler(agent, slug, function, compiler, flags, source),
     "search_notes": lambda net, agent, slug, query: net.search_notes(slug, query),
     "find_similar": lambda net, agent, slug, function, limit=5: net.find_similar(slug, function, limit),
+    "get_callers": lambda net, agent, slug, function, limit=8: net.get_callers(slug, function, limit),
     "search_learnings": lambda net, agent, slug, symptom, top=5: learnings_search.run(net, agent, slug, symptom, top),
     "guide": lambda net, agent, slug, topic="": guide_text(topic, net.overview(slug).get("platform")),
     "read_file": lambda net, agent, slug, path, start=1, count=200:
@@ -799,7 +800,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
 
 READ_ONLY = frozenset({"search_repair_examples", "get_repair_examples", "get_search_brief","get_boundary_evidence", "get_claims", "resolve_addresses", "project_info", "get_function", "last_diff", "get_context", "read_data", "get_class",
                        "guess_struct", "compiler_map", "list_functions", "search_flags", "search_notes",
-                       "find_similar", "search_learnings", "compiler_source", "guide", "read_file", "search_code", "file_status", "standins_for",
+                       "find_similar", "get_callers", "search_learnings", "compiler_source", "guide", "read_file", "search_code", "file_status", "standins_for",
                        "port_readiness", "get_data_unit", "check_for_pc", "watch_in_emulator"})
 
 # Read-only tools that read a function's saved C or the headers: they read the saved folder first (an edit made there
@@ -851,6 +852,8 @@ def _supports(console, name: str, fork: bool) -> bool:
         return console.reads_structs
     if name == "compiler_map":
         return console.file_compilers if fork else arch.COMPILER_MAP in console.features
+    if name == "get_callers":
+        return not fork  # a project's callees aren't stored yet (ROADMAP.md)
     return True
 
 
@@ -1149,7 +1152,7 @@ def _unoffered(net: RomNetwork, slug: str, name: str) -> str:
     where = f"{console.name} projects" if console.name else "this project"
     subject = "its console"
     why = {"join_functions": "can't join functions yet", "report_boundary": "can't report function ends yet",
-           "get_class": "can't read C++ classes yet", "guess_struct": "can't read struct layouts yet",
+           "get_class": "can't read C++ classes yet", "get_callers": "can't list callers yet", "guess_struct": "can't read struct layouts yet",
            "compiler_map": "can't read a compiler map yet"}.get(name)
     if name == "join_functions" and not net.fork_slug(slug):
         subject, why = "the ROM engine", "can't join functions yet"  # ROM joins are the engine's (#192), not a console's
@@ -1178,7 +1181,7 @@ ALWAYS_LOAD = agents.TOOL_META
 # Tools that read, claim or note without compiling: they share a lane no compile can fill.
 QUICK_TOOLS = frozenset({
     'guide', 'project_info', 'get_claims', 'list_functions', 'get_function', 'get_assembly', 'get_context',
-    'last_diff', 'search_notes', 'search_learnings', 'read_file', 'search_code', 'file_status', 'get_class', 'compiler_map',
+    'last_diff', 'search_notes', 'search_learnings', 'read_file', 'search_code', 'file_status', 'get_class', 'get_callers', 'compiler_map',
     'get_candidate', 'get_compiler_trial', 'get_search_brief', 'family_targets', 'get_boundary_evidence',
     'resolve_addresses', 'read_data', 'standins_for', 'claim_function', 'claim_readable', 'release_function', automatic_assignment.RELEASE,
     'search_repair_examples', 'get_repair_examples', 'upvote_repair_example',
@@ -1842,6 +1845,13 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         """Functions whose instructions look like this one's (copy-pasted code, the same inlined helper,
         template instances), matched ones first, with the matching source of the best one. Start there."""
         return await run(ctx, "find_similar", function=function, limit=limit)
+
+    @tool
+    async def get_callers(ctx: Context, function: str, limit: int = 8) -> str:
+        """Where a function is called from: each call site with its caller and the instructions around the call, and
+        what the callers say about the function's result type (a caller that reads $v0 or $f0 after the call proves
+        it returns a value). Use it when the function's own code leaves its return type or its arguments unclear."""
+        return await run(ctx, "get_callers", function=function, limit=limit)
 
     @tool
     async def search_learnings(ctx: Context, symptom: str, top: int = 5) -> str:

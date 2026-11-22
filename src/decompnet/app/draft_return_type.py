@@ -9,30 +9,47 @@ tested value: a returned value one way, a void function's leftover the other) or
 Given a declaration, m2c writes the `return`s itself, so the candidate is m2c's draft with the function declared
 `s32` (or `void`) in its context. The raw draft is still judged first and stays the stored seed; this is one more
 candidate, so a wrong guess costs one m2c run and one compile.
+
+The callers decide when the function's own exits cannot ('tested', or no reader): a caller that reads the result
+register after the call proves the function returns one (a function returning nothing leaves it unread), and the
+project header's declaration, a matched look-alike or several callers that all drop it say `void`
+(`app/call_evidence.py`; docs/learnings/finding/return-type-from-callers.md has the measurement).
 """
 import re
 
 from .. import seeds
 from ..forks.csource import _blank
 
-# Project setting (`draft_return_type`): off by default until it pays for its compiles (docs/learnings).
+# Project setting (`draft_return_type`), on by default: with the callers deciding where the exits cannot it pays for
+# its compiles (docs/learnings/finding/return-type-from-callers.md; the exits alone did not, draft-start-candidates.md).
 SETTING = 'draft_return_type'
 
 
 def enabled(cfg) -> bool:
-    return bool((cfg or {}).get(SETTING, False))
+    return bool((cfg or {}).get(SETTING, True))
 
 
 def _signature(draft, name):
     return re.search(seeds._SIGNATURE.format(name=re.escape(name)), draft, re.M)
 
 
-def retype(draft: str, name: str, contract: str | None) -> str | None:
-    """The result type the draft should be made with ('s32' or 'void'), or None when it already agrees."""
+def retype(draft: str, name: str, contract: str | None, callers: dict | None = None) -> str | None:
+    """The result type the draft should be made with ('s32', 'f32', ... or 'void'), or None when it already agrees.
+    `callers`: call_evidence.verdict's answer, used where the function's own exits are ambiguous."""
     found = _signature(draft or '', name)
-    if not found or not contract:
+    if not found:
         return None
     void = re.fullmatch(r'\s*(?:static\s+)?void\s*', found['ret']) is not None
+    if callers is not None and contract not in ('value', 'void'):
+        # the exits are ambiguous ('tested' or unread): the callers decide, or nothing does
+        if void and callers['verdict'] == 'value' and callers['strength'] == 'strong' and callers['type']:
+            return callers['type']
+        if not void and callers['verdict'] == 'void':
+            return 'void'
+        if (not void and callers['verdict'] == 'value' and callers['strength'] == 'strong'
+                and callers['type'] in ('f32', 'f64') and found['ret'].strip() != callers['type']):
+            return callers['type']  # the callers read $f0: a float result, not the integer m2c guessed
+        return None
     if void and contract in ('value', 'tested'):
         return 's32'
     if not void and contract == 'void':
@@ -54,14 +71,15 @@ def context(draft: str, name: str, header: str, result: str) -> str:
     return ''.join(kept).rstrip() + f'\n{result} {name}({params or "void"});\n'
 
 
-def candidates(draft, name, arch, asm, context_header, generate, note=''):
+def candidates(draft, name, arch, asm, context_header, generate, note='', callers=None):
     """[('return_type_m2c', source)]: m2c's draft again with the function declared as its exits suggest, when that
-    differs from the draft's own type. `generate(context)` runs m2c (the draft's own call with another context)."""
+    differs from the draft's own type. `generate(context)` runs m2c (the draft's own call with another context);
+    `callers`: call_evidence.verdict for the function."""
     from .. import arch as arches
     from ..seeds import with_m2c_macros
 
     reader = getattr(arches.get(arch), 'return_contract', None) if arch else None
-    result = retype(draft, name, reader(asm) if reader else None)
+    result = retype(draft, name, reader(asm) if reader else None, callers)
     if not result:
         return []
     try:

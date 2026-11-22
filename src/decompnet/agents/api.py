@@ -774,6 +774,9 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
         "search_notes": ("Search notes.", s(query=st("text", True))),
         "find_similar": ("Functions that look like this one, matched ones first, with the best one's source.",
                          s(function=st("function", True), limit=it("how many"))),
+        "get_callers": ("Where a function is called from: each call site with the instructions around it, and the "
+                        "result type the callers show (a caller that reads $v0/$f0 after the call).",
+                        s(function=st("function", True), limit=it("how many callers"))),
         "guide": ("Decompilation know-how; no topic lists topics.", s(topic=st("topic"))),
         "read_file": ("Read a project file with line numbers.", s(path=st("path from the project root", True),
                                                                  start=it("first line"), count=it("lines"))),

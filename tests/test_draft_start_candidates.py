@@ -19,7 +19,7 @@ def test_a_void_draft_whose_exits_set_v0_is_made_again_as_s32():
     assert 'void f(' not in context and context.rstrip().endswith('s32 f(s32 arg0, s32 arg1);') and 's32 g(s32);' in context
 
 
-def test_the_candidate_is_m2c_run_with_that_declaration_and_stays_off_by_default():
+def test_the_candidate_is_m2c_run_with_that_declaration_and_is_on_by_default():
     asm = ('glabel f\n/* 0 80000000 00000000 */  addiu $v0, $a0, 0x1\n/* 4 80000004 00000000 */  jr $ra\n'
            '/* 8 80000008 00000000 */  nop\n')
     seen = []
@@ -30,7 +30,7 @@ def test_the_candidate_is_m2c_run_with_that_declaration_and_stays_off_by_default
     [(family, source)] = draft_return_type.candidates(DRAFT, 'f', 'mips', asm, '', generate)
     assert family == 'return_type_m2c' and 'return g(arg0);' in source and seen[0].rstrip().endswith('s32 f(s32 arg0, s32 arg1);')
     assert draft_return_type.candidates(DRAFT, 'f', 'x86', asm, '', generate) == []  # no reader there yet (ROADMAP)
-    assert not draft_return_type.enabled({}) and draft_return_type.enabled({'draft_return_type': True})
+    assert draft_return_type.enabled({}) and not draft_return_type.enabled({'draft_return_type': False})
 
 
 def _fn(name, vram, code, relocs, source=None):
