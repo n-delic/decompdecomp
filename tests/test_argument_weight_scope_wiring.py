@@ -57,3 +57,33 @@ def test_the_family_reaches_the_deep_passes_local_lane():
     finally:
         monkeypatch.undo()
     assert FAMILY in {family for family, _ in proposals}
+
+
+LIST_SOURCE = HEADER + '''void walk(s32 arg0)
+{
+    void *obj;
+    void *kid;
+    for (obj = gHead; obj != NULL; obj = *(void **)((s8 *)obj + 0x1C)) {
+        for (kid = *(void **)((s8 *)obj + 8); kid != NULL; kid = *(void **)((s8 *)kid + 8)) {
+            prepare(obj, arg0);
+            color(arg0, 0, 0);
+            submit(kid, arg0);
+        }
+        for (kid = *(void **)obj; kid != NULL; kid = *(void **)kid) {
+            color(arg0, 1, 0);
+            submit_child(kid, obj, arg0);
+        }
+    }
+}
+'''
+
+
+def test_the_draft_repairs_offer_the_parameter_calls_wrapped_together():
+    """decomp-repair 0.5.661: the last k calls naming a parameter, each wrapped several deep, are one child (a render-list
+    walk went 110 -> 0 from its saved best; no single wrapper moved it)."""
+    labels = {}
+    texts = draft_repairs.variants(seeds.M2C_MACROS + LIST_SOURCE, 'walk', 'mips', '', FLAGS, labels, limit=None, header=HEADER)
+    grouped = [t for t in texts if labels.get(t) == FAMILY
+               and 'do { do { do { submit_child(kid, obj, arg0); } while (0); } while (0); } while (0);' in t
+               and 'do { do { do { submit(kid, arg0); } while (0); } while (0); } while (0);' in t]
+    assert grouped
