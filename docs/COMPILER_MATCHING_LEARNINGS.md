@@ -15320,3 +15320,7 @@ the emitted order and missing evidence.
 ### Reconstruct an indexed record from neighboring symbols
 
 A saved N64 function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` treated a `0x184` record stride as an offset in words. Changing the pointer arithmetic to bytes corrected the stride but scored 694 because the compiler retained an extra register. Declaring the base as an array of records with a `0x7C` player, `0xF8` sequence and word fields at `0x174` and `0x17C`, then using those fields, reproduced the linked target exactly (score 360 to 0). Evidence: one saved example and synthetic source, address and routing tests. The candidate requires the measured instruction sequence and the two field symbols at the corresponding addresses, and is checked by the byte judge.
+
+### Recover nibble-indexed byte and halfword tables
+
+A saved N64 function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1` read a byte table and three halfword tables as word globals, scaling their indexes incorrectly. Declaring the observed byte and halfword arrays corrected the widths and improved the linked score from 255 to 35. Inlining the high-nibble index into both lookups reproduced the target exactly (score 0). Evidence: one saved example and synthetic source, target and routing tests. The candidate requires the measured lookup and shift instructions and matching table symbols, then the byte judge verifies it.

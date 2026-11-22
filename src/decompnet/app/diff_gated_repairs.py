@@ -133,6 +133,7 @@ from decomprepair import (
     measured_memory_order,
     measured_mmio_polling,
     measured_narrow_use,
+    measured_nibble_tables,
     measured_null_iteration_store,
     measured_pointer_displacement,
     measured_pointer_scale,
@@ -368,6 +369,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_indexed_clear.variants(source, name, header, rows)
         result += measured_global_offset_reuse.variants(source, name, header, rows, asm or '')
         result += measured_list_selection.variants(source, name, header, rows)
+        result += measured_nibble_tables.variants(source, name, header, rows)
         result += measured_indexed_record_layout.variants(source, name, header, rows)
         result += measured_record_byte_offset.variants(source, name, header, rows)
         result += measured_list_head_insert.variants(source, name, header, rows)

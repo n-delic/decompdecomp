@@ -1859,3 +1859,13 @@ def test_indexed_record_layout_routes_to_kmc(monkeypatch):
                         lambda text, name, header, diff: [('indexed_record_fixture', text)])
     assert 'indexed_record_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'indexed_record_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_nibble_tables_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_nibble_tables, 'variants',
+                        lambda text, name, header, diff: [('nibble_tables_fixture', text)])
+    assert 'nibble_tables_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'nibble_tables_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
