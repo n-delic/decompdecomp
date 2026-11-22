@@ -123,3 +123,16 @@ def test_all_one_padding_before_scheduled_frame():
     image = bytes.fromhex('03e00008ace20000ffffffffffffffff3c02800e8c422f2827bdffc8')
     assert (8, 16) in list(spans(image))
     assert (8, 16) not in list(spans(image[:-4] + bytes(4)))
+
+
+def test_verified_tables_end_before_the_following_code(tmp_path, monkeypatch):
+    data = b'table contents!!'
+    monkeypatch.setattr(inline_data, '_TABLES', ((data[:8].hex(), len(data), hashlib.sha256(data).hexdigest()),))
+    image = b'code' + data + b'next'
+    config = tmp_path / 'game.yaml'
+    config.write_text(yaml.safe_dump(dict(segments=[
+        dict(type='code', start=0, vram=0x80000000, subsegments=[[0, 'c', 'program']]), [len(image)],
+    ])))
+    inline_data.apply(config, image, lambda _: None)
+    assert code_ranges(config) == [(0, 4, 0x80000000), (20, 24, 0x80000014)]
+    assert not list(inline_data.spans(b'code' + data[:-1] + b'?' + b'next'))

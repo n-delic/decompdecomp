@@ -15705,6 +15705,23 @@ or control transfer in the arms.
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` flipped a global slot and used its reloaded value to copy an indexed word. Its machine draft addressed the slot through a displaced global and folded the copy into one assignment. Restoring a verified direct symbol, staging the read before moving the destination base, and expressing the source offset as subtraction of a negated index changed the diff score from 210 to an exact linked match. Staging and rebasing alone scored 5. This is one saved example, not a controlled cross-compiler experiment; the proposal checks the resolved global address and the full measured instruction and source patterns.
 
+### Carry a proven positive zero into the second projection
+
+On a private linked N64 function compiled with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, the first of two
+adjacent projections already accumulated through the target saved
+word register. The second used a literal positive zero where the
+target carried the existing accumulator through the same float
+transfer and addition sequence.
+
+Use compound addition when every path reaches the second projection
+with positive zero in its accumulator. This recovered three operands
+and lowered the linked score from 2,890 to 2,875. Staging the product
+in an intermediate local scored the same. The direct form kept the
+instruction count and three jump tables and passed uninitialized
+diagnostics. The recipe requires the matching first transfer and
+rejects negative zero, additional reads and unproved incoming paths.
+
 ### Fold fixed-stride reads into the advancing cursor
 
 In one private N64 decoder built with
