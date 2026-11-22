@@ -16553,3 +16553,8 @@ With `-G0 -mips3 -mgp32 -mfp32 -O2`, a saved draft scored 300: the first call to
 ### KMC GCC 2.7.2 direct relocated call base
 
 A private N64 draft built with `-G0 -mips3 -mgp32 -mfp32 -O2 -fno-strength-reduce` copied a ROM base into a local pointer, which made the compiler form the relocation in a temporary register before calculating the DMA address. Replacing the single-use pointer with the named byte-array base in the argument, with the byte offset first, produced the target relocation and delay-slot registers. The linked score fell from 60 to 45 in an end-to-end Deep Permuter run. This is one saved function under its recorded profile.
+
+
+### Halfword flag updates through a byte-array draft (GCC 2.7.2 KMC)
+
+With `-G0 -mips3 -mgp32 -mfp32 -O2`, two saved drafts read and wrote an indexed flag symbol as a byte and each scored 410. The target uses `lhu` and `sh` at that same relocation. Casting both byte-addressed accesses to `u16 *` matched each example exactly with the original compiler and linked-byte judge. The focused search now uses the paired load/store width difference to prioritize the existing symbol-width repair.
