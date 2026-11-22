@@ -175,11 +175,15 @@ def register(app: App) -> None:
         for s in manager.sessions.values():
             if s.state in ("starting", "working", "waiting"):
                 running[s.slug] = running.get(s.slug, 0) + 1
+        with jobs._lock:  # a deep search running for a project shows in its sidebar line (the sweep too)
+            deep = {j.get("activity_project") for j in jobs.jobs.values()
+                    if j.get("state") == "running" and j.get("kind") in ("deep-permuter", "deep-permutation-pass")}
         out = []
         with net.summary_batch() as projects:
             for p in projects:
                 try:
-                    out.append(net.summary(p["slug"]) | {"working": running.get(p["slug"], 0)})
+                    out.append(net.summary(p["slug"]) | {"working": running.get(p["slug"], 0),
+                                                         "deep_permuter": p["slug"] in deep})
                 except Exception as e:  # noqa: BLE001
                     jobs.logger.warning("project %s can't be read: %s", p["slug"], e, exc_info=not isinstance(e, NetworkError))
                     progress_error = net.progress.errors.get(p["slug"])

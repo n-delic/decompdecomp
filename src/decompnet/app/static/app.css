@@ -501,6 +501,7 @@ a.ghost, a.primary { text-decoration: none; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none; display: inline-block; }
 .dot.on { background: var(--hl); box-shadow: 0 0 0 1.5px var(--hl-ink); }
 .dot.work { background: var(--hl); box-shadow: 0 0 0 1.5px var(--hl-ink); }
+.np-deep { font-size: 10px; line-height: 1; padding: 2px 5px; border-radius: 8px; flex: none; background: var(--hl); color: var(--hl-ink); animation: breathe 2s ease-in-out infinite; }
 .dot.err { background: var(--miss); }
 @keyframes breathe { 50% { opacity: .45; } }
 .agent-row { display: grid; gap: 10px; padding: 14px 0; }

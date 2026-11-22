@@ -4312,3 +4312,25 @@ def test_restarting_for_new_code_by_itself_is_a_saved_setting_and_off_by_default
     assert client.get('/api/code-change').json()['auto'] is True
     client.post('/api/settings', json={'auto_restart_on_code_change': False}, headers={'X-Decomp': '1'})
     assert client.get('/api/code-change').json()['auto'] is False
+
+
+def test_project_list_marks_a_project_whose_deep_permuter_runs(tmp_path, monkeypatch):
+    """The sidebar shows a project's deep permuter running (a search or the sweep), and only that project's."""
+    from decompnet.app import support
+
+    from .test_loading import tiny_game
+
+    made = []
+    init = support.Jobs.__init__
+    monkeypatch.setattr(support.Jobs, "__init__", lambda self, *a, **k: (init(self, *a, **k), made.append(self))[0])
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path)
+    tiny_game(net)
+    mcp, _, security, _ = build(net, tmp_path, PORT, SECRET)
+    client = TestClient(mcp.streamable_http_app(transport_security=security, host="127.0.0.1"),
+                        base_url=f"http://127.0.0.1:{PORT}", headers=WINDOW)
+    assert client.get("/api/projects").json()[0]["deep_permuter"] is False
+    (jobs,) = made
+    jobs.jobs["x"] = {"id": "x", "kind": "deep-permuter", "state": "running", "activity_project": "game"}
+    assert client.get("/api/projects").json()[0]["deep_permuter"] is True
+    jobs.jobs["x"]["state"] = "done"
+    assert client.get("/api/projects").json()[0]["deep_permuter"] is False

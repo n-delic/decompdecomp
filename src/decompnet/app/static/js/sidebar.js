@@ -64,6 +64,7 @@ function renderNav() {
     const p = selected ? {...project, ...selected.summary, slug:project.slug, title:project.title, working:project.working} : project;
     const pct = codePct(p);
     const short = p.platform_short || p.platform_name || "?";
+    const deep = p.deep_permuter ? `<span class="np-deep" title="Deep permuter running">deep</span>` : "";
     const state = p.working ? `<span class="dot on" title="${p.working} agent${p.working === 1 ? "" : "s"} working"></span>`
       : p.autopilot === "running" ? `<span class="dot work" title="${p.autopilot_phase === "queued" ? "autopilot waiting for its turn" : "autopilot running"}"></span>` : "";
     if (p.missing) return `<a class="nav-proj broken" href="#/p/${esc(p.slug)}" data-slug="${esc(p.slug)}" title="${esc(p.missing)}">
@@ -73,7 +74,7 @@ function renderNav() {
       <span class="np-top"><span class="np-name">${esc(p.title)}</span></span>
       <span class="np-meta"><span>can't be opened: hover for why</span></span></a>`;
     return `<a class="nav-proj" href="#/p/${esc(p.slug)}" data-slug="${esc(p.slug)}" title="${esc(p.progress_error || p.title)}">
-      <span class="np-top"><span class="swatch pc-${colourOf(p.slug)}" aria-hidden="true"></span><span class="np-name">${esc(p.title)}</span>${state}${p.room ? `<span class="np-room" title="${p.room === "host" ? "you share this project" : "in a team room"}">●●</span>` : ""}</span>
+      <span class="np-top"><span class="swatch pc-${colourOf(p.slug)}" aria-hidden="true"></span><span class="np-name">${esc(p.title)}</span>${state}${deep}${p.room ? `<span class="np-room" title="${p.room === "host" ? "you share this project" : "in a team room"}">●●</span>` : ""}</span>
       <span class="np-meta"><span>${p.progress_error ? "progress needs attention" : esc(short)}</span><span class="grow"></span><span>${p.kind === "fork" && !p.ready ? "set up" : pctNum(pct) + "%"}</span></span>
       <span class="np-bar"><i data-w="${pct.toFixed(2)}"></i></span></a>`;
   }).join("");
