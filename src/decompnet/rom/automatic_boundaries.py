@@ -428,6 +428,18 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
              or terminal_memory_ranges(fn, predecessor, image, order, segments)
              or terminal_display_modes(fn, predecessor, image, order, segments)) and not referenced(fn)):
             dropped+=1;continue
+        if (fn.size == 4 and previous is not None and following is not None
+                and owner(fn)[0] >= 0 and owner(previous) == owner(fn) == owner(following)
+                and previous.rom+previous.size == fn.rom and previous.vram+previous.size == fn.vram
+                and following.rom == fn.rom+4 and following.vram == fn.vram+4
+                and previous.size >= 8 and previous.lines[-2].word == JR_RA
+                and fn.lines[0].word == previous.lines[-1].word
+                and image[fn.rom:fn.rom+4] == fn.lines[0].word.to_bytes(4, order)
+                and following.vram in direct_calls and not referenced(fn)):
+            # A duplicate of the return delay slot between the closed function
+            # and the independently called next entry is unreachable padding.
+            dropped += 1
+            continue
         if zero_alignment(fn, previous):
             if fn.vram in data_only:
                 recovered_data.append(DataSymbol(fn.name,fn.vram,fn.rom,4,'data'))

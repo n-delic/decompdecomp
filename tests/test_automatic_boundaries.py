@@ -893,3 +893,18 @@ def test_shared_called_leaf_allows_its_own_internal_branches():
     result = repair(functions + others, [], image, consoles.get('n64'), [Segment('code', 0, len(image), BASE)])
     assert result[0].size == 24
     assert result[0].entry_aliases == {BASE+4: functions[1].name}
+
+
+@pytest.mark.parametrize('protect', [None, 'symbol', 'not_called'])
+def test_duplicate_return_delay_word_before_called_entry_is_padding(protect):
+    delay = 0xac82003c
+    before = [0x8c820000, 0x8c830004, 0x03e00008, delay]
+    after = [0x3c0b4780, 0x03e00008, 0]
+    words = before + [delay] + after
+    called = BASE+20 if protect != 'not_called' else BASE
+    words += [0x0c000000 | ((called >> 2) & 0x3ffffff), 0, 0x03e00008, 0]
+    image, functions, segments = fixture(words, cuts=(0, 16, 20, 32, 48))
+    symbols = [f'entry = 0x{BASE+16:08X};'] if protect == 'symbol' else ()
+    result = repair(functions, [], image, consoles.get('n64'), segments, symbols=symbols)
+    assert any(fn.rom == 16 for fn in result) == (protect is not None)
+    assert image[16:20] == words[4].to_bytes(4, 'big')
