@@ -342,6 +342,23 @@ MIN_CACHED_INPUT_BYTES = 4096
 MAX_CACHED_INPUT_BYTES = 2*1024*1024
 
 
+def _stable_all(session, cfg, source, intrinsic, staged):
+    """`_stable_inputs` over the source, prelude, command and every staged header. A session's headers are the
+    same objects from one compile to the next, so their verdict is kept until they change instead of scanning each
+    header again for every candidate (the part cache holds only a few entries)."""
+    names = [name for name, _ in staged]
+    own = [source.encode(), cfg.prelude.encode(), intrinsic, *(arg.encode() for arg in cfg.cmd)]
+    parts = [part for entry in staged for part in entry]
+    if session is None or session.headers is None:
+        return _stable_inputs([*own[:3], *parts, *own[3:]], names)
+    if not _stable_inputs(own, names):
+        return False
+    kept = getattr(session, 'stable_headers', None)
+    if kept is None or kept[0] is not session.headers:
+        kept = session.stable_headers = (session.headers, _stable_inputs(parts, names))
+    return kept[1]
+
+
 def _stable_inputs(inputs, staged_names=()):
     names = frozenset(staged_names)
     return all((_stable_part(part, names) if isinstance(part, bytes) and
@@ -442,8 +459,8 @@ def _compile_here(cfg: CompilerConfig, context_header: str, source: str, trusted
         staged = (session.staged if session else [(str(path.relative_to(inc)).encode(), path.read_bytes()) for path in sorted(inc.rglob('*')) if path.is_file()]) if share else []
         intrinsic = importlib.import_module(cfg.intrinsics).header().encode() if share and cfg.intrinsics else b''
         inputs = [source.encode(), cfg.prelude.encode(), intrinsic, *(part for entry in staged for part in entry)]
-        if share and _captured_include_paths(cfg.cmd) and _stable_inputs(
-                [*inputs, *(arg.encode() for arg in cfg.cmd)], [name for name, _ in staged]):
+        if share and _captured_include_paths(cfg.cmd) and _stable_all(
+                session, cfg, source, intrinsic, staged):
             from .compile_sharing import run as shared_compile
             digest = hashlib.sha256(repr((cfg, list(stamped.environment()))).encode())
             for part in inputs:
