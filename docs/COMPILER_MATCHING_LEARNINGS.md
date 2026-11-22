@@ -14820,3 +14820,7 @@ operands, scoring 7,960 with all three jump-table relocations and no
 warnings. Sinking the clamp reload into a saved call argument as
 well regressed to 8,665. Tests verify the callee, field offset, scale
 bits and candidate's opposing load order.
+
+### Return a found node from a simple list walk
+
+In two private N64 list searches built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the draft copied the current node into a separate result before comparing its key, then cleared the result on a miss. Reconstructing a `while` loop that returns the node directly on a match reproduced both linked targets exactly (score 265 to 0 each). The existing search-loop rewrite now also recognizes this standalone copy, checks the plain field accesses and sees header macros before proposing it. Evidence: two saved functions and synthetic generation and routing tests.

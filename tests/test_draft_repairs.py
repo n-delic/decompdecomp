@@ -326,3 +326,33 @@ def test_a_byte_range_test_and_masked_equality_become_the_masked_chain():
            '    return r;\n}\n')
     outputs = variants(src, 'f', 'mips')
     assert any('u8 t;' in out and '((t & 0xFF) == 9) || ((t & 0xFF) == 0xA) || ((t & 0xFF) == 0xB)' in out for out in outputs)
+
+
+def test_list_search_copy_respects_header_macros():
+    source = '''
+#define M2C_FIELD(expr, type_ptr, offset) (*(type_ptr)((s8 *)(expr) + (offset)))
+void *find(s32 key) {
+    void *node;
+    void *result;
+    node = get_head();
+    result = NULL;
+    if (node != NULL) {
+loop_1:
+        result = node;
+        if (M2C_FIELD(node, s32 *, 12) != key) {
+            node = M2C_FIELD(node, void **, 4);
+            result = NULL;
+            if (node != NULL) {
+                goto loop_1;
+            }
+        }
+    }
+    return result;
+}
+'''
+    labels = {}
+    candidates = variants(source, 'find', 'mips', labels=labels, limit=None)
+    assert any(labels.get(candidate) == 'goto_search_loop' for candidate in candidates)
+    labels = {}
+    candidates = variants(source, 'find', 'mips', labels=labels, limit=None, header='#define HIDDEN result')
+    assert all(labels.get(candidate) != 'goto_search_loop' for candidate in candidates)
