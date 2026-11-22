@@ -14,12 +14,14 @@ def _binary_tables(net, proj, fn):
         return []
     start = fn['vram']
     order = 'big' if proj['big_endian'] else 'little'
-    read_rom = net.reader(proj, fn)
+    read_rom = None
     tables = []
     for offset in range(24, len(code)-7, 4):
         word = int.from_bytes(code[offset:offset+4], order)
         if word & 0xfc1fffff != 8 or (word >> 21) & 31 == 31:
             continue
+        if read_rom is None:
+            read_rom = net.reader(proj, fn)
         table = jump_table(code, 0, len(code), start, offset, order,
                            reader=read_rom, allow_saved_base=True)
         if not table or table['state'] != 'validated':
