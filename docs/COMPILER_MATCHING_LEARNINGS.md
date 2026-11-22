@@ -1735,6 +1735,16 @@ function passed the exact judge. A controlled fixture reproduces this
 collision and rejects the same compiled instructions with a different
 loader binding.
 
+A 160-byte overlay routine built by IDO 7.1 with
+`-O2 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul -DNON_MATCHING`
+retained all of its original instruction bytes after rebinding, but one
+call still referred to a named, nonempty function defined in its object.
+Retaining the ordinary external function signature as a declaration
+removed the definition from the private candidate. IDO emitted an undefined
+call reference with the same instruction bytes, and the target loader
+binding passed the exact judge. A controlled fixture covers both the
+ordinary prototype and the earlier implicit-int placeholder.
+
 ### Externalizing IDO overlay constant pools and BSS can change instructions
 
 An isolated N64 replay found compiler-emitted, unnamed section references even

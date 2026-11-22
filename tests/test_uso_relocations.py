@@ -552,7 +552,8 @@ def test_refresh_adds_wider_pool_read_to_existing_metadata(monkeypatch):
     assert list(uso.metadata_updates(b'', {}, [row | {'meta': json.dumps({'uso': stale})}])) == []
 
 
-def test_overlay_named_binding_externalizes_only_empty_direct_call_stubs(tmp_path):
+@pytest.mark.parametrize('definition', ['placeholder() { }', 'int placeholder(int value) { return value + 3; }'])
+def test_overlay_named_binding_externalizes_only_referenced_direct_calls(tmp_path, definition):
     from decompnet.app.overlay_donor_aliases import named_bindings
     from decompnet.app.source_symbol_recovery import relocation_aliases
     from decompnet.elfobj import extract_function
@@ -562,7 +563,7 @@ def test_overlay_named_binding_externalizes_only_empty_direct_call_stubs(tmp_pat
     cfg = compiler_config(tmp_path, {'compiler': {
         'toolchain': 'ido-7.1', 'flags': ['-O2', '-G', '0', '-non_shared', '-mips2'],
     }})
-    header = 'placeholder() { }\nint real(void) { return 9; }\n'
+    header = definition + '\nint real(void) { return 9; }\n'
     source = 'int entry(int value) { return placeholder(value); }'
     built = compile_source(cfg, header, source)
     assert built.ok, built.log
@@ -584,7 +585,7 @@ def test_overlay_named_binding_externalizes_only_empty_direct_call_stubs(tmp_pat
     assert rebuilt.ok, rebuilt.log
     assert uso_match.link(rebuilt.obj, 'entry', body.code, info).exact
 
-    _, context = named_bindings(source, 'int placeholder(void) { return 9; }', baseline.candidate, aliases)
+    _, context = named_bindings(source, 'static int placeholder(void) { return 9; }', baseline.candidate, aliases)
     assert '{ return 9; }' in context
 
 
