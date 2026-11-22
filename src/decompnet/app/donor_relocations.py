@@ -12,6 +12,20 @@ def _layout(row):
     return sorted((entry[0], entry[1], entry[2]) for entry in json.loads(row['relocs'] or '[]') if len(entry) >= 3)
 
 
+def identical_targets(targets, donors, job):
+    """Index unmasked bytes as a search lead, never as a linked verdict."""
+    minimum = transfer_min_bytes(job)
+    digests = {donor.raw_digest for donor in donors
+               if donor.raw_digest and donor.size >= minimum and not donor.asm}
+    matches = defaultdict(set)
+    for function_id, target in targets.items():
+        if job.stop.is_set():
+            return {}
+        if target.raw_digest in digests:
+            matches[target.raw_digest].add(function_id)
+    return matches
+
+
 def candidates(net, proj, donors, job):
     """Mask the ROM bytes with the donor's own relocation positions before comparing."""
     by_size = defaultdict(dict)

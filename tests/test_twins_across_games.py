@@ -248,8 +248,8 @@ def test_manual_search_finds_imported_code_inside_a_merged_rom_function(built, t
     assert not any(original['target'][head['size']:-recovered['size']])  # alignment padding
 
 
-@pytest.mark.parametrize('ambiguous', [False, True])
-def test_manual_search_tries_donor_when_relocation_layouts_differ(built, tmp_path, monkeypatch, ambiguous):  # noqa: F811
+@pytest.mark.parametrize('lead', ['relaxed', 'ambiguous', 'raw'])
+def test_manual_search_tries_donor_when_relocation_layouts_differ(built, tmp_path, monkeypatch, lead):  # noqa: F811
     from decompnet.app.twins import Job, Print, _key
     from decompnet.elfobj import Reloc, mask_relocs
 
@@ -271,7 +271,13 @@ def test_manual_search_tries_donor_when_relocation_layouts_differ(built, tmp_pat
     mine = net.twins.prints(proj)
     assert mine[b['id']].key != fingerprint.key
     source = 'int func_800007D0(void) { return 123; }'
-    if ambiguous:
+    if lead == 'raw':
+        from decompnet.app import donor_relocations
+
+        fingerprint.raw_digest = mine[b['id']].raw_digest
+        assert fingerprint.raw_digest
+        monkeypatch.setattr(donor_relocations, 'candidates', lambda *_: {})
+    if lead == 'ambiguous':
         from types import SimpleNamespace
 
         from decompnet.app import donor_build, donor_relocations, donor_sources
