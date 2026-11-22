@@ -18090,3 +18090,29 @@ same }`), an identical-arms duplicate that only adds references to `x` so its pr
 `u32` and an `s32` local and pairs inside one loop body that are assigned before they are read (it took the saved
 draft's newline temporary and the colour word to 2617 from 3037 on the work-in-progress source). Steps 1-4 and 7 are not
 families yet: a recogniser for m2c's raw display-list stores as SDK macros, and un-caching a loop's invariants, are the gaps.
+
+### KMC GCC 2.7.2: a volatile read-back local pins an argument move; the plain read in the call does not
+
+Compiler and flags: `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` (default cpu r4000). One private N64 effect-spawning
+function (88 instructions) sat at 60 for several agents: every opcode and register right, only `move $a0,$s0` (the first
+call argument) two slots too early. The saved best held a read-back of a halfword it had just stored (`f = 0;` then the
+call's second argument) in a local through a volatile cast, `frame = *(volatile u16 *)((char *)p + 0x2C);`, because a plain
+read directly after the store is folded to the stored constant (`move $a1,$zero`, score 205). Hours of statement-order grids
+(24,000 orders), `do { } while (0)` regions around the tail (60,000 shapes) and local types changed nothing.
+
+The edit that matched (exact, the app's judge): delete the local and write the read, plain, in the call's argument list:
+`effectSetAnimFrame(obj, *(u16 *)((char *)p + 0x2C), animation, p);`. Measured on the same function: volatile local 60; volatile
+read in the argument list 60; plain read in the argument list 0; plain read as the statement just before the call 0; plain read
+as a statement right after the store 205 (folded). Controlled for this one function only.
+
+Why (read from the 2.7.2 sched.c, one function's evidence, so a hypothesis for other shapes): the second scheduler runs
+backwards and picks the highest depth first; an argument move that reads a saved register has no producer in the block, so it
+has the lowest priority and only fills a stall slot. The argument move for a volatile halfword load is a `(set a1 (subreg a1))`
+that stays in the scheduler's list until the end of the pass (flow deletes only true self-moves), has the load's priority plus
+its latency and fills the first stall slot, so the other move takes the next one, two slots earlier than the target. With the
+plain read the load is an ordinary combined `lhu $a1` and that phantom move is gone. Failed attempts, for the record: volatile
+stores to the byte fields (they only reorder volatile stores), types of the locals, a three-argument prototype (the fourth
+register is not an argument), per-function `-mcpu`.
+
+decomp-repair 0.5.617 `volatile_read_inline` proposes it (volatile local assigned once, used once as a call argument, only
+non-overlapping stores of the same object between); wired through `draft_repairs`, so the Deep Permuter's beam runs it too.
