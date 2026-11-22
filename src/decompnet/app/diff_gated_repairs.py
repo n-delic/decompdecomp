@@ -74,6 +74,7 @@ from decomprepair import (
     measured_kmc_stack_pointer,
     measured_kmc_two_byte_reader,
     measured_kmc_unsigned_indexed_byte,
+    measured_kmc_varbyte_accumulator,
     measured_kmc_variable_byte_cursor,
     measured_kmc_vector_square,
     measured_kmc_wrappers,
@@ -275,6 +276,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_kmc_indirect_byte_table.variants(source, name, header, rows)
         result += measured_kmc_list_count.variants(source, name, header, rows)
         result += measured_kmc_byte_cursor_return.variants(source, name, header, rows)
+        result += measured_kmc_varbyte_accumulator.variants(source, name, header, rows)
         result += measured_kmc_unsigned_indexed_byte.variants(source, name, header, rows, asm)
         result += measured_kmc_event_record.variants(source, name, header, rows)
         result += measured_kmc_flag_update.variants(source, name, header, rows)

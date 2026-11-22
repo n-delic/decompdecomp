@@ -1364,3 +1364,14 @@ def test_byte_cursor_return_routes_to_kmc(monkeypatch):
                         lambda text, name, header, diff: [('byte_cursor_return_fixture', text)])
     assert 'byte_cursor_return_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'byte_cursor_return_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+
+def test_varbyte_accumulator_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_kmc_varbyte_accumulator, 'variants',
+                        lambda text, name, header, diff: [('varbyte_accumulator_fixture', text)])
+    assert 'varbyte_accumulator_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'varbyte_accumulator_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
