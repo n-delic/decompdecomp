@@ -15912,3 +15912,6 @@ right shift fixed that instruction and improved the linked score
 from 114 to 109. This remains an inexact draft. The proposal
 requires a measured operand reversal and a unique repeated
 product of two ordinary word locals.
+### KMC GCC 2.7.2 command-word scheduling
+
+A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` packed command words and returned the advanced buffer pointer. Its machine draft scheduled the masked stride early, grouped the flag word differently and calculated the return pointer at the end. Reusing the unchanged stride expression at its two uses, regrouping the bitwise OR and staging the end pointer changed the diff score from 205 to an exact linked match. Staging the end pointer alone scored 100. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the measured instruction and source patterns and retains multiplication instead of introducing a signed left shift.
