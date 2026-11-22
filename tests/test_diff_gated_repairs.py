@@ -2479,3 +2479,16 @@ def test_stack_vector_call_reload_routes_to_kmc(monkeypatch):
                         lambda text, name, asm: [('stack_vector_fixture', text)] if asm == 'target evidence' else [])
     assert 'stack_vector_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, 'target evidence'))
     assert 'stack_vector_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, 'target evidence'))
+
+
+
+def test_byte_loop_key_routes_to_kmc_with_flags_and_resolver(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'nop', 'nop')]
+    resolver = lambda symbol: 123  # noqa: E731
+    monkeypatch.setattr(diff_gated_repairs.measured_byte_loop_key, 'variants',
+                        lambda text, name, header, diff, flags, resolve: [('byte_loop_fixture', text)] if resolve is resolver else [])
+    assert 'byte_loop_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, '', resolve=resolver))
+    assert 'byte_loop_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, '', resolve=resolver))
+    assert 'byte_loop_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-7.1', rows, '', resolve=resolver))
