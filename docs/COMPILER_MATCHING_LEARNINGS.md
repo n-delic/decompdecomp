@@ -15571,3 +15571,6 @@ leaving the instruction count and three jump tables intact. The
 linked score moved from 3,030 to 3,015, with no uninitialized warnings.
 Three alternate locals were neutral. The repair requires a verified
 scaled sample in the same register and both linked product uses.
+### KMC GCC 2.7.2 list search target
+
+A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` computed an invariant index plus step after a non-null check and before a linked-list search. Its machine draft recomputed the sum inside the search. Staging the sum inside the check immediately before the loop changed the diff score from 245 to an exact linked match; staging it before the check gave a score of 130. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the observed instruction ordering and two unchanged, unescaped local operands.
