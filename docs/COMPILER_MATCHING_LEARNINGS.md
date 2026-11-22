@@ -16335,3 +16335,7 @@ combined child scores 10. `merge_integer_lifetimes` now emits the combined candi
 liveness and reaching definitions, only for a signed phase read through a parenthesized byte mask. The focused
 Deep Permuter lane offers it directly, since the general proposal cap omitted it on this source. The exact
 standalone judge measured the generated combined child at 10 from 15; this remains one function's evidence.
+
+### KMC GCC 2.7.2 staged coordinate update
+
+A saved MIPS coordinate-update function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` interpolated two halfword coordinates before drawing a marker. The generated draft read the second source coordinate after writing the first destination coordinate and loaded a later pointer too early. Staging the source read, restoring the observed load order, and widening a halfword local changed the draft's linked difference score from 400 to an exact match. This is one saved example, not a controlled cross-compiler experiment. The candidate requires the measured load sequence and the complete arithmetic and store shape.
