@@ -13903,3 +13903,5 @@ shared cleanup reproduced the branch and scored 6. The remaining differences wer
 offsets. Replacing the existing unused two-word pad with two naturally aligned doubles restored
 the frame and scored 0. The target-guided dispatcher proposed both candidates, and the running
 app confirmed the exact match. Evidence is one real match and guarded generation regressions.
+
+In one N64 list-removal loop built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a flag assigned only zero or one was held as `s32` and combined directly with a pointer comparison. Using a `u8` flag and explicitly combining the two boolean comparisons reproduced the linked target exactly (score 400 to 0). The repair requires the flag's restricted uses and the target's boolean instruction differences. Evidence: one saved example plus synthetic generation and routing tests.
