@@ -51,6 +51,7 @@ from decomprepair import (
     measured_callback_loop,
     measured_callback_repairs,
     measured_carried_loop_test,
+    measured_command_record_cursor,
     measured_control_flow,
     measured_cursor_loop_tail,
     measured_cursor_publish,
@@ -373,6 +374,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_indexed_clear.variants(source, name, header, rows)
         result += measured_global_offset_reuse.variants(source, name, header, rows, asm or '')
         result += measured_list_selection.variants(source, name, header, rows)
+        result += measured_command_record_cursor.variants(source, name, header, rows)
         result += measured_ring_global_capture.variants(source, name, header, rows)
         result += measured_nibble_tables.variants(source, name, header, rows)
         result += measured_indexed_record_layout.variants(source, name, header, rows)
