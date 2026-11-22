@@ -330,7 +330,7 @@ dev = [
 requires-dist = [
     { name = "capstone", specifier = ">=5.0.9" },
     { name = "decompassets", url = "https://github.com/RetroReversing/decomp-assets/archive/refs/tags/v0.157.0.tar.gz" },
-    { name = "decomprepair", url = "https://github.com/RetroReversing/decomp-repair/archive/refs/tags/v0.5.507.tar.gz" },
+    { name = "decomprepair", url = "https://github.com/RetroReversing/decomp-repair/archive/refs/tags/v0.5.508.tar.gz" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "mcp", specifier = ">=2.3.0" },
     { name = "ninja", specifier = ">=1.11" },
@@ -356,13 +356,13 @@ dev = [
 
 [[package]]
 name = "decomprepair"
-version = "0.5.507"
-source = { url = "https://github.com/RetroReversing/decomp-repair/archive/refs/tags/v0.5.507.tar.gz" }
+version = "0.5.508"
+source = { url = "https://github.com/RetroReversing/decomp-repair/archive/refs/tags/v0.5.508.tar.gz" }
 dependencies = [
     { name = "capstone" },
     { name = "rabbitizer" },
 ]
-sdist = { hash = "sha256:1e9d182e851224d83e3bfec691ff766ef01f7d180f9bd62d78a45ff967ba280b" }
+sdist = { hash = "sha256:1bc25b756708fe77e48f10d3216b77783780160d8a0801e7b418d3a6c27f4f42" }
 
 [package.metadata]
 requires-dist = [
