@@ -15704,3 +15704,15 @@ or control transfer in the arms.
 ### KMC GCC 2.7.2 slot flip and indexed copy
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` flipped a global slot and used its reloaded value to copy an indexed word. Its machine draft addressed the slot through a displaced global and folded the copy into one assignment. Restoring a verified direct symbol, staging the read before moving the destination base, and expressing the source offset as subtraction of a negated index changed the diff score from 210 to an exact linked match. Staging and rebasing alone scored 5. This is one saved example, not a controlled cross-compiler experiment; the proposal checks the resolved global address and the full measured instruction and source patterns.
+
+### Fold fixed-stride reads into the advancing cursor
+
+In one private N64 decoder built with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, the draft read two
+bytes through a fixed offset pointer and a record counter, while
+another pointer walked the same records. Addressing all three bytes
+through the advancing pointer reduced the linked score from 415
+to 405. Replays of older eligible drafts of that same function
+showed the same ten-point reduction. The proposal checks that the
+fixed pointer and counter are initialized on entry and that the
+cursor and count advance together. This remains an inexact draft.
