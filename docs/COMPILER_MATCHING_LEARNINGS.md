@@ -13053,3 +13053,13 @@ first shift of a 12-byte stride before a relocated volatile pointer load.
 Read the pointer into a local before calculating the byte offset. The
 linked judge went from 60 to 0. The previous dispatcher produced no
 candidate, and the new rewrite produced one byte-exact candidate.
+
+### KMC GCC 2.7.2: recover a missing second call argument
+
+An isolated graphics-command draft called an unprototyped helper with one
+argument, while the target passed a constant three in the second argument
+register. After the existing narrow-return repair, supplying that argument
+recovered the call sequence. With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32
+-O2 -g3`, the linked score improved from 235 to 160, then to an exact match.
+This is one observed match; synthetic tests cover the target instruction,
+prototype conflicts and unique simple call guard.
