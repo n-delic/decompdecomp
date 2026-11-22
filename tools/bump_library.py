@@ -16,6 +16,9 @@ import os
 import re
 import subprocess
 import sys
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 REPO = "RetroReversing/decomp-repair"
@@ -35,10 +38,51 @@ def pinned(text):
     return match[2]
 
 
+def versions(ls_remote_output):
+    """Every vX.Y.Z among `git ls-remote --tags` lines (other tags, annotated-tag `^{}` entries, are ignored)."""
+    return {m[1] for line in ls_remote_output.splitlines() if (m := TAG.search(line.split("\t")[-1].strip()))}
+
+
 def newest(ls_remote_output):
-    """The highest vX.Y.Z among `git ls-remote --tags` lines (other tags, annotated-tag `^{}` entries, are ignored)."""
-    versions = {m[1] for line in ls_remote_output.splitlines() if (m := TAG.search(line.split("\t")[-1].strip()))}
-    return max(versions, key=key) if versions else None
+    found = versions(ls_remote_output)
+    return max(found, key=key) if found else None
+
+
+def archive_url(version):
+    return f"https://github.com/{REPO}/archive/refs/tags/v{version}.tar.gz"
+
+
+def downloadable(version, attempts=12, wait=10, fetch=None, sleep=time.sleep):
+    """True once the tag's archive (the URL the pin installs from) downloads. The release workflow pushes the tag and
+    only then creates the release, and codeload answered 404 for a tag that `git ls-remote` already listed (v0.5.642,
+    8 seconds after its push), which failed the whole run at `uv lock`. Wait up to attempts*wait seconds; a tag that
+    still isn't there is skipped this run and picked up by the next one."""
+    def head(url):
+        request = urllib.request.Request(url, method="HEAD")
+        try:
+            with urllib.request.urlopen(request, timeout=30) as reply:
+                return reply.status
+        except urllib.error.HTTPError as error:
+            return error.code
+        except OSError:
+            return 0
+    fetch = fetch or head
+    for attempt in range(attempts):
+        if fetch(archive_url(version)) == 200:
+            return True
+        if attempt + 1 < attempts:
+            sleep(wait)
+    return False
+
+
+def pick(tags, current, ready=downloadable):
+    """The newest tag above the pin whose archive downloads, or None: a tag that isn't ready yet is skipped, so one
+    that is (an older, finished one) can still be pinned and the rest wait for the next run."""
+    for version in sorted((v for v in versions(tags) if key(v) > key(current)), key=key, reverse=True):
+        if ready(version):
+            return version
+        print(f"decomprepair {version} is tagged but its archive isn't downloadable yet; skipping it this run")
+    return None
 
 
 def rewrite(text, version):
@@ -73,6 +117,12 @@ def main(argv):
         output(version="", summary="")
         print(f"decomprepair {current} is the newest release")
         return 0
+    if "--check" not in argv:
+        latest = pick(tags, current)
+        if latest is None:
+            output(version="", summary="")
+            print(f"no tag newer than decomprepair {current} has a downloadable archive yet; the next run retries")
+            return 0
     if "--check" in argv:
         print(f"decomprepair {latest} is newer than the pin {current}")
         return 0
