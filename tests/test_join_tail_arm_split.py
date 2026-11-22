@@ -70,3 +70,23 @@ def test_join_tail_arm_split_is_wired_into_the_repairs():
         assert family in draft_repairs.AGENT_FAMILIES
     out = draft_repairs.variants(SOURCE, 'f', 'mips', '', ('-G0', '-mips3', '-mgp32', '-mfp32', '-O2'), limit=400)
     assert any('p_a1[1] = v_a1;' in v and 'p_a2[1] = v_a2;' in v for v in out)
+
+
+DEFAULT = '''void f(u8 *a, u16 *out) {
+  u16 v;
+  v = 0xA0;
+  if (a[8] != 0xFF)
+  {
+    v = *(u16 *)(a + 4);
+  }
+  *out = v;
+}
+'''
+
+
+def test_default_into_then_reaches_the_drafts():
+    """decomp-repair 0.5.605: the default as the then arm of the inverted test. From a KMC N64 function (gcc 2.7.2) it
+    was 95 -> 80 on the saved best and 15 -> 0 after goto_chain_tail_split (isolated judge); this checks the route."""
+    assert 'default_into_then' in draft_repairs.AGENT_FAMILIES
+    out = draft_repairs.variants(DEFAULT, 'f', 'mips', '', ('-G0', '-mips3', '-mgp32', '-mfp32', '-O2'), limit=400)
+    assert any('if (a[8] == 0xFF)' in v and 'else' in v for v in out)
