@@ -1,5 +1,15 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: inline a single-use indexed record address
+
+In one N64 draft the address and first word of an indexed 12-byte
+record copy occupied each other's registers. Inlining the address
+into the copy improved the linked score from 50 to 5 using
+`-G0 -mips3 -mgp32 -mfp32 -O2`. Changing the order of addition
+operands left the score at 50 with a temporary or 5 when inlined.
+The measured rule checks the swapped registers through the three
+loads and first stack store, then selects a single-use local.
+
 ### KMC GCC 2.7.2: sink a repeated null flag to the final guard
 
 An N64 draft saved the same pointer null check in both comma paths and

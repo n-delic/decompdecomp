@@ -1710,3 +1710,13 @@ def test_indexed_clear_routes_to_kmc(monkeypatch):
                         lambda text, name, header, diff: [('indexed_clear_fixture', text)])
     assert 'indexed_clear_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'indexed_clear_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_route_measured_indexed_copy_inlining(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'lw $v1, ($v0)', 'lw $v0, ($v1)')]
+    monkeypatch.setattr(diff_gated_repairs.local_inline_repairs, 'measured_record_copy_inline',
+                        lambda source, name, diff, header: [('indexed_copy_fixture', source)])
+    assert 'indexed_copy_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'indexed_copy_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
