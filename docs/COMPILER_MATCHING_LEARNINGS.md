@@ -17198,3 +17198,29 @@ branch targets, spill slots and register differences keep their old costs. Match
 - First version paired rows by opcode only: two stores in another order then cost 150 each and correct but
   reordered states lost (the display-list history went from 10 to 24 "meaning" rows). Charging only instructions the
   other side lacks fixed that.
+
+## A table search as the counted loop that re-reads its field, then two register-level edits (KMC GCC 2.7.2, N64)
+
+Evidence level: one function (a 126-instruction text-measuring routine; matched, judge 0 in the app), each step scored
+with the app's judge-worker (`fast_judge`) from the saved best, nothing else run. The pieces are controlled only in the
+sense that each was scored alone and combined on that function; the compiler explanations are hypotheses read from the
+register tables, not confirmed in the compiler source.
+
+Edit list from the saved best (105, `-G0 -mips3 -mgp32 -mfp32 -O2`), score alone from 105 / combined:
+
+| edit | what changed | compiler fact (hypothesis) | alone | combined |
+| --- | --- | --- | --- | --- |
+| counted `for (k = 0; k < T[idx].count; k++)` re-reading `font->kern` and the pair array, instead of m2c's `for (;;)` behind `if (count != 0)` with `volatile` reload, identical-arm `if`, dead `off`, local `kern`, widened `c` | the search loop | the loop pass hoists the re-read field as an invariant load; cse2 folds it into a register copy of the pre-loop load (the target's `move $t0, $v1`); a local keeps one register. The zero-extension of the byte is hoisted as the second copy (`move $a3, $s3`). The first loop test is duplicated in front by jump.c: the pre-loop count check | 1278-1735 for each piece | 53 |
+| `volatile u32 pad[4]` as `pad[1]` | frame 0x50 -> 0x48 | the scratch that once reserved the whole gap | 128 | 30 |
+| `adv = ...; width += adv; total += adv;` inside one `do { } while (0);` | register priorities | a one-shot scope still counts as a loop depth for `REG_N_REFS`; the character temp (1.800) and the index (1.778) had swapped saved registers, doubling the run's references put the index first | 30 -> 0 only with the assignment inside (the two additions alone: 30; deeper wrappers 105 to 1880) | 0 |
+
+Failed: a `u32` byte `ch` (1400), comparing the widened copy `c` with the loop re-reading the field (1250-1278),
+removing either of the two outer `do { } while (0)` wrappers (55, 105), moving the
+advance computation before the kern block (2785, 4040). The existing `phantom_wide_local` also reaches 0 from the
+53/30 state (a dead `long long phantom_wide = arg1;` block in the loop: a different program).
+
+Families in decomprepair 0.5.587: `record_search_for_loop` (the whole counted loop as one child, and each piece as its own),
+`unused_frame_padding_shrink`, `accumulation_run_scope`. From the saved best the chain 105 -> 53 -> 30 -> 0 is three
+calls (`tests/test_search_loop_field_reload_wiring.py`); all three are in the draft repairs, the beam and
+`deep_permuter._local_proposals`. Not covered: m2c's `goto` form of the same search (the family reads the `for (;;)`
+shape with `kt`/`p`/`k++` and a `continue`), and loops whose records are not 8-byte structs read through one pointer field.

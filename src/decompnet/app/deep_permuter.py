@@ -438,6 +438,11 @@ class Search(Permuter):
         # a 231-instruction key/velocity dispatch (decomp-repair 0.5.583): a halfword cast shifted out, the halfword id
         # local, a byte-masked parameter narrowed with its helper, a range flag before a clamp, and the chain of them
         calls.append((L + 'narrow_param_clamp_repairs.variants', (source, name)))
+        # a text measurer's table search (decomprepair 0.5.587): the counted loop that re-reads the table field, the
+        # shorter scratch array, and a value with the totals it feeds in one one-shot scope (105 -> 53 -> 30 -> 0)
+        calls += [(L + 'search_loop_field_reload.variants', (source, name)),
+                  (L + 'frame_padding_repairs.shrink_variants', (source, name)),
+                  (L + 'accumulation_run_scope.variants', (source, name))]
         # a 205-instruction line-segment test (decomp-repair 0.5.584): the final guarded zero return as one labelled return,
         # the later zero returns and the guard-then-return forms jumping to it (20 -> 0 from the saved best, as a chain)
         calls.append((L + 'zero_exit_label_repairs.variants', (source, name)))
