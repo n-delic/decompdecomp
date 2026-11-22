@@ -4264,3 +4264,51 @@ def test_waiter_coalesces_only_an_acknowledged_unchanged_recheck(project, monkey
                 worker.rechecking.pop('game', None)
         future.result(timeout=5)
     assert decisions == [not edited]
+
+
+def test_global_types_come_back_through_save_and_restore(project, tmp_path, monkeypatch):
+    """A type given to data (Globals tab) is saved by address, even for a global still called D_xxxxxxxx."""
+    net, folder, _ = project
+    pid = net._project("game")["id"]
+    with net.store.tx() as db:
+        db.execute("INSERT INTO symbols(project_id,name,address,size,kind,c_type,type_source) VALUES(?,?,?,?,?,?,?)",
+                   (pid, "D_800A4DFC", 0x800A4DFC, 4, "data", "f32", "emulator"))
+    saves.save(net, "game")
+    saved = json.loads((folder / saves.MANIFEST).read_text())
+    assert saved["global_types"] == [{"address": 0x800A4DFC, "type": "f32", "source": "emulator"}]
+
+    work = tmp_path / "fresh"
+    work.mkdir()
+    fresh = RomNetwork(work / "app.db", work)
+    console = SimpleNamespace(read_game=lambda *args: SimpleNamespace(info={"sha1": "demo"}))
+    monkeypatch.setattr(saves.consoles, "identify", lambda _: console)
+
+    def import_game(*_args, **_kwargs):
+        config = {"kind": "rom", "platform": "n64", "rom": {"sha1": "demo"}}
+        with fresh.store.tx() as db:
+            new = db.execute("INSERT INTO projects(slug,name,root,config) VALUES('game','Game',?,?)",
+                             (str(work / "game"), json.dumps(config))).lastrowid
+            db.execute("INSERT INTO context_versions(project_id,version,header,created_at,unit) VALUES(?,1,'',0,'')", (new,))
+            for name, address in (("f", 4096), ("g", 4100)):
+                db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit) "
+                           "VALUES(?,?,?,4,1,'open','')", (new, name, address))
+            db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
+                       (new, "D_800A4DFC", 0x800A4DFC, 4, "data"))
+        return "game"
+
+    monkeypatch.setattr(fresh, "import_rom", import_game)
+    monkeypatch.setattr(fresh, "apply_remote_layout", lambda *args: None)
+    out = saves.restore(fresh, str(folder), Path("unused-own-game.bin"), log=lambda *_: None)
+    row = fresh.project_store(out["slug"]).one("SELECT c_type, type_source FROM symbols WHERE address=?", 0x800A4DFC)
+    assert (row["c_type"], row["type_source"]) == ("f32", "emulator")
+
+
+def test_merging_global_types_by_address():
+    from copy import deepcopy
+
+    from decompnet.app.progress import _merge_manifest
+    old = {"global_types": [{"address": 4, "type": "s32", "source": "agent"}]}
+    new = deepcopy(old); new["global_types"][0]["type"] = "f32"
+    current = deepcopy(old); current["global_types"].append({"address": 8, "type": "u8", "source": "emulator"})
+    merged = _merge_manifest(old, new, current)
+    assert {i["address"]: i["type"] for i in merged["global_types"]} == {4: "f32", 8: "u8"}

@@ -809,6 +809,10 @@ def _manifest_from_rows(net, proj, cfg: dict, rows, folder: Path) -> tuple[dict,
         "layout": [{"name": r["name"], "vram": r["vram"], "size": r["size"],
                     "status": "asm" if r["status"] == "asm" else "open"} for r in rows],
         "symbols": net.layout_symbols(pid),
+        # the C types given to data (Globals tab), by address: an untouched D_ name is not in `symbols`
+        "global_types": [{"address": r["address"], "type": r["c_type"], "source": r["type_source"] or ""}
+                         for r in store.all("SELECT address, c_type, type_source FROM symbols WHERE project_id=? "
+                                            "AND c_type IS NOT NULL AND kind<>'func' GROUP BY address ORDER BY address", pid)],
         "notes": notes,
         # what's set aside and why: agents' verdicts that no C makes it, the user's, a boundary report's leftover
         # (the import sets aside again what it finds by itself)
@@ -1303,6 +1307,9 @@ def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
             if db.execute("SELECT 1 FROM functions WHERE project_id=? AND name=?", (pid, symbol["name"])).fetchone():continue
             db.execute("INSERT OR REPLACE INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
                        (pid, symbol["name"], symbol["address"], symbol.get("size", 0), symbol.get("kind", "data")))
+        for item in manifest.get("global_types") or []:
+            db.execute("UPDATE symbols SET c_type=?, type_source=? WHERE project_id=? AND address=? AND kind<>'func'",
+                       (item["type"], item.get("source") or "agent", pid, item["address"]))
     net._syms.pop(pid, None)
     _restore_set_aside(store, pid, manifest.get("set_aside") or [])
 

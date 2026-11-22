@@ -2098,8 +2098,8 @@ reuse the saved map. See [ROM Explorer](docs/ROM_EXPLORER.md) for support and li
   installations show a labelled work bar beside their logs. The bar clears on completion or failure; saved-project
   cancellation clears it too. Each action says when it starts and finishes, or why it stopped. Upload percentages
   still measure bytes transferred.
-- **Globals types in saves and project mode.** A global's type is kept in the project database and across reimport,
-  but not yet in the saved progress files, so Open a saved project starts without them. The emulator records a type
+- **Globals types from the emulator.** A global's type is kept in the project database, across reimport and in saved
+  progress files (`global_types`, by address). The emulator records a type
   only from MIPS stores of the symbol's whole size (floats exactly; integers as the unsigned type of that width).
 - **Globals tab in project mode.** The Globals tab lists a ROM project's data symbols from its symbols table; a
   project-mode game (GameCube, Wii, Windows PC, DS, Xbox) keeps its data in the project's own files, so its tab says so
