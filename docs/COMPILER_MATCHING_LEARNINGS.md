@@ -13108,6 +13108,31 @@ Failed: volatile casts on the adjacent read, nested/continue forms, `register`/`
 Permuter gap: no family chooses between pointer-variable and direct-cast spellings of the same global, or
 moves a `++` across a branch to change a delay slot.
 
+## A plane-versus-triangle orientation test: loop-depth weights in statement macros (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, an N64 game, one 597-instruction function)
+
+One function (eight returns that flip a vector and negate `*dist`, two float compares, two two-flag tables over
+`s8` call results) went 487 -> 0 by hand in recorded steps; one function, not a controlled regression. The saved
+best differed from the target by `$s3`/`$s4` exchanged on dozens of rows (the 5th argument against the address of a
+local passed to calls).
+- Reading `cc1 -dl -dg`: the 5th argument's pseudo had 45 weighted uses over 1052 insns (priority 0.214), ahead of
+  the four `&sum` address temporaries (3 uses, priority 0.15-0.17) that the target puts in `$s3`. flow.c weights a
+  reference by loop depth, and a `do { } while (0)` is a loop, so every `*arg4` load/store inside the statement
+  macros counted twice. Expanding the macros as plain braces dropped it to 29 uses (0.110): 487 -> 477 and the
+  `&sum` temporaries took `$s3`, but now below the Ray address temporary (0.119), so `$s5`. Re-wrapping any two of the
+  eleven uses in `do { } while (0)` gave 33 uses (0.157, between the two): 282. Measured thresholds: 41/37/33/29
+  uses -> `$s3`/`$s3`/`$s3`/`$s4`.
+- 282 -> 250: stage the right operand of the second float compare in a local (`d2 = sum.y - out.y; if (d1 < d2)`,
+  also removing an identity inline helper that an earlier draft used to push an operand first): the `$f0`/`$f2`
+  roles of the two loads follow expansion order.
+- 250 -> 245: the fourth row of a two-flag table as `((unsigned)(c1 != 0)) & (c2 != 0)`, the first flag first.
+- 245 -> 0: the second two-flag table had only two rows; adding the empty row
+  `if ((c1 == 0) & (c2 == 0)) { }` in front, with c1 first in the tests, gave the target's order of the `sltiu`/`sltu`
+  results (an empty test is deleted but its comparisons are numbered first). Failed: dead-row variants with c2 first
+  (15/45), operand grids alone (305-625), declaring one shared `f32` for the negated values (no change: cse folds it).
+Library (decomp-repair 0.5.331): `macro_scope_weight` (unwrap, rewrap), `compare_operand_stage`,
+`condition_table_anchor`; a greedy hill-climb over their variants alone reproduces 487 -> 0 from the saved best.
+Not covered: choosing the number of re-wrapped uses from the allocation table (the family offers singles and pairs).
+
 ### Separate a guarded record read and a color clamp into their own locals (KMC GCC 2.7.2)
 
 With `-G0 -mips3 -mgp32 -mfp32 -O2`, a retail N64 draft used the same
