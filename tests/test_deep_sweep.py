@@ -1105,6 +1105,31 @@ def test_failed_recovery_uses_drafts_and_waits_for_new_inputs(sweep, monkeypatch
     assert len(calls) == 2
 
 
+def test_recovery_sets_code_no_compiler_makes_aside_instead_of_drafting_it(sweep, monkeypatch):
+    _, net, _, _ = sweep
+    from decompnet.app.deep_source_recovery import prepare
+
+    proj = net.project_row('game')
+    fn = net._function('f0', 'game')
+    with net.store.tx() as db:
+        db.execute('UPDATE functions SET best_source=NULL,best_score=NULL WHERE id=?', (fn['id'],))
+    net.twins = SimpleNamespace(set_aside_function_asm=lambda proj, fn: None)
+    monkeypatch.setattr(net, 'can_draft', lambda proj: True)
+    monkeypatch.setattr(net, '_autopilot_one', lambda *a, **k: 'fail')
+    assert prepare(net, proj, fn, Log())['status'] == 'open'
+
+    def set_aside(proj, fn):
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET status='asm' WHERE id=?", (fn['id'],))
+        return 'uses the cache instruction (cache)'
+
+    net.twins = SimpleNamespace(set_aside_function_asm=set_aside)
+    monkeypatch.setattr(net, '_autopilot_one', lambda *a, **k: pytest.fail('assembly gets no machine draft'))
+    with net.store.tx() as db:
+        db.execute("DELETE FROM settings WHERE key LIKE 'deep-source-recovery:%'")
+    assert prepare(net, proj, fn, Log())['status'] == 'asm'
+
+
 def test_claimed_function_defers_source_recovery(sweep, monkeypatch):
     _, net, _, _ = sweep
     from decompnet.app.deep_source_recovery import prepare
