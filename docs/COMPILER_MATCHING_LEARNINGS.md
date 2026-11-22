@@ -1,5 +1,14 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: hoist a counter start without a one-shot scope
+
+A private N64 draft scored 11,072 under `-G0 -mips3 -mgp32 -mfp32 -O2`.
+Moving its loop counter's zero assignment in front of the loop-entry
+guard improved the linked score to 10,827 with a one-shot scope.
+The plain hoist scored 10,767. The repair checks that the counter's
+prior value is dead at the guard and that no jump can enter the guarded
+body from outside. The function remains unmatched.
+
 ### KMC GCC 2.7.2: copy a checked pointer into a later carrier
 
 A private N64 draft scored 455 with `-G0 -mips3 -mgp32 -mfp32 -O2`.
