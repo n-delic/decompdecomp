@@ -932,3 +932,13 @@ def test_invariant_row_offset_reaches_kmc_proposals(monkeypatch):
     rows = [('r', 'sll $t1, $t0, 2', 'sll $v0, $t0, 2')]
     assert ('invariant_row_offset', 'fixed') in route('void f(void) {}', rows, 'asm')
     assert 'invariant_row_offset' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
+
+
+def test_carried_first_iteration_test_reaches_kmc_proposals(monkeypatch):
+    from decomprepair import measured_carried_loop_test
+
+    monkeypatch.setattr(measured_carried_loop_test, 'variants',
+                        lambda *args: [('carried_first_iteration_test', 'fixed')])
+    rows = [('r', 'sltiu $v0, $s0, 2', 'addiu $v1, $zero, 1')]
+    assert ('carried_first_iteration_test', 'fixed') in route('void f(void) {}', rows, 'asm')
+    assert 'carried_first_iteration_test' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
