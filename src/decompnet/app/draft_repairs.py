@@ -217,6 +217,7 @@ from decomprepair import (
     loop_top_label_repairs,
     loop_weight_repairs,
     loop_weight_set_repairs,
+    m2c_spelling,
     macro_address_repairs,
     macro_repairs,
     macro_scope_weight,
@@ -590,6 +591,34 @@ def variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels=
 
 @compile_timing.timed('proposal_generation')
 def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels=None, *, limit=LIMIT, header='', tables=(), callees='', entry_scope=None) -> list[str]:
+    """The families' proposals for `source`, and for an m2c draft also their proposals for its plain spelling.
+
+    Most families read `*(T *)((s8 *)p + K)` and `s32`, not m2c's `M2C_FIELD(p, T *, K)` and `M2C_UNK`: on 90 raw
+    drafts of an N64 game they never fired until the draft was written out (decomprepair's m2c_spelling, the
+    preprocessor's own expansion), while the families that read the macro itself (field_struct_view) need it kept.
+    So both spellings are asked. The raw spelling's proposals come first: taken in turn under a draft's limit of 20,
+    the written-out ones pushed better raw children out as often as they added one (90 drafts: 2 better, 3 worse), so
+    they add to an unlimited search (the Deep Permuter's beam, prove_chain) and fill a limit the raw ones leave."""
+    labels = {} if labels is None else labels
+    kwargs = dict(header=header, tables=tables, callees=callees, entry_scope=entry_scope)
+    raw = _spelled(source, name, arch, asm, flags, labels, limit=limit, **kwargs)
+    try:
+        written = m2c_spelling.plain(source)
+    except Exception:  # noqa: BLE001 - a draft the expansion can't read keeps its own proposals
+        written = source
+    if written == source:
+        return raw
+    plain_labels = {}
+    plain = _spelled(written, name, arch, asm, flags, plain_labels, limit=limit, **kwargs)
+    merged = list(raw)
+    for text in plain:
+        if text not in (source, written) and text not in labels:
+            merged.append(text)
+            labels[text] = plain_labels.get(text, 'expression_or_near_repair')
+    return merged if limit is None else merged[:limit]
+
+
+def _spelled(source: str, name: str, arch: str, asm: str = '', flags=(), labels=None, *, limit=LIMIT, header='', tables=(), callees='', entry_scope=None) -> list[str]:
     span = find(source, name)
     if span is None:
         return []
