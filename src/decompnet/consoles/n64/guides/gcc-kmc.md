@@ -8,6 +8,20 @@ while keeping `-O2`. Debug line labels can prevent the old assembler moving an i
 A matching result proves the flags for that function; keep the override scoped to the verified address range.
 The automatic compiler survey also checks these debug variants on saved attempts.
 
+## Last rows: which pass, by symptom
+
+`guide("near-match")` has the GCC 2.x pass rules with their evidence levels, grouped by symptom: register-only rows
+(allocation priority, `do { } while (0)` reference weight, birth-order ties, argument-register copy preferences,
+REG_EQUIV), a store or load in the wrong order (sched1's single-set boost, struct member versus raw cast in
+`true_dependence`, loop-note fences, `move_movables` and `combine_movables`) and frame-size rows (spill slots, dead
+pseudos). Before using them on this compiler:
+
+- Check the function's own profile: `lui $at; addu $at,$at,$sN` table access with stepped saved registers is
+  `-fno-strength-reduce`, and its source indexes by byte offset; profile and source change together.
+- Remove earlier agents' `volatile`, padding arrays and frame unions first, then compare.
+- `compiler_passes(passes=["greg"])` gives the allocation table and preferences; `["sched", "sched2"]` the
+  schedulers' orders; `compiler_source("gcc-2.7.2-kmc", "birthing_insn_p")` the rule's own code.
+
 ## Recheck the same C before changing a close candidate
 
 - If the target fills jump, call, or return delay slots and the current build leaves

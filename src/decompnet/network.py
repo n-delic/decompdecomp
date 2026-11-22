@@ -434,8 +434,27 @@ def stall_budget_text() -> str:
             "best score counts as progress")
 
 
-def move_on_brief(fn, after=None) -> str:
-    """The brief's line naming the function's own move-on number (the one compile_and_diff counts against)."""
+def symptom_pointer(rows) -> str:
+    """Which part of guide("near-match") a near-match's remaining rows call for (the last compile's diff rows, marker
+    first): helpers read the guide top to bottom and missed the rule that fit their rows."""
+    marks = [row[0] for row in rows or () if row[0] != " "]
+    if not marks:
+        return ""
+    frame = any(re.search(r"\$sp\b|\bsp\b", f"{row[1]} {row[2]}") and "addiu" in f"{row[1]} {row[2]}"
+                for row in rows if row[0] != " ")
+    if "s" in marks or frame:
+        return ' Your last diff has frame rows: guide("near-match"), "Frame-size rows", first; every other row shifts with the frame.'
+    if set(marks) == {"r"}:
+        return ' Your last diff is register-only: guide("near-match"), "Register-only rows", and compiler_passes(passes=["greg"]).'
+    if "o" in marks and set(marks) <= {"o", "r"}:
+        return (' Your last diff has order rows: guide("near-match"), "Order rows", and '
+                'compiler_passes(passes=["sched", "sched2"]).')
+    return ""
+
+
+def move_on_brief(fn, after=None, rows=None) -> str:
+    """The brief's line naming the function's own move-on number (the one compile_and_diff counts against), with
+    find_similar for a matched twin and, for a near-match, the guide section its last diff rows call for."""
     custom = after is not None
     best = fn["best_score"] if "best_score" in fn.keys() else None
     after = after if custom else stall_budget(fn["n_insns"] or 0, best)
@@ -446,7 +465,8 @@ def move_on_brief(fn, after=None) -> str:
             'To leave earlier with a reason, use release_function(move_on=true, claim_token="the current claim_token", notes="what you tried and why").'
             + (' Near-match: read guide("near-match") first; for register or order rows, compiler_passes shows the '
                'allocation priorities and passes, and score_permutations grids statement orders and edit combinations.'
-               if near_match(best) else ''))
+               + symptom_pointer(rows) if near_match(best) else '')
+            + ' find_similar(function) lists matched look-alikes with their C: adapt a twin before writing your own.')
 
 
 def normalized_source(source: str) -> str:
@@ -2057,7 +2077,8 @@ class Network:
             lines.append(f"claimed by {who}, lease expires in {int(claim['expires_at'] - time.time()) // 60} min "
                          f"(each compile_and_diff renews it)")
         if fn["status"] != "matched":
-            lines.append(move_on_brief(fn, self.agent_stall_budget(fn, agent)))
+            kept = self._last_diffs.get((agent.id, fn["id"])) if agent else None
+            lines.append(move_on_brief(fn, self.agent_stall_budget(fn, agent), kept[0] if kept else None))
             lines += self.tried_at_best(fn)
         if fn["status"] == "matched":
             lines += [f"MATCHED by {self._agent_name(fn['matched_agent_id'])} {_ago(fn['matched_at'])}:",
