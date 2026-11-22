@@ -14640,3 +14640,22 @@ replay on known positive examples. All inspected winners remain unmatched.
 
 
 In one N64 unlink wrapper built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a draft stored a link before a call, but the target called first and reloaded the global pointer before storing the link. Reordering the two statements and naming the verified pointer word directly reproduced the linked target exactly (score 325 to 0). This intentionally reconstructs the target's observable order rather than preserving the draft's order; the rule checks the complete target shape and encoded pointer and destination addresses. Evidence: one saved example and synthetic address and routing tests.
+
+### Stage the scale in the smoothing result local
+
+In a private N64 function built with GCC 2.7.2 KMC and
+`-G0 -mips3 -mgp32 -mfp32 -O2`, a fitted delta scaled an axis,
+subtracted the old record field and then blended it back toward the
+field value before clamping. The target scaled the axis in its saved
+float register, then reused distinct registers for the field and
+smoothing result. The draft used the return register for the product
+and smoothing result and put the field in a different register.
+
+Capturing the product in the result local before subtracting the field
+recovered the registers for the read, subtraction result and lower clamp.
+The exact linked score went from 9,265 to 9,220. A new float local for
+the product scored 9,265. Updating the source axis itself scored 9,220
+but would require checking later uses on every path. The accepted
+rewrite preserves that axis and checks the observed scale bits, field
+offset and in-place target multiply. Evidence includes one measured
+linked function and synthetic generation and routing tests.
