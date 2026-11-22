@@ -1,5 +1,25 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: place a shared case tail at its earlier guard
+
+An N64 draft jumped forward from a case's early guard into a body
+nested inside a later branch. The target placed that body directly
+after the early guard and redirected the late path to it. Moving
+the shared source body, with both paths retaining the case's final
+jump, improved the linked score from 31,267 to 29,062 under
+`-G0 -mips3 -mgp32 -mfp32 -O2`. Expanding the nearby state branch
+into its switch gave 28,557 on that intermediate source.
+
+Three unrelated duplicate-arm guards in the draft used values
+that were uninitialized on their paths. Eliminating one guard
+outright at the 29,062 baseline scored 29,772. Testing initialized
+predicates in all three guards and declaring the routine `void`
+yielded 28,857 with no return or uninitialized warnings, using
+the restored state switch. Reapplying the existing float local
+reuse repair reached 28,602 with the same warning check. These
+are linked measurements on one function. Controlled tests cover the relocated control flow,
+braced guards and declaration scope.
+
 ### KMC GCC 2.7.2: recover both versions of a stack output component
 
 Two calls in a large N64 function write the same stack vector.
