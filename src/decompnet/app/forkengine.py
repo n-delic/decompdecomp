@@ -3300,6 +3300,7 @@ class ForkEngine:
         linked = fp.source_is_linked(unit)  # the game is built from this file: changes must keep it identical
         with self._tree(proj).exclusive() if linked else self._tree(proj).shared(), self._unit_lock(proj, unit.name):
             fn = self._fn(slug, function)
+            previous = self._current_source(fp, fn, comment=True) if fn['status'] == 'matched' else None
             if exact_only and (fn['status'] != 'open' or source != fn['best_source']):
                 return {"matched": False, "score": None}
             if not keep and not diagnostic and fn['status'] == 'matched':
@@ -3505,6 +3506,8 @@ class ForkEngine:
                     return {"text": f"❌ {fn['name']} already matches; your version {why}, so the matching one was "
                                     "kept. Call claim_function for a function that still needs work.",
                             "score": score, "matched": False}
+                if " ".join(code.split()) != " ".join((previous or "").split()):
+                    self._kept_as_history(fn, agent, previous, polishing=comment)
                 self._commit_paths(proj, fp, committed, f"Tidy {meta.get('demangled') or symbol} (still matches)\n\n"
                                                         f"Edited by {agent.name} with decompdecomp.")
                 return {**evidence,"text": f"✅ {fn['name']} still matches; your tidier version is committed.{_renamed_note(d)}",
@@ -3530,6 +3533,17 @@ class ForkEngine:
         else:
             text = f"{percent_text(pct)} match (score {score}; 0 = identical).\n{d.render()}{line_note}{missing}"
         return {**evidence,"text": remembered(text, score) + stall, "score": score, "matched": False, "adopted": True}
+
+    def _kept_as_history(self, fn, agent: Agent, previous: str | None, *, polishing: bool) -> None:
+        """A matched function's file took a new exact source: the one it had stays among the attempts, and unless this
+        is polishing (which marks the function readable itself) the function is unpolished again, as in ROM mode
+        (Network._replace_match)."""
+        store = self.net.project_store(fn["project_id"])
+        with store.tx() as db:
+            self.net.keep_matching_history(db, fn, previous or fn["matched_source"])
+            if not polishing:
+                db.execute("UPDATE functions SET readable=0, unpolished_source=NULL WHERE id=?", (fn["id"],))
+                self.net._event(db, fn["project_id"], agent.id, "rematch", fn["name"])
 
     def try_compiler(self, agent: Agent, slug: str, function: str, compiler: str, flags: str = "",
                      source: str = "", keep_match: bool = True) -> str:
