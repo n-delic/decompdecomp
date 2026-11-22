@@ -530,7 +530,11 @@ class Search(Permuter):
                     # a pointer-chain load pinned behind the branch operand's load in a one-shot scope, with m2c's
                     # identical if/else arms written once (decomp-repair 0.5.340): 210 -> 0 as one child, 220 for
                     # the arms alone and 235 for the others alone, so the beam has to keep the weaker ones
-                    ('decomprepair.chain_load_scope.variants', (parent, fn['name'], proj['arch']))])
+                    ('decomprepair.chain_load_scope.variants', (parent, fn['name'], proj['arch'])),
+                    # a halfword countdown timer's guarded loop: the unsigned entry test kept, the masked word
+                    # counter a u16, the field countdown a compound decrement (decomp-repair 0.5.348): 310 -> 0 as
+                    # one child, 314, 310 and 455 as its parts, so the beam has to keep the weaker ones
+                    ('decomprepair.halfword_countdown_shapes.variants', (parent, fn['name'], proj['arch']))])
                     for pair in generation_calls.pairs(result)]
                 for family, child in proposals:
                     if child in seen or budget <= 0:
