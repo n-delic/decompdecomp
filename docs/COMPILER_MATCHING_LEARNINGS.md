@@ -14700,3 +14700,20 @@ uses are confined to its respective lifetime.
 
 
 In one N64 slot loop built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the draft carried a synthetic first-iteration flag initialized to a constant, while the target computed the index test before entering and in the loop delay slot. Reconstructing the equivalent bounded `for` loop and its direct condition reproduced the linked target exactly (score 335 to 0). The rule requires the measured branch shape and the complete bounded source form. Evidence: one saved example and synthetic generation and routing tests.
+
+### Reload a clamped field through the saved axis
+
+In a private N64 function built with GCC 2.7.2 KMC and
+`-G0 -mips3 -mgp32 -mfp32 -O2`, two paths reloaded a smoothed field
+after both clamp arms and subtracted it from a float global. The target
+kept the reload in a saved float register, while the draft loaded it
+into a scratch register.
+
+Capturing the reload in the earlier smoothing axis recovered the target
+register and the field-before-global read order. Restoring the source
+axis after subtraction scored 9,110, the same as directly reusing it,
+from a 9,205 baseline. Only the first path scored 9,200 and only the
+second scored 9,115. Capturing the second path's read before its last
+clamp guard scored 9,505. Synthetic tests bind the field offset,
+branch-likely store and relocated subtraction and preserve later uses
+of the source axis.
