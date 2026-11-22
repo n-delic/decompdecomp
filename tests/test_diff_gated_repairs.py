@@ -2138,3 +2138,14 @@ int f(int x, u32 y) {
     candidates = proposals(source, 'f', '', 'mips', KMC, rows, '')
     [group] = [text for family, text in candidates if family == 'arithmetic_operand_order']
     assert group.count('right * left') == 2
+
+
+def test_command_word_schedule_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'nop', 'nop')]
+    monkeypatch.setattr(diff_gated_repairs.measured_command_word_schedule, 'variants',
+                        lambda text, name, header, diff: [('command_word_fixture', text)])
+    assert 'command_word_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'command_word_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+    assert 'command_word_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-7.1', rows, ''))
