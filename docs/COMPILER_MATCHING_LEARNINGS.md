@@ -17503,3 +17503,72 @@ Family: decomp-repair `array_declaration_scope_sink` (0.5.594, in `declaration_s
 whose every reference lies in one block (a switch body included) is declared at the start of that block, and a child
 moves the unused `volatile` scratch with it. `tests/test_array_declaration_scope_sink_wiring.py` checks the draft repairs
 and the local lane. From the saved best the combined child scores 10702 in the isolated judge.
+
+
+## Spill slots numbered in the order of the declarations: block-level `spXX` locals back at the top (851-instruction ray test)
+
+An 851-instruction N64 ray test (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, scoring 2) keeps the addresses of its
+scratch vectors (`sp164`, `sp16C`, `sp174`, ... m2c names them after their stack slots) in spilled pseudos. An earlier
+session had declared two of them (`sp174`, `sp194`) at the top of the block that uses them, so the six addresses of the
+room section took the slots 0x174, 0x17c, 0x184, 0x1ac, 0x1a4, 0x19c where the target has 0x174 to 0x194 and 0x1ac in
+the order of the names. This is the reverse of `declaration_scope_sink`: the pseudo of a block-level declaration is
+numbered when the block opens (hypothesis from the numbering seen in the dumps, not confirmed in the compiler source),
+reload hands out slots in pseudo-number order, so the two came after every other `spXX` local.
+
+| edit | score |
+| --- | --- |
+| saved best (5943 here under scoring 2; the app's cached 5103 was scoring 1) | 5943 |
+| `sp174` declared with the other function-level locals after `sp16C`, `sp194` after `sp18C` | 5920 |
+
+Controlled result: 151 -> 128 differing rows (the 24 `s` rows of the slot offsets among them), nothing else moved. One
+function, not a regression test of the compiler. Failed here: `spEC = arg0;` dropped for the parameter itself puts the
+first spill store (`sw $a0`) where the target has it but moves a delay-slot store elsewhere (5920 -> 6060); permuting the
+order of the five parameter copies at the top changes nothing (they are pseudo copies; sched1 decides the order).
+
+Family: decomp-repair `declaration_scope_hoist` (0.5.596): scalar and pointer locals declared in inner blocks, not in a
+record body, whose name appears once, are moved to the function's declarations by their offset name; one child moves them
+all. It reproduces the edit exactly from the saved best. `tests/test_declaration_scope_hoist_wiring.py` checks the draft
+repairs and the local lane.
+
+## A recency-list cache lookup: ten small source shapes took 5451 to exact (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`)
+
+A 364-instruction N64 function (walk a doubly linked recency list for nodes that overlap a byte range, log the part
+of each that was not loaded, move the node to the front, then fill the rest of the range from nodes taken off a free
+list or off the list's tail; its results go to a 2x3 record) stood at a saved best of 4751 under scoring 1 (5451 under
+scoring 2) with 160 differing rows, mostly registers. The saved best carried scaffolding that was no part of any
+program (a stack array read through a pointer with `p[0]`, `p[2]`, `p[4]`, a float of unions for a node, a dead
+`__repair_phase_storage`, one wrong store: a row length stored after its source variable changed). A clean rewrite of
+the same algorithm scored 5720 and was then reduced by single edits; every edit below was scored in the isolated judge
+(controlled: one function, one compiler; the compiler explanations are hypotheses from the cc1 `-dl -dg` and `-dS -dR`
+dumps, not confirmed in its source).
+
+| edit | what it changes | score (rows) |
+| --- | --- | --- |
+| natural rewrite: `u32 buf[3][2]` indexed `buf[k][(u16) n]`, scratch locals, `s32` counter declared after the size | the stack rows as three arrays of two (one base register) | 5720 |
+| the scratch `a0` assigned inside the condition, `(a0 = node->addr) < hi && lo < a0` | one load fewer; the register order of the address, length and sum | 4411 |
+| `s1 = start + size;` once, then `if (s1 >= ..) s1 = ..; else s1 = ((s1 - ..` | the sum lives in the register `s1` takes (`move $s1,$v1`) | 3415 |
+| arm-private scratch (`n`) in the two arms that assigned the shared `a0` | the shared one was a global pseudo that took `$a1`; the arm's takes `$v0` | 3285 |
+| the log entry's pointer local gone, `table[idx].b = ..` at each of the three stores | a function-level pointer is a global pseudo (`$t0`); at the store it is a block temporary (`$a1`, `$v1`) | 1975 (34) |
+| the node taken off the free list held in `t`, copied into the loop's node where the arm is done with the list | the copy lands after the bookkeeping and the stores name `$a0` then `$s0` | 2860 -> 2515 |
+| `n = size - 0x600; size = n + s1;` and `m = s1 - 0x600; start -= m;` | gcc's fold would reassociate `(a - K) + b` and `a - (b - K)`; the target has `addiu`, `addu` and `addiu`, `subu` | 2445 -> 2360 |
+| break arm: the `buf[0]` store first, then `buf[1]`, `size = 0`, `buf[2]` | store order of an arm of independent stores | 870 -> 595 |
+| single-return arm: `a`, then `c`, then `d = 0` | same | 595 -> 535 |
+| the `buf[2]` store moved before the `D_80108F70++` store | same | 535 -> 30 |
+| both copies of the parameters dropped (`start`, `size` used as `arg1`, `arg2`) | the second scheduler places the prologue's saves with the moves of the copies; the target has `$a1`, `$a2`, `$a3` moved in parameter order, then the zero | 30 -> 0 |
+
+Single edits that failed or were not needed: a union `u.value` for the sum of the free-list branch (a `move $v1,$v0`
+the target does not have; the plain `size + s1` was better), a `tmp` for the call's result stored later (tied at 30,
+removed from the final source), placing the counter's zero at the top of the function or after the sums (the prologue
+order does not follow it; only dropping the parameter copies moved it), a hoisted-constant local `k = 0x600` for the
+tail loop (85 rows against 64: it kills the immediates `sltiu 0x601` and `addiu -0x600`), `e = (Ent *)(idx * 12 + base)`
+for the operand order of the entry address (identical to `&table[idx]` once the pointer was gone). Dropping one
+parameter copy at a time scored 30 and 60 from 30: only both together were exact.
+
+Families: decomp-repair 0.5.597, `walk_shape_repairs`: `element_pointer_inline`, `condition_capture`,
+`value_reuse_before_branch`, `arm_scoped_scratch`, `reassociation_temp`, `arm_handle_copy` and `store_run_move`, each its
+own child, and `walk_shape_chain` for the six that are the same wherever they apply (2820 -> 870 on the reversed
+source); `parameter_copy_drop` now also offers every copy dropped at once. Reproduced from the reversed source with
+only these variants: 2820, 870 (chain), 595, 535, 30 (the store moves, each an improvement so the beam keeps them) and
+0 (the all-copies child). `tests/test_walk_shape_wiring.py` checks the draft repairs and the Deep Permuter's local lane.
+Not covered: the position of the node copy in the free-list arm (the chain takes the fourth statement, one function's
+answer; the single children offer the five), and the move of a statement more than five places in a run.
