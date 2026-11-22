@@ -1253,6 +1253,36 @@ def test_loop_vector_shape_pass_reaches_the_chain_load_scope_that_matched_a_menu
     assert any('guard_load' in c for c in seen)
 
 
+def test_loop_vector_shape_pass_reaches_the_halfword_countdown_that_matched_a_menu_function(monkeypatch):
+    """The unsigned entry test, the u16 counter and the compound field decrement: 310 -> 0 in one child."""
+    net = setup(monkeypatch)
+    source = ('extern void *gMenu;\nextern void *gState;\nextern int sink(void *, int);\nvoid f(void) {\n  int i;\n  short t;\n'
+              '  unsigned short temp;\n  int next;\n  void *state;\n  void *menu;\n'
+              '  t = *((short *) (((char *) gMenu) + 0x7C));\n  if (t == 0)\n  {\n    i = 0;\n    state = gState;\n'
+              '    if ((((unsigned) t) + 1) <= ((unsigned char) (*((unsigned char *) (((char *) state) + 5)))))\n    {\n'
+              '      do\n      {\n        sink(state, i & 0xFFFF);\n        i += 1;\n      }\n'
+              '      while (((unsigned) (i & 0xFFFF)) < ((unsigned char) (*((unsigned char *) (((char *) state) + 5)))));\n    }\n  }\n'
+              '  menu = gMenu;\n  temp = *((short *) (((char *) menu) + 0x7C));\n  if (((short) temp) > 0)\n  {\n'
+              '    next = temp - 1;\n    *((short *) (((char *) menu) + 0x7C)) = next;\n    if ((next << 0x10) == 0)\n    {\n'
+              '      sink(state, 1);\n    }\n  }\n}\n')
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_score=310,best_source=? WHERE name='f'", (source,))
+    fn, proj = net.function(), net.project_row('game')
+    search = deep_permuter.Search(net, 1, 30, Log(), fn)
+    seen = []
+
+    def score(agent, proj, fn, candidate, best, fork):
+        seen.append(candidate)
+        search.tested += 1
+        # each edit alone is no better (314, 310, 455); the three together are exact
+        whole = ('(unsigned) t) <' in candidate and 'u16 i;' in candidate and '-= 1;' in candidate)
+        return 0 if whole else 314
+
+    monkeypatch.setattr(search, '_score', score)
+    assert search.loop_vector_shape_pass(AGENT, proj, dict(fn, best_source=source, name='f'), 310, None) == 0
+    assert len(seen) >= 3
+
+
 def test_a_stub_baseline_is_named_before_the_tuning_passes(monkeypatch):
     net = setup(monkeypatch)
     fn = net.function()

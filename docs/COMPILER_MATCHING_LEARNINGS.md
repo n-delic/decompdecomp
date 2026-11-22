@@ -13509,3 +13509,46 @@ that scored 265 through the linked-byte judge. Evidence is one measured improvem
 rewrite regressions. The function remains unmatched.
 
 On one N64 function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1`, an indexed byte used in a packed color needed an unsigned load rather than the draft's signed load. Casting that read to `u8` improved the linked score from 370 to 170. Removing an inferred trailing call argument using the existing target-call-arity hypothesis then reproduced the target exactly; arity inferred from register setup remains speculative and the judge must verify it. Evidence: one saved example, with synthetic generation and routing tests.
+
+## A halfword countdown timer and its guarded loop: three edits that only work together (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, an N64 game, one 252-instruction menu function)
+
+A saved best scored 310: two rows wrong (a missing `sltu $v0,$v1,$v0` before the loop's entry branch, and an extra
+`andi $v0,$v1,0xffff` in a halfword countdown), the rest of the 252 instructions exact. The control flow was a loop
+over a record's entries that runs only while a halfword timer field is zero, then the timer's own countdown. The match
+took three edits, scored from the saved best with the app's judge (`fast_judge`), each alone and together:
+
+| edit | alone | with the others |
+| --- | --- | --- |
+| entry test `(u32) t + 1 <= n` written `(u32) t < n` | 314 | |
+| loop counter `s32 i` (every read `i & 0xFFFF`) declared `u16 i` | 310 | |
+| field countdown `x = *F; if ((s16) x > 0) { y = x - 1; *F = y; if ((y << 0x10) == 0)` written `if (*F > 0) { *F -= 1; if (*F == 0)` | 455 | |
+| first two | 355 | |
+| all three | | 0 |
+
+What each changes in the compiler (`cc1 -dr -dc -dS`):
+
+- The loop is a `do { } while`, so jump.c copies its exit test above the loop. With `t == 0` known on the path, cse
+  folds `t + 1 <= n` to `n != 0` and the `sltu` disappears. `(u32) t < n` is the same value but cse maps `t` to the
+  register of the zero it just tested, not to the constant, so the compare stays (`lh $v1` ... `sltu $v0,$v1,$v0`).
+  Where the counter's `i = 0` came before the compare, cse picked the counter's register instead (the lowest-numbered
+  pseudo of the equivalence class) and combine folded the constant in again: placing `var = 0` before the test, after
+  it, or at the top of the function, a declaration inside the block, `i = t`, mask spellings and a `u16` temp for the
+  test were all 314 or worse.
+- A `u16` counter's `move $a2,$zero` is the one instruction reorg moves into the entry branch's delay slot; with a
+  word counter it stays after a `nop` (the diff showed `nop`, then `move`, one row each).
+- A halfword read into an `unsigned short` temp then decremented is zero-extended (`andi 0xffff`) before the `addiu`;
+  an `s16` or `s32` temp has no `andi` but also no `move $v1,$v0` and a different register for the record pointer
+  (the frame also lost its 8-byte local). The natural `if (*F > 0) { *F -= 1; if (*F == 0)` gave `lh; blez; move;
+  addiu; sh; sll; bnez` exactly, with the field's pointer in `$a0` and the other record in `$a1`.
+
+Failed here (not repeated): the `+ 1` form with `var = 0` moved to six places; `u16`/`s16` counters with each placement
+(355 to 870); `(u32)(u16) t < n` (774); the guard as `n != 0` (310, the same as the folded form); the timer read from
+memory twice; `unsigned short`/`s16`/`s32` temps in the m2c countdown shape (355 to 379).
+
+Permuter: none of the existing families (168 children on the saved source, none below 310) proposes these, and a
+step-at-a-time search cannot keep them (314, 310 and 455 alone). decomp-repair 0.5.348 `halfword_countdown_shapes`
+proposes each edit and the combination as one child (`unsigned_successor_compare`, `masked_halfword_counter`,
+`field_countdown_compound`, `halfword_countdown_combo`); from the saved 310 source the combination scores 0 through the
+judge, and `deep_permuter.loop_vector_shape_pass` offers it. Evidence level: one function, plus synthetic tests of each
+rewrite and its guards (the counter must be read only through its mask, stepped by one; the successor test unsigned;
+the countdown's temps used nowhere else).
