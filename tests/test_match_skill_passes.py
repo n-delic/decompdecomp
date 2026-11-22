@@ -133,7 +133,7 @@ VERBOSE = SCHED + """
 """
 
 
-def test_the_verbose_scheduler_dump_adds_the_flag_and_prints_only_its_notes(tmp_path, monkeypatch):
+def test_the_verbose_scheduler_notes_need_no_compiler_flag_and_print_only_the_notes(tmp_path, monkeypatch):
     net = project(tmp_path)
     seen = {}
 
@@ -145,7 +145,7 @@ def test_the_verbose_scheduler_dump_adds_the_flag_and_prints_only_its_notes(tmp_
     assert seen["extra_flags"] == () and "-fsched-verbose-2" not in plain
     text = hosted_judge.passes_report(net, {"slug": "game", "name": "f1", "source": "int f1(void){return 0;}",
                                             "passes": ["greg"], "sched_verbose": True})["text"]
-    assert seen["extra_flags"] == ("-fsched-verbose-2",) and "sched" in seen["passes"]  # asked for it, so dumped
-    assert "First scheduler, -fsched-verbose-2 (3 lines):" in text
+    assert seen["extra_flags"] == () and "sched" in seen["passes"]  # cc1 2.7.2 refuses -fsched-verbose-2
+    assert "First scheduler notes (3 lines):" in text
     assert ";; launching insn 58 (priority 2)" in text and ";; set-count rule: insn 4 first" in text
     assert compiler_passes.verbose_schedule({"phases": {}}) == []
