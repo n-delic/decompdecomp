@@ -155,6 +155,7 @@ from decomprepair import (
     packed_matrix_conversion,
     passthrough_argument_repairs,
     projection_argument_before_store,
+    projection_gain,
     rejected_branch_default,
     relocated_byte_table,
     relocated_global_update,
@@ -341,6 +342,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += balanced_clamp_argument_stage.variants(source, name, rows, header=header)
         result += balanced_clamp_predicates.variants(source, name, rows, header=header, max_bytes=MAX_SOURCE_BYTES)
         result += trig_axis_reuse.variants(source, name, rows, header=header)
+        result += projection_gain.variants(source, name, rows, header=header)
         result += smoothing_call_before_read.variants(source, name, rows, header=header)
         result += projection_argument_before_store.variants(source, name, rows, header=header)
         result += balanced_signed_selector_increment.variants(source, name, rows, header=header)
