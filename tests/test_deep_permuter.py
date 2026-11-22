@@ -1,4 +1,5 @@
 import json
+import time
 
 import pytest
 
@@ -271,6 +272,7 @@ def test_local_repairs_chain_from_saved_improvements_with_fresh_diffs(monkeypatc
 
 def test_chained_local_repairs_share_the_original_compile_limit(monkeypatch):
     net = setup(monkeypatch)
+    monkeypatch.setattr(deep_permuter, 'EXTEND_MAX', 0)  # the hard limit, not the extension
     generated = []
     def variants(source, *args, **kwargs):
         generated.append(source)
@@ -587,6 +589,7 @@ def test_room_search_publishes_one_result_note_not_lease_notes(monkeypatch, note
 
 def test_side_search_keeps_other_agents_lease_and_defers_compiler_changes(monkeypatch):
     net = setup(monkeypatch)
+    monkeypatch.setattr(deep_permuter, 'EXTEND_MAX', 0)
     with net.store.tx() as db:
         db.execute("INSERT INTO agents(id,name,token_hash) VALUES(2,'owner','owner-token')")
         db.execute('INSERT INTO claims VALUES(1,2,123,9999999999)')
@@ -1666,3 +1669,65 @@ def test_guarded_split_scope_reaches_focused_lane(monkeypatch):
     proposals, _ = search._local_proposals(source, proj, fn, [])
     assert any(family == 'reused_temp_split' and 'value_b1 = p[1];' in candidate
                and '} while (0);' in candidate for family, candidate in proposals)
+
+
+def _budget_search(monkeypatch, **attrs):
+    net = setup(monkeypatch)
+    search = deep_permuter.Search(net, 1, 100, Log())
+    search.best = 10
+    for key, value in attrs.items():
+        setattr(search, key, value)
+    return search
+
+
+def test_a_search_still_improving_at_its_limit_extends_its_budget(monkeypatch):
+    search = _budget_search(monkeypatch)
+    search.tested = 100
+    search.improved_at = (95, time.monotonic())
+    search.check()  # extended instead of raising
+    assert (search.limit, search.extensions) == (150, 1)
+    assert search.deadline - search.started_at == pytest.approx(90)
+
+
+def test_extensions_need_fresh_improvement_and_are_capped(monkeypatch):
+    search = _budget_search(monkeypatch)
+    search.tested = 100
+    search.improved_at = (95, time.monotonic())
+    search.check()
+    search.tested = 150  # no improvement since the extension began
+    with pytest.raises(deep_permuter.SearchLimit):
+        search.check()
+    for expected in (2, 3):
+        search.improved_at = (search.tested - 1, time.monotonic())
+        search.check()
+        assert search.extensions == expected
+        search.tested = search.limit
+    search.improved_at = (search.tested - 1, time.monotonic())
+    with pytest.raises(deep_permuter.SearchLimit):  # EXTEND_MAX reached
+        search.check()
+
+
+@pytest.mark.parametrize('attrs', [
+    {'improved_at': None},                                   # never improved
+    {'improved_at': (10, 0.0)},                              # improved early in the budget
+    {'extendable': False, 'improved_at': (99, 1e12)},        # a caller capped the run
+    {'best': 0, 'improved_at': (99, 1e12)},                  # matched
+])
+def test_a_search_that_is_not_improving_late_ends_at_its_limit(monkeypatch, attrs):
+    search = _budget_search(monkeypatch, **attrs)
+    search.tested = 100
+    with pytest.raises(deep_permuter.SearchLimit):
+        search.check()
+
+
+def test_a_run_that_keeps_improving_spends_the_extended_budget(monkeypatch):
+    net = setup(monkeypatch)
+    monkeypatch.setattr(draft_repairs, 'variants', lambda source, *args, **kwargs: [source + ' '])
+    def judge(self, agent, proj, fn, source, best, fork):
+        with net.store.tx() as db:
+            db.execute('UPDATE functions SET best_score=?,best_source=? WHERE id=?', (best-1, source, fn['id']))
+        return best-1
+    monkeypatch.setattr(Permuter, '_score', judge)
+    result = deep_permuter.run(net, 'game', 'f', 1, 2, Log())
+    assert result['reason'] == 'Variant limit reached'
+    assert result['tested'] > 2  # extended while still improving, then stopped at the cap
