@@ -379,9 +379,28 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
 
     recovered_data=[]
     predecessors={(fn.rom+fn.size,fn.vram+fn.size):fn for fn in result if fn.size>=8}
-    kept=[];dropped=markers=recovered_shared=0;ordered=sorted(result,key=lambda f:(owner(f),f.rom))
+    kept=[];dropped=markers=recovered_shared=recovered_continuations=0;ordered=sorted(result,key=lambda f:(owner(f),f.rom))
     for i,fn in enumerate(ordered):
         previous=kept[-1] if kept else None;following=ordered[i+1] if i+1<len(ordered) else None
+        if (previous is not None and owner(fn)[0] >= 0 and owner(previous) == owner(fn)
+                and previous.rom+previous.size == fn.rom and previous.vram+previous.size == fn.vram
+                and previous.lines[0].word & 0xffff0000 == 0x27bd0000
+                and previous.lines[0].word & 0x8000 and fn.size >= 8
+                and fn.lines[-2].word == JR_RA
+                and fn.lines[-1].word == 0x27bd0000 | ((-previous.lines[0].word) & 0xffff)
+                and fn.vram not in entered_addresses and not referenced(fn)
+                and not any(d.rom is not None and d.rom < fn.rom+fn.size and previous.rom < d.rom+d.size for d in data)):
+            import rabbitizer
+            tail = rabbitizer.Instruction(previous.lines[-1].word)
+            if (tail.isValid() and not tail.hasDelaySlot()
+                    and tail.getOpcodeName() not in ('eret', 'break', 'syscall', 'teq', 'tne', 'tge', 'tgeu', 'tlt', 'tltu')):
+                # A framed function falls straight into an unentered continuation
+                # that restores its exact frame before returning.
+                kept[-1] = replace(previous, lines=previous.lines+fn.lines,
+                                   labels=previous.labels | fn.labels,
+                                   entry_aliases={**previous.entry_aliases, **fn.entry_aliases})
+                recovered_continuations += 1
+                continue
         if overlay_end_marker(fn, previous, following, image, order, segments) and not referenced(fn):
             data.append(DataSymbol(fn.name, fn.vram, fn.rom, 4, 'data'))
             markers += 1
@@ -475,6 +494,8 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
         log(f'Recovered {len(recovered_data)} referenced words as data between functions.')
     if recovered_shared:
         log(f'Recovered {recovered_shared} closed leaves with independently entered assembly tails.')
+    if recovered_continuations:
+        log(f'Joined {recovered_continuations} unentered framed continuations.')
     return kept if dropped or markers or recovered_data or recovered_shared else result if changed else functions
 
 

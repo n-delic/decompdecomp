@@ -908,3 +908,17 @@ def test_duplicate_return_delay_word_before_called_entry_is_padding(protect):
     result = repair(functions, [], image, consoles.get('n64'), segments, symbols=symbols)
     assert any(fn.rom == 16 for fn in result) == (protect is not None)
     assert image[16:20] == words[4].to_bytes(4, 'big')
+
+
+@pytest.mark.parametrize('protect', [None, 'symbol', 'frame_mismatch', 'transfer'])
+def test_unentered_framed_continuation_can_join(protect):
+    words = [0x27bdffe0, 0xafbf001c, 0x08000410 if protect == 'transfer' else 0x24840001,
+             0x24020001,
+             0x8fbf001c, 0x03e00008, 0x27bd0018 if protect == 'frame_mismatch' else 0x27bd0020]
+    image, functions, segments = fixture(words, cuts=(0, 12, 28))
+    symbols = [f'other_entry = 0x{BASE+12:08X};'] if protect == 'symbol' else ()
+    result = repair(functions, [], image, consoles.get('n64'), segments, symbols=symbols)
+    if protect is None:
+        assert [(fn.rom, fn.size) for fn in result] == [(0, 28)]
+    else:
+        assert any(fn.rom == 12 for fn in result)
