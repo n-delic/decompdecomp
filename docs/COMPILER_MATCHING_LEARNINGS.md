@@ -1558,6 +1558,20 @@ rebuilding the affected overlays from those compiled objects reproduced the
 cartridge bytes. Changing a call to a second alias under the same base symbol
 fails the controlled regression.
 
+### Rebase an imported overlay data reference
+
+A controlled IDO 5.3 test uses
+`-O2 -mips2 -G 0 -non_shared -Xcpluscomm -Wab,-r4300_mul` to read one element
+of an external array. The source retry retains the declared array type and
+adds the byte delta measured from corresponding HI16 and LO16 relocations.
+The exact judge accepts forward and backward offsets and an offset that
+crosses the signed low-half boundary. An incorrect byte delta fails.
+
+On an isolated N64 project, a 185-pair retry saved seven functions. A control
+replay confirmed that three required the data rebase and four already passed
+ordinary donor verification. This fixture exercises compiler-emitted
+relocations and keeps the destination loader's byte and symbol checks.
+
 ### Observation: source layout sensitivity (IDO 5.3)
 
 The existing [IDO guide](../src/decompnet/consoles/n64/guides/ido.md) records a private same-source
@@ -13238,6 +13252,24 @@ the same center, loads from one base register, and comparisons of the
 results. It generates a candidate only across local statements that preserve
 the inputs. Evidence is one partial live match and synthetic tests.
 
+### KMC GCC 2.7.2: capture a vector result before another store
+
+On a large N64 function, the target loaded all three floats from an
+output buffer immediately after a call, then stored through another
+pointer. The source postponed each load until it needed the component.
+Under `-G0 -mips3 -mgp32 -mfp32 -O2`, staging the three values in float
+locals before the store improved the exact linked score from 24,525 to
+23,885. The warning check was clean. Independently moving two calls and
+staging one earlier component reduced the combined candidate to 22,686.
+Moving both earlier horizontal accumulator updates together instead
+put the saved registers in a different order and scored 25,165 or
+worse in the corresponding trials.
+
+The `vector_output_capture` repair requires the same output call count,
+a stack argument, the three adjacent loads, and an ensuing non-stack
+store in the target. Tests cover source escapes and absent evidence.
+Evidence is one observed partial match plus synthetic tests.
+
 ### KMC GCC 2.7.2: reuse two float lifetimes with guarded labels
 
 In a large N64 function built with `-G0 -mips3 -mgp32 -mfp32 -O2`,
@@ -13333,3 +13365,40 @@ Edit list from the saved 210 (scores alone and combined):
 Together (1 then 2 then 3, `ptr`, `tmpA`, `do { var = *ptr; } while (0);`, then `temp_s3 = entry + 0x28;`): 210 -> 0. Without the wrapper, the same split and local scored 220-235; the wrapper alone on the unsplit chain 210.
 
 decomp-repair 0.5.340 `chain_load_scope` proposes the combination (and `identical_arm_collapse` the collapse); from the saved 210 source `variants()` emits the exact child (collapse of the first identical pair, then the scope). Evidence level: one function; the rewrite is covered by unit tests, and the app's beam (`loop_vector_shape_pass`) offers it.
+
+
+Two N64 flag-update functions built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` used `lhu` and `sh` for an indexed flag table that the draft had declared as `char[]`. Casting both reads and writes to `u16 *` recovered exact matches in both cases (score 400 to 0). The target-guided repair proposes this width when the changed load and store both name the same table; the compiler and judge still decide whether it matches. Evidence: two saved examples and a synthetic routing and generation regression, rather than an independently controlled compiler experiment.
+
+### Scan packed byte pairs with byte-sized inputs (KMC GCC 2.7.2)
+
+With `-G0 -mips3 -mgp32 -mfp32 -O2`, a retail N64 scan masked two
+parameters in the preheader, then advanced the byte cursor in either
+mismatch branch's delay slot. Model both parameters and the cursor as
+bytes. Use separate mismatch continuations so each comparison can
+schedule the increment. A public caller corroborated the interface.
+The linked score went from 1,440 to 0, and the dispatcher generated one
+byte-exact candidate.
+
+### KMC GCC 2.7.2: reuse a dead return local for an earlier load
+
+On one N64 function with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`,
+reusing the later return-value local for an earlier halfword load changed
+its register allocation. Starting with a one-argument callee declaration
+consistent with a matched callee, the exact isolated judge improved from
+30 to 15; the saved two-argument candidate remained better at 5, and this
+is not a match. The `dead_local_stage` repair offers the reuse when the
+outer local is untouched and unaliased, has the same type, and is safely
+overwritten after the inner value's last use. A synthetic regression covers
+the rewrite and its guards; this is one function, not a controlled
+cross-game result.
+
+The saved candidate's only differing instruction reads an argument register
+where the target reads a saved register. Widening its signed halfword local
+fixed that operand but delayed argument setup and scored 60. Adding a
+redundant unsigned-halfword normalization after the table index scored 30,
+and scheduling scopes did not restore the target ordering. GCC's RTL showed
+the short local's early sign-extension copy being reused by CSE, while the
+word local left the subtraction on the saved register and emitted the call
+argument copy later. These are failed experiments, not a source match.
+
+In the same function, the initialized 75-point seed had competing loop counter and flag allocation priorities of 14/49 and 12/41 in GCC's allocation dumps. Moving an independent flag reset before the counter increment changed their allocation order and improved the exact judge score from 75 to 25, leaving five address/load register differences. This is one measured function. decomp-repair 0.5.342 extends `statement_interleave` to offer that guarded adjacent swap even with unrelated volatile pointer loads; a synthetic regression checks lane routing and branch safety.

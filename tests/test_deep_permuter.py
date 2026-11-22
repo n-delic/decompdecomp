@@ -1162,6 +1162,27 @@ def test_loop_vector_shape_pass_offers_known_zero_conversion(monkeypatch):
     assert any('(unsigned short) value ^ ((unsigned int) value & 0xFFFF)' in c for c in seen)
 
 
+def test_loop_vector_shape_pass_interleaves_increment_and_reset(monkeypatch):
+    net = setup(monkeypatch)
+    source = ("int f(void) { volatile int *p;\nint counter;\nint found;\n"
+              "next:\n    counter++;\n\n    found = 0;\n    if (*p) goto next;\n"
+              "return found + counter; }")
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_score=75,best_source=? WHERE name='f'", (source,))
+    fn, proj = net.function(), net.project_row('game')
+    search = deep_permuter.Search(net, 1, 30, Log(), fn)
+    seen = []
+
+    def score(agent, proj, fn, candidate, best, fork):
+        seen.append(candidate)
+        search.tested += 1
+        return 25 if 'found = 0;\n\n    counter++;' in candidate else 75
+
+    monkeypatch.setattr(search, '_score', score)
+    assert search.loop_vector_shape_pass(AGENT, proj, dict(fn, best_source=source, name='f'), 75, None) == 25
+    assert any('found = 0;\n\n    counter++;' in c for c in seen)
+
+
 def test_loop_vector_shape_pass_reaches_the_guard_initializer_scope_that_matched_a_timer_loop(monkeypatch):
     """A guard's `i = 0;` hoisted before it in a one-shot scope, the copy before the guard sunk: 10 -> 0 in one child."""
     net = setup(monkeypatch)

@@ -39,33 +39,38 @@ def rename(text, aliases):
     return ''.join(parts)
 
 
-def comparable_overlay_code(candidate, target):
-    """Compare raw code after excluding only fields the overlay linker can resolve."""
+def comparable_overlay_code(candidate, target, *, masked=None):
+    """Compare the instruction bits outside the proposed relocation fields."""
     if candidate is None:
         return False
-    if not target.linker_relocs:
+    fields = target.linker_relocs if masked is None else masked
+    if not fields:
         return candidate.code == target.code
     def comparable(code):
-        return mask_relocs(code, target.linker_relocs, target.arch, target.big_endian)
+        return mask_relocs(code, fields, target.arch, target.big_endian)
     return comparable(candidate.code) == comparable(target.code)
 
 
-def relocation_aliases(candidate, target):
-    """Propose aliases for loader symbols when raw code and the relocation sites agree."""
-    if not comparable_overlay_code(candidate, target):
-        return {}
+def overlay_bindings(candidate, target, *, masked=None):
+    """Map loader symbols only when code and relocation sites support one binding per symbol."""
+    if not comparable_overlay_code(candidate, target, masked=masked):
+        return None
     expected = {(r.offset, r.type): r.symbol for r in target.relocs}
     actual = {(r.offset, r.type): r.symbol for r in candidate.relocs}
     if expected.keys() != actual.keys() or len(actual) != len(candidate.relocs) or len(expected) != len(target.relocs):
-        return {}
+        return None
     aliases = {}
     for site, source in actual.items():
         name = expected[site]
         if not re.fullmatch(r'[A-Za-z_]\w*', source) or not re.fullmatch(r'[A-Za-z_]\w*', name):
-            return {}
+            return None
         if aliases.setdefault(source, name) != name:
-            return {}
-    return {old: new for old, new in aliases.items() if old != new}
+            return None
+    return aliases
+
+
+def relocation_aliases(candidate, target):
+    return {old: new for old, new in (overlay_bindings(candidate, target) or {}).items() if old != new}
 
 
 def variants(source, header, measurement):
