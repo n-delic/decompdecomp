@@ -172,3 +172,13 @@ nop
     labels = {}
     texts = draft_repairs.variants(source, 'f', 'mips', asm, FLAGS, labels, limit=None, header=HEADER)
     assert any(labels.get(text) == 'target_call_arity' and 'g(saved);' in text for text in texts)
+
+
+def test_unsigned_parameter_used_for_high_bytes_gets_unsigned_widening():
+    source = '''void f(u8 value, void *out) {
+    M2C_FIELD(out, s8 *, 0) = (s8)(value >> 8);
+    M2C_FIELD(out, s8 *, 1) = (s8)(value >> 0x18);
+}'''
+    labels = {}
+    texts = draft_repairs.variants(source, 'f', 'mips', '', FLAGS, labels, limit=None, header=HEADER)
+    assert any(labels.get(text) == 'narrow_widening' and 'u32 value' in text for text in texts)
