@@ -17,6 +17,7 @@ from difflib import SequenceMatcher
 from functools import lru_cache
 
 from .. import permuter, similarity, toolchains
+from ..arch import mips_immediates
 from ..metadata_rows import rows as metadata_rows
 from ..network import NetworkError
 from ..project import compiler_for
@@ -40,9 +41,6 @@ MUTATION_DRAWS = 48
 TOKENS = re.compile(r'/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|'
                     r'[A-Za-z_]\w*|(?<![\w.])(?:0[xX][0-9a-fA-F]+|[0-9]+)(?:[uUlL]*)(?![\w.])', re.S)
 INTEGER = re.compile(r'(0[xX][0-9a-fA-F]+|[0-9]+)([uUlL]*)\Z')
-# Arithmetic/logical immediates and explicit load/store offsets; never branches.
-IMMEDIATE_OPS = {8, 9, 10, 11, 12, 13, 14, 32, 33, 35, 36, 37, 40, 41, 43}
-UNSIGNED_OPS = {12, 13, 14}
 
 
 def relocations(fn) -> list[tuple[int, int, int]]:
@@ -93,27 +91,8 @@ def literal_variants(source: str, a, b, big: bool) -> list[str]:
     Repeated numbers, signed expressions, split address constants and changed instruction layouts need
     more context than this small search can establish.
     """
-    left, right = a['target'] or b'', b['target'] or b''
-    if len(left) != len(right) or len(left) % 4:
-        return []
-    relocated = {off for off, _, _ in relocations(a)} | {off for off, _, _ in relocations(b)}
-    changes, offset_ops = {}, {}
-    order = 'big' if big else 'little'
-    for off in range(0, len(left), 4):
-        x, y = int.from_bytes(left[off:off + 4], order), int.from_bytes(right[off:off + 4], order)
-        if x == y or off in relocated:
-            continue
-        op = x >> 26
-        if x >> 16 != y >> 16 or op not in IMMEDIATE_OPS:
-            return []
-        old, new = x & 0xffff, y & 0xffff
-        if op not in UNSIGNED_OPS and (old >= 0x8000 or new >= 0x8000):
-            return []
-        if old in changes and changes[old] != new:
-            return []
-        changes[old] = new
-        offset_ops.setdefault(old, set()).add(op)
-    if not changes or len(changes) > 2:
+    changes, offset_ops = literal_changes(a, b, big)
+    if not changes:
         return []
     occurrences = {}
     for token in TOKENS.finditer(source):
@@ -138,6 +117,13 @@ def literal_variants(source: str, a, b, big: bool) -> list[str]:
     for start, (end, value) in sorted(replacements.items(), reverse=True):
         result = result[:start] + value + result[end:]
     return [result]
+
+
+def literal_changes(a, b, big):
+    """Identify small standalone immediate changes before reading the donor C."""
+    left, right = a['target'] or b'', b['target'] or b''
+    relocated = {off for off, _, _ in relocations(a)} | {off for off, _, _ in relocations(b)}
+    return mips_immediates.changes(left, right, relocated, big)
 
 
 def _mnemonics(net, proj, fn) -> list[str]:

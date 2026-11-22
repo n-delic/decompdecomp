@@ -277,7 +277,7 @@ def test_manual_search_tries_donor_when_relocation_layouts_differ(built, tmp_pat
         from decompnet.app import donor_build, donor_relocations, donor_sources
         from decompnet.project import compiler_for
 
-        unit = SimpleNamespace(name=a['unit'], base=None)
+        unit = SimpleNamespace(name=a['unit'], base=None, target=None)
         fork = SimpleNamespace(root=tmp_path, units=lambda: [unit])
         settings = compiler_for(net.cfg(proj), b['vram'], b)
         monkeypatch.setattr(donor_build.Settings, 'for_unit', lambda *_: settings)
@@ -411,3 +411,74 @@ def test_donor_replay_uses_original_declarations_after_alias_collision(built, tm
     saved = net._function(fn['name'], slug)
     saved_header = net._context(proj['id'], saved['unit'])['header']
     assert 'first(int *);' in saved_header and 'second(float *);' in saved_header
+
+
+def test_imported_donor_with_different_literal_is_verified_in_the_rom(built, tmp_path, monkeypatch):  # noqa: F811
+    from dataclasses import replace
+
+    from decompnet.app.twins import Job
+    from decompnet.compiler import compile_source
+    from decompnet.elfobj import extract_function
+    from decompnet.forks.project import ForkProject
+    from decompnet.project import compiler_for
+
+    net = RomNetwork(tmp_path / 'decomp.db', tmp_path)
+    slug = net.import_rom(ROM, confirmed=True, log=lambda *_: None)
+    agent, _ = net.local_agent('autopilot')
+    net.split_function(agent, slug, 'func_800007C4', '0x800007D0')
+    dest = net._project(slug)
+    entry = net._function('func_800007D0', slug)
+    own = compiler_for(net.cfg(dest), entry['vram'], entry)
+    _, invocation = net._invocation(dest, entry)
+    source = """int donor(int x, int *out) {
+        if (x < 37) {
+            out[0] = x;
+            out[1] = x + 17;
+            return 6;
+        }
+        out[2] = x;
+        return 98;
+    }"""
+    donor_obj = compile_source(invocation, '', source)
+    newer = source.replace('donor', entry['name']).replace('37', '42')
+    target_obj = compile_source(invocation, '', newer)
+    assert donor_obj.ok, donor_obj.log
+    assert target_obj.ok, target_obj.log
+    raw = extract_function(donor_obj.obj, 'donor').code
+    unlinked = extract_function(target_obj.obj, entry['name']).code
+    rom_target = replace(net._rom_target(entry), code=unlinked, relocs=[])
+    linked = net.console(dest).link_function(target_obj.obj, entry['name'], rom_target,
+                                            net.symbols(dest['id']), net.reader(dest, entry))
+    assert not linked.problems
+    target = linked.linked_code
+    assert len(raw) == len(target) and target != raw and len(target) >= 32
+    with net.project_store(dest['id']).tx() as db:
+        db.execute("UPDATE functions SET target=?,size=?,n_insns=?,relocs='[]' WHERE id=?",
+                   (target, len(target), len(target) // 4, entry['id']))
+
+    copy_project(net, slug, 'imported-library')
+    other = net._project('imported-library')
+    donor = net._function(entry['name'], other['slug'])
+    with net.project_store(other['id']).tx() as db:
+        db.execute("UPDATE functions SET name='donor',unit='unit',status='matched' WHERE id=?", (donor['id'],))
+    root = tmp_path / 'donor'
+    root.mkdir()
+    (root / 'unit.c').write_text('typedef int Word;\n' + source)
+    (root / 'target.o').write_bytes(donor_obj.obj)
+    (root / 'objdiff.json').write_text(json.dumps({'units': [{
+        'name': 'unit', 'target_path': 'target.o', 'metadata': {
+            'source_path': 'unit.c',
+        }, 'scratch': {'compiler': own['toolchain'], 'c_flags': ' '.join(own['flags'])}}]}))
+    project = ForkProject(root)
+    other = dict(other) | {'root': str(root)}
+    monkeypatch.setattr(net.forks, 'get', lambda _: (other, project, {'platform': 'n64'}))
+    monkeypatch.setattr(net.forks, 'is_asm', lambda *_: False)
+    job = Job()
+    job.cross_exhaustive = True
+    result = net.twins._fork_to_rom(agent, dest, other, {}, net.twins.prints(dest), job)
+    attempts = [tuple(row) for row in net.project_store(dest['id']).all(
+        'SELECT outcome,reason FROM cross_game_attempts WHERE function_id=?', entry['id'])]
+    assert result == 1, (own, attempts)
+    saved = net._function(entry['name'], slug)
+    assert saved['status'] == 'matched' and 'x < 42' in saved['matched_source']
+    assert saved['target'] == target

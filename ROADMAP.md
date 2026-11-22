@@ -1129,6 +1129,8 @@ Tiny MIPS templates and explicitly imported SDK C go through the same judge. Ver
 explicit pointer-offset edits; reconstructing named struct layouts and shared types remains planned. New verified
 matches trigger a bounded, configurable automatic cascade. Project-mode support for these additions is planned:
 per-file compiler context, template readers and SDK source placement must be integrated with the object judge.
+Explicit MIPS ROM searches can also adapt up to two aligned literal changes from an imported ELF donor,
+using its declared compiler context where available. The destination judge verifies the resulting C.
 Project-mode similar-transfer support is planned: align target-object relocations and adapt file-local declarations before trying
 similar C through objdiff. Other processors need an instruction reader for this search.
 

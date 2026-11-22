@@ -1502,6 +1502,19 @@ The trial uses the donor's declared C++ replacement and the receiving function's
 relocation evidence, with the ordinary compile and link verdict required before
 saving the per-function profile.
 
+### Literal differences in imported MIPS donors
+
+In a controlled GCC 2.7.2 KMC example with
+`-G0 -mips3 -mgp32 -mfp32 -O2`, a comparison threshold changes from 37 to 42.
+The imported object and ROM function keep the same instruction structure.
+Transferring the unique comparison literal then passes the ordinary ROM linker,
+including the compiler's internal branch relocation.
+
+The same source-replay pass made 149 attempts on an isolated N64 project and
+saved 11 matches. It used IDO 7.1 with
+`-O2 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul -DNON_MATCHING`
+for all 11. All 11 recompiled and passed the exact judge after reopening.
+
 ### IDO per-object recipes for replacement C
 
 In a controlled IDO 7.1 regression, the same replacement source builds different

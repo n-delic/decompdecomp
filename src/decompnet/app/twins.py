@@ -1513,6 +1513,10 @@ class Twins:
                     matched += 1
                     if job is not None:
                         job.cross_matched += 1
+        if build and proj['arch'] == 'mips' and not job.stop.is_set():
+            from . import imported_literals
+
+            matched += imported_literals.run(self, agent, proj, other, donors, theirs, units, build, job)
         return matched
 
     def _try_pair(self, agent, proj, a, b, *, partial=False) -> str:

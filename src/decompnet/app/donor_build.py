@@ -226,13 +226,20 @@ class Settings:
         return {'toolchain': 'ido-' + version, 'flags': flags}
 
 
-def verify(net, proj, fn, other, donor, names, settings, agent, job, cache, *, replacement=None):
+def verify(net, proj, fn, other, donor, names, settings, agent, job, cache, *, replacement=None, adapt=None):
     """Compile in private and retain this exact header and profile only with a fresh byte verdict."""
 
     if not replacement and (not settings or toolchains.installed(settings['toolchain']) is None):
         return 'skip', 'The donor file compiler is unavailable.'
     if not net.permuter._hold(agent, fn, count_turn=False, seconds=120):
         return 'skip', 'The function is being worked on.'
+    def replay(current, trial, source, header):
+        if adapt is not None:
+            source = adapt(source)
+            if source is None:
+                return False, 'The donor has no unambiguous literal to transfer.'
+        return _try(net, current, trial, fn, source, header, agent, job)
+
     try:
         store = net.project_store(proj['id'])
         current = store.one('SELECT * FROM projects WHERE id=?', proj['id'])
@@ -252,7 +259,7 @@ def verify(net, proj, fn, other, donor, names, settings, agent, job, cache, *, r
                     lead = donor_unit.replacement(
                         other, donor, fn['name'], invocation, path, getattr(cache, 'replacements', None))
                     if lead:
-                        accepted, why = _try(net, current, trial, fn, *lead, agent, job)
+                        accepted, why = replay(current, trial, *lead)
                         whole_reason = whole_reason or why
                         if accepted:
                             return 'match', 'Verified from the donor build’s replacement source.'
@@ -268,7 +275,7 @@ def verify(net, proj, fn, other, donor, names, settings, agent, job, cache, *, r
             except (NetworkError, OSError, ValueError):
                 whole = None
             if whole:
-                accepted, reason = _try(net, current, private, fn, *whole, agent, job)
+                accepted, reason = replay(current, private, *whole)
                 whole_reason = whole_reason or reason
                 if accepted:
                     return 'match', 'Verified from a saved donor translation unit.'
@@ -278,7 +285,7 @@ def verify(net, proj, fn, other, donor, names, settings, agent, job, cache, *, r
                     # the same destination spelling. Let emitted relocations guide the retry.
                     original = donor_unit.candidate(other, donor, {donor['name']: fn['name']}, invocation, cache)
                     if original and original != whole:
-                        accepted, reason = _try(net, current, private, fn, *original, agent, job)
+                        accepted, reason = replay(current, private, *original)
                         if accepted:
                             return 'match', 'Verified using compiled donor bindings.'
         for body, header, _ in donor_sources.imported(net, other, donor, cache):
@@ -287,7 +294,7 @@ def verify(net, proj, fn, other, donor, names, settings, agent, job, cache, *, r
             aliases = {**names, donor['name']: fn['name']}
             source = source_symbol_recovery.rename(body, aliases)
             header = source_symbol_recovery.rename(header, aliases)
-            accepted, reason = _try(net, current, private, fn, source, header, agent, job)
+            accepted, reason = replay(current, private, source, header)
             if accepted:
                 return 'match', 'Verified with donor header and per-file compiler settings.'
         return 'miss', whole_reason or reason
