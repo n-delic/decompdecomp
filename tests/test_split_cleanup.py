@@ -11,8 +11,8 @@ from decompnet.app.engine import RomNetwork
 
 from .test_rom import built  # noqa: F401  (fixture that builds the demo ROM)
 
-pytestmark = pytest.mark.skipif(toolchains.installed("gcc-2.7.2-kmc") is None or not shutil.which("ld.lld"),
-                                reason="needs gcc-2.7.2-kmc and ld.lld to build the demo ROM")
+pytestmark = pytest.mark.skipif(toolchains.installed("gcc-2.7.2-kmc") is None or not shutil.which("ld.lld") or not shutil.which("llvm-objcopy"),
+                                reason="needs gcc-2.7.2-kmc, ld.lld and llvm-objcopy to build the demo ROM")
 
 SLUG = "demo-quest-64"
 FN = "func_800007C4"

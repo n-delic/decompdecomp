@@ -19,8 +19,8 @@ from .test_rom import built  # noqa: F401  (fixture that builds the demo ROM)
 
 UNKNOWN = "msvcxx-x86_64"
 SLUG = "demo-quest-64"
-HAS_COMPILER = pytest.mark.skipif(toolchains.installed("gcc-2.7.2-kmc") is None or not shutil.which("ld.lld"),
-                                  reason="needs gcc-2.7.2-kmc and ld.lld to build the demo ROM")
+HAS_COMPILER = pytest.mark.skipif(toolchains.installed("gcc-2.7.2-kmc") is None or not shutil.which("ld.lld") or not shutil.which("llvm-objcopy"),
+                                  reason="needs gcc-2.7.2-kmc, ld.lld and llvm-objcopy to build the demo ROM")
 
 
 @pytest.fixture(scope="module")

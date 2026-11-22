@@ -19,7 +19,7 @@ from decompnet.compiler import CompilerConfig, compile_source
 from decompnet.rom import match
 from decompnet.rom.symbols import Symbol, SymbolTable
 
-pytestmark = pytest.mark.skipif(toolchains.installed("gcc-2.7.2-kmc") is None or not shutil.which("ld.lld"),
+pytestmark = pytest.mark.skipif(toolchains.installed("gcc-2.7.2-kmc") is None or not shutil.which("ld.lld") or not shutil.which("llvm-objcopy"),
                                 reason="needs gcc-2.7.2-kmc and ld.lld")
 
 GAME = """

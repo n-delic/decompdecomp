@@ -334,9 +334,11 @@ def test_recently_released_work_never_starts_a_new_provider_conversation(tmp_pat
 def test_large_stalled_claim_uses_shorter_budget_and_deep_handoff(tmp_path, monkeypatch):
     net, agent, fn = game(tmp_path)
     with net.store.tx() as db:
-        db.execute('UPDATE functions SET n_insns=300, abandons=3 WHERE id=?', (fn['id'],))
+        # A best score above NEAR_MATCH_SCORE: a near-match (466e2fc30) keeps the longer NEAR_MATCH_BUDGET, so the
+        # shorter plateau budget applies only to a large function that is still far from matching.
+        db.execute('UPDATE functions SET n_insns=300, abandons=3, best_score=200 WHERE id=?', (fn['id'],))
     fn = net.claim_row(agent, 'game', 'f')
-    for value in (15, 16, 17, 18):
+    for value in (215, 216, 217, 218):
         net._record(fn, agent, value, f'int f(){{return {value};}}', 1)
     assert net.claim_progress(agent, fn)['after'] == 4
     net.set_selection('game', agent.name, {'stall_compiles': 7})

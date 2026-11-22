@@ -38,7 +38,12 @@ _REG = re.compile(
     r"|cr\d|lr|pc|ip|sb|sl|d\d+|s\d+)$"  # ppc / arm
 )
 _NUM = re.compile(r"^-?(0x[0-9a-f]+|\d+)$", re.I)
-_STACK = re.compile(r"\b(rsp|rbp|esp|ebp|\$?sp|\$?fp|r1)\b")
+# The registers that hold a frame, per processor: `r1` is PowerPC's stack pointer but an ordinary register on ARM, so
+# an ARM `[r1, #0x10]` is a field of whatever r1 points to, not a spill slot (ARM's `sp`, MIPS's `$sp`, x86's esp and
+# ebp are named as they print).
+_STACK = re.compile(r"\b(rsp|rbp|esp|ebp|\$?sp|\$?fp)\b")
+_STACK_PPC = re.compile(r"\b(rsp|rbp|esp|ebp|\$?sp|\$?fp|r1)\b")
+_STACK_BY_ARCH = {"ppc": _STACK_PPC, "ppc64": _STACK_PPC}
 _TOKEN = re.compile(r"[\w.$<>+@-]+|\S")
 
 
@@ -185,7 +190,8 @@ def asm_text(fn: FunctionObj) -> str:
     return "\n".join(f"{i.offset:5x}:  {i.text}" for i in disassemble(fn))
 
 
-def _classify(a: Insn, b: Insn) -> tuple[int, str]:
+def _classify(a: Insn, b: Insn, arch: str | None = None) -> tuple[int, str]:
+    stack = _STACK_BY_ARCH.get(arch, _STACK)
     if a.text == b.text:
         return 0, " "
     ta, tb = _TOKEN.findall(a.operands), _TOKEN.findall(b.operands)
@@ -193,9 +199,9 @@ def _classify(a: Insn, b: Insn) -> tuple[int, str]:
         diffs = [(x, y) for x, y in zip(ta, tb) if x != y]
         if all(_REG.match(x) and _REG.match(y) for x, y in diffs):
             return PENALTY_REGALLOC, "r"
-        if all(_NUM.match(x) and _NUM.match(y) for x, y in diffs) and _STACK.search(a.operands):
+        if all(_NUM.match(x) and _NUM.match(y) for x, y in diffs) and stack.search(a.operands):
             return PENALTY_STACKDIFF, "s"
-    if _changes_meaning(a, ta, b, tb):
+    if _changes_meaning(a, ta, b, tb, stack):
         return PENALTY_MEANING, "i"  # (the row keeps the operand mark its readers know)
     return PENALTY_OPERAND, "i"
 
@@ -212,7 +218,7 @@ def _meaning_key(ins: Insn) -> tuple:
     return ins.mnemonic.lower(), tuple(sorted(_values(_TOKEN.findall(ins.operands)).elements()))
 
 
-def _changes_meaning(a: Insn, ta: list[str], b: Insn, tb: list[str]) -> bool:
+def _changes_meaning(a: Insn, ta: list[str], b: Insn, tb: list[str], stack=_STACK) -> bool:
     """Whether two instructions with the same opcode differ in what they compute, not only in where: another offset
     or symbol in a load or store, another constant, another call. A branch's target moves with the code before it,
     and a stack slot's offset with the frame's layout, so neither counts."""
@@ -223,7 +229,7 @@ def _changes_meaning(a: Insn, ta: list[str], b: Insn, tb: list[str]) -> bool:
         va, vb = (Counter({t: n for t, n in v.items() if not _NUM.match(t.lstrip("#"))}) for v in (va, vb))
     if va == vb:
         return False
-    if _STACK.search(a.operands) and _STACK.search(b.operands) and all(
+    if stack.search(a.operands) and stack.search(b.operands) and all(
             _NUM.match(t) for t in (va - vb) + (vb - va)):
         return False  # a spill slot moved: the frame's layout, not the program's
     return True
@@ -497,7 +503,7 @@ def _diff(target: FunctionObj, candidate: FunctionObj, *, details=True) -> DiffR
     for op, a0, a1, b0, b1 in alignment:
         if op == "equal":
             for a, b in zip(t_ins[a0:a1], c_ins[b0:b1]):
-                pen, mark = _classify(a, b)
+                pen, mark = _classify(a, b, target.arch)
                 if pen == PENALTY_MEANING:
                     ka, kb = _meaning_key(a), _meaning_key(b)
                     if unmatched_t[ka] > 0 or unmatched_c[kb] > 0:

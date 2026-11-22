@@ -15,8 +15,8 @@ from decompnet.network import NetworkError
 from .test_rom import built  # noqa: F401  (fixture that builds the demo ROM)
 
 SLUG = "demo-quest-64"
-needs_demo = pytest.mark.skipif(toolchains.installed("gcc-2.7.2-kmc") is None or not shutil.which("ld.lld"),
-                                reason="needs gcc-2.7.2-kmc and ld.lld to build the demo ROM")
+needs_demo = pytest.mark.skipif(toolchains.installed("gcc-2.7.2-kmc") is None or not shutil.which("ld.lld") or not shutil.which("llvm-objcopy"),
+                                reason="needs gcc-2.7.2-kmc, ld.lld and llvm-objcopy to build the demo ROM")
 needs_m2c = pytest.mark.skipif(toolchains.installed("m2c") is None, reason="needs m2c")
 
 

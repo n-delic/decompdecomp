@@ -21,7 +21,7 @@ from decompnet.app.engine import RomNetwork
 from decompnet.app.server import build
 
 # the tests that import the demo ROM (the rest, such as the GUI's security, run anywhere)
-needs_demo = pytest.mark.skipif(toolchains.installed("gcc-2.7.2-kmc") is None or not shutil.which("ld.lld"),
+needs_demo = pytest.mark.skipif(toolchains.installed("gcc-2.7.2-kmc") is None or not shutil.which("ld.lld") or not shutil.which("llvm-objcopy"),
                                 reason="needs gcc-2.7.2-kmc")
 PORT, SECRET = 6499, "s3cret-for-tests"
 
