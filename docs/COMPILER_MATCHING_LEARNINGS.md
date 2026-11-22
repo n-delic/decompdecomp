@@ -14659,3 +14659,6 @@ but would require checking later uses on every path. The accepted
 rewrite preserves that axis and checks the observed scale bits, field
 offset and in-place target multiply. Evidence includes one measured
 linked function and synthetic generation and routing tests.
+
+
+In one N64 nested float-copy loop built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the draft recalculated the row offset inside the inner loop, while the target computed it before the loop. Hoisting the invariant offset improved the linked score from 275 to 60; also folding the local column increment into its condition reproduced the linked target exactly (score 0). The rule requires the measured loop shape and local counters. Evidence: one saved example and synthetic generation and routing tests.
