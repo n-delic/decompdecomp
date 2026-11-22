@@ -16558,3 +16558,48 @@ A private N64 draft built with `-G0 -mips3 -mgp32 -mfp32 -O2 -fno-strength-reduc
 ### Halfword flag updates through a byte-array draft (GCC 2.7.2 KMC)
 
 With `-G0 -mips3 -mgp32 -mfp32 -O2`, two saved drafts read and wrote an indexed flag symbol as a byte and each scored 410. The target uses `lhu` and `sh` at that same relocation. Casting both byte-addressed accesses to `u16 *` matched each example exactly with the original compiler and linked-byte judge. The focused search now uses the paired load/store width difference to prioritize the existing symbol-width repair.
+
+## A spilled-parameter function: plain locals, not a `volatile` state struct (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, an N64 game, one 363-instruction function, 1025 -> 0)
+
+Evidence level: one function (the chain is controlled: each step scored with the app's own judge, and the library
+families reproduce the whole chain from the saved 1025 draft to 0).
+
+The draft stood at 1025 for many sessions with a local struct of `volatile` fields holding the parameters and
+flags the target keeps in memory. The target reloads those values with `lw $t0, <slot>($sp)` (and `lbu $t0` plus a
+`move $v0, $t0` for the loop's exit byte); the volatile draft reloaded into `$v0`/`$a0` and never got the slots or the
+moves. The target's values are not volatile at all: the function has more values live across calls (the command
+pointers, a derived pointer, a counter, an offset, a base, a pointer to the output, four spilled parameters/flags)
+than saved registers, so global allocation spills the lowest priorities to stack slots and reload fills them through
+`$t0`, the register the rest of the function never touches.
+
+Chain from the saved draft (each score is the exact judge):
+
+| step | edit | score |
+| --- | --- | --- |
+| 0 | saved draft (volatile state struct, volatile reads of the fifth argument, a duplicated else arm) | 1025 |
+| 1 | struct and volatile reads removed, the fields as plain locals / the parameters (`volatile_read_drop`, `volatile_state_unwrap`, `narrow_copy_merge`) | 1881 (worse alone) |
+| 2 | `if (flags) A else if (arg4 \|\| n) B else B` keeps one `B` (`identical_arm_collapse`) | 175 |
+| 3 | the exit flag tested as `while ((done & 1) == 0)` instead of `while (!done)` (`flag_exit_mask_test`) | 60 |
+| 4 | the loop's float literal in a local assigned first in the run of assignments before the loop, the narrowing of the fifth argument next, the derived pointer last (`loop_constant_stage` with its swap) | 0 |
+
+What decided each step (GCC 2.7.2):
+- Spill slots are numbered by pseudo number: slots grow in declaration order of the spilled pseudos, so the exit
+  flag has to be declared before the narrowed flag for the target's `0x147` / `0x14c` layout (175 with them swapped
+  would be 260). A parameter that is spilled keeps its pseudo's slot, not its incoming home slot.
+- `while ((done & 1) == 0)` on a `u8` that is only ever 0 or 1 gives `lbu $t0; move $v0, $t0; beqz`: the plain
+  test reloads straight into the branch register. `done == 0`, `!(s32) done`, `(u8) done == 0` and a statement
+  expression all gave the plain `lbu $v0` (identical RTL).
+- The loop's hoisted constant is emitted by loop.c at the loop head, after the loop-invariant `sll`/`sra` when the
+  narrowing sits in the loop, and the first scheduler breaks equal priorities by that order: with the constant and
+  the narrowing both assigned before the loop, the order of the three statements decides whether the target's
+  `lui, mtc1, sll, sra, addiu, sw` comes out. Only constant, narrowing, derived pointer gave it; the other five
+  orders and the in-loop placements stayed at 60.
+- A giv-derived second cursor (reading `cursor[1]`) puts the derived pointer after the hoisted constant too, but
+  loop.c then bases it at `cursor + 3` and the registers swap; the target has an explicit second cursor.
+
+Failed: dropping the volatile alone (2927 with the junk arm), `s8 arg4` as the parameter type (the byte spill is
+slot `0x144` and the frame grows by 8), a statement-expression temporary for the exit test (460), the narrowing
+inside the loop only (811, because it is no longer hoisted).
+
+decomp-repair 0.5.562 `spill_shape_repairs`: `volatile_read_drop`, `volatile_state_unwrap`, `narrow_copy_merge`,
+`identical_arm_collapse`, `flag_exit_mask_test`, `preloop_assignment_swap`, `loop_constant_stage`.
