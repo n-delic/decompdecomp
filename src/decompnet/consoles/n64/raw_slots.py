@@ -121,6 +121,32 @@ def add(config, image, found, records, log, *, preserve_gaps=False):
     return True
 
 
+def recover_gaps(image, records, found, resident, log):
+    """`found` plus the closed bodies in each bank's unowned gaps. A bank read from its directory was mapped from
+    the code the scan had already found, so a function reached only through a pointer, or after a gap, stayed in
+    a `bin` gap segment as raw bytes (a bank's 6 KB of framed functions directly after its last found one).
+    Each bank is scanned as the registered banks are, with the bank's own load address as an entry."""
+    from .loader_code import complete
+
+    class Quiet:
+        check_cancel = staticmethod(getattr(log, 'check_cancel', lambda: None))
+
+        def __call__(self, *_):
+            pass
+
+    result = list(found)
+    for record in records:
+        scope = (record.start, record.end, record.vram)
+        table = dict(rom_start=record.start, rom_end=record.end, vram=record.vram)
+        inside = [f for f in result if record.start <= f[0] and f[1] <= record.end]
+        grown = complete(image, inside, [scope], resident, Quiet(), table_ranges=[table], entries=(record.vram,))
+        result = [f for f in result if f not in inside] + list(grown)
+    gained = len(result) - len(found)
+    if gained > 0:
+        log(f'Recovered {gained} more bodies in the gaps of {len(records)} raw banks.')
+    return sorted(result)
+
+
 _REGISTERED_ENTRY = struct.Struct('>7I')
 
 

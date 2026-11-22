@@ -601,7 +601,7 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
         if shared_dma.add(config, original_rom, taken, found, slots, log):
             return original
     if not packed and taken and (slots := raw_slots.read(original_rom,taken)):
-        if raw_slots.add(config,original_rom,found,slots,log):
+        if raw_slots.add(config,original_rom,raw_slots.recover_gaps(original_rom,slots,found,taken,log),slots,log):
             return original
     if not found:
         return original

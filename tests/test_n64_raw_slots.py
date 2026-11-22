@@ -129,3 +129,14 @@ def test_current_thread_dispatch_accepts_the_short_scheduler_with_interrupt_rest
     assert calls_current_thread_dispatch(struct.pack('>51I', *words), start, 0x80001000, segments, 'big')
     words[45] = 0
     assert not calls_current_thread_dispatch(struct.pack('>51I', *words), start, 0x80001000, segments, 'big')
+
+
+def test_framed_function_after_a_found_one_in_a_directory_bank_is_recovered():
+    """A bank read from its directory was mapped from the scan's own finds: a framed function right after the last
+    found one stayed in a `bin` gap (bomberman-hero's overlay banks: 6 KB of functions as raw bytes)."""
+    image = bytearray(cartridge())
+    struct.pack_into('>6I',image,0x208,0x27bdffe8,0xafbf0014,0x00000000,0x8fbf0014,0x03e00008,0x27bd0018)
+    slots = raw_slots.read(bytes(image),[(0,128,0x80000000)])
+    found = [(0x200,0x208,0x80100000)]
+    grown = raw_slots.recover_gaps(bytes(image),slots,found,[(0,128,0x80000000)],lambda _: None)
+    assert (0x208,0x220,0x80100008) in grown and (0x200,0x208,0x80100000) in grown
