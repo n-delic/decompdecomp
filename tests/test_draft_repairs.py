@@ -413,3 +413,24 @@ void f(int outer, int inner) {
     [direct] = [candidate for candidate in proposals if labels[candidate] == 'branch_store_tail']
     assert 'volatile short scratch;' not in direct
     assert direct.count('selected = 4;') == 2
+
+
+def test_draft_repairs_offer_cleanup_for_uninitialized_identical_arms():
+    from decompnet.app import draft_repairs
+
+    source = """
+int f(void) {
+    float scratch;
+    if (scratch) {
+        setup();
+    } else {
+        setup();
+    }
+    return 0;
+}
+"""
+    labels = {}
+    proposals = draft_repairs.variants(source, 'f', 'mips', labels=labels)
+    [cleaned] = [candidate for candidate in proposals if labels[candidate] == 'common_scalar_tail']
+    assert 'if (scratch)' not in cleaned
+    assert cleaned.count('setup();') == 1
