@@ -2045,8 +2045,8 @@ class Network:
                 lines += ["", f"### Best attempt so far: score {fn['best_score']} by "
                               f"{self._agent_name(fn['best_agent_id'])} ({fn['attempts']} attempts total) — "
                               f"start from this", "```c", fn["best_source"].strip(), "```"]
-                from .app.best_warnings import brief_lines
-                lines += brief_lines(fn)
+                from .app.best_warnings import brief_lines, draft_lines
+                lines += brief_lines(fn) + draft_lines(fn)
             elif fn["seed"]:
                 lines += ["", "### Machine draft (m2c): its control flow and arithmetic are usually right, its types "
                               "and names usually wrong. Start from it and fix those", "```c", fn["seed"].strip(), "```"]

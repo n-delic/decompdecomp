@@ -1159,6 +1159,13 @@ judge worker for project-mode units, then the same pass. It found nothing on the
 
 ## Recently done
 
+- **Scores weigh meaning; stalled bests restart from the draft.** A memory access at another offset, another
+  constant or another call costs 150, more than a reorder (scoring.PENALTY_MEANING, score version 2; open bests are
+  rescored once by Check again). An unmatched function's brief warns about a best that stores one place twice,
+  reads unset locals or makes a local volatile (advisory only: hardware and volatile stores are never flagged), and
+  offers the machine draft as a second start once the best has stalled; the Deep Permuter climbs from that draft too
+  (`draft_restart_pass`). ROM mode for the score and the permuter pass — fork projects keep objdiff's percentage and
+  their permuter doesn't take the draft chain yet (no `_judge_with` there); the brief's lines work everywhere.
 - **Agents & models controls.** Collapsible sections show installed agent apps, prompt templates, optional tool
   visibility and recorded usage, manual project-scoped MCP connections, and saved API endpoints. Global and
   per-helper prompt and tool choices take effect on new sessions; disabled tool calls are rejected immediately.
