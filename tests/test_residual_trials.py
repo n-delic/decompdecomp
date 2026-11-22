@@ -85,3 +85,29 @@ def test_single_mask_followup_is_routed_from_linked_rows():
     assert all(family == 'last_byte_mask' for family, _ in proposals)
     second = [*BYTE_MASK_ROWS, ('i', 'nop', 'move $a0, $a1')]
     assert not residual_trials.proposals(BYTE_GUARD, 'f0', '', second)
+
+
+def test_each_stack_output_phase_is_proposed_from_linked_target_rows():
+    source = """\
+void f(void) {
+    f32 buffer[3];
+    f32 var_fp;
+    sample(buffer, 1);
+    note();
+    sample(buffer, 2);
+    var_fp = (0.0f - buffer[1]) - buffer[1];
+    emit(var_fp);
+}
+"""
+    target = [
+        'jal sample', 'addiu $a0, $sp, 0x20', 'lwc1 $f0, 0x24($sp)',
+        'mtc1 $fp, $f16', 'sub.s $f16, $f16, $f0', 'mfc1 $fp, $f16',
+        'jal note', 'nop',
+        'jal sample', 'addiu $a0, $sp, 0x20', 'lwc1 $f2, 0x24($sp)',
+        'mtc1 $fp, $f16', 'sub.s $f16, $f16, $f2', 'mfc1 $fp, $f16',
+    ]
+    rows = [('<', instruction, '') for instruction in target]
+    [(family, candidate)] = residual_trials.proposals(source, 'f', '', rows)
+    assert family == 'stack_call_output_phases'
+    assert 'sample(buffer, 1);\n    var_fp = 0.0f - buffer[1];' in candidate
+    assert 'sample(buffer, 2);\n    var_fp -= buffer[1];' in candidate
