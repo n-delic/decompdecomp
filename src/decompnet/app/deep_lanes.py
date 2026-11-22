@@ -272,6 +272,10 @@ def child(db_path, workspace, background):
         from .workers import started_priority
         started_priority()
     logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
+    from .. import thread_cpu
+    # Where a lane's CPU goes (logs/thread-cpu-lane-<pid>.log; `python -m decompnet.thread_cpu` adds the lanes up). The
+    # lanes are the heaviest Python of a deep search, and the only helper the report did not name.
+    sampler = thread_cpu.start_worker('lane')
     out = sys.stdout
     sys.stdout = sys.stderr  # nothing printed may corrupt the messages
     net = RomNetwork(db_path, Path(workspace))
@@ -414,6 +418,8 @@ def child(db_path, workspace, background):
             stop.set()
         for pool in pools.values():
             pool.close()
+        if sampler is not None:
+            sampler.close()  # (os._exit skips atexit: write the last figures now)
         os._exit(0)  # (daemon threads and compiler sessions end with the process)
 
 

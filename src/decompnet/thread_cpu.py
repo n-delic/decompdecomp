@@ -33,6 +33,13 @@ from collections import Counter, deque
 from pathlib import Path
 
 _PACKAGE = os.path.dirname(os.path.abspath(__file__)) + os.sep
+# DECOMP_THREAD_CPU_STACKS=N names the N callers of every location (`app/a.py:f < app/b.py:g < app/c.py:h`), so the
+# report can be read as call paths instead of the innermost function alone. Off by default: a longer name per
+# location means more distinct locations, and the figures are less easy to add up by eye.
+try:
+    _STACK_DEPTH = max(0, min(8, int(os.environ.get("DECOMP_THREAD_CPU_STACKS", "0") or 0)))
+except ValueError:
+    _STACK_DEPTH = 0
 _LIBRARIES = ("decomprepair", "decompassets")  # the libraries decompdecomp depends on: named by module in the report
 
 
@@ -154,7 +161,10 @@ def _location(frame) -> str:
             if (kind := _FORWARDERS.get(os.path.basename(filename))) is not None:
                 return f"{kind}: " + _callers(frame.f_back)
             place = f"{name}:{frame.f_code.co_name}"
-            return place if below is None else f"{place} (in {below})"
+            place = place if below is None else f"{place} (in {below})"
+            if _STACK_DEPTH and (chain := _callers(frame.f_back, _STACK_DEPTH)) != "?":
+                place += " < " + chain
+            return place
         if below is None:
             below = f"{os.path.basename(filename)}:{frame.f_code.co_name}"
         frame = frame.f_back
