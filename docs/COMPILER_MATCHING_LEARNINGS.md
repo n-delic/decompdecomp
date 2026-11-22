@@ -15656,3 +15656,6 @@ separate conversion and multiplication with the staged sample scored
 2,940, recovering six register operands without changing any other
 linked instruction or the three jump tables. An alternate holder was
 neutral, and the selected source passed uninitialized diagnostics.
+### IDO 7.1 indexed record update
+
+A saved MIPS example built with IDO 7.1 `-O0 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul -DNON_MATCHING` used a record count as both array index and value, then incremented the count through a registered owner pointer. The machine draft cached the count in a registered integer and updated through the original pointer. Replacing the cached index alone changed the diff score from 205 to 327; registering the owner alone scored 472. Applying both changes produced an exact linked match (score 0). This is one saved example, not a controlled cross-compiler experiment; the proposal requires both measured instruction patterns and rejects volatile count fields.

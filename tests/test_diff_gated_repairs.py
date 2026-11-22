@@ -1995,3 +1995,14 @@ def test_zero_record_pairs_routes_to_kmc(monkeypatch):
     assert 'zero_record_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'zero_record_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
     assert 'zero_record_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-7.1', rows, ''))
+
+
+def test_ido_index_update_routes_to_ido_71(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'nop', 'nop')]
+    monkeypatch.setattr(diff_gated_repairs.measured_ido_index_update, 'variants',
+                        lambda text, name, header, diff: [('ido_index_fixture', text)])
+    assert 'ido_index_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-7.1', rows, ''))
+    assert 'ido_index_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-5.3', rows, ''))
+    assert 'ido_index_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
