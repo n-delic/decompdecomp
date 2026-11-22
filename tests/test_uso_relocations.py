@@ -439,7 +439,12 @@ def test_fixed_offset_recovery_declines_a_partially_supported_rebase(tmp_path):
     assert offset_retry(source, header, 'entry', original, expected) is None
 
 
-def test_overlay_probes_calls_to_an_empty_donor_placeholder(tmp_path):
+@pytest.mark.parametrize('definition', [
+    'placeholder() { }',
+    'int placeholder(int value) { return value + 3; }',
+    'int placeholder(value) short value; { return value + 3; }',
+])
+def test_overlay_probes_calls_to_a_defined_donor_helper(tmp_path, definition):
     from threading import Event
 
     from decompnet.app.overlay_donor_aliases import retry
@@ -450,8 +455,8 @@ def test_overlay_probes_calls_to_an_empty_donor_placeholder(tmp_path):
     cfg = compiler_config(tmp_path, {'compiler': {
         'toolchain': 'ido-7.1', 'flags': ['-O2', '-G', '0', '-non_shared', '-mips2'],
     }})
-    header = 'placeholder() { }\n'
-    source = 'int entry(int value) { placeholder(value, 4); return placeholder(value); }'
+    header = definition + '\n'
+    source = 'int entry(int value) { placeholder(value); return placeholder(value + 1); }'
     original = compile_source(cfg, header, source)
     assert original.ok, original.log
     body = extract_function(original.obj, 'entry')
@@ -552,7 +557,11 @@ def test_refresh_adds_wider_pool_read_to_existing_metadata(monkeypatch):
     assert list(uso.metadata_updates(b'', {}, [row | {'meta': json.dumps({'uso': stale})}])) == []
 
 
-@pytest.mark.parametrize('definition', ['placeholder() { }', 'int placeholder(int value) { return value + 3; }'])
+@pytest.mark.parametrize('definition', [
+    'placeholder() { }',
+    'int placeholder(int value) { return value + 3; }',
+    'int placeholder(value) short value; { return value + 3; }',
+])
 def test_overlay_named_binding_externalizes_only_referenced_direct_calls(tmp_path, definition):
     from decompnet.app.overlay_donor_aliases import named_bindings
     from decompnet.app.source_symbol_recovery import relocation_aliases

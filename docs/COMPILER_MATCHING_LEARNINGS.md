@@ -1745,6 +1745,16 @@ call reference with the same instruction bytes, and the target loader
 binding passed the exact judge. A controlled fixture covers both the
 ordinary prototype and the earlier implicit-int placeholder.
 
+The same IDO 7.1 profile emitted all 920 target bytes for one
+overlay caller, with one remaining relocation to a defined K&R helper.
+A declaration retaining the helper's return type and using an
+unspecified argument list preserved C's default argument promotions.
+The compiler emitted an undefined reference and the exact judge verified
+the original caller. The call-site probes can also use those declarations
+for a defined helper that needs distinct loader references. The controlled
+fixtures cover a short parameter in a K&R definition as well as the
+earlier ANSI prototype and implicit-int empty stub.
+
 ### Externalizing IDO overlay constant pools and BSS can change instructions
 
 An isolated N64 replay found compiler-emitted, unnamed section references even

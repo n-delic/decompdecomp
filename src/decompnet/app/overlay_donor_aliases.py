@@ -33,23 +33,20 @@ def _stub_prototype(text, symbol):
     return f'extern {match[1] or "int"} {symbol}();' if match else None
 
 
-def _empty_c_stub(declarations, symbol):
-    """Use the signature of a C89 placeholder without duplicating its empty body."""
-    for decl in declarations:
-        if symbol in decl.names and (prototype := _stub_prototype(decl.text, symbol)):
-            return prototype
-    return None
-
-
 def _external_prototype(definition, symbol):
     if prototype := _stub_prototype(definition, symbol):
         return prototype
     clean = csource._blank(definition)
     signature, brace, _ = clean.partition('{')
-    if (not brace or not re.fullmatch(r'[A-Za-z_][\w\s*]*\b' + re.escape(symbol) + r'\s*\([^;{}]*\)', signature.strip())
-            or re.search(r'\b(?:static|inline|__inline|__inline__|typedef)\b', signature)):
+    if not brace or re.search(r'\b(?:static|inline|__inline|__inline__|typedef)\b', signature):
         return None
-    return definition[:len(signature)].rstrip() + ';'
+    name = r'([A-Za-z_][\w\s*]*\b' + re.escape(symbol) + r')'
+    if re.fullmatch(name + r'\s*\([^;{}]*\)', signature.strip()):
+        return definition[:len(signature)].rstrip() + ';'
+    # K&R definitions already take promoted arguments at call sites.
+    old_style = re.fullmatch(name + r'\s*\(\s*\w+(?:\s*,\s*\w+)*\s*\)(?:\s*[^;(){}]+;)+',
+                             signature.rstrip())
+    return definition[:old_style.end(1)] + '();' if old_style else None
 
 
 def named_bindings(source, header, candidate, aliases):
@@ -170,8 +167,13 @@ def retry(source, header, name, candidate, target, measure, stop, *, separate=No
                             and not re.match(r'(?:static|typedef)\b', d.text)
                             and (external.fullmatch(d.text) or prototype.fullmatch(d.text))), None)
         start = len(header)
-        if declaration is None and all(kind == JUMP for (at, kind), ref in actual.items() if ref == symbol):
-            declaration = _empty_c_stub(declarations, symbol)
+        if declaration is None and all(r.type == JUMP and not r.addend
+                                       for r in candidate.relocs if r.symbol == symbol):
+            for text in (header, source):
+                if definition := csource.find(text, symbol):
+                    declaration = _external_prototype(text[slice(*definition)], symbol)
+                    if declaration:
+                        break
         if declaration is None:
             linked = _cpp_declaration(header, clean_header, symbol)
             if linked is None:
