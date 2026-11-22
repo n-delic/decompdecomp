@@ -15428,3 +15428,18 @@ instruction, source guard and Deep Permuter routing tests.
 ### Capture an initial count and reserve stack event space
 
 A saved N64 initializer built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` stored a configuration count before another field, while the target loaded the count first and stored it after that field. The target also reserved 16 more stack bytes around a local event. Staging the count alone improved the linked score from 305 to 8; reserving the smallest measured halfword array that gives the target frame as well reproduced the target exactly (score 0). Evidence: one saved example and synthetic source, frame and routing tests. The frame establishes reserved space rather than the full event type, and moving the load can matter for aliased inputs, so this target-led candidate is verified by the byte judge.
+
+### Separate two bound stores to recover scratch register roles
+
+A linked N64 function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`
+compiled a lower-or-upper range check with a shared store. It used the
+same two scratch float registers as the target but exchanged the field
+and bound roles. Expressing the low and high checks as an `if` and
+`else if`, each storing its own bound, fixes seven register operands
+and leaves the surrounding linked instructions byte-identical. The
+score fell from 3,425 to 3,390, with all three jump tables and no
+uninitialized warnings. Reversing the comparison spelling, using the
+named bound in both comparisons and embedding the field load in the
+first comparison were neutral. Evidence includes one private linked
+function and synthetic tests for the two constants, compare and store
+sequence, source guards and KMC Deep Permuter routing.
