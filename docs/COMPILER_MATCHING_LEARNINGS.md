@@ -16526,3 +16526,9 @@ schedule. This is one private function under this profile.
 ### Null-guard return layout (GCC 2.7.2 KMC)
 
 With `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, one saved draft returned zero immediately for a null pointer and scored 400. Moving the remaining work inside the non-null branch and returning zero afterward reproduced the target's ordinary branch and separate zero-return jump exactly. This is one saved example verified with its original compiler and linked-byte judge; the target-guided search uses that branch-layout difference to prioritize the existing guard inversion.
+
+
+
+### KMC GCC 2.7.2 named unsigned conversion bias
+
+A saved MIPS draft compiled with `-G0 -mips3 -mgp32 -mfp32 -O2 -fno-strength-reduce` used an anonymous double constant for three unsigned-to-float conversions. The ROM loads the same bias from a named address. Staging that verified 4294967296.0 value before the loop and explicitly correcting negative signed conversions cleared a relocation error and changed the linked score from 140 to 60. The project default without the last flag scored 810. This is one private replay with the original function profile.

@@ -907,6 +907,43 @@ class Search(Permuter):
             break
         return measured
 
+    def repair_conversion_bias(self, agent, proj, fn, state, best):
+        """Use a fresh diff when an anonymous conversion pool prevents a clean link."""
+        from decomprepair import unsigned_float_bias
+
+        source = fn['best_source']
+        if proj['arch'] != 'mips' or not source or source.count('(f64)') < 3 or self.limit - self.tested < 2:
+            return best
+        profile = compiler_for(self.net.cfg(proj), fn['vram'], fn)
+        if not profile['toolchain'].startswith('gcc-2.7.2-kmc'):
+            return best
+        symbols = self.net.symbols(proj['id'])
+
+        def read_data(symbol, width):
+            address = symbols.resolve(symbol)
+            if address is None:
+                return None
+            try:
+                return self.net.reader(proj, fn)(address, width)
+            except (NetworkError, OSError):
+                return None
+
+        self.check()
+        self.tested += 1
+        self.report()
+        _, diff, problems = self.net._judge_with(proj, fn, profile['toolchain'], profile['flags'], source)
+        if diff is None or '.rodata+' not in problems:
+            return best
+        header = self.net._context(proj['id'], fn['unit'])['header']
+        for family, candidate in unsigned_float_bias.variants(
+                source, fn['name'], header, diff.rows, read_data, bool(proj['big_endian'])):
+            state.add(variants=1, repairs=1)
+            with repair_trial({'kind': 'deep local repair', 'family': family}):
+                score = self._score_current(agent, proj, fn, candidate, best, None)
+            if score is not None and score < best:
+                return self._saved_result(proj, fn, best)[0]
+        return best
+
     def repair_saved_drafts(self, agent, proj, fn, state, best):
         """A worse saved draft can expose compiler evidence that the winner lacks."""
         from .. import candidate_quality
@@ -2138,6 +2175,9 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
                 if baseline is None:
                     raise NetworkError('The saved C does not compile in the current context; fix its declarations before deep search.')
                 fn = net._function(name, slug)
+                if baseline and not fork and (lane is None or lane.index == 0):
+                    baseline = search.repair_conversion_bias(agent, proj, fn, state, baseline)
+                    fn = net._function(name, slug)
                 if baseline and not fork and (lane is None or lane.index == 0):
                     baseline = search.better_saved_baseline(agent, proj, fn, state, baseline)
                     fn = net._function(name, slug)

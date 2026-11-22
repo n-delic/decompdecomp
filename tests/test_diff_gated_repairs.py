@@ -2709,3 +2709,23 @@ def test_measured_null_guard_route():
     result = dict(proposals(source, 'f', '', 'mips', KMC, rows, ''))
     assert 'if (p != 0)' in result['guard_inversion']
     assert 'guard_inversion' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))
+
+
+
+def test_unsigned_float_bias_receives_verified_rom_reader(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    def reader(symbol, width):
+        return b'\0' * width
+
+    def candidates(source, name, header, rows, read_data, big_endian):
+        assert read_data is reader
+        assert big_endian
+        return [('unsigned_float_fixture', source)]
+
+    rows = [('i', 'ldc1 $f20, %lo(bias)($at)', 'ldc1 $f20, %lo(?local)($at)')]
+    monkeypatch.setattr(diff_gated_repairs.unsigned_float_bias, 'variants', candidates)
+    args = ('void f(void) {}', 'f', '', 'mips')
+    settings = dict(read_data=reader, big_endian=True)
+    assert 'unsigned_float_fixture' in dict(proposals(*args, KMC, rows, '', **settings))
+    assert 'unsigned_float_fixture' not in dict(proposals(*args, EGCS, rows, '', **settings))

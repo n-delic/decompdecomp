@@ -248,6 +248,7 @@ from decomprepair import (
     targeted_switch_labels,
     trig_axis_reuse,
     uncached_read_repairs,
+    unsigned_float_bias,
     vector_output_capture,
     wide_update_before_flags,
 )
@@ -559,6 +560,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     result += target_memory_schedule_diff_repairs.proposals(source,name,header,toolchain,rows,target,candidate,asm,
                                                              big_endian=big_endian,flags=flags)
     if toolchain.startswith('gcc-2.7.2-kmc'):
+        result += unsigned_float_bias.variants(source, name, header, rows, read_data, big_endian)
         result += measured_teardown_pointer_order.variants(source, name, header, rows, flags, resolve)
         result += measured_loop_count_pointer.variants(source, name, header, rows, flags, resolve)
         result += measured_loop_key_copy.variants(source, name, header, rows, flags)
