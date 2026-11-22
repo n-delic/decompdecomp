@@ -88,8 +88,12 @@ void f(int *p, int a, int b)
 }
 """
     labels = {}
-    draft_repairs.variants(source, 'f', 'mips', labels=labels, limit=None)
-    assert {'allocation_lever', 'identical_arm_collapse'} <= set(labels.values())
+    out = draft_repairs.variants(source, 'f', 'mips', labels=labels, limit=None)
+    assert 'allocation_lever' in set(labels.values())
+    # identical_arm_collapse is reached when its child is proposed, not when its label wins: a child that several
+    # families write alike is kept once, under whichever family produced it first (float_block_normal_form does, since 0.5.674)
+    collapsed = [text for family, text in identical_arm_collapse_repairs.variants(source, 'f') if family == 'identical_arm_collapse']
+    assert collapsed and set(collapsed) <= set(out)
     assert {'allocation_lever', 'indexed_record_base', 'identical_arm_collapse'} <= set(draft_repairs.AGENT_FAMILIES)
 
 
