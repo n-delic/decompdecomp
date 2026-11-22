@@ -13117,3 +13117,15 @@ follow its own reload. The linked score went from 85 to 65. A second
 rewrite stages the signed color clamp in a separate local before packing
 the byte, taking the score to 55. The dispatcher reproduced both steps.
 The function remains unmatched.
+
+
+### KMC GCC 2.7.2: reconstruct message-thread stack buffers and loops
+
+A scratch message-thread draft used scalar placeholders for a client record
+and eight-word message buffer. Restoring four- and eight-word stack objects
+recovered the target frame and call offsets. Expressing the outer receive
+loop and inner callback traversal as nested loops recovered the remaining
+branch directions. With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`,
+the linked score improved from 220 to an exact match. Restoring the stack
+objects alone left score 210. This is one observed match; synthetic tests
+cover the stack evidence, call sequence and source flow guards.

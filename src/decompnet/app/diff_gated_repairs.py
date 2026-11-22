@@ -53,6 +53,7 @@ from decomprepair import (
     measured_kmc_global_stores,
     measured_kmc_input,
     measured_kmc_lifetimes,
+    measured_kmc_message_thread,
     measured_kmc_packed_bits,
     measured_kmc_pointer_table_guard,
     measured_kmc_record_reads,
@@ -275,6 +276,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_kmc_scalar_shapes.variants(source, name, header, rows, resolve=resolve, flags=flags)
         result += measured_kmc_second_call_argument.variants(source, name, header, rows)
         result += measured_kmc_lifetimes.variants(source, name, header, rows)
+        result += measured_kmc_message_thread.variants(source, name, header, rows)
         result += measured_kmc_packed_bits.variants(source, name, header, rows)
         result += measured_kmc_pointer_table_guard.variants(source, name, header, rows)
         result += measured_kmc_two_byte_reader.variants(source, name, header, rows)
