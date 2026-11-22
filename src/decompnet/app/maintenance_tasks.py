@@ -127,6 +127,7 @@ def _search_cross_game(net, slug, job):
     free_candidates.budget(job, seconds=float("inf"), attempts=float("inf"))
     job.cross_exhaustive = True
     job.cross_started = time.monotonic()
+    job.cross_attempt_start = time.time()
     job.cross_seconds = 0
     job.partial_limit = float("inf")
     report(job, 'Reading saved transfer results')

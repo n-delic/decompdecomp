@@ -148,7 +148,8 @@ def run(twins, agent, proj, other, donors, prints, units, settings, job, *, chec
                     job.reuse_matched += 1
                     job.reuse_bytes += row_full['size']
                 break
-    if checked is not None and not job.stop.is_set():
+    if checked is not None and not job.stop.is_set() and not (
+            getattr(job, '_parallel_donors', False) and hasattr(job, 'cross_attempt_start')):
         from . import imported_similarity
 
         matched += imported_similarity.run(twins, agent, proj, other, hits, units, settings, job, checked)

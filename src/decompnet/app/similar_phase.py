@@ -61,11 +61,11 @@ class SearchStopped(Exception):
     """The manual search was cancelled by its owning job."""
 
 
-def search_partition(net, slug, function_ids, stop, progress):
+def search_partition(net, slug, function_ids, stop, progress, *, imported_since=None):
     """Judge a disjoint subset of this project's functions in one interpreter."""
     from .. import compiler
     from ..compile_sessions import session
-    from . import maintenance
+    from . import imported_similarity, maintenance
     from .twins import Job
 
     job = Job(stop=stop)
@@ -87,6 +87,8 @@ def search_partition(net, slug, function_ids, stop, progress):
 
     try:
         with maintenance.foreground(job.foreground), maintenance.cancellation(stop), session(), compiler.cancellable(check_cancel):
+            if imported_since is not None:
+                imported_similarity.search_partition(net.twins, net.project_row(slug), function_ids, imported_since, job)
             similar_matches.run(net.twins, slug, job, function_ids=function_ids)
     except (SearchStopped, maintenance.Cancelled):
         pass
@@ -110,8 +112,15 @@ def parallel(twins, slug, job):
         "SELECT id FROM main.functions WHERE project_id=? AND status='open' AND size BETWEEN ? AND ? ORDER BY size DESC, id",
         proj['id'], similar_matches.MIN_BYTES, similar_matches.MAX_BYTES)]
     width = min(workers.WORKERS, compiler.concurrency_limit(), len(targets))
+    since = getattr(job, 'cross_attempt_start', None)
     if width < 2:
-        return similar_matches.run(twins, slug, job) if targets else 0
+        before = job.cross_matched
+        if since is not None and targets:
+            from . import imported_similarity
+
+            imported_similarity.search_partition(twins, proj, targets, since, job)
+        return job.cross_matched - before + (similar_matches.run(twins, slug, job) if targets else 0)
+    options = {'imported_since': since} if since is not None else {}
 
     report(job, 'Preparing verified donor indexes')
     for other in similar_matches.donor_projects(net, proj).values():
@@ -157,15 +166,15 @@ def parallel(twins, slug, job):
                 with lock:
                     snapshots[index] = snapshot
                     if snapshot.get('done') is not None:
-                        positions[index] = snapshot['done']
+                        positions[index] = max(positions.get(index, 0), min(2 * len(ids), snapshot['done']))
                     publish()
         lane_log = Log()
         try:
             try:
-                result = lanes.donors(slug, ids, lane_log)
+                result = lanes.donors(slug, ids, lane_log, **options)
             except deep_lanes.Unavailable:
                 lane_log.check_cancel()
-                result = search_partition(net, slug, ids, job.stop, lane_log.progress)
+                result = search_partition(net, slug, ids, job.stop, lane_log.progress, **options)
         except SearchStopped:
             return
         with lock:

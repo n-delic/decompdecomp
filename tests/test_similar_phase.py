@@ -204,3 +204,26 @@ def test_cancelling_parallel_search_does_not_retry_stopped_partitions(pair, monk
     monkeypatch.setattr(similar_phase, 'search_partition', lambda *a: pytest.fail('retried cancelled work'))
     assert similar_phase.run(pair.twins, 'destination', job) == 0
     assert job.stop.is_set() and closed == [0]
+
+
+def test_similarity_partition_checks_imported_and_rom_donors(pair, monkeypatch):
+    from decompnet.app import imported_similarity
+
+    calls = []
+
+    def imported(twins, proj, ids, since, job):
+        assert since == 123
+        calls.append(('imported', ids))
+        job.cross_tried += 2
+        job.cross_matched += 1
+
+    def rom(twins, slug, job, *, function_ids):
+        calls.append(('rom', function_ids))
+        job.cross_tried += 1
+
+    monkeypatch.setattr(imported_similarity, 'search_partition', imported)
+    monkeypatch.setattr(similar_matches, 'run', rom)
+    result = similar_phase.search_partition(pair, 'destination', [2], Job().stop, lambda _: None,
+                                            imported_since=123)
+    assert calls == [('imported', [2]), ('rom', [2])]
+    assert result['tried'] == 3 and result['matched'] == 1

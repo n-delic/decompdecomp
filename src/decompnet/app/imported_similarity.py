@@ -1,5 +1,6 @@
 """Find and verify close imported functions whose instruction layouts have changed."""
 
+import json
 import time
 from collections import Counter, defaultdict
 from dataclasses import replace
@@ -103,7 +104,7 @@ def aliases(fingerprint, donor_ops, target, target_ops, donor_name, target_name)
     return renames(replace(fingerprint, refs=left), Print('', right, 0), donor_name, target_name) or {}
 
 
-def run(twins, agent, proj, other, hits, units, settings, job, checked):
+def run(twins, agent, proj, other, hits, units, settings, job, checked, *, function_ids=None):
     net = twins.net
     console = net.console(proj)
     big = bool(proj['big_endian'])
@@ -114,9 +115,11 @@ def run(twins, agent, proj, other, hits, units, settings, job, checked):
     store = net.project_store(proj['id'])
     from .similar_matches import MAX_BYTES, MIN_BYTES
 
+    selected = " AND id IN (SELECT value FROM json_each(?))" if function_ids is not None else ""
+    params = [json.dumps(function_ids)] if function_ids is not None else []
     rows = store.all("SELECT id,name,target,relocs,vram,meta,unit,size,rom_offset FROM functions "
-                     "WHERE project_id=? AND status='open' "
-                     "AND size BETWEEN ? AND ? ORDER BY id", proj['id'], MIN_BYTES, MAX_BYTES)
+                     "WHERE project_id=? AND status='open' AND size BETWEEN ? AND ?" + selected + " ORDER BY id",
+                     proj['id'], MIN_BYTES, MAX_BYTES, *params)
     def exhausted():
         return job.stop.is_set() or (hasattr(job, 'reuse_limit') and free_candidates.exhausted(job))
 
@@ -180,3 +183,32 @@ def run(twins, agent, proj, other, hits, units, settings, job, checked):
             if accepted:
                 break
     return matched
+
+def search_partition(twins, proj, function_ids, since, job):
+    """Reopen verified imported donors inside the worker owning these destinations."""
+    from . import imported_literals, shared_reuse
+
+    net = twins.net
+    store = net.project_store(proj['id'])
+    agent, _ = net.local_agent('autopilot')
+    for other in shared_reuse.compatible(net, proj):
+        if job.stop.is_set():
+            return
+        if not net.fork_slug(other['slug']):
+            continue
+        _, fork, _ = net.forks.get(other['slug'])
+        prints = twins._fork_prints(other, matched_only=True)
+        units = {unit.name: unit for unit in fork.units()}
+        donor_rows = net.project_store(other['id']).all(
+            "SELECT id,project_id,name,unit,meta FROM functions WHERE project_id=? AND status='matched'", other['id'])
+        hits = imported_literals.index(units, donor_rows, prints, bool(proj['big_endian']), job)
+        if not hits:
+            continue
+        checked = defaultdict(set)
+        for row in store.all(
+                "SELECT function_id,source_function_id FROM cross_game_attempts "
+                "WHERE source_project_id=? AND created_at>=? AND function_id IN (SELECT value FROM json_each(?))",
+                other['id'], since, json.dumps(function_ids)):
+            checked[row['function_id']].add(row['source_function_id'])
+        run(twins, agent, proj, other, hits, units, donor_build.Settings(fork), job, checked,
+            function_ids=function_ids)
