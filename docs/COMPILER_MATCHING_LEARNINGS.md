@@ -15609,3 +15609,15 @@ it altered scheduling around another call. Deep Permuter emits at
 most four evidence-backed groups, including variants leaving a
 single gain unchanged. The control-flow check rejects any additional
 read of a replaced assignment.
+
+### Split a generated pointer and integer phase union
+
+In the same private N64 switch sample built with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, splitting a generated
+pointer/integer union into two locals changed the width value from a
+saved register to the target's argument register. The linked judge
+improved from 803 to 372, with exact jump-table data and remaining
+instruction differences. Keeping the unused integer member in the
+pointer union scored the same. The automatic proposal checks direct
+member uses, disjoint liveness, and a dominating write before every
+read. This is a single saved example.

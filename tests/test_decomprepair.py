@@ -66,3 +66,21 @@ def test_rewrites_moved_in_040_keep_their_app_names():
     assert switch_tables.variants is st.variants and switch_tables.read.__module__ == "decompnet.app.switch_tables"
     assert layout_frontiers.offer is lf.offer and layout_frontiers.saved.__module__ == "decompnet.app.layout_frontiers"
     assert expression_recipes.apply is er.apply and expression_recipes.learn.__module__ == "decompnet.app.expression_recipes"
+
+
+def test_draft_repairs_offer_a_generated_union_split():
+    from decompnet.app import draft_repairs
+
+    source = """
+int example(int *input) {
+    union { int *pointer; int value; } __repair_phase_storage;
+    __repair_phase_storage.pointer = input;
+    use_pointer(__repair_phase_storage.pointer);
+    __repair_phase_storage.value = 12;
+    return __repair_phase_storage.value;
+}
+"""
+    labels = {}
+    proposals = draft_repairs.variants(source, 'example', 'mips', flags=('-mgp32',), labels=labels)
+    [split] = [candidate for candidate in proposals if labels[candidate] == 'split_pointer_integer_phase']
+    assert 'return __repair_phase_storage_value;' in split
