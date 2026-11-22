@@ -26,6 +26,7 @@ from decomprepair import (
     conditional_smoothing_gain,
     counted_switch_advance,
     direct_mapped_address,
+    direct_relocated_call_base,
     epsilon_predicate_order,
     field_copy_before_clear,
     field_snapshot_copies,
@@ -562,6 +563,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
                                                              big_endian=big_endian,flags=flags)
     if toolchain.startswith('gcc-2.7.2-kmc'):
         result += unsigned_float_bias.variants(source, name, header, rows, read_data, big_endian)
+        result += direct_relocated_call_base.variants(source, name, header, rows)
         result += measured_teardown_pointer_order.variants(source, name, header, rows, flags, resolve)
         result += measured_loop_count_pointer.variants(source, name, header, rows, flags, resolve)
         result += measured_loop_key_copy.variants(source, name, header, rows, flags)

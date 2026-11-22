@@ -16546,3 +16546,8 @@ A saved MIPS draft compiled with `-G0 -mips3 -mgp32 -mfp32 -O2 -fno-strength-red
 ### Mixed call arity with an unused global pointer (GCC 2.7.2 KMC)
 
 With `-G0 -mips3 -mgp32 -mfp32 -O2`, a saved draft scored 300: the first call to a helper had one argument, while a later call also passed a nonvolatile global pointer. The target did not reload that pointer at the later call. Dropping the extra argument produced an exact linked match with the original compiler. The focused search now also tries this existing mixed-call repair when the removed expression is a plain nonvolatile global pointer and is not shadowed or a macro.
+
+
+### KMC GCC 2.7.2 direct relocated call base
+
+A private N64 draft built with `-G0 -mips3 -mgp32 -mfp32 -O2 -fno-strength-reduce` copied a ROM base into a local pointer, which made the compiler form the relocation in a temporary register before calculating the DMA address. Replacing the single-use pointer with the named byte-array base in the argument, with the byte offset first, produced the target relocation and delay-slot registers. The linked score fell from 60 to 45 in an end-to-end Deep Permuter run. This is one saved function under its recorded profile.
