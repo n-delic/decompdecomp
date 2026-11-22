@@ -13154,3 +13154,42 @@ branch directions. With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`,
 the linked score improved from 220 to an exact match. Restoring the stack
 objects alone left score 210. This is one observed match; synthetic tests
 cover the stack evidence, call sequence and source flow guards.
+
+
+## A 316-instruction actor update: a pointer joined across arms, tail-merge, and scheduler order from helper parameters (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, an N64 game, one 316-instruction function)
+
+Exact from 285 (one function, so one observed match, not a controlled test). The edit list, each score from the app's
+judge worker:
+
+| Edit | Score |
+| --- | --- |
+| start (saved best) | 285 |
+| load the `0x14` float into a local before the `0x2c` one at a smoothing tail | 275 |
+| split m2c's joined pointer `var_v0` into one pointer per arm and store through it in each arm (cross-jumping re-merges the identical final `swc1`) | 245 |
+| state-0 sub-object copy through a one-line `inline` helper (found by the app's own search), `rotateVec3ByMat3(sp28, arg0)` with both arguments | 120 |
+| table slot address through `inline void **slot(char *base, s32 i)` with the table passed as a parameter, and `1.0f` in its own local before it | 60 |
+| a new local `pv = sp18` passed to the call and to the later callee, instead of reusing `arg0` | 0 |
+
+Compiler facts behind them:
+
+- **A pointer assigned in two arms and used after the join is one global pseudo, and global allocation gives it the
+  register of any address that dies in a load that sets it.** `-dl -dg` printed `;; 95 preferences: 3 16` for the
+  joined pointer (the dying addresses' registers `$v1` and `$s0`), so it took `$v1`; the target had `$v0`. Keeping the
+  address alive past the load removed the preference and the pointer went to `$v0`. The natural spelling is not to join:
+  one pointer per arm, each used only in its arm. The two identical stores that follow then become one tail through
+  cross-jumping, so the output still has a single `swc1` after a `j`. Both pointers are block-local, so local-alloc
+  gives them `$v0`. Merging the pointer with the earlier temporary instead (`p = a; use p; p = b`) was worse (315 and
+  365): it makes the pointer global and moves the neighbouring locals.
+- **Scheduler order of address arithmetic follows how it is written, not only what it computes.** `(i * 4) + D` and
+  `D + i * 4`, assigning inside the call, a `do { } while (0)` and a plain base local all produced the same or worse
+  code (470, 455 and 330 were seen). Passing the table symbol as a parameter of a one-line `inline` helper put its
+  `lui/addiu` first, and holding the `1.0f` argument in a local before the helper call put the constant ahead of
+  them, which is the target's order.
+- **A frame address held in `arg0` is hoisted above the previous call by the first scheduler; in a fresh local it
+  isn't tied to `$a0`'s move** (sched2 listed the `$a0` move as depending on the address set only for the reused
+  pseudo). The fresh local gave the target's `move $a0; addiu; move $a1` order after eight spellings of the reused
+  one had kept the first two swapped.
+
+Not found by the permuter: the per-arm split and the fresh-local-for-address rewrites have no family. A library family
+should offer, for a joined pointer set by loads from dying addresses, the per-arm split (with the join's store
+duplicated), and, for a parameter reused as a frame address, the fresh local. Neither is written yet.
