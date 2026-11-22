@@ -17735,6 +17735,11 @@ state shared and only the node private (445-680); a value kept in the draft's `v
 pseudos span the first half of the function and move its registers); statement orders of the three loads and the
 expression association (no change).
 
+Then the draft repairs run on the saved best with its `volatile` reads dropped: `goto_chain_tail_split` takes 95 to 15 in one step,
+and `default_into_then` (decomp-repair 0.5.605, in `default_else_repairs`: `x = D; if (c != K) { x = y; }` as
+`if (c == K) { x = D; } else { x = y; }`) takes 95 to 80 on its own and 15 to 0 on top of the chain. `default_into_else`
+(the body kept as the then arm) changed nothing there. Both are reproduced from the saved source in the isolated judge.
+
 Family: decomp-repair `goto_chain_tail_split` (0.5.602), in `join_tail_arm_split_repairs`: the chain, then every arm-private
 rename restricted to the chain, all at once and each "all but one". The saved best could not reach it: `volatile` reads (an
 earlier search's scaffold) make `local_flow` give no advice, so no arm family ran on it until the `volatile` was dropped
