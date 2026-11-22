@@ -453,15 +453,14 @@ class Search(Permuter):
         # a 34-instruction object placer (decomp-repair 0.5.589): the masked flag word with a byte stored over it as
         # bit-fields, the volatile pointer dropped, the literal store first (15 -> 0 from the saved best, as a chain)
         calls.append((L + 'flag_word_bitfield_repairs.variants', (source, name)))
-        # a four-loop table loader (decomp-repair 0.5.593): counted loops as `for` loops over one counter with the pointer
-        # walk as an index, strides from the counter, the unused frame array dropped, the scaled-register sum, the
-        # integer address sum, the product shifted in its arm and the limit casts (99 -> 0 from the saved best, as one chain)
-        calls.append((L + 'counted_loop_shapes.variants', (source, name)))
-        # a 178-instruction ray and triangle test (decomp-repair 0.5.593): union-pun float locals written plain, declarations
-        # moved ahead of the pun group (275 -> 0 from the saved best in two edits)
-        calls.append((L + 'float_pun_depun.variants', (source, name)))
         # a 95-instruction plane routine (decomp-repair 0.5.588): the pointers it only reads made const with the vector
         # differences written in the products and one kept as a local (480 -> 0 from the saved best, as one child)
+        # a 178-instruction ray and triangle test (decomp-repair 0.5.593): the float locals written through a float/integer
+        # union as plain floats, the later scalar declarations moved before them (275 -> 100 -> 0 from the saved best)
+        calls.append((L + 'float_pun_depun.variants', (source, name)))
+        # a texture-loader-sized N64 function (decomp-repair 0.5.593, counted_loop_shapes): counted loops as for loops over
+        # one counter, each step and the chain (99 -> 0 from the saved best)
+        calls.append((L + 'counted_loop_shapes.variants', (source, name)))
         calls.append((L + 'const_read_inline.variants', (source, name)))
         calls.append((L + 'const_read_repairs.variants', (source, name)))
         # an 84-instruction N64 initialiser (decomp-repair 0.5.585): the second loop's starts and steps wrapped together,

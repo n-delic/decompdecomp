@@ -17417,3 +17417,50 @@ Families: decomp-repair `counted_loop_shapes` (0.5.593): the families named in t
 (`tests/test_counted_loop_shapes_wiring.py` checks it on a synthetic function through the draft repairs and the local
 lane). Not covered: a counter stepped by more than one, a guard that is not the loop's first test, signed counters, and
 loops whose counter step is not the last statement (the pointer-to-index step handles the one place m2c moved it).
+
+## A float/integer union pun hid the allocator's own choice; the plain float and one declaration order matched (178 instructions)
+
+Evidence level: one function (an N64 ray-and-triangle test: a vector difference, a cross product, three dot products, a
+double-precision reciprocal), KMC GCC 2.7.2, `-O2 -G0 -mips3 -mgp32 -mfp32`; controlled by the isolated judge and by
+`cc1 -dl -dg` dumps, not by the compiler's source.
+
+The saved best (275, 55 register-only rows) had five float locals as `union { f32 f; u32 i; }` (`ex.f = a - b; e2[0] =
+ex.i;`, the vector read back through `((FU *) p)[1]`) because the target stores those floats from integer registers
+(`mfc1 $t1, $f2; sw $t1, 0x10($sp)`) and an earlier session forced that with the pun. The target does not need the pun:
+a float pseudo has class `FP_REGS` with `GR_REGS` as the alternate class, and global.c hands the callee-saved float
+registers out in priority order (`floor_log2(uses) * uses / live_length`), so the pseudos that lose go to integer
+registers by themselves (and `mfc1`/`mtc1` appear around them). Two of the six that got a callee-saved float register
+(`f22`, `f26`) lost it again when reload spilled two register pairs for the double zero constants, and became integer
+registers: that is why the target's four remaining float locals sit in `f20`, `f24`, `f28`, `f30` with gaps, while the
+pun version (the five forced to integers) packed them in `f20` to `f26`.
+
+| edit | score |
+| --- | --- |
+| saved best (union pun, `u32 e2[3]`) | 275 |
+| the five union locals as plain `f32`, `e2` a `Vec3`, the loads `arg1->y` / `arg1->x` (declarations unchanged) | 100 |
+| + the three vector differences declared before the loaded components (`e1x, e1y, e1z; ex, ey, ez; dx, dy, dz`) | 0 |
+| only the declarations moved, the pun kept | 275 |
+| from the plain natural source (no cached loads) | 7935 |
+| + the repeated `arg1` field reads cached once in `dx, dy, dz` | 860 |
+| + the first of them read through a `const volatile` pointer | 650 |
+| + `e1x..e1z` and `ex..ez` staged (`e1x = ...; e1.x = e1x;`) | 0 |
+
+Why the declaration order matters (hypothesis, from the `.lreg`/`.greg` tables): a difference (`e1z`, 5 uses over 70
+instructions) and a loaded component (`dx`, 4 uses over 56) had the same priority (0.1428), and so did `dy` and `dz`
+(4 over 63); equal priorities are taken in pseudo-number order, which is declaration order. With the loaded components
+first, the loaded `dx` got `f20`; with the differences first, `e1z` got `f20` and `dx` the next register, and the
+pair that reload then evicted was the loaded components, as in the target. Moving only `e1z` before the group was
+already 0. The volatile read of `dz` keeps its load early (length 63 instead of 69 and priority 0.127 instead of 0.116),
+which is what lets it outrank `e1x` (0.123) and `ez` for the last callee-saved register; plain, it scored 480 against
+the pun best's order of loads.
+
+Failed or neutral: all flag variants (`-fno-strength-reduce`, `-fforce-mem`, `-fcaller-saves`, `-O3`, ...) left 275
+or worsened; `-O1` 9942; moving the `dz` load around in the pun version (identical code: volatile pins it); the
+existing repair families on the saved best (best 275, 45 variants, none touching the pun).
+
+Families: decomp-repair `float_pun_depun` (0.5.593: every pun local whose uses are `.f`, a store of `.i` into a
+write-only integer array, or a pun-typed load becomes a plain `f32`; then the same with each subset of the later float
+declarations moved before the group). From the saved best, children score 100 and (with `e1z` or the three differences
+moved) 0 in the isolated judge; `tests/test_float_pun_depun_wiring.py` checks the draft repairs and the local lane.
+Not covered: the step from the plain natural source (cached field reads, the volatile read, the staging of the
+differences), which is a separate family still to write.
