@@ -183,6 +183,7 @@ from decomprepair import (
     measured_two_list_allocation,
     measured_varbyte_lookup,
     measured_wide_division_stride,
+    measured_word_byte_packing,
     measured_zero_record_pairs,
     ordered_halfword_updates,
     oscillator_phase_hold,
@@ -554,6 +555,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_conditional_call_stage.variants(source, name, header, rows, resolve=resolve)
         result += measured_lookup_owner.variants(source, name, header, rows)
         result += measured_branch_byte_stores.variants(source, name, header, rows)
+        result += measured_word_byte_packing.variants(source, name, header, rows)
         result += measured_wide_division_stride.variants(source, name, header, rows)
         result += measured_slot_flip_copy.variants(source, name, header, rows, resolve=resolve)
         result += measured_conditional_flag_owner.variants(source, name, header, rows, resolve=resolve)
