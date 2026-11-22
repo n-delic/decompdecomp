@@ -151,5 +151,18 @@ const row=(n=0)=>({id:'r'+n,kind:'image',start:128+n*200,detected_asset:{...asse
   assert.match(html,/value="3" selected>Slot 7/);
   assert.doesNotMatch(html,/Slot 3/);
  }
+ {
+  const model={kind:'3d model',media:'model',offset:16,size:32,label:'Single mesh',vertices:4,triangles:2};
+  const t=setup({available:true,regions:[{id:'single',kind:'3d model',detected_asset:model,evidence:[model]}]});
+  t.context.$('romAssetBrowser').open=true;
+  t.context.$('romModelPanel').hidden=false;
+  t.run('renderRomModelBrowser(romView())');
+  assert.match(t.context.$('romModelContext').textContent,/1 models · 1 meshes/);
+  t.context.region={detected_asset:model};
+  const html=t.run('romNativeModelHTML(region)');
+  assert.match(html,/Single mesh/);
+  assert.match(html,/1 meshes · 4 vertices/);
+  assert.doesNotMatch(html,/undefined/);
+ }
  console.log('Asset browser infinite scroll, usage, cancellation and playback passed');
 })().catch(error=>{console.error(error);process.exitCode=1;});
