@@ -634,6 +634,62 @@ class Search(Permuter):
                     return score
         return best
 
+    PAIR_WORKERS = 2   # judge-worker processes of the pair search: it must leave the machine usable
+
+    def repair_pair_pass(self, agent, proj, fn, best, fork):
+        """Two library repairs at once, judged exactly in parallel (pair_search).
+
+        The few single children the operand pass can afford to compile each score the same or worse when a match needs
+        two edits together. Here every local repair child (up to pair_search.MAX_SINGLES) is judged by the pool, the best
+        thirty from different families are composed in pairs where their edits touch different lines, the pairs
+        (at most pair_search.PAIR_BUDGET) are judged too, and an improvement goes through the ordinary path so it is
+        saved and verified. A single child that already improves is taken first, like the other passes."""
+        from . import judge_pool, pair_search
+        rows = self.winner_diff[0] if self.winner_diff else ()
+        if fork or not best or not rows or self.limit - self.tested < 4 or self.deadline - time.monotonic() < 90:
+            return best
+        fn = self.net._function(fn['name'], proj['slug'])
+        source = _candidate_source(fn, best)
+        own = compiler_for(self.net.cfg(proj), fn['vram'], fn)
+        flags = own['flags'].split() if isinstance(own['flags'], str) else own['flags']
+        self.phase = 'pair search'
+        proposals, _ = self._local_proposals(source, proj, fn, rows)
+        kids, seen = [], {source}
+        for family, child in proposals:
+            if child not in seen and len(kids) < pair_search.MAX_SINGLES:
+                seen.add(child)
+                kids.append((family, child))
+        if not kids:
+            return best
+        self.log(f'Searching pairs of repairs: judging {len(kids)} single children, then pairs of the best '
+                 f'{pair_search.TOP_K} from different families.')
+        with judge_pool.JudgePool(proj['slug'], fn, own['toolchain'], flags, size=self.PAIR_WORKERS) as pool:
+            scores = pool.judge_many([child for _, child in kids], self.check)
+            singles = [(score, family, child) for (family, child), score in zip(kids, scores) if score is not None]
+            if pool.errors:
+                self.log('Pair search could not judge here: ' + pool.errors[0][:200])
+            lone = min(singles, default=None, key=lambda item: item[0])
+            if lone and lone[0] < best:
+                found = (lone[0], lone[2], lone[1], len(kids))
+            else:
+                found = pair_search.search(
+                    pool.judge_many, source, singles, best, check=self.check, log=self.log,
+                    regenerate=lambda parent: self._local_proposals(parent, proj, fn, rows)[0], skip=self.local_seen)
+                found = (found[0], found[1], found[2], found[3] + len(kids))
+        self.tested += max(1, found[3] // 50)
+        self.report()
+        score, candidate, label, _ = found
+        if candidate is None:
+            return best
+        self.local_seen.add(candidate)
+        with repair_trial({'kind': 'deep local repair', 'family': label}):
+            measured = self._score(agent, proj, fn, candidate, best, fork)
+        if measured is None or measured >= best:
+            self.log(f'Pair search found {score} in the pool but the ordinary judge gave {measured}; keeping the saved source.')
+            return best
+        self.log(f'Pair search improved {best} to {measured} ({label}).')
+        return measured
+
     def stub_note(self):
         """The stub message when the measured baseline emits under half of the target's instructions, else ''.
 
@@ -2437,6 +2493,9 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
                     elif not relabel and (lane is None or lane.index == 0):
                         baseline = search.operand_order_pass(agent, proj, fn, baseline, fork)
                         fn = net._function(name, slug)
+                        if baseline and not fork:
+                            baseline = search.repair_pair_pass(agent, proj, fn, baseline, fork)
+                            fn = net._function(name, slug)
                         if baseline == 0:
                             reason = 'Matched'
                         if baseline:
