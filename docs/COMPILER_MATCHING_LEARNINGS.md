@@ -16313,3 +16313,9 @@ A saved MIPS setup function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -
 ### IDO C++ implicit method calls in overlays
 
 An isolated N64 overlay donor built with IDO 7.1 using `-O2 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul -DNON_MATCHING` produced 696 bytes identical to the target, but two calls still referred to a mangled C++ method instead of the loader's symbol. Replacing the two implicit method calls with C-linkage calls that pass `this` explicitly preserved all 696 bytes and satisfied both loader relocations. This is one observed candidate, not a cross-compiler result. A compiler-backed regression also checks that a different loader binding is rejected; every proposed rewrite still needs the exact judge.
+
+The phase reuse and guard sink must be offered together: the first step alone scores 25 from 15, while the
+combined child scores 10. `merge_integer_lifetimes` now emits the combined candidate using control-flow
+liveness and reaching definitions, only for a signed phase read through a parenthesized byte mask. The focused
+Deep Permuter lane offers it directly, since the general proposal cap omitted it on this source. The exact
+standalone judge measured the generated combined child at 10 from 15; this remains one function's evidence.
