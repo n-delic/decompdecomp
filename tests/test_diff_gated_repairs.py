@@ -1799,3 +1799,13 @@ def test_route_signed_byte_table_base_only_on_big_endian_mips():
     expected = source.replace('(u16 *)', '(s8 *)')
     assert ('relocated_signed_byte_load', expected) in proposals(source, 'f', '', 'mips', KMC, rows, '', big_endian=True)
     assert all(label != 'relocated_signed_byte_load' for label, _ in proposals(source, 'f', '', 'mips', KMC, rows, ''))
+
+
+def test_float_argument_pair_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_float_argument_pair, 'variants',
+                        lambda text, name, header, diff: [('float_argument_pair_fixture', text)])
+    assert 'float_argument_pair_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'float_argument_pair_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))

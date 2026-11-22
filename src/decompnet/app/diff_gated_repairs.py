@@ -53,6 +53,7 @@ from decomprepair import (
     measured_cursor_schedule,
     measured_expression_repairs,
     measured_flag_reload,
+    measured_float_argument_pair,
     measured_float_grid_stores,
     measured_forwarded_counter,
     measured_forwarded_pointer,
@@ -361,6 +362,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_be16_cursor.variants(source, name, header, rows)
         result += measured_forwarded_counter.variants(source, name, header, rows, asm or '')
         result += measured_flag_reload.variants(source, name, header, rows)
+        result += measured_float_argument_pair.variants(source, name, header, rows)
         result += measured_guarded_index.variants(source, name, header, rows)
         result += measured_reset_loops.variants(source, name, header, rows)
         result += measured_interpolation_calls.variants(source, name, header, rows)
