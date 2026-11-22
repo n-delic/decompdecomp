@@ -52,6 +52,13 @@ RANDOM_TRIAL_WINDOW = 64
 DRAFT_RESTART_TRIALS = 24  # candidates a stalled function's draft chain may judge in one search
 RANDOM_SECONDS_WINDOW = 30
 LOCAL_PAUSES = {'phase_budget', 'burst_budget'}
+# A search that is still getting better when its budget runs out earns more of it: an improvement in the last
+# EXTEND_WINDOW of the budget extends minutes and compiles by EXTEND_STEP of the original, at most EXTEND_MAX times.
+# The window starts after the original end once extended (0.75 * 1.5 > 1), so each extension needs a fresh
+# improvement; a search that stalls ends at its next limit.
+EXTEND_WINDOW = 0.25
+EXTEND_STEP = 0.5
+EXTEND_MAX = 3
 
 
 class SearchLimit(Exception):
@@ -131,6 +138,11 @@ class Search(Permuter):
         self.seconds = min(minutes*60,getattr(log,'maximum_seconds',minutes*60))
         self.deadline = self.started_at+self.seconds
         self.limit = self.random_trial_limit = max_variants
+        self.base_seconds, self.base_limit = self.seconds, max_variants
+        self.extensions = 0
+        self.improved_at = None  # (tested, monotonic time) of the latest new best
+        # A caller that caps the run (parallel lanes, maintenance tasks) owns its deadline; only a plain run extends.
+        self.extendable = getattr(log, 'maximum_seconds', None) is None
         self.log = log
         self.tested = self.skipped = self.visited = self.rejected = 0
         from .search_efficiency import Measurements
@@ -224,10 +236,29 @@ class Search(Permuter):
 
     def check(self):
         self.log.check_cancel()
+        if (time.monotonic() >= self.deadline or self.tested >= self.limit) and self._extend():
+            return
         if time.monotonic() >= self.deadline:
             raise SearchLimit('Time limit reached')
         if self.tested >= self.limit:
             raise SearchLimit('Variant limit reached')
+
+    def _extend(self):
+        """Grow the budget when the best score improved in its last EXTEND_WINDOW; True when it grew."""
+        if not self.extendable or self.extensions >= EXTEND_MAX or self.improved_at is None or not self.best:
+            return False
+        tested, at = self.improved_at
+        late = tested > self.limit * (1 - EXTEND_WINDOW) or at > self.deadline - self.seconds * EXTEND_WINDOW
+        if not late:
+            return False
+        self.extensions += 1
+        self.limit += max(1, round(self.base_limit * EXTEND_STEP))
+        extra = self.base_seconds * EXTEND_STEP
+        self.deadline += extra
+        self.seconds += extra
+        self.log(f'Still improving at the end of its budget (best score {self.best:,}); extending the search by '
+                 f'{round(EXTEND_STEP * 100)}% ({self.extensions}/{EXTEND_MAX}).')
+        return True
 
     def _chart(self, score):
         """A point on the run chart; past 200 every other middle point goes, the first and latest stay."""
@@ -2059,6 +2090,7 @@ class Search(Permuter):
                 if self.best is not None:
                     self.improvements += 1
                 self.best = score
+                self.improved_at = (self.tested, time.monotonic())
                 self._chart(score)
                 winner = True
             if winner:
