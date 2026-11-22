@@ -2605,3 +2605,12 @@ def test_child_slot_update_receives_abi_flags_and_symbol_resolver(monkeypatch):
                                                 flags=flags, resolve=resolve))
     assert 'child_slot_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, '',
                                                     flags=flags, resolve=resolve))
+
+def test_private_record_padding_reaches_kmc_router(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('s', 'addiu $sp, $sp, -0x48', 'addiu $sp, $sp, -0x50')]
+    monkeypatch.setattr(diff_gated_repairs.private_record_padding, 'variants',
+                        lambda text, name, diff, header: [('private_record_fixture', text)])
+    assert 'private_record_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'private_record_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))

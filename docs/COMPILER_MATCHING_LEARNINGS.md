@@ -16385,3 +16385,7 @@ A saved MIPS function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3
 ### IDO generated C++ overlay references
 
 An isolated N64 overlay function built with IDO 7.1 using `-O2 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul -DNON_MATCHING` compiled to the original 588 instruction bytes, but its generated base-constructor call and vtable address used C++ symbols rather than the loader's names. Explicit object-file binding declarations preserved the generated instructions and allowed the overlay linker to verify both loader records. This is one observed function, not a cross-compiler result. A compiler-backed regression checks constructor and vtable bindings, a wrong symbol, a nonzero marker addend, and cartridge reconstruction.
+
+### Remove local record padding with a neighboring declaration move
+
+On one saved MIPS function, `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` allocated a frame eight bytes larger than the target. Removing two unused word fields and moving the neighboring array declaration after two scalar locals changed its linked score from 1420 to 1413. Removing the padding alone scored 1495 and moving the declaration alone scored 1509. The rule proposes the combination when the record is accessed through its members and its full layout is unobserved. This is one saved-function replay.
