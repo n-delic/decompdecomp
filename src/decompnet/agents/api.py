@@ -707,6 +707,13 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
             s(function=st("function", True), revision=st("current candidate revision", True),
               calls=it("number of recorded calls, 1–3"), vis=it("maximum emulator retraces"),
               input=st("optional scripted controller input"))),
+        "get_call_hints": ("What the console really passed to a function: records its first calls in the reversing "
+                           "emulator (N64) and says its arguments' kinds and value ranges and what it reads and writes "
+                           "through pointer arguments. 'still running': call again with the same arguments.",
+                           s(function=st("function", True), calls=it("1-8 (4)"),
+                             vis=it("how far to run, VIs, 60 a second (3600)"), from_vi=it("record from this VI"),
+                             input=st("controller script vi:A+START,...; none: the game sits at its title"),
+                             expansion_pak=bo("8 MB instead of 4"))),
         "compare_behaviour": ("Does a function behave like the original in a port? Records its first real calls in "
                               "the reversing emulator (N64), runs each through its recompiled and decompiled C, and "
                               "compares results and memory. Slow the first time: 'still running' means call again "

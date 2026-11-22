@@ -24,7 +24,9 @@ _LINE = re.compile(r'^\s*(?:/\*(?P<comment>.*?)\*/\s*)?(?P<op>[a-z][\w.]*)\s*(?P
 _LABEL = re.compile(r'^\s*(?:\.L\w+|\w+):\s*$')
 _REG = re.compile(r'\$(\w+)')
 # the float result register, as the listing names it ($fv0 in the N64's and PlayStation's, $f0 elsewhere)
-_ALIAS = {'f0': 'fv0', 'fv0f': 'fv0', 'f1': 'fv0'}
+# (and the float argument registers, $f12/$f14 as $fa0/$fa1, a double's second half with its first)
+_ALIAS = {'f0': 'fv0', 'fv0f': 'fv0', 'f1': 'fv0', 'f12': 'fa0', 'fa0f': 'fa0', 'f13': 'fa0', 'f14': 'fa1',
+          'fa1f': 'fa1', 'f15': 'fa1'}
 
 _STORES = frozenset({'sb', 'sh', 'sw', 'swl', 'swr', 'sd', 'sdl', 'sdr', 'swc1', 'sdc1', 'swc2', 'sc', 'scd', 'sq'})
 _PARTIAL_LOADS = frozenset({'lwl', 'lwr', 'ldl', 'ldr'})  # they merge into their destination: it is read too
