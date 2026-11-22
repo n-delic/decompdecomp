@@ -50,6 +50,7 @@ from decomprepair import (
     measured_after_call_reload,
     measured_be16_cursor,
     measured_branch_byte_stores,
+    measured_branch_byte_tail,
     measured_branch_halfword_store,
     measured_byte_clamp,
     measured_byte_clear_base,
@@ -567,6 +568,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_conditional_call_stage.variants(source, name, header, rows, resolve=resolve)
         result += measured_lookup_owner.variants(source, name, header, rows)
         result += measured_branch_byte_stores.variants(source, name, header, rows)
+        result += measured_branch_byte_tail.variants(source, name, header, rows)
         result += measured_word_byte_packing.variants(source, name, header, rows)
         result += measured_wide_division_stride.variants(source, name, header, rows)
         result += measured_slot_flip_copy.variants(source, name, header, rows, resolve=resolve)

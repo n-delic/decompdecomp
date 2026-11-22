@@ -16141,3 +16141,7 @@ A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` wro
 ### KMC GCC 2.7.2 unused frame in a leaf loop
 
 A saved MIPS byte-fill example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` reserved an eight-byte stack frame but otherwise matched a frameless generated draft. Declaring an unused two-word local changed the linked difference score from 320 to an exact match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires an otherwise identical leaf instruction stream, matching frame entry and return restoration, and branch destinations shifted only by the extra entry instruction.
+
+### KMC GCC 2.7.2 byte-store branch tail
+
+A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` selected between two groups of byte stores followed by a shared byte store. Duplicating that last store into both source arms changed the linked difference score from 350 to an exact match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the measured branch/store sequence and two complete arms containing only byte stores to the same object.
