@@ -223,6 +223,7 @@ from decomprepair import (
     scoped_phase_initializer,
     search_exit_loop_repairs,
     shared_projection_lifetime,
+    shared_reset_rebalance,
     shared_return_repairs,
     short_leaf_drafts,
     smoothing_call_before_read,
@@ -612,6 +613,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_float_grid_stores.variants(source, name, rows)
         result += measured_staged_float_order.variants(source, name, rows, header)
         result += natural_pointer_spill.variants(source, name, rows, header)
+        result += shared_reset_rebalance.variants(source, name, rows, header)
         result += measured_forwarded_pointer.variants(source, name, header, asm or '')
         result += float_intermediate_repairs.repeated_products(source, name, rows)
         result += measured_expression_repairs.variants(source,name,header,rows)

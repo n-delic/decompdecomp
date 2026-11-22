@@ -16061,6 +16061,25 @@ Two saved MIPS examples built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` 
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` checked three signature bytes. The generated draft's combined condition used different registers and a shared result copy. Staging the input bytes and comparison constants in word locals changed the linked difference score from 250 to an exact match while retaining the integer return type. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the complete source, measured instructions and constants, and resolved addresses for all three byte loads.
 
+### Balance a shared reset between phase stores and later calls
+
+In a private N64 function built with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, exchanging the first
+and fourth independent stores after split floating-point captures
+reduced the linked score from 360 to 355. All captures remained
+before the disjoint stores.
+
+Reusing the saved reset word for two later float stores and a
+setup copy let four of six repeated call arguments go back to
+literal zero. The paired stores, the setup copy and those four
+arguments then occupied their target registers. The score
+fell from 355 to 320 while retaining 3,034 instructions and
+all three jump tables. Reverting every call argument after the
+same reset changes scored 400 before the store-order trial
+because it displaced the saved-register allocations. The
+trial checks the paired stores, argument evidence and local
+zero's initialization before asking the exact judge.
+
 ### Split the float load and sum when a stack input crosses a field load
 
 In a private N64 function built with
