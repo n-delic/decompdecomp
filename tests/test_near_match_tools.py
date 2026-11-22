@@ -65,3 +65,14 @@ def test_phase_summary_keeps_bounded_excerpts(tmp_path):
     out = compiler_diagnostics.phase_summary(tmp_path, 'f', 'mips', excerpts=('greg',))
     assert len(out['phases']['greg']['excerpt']) == compiler_diagnostics.EXCERPT_CHARS
     assert out['phases']['greg']['excerpt_cut']
+
+
+def test_compiler_passes_names_where_the_compilers_source_is(tmp_path, monkeypatch):
+    from decompnet import toolchains
+    from decompnet.app import compiler_passes
+
+    monkeypatch.setenv("DECOMPNET_TOOLCHAINS", str(tmp_path))
+    assert "No public source" in compiler_passes.source_line("ido-7.1")
+    assert "isn't downloaded yet" in compiler_passes.source_line("gcc-2.7.2-kmc")
+    monkeypatch.setattr(toolchains, "source_for", lambda c: tmp_path / "gcc-2.7.2-kmc-source")
+    assert str(tmp_path / "gcc-2.7.2-kmc-source") in compiler_passes.source_line("gcc-2.7.2-kmc")

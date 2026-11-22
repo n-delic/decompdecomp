@@ -789,3 +789,81 @@ def test_wabt_has_a_build_for_every_desktop():
     for mac in ("macos-x86_64", "macos-arm64"):
         (source,) = tc.parts_for(mac)
         assert source["build"] == "wabt" and source["url"].endswith("/wabt-1.0.42.tar.xz") and source["sha256"]
+
+
+# Compiler sources: the GCC source nearest each free compiler, fetched with it, for agents to read its passes.
+
+def test_every_free_gcc_family_compiler_names_a_pinned_source_and_proprietary_ones_none():
+    reg = toolchains.registry()
+    with_source = {tid: tc.compiler_source for tid, tc in reg.items() if tc.compiler_source}
+    assert {"gcc-2.7.2-kmc", "gcc-2.6.3-psx", "gcc-2.91.66-psx", "ee-gcc-2.96", "ee-gcc-3.2", "psp-gcc-1.7.1",
+            "gcc-2.8.1-pm", "sn-n64-272-970404"} <= set(with_source)
+    for tid, sid in with_source.items():
+        assert not reg[tid].proprietary, tid
+        src = reg[sid]
+        assert sid.endswith("-source") and src.kind == "tool" and not src.proprietary and src.parts, sid
+        assert all(len(p["sha256"]) == 64 and p["url"].startswith("https://") for p in src.parts), sid
+    for tid in ("ido-7.1", "mwccpsp-3.0.1-b219", "pspsnc-1.2.7503", "sn-n64-281", "mwcps2-3.0.1"):
+        assert toolchains.source_id(tid) is None and toolchains.source_for(tid) is None
+    assert toolchains.source_id("gcc-2.7.2-kmc") == "gcc-2.7.2-kmc-source"
+
+
+def _tarball(tc_root, name, files):
+    folder = tc_root / f"{name}-tree"
+    for rel, text in files.items():
+        (folder / rel).parent.mkdir(parents=True, exist_ok=True)
+        (folder / rel).write_text(text)
+    archive = tc_root / f"{name}.tar.gz"
+    with tarfile.open(archive, "w:gz") as t:
+        t.add(folder, arcname=name)
+    return archive, hashlib.sha256(archive.read_bytes()).hexdigest()
+
+
+def _compiler_with_source(monkeypatch, tc_root, *, broken_source=False):
+    cc, cc_sha = _tarball(tc_root, "cc", {"gcc": "#!/bin/sh\n"})
+    src, src_sha = _tarball(tc_root, "gcc-9.9", {"gcc/sched.c": "/* sched */", "gcc/testsuite/t.c": "", "README": ""})
+    compiler = toolchains.Toolchain(id="fakecc", name="Fake GCC", license="GPL-2.0", source="test",
+                                    compiler_source="fakecc-source",
+                                    parts=[{"url": cc.as_uri(), "sha256": cc_sha, "subdir": "cc"}])
+    source = toolchains.Toolchain(id="fakecc-source", name="Fake GCC source", kind="tool", license="GPL-2.0",
+                                  source="test", parts=[{"url": src.as_uri(), "sha256": "0" * 64 if broken_source else src_sha,
+                                                         "subdir": "gcc-9.9", "keep": {"gcc": "gcc"},
+                                                         "drop": ["gcc/testsuite"]}])
+    reg = {"fakecc": compiler, "fakecc-source": source}
+    monkeypatch.setattr(toolchains, "registry", lambda: reg)
+    monkeypatch.setattr(toolchains, "_registered", lambda tid: reg.get(tid))
+
+
+def test_installing_a_compiler_installs_its_source_without_its_testsuite(tc_root, monkeypatch):
+    _compiler_with_source(monkeypatch, tc_root)
+    toolchains.install("fakecc", log=lambda *_: None)
+    where = toolchains.source_for("fakecc")
+    assert where == toolchains.path("fakecc-source")
+    assert (where / "gcc" / "sched.c").read_text() == "/* sched */"
+    assert not (where / "gcc" / "testsuite").exists() and not (where / "README").exists()
+
+
+def test_a_compiler_installed_before_sources_gets_its_source_on_the_next_install_pass(tc_root, monkeypatch):
+    _compiler_with_source(monkeypatch, tc_root)
+    toolchains.install("fakecc", log=lambda *_: None)
+    shutil.rmtree(toolchains.path("fakecc-source"))  # as an install from before sources were pinned
+    assert toolchains.source_for("fakecc") is None
+    assert toolchains.fetch_missing_sources(log=lambda *_: None) == ["fakecc-source"]
+    assert toolchains.source_for("fakecc") is not None
+    assert toolchains.fetch_missing_sources(log=lambda *_: None) == []  # nothing again once it's there
+
+
+def test_a_source_that_fails_to_download_leaves_the_compiler_usable(tc_root, monkeypatch):
+    _compiler_with_source(monkeypatch, tc_root, broken_source=True)
+    lines = []
+    assert toolchains.install("fakecc", log=lines.append) == toolchains.path("fakecc")
+    assert toolchains.require("fakecc") and toolchains.source_for("fakecc") is None
+    assert any("tried again" in line for line in lines)
+
+
+def test_setup_downloads_no_compiler_source_for_compilers_it_does_not_install(tc_root, monkeypatch):
+    """Sources come with their compiler only: a computer without that compiler downloads nothing more."""
+    _compiler_with_source(monkeypatch, tc_root)
+    monkeypatch.setattr(toolchains, "_download", lambda *a, **k: pytest.fail("downloaded"))
+    assert toolchains.fetch_missing_sources(log=lambda *_: None) == []
+    assert toolchains.fetch_source("fakecc", log=lambda *_: None) is None

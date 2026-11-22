@@ -41,7 +41,20 @@ def run(net, agent, slug, function, revision, passes=None):
         raise NetworkError(f"{result['skipped']} compiler_passes needs a pinned, installed GCC-family compiler "
                            f"(this function's is {profile.get('toolchain') or 'a custom command'}); use compile_variants "
                            "and guide(\"near-match\") instead.")
-    return render(result, passes, revision)
+    return render(result, passes, revision) + source_line(result.get('toolchain') or profile.get('toolchain'))
+
+
+def source_line(compiler):
+    """Where to read the passes themselves: the compiler's source, installed with it (toolchains.source_for)."""
+    from .. import toolchains
+    if not compiler or not toolchains.source_id(compiler):
+        return "\n\nNo public source for this compiler's passes."
+    where = toolchains.source_for(compiler)
+    if where is None:
+        return (f"\n\nIts source ({toolchains.source_id(compiler)}) isn't downloaded yet: installing the compiler again "
+                "in Compilers & tools fetches it.")
+    return (f"\n\nIts source, to read the pass that decides this (sched.c, local-alloc.c, global.c, reorg.c, jump.c, "
+            f"cse.c, loop.c, combine.c): {where} ({toolchains.get(toolchains.source_id(compiler)).description})")
 
 
 def render(result, passes, revision):

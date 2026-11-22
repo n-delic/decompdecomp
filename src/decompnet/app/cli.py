@@ -428,6 +428,8 @@ def setup(args) -> int:
             toolchains.install(tid, log=lambda line: print(f"  {line}"))
         except Exception as e:  # keep going: the app shows what's missing
             print(f"  ! {tc.name}: {e}")
+    # compilers installed before their sources were pinned get them now (a failure is only reported: retried next time)
+    toolchains.fetch_missing_sources(log=lambda line: print(f"  {line}"))
     from . import mcp_gateway
     try:
         mcp_gateway.install(log=lambda line: print(f"  {line}"))

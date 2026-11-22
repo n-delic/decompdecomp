@@ -34,6 +34,7 @@ subdir = "usr/lib32"
 platforms = ["wsl-x86_64"]
 
 ["gcc-2.7.2-kmc"]
+compiler_source = "gcc-2.7.2-kmc-source"
 intrinsics = "decompnet.arch.mips_debug_break"
 name = "GCC 2.7.2 (KMC-compatible) + binutils 2.6"
 platform = "N64"
@@ -81,6 +82,7 @@ build = "binutils-2.6-kmc"
 platforms = ["macos-arm64"]
 
 ["gcc-2.6.3-psx"]
+compiler_source = "gcc-2.6.3-source"
 intrinsics = "decompnet.consoles.ps1.gte"
 name = "GCC 2.6.3 for PlayStation + maspsx (ASPSX 2.34)"
 platform = "PS1"
@@ -114,6 +116,7 @@ sha256 = "01e6e8c4933414ea3f8d8e3bc766a1f5fafd4fc0110e0b75d1f691bd791989b1"
 platforms = ["linux-x86_64"]
 
 ["gcc-2.7.2-cdk-psx"]
+compiler_source = "gcc-2.7.2-source"
 name = "GCC 2.7.2 CDK for PlayStation + maspsx (ASPSX 2.67)"
 platform = "PS1"
 arch = "mipsel"
@@ -136,6 +139,7 @@ sha256 = "43fe3df44badd23d57075adc06ab177d980b1e29f0392a5426e89f652c832d1a"
 platforms = ["macos-arm64"]
 
 ["gcc-2.7.2-psx"]
+compiler_source = "gcc-2.7.2-source"
 intrinsics = "decompnet.consoles.ps1.gte"
 name = "GCC 2.7.2 for PlayStation + maspsx (ASPSX 2.56)"
 platform = "PS1"
@@ -160,6 +164,7 @@ sha256 = "4280894661c9792bc19f5c970c283d35381937fb44e479a91d0c044c95fcd208"
 platforms = ["macos-arm64"]
 
 ["gcc-2.8.1-psx"]
+compiler_source = "gcc-2.8.1-source"
 intrinsics = "decompnet.consoles.ps1.gte"
 name = "GCC 2.8.1 for PlayStation + maspsx (ASPSX 2.79)"
 platform = "PS1"
@@ -184,6 +189,7 @@ sha256 = "bab0c6ea1f394573d5aabbdd7b37e36aceeb83c522141d946a87a9f58c199ea0"
 platforms = ["macos-arm64"]
 
 ["gcc-2.5.7-psx"]
+compiler_source = "gcc-2.5.7-source"
 name = "GCC 2.5.7-psx for PlayStation + maspsx (ASPSX 2.08)"
 platform = "PS1"
 arch = "mipsel"
@@ -202,6 +208,7 @@ sha256 = "0db1fb403c766e51b094354b9a136a6c1f01457aa41ccca28ac457b7cb67d871"
 platforms = ["linux-x86_64"]
 
 ["gcc-2.6.0-psx"]
+compiler_source = "gcc-2.6.0-source"
 name = "GCC 2.6.0-psx for PlayStation + maspsx (ASPSX 2.34)"
 platform = "PS1"
 arch = "mipsel"
@@ -234,6 +241,7 @@ config_sub_sha256 = "71b8d73e46e0c31b1dc91ba5306f5ef0af009273b3bb283f31d8dad6966
 version = "2.6.0"
 
 ["gcc-2.7.2-cdk"]
+compiler_source = "gcc-2.7.2-source"
 name = "GCC 2.7.2-cdk for PlayStation + maspsx (ASPSX 2.67)"
 platform = "PS1"
 arch = "mipsel"
@@ -256,6 +264,7 @@ sha256 = "43fe3df44badd23d57075adc06ab177d980b1e29f0392a5426e89f652c832d1a"
 platforms = ["macos-arm64"]
 
 ["gcc-2.8.0-psx"]
+compiler_source = "gcc-2.8.0-source"
 name = "GCC 2.8.0-psx for PlayStation + maspsx (ASPSX 2.77)"
 platform = "PS1"
 arch = "mipsel"
@@ -288,6 +297,7 @@ config_sub_sha256 = "71b8d73e46e0c31b1dc91ba5306f5ef0af009273b3bb283f31d8dad6966
 version = "2.8.0"
 
 ["gcc-2.91.66-psx"]
+compiler_source = "egcs-1.1.2-source"
 name = "GCC 2.91.66-psx for PlayStation + maspsx (ASPSX 2.81)"
 platform = "PS1"
 arch = "mipsel"
@@ -306,6 +316,7 @@ sha256 = "f773a0a9659fa4ff74313ac4363d939312e8125675cd09ad9f8c1202f587f1fd"
 platforms = ["linux-x86_64"]
 
 ["gcc-2.95.2-psx"]
+compiler_source = "gcc-2.95.2-source"
 name = "GCC 2.95.2-psx for PlayStation + maspsx (ASPSX 2.86)"
 platform = "PS1"
 arch = "mipsel"
@@ -337,6 +348,7 @@ platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
 
 # Sony packs retain their original i386 binaries on Mac, through the shared local Linux runner.
 ["ee-gcc-2.96"]
+compiler_source = "gcc-2.95.3-source"
 linux_vm = true
 cplusplus = true
 name = "EE-GCC 2.96"
@@ -357,6 +369,7 @@ sha256 = "0590d2ca9da8f5903889d66761220d14b47a8d14ba987ca53db84a1650a1fd0a"
 platforms = ["linux-x86_64"]
 
 ["ee-gcc-2.9-991111"]
+compiler_source = "ee-gcc-2.9-991111-source"
 linux_vm = true
 cplusplus = true
 name = "EE-GCC 2.9 (991111)"
@@ -374,6 +387,7 @@ sha256 = "99cb5db603cd985b50fc6851157020ad69489f2227309ccf825bd43ac7bc19dd"
 platforms = ["linux-x86_64"]
 
 ["ee-gcc-2.95.2"]
+compiler_source = "gcc-2.95.2-source"
 space_free_runtime = true
 cplusplus = true
 name = "EE-GCC 2.95.2 (SN Systems 273a)"
@@ -391,6 +405,7 @@ sha256 = "ee9d9a7fccb59aebfa78a5587f6f8059660b91f705acddbc292ad2243c8e562e"
 platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
 
 ["ee-gcc-2.95.3"]
+compiler_source = "gcc-2.95.3-source"
 space_free_runtime = true
 cplusplus = true
 name = "EE-GCC 2.95.3 (SN Systems 136)"
@@ -408,6 +423,7 @@ sha256 = "3b6ae6897229ad005aaf1b0afaa1f3cb46e74b4c21a42e01130c07c0c598067f"
 platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
 
 ["ee-gcc-3.2"]
+compiler_source = "gcc-3.2-source"
 linux_vm = true
 cplusplus = true
 name = "EE-GCC 3.2 (040921)"
@@ -460,6 +476,7 @@ platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
 # (3.0.0)"): only its code tells them apart. They build at -O3: a PSP game with debug symbols matches there, and -O2
 # leaves the delay slot of every return empty, which its code never does.
 ["psp-gcc-1.3.1"]
+compiler_source = "gcc-3.3.3-source"
 cplusplus = true
 name = "PSP GCC 3.3.3 (SDK 1.3.1)"
 platform = "PSP"
@@ -476,6 +493,7 @@ sha256 = "788b6d2c0ed920da6b1e5a350d23dd7ea05820526e23f9b5b967b3b238ea2e2e"
 platforms = ["linux-x86_64"]
 
 ["psp-gcc-1.7.1"]
+compiler_source = "gcc-3.3.3-source"
 cplusplus = true
 name = "PSP GCC 3.3.3 (SDK 1.7.1)"
 platform = "PSP"
@@ -1344,6 +1362,7 @@ commit = "ec3a4e3ee3afe3e9b4a9c7ae8fffc65e1ea2096c"
 pip_extra = ["setuptools<70"]
 
 [agbcc]
+compiler_source = "agbcc-source"
 name = "agbcc"
 kind = "compiler"
 platform = "Game Boy Advance"
@@ -1384,6 +1403,7 @@ sha256 = "864c0c8815857d68a1bbba2e5e2782255bb922845c71c97636004a3d74f60986"
 platforms = ["windows-x86_64"]  # the Windows zip has bin/, lib/, ... at its top, no folder around them
 
 ["ps3dev-gcc"]
+compiler_source = "gcc-7.2.0-source"
 cplusplus = true
 name = "PS3 GCC 7.2 (ps3dev)"
 platform = "PS3"
@@ -1586,6 +1606,291 @@ sha256 = "43a43cc8b4b0ff53d16929b7bd02f724fbd21134b93b173a189ae146d618bff2"
 subdir = "ultralib-e24c836796df4bf520ff8b11a5c9d2cea3a66cbd"
 keep = { "src" = "src", "include" = "include", "README.md" = "README.md" }
 
+# Compiler sources: the GNU (or vendor-published GPL) source nearest each free GCC-family compiler, so agents can
+# read its passes (sched.c, local-alloc.c, global.c, reorg.c...). A compiler names its own with `compiler_source`;
+# toolchains.install fetches it with the compiler (a failure never fails the compiler: the next install pass retries),
+# toolchains.source_for(compiler) says where it is. Vendor builds (KMC, PSY-Q, Cygnus CDK, Sony EE/PSP, SN) may differ
+# from their GNU base wherever the description says "nearest". Proprietary compilers (IDO, MIPSpro, Metrowerks
+# mwcc/mwccps2/mwccpsp, SN Systems ccn64/ccps2/pspsnc, Visual C++, the console SDK kits) have no public source: nothing here.
+
+["gcc-2.5.7-source"]
+name = "GNU GCC 2.5.7 source"
+kind = "tool"
+license = "GPL-2.0-or-later"
+source = "https://www.nic.funet.fi/index/gnu/funet/historical-funet-gnu-area-from-early-1990s/gcc-2.5.7.tar.gz"
+description = "Source to read for gcc-2.5.7-psx; the PlayStation patches (decompals/old-gcc) are in psx-patches/."
+[["gcc-2.5.7-source".parts]]
+url = "https://www.nic.funet.fi/index/gnu/funet/historical-funet-gnu-area-from-early-1990s/gcc-2.5.7.tar.gz"
+sha256 = "6345be42235e5ec4c448d6587e55283da3ee57761db5d20d7a0a48d63987fc8e"
+subdir = "gcc-2.5.7"
+drop = ["testsuite"]
+[["gcc-2.5.7-source".parts]]
+url = "https://codeload.github.com/decompals/old-gcc/tar.gz/cf70ec58bce58128732062bc9930045c82904cbb"
+sha256 = "94a2522a7ec72024040ca30f75e847240f1bae1aca18bfcc1e87ead882a086fb"
+file = "old-gcc-cf70ec58bce58128732062bc9930045c82904cbb.tar.gz"
+subdir = "old-gcc-cf70ec58bce58128732062bc9930045c82904cbb"
+keep = { "patches" = "psx-patches" }
+
+["gcc-2.6.0-source"]
+name = "GNU GCC 2.6.0 source"
+kind = "tool"
+license = "GPL-2.0-or-later"
+source = "https://www.nic.funet.fi/index/gnu/funet/historical-funet-gnu-area-from-early-1990s/gcc-2.6.0.tar.gz"
+description = "Source to read for gcc-2.6.0-psx; PlayStation patches in psx-patches/."
+[["gcc-2.6.0-source".parts]]
+url = "https://www.nic.funet.fi/index/gnu/funet/historical-funet-gnu-area-from-early-1990s/gcc-2.6.0.tar.gz"
+sha256 = "678b217098c40ea23c14ff36c42c6e1c85a375b1d9fa235525f209c826525695"
+subdir = "gcc-2.6.0"
+drop = ["testsuite"]
+[["gcc-2.6.0-source".parts]]
+url = "https://codeload.github.com/decompals/old-gcc/tar.gz/cf70ec58bce58128732062bc9930045c82904cbb"
+sha256 = "94a2522a7ec72024040ca30f75e847240f1bae1aca18bfcc1e87ead882a086fb"
+file = "old-gcc-cf70ec58bce58128732062bc9930045c82904cbb.tar.gz"
+subdir = "old-gcc-cf70ec58bce58128732062bc9930045c82904cbb"
+keep = { "patches" = "psx-patches" }
+
+["gcc-2.6.3-source"]
+name = "GNU GCC 2.6.3 source"
+kind = "tool"
+license = "GPL-2.0-or-later"
+source = "https://www.nic.funet.fi/index/gnu/funet/historical-funet-gnu-area-from-early-1990s/gcc-2.6.3.tar.gz"
+description = "Source to read for gcc-2.6.3-psx; PlayStation patches in psx-patches/."
+[["gcc-2.6.3-source".parts]]
+url = "https://www.nic.funet.fi/index/gnu/funet/historical-funet-gnu-area-from-early-1990s/gcc-2.6.3.tar.gz"
+sha256 = "66529b6ced4ccc580ec365809c1abed856d948283deff656801dec14f47d081a"
+subdir = "gcc-2.6.3"
+drop = ["testsuite"]
+[["gcc-2.6.3-source".parts]]
+url = "https://codeload.github.com/decompals/old-gcc/tar.gz/cf70ec58bce58128732062bc9930045c82904cbb"
+sha256 = "94a2522a7ec72024040ca30f75e847240f1bae1aca18bfcc1e87ead882a086fb"
+file = "old-gcc-cf70ec58bce58128732062bc9930045c82904cbb.tar.gz"
+subdir = "old-gcc-cf70ec58bce58128732062bc9930045c82904cbb"
+keep = { "patches" = "psx-patches" }
+
+["gcc-2.7.2-source"]
+name = "GNU GCC 2.7.2 source"
+kind = "tool"
+license = "GPL-2.0-or-later"
+source = "https://ftp.gnu.org/old-gnu/gcc/gcc-2.7.2.tar.gz"
+description = "Source to read for gcc-2.7.2-psx, gcc-2.7.2-cdk(-psx): the PSY-Q and Cygnus CDK builds carry vendor changes not in GNU 2.7.2; PlayStation patches in psx-patches/. The SN Systems N64 builds (proprietary) are 2.7.2-based too.."
+[["gcc-2.7.2-source".parts]]
+url = "https://ftp.gnu.org/old-gnu/gcc/gcc-2.7.2.tar.gz"
+sha256 = "7cd8bce5c3aeec59a72ecc2d3d5123864a817b14cdbd0680b1a969c3bccc5da5"
+subdir = "gcc-2.7.2"
+drop = ["testsuite"]
+[["gcc-2.7.2-source".parts]]
+url = "https://codeload.github.com/decompals/old-gcc/tar.gz/cf70ec58bce58128732062bc9930045c82904cbb"
+sha256 = "94a2522a7ec72024040ca30f75e847240f1bae1aca18bfcc1e87ead882a086fb"
+file = "old-gcc-cf70ec58bce58128732062bc9930045c82904cbb.tar.gz"
+subdir = "old-gcc-cf70ec58bce58128732062bc9930045c82904cbb"
+keep = { "patches" = "psx-patches" }
+
+["gcc-2.7.2-kmc-source"]
+name = "GCC 2.7.2 source as built for KMC (decompals/mips-gcc-2.7.2)"
+kind = "tool"
+license = "GPL-2.0-or-later"
+source = "decompals/mips-gcc-2.7.2 @ e6271f1"
+description = "Source to read for gcc-2.7.2-kmc: a community reconstruction (the tree its Apple Silicon build compiles), not KMC's own source, which was never published."
+[["gcc-2.7.2-kmc-source".parts]]
+url = "https://codeload.github.com/decompals/mips-gcc-2.7.2/tar.gz/e6271f14b095d7d8b2638c2b5e07d0d5cd05bc14"
+sha256 = "5406c1e8bf88da5aef37050a360577fd80569a022cb86622135da2190efd188d"
+file = "mips-gcc-2.7.2-e6271f14b095d7d8b2638c2b5e07d0d5cd05bc14.tar.gz"
+subdir = "mips-gcc-2.7.2-e6271f14b095d7d8b2638c2b5e07d0d5cd05bc14"
+drop = ["testsuite"]
+
+
+["gcc-2.8.0-source"]
+name = "GNU GCC 2.8.0 source"
+kind = "tool"
+license = "GPL-2.0-or-later"
+source = "https://ftp.gnu.org/gnu/gcc/gcc-2.8.0.tar.gz"
+description = "Source to read for gcc-2.8.0-psx; PlayStation patches in psx-patches/."
+[["gcc-2.8.0-source".parts]]
+url = "https://ftp.gnu.org/gnu/gcc/gcc-2.8.0.tar.gz"
+sha256 = "549e0482caa6c7fbdec723fae3f7748d35290d9f89cc02fe5a60e6a42b237abd"
+subdir = "gcc-2.8.0"
+drop = ["testsuite"]
+[["gcc-2.8.0-source".parts]]
+url = "https://codeload.github.com/decompals/old-gcc/tar.gz/cf70ec58bce58128732062bc9930045c82904cbb"
+sha256 = "94a2522a7ec72024040ca30f75e847240f1bae1aca18bfcc1e87ead882a086fb"
+file = "old-gcc-cf70ec58bce58128732062bc9930045c82904cbb.tar.gz"
+subdir = "old-gcc-cf70ec58bce58128732062bc9930045c82904cbb"
+keep = { "patches" = "psx-patches" }
+
+["gcc-2.8.1-source"]
+name = "GNU GCC 2.8.1 source"
+kind = "tool"
+license = "GPL-2.0-or-later"
+source = "https://ftp.gnu.org/gnu/gcc/gcc-2.8.1.tar.gz"
+description = "Source to read for gcc-2.8.1-psx; PlayStation patches in psx-patches/."
+[["gcc-2.8.1-source".parts]]
+url = "https://ftp.gnu.org/gnu/gcc/gcc-2.8.1.tar.gz"
+sha256 = "3b30fbfdf93e628373d90d174243f3267b0eec9ebe792bb64fd15b8828c2ea4c"
+subdir = "gcc-2.8.1"
+drop = ["testsuite"]
+[["gcc-2.8.1-source".parts]]
+url = "https://codeload.github.com/decompals/old-gcc/tar.gz/cf70ec58bce58128732062bc9930045c82904cbb"
+sha256 = "94a2522a7ec72024040ca30f75e847240f1bae1aca18bfcc1e87ead882a086fb"
+file = "old-gcc-cf70ec58bce58128732062bc9930045c82904cbb.tar.gz"
+subdir = "old-gcc-cf70ec58bce58128732062bc9930045c82904cbb"
+keep = { "patches" = "psx-patches" }
+
+["gcc-2.8.1-pm-source"]
+name = "GCC 2.8.1 source as built for an N64 game (pmret/gcc-papermario)"
+kind = "tool"
+license = "GPL-2.0-or-later"
+source = "pmret/gcc-papermario @ d97824f"
+description = "Source to read for gcc-2.8.1-pm: a community reconstruction (the tree its Apple Silicon build compiles), not vendor source."
+[["gcc-2.8.1-pm-source".parts]]
+url = "https://codeload.github.com/pmret/gcc-papermario/tar.gz/d97824ffc7517675646960442b3f512a473e4404"
+sha256 = "9d8ce88450d2df774f28931b7dfa84588cfe50419753887d6130efe75260b2f3"
+file = "gcc-papermario-d97824ffc7517675646960442b3f512a473e4404.tar.gz"
+subdir = "gcc-papermario-d97824ffc7517675646960442b3f512a473e4404"
+drop = ["testsuite"]
+
+["egcs-1.1.2-source"]
+name = "EGCS 1.1.2 (gcc 2.91.66) source"
+kind = "tool"
+license = "GPL-2.0-or-later"
+source = "https://gcc.gnu.org/pub/gcc/old-releases/egcs/egcs-1.1.2.tar.bz2"
+description = "Source to read for gcc-2.91.66-psx and gcc-egcs-1.1.2-4 (2.91.66 is EGCS 1.1.2's version); PlayStation patches in psx-patches/."
+[["egcs-1.1.2-source".parts]]
+url = "https://gcc.gnu.org/pub/gcc/old-releases/egcs/egcs-1.1.2.tar.bz2"
+sha256 = "9d1dca503780ca9e92d9e7146f7f9427ec42893a711dff486c86959621e8fa4a"
+subdir = "egcs-1.1.2"
+keep = { "gcc" = "gcc", "include" = "include" }
+drop = ["gcc/testsuite"]
+[["egcs-1.1.2-source".parts]]
+url = "https://codeload.github.com/decompals/old-gcc/tar.gz/cf70ec58bce58128732062bc9930045c82904cbb"
+sha256 = "94a2522a7ec72024040ca30f75e847240f1bae1aca18bfcc1e87ead882a086fb"
+file = "old-gcc-cf70ec58bce58128732062bc9930045c82904cbb.tar.gz"
+subdir = "old-gcc-cf70ec58bce58128732062bc9930045c82904cbb"
+keep = { "patches" = "psx-patches" }
+
+["ee-gcc-2.9-991111-source"]
+name = "EE-GCC 2.9 (991111) source (SCE)"
+kind = "tool"
+license = "GPL-2.0-or-later"
+source = "GirianSeed/ee-gcc release src-2.9-ee-991111-01 (Sony Computer Entertainment's own GPL release)"
+description = "Source to read for ee-gcc-2.9-991111: vendor source (SCE). The Cygnus base is in gcc/ (and include/), Sony's changes to it in sce-patch/patch (a context diff, not applied)."
+[["ee-gcc-2.9-991111-source".parts]]
+url = "https://github.com/GirianSeed/ee-gcc/releases/download/src-2.9-ee-991111-01/ee-gcc-2.0.zip"
+sha256 = "99ae6c81801fa0108f436df186daefcc9101b5f402525dae75da8c5e5de728fe"
+file = "ee-gcc-2.9-991111-src.zip"
+keep = { "src/src.tar.gz" = "src.tar.gz", "sce-patch" = "sce-patch", "COPYING" = "COPYING" }
+inner = { file = "src.tar.gz", subdir = "src", keep = { "gcc" = "gcc", "include" = "include" }, drop = ["gcc/testsuite"] }
+
+["gcc-egcs-2.91.66-source"]
+name = "EGCS 2.91.66 source as built for N64 (decompals/mips-gcc-egcs-2.91.66)"
+kind = "tool"
+license = "GPL-2.0-or-later"
+source = "decompals/mips-gcc-egcs-2.91.66 tag 0.7 @ ac3419e"
+description = "Source to read for gcc-egcs-2.91.66: a community reconstruction (the tree its release was built from), not vendor source."
+[["gcc-egcs-2.91.66-source".parts]]
+url = "https://codeload.github.com/decompals/mips-gcc-egcs-2.91.66/tar.gz/ac3419e24f024dc41a737837b3934103a58e7bbd"
+sha256 = "5081e5f6ff068ebc8d4efec175a88b411c71b8b5e5f8294c3b2644a8e89a9164"
+file = "mips-gcc-egcs-2.91.66-ac3419e24f024dc41a737837b3934103a58e7bbd.tar.gz"
+subdir = "mips-gcc-egcs-2.91.66-ac3419e24f024dc41a737837b3934103a58e7bbd"
+keep = { "gcc" = "gcc", "include" = "include" }
+drop = ["gcc/testsuite"]
+
+["gcc-2.95.2-source"]
+name = "GNU GCC 2.95.2 source (gcc-core)"
+kind = "tool"
+license = "GPL-2.0-or-later"
+source = "https://ftp.gnu.org/gnu/gcc/gcc-2.95.2/gcc-core-2.95.2.tar.gz"
+description = "Source to read for gcc-2.95.2-psx, ee-gcc-2.95.2 (nearest GNU release: SN Systems' EE changes, the r5900 and MMI, were never published).."
+[["gcc-2.95.2-source".parts]]
+url = "https://ftp.gnu.org/gnu/gcc/gcc-2.95.2/gcc-core-2.95.2.tar.gz"
+sha256 = "65e68d39ba3f2a6b23431ee361b62fe0103b35c3ccaa818d174ace80dfc587b1"
+subdir = "gcc-2.95.2"
+keep = { "gcc" = "gcc", "include" = "include" }
+drop = ["gcc/testsuite"]
+[["gcc-2.95.2-source".parts]]
+url = "https://codeload.github.com/decompals/old-gcc/tar.gz/cf70ec58bce58128732062bc9930045c82904cbb"
+sha256 = "94a2522a7ec72024040ca30f75e847240f1bae1aca18bfcc1e87ead882a086fb"
+file = "old-gcc-cf70ec58bce58128732062bc9930045c82904cbb.tar.gz"
+subdir = "old-gcc-cf70ec58bce58128732062bc9930045c82904cbb"
+keep = { "patches" = "psx-patches" }
+
+["gcc-2.95.3-source"]
+name = "GNU GCC 2.95.3 source (gcc-core)"
+kind = "tool"
+license = "GPL-2.0-or-later"
+source = "https://ftp.gnu.org/gnu/gcc/gcc-2.95.3/gcc-core-2.95.3.tar.gz"
+description = "Source to read for ee-gcc-2.95.3; nearest release for ee-gcc-2.96 (Cygnus/Red Hat 2.96 was never a GNU release). EE changes not in it.."
+[["gcc-2.95.3-source".parts]]
+url = "https://ftp.gnu.org/gnu/gcc/gcc-2.95.3/gcc-core-2.95.3.tar.gz"
+sha256 = "56811ee60990b4660d54c2a66f5e0253a487e330ee53b499d8a565882ff16ef7"
+subdir = "gcc-2.95.3"
+keep = { "gcc" = "gcc", "include" = "include" }
+drop = ["gcc/testsuite"]
+
+["gcc-3.2-source"]
+name = "GNU GCC 3.2 source (gcc-core)"
+kind = "tool"
+license = "GPL-2.0-or-later"
+source = "https://ftp.gnu.org/gnu/gcc/gcc-3.2/gcc-core-3.2.tar.gz"
+description = "Source to read for ee-gcc-3.2 (Sony's EE patches not included)."
+[["gcc-3.2-source".parts]]
+url = "https://ftp.gnu.org/gnu/gcc/gcc-3.2/gcc-core-3.2.tar.gz"
+sha256 = "52d3dbca50308bf02c0c07d25c1ec5938ebbd503125510422b82c4fa0498d1df"
+subdir = "gcc-3.2"
+keep = { "gcc" = "gcc", "include" = "include" }
+drop = ["gcc/testsuite"]
+
+["gcc-3.3.3-source"]
+name = "GNU GCC 3.3.3 source (gcc-core)"
+kind = "tool"
+license = "GPL-2.0-or-later"
+source = "https://ftp.gnu.org/gnu/gcc/gcc-3.3.3/gcc-core-3.3.3.tar.bz2"
+description = "Source to read for psp-gcc-1.3.1, psp-gcc-1.7.1 (Sony's Allegrex changes not included)."
+[["gcc-3.3.3-source".parts]]
+url = "https://ftp.gnu.org/gnu/gcc/gcc-3.3.3/gcc-core-3.3.3.tar.bz2"
+sha256 = "a4bf992ca719711a77d09b84fc496bbe6fcecb8feac996c2e6e102d3cbbe15eb"
+subdir = "gcc-3.3.3"
+keep = { "gcc" = "gcc", "include" = "include" }
+drop = ["gcc/testsuite"]
+
+["gcc-4.4.0-source"]
+name = "GNU GCC 4.4.0 source (gcc-core)"
+kind = "tool"
+license = "GPL-3.0-or-later"
+source = "https://ftp.gnu.org/gnu/gcc/gcc-4.4.0/gcc-core-4.4.0.tar.bz2"
+description = "Source to read for gcc-4.4.0-n64."
+[["gcc-4.4.0-source".parts]]
+url = "https://ftp.gnu.org/gnu/gcc/gcc-4.4.0/gcc-core-4.4.0.tar.bz2"
+sha256 = "619fadd010408b1f7ef09b3ffb5af01e5a2604109d762fdc1c66f0dc898e0f5c"
+subdir = "gcc-4.4.0"
+keep = { "gcc" = "gcc", "include" = "include", "libcpp" = "libcpp" }
+drop = ["gcc/testsuite"]
+
+["gcc-7.2.0-source"]
+name = "GNU GCC 7.2.0 source (the C compiler)"
+kind = "tool"
+license = "GPL-3.0-or-later"
+source = "https://ftp.gnu.org/gnu/gcc/gcc-7.2.0/gcc-7.2.0.tar.xz"
+description = "Source to read for ps3dev-gcc (ps3toolchain's patches not included)."
+[["gcc-7.2.0-source".parts]]
+url = "https://ftp.gnu.org/gnu/gcc/gcc-7.2.0/gcc-7.2.0.tar.xz"
+sha256 = "1cf7adf8ff4b5aa49041c8734bbcf1ad18cc4c94d0029aae0f4e48841088479a"
+subdir = "gcc-7.2.0"
+keep = { "gcc" = "gcc", "include" = "include", "libcpp" = "libcpp" }
+drop = ["gcc/testsuite", "gcc/ada", "gcc/go", "gcc/fortran", "gcc/java", "gcc/objc", "gcc/objcp", "gcc/brig", "gcc/jit", "gcc/po", "gcc/doc"]
+
+["agbcc-source"]
+name = "agbcc source (pret/agbcc)"
+kind = "tool"
+license = "GPL-2.0-or-later"
+source = "pret/agbcc @ da598c1"
+description = "Source to read for agbcc: pret's tree (gcc/ is agbcc, gcc_arm/ agbcc_arm)."
+[["agbcc-source".parts]]
+url = "https://codeload.github.com/pret/agbcc/tar.gz/da598c1d918402c42c0c0d7128ba14567f3175e9"
+sha256 = "f69ae187a6133b1d353a01a86c1da92a9e38df06c6d3e08e2ae360ea051c1b60"
+file = "agbcc-da598c1d918402c42c0c0d7128ba14567f3175e9.tar.gz"
+subdir = "agbcc-da598c1d918402c42c0c0d7128ba14567f3175e9"
+keep = { "gcc" = "gcc", "gcc_arm" = "gcc_arm", "ginclude" = "ginclude", "libiberty" = "libiberty" }
+
 [dtk-template]
 name = "dtk-template"
 kind = "template"
@@ -1693,6 +1998,7 @@ into = "source/magic_enum"
 platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
 
 ["gcc-2.8.1-pm"]
+compiler_source = "gcc-2.8.1-pm-source"
 family = "gcc"
 name = "GCC 2.8.1 (PM matching)"
 platform = "N64"
@@ -1739,6 +2045,7 @@ rosetta = true
 
 
 ["gcc-egcs-2.91.66"]
+compiler_source = "gcc-egcs-2.91.66-source"
 family = "gcc"
 name = "EGCS 1.1.2 / GCC 2.91.66"
 platform = "N64"
@@ -1787,6 +2094,7 @@ platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
 
 
 ["sn-n64-272-970404"]
+compiler_source = "gcc-2.7.2-source"
 family = "gcc"
 name = "Reconstructed SN64 GCC 2.7.2 (970404)"
 platform = "N64"
@@ -1860,6 +2168,7 @@ platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
 # Additional comparison profiles: Linux packs, Windows via WSL.
 
 ["gcc-egcs-1.1.2-4"]
+compiler_source = "egcs-1.1.2-source"
 linux_vm = true
 name = "Original EGCS 1.1.2-4"
 platform = "N64"
@@ -1877,6 +2186,7 @@ sha256 = "c8d0adeecbe655db1631df5dea58781f4aa738f9762b907f58a6e70740d1815a"
 platforms = ["linux-x86_64"]
 
 ["gcc-4.4.0-n64"]
+compiler_source = "gcc-4.4.0-source"
 linux_vm = true
 name = "GCC 4.4.0 (MIPS64 ELF)"
 platform = "N64"

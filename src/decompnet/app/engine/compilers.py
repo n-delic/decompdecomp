@@ -872,6 +872,7 @@ class CompilerMixin:
         installed, left_out = [], []
         for tid in console.installable_compilers():
             if toolchains.installed(tid) is not None:
+                toolchains.fetch_source(tid, log=log)  # one installed before sources were: its source now
                 continue
             if toolchains.get(tid).proprietary and not accept_license:
                 left_out.append(tid)
