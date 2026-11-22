@@ -253,6 +253,9 @@ def replacement_profiles(path, replacement, resident):
     return [primary, {**primary, 'flags': flags}]
 
 
+_DECLARATION_CONFLICT = re.compile(
+    r'redeclar|redefin|conflicting (?:types?|declarations?)|incompatible function return type'
+    r'|number of (?:arguments|parameters).*declaration', re.I)
 LENGTH_MISS = 'Compiled donor length differs'
 
 
@@ -296,7 +299,7 @@ def verify(net, proj, fn, other, donor, names, settings, agent, job, cache, *, r
         return _try(net, current, trial, fn, source, header, agent, job, compiled_literals=compiled_literals)
 
     def retry_declarations(current, trial, candidate, why):
-        if job.stop.is_set() or "redeclaration of '" not in why:
+        if job.stop.is_set() or not _DECLARATION_CONFLICT.search(why):
             return False
         # A full translation unit can have conflicting declarations unrelated
         # to this entry. Keep only the entry and its declaration closure.
@@ -347,7 +350,7 @@ def verify(net, proj, fn, other, donor, names, settings, agent, job, cache, *, r
                 original = None
                 original_reason = reason
                 if (names and not job.stop.is_set()
-                        and re.search(r'redeclar|redefin|conflicting (?:types?|declarations?)', reason, re.I)):
+                        and _DECLARATION_CONFLICT.search(reason)):
                     # The donor's names can collide when several declarations acquire
                     # the same destination spelling. Let emitted relocations guide the retry.
                     original = donor_unit.candidate(other, donor, {donor['name']: fn['name']}, invocation, cache)

@@ -414,7 +414,13 @@ def test_saved_whole_donor_unit_reverifies_and_exports_only_its_entry(built, tmp
     assert entry['entry_only']
 
 
-def test_donor_replay_uses_original_declarations_after_alias_collision(built, tmp_path, monkeypatch):  # noqa: F811
+@pytest.mark.parametrize('diagnostic', [
+    None,
+    'Incompatible function return type for this function.',
+    "The number of arguments doesn't agree with the number in the declaration.",
+    'The number of parameters for function is different from the previous declaration.',
+])
+def test_donor_replay_uses_original_declarations_after_alias_collision(built, tmp_path, monkeypatch, diagnostic):  # noqa: F811
     from decompnet.app import donor_build, donor_sources
     from decompnet.app.twins import Job
     from decompnet.project import compiler_for
@@ -435,6 +441,16 @@ def test_donor_replay_uses_original_declarations_after_alias_collision(built, tm
     donor = {'name': fn['name'], 'unit': 'unit', 'meta': None}
     profile = compiler_for(net.cfg(proj), fn['vram'], fn)
     monkeypatch.setattr(donor_sources, 'imported', lambda *_: [])
+    if diagnostic:
+        from dataclasses import replace
+
+        compile_candidate = net._compile
+
+        def compile_with_diagnostic(project, context, source, function):
+            result = compile_candidate(project, context, source, function)
+            return result if result.ok else replace(result, log='cfe: Error: ' + diagnostic)
+
+        monkeypatch.setattr(net, '_compile', compile_with_diagnostic)
     result = donor_build.verify(net, proj, fn, {'root': str(root)}, donor,
                                 {'first': 'common', 'second': 'common'}, profile, agent, Job(), {})
     assert result == ('match', 'Verified using compiled donor bindings.')
