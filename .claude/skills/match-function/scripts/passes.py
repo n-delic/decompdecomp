@@ -13,8 +13,9 @@ code behind the `compiler_passes` tool, and prints
     passes.py CAND.c --slug SLUG --function FUNC [--passes greg,sched,sched2] [--sched-verbose]
 
 Diagnostic only: nothing is recorded or judged, no claim is needed. GCC-family compilers only (not IDO or Metrowerks);
-the candidate must define FUNC. Comments are blanked first (preprocess.py: the pinned classic cpp aborts on some
-comments), line numbers kept. Uses the judge worker (fast_judge.py), so the same `decomp` and DECOMP_HOME rules apply.
+the candidate must define FUNC. Comments are blanked first (preprocess.py: the classic cpp reads an apostrophe in a `//`
+comment as an unterminated constant), line numbers kept. To run cc1 yourself on the preprocessed C, use
+`preprocess.py CAND.c --slug S --function F`, never the bare `cpp`, which aborts on every file. Uses the judge worker (fast_judge.py), so the same `decomp` and DECOMP_HOME rules apply.
 """
 import argparse
 import sys

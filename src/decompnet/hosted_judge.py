@@ -26,6 +26,9 @@ Requests:
   notes too)} -> {"text"}: the compiler's allocation priority
   table, register preferences and scheduling orders for that C under the function's profile (compiler_passes.report,
   the code behind the compiler_passes tool; the skill's passes.py).
+- {"op": "preprocess", "slug", "name", "source"} -> {"text", "cc1", "log"}: the candidate preprocessed as the app's
+  compile does it (the function's profile, the project's header; compiler.preprocess_candidate), and the cc1 command
+  line to run dumps on the result (the skill's preprocess.py). The bundled bare `cpp` aborts, so never run it by hand.
 
 Opened as the reader process does (store.ATTACH_ONLY, no saved-progress sync), so it can run beside the app.
 
@@ -166,6 +169,26 @@ def passes_report(net, request: dict) -> dict:
         return {"error": str(error)}
 
 
+def preprocess_report(net, request: dict) -> dict:
+    """A candidate preprocessed exactly as the app's compile does it, and the cc1 command to dump its passes."""
+    from . import compiler, toolchains
+    from .project import compiler_config, compiler_for
+    found = lookup(net, request)
+    if isinstance(found, dict):
+        return found
+    proj, fn = found
+    source = request.get("source")
+    if not isinstance(source, str) or not source.strip():
+        return {"error": "no source"}
+    profile = compiler_for(net.cfg(proj), fn["vram"], fn)
+    tid = profile.get("toolchain", "")
+    if not tid or "cmd" in profile or not toolchains.installed(tid):
+        return {"error": "this function's compiler isn't a pinned, installed one; nothing is downloaded"}
+    cfg = compiler_config(Path(proj["root"]), {"compiler": {"toolchain": tid, "flags": profile.get("flags", [])}})
+    header = net._context(proj["id"], fn["unit"])["header"]
+    return compiler.preprocess_candidate(cfg, header, source)
+
+
 class Packs:
     """Projects from verification packs in a folder, each judged on a scratch project built from it."""
 
@@ -217,6 +240,8 @@ def serve(net, lines=sys.stdin, out=sys.stdout) -> None:
                 reply = function_info(net, request)
             elif request.get("op") == "passes" and not packs:
                 reply = passes_report(net, request)
+            elif request.get("op") == "preprocess" and not packs:
+                reply = preprocess_report(net, request)
             else:
                 reply = {"error": f"unknown op {request.get('op')!r}"}
         except Exception as error:  # this request only: the verifier releases it for another

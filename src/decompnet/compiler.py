@@ -558,6 +558,64 @@ def _compile_as(cfg: CompilerConfig, work: Path, root: str, source: str, ext: st
     return CompileResult(True, obj.read_bytes(), log[-2000:], "c++" if ext == "cpp" else "c")
 
 
+def preprocess_candidate(cfg: CompilerConfig, context_header: str, source: str) -> dict:
+    """A candidate preprocessed exactly as the app's compile does it, for an agent who wants the `.i` to run cc1's dumps on.
+
+    The same func.c the compile writes (prelude, intrinsics, `context.h` with the project's header, `#line`) goes
+    through the same driver command with `-c` turned into `-E`, so the includes, defines and predefined macros are
+    the compile's. Running the bundled classic `cpp`/`cccp` by hand instead aborts (SIGABRT, exit 134) on any file:
+    GCC 2.7.2's own built-in list of predefined macros (CPP_PREDEFINES, a MIPS config run together as
+    `-Amachine(mips)-Dunix`) is malformed, and only the driver's `-undef` (with its own -D/-A list) skips it.
+    Returns {"text": the preprocessed C, "cc1": the cc1 command line to run on it, with `IN.i` and `OUT.s` to fill in,
+    "log"} or {"error": ...}. Nothing is judged or recorded."""
+    argv = list(cfg.cmd)
+    if '-c' not in argv or cfg.wsl or cfg.linux_vm or _sandbox_mode(cfg) != 'none':
+        return {'error': "this compiler's command isn't a plain native GCC-style driver (-c), so there is no cpp/cc1 pair to show"}
+    with _workspace('decompnet-pre-') as tmp:
+        work = Path(tmp)
+        (work / 'include').mkdir()
+        for d in cfg.include_dirs:
+            shutil.copytree(d, work / 'include', dirs_exist_ok=True)
+        (work / 'include' / 'context.h').write_text(context_header, encoding='utf-8', newline='\n')
+        name = 'func.' + cfg.source_extension
+        intrinsics = importlib.import_module(cfg.intrinsics).header() if cfg.intrinsics else ''
+        (work / name).write_text(cfg.prelude + intrinsics + f'#include "context.h"\n#line 1 "{name}"\n' + source + '\n',
+                                 encoding='utf-8', newline='\n')
+        root = str(work)
+        values = {'{src}': f'{root}/{name}', '{obj}': f'{root}/func.i', '{include}': f'{root}/include'}
+        argv = [values.get(a, a.replace('{include}', values['{include}'])) for a in argv]
+
+        def swapped(flag, *more, obj='func.i'):
+            words = [flag if a == '-c' else a.replace(values['{obj}'], f'{root}/{obj}') for a in argv]
+            return words[:1] + list(more) + words[1:]
+        try:
+            with _slot():
+                pre = _exec(cfg, work, swapped('-E'), cfg.timeout)
+                # -v prints the driver's own cc1 line, with this compile's flags
+                verbose = _exec(cfg, work, swapped('-S', '-v', obj='func.s'), cfg.timeout)
+        except subprocess.TimeoutExpired:
+            return {'error': f'compiler timed out after {cfg.timeout}s'}
+        log = (pre.stdout + pre.stderr).replace(root + '/', '')
+        out = work / 'func.i'
+        if pre.returncode != 0 or not out.is_file():
+            return {'error': 'the preprocessor failed:\n' + log[-3000:]}
+        text = out.read_text(encoding='utf-8', errors='replace')
+        tool = next((a[2:].rstrip('/') for a in argv if a.startswith('-B') and len(a) > 2), None)
+        cc1 = None
+        for line in (verbose.stderr or '').splitlines():
+            if tool and line.startswith(' ' + tool + '/'):
+                words = line.strip().replace(tool, '\0').split(' ')
+                words = [w.replace('\0', tool) for w in words]
+                if Path(words[0]).name in ('cc1', 'cc1plus'):
+                    # The temporary input and output become the caller's: the driver's name for them is gone with it.
+                    words = [('IN.i' if re.search(r'/cc\w{6}\.i$', w) else w) for w in words]
+                    if '-o' in words:
+                        words[words.index('-o') + 1] = 'OUT.s'
+                    cc1 = words
+                    break
+        return {'text': text, 'cc1': cc1, 'log': log[-2000:]}
+
+
 def preprocess_donor_unit(cfg: CompilerConfig, source: str) -> str | None:
     """Resolve the donor's conditional C before applying the normal source guards."""
     if '-c' not in cfg.cmd or len(source.encode()) > MAX_DONOR_UNIT_BYTES:
