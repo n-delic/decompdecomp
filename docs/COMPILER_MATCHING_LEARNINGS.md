@@ -14845,3 +14845,22 @@ calls, both offsets and disjoint lifetimes.
 ### Duplicate a common field store into both branches
 
 In a private N64 colour update built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the draft shared an alpha-byte store after two colour branches. Placing that store at the end of each branch reproduced the linked target exactly, improving its score from 350 to 0. The existing branch-tail repair now handles the standard generated field macro with a literal store, while rejecting hidden macro effects and unsafe branch control flow. Evidence: one saved function and synthetic generation and routing tests.
+
+### Pair a clamped float argument with two earlier predicate stages
+
+In a private N64 function built with GCC 2.7.2 KMC and
+`-G0 -mips3 -mgp32 -mfp32 -O2`, the target reloaded a field after a
+clamp into a float register and then moved it into the fourth argument
+register. The draft loaded the field directly into that argument
+register. Earlier, two float predicates left opportunities to stage
+their first inverted integer flags before the second comparison.
+
+Capturing the field in the completed clamp result local scored
+8,515 from a 7,810 baseline. The two earlier predicate stages alone
+scored 8,825. The three changes together preserved the instruction
+count and all three jump-table relocations and scored 7,620 with
+no warnings. Pairing only one predicate with the argument capture
+scored 8,225 or worse. The capture recovered the float reload,
+transfer and delay nop, while the chosen float register still
+differed. Synthetic tests check both earlier slot witnesses, the
+callee address, the float argument position and the dead result.
