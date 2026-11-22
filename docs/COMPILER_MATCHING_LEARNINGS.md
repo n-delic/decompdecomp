@@ -17739,3 +17739,25 @@ Family: decomp-repair `goto_chain_tail_split` (0.5.602), in `join_tail_arm_split
 rename restricted to the chain, all at once and each "all but one". The saved best could not reach it: `volatile` reads (an
 earlier search's scaffold) make `local_flow` give no advice, so no arm family ran on it until the `volatile` was dropped
 (open: nothing proposes dropping the `volatile` before the arm families run).
+
+## Saved registers swapped between a parameter and a global table's address: both references, together (KMC GCC 2.7.2, N64)
+
+`gcc-2.7.2-kmc`, `-G0 -mips3 -mgp32 -mfp32 -O2`, a 110-instruction sound-pan function: seven rows differed, `$s0` and `$s2`
+exchanged between the magnitude (the target reuses `$s0`, which held the marker pointer parameter) and the address of the
+option-byte table (target `$s2`). Saved score 35 (an earlier search's `do { p = table; } while (0)` pointer local), matched
+at 0. The priority table (`-dl -dg`, `app/allocation_priority.py`): the target needs the parameter pseudo (3 uses, live over 9
+insns, 0.333) to be allocated before the first parameter (8 uses over 71 insns, 0.338), and the table address after both. The
+saved best's wrapped pointer local counted 4 uses (`lui`/`addiu` pair plus the scope), 0.571, so it won `$s0` first.
+
+| edit | score |
+| --- | --- |
+| saved best (pointer local, one-shot scope) | 35 |
+| pointer local written out (`gOptionChoice[0]` twice), nothing else | 85 |
+| the parameter's first call `do { f(arg1, arg2, &sp); } while (0);`, pointer local kept | 35 |
+| both | 0 |
+| a scalar `gOptionChoice` read twice instead of the array; the magnitude's arms wrapped; the magnitude written into the parameter | 1361; 75 to 710; 125 |
+
+Controlled result in this function: byte-identical, one function (the explanation is a hypothesis read from the dumps, not
+confirmed in the compiler source). The match relies on one scaffold: the `do { } while (0)` round the call, which costs no
+instruction. Family: decomp-repair `argument_weight_scope` (0.5.603), wired into the drafts and the deep local lane
+(`tests/test_argument_weight_scope_wiring.py`); from the saved best it emits the 0 child.
