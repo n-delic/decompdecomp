@@ -105,6 +105,7 @@ from decomprepair import (
     measured_pointer_displacement,
     measured_pointer_scale,
     measured_scalar_updates,
+    measured_square_loads,
     measured_stack_records,
     measured_storage_shapes,
     measured_temporary_repairs,
@@ -313,6 +314,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_kmc_indirect_byte_table.variants(source, name, header, rows)
         result += measured_kmc_invariant_row.variants(source, name, header, rows)
         result += measured_kmc_list_count.variants(source, name, header, rows)
+        result += measured_square_loads.variants(source, name, header, rows)
         result += measured_kmc_list_append.variants(source, name, header, rows)
         result += measured_kmc_null_table_loop.variants(source, name, header, rows)
         result += measured_kmc_byte_cursor_return.variants(source, name, header, rows)

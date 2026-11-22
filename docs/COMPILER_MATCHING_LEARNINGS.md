@@ -14725,3 +14725,7 @@ second scored 9,115. Capturing the second path's read before its last
 clamp guard scored 9,505. Synthetic tests bind the field offset,
 branch-likely store and relocated subtraction and preserve later uses
 of the source axis.
+
+### Inline component square loads
+
+In one N64 function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a draft loaded each 32-bit component into a local before squaring it. Inlining the loads into their corresponding stores and putting each store on its own line removed the extra load stalls and reproduced the linked target exactly, improving its score from 260 to 0. Inlining all loads without separating two stores that shared a source line scored 100. The candidate is restricted to the measured straight-line, nonvolatile word-load shape. Evidence: one saved function and synthetic generation and routing tests.

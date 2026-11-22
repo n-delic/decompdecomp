@@ -1544,3 +1544,13 @@ def test_halfword_index_scale_and_frame_are_kmc_target_gated():
     assert {'halfword_index_scale','halfword_index_scale_with_frame'} <= families(KMC, rows)
     assert 'halfword_index_scale' not in families('ido-7.1', rows)
     assert 'halfword_index_scale' not in families(KMC, [])
+
+
+def test_square_loads_route_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_square_loads, 'variants',
+                        lambda text, name, header, diff: [('square_load_fixture', text)])
+    assert 'square_load_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'square_load_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
