@@ -117,3 +117,16 @@ every connection keeps 512 prepared statements (`STATEMENT_CACHE`, Python's defa
   needs `bash`, whose start-up cost 4.5 ms of CPU per compile: 12.4 ms of child CPU per compile against 7.9 ms, and the
   machine was out of CPU, not wall time. A pipeline started from Python without a shell would avoid that but has to
   carry the watchdog, process tracking and cancellation for three processes.
+
+## Finding where a pass's CPU goes
+
+Every helper process samples its own threads' kernel CPU every two seconds and charges it to the code the thread is in
+(thread_cpu.py: logs/thread-cpu-<role>-<pid>.log and .json). The deep-search lanes, the heaviest Python of a pass, were
+the one helper not named in it; they now write `thread-cpu-lane-<pid>`. Add every process up with
+
+    python -m decompnet.thread_cpu <home>/.decomp/logs --minutes 30
+
+`DECOMP_THREAD_CPU_STACKS=3` (set before starting the app; its helpers inherit it) names the three callers of each
+location, `app/x.py:f < app/y.py:g < app/z.py:h`, to read the report as call paths. `DECOMP_THREAD_CPU=0` turns the
+sampler off. It reads kernel CPU time, so a thread waiting on a lock or a pipe is not charged: only code that
+used the processor appears.

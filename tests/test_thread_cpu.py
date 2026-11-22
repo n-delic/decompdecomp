@@ -225,3 +225,29 @@ def test_the_report_shows_what_one_request_costs_inside_the_helper(tmp_path):
     assert "1.0 s  proposal encode: 10.00 ms of processor per request" in report
     assert "20.0 MB  proposal result: 200.0 KB per request" in report
     assert "100  proposal proposal_requests: 100.0 ms of processor each" in report and "requests: 100.0 ms" in report
+
+
+def test_callers_are_named_only_when_asked(monkeypatch):
+    import os
+    import sys
+    from pathlib import Path
+    monkeypatch.setattr(thread_cpu, "_PACKAGE", str(Path(__file__).parent) + os.sep)  # (this file counts as the app's own)
+
+    def inner():
+        return thread_cpu._location(sys._getframe())
+
+    def outer():
+        return inner()
+    monkeypatch.setattr(thread_cpu, "_STACK_DEPTH", 0)
+    assert outer() == "test_thread_cpu.py:inner"
+    monkeypatch.setattr(thread_cpu, "_STACK_DEPTH", 2)
+    assert outer() == ("test_thread_cpu.py:inner < test_thread_cpu.py:outer < "
+                       "test_thread_cpu.py:test_callers_are_named_only_when_asked")
+
+
+def test_a_lane_samples_itself_like_the_other_helpers(monkeypatch):
+    import inspect
+
+    from decompnet.app import deep_lanes
+    source = inspect.getsource(deep_lanes.child)
+    assert "thread_cpu.start_worker('lane')" in source and "sampler.close()" in source
