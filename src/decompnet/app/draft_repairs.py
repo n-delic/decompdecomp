@@ -98,6 +98,7 @@ from decomprepair import (
     derived_pointer_fold_repairs,
     disjoint_local_merge_repairs,
     display_cursor_record_repairs,
+    display_value_stage,
     duplicate_return_node_repairs,
     element_update_repairs,
     entry_base_init_repairs,
@@ -207,6 +208,7 @@ from decomprepair import (
     narrow_count_copy_repairs,
     narrow_expression_repairs,
     narrow_param_clamp_repairs,
+    narrow_quotient_local,
     narrow_shift_repairs,
     narrow_store_repairs,
     narrow_test_share_repairs,
@@ -281,6 +283,7 @@ from decomprepair import (
     search_loop_field_reload,
     search_loop_repairs,
     shared_constant_store_repairs,
+    shared_copy_local_split,
     shared_offset_repairs,
     shared_product_repairs,
     shared_return_repairs,
@@ -396,6 +399,7 @@ AGENT_FAMILIES += (arm_label_share_repairs.FAMILIES + declaration_scope_sink_rep
                    + narrow_test_share_repairs.FAMILIES + phase_storage_split_repairs.FAMILIES
                    + narrow_param_clamp_repairs.FAMILIES + search_loop_field_reload.FAMILIES + accumulation_run_scope.FAMILIES
                    + flag_word_bitfield_repairs.FAMILIES + argument_spill_tail.FAMILIES)
+AGENT_FAMILIES += display_value_stage.FAMILIES + shared_copy_local_split.FAMILIES + narrow_quotient_local.FAMILIES
 
 LIMIT = 20
 _IDENT = r'[A-Za-z_]\w*'
@@ -800,12 +804,16 @@ def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels
     # bound set twice so it stays in the loop, the inner loop reading a copy of the outer cursor, a field's pointer reloaded
     # into its local and the base address assigned at the entry; decomprepair 0.5.565; then a short live range written through a free
     # local, two pointer locals taken turns written as one and equal if/else arms written once, 1110 -> exact; decomprepair 0.5.567)
+    # (a lit-actor drawer's chain, 10895 -> 4488: a word-typed cursor as records, each command whole (display_cursor_record_ordered),
+    # the copy of one call result per arm removed, a heavy command value staged before the cursor is read and a quotient kept in a
+    # halfword with signed operands; decomprepair 0.5.599)
     # (a display-list cursor as a record pointer with each advance by its command's words, an or-chain's literal first and a volatile
     # halfword global as the plain one: the chain of a 318-instruction N64 function, 1825 -> exact; decomprepair 0.5.373)
     for module in (loop_head_giv_repairs, default_else_repairs, stored_compare_repairs, loop_entry_reset_repairs,
                    guard_temp_sink_repairs, product_shift_stage_repairs, clamp_default_scope_repairs,
                    volatile_local_drop_repairs, disjoint_local_merge_repairs, reused_temp_split_repairs,
-                   accumulator_chain_repairs, display_cursor_record_repairs,
+                   accumulator_chain_repairs, display_cursor_record_repairs, display_value_stage,
+                   shared_copy_local_split, narrow_quotient_local,
                    volatile_global_plain_repairs, spill_shape_repairs,
                    clamp_arm_stores, adjacent_array_store_order, global_field_load_stage, preheader_run_order,
                    guard_copy_cse_barrier, constant_store_bracket,
