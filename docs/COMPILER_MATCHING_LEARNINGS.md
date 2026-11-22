@@ -13319,3 +13319,6 @@ base. On a retail N64 function the linked score went from 968 to 0;
 the old dispatcher produced no candidate and the new rule produced one
 byte-exact candidate.
 On that same function, deriving the defined zero from the already loaded count as `(unsigned short) count ^ ((unsigned int) count & 0xFFFF)` improved the scoped seed from 85 to 75. Both expressions have the same low 16 bits, so their XOR is zero; the generated child retains the existing load and adds no pointer read. Direct self-XOR, self-subtraction and masking by zero all stayed at 85. The exact judge reports 15 remaining register differences; this is one function, not a match. decomp-repair 0.5.339 offers the identity only for the guarded stable-local shape, with synthetic generation and safety tests.
+
+
+Two N64 flag-update functions built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` used `lhu` and `sh` for an indexed flag table that the draft had declared as `char[]`. Casting both reads and writes to `u16 *` recovered exact matches in both cases (score 400 to 0). The target-guided repair proposes this width when the changed load and store both name the same table; the compiler and judge still decide whether it matches. Evidence: two saved examples and a synthetic routing and generation regression, rather than an independently controlled compiler experiment.
