@@ -17637,3 +17637,14 @@ by the families), terminal alpha placement inside the command (5227 against 4792
 
 Still open: the saved registers (`temp_s0`/`temp_s4` swapped: priorities 122 > 144 by `.lreg`, the target has the opposite
 assignment), the counter's delay slot, one arm's `move $s1,$v0` timing, and about forty register-only rows.
+
+Continuation of the lit-actor drawer entry above (same function, compiler and scoring): the light lookup of its default arm,
+`var_a0 = arg0; if (flags & 0x1000) { var_a0 = temp_s0; } idx = find(var_a0, &r, &g, &b);`, as the call in both arms
+(`if (flags & 0x1000) { idx = find(temp_s0, ...); } else { idx = find(arg0, ...); }`) went 4183 -> 3728: the compiler merged
+the two call sequences again (one `jal`, the other arm's `move $a0` in its delay slot) and the copy of the result moved to the
+top of the block, where the target has it (hypothesis: cross-jumping and delay-slot filling, not read in the compiler
+source). Family: decomp-repair `selected_argument_call_split` (0.5.600). Removing the `volatile u64` frame padding was then
+free (the narrowed quotient and the staged values own the eight bytes): 3728 -> 3712 with the frame still 0x68 and no
+scaffold. The function is recorded at 3712 and is not matched; the `phantom_wide` dead block in one arm is still in
+the source because removing it costs 195 (it only moves one store past the colour arithmetic; no faithful spelling found:
+the Gfx member form, a fresh cursor read and the advance placed after the first word all measured the same or worse).

@@ -60,9 +60,23 @@ QUOTIENT = HEADER + '''void quotient(u8 *arg0, s32 *out)
   out[0] = lum * 5;
 }
 '''
+PICK = HEADER + '''void pick(u8 *arg0, u8 *spare, s32 flags)
+{
+  u8 *var_a0;
+  s32 idx;
+  s32 sp29;
+  var_a0 = arg0;
+  if (flags & 0x1000)
+  {
+    var_a0 = spare;
+  }
+  idx = find(var_a0, &sp29, 1);
+  use(idx, sp29);
+}
+'''
 EXPECTED = {'cursor': {'display_cursor_record_ordered', 'display_value_stage'}, 'copies': {'shared_copy_local_direct'},
-            'quotient': {'narrow_quotient_local'}}
-SOURCES = {'cursor': CURSOR, 'copies': COPIES, 'quotient': QUOTIENT}
+            'quotient': {'narrow_quotient_local'}, 'pick': {'selected_argument_call_split'}}
+SOURCES = {'cursor': CURSOR, 'copies': COPIES, 'quotient': QUOTIENT, 'pick': PICK}
 
 
 def test_the_families_are_known_to_the_agents():

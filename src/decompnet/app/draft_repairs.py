@@ -282,6 +282,7 @@ from decomprepair import (
     search_exit_loop_repairs,
     search_loop_field_reload,
     search_loop_repairs,
+    selected_argument_call_split,
     shared_constant_store_repairs,
     shared_copy_local_split,
     shared_offset_repairs,
@@ -329,6 +330,7 @@ from decomprepair import (
     target_string_repairs,
     terminal_guard_repairs,
     ternary_argument_repairs,
+    triangle_arm_calls,
     unknown32_float_repairs,
     unknown_symbol_offset_repairs,
     unknown_table_index_repairs,
@@ -399,7 +401,8 @@ AGENT_FAMILIES += (arm_label_share_repairs.FAMILIES + declaration_scope_sink_rep
                    + narrow_test_share_repairs.FAMILIES + phase_storage_split_repairs.FAMILIES
                    + narrow_param_clamp_repairs.FAMILIES + search_loop_field_reload.FAMILIES + accumulation_run_scope.FAMILIES
                    + flag_word_bitfield_repairs.FAMILIES + argument_spill_tail.FAMILIES)
-AGENT_FAMILIES += display_value_stage.FAMILIES + shared_copy_local_split.FAMILIES + narrow_quotient_local.FAMILIES
+AGENT_FAMILIES += (display_value_stage.FAMILIES + shared_copy_local_split.FAMILIES + narrow_quotient_local.FAMILIES
+                   + selected_argument_call_split.FAMILIES + triangle_arm_calls.FAMILIES)
 
 LIMIT = 20
 _IDENT = r'[A-Za-z_]\w*'
@@ -813,7 +816,8 @@ def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels
                    guard_temp_sink_repairs, product_shift_stage_repairs, clamp_default_scope_repairs,
                    volatile_local_drop_repairs, disjoint_local_merge_repairs, reused_temp_split_repairs,
                    accumulator_chain_repairs, display_cursor_record_repairs, display_value_stage,
-                   shared_copy_local_split, narrow_quotient_local,
+                   shared_copy_local_split, narrow_quotient_local, selected_argument_call_split,
+                   triangle_arm_calls,
                    volatile_global_plain_repairs, spill_shape_repairs,
                    clamp_arm_stores, adjacent_array_store_order, global_field_load_stage, preheader_run_order,
                    guard_copy_cse_barrier, constant_store_bracket,
