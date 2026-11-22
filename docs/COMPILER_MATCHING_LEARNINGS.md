@@ -13410,6 +13410,23 @@ the same center, loads from one base register, and comparisons of the
 results. It generates a candidate only across local statements that preserve
 the inputs. Evidence is one partial live match and synthetic tests.
 
+### KMC GCC 2.7.2: keep the address of a single byte update
+
+An N64 draft named a global only once in a byte compound OR, but the
+operation loads and stores the same byte. The target builds its address
+once in a register and uses it for both accesses. Naming a local
+address improved the linked score from 13,510 to 13,285 with
+`-G0 -mips3 -mgp32 -mfp32 -O2`. Using a volatile pointer variable instead
+scored 14,474. The `symbol_byte_update_address` repair checks the symbol,
+mask, address register and byte value register before offering the
+local pointer.
+
+Separately, making a stack coordinate's zero store consume a previously
+initialized float zero scored 13,090 from 13,285. An isolated bitwise
+union-member store reached 13,310 from 13,510 and highlighted the
+target's integer zero store. Evidence is one partial N64 match and
+synthetic byte-update tests.
+
 ### KMC GCC 2.7.2: recover the empty lower case in a byte switch
 
 A loaded byte was dispatched to two adjacent active cases. The target
