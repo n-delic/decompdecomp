@@ -74,8 +74,14 @@ on. Add the connection to your client as `connection.json` says. Finish with `se
 revokes the connection (that frees the claim even with no compile yet) and removes the whole folder. Release with notes
 through MCP first when you learned something.
 
+**Submitting to the app: `setup.py try <holder> CAND.c`** (add the function name as a third argument for another claimed
+function). It calls `compile_and_diff` over the session's own MCP connection, the one that holds the claim, and prints the
+app's verdict. Use it for every submit and confirmation; do not write your own gateway client, and do not use `judge.py try`
+in a session (its claim belongs to the connection, so it answers HTTP 400). `judge.py try` is for a claim made with
+`judge.py claim` only. `last_diff` and the rest stay MCP calls from your client.
+
 The other scripts, run with that venv's python (`$UV_PROJECT_ENVIRONMENT/bin/python`): `fast_judge.py FILE.c --slug S
---function F [--diff [--rows N|all]]` (score, and the app's differing rows: 60 by default, then a "... N more rows" line), `passes.py FILE.c --slug S --function F` (allocation
+--function F [--diff [--rows N|all]]` (score, and the app's differing rows: 60 by default, then a "... N more rows" line; `--rows all` shows every row; a session's worktree off an older origin/main may lack `--rows`: `git pull --rebase` there and `setup.py sync <holder>`), `passes.py FILE.c --slug S --function F` (allocation
 priorities, register preferences, scheduler orders), `prove_chain.py --slug S --function F --families a,b|all` (greedy
 chain of library families, scored), `families.py [words]` (the library's families, one line each),
 `tools/learnings.py` (evidence entries).
@@ -206,7 +212,7 @@ and write it to a scratch file for local probes. Use `get_assembly` for the targ
 ## 2. Work fast and locally
 
 Use `scripts/compile_snippet.py` for quick compiler probes. Confirm the best candidate with
-`compile_and_diff(function=FUNC, source=...)` and use `last_diff` to page the submitted trial's diff.
+`setup.py try HOLDER CAND.c` (that is `compile_and_diff` as your session) and use `last_diff` to page the submitted trial's diff.
 
 ```bash
 .venv/bin/python .claude/skills/match-function/scripts/compile_snippet.py ido-7.1 cand.c --asm FUNC.s
@@ -488,7 +494,7 @@ the existing families on the saved best first (`prove_chain.py --list`): what th
 Persistence is the default: a near-match nobody finishes is worth more than three abandoned ones. A hand-off is allowed
 only when `clock.py <holder>` (or `clock.py --slug S --function F --agent NAME --since T`) prints **"hand-off allowed"**:
 at least 45 minutes on the function **and** 45 minutes since your last improvement, read from the app's attempt history,
-not judged by you. Submit every new best to the app (`compile_and_diff`) as soon as `fast_judge` finds it, or the clock
+not judged by you. Submit every new best to the app (`setup.py try <holder> CAND.c`) as soon as `fast_judge` finds it, or the clock
 can't see it. Before that verdict, or while the score still improves, keep going (step 1 again: read the diff). Even
 with the verdict, hand off only when you are near 0 and stuck on the last rows, or can state the stall precisely
 (a compiler behaviour with no known source shape); a run that is still learning keeps working.

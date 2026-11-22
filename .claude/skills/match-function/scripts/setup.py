@@ -14,6 +14,9 @@ read a function's status.
                                                         start the renewal
     setup.py sync HOLDER                                `uv sync` the private venv to the worktree's pyproject/uv.lock
                                                         (after `git pull` or a rebase there: the pins may have moved)
+    setup.py try HOLDER CAND.c [FUNC]                   submit a candidate to the app as this session (compile_and_diff over
+                                                        the session's own MCP connection, which holds the claim) and print
+                                                        the app's verdict; FUNC defaults to the claimed function
     setup.py stop HOLDER                                stop the renewal, revoke the connection (that frees its
                                                         claim, even with no compile yet), remove /tmp/dd-HOLDER/
 
@@ -236,6 +239,30 @@ def renew_loop(root, interval):
     (root / "renew.pid").unlink(missing_ok=True)
 
 
+def try_candidate(holder, path, function=""):
+    """Submit CAND.c as the session: `compile_and_diff` over the connection that holds the claim, and print the app's
+    verdict text. The window API's /api/try judges as another identity and is refused while this connection holds the
+    claim (HTTP 400), so a session never goes through it; nor does anyone need their own gateway client."""
+    root = session_dir(holder)
+    if not (root / "connection.json").exists():
+        sys.exit(f"no session {holder!r} ({root / 'connection.json'} is missing): start one with setup.py SLUG [FUNC]")
+    info = json.loads((root / "connection.json").read_text())
+    name = function or info.get("function")
+    if not name:
+        sys.exit("the session has no claimed function; name it: setup.py try HOLDER CAND.c FUNC")
+    try:
+        source = Path(path).read_text()
+    except OSError as error:
+        sys.exit(f"can't read {path}: {error}")
+    gateway = Gateway(info["gateway_url"], info["token"])
+    try:
+        gateway.start()
+        print(gateway.call("compile_and_diff", {"function": name, "source": source}))
+    except McpError as error:
+        sys.exit(f"not submitted: {error}")
+    return 0
+
+
 def alive(pid):
     """Is `pid` still our renewal? (a recycled pid must never be signalled)"""
     try:
@@ -327,6 +354,10 @@ def main(argv):
         if len(argv) != 2:
             sys.exit(__doc__)
         return sync_session(argv[1])
+    if argv[:1] == ["try"]:
+        if len(argv) not in (3, 4):
+            sys.exit(__doc__)
+        return try_candidate(argv[1], argv[2], argv[3] if len(argv) == 4 else "")
     if argv[:1] == ["stop"]:
         if len(argv) != 2:
             sys.exit(__doc__)
