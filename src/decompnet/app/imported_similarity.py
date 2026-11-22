@@ -161,7 +161,7 @@ def run(twins, agent, proj, other, hits, units, settings, job, checked):
                     job.reuse_attempts += 1
                 try:
                     outcome, why = donor_build.verify(net, proj, fn, other, donor, names, trial, agent, job,
-                                                     settings.headers, replacement=replacement)
+                                                     settings.headers, replacement=replacement, compiled_literals=True)
                 except (NetworkError, OSError, ValueError) as error:
                     outcome, why = 'skip', str(error)
                 with store.tx() as conn:

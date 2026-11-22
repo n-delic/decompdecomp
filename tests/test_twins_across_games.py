@@ -490,7 +490,8 @@ def test_imported_donor_with_different_literal_is_verified_in_the_rom(built, tmp
     assert saved['target'] == target
 
 
-def test_similar_imported_object_rebuilds_with_the_destination_compiler_profile(built, tmp_path, monkeypatch):  # noqa: F811
+@pytest.mark.parametrize('literal_change', [False, True])
+def test_similar_imported_object_rebuilds_with_the_destination_compiler_profile(built, tmp_path, monkeypatch, literal_change):  # noqa: F811
     from decompnet import similarity, toolchains
     from decompnet.app.twins import Job
     from decompnet.compiler import compile_source
@@ -554,10 +555,10 @@ void donor(volatile int *out, int n) {
     monkeypatch.setattr(net.forks, 'is_asm', lambda *_: False)
     job = Job()
     job.cross_exhaustive = True
-    (root / 'unit.c').write_text(source.replace('n + 8', 'n + 9'))
+    (root / 'unit.c').write_text(source.replace('n + 8', 'n ^ 9'))
     assert net.twins._fork_to_rom(agent, proj, other, {}, net.twins.prints(proj), job) == 0
     assert net._function(fn['name'], slug)['status'] == 'open'
-    (root / 'unit.c').write_text(source)
+    (root / 'unit.c').write_text(source.replace('n + 8', 'n + 9') if literal_change else source)
     assert net.twins._fork_to_rom(agent, proj, other, {}, net.twins.prints(proj), job) == 1
     saved = net._function(fn['name'], slug)
     assert saved['status'] == 'matched' and saved['target'] == right

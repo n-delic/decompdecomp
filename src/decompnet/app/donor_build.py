@@ -234,7 +234,7 @@ class Settings:
         return {'toolchain': 'ido-' + version, 'flags': flags}
 
 
-def verify(net, proj, fn, other, donor, names, settings, agent, job, cache, *, replacement=None, adapt=None):
+def verify(net, proj, fn, other, donor, names, settings, agent, job, cache, *, replacement=None, adapt=None, compiled_literals=False):
     """Compile in private and retain this exact header and profile only with a fresh byte verdict."""
 
     if not replacement and (not settings or toolchains.installed(settings['toolchain']) is None):
@@ -246,7 +246,7 @@ def verify(net, proj, fn, other, donor, names, settings, agent, job, cache, *, r
             source = adapt(source)
             if source is None:
                 return False, 'The donor has no unambiguous literal to transfer.'
-        return _try(net, current, trial, fn, source, header, agent, job)
+        return _try(net, current, trial, fn, source, header, agent, job, compiled_literals=compiled_literals)
 
     def retry_declarations(current, trial, candidate, why):
         if job.stop.is_set() or "redeclaration of '" not in why:
@@ -331,9 +331,9 @@ def verify(net, proj, fn, other, donor, names, settings, agent, job, cache, *, r
 
 @trial
 @donor_declaration_cache()
-def _try(net, proj, private, fn, source, header, agent, job):
+def _try(net, proj, private, fn, source, header, agent, job, *, compiled_literals=False):
     """Offer one reduced translation unit and one relocation-based retry when the object supports it."""
-    reduced = rebound = localized = False
+    reduced = rebound = localized = literal_changed = False
     evidence = exact_match_inputs.capture(net, private, fn, {'header': header}, source)
     while not job.stop.is_set():
         result = net._compile(private, header, source, fn)
@@ -365,6 +365,14 @@ def _try(net, proj, private, fn, source, header, agent, job):
                             exact_inputs={**evidence, 'source': source, 'header': header},
                             before_record=still_claimed)
             return True, ''
+        if compiled_literals and not literal_changed and candidate is not None:
+            from . import imported_literals
+
+            changed = imported_literals.adapt_compiled(source, fn['name'], candidate, net._target_obj(fn, proj))
+            if changed is not None:
+                source = changed
+                literal_changed = True
+                continue
         variants = []
         if not rebound:
             if net.console(proj).export_overlay(net._rom_target(fn)) is not None:

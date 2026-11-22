@@ -1515,6 +1515,17 @@ saved 11 matches. It used IDO 7.1 with
 `-O2 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul -DNON_MATCHING`
 for all 11. All 11 recompiled and passed the exact judge after reopening.
 
+### Recheck literal differences after recompiling an imported donor
+
+A controlled IDO 7.1 `-O2 -G 0 -non_shared -mips2` example has one extra
+volatile write under its donor's preprocessor flag and one changed addition
+constant. Under the destination profile the instruction layout aligns. The
+fresh compile identifies the unique immediate change and the updated C passes
+the exact destination check. An opcode change in the same location still fails.
+
+The isolated N64 replay of previously unsuccessful similar-source candidates
+did not find an additional exact match with this retry.
+
 ### IDO per-object recipes for replacement C
 
 In a controlled IDO 7.1 regression, the same replacement source builds different

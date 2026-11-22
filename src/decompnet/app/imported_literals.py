@@ -63,6 +63,17 @@ def _adapt(body, name, donor, target, big):
     return body[:start] + variants[0] + body[end:] if variants else None
 
 
+def adapt_compiled(source, name, candidate, target):
+    """Use the actual compiler output, ignoring operand fields owned by either linker."""
+    if not candidate or len(candidate.code) != len(target.code):
+        return None
+
+    def entry(obj):
+        return {'target': obj.code, 'relocs': json.dumps([(r.offset, r.type, 0) for r in obj.relocs])}
+
+    return _adapt(source, name, entry(candidate), entry(target), target.big_endian)
+
+
 def run(twins, agent, proj, other, donors, prints, units, settings, job, *, checked=None):
     """Build and judge changed literals with the destination's symbol and byte checks."""
     from .twins import WHY_CHARS, renames
