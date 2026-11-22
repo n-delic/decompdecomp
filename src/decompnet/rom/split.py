@@ -21,8 +21,12 @@ from ..hostenv import NO_WINDOW, console_python, stop_process_tree
 from . import DisassemblyTimeout, Picked, RomError
 
 _INSN = re.compile(r"^\s*/\* ([0-9A-F]+) ([0-9A-F]{8}) ([0-9A-F]{8}) \*/\s+(\S+)\s*(.*?)\s*$")
-_LOCAL_NAME = r"\.?L([0-9A-F]{8})(?:_(?:overlay_[0-9]{3}|ovl_[0-9]{2,3}))?"
+# A label may carry the name of the overlay or slot it lives in (`_overlay_001`, `_ovl_01`, `_raw_slot_03`,
+# `_packed_program_02`, `_dma_overlay_01`): any lower-case word suffix, so a new kind of slot needs no change here.
+_LOCAL_NAME = r"\.?L([0-9A-F]{8})(?:_[a-z][a-z0-9]*(?:_[a-z0-9]+)*)?"
 _LOCAL_REF = re.compile(r"(?<![\w.$])" + _LOCAL_NAME + r"(?![\w.$])")
+_BRANCH = re.compile(r"(?:b(?!\w*al)\w*|j)$")  # branches and jumps, not calls (jal, jalr, bal and the other linking branches)
+_FUNC_REF = re.compile(r"(?<![\w.$])func_([0-9A-Fa-f]{8})(?:_[a-z][a-z0-9_]*)?(?![\w.$])")
 _LABEL = re.compile(r"^\s*(?:jlabel\s+)?(" + _LOCAL_NAME + r"):?\s*$")
 _DATA = re.compile(r"^\s*/\* ([0-9A-F]+ )?([0-9A-F]{8})(?: [0-9A-F]+)? \*/\s+\.(\w+)\s*(.*?)\s*$")
 _DLABEL = re.compile(r"^\s*dlabel\s+(\S+)")
@@ -538,6 +542,27 @@ def draft_asm(text: str, name: str, vram: int | None = None, data_asm: str = '')
     by_address: dict[int, list[str]] = {}
     for label, address in missing.items():
         by_address.setdefault(address, []).append(label)
+    # A branch inside the function to an address that is also named like a function (`func_80105044`): the
+    # importer had a symbol there (a shared tail another entry jumps into) and left no label, so m2c reported
+    # "Cannot find branch target" (it only takes `.L` names as local labels). Only a branch or jump (never a call)
+    # to an instruction of this very function: its operand becomes the local label, which is defined there.
+    own = {int(m[2], 16) for _, m in instructions}
+    entry_names = {name} | {m[1] for line in lines if (m := _GLABEL.match(line))}
+    for index, m in instructions:
+        if not _BRANCH.match(m[4]):
+            continue
+
+        def local(ref):
+            address = int(ref[1], 16)
+            if ref[0] in entry_names or address not in own:
+                return ref[0]
+            label = f".L{address:08X}"
+            if label not in defined and label not in by_address.setdefault(address, []):
+                by_address[address].append(label)
+            return label
+        operands = _FUNC_REF.sub(local, m[5])
+        if operands != m[5]:
+            lines[index] = lines[index][:lines[index].rindex(m[5])] + operands
     out = []
     for line in lines:
         if m := _INSN.match(line):
