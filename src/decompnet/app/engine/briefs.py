@@ -701,6 +701,10 @@ class BriefMixin:
             lines.append("calls: " + ", ".join(syms.label(a) for a in calls[:30]))
         if callers:
             lines.append("called by: " + ", ".join(syms.label(a) for a in callers[:30]))
+            from .. import call_evidence
+            hint = call_evidence.brief_line(self, proj, fn, self._context(proj["id"], fn["unit"])["header"])
+            if hint:
+                lines.append(hint)
         used = sorted(x["uses"].get(fn["vram"], ()))
         if used:
             lines += ["", "### Data it uses (declare what you need as extern in your source, or in context.h)"]
@@ -799,6 +803,19 @@ class BriefMixin:
                 out.append((rows[(v, n)], sim))
         out.sort(key=lambda x: (x[0]["status"] != "matched", -x[1]))
         return out[:top]
+
+    def get_callers(self, project: str | None, function: str, limit: int = 8) -> str:
+        """Every call of a function: caller, the instructions around the call, and the result type the callers show
+        (app/call_evidence.py)."""
+        if self.fork_slug(project):
+            raise NetworkError("get_callers isn't offered in project mode yet: a project's callees aren't stored "
+                               "(ROADMAP.md); read the callers' source in the project files")
+        from .. import call_evidence
+        proj = self._project(project)
+        fn = self._function(function, proj["slug"])
+        found = call_evidence.gather(self, proj, fn, self._context(proj["id"], fn["unit"])["header"],
+                                     limit=max(1, min(int(limit), 20)))
+        return call_evidence.render(fn, found)
 
     def find_similar(self, project: str | None, function: str, limit: int = 5) -> str:
         if (fork := self.fork_slug(project)):

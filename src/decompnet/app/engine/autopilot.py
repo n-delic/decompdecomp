@@ -425,12 +425,17 @@ class AutopilotMixin:
                     # a close matched look-alike's C with this function's names (app/twin_drafts.py)
                     candidates += twin_drafts.candidates(self, proj, fn, ctx['header'])
                 if draft_return_type.enabled(self.cfg(proj)):
+                    from .. import call_evidence
+                    try:  # what the callers show (app/call_evidence.py); the function's own exits decide when they can
+                        callers = call_evidence.verdict(call_evidence.gather(self, proj, fn, ctx['header']))
+                    except Exception:  # noqa: BLE001 - a witness; the draft stage goes on without it
+                        callers = None
                     candidates += draft_return_type.candidates(draft, fn['name'], proj['arch'], target_asm, context,
                                                                lambda ctx_text: seeds.generate_from_asm(
                                                                    target_asm, fn['name'], toolchain, ctx_text, data_asm,
                                                                    valid=True, strict=False, timeout=20,
                                                                    resolve=lambda symbol: self.symbols(proj['id']).resolve(symbol)),
-                                                               note)
+                                                               note, callers)
                 from ..loop_storage_shapes import variants as loop_shapes
                 for family,source in loop_shapes(draft,fn['name'],ctx['header'],proj['arch'])[:2]:
                     candidates.append((family,f"{note}{seeds.with_m2c_macros(source)}\n"))

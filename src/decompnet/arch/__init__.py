@@ -17,6 +17,7 @@ from . import (
     arm,
     mips,
     mips_assets,
+    mips_callsites,
     mips_code_recovery,
     mips_debug,
     mips_drafts,
@@ -91,6 +92,9 @@ class Arch:
     repair_search_hints: Callable[..., dict] | None = None
     source_return_paths: Callable[..., dict | None] | None = None
     source_return_contract: Callable[..., dict | None] | None = None
+    # each call of a function in a caller's assembly and whether the caller reads its result: (asm, name, before,
+    # after) -> [site dicts] (app/call_evidence.py, get_callers; MIPS only, the others ROADMAP)
+    call_sites: Callable[..., list] | None = None
     # the result type a draft's exits suggest: 'value', 'tested', 'void' or None (app/draft_return_type.py; MIPS only:
     # x86/PPC/ARM have no reader yet, ROADMAP)
     return_contract: Callable[[str], str | None] | None = None
@@ -124,7 +128,7 @@ class Arch:
 ARCHES = [
     Arch("mips", "MIPS", mips.CAPSTONE, mips.RELOC_MASKS, mips.asm_reason, True,
          frozenset({COMPILER_MAP, CLASSES, BOUNDARIES, STRUCTS}), mips_fields.read_facts, called_code_extent=mips_code_recovery.called_extent, padding_reason=mips.padding_reason, gcc_register_aliases=mips.gcc_register_aliases,
-         asset_flow=mips_assets.read, source_local_storage=mips_local_storage.read, source_scalar_destination=mips_local_storage.scalar_destination, initial_draft_evidence=mips_drafts.read, source_hazard_rows=mips_hazards.rows_witness, source_return_paths=mips_return_paths.read, return_contract=mips_return_paths.contract, source_return_contract=mips_returns.result, source_stack_call_store=mips_returns.stack_call_store, repair_search_hints=mips_search.read, object_functions=mips_debug.functions, object_placeholders=mips_debug.placeholders, instruction_regions=mips_regions.read, build_tool_paths=mips_tools.build_paths, stack_frame_growth=mips_stack.frame_growth, stack_layout=mips_stack.repair_layout, source_operand_changes=mips_source_recovery.operand_changes, source_extra_narrowing=mips_source_recovery.extra_narrowing, source_private_abi=mips_source_recovery.private_abi, source_pointer_lifetime=mips_pointer_lifetime.read, source_pointer_snapshot=mips_source_recovery.pointer_snapshot_order, source_switch_blocks=mips_source_recovery.blocks, source_recovery_hints=mips_source_recovery.recovery_hints, source_tail_branch=mips_source_recovery.tail_branch, source_tail_dispatch=mips_tail_dispatch.read, source_symbol_bindings=mips_source_symbols.bindings, boundary_reason=mips.boundary_reason, boundary_instruction=mips.boundary_instruction, built_floats=mips.built_floats, edit_hint=mips.edit_hint, variants={mips.ALLEGREX: mips.allegrex_lines},
+         asset_flow=mips_assets.read, source_local_storage=mips_local_storage.read, source_scalar_destination=mips_local_storage.scalar_destination, initial_draft_evidence=mips_drafts.read, source_hazard_rows=mips_hazards.rows_witness, source_return_paths=mips_return_paths.read, return_contract=mips_return_paths.contract, call_sites=mips_callsites.sites, source_return_contract=mips_returns.result, source_stack_call_store=mips_returns.stack_call_store, repair_search_hints=mips_search.read, object_functions=mips_debug.functions, object_placeholders=mips_debug.placeholders, instruction_regions=mips_regions.read, build_tool_paths=mips_tools.build_paths, stack_frame_growth=mips_stack.frame_growth, stack_layout=mips_stack.repair_layout, source_operand_changes=mips_source_recovery.operand_changes, source_extra_narrowing=mips_source_recovery.extra_narrowing, source_private_abi=mips_source_recovery.private_abi, source_pointer_lifetime=mips_pointer_lifetime.read, source_pointer_snapshot=mips_source_recovery.pointer_snapshot_order, source_switch_blocks=mips_source_recovery.blocks, source_recovery_hints=mips_source_recovery.recovery_hints, source_tail_branch=mips_source_recovery.tail_branch, source_tail_dispatch=mips_tail_dispatch.read, source_symbol_bindings=mips_source_symbols.bindings, boundary_reason=mips.boundary_reason, boundary_instruction=mips.boundary_instruction, built_floats=mips.built_floats, edit_hint=mips.edit_hint, variants={mips.ALLEGREX: mips.allegrex_lines},
          is_padding=mips.is_padding, ends_in_delay_branch=mips.ends_in_delay_branch, split_immediates=mips_immediates.split_immediates),
     Arch("ppc", "PowerPC", ppc.CAPSTONE, ppc.RELOC_MASKS, ppc.asm_reason, is_padding=ppc.is_padding),
     Arch("ppc64", "PowerPC64", ppc64.CAPSTONE, ppc64.RELOC_MASKS, ppc64.asm_reason, features=frozenset({BOUNDARIES}), is_padding=ppc.is_padding),
