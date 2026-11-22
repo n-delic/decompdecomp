@@ -76,3 +76,30 @@ def test_native_float_spill_reaches_the_kmc_repair_lane():
                for candidate in repairs)
     candidates = proposals(SOURCE, 'f', '', 'mips', 'gcc-egcs', ROWS, '')
     assert not any(family == 'native_float_spill' for family, _ in candidates)
+
+
+SETUP_ROWS = [
+    (' ', 'move $s7, $zero', 'move $s7, $zero'),
+    ('r', 'move $a0, $s2', 'move $s5, $zero'),
+    (' ', 'sw $s7, 0x50($sp)', 'sw $s7, 0x50($sp)'),
+    (' ', 'lui $at, %hi(heading)', 'lui $at, %hi(heading)'),
+    ('r', 'sw $s7, %lo(heading)($at)', 'sw $s5, %lo(heading)($at)'),
+    (' ', 'jal prepare', 'jal prepare'),
+    ('r', 'move $s6, $s7', 'move $a0, $s2'),
+    (' ', 'lui $v0, %hi(first)', 'lui $v0, %hi(first)'),
+    (' ', 'lbu $v0, %lo(first)($v0)', 'lbu $v0, %lo(first)($v0)'),
+    ('r', 'move $fp, $s7', 'move $s6, $s5'),
+    (' ', 'lwc1 $f16, 0x50($sp)', 'lwc1 $f16, 0x50($sp)'),
+    (' ', 'lwc1 $f16, 0x50($sp)', 'lwc1 $f16, 0x50($sp)'),
+]
+
+
+def test_native_setup_copy_reaches_the_kmc_repair_lane():
+    native = [code for family, code in proposals(SOURCE, 'f', '', 'mips', 'gcc-2.7.2-kmc', ROWS, '')
+              if family == 'native_float_spill'][1]
+    repairs = [code for family, code in proposals(native, 'f', '', 'mips', 'gcc-2.7.2-kmc', SETUP_ROWS, '')
+               if family == 'native_float_setup_copy']
+    assert len(repairs) == 1
+    assert repairs[0].index('prepare(p);') < repairs[0].index('y = cleared.number;')
+    candidates = proposals(native, 'f', '', 'mips', 'gcc-egcs', SETUP_ROWS, '')
+    assert not any(family == 'native_float_setup_copy' for family, _ in candidates)

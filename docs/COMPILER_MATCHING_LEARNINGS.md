@@ -16498,3 +16498,20 @@ With `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a saved draft passed the integer bits `
 ### A consumed argument register before a call (GCC 2.7.2 KMC)
 
 With `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, one saved draft scored 270 after passing an extra integer literal to a call. The target used that register for an earlier OR and did not set it up again for the call; dropping the trailing argument and correcting the local prototype matched exactly. This is a saved example verified with the original compiler and linked-byte judge. The target-guided search only offers this drop for literal arguments, whose removal cannot discard evaluation side effects.
+
+### Recover a shared setup copy after the native float spill
+
+In the same private N64 replay under
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, the native
+float writeback matched and the setup code still initialized one
+axis accumulator from a separate literal. Moving its initialization
+after the setup call and copying the existing cleared word's float
+view recovered the target saved-register move. Redefining the
+known-zero word between the call and copy prevented CSE from
+forwarding the earlier stack value. The later combine pass erased
+the shift pair.
+
+The linked score moved from 155 to 150 with the same frame,
+3,034 instructions and three jump tables. Placing the copy before
+the call instead scored 210 because it changed the stack store's
+schedule. This is one private function under this profile.
