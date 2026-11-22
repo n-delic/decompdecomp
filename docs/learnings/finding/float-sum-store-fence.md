@@ -2,7 +2,7 @@
 title: a float sum split around a run of stores needs its first add's operand order and a one-shot scope inside the run
 kind: finding
 compiler: gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2
-evidence: one function
+evidence: observation
 date: 2026-11-22
 ---
 

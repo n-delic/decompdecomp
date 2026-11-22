@@ -79,7 +79,9 @@ def generator(judge, name):
         source = current_name(source, name, vram)
         labels = {}
         texts = draft_repairs.variants(source, name, judge.arch, judge.asm, judge.compiler["flags"], labels,
-                                       limit=None, header=judge.header)
+                                       limit=None, header=judge.header, tables=getattr(judge, "tables", ()),
+                                       callees=getattr(judge, "callees", ""),
+                                       entry_scope=getattr(judge, "entry_scope", None))
         return [(labels.get(text, "unlabelled"), text) for text in texts]
     return generate
 

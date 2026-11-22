@@ -57,7 +57,11 @@ def test_feedback_keeps_one_compile_allowance_and_releases_the_claim(monkeypatch
         return score
     monkeypatch.setattr(Permuter,'_score',judge)
     batches(monkeypatch,['random win'])
-    result=deep_permuter.run(net,'game','f',1,2,Log())
+    log=Log()
+    # A search still improving at its end extends its budget (8c8bede14); this test pins the strict allowance
+    # of a capped run, so it sets a maximum like the agents' bounded searches do.
+    log.maximum_seconds=60
+    result=deep_permuter.run(net,'game','f',1,2,log)
     assert result['reason']=='Variant limit reached' and result['tested']==2
     assert net.function()['best_source']=='local win'
     assert net.store.one('SELECT COUNT(*) n FROM claims')['n']==0

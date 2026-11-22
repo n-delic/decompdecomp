@@ -18,7 +18,9 @@ Requests:
   (marker, target, candidate) row of that diff, unrendered (the skill's region view, regions.py).
 - {"op": "function", "slug", "name", "vram" (optional, for overlays)} -> {"name", "vram", "target" (hex), "unit",
   "arch", "asm" (the target's assembly text), "header" (the project's typedefs and externs the judge prepends),
-  "compiler": {"toolchain", "flags"} (this function's own profile)}: everything a local search needs to judge without being told the function's bytes
+  "compiler": {"toolchain", "flags"} (this function's own profile), "tables" ([[low, [targets...]], ...]: its jump
+  tables, as switch_tables.read), "callees" (its callees' matched C, capture_followup_repairs.callee_evidence) and
+  "entry_scope" (promoted_entry_repairs.scope): the context the app's draft path hands draft_repairs.variants}: everything a local search needs to judge without being told the function's bytes
   (the match-function skill's fast_judge.py).
 - {"op": "passes", "slug", "name", "source", "passes" (optional)} -> {"text"}: the compiler's allocation priority
   table, register preferences and scheduling orders for that C under the function's profile (compiler_passes.report,
@@ -132,10 +134,16 @@ def function_info(net, request: dict) -> dict:
     if isinstance(found, dict):
         return found
     proj, fn = found
+    from .app import draft_repairs, switch_tables
     profile = compiler_for(net.cfg(proj), fn["vram"], fn)
+    # What draft_repairs.variants needs beyond the source: families like switch_gap_goto read the jump tables, so a
+    # script that calls variants without them never sees those families fire.
     return {"name": fn["name"], "vram": fn["vram"], "target": bytes(fn["target"] or b"").hex(), "unit": fn["unit"],
             "arch": proj["arch"], "asm": fn["asm"] or "",
             "header": net._context(proj["id"], fn["unit"])["header"],
+            "tables": [[low, list(targets)] for low, targets in switch_tables.read(net, proj, fn)],
+            "callees": draft_repairs.capture_followup_repairs.callee_evidence(net, proj, fn, fn["best_source"] or ""),
+            "entry_scope": draft_repairs.promoted_entry_repairs.scope(net, proj, fn),
             "compiler": {"toolchain": profile.get("toolchain"), "flags": list(profile.get("flags") or [])}}
 
 
