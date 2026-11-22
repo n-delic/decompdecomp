@@ -17593,3 +17593,47 @@ Controlled result: the six rows of the hunk (store position, `bc1f` delay slot) 
 
 Family: decomp-repair `compare_load_stage` (0.5.598). `tests/test_compare_load_stage_wiring.py` checks the draft repairs
 and the local lane. It reproduces the 5060 -> 4810 step exactly from the saved best.
+
+## A lit-actor drawer: display-list members, a copy per arm, a staged colour, a halfword quotient (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`)
+
+The same 842-instruction N64 function as the array-slot entry above (scoring 2; the saved best 10895, 7955 under scoring 1)
+went from 10895 to 4183 by hand and to 4488 through four new decomp-repair families (0.5.599) run in sequence on the
+saved best. Controlled results, each measured through the isolated judge on this one function; the compiler explanations
+are hypotheses, not confirmed in the compiler source. Not matched: the function is at 4183 by hand, a register-allocation
+tail and a counter's delay slot remain (below).
+
+| step | hand | families (from the saved best) |
+| --- | --- | --- |
+| saved best | 10895 | 10895 |
+| two globals read as `lbu` in the target declared `u8` (existing `symbol_width`) | 10770 / 10577 | 10770 |
+| vector and unused volatile scratch declared in the switch body (`array_declaration_scope_sink`) | 10702 | 10577 |
+| cursor `s32 * volatile` -> plain pointer, the first two commands as `Gfx` members, each written whole (`display_cursor_record_ordered`) | 8827 -> 7722 -> 7467 | 7497 |
+| one copy of the call result per arm instead of `var_s4` shared (`shared_copy_local_direct`) | 6442 | 6502 |
+| colour word computed into a block local before the cursor is read, with the group's words as members, both default arms (`display_value_stage`) | 4792 | 5097 |
+| `u16 lum = (a + b + c) / 3;` with signed operands instead of a masked word (`narrow_quotient_local`) | 4183 | 4488 |
+
+What each step is (hypotheses): (1) A raw `*(s32 *)(p + 4)` store is not "in struct" for gcc's alias analysis, a store through
+a member is, and the cursor global is not: only member stores keep the cursor's value known across the words, so the second
+command's advance costs no reload, and the loads of the globals the command's words read are not held behind the stores
+(the target's order of the seven colour-byte loads reproduced exactly once the words were members). `volatile` on the
+cursor, which an earlier agent added to force the reloads, instead serialises every memory access around it. (2) A local
+copied from a different call result in each arm is one pseudo with several definitions: the copy out of the return register
+was scheduled right after the call instead of where the target has it (the target's `move $s4,$v0` sits after three loads)
+and the temporaries took `$v0`. Using each arm's own result gave the target's registers for both arms (rows of both arms
+went to zero). (3) The target loads the two multiplies' operands and starts the multiplies before it reads the cursor; a
+value written inside `g = cursor++; g->w1 = EXPR;` is loaded after the cursor, so the value goes in a local first. Members
+alone made this arm worse (6442 -> 7412), the staged value alone made it worse than the combination, the combination of
+both arms is 4792: offered as one child. (4) A signed `x / 3` is `mult` by 0x55555556, `mfhi` and a correction `sra 31;
+subu`; storing the quotient in an `unsigned short` drops the correction (the target's `mfhi; andi 0xffff`), but only with
+signed operands; with an unsigned operand the division is `multu` by 0xaaaaaaab. The masked word form and every spelling of
+the operand types alone kept the correction (64 type combinations tried).
+
+Failed or neutral here: natural per-channel statements instead of m2c's early temporaries (identical code, kept as cleaner),
+`D_80113022 += 1` or `++D_80113022` or a local copy instead of the early `var_v1 = D_80113022 + 1` (4546 to 6196 against
+4183: the counter's tail is shared between two arms by cross-jumping, and the delay slot only holds the increment with the
+early form), all struct-typed field accesses for the actor and camera (10717, worse), `Gfx` members for every command (8347
+against 7722 for the first two only), removing the `phantom_wide` dead block of the saved best (+195, left alone, not used
+by the families), terminal alpha placement inside the command (5227 against 4792).
+
+Still open: the saved registers (`temp_s0`/`temp_s4` swapped: priorities 122 > 144 by `.lreg`, the target has the opposite
+assignment), the counter's delay slot, one arm's `move $s1,$v0` timing, and about forty register-only rows.
