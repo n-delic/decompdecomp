@@ -14770,3 +14770,21 @@ In a private N64 matrix function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mf
 ### Stage signed lookup results in interpolation
 
 In two private N64 lookup interpolators built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the target sign-extended the first signed-halfword call result before the second call, while each draft deferred the conversion. Staging the first result in a signed word local and the difference between the second result and the narrowed first result in another local reproduced both linked targets exactly, from score 255 to 0 each. Staging only the first result scored 60; staging only the difference scored 195. The candidate checks the call, local types and measured ordering. Evidence: two saved functions and synthetic generation and routing tests.
+
+### Pair a signed selector with the later byte increment copy
+
+In a private N64 function built with GCC 2.7.2 KMC and
+`-G0 -mips3 -mgp32 -mfp32 -O2`, a signed byte selected cases 0 through 3.
+The draft masked the sign-extended load through an unsigned halfword.
+Much later the target preserved a different signed byte before
+overwriting its register with the increment predicate. The draft used
+a spare predicate register and never captured the old byte separately.
+
+A signed-byte mode local removed the mask while leaving the cases
+unchanged. Alone this scored 8,425 from 8,355. A halfword snapshot of
+the later count before reusing its local for the predicate scored
+8,410 by itself. The pair retained all three jump-table relocations
+and the instruction count, and scored 8,210 with no warnings. The
+repaired count still uses the opposite physical registers for the
+copy and predicate. Tests verify both witnesses and prove the
+borrowed snapshot local is dead at the insert point.
