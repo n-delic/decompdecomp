@@ -185,6 +185,25 @@ def count(name: str, amount: int = 1) -> None:
         _counts[name] += amount
 
 
+class _Timed:
+    """Adds the processor time the calling thread spends inside the block, in microseconds, as `<name>_us`."""
+    __slots__ = ("name", "began")
+
+    def __init__(self, name):
+        self.name = name
+
+    def __enter__(self):
+        self.began = time.thread_time()
+
+    def __exit__(self, *_):
+        count(self.name + "_us", int((time.thread_time() - self.began) * 1e6))
+
+
+def timed(name: str) -> _Timed:
+    """`with thread_cpu.timed("decode"):` notes this thread's processor time in the block (about a microsecond of overhead)."""
+    return _Timed(name)
+
+
 class Sampler:
     def __init__(self, path, *, interval=.5, report_every=60, read=None, role="app"):
         self.path = Path(path)
@@ -310,8 +329,12 @@ def start(path) -> Sampler | None:
     return Sampler(path, read=read).start()
 
 
-def start_worker(role: str, *, interval: float = .5) -> Sampler | None:
-    """A helper process's sampler: logs/thread-cpu-<role>-<pid>.log in the app's home (the app's own `start` is for the server)."""
+WORKER_INTERVAL = 2.0  # seconds between a helper's samples (a hundred of them at .5 s cost 8% of their own CPU in a live run)
+
+
+def start_worker(role: str, *, interval: float = WORKER_INTERVAL) -> Sampler | None:
+    """A helper process's sampler: logs/thread-cpu-<role>-<pid>.log in the app's home (the app's own `start` is for the server).
+    Helpers are mostly single-threaded and long-lived, so they are sampled less often than the server."""
     if os.environ.get("DECOMP_THREAD_CPU", "").strip() == "0":
         return None
     read = reader()
@@ -367,10 +390,20 @@ def merged(folder, minutes: float | None = None) -> str:
     lines.append("\nBy process kind\n")
     lines.extend(f"  {seconds:9.1f} s  {seconds / total:5.1%}  {role} ({count[role]} processes, {wall[role]:.0f} s alive)\n"
                  for role, seconds in roles.most_common())
-    if units:
+    work = {key: number for key, number in units.items() if not key[1].endswith(("_us", "_bytes"))}
+    if work:
         lines.append("\nWork done, and the processor it took\n")
-        for (role, name), number in sorted(units.items()):
+        for (role, name), number in sorted(work.items()):
             lines.append(f"  {number:9d}  {role} {name}: {roles[role] / max(number, 1) * 1000:.1f} ms of processor each\n")
+    inside = {key: number for key, number in units.items() if key[1].endswith(("_us", "_bytes"))}
+    if inside:
+        lines.append("\nInside the helpers' own loop (what one request costs the helper itself)\n")
+        for (role, name), number in sorted(inside.items()):
+            each = number / max(units.get((role, "requests"), 0), 1)
+            if name.endswith("_us"):
+                lines.append(f"  {number / 1e6:9.1f} s  {role} {name[:-3]}: {each / 1000:.2f} ms of processor per request\n")
+            else:
+                lines.append(f"  {number / 1e6:9.1f} MB  {role} {name[:-6]}: {each / 1000:.1f} KB per request\n")
     lines.append("\nBy process kind and code\n")
     lines.extend(f"  {seconds:9.1f} s  {role:<10} {place}\n" for (role, place), seconds in places.most_common(40))
     if libraries:

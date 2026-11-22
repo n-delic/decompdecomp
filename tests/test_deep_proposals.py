@@ -255,3 +255,26 @@ def test_the_draft_worker_batch_asks_a_fresh_worker_when_the_idle_one_died(monke
     assert result['candidates'] and len(started) == 1
     for worker in draft_repairs._IDLE_WORKERS:
         worker.close()
+
+
+def test_the_worker_times_decoding_generation_and_encoding_of_a_request(tmp_path):
+    """The proposal worker's own loop was 63% of its CPU in a live run with no breakdown; it now reports one."""
+    import json
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+    args, kwargs = request()
+    env = {**os.environ, 'DECOMP_HOME': str(tmp_path), 'DECOMP_PROPOSAL_WORKER': '1'}
+    script = Path(deep_proposals.__file__).with_name('deep_proposal_worker.py')
+    done = subprocess.run([sys.executable, str(script)], input=json.dumps([args, kwargs]).encode() + b'\n', env=env,
+                          capture_output=True, timeout=60)
+    assert done.returncode == 0 and json.loads(done.stdout)['candidates']
+    reports = list((tmp_path / '.decomp' / 'logs').glob('thread-cpu-proposal-*.json'))
+    if not reports:
+        pytest.skip('no per-thread CPU reader on this system')
+    counts = json.loads(reports[0].read_text())['counts']
+    assert counts['requests'] == 1 and counts['proposal_requests'] == 1 and counts['candidates'] >= 1
+    assert counts['request_bytes'] > 0 and counts['result_bytes'] > counts['request_bytes']
+    assert all(counts[name] >= 0 for name in ('decode_us', 'generate_us', 'encode_us', 'write_us'))
+    assert counts['generate_us'] > 0
