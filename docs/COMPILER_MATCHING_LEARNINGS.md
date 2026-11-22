@@ -16882,3 +16882,42 @@ match touched.
 
 decomp-repair 0.5.572: `statement_group_order`, `counter_derived_offset_unwrapped`, and `retry_goto_scope` for any
 constant step.
+
+## A defaults reset: where the repeated literal's stores sit (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, an N64 game, one 145-instruction function, 210 -> 0)
+
+Evidence level: one function (matched, recorded 0 by the app's judge) plus a controlled check: the new family run on
+the saved 210 source reaches an exact child, scored with `fast_judge.py`. The compiler explanations are hypotheses;
+only the scores are measured.
+
+The function ends in one `do { u8 reset = 0xFF; ... } while (0)` run of 31 `global = literal;` stores (a defaults
+reset). m2c's source differed from the target by one `lui/sb` pair: it stored `8` to one global twice (an early
+store and a later one, other stores between; both are emitted, cse deletes a duplicate store only when the two are
+adjacent: a probe of `a = 8; b = 0; a = 8;` emits three stores, `a = 8; a = 8;` one) while the target has only the
+later one but loads the `8` early (`li $a0, 8` right after `li $v0, 0x60`) and keeps it in `$a0` until its two
+stores in the middle of the block.
+
+| step | what changed | score |
+| --- | --- | --- |
+| saved best | early and later store of `8` to one global | 210 |
+| drop the early store | one store of `8` left per global | 1350 (the `8` now takes `$v0`, its stores are scheduled up beside each other) |
+| move the one `0x80` store earlier | the `$v0` constant overlaps the `8`'s span | 415 |
+| a hill climb of single statement moves, then random restarts | | 250, 120, 60 |
+| the three one-shot stores (`0xEF`, `0x40`, `0x10`) moved from the top of the run to between the two remaining `8` stores, in that order | the target's `li` order | 0 (other orders of the three: 60 or 90) |
+
+- Hypothesis (local-alloc / sched2, not confirmed in the compiler source): the second scheduler leaves stores in source
+  order except that stores fed by a chain of `$v0` loads rise to the top of the block; a literal stored twice is a
+  pseudo that lives from its first to its last store and takes the first register free over that span. It lands in
+  `$a0` (as the target's does) only when a one-shot temporary (`$v0`) is stored *between* its stores, which is why
+  moving the one-shot stores into the span, not the order of the repeated stores, fixes the registers, and why the
+  early `li` of the target needs no early store.
+- The step list is what the permuter lacked: `paired_statement_moves` samples two moves and `statement_group_orders`
+  windows of two to four neighbours, and a one-move hill climb stood still at 210 (single moves 1350 -> 415 only after
+  the duplicate was gone); none of the 233 children the existing families produce from the saved best scored below 210.
+  `constant_store_bracket` offers the drop-and-move chain as one child (and the parts), `duplicate_constant_store_drop`
+  the drop alone, only inside a block of `global = literal;` / `global = held_local;` statements (no call, read or
+  aliasing store crosses another), and on the saved 210 source one child is exact.
+- Failed here: a local `u8 eight = 8;` used by both stores (cse folds it back, 1350); moving the repeated stores to
+  every pair of positions with the one-shot stores left where they were (410 at best); putting one of the three
+  one-shot stores alone, or two of them, inside the span (210 - 270; all three in the target's order: 0).
+
+decomp-repair 0.5.576: `constant_store_bracket`, `duplicate_constant_store_drop`.
