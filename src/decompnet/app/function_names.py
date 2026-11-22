@@ -57,4 +57,6 @@ def canonical_source(fn, source: str) -> str:
         aliases.add(f"func_{fn['vram']:08X}")
     aliases.discard(None)
     aliases.discard(fn["name"])
+    if not any(alias in source for alias in aliases):
+        return source
     return rename_identifiers(source, dict.fromkeys(aliases, fn["name"]))

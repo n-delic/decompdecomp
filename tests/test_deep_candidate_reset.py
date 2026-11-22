@@ -69,3 +69,39 @@ def test_sweep_keeps_input_reset_pending_without_completing(sweep, monkeypatch):
     rows = net.store.all('SELECT state,completed_at,error FROM deep_permutation_passes')
     assert rows and all(row['state'] == 'pending' and row['completed_at'] is None for row in rows)
     assert all('Saved candidate changed' in row['error'] for row in rows)
+
+
+def test_local_repairs_parse_saved_source_under_the_current_function_name(monkeypatch):
+    net = setup(monkeypatch)
+    old = 'int old(void) { /* old */ return old(); }'
+    current = 'int f(void) { /* old */ return f(); }'
+    with net.store.tx() as db:
+        db.execute('UPDATE functions SET best_source=?,meta=?',
+                   (old, '{"naming":{"previous_name":"old"}}'))
+    fn = net.function()
+    search = deep_permuter.Search(net, 1, 20, Log(), fn)
+    monkeypatch.setattr(search, '_repair_preflight', lambda *args: 40)
+    seen = []
+
+    def variants(source, name, *args, **kwargs):
+        seen.append((source, name))
+        return []
+
+    monkeypatch.setattr(draft_repairs, 'variants', variants)
+    assert search.local_repairs(AGENT, net.project_row('game'), fn, 40, None, max_trials=1) == (40, current)
+    assert seen and all(item == (current, 'f') for item in seen)
+    assert net.function()['best_source'] == old
+
+
+def test_renamed_candidate_uses_its_measured_diff_only_in_the_same_scope(monkeypatch):
+    net = setup(monkeypatch)
+    fn = dict(net.function(), vram=0x80000000)
+    search = deep_permuter.Search(net, 1, 20, Log(), fn)
+    old = 'int func_80000000(void) { return 1; }'
+    current = 'int f(void) { return 1; }'
+    search.winner_source = old
+    search.winner_diff = ([], '')
+    search.winner_scope = deep_permuter.agent_tokens.target_scope(net, dict(fn, best_source=old), '')
+    assert search.measured_winner(fn, current)
+    assert not search.measured_winner(fn, current.replace('1', '2'))
+    assert not search.measured_winner(dict(fn, target=b'changed'), current)
