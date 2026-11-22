@@ -144,5 +144,9 @@ def replacement(other, donor, target_name, invocation, path, cache=None):
     from .source_symbol_recovery import rename
 
     start = text.rfind('\n', 0, span[0]) + 1
-    aliases = {source_name: target_name}
+    # A constructor must keep its class name; renaming that identifier also
+    # renames the class and still emits a compiler-generated constructor symbol.
+    signature = csource._blank(text[slice(*span)]).partition('{')[0]
+    constructor = re.search(r'\b([A-Za-z_]\w*)::\1\s*\(', signature)
+    aliases = {} if constructor else {source_name: target_name}
     return rename(text[start:], aliases), DONOR_UNIT_HEADER + rename(text[:start], aliases)

@@ -197,6 +197,27 @@ def _defined_data_fields(elf, raw, target, expected, section):
     return verified
 
 
+def _marker_value(elf, symbol):
+    """Read one global pointer marker and its single symbol relocation."""
+    shndx, start = symbol['st_shndx'], symbol['st_value']
+    if (not isinstance(shndx, int) or start % 4 or symbol['st_size'] != 4
+            or symbol['st_info']['bind'] != 'STB_GLOBAL' or symbol['st_info']['type'] != 'STT_OBJECT'):
+        return None
+    data = elf.get_section(shndx)
+    if data['sh_type'] != 'SHT_PROGBITS' or data['sh_flags'] & 3 != 3 or start + 4 > data['sh_size']:
+        return None
+    offset = int.from_bytes(data.data()[start:start + 4], 'big', signed=True)
+    refs = [(r, elf.get_section(table['sh_link'])) for table in elf.iter_sections()
+            if isinstance(table, RelocationSection) and table['sh_info'] == shndx
+            for r in table.iter_relocations() if start <= r['r_offset'] < start + 4]
+    if len(refs) != 1:
+        return None
+    reloc, symbols = refs[0]
+    if reloc['r_offset'] != start or reloc['r_info_type'] != 2 or reloc.is_RELA():
+        return None
+    return symbols.get_symbol(reloc['r_info_sym']), offset
+
+
 def _explicit_bindings(elf):
     """Read source-declared aliases for unresolved donor symbols.
 
@@ -212,33 +233,47 @@ def _explicit_bindings(elf):
         match = _EXPLICIT_BINDING.fullmatch(symbol.name)
         if not match:
             continue
-        shndx, start = symbol['st_shndx'], symbol['st_value']
-        if (not isinstance(shndx, int) or start % 4 or symbol['st_size'] != 4
-                or symbol['st_info']['bind'] != 'STB_GLOBAL' or symbol['st_info']['type'] != 'STT_OBJECT'):
+        value = _marker_value(elf, symbol)
+        if value is None:
             markers[match[1]].append(None)
             continue
-        data = elf.get_section(shndx)
-        if (data['sh_type'] != 'SHT_PROGBITS' or data['sh_flags'] & 3 != 3
-                or start + 4 > data['sh_size']):
-            markers[match[1]].append(None)
-            continue
-        offset = int.from_bytes(data.data()[start:start + 4], 'big', signed=True)
-        refs = [(r, elf.get_section(table['sh_link'])) for table in elf.iter_sections()
-                if isinstance(table, RelocationSection) and table['sh_info'] == shndx
-                for r in table.iter_relocations() if start <= r['r_offset'] < start + 4]
-        if len(refs) != 1:
-            markers[match[1]].append(None)
-            continue
-        reloc, symbols = refs[0]
-        binding = symbols.get_symbol(reloc['r_info_sym'])
+        binding, offset = value
         distinct = _REFERENCE.fullmatch(binding.name)
         binding_name = distinct[1] if distinct else binding.name
-        if (reloc['r_offset'] != start or reloc['r_info_type'] != 2 or reloc.is_RELA()
-                or binding['st_shndx'] != 'SHN_UNDEF' or not _BINDING.fullmatch(binding_name)):
+        if binding['st_shndx'] != 'SHN_UNDEF' or not _BINDING.fullmatch(binding_name):
             markers[match[1]].append(None)
             continue
         markers[match[1]].append((binding_name, offset))
     return {name: values[0] for name, values in markers.items() if len(values) == 1 and values[0] is not None}
+
+
+def _constructor_entry(elf):
+    """Resolve an explicit entry marker to exactly one defined constructor."""
+    symtab = elf.get_section_by_name('.symtab')
+    if symtab is None:
+        return None
+    symbols = list(symtab.iter_symbols())
+    markers = [symbol for symbol in symbols if re.fullmatch(r'decomp_overlay_entry(?:_[A-Za-z_]\w*)?', symbol.name)]
+    if len(markers) != 1 or not (value := _marker_value(elf, markers[0])):
+        return None
+    reference, offset = value
+    if (offset or reference['st_info']['bind'] != 'STB_GLOBAL'
+            or not re.fullmatch(r'__ct__[A-Za-z0-9_]+', reference.name)):
+        return None
+    definitions = [symbol for symbol in symbols if symbol.name == reference.name
+                   and symbol['st_info']['type'] == 'STT_FUNC' and symbol['st_info']['bind'] == 'STB_GLOBAL'
+                   and isinstance(symbol['st_shndx'], int)
+                   and symbol['st_size'] > 0]
+    if len(definitions) != 1:
+        return None
+    symbol, = definitions
+    if (reference['st_shndx'] != 'SHN_UNDEF'
+            and (reference['st_shndx'], reference['st_value']) != (symbol['st_shndx'], symbol['st_value'])):
+        return None
+    section = elf.get_section(symbol['st_shndx'])
+    if not section['sh_flags'] & 4 or symbol['st_value'] + symbol['st_size'] > section['sh_size']:
+        return None
+    return symbol['st_shndx'], symbol['st_value'], symbol['st_size']
 
 
 def _explicit_offset_fields(raw, target, expected, explicit, section):
@@ -284,7 +319,7 @@ def link(obj, name, target, info):
         elf = candidate_elf(obj, ELFFile)
         if elf.little_endian or elf['e_machine'] != 'EM_MIPS':
             return LinkResult(None, False, ['Overlay text requires a big-endian MIPS object.'])
-        entry = _function_symbols(elf).get(name)
+        entry = _function_symbols(elf).get(name) or _constructor_entry(elf)
         if not entry:
             return LinkResult(None, False, [f'The object has no function named {name}.'])
         shndx, start, size = entry

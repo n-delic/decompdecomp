@@ -381,6 +381,8 @@ def verify(net, proj, fn, other, donor, names, settings, agent, job, cache, *, r
 def _try(net, proj, private, fn, source, header, agent, job, *, compiled_literals=False):
     """Offer one reduced translation unit and one relocation-based retry when the object supports it."""
     reduced = rebound = localized = literal_changed = methods_rebound = explicit_rebound = False
+    constructor_rebound = False
+    source_name = fn['name']
     globalized_names = None
     data_bound = False
     evidence = exact_match_inputs.capture(net, private, fn, {'header': header}, source)
@@ -398,6 +400,22 @@ def _try(net, proj, private, fn, source, header, agent, job, *, compiled_literal
             reduced = True
             continue
         candidate, exact, problems = net._evaluate(fn, proj, result.obj)
+        # The N64 overlay linker and cartridge exporter understand this entry
+        # marker. Main-ROM and owned-build exports still need their own adapter.
+        if (candidate is None and not constructor_rebound and donor_unit.is_unit(header, proj)
+                and net.console(proj).export_overlay(net._rom_target(fn)) is not None):
+            from . import overlay_donor_aliases
+
+            def probe_constructor(symbol, obj=result.obj):
+                trial_fn = {**dict(fn), 'name': symbol}
+                return net._evaluate(trial_fn, proj, obj)[0]
+
+            rewritten = overlay_donor_aliases.constructor_entry(
+                source, header, result.obj, fn['name'], net._target_obj(fn, proj), probe_constructor)
+            if rewritten:
+                source, header, source_name = rewritten
+                constructor_rebound = True
+                continue
         if candidate is not None and exact is True:
             if job.stop.is_set():
                 break
@@ -417,7 +435,7 @@ def _try(net, proj, private, fn, source, header, agent, job, *, compiled_literal
         if compiled_literals and not literal_changed and candidate is not None:
             from . import imported_literals
 
-            changed = imported_literals.adapt_compiled(source, fn['name'], candidate, net._target_obj(fn, proj))
+            changed = imported_literals.adapt_compiled(source, source_name, candidate, net._target_obj(fn, proj))
             if changed is not None:
                 source = changed
                 literal_changed = True
@@ -452,11 +470,11 @@ def _try(net, proj, private, fn, source, header, agent, job, *, compiled_literal
                     return donor_relocations.separate_overlay_references(net.console(proj), aliases)
 
                 rebound_data = overlay_donor_aliases.offset_retry(
-                    source, header, fn['name'], candidate, expected, separate=separate)
+                    source, header, source_name, candidate, expected, separate=separate)
                 aliases = source_symbol_recovery.relocation_aliases(candidate, expected)
                 if rebound_data:
                     variants = [('overlay-data-offsets', *rebound_data)]
-                elif not localized and (local := overlay_donor_aliases.local_functions(
+                elif source_name == fn['name'] and not localized and (local := overlay_donor_aliases.local_functions(
                         source, header, fn['name'], result.obj, candidate, expected)):
                     variants = [('overlay-local-functions', *local)]
                 elif aliases:
@@ -469,7 +487,7 @@ def _try(net, proj, private, fn, source, header, agent, job, *, compiled_literal
                         return net._evaluate(fn, proj, built.obj)[0] if built.ok else None
 
                     rewritten = overlay_donor_aliases.retry(
-                        source, header, fn['name'], candidate, expected, measure, job.stop, separate=separate)
+                        source, header, source_name, candidate, expected, measure, job.stop, separate=separate)
                     if rewritten:
                         variants = [('overlay-call-sites', *rewritten)]
             else:
@@ -492,7 +510,7 @@ def _try(net, proj, private, fn, source, header, agent, job, *, compiled_literal
                 from . import overlay_donor_aliases
 
                 rewritten = overlay_donor_aliases.cpp_methods(
-                    source, header, fn['name'], candidate, net._target_obj(fn, proj),
+                    source, header, source_name, candidate, net._target_obj(fn, proj),
                     console.separate_overlay_reference)
                 if rewritten:
                     variants = [('overlay-cpp-methods', *rewritten)]

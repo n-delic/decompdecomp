@@ -871,6 +871,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Struct layouts from loads and stores (`guess_struct`) | ✓ | ✓ | ✓ | — | — | ✓ | — | — | ✓ | ✓ | — | — |
 | The game's own debug symbols: names, types, prototypes | — | — | ✓ symbol table, STABS, DWARF 1; the compiler of each object file | names (types and prototypes: —) | — | ✓ symbol table, DWARF 1 | — | — | ✓ PDB (Visual C++ 6.0's PDB 2.0, MSF 7.00), linker map, COFF symbols (64-bit games': untested) | — (an XBE has none) | — | — |
 | Twins across your games | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | ✓ (between project-mode games; not run on two GameCube games yet) | ✓ (between PC projects) | ✓ (as PC's; not run on two Xbox games yet) | ✓ (between project-mode games; not run on two DS games yet) | — |
+| Cross-game C++ constructor entry replay | ✓ N64 overlays; — main ROM | — | — | — | — | — | — | — | — | — | — | — owned builds planned |
 | Find imported donor code inside a merged function during manual search | ✓ MIPS ROM target | ✓ shared MIPS path | ✓ shared MIPS path | ✓ shared MIPS path | — separate owned build | ✓ shared MIPS path | — ARM/Thumb boundary reader planned | — separate owned build | — separate owned build | — separate owned build | — separate owned build | ✓ verified ELF donor to MIPS ROM |
 | Preview and add exact same-ROM donor code | ✓ mapped raw and USO text | — image adapter planned | — image adapter planned | — image adapter planned | — separate build | — image adapter planned | — image adapter planned | — separate build | — separate build | — separate build | — separate build | ✓ ELF donor for supported ROM destinations |
 | Named Claude accounts, assigned per helper; recorded usage per account | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -1142,6 +1143,9 @@ objects by instruction sequence, align their relocation names, and try the donor
 profiles. The destination judge verifies the resulting C.
 Project-mode similar-transfer support is planned: align target-object relocations and adapt file-local declarations before trying
 similar C through objdiff. Other processors need an instruction reader for this search.
+
+Cross-game C++ constructor entry replay currently covers N64 overlays with IDO. Main-ROM linking and owned-build
+projects need their own verified constructor-entry selection and export handling before this retry can reach them.
 
 The Deep Permuter's two-move pass (`app/paired_moves.py`, judged through `app/judge_pool.py`: a pool of `decomp
 judge-worker` processes) runs for ROM projects, whose functions carry target bytes the worker judges exactly. Project

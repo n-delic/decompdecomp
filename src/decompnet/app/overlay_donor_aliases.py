@@ -220,6 +220,42 @@ def explicit_symbol_bindings(source, header, candidate, target, separate):
     return source, header + '\n' + linkage + '\n'.join(additions) + end_linkage
 
 
+def constructor_entry(source, header, obj, name, target, probe):
+    """Identify one emitted C++ constructor as the target entry by its instructions."""
+    from elftools.common.exceptions import ELFError
+    from elftools.elf.elffile import ELFFile
+
+    from ..candidate_work import elf as candidate_elf
+    from ..elfobj import _function_symbols
+
+    if target.arch != 'mips' or not re.fullmatch(r'[A-Za-z_]\w*', name):
+        return None
+    constructors = re.findall(r'\b([A-Za-z_]\w*)::\1\s*\([^;{}]*\)\s*\{', csource._blank(source))
+    if len(constructors) != 1:
+        return None
+    owner, = constructors
+    prefix = '__ct__' + str(len(owner)) + owner + 'F'
+    marker = 'decomp_overlay_entry'
+    if re.search(r'\b' + re.escape(marker) + r'\b', csource._blank(source + header)):
+        return None
+    try:
+        functions = _function_symbols(candidate_elf(obj, ELFFile))
+    except (ELFError, ValueError, TypeError, IndexError):
+        return None
+    eligible = []
+    for symbol, (_, _, size) in functions.items():
+        if not symbol.startswith(prefix) or size != len(target.code) or not re.fullmatch(r'[A-Za-z_]\w*', symbol):
+            continue
+        candidate = probe(symbol)
+        if comparable_overlay_code(candidate, target, masked=_data_fields(target)):
+            eligible.append(symbol)
+    if len(eligible) != 1:
+        return None
+    symbol, = eligible
+    addition = f'extern "C" unsigned char {symbol}[];\nvoid *{marker} = {symbol};\n'
+    return source, header + '\n' + addition, f'{owner}::{owner}'
+
+
 def retry(source, header, name, candidate, target, measure, stop, *, separate=None):
     """Return one rewrite, supported by compiler probes, for the ordinary exact judge."""
     if not comparable_overlay_code(candidate, target):
