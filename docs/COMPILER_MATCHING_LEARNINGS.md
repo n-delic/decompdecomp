@@ -15691,3 +15691,13 @@ kept all three jump tables and passed uninitialized diagnostics.
 ### KMC GCC 2.7.2 conditional flag owner
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` retained a global object pointer across a conditional flag update and shared store. Its machine draft reloaded the pointer before the store. Loading the owner separately inside each path and reusing it at the shared store changed the diff score from 240 to an exact linked match; hoisting the load above the branch instead scored 340. This is one saved example, not a controlled cross-compiler experiment. The proposal checks the target relocation against the source's base plus displacement and requires the measured control-flow and instruction patterns.
+
+### Sink a common global reset past a local assignment
+
+In one private N64 example built with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, both branch arms reset
+the same global before assigning a literal to a local loop index.
+Moving the reset to their join improved the linked score from 460
+to 390. The text remains inexact. The proposal requires flat arms,
+an ordinary declared global, a distinct scalar local and no macro
+or control transfer in the arms.
