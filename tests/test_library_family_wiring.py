@@ -93,3 +93,49 @@ s32 pick(void *actor, Rec *recs, s32 count)
     draft_repairs.variants(source, 'pick', 'mips', labels=labels, limit=None)
     assert 'crossing_scope_unwrap' in set(labels.values())
     assert 'crossing_scope_unwrap' in draft_repairs.AGENT_FAMILIES
+
+
+def test_range_assignment_switch_and_scalar_reload_volatile_are_proposed_and_known_to_agents():
+    """A KMC gcc 2.7.2 menu function went 30 -> 0 by collapsing a duplicated store, writing m2c's range-test tree as the
+    switch and declaring the stored-then-read flag volatile; drafts and the beam offer the last two."""
+    source = """\
+extern s32 *gState;
+extern u16 gAction;
+void f(void)
+{
+  s32 state;
+  s32 var;
+  state = *gState;
+  if (state != 0x1A)
+  {
+    if (0x1B > ((s32) state))
+    {
+      var = 3;
+      if (state != 0x19)
+      {
+        var = 1;
+      }
+    }
+    else
+    {
+      var = 1;
+      if (state == 0x1B)
+      {
+        var = 3;
+      }
+    }
+  }
+  else
+  {
+    var = 2;
+  }
+  gAction = var;
+  g(gAction);
+}
+"""
+    labels = {}
+    out = draft_repairs.variants(source, 'f', 'mips', labels=labels, limit=None)
+    assert {'range_assignment_switch', 'scalar_reload_volatile'} <= set(labels.values())
+    assert any('switch (state)' in text and 'case 0x19:' in text for text in out)
+    assert any('extern volatile u16 gAction;' in text for text in out)
+    assert {'range_assignment_switch', 'scalar_reload_volatile'} <= set(draft_repairs.AGENT_FAMILIES)
