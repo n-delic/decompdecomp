@@ -1,5 +1,19 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: recover both versions of a stack output component
+
+Two calls in a large N64 function write the same stack vector.
+The draft subtracted its second Y component twice. The target
+loads the component after each call and subtracts each from the
+same saved accumulator. Restoring the two subtractions where the
+values are still available improved the linked score from 32,007
+to 31,267 under `-G0 -mips3 -mgp32 -mfp32 -O2`. Carrying the prior
+zero-valued accumulator into the first subtraction scored 31,258.
+Moving the X update earlier by itself scored 31,384, the Z update
+scored 31,818, and moving both scored 33,389. These are measurements
+on one function. Controlled tests require matching stack offsets
+and matching saved accumulator transfers in both target windows.
+
 ### KMC GCC 2.7.2: reuse saved floating-point accumulator storage
 
 A large N64 draft assigned two block-local float temporaries and
