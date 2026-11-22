@@ -1624,3 +1624,13 @@ def test_route_reciprocal_named_spill_stores():
     assert ('spill_declaration_order', expected) in proposals(source, 'f', '', 'mips', KMC, rows, '')
     assert all(label != 'spill_declaration_order' for label, _ in
                proposals(source, 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_be16_cursor_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_be16_cursor, 'variants',
+                        lambda text, name, header, diff: [('be16_cursor_fixture', text)])
+    assert 'be16_cursor_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'be16_cursor_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
