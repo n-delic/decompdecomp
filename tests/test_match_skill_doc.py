@@ -9,7 +9,8 @@ SKILL = ROOT / ".claude" / "skills" / "match-function"
 def test_every_script_the_skill_names_exists():
     text = (SKILL / "SKILL.md").read_text()
     named = set(re.findall(r"scripts/([a-z_]+\.py)", text)) | {"setup.py", "fast_judge.py", "passes.py", "prove_chain.py",
-                                                              "families.py", "judge.py", "compile_snippet.py"}
+                                                              "families.py", "judge.py", "compile_snippet.py",
+                                                              "regions.py"}
     assert named and all((SKILL / "scripts" / name).exists() for name in named)
     assert (ROOT / "tools" / "learnings.py").exists()
 
@@ -34,3 +35,8 @@ def test_the_skill_defaults_to_a_near_match_claim_and_keeps_random_available():
 def test_the_skill_hands_off_only_by_the_clock():
     text = (SKILL / "SKILL.md").read_text()
     assert "clock.py" in text and "hand-off allowed" in text and "45 minutes" in text and "handed off" in text
+
+
+def test_the_skill_has_a_large_function_method():
+    text = (SKILL / "SKILL.md").read_text()
+    assert "regions.py" in text and "Fix the frame first" in text and "region by region" in text

@@ -77,7 +77,7 @@ through MCP first when you learned something.
 The other scripts, run with that venv's python (`$UV_PROJECT_ENVIRONMENT/bin/python`): `fast_judge.py FILE.c --slug S
 --function F [--diff [--rows N|all]]` (score, and the app's differing rows: 60 by default, then a "... N more rows" line), `passes.py FILE.c --slug S --function F` (allocation
 priorities, register preferences, scheduler orders), `prove_chain.py --slug S --function F --families a,b|all` (greedy
-chain of library families, scored), `families.py [words]` (the library's families, one line each),
+chain of library families, scored), `families.py [words]` (the library's families, one line each), `regions.py` (a large function region by region, step 2),
 `tools/learnings.py` (evidence entries).
 
 ## Connect through the Rust MCP gateway
@@ -123,7 +123,7 @@ The gateway deduplicates pending calls by connection, tool and arguments.
 - **The claim is renewed at least every 10 minutes** (`setup.py` does it every 5; by hand, `claim_function(function=FUNC)`
   again). A lapsed claim lets other agents take the function.
 - **An enormous function** (well over ~1000 instructions, or a best in the thousands with no near-miss rows) may be
-  released once and another claimed.
+  released once and another claimed. If you keep it, work it with the large-function method (step 2).
 - **A function given**: call `claim_function(function=FUNC, fallback=false)` when the tool exposes
   `fallback`. If someone else holds it, report the conflict and continue in the isolated judge.
   Older app versions may assign a different function when a named claim fails. If that happens,
@@ -234,6 +234,19 @@ wrongly: a 1000 → 680 local improvement was 1090 → 1030 in the app. Confirm 
 Before searching, reproduce the live baseline with the same source, effective compiler, flags and
 project context. Resolve a score discrepancy before ranking variants. Measure children against the
 seed they came from and keep the earlier control so the effect of a questionable edit stays visible.
+
+### Large functions (over ~1000 instructions): one region at a time
+
+`regions.py FILE.c --slug S --function F [--size 40] [--show N]` splits the diff at the target's basic blocks into
+regions of at least 40 instructions, with each region's differing rows by kind and an estimated score, marks the
+regions that already match and the first one to fix; `--show N` prints one region's rows.
+1. **Fix the frame first.** A frame size that differs (`addiu $sp` and every `s` row) shifts every region; get region
+   0's prologue and the stack slots right (locals' count, size and order, spill slots) before anything else.
+2. **Then region by region from the top**: the first region that still differs, until it reads "match", then the
+   next. A fix above shifts registers and order below it, so don't polish a later region while an earlier one
+   differs; re-run `regions.py` after each accepted change and check that no matched region broke.
+3. **Prove each region's family**: when an edit makes a region match, say which library family (or which missing
+   one) does it (`prove_chain.py` on the before/after, step 4), so the large function's fixes become permuter steps.
 
 ## 3. What has worked (extend this list when you learn more; it is the permuter's to-do list)
 
