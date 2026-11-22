@@ -130,12 +130,19 @@ def replacement(other, donor, target_name, invocation, path, cache=None):
         return None
     entry = (donor['meta'] and json.loads(donor['meta']).get('symbol')) or donor['name']
     if entry not in spans:
-        spans[entry] = csource.find(text, entry)
-    span = spans[entry]
+        spans[entry] = (entry, csource.find(text, entry))
+        if spans[entry][1] is None and path.suffix == '.cpp':
+            clean = csource._blank(text)
+            methods = [(match[1], match[2]) for match in re.finditer(
+                r'\b([A-Za-z_]\w*)::([A-Za-z_]\w*)\s*\([^;{}]*\)\s*\{', clean)]
+            if len(methods) == 1:
+                owner, method = methods[0]
+                spans[entry] = (method, csource.find(text, f'{owner}::{method}'))
+    source_name, span = spans[entry]
     if not span or csource.is_stub(text[slice(*span)]):
         return None
     from .source_symbol_recovery import rename
 
     start = text.rfind('\n', 0, span[0]) + 1
-    aliases = {entry: target_name}
+    aliases = {source_name: target_name}
     return rename(text[start:], aliases), DONOR_UNIT_HEADER + rename(text[:start], aliases)
