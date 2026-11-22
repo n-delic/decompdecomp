@@ -15461,3 +15461,18 @@ A saved N64 command builder compiled with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp3
 ### Delay a local flag value into its guarded branch
 
 A saved N64 flag update built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1` computed an OR mask before a byte-field guard, while the target placed it in the branch delay slot. Moving the local computation to the beginning of the branch reproduced the linked target exactly (score 380 to 0). Evidence: one saved example and synthetic source, instruction and routing tests. The candidate requires the measured guard and mask sequence, and the local must have no uses after the branch; the byte judge verifies the result.
+
+### Reuse a saved float for the sign of a squared sample
+
+In a private linked N64 function built with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, two signed squares copied
+the returned sample before overwriting it. The compiler placed the sign
+snapshot in a scratch float register where the target used a saved
+register. A scaled sample of the same function with different selectors
+confirmed an existing saved local. Reusing that local for the two sign
+snapshots corrected six register operands and moved the score from
+3,390 to 3,360, with identical instruction counts, all three jump tables
+and no uninitialized warnings. The individual edits scored 3,370 and
+3,380. Other holder choices were neutral or only recovered two operands.
+The Deep Permuter requires linked witnesses, compatible selectors and
+a dead, unescaped local before proposing the combined rewrite.
