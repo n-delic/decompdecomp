@@ -46,3 +46,23 @@ def test_the_family_is_proposed_labelled_and_known(family, source, name):
     draft_repairs.variants(source, name, 'mips', labels=labels, limit=None)
     assert family in set(labels.values())
     assert family in draft_repairs.AGENT_FAMILIES
+
+
+def test_crossing_scope_unwrap_is_offered_and_known():
+    from decomprepair import crossing_scope_unwrap
+    source = """\
+void k(int *p, int n) {
+    int i;
+    i = 0;
+    do {
+    scan:
+        p[i] = n;
+        i++;
+        if (i < n) goto scan;
+    } while (0);
+}
+"""
+    children = crossing_scope_unwrap.variants(source, 'k')
+    result = draft_repairs.variants(source, 'k', 'mips', labels={}, limit=None)
+    assert children and all(text in result for _, text in children)
+    assert 'crossing_scope_unwrap' in draft_repairs.AGENT_FAMILIES

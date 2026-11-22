@@ -854,7 +854,7 @@ def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels
                    argument_weight_scope, staged_sum_scope,
                    loop_exit_value_block, argument_loop_split, ternary_clamp_split, member_alias_pair,
                    volatile_global_plain_repairs, spill_shape_repairs,
-                   clamp_arm_stores, adjacent_array_store_order, arm_increment_temp, global_field_load_stage, preheader_run_order,
+                   clamp_arm_stores, crossing_scope_unwrap, adjacent_array_store_order, arm_increment_temp, global_field_load_stage, preheader_run_order,
                    guard_copy_cse_barrier, constant_store_bracket,
                    counter_derived_offset, counter_append_scope_repairs, loop_limit_reassign_repairs,
                    # (a float constant loop.c hoists out of a loop, kept where it is used by one shared local assigned in place:
