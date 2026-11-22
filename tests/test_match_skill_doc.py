@@ -45,3 +45,8 @@ def test_the_skill_has_a_large_function_method():
 def test_the_skill_names_the_grid_tool_and_its_marker_syntax():
     text = (SKILL / "SKILL.md").read_text()
     assert "grid.py" in text and "/*permute{*/" in text and "/*{*/" in text and "--count" in text
+
+
+def test_the_skill_names_the_look_alike_tool_in_orientation():
+    text = (SKILL / "SKILL.md").read_text()
+    assert "similar.py SLUG FUNC" in text and "find_similar" in text and "--sources" in text

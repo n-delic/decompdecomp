@@ -263,6 +263,36 @@ def try_candidate(holder, path, function=""):
     return 0
 
 
+def session_gateway(slug="", holder=""):
+    """(a started Gateway, the session's connection info) for a read or a write made as a session of this project: the
+    named `holder`'s, or the only session under TMP whose project is `slug`. Several candidates are never guessed
+    between (a session's token is its owner's): name one with --holder."""
+    if holder:
+        roots = [session_dir(holder_name(holder))]
+    else:
+        roots = sorted(path.parent for path in TMP.glob("dd-*/connection.json"))
+    found = []
+    for root in roots:
+        try:
+            info = json.loads((root / "connection.json").read_text())
+        except (OSError, ValueError):
+            continue
+        if not slug or info.get("slug") == slug:
+            found.append(info)
+    if not found:
+        sys.exit(f"no setup.py session for {slug or 'any project'}{f' ({holder})' if holder else ''}: start one with "
+                 f"`setup.py SLUG [FUNC]`; the app's MCP tools need that connection")
+    if len(found) > 1:
+        sys.exit("several sessions match (" + ", ".join(i.get("holder", "?") for i in found) + "): pass --holder NAME")
+    info = found[0]
+    gateway = Gateway(info["gateway_url"], info["token"])
+    try:
+        gateway.start()
+    except McpError as error:
+        sys.exit(f"the session's connection isn't answering: {error}")
+    return gateway, info
+
+
 def alive(pid):
     """Is `pid` still our renewal? (a recycled pid must never be signalled)"""
     try:

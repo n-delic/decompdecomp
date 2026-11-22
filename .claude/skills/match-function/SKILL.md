@@ -83,7 +83,7 @@ in a session (its claim belongs to the connection, so it answers HTTP 400). `jud
 The other scripts, run with that venv's python (`$UV_PROJECT_ENVIRONMENT/bin/python`): `fast_judge.py FILE.c --slug S
 --function F [--diff [--rows N|all]]` (score, and the app's differing rows: 60 by default, then a "... N more rows" line; `--rows all` shows every row; a session's worktree off an older origin/main may lack `--rows`: `git pull --rebase` there and `setup.py sync <holder>`), `passes.py FILE.c --slug S --function F` (allocation
 priorities, register preferences, scheduler orders), `prove_chain.py --slug S --function F --families a,b|all` (greedy
-chain of library families, scored), `families.py [words]` (the library's families, one line each), `grid.py FILE.c --slug S --function F` (every combination of marked alternatives and statement orders, scored; step 2), `regions.py` (a large function region by region, step 2),
+chain of library families, scored), `families.py [words]` (the library's families, one line each), `similar.py SLUG FUNC` (matched look-alikes and their saved C; step 1), `grid.py FILE.c --slug S --function F` (every combination of marked alternatives and statement orders, scored; step 2), `regions.py` (a large function region by region, step 2),
 `tools/learnings.py` (evidence entries).
 
 ## Connect through the Rust MCP gateway
@@ -187,6 +187,9 @@ and write it to a scratch file for local probes. Use `get_assembly` for the targ
   both. Earlier agents' frame, `volatile` and scratch-array workarounds in saved bests are often worth removing.
 - Read `best.c` and the **diff of the best source**, not the score. Group mismatches: register choice, instruction
   order, missing/extra instructions, branch shape, stack frame. Say which group dominates.
+- **Look at matched look-alikes first**: `similar.py SLUG FUNC` (a session's python) lists matched functions with
+  similar instruction patterns (the app's `find_similar`) with their similarity and prints the saved C of the best
+  three (`--sources N`, `--out DIR` writes files, `--all` adds unmatched ones). Their spelling is a lead to adapt; judge it.
 - Read the function's notes and history with the corresponding `get_function` sections. Earlier agents' dead ends are
   evidence; repeat none of them.
 - Keep a newly improved candidate as a private search seed even if it contains a suspicious read.
