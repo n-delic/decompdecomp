@@ -1951,3 +1951,14 @@ def test_ido_callback_offset_routes_to_ido_71(monkeypatch):
     assert 'ido_callback_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-7.1', rows, ''))
     assert 'ido_callback_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-5.3', rows, ''))
     assert 'ido_callback_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+
+
+def test_saved_global_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'nop', 'nop')]
+    monkeypatch.setattr(diff_gated_repairs.measured_saved_global, 'variants',
+                        lambda text, name, header, diff, resolve=None: [('saved_global_fixture', text)])
+    assert 'saved_global_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'saved_global_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+    assert 'saved_global_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-7.1', rows, ''))
