@@ -2503,3 +2503,14 @@ def test_guarded_zero_routes_to_kmc(monkeypatch):
     assert 'guarded_zero_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'guarded_zero_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
     assert 'guarded_zero_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-7.1', rows, ''))
+
+
+def test_fixed_blend_routes_only_to_kmc_mips(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'mult $v0, $a2', 'mult $v1, $a2')]
+    monkeypatch.setattr(diff_gated_repairs.fixed_blend_staging, 'variants',
+                        lambda text, name, diff, *, header: [('fixed_blend_fixture', text)])
+    assert 'fixed_blend_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'fixed_blend_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+    assert not proposals('void f(void) {}', 'f', '', 'arm', KMC, rows, '')
