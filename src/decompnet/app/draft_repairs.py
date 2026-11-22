@@ -22,6 +22,7 @@ from decomprepair import (
     argument_loop_split,
     argument_spill_tail,
     argument_weight_scope,
+    arm_argument_copy_join,
     arm_increment_temp,
     arm_label_share_repairs,
     arm_pointer_split_repairs,
@@ -447,6 +448,7 @@ AGENT_FAMILIES += entry_constant_local.FAMILIES + store_temp_inline.FAMILIES
 AGENT_FAMILIES += float_sum_store_fence.FAMILIES + shared_assignment_inline.FAMILIES
 AGENT_FAMILIES += call_carrier_pointer_split.FAMILIES
 AGENT_FAMILIES += collapsed_guard_lifetime_merge.FAMILIES
+AGENT_FAMILIES += arm_argument_copy_join.FAMILIES
 AGENT_FAMILIES += string_walk_index.FAMILIES
 AGENT_FAMILIES += ladder_result_narrow.FAMILIES
 AGENT_FAMILIES += loop_guard_counter_compare.FAMILIES
@@ -970,6 +972,10 @@ def _spelled(source: str, name: str, arch: str, asm: str = '', flags=(), labels=
                    # (an identical-arm guard on an unassigned local collapsed and two integer locals merged, as one child: a 74-instruction
                    # KMC audio function 60 -> 0, the collapse alone 110 and the merge alone 690; decomprepair 0.5.652)
                    collapsed_guard_lifetime_merge,
+                   # (a call's first argument copied on two paths of the switch before it, with the masked store value in its own local,
+                   # as one child: a 150-instruction KMC effect spawner 60 -> 0, the local alone 520 and the copy on four paths 115;
+                   # decomprepair 0.5.654)
+                   arm_argument_copy_join,
                    # (a byte string walked by a pointer written as the index loop it came from, which moves the pointer's start after the
                    # jump table's address: an 82-instruction KMC font routine 360 -> 0; decomprepair 0.5.653)
                    string_walk_index,
