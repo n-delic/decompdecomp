@@ -12953,3 +12953,11 @@ the table-selection branch recovered those registers. With
 improved the linked score from 220 to 15, then to an exact match. Changing
 only the copied local's type or qualifiers had left the score at 15. This is
 one observed match; synthetic tests cover the source and instruction guards.
+
+### Stage a fresh link pointer reload before a neighboring store (KMC GCC 2.7.2)
+
+With `-G0 -mips3 -mgp32 -mfp32 -O2`, a retail N64 routine had one store
+on the wrong side of a pointer reload. Read the next pointer into the
+existing local after the conditional link update and before the neighboring
+store. The linked score went from 60 to 0. The previous dispatcher proposed
+nothing, and the new rewrite generated one byte-exact candidate.
