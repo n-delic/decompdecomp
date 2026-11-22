@@ -390,6 +390,17 @@ says the fix and the library families it names; try those families with `prove_c
 - **A struct of `volatile` fields in an m2c draft** is usually just spilled registers: make them plain locals.
 - **Frame size: use loops, not scratch arrays.** Each pre-test `for` loop keeps 8 extra frame bytes in KMC GCC 2.7.2
   (hypothesis).
+- **Leaf functions: temporaries in `$v0`/`$v1`/`$a0..`, decided by two allocators.** Pseudos that live in one basic block
+  and die once go to local-alloc.c (by `floor_log2(refs) * refs * size / life`, a copy to `$v0` first), and it *ties* the
+  output of an insn to a first operand that dies there (`and`'s result takes its first operand's register); pseudos that
+  cross a block, or die twice, go to global.c (priority as in the `-dl -dg` table). A register exchange between two locals
+  with no loops: count weighted references from the source (a reference is 1 plus its loop depth; the table agrees to the
+  digit) and wrap the statements that name one and not the other in `do { } while (0);` (one more reference each),
+  deeper until the order flips: decomp-repair `call_weight_ladder`, `local_weight_ladder` (85 -> 15 on a heap
+  allocator). A complement (`~mask`) computed before a two-arm branch that only one arm reads is a global pseudo; sunk
+  into the arm as its first statement in a scope it is a local that heads the arm and fills the branch's delay slot
+  (`arm_invariant_sink`, 115 -> 85). Reusing one variable for a sum and its result gives it two deaths (global) and
+  breaks the tie. The delay slot takes an arm's first one-word insn, or one from above the branch, never a later one.
 - **Flag words and widths:** bit-field structs for flag words; `u8`/`u16` widths keep or drop masks; overwrite a
   parameter after copying it (`arg = arg_in; arg_in = 0;`).
 
