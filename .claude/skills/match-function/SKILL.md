@@ -66,11 +66,16 @@ through the window API or restart the app.
 
 Call `project_info` and verify that the connection is scoped to the requested project. Use the same
 connection throughout the run so the app keeps attempts and claims under one identity.
+If the endpoint disappears, check the running app's advertised gateway port and verify
+`project_info` again before sending mutations. An app restart can retire a temporary endpoint.
+If sending raw MCP requests, use a distinct JSON-RPC ID for each request, including retries.
+The gateway deduplicates pending calls by connection, tool and arguments.
 
 ## Claim one function
 
-- Start with `get_claims` to recover an existing claim on this connection. If it holds the function
-  for this run, resume it. If it holds unrelated work, use a separate project connection.
+- On a reused connection, start with `get_claims` to recover existing work. If it holds this
+  function, resume it. If it holds unrelated work, use a separate project connection. A newly
+  created connection that has made no claim can go straight to the first claim.
 - **Only a project given**: call `claim_function(strategy="random")` and use the name the app returns.
 - **A function given**: call `claim_function(function=FUNC, fallback=false)` when the tool exposes
   `fallback`. If someone else holds it, report the conflict and continue in the isolated judge.
