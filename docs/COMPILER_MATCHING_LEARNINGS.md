@@ -14961,3 +14961,20 @@ unconditional reload.
 ### Preserve a list-selection result across calls
 
 In a private N64 voice-selection function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the target kept a zero-initialized result in a saved register across calls on the free-list path and reused its list cursor for the fallback walk. The draft returned a literal early and used separate result and cursor locals on the fallback path. Joining the paths, returning the existing result and reusing the cursor reproduced the linked target exactly (score 351 to 0). Joining the paths alone scored 170; joining them and returning the shared result scored 40. The candidate checks local lifetimes, control transfers and saved-register evidence. Evidence: one saved function and synthetic generation and routing tests.
+
+### Reuse a guarded field local for a sampled phase scale
+
+In a private N64 function built with GCC 2.7.2 KMC and
+`-G0 -mips3 -mgp32 -mfp32 -O2`, an earlier field guard used a scratch
+float where the target used a saved register. A later phase selected a
+sample, applied a fixed scale and blended it with a field. The target
+scaled the sample in place, while the draft wrote the product to a
+separate temporary.
+
+Reusing the first field local for the later sampling phase and
+scaling it in place restored seven exact instructions and lowered the
+linked score from 7,530 to 7,495 with all three jump-table relocations
+and no warnings. Renaming the sample local without the in-place
+multiply scored 7,605. The repair checks the old field and compare,
+the sample's literal inputs and the scale, and verifies that no
+control-flow edge bypasses the new lifetime's initialization.
