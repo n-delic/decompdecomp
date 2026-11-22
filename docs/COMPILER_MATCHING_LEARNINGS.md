@@ -13878,3 +13878,5 @@ the next offset reduced the linked-byte judge score from 450 to 410. Both stores
 pointer and disjoint word offsets. The target-guided rule reproduced the improvement from the saved
 draft. Evidence is one measured improvement and synthetic cases for volatile, overlapping, and
 separated stores. The function remains unmatched.
+
+In one N64 function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, two calls to the same helper needed one argument, but the draft added an extra global pointer only to the second call. Dropping that argument reproduced the linked target exactly (score 300 to 0). The existing target-call-arity rule had required every call to need a drop; it now also offers a mixed correction when the other calls already have the same measured arity and the removed argument is a plain nonvolatile global pointer. Arity from register setup is a hypothesis that the judge verifies. Evidence: one saved example plus library and app generation tests.
