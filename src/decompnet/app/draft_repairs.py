@@ -88,6 +88,7 @@ from decomprepair import (
     counter_companion_repairs,
     counter_derived_offset,
     counter_loop_repairs,
+    dead_local_constant_compare,
     dead_local_stage_repairs,
     debug_boundary_repairs,
     debug_initializer_repairs,
@@ -412,7 +413,7 @@ AGENT_FAMILIES = goto_loop_invariants.FAMILIES + entry_scope_split.FAMILIES + me
                   'terminal_early_return','member_store_replay','scalar_global_address','split_mask_stores',
                   'split_integer_phase','paired_integer_lifetimes','initialization_cluster')
 
-AGENT_FAMILIES += (guarded_pointer_copy.FAMILY,) + shifted_byte_lifetime.FAMILIES + float_constant_loop_pin.FAMILIES
+AGENT_FAMILIES += (guarded_pointer_copy.FAMILY,) + shifted_byte_lifetime.FAMILIES + float_constant_loop_pin.FAMILIES + dead_local_constant_compare.FAMILIES
 AGENT_FAMILIES += loop_weight_set_repairs.FAMILIES
 AGENT_FAMILIES += (arm_label_share_repairs.FAMILIES + declaration_scope_sink_repairs.FAMILIES + element_update_repairs.FAMILIES
                    + narrow_test_share_repairs.FAMILIES + phase_storage_split_repairs.FAMILIES
@@ -852,6 +853,9 @@ def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels
                    # (a float constant loop.c hoists out of a loop, kept where it is used by one shared local assigned in place:
                    # a 1000-instruction N64 collision sweep 8632 -> 7018, its extra saved FP register and frame growth gone; decomprepair 0.5.624)
                    float_constant_loop_pin,
+                   # (a compare's literal routed through a local the next statement reassigns: the literal becomes a
+                   # global-allocator pseudo and takes $v1, 10 -> 0 on a KMC predicate; decomprepair 0.5.628)
+                   dead_local_constant_compare,
                    outer_cursor_entry_copy_repairs, loaded_pointer_reuse_repairs, entry_base_init_repairs,
                    live_range_retarget_repairs, pointer_local_merge_repairs, identical_arm_collapse_repairs):
         for family, text in _generated(module.variants, source, name):
