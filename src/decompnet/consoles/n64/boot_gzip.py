@@ -73,6 +73,83 @@ def _bounds(events, after):
             yield start, end
 
 
+def _registered_overlays(rom, boot_events, primary, source, limit):
+    """Follow the boot-initialized ROM ranges and resident program's destination stores."""
+    target, text, _ = primary
+    stores = {}
+    for event in [*boot_events, *read(target, text)['events']]:
+        if event['kind'] != 'store' or event['width'] != 4:
+            continue
+        place, value = _constant(event.get('place')), _constant(event.get('value'))
+        if place is not None and value is not None:
+            stores.setdefault(place, set()).add(value)
+
+    def value(place):
+        values = stores.get(place, set())
+        return next(iter(values)) if len(values) == 1 else None
+
+    anchors = [place for place in stores if value(place) == source and value(place + 4) == limit
+               and value(place + 8) == target]
+    if len(anchors) != 1:
+        return ()
+    overlays, seen = [], set()
+    for i in range(1, 33):
+        place = anchors[0] + i * 24
+        lo, hi, destination = value(place), value(place + 4), value(place + 8)
+        if (lo is None or hi is None or destination is None or not 0 < lo < hi <= len(rom)
+                or not 0x80000000 <= destination < 0x80800000 or destination % 16
+                or (lo, hi) in seen or not (pair := _pair(rom, lo, hi))):
+            break
+        text_data, data = pair
+        if destination + len(text_data) + len(data) > 0x80800000:
+            break
+        seen.add((lo, hi))
+        overlays.append((destination, text_data, data))
+    # A shared runtime slot and a contiguous table distinguish overlays from
+    # unrelated data records that happen to point to compressed members.
+    if len(overlays) < 2 or len({destination for destination, _, _ in overlays}) != 1:
+        return ()
+    primary_end = target + len(primary[1]) + len(primary[2])
+    if any(destination < primary_end and target < destination + len(code) + len(data)
+           for destination, code, data in overlays):
+        return ()
+    return tuple(overlays)
+
+
+def _pointer_find(rom, boot_ranges):
+    """Bind a DMA source to the output pointer passed to a paired-member inflater."""
+    matches = {}
+    for start, end, base in boot_ranges:
+        if start >= 0x10000:
+            continue
+        boot_events = read(base, rom[start:min(end, 0x10000)])['events']
+        calls = list(_calls(boot_events))
+        for (dma, args), (inflate, _) in pairwise(calls):
+            source, limit, scratch = args[:3]
+            if (source is None or limit is None or scratch is None or not 0 < source < limit <= len(rom)
+                    or not 0x80000000 <= scratch < 0x80800000 or scratch % 16
+                    or inflate['block'] != dma['block'] or not 0 < inflate['instruction'] - dma['instruction'] <= 32):
+                continue
+            pointers = inflate['args'][:2]
+            if any(not arg or arg.get('kind') != 'stack' for arg in pointers):
+                continue
+            memory = {item['place']['offset']: _constant(item.get('value'))
+                      for item in dma.get('memory', []) if item.get('place', {}).get('kind') == 'stack'}
+            input_addr, output_addr = (memory.get(arg['offset']) for arg in pointers)
+            if (input_addr != scratch or output_addr is None or output_addr % 16
+                    or not 0x80000000 <= output_addr < 0x80800000 or output_addr == scratch):
+                continue
+            if not (pair := _pair(rom, source, limit)):
+                continue
+            text, data = pair
+            if output_addr + len(text) + len(data) > 0x80800000:
+                continue
+            primary = (output_addr, text, data)
+            matches[source, limit, output_addr] = (primary, *_registered_overlays(
+                rom, boot_events, primary, source, limit))
+    return next(iter(matches.values())) if len(matches) == 1 else None
+
+
 def find(rom, boot_ranges):
     """Use the boot DMA, inflater arguments and saved ROM bounds to identify both programs."""
     matches = {}
@@ -111,7 +188,9 @@ def find(rom, boot_ranges):
                         continue
                     matches[primary, secondary, source, midpoint, limit] = (
                         (primary, *first), (secondary, *second))
-    return next(iter(matches.values())) if len(matches) == 1 else None
+    if matches:
+        return next(iter(matches.values())) if len(matches) == 1 else None
+    return _pointer_find(rom, boot_ranges)
 
 
 def verify_analysis(rom, expanded, boot_ranges):
@@ -147,15 +226,20 @@ def add(config, workdir, image, rom, boot_ranges, log):
     segments = cfg['segments']
     segments.pop()
     expanded = bytearray(rom)
-    for vram, text, data in programs:
+    repeated = {vram for vram, _, _ in programs if sum(vram == other for other, _, _ in programs) > 1}
+    for index, (vram, text, data) in enumerate(programs):
         start = len(expanded)
-        name = f'program_{vram:08X}'
+        name = f'program_{vram:08X}_{index}' if vram in repeated else f'program_{vram:08X}'
         parts = [[start, 'c', name]]
         for before, after in inline_tables(text):
             parts.extend([[start + before, 'rodata', f'{name}_table_{before:X}'],
                           [start + after, 'c', f'{name}_text_{after:X}']])
         parts.append([start + len(text), 'data', name])
-        segments.append(dict(name=name, type='code', start=start, vram=vram, subsegments=parts))
+        segment = dict(name=name, type='code', start=start, vram=vram, subsegments=parts)
+        if repeated:
+            segment.update(exclusive_ram_id=f'gzip_slot_{vram:08X}', symbol_name_format=f'$VRAM_{name}',
+                           symbol_name_format_no_rom=f'$VRAM_{name}')
+        segments.append(segment)
         expanded.extend(text)
         expanded.extend(data)
     segments.append([len(expanded)])
@@ -164,5 +248,5 @@ def add(config, workdir, image, rom, boot_ranges, log):
     cfg['options']['target_path'] = filename
     cfg['sha1'] = hashlib.sha1(expanded).hexdigest()
     config.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding='utf-8')
-    log('Unpacked two gzip programs at the addresses supplied by the boot loader')
+    log(f'Unpacked {len(programs)} gzip program(s) at the addresses supplied by the boot loader')
     return filename

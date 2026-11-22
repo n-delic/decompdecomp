@@ -99,7 +99,7 @@ def _first_address(path: Path) -> tuple[int | None, int | None]:
     return None, None
 
 
-def _symbol_lines(net, proj, rows=None, excluded=(), segments=()) -> list[str]:
+def _symbol_lines(net, proj, rows=None, excluded=(), segments=(), unsized=()) -> list[str]:
     """symbol_addrs.txt entries for every function and every named symbol, so splat writes the project's names. A
     function's size too: spimdisasm ends a function with a switch at its first return, and the import put the cases
     back (split.merge_switch_cases: a PSP game's GCC and EE-GCC 3.2 load jump tables that way), so splat must too."""
@@ -121,7 +121,8 @@ def _symbol_lines(net, proj, rows=None, excluded=(), segments=()) -> list[str]:
             raise ExportError("An overlapping function has no matching scoped ROM bank.")
         if owner is not None and owner.get("exclusive_ram_id"):
             suffix = f" rom:0x{rom:X} segment:{owner['name']}"
-        lines.append(f"{row['name']} = 0x{vram:08X}; // type:func size:0x{row['size']:X}{suffix}")
+        size = "" if row["name"] in unsized else f" size:0x{row['size']:X}"
+        lines.append(f"{row['name']} = 0x{vram:08X}; // type:func{size}{suffix}")
     # One name per address: splat refuses two ("Duplicate symbol detected", an N64 game whose agents gave one address
     # two names). The table's own name for the address labels it; the other names still link, from build.json.
     named = set(funcs)
@@ -131,6 +132,14 @@ def _symbol_lines(net, proj, rows=None, excluded=(), segments=()) -> list[str]:
         named.add(s.address)
         lines.append(f"{s.name} = 0x{s.address:08X};")
     return lines
+
+
+def _fallthrough_entries(rows, console):
+    """Let splat split a reviewed entry that falls directly into another entry."""
+    starts = {(r['vram'], r['rom_offset']) for r in rows}
+    return {r['name'] for r in rows if r['rom_offset'] is not None
+            and (r['vram'] + r['size'], r['rom_offset'] + r['size']) in starts
+            and console.boundary_reason(r['target'] or b'')}
 
 
 def _segments(config: dict) -> list[dict]:
@@ -341,7 +350,7 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
     proj = net._project(slug)
     cfg = net.cfg(proj)
     store = net.project_store(proj['id'])
-    population = store.all('SELECT name,vram,size,rom_offset,meta FROM functions WHERE project_id=?', proj['id'])
+    population = store.all('SELECT name,vram,size,rom_offset,meta,target FROM functions WHERE project_id=?', proj['id'])
     banks = cfg.get('donor_overlays') or {}
     native_end = min(banks.values(), default=None)
     analysis_only = ({r['name'] for r in population if r['rom_offset'] is not None and r['rom_offset'] >= native_end}
@@ -379,7 +388,11 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
     for extra in ("reloc_addrs.txt",):
         if (work / extra).exists():
             shutil.copyfile(work / extra, out / extra)
-    (out / "symbol_addrs.txt").write_text("\n".join(_symbol_lines(net, proj, population, analysis_only, _segments(split_config))) + "\n", encoding="utf-8")
+    # A sized fallthrough entry can make splat absorb all following entries into
+    # its assembly file. Leave its extent to splat when another entry begins
+    # exactly at its end; boundary review still decides whether it is valid.
+    unsized = _fallthrough_entries(population, console)
+    (out / "symbol_addrs.txt").write_text("\n".join(_symbol_lines(net, proj, population, analysis_only, _segments(split_config), unsized)) + "\n", encoding="utf-8")
     res = run([console_python(), "-m", "splat", "split", "splat.yaml"], out, log)
     if res.returncode != 0:
         raise ExportError("splat failed:\n" + (res.stdout + res.stderr)[-1500:])
