@@ -73,3 +73,17 @@ def test_a_standalone_partial_prologue_never_crosses_another_parent_or_unbalance
     assert complete(rom,[(0,4,0x80001000)])==[(0,4,0x80001000)]
     rom=rom[:-4]+struct.pack('>I',0x27bd0018)
     assert complete(rom,[(0,4,0x80001000)],[(16,28,0x90001000)])==[(0,4,0x80001000)]
+
+
+def test_long_scheduled_prologue_requires_independent_call():
+    words = [0x03e00008, 0] + [0x3c028001] * 8 + [0x27bdffe8, 0, 0x03e00008, 0x27bd0018]
+    rom = struct.pack('>' + str(len(words)) + 'I', *words)
+    segment = [(0, 12, 0x80001000)]
+    assert complete(rom, segment) == segment
+    assert complete(rom, segment, called={0x80001008}) == [(0, len(rom), 0x80001000)]
+
+
+def test_called_tail_accepts_a_straight_line_stack_pop_before_return():
+    words = [0x03e00008, 0] + [0x3c028001] * 8 + [0x27bdffe8, 0, 0x27bd0018, 0x03e00008, 0]
+    rom = struct.pack('>' + str(len(words)) + 'I', *words)
+    assert complete(rom, [(0, 12, 0x80001000)], called={0x80001008}) == [(0, len(rom), 0x80001000)]

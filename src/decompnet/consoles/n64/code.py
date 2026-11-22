@@ -596,6 +596,16 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
     found, runtime = inferred_overlays.runtime_mappings(rom, found, loaded.get('moved_ranges', ()), taken)
     found, scoped = inferred_overlays.recover(rom, found, taken, getattr(log, 'check_cancel', lambda: None),
                                              changed=runtime)
+    # Corrected addresses can expose a called prologue whose frame lies beyond
+    # the scanner's original alignment tail.
+    from .code_tails import complete as complete_tails
+    called = set()
+    for start,end,entry in (*taken, *found):
+        words = struct.unpack_from(f'>{(end-start)//4}I', rom, start)
+        called.update(jal_targets(words, entry))
+    found = complete_tails(rom, found, taken, called=called)
+    found = inferred_overlays.drop_pointer_fragments(rom, found, taken)
+    scoped &= {start for start,_,_ in found}
     safe = inferred_overlays.safe_scopes(found, scoped, taken)
     if safe is None:
         found, scoped = before_mapping, set()

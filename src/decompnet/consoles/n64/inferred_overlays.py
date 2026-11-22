@@ -9,6 +9,43 @@ _MIN_CALLS = 32
 _MAX_PAIRS = 1_000_000
 
 
+def _entry_mapping(image, lo, hi, vram, callers, taken, check):
+    """Find a nearby aligned mapping when many calls name complete return-separated entries."""
+    old = vram-lo
+    if old % 16 == 0 or hi-lo < 4096:
+        return None
+    words = struct.unpack_from(f'>{(hi-lo)//4}I', image, lo)
+    entries = set()
+    for i in range(2, len(words)-3):
+        a,b,c = words[i:i+3]
+        reg = (a >> 16) & 31
+        if (words[i-2] == JR_RA and a >> 26 == 15 and reg
+                and b >> 26 == 9 and (b >> 21) & 31 == reg and (b >> 16) & 31 == reg
+                and c >> 26 == 35 and (c >> 21) & 31 == reg and (c >> 16) & 31):
+            entries.add(lo+4*i)
+    if len(entries) < 8:
+        return None
+    targets = [set(), set()]
+    for start,end,base in callers:
+        check()
+        code = struct.unpack_from(f'>{(end-start)//4}I', image, start)
+        targets[start == lo and end == hi].update(
+            0x80000000 | ((word & 0x03ffffff) << 2) for word in code if word >> 26 == 3)
+    previous = sum(len(group & {at+old for at in entries}) for group in targets)
+    choices = []
+    for delta in range(-15, 16):
+        mapping = old+delta
+        address = lo+mapping
+        if (mapping % 16 or not 0x80000400 <= address < address+hi-lo <= 0x80800000
+                or any(base < address+hi-lo and address < base+end-start for start,end,base in taken)):
+            continue
+        matches = {at+mapping for at in entries}
+        outside, inside = (len(group & matches) for group in targets)
+        if inside >= 8 and outside >= 1 and inside+outside >= 4*max(1,previous):
+            choices.append(address)
+    return choices[0] if len(choices) == 1 else None
+
+
 def recover(image, found, taken=(), check=lambda: None, *, changed=()):
     """Return corrected inferred ranges and the starts needing independent splat scopes."""
     result = list(found)
@@ -16,6 +53,10 @@ def recover(image, found, taken=(), check=lambda: None, *, changed=()):
     for index, (lo, hi, vram) in enumerate(found):
         check()
         if lo < 0 or hi - lo < 4096 or hi > len(image) or (lo | hi) % 4:
+            continue
+        if corrected := _entry_mapping(image, lo, hi, vram, (*taken, *found), taken, check):
+            result[index] = (lo, hi, corrected)
+            changed.add(lo)
             continue
         words = struct.unpack_from(f'>{(hi-lo)//4}I', image, lo)
         targets = {0x80000000 | ((word & 0x03ffffff) << 2) for word in words if word >> 26 == 3}
@@ -146,3 +187,42 @@ def scope(config, found, scoped):
             name = segment['name']
             segment.update(exclusive_ram_id=ident, symbol_name_format=f'$VRAM_{name}',
                            symbol_name_format_no_rom=f'$VRAM_{name}')
+
+
+def drop_pointer_fragments(image, found, taken=()):
+    """Leave a terminated pointer table outside text when discovery split it into one-word scopes."""
+    ordered = sorted(found)
+    remove = set()
+    for i in range(1, len(ordered)-2):
+        prev = ordered[i-1]
+        group = ordered[i:i+3]
+        if (any(end-start != 4 for start,end,_ in group)
+                or prev[1] != group[0][0]
+                or group[0][1] != group[1][0] or group[1][1] != group[2][0]
+                or group[1][2] != group[0][2]+4 or group[2][2] != group[0][2]+8):
+            continue
+        first, second, zero = struct.unpack_from('>3I', image, group[0][0])
+        if (zero or first % 4 or second % 4 or first == second
+                or not all(prev[2] <= v < prev[2]+prev[1]-prev[0] for v in (first, second))):
+            continue
+        targets = {v for _,_,v in group}
+        referenced = False
+        for start,end,base in (*taken, *found):
+            for at in range(start, end, 4):
+                word = struct.unpack_from('>I', image, at)[0]
+                op = word >> 26
+                if op in (2,3):
+                    dest = ((base+at-start+4) & 0xf0000000) | ((word & 0x3ffffff) << 2)
+                elif op in (1,4,5,6,7,20,21,22,23) or op == 17 and (word >> 21) & 31 == 8:
+                    imm = (word & 0xffff) ^ 0x8000
+                    dest = base+at-start+4+(imm-0x8000)*4
+                else:
+                    continue
+                if dest in targets:
+                    referenced = True
+                    break
+            if referenced:
+                break
+        if not referenced:
+            remove.update(start for start,_,_ in group)
+    return [segment for segment in found if segment[0] not in remove]

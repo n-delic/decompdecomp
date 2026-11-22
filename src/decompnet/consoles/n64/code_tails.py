@@ -9,7 +9,7 @@ from ...arch.mips import JR_RA, is_frame
 MAX_TAIL = 0x10000
 
 
-def complete(rom, segments, taken=()):
+def complete(rom, segments, taken=(), *, called=()):
     import rabbitizer
 
     result = []
@@ -24,7 +24,8 @@ def complete(rom, segments, taken=()):
         if last>=end or not any(word(at) for at in range(last,end,4)):
             result.append((start,end,vram));continue
         # A compiler may schedule one or two loads before the frame, caught by padding.
-        frames = [at for at in range(last,min(end+16,len(rom)-3),4) if is_frame(word(at))]
+        lookahead = 64 if vram+last-start in called else 16
+        frames = [at for at in range(last,min(end+lookahead,len(rom)-3),4) if is_frame(word(at))]
         if not frames:
             result.append((start,end,vram));continue
         frame = frames[0]
@@ -38,6 +39,7 @@ def complete(rom, segments, taken=()):
             if s!=start and v>=vram+end-start:
                 limit = min(limit,start+v-vram)
         highest = end
+        destinations = set()
         recovered = None
         for at in range(frame,limit-3,4):
             w = word(at)
@@ -50,10 +52,16 @@ def complete(rom, segments, taken=()):
                 target=at+4+delta*4
                 if target<start or target>=limit:
                     break
+                destinations.add(target)
                 highest=max(highest,target+4,at+8)
             if w==JR_RA and at+8<=limit:
                 # The selected terminal return must pop precisely this prologue's frame.
-                if word(at+4)==(0x27BD0000|size) and at+8>=highest:
+                pop = 0x27BD0000 | size
+                delayed = word(at+4) == pop
+                before = (at >= frame+8 and word(at-4) == pop
+                          and not rabbitizer.Instruction(word(at-8)).hasDelaySlot()
+                          and not destinations.intersection((at-4, at, at+4)))
+                if (delayed or before) and at+8>=highest:
                     recovered=at+8
                 break
         new_end=max(end,recovered or end)

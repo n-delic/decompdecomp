@@ -84,3 +84,34 @@ def test_scope_inferred_segments_below_banks_or_keep_original_for_known_conflict
     taken=[(0,0x1000,0x80100000)]
     assert inferred_overlays.safe_scopes(found,{0x2000},taken)=={0x1000,0x2000}
     assert inferred_overlays.safe_scopes(found,{0x2000},[(0,0x100000,0x80000400)]) is None
+
+
+def test_shifted_overlay_needs_return_separated_entries_and_external_call():
+    lo, hi = 0x1000, 0x2400
+    correct = 0x80301000
+    image = bytearray(hi)
+    def jal(address):
+        return 0x0c000000 | ((address >> 2) & 0x3ffffff)
+    for i in range(16):
+        target = correct + ((i + 1) % 16) * 32 + 8
+        struct.pack_into('>8I', image, lo + i*32, 0x03e00008, 0, 0x3c038004, 0x24630010,
+                         0x8c620000, jal(target), 0, 0)
+    struct.pack_into('>I', image, 0, jal(correct + 8))
+    found = [(lo, hi, correct - 12)]
+    external = (0, 0x100, 0x80001000)
+    result, scoped = inferred_overlays.recover(bytes(image), found, [external])
+    assert result == [(lo, hi, correct)]
+    assert lo in scoped
+    image[:4] = bytes(4)
+    assert inferred_overlays.recover(bytes(image), found, [external])[0] == found
+    assert inferred_overlays.recover(bytes(image), [(lo, hi, correct)], [external])[0] == [(lo, hi, correct)]
+
+
+def test_terminated_pointer_words_do_not_become_independent_code_scopes():
+    image = bytearray(64)
+    struct.pack_into('>3I', image, 16, 0x80001004, 0x80001008, 0)
+    found = [(0, 16, 0x80001000), (16, 20, 0x80202000),
+             (20, 24, 0x80202004), (24, 28, 0x80202008), (28, 64, 0x8020200c)]
+    assert inferred_overlays.drop_pointer_fragments(bytes(image), found) == [found[0], found[4]]
+    struct.pack_into('>I', image, 0, 0x08000000 | ((0x80202004 >> 2) & 0x3ffffff))
+    assert inferred_overlays.drop_pointer_fragments(bytes(image), found) == found
