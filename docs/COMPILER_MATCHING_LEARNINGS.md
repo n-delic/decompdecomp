@@ -16835,3 +16835,28 @@ move $s2,$a3` ahead of the call and every build of the saved best had `move $s6,
   the saved best it reproduces the whole chain in one child (60 to 0); it reaches the draft repair path and the Deep
   Permuter's local/beam lane through `draft_repairs.variants` (`tests/test_entry_copy_store_first.py`). Not yet
   explored: a parameter that is narrow or float, or whose copy must pass a call's argument setup further into the body.
+## Statement orders as one child, and a two-step chain emitted whole (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, an N64 game)
+
+Evidence level: three matched functions; each before-state rebuilt from its saved match by undoing the edits listed
+in the entries above, every score from the app's own judge (`fast_judge.py`, the standalone judge worker), no saved
+match touched.
+
+| function | before-state | before | child | after |
+| --- | --- | --- | --- | --- |
+| 363-instruction spilled-parameter function | each of the five wrong orders of its three pre-loop assignments | 60 | `statement_group_order` (target order) | 0 |
+| 86-instruction scene-stack search | `offset` stepped beside the counter and the flag test in `do { } while (0)` | 115 | `counter_derived_offset_unwrapped` | 0 (the halves: 20 and 190) |
+
+- `preloop_assignment_swap` and `allocation_lever` don't produce the target order in one step from any of the five
+  wrong orders, and the orders in between tie at 60, so a one-step-at-a-time search has no gradient to follow.
+  `statement_group_order` offers every order of a window of two to four neighbouring one-line statements that keeps
+  their dependencies (a name written and read, any memory store against any other memory access), one child each.
+- The 719-instruction voice-table function: in its matched source, five reorders of the 0x740 block's loads (`-0x8A`
+  and `-0x78` before the table product, swapped, the `-0x92` load first, one after the shift) all still score 0. The
+  order mattered only in the chain's intermediate states (2615 / 1375), which were not rebuilt here; the next step is
+  to rebuild the 1375 state (rows 1-8 and 10-13 applied, rows 1 and 9 not) and run `statement_group_order` on it.
+- The 318-instruction display-list function: the remaining lever is the order of loads inside the rectangle macros'
+  arguments, which are expressions, not statements, so `statement_group_order` cannot reach it; an argument-evaluation
+  order family (temporaries staged before the macro in each order) is the next step.
+
+decomp-repair 0.5.572: `statement_group_order`, `counter_derived_offset_unwrapped`, and `retry_goto_scope` for any
+constant step.
