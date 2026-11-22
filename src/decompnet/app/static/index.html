@@ -231,6 +231,7 @@
     <nav class="ptabs" id="ptabs" aria-label="This project">
       <a data-ptab="overview">Overview</a>
       <a data-ptab="functions">Functions <span class="count" id="fnTabCount"></span></a>
+      <a data-ptab="globals">Globals <span class="count" id="gTabCount"></span></a>
       <a data-ptab="rom">ROM Explorer</a>
       <a data-ptab="porting">Porting</a>
       <a data-ptab="matching">Local Matching</a>
@@ -414,6 +415,23 @@
       </table>
     </div>
     <div class="list-foot"><span class="muted small" id="fnShown"></span><button class="ghost small-btn" id="fnMore" type="button" hidden>Show more</button></div>
+  </section>
+
+  <!-- globals: the game's data symbols, by their name now and the D_ address name they started as -->
+  <section class="ptab panel" data-pane="globals" id="globalsView" hidden>
+    <div class="list-tools">
+      <input id="globalsSearch" class="search" type="search" placeholder="Find a global by name, D_ name, address or value" aria-label="Find a global" autocomplete="off" spellcheck="false">
+      <div class="seg" id="globalsFilter" role="radiogroup" aria-label="Show"></div>
+    </div>
+    <p class="muted small list-hint">Variables, tables and strings in the game. Names agents have given appear beside the address name they started as (D_800A4DFC → sDirectKey).</p>
+    <p class="notice" id="globalsNote" hidden></p>
+    <div class="fn-table-wrap">
+      <table class="fn-table globals-table">
+        <thead id="globalsHead"></thead>
+        <tbody id="globalsRows"></tbody>
+      </table>
+    </div>
+    <div class="list-foot"><span class="muted small" id="globalsShown"></span><button class="ghost small-btn" id="globalsMore" type="button" hidden>Show more</button></div>
   </section>
 
   <!-- agents: who works here and what happens, side by side; what they're told below; what waits for you last -->
@@ -1459,6 +1477,7 @@
 <script defer src="/assets/js/repository-push.js"></script>
 <script defer src="/assets/js/steering.js"></script>
 <script defer src="/assets/js/variants.js"></script>
+<script defer src="/assets/js/globals.js"></script>
 <script defer src="/assets/js/background-work.js"></script>
 <script defer src="/assets/js/data-directories.js"></script>
 <script defer src="/assets/js/compiler-service.js"></script>

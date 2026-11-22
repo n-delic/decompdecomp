@@ -898,6 +898,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Per-game portability checklist for polishing | ✓ | ✓ | ✓ | ✓ | — polishing support pending | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Small polish plans, prepared evidence and verified identical-helper reuse | ✓ shared path | ✓ shared path | ✓ shared path | — | — | ✓ shared path | — | ✓ shared path | ✓ shared path | — | ✓ shared path | ✓ shared path |
 | Real names for the game's symbols (`rename_symbol`) | ✓ | ✓ | ✓ | ✓ | ✓ functions | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | dtk and ds-decomp projects |
+| Globals tab: the game's data symbols beside their `D_` address names | ✓ | ✓ shared path | ✓ shared path | — | — | ✓ shared path | ✓ shared path | — | — | — | — | — |
 | Save and restore (`progress/`, Open a saved project); remember each project's save destination | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | partly: the project's git, best attempts saved; a new copy starts without them | partly: the project's git, best attempts saved; a new copy starts without them | the project's git; best attempts saved; the PE view made again from your XBE or disc | partly: the project's git, best attempts saved; a new copy starts without them | the project's git; best attempts saved |
 | Pause and resume automatic rechecks of saved matches | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — | ✓ ROM | ✓ ROM | — uses project build | — uses project build | — uses project build | — uses project build | — uses project build |
 | Saved README preserves notes, with completion bar and function map | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -2097,6 +2098,9 @@ reuse the saved map. See [ROM Explorer](docs/ROM_EXPLORER.md) for support and li
   installations show a labelled work bar beside their logs. The bar clears on completion or failure; saved-project
   cancellation clears it too. Each action says when it starts and finishes, or why it stopped. Upload percentages
   still measure bytes transferred.
+- **Globals tab in project mode.** The Globals tab lists a ROM project's data symbols from its symbols table; a
+  project-mode game (GameCube, Wii, Windows PC, DS, Xbox) keeps its data in the project's own files, so its tab says so
+  and lists nothing yet. It needs a reader for dtk's and ds-decomp's symbols and for the PC project's data.
 - **Names in project mode.** rename_symbol renames a function or a global in a project too: in the game's symbols
   (DS: ds-decomp's symbols.txt; GameCube, Wii: dtk's) and in every source and header file, kept only when the game
   still rebuilds byte for byte and every match holds. Polishing's names were local only before (func_0205d0f4,

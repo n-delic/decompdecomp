@@ -455,7 +455,7 @@ const S = {
 };
 const VIEWS = ["home", "catalog", "project", "agentsPage", "toolsPage", "settingsPage", "backgroundPage"];
 /* Project views. Local CPU searches share Local Matching; configuration stays in Settings. */
-const TABS = ["overview", "functions", "rom", "porting", "matching", "agents", "variants", "settings"];
+const TABS = ["overview", "functions", "globals", "rom", "porting", "matching", "agents", "variants", "settings"];
 
 /* The project folder in the computer's file manager (decompdecomp in Docker says where it is instead). */
 function openFolder() {
