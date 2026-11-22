@@ -13920,3 +13920,11 @@ the frame and scored 0. The target-guided dispatcher proposed both candidates, a
 app confirmed the exact match. Evidence is one real match and guarded generation regressions.
 
 In one N64 list-removal loop built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a flag assigned only zero or one was held as `s32` and combined directly with a pointer comparison. Using a `u8` flag and explicitly combining the two boolean comparisons reproduced the linked target exactly (score 400 to 0). The repair requires the flag's restricted uses and the target's boolean instruction differences. Evidence: one saved example plus synthetic generation and routing tests.
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, an N64 draft incorrectly forwarded its
+own pointer before three halfword arguments. The target caller sets only the first three argument
+registers, and the callee overwrites the fourth before using it. Removing the pointer and its
+prototype slot reduced the linked-byte score from 680 to 625. With the function's saved
+`-fno-strength-reduce -g3` settings, the same edit scored 880 to 875. Dropping the last scalar
+instead scored 1,818 under those settings. The function remains unmatched. Evidence is one
+measured improvement and a synthetic arity regression.
