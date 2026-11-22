@@ -1,5 +1,16 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: copy a checked pointer into a later carrier
+
+A private N64 draft scored 455 with `-G0 -mips3 -mgp32 -mfp32 -O2`.
+Copying the non-null pointer into a dead same-type local at the guard
+entry and using it for one store scored 60. The later assignment to
+that local stayed in place. KMC then filled a signed-conversion
+branch delay slot with the pointer move. The scratch target remains
+unmatched. Moving the copy later or changing the conversion expression
+did not improve on 60. Separately restoring the target's global
+address in the preceding branch brought the score to 40.
+
 ### KMC GCC 2.7.2: a jump can bypass temporary-split initialization
 
 With `-G0 -mips3 -mgp32 -mfp32 -O2`, splitting a reused loop
