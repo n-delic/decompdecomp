@@ -452,6 +452,8 @@ class Search(Permuter):
                  (L + 'arm_argument_copy_join.variants', (source, name)),
                  # a byte string walked by a pointer written as the index loop it came from (the pointer's start moves after the jump table's address)
                  (L + 'string_walk_index.variants', (source, name)),
+                 # a row-major table's pointer walks and a parallel byte table's word reads as `D[row][column]` over `s32 D[][K]` (one child for every access)
+                 (L + 'row_major_table.variants', (source, name)),
                  # a bit-test ladder's result as the else-if chain, in a u8, in a function returning s32 (one child; each piece alone worse)
                  (L + 'ladder_result_narrow.variants', (source, name)),
                  # a loop's entry guard as the counter's compare (an unaccessed 8-byte spill slot) with each local merge as one child

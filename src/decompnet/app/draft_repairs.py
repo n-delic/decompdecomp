@@ -309,6 +309,7 @@ from decomprepair import (
     returned_flag_repairs,
     reused_counter_split_scope,
     reused_temp_split_repairs,
+    row_major_table,
     row_subscript_repairs,
     saved_register_argument_repairs,
     scalar_reload_volatile_repairs,
@@ -454,6 +455,7 @@ AGENT_FAMILIES += collapsed_guard_lifetime_merge.FAMILIES
 AGENT_FAMILIES += arm_argument_copy_join.FAMILIES
 AGENT_FAMILIES += string_walk_index.FAMILIES
 AGENT_FAMILIES += ladder_result_narrow.FAMILIES
+AGENT_FAMILIES += row_major_table.FAMILIES
 AGENT_FAMILIES += walked_table_index_repairs.FAMILIES
 AGENT_FAMILIES += loop_guard_counter_compare.FAMILIES
 AGENT_FAMILIES += phase_donor_repairs.FAMILIES
@@ -993,6 +995,9 @@ def _spelled(source: str, name: str, arch: str, asm: str = '', flags=(), labels=
                    # (a bit-test ladder's result as the else-if chain, in a u8, in a function returning s32 rather than unsigned long long,
                    # as one child: an 89-instruction KMC audio-setup function 90 -> 0, alone 180 and 100; decomprepair 0.5.655)
                    ladder_result_narrow,
+                   # (a row-major table's pointer walks and its parallel byte table's word reads as D[row][column] over s32 D[][K]: a
+                   # 374-instruction KMC function 645 -> 0, one child for every access; decomprepair 0.5.658)
+                   row_major_table,
                    # (a loop's entry guard as the counter's compare, which gives the frame an unaccessed 8-byte spill slot, with each
                    # disjoint_local_merge of the guarded text as one child: a 401-instruction KMC loader 22 -> 0; decomprepair 0.5.640)
                    loop_guard_counter_compare,
