@@ -88,6 +88,7 @@ from decomprepair import (
     measured_mmio_polling,
     measured_narrow_use,
     measured_null_iteration_store,
+    measured_pointer_displacement,
     measured_pointer_scale,
     measured_scalar_updates,
     measured_stack_records,
@@ -422,6 +423,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         if candidate_source := measured_address_repairs.rewrite_byte_offsets(source, name, asm or '', header):
             result.append(('byte_scaled_global_offset', candidate_source))
         result += measured_address_repairs.variants(source,name,header,rows,symbols)
+        result += measured_pointer_displacement.variants(source,name,header,rows)
         result += measured_pointer_scale.variants(source,name,header,rows)
         result += target_string_repairs.verified_variants(source, name, header, rows, read_data)
         result += measured_immediate_repairs.variants(source,name,rows)
