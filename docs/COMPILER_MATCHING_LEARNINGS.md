@@ -14548,3 +14548,20 @@ scratch replay and a synthetic regression for repeated name collisions.
 
 
 In one N64 counted-call loop built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1`, a draft read a halfword count through a word pointer, scaled a record address twice and used the call index before assigning it. Recovering the halfword loads, byte-addressed record stride and current loop index reproduced the linked target exactly (score 300 to 0). The rule requires matching entry and latch table loads, target stride and call evidence; it reconstructs undefined draft behavior. Evidence: one saved example and synthetic generation and routing tests.
+
+### Keep computed axes in saved registers across an input call
+
+In a private N64 function built with GCC 2.7.2 KMC and
+`-G0 -mips3 -mgp32 -mfp32 -O2`, the target placed one computed axis
+in a saved FPR before publishing it to a global. After an input call,
+it added both computed values to their accumulators, then reused the
+first saved FPR for the scaled input. Capturing the computed axis and
+consuming both values at the measured phase restored that schedule.
+
+The exact linked score moved from 11,145 to 10,515 with every jump
+table linked. Holding the axis without moving its consumer scored
+12,205. Moving both consumers without reusing the first saved float
+scored 11,875. A hand edit that also reused a known zero accumulator
+for the initial subtraction scored 10,500. The automated proposal
+retains the existing initializer and checks the later full definition
+before reusing the saved float.

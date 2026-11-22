@@ -100,6 +100,7 @@ from decomprepair import (
     measured_temporary_repairs,
     measured_thread_addresses,
     ordered_halfword_updates,
+    oscillator_phase_hold,
     packed_matrix_conversion,
     passthrough_argument_repairs,
     rejected_branch_default,
@@ -263,6 +264,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     result += measured_lifetime_shapes.variants(source, name, header, toolchain, rows)
     result += measured_scalar_updates.variants(source, name, header, toolchain, rows, asm)
     if toolchain == 'gcc-2.7.2-kmc':
+        result += oscillator_phase_hold.variants(source, name, rows, header=header)
         result += halfword_before_float_store.variants(source, name, rows, header=header)
         result += rejected_branch_default.variants(source, name, rows, header=header)
         result += measured_kmc_stack_pointer.variants(source, name, rows)
