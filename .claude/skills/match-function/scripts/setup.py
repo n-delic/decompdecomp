@@ -7,8 +7,11 @@ undoes all of it in one step. Claims go through the app's MCP gateway on a proje
 skill's rule: never through the window API); the window API is used only to create and revoke that connection and to
 read a function's status.
 
-    setup.py SLUG [FUNC] [--holder NAME] [--home DIR]   build the session, claim FUNC (a random open function when
-                                                        none is given: asked for exactly once), start the renewal
+    setup.py SLUG [FUNC] [--holder NAME] [--home DIR] [--random] [--max-size N]
+                                                        build the session, claim FUNC (with none: the nearest open
+                                                        function, lowest saved score first, of at most N=800
+                                                        instructions; --random a random one; asked for exactly once),
+                                                        start the renewal
     setup.py sync HOLDER                                `uv sync` the private venv to the worktree's pyproject/uv.lock
                                                         (after `git pull` or a rebase there: the pins may have moved)
     setup.py stop HOLDER                                stop the renewal, revoke the connection (that frees its
@@ -105,9 +108,17 @@ class Gateway:
         raise McpError(f"{tool} was still running after {STILL_RUNNING_RETRIES} repeats; check the app")
 
 
-def claim(gateway, function=""):
-    """Claim FUNC by name (never swapped for another), or a random open function when none is named: one call."""
-    text = gateway.call("claim_function", {"function": function, "fallback": False} if function else {"strategy": "random"})
+NEAREST_MAX_INSNS = 800  # the default pick's size cap: near-misses a hand session can finish, not 3,000-line giants
+
+
+def claim(gateway, function="", strategy="random", max_insns=0):
+    """Claim FUNC by name (never swapped for another), or, when none is named, an open function nobody holds picked by
+    `strategy` (nearest: the lowest saved score first; random) of at most `max_insns` instructions: one call."""
+    if function:
+        arguments = {"function": function, "fallback": False}
+    else:
+        arguments = {"strategy": strategy, **({"max_insns": int(max_insns)} if max_insns else {})}
+    text = gateway.call("claim_function", arguments)
     found = CLAIMED.search(text)
     if not found:
         raise McpError(f"claim_function didn't claim anything: {text[:400]}")
@@ -290,7 +301,8 @@ def start(args):
         # Claimed last so the claim's ten minutes are not spent on the build; exactly one claim call is made.
         gateway = Gateway(url, connection["token"])
         gateway.start()
-        info["function"] = claim(gateway, args.function or "")
+        strategy = "random" if args.random else "nearest"
+        info["function"] = claim(gateway, args.function or "", strategy, args.max_size)
         write_connection(root, info)
         info["renew_pid"] = start_renewal(root, args.interval)
     except BaseException as error:
@@ -325,6 +337,10 @@ def main(argv):
     parser.add_argument("--home")
     parser.add_argument("--repo", help="the checkout to add the worktree to (default: the one this script is in)")
     parser.add_argument("--interval", type=int, default=RENEW_SECONDS)
+    parser.add_argument("--random", action="store_true",
+                        help="with no FUNC: a random open function instead of the nearest (lowest saved score) one")
+    parser.add_argument("--max-size", type=int, default=NEAREST_MAX_INSNS, metavar="N",
+                        help=f"with no FUNC: only functions of at most N instructions (default {NEAREST_MAX_INSNS}; 0: any)")
     parser.add_argument("--no-sync", action="store_true", help="skip the venv's `uv sync` (tests)")
     return start(parser.parse_args(argv))
 

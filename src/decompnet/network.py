@@ -8,6 +8,7 @@ a tool result.
 from __future__ import annotations
 
 import collections
+import contextvars
 import hashlib
 import json
 import logging
@@ -187,6 +188,9 @@ STRATEGIES = {
     # near-misses, the ones given up on least first (else every agent resumes the same stuck one)
     "closest": "f.best_score IS NULL, f.abandons ASC, CAST(f.best_score AS REAL) / (f.n_insns * 100) ASC",
     "hardest": "f.n_insns DESC",
+    # the lowest saved score first, absolute (fewest wrong bytes), not relative to size like closest: what a hand
+    # matcher (the match-function skill) can finish soonest; given up on least breaks ties
+    "nearest": "f.best_score IS NULL, f.best_score ASC, f.abandons ASC, f.n_insns ASC",
     # a first pass over everything before polishing near misses: what nobody compiled yet, then easiest's order
     "untried": f"f.attempts > 0, {_EASIEST}",
     "random": "RANDOM()",
@@ -462,6 +466,28 @@ def stall_line(since: int, after: int) -> str:
     return f"no better in {since}/{after} compiles (move on at {after})"
 
 
+# An automatic claim's size cap (instructions) for this call only: claim_function(max_insns=N) and the CLI's
+# /api/claim set it around their claim, so the cap reaches the queue through every engine's claim_row override
+# without a new parameter on each. None: no cap (every other claim).
+CLAIM_SIZE_CAP: contextvars.ContextVar[int | None] = contextvars.ContextVar("claim_size_cap", default=None)
+
+
+@contextmanager
+def claim_size_cap(limit):
+    """Claims inside take only functions of at most `limit` instructions (0/None: any size)."""
+    try:
+        limit = int(limit or 0)
+    except (TypeError, ValueError):
+        raise NetworkError("max_insns must be a whole number of instructions") from None
+    if limit < 0:
+        raise NetworkError("max_insns must be a whole number of instructions")
+    token = CLAIM_SIZE_CAP.set(limit or None)
+    try:
+        yield
+    finally:
+        CLAIM_SIZE_CAP.reset(token)
+
+
 def claim_query(strategy: str) -> str:
     """The automatic claim's query for one order (STRATEGIES): open functions nobody holds, the release rules'
     exclusions and preferences first, then the order. Named arguments: Network._claim_plan."""
@@ -474,6 +500,7 @@ def claim_query(strategy: str) -> str:
             AND (:batch_unit IS NULL OR (f.unit=:batch_unit AND f.n_insns<=:batch_limit AND f.boost>=0
                  AND f.id NOT IN ({WAITING})))
             AND f.id NOT IN (SELECT value FROM json_each(:batch_sdk))
+            AND (:max_insns IS NULL OR f.n_insns <= :max_insns)
             AND (:below IS NULL OR f.best_score IS NULL OR
                  MAX(0.0, 100.0 * (1.0 - CAST(f.best_score AS REAL) / MAX(1, f.n_insns * 100))) < :below)
             AND (:tries IS NULL OR (SELECT COUNT(*) FROM attempts a
@@ -1741,6 +1768,7 @@ class Network:
                 "routing_trial": routing_trial,
                 "mine": self._own_release_cutoff(store, agent.id, now, proj), "custom": custom,
                 "below": policy.get("match_below"), "tries": policy.get("max_tries"),
+                "max_insns": CLAIM_SIZE_CAP.get(),
                 "machine_pending": json.dumps(self._machine_pending(proj, agent))}
         return claim_query(strategy), args
 

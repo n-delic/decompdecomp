@@ -24,3 +24,8 @@ def test_the_skill_leaves_tagging_and_the_pin_to_the_workflows_and_evidence_to_p
 def test_the_skill_documents_the_row_limit_and_the_venv_sync():
     text = (SKILL / "SKILL.md").read_text()
     assert "--rows" in text and "setup.py sync" in text
+
+
+def test_the_skill_defaults_to_a_near_match_claim_and_keeps_random_available():
+    text = (SKILL / "SKILL.md").read_text()
+    assert 'strategy="nearest", max_insns=800' in text and "--random" in text and "--max-size" in text

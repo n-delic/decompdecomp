@@ -491,8 +491,15 @@ def _release_with_experiment(net, agent, slug, function, notes="", needs="", not
 
 @claim_state.quick
 def _claim(net: RomNetwork, agent: Agent, slug: str, function: str, strategy: str, count: int = 1,
-           fallback: bool = True) -> str:
-    """Claim the named function or choose available work when fallback is enabled."""
+           fallback: bool = True, max_insns: int = 0) -> str:
+    """Claim the named function or choose available work when fallback is enabled; max_insns caps the size of an
+    automatically chosen one."""
+    from ..network import claim_size_cap
+    with claim_size_cap(max_insns):
+        return _claim_capped(net, agent, slug, function, strategy, count, fallback)
+
+
+def _claim_capped(net, agent, slug, function, strategy, count, fallback):
     from . import work_availability
     focused=agent.id in getattr(net,'_agent_focus',{})
     if not focused and not function and (waiting := work_availability.cached(net,agent,slug)):
@@ -705,8 +712,8 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "compile_family": agent_tokens.local_family,
     "family_targets": agent_tokens.family_targets,
     "get_assembly": lambda net, agent, slug, function, start=0, limit=60, focus="": agent_tokens.assembly(net, slug, function, start, limit, focus, agent),
-    "claim_function": lambda net, agent, slug, function="", strategy="", count=1, fallback=True:
-        _claim(net, agent, slug, function, strategy, count, fallback),
+    "claim_function": lambda net, agent, slug, function="", strategy="", count=1, fallback=True, max_insns=0:
+        _claim(net, agent, slug, function, strategy, count, fallback, max_insns),
     "get_function": agent_tokens.function_view,
     "compile_and_diff": lambda net, agent, slug, **args: _compile(net, agent, slug, **args),
     "search_repair_examples": repair_search.search,
@@ -1294,7 +1301,7 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
 
     @tool
     async def claim_function(ctx: Context, function: str = "", strategy: str = "", count: int = 1,
-                             fallback: bool = True) -> str:
+                             fallback: bool = True, max_insns: int = 0) -> str:
         """Claim the next function to decompile (or a specific one by name or address).
 
         Returns a lightweight receipt with saved candidate C and claim token. No baseline compile, new draft or
@@ -1304,13 +1311,17 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         Args:
             function: optional name or address (0x80001234) of a specific function
             strategy: no_compiling_c (only functions without a recorded successful C compilation), untried (no compile attempts first), finish (forks' default: the files closest to being linked first), easiest (fewest
-                instructions; ROM projects' default), closest (nearly matched already), hardest, random
+                instructions; ROM projects' default), closest (nearly matched already, relative to size), nearest
+                (lowest saved score first), hardest, random
             count: up to 6: small functions come as a batch (neighbours in one file) to write together and
                 judge in one compile_and_diff; a big one comes alone
             fallback: allow another assignment if the named function is unavailable (default true).
                 Set false when the task requires only the named function.
+            max_insns: when choosing automatically, only functions of at most this many instructions (0: any size)
         """
         options = {} if fallback else {"fallback": False}
+        if max_insns:
+            options["max_insns"] = max_insns
         return await run(ctx, "claim_function", function=function, strategy=strategy, count=count, **options)
 
     @tool
