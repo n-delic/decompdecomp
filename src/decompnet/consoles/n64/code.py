@@ -767,7 +767,7 @@ def insert_segments(config: Path, cfg: dict, found, size: int) -> None:
     config.write_text(yaml.safe_dump(cfg, sort_keys=False, default_flow_style=None), encoding="utf-8")
 
 
-def missed_functions(config: Path, rom: bytes, log=print) -> list[tuple[int, int, int]]:
+def missed_functions(config: Path, rom: bytes, log=print, known_functions=()) -> list[tuple[int, int, int]]:
     """In a project that exists, the functions its split left as data that an import would now find (complete_gaps,
     with the addresses the game was seen running in the project's folder): written into splat's `config` as code
     segments, as an import writes them, and returned as (rom_start, rom_end, vram), one function each. Lets a
@@ -781,10 +781,64 @@ def missed_functions(config: Path, rom: bytes, log=print) -> list[tuple[int, int
     declared = tuple((s.rom_start, s.rom_end, s.vram) for s in known)
     found = complete_gaps(rom, taken, [], declared, runtime_entries(config.parent), log=log)
     new = sorted({r for r in found if not any(a < r[1] and r[0] < b for a, b, _ in taken)})
+    cfg = yaml.safe_load(config.read_text(encoding="utf-8"))
+    inside = _bodies_inside_code(cfg, rom, taken, known_functions, log) if known_functions else []
     if new:
-        cfg = yaml.safe_load(config.read_text(encoding="utf-8"))
         insert_segments(config, cfg, new, len(rom))
-    return new
+        cfg = yaml.safe_load(config.read_text(encoding="utf-8"))
+    if inside and _cut_inside(cfg, inside):
+        config.write_text(yaml.safe_dump(cfg, sort_keys=False, default_flow_style=None), encoding="utf-8")
+    return sorted(set(new) | {b for b in inside if _cut_ok(cfg, b)})
+
+
+def _bodies_inside_code(cfg, rom, taken, known, log):
+    """Closed bodies in a code segment's raw bytes: the gaps between the project's own functions, scanned as
+    loader banks are (loader_code). The split left them as `.word` data, and an import now recovers them (mixed_code)
+    but a project only gained them by being imported again."""
+    from .loader_code import complete
+
+    spans = sorted((lo, hi, vram) for lo, hi, vram in known)
+    banks = [(a, b, v) for a, b, v in taken]
+    table = [dict(rom_start=a, rom_end=b, vram=v) for a, b, v in banks]
+    found = complete(rom, spans, banks, (), log, table_ranges=table, what="the gaps inside code segments")
+    return sorted(set(found) - set(spans))
+
+
+def _owner(cfg, lo, hi):
+    """The splat segment (with C subsegments) whose bytes hold [lo, hi), or None."""
+    segs = [x for x in cfg.get("segments", []) if (isinstance(x, dict) and "start" in x) or isinstance(x, list)]
+    start_of = lambda x: x["start"] if isinstance(x, dict) else x[0]
+    segs.sort(key=start_of)
+    for seg, after in zip(segs, segs[1:]):
+        if isinstance(seg, dict) and isinstance(seg.get("subsegments"), list) and start_of(seg) <= lo and hi <= start_of(after):
+            return seg
+    return None
+
+
+def _cut_ok(cfg, body):
+    return _owner(cfg, body[0], body[1]) is not None
+
+
+def _cut_inside(cfg, bodies):
+    """Give each body its own C subsegment (cuts at its start and end) in the code segment that holds it."""
+    changed = False
+    for lo, hi, _ in bodies:
+        seg = _owner(cfg, lo, hi)
+        if seg is None:
+            continue
+        subs = seg["subsegments"]
+        existing = {s[0] for s in subs if isinstance(s, list) and s}
+        parent = max((s for s in subs if isinstance(s, list) and len(s) > 2 and s[1] == "c" and s[0] <= lo),
+                     key=lambda s: s[0], default=None)
+        if parent is None:
+            continue
+        for at in (lo, hi):
+            if at not in existing:
+                subs.append([at, "c", f"{parent[2]}_{at:06X}"])
+                existing.add(at)
+                changed = True
+        subs.sort(key=lambda s: s[0] if isinstance(s, list) and s else s.get("start", 0))
+    return changed
 
 
 def recover_terminal_display_lists(result, image, log=print):

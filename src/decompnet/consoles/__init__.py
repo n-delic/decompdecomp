@@ -314,7 +314,7 @@ class Console:
         """Original code regions with separate module-relative addresses."""
         return []
 
-    def missed_functions(self, config: Path, image: bytes, log=print) -> list[tuple[int, int, int]] | None:
+    def missed_functions(self, config: Path, image: bytes, log=print, known=()) -> list[tuple[int, int, int]] | None:
         """ROM mode: in a project that exists, the functions its split left as data that an import would now find,
         written into splat's `config` as code segments and returned as (rom_start, rom_end, vram), one function each
         (N64: consoles/n64/code.py). None when the console has no such search yet (ROADMAP.md)."""

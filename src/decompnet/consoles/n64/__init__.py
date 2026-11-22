@@ -398,10 +398,10 @@ class Nintendo64(Console):
 
         return read(image)
 
-    def missed_functions(self, config: Path, image: bytes, log=print) -> list[tuple[int, int, int]] | None:
+    def missed_functions(self, config: Path, image: bytes, log=print, known=()) -> list[tuple[int, int, int]] | None:
         from .code import missed_functions
 
-        return missed_functions(config, image, log)
+        return missed_functions(config, image, log, known)
 
     def import_pointer_is_data(self, image, offset):
         from .packed_pointers import is_data

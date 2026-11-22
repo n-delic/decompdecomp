@@ -135,7 +135,9 @@ class EditMixin:
         before = config.read_text(encoding="utf-8")
         image, _ = self._rom(proj)
         try:
-            found = console.missed_functions(config, image, log)
+            rows = self.project_store(proj["id"]).all(
+                "SELECT rom_offset,size,vram FROM functions WHERE project_id=? AND rom_offset IS NOT NULL", proj["id"])
+            found = console.missed_functions(config, image, log, [(r["rom_offset"], r["rom_offset"] + r["size"], r["vram"]) for r in rows])
         except Exception:
             config.write_text(before, encoding="utf-8")
             raise
