@@ -3,7 +3,8 @@
 # every 20 minutes (and by hand: `gh workflow run library-pin`), and when a newer tag exists it rewrites the pin
 # (tools/bump_library.py), runs `uv lock`, checks the app still imports and runs the library's tests here, opens a
 # pull request and merges it. A family the app doesn't call yet (tests/test_library_family_wiring.py) doesn't block the
-# pin, since wiring it needs the new tag installed: the run goes red and opens an issue naming the unreached modules.
+# pin, since wiring it needs the new tag installed: the run goes red, its summary names the unreached modules, and an
+# issue is opened too when the repository has issues turned on (this one does not, so the red run is the alarm).
 # Smoke tests failing does block it: nothing is merged, the run goes red.
 # Needs no secret: the workflow's own token opens and merges the PR (Settings > Actions allows it, and main isn't protected).
 name: library-pin
@@ -76,7 +77,8 @@ jobs:
           $(tail -n 25 wiring.log)
           \`\`\`
           Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-          existing="$(gh issue list --state open --search "has families the app does not call in:title" --json number --jq '.[0].number')"
-          if [ -n "$existing" ]; then gh issue comment "$existing" --body "$body"; else gh issue create --title "$title" --label enhancement --body "$body"; fi
-          echo "::error::decomprepair $VERSION is pinned but not fully wired: see the issue"
+          printf '%s\n' "$body" >> "$GITHUB_STEP_SUMMARY"
+          existing="$(gh issue list --state open --search "has families the app does not call in:title" --json number --jq '.[0].number' 2>/dev/null || true)"
+          if [ -n "$existing" ]; then gh issue comment "$existing" --body "$body" || true; else gh issue create --title "$title" --label enhancement --body "$body" || echo "issues are off here: the red run and its summary are the report"; fi
+          echo "::error::decomprepair $VERSION is pinned but not fully wired: see the run summary"
           exit 1
