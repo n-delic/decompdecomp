@@ -46,6 +46,7 @@ from decomprepair import (
     measured_address_repairs,
     measured_after_call_reload,
     measured_be16_cursor,
+    measured_branch_byte_stores,
     measured_branch_halfword_store,
     measured_byte_clamp,
     measured_byte_clear_base,
@@ -508,6 +509,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += guard_reset_scheduling.variants(source, name, header, rows)
         result += global_pointer_local_repairs.scoped_field_reads(source, name, rows)
         result += measured_global_rebase.variants(source, name, header, rows, resolve=resolve)
+        result += measured_branch_byte_stores.variants(source, name, header, rows)
         result += measured_wide_division_stride.variants(source, name, header, rows)
         result += measured_slot_flip_copy.variants(source, name, header, rows, resolve=resolve)
         result += measured_conditional_flag_owner.variants(source, name, header, rows, resolve=resolve)
