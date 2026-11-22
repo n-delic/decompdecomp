@@ -29,7 +29,7 @@ improvements found during the run merged with their tests.
   accepts a later exact source for a matched function anyway, keeping the previous one in history. Your job is only
   that each step stays a faithful program (above) and that the scaffolding a match relies on is reported.
 - Keep a private checkpoint with the latest live verdict, the measured search seeds and their scores, pending
-  MCP calls, the next experiment, and open PRs or release tags. Resume from it across context changes.
+  MCP calls, the next experiment, and open PRs. Resume from it across context changes.
   A plateau calls for a different experiment. Keep the claim while working on the match.
 - Report success after the judge records 0 and the tested permuter improvements from step 5 are merged.
 
@@ -57,12 +57,32 @@ Keep hunting while there is a useful next step (see the completion condition abo
 that is step 5's question to answer honestly (what would have found the near-miss's last row?), not a licence to
 skip it: a near-match that the permuter cannot close is always a permuter gap.
 
-The permuter's rewrites live in the decomp-repair library (AGENTS.md, "Agents": change it there, tag, bump the tag
-in `pyproject.toml`, `uv lock`). What runs candidates stays in `src/decompnet/app/`. Read that section first.
+The permuter's rewrites live in the decomp-repair library (AGENTS.md, "Agents": change it there; the release and the
+pin follow by workflow, step 5). What runs candidates stays in `src/decompnet/app/`. Read that section first.
+
+## Start: `setup.py` makes the session and ends it
+
+Scripts live in `.claude/skills/match-function/scripts/`; read the latest from origin/main without touching the primary
+checkout: `git fetch -q origin && git archive origin/main .claude/skills/match-function/scripts | tar -x -C /tmp/dd-skill`
+(`mkdir -p` it first), then run `python3 /tmp/dd-skill/.claude/skills/match-function/scripts/setup.py SLUG [FUNC]
+--repo <primary checkout>`. It picks a holder, builds `/tmp/dd-<holder>/` with a worktree off origin/main (`repo/`, detached:
+`git switch -c <type>/<name>` there) and a private venv, creates the project-scoped MCP connection (token in
+`connection.json`, mode 0600, never printed), claims once (a random open function when none is given) and renews the claim
+every 5 minutes until it matches. It prints the environment; use that worktree's own `scripts/` and venv python from then
+on. Add the connection to your client as `connection.json` says. Finish with `setup.py stop <holder>`: it stops the renewal,
+revokes the connection (that frees the claim even with no compile yet) and removes the whole folder. Release with notes
+through MCP first when you learned something.
+
+The other scripts, run with that venv's python (`$UV_PROJECT_ENVIRONMENT/bin/python`): `fast_judge.py FILE.c --slug S
+--function F [--diff]` (score, and the app's differing rows), `passes.py FILE.c --slug S --function F` (allocation
+priorities, register preferences, scheduler orders), `prove_chain.py --slug S --function F --families a,b|all` (greedy
+chain of library families, scored), `families.py [words]` (the library's families, one line each),
+`tools/learnings.py` (evidence entries).
 
 ## Connect through the Rust MCP gateway
 
 Use the running app's decompdecomp MCP tools for claims, saved candidates, judging and release.
+`setup.py` (above) creates the dedicated connection and claims over it; what follows is what it does, and the manual way.
 If the app started this client as a helper, use its existing connection. Otherwise, use a dedicated
 project-scoped connection for this session. In the app, open **Agents & models → Connect another AI
 tool with MCP**, select the requested project and use the configuration it provides for the client.
@@ -93,10 +113,10 @@ The gateway deduplicates pending calls by connection, tool and arguments.
 - On a reused connection, start with `get_claims` to recover existing work. If it holds this
   function, resume it. If it holds unrelated work, use a separate project connection. A newly
   created connection that has made no claim can go straight to the first claim.
-- Claim with your own holder name. **Only a project given**: call the random claim (`claim SLUG` with no function,
-  `claim_function(strategy="random")`) exactly once and use the name the app returns; never loop on it.
-- **Renew the claim (`claim SLUG FUNC`) at least every 10 minutes during local work.** A lapsed claim lets other
-  agents take the function.
+- `setup.py` makes the first claim (once) and renews it. By hand: with your own holder name; **only a project given**:
+  call the random claim (`claim_function(strategy="random")`) exactly once and use the name the app returns; never loop on it.
+- **The claim is renewed at least every 10 minutes** (`setup.py` does it every 5; by hand, `claim_function(function=FUNC)`
+  again). A lapsed claim lets other agents take the function.
 - **An enormous function** (well over ~1000 instructions, or a best in the thousands with no near-miss rows) may be
   released once and another claimed.
 - **A function given**: call `claim_function(function=FUNC, fallback=false)` when the tool exposes
@@ -127,8 +147,8 @@ The gateway deduplicates pending calls by connection, tool and arguments.
 - **In the primary checkout, never `git pull`/`checkout`/`stash`, `uv sync`, or create branches**: the user's live
   app runs from its `.venv`, and a pull leaves the source ahead of it (the app's judge-worker then failed to import
   decomprepair). Read the latest skill with `git fetch -q origin && git show origin/main:.claude/skills/match-function/SKILL.md`.
-  Work in a worktree off `origin/main` (`git worktree add -b <type>/<name> ../dd-<holder> origin/main`) with a private
-  venv: `UV_PROJECT_ENVIRONMENT=/tmp/dd-<holder>-venv uv sync`; run `fast_judge.py` or a judge-worker from it.
+  Work in the session's worktree and private venv (`setup.py` makes them; by hand: `git worktree add` off `origin/main` and
+  `UV_PROJECT_ENVIRONMENT=<private dir> uv sync`); run `fast_judge.py` or a judge-worker from it.
 - On macOS, BSD `sed -i` needs `sed -i ''`. For long commands, use the client's background
   execution tools. In Claude Code, use `Monitor` when available. In Codex, poll the running command
   or session with its process tools.
@@ -200,7 +220,9 @@ settings, and verify `get_function(section="summary")` after an approved applica
 
 **For a search, use the app's own judge standalone.** `decomp judge-worker` returns exactly the app's score (a
 source judged 1090 in the app judged 1090 here) in about 0.1 s, needs no claim, runs beside the app without touching
-its state. Reuse a single `scripts/fast_judge.py` worker (`Judge(...).score(source)`) for these probes.
+its state. `scripts/fast_judge.py FILE.c --slug S --function F --diff` needs no ROM path or offsets (it takes the target, the
+project header and the function's own compiler from the app) and prints the app's differing rows after the score; in a
+loop, reuse one `Judge(slug, name)` worker (`.score(source)`, `.judge(source, diff=True)`).
 **Do not search on an approximation**: a home-made scorer (opcode alignment plus register counts) ranked candidates
 wrongly: a 1000 → 680 local improvement was 1090 → 1030 in the app. Confirm any result once with `compile_and_diff`.
 
@@ -336,11 +358,13 @@ the shape is decided by a compiler pass, not by how you spell the C. Stop writin
    builds and Visual C++ have none. Don't search the whole filesystem for `sched.c`/`loop.c`/`cse.c`.
 3. **Turn the finding into a rewrite.** The pass's rule is the permuter's guide: a family in decomp-repair that
    produces the source shape the rule needs (step 5). Record the rule, not only the spelling, in
-   COMPILER_MATCHING_LEARNINGS.md ("jump.c inverts `if (x) goto A; goto B;` unless an insn sits between them" is
+   a `docs/learnings/` finding ("jump.c inverts `if (x) goto A; goto B;` unless an insn sits between them" is
    reusable; "this function needed `goto`" is not).
 
-4. **Register-only rows: dump priorities, not passes.** `-dl -dg` prints each pseudo's priority; compare it with the
-   target's register order and change uses/live ranges (above, in 3). An empty `.lreg` means cc1 didn't get the
+4. **Register-only rows: dump priorities, not passes.** `passes.py CAND.c --slug S --function F` prints the allocation
+   priority table (refs, live length, priority, register), each pseudo's register preference and both schedulers'
+   instruction order with the project's compiler and flags, and where the compiler's source is; compare with the
+   target's register order and change uses/live ranges (above, in 3). The raw `-dl -dg` dump is the same thing by hand. An empty `.lreg` means cc1 didn't get the
    flag or failed to parse: run the compiler's own `gcc -E` first and strip comments.
 
 **Stuck near 0:** no long blind or random searches. Decode the rows, read the cc1 dumps (`-dl -dg` allocation
@@ -359,6 +383,10 @@ priorities and preferences, `-dS -dR` scheduling), and run the recent repair fam
    live claim's compile budget.
    If the family misses the shape or routing skips it, prove the missing behavior with a regression
    and land the fix in step 5. When results plateau, read the diff and choose a new hypothesis.
+
+`prove_chain.py --slug S --function F [SOURCE.c] --families a,b|all` applies the best-scoring child of those families
+step by step (bounded: one judge, capped children and steps; `--list` shows which families produce children) and prints
+each step's family and score: the cheap answer to "would the library have reached this from here".
 
 Never start or wait on a Deep Permuter run, a sweep, `scripts/scratch_run.py`, or an equivalent broad search,
 even for one function, and leave the running jobs' settings alone. Test a repair by calling it directly and scoring
@@ -382,19 +410,20 @@ For each manual step that moved the score, answer: **could the permuter have don
   spell the same operation differently from m2c. Add a unit test, verify that the permuter lane
   offers the candidate, and use the exact judge to measure it. After merging, check the live verdict
   with `get_function(section="summary")`. Describe the isolated evidence in the PR.
-- Record the evidence in `docs/COMPILER_MATCHING_LEARNINGS.md`: exact compiler and flags, the source change, the
-  measured before/after, and failed experiments. Say which are controlled results and which are one function.
+- Record the evidence as its own file: `python tools/learnings.py new function|finding|experiment NAME --compiler "..."`
+  (`docs/learnings/`; never append to `docs/COMPILER_MATCHING_LEARNINGS.md`, whose shared edits made PRs conflict): exact
+  compiler and flags, the source change, the measured before/after, and failed experiments. Say which are controlled
+  results and which are one function.
 - A change here needs its PR (AGENTS.md): branch `<type>/<name>`, test, `uv run ruff check`, merged after creation.
-  Say in the PR which features you ran and how, and for a library change the tag you bumped. Other sessions release
-  the library too: right before tagging, `git fetch --tags` and read `git ls-remote origin refs/tags/vX.Y.Z`; a tag that
-  exists is taken (use the next version, never move a tag), and after the library's release check its archive
-  contains your module before bumping the app's pin. If main already pins a newer archive with the
-  repair, keep that pin and test against it. While CI runs, keep the next independent local experiment
-  ready without changing a worktree used by an active judge.
-
-  Tag gotchas seen in one batch: `git fetch --tags` "would clobber existing tag" means a tag you made locally was
-  released meanwhile by another session: `git tag -d` it, take the next free version, tag only right before the
-  push; and a run's "No module named decomprepair.<x>" meant the pinned tag predates your module (check the archive).
+  Say in the PR which features you ran and how. **Never tag the library or bump its pin yourself.** Merge the library PR
+  with no version bump and no tag; its release workflow tags the merge (it runs on every merge, and `gh workflow run
+  release -R RetroReversing/decomp-repair` starts it at once), and the library-pin workflow here opens and merges the pin
+  PR (`gh workflow run library-pin`). Wait until `pyproject.toml` on origin/main pins a release containing your module
+  (`git fetch -q origin && git show origin/main:pyproject.toml | grep decomprepair`, and check the module is in
+  the archive), then wire it in a PR of its own. A new family the app doesn't call turns that workflow's run red until
+  it is wired (tests/test_library_family_wiring.py). While CI runs, keep the next independent local experiment ready
+  without changing a worktree used by an active judge. A run's "No module named decomprepair.<x>" means the pinned
+  release predates your module.
 - After the first 0, read `get_function(section="summary")` again and verify the function is recorded as matched
   with a best score of 0. If it still shows open, check the compile result before resubmitting.
 
@@ -415,8 +444,7 @@ afterwards, leave its note with the evidenced blocker.
   Resolve merge conflicts in a separate `--detach` worktree, not the one a run is using; never remove that worktree.
 - **Merges and rebases: grep every changed file for conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`) before
   committing AND before pushing**, and never merge a PR whose diff contains them.
-- **Other sessions share the machine.** The scratch port, the tags in the library (`git ls-remote --tags` right
-  before tagging; main's version may already be ahead) and the library's `main` all move under you. Use a free
+- **Other sessions share the machine.** The scratch port and the library's `main` move under you. Use a free
   `--port`; kill a run by its pid, never `pkill -f` on a script name (it kills other sessions' runs and any monitoring commands whose command lines contain the name).
 - **The app you judge through can disappear** (the user quits it). Don't start one. Score locally with
   `compile_snippet.py` (it needs the file's own typedefs: `f32` is not in its prelude) against the project's
@@ -434,7 +462,8 @@ afterwards, leave its note with the evidenced blocker.
   that local metadata is unavailable.
 - **Check what already exists before writing a rewrite.** `passthrough_argument` already did the argument fix and
   `symbol_width_repairs` was one regex away from the cast fix; ten minutes of grep over the library's docstrings
-  found both. Run the existing families on the saved best first: what they don't produce is the gap.
+  found both. `families.py <words>` is that grep (family, module, purpose, one line each, from the installed library); run
+the existing families on the saved best first (`prove_chain.py --list`): what they don't produce is the gap.
 
 - **Edit the best, keep an edit list, and score each row** (edit, score alone, score combined). It worked: the
   180 -> 0 table above came straight from it, and it showed which edits only help together (guard on the counter
@@ -452,7 +481,7 @@ Confirm these results before reporting success.
 
 - the app records the function as matched with a best score of 0 (`get_function(section="summary")`), and
   `judge.py diff` re-read shows "matched best 0";
-- the `docs/COMPILER_MATCHING_LEARNINGS.md` entry is written (step 5; skipped until reminded in one run); and
+- the `docs/learnings/` entry is written (step 5; skipped until reminded in one run); and
 - the permuter or app change from step 5 is merged if an improvement was found, the function is
   confirmed matched in the app after the merge (`get_function(section="summary")`), and your final message gives the before/after
   evidence. Do not run `scratch_run.py`; the user tests the repair in their app.
@@ -460,7 +489,8 @@ Confirm these results before reporting success.
 A long search with no new idea is not progress, and not a stopping point: when the score stops moving, go back to
 step 1 and read the diff again before spending more compiles.
 
-Release any remaining claim through MCP. Remove every worktree, clone, scratch folder and private venv you made, and
+Release any remaining claim through MCP, then `setup.py stop <holder>` (it removes the worktree, venv and scratch folder
+of the session). Remove any other worktree, clone, scratch folder and private venv you made, and
 never write game-derived source under `~/Documents` (scratch in `/tmp`). Then report the score, what matched the
 function, every PR number, any per-function profile change, any scaffolding the match relies on, and any remaining
 permuter gaps.
