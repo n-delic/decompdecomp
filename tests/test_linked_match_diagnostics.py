@@ -82,6 +82,16 @@ def test_floating_register_lane_tries_the_two_arm_float_rewrites_first():
     assert not allocation_search.floating_proposals(source,'f','',[('r','addu $a0, $a1, $a2','addu $a0, $a1, $a3')],'mips')
 
 
+def test_floating_register_lane_offers_the_constant_each_arm_picks_as_a_product_in_each_arm():
+    # A KMC GCC 2.7.2 function at 15 with $f0/$f2 traded places: a float literal each arm picks, multiplied after the join.
+    source = ('void f(void *o, s32 k) {\n    f32 scale;\n    f32 r;\n    s32 i;\n\n    if (k == 2) {\n        scale = 0.75f;\n'
+              '        i = k * 4;\n    } else {\n        scale = 0.25f;\n        i = k * 4;\n    }\n'
+              '    r = scale * *((f32 *)((s8 *)&table + i));\n    M2C_FIELD(o, f32 *, 0xCC) = r;\n}\n')
+    rows = [('r','mtc1 $at, $f0','mtc1 $at, $f2'),('r','lwc1 $f2, 0($at)','lwc1 $f0, 0($at)')]
+    found = dict((family, text) for family, text in allocation_search.floating_proposals(source,'f','',rows,'mips'))
+    assert 'r = 0.75f * *((f32 *)((s8 *)&table + i));' in found['float_arm_constant_tail']
+
+
 def test_proven_indexed_dispatch_checks_past_first_word():
     from decompnet.rom.match import R_MIPS_32, RomTarget, _Linker
 

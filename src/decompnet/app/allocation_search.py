@@ -26,14 +26,15 @@ def floating_only(rows, arch):
 
 
 def floating_proposals(source, name, header, rows, arch):
-    from decomprepair import float_arm_roles, floating_initializers
+    from decomprepair import float_arm_constant_tail, float_arm_roles, floating_initializers
 
     # A private include can hide a volatile field or alias from the source reader.
     if re.search(r'^\s*#\s*include\b', header+'\n'+source, re.M) or not floating_only(rows,arch):
         return []
     # Float registers trading places across an if/else that both set one field: the two-arm rewrites come first,
     # as a short lane (an N64 function went from six operands off to exact with them) and the load orders follow.
-    return float_arm_roles.variants(source,name,header)+floating_initializers.variants(source,name,header)
+    return (float_arm_roles.variants(source,name,header)+float_arm_constant_tail.variants(source,name,header)
+            +floating_initializers.variants(source,name,header))
 
 
 def allowance(diagnosis):

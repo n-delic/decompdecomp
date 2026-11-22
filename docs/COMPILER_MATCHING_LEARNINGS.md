@@ -13292,6 +13292,23 @@ new family.
 
 On one N64 function compiled with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, an initialized local zero before a comparison scored 350. Wrapping just that comparison assignment in `do { ... } while (0)` kept the same evaluation and scored 85 in the exact judge; the remaining differences were register allocation. The inherited score-10 source read that local before initialization and is only a search control, not evidence of valid C. Initializing at declaration scored 295, initializing before the load scored 350, and making the local volatile scored 1080. These are observations on one function; decomp-repair 0.5.335 offers the comparison scope and a synthetic regression covers generation, including a surrounding volatile load.
 
+### KMC GCC 2.7.2: combine drops a lone `& 0xFF` after a zero-extending load, and a float constant picked by an arm sits in the wrong register
+
+One N64 function (`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, saved best 215) matched exactly (score 0, the app's judge) after two edits from the saved best.
+1. A byte local `s8 t = (u8 field)` tested as `((u32)(t - 9) < 2U) || ((t & 0xFF) == 0xB)` compiled to `lb` and no `andi`; the target has
+   `lbu` and `andi $v1,$v1,0xff` in the first branch's delay slot. A `u8` local (`lbu`) with the range written out as
+   `((t & 0xFF) == 9) || ((t & 0xFF) == 0xA) || ((t & 0xFF) == 0xB)` kept the `andi`: 215 -> 15. cc1's `-dc` dump shows the
+   cause: a single `(and P 255)` is merged into its branch and simplified away because combine knows P is a zero-extended
+   byte, but when the masked value is compared more than once the `and` has two uses and survives (a plain `u8`/`s32`
+   local, `u16`, `(u8)` casts, `(t & 0xFF) - 9 < 2U` and `s8` locals all scored 235 or worse). A snippet with
+   `if (t == 9) goto L; if ((t & 0xFF) == 10) goto L; if ((t & 0xFF) == 11)` keeps one `andi` for the same reason.
+2. Remaining 15 was `$f0`/`$f2` traded places: `var_fv0 = 0.75f / 0.25f` set in each arm and `r = var_fv0 * table[idx]` after the join
+   gave the constant the later register. Writing `r = 0.75f * table[idx]` at the end of each arm (keeping the index
+   assignment, dropping the variable) was exact: 15 -> 0. Failed variants: swapping the multiply's operands (20), a ternary
+   for the constant (860), keeping the variable inside each arm (20).
+decomp-repair 0.5.337 offers both (`masked_range_equality_chain`, `float_arm_constant_tail`); applied in that order from the
+saved best they reproduce the exact source. Evidence level: one function, rewrites controlled by unit tests.
+
 ### Recover unsigned byte-table guards (KMC GCC 2.7.2)
 
 With `-G0 -mips3 -mgp32 -mfp32 -O2`, two signed byte loads disagreed
