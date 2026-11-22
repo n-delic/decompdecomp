@@ -128,3 +128,49 @@ def test_imported_similarity_accepts_a_larger_body_with_agreeing_operands():
     fingerprint = Print('larger', [], len(donor_code), layout=[])
     index = Index([({'id': 1}, fingerprint, {'target': donor_code})], True, '', Job().stop)
     assert index.shortlist(target, target_ops)[0][0]['id'] == 1
+
+
+def test_similar_donor_retries_optimization_after_length_miss(monkeypatch):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from decompnet.app import donor_build, imported_similarity
+
+    original = {'toolchain': 'ido-7.1', 'flags': ['-O2']}
+    alternate = {'toolchain': 'ido-7.1', 'flags': ['-O1']}
+    fn = {'id': 7, 'name': 'target', 'target': bytes(32), 'relocs': '[]',
+          'vram': 0x80001000, 'meta': '{}', 'unit': '', 'size': 32, 'rom_offset': 0}
+    donor = {'id': 8, 'name': 'donor', 'unit': 'u'}
+    fingerprint = Print('donor', [], 32, layout=[])
+    index = Mock()
+    index.entries = {8: True}
+    index.shortlist.return_value = [(donor, fingerprint, bytes(32), ('x',), 1)]
+    monkeypatch.setattr(imported_similarity, 'Index', lambda *args: index)
+    monkeypatch.setattr(imported_similarity.similarity, 'mips_mnemonics', lambda *a, **k: ('x',))
+    monkeypatch.setattr(imported_similarity, 'aliases', lambda *a: {})
+    monkeypatch.setattr(imported_similarity, 'compiler_for', lambda *a: original)
+    monkeypatch.setattr(imported_similarity.toolchains, 'installed', lambda *a: True)
+    monkeypatch.setattr(donor_build, 'optimization_trials', lambda *a: [(alternate, None)])
+    verify = Mock(side_effect=[('miss', donor_build.LENGTH_MISS + ': 36 bytes'),
+                               ('match', 'Verified exact.')])
+    monkeypatch.setattr(donor_build, 'verify', verify)
+    project_store = Mock()
+    project_store.all.return_value = [fn]
+    project_store.one.return_value = fn
+    connection = Mock()
+    project_store.tx.return_value = nullcontext(connection)
+    console = SimpleNamespace(cpu_variant='', export_overlay=lambda _: None)
+    net = SimpleNamespace(console=lambda _: console, project_store=lambda _: project_store,
+                          cfg=lambda _: {}, _rom_target=lambda _: None, _target_obj=lambda *a: SimpleNamespace(relocs=[]),
+                          forks=SimpleNamespace(is_asm=lambda *a: False))
+    settings = SimpleNamespace(headers={}, for_unit=lambda _: original, replacement_source=lambda *a: None)
+    project = {'id': 1, 'big_endian': 1}
+    other = {'id': 2, 'name': 'Donor'}
+    job = Job()
+    job.cross_exhaustive = True
+    assert imported_similarity.run(SimpleNamespace(net=net), None, project, other, {1: [1]},
+                                   {'u': object()}, settings, job, {}) == 1
+    assert [call.args[6] for call in verify.call_args_list] == [original, alternate]
+    assert job.cross_tried == 2
+    assert 'Alternate donor optimization' in connection.execute.call_args.args[1][-2]

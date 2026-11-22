@@ -167,6 +167,21 @@ def run(twins, agent, proj, other, hits, units, settings, job, checked, *, funct
                                                      settings.headers, replacement=replacement, compiled_literals=True)
                 except (NetworkError, OSError, ValueError) as error:
                     outcome, why = 'skip', str(error)
+                if outcome == 'miss' and why.startswith(donor_build.LENGTH_MISS):
+                    for alternate, replacement_trial in donor_build.optimization_trials(trial, replacement):
+                        if exhausted():
+                            break
+                        job.cross_candidates += 1
+                        job.cross_tried += 1
+                        try:
+                            retried, detail = donor_build.verify(
+                                net, proj, fn, other, donor, names, alternate, agent, job, settings.headers,
+                                replacement=replacement_trial, compiled_literals=True)
+                        except (NetworkError, OSError, ValueError) as error:
+                            retried, detail = 'skip', str(error)
+                        if retried == 'match':
+                            outcome, why = retried, 'Alternate donor optimization: ' + detail
+                            break
                 with store.tx() as conn:
                     conn.execute("INSERT INTO cross_game_attempts(project_id,function_id,source_project_id,"
                                  "source_function_id,outcome,reason,created_at) VALUES(?,?,?,?,?,?,?)",

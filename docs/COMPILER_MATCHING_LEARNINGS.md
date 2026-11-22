@@ -16192,3 +16192,14 @@ The `last_byte_mask` family previously produced five candidates from that seed: 
 ### KMC GCC 2.7.2 branch between call returns
 
 A saved MIPS message-queue wrapper built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` returned the result of one of two calls. Widening a parameter from a byte to `s32` changed the linked difference score from 976 to 220; inverting the final guard so the other call returned first produced an exact match. This is one saved example, not a controlled cross-compiler experiment. The return expressions remain in their original execution paths.
+
+### Alternate IDO optimization for similar donor functions
+
+In an isolated N64 cross-game search, an SDK DMA routine compiled from the donor
+with IDO 7.1 `-O2 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul`
+produced 132 bytes against a 140-byte target. The same source at `-O1`
+reproduced the linked target exactly. An SDK peripheral I/O routine also matched
+with the donor's IDO 7.1 `-O1` profile. Both source/header/profile pairs were
+compiled again and saved by the destination app's exact judge. The similar
+donor search now tries the existing bounded optimization alternatives when a
+search encounters a compiled length mismatch.
