@@ -14803,3 +14803,20 @@ borrowed snapshot local is dead at the insert point.
 ### Stage a disjoint field ahead of reset loops
 
 In a private N64 reset function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the target loaded a word field before two short clearing loops and reused one counter. The draft loaded the field after the loops, used separate counters and initialized the second cursor before its loop. Staging the word before the loops, sharing the counter and computing the second cursor at the start of each iteration reproduced the linked target exactly (score 320 to 0). Staging the field alone scored 240; moving the cursor alone scored 110; combining those without sharing the counter scored 30. The rule checks the measured load order, counter lifetimes and that neither loop writes the staged word. Evidence: one saved function and synthetic generation and routing tests.
+
+### Sample and scale before loading the old smoothing field
+
+In a private N64 function built with GCC 2.7.2 KMC and
+`-G0 -mips3 -mgp32 -mfp32 -O2`, the draft captured an old record field
+before a call whose scaled float result fed the smoothing expression.
+The target called first, scaled its result and then loaded the old
+field. The draft had to keep the field through the call and used
+different float registers for the following clamp.
+
+Capturing just the sample before the field read moved the linked
+score from 8,210 to 8,005. Staging the sample and its scale before
+reading the field recovered the target's read order and clamp
+operands, scoring 7,960 with all three jump-table relocations and no
+warnings. Sinking the clamp reload into a saved call argument as
+well regressed to 8,665. Tests verify the callee, field offset, scale
+bits and candidate's opposing load order.
