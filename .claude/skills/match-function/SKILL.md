@@ -560,7 +560,8 @@ To hand off:
    the edit list from the saved best, each idea tried with its score, any scaffolding in the best, and the compiler
    findings (dumps read, pass orders, allocation priorities).
 2. Merge any library or app work it produced (step 5), with tests, as on a match.
-3. `release_function(function=F, notes=<one line>, claim_token=...)`, then `setup.py stop <holder>`.
+3. `release_function(function=F, notes=<one line>, claim_token=...)` (the app accepts it once the clock allows and your
+   `add_note` is written, whatever the compile count says), then `setup.py stop <holder>`.
 4. Report **"handed off"**, with the clock's line, the best score and the note's summary, so a stronger agent resumes
    from the history.
 

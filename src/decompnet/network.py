@@ -442,9 +442,24 @@ def handoff_due(status) -> bool:
     return bool(status.get("claimed_at")) and near_match(best) and (status.get("quiet_minutes") or 0) >= HANDOFF_MINUTES
 
 
+def handoff_clock_ran_out(status, now=None) -> bool:
+    """The match-function skill's clock (scripts/clock.py), for any function and not only a near-match: at least
+    HANDOFF_MINUTES since the claim and HANDOFF_MINUTES since its last improvement. A release after this and a
+    hand-off note goes through whatever the compile count says (release_function's push-back): the skill said
+    "hand-off allowed" and the compile-count rule then refused the release it had just asked for."""
+    now = time.time() if now is None else now
+    claimed = status.get("claimed_at")
+    return bool(claimed) and (now - claimed) / 60 >= HANDOFF_MINUTES and (status.get("quiet_minutes") or 0) >= HANDOFF_MINUTES
+
+
 def handoff_line(status) -> str:
-    """The clock as compile results and release push-backs show it, for a near-match only."""
+    """The clock as compile results and release push-backs show it, for a near-match only; past the clock on any
+    other function, the way to hand it off."""
     best = status.get("best") if status.get("best") is not None else status.get("inherited_best")
+    if status.get("handoff_clock") and not near_match(best):
+        return (f" ⏱ Hand-off clock: {int(status.get('quiet_minutes') or 0)} min without a better score. To hand off, "
+                "write a hand-off note with add_note (edits tried with scores, rows left, next idea), then "
+                "release_function with the current claim_token; it goes through now.")
     if not status.get("claimed_at") or not near_match(best):
         return ""
     quiet = int(status.get("quiet_minutes") or 0)
@@ -2470,6 +2485,7 @@ class Network:
         status = {"claimed_at": start, "compiles": len(scores), "no_better": _no_better(scores, baseline, digests), "after": after, "inherited_best": baseline,
                   "best": min((s for s in scores if s is not None), default=None), "quiet_minutes": quiet}
         status["handoff"] = handoff_due(status)
+        status["handoff_clock"] = handoff_clock_ran_out(status)
         return status
 
     def stall_note(self, function_id: int, agent_id: int, *, project_id: int | None = None) -> str:

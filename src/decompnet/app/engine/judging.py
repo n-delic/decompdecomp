@@ -619,6 +619,11 @@ class JudgeMixin:
             return None  # compile_and_diff said to move on
         if progress.get("handoff"):
             return None  # the hand-off clock ran out on a near-match (network.HANDOFF_MINUTES)
+        noted = progress.get("handoff_clock") and self.project_store(fn['project_id']).one(
+            "SELECT 1 FROM notes WHERE function_id=? AND agent_id=? AND created_at >= ?",
+            fn["id"], agent.id, progress["claimed_at"])
+        if noted:
+            return None  # the clock allows a hand-off (any score) and its note was written: the skill's rule, not the count
         pushed = self.project_store(fn['project_id']).one("SELECT COUNT(*) AS n FROM events WHERE agent_id=? AND kind='release_pushed' AND "
                                 "detail=? AND created_at >= ?", agent.id, fn["name"], progress["claimed_at"])["n"]
         if n and pushed:
@@ -654,6 +659,8 @@ class JudgeMixin:
                     "(parameters, convention) differs" if x86 else "")
                  + "; fix structure and calls first, registers last.",
                  *hints,
+                 *(["The hand-off clock has run out: write a hand-off note with add_note (edits tried with scores, rows "
+                    "left, next idea), then release_function again; it goes through."] if progress.get("handoff_clock") else []),
                  ("Compile it (a release with no compile isn't taken)." if not n else
                   f"release_function goes through at {after} compiles in a row without a better score, or if you "
                   "ask again now with notes saying why it can't get closer.")
