@@ -201,6 +201,11 @@ CLAIM_ORDERS = {
 }
 
 
+def same_source(fn, source: str) -> bool:
+    """Whether `source` is the C the matched function already has (up to whitespace): a recheck, not a replacement."""
+    return " ".join(source.split()) == " ".join((fn["matched_source"] or "").split())
+
+
 class NetworkError(Exception):
     """An error meant to be shown to the agent as-is."""
 
@@ -2241,15 +2246,25 @@ class Network:
         d = self._score_candidate(fn, proj, cand, verdict)
         checks = self._candidate_checks(fn, proj, result.obj)
         matched_now = d.bytes_match and not scratch
+        # A matched function's new source that the judge verifies as exact replaces the saved one (a cleaner program
+        # for the same bytes); the same C again is only a recheck, and anything short of exact never replaces it.
+        rematch = bool(scratch and d.bytes_match and not same_source(fn, source))
         last = store.one("SELECT score FROM attempts WHERE function_id=? AND agent_id=? AND score IS NOT NULL "
                               "ORDER BY id DESC LIMIT 1", fn["id"], agent.id)
-        self._record(fn, agent, d.score, source, ctx["version"], matched=matched_now, effective_settings=getattr(result,"effective_settings",None), mismatch_rows=d.rows)
+        self._record(fn, agent, d.score, source, ctx["version"], matched=matched_now or rematch,
+                     effective_settings=getattr(result,"effective_settings",None), mismatch_rows=d.rows,
+                     **({"verified_replacement": True, "replacement": True} if rematch else {}))
         self.keep_diff(agent.id, fn["id"], self._search_rows(fn, proj, result.obj, d.rows))
         compiled_output = {'fingerprint': cand.fingerprint(), 'granularity': 'function'}
 
+        if rematch:
+            return {"text": f"✅ {fn['name']} was already matched, and this source is byte-identical too: it is the saved "
+                            "source now (the previous matching source stays in the function's history).",
+                    "score": 0, "matched": True, "exact": True, "new_match": False, "adopted": True,
+                    "replaced": True, "checks": checks, "compiled_output": compiled_output}
         if scratch:
             head = f"(scratch — {fn['name']} was already matched) score {d.score}"
-            if d.bytes_match:head += '; EXACT recheck; no new credit or source replacement'
+            if d.bytes_match:head += '; EXACT recheck of the saved source'
         elif d.bytes_match:
             return {"text": f"✅ MATCH! {fn['name']} is byte-identical to the target ({fn['n_insns']} instructions). "
                             f"Credited to {agent.name}; your claim is released. Call claim_function for the next one."
@@ -2446,10 +2461,12 @@ class Network:
                 compiled: bool | None = None, via: str = "agent", effective_settings=None,
                 prepared_header=None, prepared_inputs=None, prepared_compiler=None, before_record=None, restoring_exact=False, prepared_assembly=False, write_wait=None, exact_inputs=None,
                 best: bool = True, retain_match_credit: bool = False, mismatch_rows=(), handoff_inputs=None,
-                verified_replacement: bool = False):
+                verified_replacement: bool = False, replacement: bool = False):
         """An attempt. `best`: False for one whose code can't stay in the source (it breaks matched neighbours), so
         it never becomes the best that briefs offer and a release puts back.
-        Only explicit, verified source updates may publish over an existing match."""
+        Only explicit, verified source updates may publish over an existing match. `replacement`: that update is an
+        exact source for an already matched function: it becomes the saved source, the match's credit and date stay,
+        the previous source is kept in the attempts (history), and the function is no longer counted readable."""
         store = self.project_store(fn["project_id"])
         now = time.time()
         compiled = score is not None if compiled is None else compiled
@@ -2539,7 +2556,9 @@ class Network:
             if (via == "agent" and not stale and current['status'] == 'open'
                     and current['abandons'] >= ESCALATE_AFTER and agent.name not in NON_MODEL_AGENTS):
                 claim_routing.tested(db, proj, current, agent, matched and score == 0 and not retain_match_credit)
-            if matched and not stale and not retain_match_credit:
+            if matched and not stale and replacement and already_matched and score == 0:
+                self._replace_match(db, current, agent, source)
+            elif matched and not stale and not retain_match_credit:
                 db.execute("UPDATE functions SET status='matched', matched_source=?, matched_agent_id=?, "
                            "matched_at=?, best_score=0, best_source=? WHERE id=?",
                            (source, agent.id, now, source, fn["id"]))
@@ -2556,10 +2575,27 @@ class Network:
                 self.check_attempt_limit(agent, fn)
             except NetworkError:
                 pass  # the attempt itself still returns its diff; the next claim moves on
-        if matched and not retain_match_credit:
+        if matched and not retain_match_credit and not replacement:
             store.after_commit(lambda: self.on_match(store.one("SELECT * FROM projects WHERE id=?", fn["project_id"]), fn["id"], agent))
         elif improved:
             self.on_improvement(store.one("SELECT * FROM projects WHERE id=?", fn["project_id"]), fn["id"])
+
+    def _replace_match(self, db, current, agent: Agent, source: str) -> None:
+        """An already matched function's new exact source (the judge verified it) is the saved one. The previous
+        matching source is kept as an exact attempt, so history has it whatever wrote it, and the function goes back
+        to unpolished: polishing's own path (RomPolish._readable) writes readable=1 afterwards."""
+        self.keep_matching_history(db, current, current['matched_source'])
+        db.execute("UPDATE functions SET matched_source=?, best_source=?, best_score=0, readable=0, "
+                   "unpolished_source=NULL WHERE id=?", (source, source, current['id']))
+        self._event(db, current['project_id'], agent.id, "rematch", current['name'])
+
+    def keep_matching_history(self, db, current, old: str | None) -> None:
+        """`old`, a source that matched, stays among the function's attempts (once), before a new one replaces it."""
+        if old and not db.execute("SELECT 1 FROM attempts WHERE function_id=? AND score=0 AND source=?",
+                                  (current['id'], old)).fetchone():
+            db.execute("INSERT INTO attempts(function_id,agent_id,score,compiled,context_version,source,created_at) "
+                       "VALUES(?,?,0,1,0,?,?)", (current['id'], current['matched_agent_id'] or 0, old,
+                                                 current['matched_at'] or time.time()))
 
     def _release_matched_claim(self, db, function_id, matching_agent_id=None):
         """The saved match owns the function; notify its displaced worker only after commit."""

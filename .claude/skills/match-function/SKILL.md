@@ -24,6 +24,10 @@ improvements found during the run merged with their tests.
 - **Every step must be a faithful program.** Never add stores to wrong addresses or values, dead blocks or phantom
   locals (an unused `long long`) just to improve the score; prefer source a developer could plausibly have written.
   When a match relies on scaffolding anyway (a `+ (t & 3)` zero term), say so in the report and the notes.
+- **Do not tidy a matched source.** Once the judge says 0, stop: do not spend compiles or time renaming, retyping,
+  commenting, reordering or otherwise cleaning it up. Polishing does that afterwards (`app/readable.py`), and the app
+  accepts a later exact source for a matched function anyway, keeping the previous one in history. Your job is only
+  that each step stays a faithful program (above) and that the scaffolding a match relies on is reported.
 - Keep a private checkpoint with the latest live verdict, the measured search seeds and their scores, pending
   MCP calls, the next experiment, and open PRs or release tags. Resume from it across context changes.
   A plateau calls for a different experiment. Keep the claim while working on the match.

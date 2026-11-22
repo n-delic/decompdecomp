@@ -325,8 +325,6 @@ class JudgeMixin:
         out, matched = [], 0
         for name in names:
             try:
-                if self._function(name, project)['status'] == 'matched':
-                    raise NetworkError(f"{name} is already matched. Claim another function.")
                 one = self.forks.one_definition(fork, source, name, [n for n in names if n != name]) if fork else source
                 res = self.attempt(agent, name, one, project)
                 res["text"] += self.attempt_limit_note(agent, name, project)
@@ -390,6 +388,9 @@ class JudgeMixin:
             result = super()._record(fn, *args, **kwargs)
             if before is not None and before['status'] != 'matched':
                 verdict = match_commits.capture_verdict(store, fn['id'])
+        if proj is not None and kwargs.get('replacement') and verdict is None:
+            # a new exact source for a matched function commits like a polished one: the same function, new C
+            match_commits.enqueue(self, proj, fn['id'], polished=True)
         if verdict is not None:
             # Queueing waits for the database writer. Other judges can use the project lock meanwhile.
             match_commits.enqueue(self, proj, fn['id'], verdict=verdict)
