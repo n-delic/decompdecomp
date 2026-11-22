@@ -1,5 +1,14 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: share repeated unsigned offsets through an inline helper
+
+Factoring two copies of a shift, stride, and bias calculation into a
+single inline helper improved a private N64 draft from 7,412 to 7,052
+with `-G0 -mips3 -mgp32 -mfp32 -O2`. Factoring the call argument alone
+scored 7,252, and factoring the store expression alone scored 7,212.
+A separate narrow-store scheduling change took the draft to 7,037.
+The function remains unmatched.
+
 ### KMC GCC 2.7.2: share the update before continue
 
 In a private N64 linked-list draft, branches copied the saved next pointer
