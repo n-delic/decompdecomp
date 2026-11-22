@@ -1185,6 +1185,13 @@ measured the exits alone gained nothing; the callers decide where they cannot, a
 
 ## Recently done
 
+- **Scores follow the flow, not the instruction count (score version 3).** On a large function one instruction added
+  or removed shifted every later branch (and jump to the function's own symbol), and each one cost 10 or, for a
+  relocated jump, 150 as another call: a candidate that fixed a whole loop scored 2,175 against a best of 340. A branch
+  whose target is the instruction its counterpart's target pairs in the diff's alignment now costs nothing
+  (`scoring._Alignment`; MIPS, PowerPC, x86, ARM and Thumb forms; a match is still byte-identical). Open bests are
+  rescored once by Check again after the update; ROM mode only (fork projects keep objdiff's percentage).
+
 - **Scores weigh meaning; stalled bests restart from the draft.** A memory access at another offset, another
   constant or another call costs 150, more than a reorder (scoring.PENALTY_MEANING, score version 2; open bests are
   rescored once by Check again). An unmatched function's brief warns about a best that stores one place twice,
