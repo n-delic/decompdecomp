@@ -110,7 +110,8 @@ def _candidate_source(fn, best):
             or row['status'] != 'matched' and (row['status'] != 'open' or best is None or row.get('best_score') is None)):
         from .progress import ProgressMoved
         raise ProgressMoved('Saved candidate changed during deep search. Wait for synchronization, then retry with its current C and score.')
-    return source
+    from .function_names import canonical_source
+    return canonical_source(fn, source)
 
 
 # a deep pass that found C exact only under another compiler profile (profile_climb): the suggestion waits for review
@@ -702,8 +703,13 @@ class Search(Permuter):
         return best
 
     def measured_winner(self, fn, source):
-        return (self.winner_diff is not None and self.winner_source == source
-                and self.winner_scope == agent_tokens.target_scope(self.net, {**dict(fn), 'best_source':source}, ''))
+        if self.winner_diff is None or self.winner_source is None:
+            return False
+        from .function_names import canonical_source
+        if self.winner_source != source and canonical_source(fn, self.winner_source) != source:
+            return False
+        return self.winner_scope == agent_tokens.target_scope(
+            self.net, {**dict(fn), 'best_source': self.winner_source}, '')
 
     def linked_case_diff(self, fn, source):
         return self.winner_jump_tables if self.winner_jump_tables and self.measured_winner(fn, source) else ()
@@ -952,7 +958,7 @@ class Search(Permuter):
         rows = self.winner_diff[0] if self.winner_diff else ()
         if not allocation_search.near_registers(rows, proj['arch']):
             return best
-        source = fn['best_source']
+        source = _candidate_source(fn, best)
         ctx = self.net._context(proj['id'], fn['unit'])
         header = self.net.forks.permuter_header(fork, fn['name']) if fork else ctx['header']
         choices = allocation_search.near_proposals(source, fn['name'], header, rows, proj['arch'])
@@ -1098,7 +1104,6 @@ class Search(Permuter):
         trials = 0
         detours_used = set()
         alternatives = search_frontier.Frontier()
-        source = fn['best_source']
         context = self.net._context(proj['id'],fn['unit'])
         header = self.net.forks.permuter_header(fork,fn['name']) if fork else (context['header'] if context else '')
         best = self._repair_preflight(agent, proj, fn, best, fork)
@@ -1548,7 +1553,7 @@ class Search(Permuter):
                         # All inverses were measured/cache-checked. Resume the broad page once;
                         # do not treat a failed cleanup as exhaustion of ordinary repair families.
                         continue
-                    if resume_base == fn['best_source'] and resume_base not in expanded:
+                    if resume_base not in expanded and resume_base == _candidate_source(fn, best):
                         source = resume_base
                         continue
                     detour = next((node for node in alternatives.nodes
