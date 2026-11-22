@@ -243,6 +243,37 @@ def installed() -> Path | None:
     return toolchains.path(TOOL) if toolchains.installed(TOOL) else None
 
 
+_auto = {"lock": threading.Lock(), "failed": 0.0}
+RETRY_AFTER = 3600  # seconds before a failed build is tried again, not once per import
+
+
+def ensure(log=print) -> Path | None:
+    """`installed()`, after downloading the pinned sources and building the emulator when it is missing, as
+    objdiff-cli, wibo and decomp-permuter are. Without it an import silently skipped running the game (loaded_code),
+    so the code a game loads at run time stayed data: a computer that never built it imported worse than one that
+    had. None when it can't be built here (no build for this computer, DECOMP_AUTO_TOOLS=off, or the build failed:
+    reported to `log`, retried after RETRY_AFTER seconds)."""
+    from .... import toolchains
+
+    if (found := installed()) is not None:
+        return found
+    if os.environ.get("DECOMP_AUTO_TOOLS", "on") == "off" or not toolchains.get(TOOL).supported:
+        return None
+    with _auto["lock"]:
+        if (found := installed()) is not None:
+            return found
+        if _auto["failed"] and time.monotonic() - _auto["failed"] < RETRY_AFTER:
+            return None
+        try:
+            log("Building the reversing emulator (mupenRE) from its pinned source; this happens once.")
+            toolchains.ensure(TOOL, log=log)
+        except Exception as error:  # imports go on without running the game, and say so
+            _auto["failed"] = time.monotonic()
+            log(f"The reversing emulator could not be built ({str(error)[:200]}); the game isn't run to find its loaded code.")
+            return None
+    return installed()
+
+
 def run(rom: Path, vis: int, *, inputs: str = "", dumps: dict[int, Path] | None = None,
         watches: list[tuple[int, int]] | tuple = (), breaks: list[int] | tuple = (), report_from: int = 0,
         max_hits: int = 200, expansion_pak: bool = False, timeout: float = 1800,

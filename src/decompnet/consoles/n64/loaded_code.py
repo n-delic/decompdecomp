@@ -80,7 +80,7 @@ def find(rom_path: Path, rom: bytes, taken, found=(), *, log=print, stop=lambda:
     clear of `taken` and `found` (the split's and the static search's), each the ROM's own bytes at their address."""
     from . import emulator
 
-    if emulator.installed() is None:
+    if emulator.ensure(log) is None:
         return {"segments": [], "decoded": 0, "moved": [], "skipped": "the reversing emulator isn't installed"}
     with tempfile.TemporaryDirectory(prefix="decomp-loaded-code-") as tmp:
         try:

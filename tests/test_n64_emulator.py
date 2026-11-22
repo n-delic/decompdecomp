@@ -129,3 +129,32 @@ def test_a_runs_output_stays_bounded_and_a_stuck_emulator_is_named():
         noisy.add(f"core: distinct message {index}\n")
     noisy.add("stopped 30\n")
     assert len(noisy.text()) < _Output.NOISE + 1000 and parse(noisy.text()).vis == 30
+
+
+def test_ensure_builds_the_missing_emulator_once_and_retries_a_failure_later(tmp_path, monkeypatch):
+    """An import that finds the emulator missing builds it (as objdiff-cli is), so a computer that never built it
+    doesn't import worse (loaded_code skipped running the game); a failed build isn't retried per import."""
+    from decompnet import toolchains
+
+    monkeypatch.setenv("DECOMP_AUTO_TOOLS", "on")
+    monkeypatch.setattr(emulator, "_auto", {"lock": emulator.threading.Lock(), "failed": 0.0})
+    state = {"built": False, "calls": 0, "fail": True}
+    monkeypatch.setattr(emulator, "installed", lambda: tmp_path if state["built"] else None)
+
+    def fake_ensure(tid, log=print):
+        state["calls"] += 1
+        if state["fail"]:
+            raise toolchains.ToolchainError("no compiler")
+        state["built"] = True
+    monkeypatch.setattr(toolchains, "ensure", fake_ensure)
+    lines = []
+    assert emulator.ensure(lines.append) is None and state["calls"] == 1
+    assert any("could not be built" in line for line in lines)
+    assert emulator.ensure(lines.append) is None and state["calls"] == 1  # not again at once
+    state["fail"] = False
+    emulator._auto["failed"] = 0.0
+    assert emulator.ensure(lines.append) == tmp_path and emulator.ensure(lines.append) == tmp_path
+    assert state["calls"] == 2
+    monkeypatch.setenv("DECOMP_AUTO_TOOLS", "off")
+    state["built"] = False
+    assert emulator.ensure(lines.append) is None and state["calls"] == 2
