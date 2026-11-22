@@ -16398,3 +16398,7 @@ A saved MIPS function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3
 ### IDO generated C++ overlay references
 
 An isolated N64 overlay function built with IDO 7.1 using `-O2 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul -DNON_MATCHING` compiled to the original 588 instruction bytes, but its generated base-constructor call and vtable address used C++ symbols rather than the loader's names. Explicit object-file binding declarations preserved the generated instructions and allowed the overlay linker to verify both loader records. This is one observed function, not a cross-compiler result. A compiler-backed regression checks constructor and vtable bindings, a wrong symbol, a nonzero marker addend, and cartridge reconstruction.
+
+### KMC GCC 2.7.2 adjacent record stores
+
+A saved MIPS event setup built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` stored a halfword and word to disjoint fields of one record. Swapping their adjacent source statements changed a partially repaired draft's linked difference score from 60 to an exact match. This is one saved example, not a controlled cross-compiler experiment. The candidate requires the target and candidate instruction streams to contain the same adjacent stores in opposite order and checks that the fields do not overlap and the source inputs are ordinary, non-escaped locals or parameters.
