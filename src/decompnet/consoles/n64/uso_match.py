@@ -50,6 +50,7 @@ def symbolic_target(target):
     linker_relocs = []
     local_calls = _local_calls(target.uso)
     pool_sites = {at for at, _, _ in target.uso.get('pool_loads', ())}
+    pool_sites.update(at for at, _, _ in target.uso.get('jump_tables', ()))
     for at, kind, index in target.uso['relocs'] or ():
         delta, length, mask = MASKS_BY_ARCH.get(('mips', kind), (0, 4, 0xFFFFFFFF))
         field = int.from_bytes(target.code[at + delta:at + delta + length], 'big') & mask
@@ -63,11 +64,29 @@ def symbolic_target(target):
     return FunctionObj(target.name, 'mips', True, target.code, relocations, linker_relocs=linker_relocs)
 
 
-def _pool_fields(elf, raw, code, target, expected, pool_loads):
-    """Bind a compiler section only with evidence for all of its constant reads."""
-    if not pool_loads or len(code) != len(target):
+def _matches_table(blob, relocations, offset, targets, entry):
+    section, start, size = entry
+    end = offset + len(targets) * 4
+    if end > len(blob) or any(at % 4 for at in relocations if offset - 3 <= at < end):
+        return False
+    for at, destination in zip(range(offset, end, 4), targets, strict=True):
+        if at not in relocations or not 0 <= destination < size or destination % 4:
+            return False
+        relocation, symbols = relocations[at]
+        symbol = symbols.get_symbol(relocation['r_info_sym'])
+        if (relocation['r_info_type'] != 2 or relocation.is_RELA() or symbol['st_shndx'] != section
+                or symbol['st_info']['type'] != 'STT_SECTION' or symbol['st_value']
+                or int.from_bytes(blob[at:at + 4], 'big') != start + destination):
+            return False
+    return True
+
+
+def _pool_fields(elf, raw, code, target, expected, info, entry):
+    """Bind read-only data only when every constant or jump table load is proven."""
+    pool = {(at, index): bytes.fromhex(value) for at, index, value in info.get('pool_loads', ())}
+    tables = {(at, index): targets for at, index, targets in info.get('jump_tables', ())}
+    if not (pool or tables) or len(code) != len(target):
         return {}
-    pool = {(at, index): bytes.fromhex(value) for at, index, value in pool_loads}
     groups = defaultdict(list)
     for item in raw:
         symbol = item['symtab'].get_symbol(item['symidx'])
@@ -91,19 +110,27 @@ def _pool_fields(elf, raw, code, target, expected, pool_loads):
         if not highs or not lows or any(item['value'] or target[item['off']+2:item['off']+4] != b'\0\0'
                                         for item in highs):
             continue
-        data_relocs = [r for section in elf.iter_sections()
+        data_relocs = [(r, elf.get_section(section['sh_link'])) for section in elf.iter_sections()
                        if isinstance(section, RelocationSection) and section['sh_info'] == section_index
                        for r in section.iter_relocations()]
-        if any(r['r_info_type'] not in (2, 5, 6) for r in data_relocs):
+        if any(r['r_info_type'] not in (2, 5, 6) for r, _ in data_relocs):
             continue
-        relocated = {r['r_offset'] for r in data_relocs}
+        by_offset = {r['r_offset']: (r, symbols) for r, symbols in data_relocs}
+        if len(by_offset) != len(data_relocs):
+            continue
         blob = data.data()
         for item in lows:
-            width = POOL_LOAD_WIDTHS.get(code[item['off']] >> 2)
+            opcode = code[item['off']] >> 2
             offset = item['value']
+            width = POOL_LOAD_WIDTHS.get(opcode)
+            if not width or offset % width or offset >= 0x8000:
+                break
+            if targets := tables.get((item['off'], index)):
+                if opcode != 0x23 or not _matches_table(blob, by_offset, offset, targets, entry):
+                    break
+                continue
             original = pool.get((item['off'], index), b'')
-            if (not width or offset % width or offset >= 0x8000
-                    or any(offset - 3 <= off < offset + width for off in relocated)
+            if (any(offset - 3 <= off < offset + width for off in by_offset)
                     or len(original) != width or original != blob[offset:offset + width]):
                 break
         else:
@@ -126,7 +153,7 @@ def link(obj, name, target, info):
         shndx, start, size = entry
         code = elf.get_section(shndx).data()[start:start + size]
         raw = raw_relocs(elf, shndx, start, size, code)
-        pool = _pool_fields(elf, raw, code, target, expected, info.get('pool_loads', ()))
+        pool = _pool_fields(elf, raw, code, target, expected, info, entry)
     except (ELFError, ValueError, TypeError, IndexError):
         return LinkResult(None, False, ['The compiler object could not be read as overlay text.'])
 

@@ -241,3 +241,19 @@ def test_saved_switch_base_can_follow_an_early_return(order):
     clobber = words.copy()
     clobber[14] = 0x0000b821  # a backedge delay slot overwrites s7
     assert recognize(clobber) is None
+
+
+def test_guard_can_schedule_stack_spills_and_an_unrelated_move():
+    image, ranges = fixture()
+    # Insert two stack spills between the bound and branch, and fill its delay slot.
+    code = image[0x1000:0x103c]
+    scheduled = code[:4] + struct.pack('>II', 0xafbf001c, 0xafa40020) + code[4:8]
+    scheduled += struct.pack('>I', 0x00808025) + code[12:]
+    end = 0x1000 + len(scheduled)
+    image[0x1000:end] = scheduled
+    image[0x1100:0x1108] = struct.pack('>II', 0x8000102c, 0x80001034)
+    result = jump_table(image, 0x1000, end, 0x80001000, 0x1024, 'big', ranges)
+    assert result['state'] == 'validated' and result['entry_count'] == 2
+
+    image[0x1008:0x100c] = struct.pack('>I', 0x00801825)  # Clobbers the checked index.
+    assert jump_table(image, 0x1000, end, 0x80001000, 0x1024, 'big', ranges) is None

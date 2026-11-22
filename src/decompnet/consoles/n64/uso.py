@@ -229,12 +229,50 @@ def function_pool_loads(region, start, size, relocs):
     return lows
 
 
+def function_jump_tables(region, start, size, relocs):
+    """Prove the extent and destinations of indexed reads from the loader's text pointers."""
+    from ...arch.mips_indirect import jump_table
+
+    if not (region.rodata and region.rodata_relocations and region.text_bases):
+        return []
+    data_relocs = {at: (kind, index) for at, kind, index in region.rodata_relocations}
+    sites = {at: (kind, index) for at, kind, index in relocs or ()}
+    tables = []
+    for at, (kind, index) in sites.items():
+        if (kind != 6 or index not in region.rodata_bases or at + 12 > size
+                or sites.get(at - 8) != (5, index)):
+            continue
+        high, _, word = struct.unpack_from('>III', region.data, start + at - 8)
+        if high >> 26 != 15 or high & 0xffff or word >> 26 != 0x23 or word & 3 or word & 0x8000:
+            continue
+        base = word & 0xffff
+
+        def read(address, length, base=base):
+            if address != base or address + length > len(region.rodata):
+                return None
+            records = [data_relocs.get(p) for p in range(address, address + length, 4)]
+            first = records[0]
+            if not first or first[0] != 2 or first[1] not in region.text_bases or any(r != first for r in records):
+                return None
+            return region.rodata[address:address + length]
+
+        table = jump_table(region.data, start, start + size, start, start + at + 4, 'big', reader=read)
+        if table and table['state'] == 'validated':
+            tables.append((at, index, table))
+    destinations = {target for _, _, table in tables for target in table['targets']}
+    return [[at, index, [address - start for address in table['targets']]]
+            for at, index, table in tables
+            if not any(table['guard_address'] < target <= table['address'] + 4 for target in destinations)]
+
+
 def _binding_metadata(region, start, size, relocs):
     metadata = {}
     if calls := function_local_calls(region, start, size, relocs):
         metadata['local_calls'] = calls
     if loads := function_pool_loads(region, start, size, relocs):
         metadata['pool_loads'] = loads
+    if tables := function_jump_tables(region, start, size, relocs):
+        metadata['jump_tables'] = tables
     return metadata
 
 
@@ -285,9 +323,10 @@ def metadata_updates(image, banks, rows):
             continue
         new = _binding_metadata(region, start, size, info['relocs'])
         updates = {key: value for key, value in new.items() if key not in info}
-        old_pool, new_pool = info.get('pool_loads', []), new.get('pool_loads', [])
-        if old_pool != new_pool and all(load in new_pool for load in old_pool):
-            updates['pool_loads'] = new_pool
+        for key in ('pool_loads', 'jump_tables'):
+            saved, refreshed = info.get(key, []), new.get(key, [])
+            if saved != refreshed and all(item in refreshed for item in saved):
+                updates[key] = refreshed
         if updates:
             yield row['id'], json.dumps(meta | {'uso': info | updates})
 
@@ -333,6 +372,10 @@ def rebuild(image, entries):
                 original_pool = function_pool_loads(region, start, size, info['relocs'])
                 if any(load not in original_pool for load in saved_pool):
                     raise ValueError(f'Overlay constant pool metadata at 0x{offset:X}+0x{start:X} has changed')
+            if saved_tables := info.get('jump_tables'):
+                original_tables = function_jump_tables(region, start, size, info['relocs'])
+                if any(table not in original_tables for table in saved_tables):
+                    raise ValueError(f'Overlay jump table metadata at 0x{offset:X}+0x{start:X} has changed')
             verified = link(obj, name, region.data[start:end], info)
             if not verified.exact:
                 details = ', '.join(verified.problems) or 'text bytes differ'
