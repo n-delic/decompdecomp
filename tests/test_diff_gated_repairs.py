@@ -2379,3 +2379,14 @@ def test_saved_pointer_copy_routes_to_kmc(monkeypatch):
     assert 'saved_pointer_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'saved_pointer_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
     assert 'saved_pointer_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-7.1', rows, ''))
+
+
+def test_forward_entry_pointer_routes_to_kmc_with_asm(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'nop', 'nop')]
+    monkeypatch.setattr(diff_gated_repairs.measured_forward_entry_pointer, 'variants',
+                        lambda text, name, header, diff, asm: [('entry_pointer_fixture', text)] if asm == 'asm' else [])
+    assert 'entry_pointer_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, 'asm'))
+    assert 'entry_pointer_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, 'asm'))
+    assert 'entry_pointer_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-7.1', rows, 'asm'))

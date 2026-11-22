@@ -73,6 +73,7 @@ from decomprepair import (
     measured_flag_reload,
     measured_float_argument_pair,
     measured_float_grid_stores,
+    measured_forward_entry_pointer,
     measured_forwarded_counter,
     measured_forwarded_pointer,
     measured_global_offset_reuse,
@@ -546,6 +547,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_list_key_search.variants(source, name, header, rows, resolve=resolve)
         result += measured_strided_halfword_copy.variants(source, name, header, rows)
         result += measured_saved_pointer_copy.variants(source, name, header, rows)
+        result += measured_forward_entry_pointer.variants(source, name, header, rows, asm)
         result += measured_record_pointer_update.variants(source, name, header, rows)
         result += measured_record_ramp.variants(source, name, header, rows)
         result += measured_region_search.variants(source, name, header, rows)
