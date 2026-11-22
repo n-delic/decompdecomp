@@ -15152,3 +15152,19 @@ cover these gates.
 ### Store selected halfword constants in their branches
 
 A saved N64 DMA wrapper built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` selected one of two halfword constants into a local before a shared field store. The target used a jump with one constant in its delay slot. Replacing each local assignment with its corresponding field store produced that branch layout and reproduced the linked target exactly (score 270 to 0). Evidence: one saved example and synthetic source, instruction and routing tests. The rule requires two simple constant arms, a single use of the local and the measured target sequence.
+
+### Order the OR operands after staging a float-bound predicate
+
+With GCC 2.7.2 KMC `-G0 -mips3 -mgp32 -mfp32 -O2`, capturing the first
+integer inversion before the second comparison can already match both
+XOR operations. The final integer OR still uses the draft's operand
+order. Placing the captured flag first in the source restored the OR
+register order at four sites and changed the linked score from 6,495 to
+6,475 in one private N64 function. The three jump tables remained linked
+and there were no uninitialized warnings.
+
+The measured family requires both bounds and integer inversions to
+agree with the target and only the OR operand order to differ at each
+identified staged predicate. It uses the exact float bound to associate
+the measured sites with source and skips groups whose counts differ.
+Synthetic tests verify the gates.
