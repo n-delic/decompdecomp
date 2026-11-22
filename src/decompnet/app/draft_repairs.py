@@ -732,11 +732,14 @@ def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels
     for module in (loop_head_giv_repairs, default_else_repairs, stored_compare_repairs, loop_entry_reset_repairs,
                    guard_temp_sink_repairs, product_shift_stage_repairs, clamp_default_scope_repairs,
                    volatile_local_drop_repairs, disjoint_local_merge_repairs, reused_temp_split_repairs,
-                   accumulator_chain_repairs, display_cursor_record_repairs, or_chain_order_repairs,
+                   accumulator_chain_repairs, display_cursor_record_repairs,
                    volatile_global_plain_repairs):
         for family, text in _generated(module.variants, source, name):
             proposals.append(text)
             labels[text] = family
+    for family, text in _generated(or_chain_order_repairs.variants, source, name, header):
+        proposals.append(text)
+        labels[text] = family
     for family, text in _generated(narrow_count_copy_repairs.variants, source, name, header):
         proposals.append(text)
         labels[text] = family
