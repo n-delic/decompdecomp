@@ -208,3 +208,36 @@ def test_deep_jump_table_evidence_reads_rom_without_assembly_labels():
         assert switch_tables.read(net, proj, fn) == [(0, [0x80001024, 0x8000102c])]
         image[0x1104:0x1108] = (0x80002000).to_bytes(4, order)
         assert switch_tables.read(net, proj, fn) == []
+
+
+@pytest.mark.parametrize('order', ['big', 'little'])
+def test_saved_switch_base_can_follow_an_early_return(order):
+    vram = 0x80001000
+    words = [
+        0x0c001000, 0,  # jal to an external helper
+        0x1080000c, 0,  # beqz a0 to the return tail
+        0x3c178000, 0x26f72000,  # table base in s7
+        0x2c620002, 0x10400007,  # bound and default branch
+        0x00031080, 0x00571021, 0x8c420000, 0x00400008, 0,
+        0x1000fff8, 0,  # a case loops to the guard
+        0x03e00008, 0,
+    ]
+    destinations = [vram + 13 * 4, vram + 15 * 4]
+
+    def recognize(words):
+        code = b''.join(word.to_bytes(4, order) for word in words)
+        data = b''.join(address.to_bytes(4, order) for address in destinations)
+        return jump_table(code, 0, len(code), vram, 11 * 4, order,
+                          reader=lambda at, size: data if (at, size) == (0x80002000, 8) else None,
+                          allow_saved_base=True)
+
+    assert recognize(words)['targets'] == destinations
+    bypass = words.copy()
+    bypass[2] = 0x10800003  # can jump to the guard without establishing s7
+    assert recognize(bypass) is None
+    delay_slot_base = words.copy()
+    delay_slot_base[3] = 0x1080000b
+    assert recognize(delay_slot_base) is None
+    clobber = words.copy()
+    clobber[14] = 0x0000b821  # a backedge delay slot overwrites s7
+    assert recognize(clobber) is None

@@ -14207,3 +14207,10 @@ Added to the permuter (decomp-repair 0.5.371), one family per row: `volatile_loc
 those: choose the order of three independent loads in a block (the order that gives the byte the lower register is
 found only by scoring all six), and judge a merge before its partner (the counter merges raise the score alone and pay
 off with the loads' order). Run from the saved best with no permuter job (the library's own `propose`, every child judged by the app's judge): a greedy descent over every family stalls at 2615; the twelve families applied once each in the order above, each family's best child kept, reach 2280, and a greedy descent from there stalls at 1375. The distance left is the statement orders and operand orders of rows 1 and 9.
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, an N64 routine hoisted its switch-table base
+into a saved register after the early-return checks. The straight-line recognizer missed the table
+because a branch preceded the base load. Validating the early exits and checking for a clobber
+along the loop exposed all 32 entries to Deep Permuter. The existing draft still scores 80
+with an unresolved relocation. Disabling either scheduler or delayed branches did not link the draft.
+Evidence is one validated retail table and synthetic big- and little-endian control-flow tests.
