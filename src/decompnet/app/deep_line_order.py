@@ -35,20 +35,51 @@ def rank(parent: str, candidates: list, focus: dict[int, int]) -> list:
     return [candidates[index] for index in order]
 
 
-def focus_lines(net, proj, fn, source: str) -> dict[int, int]:
-    """{C line: weight} for the lines the compiler ties to this source's differing instructions; {} when it can't."""
+def line_info(net, proj, fn, source: str) -> dict | None:
+    """source_lines.mismatches for this source's own compile (through the -g twin when it has no line table), or None
+    when it can't be judged here (a project without the ROM judge, a compile error)."""
     from ..source_lines import mismatches
     header = (net._context(proj['id'], fn['unit']) or {}).get('header', '')
     result = net._compile(proj, header, source, fn)
     if not result.ok:
-        return {}
+        return None
     cand, verdict, _ = net._evaluate(fn, proj, result.obj)
     if cand is None:
-        return {}
+        return None
     diff = scoring.diff(net._target_obj(fn, proj), cand)
     obj = net.line_object(proj, header, source, fn, result) or result.obj
-    info = mismatches(obj, fn['name'], diff.rows, source, 'func.cpp' if result.language == 'c++' else 'func.c')
+    return mismatches(obj, fn['name'], diff.rows, source, 'func.cpp' if result.language == 'c++' else 'func.c', arch=proj['arch'])
+
+
+def focus_lines(net, proj, fn, source: str) -> dict[int, int]:
+    """{C line: weight} for the lines the compiler ties to this source's differing instructions; {} when it can't."""
+    info = line_info(net, proj, fn, source)
+    if not info:
+        return {}
     return {entry['line']: DIFFERENT if entry['severity'] == 'different' else OPERAND for entry in info['lines']}
+
+
+def locator(net, proj, fn, mapped):
+    """`located(source)` for a local-repair search: the repair locations its trials recorded, else, when those have no
+    line map (a GCC game built without -g), the map of that source's own compile and its byte-identical -g twin, made
+    once per source. The localised repair families (targeted storage, scan loads, loop shapes, layout) read it."""
+    from decomprepair import repair_localisation
+    can = all(hasattr(net, name) for name in ('_evaluate', '_target_obj', 'line_object', '_compile'))
+    made: dict[str, dict | None] = {}
+
+    def located(source):
+        recorded = mapped.get(source)
+        if recorded and (recorded.get('mapping') or {}).get('available') or not can:
+            return recorded
+        if source not in made:
+            try:
+                info = line_info(net, proj, fn, source)
+            except Exception:  # advice only: a broken map must never stop a search
+                info = None
+            made[source] = repair_localisation.bind(source, info) if info and info.get('available') else recorded
+        return made[source]
+
+    return located
 
 
 def for_function(net, proj, fn, log, then=None, finder=focus_lines):

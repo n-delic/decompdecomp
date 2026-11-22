@@ -134,16 +134,22 @@ def locations(data, name, filename='func.c'):
 
 
 def debug_twin_cmd(cmd, toolchain=''):
-    """`cmd` with -g added before the source, for a GCC that can say which line made each instruction; else None.
+    """`cmd` with the compiler's own debug flag added before the source, for a compiler that can say which line made
+    each instruction; else None.
 
-    Only GCC: IDO's -g turns the optimizer off, CodeWarrior's is -sym. An old GCC's debug labels can still change
-    what its assembler schedules, so the twin is never trusted until `same_code` agrees (neutral_object)."""
+    GCC: -g. CodeWarrior (the mwcc family): -sym on, the same switch its projects build with. IDO needs no twin: its
+    ECOFF objects carry line numbers already, and its -g* flags change the code (-g and -g2 switch the optimizer off,
+    -g3 reschedules). An old GCC's debug labels can also change what its assembler schedules, so a twin is never
+    trusted until `same_code` agrees (neutral_object)."""
     from . import toolchains
     gcc = toolchain.startswith(('gcc', 'ee-gcc')) or toolchains.compiler_family(toolchain) == 'gcc'
-    if not gcc or '{src}' not in cmd or any(re.fullmatch(r'-g[0-3]?', arg) for arg in cmd):
+    codewarrior = toolchain.startswith(('mwcps2', 'mwccpsp', 'mwcc', 'mwldeppc'))
+    if not (gcc or codewarrior) or '{src}' not in cmd:
+        return None
+    if any(re.fullmatch(r'-g[0-3]?|-sym', arg) for arg in cmd):
         return None
     at = cmd.index('{src}')
-    return [*cmd[:at], '-g', *cmd[at:]]
+    return [*cmd[:at], *(['-g'] if gcc else ['-sym', 'on']), *cmd[at:]]
 
 
 def same_code(a, b, name):

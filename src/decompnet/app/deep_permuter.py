@@ -1192,6 +1192,8 @@ class Search(Permuter):
         current_scope=agent_tokens.target_scope(self.net,{**dict(fn),'best_source':source},'')
         feedback=deep_repair_feedback.Feedback(source,best,initial_rows,self.winner_output if self.winner_source==source and self.winner_scope==current_scope else None,getattr(self,'winner_output_granularity','function'))
         source_locations={source:getattr(self,'winner_locations',None)}
+        from . import deep_line_order
+        located = deep_line_order.locator(self.net, proj, fn, source_locations) if not fork else source_locations.get
         resume_base = source
         # Recheck prior roots rather than trusting cached results across turns.
         if (max_trials and proj['slug'] not in self.net.links
@@ -1355,15 +1357,15 @@ class Search(Permuter):
                     choices.append(candidate)
                 from . import targeted_debug_layout
                 for family,candidate in targeted_debug_layout.variants(source,fn['name'],header,proj['arch'],flags,
-                        {'rows':rows,'repair_locations':source_locations.get(source)}):
+                        {'rows':rows,'repair_locations':located(source)}):
                     labels[candidate]=family
                     choices.insert(0,candidate)
                 from . import scan_load_repairs
-                guided_scans=scan_load_repairs.variants(source,fn['name'],header,proj['arch'],rows,source_locations.get(source))
+                guided_scans=scan_load_repairs.variants(source,fn['name'],header,proj['arch'],rows,located(source))
                 for family,candidate in guided_scans:labels[candidate]=family
                 choices=list(dict.fromkeys([c for _,c in guided_scans]+choices))
                 from . import targeted_storage_repairs
-                for family,candidate in targeted_storage_repairs.variants(source,fn['name'],header,proj['arch'],rows,source_locations.get(source)):
+                for family,candidate in targeted_storage_repairs.variants(source,fn['name'],header,proj['arch'],rows,located(source)):
                     labels[candidate]=family
                     choices.append(candidate)
                 from . import expression_recipes
@@ -1413,7 +1415,7 @@ class Search(Permuter):
                         [(labels.get(c,'local_repair'),c) for c in choices],phase_evidence.get('value_trace'),header,allocation=phase_evidence.get('allocation'))]
 
                 from decomprepair import repair_localisation
-                localised=repair_localisation.proposals(source,[(labels.get(c,'local_repair'),c) for c in choices],source_locations.get(source))
+                localised=repair_localisation.proposals(source,[(labels.get(c,'local_repair'),c) for c in choices],located(source))
                 choices=[c for family,c in localised]
                 labels.update({c:family for family,c in localised})
                 from . import proposal_progress
