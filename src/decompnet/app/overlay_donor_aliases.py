@@ -262,7 +262,11 @@ def retry(source, header, name, candidate, target, measure, stop, *, separate=No
     for symbol, names in replacements.items():
         if names == {symbol} and symbol not in data_changes:
             continue
-        if not all(re.fullmatch(r'[A-Za-z_]\w*', word) for word in {symbol, *names}):
+        # Anonymous compiler sections cannot be renamed in source. Leave their
+        # bindings to the pool/local-data judge and still probe named uses.
+        if not re.fullmatch(r'[A-Za-z_]\w*', symbol):
+            continue
+        if not all(re.fullmatch(r'[A-Za-z_]\w*', word) for word in names):
             return None
         if len(names) == 1 and symbol not in data_changes:
             direct[symbol] = next(iter(names))

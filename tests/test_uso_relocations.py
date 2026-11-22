@@ -368,6 +368,51 @@ def test_overlay_replays_distinct_loader_calls_from_one_donor_placeholder(tmp_pa
     assert uso_match.link(result.obj, 'example', raw.code, info).exact
 
 
+def test_overlay_call_probes_do_not_guess_anonymous_pool_bindings(tmp_path):
+    from threading import Event
+
+    from elftools.elf.elffile import ELFFile
+
+    from decompnet.app.overlay_donor_aliases import retry
+    from decompnet.candidate_work import elf as candidate_elf
+    from decompnet.elfobj import extract_function
+
+    if toolchains.installed('ido-5.3') is None:
+        pytest.skip('needs IDO 5.3')
+    cfg = compiler_config(tmp_path, {'compiler': {'toolchain': 'ido-5.3', 'flags': toolchains.get('ido-5.3').flags}})
+    header = 'extern void placeholder(int);'
+    source = 'void example(float *out) { placeholder(1); placeholder(2); *out=1.2345f; }'
+    original = compile_source(cfg, header, source)
+    assert original.ok, original.log
+    body = extract_function(original.obj, 'example')
+    calls = [r for r in body.relocs if r.symbol == 'placeholder']
+    pool = [r for r in body.relocs if r.symbol == '.rodata']
+    assert len(calls) == len(pool) == 2
+    low, = [r for r in pool if r.type == 6]
+    target_code = bytearray(body.code)
+    target_code[low.offset + 2:low.offset + 4] = (0x20).to_bytes(2, 'big')
+    target_code = bytes(target_code)
+    indices = {calls[0].offset: 1, calls[1].offset: 2, **{r.offset: 3 for r in pool}}
+    info = {'section': 64, 'start': 0, 'size': len(body.code),
+            'relocs': [[r.offset, r.type, indices[r.offset]] for r in body.relocs]}
+    target = uso_match.symbolic_target(uso_match.Target('example', 0, target_code, [], uso=info))
+    initial = uso_match.link(original.obj, 'example', target_code, info)
+
+    def measure(text, context):
+        trial = compile_source(cfg, context, text)
+        assert trial.ok, trial.log
+        return uso_match.link(trial.obj, 'example', target_code, info).candidate
+
+    rebound, context = retry(source, header, 'example', initial.candidate, target, measure, Event())
+    assert uso_match.alias(64, 1) in rebound and uso_match.alias(64, 2) in rebound
+    result = compile_source(cfg, context, rebound)
+    assert result.ok, result.log
+    assert not uso_match.link(result.obj, 'example', target_code, info).exact
+    rodata = candidate_elf(result.obj, ELFFile).get_section_by_name('.rodata').data()
+    proof = info | {'pool_loads': [[low.offset, 3, rodata[low.addend:low.addend + 4].hex()]]}
+    assert uso_match.link(result.obj, 'example', target_code, proof).exact
+
+
 def test_local_overlay_calls_link_and_rebuild_with_distinct_offsets(tmp_path):
     from threading import Event
 
