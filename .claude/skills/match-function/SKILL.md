@@ -17,10 +17,9 @@ improvements found during the run merged with their tests.
   report the exact blocker and the current verdict.
 - **Keep a visible plan and say what you are doing in a line** when you start a long run, so a user following along
   can see the loop is alive. Long runs go in the background.
-- **Never start the Deep Permuter** (`scratch_run.py` or any long search job). The user runs it in
-  their live app and it already uses every core. To test a repair, call it directly: the library's family (or the
-  app's `draft_repairs.variants`) on the current best source, scoring its variants with `fast_judge.py` and
-  confirming the best one with `compile_and_diff`.
+- **Leave the user's Deep Permuter run alone.** It already uses most cores. Use its saved results to
+  identify a gap, then test one named repair at a time with the bounded procedure in step 4.
+  The deliverable is a tested permuter improvement that can reproduce the measured gain.
 - Keep a private checkpoint with the latest live verdict, the measured search seeds and their scores, pending
   MCP calls, the next experiment, and open PRs or release tags. Resume from it across context changes.
   A plateau calls for a different experiment. Keep the claim while working on the match.
@@ -124,7 +123,7 @@ and write it to a scratch file for local probes. Use `get_assembly` for the targ
   supported, the compiler's allocation and scheduling dumps to find what the edit changed. An identical-arm
   float guard can affect floating-point live ranges before the compiler merges the arms, so removing
   the guard immediately can also discard useful allocation evidence.
-- Work from the improved seed. Try bounded Deep Permuter families against it and measure their
+- Work from the improved seed. Try one named repair family at a time against it and measure its
   children. For an uninitialized float guard, test alternatives that retain the useful guard or
   lifetime shape while supplying an initialized value, and measure which other repairs combine with it.
   If generation or routing misses the improvement, add a regression that starts from that seed and
@@ -155,7 +154,7 @@ judge: `compile_and_diff`. A candidate that looks better locally has to beat the
 
 **For a search, use the app's own judge standalone.** `decomp judge-worker` returns exactly the app's score (a
 source judged 1090 in the app judged 1090 here) in about 0.1 s, needs no claim, runs beside the app without touching
-its state, and parallelises across processes. `scripts/fast_judge.py` wraps it (`Judge(...).score(source)`).
+its state. Reuse a single `scripts/fast_judge.py` worker (`Judge(...).score(source)`) for these probes.
 **Do not search on an approximation**: a home-made scorer (opcode alignment plus register counts) ranked candidates
 wrongly: a 1000 → 680 local improvement was 1090 → 1030 in the app. Confirm any result once with `compile_and_diff`.
 
@@ -262,16 +261,20 @@ the shape is decided by a compiler pass, not by how you spell the C. Stop writin
    target's register order and change uses/live ranges (above, in 3). An empty `.lreg` means cc1 didn't get the
    flag or failed to parse: run the compiler's own `gcc -E` first and strip comments.
 
-## 4. Search only when you can name the mismatch
+## 4. Test one repair at a time
 
-A blind hill-climb through `compile_and_diff` is too slow. With `fast_judge` it is cheap: random statement
-swaps, call-wrapper toggles and local type changes took one function from 1090 to 785 in a round of six seeds, then
-plateaued: two more rounds, including token-level rewrites (`x += 1` vs `++x`, `& 0xFFFF` vs a cast), found
-nothing. Use it to clear the easy rows, then stop and read the diff: a search that cannot name what it is looking for
-will not find the last rows. Verify its best in the app before believing it.
+1. Name the mismatch and the repair family that could change it. Use the function's saved Deep
+   Permuter results to see whether the family already ran and what it emitted.
+2. Run that family directly on the saved seed and score only the variants that test the hypothesis.
+   Start with a small batch and score serially through one local judge worker. If using MCP
+   `try_local_repairs`, pass exactly one family and a small explicit `max_trials`. A call with no
+   family selects repairs automatically.
+3. Compare the exact diff to the seed. Confirm the best useful candidate with `compile_and_diff`.
+   If the family misses the shape or routing skips it, prove the missing behavior with a regression
+   and land the fix in step 5. When results plateau, read the diff and choose a new hypothesis.
 
-Do not start the Deep Permuter. The user runs it in their app and it takes every core. Its saved
-results in the function's Deep permuter tab may be read as leads.
+Do not start a full Deep Permuter run, a sweep, `scripts/scratch_run.py`, or an equivalent broad
+search, even for one function. Leave the running job's settings and worker count alone.
 
 ## 5. Teach the permuter (do it first, merge it, then continue hunting)
 
@@ -281,15 +284,10 @@ For each manual step that moved the score, answer: **could the permuter have don
 - No: write the rewrite or the search guide. Smallest useful form: a function in decomp-repair that takes source
   and returns variants, with a test that fails without it (see `call_scope_repairs.py` for the shape). Prove it by
   running it on the function you just matched: starting from the state *before* your fix, it must reach the fix.
-- **Never run `scripts/scratch_run.py`, or any throwaway app, fresh import or long proof search.** It takes too much
-  CPU for the whole machine (other agents and the user's app share it), and the user tests every repair themselves in
-  their own app later. Your job is **new repairs in the permuter**, not proving old ones: spend the time finding the
-  next gap and writing its rewrite. To check a repair, test it on the function's *current best source* from
-  `get_candidate(base="saved_best")` as well as on the draft (the search saves its own best in a printed dialect,
-  `*((u8 *) (((char *) p) + 5))`, `v = v + 2;`, a braced `goto`, and a rewrite written against m2c's raw spelling never
-  fires on that), add the unit test, wire it into the permuter, **merge, and then connect to the running app to make
-  sure the function is matched there too** (`get_function(section="summary")` says "matched"; the saved best is the source that
-  judged 0). Say in the PR what you ran and that the real proof is the user's run.
+- Test the specific repair on the saved source and, when relevant, the draft. The saved source can
+  spell the same operation differently from m2c. Add a unit test, verify that the permuter lane
+  offers the candidate, and use the exact judge to measure it. After merging, check the live verdict
+  with `get_function(section="summary")`. Describe the isolated evidence in the PR.
 - Record the evidence in `docs/COMPILER_MATCHING_LEARNINGS.md`: exact compiler and flags, the source change, the
   measured before/after, and failed experiments. Say which are controlled results and which are one function.
 - A change here needs its PR (AGENTS.md): branch `<type>/<name>`, test, `uv run ruff check`, merged after creation.

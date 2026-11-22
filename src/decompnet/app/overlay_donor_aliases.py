@@ -5,7 +5,7 @@ from collections import defaultdict
 
 from .. import seeds
 from ..forks import csource
-from .source_symbol_recovery import rename
+from .source_symbol_recovery import comparable_overlay_code, rename
 
 MAX_PROBES = 16
 
@@ -24,7 +24,7 @@ def _cpp_declaration(header, clean, symbol):
 
 def retry(source, header, name, candidate, target, measure, stop):
     """Return one rewrite, supported by compiler probes, for the ordinary exact judge."""
-    if candidate is None or candidate.code != target.code:
+    if not comparable_overlay_code(candidate, target):
         return None
     actual = {(r.offset, r.type): r.symbol for r in candidate.relocs}
     expected = {(r.offset, r.type): r.symbol for r in target.relocs}
@@ -41,6 +41,8 @@ def retry(source, header, name, candidate, target, measure, stop):
         return None
     clean_source = csource._blank(source)
     clean_header = csource._blank(header)
+    prototype = re.compile(r'[^;{}=#]+\([^;{}=#]*\)\s*;', re.S)
+    external = re.compile(r'extern\b[^;{}=#]+;', re.S)
     declarations = seeds.declarations(header)
     probes = []
     extras = set()
@@ -55,7 +57,8 @@ def retry(source, header, name, candidate, target, measure, stop):
             continue
         # Only duplicate a declaration, never a definition or initializer.
         declaration = next((d.text for d in declarations if symbol in d.names
-                            and re.fullmatch(r'extern\b[^;{}=#]+;', d.text, re.S)), None)
+                            and not re.match(r'(?:static|typedef)\b', d.text)
+                            and (external.fullmatch(d.text) or prototype.fullmatch(d.text))), None)
         start = len(header)
         if declaration is None:
             linked = _cpp_declaration(header, clean_header, symbol)

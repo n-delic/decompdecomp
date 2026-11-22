@@ -274,6 +274,11 @@ class Nintendo64(Console):
 
         return target.uso if isinstance(target, Target) and target.uso['relocs'] is not None else None
 
+    def overlay_metadata_updates(self, image, cfg, rows):
+        from .uso import metadata_updates
+
+        return metadata_updates(image, cfg['donor_overlays'], rows)
+
     def rebuild_overlays(self, image, entries):
         from .uso import rebuild
 
@@ -284,20 +289,23 @@ class Nintendo64(Console):
 
         import rabbitizer
 
-        from .uso_match import alias
+        from .uso_match import alias, local_alias
 
         info = getattr(fn, 'uso', None)
         if not info or not info['relocs']:
             return super().function_asm(fn)
         lines = list(fn.lines)
+        local_calls = {(at, index): offset for at, index, offset in info.get('local_calls', ())}
         for at, kind, index in info['relocs']:
             line = lines[at // 4]
-            name = alias(info['section'], index)
+            offset = local_calls.get((at, index)) if kind == 4 else None
+            name = (local_alias(info['section'], index, offset) if offset is not None
+                    else alias(info['section'], index))
             if kind in (4, 5, 6):
                 field = line.word & (0x3ffffff if kind == 4 else 0xffff)
                 mask = {4: '', 5: '%hi', 6: '%lo'}[kind]
                 immediate = name if not mask else f'{mask}({name})'
-                if field:
+                if field and offset is None:
                     # Keep the encoded addend visible when it is more than a symbol reference.
                     immediate = f'{immediate} /* encoded addend 0x{field:X} */'
                 insn = rabbitizer.Instruction(line.word, line.vram)

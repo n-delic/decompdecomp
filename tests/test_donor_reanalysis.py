@@ -15,10 +15,10 @@ from .test_app_engine import CLAMP
 from .test_rom import ROM, built  # noqa: F401
 
 
-def _module(data, *, compressed=True, relocations=b''):
+def _module(data, *, compressed=True, relocations=b'', text_base=False):
     packed = crunch64.yay0.compress(data) if compressed else data
     symbols = b''.join(struct.pack('>III', tag, value, 0) for tag, value in (
-        (0x00520000, 4), (0x00520000, 0), (0x00520000, 5), (0x00520000, len(data)), (0x00530000, 8)))
+        (0x00520000, 4), (0x00540000 if text_base else 0x00520000, 0), (0x00520000, 5), (0x00520000, len(data)), (0x00530000, 8)))
     record = lambda kind, body, flags: struct.pack('>III', kind, len(body), flags) + body
     return (struct.pack('>III', 0x12345678, 1, 1) + b'code.uso\0'
             + struct.pack('>IIII', 0x12345678, 0, 0, 0)

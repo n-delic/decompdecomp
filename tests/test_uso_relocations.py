@@ -121,3 +121,68 @@ def test_overlay_replays_distinct_loader_calls_from_one_donor_placeholder(tmp_pa
     result = compile_source(cfg, context, rewritten)
     assert result.ok, result.log
     assert uso_match.link(result.obj, 'example', raw.code, info).exact
+
+
+def test_local_overlay_calls_link_and_rebuild_with_distinct_offsets(tmp_path):
+    from threading import Event
+
+    from decompnet.app.overlay_donor_aliases import retry
+    from decompnet.elfobj import extract_function
+
+    if toolchains.installed('ido-5.3') is None:
+        pytest.skip('needs IDO 5.3')
+    cfg = compiler_config(tmp_path, {'compiler': {'toolchain': 'ido-5.3', 'flags': toolchains.get('ido-5.3').flags}})
+    source = 'void example(void) { placeholder(1); placeholder(2); }'
+    header = 'void placeholder(int);'
+    baseline = compile_source(cfg, header, source)
+    assert baseline.ok, baseline.log
+    body = extract_function(baseline.obj, 'example')
+    assert len(body.relocs) == 2
+    offsets = (0x60, 0x70)
+    assert len(body.code) + 4 < min(offsets)
+    code = bytearray(body.code)
+    records = []
+    for reloc, offset in zip(body.relocs, offsets, strict=True):
+        assert reloc.type == 4
+        code[reloc.offset:reloc.offset + 4] = (0x0c000000 | offset >> 2).to_bytes(4, 'big')
+        records.append(struct.pack('>III', 0x11, 4 + reloc.offset, 0))
+    code = bytes(code)
+    text = (bytes(4) + code).ljust(0x80, b'\0')
+    cartridge = bytes(64) + _module(text, relocations=b''.join(records), text_base=True)
+    region, = uso.read(cartridge)
+    relocs = uso.function_relocations(region, 4, len(code))
+    calls = uso.function_local_calls(region, 4, len(code), relocs)
+    assert calls == [[r.offset, 1, offset] for r, offset in zip(body.relocs, offsets, strict=True)]
+    info = {'section': region.offset, 'start': 4, 'size': len(code), 'relocs': relocs, 'local_calls': calls}
+    import json
+
+    legacy = dict(info)
+    legacy.pop('local_calls')
+    row = {'id': 17, 'meta': json.dumps({'uso': legacy}), 'target': code, 'rom_offset': 256 + 4}
+    banks = {str(region.offset): 256}
+    updated, = uso.metadata_updates(cartridge, banks, [row])
+    assert updated[0] == row['id'] and json.loads(updated[1])['uso'] == info
+    assert list(uso.metadata_updates(cartridge, banks, [row | {'target': bytes(len(code))}])) == []
+    assert list(uso.metadata_updates(cartridge, banks, [row | {'rom_offset': 4}])) == []
+
+    original = uso_match.link(baseline.obj, 'example', code, info)
+    assert not original.exact
+    target = uso_match.symbolic_target(uso_match.Target('example', 4, code, [], uso=info))
+
+    def measure(text, context):
+        built = compile_source(cfg, context, text)
+        assert built.ok, built.log
+        return uso_match.link(built.obj, 'example', code, info).candidate
+
+    rebound, context = retry(source, header, 'example', original.candidate, target, measure, Event())
+    built = compile_source(cfg, context, rebound)
+    assert built.ok, built.log
+    linked = uso_match.link(built.obj, 'example', code, info)
+    assert linked.exact and linked.linked_code == code
+    assert uso.rebuild(cartridge, [('example', info, built.obj)]) == cartridge
+    assert not uso_match.link(built.obj, 'example', code, info | {'local_calls': []}).exact
+    wrong = compile_source(cfg, context, rebound.replace(target.relocs[0].symbol, target.relocs[1].symbol))
+    assert wrong.ok, wrong.log
+    assert not uso_match.link(wrong.obj, 'example', code, info).exact
+    with pytest.raises(ValueError, match='local call metadata'):
+        uso.rebuild(cartridge, [('example', info | {'local_calls': calls[:1]}, built.obj)])

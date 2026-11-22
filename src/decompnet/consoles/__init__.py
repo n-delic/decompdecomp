@@ -360,6 +360,10 @@ class Console:
         """Return the checked cartridge placement for an independently loaded function."""
         return None
 
+    def overlay_metadata_updates(self, image, cfg, rows):
+        """Yield fresh metadata for existing functions after checking the original loader records."""
+        return ()
+
     def rebuild_overlays(self, image, entries):
         """Put compiled overlay text back in the cartridge using its loader format."""
         if entries:

@@ -1474,6 +1474,15 @@ R_MIPS_26 calls. The exact overlay judge correctly rejected both approaches.
 Declaring the common loader symbol can resolve the compile error, but the
 encoded offsets still require independent overlay-local linking evidence.
 
+A loader-grade retry resolved the two address forms independently: IDO emits an
+undefined direct call to a specific overlay-local alias, and the overlay linker
+resolves that alias using validated loader metadata. The linker compares the
+whole function and original loader bindings after resolving the call. This
+produced 33 verified matches on the isolated N64 copy. Reopening it and
+rebuilding the affected overlays from those compiled objects reproduced the
+cartridge bytes. Changing a call to a second alias under the same base symbol
+fails the controlled regression.
+
 ### Observation: source layout sensitivity (IDO 5.3)
 
 The existing [IDO guide](../src/decompnet/consoles/n64/guides/ido.md) records a private same-source
@@ -12943,3 +12952,21 @@ Assign the scaled result back to the unsigned local before storing it.
 The linked score went from 40 to 30 on a retail N64 function. The previous
 dispatcher proposed nothing and the rewrite removed both register differences.
 Four earlier save and move differences remain.
+
+### KMC GCC 2.7.2: split a masked index into table-selection branches
+
+The preceding byte-index repair left three register differences in an
+isolated lookup draft. Moving the pure masked index copy into both arms of
+the table-selection branch recovered those registers. With
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1`, the two repairs together
+improved the linked score from 220 to 15, then to an exact match. Changing
+only the copied local's type or qualifiers had left the score at 15. This is
+one observed match; synthetic tests cover the source and instruction guards.
+
+### Stage a fresh link pointer reload before a neighboring store (KMC GCC 2.7.2)
+
+With `-G0 -mips3 -mgp32 -mfp32 -O2`, a retail N64 routine had one store
+on the wrong side of a pointer reload. Read the next pointer into the
+existing local after the conditional link update and before the neighboring
+store. The linked score went from 60 to 0. The previous dispatcher proposed
+nothing, and the new rewrite generated one byte-exact candidate.

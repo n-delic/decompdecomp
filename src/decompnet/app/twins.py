@@ -867,6 +867,33 @@ class Twins:
             return False
         return bool(source) and self._missed(b_id, source, project_id=proj['id'])
 
+    def _refresh_overlay_metadata(self, proj, job):
+        cfg = self.net.cfg(proj)
+        banks = cfg.get('donor_overlays')
+        if not banks:
+            return
+        from .cross_game_progress import report
+
+        report(job, 'Checking overlay loader records')
+        store = self.net.project_store(proj['id'])
+        rows = {row['id']: row for row in store.all(
+            "SELECT id,meta,target,rom_offset FROM functions WHERE project_id=? AND status='open' AND rom_offset>=?",
+            proj['id'], min(banks.values()))}
+        if job.stop.is_set() or not rows:
+            return
+        image, _ = self.net._rom(proj)
+        updates = self.net.console(proj).overlay_metadata_updates(image, cfg, rows.values())
+        changes = []
+        for fid, meta in updates:
+            if job.stop.is_set():
+                return
+            row = rows[fid]
+            changes.append((meta, fid, row['meta'], row['target'], row['rom_offset']))
+        if changes and not job.stop.is_set():
+            with store.tx() as db:
+                db.executemany("UPDATE functions SET meta=? WHERE id=? AND meta IS ? AND target=? AND rom_offset=?", changes)
+            self.net.bump_generation(proj['id'])
+
     def across_games(self, slug: str, job: Job | None = None) -> int:
         """Matched code from the user's other games, tried on this game's identical functions: libraries (an SDK's,
         a compiler's runtime, middleware) come in the same code from one game to the next, built by the same
@@ -879,6 +906,8 @@ class Twins:
         from .cross_game_progress import report
         if job is not None and job.stop.is_set():
             return 0
+        if not fork and getattr(job, 'cross_exhaustive', False) and slug not in self.net.links:
+            self._refresh_overlay_metadata(proj, job)
         report(job, 'Reading the local verified-match library')
         others = list(shared_reuse.compatible(self.net, proj))
         archived = self.net.match_library.reuse(self, proj, job) if hasattr(self.net, "match_library") else 0
