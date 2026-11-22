@@ -33,6 +33,7 @@ def setup(monkeypatch, imported=False):
         return draft_repairs.variants(*args, labels=labels, **kwargs), labels, 0
     monkeypatch.setattr(deep_proposals.Pool, 'generate', generate)
     monkeypatch.setattr('decompnet.app.compiler_preflight.warnings', lambda *args: '')
+    monkeypatch.setattr('decompnet.app.deep_profile_sweep.run', lambda *args: False)  # (own tests: test_deep_profile_sweep)
     net._function = lambda name, slug: net.function()
     net.local_agent = lambda name: (AGENT, None)
     net.fork_slug = lambda slug: 'fork' if imported else None
