@@ -1361,7 +1361,7 @@ function renderProjectFacts(ov) {
     !fork && ov.rom?.region ? ["Region", ov.rom.region] : null, fork ? ["Layout", ov.origin === "scratch" ? (ov.layout || "decomp") + " (from scratch)" : ov.fork_kind] : ["Compiler", `${ov.compiler.name} ${ov.compiler.flags.join(" ")}`],
     ...projectCompilerFacts(ov),
     ov.libultra ? ["Libultra (header)", ov.libultra.header_version || "Unknown"] : null,
-    ov.libultra ? ["Libultra detection", ov.libultra.note] : null,
+    ov.libultra ? ["Libultra detection", ov.libultra.summary || ov.libultra.note] : null,
     ov.libultra ? ["Libultra signatures", ov.libultra.signature_candidates.slice(0, 3).map(r => `${r.corpus.split(" / ").slice(0, 2).join(" / ")}: ${r.fingerprints} exact fingerprints (${r.version_specific_fingerprints} specific to this version among local archives)`).join("; ") || "No matching local archive signatures indexed"] : null,
     fork && ov.repo_url ? ["Repository", ov.repo_url.replace(/^https?:\/\//, "")] : null,
     ["Functions", `${ov.functions.toLocaleString()} (${bytes(ov.bytes || 0)} of code)`],

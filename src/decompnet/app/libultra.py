@@ -81,6 +81,32 @@ def report(net, proj):
                    "functions": sum(keys[k] for k in ks), "names": len(names[c])}
                   for c, ks in corpora.items()]
     candidates.sort(key=lambda r: (-r["fingerprints"], r["corpus"]))
+    indexed = {m.group(1).upper() for r in net.store.all("SELECT DISTINCT corpus FROM sdk_signatures WHERE arch='mips' AND big_endian=1")
+               if (m := _VERSION.search(r["corpus"]))}
     return {"header_version": version, "header_raw": raw.hex() if valid else None, "header_offset": "0x0C",
-            "signature_candidates": candidates,
+            "signature_candidates": candidates, "summary": summary(version, candidates, indexed),
             "note": "Header declaration; signature counts are supporting evidence, not proof of one SDK revision."}
+
+
+def summary(header, candidates, indexed):
+    """One sentence saying what the ROM header declares, which indexed archives the code matches best and which
+    releases no archive covers. A header can keep the version of the `romheader` a project started from while the
+    game links a newer library, and code that is unchanged between releases matches every archive that has it, so
+    the two can differ without either being wrong."""
+    best = {c["version"] for c in candidates if c["fingerprints"] == candidates[0]["fingerprints"]} if candidates else set()
+    parts = [f"ROM header declares {header}" if header else "ROM header declares no libultra version"]
+    if best:
+        parts.append("code matches the " + _span(best) + " archives in your folder")
+    else:
+        parts.append("no libultra archive in your folder matches its code")
+    top = max([v for v in (header, *best) if v] or [None], default=None)
+    absent = [f"2.0{chr(c)}" for c in range(ord("A"), ord(top[-1]) + 1) if f"2.0{chr(c)}" not in indexed] if top else []
+    text = "; ".join(parts)
+    if absent:
+        text += f" ({_span(absent)} {'is' if len(absent) == 1 else 'are'} not indexed, so code shared with them can't be told apart)"
+    return text + "."
+
+
+def _span(versions):
+    versions = sorted(versions)
+    return versions[0] if len(versions) == 1 else f"{versions[0]}\u2013{versions[-1]}" if len(versions) > 2 else " and ".join(versions)

@@ -108,6 +108,8 @@ def test_imported_n64_settings_include_header_and_target_signature_evidence(tmp_
     info = net.forks.overview('demo')['libultra']
     assert info['header_version'] == '2.0F'
     assert info['signature_candidates'][0]['fingerprints'] == 1
+    assert info['summary'] == ('ROM header declares 2.0F; code matches the 2.0F archives in your folder '
+                               '(2.0A\u20132.0E are not indexed, so code shared with them can\'t be told apart).')
     (root/'decompressed.pal.z64').unlink()
     assert net.forks.overview('demo')['libultra']['header_version'] is None
 
@@ -131,3 +133,15 @@ def test_safe_yaml_loader_fallback_preserves_compiler_declarations(tmp_path,monk
     expected = describe(project)
     monkeypatch.delattr(yaml,'CSafeLoader',raising=False)
     assert describe(project) == expected
+
+
+def test_libultra_summary_says_what_the_header_declares_and_what_no_archive_covers():
+    from decompnet.app.libultra import summary
+    cand = [{'version': '2.0H', 'fingerprints': 41}, {'version': '2.0H', 'fingerprints': 40}, {'version': '2.0K', 'fingerprints': 3}]
+    text = summary('2.0D', cand, {'2.0H', '2.0I', '2.0J', '2.0K', '2.0L'})
+    assert text == ("ROM header declares 2.0D; code matches the 2.0H archives in your folder "
+                    "(2.0A\u20132.0G are not indexed, so code shared with them can't be told apart).")
+    assert summary(None, [], {'2.0H'}) == 'ROM header declares no libultra version; no libultra archive in your folder matches its code.'
+    wide = summary('2.0I', [{'version': 'x', 'fingerprints': 1}][:0] or [{'version': '2.0I', 'fingerprints': 5}, {'version': '2.0J', 'fingerprints': 5}],
+                   {'2.0H', '2.0I', '2.0J'})
+    assert wide.startswith('ROM header declares 2.0I; code matches the 2.0I and 2.0J archives')

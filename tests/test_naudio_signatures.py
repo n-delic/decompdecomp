@@ -110,8 +110,7 @@ def test_the_tool_labels_libultra_archives_and_leaves_out_what_other_tables_name
 
 
 def test_the_libultra_table_is_the_sdks_own_builds_beyond_the_other_tables():
-    table = Path(N64.sdk_tables[-1])
-    assert table.name == "libultra_signatures.tsv"
+    table = next(Path(t) for t in N64.sdk_tables if Path(t).name == "libultra_signatures.tsv")
     lines = table.read_text(encoding="utf-8").splitlines()
     assert lines[0].startswith("# libultra 2.0H-2.0L,") and "no code" in lines[0]
     rows = [line.split("\t") for line in lines if not line.startswith("#")]
@@ -129,3 +128,18 @@ def test_no_fingerprint_is_in_both_tables():
     ultralib = {line.split("\t")[0] for line in Path(N64.sdk_table).read_text(encoding="utf-8").splitlines()
                 if not line.startswith("#")}
     assert not ultralib & {f for f, _, _, _ in _rows()}
+
+
+def test_the_2_0d_table_names_library_code_no_archive_has_and_overlaps_no_other_table():
+    table = next(Path(t) for t in N64.sdk_tables if Path(t).name == "libultra_2_0d_signatures.tsv")
+    lines = table.read_text(encoding="utf-8").splitlines()
+    assert lines[0].startswith("# libultra 2.0D,") and "no code" in lines[0]
+    rows = [line.split("\t") for line in lines if not line.startswith("#")]
+    assert len(rows) >= 40
+    others = {line.split("\t")[0] for other in (Path(N64.sdk_table), *(Path(t) for t in N64.sdk_tables if Path(t) != table))
+              for line in other.read_text(encoding="utf-8").splitlines() if not line.startswith("#")}
+    assert len({r[0] for r in rows}) == len(rows)  # one name per fingerprint
+    for fingerprint, size, name, builds in rows:
+        assert re.fullmatch(r"[0-9a-f]{40}", fingerprint) and int(size) >= 32 and name and fingerprint not in others
+        assert builds.startswith("2.0D games")
+    assert {"__osViInit", "osSpTaskLoad", "__osSpSetPc"} <= {r[2] for r in rows}

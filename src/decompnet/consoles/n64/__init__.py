@@ -224,7 +224,9 @@ class Nintendo64(Console):
     # libultra as the SDK's own archives built it (SGI's cc for 2.0I, GCC for 2.0J-2.0L), beyond what the rebuild above
     # names (libultra_signatures.tsv: tools/naudio_signatures.py --library libultra)
     sdk_tables = (str(Path(__file__).with_name("naudio_signatures.tsv")), str(Path(__file__).with_name("runtime_signatures.tsv")),
-                  str(Path(__file__).with_name("libultra_signatures.tsv")))
+                  str(Path(__file__).with_name("libultra_signatures.tsv")),
+                  # libultra code the SDK folder lacks, as games that declare 2.0D link it (2.0D-2.0G have no archive)
+                  str(Path(__file__).with_name("libultra_2_0d_signatures.tsv")))
 
     def sdk_assembly_identity(self, code, big_endian=True):
         return sdk_assembly.identify(code, big_endian)
