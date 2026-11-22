@@ -2659,3 +2659,21 @@ def test_loop_count_pointer_receives_abi_and_symbol_resolver(monkeypatch):
                                                      flags=flags, resolve=resolve))
     assert 'count_pointer_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, '',
                                                         flags=flags, resolve=resolve))
+
+
+def test_teardown_pointer_order_receives_abi_and_symbol_resolver(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('o', 'lui $a0, %hi(records)', 'lui $v0, %hi(callback)')]
+    flags = ('-mgp32',)
+    resolve = lambda name: {'records': 0x1000}.get(name)
+
+    def candidate(text, name, header, diff, compiler_flags, resolver):
+        assert compiler_flags is flags and resolver is resolve
+        return [('teardown_pointer_fixture', text)]
+
+    monkeypatch.setattr(diff_gated_repairs.measured_teardown_pointer_order, 'variants', candidate)
+    assert 'teardown_pointer_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, '',
+                                                       flags=flags, resolve=resolve))
+    assert 'teardown_pointer_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, '',
+                                                           flags=flags, resolve=resolve))
