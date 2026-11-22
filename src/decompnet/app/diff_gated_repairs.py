@@ -118,6 +118,7 @@ from decomprepair import (
     measured_kmc_wrappers,
     measured_lifetime_shapes,
     measured_list_selection,
+    measured_masked_halfword_read,
     measured_matrix_products,
     measured_memory_order,
     measured_mmio_polling,
@@ -361,6 +362,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_kmc_carriers.variants(source, name, header, rows)
         result += measured_kmc_cursor_switch.variants(source, name, header, rows)
         result += measured_kmc_field_pointer.variants(source, name, header, rows)
+        result += measured_masked_halfword_read.variants(source, name, header, rows)
         result += measured_kmc_event_field_order.variants(source, name, header, rows)
         result += measured_kmc_event_timestamp.variants(source, name, header, rows)
         result += measured_kmc_halfword_flag_table.variants(source, name, header, rows)

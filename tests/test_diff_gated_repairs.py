@@ -1760,3 +1760,13 @@ def test_route_measured_table_compare_scope(monkeypatch):
                         lambda source, name, diff, header: [('table_compare_pointer_scope', source)])
     assert 'table_compare_pointer_scope' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'table_compare_pointer_scope' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_masked_halfword_read_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_masked_halfword_read, 'variants',
+                        lambda text, name, header, diff: [('masked_halfword_fixture', text)])
+    assert 'masked_halfword_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'masked_halfword_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))

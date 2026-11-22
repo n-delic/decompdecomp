@@ -15126,3 +15126,7 @@ products and reject cases where the old guard value is still live.
 ### Stage an event timestamp before initializing its record
 
 Two saved N64 examples built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` initialized an event record before loading its timestamp inputs. The target loaded those inputs first, then stored the event type, payload, next pointer and timestamp. Computing the timestamp in a local before the stores reproduced both linked targets exactly, improving scores 395 to 0 and 325 to 0. Evidence: two saved examples and synthetic source-shape and compiler-routing tests. This is a target-led candidate, not a general semantics-preserving rewrite: moving the loads can change behavior if the event aliases an input, so acceptance still requires the normal byte judge.
+
+### Read a halfword after a masked word test
+
+In a saved N64 list traversal built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the draft narrowed a word load to `u16` for a comparison after testing the same word with a mask. The target instead loaded an unsigned halfword at the word's address. Changing that comparison to a halfword field read reproduced the linked target exactly (score 280 to 0). Evidence: one saved example and synthetic witness, offset and routing tests. This target-led correction changes which bits are read on big-endian MIPS; it is generated only for the measured instruction shape and accepted by the byte judge.
