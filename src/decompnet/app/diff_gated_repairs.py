@@ -199,6 +199,7 @@ from decomprepair import (
     measured_wide_division_stride,
     measured_word_byte_packing,
     measured_zero_record_pairs,
+    natural_pointer_spill,
     ordered_halfword_updates,
     oscillator_phase_hold,
     packed_matrix_conversion,
@@ -599,6 +600,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += loop_counter_roles_repairs.guarded_reuse_variants(source, name, rows)
         result += measured_float_grid_stores.variants(source, name, rows)
         result += measured_staged_float_order.variants(source, name, rows, header)
+        result += natural_pointer_spill.variants(source, name, rows, header)
         result += measured_forwarded_pointer.variants(source, name, header, asm or '')
         result += float_intermediate_repairs.repeated_products(source, name, rows)
         result += measured_expression_repairs.variants(source,name,header,rows)

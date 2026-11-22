@@ -16052,6 +16052,26 @@ Two saved MIPS examples built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` 
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` checked three signature bytes. The generated draft's combined condition used different registers and a shared result copy. Staging the input bytes and comparison constants in word locals changed the linked difference score from 250 to an exact match while retaining the integer return type. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the complete source, measured instructions and constants, and resolved addresses for all three byte loads.
 
+### Restore a natural pointer spill through the shared reset word
+
+A private N64 function built with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` stored a cached pointer in
+an explicit frame member. The target used a separate register at entry
+and at two nested reloads, and its final call filled the global
+arguments before reloading the pointer. Keeping the pointer as a
+scalar alone displaced an accumulator and lost the jump-table
+bindings. Reusing a known zero word in repeated calls restored the
+natural pointer spill and final call order.
+
+Removing the unused frame tail restored the original frame and slot,
+reducing the linked score from 675 to 390. Sharing that zero's float
+view for the first stack reset brought the score to 385. Both linked
+trials retained 3,034 instructions and all three jump tables. The
+repeated calls themselves still differ in the register that supplies
+zero. This is one measured case. The trial checks pointer loads,
+register use, reset word ownership and entry into the reset scope
+before asking the judge to test the change.
+
 ### Inline a staged global-backed float capture and reschedule its stores
 
 A private N64 function built with
