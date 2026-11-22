@@ -55,3 +55,20 @@ def test_audio_text_after_bootstrap_requires_vector_program(entry):
     assert list(audio_spans(image)) == [(0xd0, 0x10d0)]
     image[0x100:0x200] = bytes(0x100)
     assert not list(audio_spans(image))
+
+@pytest.mark.parametrize('boot', ['standard', 'variant'])
+def test_audio_text_before_bootstrap_accepts_pointer_first_entry(boot):
+    from decompnet.consoles.n64.port import RSPBOOT
+    from decompnet.consoles.n64.rsp_prefix import audio_spans
+
+    image = bytearray(0x1000 + 0xd0)
+    image[:16] = bytes.fromhex('2018036020170f908c3c00308c3b0034')
+    for i in range(64):
+        struct.pack_into('>I', image, 0x100 + i * 4, 0x4a000000)
+    for i in range(3):
+        struct.pack_into('>I', image, 0x200 + i * 4, 0x09000400 + i)
+    signature = RSPBOOT if boot == 'standard' else bytes.fromhex('342100010900041a') + RSPBOOT[4:]
+    image[0x1000:0x1000+len(signature)] = signature
+    assert list(audio_spans(image)) == [(0, 0x1000)]
+    image[0x100:0x200] = bytes(0x100)
+    assert not list(audio_spans(image))

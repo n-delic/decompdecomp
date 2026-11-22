@@ -19,7 +19,9 @@ def audio_spans(image):
     """Find audio RSP programs adjacent to the verified libultra bootstrap."""
     from .port import RSPBOOT
 
-    for match in re.finditer(re.escape(RSPBOOT), image):
+    variant = bytes.fromhex('342100010900041a') + RSPBOOT[4:]
+    pattern = re.escape(RSPBOOT) + b'|' + re.escape(variant)
+    for match in re.finditer(pattern, image):
         end = match.start()
         # Some audio tasks place the bootstrap immediately before their
         # 4 KiB text. Its entry initializes DMEM command pointers or reads SP status first.
@@ -42,8 +44,10 @@ def audio_spans(image):
             status, data, size = struct.unpack_from('>3I', image, start)
             # The first operations read SP_STATUS and the two task DMEM
             # fields for its command list.
-            if (status & 0xffe0ffff != 0x40005800 or data & 0xffe0ffff != 0x8c200030
-                    or size & 0xffe0ffff != 0x8c200034):
+            status_first = (status & 0xffe0ffff == 0x40005800 and data & 0xffe0ffff == 0x8c200030
+                            and size & 0xffe0ffff == 0x8c200034)
+            pointers_first = image[start:start+16] == bytes.fromhex('2018036020170f908c3c00308c3b0034')
+            if not (status_first or pointers_first):
                 continue
             words = struct.unpack_from(f'>{(end-start)//4}I', image, start)
             if sum(map(_vector, words)) < _MIN_VECTORS:

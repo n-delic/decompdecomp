@@ -849,3 +849,47 @@ def test_function_pointer_array_is_data_when_no_control_flow_enters(case):
         assert all(fn.rom!=128 for fn in result)
     else:
         assert any(fn.rom==128 for fn in result)
+
+@pytest.mark.parametrize('case', ['shared', 'tail_not_called', 'interior_entry', 'data', 'changed_bytes'])
+def test_called_single_instruction_entry_shares_closed_leaf(case):
+    # Two callers use different entries into the same frameless computation.
+    words = [0x24844000, 0x00041040, 0x03e00008, 0]
+    image, functions, segments = fixture(words, cuts=(0, 4, 16))
+    caller_words = [0x0c000000 | (BASE >> 2 & 0x3ffffff), 0,
+                    0x0c000000 | ((BASE+4 if case != 'tail_not_called' else BASE) >> 2 & 0x3ffffff), 0,
+                    0x03e00008, 0]
+    extra, callers, _ = fixture(caller_words, cuts=(0, 24))
+    callers[0] = replace(callers[0], rom=16, vram=BASE+16,
+                         lines=[replace(line, rom=line.rom+16, vram=line.vram+16) for line in callers[0].lines])
+    image += extra
+    functions += callers
+    segments = [Segment('code', 0, len(image), BASE)]
+    data = []
+    symbols = ['inside = 0x80001008; // type:func'] if case == 'interior_entry' else []
+    if case == 'data':
+        data.append(DataSymbol('table', BASE+8, 8, 4, 'data'))
+    if case == 'changed_bytes':
+        functions[0].lines[0] = replace(functions[0].lines[0], word=0x24844001)
+    result = repair(functions, data, image, consoles.get('n64'), segments, symbols=symbols)
+    if case == 'shared':
+        assert result[0].size == 16
+        assert result[0].entry_aliases == {BASE+4: functions[1].name}
+        assert any(d.vram == BASE+4 and d.kind == 'func' for d in data)
+    elif case == 'tail_not_called':
+        assert result[0].size == 16 and not result[0].entry_aliases
+    else:
+        assert [f.size for f in result[:2]] == [4, 12]
+
+
+def test_shared_called_leaf_allows_its_own_internal_branches():
+    words = [0x24844000, 0x10800001, 0, 0x00041040, 0x03e00008, 0]
+    image, functions, _ = fixture(words, cuts=(0, 4, 24))
+    callers = [0x0c000000 | (BASE >> 2 & 0x3ffffff), 0,
+               0x0c000000 | ((BASE+4) >> 2 & 0x3ffffff), 0, 0x03e00008, 0]
+    extra, others, _ = fixture(callers, cuts=(0, 24))
+    others[0] = replace(others[0], rom=24, vram=BASE+24,
+                        lines=[replace(line, rom=line.rom+24, vram=line.vram+24) for line in others[0].lines])
+    image += extra
+    result = repair(functions + others, [], image, consoles.get('n64'), [Segment('code', 0, len(image), BASE)])
+    assert result[0].size == 24
+    assert result[0].entry_aliases == {BASE+4: functions[1].name}
