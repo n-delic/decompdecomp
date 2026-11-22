@@ -386,6 +386,8 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
                 and previous.rom+previous.size == fn.rom and previous.vram+previous.size == fn.vram
                 and previous.lines[0].word & 0xffff0000 == 0x27bd0000
                 and previous.lines[0].word & 0x8000 and fn.size >= 8
+                and not is_frame(fn.lines[0].word)
+                and not any(line.word == JR_RA for line in previous.lines)
                 and fn.lines[-2].word == JR_RA
                 and fn.lines[-1].word == 0x27bd0000 | ((-previous.lines[0].word) & 0xffff)
                 and fn.vram not in entered_addresses and not referenced(fn)
@@ -393,6 +395,8 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
             import rabbitizer
             tail = rabbitizer.Instruction(previous.lines[-1].word)
             if (tail.isValid() and not tail.hasDelaySlot()
+                    and not rabbitizer.Instruction(fn.lines[0].word).hasDelaySlot()
+                    and (len(previous.lines) < 2 or not rabbitizer.Instruction(previous.lines[-2].word).hasDelaySlot())
                     and tail.getOpcodeName() not in ('eret', 'break', 'syscall', 'teq', 'tne', 'tge', 'tgeu', 'tlt', 'tltu')):
                 # A framed function falls straight into an unentered continuation
                 # that restores its exact frame before returning.
@@ -496,7 +500,7 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
         log(f'Recovered {recovered_shared} closed leaves with independently entered assembly tails.')
     if recovered_continuations:
         log(f'Joined {recovered_continuations} unentered framed continuations.')
-    return kept if dropped or markers or recovered_data or recovered_shared else result if changed else functions
+    return kept if dropped or markers or recovered_data or recovered_shared or recovered_continuations else result if changed else functions
 
 
 

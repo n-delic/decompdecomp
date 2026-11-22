@@ -922,3 +922,13 @@ def test_unentered_framed_continuation_can_join(protect):
         assert [(fn.rom, fn.size) for fn in result] == [(0, 28)]
     else:
         assert any(fn.rom == 12 for fn in result)
+
+
+def test_continuation_join_is_kept_without_other_repairs():
+    words = [0x27bdffd0, 0xafbf002c, 0x03a0f021, 0x00431021,
+             0x87c3001c, 0x03c0e821, 0x8fbf002c, 0x03e00008, 0x27bd0030]
+    image, functions, segments = fixture(words, cuts=(0, 16, 36))
+    logs = []
+    result = repair(functions, [], image, consoles.get('n64'), segments, log=logs.append)
+    assert [(fn.rom, fn.size) for fn in result] == [(0, 36)]
+    assert any('Joined 1 unentered framed continuations' in line for line in logs)
