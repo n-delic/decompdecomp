@@ -15245,3 +15245,18 @@ and escaped storage.
 ### Restore the previous head in a list insertion
 
 A saved N64 list insertion built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` assigned the new node to the global head before reading that head for the node's link, making the draft self-link. The target loaded the old head first and stored the new head after the other node fields. Capturing the head address, storing the old head into the node, then publishing the node reproduced the linked target exactly (score 315 to 0). Merely changing the order without capturing the address scored 520. Evidence: one saved example and synthetic source, target and routing tests. The candidate corrects the draft's behavior and requires the measured target sequence before the byte judge evaluates it.
+
+### Reuse a zero accumulator for a global float subtraction
+
+Under GCC 2.7.2 KMC `-G0 -mips3 -mgp32 -mfp32 -O2`, the target
+subtracted a global float from the incoming accumulator in place.
+The draft loaded another representation of the initialized zero and
+used a scratch result. Reusing the accumulator recovered the saved
+register transfer, in-place subtraction and move back. The linked
+score on one private N64 function fell from 6,070 to 6,055. All three
+jump tables still linked, with no uninitialized warnings.
+
+The repair requires the global load and all three register differences
+and proves both the old zero operand and the incoming accumulator's
+positive zero across every path. Synthetic tests cover a literal and
+a zero bit field and reject a path that mutates either value.
