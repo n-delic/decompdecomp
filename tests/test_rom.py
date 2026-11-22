@@ -26,14 +26,14 @@ DEMO = ROOT / "projects" / "demo-rom"
 ROM = DEMO / "build" / "demo-quest-64.z64"
 ELF = DEMO / "build" / "demo-quest-64.elf"
 
-pytestmark = pytest.mark.skipif(toolchains.installed("gcc-2.7.2-kmc") is None or not shutil.which("ld.lld"),
-                                reason="needs gcc-2.7.2-kmc and ld.lld to build the demo ROM")
+pytestmark = pytest.mark.skipif(toolchains.installed("gcc-2.7.2-kmc") is None or not shutil.which("ld.lld") or not shutil.which("llvm-objcopy"),
+                                reason="needs gcc-2.7.2-kmc, ld.lld and llvm-objcopy to build the demo ROM")
 
 
 @pytest.fixture(scope="module")
 def built():
-    if toolchains.installed("gcc-2.7.2-kmc") is None or not shutil.which("ld.lld"):
-        pytest.skip("needs gcc-2.7.2-kmc and ld.lld to build the demo ROM")
+    if toolchains.installed("gcc-2.7.2-kmc") is None or not shutil.which("ld.lld") or not shutil.which("llvm-objcopy"):
+        pytest.skip("needs gcc-2.7.2-kmc, ld.lld and llvm-objcopy to build the demo ROM")
     if not ROM.exists():
         subprocess.run([sys.executable, str(DEMO / "build.py")], check=True)
     return ROM.read_bytes()

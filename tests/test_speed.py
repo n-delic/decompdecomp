@@ -21,8 +21,8 @@ from decompnet.rom import match
 
 from .test_export import DEMOS, FUNCTIONS, GAME
 
-pytestmark = pytest.mark.skipif(toolchains.installed("gcc-2.7.2-kmc") is None or not shutil.which("ld.lld"),
-                                reason="needs gcc-2.7.2-kmc and ld.lld to build the demo ROM")
+pytestmark = pytest.mark.skipif(toolchains.installed("gcc-2.7.2-kmc") is None or not shutil.which("ld.lld") or not shutil.which("llvm-objcopy"),
+                                reason="needs gcc-2.7.2-kmc, ld.lld and llvm-objcopy to build the demo ROM")
 
 
 def test_renames_follow_the_relocations():

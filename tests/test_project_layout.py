@@ -94,7 +94,7 @@ DEMOS = {  # console: (game, its compiler, the script that builds it)
 def test_an_import_with_the_checkbox_gets_its_project_folder(tmp_path, console):
     game, compiler, build = DEMOS[console]
     if toolchains.installed(compiler) is None or toolchains.installed("binutils-mips") is None \
-            or shutil.which("ld.lld") is None:
+            or shutil.which("ld.lld") is None or shutil.which("llvm-objcopy") is None:
         pytest.skip(f"the {console} demo's compiler and linker aren't installed")
     if not game.exists():
         import subprocess
@@ -223,7 +223,7 @@ def test_edits_in_the_project_folder_are_judged_by_the_rom_judge(tmp_path, conso
     each is judged like the function page's Try, credited to you, and the folder is regenerated without losing any."""
     game, compiler, _ = DEMOS[console]
     if toolchains.installed(compiler) is None or toolchains.installed("binutils-mips") is None \
-            or shutil.which("ld.lld") is None or not game.exists():
+            or shutil.which("ld.lld") is None or shutil.which("llvm-objcopy") is None or not game.exists():
         pytest.skip(f"the {console} demo, its compiler or linker isn't here")
     net = _net(tmp_path)
     slug = net.import_rom(game, confirmed=True, log=lambda *_: None, project_layout=True)
@@ -299,7 +299,7 @@ def test_a_guessed_file_edited_whole_matches_function_by_function(tmp_path, cons
     and the export builds it from a file of its own; the unit's file comes back for the other."""
     game, compiler, _ = DEMOS[console]
     if toolchains.installed(compiler) is None or toolchains.installed("binutils-mips") is None \
-            or shutil.which("ld.lld") is None or not game.exists():
+            or shutil.which("ld.lld") is None or shutil.which("llvm-objcopy") is None or not game.exists():
         pytest.skip(f"the {console} demo, its compiler or linker isn't here")
     net = _net(tmp_path)
     slug = net.import_rom(game, confirmed=True, log=lambda *_: None, project_layout=True)

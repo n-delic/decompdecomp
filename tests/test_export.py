@@ -37,7 +37,7 @@ DEMOS = {
 def _ready(platform: str) -> bool:
     _, _, tc, _ = DEMOS[platform]
     return (toolchains.installed(tc) is not None and toolchains.installed("binutils-mips") is not None
-            and shutil.which("ld.lld") is not None)
+            and shutil.which("ld.lld") is not None and shutil.which("llvm-objcopy") is not None)
 
 
 # the demo's C that doesn't match on a platform as it is: PSP GCC schedules entity_spawn's call of entity_default_hp
