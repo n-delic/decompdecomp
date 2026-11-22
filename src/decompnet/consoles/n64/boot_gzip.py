@@ -190,7 +190,11 @@ def find(rom, boot_ranges):
                         (primary, *first), (secondary, *second))
     if matches:
         return next(iter(matches.values())) if len(matches) == 1 else None
-    return _pointer_find(rom, boot_ranges)
+    pointer = _pointer_find(rom, boot_ranges)
+    if pointer:
+        return pointer
+    from . import boot_raw_deflate
+    return boot_raw_deflate.find(rom, boot_ranges)
 
 
 def verify_analysis(rom, expanded, boot_ranges):
@@ -248,5 +252,5 @@ def add(config, workdir, image, rom, boot_ranges, log):
     cfg['options']['target_path'] = filename
     cfg['sha1'] = hashlib.sha1(expanded).hexdigest()
     config.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding='utf-8')
-    log(f'Unpacked {len(programs)} gzip program(s) at the addresses supplied by the boot loader')
+    log(f'Unpacked {len(programs)} compressed program(s) at the addresses supplied by the boot loader')
     return filename

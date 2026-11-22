@@ -596,7 +596,7 @@ def build() -> bool:
                 from decompnet.consoles.n64.boot_gzip import verify_analysis
 
                 if not verify_analysis(original, out, boot_ranges):
-                    fail("Rebuilt code differs from the original gzip program members.")
+                    fail("Rebuilt code differs from the original compressed boot programs.")
                 out = original
             else:
                 out = rebuild_cartridge(out, original, cartridge["blocks"])
