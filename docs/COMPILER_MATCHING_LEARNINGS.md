@@ -1,5 +1,15 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: keep a float through the comparison and multiplication
+
+A private N64 draft converted one component to an integer before a range
+check and again before a multiply. The target used the spilled float for
+both. With `-G0 -mips3 -mgp32 -mfp32 -O2`, using the saved float in both
+places removed the extra conversion and improved the linked score from
+22,498 to 22,204. The individual changes scored 22,543 and 22,538.
+The repair requires evidence from the linked diff. The function remains
+unmatched.
+
 ### KMC GCC 2.7.2: flip repeated flag branches together
 
 Three branches in a private N64 draft tested the same negated bitmask.
