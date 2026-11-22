@@ -123,7 +123,7 @@ def prioritized(proj, fn, own):
 def neighbours(net, proj, fn, own):
     """Nearby exact matches propose flags, not an inferred compiler range or a setting change."""
     from ..project import compiler_for
-    rows=net.project_store(proj['id']).all("SELECT vram FROM functions WHERE project_id=? AND status='matched' AND best_score=0 "
+    rows=net.project_store(proj['id']).all("SELECT name,vram,rom_offset FROM functions WHERE project_id=? AND status='matched' AND best_score=0 "
                        "AND vram BETWEEN ? AND ? ORDER BY ABS(vram-?) LIMIT 8",
                        proj['id'],fn['vram']-16384,fn['vram']+16384,fn['vram'])
     cfg=net.cfg(proj);ranked=[]

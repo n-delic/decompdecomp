@@ -1151,6 +1151,15 @@ Keep this file updated when a verified match explains a reusable compiler behavi
 summaries live in `src/decompnet/consoles/*/guides/`; this is the evidence ledger, including failed ideas.
 Do not treat an instruction similarity score as proof of a match.
 
+## Read verified compiler overrides from nearby matched entries
+
+A private N64 draft scored 525 with `gcc-2.7.2-kmc -G0 -mips3 -mgp32
+-mfp32 -O2`. Adding `-fno-cse-skip-blocks`, which a nearby exact match
+used, lowered the score to 105 with identical source and header. The
+neighbor lookup now retains the ROM offset and name so the address can
+select the correct entry-specific profile, including for overlays.
+The lower score is a scratch measurement, and the function remains unmatched.
+
 ## How to add a finding
 
 Record the compiler **version and flags**, processor/ABI, original mismatch, source change, measured

@@ -465,3 +465,20 @@ def test_poll_loop_without_strength_reduction_is_probed_with_its_spellings(monke
     assert result['best']['exact'] and '-fno-strength-reduce' in result['best']['flags']
     assert state['calls'][0] == (['-O2'], source)
     assert all(flags == ['-O2', '-fno-strength-reduce'] for flags, _ in state['calls'][1:3])
+
+
+def test_nearby_match_proposes_its_entry_specific_compiler_flags():
+    net, proj, fn, state = setup()
+    address = fn['vram'] + 4
+    with net.store.tx() as db:
+        db.execute("INSERT INTO functions(project_id,name,vram,size,rom_offset,status,best_score)"
+                   " VALUES(1,'neighbor',?,16,200,'matched',0)", (address,))
+    net.cfg(proj)['function_compilers'] = {
+        f'100:{address}': {'vram': address, 'toolchain': 'example', 'flags': ['-O1']},
+        f'200:{address}': {'vram': address, 'toolchain': 'example', 'flags': ['-O3']},
+    }
+
+    result = preflight.run(net, proj, fn, max_profiles=2)
+
+    assert state['calls'] == [['-O2'], ['-O3']]
+    assert result['best']['exact']
