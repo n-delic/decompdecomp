@@ -221,6 +221,24 @@ Record the exact compiler/flags, source change, measured result and evidence lev
 experiments that would otherwise be repeated. Keep game data private and distinguish controlled
 regression tests from new matches. Add a short version to the appropriate compiler guide when useful.
 
+## SDK code is SDK, not assembly
+
+Code that comes from a platform's SDK or runtime (libultra's cache and thread routines, libgcc helpers, a console's
+kernel stubs) is classified as SDK, never as plain hand-written assembly. A port replaces SDK code with its own,
+and a rebuild links the SDK's; a function filed as "assembly" is one somebody has to look at again later to find
+that out, and agents (three of them, in one game) spend attempts on it before giving a `not_c` verdict.
+- The classifier order is: the SDK's identity first (`app/sdk_assembly.py`: `known_proof`, library detection,
+  `verified_assembly` with kind `sdk`; the N64's digests are `consoles/n64/sdk_assembly.py`), the processor's
+  `asm_reason` (`arch/`, the decomp-repair library) only for what is not recognised, and an agent's `not_c` last.
+- When code that no compiler makes (a `cache` loop, `syscall`, coprocessor 0) shows up open or filed as assembly,
+  work out which SDK routine it is before adding an `asm_reason` rule. Another build of a known routine gets its
+  digest in the console's table (the full body's SHA-256, checked instruction by instruction against a build the
+  table already has: the same routine assembled with another scheduling is the usual difference); never a
+  relocation-normalised hash, which cannot prove linked equality.
+- `asm_reason` stays the fallback for code nobody recognises (the game's own assembly); the set-aside pass
+  (`twins._set_aside_rom_asm`) asks the SDK's identity first, so a routine is never filed as assembly while its
+  identity is known.
+
 ## Conventions
 
 [docs/CONVENTIONS.md](docs/CONVENTIONS.md) has them in full (where code goes, names, comments, errors, tests,

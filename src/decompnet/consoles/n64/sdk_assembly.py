@@ -38,6 +38,17 @@ KNOWN = {
         ('osWritebackDCache', 116, 'scheduled data cache writeback', 'os/writebackdcache.s'),
     'b868489aa115fdc2f51ebae88065f21a34d22bfd3e4c0f14ab431fe181859810':
         ('osInvalICache', 116, 'scheduled instruction cache invalidation', 'os/invalicache.s'),
+    # The same four routines as other libultra builds assembled them: `move` where the older build has
+    # `addu $x, $y, $zero`, and the `andi`/`addiu` pair in the other order. The cache operations, the loop bounds
+    # and the control flow are the same instruction for instruction (checked against the variants above).
+    '713e7b78373df6fbf3d030b5237e9c1e2148c9443cbfdf938f2e8ffdf8e2d326':
+        ('osInvalICache', 116, 'instruction cache invalidation, `move` form', 'os/invalicache.s'),
+    'f8a381ee23df95612ed0fb5ddcef245f947b01e12d78364fa5b45491f4eb7b55':
+        ('osInvalDCache', 172, 'data cache invalidation, `move` form with the filled delay slot', 'os/invaldcache.s'),
+    '5306341d7122fdbbae63d48917c76f7f6c2ee0321e490862302581561bf0474c':
+        ('osWritebackDCache', 116, 'data cache writeback, `move` form', 'os/writebackdcache.s'),
+    '394d3bf1ec1a51ef7eff9113ae1103280d0f09b29035cfd8630a0843d890c4f5':
+        ('osWritebackDCacheAll', 40, 'whole data cache writeback', 'os/writebackdcacheall.s'),
 }
 # The rebuild corpus hashes relocation-free functions as SHA-1(body + b"[]").
 # The SDK's libultra builds use MGU assembly; libgultra builds use C and keep

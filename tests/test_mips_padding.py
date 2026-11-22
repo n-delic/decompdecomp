@@ -118,3 +118,24 @@ def test_fork_object_padding_is_set_aside_without_guessing_its_console_abi(tmp_p
     assert net._function("padding", "demo")["status"] == "asm"
     assert not net.store.one("SELECT 1 FROM claims WHERE function_id=?", ids["padding"])
     assert net.claim_row(agent, "demo")["name"] == "empty"
+
+
+def test_the_set_aside_pass_asks_the_sdk_identity_before_asm_reason(monkeypatch):
+    # AGENTS.md, "SDK code is SDK, not assembly": a cache routine is filed as the SDK routine it is, so only what the
+    # SDK table doesn't know goes by the processor's asm_reason.
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    from decompnet.app import boundary_review, sdk_assembly, twins
+    order = []
+    monkeypatch.setattr(boundary_review, 'refresh', lambda *args: order.append('refresh'))
+    monkeypatch.setattr(sdk_assembly, 'discover_known', lambda net, proj: order.append('sdk') or 0)
+
+    @contextmanager
+    def tx():
+        yield SimpleNamespace(execute=lambda *args: SimpleNamespace(rowcount=0))
+    store = SimpleNamespace(all=lambda *args: [{'id': 1, 'target': b'\x01\x00\x00\x00', 'meta': None}], tx=tx)
+    console = SimpleNamespace(asm_reason=lambda code: order.append('asm_reason') or 'no C makes it')
+    net = SimpleNamespace(console=lambda proj: console, project_store=lambda pid: store)
+    twins.Twins(net)._set_aside_rom_asm({'id': 1})
+    assert order == ['refresh', 'sdk', 'asm_reason']
