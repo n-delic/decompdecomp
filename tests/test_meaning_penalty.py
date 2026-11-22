@@ -143,3 +143,22 @@ def test_byte_identical_code_scores_zero_whatever_it_stores():
     code = mips(sw(8, 0x20, base=1), sw(9, 0x20, base=1), sw(9, 0x20, base=1), JR_RA, NOP)
     result = scoring.diff(code, mips(sw(8, 0x20, base=1), sw(9, 0x20, base=1), sw(9, 0x20, base=1), JR_RA, NOP))
     assert result.score == 0 and result.bytes_match
+
+
+def test_arm_r1_is_not_a_stack_slot():
+    """r1 is PowerPC's stack pointer only: through ARM's r1 an offset is a field, scored as one."""
+    ldr = lambda off: insn("ldr", f"r0, [r1, #{off}]")  # noqa: E731
+    assert _classify(ldr("0x10"), ldr("0x14"), "arm")[0] == scoring.PENALTY_MEANING
+    assert _classify(ldr("0x10"), ldr("0x14"), "thumb")[0] == scoring.PENALTY_MEANING
+    # a plain number change through r1 (no meaning change possible: same mnemonic, number only) is no stack diff
+    add = lambda n: insn("add", f"r0, r1, #{n}")  # noqa: E731
+    assert _classify(add(4), add(8), "arm")[0] != scoring.PENALTY_STACKDIFF
+    # ARM's real stack pointer keeps the cheap score
+    sp = lambda off: insn("str", f"r0, [sp, #{off}]")  # noqa: E731
+    assert _classify(sp("0x10"), sp("0x14"), "arm")[0] == scoring.PENALTY_STACKDIFF
+
+
+def test_ppc_r1_stays_a_stack_slot():
+    lwz = lambda off: insn("lwz", f"r0, {off}(r1)")  # noqa: E731
+    assert _classify(lwz("0x10"), lwz("0x14"), "ppc")[0] == scoring.PENALTY_STACKDIFF
+    assert _classify(lwz("0x10"), lwz("0x14"), "ppc64")[0] == scoring.PENALTY_STACKDIFF
