@@ -15130,3 +15130,20 @@ Two saved N64 examples built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g
 ### Read a halfword after a masked word test
 
 In a saved N64 list traversal built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the draft narrowed a word load to `u16` for a comparison after testing the same word with a mask. The target instead loaded an unsigned halfword at the word's address. Changing that comparison to a halfword field read reproduced the linked target exactly (score 280 to 0). Evidence: one saved example and synthetic witness, offset and routing tests. This target-led correction changes which bits are read on big-endian MIPS; it is generated only for the measured instruction shape and accepted by the byte judge.
+
+### Stage a widened field calculation before byte stores
+
+GCC 2.7.2 KMC with `-G0 -mips3 -mgp32 -mfp32 -O2` loaded a float field
+and added an external double before two byte stores. It narrowed and
+stored the float after the byte stores. The draft ran the first two
+stores before the double calculation. Capturing the sum in an ordinary
+double local retained the write order and reproduced the read and
+conversion schedule.
+
+In one privately judged N64 function the linked score improved from
+6,615 to 6,495, with all three jump tables and no uninitialized warnings.
+Capturing only the initial float was neutral. Moving the whole field
+update also scored 6,495, but would change the source's write order.
+The proposed repair requires the same base, nonoverlapping fields, the
+measured double symbol and both instruction sequences. Synthetic tests
+cover these gates.
