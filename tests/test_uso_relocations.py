@@ -67,6 +67,40 @@ def test_uso_rejects_unsupported_or_duplicate_relocation_records():
         assert region.relocations is None
 
 
+def test_overlay_cpp_method_calls_keep_loader_binding(tmp_path):
+    from decompnet.app.overlay_donor_aliases import cpp_methods
+    from decompnet.elfobj import extract_function, unmangle
+
+    if toolchains.installed('ido-7.1-ncc') is None:
+        pytest.skip('needs IDO 7.1 C++')
+    flags = ['-O2', '-G', '0', '-non_shared', '-mips2', '-32']
+    cfg = compiler_config(tmp_path, {'compiler': {'toolchain': 'ido-7.1-ncc', 'flags': flags}})
+    header = 'class Mesh { public: int example(int); int adjacent(int); };'
+    source = 'int Mesh::example(int i) { return adjacent(i) + adjacent(i + 1); }'
+    original = compile_source(cfg, header, source)
+    assert original.ok, original.log
+    raw = extract_function(unmangle(original.obj, lambda name: name == 'example'), 'example')
+    assert len(raw.relocs) == 2
+    info = {'section': 64, 'start': 0, 'size': len(raw.code),
+            'relocs': [(r.offset, r.type, 1) for r in raw.relocs]}
+    target = uso_match.symbolic_target(uso_match.Target('example', 0, raw.code, [], uso=info))
+    baseline = uso_match.link(original.obj, 'example', raw.code, info)
+    assert baseline.instructions_exact and not baseline.exact
+    rebound, context = cpp_methods(source, header, 'example', baseline.candidate, target,
+                                   uso_match.separate_reference)
+    assert rebound.count('(this, ') == 2
+    built = compile_source(cfg, context, rebound)
+    assert built.ok, built.log
+    assert uso_match.link(built.obj, 'example', raw.code, info).exact
+    wrong = compile_source(cfg, context.replace('sym_1__ref1', 'sym_2__ref1'),
+                           rebound.replace('sym_1__ref1', 'sym_2__ref1'))
+    assert wrong.ok, wrong.log
+    assert not uso_match.link(wrong.obj, 'example', raw.code, info).exact
+    info['relocs'][1] = (*info['relocs'][1][:2], 2)
+    split = uso_match.symbolic_target(uso_match.Target('example', 0, raw.code, [], uso=info))
+    assert cpp_methods(source, header, 'example', baseline.candidate, split, uso_match.separate_reference) is None
+
+
 def test_yay0_rebuild_uses_literals_and_verifies_back_references():
     original = b'abcdefgh' * 8
     compressed = crunch64.yay0.compress(original)
