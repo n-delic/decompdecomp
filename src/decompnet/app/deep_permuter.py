@@ -474,6 +474,7 @@ class Search(Permuter):
                   (L + 'guarded_increment_sink.variants', (source, name)),  # decomp-repair 0.5.607: a counter's early sum back inside its guard as G++
                   (L + 'argument_weight_scope.variants', (source, name)),  # decomp-repair 0.5.603: a parameter's first call in a one-shot scope with the table pointer local written out
                   (L + 'arm_variable_share.variants', (source, name)),  # decomp-repair 0.5.601: the counters of sibling arms' loops and their derived indices as one variable
+                  (L + 'ternary_clamp_split.variants', (source, name)),  # decomp-repair 0.5.612: a ?: clamp as a copy and a guarded default, the later reads on the copy
                   (L + 'loop_exit_value_block.variants', (source, name)),  # decomp-repair 0.5.608: a search loop's not-found value set on its exit path (goto), not carried round the loop
                   (L + 'argument_loop_split.variants', (source, name)),  # decomp-repair 0.5.608: a loop variable passed as a call argument gets its own local
                   (L + 'entry_scheduling_scope.variants', (source, name)),  # decomp-repair 0.5.606: the opening run wrapped in do { } while (0), narrow stack parameters through locals

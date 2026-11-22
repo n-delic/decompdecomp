@@ -17961,3 +17961,21 @@ Failed: `for (;;)` with the zero on the exit (3450), `if (found-ness)` after the
 `found = 0` before the loop with none at the bottom (2985), the break form without the goto (1805), `tail` as a plain sum (600).
 Families: decomp-repair `loop_exit_value_block` and `argument_loop_split` (0.5.608), both reproduced from the saved best
 (285 -> 180 -> 20). Steps 3 and 4 are not yet families.
+
+## KMC GCC 2.7.2 (`-G0 -mips3 -mgp32 -mfp32 -O2`): a `?:` clamp read by two call arms, as a copy and a guarded default
+
+A 114-instruction N64 function (a frame index `next = index + 1` clamped with `next = next < count ? next : 0;` before
+`if (!(flags & 0x40000)) { f(.., index, next); return; } g(.., index, next, ..)`), saved best 435 with every other row
+right. The target's clamp is `slt; negu; and $t1,$a3,$v0; addu $a3,$t1,$zero`, then `addu $a3,$t1,$zero` in the first call's
+delay slot and no copy before the second call: two pseudos (the `and` result in `$t1`, a copy of it in `$a3` read by the second
+arm). The ternary compiles to `v = 0; v = v & -(v < n)` and the allocator puts the `and` straight into `$a3` (and, with a copy
+back into `v` or the `x & -(x < n)` spelling, the split exists but the roles are the other way round: the arm that reads the
+`and` result got `$a3`, the other `$t1`, 855). Forty spellings were scored with the app's judge (clamp as `?:`, as `& -(..)`, as
+`t = v; if (v >= n) t = 0;`, with and without `v = t;`, which arm reads which variable, five declaration positions of the new
+local): the `if` form with both arms reading `t` was the only one at 0, the rest 435, 730, 855 or 910. Controlled (one
+function, exact judge, same compiler, only the clamp and the reads changed).
+Hypothesis, not read from cse.c's final form: in `make_regs_eqv` the copy's class prefers the register with the later last use
+beyond the basic block, so the copy a later call arm reads becomes canonical and cse rewrites the earlier arm to it; the
+`if` form has no copy to merge, and the allocator's priority order (3 references over 15 insns against 2 over 18 in the
+ternary's split) differs. A volatile read of the period field in the same function was left as the earlier agent had it.
+Family: decomp-repair `ternary_clamp_split` (0.5.612), reproduced from the saved best (435 -> 0).
