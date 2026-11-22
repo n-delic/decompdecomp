@@ -15588,3 +15588,6 @@ shift. Either of those changes alone broke the linked table check.
 The automated adjacent-store proposal relies on the same base,
 distinct word-aligned offsets and unqualified word views. This is
 one saved example, with two starting drafts.
+### KMC GCC 2.7.2 byte-packing accumulator
+
+A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` shifted its accumulator, incremented an independent counter, and then ORed in a byte. Its machine draft combined the multiplication and OR after the increment. Splitting the original multiplication and OR into separate assignments around the counter increment changed the diff score from 250 to an exact linked match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the measured instruction ordering and independent, unescaped locals.
