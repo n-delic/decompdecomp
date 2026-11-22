@@ -31,3 +31,17 @@ def test_deep_permuter_tries_the_witnessed_smoothing_scale_for_kmc():
     assert 'result = axis * 32.0f;\n    result = ((result - old)' in candidate
     for arch, compiler in [('arm', 'gcc-2.7.2-kmc'), ('mips', 'gcc-egcs'), ('mips', 'ido-5.3')]:
         assert all(label != FAMILY for label, _ in proposals(SOURCE, 'adjust', '', arch, compiler, ROWS, ''))
+
+
+def test_deep_permuter_stages_the_axis_when_a_complete_clamp_reloads_it():
+    source = SOURCE[:SOURCE.rindex('}')] + '''
+    else if (result > 32.0f) {
+        *((f32 *) (((char *) record) + 0x48)) = 32.0f;
+    }
+    axis = *((f32 *) (((char *) record) + 0x48));
+}
+'''
+    options = proposals(source, 'adjust', '', 'mips', 'gcc-2.7.2-kmc', ROWS, '')
+    [candidate] = [text for label, text in options if label == 'float_clamp_axis_stage']
+    assert 'axis = axis * 32.0f;\n    old =' in candidate
+    assert 'result = ((axis - old)' in candidate
