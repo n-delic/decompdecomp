@@ -694,21 +694,23 @@ def test_search_starts_before_full_preparation_and_reports_checked_total(sweep, 
     assert preparations[-1]['done']
 
 
-def test_loop_repeats_same_settings_and_stops_on_cancel(sweep, monkeypatch):
+def test_loop_doubles_both_budgets_and_stops_on_cancel(sweep, monkeypatch):
     obj, net, calls, _ = sweep
     original = deep_permuter.run
     log = Log()
-    def search(*args):
-        if len(calls) == 5:
+    budgets = []
+    def search(*args, **options):
+        if len(calls) == 6:
             log.cancelled = True
             log.check_cancel()
-        assert args[3:5] == (2, 17)
+        budgets.append((*args[3:5], options.get('expanded_budget', False)))
         return original(*args)
     monkeypatch.setattr(deep_permuter, 'run', search)
     with pytest.raises(RuntimeError, match='cancelled'):
-        obj.run('game', 2, 17, log, loop=True)
-    assert calls == ['f0', 'f1', 'f0', 'f1', 'f0']
-    assert obj.history('game', net._function('f0', 'game'))['completed']
+        obj.run('game', 60, 300_000, log, loop=True)
+    assert calls == ['f0', 'f1'] * 3
+    assert budgets == [(60, 300_000, False)] * 2 + [(120, 600_000, True)] * 2 + [(240, 1_200_000, True)] * 2
+    assert obj.history('game', net._function('f1', 'game'))['completed']
 
 
 def test_waiting_turn_goes_behind_other_candidates(sweep, monkeypatch):
