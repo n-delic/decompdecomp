@@ -135,3 +135,54 @@ def test_deep_permuter_pairs_projection_scale_and_predicate_for_kmc():
     assert 'projection = value * 0.25f;' in candidate
     for arch, toolchain in [('arm', 'gcc-2.7.2-kmc'), ('mips', 'ido-5.3'), ('mips', 'gcc-egcs')]:
         assert all(label != 'balanced_projection_scale' for label, _ in proposals(PROJECTION_SOURCE, 'adjust', '', arch, toolchain, PROJECTION_ROWS, ''))
+
+
+CARRY_SOURCE = '''
+void adjust(void *record, float angle, int bypass)
+{
+    float phase;
+    float vertical;
+    int upper;
+    int lower;
+    vertical = 0.0f;
+    phase = *((f32 *) (((char *) record) + 8));
+    upper = 1;
+    if (!(phase <= 0.0002f)) {
+        upper = 0;
+    }
+    lower = 1;
+    if (!(phase >= (-0.0002f))) {
+        lower = 0;
+    }
+    if (((lower ^ 1) | (upper ^ 1)) != 0) {
+        mark(record);
+    }
+    project:
+    vertical = 0.0f + (phase * cosine(angle));
+    report(vertical);
+}
+'''
+CARRY_EARLY = [('r', 'lwc1 $f26, 8($s1)', 'lwc1 $f20, 8($s1)')] + ROWS[:24]
+CARRY_LATE = [
+    (' ', 'beqz $v0, .Lprojection', 'beqz $v0, .Lprojection'),
+    (' ', 'nop', 'nop'),
+    (' ', 'jal cosine', 'jal cosine'),
+    (' ', 'nop', 'nop'),
+    ('r', 'mul.s $f0, $f26, $f0', 'mul.s $f0, $f20, $f0'),
+    ('<', 'mtc1 $s6, $f16', ''),
+    (' ', 'nop', 'nop'),
+    ('r', 'add.s $f16, $f16, $f0', 'add.s $f0, $f0, $f24'),
+    ('r', 'mfc1 $s6, $f16', 'mfc1 $s6, $f0'),
+]
+CARRY_ROWS = CARRY_EARLY + CARRY_LATE
+
+
+def test_deep_permuter_pairs_the_predicate_with_one_zero_projection_carry():
+    family = 'balanced_predicate_projection'
+    [candidate] = [text for label, text in proposals(CARRY_SOURCE, 'adjust', '', 'mips',
+                                                    'gcc-2.7.2-kmc', CARRY_ROWS, '') if label == family]
+    assert 'repair_early_fold | (lower ^ 1)' in candidate
+    assert 'vertical += (phase * cosine(angle));' in candidate
+    for compiler in ('gcc-egcs', 'ido-5.3'):
+        assert all(label != family for label, _ in proposals(CARRY_SOURCE, 'adjust', '', 'mips',
+                                                              compiler, CARRY_ROWS, ''))

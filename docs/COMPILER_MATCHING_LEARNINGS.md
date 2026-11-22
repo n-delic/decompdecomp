@@ -15218,3 +15218,25 @@ Two saved N64 functions built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1` 
 ### Stage the base of a byte-clear loop
 
 A saved N64 byte-clear loop built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1` recalculated its indexed table base in the loop, while the target computed it before the loop. Masking the row index first, then assigning the base and adding the row offset inside a single-iteration `do` block, reproduced the linked target exactly (score 255 to 0). Without the block the same staged assignments scored 45; combining the assignments scored 120. Evidence: one saved example and synthetic source, target and routing tests. The candidate requires the measured loop and instruction shapes and is verified by the byte judge.
+
+### Pair an earlier predicate with a carried zero projection accumulator
+
+GCC 2.7.2 KMC with `-G0 -mips3 -mgp32 -mfp32 -O2` put a staged integer
+inversion in the second float branch's delay slot and reused an
+initialized accumulator register during a later projection. The draft
+held the inversion too late and added a scratch floating zero.
+
+In one private linked N64 function, the baseline scored 6,415. Staging
+only the inversion scored 7,525. Carrying only either individual
+accumulator scored 7,015. Pairing the inversion with one accumulator
+and placing the first staged flag first in the OR restored the
+measured carry, add and flag instructions and scored 6,070. It retained
+all three jump tables and compiled without uninitialized warnings.
+Carrying both accumulators with the paired flag change lost a table
+relocation and scored 13,571.
+
+The Deep Permuter requires both nearby instruction differences. Its
+flow check allows an accumulator read only when the incoming value is
+proven positive zero on every path, including the KMC zero-word union
+form. Synthetic tests cover a branch bypass, later change, back edge
+and escaped storage.
