@@ -15491,3 +15491,7 @@ a dead, unescaped local before proposing the combined rewrite.
 ### Share repeated signed offset calculations through an inline helper
 
 A saved N64 controller routine built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` repeated a signed `index * 0x68 + 0x18C` offset. The draft added the constant to the global base, while the target added it to the scaled index before combining the two. Factoring both offset expressions through a small inline helper reproduced the linked target exactly (score 275 to 0). Evidence: one saved example and synthetic source, target and routing tests. The rule requires the measured instruction sequence, repeated expression and unchanged parameter, then the byte judge verifies the candidate.
+
+### Return the old value when advancing a relocated pool
+
+Three saved N64 pool allocators built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` advanced an indexed entry but their drafts declared `void` and omitted the old value returned by the target. The existing relocated-pool rule corrected the global addresses but stopped at score 40. Declaring an unconstrained `s32` return and returning the entry's prior value reproduced all three linked targets exactly (each score 235 to 0). Evidence: three saved examples and synthetic target, address and declaration tests. The candidate requires both addresses to resolve to the source offsets and no external declaration constraining the return type; the byte judge verifies it.
