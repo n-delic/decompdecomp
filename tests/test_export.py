@@ -644,3 +644,16 @@ def test_export_keeps_fallthrough_entries_separate():
         'entry = 0x80001004; // type:func size:0x8',
         'other_bank = 0x8000100C; // type:func size:0x4',
     ]
+
+
+def test_unresolved_scoped_automatic_names_keep_their_address():
+    from decompnet.rom.export import _auto_addresses
+
+    text = 'lui $at, %hi(D_80028D68_code_80027AF0)\n.word func_80123400_code_80120000'
+    assert _auto_addresses([text], set()) == {
+        'D_80028D68_code_80027AF0': 0x80028D68,
+        'func_80123400_code_80120000': 0x80123400,
+    }
+    assert _auto_addresses([text], {'D_80028D68_code_80027AF0'}) == {
+        'func_80123400_code_80120000': 0x80123400,
+    }
