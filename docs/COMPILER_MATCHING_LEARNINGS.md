@@ -15371,3 +15371,8 @@ avoids preprocessing directives, literal text or line continuations.
 The private baseline's linked diff was identical after the indentation
 change alone. Synthetic tests verify both mismatch witnesses and that
 the emitted text stays within the passed source budget.
+
+
+### Advance a two-word command cursor after a call
+
+A saved N64 command builder compiled with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` wrote two command words through separate byte-offset pointers. The target retained an eight-byte command cursor and advanced it between commands. Declaring a two-word record, using post-increment for the first command and reading the final word through the global pointer reproduced the linked target exactly (score 360 to 0). Evidence: one saved example and synthetic source, target and routing tests. The candidate requires the measured command constants and cursor instruction sequence and is checked by the byte judge.
