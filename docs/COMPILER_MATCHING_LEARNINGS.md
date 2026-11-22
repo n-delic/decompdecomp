@@ -14356,3 +14356,40 @@ checks they compose). What the permuter still cannot do: choose the pin (`key = 
 needs it, or find the first arm's polarity change by score, since written alike it measures 755 against the best's 380.
 
 In one N64 byte-mask routine built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, complementing one byte and ORing it with another and a constant made the compiler materialize a negative word mask. Narrowing the intermediate OR to `u8` before combining the constant reproduced the linked target exactly (score 330 to 0). The diff-gated candidate keeps the final byte assignment and requires the measured immediate difference. Evidence: one saved example and synthetic generation and routing tests.
+## An N64 game's 1,190-instruction object-spawning switch: an 11-step chain, 2598 -> 0 (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, one function)
+
+Evidence level: one function, judged byte-exact by the app after each step (default compiler profile; no per-function
+flags). The saved best was an m2c draft at 2598 whose frame was an m2c `locals` struct with three `volatile` members.
+Each step below is one edit; scores are the app's judge on the whole function. The library's own `propose`, run in
+order from the saved best with no permuter job, reproduces the chain from 2598 to 0 (decomp-repair 0.5.374).
+
+| Step | Edit | Score | Compiler fact it changes | Family |
+| --- | --- | --- | --- | --- |
+| 0 | saved draft | 2598 | | |
+| 1 | the labels two switch arms shared sat inside the first arm's `if`/`else`; each tail became a `goto` there and the labelled tails follow the last arm that jumps to them, the first falling into the second (`if (v != 0) break;`) | 2708 | blocks are laid out in source order, so the nest decides where the shared call sits (the score rises: every later branch offset moved by 4, the layout is right) | `nested_join_hoist` |
+| 2 | a four-case constant-assigning switch written in the target's case order, without the pre-initialised default | 898 | `(v == 0xb) * 4` was if-converted; with the cases in order gcc keeps the branch and the delay-slot `li` | `switch_layout` (existing) |
+| 3 | `v = field + 0x6F; send(ctx, v & 0xFF)` written as one expression in the call | 873 | a named local is a user variable and is never tied to the register its value goes to next; the target computed the whole chain in `$a1` | `paired_call_argument_inline` |
+| 4 | `(s32) FIELD(u16, -0x10) == 0` read as `FIELD(s32, -0x10)` | 673 | `lw` and one `bnez` where `lhu` could not give two halfwords' test | `widened_field_read` |
+| 5 | callee declared `f32 callee(f32)`, called with `60.0f` | 1563 | the `lui $at; mtc1 $at, $f12` pair the draft was missing (the score rises: the draft's float stores still carry two extra `nop`s, which step 8 removes) | `float_register_argument` |
+| 6 | the second record pointer dropped: its uses are offsets from the record pointer (`+0x3C`) | 1533 | loop.c strength-reduces the field addresses into its own register and puts its increment where the target has it; with two user pointers loop.c made a third (`var_s4 + 0x24`) and the saved registers went to the wrong pseudos | `derived_pointer_fold` |
+| 7 | the second and third loops' counters are one variable | 1518 | one pseudo, one priority, `$s7` in each loop | `disjoint_local_merge` (released meanwhile by another change) |
+| 8 | the first two `lvalue = (s16)(s32) float` stores go through `s16` locals | 85 | the three float conversions had come out in the order of the call's argument, whose chain is one move longer (`mov $a2`): `rank_for_schedule` takes the highest priority first and ties go to the *later* instruction; a narrow local adds a move to the other chains and the target's order, with the stores after all three `mfc1`s and no `nop`s, appears | `staged_narrow_store` |
+| 9 | the `volatile` struct members for the three spill slots (`0xCC`, `0xD4`, `0xDC`) became plain locals, the struct's tail and the padding before it were dropped, and the copy `var_s4 = buffer` moved after the call that fills the buffer | 22 | a member of the frame struct is a memory object the first scheduler orders: its store sat 8 instructions too early, `$v0` held the byte load's value instead of the call result and `addiu $t0, $sp, 0xB8` became `$v0`. As real pseudos the compiler spills them (stored where the second scheduler puts a store, `$t0` as the reload register of a hoisted `&local`); with the copy before the call, loop.c's biv initial value was the spilled pointer (`lw $t0` and `addiu $s2, $t0, 0x3C`), after it the loop's own register | `volatile_slot_demotion`, `copy_sink_after_call` |
+| 10 | the three halfword stores into the struct (`L.a = r_0`, `L.b = r_2`, `L.c = (s16) t`) written through `__repair_store_halfword(x)` (`x = (unsigned)x << 16; x = (int)x >> 16`) | 0 | each keeps a pseudo that combine later folds away but whose reference count stays above zero, so reload reserves an unused eight-byte slot for it: the frame was 24 bytes short (0x108 against 0x120), the saved-register offsets all `s` rows, and every other row already agreed. One or two of the three left the frame at 0x110 or 0x118 and the score at 22 | `halfword_store_normalization` (extended to a local struct's members and signed halfwords) |
+
+Failed experiments, so they are not repeated: `-fno-strength-reduce` for the function (it made independent
+`var_s2 += 0x22; var_s4 += 0x22` pointers allocate as the target does, 1533, but needed a per-function profile and
+dropping the second pointer reaches the same code with the default flags); the three spill slots as `volatile` struct
+members, as non-volatile members and as separate volatile locals (offsets right; store 8 instructions early, `$v0`
+for `$t0`); moving the `locals.spCC = call()` statement to after the loads (the first scheduler placed it by priority
+regardless, 3098); reordering the three float stores in every permutation, fresh single-assignment `s32` temporaries
+for them, and temporaries shared with other uses (the shared ones changed the order only because their extra copy
+instructions changed the priorities, which the `s16` locals do on purpose); a named variable for the inlined argument
+(`lbu $a1` -> `$v0`); padding arrays after the spills (they sit below the spill slots: `get_frame_size()` grows but the
+slots move); and six `__repair_spill_normalize` sites on masked expressions (each added shift instructions: only a
+masked *local* and halfword stores are free).
+
+What the permuter still cannot do, after these families: step 5 raises the score alone and pays off with step 8 (a
+search that only accepts improvements will not take it); step 6 needs the function's own record-field accesses to be
+the only users of the second pointer; and step 10 needs the frame gap to be a multiple of 8 with every earlier spill
+agreeing, which the existing frame evidence reads but the number of stores to normalise (three here) has to be right.
