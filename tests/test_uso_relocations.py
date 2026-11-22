@@ -144,7 +144,7 @@ def test_overlay_defined_zero_data_requires_explicit_loader_binding(tmp_path, mo
 
 
 def test_overlay_cpp_method_calls_keep_loader_binding(tmp_path):
-    from decompnet.app.overlay_donor_aliases import cpp_methods
+    from decompnet.app.overlay_donor_aliases import cpp_generated_bindings, cpp_methods
     from decompnet.elfobj import extract_function, unmangle
 
     if toolchains.installed('ido-7.1-ncc') is None:
@@ -162,6 +162,11 @@ def test_overlay_cpp_method_calls_keep_loader_binding(tmp_path):
     target = uso_match.symbolic_target(uso_match.Target('example', 0, raw.code, [], uso=info))
     baseline = uso_match.link(original.obj, 'example', raw.code, info)
     assert baseline.instructions_exact and not baseline.exact
+    marker_source, marker_header = cpp_generated_bindings(source, header, baseline.candidate, target,
+                                                         uso_match.separate_reference)
+    marker_build = compile_source(cfg, marker_header, marker_source)
+    assert marker_build.ok, marker_build.log
+    assert uso_match.link(marker_build.obj, 'example', raw.code, info).exact
     rebound, context = cpp_methods(source, header, 'example', baseline.candidate, target,
                                    uso_match.separate_reference)
     assert rebound.count('(this, ') == 2
@@ -175,6 +180,80 @@ def test_overlay_cpp_method_calls_keep_loader_binding(tmp_path):
     info['relocs'][1] = (*info['relocs'][1][:2], 2)
     split = uso_match.symbolic_target(uso_match.Target('example', 0, raw.code, [], uso=info))
     assert cpp_methods(source, header, 'example', baseline.candidate, split, uso_match.separate_reference) is None
+
+
+def test_overlay_cpp_generated_symbols_use_explicit_object_bindings(tmp_path, monkeypatch):
+    from contextlib import nullcontext
+    from inspect import unwrap
+    from threading import Event
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from decompnet import consoles
+    from decompnet.app import donor_build, exact_match_inputs
+    from decompnet.app.overlay_donor_aliases import cpp_generated_bindings
+    from decompnet.elfobj import extract_function
+
+    if toolchains.installed('ido-7.1-ncc') is None:
+        pytest.skip('needs IDO 7.1 C++')
+    flags = ['-O2', '-G', '0', '-non_shared', '-mips2', '-32']
+    cfg = compiler_config(tmp_path, {'compiler': {'toolchain': 'ido-7.1-ncc', 'flags': flags}})
+    header = ('struct Base { Base(int); }; '
+              'struct Child : Base { Child() : Base(3) {} virtual void f(); }; '
+              'extern "C" void sink(void *);')
+    source = 'extern "C" void example() { Child c; sink(&c); }'
+    donor = compile_source(cfg, header, source)
+    assert donor.ok, donor.log
+    body = extract_function(donor.obj, 'example')
+    indices = {'__ct__4BaseFi': 1, '__vtbl__5Child': 2, 'sink': 3}
+    assert {r.symbol for r in body.relocs} == indices.keys()
+    kinds = {4: 0x11, 5: 0x13, 6: 0x12}
+    records = b''.join(struct.pack('>III', (indices[r.symbol] << 4) | (kinds[r.type] & 15), r.offset + 4, 1)
+                       for r in body.relocs)
+    cartridge = bytes(64) + _module(bytes(4) + body.code, relocations=records)
+    region, = uso.read(cartridge)
+    info = {'section': region.offset, 'start': 4, 'size': len(body.code),
+            'relocs': uso.function_relocations(region, 4, len(body.code))}
+    target = uso_match.symbolic_target(uso_match.Target('example', 4, body.code, [], uso=info))
+    sink = uso_match.alias(region.offset, 3)
+    header, source = header.replace('sink', sink), source.replace('sink', sink)
+    original = compile_source(cfg, header, source)
+    assert original.ok, original.log
+    baseline = uso_match.link(original.obj, 'example', body.code, info)
+    assert baseline.instructions_exact and not baseline.exact
+    rebound, context = cpp_generated_bindings(source, header, baseline.candidate, target, uso_match.separate_reference)
+    built = compile_source(cfg, context, rebound)
+    assert built.ok, built.log
+    assert uso_match.link(built.obj, 'example', body.code, info).exact
+    assert uso.rebuild(cartridge, [('example', info, built.obj)]) == cartridge
+    wrong = compile_source(cfg, context.replace('_sym_1__ref1', '_sym_2__ref1'), rebound)
+    assert wrong.ok, wrong.log
+    assert not uso_match.link(wrong.obj, 'example', body.code, info).exact
+    wrong_context = context.replace('decomp_overlay_bind___ct__4BaseFi = ',
+                                    'decomp_overlay_bind___ct__4BaseFi = 1 + ')
+    wrong = compile_source(cfg, wrong_context, rebound)
+    assert wrong.ok, wrong.log
+    assert not uso_match.link(wrong.obj, 'example', body.code, info).exact
+
+    console = consoles.of({'platform': 'n64'})
+    record = Mock()
+    net = SimpleNamespace(
+        _compile=lambda _project, h, s, _fn: compile_source(cfg, h, s),
+        _evaluate=lambda _fn, _project, obj: (lambda result: (result.candidate, result.exact, result.problems))(
+            uso_match.link(obj, 'example', body.code, info)),
+        _rom_target=lambda _fn: uso_match.Target('example', 4, body.code, [], uso=info),
+        _target_obj=lambda *_: target, console=lambda _: console, _record=record,
+        progress=SimpleNamespace(judging=lambda *_args, **_kwargs: nullcontext()))
+    monkeypatch.setattr(exact_match_inputs, 'capture', lambda *_: {})
+    monkeypatch.setattr(donor_build, 'acceptable', lambda *_: True)
+    fn = {'name': 'example', 'size': len(body.code), 'id': 1}
+    accepted, _ = unwrap(donor_build._try)(net, {'slug': 'test', 'arch': 'mips'}, {}, fn, source, header,
+                                          SimpleNamespace(id=1), SimpleNamespace(stop=Event()))
+    assert accepted
+    saved = record.call_args.kwargs['exact_inputs']
+    replayed = compile_source(cfg, saved['header'], saved['source'])
+    assert replayed.ok, replayed.log
+    assert uso_match.link(replayed.obj, 'example', body.code, info).exact
 
 
 def test_yay0_rebuild_uses_literals_and_verifies_back_references():
