@@ -180,19 +180,50 @@ def function_local_calls(region, start, size, relocs):
     return targets
 
 
+def _native_metadata(regions, offset, size, matches):
+    """Existing disassembly can cover uncompressed module text under a runtime address."""
+    if offset is None or size <= 0 or size % 4:
+        return None
+    owners = [region for region in regions if not region.compressed and region.relocations
+              and 0 <= offset - region.offset <= len(region.data) - size]
+    if len(owners) != 1:
+        return None
+    region, = owners
+    start = offset - region.offset
+    if start % 4 or not matches(region.data[start:start + size]):
+        return None
+    relocs = function_relocations(region, start, size)
+    if not relocs:
+        return None  # the ordinary byte judge already handles this body
+    info = {'section': region.offset, 'start': start, 'size': size, 'relocs': relocs, 'native': True}
+    if calls := function_local_calls(region, start, size, relocs):
+        info['local_calls'] = calls
+    return info
+
+
 def metadata_updates(image, banks, rows):
     """Upgrade saved overlay metadata only where the loader records and whole body still agree."""
     import json
 
     regions = {region.offset: region for region in read(image)}
+    if not regions:
+        return
     for row in rows:
         meta = json.loads(row['meta'] or '{}')
         info = meta.get('uso')
-        if not info or info.get('local_calls') or info.get('relocs') is None:
+        if not info:
+            code = row['target'] or b''
+            native = _native_metadata(regions.values(), row['rom_offset'], len(code), code.__eq__)
+            if native:
+                yield row['id'], json.dumps(meta | {'uso': native})
+            continue
+        if info.get('local_calls') or info.get('relocs') is None:
             continue
         region = regions.get(info['section'])
         start, size = info['start'], info['size']
-        if (region is None or banks.get(str(region.offset)) != row['rom_offset'] - start
+        bank = region.offset if region and info.get('native') and not region.compressed else banks.get(str(info['section']))
+        if (region is None or row['rom_offset'] is None or bank != row['rom_offset'] - start
+                or start < 0 or size <= 0 or start + size > len(region.data)
                 or region.data[start:start + size] != row['target']
                 or function_relocations(region, start, size) != info['relocs']):
             continue
@@ -287,6 +318,13 @@ def add_to_split(result: "SplitResult", workdir: "Path", original: bytes, log) -
     if not image.startswith(original):
         return
     covered = [(fn.rom, fn.rom + fn.size) for fn in result.functions]
+    native = [region for kind, region in regions if kind == 'uso' and not region.compressed]
+    for fn in result.functions:
+        check()
+        def matches(code, fn=fn):
+            return all(word == line.word for (word,), line in zip(struct.iter_unpack('>I', code), fn.lines, strict=True))
+        if info := _native_metadata(native, fn.rom, fn.size, matches):
+            fn.uso = info
 
     def quiet(*_):
         pass

@@ -315,3 +315,59 @@ def test_donor_local_text_calls_bind_to_an_independently_linked_overlay(tmp_path
     wrong = compile_source(cfg, context, rebound.replace(second, first))
     assert wrong.ok, wrong.log
     assert not uso_match.link(wrong.obj, 'entry', bytes(code), info).exact
+
+
+def test_recovers_loader_metadata_for_raw_functions_with_an_existing_runtime_address(tmp_path):
+    import json
+
+    from decompnet import consoles
+
+    code = bytes.fromhex('27bdffe8 afbf0014 0c000000 00000000 8fbf0014 27bd0018 03e00008 00000000')
+    records = struct.pack('>III', 0x11, 12, 1)
+    cartridge = bytes(64) + _module(bytes(4) + code, compressed=False, relocations=records)
+    region, = uso.read(cartridge)
+    row = {'id': 1, 'name': 'entry', 'vram': 0x80010000, 'rom_offset': region.offset + 4,
+           'size': len(code), 'target': code, 'relocs': '[]', 'meta': None}
+    good, = uso.metadata_updates(cartridge, {}, [row])
+    assert good[0] == 1
+    info = json.loads(good[1])['uso']
+    assert info == {'section': region.offset, 'start': 4, 'size': len(code), 'relocs': [[8, 4, 1]], 'native': True}
+    assert not list(uso.metadata_updates(cartridge, {}, [row | {'rom_offset': region.offset},
+                                                         row | {'target': b'\0' * len(code)}]))
+    compressed = bytes(64) + _module(bytes(4) + code, compressed=True, relocations=records)
+    assert not list(uso.metadata_updates(compressed, {}, [row]))
+
+    cfg = {'platform': 'n64'}
+    console = consoles.of(cfg)
+    recovered = row | {'meta': good[1]}
+    target = console.target_from_row(recovered, cfg)
+    assert target.vram == row['vram'] and target.code == code and console.export_overlay(target) == info
+    misplaced = recovered | {'rom_offset': row['rom_offset'] + 4}
+    assert console.export_overlay(console.target_from_row(misplaced, cfg)) is None
+
+    if toolchains.installed('ido-5.3') is None:
+        pytest.skip('needs IDO 5.3')
+    compiler = compiler_config(tmp_path, {'compiler': {'toolchain': 'ido-5.3', 'flags': toolchains.get('ido-5.3').flags}})
+    alias = uso_match.alias(region.offset, 1)
+    source = f'extern void {alias}(void); void entry(void) {{ {alias}(); }}'
+    built = compile_source(compiler, '', source)
+    assert built.ok, built.log
+    assert console.link_function(built.obj, 'entry', target, None, None).exact
+    assert console.rebuild_overlays(cartridge, [('entry', info, built.obj)]) == cartridge
+
+
+
+def test_split_keeps_a_raw_overlay_function_identity_and_records_its_loader_relocations(tmp_path):
+    from decompnet.rom.split import SplitResult, function_from_bytes
+
+    code = bytes.fromhex('27bdffe8 afbf0014 0c000000 00000000 8fbf0014 27bd0018 03e00008 00000000')
+    records = struct.pack('>III', 0x11, 12, 1)
+    cartridge = bytes(64) + _module(bytes(4) + code, compressed=False, relocations=records)
+    region, = uso.read(cartridge)
+    fn = function_from_bytes('entry', code, region.offset + 4, 0x80010000, 'main')
+    result = SplitResult([fn], [], [], {}, tmp_path / 'game.yaml', 'IDO', '', image='game.z64')
+    (tmp_path / result.image).write_bytes(cartridge)
+    uso.add_to_split(result, tmp_path, cartridge, lambda *_: None)
+    assert result.functions == [fn]
+    assert (fn.name, fn.vram, fn.rom) == ('entry', 0x80010000, region.offset + 4)
+    assert fn.uso['native'] is True and fn.uso['relocs'] == [[8, 4, 1]]

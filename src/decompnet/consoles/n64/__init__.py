@@ -238,22 +238,37 @@ class Nintendo64(Console):
         info = getattr(fn, 'uso', None)
         return {'uso': info} if info is not None else {}
 
-    def target_from_row(self, fn, cfg):
+    def overlay_cartridge_placement(self, fn, cfg):
         import json
 
+        row = dict(fn)
+        offset = row.get('rom_offset')
+        if offset is None:
+            return None
+        info = json.loads(row.get('meta') or '{}').get('uso', {})
+        section, start = info.get('section'), info.get('start')
+        if not isinstance(section, int) or not isinstance(start, int) or start < 0 or info.get('size') != row['size']:
+            return None
+        if info.get('native'):
+            if offset == section + start:
+                return info
+        elif (start == row['vram']
+              and (cfg.get('donor_overlays') or {}).get(str(section)) == offset - start):
+            return info
+        return None
+
+    def target_from_row(self, fn, cfg):
         from .uso_match import Target
 
         target = super().target_from_row(fn, cfg)
-        row = dict(fn)
-        offset = row.get('rom_offset')
+        if info := self.overlay_cartridge_placement(fn, cfg):
+            if info.get('size') == len(target.code):
+                return Target(**vars(target), uso=info)
+        offset = dict(fn).get('rom_offset')
         banks = cfg.get('donor_overlays') or {}
-        if not banks or offset is None or offset < min(banks.values()):
-            return target
-        info = json.loads(row.get('meta') or '{}').get('uso', {})
-        if (banks.get(str(info.get('section'))) != offset - target.vram
-                or info.get('start') != target.vram or info.get('size') != len(target.code)):
-            info = {'section': None, 'relocs': None}
-        return Target(**vars(target), uso=info)
+        if banks and offset is not None and offset >= min(banks.values()):
+            return Target(**vars(target), uso={'section': None, 'relocs': None})
+        return target
 
     def target_object(self, fn, cfg, symbols):
         from ...rom.match import canonical_target

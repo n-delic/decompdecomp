@@ -1571,6 +1571,22 @@ rebuilding the affected overlays from those compiled objects reproduced the
 cartridge bytes. Changing a call to a second alias under the same base symbol
 fails the controlled regression.
 
+### Retain loader relocations for text already indexed at a runtime address
+
+An uncompressed overlay can be disassembled through an ordinary ROM segment,
+where the immediate fields still carry pre-relocation values. In an isolated
+N64 project this made valid IDO objects report missing ROM addresses for
+compiler constants and unresolved external calls. The cartridge contained the
+corresponding text and loader relocation table. Matching the complete body
+at its original file offset recovered the relocation data for 444 open entries
+while preserving their runtime addresses and names.
+
+A targeted replay of 130 donor candidates saved 71 functions (69 IDO 7.1,
+two IDO 7.1 NCC). All 71 passed a fresh compile and exact relocation check
+and reconstructed the identical cartridge together. Controlled fixtures
+reject a changed body and address, keep the original identity during import,
+and distinguish raw placements from compressed sections.
+
 ### Rebind donor calls to functions defined in the same translation unit
 
 IDO 7.1 `-O2 -G 0 -non_shared -mips2` compiles direct calls to static

@@ -360,6 +360,10 @@ class Console:
         """Return the checked cartridge placement for an independently loaded function."""
         return None
 
+    def overlay_cartridge_placement(self, fn, cfg):
+        """Return loader metadata for a stored row with a verified placement."""
+        return None
+
     def overlay_metadata_updates(self, image, cfg, rows):
         """Yield fresh metadata for existing functions after checking the original loader records."""
         return ()
