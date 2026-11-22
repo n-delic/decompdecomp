@@ -169,8 +169,8 @@ def retry(source, header, name, candidate, target, measure, stop, *, separate=No
                             and not re.match(r'(?:static|typedef)\b', d.text)
                             and (external.fullmatch(d.text) or prototype.fullmatch(d.text))), None)
         start = len(header)
-        if declaration is None and all(r.type == JUMP and not r.addend
-                                       for r in candidate.relocs if r.symbol == symbol):
+        direct_call = all(r.type == JUMP and not r.addend for r in candidate.relocs if r.symbol == symbol)
+        if declaration is None and direct_call:
             for text in (header, source):
                 if definition := csource.find(text, symbol):
                     declaration = _external_prototype(text[slice(*definition)], symbol)
@@ -178,9 +178,13 @@ def retry(source, header, name, candidate, target, measure, stop, *, separate=No
                         break
         if declaration is None:
             linked = _cpp_declaration(header, clean_header, symbol)
-            if linked is None:
+            if linked:
+                declaration, start = linked
+            elif direct_call:
+                # Try C89's implicit declaration. The probe must still preserve all instruction bytes.
+                declaration = f'extern int {symbol}();'
+            else:
                 return None
-            declaration, start = linked
         if symbol in data_changes:
             plain = csource._blank(declaration.removeprefix('extern "C" ')).strip()
             if not plain.startswith('extern '):

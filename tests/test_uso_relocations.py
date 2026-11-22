@@ -440,6 +440,7 @@ def test_fixed_offset_recovery_declines_a_partially_supported_rebase(tmp_path):
 
 
 @pytest.mark.parametrize('definition', [
+    '',  # An implicit C89 call still emits an ordinary external relocation.
     'placeholder() { }',
     'int placeholder(int value) { return value + 3; }',
     'int placeholder(value) short value; { return value + 3; }',
