@@ -14636,3 +14636,7 @@ scratch baselines with known staging winners. The spread order improved nine.
 Two of those baselines also reproduced the gain through the app's candidate
 collector, falling from 3,057 to 3,027 and from 13,328 to 12,993. This is a
 replay on known positive examples. All inspected winners remain unmatched.
+
+
+
+In one N64 unlink wrapper built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a draft stored a link before a call, but the target called first and reloaded the global pointer before storing the link. Reordering the two statements and naming the verified pointer word directly reproduced the linked target exactly (score 325 to 0). This intentionally reconstructs the target's observable order rather than preserving the draft's order; the rule checks the complete target shape and encoded pointer and destination addresses. Evidence: one saved example and synthetic address and routing tests.

@@ -913,3 +913,13 @@ def test_relocated_pointer_reloads_reach_kmc_proposals(monkeypatch):
     rows = [('r', 'lw $v0, %lo(value)($v0)', 'lw $v0, ($s0)')]
     assert ('direct_pointer_reloads', 'fixed') in route('void f(void) {}', rows, 'asm')
     assert 'direct_pointer_reloads' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
+
+
+def test_call_then_pointer_reload_reaches_kmc_proposals(monkeypatch):
+    from decomprepair import measured_after_call_reload
+
+    monkeypatch.setattr(measured_after_call_reload, 'variants',
+                        lambda *args: [('target_call_then_pointer_reload', 'fixed')])
+    rows = [('o', 'jal unlink', ''), ('o', '', 'jal unlink')]
+    assert ('target_call_then_pointer_reload', 'fixed') in route('void f(void) {}', rows, 'asm')
+    assert 'target_call_then_pointer_reload' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
