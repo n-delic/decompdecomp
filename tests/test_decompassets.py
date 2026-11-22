@@ -86,3 +86,28 @@ def test_paged_texture_and_model_reach_console_previews():
     picture = next(item for item in assets if item.get('layout') == 'big-resource-images')
     assert console.asset_preview(image, model, {})['triangles'] == 1
     assert console.asset_preview(image, picture, {})['details']['width'] == 8
+
+
+def test_paged_audio_reaches_console_previews():
+    import struct
+
+    from decompnet.consoles import get
+
+    page = bytearray(8192)
+    page[100:108] = b'idx\0' + struct.pack('<I', 44)
+    struct.pack_into('>5I', page, 108, 2, 0, 0, 68, 0)
+    struct.pack_into('>5I', page, 128, 0x12345678, 1, 68, 68, 1)
+    page[300:308] = b'SAM\0' + struct.pack('<I', 36)
+    struct.pack_into('>8I', page, 308, 5, 2, 0, 0, 16000, 0x80000000, 60, 32)
+    page[340:344] = bytes.fromhex('52001f00')
+    archive_size = 20 + len(page)
+    archive = b'testBIG\0' + struct.pack('>I2I', len(page), 20 << 4, archive_size << 4) + page
+    big_row = b'sfx.big\0'.ljust(16, b'\0') + struct.pack('>4I', 0, archive_size, 0, 0)
+    raw_row = b'big.raw\0'.ljust(16, b'\0') + struct.pack('>4I', 0, 136, archive_size, 0)
+    block = struct.pack('>hhB', 1, 100, 0) + b'\x1f' + bytes(62)
+    image = big_row + raw_row + archive + block * 2
+    console = get('n64')
+    assets = console.asset_regions(image)
+    for layout in ('big-indexed-audio', 'big-sam-audio'):
+        bank = next(item for item in assets if item.get('layout') == layout)
+        assert console.asset_preview(image, bank, {})['mime'] == 'audio/wav'
