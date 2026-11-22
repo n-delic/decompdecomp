@@ -19,6 +19,7 @@ from decomprepair import (
     clamp_saved_argument_lifetime,
     clamped_field_reload,
     conditional_field_subtract,
+    conditional_smoothing_gain,
     counted_switch_advance,
     direct_mapped_address,
     epsilon_predicate_order,
@@ -355,6 +356,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += projection_gain.variants(source, name, rows, header=header)
         result += quadratic_sign_holder.variants(source, name, rows, header=header)
         result += smoothing_call_before_read.variants(source, name, rows, header=header)
+        result += conditional_smoothing_gain.variants(source, name, rows, header=header)
         result += projection_argument_before_store.variants(source, name, rows, header=header)
         result += balanced_signed_selector_increment.variants(source, name, rows, header=header)
         result += balanced_float_predicate_return.variants(source, name, rows, header=header)
