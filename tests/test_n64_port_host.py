@@ -566,20 +566,30 @@ static uint8_t *M = memory, *rom = cartridge;
 static size_t rom_size = sizeof cartridge;
 #define LOG(...) ((void)0)
 static unsigned long dmas;
-static void port_trace(void) {}
+static int traces;
+static void port_trace(void) { traces++; }
+#define SHADOW_STACKS 0x10000000u
+#define SHADOW_SIZE 0x100000u
+#define BOOT_STACK_SIZE 0x10000u
+#define BOOT_STACK_BUS 0x15000000u
 static int put(u32 mq, u32 msg, int flag, int jam) {
     (void)flag;
     (void)jam;
     assert(mq == 32 && msg == 64);
     return 0;
 }
-""" + _function(HOST.read_text(), "wbe32") + "\n"
+""" + _function(HOST.read_text(), "wbe32") + "\n" + _function(HOST.read_text(), "stack_end") + "\n"
         + _function(HOST.read_text(), "w2c_env_osPiStartDma") + r"""
 int main(void) {
     w2c_env_osPiStartDma(NULL, 64, 0, 0, 1, 0, 2, 32);
     w2c_env_osPiStartDma(NULL, 64, 0, 0, 0xB0000001, 2, 2, 32);
     assert(memcmp(memory, "\x20\x30\x20\x30", 4) == 0);
     assert(memcmp(memory + 76, "\xB0\x00\x00\x01", 4) == 0);
+    int invalid = traces;
+    w2c_env_osPiStartDma(NULL, 0, 0, 1, 0, 0x1400FFF0u, 8, 0);
+    assert(traces == invalid);
+    w2c_env_osPiStartDma(NULL, 0, 0, 1, 0, 0x14FFFFFCu, 8, 0);
+    assert(traces == invalid + 1);
     return 0;
 }
 """)

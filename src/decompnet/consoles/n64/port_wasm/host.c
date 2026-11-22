@@ -613,7 +613,10 @@ u32 w2c_env_osPiStartDma(struct w2c_env *e, u32 mb, u32 pri, u32 dir, u32 dev, u
     (void)e; (void)pri;
     dmas++;
     if (getenv("PORT_DMA")) fprintf(stderr, "osPiStartDma(mb %08X, pri %u, dir %u, dev %08X, dram %08X, size %X, mq %08X)\n", mb, pri, dir, dev, dram, size, mq);
-    if (dram < 0x80000000u) { fprintf(stderr, "osPiStartDma to %08X, outside the console's RAM\n", dram); port_trace(); }
+    u32 end = stack_end(dram);
+    if (dram < 0x80000000u && (!end || size > end - dram)) {
+        fprintf(stderr, "osPiStartDma to %08X, outside the console's RAM\n", dram); port_trace();
+    }
     /* The PI uses a cartridge bus address. Some callers pass the full address returned by osRomBase,
        including the KSEG bits, while others pass a byte offset into the ROM. Keep dev intact in OSIoMesg. */
     u32 offset = dev & 0x0FFFFFFFu;
