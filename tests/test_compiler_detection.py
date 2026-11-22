@@ -287,3 +287,17 @@ def test_profile_phase_propagates_user_cancellation(monkeypatch):
     search = SimpleNamespace(deadline=profile_climb.time.monotonic() + 100, check=cancelled)
     with pytest.raises(RuntimeError, match='cancelled'):
         profile_climb.explore(search, None, PROJ, FN, 155)
+
+
+def test_kmc_cse_probe_recognizes_repeated_relocated_store_addresses():
+    from decompnet.app.profile_hypotheses import kmc_cse_address_probe
+
+    profile = {'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-O2']}
+    high = 'lui $at, %hi(cursor)'
+    store = 'sw $v0, %lo(cursor)($at)'
+    shared = [(' ', high, high), (' ', store, store)]
+    reloads = [('<', high, ''), (' ', store, store)] * 2
+    assert kmc_cse_address_probe(profile, shared + reloads) == ['-O2', '-fno-cse-skip-blocks']
+    assert kmc_cse_address_probe(profile, shared + reloads[:2]) is None
+    for unrelated in ('sw $v0, %lo(other)($at)', 'sw $v0, %lo(cursor)($v1)'):
+        assert kmc_cse_address_probe(profile, shared + [('<', high, ''), ('<', unrelated, '')] * 2) is None

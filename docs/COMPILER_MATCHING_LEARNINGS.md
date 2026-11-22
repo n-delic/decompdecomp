@@ -1151,6 +1151,16 @@ Keep this file updated when a verified match explains a reusable compiler behavi
 summaries live in `src/decompnet/consoles/*/guides/`; this is the evidence ledger, including failed ideas.
 Do not treat an instruction similarity score as proof of a match.
 
+## Probe cross-block CSE when relocated stores repeat an address
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, an N64
+draft combined several global address calculations that the target repeated
+immediately before stores. Adding `-fno-cse-skip-blocks` lowered the linked
+score from 13,763 to 13,613 with identical source and header. The compiler
+probe now recognizes adjacent high and low relocations on a store when the
+register and symbol agree. This is a scratch replay and synthetic coverage.
+The function remains unmatched.
+
 ## Keep temporary writes that feed a switch join
 
 In a private N64 draft built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32

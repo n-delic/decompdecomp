@@ -39,9 +39,22 @@ def kmc_cse_address_probe(own, rows):
         halves = [Counter(match[1] for row in rows if (match := pattern.fullmatch(row[side].strip())))
                   for pattern in (high, low)]
         counts.append(halves[0] & halves[1])
-    target, candidate = counts
-    if any(candidate[symbol] > 0 and count - candidate[symbol] >= 2 for symbol, count in target.items()):
-        return [*flags, option]
+    # A relocated store can use the high register directly, without an addiu.
+    high_register = re.compile(r'lui\s+(\$\w+),\s*%hi\(([^()]+)\)')
+    store = re.compile(r's(?:b|h|w)\s+\$\w+,\s*%lo\(([^()]+)\)\((\$\w+)\)')
+    store_counts = []
+    for side in (1, 2):
+        instructions = [row[side].strip() for row in rows if row[side].strip()]
+        pairs = Counter()
+        for before, after in zip(instructions, instructions[1:]):
+            setup = high_register.fullmatch(before)
+            write = store.fullmatch(after)
+            if setup and write and setup.groups() == (write[2], write[1]):
+                pairs[write[1]] += 1
+        store_counts.append(pairs)
+    for target, candidate in (counts, store_counts):
+        if any(candidate[symbol] > 0 and count - candidate[symbol] >= 2 for symbol, count in target.items()):
+            return [*flags, option]
     return None
 
 
