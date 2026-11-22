@@ -139,6 +139,24 @@ def test_locator_keeps_a_recorded_map_and_builds_one_once_when_there_is_none(mon
     assert located('other') is made and located('unseen')['mapping']['lines'] == [{'line': 2}] and asked == ['other', 'unseen']
 
 
+def test_line_info_reads_the_header_from_a_database_row():
+    """The app's `_context` returns a sqlite3.Row, which has no .get: every real run skipped the line focus on it."""
+    import sqlite3
+    db = sqlite3.connect(':memory:')
+    db.row_factory = sqlite3.Row
+    row = db.execute("SELECT 'int x;' AS header, 1 AS version").fetchone()
+    seen = []
+
+    def compile_(proj, header, source, fn):
+        seen.append(header)
+        return SimpleNamespace(ok=False)
+    net = SimpleNamespace(_context=lambda pid, unit: row, _compile=compile_)
+    assert order.line_info(net, {'id': 1}, {'unit': 'u'}, PARENT) is None and seen == ['int x;']
+    net = SimpleNamespace(_context=lambda pid, unit: None, _compile=compile_)
+    order.line_info(net, {'id': 1}, {'unit': 'u'}, PARENT)
+    assert seen[-1] == ''
+
+
 def test_locator_falls_back_to_the_recorded_map_when_the_twin_gives_nothing_or_fails(monkeypatch):
     from decomprepair import repair_localisation
     recorded = repair_localisation.bind('a', {'available': False, 'lines': []})
