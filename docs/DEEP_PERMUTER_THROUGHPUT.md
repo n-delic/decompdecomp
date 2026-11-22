@@ -174,6 +174,18 @@ On an Apple M5 Max, an optimized Rust byte scanner called in-process through
 result conversion. The inputs were 128 saved, open-function bodies from a local
 MIPS project with synthetic edits. The prototype matched Python's results on
 all 1,024 candidate texts and on 1,000 generated token edge cases. This measured
-literal extraction only. A production scanner needs wider token parity coverage,
-including Python fallback for unsupported input, and a full-search benchmark to
-measure actual throughput. The live timing uses the current Python extractor.
+literal extraction only.
+
+Packaged builds now use the Rust scanner for eligible ASCII candidate source.
+With the shipped scanner's validation and result conversion, the same 128-body
+test measured 0.030 ms per eight candidates versus 0.699 ms in Python.
+On the 12 bodies with supported target constants, the entire ranking step
+took 0.041 ms versus 1.051 ms per batch. These timings exclude candidate
+generation, compilation and judging. Literal sets and the stable candidate order
+are checked against Python. A missing native library or symbol, non-ASCII source,
+unterminated comments or strings, and source larger than 256 KiB use Python.
+
+For a source checkout, run `uv run --locked python packaging/build_alignment.py`
+with Rust installed. Restart after building the library. To compare against
+Python with the same ranking option enabled, start the app with
+`DECOMP_NATIVE_RANK_LITERALS=0`.

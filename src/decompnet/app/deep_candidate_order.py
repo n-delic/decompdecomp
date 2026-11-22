@@ -1,5 +1,7 @@
 """Order a bounded batch of already generated candidates before compiler admission."""
+import ctypes
 import json
+import os
 import re
 import time
 from functools import lru_cache
@@ -7,11 +9,12 @@ from functools import lru_cache
 from decomprepair.repair_tokens import tokens
 
 from .. import arch, compile_timing
+from ..instruction_alignment import native_symbol
 
 _LITERAL = re.compile(r'(0[xX][0-9a-fA-F]+|0[0-7]*|[1-9][0-9]*)[uUlL]*')
 
 
-def _literals(source):
+def _python_literals(source):
     values = set()
     for token in tokens(source):
         match = _LITERAL.fullmatch(token)
@@ -23,6 +26,37 @@ def _literals(source):
         if 0x10000 <= value <= 0xffffffff:
             values.add(value)
     return values
+
+
+@lru_cache(maxsize=1)
+def _kernel():
+    if os.environ.get('DECOMP_NATIVE_RANK_LITERALS') == '0':
+        return None
+    try:
+        function = native_symbol('dd_rank_literals_v1')
+    except (AttributeError, OSError):
+        return None
+    size = ctypes.c_size_t
+    function.argtypes = [ctypes.c_char_p, size, ctypes.POINTER(ctypes.c_uint32), size]
+    function.restype = size
+    return function
+
+
+def _native_literals(source, kernel):
+    raw = source.encode('ascii')
+    # The shortest eligible spelling is a five-digit decimal number.
+    result = (ctypes.c_uint32 * (len(raw) // 5))()
+    count = kernel(raw, len(raw), result, len(result))
+    return set(result[:count]) if count <= len(result) else None
+
+
+def _literals(source):
+    if len(source) < 5:
+        return set()
+    if len(source) <= 256 * 1024 and source.isascii() and (kernel := _kernel()) is not None:
+        if (result := _native_literals(source, kernel)) is not None:
+            return result
+    return _python_literals(source)
 
 
 def for_function(project, function, log):

@@ -27,8 +27,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: uv sync --locked
       - run: uv run --locked python packaging/build_alignment.py
-      - run: uv run --locked python -c "from decompnet.instruction_alignment import _kernel; assert _kernel() is not None"
-      - run: uv run --locked pytest -q -o addopts= tests/test_instruction_alignment.py
+      - run: uv run --locked python -c "from decompnet import instruction_alignment; from decompnet.app import deep_candidate_order; assert instruction_alignment._kernel() and deep_candidate_order._kernel()"
+      - run: uv run --locked pytest -q -o addopts= tests/test_instruction_alignment.py tests/test_deep_candidate_order.py
 
   windows:
     needs: check

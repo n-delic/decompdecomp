@@ -21,6 +21,11 @@ def library_name() -> str:
     return f'decomp-alignment.{suffix}'
 
 
+def native_symbol(name):
+    path = Path(__file__).resolve().with_name('bin') / library_name()
+    return getattr(ctypes.CDLL(str(path)), name)
+
+
 class _Block(ctypes.Structure):
     _fields_ = [('a', ctypes.c_size_t), ('b', ctypes.c_size_t), ('size', ctypes.c_size_t)]
 
@@ -29,9 +34,8 @@ class _Block(ctypes.Structure):
 def _kernel():
     if os.environ.get('DECOMP_NATIVE_ALIGNMENT') == '0':
         return None
-    path = Path(__file__).resolve().with_name('bin') / library_name()
     try:
-        function = ctypes.CDLL(str(path)).dd_matching_blocks_v1
+        function = native_symbol('dd_matching_blocks_v1')
     except (OSError, AttributeError):
         return None
     tokens = ctypes.POINTER(ctypes.c_uint32)

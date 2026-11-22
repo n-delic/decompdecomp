@@ -1,3 +1,5 @@
+mod rank_literals;
+
 use std::slice;
 
 #[repr(C)]
