@@ -29,6 +29,9 @@ class Text:
     stored_size: int = 0
     relocations: tuple[tuple[int, int, int], ...] | None = None  # (text offset, ELF kind, symbol index)
     text_bases: tuple[int, ...] = ()  # zero-valued text-section symbols in the loader table
+    rodata: bytes = b''
+    rodata_bases: tuple[int, ...] = ()
+    rodata_relocations: tuple[tuple[int, int, int], ...] | None = None
 
 
 
@@ -89,7 +92,7 @@ def _yay0(source, replacement=None):
 def _text(rom, name, at, end):
     sections = set()
     result = None
-    symbols = relocations = b''
+    symbols = relocations = rodata = rodata_relocs = b''
     for _ in range(len(_KINDS)):
         for pad in range(4):
             if at + pad + 12 > end:
@@ -109,15 +112,19 @@ def _text(rom, name, at, end):
                 return result
             # A zero-valued text symbol is an import, not entry-point evidence.
             entries = set()
-            text_bases = []
+            text_bases, rodata_bases = [], []
             for index, (tag, value, _) in enumerate(struct.iter_unpack('>III', symbols)):
                 symbol_type = (tag >> 16) & 0xFF
                 if symbol_type == 0x52 and 0 < value < len(result.data) and value % 4 == 0:
                     entries.add(value)
                 if symbol_type == 0x54 and value == 0:
                     text_bases.append(index)
+                if symbol_type == 0x74 and value == 0:
+                    rodata_bases.append(index)
             return replace(result, entries=tuple(sorted(entries)), text_bases=tuple(text_bases),
-                           relocations=_relocations(relocations, len(symbols) // 12, len(result.data)))
+                           relocations=_relocations(relocations, len(symbols) // 12, len(result.data)),
+                           rodata=rodata, rodata_bases=tuple(rodata_bases),
+                           rodata_relocations=_relocations(rodata_relocs, len(symbols) // 12, len(rodata)))
         sections.add(kind)
         compressed = bool(flags & 0x10000)
         at = offset + (size if kind != 8 else 0)
@@ -130,12 +137,16 @@ def _text(rom, name, at, end):
             payload = _yay0(rom[offset:at])
             if payload is None:
                 return None
-        elif kind in (1, 2, 5):
+        elif kind in (1, 2, 4, 5, 7):
             payload = rom[offset:at]
         if kind == 1:
             symbols = payload
         if kind == 2:
             relocations = payload
+        if kind == 4:
+            rodata_relocs = payload
+        if kind == 7:
+            rodata = payload
         if kind == 5 and len(payload) >= 8 and len(payload) % 4 == 0:
             result = Text(name, offset, payload, compressed, stored_size=size)
     return None
@@ -180,6 +191,46 @@ def function_local_calls(region, start, size, relocs):
     return targets
 
 
+def function_pool_loads(region, start, size, relocs):
+    """Attach direct single-precision reads of proven loader-owned constant bytes."""
+    rodata = getattr(region, 'rodata', b'')
+    data_relocs = getattr(region, 'rodata_relocations', None)
+    if not rodata or data_relocs is None:
+        return []
+    bases = set(region.rodata_bases)
+    pointers = {at for at, _, _ in data_relocs}
+    highs, otherwise = {}, set()
+    for at, kind, index in relocs or ():
+        if index not in bases or not 0 <= at <= size - 4:
+            continue
+        word = int.from_bytes(region.data[start + at:start + at + 4], 'big')
+        if kind == 5:
+            highs.setdefault(index, []).append(word)
+        elif kind != 6:
+            otherwise.add(index)
+    supported = {index for index, group in highs.items()
+                 if index not in otherwise and all(word >> 26 == 15 and not word & 0xffff for word in group)}
+    lows = []
+    for at, kind, index in relocs or ():
+        if kind != 6 or index not in supported or not 0 <= at <= size - 4:
+            continue
+        word = int.from_bytes(region.data[start + at:start + at + 4], 'big')
+        offset = word & 0xffff
+        if word >> 26 != 0x31 or offset % 4 or offset >= 0x8000 or offset + 4 > len(rodata) or offset in pointers:
+            continue
+        lows.append([at, index, rodata[offset:offset + 4].hex()])
+    return lows
+
+
+def _binding_metadata(region, start, size, relocs):
+    metadata = {}
+    if calls := function_local_calls(region, start, size, relocs):
+        metadata['local_calls'] = calls
+    if loads := function_pool_loads(region, start, size, relocs):
+        metadata['pool_loads'] = loads
+    return metadata
+
+
 def _native_metadata(regions, offset, size, matches):
     """Existing disassembly can cover uncompressed module text under a runtime address."""
     if offset is None or size <= 0 or size % 4:
@@ -196,9 +247,7 @@ def _native_metadata(regions, offset, size, matches):
     if not relocs:
         return None  # the ordinary byte judge already handles this body
     info = {'section': region.offset, 'start': start, 'size': size, 'relocs': relocs, 'native': True}
-    if calls := function_local_calls(region, start, size, relocs):
-        info['local_calls'] = calls
-    return info
+    return info | _binding_metadata(region, start, size, relocs)
 
 
 def metadata_updates(image, banks, rows):
@@ -217,7 +266,7 @@ def metadata_updates(image, banks, rows):
             if native:
                 yield row['id'], json.dumps(meta | {'uso': native})
             continue
-        if info.get('local_calls') or info.get('relocs') is None:
+        if info.get('relocs') is None:
             continue
         region = regions.get(info['section'])
         start, size = info['start'], info['size']
@@ -227,9 +276,10 @@ def metadata_updates(image, banks, rows):
                 or region.data[start:start + size] != row['target']
                 or function_relocations(region, start, size) != info['relocs']):
             continue
-        if calls := function_local_calls(region, start, size, info['relocs']):
-            info['local_calls'] = calls
-            yield row['id'], json.dumps(meta)
+        new = _binding_metadata(region, start, size, info['relocs'])
+        updates = {key: value for key, value in new.items() if key not in info}
+        if updates:
+            yield row['id'], json.dumps(meta | {'uso': info | updates})
 
 
 def replace_text(cartridge, region, text):
@@ -268,6 +318,8 @@ def rebuild(image, entries):
             local_calls = function_local_calls(region, start, size, info['relocs'])
             if info.get('local_calls') and info['local_calls'] != local_calls:
                 raise ValueError(f'Overlay local call metadata at 0x{offset:X}+0x{start:X} has changed')
+            if info.get('pool_loads') and info['pool_loads'] != function_pool_loads(region, start, size, info['relocs']):
+                raise ValueError(f'Overlay constant pool metadata at 0x{offset:X}+0x{start:X} has changed')
             verified = link(obj, name, region.data[start:end], info)
             if not verified.exact:
                 details = ', '.join(verified.problems) or 'text bytes differ'
@@ -293,7 +345,7 @@ def read(rom: bytes) -> list[Text]:
             continue
         name = entry[1].decode('ascii')
         if text := _text(rom, name, header + 16, end):
-            stored += len(text.data)
+            stored += len(text.data) + len(text.rodata)
             if stored > _MAX_TOTAL_TEXT:
                 return result
             result.append(text)
@@ -356,8 +408,7 @@ def add_to_split(result: "SplitResult", workdir: "Path", original: bytes, log) -
             fn = function_from_bytes(entry, region.data[a:b], start + a, v, name)
             relocs = function_relocations(region, a, b - a)
             fn.uso = {'section': region.offset, 'start': a, 'size': b - a, 'relocs': relocs}
-            if local_calls := function_local_calls(region, a, b - a, relocs):
-                fn.uso['local_calls'] = local_calls
+            fn.uso.update(_binding_metadata(region, a, b - a, relocs))
             result.functions.append(fn)
         functions, banks = counts.get(kind, (0, 0))
         counts[kind] = functions+len(bodies), banks+1

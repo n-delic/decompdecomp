@@ -473,3 +473,58 @@ def test_overlay_probes_calls_to_an_empty_donor_placeholder(tmp_path):
     wrong = compile_source(cfg, context, rewritten.replace(uso_match.alias(64, 2), uso_match.alias(64, 1)))
     assert wrong.ok, wrong.log
     assert not uso_match.link(wrong.obj, 'entry', body.code, info).exact
+
+
+def test_anonymous_object_pool_requires_cartridge_bytes_and_original_loader_sites(tmp_path):
+    import json
+
+    from decompnet.elfobj import extract_function
+
+    if not toolchains.installed('ido-7.1'):
+        pytest.skip('needs IDO 7.1')
+    cfg = compiler_config(tmp_path, {'compiler': {
+        'toolchain': 'ido-7.1', 'flags': ['-O2', '-G', '0', '-non_shared', '-mips2'],
+    }})
+    obj = compile_source(cfg, '', 'float entry(void) { return 0.4f; }')
+    assert obj.ok, obj.log
+    fn = extract_function(obj.obj, 'entry')
+    assert [r.type for r in fn.relocs] == [5, 6]
+    code = bytearray(fn.code)
+    load = fn.relocs[1].offset
+    code[load+2:load+4] = (32).to_bytes(2, 'big')
+
+    def record(kind, body):
+        return struct.pack('>III', kind, len(body), 0x10000000) + body
+
+    def cartridge(value, rodata_relocs=b''):
+        symbols = struct.pack('>6I', 0x520000, 4, 0, 0x740000, 0, 0)
+        relocs = b''.join(struct.pack('>III', 0x13 if r.type == 5 else 0x12, r.offset + 4, 0) for r in fn.relocs)
+        return (bytes(64) + struct.pack('>III', 0x12345678, 1, 1) + b'pool.uso\0'
+                + struct.pack('>IIII', 0x12345678, 0, 0, 0)
+                + record(1, symbols) + record(2, relocs) + record(4, rodata_relocs)
+                + record(5, bytes(4) + bytes(code)) + record(7, bytes(32) + struct.pack('>f', value))
+                + record(11, b''))
+
+    def placement(image):
+        region, = uso.read(image)
+        relocs = uso.function_relocations(region, 4, len(code))
+        return {'section': region.offset, 'start': 4, 'size': len(code), 'relocs': relocs,
+                'pool_loads': uso.function_pool_loads(region, 4, len(code), relocs)}
+
+    image = cartridge(0.4)
+    info = placement(image)
+    assert info['pool_loads'] == [[load, 1, struct.pack('>f', 0.4).hex()]]
+    older = {key: value for key, value in info.items() if key != 'pool_loads'}
+    row = {'id': 1, 'rom_offset': info['section'] + 4, 'target': bytes(code),
+           'meta': json.dumps({'uso': older | {'native': True}})}
+    update, = uso.metadata_updates(image, {}, [row])
+    assert json.loads(update[1])['uso'] == info | {'native': True}
+    assert not uso_match.link(obj.obj, 'entry', bytes(code), info | {'pool_loads': []}).exact
+    assert uso_match.link(obj.obj, 'entry', bytes(code), info).exact
+    assert uso.rebuild(image, [('entry', info, obj.obj)]) == image
+    wrong = cartridge(0.7)
+    assert not uso_match.link(obj.obj, 'entry', bytes(code), placement(wrong)).exact
+    with pytest.raises(ValueError, match='constant pool metadata'):
+        uso.rebuild(wrong, [('entry', info, obj.obj)])
+    relocated = cartridge(0.4, struct.pack('>III', 0x14, 32, 0))
+    assert placement(relocated)['pool_loads'] == []

@@ -1739,6 +1739,14 @@ section-base criteria. Instruction bits outside the original relocation
 fields agreed for each measured function. This was a read-only comparison.
 It establishes candidate data for a future exact link and confers no match.
 
+The overlay linker can now place an anonymous IDO float pool when every
+reference to its read-only section has a corroborated HI16/LO16 site and each
+loaded word is identical to the original unrelocated cartridge data. Fourteen
+functions from a 47-pair isolated replay matched. The previous linker missed
+the same fourteen pairs. All recompiled after reopening and reconstructed
+the original cartridge together. A controlled fixture rejects a changed
+constant and a destination word that itself has a loader relocation.
+
 ### Observation: source layout sensitivity (IDO 5.3)
 
 The existing [IDO guide](../src/decompnet/consoles/n64/guides/ido.md) records a private same-source

@@ -1,9 +1,11 @@
 """Judge cartridge overlay text before runtime relocation, checking bytes and symbol bindings."""
 import re
+from collections import defaultdict
 from dataclasses import dataclass
 
 from elftools.common.exceptions import ELFError
 from elftools.elf.elffile import ELFFile
+from elftools.elf.relocation import RelocationSection
 
 from ...candidate_work import elf as candidate_elf
 from ...elfobj import FunctionObj, Reloc, _function_symbols, unmangle
@@ -46,6 +48,7 @@ def symbolic_target(target):
     relocations = []
     linker_relocs = []
     local_calls = _local_calls(target.uso)
+    pool_sites = {at for at, _, _ in target.uso.get('pool_loads', ())}
     for at, kind, index in target.uso['relocs'] or ():
         delta, length, mask = MASKS_BY_ARCH.get(('mips', kind), (0, 4, 0xFFFFFFFF))
         field = int.from_bytes(target.code[at + delta:at + delta + length], 'big') & mask
@@ -54,9 +57,53 @@ def symbolic_target(target):
         binding = local_alias(section, index, offset) if offset is not None else alias(section, index)
         relocation = Reloc(at, kind, binding, field)
         relocations.append(relocation)
-        if offset is not None:
+        if offset is not None or at in pool_sites:
             linker_relocs.append(relocation)
     return FunctionObj(target.name, 'mips', True, target.code, relocations, linker_relocs=linker_relocs)
+
+
+def _pool_fields(elf, raw, code, target, expected, pool_loads):
+    """Bind a compiler section only with evidence for all of its constant reads."""
+    if not pool_loads or len(code) != len(target):
+        return {}
+    pool = {(at, index): bytes.fromhex(value) for at, index, value in pool_loads}
+    groups = defaultdict(list)
+    for item in raw:
+        symbol = item['symtab'].get_symbol(item['symidx'])
+        section_index = symbol['st_shndx']
+        if symbol['st_info']['type'] == 'STT_SECTION' and isinstance(section_index, int):
+            groups[section_index].append(item)
+    verified = {}
+    for section_index, uses in groups.items():
+        data = elf.get_section(section_index)
+        if data.name not in ('.rodata', '.rdata') or data['sh_type'] != 'SHT_PROGBITS' or data['sh_flags'] & 1:
+            continue
+        if any(item['rela'] or item['type'] not in (5, 6)
+               or item['off'] not in expected or expected[item['off']][0] != item['type'] for item in uses):
+            continue
+        indices = {expected[item['off']][1] for item in uses}
+        if len(indices) != 1:
+            continue
+        index, = indices
+        highs = [item for item in uses if item['type'] == 5]
+        lows = [item for item in uses if item['type'] == 6]
+        if not highs or not lows or any(item['value'] or target[item['off']+2:item['off']+4] != b'\0\0'
+                                        for item in highs):
+            continue
+        data_relocs = [r for section in elf.iter_sections()
+                       if isinstance(section, RelocationSection) and section['sh_info'] == section_index
+                       for r in section.iter_relocations()]
+        if any(r['r_info_type'] not in (2, 5, 6) for r in data_relocs):
+            continue
+        relocated = {r['r_offset'] for r in data_relocs}
+        blob = data.data()
+        if any(code[item['off']] >> 2 != 0x31 or item['value'] % 4 or item['value'] >= 0x8000
+               or any(item['value'] - 3 <= off < item['value'] + 4 for off in relocated)
+               or len(pool.get((item['off'], index), ())) != 4
+               or pool[item['off'], index] != blob[item['value']:item['value']+4] for item in lows):
+            continue
+        verified.update((item['off'], int.from_bytes(target[item['off']+2:item['off']+4], 'big')) for item in uses)
+    return verified
 
 
 def link(obj, name, target, info):
@@ -74,6 +121,7 @@ def link(obj, name, target, info):
         shndx, start, size = entry
         code = elf.get_section(shndx).data()[start:start + size]
         raw = raw_relocs(elf, shndx, start, size, code)
+        pool = _pool_fields(elf, raw, code, target, expected, info.get('pool_loads', ()))
     except (ELFError, ValueError, TypeError, IndexError):
         return LinkResult(None, False, ['The compiler object could not be read as overlay text.'])
 
@@ -86,7 +134,10 @@ def link(obj, name, target, info):
         at, kind = item['off'], item['type']
         symbol = item['symtab'].get_symbol(item['symidx'])
         binding = symbol.name
-        candidate.append(Reloc(at, kind, binding, item['value']))
+        if at in pool:
+            candidate.append(Reloc(at, kind, alias(section, expected[at][1]), pool[at]))
+        else:
+            candidate.append(Reloc(at, kind, binding, item['value']))
         distinct = _REFERENCE.fullmatch(binding)
         if distinct:
             binding = distinct[1]
@@ -103,6 +154,9 @@ def link(obj, name, target, info):
                 if word >> 26 == 3 and not item['value'] and 0 < offset <= _CALL_MASK * 4 and offset % 4 == 0:
                     linked[at:at + 4] = (word | (offset >> 2)).to_bytes(4, 'big')
                     valid = True
+        if at in pool and at not in seen:
+            linked[at+2:at+4] = pool[at].to_bytes(2, 'big')
+            valid = True
         if not valid:
             wanted = alias(section, original[1]) if original else 'no relocation'
             problems.append(f'Overlay relocation at +0x{at:X} requires {wanted} with the original relocation kind.')
