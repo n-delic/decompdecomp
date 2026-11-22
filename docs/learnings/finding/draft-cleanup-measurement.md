@@ -65,3 +65,108 @@ cleanup (captured +434 mean, 0/20 better; counter_derived_offset +548, 0/2; temp
 captured_index, 0 / 0), so none joins `draft_cleanup`. Interleaved into a draft's 20 proposals, the written-out
 children were neutral (2 better, 3 worse best child), so they follow the raw ones. prove_chain (all families, 4 steps,
 40 children) on 10 raw drafts: 8,130 before and after (the 40-child cap keeps the appended children out).
+
+## Re-measurement on a fixed, saved sample (300 functions, decomprepair 0.5.655)
+
+The two samples above disagreed (-133, 6 better / 1 worse, then +32, 4 better / 5 worse) and the first list was not
+saved. This one is fixed and re-runnable. Result: keep the stage on, both components; no change.
+
+Method. The matched functions of the same N64 game (1,689; 1,578 still carry the stored machine draft in
+`functions.seed`, read from the project database read-only: `seed` is a hash into `text_payloads`, zlib-packed, the
+`DRAFT_NOTE` line and the `M2C_MACROS` preamble stripped; a draft that names its old `func_<vram>` after a rename is
+given the current name). For each draft: `draft_cleanup.cleaned(draft, name, arch, asm, header)` exactly as
+`engine/autopilot.py` calls it (asm and header from the judge worker's `function` op), each component alone on the raw
+draft (record view = `field_struct_view` or `raw_address` or `record_slot`, first variant; gbi macros), and the raw
+draft itself, every one wrapped as the stage wraps it (`note` + `with_m2c_macros`) and scored by `decomp judge-worker`
+(`fast_judge.Judge`, three workers, read-only; no app try, no saved match touched, no permuter). The stage's firing
+set was computed on all 1,578 drafts first (pure source rewrites, 2.8 ms each, 80 ms at most): it fires on 150
+(9.5 %), 124 through the record view and 26 through gbi macros; none of the 150 had a raw draft that already matched
+(361 of the 1,578 raw drafts match outright, 177 do not compile). The sample is those 150 plus 150 that the stage does not touch
+(25 per size bin 0-20, 21-40, 41-80, 81-160, 161-320, 321+ instructions, `random.Random(20261122)`, raw score not 0),
+which confirmed the control: no change, nothing to judge. Because every firing draft is in the sample, the apply
+rate and the starting-best numbers below are the game's, not an estimate; only the extra compiles for the fill are wasted.
+Size mix of the 150: 11 / 25 / 43 / 39 / 17 / 15 across the six bins.
+
+Per variant, firing drafts only (Δ = cleaned score - raw score, both compiled; < 0 better):
+
+| variant | applies | both compile | mean Δ | median | better / worse / same | newly matched |
+|---|---|---|---|---|---|---|
+| record view alone | 124 | 107 | -7 | -65 | 55 / 50 / 2 | 3 |
+| gbi macros alone | 26 | 20 | -136 | -315 | 14 / 4 / 2 | 1 |
+| production stage (record view, then gbi) | 150 | 127 | -28 (95 % CI -238 to +266) | -150 | 69 / 54 / 4 | 4 |
+
+23 firing drafts do not compile before or after (neither variant rescued or broke one). Production's mean is held up
+by one gbi draft that worsened by 14,413 (without it -142); a sign test on 69 vs 54 gives p = 0.21, so a single
+sample's mean cannot separate "helps" from "hurts": that is why the two earlier samples disagreed. Distribution
+of the production variant: 54 losses, median +255, p90 +770, 39 above 100, 13 above 500, 4 above 1,000, max +14,413; 69
+gains, median -300, best -4,040. By size the stage is clearly good up to 80 instructions (mean -122 below 41, -72 up to
+80: 44 better / 29 worse), neutral at 81-160 (+1, 11 / 17) and harmful above 160 on average (+164, 14 / 8, but still
+14 wins worth 12,914 points).
+
+What production does (the raw draft is judged too and the better is kept; ties keep the raw): the cleaned copy becomes the
+starting best in 69 of the 150 firing drafts (46 %), and never costs score. Mean improvement of the starting best:
+239 points per firing draft (35,886 points in all), 34.5 per draft that compiles and does not already match, 22.7 per
+stored draft; 4.4 % of all drafts (6.6 % of the compiled, unmatched ones) start better. Four drafts (a draft that
+was 350, 450, 450 and 895 from a match) become exact matches from the cleaned copy alone. The harmful half
+costs one extra compile and judge per firing draft: 9.5 % of drafts, 0.1 s each, plus 2.8 ms of rewriting.
+
+Decision: keep `draft_cleanup` on, with both components, unchanged. A cleaned copy is a candidate beside the raw
+draft, so a harmful rewrite only costs a compile, and the share where it wins (46 % of the drafts it touches, half of
+them by 300 points or more) is far above that cost. Not measured: whether a better starting score leads to
+more matches later, and other games or compilers. A size cut-off (skipping drafts above 160 instructions) would save
+about 20 % of the stage's compiles and give up 14 wins, so it is not worth a rule.
+
+Sample (re-run: draft from the stored seed as above, then the stage; names of the project `twine`).
+Firing set (150, vram order):
+
+```
+func_800015AC findOrLoadStreamSlot func_80006560 func_800075C4 func_80008598 actorDrawLit startDistanceSound
+func_8000C34C saveFindTaggedSlot func_8001226C saveDataRunSteps func_80012784 saveLoadSlot requestSaveSlot
+saveSlotKeyCheck func_80019E28 func_80019F7C func_8001A968 updatePickupSaveText func_8001D738 openPickupSearchMenu
+menuHandleSelection func_8001F4B8 func_8001F9A4 init_entry_list menuRefreshSlot menuBuildOwnerChannels func_80021B94
+refreshSaveSlotMenu commitSaveSlotRecord func_8002424C func_80027D60 func_8002B9CC func_8002BA4C func_8002BA6C
+getKeyEntryFlag initSetupTables func_8002D240 func_8002D960 func_8002E114 createTextMenu func_80032630
+gfxAppendTexture emitPrimColor func_800344DC emitScissorFromWindow func_80034928 func_800349B4 func_80034EFC
+func_80035060 func_800355BC drawRenderObject func_800362B4 func_80036BBC emitObjectListCommands func_80037C84
+func_80037DC0 func_800389F0 emit_projection_viewport_commands emitObjectMatrixCmd
+emit_matrices_viewport_and_persp_norm func_8003B954 SetScissorRect func_8003FA78 func_800422F4 func_800426B8
+func_80042CFC func_80044538 effectSetAnimFrame func_80044710 func_8004478C func_80044818 initObjectFromBankEntry
+func_8004493C func_80044968 func_80044C4C func_8005F664 func_8005FE20 func_80063C7C func_80063D38
+actorInitTrackMarker func_80064264 func_800645A4 func_80064860 func_80065BC4 func_8006832C func_80070730
+func_80074C34 func_800750B0 func_80081758 setBonusSlotState func_80081CC0 func_80081D00 func_80084048 func_800882D0
+dataBankUpdateSlot func_8008892C func_80088EE4 func_8008D138 func_8008E4A8 func_8008E594 func_8008E680 func_8008E7B8
+func_8008E96C func_8008EA58 func_8008EB00 func_8008EB80 func_8008EF18 func_8008F2A4 func_8009092C ReleaseSoundEntity
+sndStopEntity func_80090FB8 func_80091064 soundEntitySetParam func_80091254 stopEntitySound setSoundEntityValues
+setSoundEntityParams func_80091654 func_800918D8 startAudioVoice func_80093758 soundGroupAddEntry soundQueueInsert
+audio_slot_reset insertOrCountEntry insertSortedKeyEntry releaseSceneGroupRef insertOrRefSortedEntry keyTableRegister
+registerWorkerEntry func_80097EF8 func_8009811C voiceListRemove func_800994B4 voiceRelease sndStopNode audioCmdNoteOn
+func_8009C660 voiceSetParamForHandle voiceSetParam40ForHandle flushDmaRequestQueue dmaRomToRam enqueueDmaRequest
+refreshSaveSlotSelection func_8011A098 func_8011ACAC spawnSlotActor spawnProbeObject
+```
+
+Not touched by the stage (150, stratified by size, vram order):
+
+```
+initSystem func_80001D80 func_80001E28 func_80002BD0 func_80002C74 func_80002EF0 func_80005310 func_8000550C
+func_80005F5C create_centered_sprite func_800083DC func_8000A18C func_8000B224 heapAllocBlock func_8000B750
+packFadedRgb5A1 func_8000C8E8 func_8000C948 func_8000C97C func_8000D000 func_8000DB28 func_8000DBF0
+updateTransitionState func_800107BC saveVerifySlot func_80013430 func_80013F74 func_80014A0C IsSphereVisible
+unlinkNode objectListInsert func_80018318 initSaveSlotMenus func_8001A4F4 func_8001A880 setupPickupActor
+menuPopulateItems menuUpdateCursorActor func_80021BF4 func_8002255C func_80022DE8 func_80022F10 func_8002323C
+updateSaveMenuEntries saveMenuHandleCommand func_8002502C func_80027C60 updateActiveMenuState func_80029768
+updateTrackMarkerEffect func_8002BB1C func_8002BC68 copyStateTablesToRam func_8002FAD8 func_80030C7C showTrackMarker
+func_80035854 func_80038000 func_8003941C Obj_UpdateContactPairs linkSourceNodesByNearestPart
+Obj_AttachToFloorObjects actorLinkToSurface func_8003EC70 Vec3_DistanceSq segmentClosestPoint randomU32Next quatSlerp
+func_800473AC func_80047F50 Ray_CastObjects func_8004F430 func_800588D8 func_800589FC func_8005B608 func_8005B830
+func_8005C81C func_8005C83C func_8005CE70 spawnTrackTriggerEffect updateObjectTrackState func_8005DED8
+checkBonusObjectPickup triggerNearbyBonusObject func_8006201C func_800624A8 func_80063098 actorFinishIfMatch
+func_8006452C func_800673EC updateChainObject resolveBorderCollision func_8007089C func_800723C0
+stepTrackPathFollower func_80073108 func_80073634 func_80073A00 func_80073AF8 func_800740D0 textScanNextWordSpan
+func_800770E4 func_80077A94 func_80077FF0 func_8007847C func_8007898C UpdateActorGroundProbe func_8007BAF8
+sinTableLookup cosTableLookup func_80083138 MatMul3x3InPlace func_80084180 playTrackCueSound func_80084E60
+func_80085D90 updateActorTrackingState func_80086480 func_80087580 actorUpdateState initDemoPlayback func_80088DA0
+func_80089F7C func_8008B1C0 workerShutdownDrain audioVoiceIsActive func_8008C7E0 func_8008CBD0 func_8008D838
+func_800923D0 func_80093220 binarySearchRecords func_80096DFC func_800985A8 func_8009CA5C func_8009CD00 func_8009DF60
+osAiSetNextBuffer __cosf guRandom rspStartTask func_800A23E4 guRotateF osInitialize cordicSinCos
+findNearestSearchEntry func_8011A2A0 func_8011AE4C updateMenuCountdown func_8011CC3C
+```
