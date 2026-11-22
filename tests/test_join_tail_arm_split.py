@@ -25,6 +25,46 @@ SOURCE = '''void f(s32 i) {
 '''
 
 
+CHAIN = '''void f(s32 mode) {
+  s32 *node;
+  s32 *state;
+  s32 idle;
+  node = g_first;
+  if (mode == 0x80) {
+    node = g_second;
+    state = g_state;
+    idle = g_idle;
+    goto emit;
+  }
+  if (mode == 0x81) {
+    node = g_second;
+    state = g_state;
+    do {
+      idle = g_other;
+emit:
+      node[4] = ((idle & -256) | state[12]) & -256 | state[7];
+    } while (0);
+  } else {
+    node = g_second;
+    state = g_state;
+    node[4] = (g_idle & -256) | state[12];
+  }
+  g_done = 1;
+}
+'''
+
+
+def test_goto_chain_tail_split_reaches_the_drafts_with_each_all_but_one_rename():
+    """decomp-repair 0.5.602: `goto L` into the next if's tail as an else-if chain carrying the tail. From a KMC N64
+    function (gcc 2.7.2) at 80, the child pointer left shared and every other name split per arm was 0 (judge-worker
+    on that function; this checks the route with a synthetic one)."""
+    assert 'goto_chain_tail_split' in draft_repairs.AGENT_FAMILIES
+    out = draft_repairs.variants(CHAIN, 'f', 'mips', '', ('-G0', '-mips3', '-mgp32', '-mfp32', '-O2'), limit=400)
+    chains = [v for v in out if '} else if (mode == 0x81)' in v and 'goto emit' not in v]
+    assert chains
+    assert any('state_a1' in v and 'node_a1' not in v for v in chains), 'the shared node was not offered'
+
+
 def test_join_tail_arm_split_is_wired_into_the_repairs():
     for family in ('arm_private_rename', 'join_tail_arm_split', 'goto_body_copy', 'phase_union_unshare'):
         assert family in draft_repairs.AGENT_FAMILIES

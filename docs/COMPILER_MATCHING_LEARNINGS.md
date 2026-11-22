@@ -17706,3 +17706,36 @@ made it worse (1565): only counters and what is a plain conversion of one are sh
 Family: decomp-repair `arm_variable_share` (0.5.601). It emits every pair at once, then each alone, and reproduces the chain from
 the pre-merge state (830 -> 565 in the isolated judge). `tests/test_arm_variable_share_wiring.py` checks the draft repairs and the
 local lane.
+
+
+## A shared tail entered by `goto` as an else-if chain with per-arm names: `goto_chain_tail_split` (menu-item layout function)
+
+A KMC GCC 2.7.2 N64 function (`-G0 -mips3 -mgp32 -mfp32 -O2`, 164 instructions, 95 in the saved best) writes a colour word
+into a child record in one of three ways chosen by a mode byte (`== 0x80`, `== 0x81`, otherwise). m2c left it as
+`if (m == 0x80) { ...; goto L; } if (m == 0x81) { ...; do { v = D; L: store } while (0); } else { ... }`. The target holds the
+tail twice (the compiler's cross-jumping merged the copies after register allocation) with the saved-state pointer in `$v1`,
+the sub-record in `$a0`, the byte read into `$v1` again; every shape that kept the state, the value and the node as
+function-wide variables put the state in `$a0` (an `$a0`/`$v1` mirror, 80 in the judge). Hypothesis, not confirmed in the
+source: variables set in several blocks are global pseudos, allocated after every block-local one, so the local temporaries
+took `$v1` first.
+
+Edit list from the saved best (the app's judge, each step alone then combined):
+
+| edit | score |
+| --- | --- |
+| `v = 0xA0; if (m != 0xFF) { v = x; }` written `if (m == 0xFF) { v = 0xA0; } else { v = x; }` | 95 -> 80 |
+| the tail copied into each arm, the goto removed, `if` -> `else if` (the jump skipped the rest of the chain) | 80 (structure only) |
+| ... with state and value private to each of the two arms, the child pointer left shared | 205 with the node private too, 35 with the else arm unchanged |
+| ... and the last arm's node, state and value private as well | 0 |
+
+Controlled result in this function: byte-identical (the earlier agents' `volatile` child reads were not needed; removing
+them left 0). One function, not a regression: the evidence for the rewrite is that it reproduces 80 -> 0 in the judge
+(`tests/test_join_tail_arm_split.py` checks the route with a synthetic function). Failed: every name private (205); the
+state shared and only the node private (445-680); a value kept in the draft's `var_a0`/`var_v1` names (745-985, those
+pseudos span the first half of the function and move its registers); statement orders of the three loads and the
+expression association (no change).
+
+Family: decomp-repair `goto_chain_tail_split` (0.5.602), in `join_tail_arm_split_repairs`: the chain, then every arm-private
+rename restricted to the chain, all at once and each "all but one". The saved best could not reach it: `volatile` reads (an
+earlier search's scaffold) make `local_flow` give no advice, so no arm family ran on it until the `volatile` was dropped
+(open: nothing proposes dropping the `volatile` before the arm families run).
