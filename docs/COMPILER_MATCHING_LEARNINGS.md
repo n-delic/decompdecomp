@@ -1,5 +1,15 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: vary independent float capture and store orders together
+
+A private N64 draft scored 1,115 with `-G0 -mips3 -mgp32 -mfp32 -O2`.
+The draft captured several float sums through an inline helper and
+then stored them to distinct offsets from one base. Changing both
+the order of the captures and the order of the stores scored 1,105.
+The combined search keeps all captures ahead of all stores and
+requires measured evidence of mismatched store offsets. The target
+remains unmatched.
+
 ### KMC GCC 2.7.2: restore opposite float constants in two switch cases
 
 A private N64 draft scored 120 under `-G0 -mips3 -mgp32 -mfp32 -O2`.
