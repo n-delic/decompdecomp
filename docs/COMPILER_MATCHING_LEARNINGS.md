@@ -15656,3 +15656,15 @@ separate conversion and multiplication with the staged sample scored
 2,940, recovering six register operands without changing any other
 linked instruction or the three jump tables. An alternate holder was
 neutral, and the selected source passed uninitialized diagnostics.
+
+### Stage the row stride and base before indexing the column
+
+A private N64 switch sample built with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` used two reads from a
+fixed-stride table. Staging the byte row index, row stride, byte
+column index, and row base reduced the linked score from 372 to 112
+with exact jump-table data. An earlier linear address form scored
+317. Omitting the row-base local or omitting the stride local scored
+1,347 and 192 respectively. The proposal verifies the byte field
+views and the column helper's single read, then derives the strides
+with `sizeof`. The candidate still has instruction differences.
