@@ -17282,3 +17282,45 @@ hoist and the chain; from the saved best the chain child scores 0 (`tests/test_f
 draft repairs, the beam and `deep_permuter._local_proposals`. Big-endian only (the bit order and the top-byte store
 read the word as MSB-first). Not covered: a word whose other fields are also read elsewhere in the function (the
 member is replaced, so those reads fail to compile), a mask that is not one run of bits, and little-endian games.
+
+## A 284-instruction model loader matched in three permuter steps: goto into a nested arm, loop-depth weights, a shared shift (KMC GCC 2.7.2, N64)
+
+Evidence level: one function (a model loader reading a 32-byte, four-section header into a stack buffer, allocating
+one block for the sections and filling it from raw or compressed data; matched, judge 0 in the app). `gcc-2.7.2-kmc
+-G0 -mips3 -mgp32 -mfp32 -O2`, every step scored with the app's judge-worker, no Deep Permuter run. Compiler explanations
+are hypotheses (cc1 dumps `-dl -dg -dS -dc` and cc1 under lldb, not the compiler source). Controlled results are the
+numbers below; they are one function.
+
+| step | edit | score |
+| --- | --- | --- |
+| saved best | 8 differing rows: a register and `bnez` where the target has `bnel`, the allocation-size sum, a saved register | 290 |
+| `goto_nested_entry_else` (0.5.580) | m2c's `v = e; if (v != 0) goto L;` into the next `if`'s then arm becomes `t = e; if (t == 0) { ... } else { v = t; }` | 80 |
+| `weight_combination` (0.5.586) | four edits, alone 1596 / 320 / 160 / 80, together 65: the stack local used directly for a pointer chain (`spill_slot_copy_collapse`), the function-body `do { } while (0)` and the inner call scopes removed (`weight_scope_unwrap`, labels allowed), an init sunk into its guard (`init_sink_into_guard`) | 65 |
+| `shared_shift_combination` (0.5.591) | `((u32)(A*8 + (t = T*4))) + (C + t)` becomes `A*8 + (t = T*4) + t + C + (t & 3)` | 0 |
+
+What each edit changes (hypotheses): the target's `bnel` copies the first instruction of an out-of-line else arm into
+its delay slot, so the store has to live in an else arm; written before the `if` it is `bnez` with the store from
+above. GCC 2.x counts a reference once per loop depth and global.c ranks saved registers by
+`floor_log2(uses) * uses / length`, so a function-body one-shot loop doubles every weight and a spilled pointer
+outranked a call-crossing one; without the wrapper the stack slot is the spilled pseudo and reload picks `$t0` for its
+first add, where local-alloc picked `$a3`. The last row: flow links a shift's definition only from its first use, and
+combine's three-insn merge (shift, first sum, second sum) needs that link. The plain chain merges the two uses into
+`(A + T) << 3` (487 to 915); the m2c shape with only `+ (t & 3)` stays 65; a first use of `t` that is not the first
+sum (`t & 3`, which combine evaluates to 0 because the low two bits of `t` are known zero) leaves `sll; addu; addu`
+and then vanishes. The same works as the call's second argument (`0x2D + (t & 3)`, arguments are evaluated right to
+left). A store of `t` before the sum also blocks the merge but stays in the object code; a use of `t` after the
+call blocks it too but keeps `t` in a saved register.
+
+Failed or neutral: 2,100 random sum grammars with temporaries and casts (none better than the start), `t & -4`
+(folded before combine), the sum as an inline helper (907 to 915), reusing the temporary after the call, `known_zero_mask`
+on the shift (does not apply: the mask is on a sum operand), every one-edit-at-a-time family on the 65 source (all 65).
+
+Technique worth reusing: run the pinned `cc1` under lldb (it has symbols), break on `try_combine` and `can_combine_p`,
+print the insn UIDs and the return value, and read the LOG_LINKS in the `-df` dump (`(insn_list N ...)` after each insn):
+the attempts that are tried, which succeed, and which link a definition to its use show why an expression merges.
+
+Families: decomp-repair `shared_shift_zero_use` (0.5.591: `shared_shift_chain`, `shared_shift_zero_use`,
+`shared_shift_combination`). From the saved best the three released families applied in order reach 290 -> 80 -> 65 -> 0
+with no change of shape between stages (`tests/test_shared_shift_zero_use.py`); wired into the draft repairs, the deep pass
+and the local lane through `draft_repairs.AGENT_FAMILIES`. Not covered: a shift with other writes between its reads, a sum
+inside a larger expression with side effects, and shifts the compiler cannot prove zero in the low bits.
