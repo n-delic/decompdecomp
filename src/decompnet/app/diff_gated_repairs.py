@@ -342,6 +342,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += clamp_saved_argument_lifetime.variants(source, name, rows, header=header)
         result += balanced_clamp_argument_stage.variants(source, name, rows, header=header)
         result += balanced_clamp_predicates.variants(source, name, rows, header=header, max_bytes=MAX_SOURCE_BYTES)
+        result += balanced_clamp_predicates.split_register_variants(source, name, rows, header=header)
         result += trig_axis_reuse.variants(source, name, rows, header=header)
         result += projection_gain.variants(source, name, rows, header=header)
         result += smoothing_call_before_read.variants(source, name, rows, header=header)
