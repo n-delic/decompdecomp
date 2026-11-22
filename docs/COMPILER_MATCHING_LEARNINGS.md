@@ -16000,3 +16000,7 @@ the save area, while the existing frame word preserves it.
 ### KMC GCC 2.7.2 region bounds search
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` searched a circular list for the first region containing a point. The generated draft used a flattened condition with comma expressions and a shared result. Restoring the ordered bounds checks, staging the second lower bound before reading the point and returning the found region changed the linked difference score from 245 to an exact match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the measured instruction order, field offsets and complete source shape.
+
+### KMC GCC 2.7.2 byte-to-record ramp
+
+A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` interpolated between byte endpoints and wrote a sequence of records. Its generated draft used different local widths and a loop tail that led to a different register allocation. Restoring the measured locals and loop shape changed the linked difference score from 215 to an exact match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the measured instructions, offsets and complete generated source shape; the judge verifies the candidate.
