@@ -15736,3 +15736,25 @@ cursor and count advance together. This remains an inexact draft.
 ### KMC GCC 2.7.2 indexed wide division
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` indexed records with an eight-byte stride, loaded a 64-bit field and divided it by a constant. Its machine draft scaled an `s32 *` by an additional factor of four and represented the wide helper arguments as four words. Correcting the helper signature and wide load alone reduced the diff score from 210 to 10; correcting the byte stride too produced an exact linked match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the measured instruction and source patterns and assumes the 64-bit field is suitably aligned.
+
+### Balance a typed sign-field read with the following clamp
+
+In a private linked N64 function built with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, the target reads a record's
+float sign, compares it, and stores the global subtraction before
+branching. The candidate's byte-offset float dereference delayed that
+read until after the subtract and store. A typed record view with an
+explicit byte prefix keeps the same field offset and restores the
+target's scheduling. The compiler uses one fewer instruction in that
+span.
+
+The following fused-bound clamp has the opposite imbalance. Express
+the lower and upper stores as an `if` and `else if`, which restores the
+separate field load and delay slot. Together the rewrites keep all
+3,034 instructions and three jump tables and move the linked score
+from 2,875 to 2,245. The typed read alone scored 4,740 and the clamp
+alone scored 5,030, both with unresolved final table relocation.
+Moving the untyped read into an earlier temporary also regressed.
+The direct typed view with the split clamp passed uninitialized
+diagnostics. The recipe requires both linked shapes and a matching
+ordinary float field in the source.
