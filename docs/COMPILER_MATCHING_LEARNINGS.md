@@ -13259,3 +13259,7 @@ decomp-repair 0.5.334 `loop_goto_form` offers the rewrite for each loop (the opp
 reproduces the exact child from the 1554 state. Evidence level: one function; the loop shape is controlled by a unit test.
 Not covered: the 1024 -> 1554 step (replacing the cast scaffolding with literals) is a search-scaffolding cleanup, no
 new family.
+
+### KMC GCC 2.7.2: scope an initialized comparison
+
+On one N64 function compiled with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, an initialized local zero before a comparison scored 350. Wrapping just that comparison assignment in `do { ... } while (0)` kept the same evaluation and scored 85 in the exact judge; the remaining differences were register allocation. The inherited score-10 source read that local before initialization and is only a search control, not evidence of valid C. Initializing at declaration scored 295, initializing before the load scored 350, and making the local volatile scored 1080. These are observations on one function; decomp-repair 0.5.335 offers the comparison scope and a synthetic regression covers generation, including a surrounding volatile load.

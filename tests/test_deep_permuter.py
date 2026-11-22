@@ -1121,6 +1121,26 @@ def test_loop_vector_shape_pass_reaches_the_scheduling_boundary_that_matched_a_d
     assert any('do {' in c and 'repair_scope_1' not in c for c in seen) or len(seen) < 64
 
 
+def test_loop_vector_shape_pass_offers_comparison_scope_with_volatile_load(monkeypatch):
+    net = setup(monkeypatch)
+    source = ("int f(void) { volatile int *p; int zero, count, present; "
+              "do { zero = 0; count = *p; present = (short) (zero < count); } while (0); return present; }")
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_score=350,best_source=? WHERE name='f'", (source,))
+    fn, proj = net.function(), net.project_row('game')
+    search = deep_permuter.Search(net, 1, 30, Log(), fn)
+    seen = []
+
+    def score(agent, proj, fn, candidate, best, fork):
+        seen.append(candidate)
+        search.tested += 1
+        return 85 if 'do { present = (short) (zero < count); } while (0);' in candidate else 350
+
+    monkeypatch.setattr(search, '_score', score)
+    assert search.loop_vector_shape_pass(AGENT, proj, dict(fn, best_source=source, name='f'), 350, None) == 85
+    assert any('do { present = (short) (zero < count); } while (0);' in c for c in seen)
+
+
 def test_loop_vector_shape_pass_reaches_the_guard_initializer_scope_that_matched_a_timer_loop(monkeypatch):
     """A guard's `i = 0;` hoisted before it in a one-shot scope, the copy before the guard sunk: 10 -> 0 in one child."""
     net = setup(monkeypatch)
