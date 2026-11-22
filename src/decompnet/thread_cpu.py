@@ -128,21 +128,49 @@ def _library(filename: str) -> str | None:
     return None
 
 
+def _own(filename: str) -> str | None:
+    """`app/twins.py` for decompdecomp's own code, `decomprepair/x.py` for its libraries, else None."""
+    if filename.startswith(_PACKAGE):
+        return filename[len(_PACKAGE):]
+    return _library(filename)
+
+
+# Frames that only forward a call: the database wrapper holds every query's CPU, so the report names who asked.
+_FORWARDERS = ("payload_storage.py",)
+
+
 def _location(frame) -> str:
-    """The innermost frame in decompnet's own code or a library's (else the innermost one): `app/twins.py:_build_rom_prints`."""
-    innermost = None
+    """Where a thread is: the innermost frame in decompnet's own code or a library's (`app/twins.py:_build_rom_prints`).
+
+    Work inside a stdlib or C call beneath it is added (`... (in decoder.py:decode)`), and a database call is named by
+    the code that asked: `sql: store.py:one < app/progress.py:_read_once`."""
+    innermost, below = None, None
     while frame is not None:
         filename = frame.f_code.co_filename
         if innermost is None:
             innermost = frame
-        if filename.startswith(_PACKAGE):
-            return f"{filename[len(_PACKAGE):]}:{frame.f_code.co_name}"
-        if (library := _library(filename)) is not None:
-            return f"{library}:{frame.f_code.co_name}"
+        if (name := _own(filename)) is not None:
+            if os.path.basename(filename) in _FORWARDERS:
+                return "sql: " + _callers(frame.f_back)
+            place = f"{name}:{frame.f_code.co_name}"
+            return place if below is None else f"{place} (in {below})"
+        if below is None:
+            below = f"{os.path.basename(filename)}:{frame.f_code.co_name}"
         frame = frame.f_back
     if innermost is None:
         return "?"
     return f"{os.path.basename(innermost.f_code.co_filename)}:{innermost.f_code.co_name}"
+
+
+def _callers(frame, depth: int = 3) -> str:
+    """The next `depth` own-code frames outward, innermost first: `store.py:one < app/progress.py:_read_once`."""
+    found = []
+    while frame is not None and len(found) < depth:
+        name = _own(frame.f_code.co_filename)
+        if name is not None and os.path.basename(frame.f_code.co_filename) not in _FORWARDERS:
+            found.append(f"{name}:{frame.f_code.co_name}")
+        frame = frame.f_back
+    return " < ".join(found) or "?"
 
 
 class Sampler:

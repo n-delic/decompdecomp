@@ -2,6 +2,7 @@
 import hashlib
 import json
 import threading
+import time
 from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import lru_cache, wraps
@@ -11,6 +12,11 @@ VERSION = 'local-repairs-v21'
 RELEASES = 3
 PREFIX = 'agent-stall:'
 _rule_snapshot = ContextVar('repair_rule_snapshot', default=None)
+# Background threads have no session or snapshot, so each claim re-listed and re-stamped ~120 files (a live Deep
+# Permuter run spent 39 of its 340 CPU seconds here). The stamp is advisory, so a few seconds old is fresh enough.
+_RECENT_SECONDS = 5.0
+_recent_lock = threading.Lock()
+_recent = None  # (computed at, identity, rules)
 
 
 @contextmanager
@@ -47,7 +53,7 @@ def repair_rules():
     session = current()
     if session is None:
         active = _rule_snapshot.get()
-        if active is None or active['owner'] != threading.get_ident():return _repair_rules()
+        if active is None or active['owner'] != threading.get_ident():return _recent_rules()
         identity = (repair_rules, _repair_rules)
         snapshot = active.get('snapshot')
         if snapshot is None or snapshot[0] != identity:
@@ -58,6 +64,20 @@ def repair_rules():
     if snapshot is None or snapshot[0] != identity:
         snapshot = session.repair_implementations = (identity, tuple(_repair_rules()))
     return list(snapshot[1])
+
+
+def _recent_rules():
+    """The implementation stamp for a caller with no session, reused for a few seconds (edits show within them)."""
+    global _recent
+    identity, now = (repair_rules, _repair_rules), time.monotonic()
+    with _recent_lock:
+        held = _recent
+    if held is not None and held[1] == identity and 0 <= now - held[0] < _RECENT_SECONDS:
+        return list(held[2])
+    rules = _repair_rules()
+    with _recent_lock:
+        _recent = (now, identity, tuple(rules))
+    return rules
 
 
 def _repair_rules():
