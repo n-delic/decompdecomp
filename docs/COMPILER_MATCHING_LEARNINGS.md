@@ -1571,6 +1571,22 @@ rebuilding the affected overlays from those compiled objects reproduced the
 cartridge bytes. Changing a call to a second alias under the same base symbol
 fails the controlled regression.
 
+### Retain loader relocations for text already indexed at a runtime address
+
+An uncompressed overlay can be disassembled through an ordinary ROM segment,
+where the immediate fields still carry pre-relocation values. In an isolated
+N64 project this made valid IDO objects report missing ROM addresses for
+compiler constants and unresolved external calls. The cartridge contained the
+corresponding text and loader relocation table. Matching the complete body
+at its original file offset recovered the relocation data for 444 open entries
+while preserving their runtime addresses and names.
+
+A targeted replay of 130 donor candidates saved 71 functions (69 IDO 7.1,
+two IDO 7.1 NCC). All 71 passed a fresh compile and exact relocation check
+and reconstructed the identical cartridge together. Controlled fixtures
+reject a changed body and address, keep the original identity during import,
+and distinguish raw placements from compressed sections.
+
 ### Rebind donor calls to functions defined in the same translation unit
 
 IDO 7.1 `-O2 -G 0 -non_shared -mips2` compiles direct calls to static
@@ -13293,6 +13309,23 @@ the same center, loads from one base register, and comparisons of the
 results. It generates a candidate only across local statements that preserve
 the inputs. Evidence is one partial live match and synthetic tests.
 
+### KMC GCC 2.7.2: stage an entry pointer around a signed flag
+
+In one large N64 function, the target read two pointers and a signed
+global flag, spilled the first pointer to a local frame slot, then
+read a signed byte through the second pointer. The draft stored the
+first pointer immediately and delayed the global read until the guard.
+
+With `-G0 -mips3 -mgp32 -mfp32 -O2`, capturing the flag as a byte
+and staging the frame store scored 19,427 from 19,622. Holding the
+flag in an integer preserved the signed load and scored 19,232.
+Moving the pointer store into a comma expression at the guard
+scored 19,502 with the integer local.
+
+The `entry_pointer_capture` repair requires the six target operations,
+a local frame member and a trivial signed-byte read helper. Evidence is
+one observed partial match with synthetic source and target tests.
+
 ### KMC GCC 2.7.2: widen a mode assigned only small constants
 
 A large N64 draft held a mode in a byte even though every assignment
@@ -13633,3 +13666,13 @@ Permuter: none of the existing families (30 children on the saved source) propos
 and the inlines as bundles, small ones first; from the saved 85 source one of its children scores 0 through the judge.
 Evidence level: one function plus synthetic tests of each guard (a carrier read later, a write in one arm only, loops,
 double literals, calls in the sum).
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, an N64 routine was 30 points away after its length
+calculation was repaired. Its only differences were two adjacent callee-saved argument copies in reversed
+order, including their stack saves. Both parameters were used only in byte stores. Exchanging the two
+formals' `u8` and `s32` types reproduced the target, while casts and local copies at the stores did not.
+The gated repair generated one candidate from the 30-point draft and the linked-byte judge scored it 0.
+The running app also accepted the exact match. Evidence is one real match and synthetic positive and
+negative generation tests.
+
+One N64 linked-list walk built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` had been drafted as returning `void`, while the target initialized the return register to zero and incremented it on each iteration. Restoring a counter and returning it reproduced the linked target exactly (score 400 to 0). The repair requires both target counter instructions and the simple list-walk shape. Evidence: one saved example and synthetic generation and routing tests.

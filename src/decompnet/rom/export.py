@@ -341,12 +341,15 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
     proj = net._project(slug)
     cfg = net.cfg(proj)
     store = net.project_store(proj['id'])
-    population = store.all('SELECT name,vram,size,rom_offset FROM functions WHERE project_id=?', proj['id'])
+    population = store.all('SELECT name,vram,size,rom_offset,meta FROM functions WHERE project_id=?', proj['id'])
     banks = cfg.get('donor_overlays') or {}
     native_end = min(banks.values(), default=None)
-    excluded = ({r['name'] for r in population if r['rom_offset'] is not None and r['rom_offset'] >= native_end}
-                if native_end is not None else set())
-    population = [row for row in population if row['name'] not in excluded]
+    analysis_only = ({r['name'] for r in population if r['rom_offset'] is not None and r['rom_offset'] >= native_end}
+                     if native_end is not None else set())
+    excluded = analysis_only | {r['name'] for r in population if r['meta'] and console.overlay_cartridge_placement(r, cfg)}
+    # Raw overlay entries still occupy space in the cartridge split; build their C
+    # through the loader path while the assembly supplies the original placeholders.
+    population = [row for row in population if row['name'] not in analysis_only]
     if EXPORT not in console.features:
         raise ExportError(f"exporting a rebuildable project isn't supported for {console.name or 'this console'} yet")
     work = Path(proj["root"])
@@ -376,7 +379,7 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
     for extra in ("reloc_addrs.txt",):
         if (work / extra).exists():
             shutil.copyfile(work / extra, out / extra)
-    (out / "symbol_addrs.txt").write_text("\n".join(_symbol_lines(net, proj, population, excluded, _segments(split_config))) + "\n", encoding="utf-8")
+    (out / "symbol_addrs.txt").write_text("\n".join(_symbol_lines(net, proj, population, analysis_only, _segments(split_config))) + "\n", encoding="utf-8")
     res = run([console_python(), "-m", "splat", "split", "splat.yaml"], out, log)
     if res.returncode != 0:
         raise ExportError("splat failed:\n" + (res.stdout + res.stderr)[-1500:])
@@ -572,7 +575,7 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
     data_c = _data_in_c(net, proj, out, layout, objects, image, cfg, log)
     defined.update(d["name"] for d in data_c)
     syms = net.symbols(proj["id"])
-    absolute = {s.name: s.address for s in syms.by_name.values() if s.name not in defined and s.name not in excluded}
+    absolute = {s.name: s.address for s in syms.by_name.values() if s.name not in defined and s.name not in analysis_only}
     # Startup assembly can retain an import-time alias after a discovered function receives an address-based
     # name. Keep those known addresses too; otherwise its named jump target is undefined in the standalone link.
     for name, address in split.named_symbols(work).items():
@@ -672,7 +675,7 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
     (out / "objdiff.json").write_text(json.dumps({"build_base": False, "build_target": False, "units": units_json}, indent=2),
                                       encoding="utf-8")
     matched = sum(1 for f in functions if f["kind"] == "c") + len(overlays)
-    total_functions = len(functions) + len(excluded)
+    total_functions = len(functions) + len(analysis_only)
     _write_docs(out, proj["name"], console.name, base, matched, total_functions, as_fallback)
     if overlays:
         with (out / 'README.md').open('a', encoding='utf-8') as readme:

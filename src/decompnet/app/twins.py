@@ -887,8 +887,8 @@ class Twins:
         report(job, 'Checking overlay loader records')
         store = self.net.project_store(proj['id'])
         rows = {row['id']: row for row in store.all(
-            "SELECT id,meta,target,rom_offset FROM functions WHERE project_id=? AND status='open' AND rom_offset>=?",
-            proj['id'], min(banks.values()))}
+            "SELECT id,meta,target,rom_offset FROM functions WHERE project_id=? AND status='open' AND rom_offset IS NOT NULL",
+            proj['id'])}
         if job.stop.is_set() or not rows:
             return
         image, _ = self.net._rom(proj)
@@ -901,7 +901,9 @@ class Twins:
             changes.append((meta, fid, row['meta'], row['target'], row['rom_offset']))
         if changes and not job.stop.is_set():
             with store.tx() as db:
-                db.executemany("UPDATE functions SET meta=? WHERE id=? AND meta IS ? AND target=? AND rom_offset=?", changes)
+                db.executemany("UPDATE functions SET meta=? WHERE id=? AND meta IS ? AND target=? AND rom_offset=? AND status='open' "
+                               "AND NOT EXISTS (SELECT 1 FROM claims WHERE function_id=functions.id AND expires_at>?)",
+                               [(*change, time.time()) for change in changes])
             self.net.bump_generation(proj['id'])
 
     def across_games(self, slug: str, job: Job | None = None) -> int:
