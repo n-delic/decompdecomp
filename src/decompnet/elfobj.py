@@ -20,6 +20,7 @@ from elftools.elf.sections import SymbolTableSection
 from . import arch
 from .candidate_work import current, remember
 from .candidate_work import elf as candidate_elf
+from .candidate_work import symbols as candidate_symbols
 
 # e_machine -> arch key used throughout decompnet
 MACHINES = {"EM_X86_64": "x86_64", "EM_386": "x86", "EM_MIPS": "mips", "EM_PPC": "ppc", "EM_PPC64": "ppc64",
@@ -250,7 +251,7 @@ def _read_function_symbols(elf) -> dict[str, tuple[int, int, int]]:
         return {}
     out: dict[str, tuple[int, int, int]] = {}
     loose: dict[int, list[tuple[int, str]]] = {}
-    for s in symtab.iter_symbols():
+    for s in candidate_symbols(elf, symtab):
         shndx = s["st_shndx"]
         if not s.name or not isinstance(shndx, int) or s["st_info"]["type"] in ("STT_SECTION", "STT_FILE"):
             continue
@@ -358,8 +359,8 @@ def unmangle(data: bytes, known) -> bytes:
     if not isinstance(symtab, SymbolTableSection):
         return data
     base = elf.get_section(symtab["sh_link"])["sh_offset"]
-    out = bytearray(data)
-    for sym in symtab.iter_symbols():
+    out = None
+    for sym in candidate_symbols(elf, symtab):
         name = sym.name
         if not name or known(name):
             continue
@@ -388,6 +389,8 @@ def unmangle(data: bytes, known) -> bytes:
                     new = name[i + 1:i + 1 + n]
                 i += 1 + max(n, 0)
         if new:
+            if out is None:
+                out = bytearray(data)
             at = base + sym["st_name"]
             out[at:at + len(new) + 1] = new.encode() + b"\0"
-    return bytes(out)
+    return bytes(out) if out is not None else data

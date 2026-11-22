@@ -1,10 +1,10 @@
 """Judge cartridge overlay text before runtime relocation, checking bytes and symbol bindings."""
 from dataclasses import dataclass
-from io import BytesIO
 
 from elftools.common.exceptions import ELFError
 from elftools.elf.elffile import ELFFile
 
+from ...candidate_work import elf as candidate_elf
 from ...elfobj import FunctionObj, Reloc, _function_symbols, unmangle
 from ...rom.link import LinkResult
 from ...rom.match import RomTarget, raw_relocs
@@ -55,7 +55,7 @@ def link(obj, name, target, info):
     local_calls = _local_calls(info)
     try:
         obj = unmangle(obj, lambda symbol: symbol == name)
-        elf = ELFFile(BytesIO(obj))
+        elf = candidate_elf(obj, ELFFile)
         if elf.little_endian or elf['e_machine'] != 'EM_MIPS':
             return LinkResult(None, False, ['Overlay text requires a big-endian MIPS object.'])
         entry = _function_symbols(elf).get(name)

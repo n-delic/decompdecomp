@@ -7,6 +7,8 @@ Layout: binutils include/coff/sym.h (HDRR, FDR and SYMR).
 """
 import struct
 
+from ..candidate_work import symbols as candidate_symbols
+
 
 def records(elf):
     """name -> (executable section, offset, explicit length); malformed/ambiguous records give no evidence."""
@@ -25,11 +27,14 @@ def placeholders(elf):
     if cached is not None:return cached
     found=records(elf)
     if not found:return {}
-    symtab=elf.get_section_by_name('.symtab')
-    ordinary={s.name for s in symtab.iter_symbols()
-              if isinstance(s['st_shndx'],int) and s['st_shndx']>0} if symtab else set()
-    candidates={n:v for n,v in found.items() if n not in ordinary and v[2]==8
+    candidates={n:v for n,v in found.items() if v[2]==8
                 and elf.get_section(v[0]).data()[v[1]:v[1]+8]==bytes.fromhex('03e0000800000000')}
+    if candidates:
+        symtab=elf.get_section_by_name('.symtab')
+        if symtab:
+            for symbol in candidate_symbols(elf, symtab):
+                if isinstance(symbol['st_shndx'], int) and symbol['st_shndx'] > 0:
+                    candidates.pop(symbol.name, None)
     if not candidates:
         elf._decomp_ecoff_placeholders={}
         return {}
@@ -103,7 +108,7 @@ def _read(elf):
     if any(a[1]+a[2]>b[1] for a,b in zip(spans,spans[1:])):raise ValueError('Overlapping ECOFF procedures')
     symtab=elf.get_section_by_name('.symtab')
     if symtab:
-        for symbol in symtab.iter_symbols():
+        for symbol in candidate_symbols(elf, symtab):
             if symbol.name in result and symbol['st_info']['type']=='STT_FUNC':
                 sx,start,size=result[symbol.name]
                 if (symbol['st_shndx'],symbol['st_value'])!=(sx,start) or symbol['st_size'] not in (0,size):

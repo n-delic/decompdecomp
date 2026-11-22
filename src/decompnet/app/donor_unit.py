@@ -11,6 +11,34 @@ from ..forks.source_paths import readable
 from . import donor_sources
 
 
+class PreparedSources(dict):
+    """Keep replacement snapshots from evicting the resident source cache."""
+
+    def __init__(self):
+        super().__init__()
+        self.replacements = {}
+
+
+def _cache_snapshot(cache, key, prepare):
+    if key not in cache:
+        saved = prepare()
+        if len(cache) >= 4:
+            cache.pop(next(iter(cache)))
+        cache[key] = saved
+    return cache[key]
+
+
+def _preprocess(path, root, invocation, *, original_parent=None):
+    roots, _ = donor_sources.build_hints(root)
+    reader = donor_sources.DonorReader({'root': str(root), 'include_roots': '\n'.join(map(str, roots))})
+    text = reader.flatten(path, original_parent=original_parent)
+    if original_parent is not None:
+        # Plain checkout source may still contain assembly placeholders.
+        text = re.sub(r'(?m)^[ \t]*(?:#\s*pragma\s+)?(?:GLOBAL_ASM|INCLUDE_ASM|INCLUDE_RODATA)\([^\n]*$', '', text)
+    text = preprocess_donor_unit(invocation, text)
+    return (re.sub(r'(?m)^[ \t]*#[^\n]*', '', text) if text is not None else None), reader
+
+
 def candidate(other, donor, names, invocation, cache):
     """Snapshot the compiler's selected translation unit with its entry in the editable source."""
     if 'unit' not in donor.keys():
@@ -24,26 +52,21 @@ def candidate(other, donor, names, invocation, cache):
     if not generated.is_relative_to(root) or not generated.is_file():
         generated = original
     entry = (donor['meta'] and json.loads(donor['meta']).get('symbol')) or donor['name']
-    key = (generated, tuple(invocation.cmd))
-    if key not in cache:
-        roots, _ = donor_sources.build_hints(root)
-        reader = donor_sources.DonorReader({'root': str(root), 'include_roots': '\n'.join(map(str, roots))})
-        text = reader.flatten(generated, original_parent=original.parent)
-        # Plain checkout source may still contain its assembly placeholders. Preserve their line
-        # boundaries; never compile them into a saved C unit.
-        text = re.sub(r'(?m)^[ \t]*(?:#\s*pragma\s+)?(?:GLOBAL_ASM|INCLUDE_ASM|INCLUDE_RODATA)\([^\n]*$', '', text)
-        text = preprocess_donor_unit(invocation, text)
-        if len(cache) >= 4:
-            cache.pop(next(iter(cache)))
-        cache[key] = (reader.file(original), re.sub(r'(?m)^[ \t]*#[^\n]*', '', text) if text is not None else None)
-    original_text, text = cache[key]
+    key = (generated, original, tuple(invocation.cmd), invocation.source_extension)
+
+    def prepare():
+        text, reader = _preprocess(generated, root, invocation, original_parent=original.parent)
+        return reader.file(original), text, {}
+
+    original_text, text, spans = _cache_snapshot(cache, key, prepare)
     if text is None:
         return None
-    original_span = csource.find(original_text, entry)
-    if original_span is None or csource.is_stub(original_text[slice(*original_span)]):
-        return None
+    if entry not in spans:
+        original_span = csource.find(original_text, entry)
+        spans[entry] = (csource.find(text, entry)
+                        if original_span and not csource.is_stub(original_text[slice(*original_span)]) else None)
+    span = spans[entry]
     # Keep the selected definition in the editable source and the preceding text in its private header.
-    span = csource.find(text, entry)
     if span is None or csource.is_stub(text[span[0]:span[1]]):
         return None
     start = text.rfind('\n', 0, span[0]) + 1
@@ -66,19 +89,22 @@ def is_unit(header, proj):
     return proj['arch'] == 'mips' and header.startswith(DONOR_UNIT_HEADER)
 
 
-def replacement(other, donor, target_name, invocation, path):
+def replacement(other, donor, target_name, invocation, path, cache=None):
     """Prepare literal replacement C without executing the donor's build or object patches."""
     root = Path(other['root']).resolve()
     if not path.resolve().is_relative_to(root):
         return None
-    roots, _ = donor_sources.build_hints(root)
-    reader = donor_sources.DonorReader({'root': str(root), 'include_roots': '\n'.join(map(str, roots))})
-    text = preprocess_donor_unit(invocation, reader.flatten(path))
+    key = (path, tuple(invocation.cmd), invocation.source_extension)
+    def prepare():
+        return _preprocess(path, root, invocation)[0], {}
+
+    text, spans = _cache_snapshot(cache if cache is not None else {}, key, prepare)
     if text is None:
         return None
-    text = re.sub(r'(?m)^[ \t]*#[^\n]*', '', text)
     entry = (donor['meta'] and json.loads(donor['meta']).get('symbol')) or donor['name']
-    span = csource.find(text, entry)
+    if entry not in spans:
+        spans[entry] = csource.find(text, entry)
+    span = spans[entry]
     if not span or csource.is_stub(text[slice(*span)]):
         return None
     from .source_symbol_recovery import rename

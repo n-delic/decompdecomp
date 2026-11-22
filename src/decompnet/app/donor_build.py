@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from .. import arch, toolchains
+from ..candidate_work import trial
 from ..network import NetworkError
 from ..permuter_claims import nonexclusive
 from . import donor_sources, donor_unit, exact_match_inputs, prepared_evidence, source_symbol_recovery
@@ -29,7 +30,7 @@ class Settings:
     """Read literal Make declarations and exact object overrides without running a donor build."""
 
     def __init__(self, project):
-        self.headers = {}
+        self.headers = donor_unit.PreparedSources()
         self.root = project.root
         self.variables = {}
         self.overrides = {}
@@ -248,7 +249,8 @@ def verify(net, proj, fn, other, donor, names, settings, agent, job, cache, *, r
                 trial = {**dict(current), 'config': json.dumps(prepared_evidence.scoped_config(current, fn, profile))}
                 try:
                     _, invocation = net._invocation(trial, fn)
-                    lead = donor_unit.replacement(other, donor, fn['name'], invocation, path)
+                    lead = donor_unit.replacement(
+                        other, donor, fn['name'], invocation, path, getattr(cache, 'replacements', None))
                     if lead:
                         accepted, why = _try(net, current, trial, fn, *lead, agent, job)
                         whole_reason = whole_reason or why
@@ -284,6 +286,7 @@ def verify(net, proj, fn, other, donor, names, settings, agent, job, cache, *, r
         net.permuter._let_go(agent, fn)
 
 
+@trial
 def _try(net, proj, private, fn, source, header, agent, job):
     """Offer one reduced translation unit and one relocation-based retry when the object supports it."""
     reduced = rebound = False

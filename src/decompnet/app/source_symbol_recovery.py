@@ -1,5 +1,6 @@
 """Turn independently measured addresses into private, normally judged alternatives."""
 import re
+from functools import lru_cache
 from io import BytesIO
 
 from elftools.common.exceptions import ELFError
@@ -13,11 +14,29 @@ MAX_HELPER_BYTES = 256
 MAX_HELPERS = 3
 
 
+@lru_cache(maxsize=64)
+def _alias_pattern(names):
+    return re.compile(r'\b(?:' + '|'.join(map(re.escape, names)) + r')\b')
+
+
 def rename(text, aliases):
-    clean = _blank(text)
-    for match in reversed(list(re.finditer(r'\b[A-Za-z_]\w*\b',clean))):
-        if match[0] in aliases:text = text[:match.start()]+aliases[match[0]]+text[match.end():]
-    return text
+    """Apply identifier aliases in one pass, retaining original comments, strings and whitespace."""
+    names = tuple(sorted(name for name, replacement in aliases.items()
+                         if name != replacement and re.fullmatch(r'[A-Za-z_]\w*', name)))
+    if not names:
+        return text
+    pattern = _alias_pattern(names)
+    if not pattern.search(text):
+        return text
+    parts = []
+    start = 0
+    for match in pattern.finditer(_blank(text)):
+        parts.extend((text[start:match.start()], aliases[match[0]]))
+        start = match.end()
+    if not parts:
+        return text
+    parts.append(text[start:])
+    return ''.join(parts)
 
 
 def comparable_overlay_code(candidate, target):

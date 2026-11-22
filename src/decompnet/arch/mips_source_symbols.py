@@ -1,9 +1,10 @@
 """Private address hypotheses only when every non-relocation instruction bit agrees."""
-from io import BytesIO
 
 from elftools.common.exceptions import ELFError
 from elftools.elf.elffile import ELFFile
 from elftools.elf.relocation import RelocationSection
+
+from ..candidate_work import elf as candidate_elf
 
 MAX_BYTES = 64 * 1024
 MAX_SYMBOLS = 64
@@ -28,7 +29,7 @@ def bindings(obj, name, target, vram, resolve):
     from ..elfobj import _function_symbols
     if not target or len(target) > MAX_BYTES or len(target) % 4 or vram is None:return []
     try:
-        elf = ELFFile(BytesIO(obj))
+        elf = candidate_elf(obj, ELFFile)
         if elf['e_machine'] != 'EM_MIPS' or elf.elfclass != 32:return []
         span = _function_symbols(elf).get(name)
         if not span:return []

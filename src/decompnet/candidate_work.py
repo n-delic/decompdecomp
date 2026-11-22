@@ -70,3 +70,13 @@ def remember(key, build):
         if len(value.memo) < 32:value.memo[key] = result
         return result
     return value.memo[key]
+
+
+
+def symbols(elf, table):
+    """Share a parsed symbol table for the lifetime of an immutable candidate ELF."""
+    work = current()
+    if work is None or not any(parsed is elf for parsed in work.objects.values()):
+        return table.iter_symbols()
+    key = ('elf-symbol-table', elf, table.name, table['sh_offset'])
+    return remember(key, lambda: tuple(table.iter_symbols()))

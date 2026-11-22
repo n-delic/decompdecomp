@@ -255,3 +255,42 @@ def test_a_replacement_recipe_can_reproduce_bytes_its_resident_profile_cannot(tm
     expected = {'toolchain': 'ido-7.1', 'flags': ['-G', '0', '-non_shared', '-O2']}
     assert code(replacement) == code(expected)
     assert code(settings.for_unit(unit)) != code(expected)
+
+
+def test_replacement_preprocesses_once_per_compiler_and_keeps_each_destination_name(tmp_path, monkeypatch):
+    from decompnet.app import donor_unit
+    from decompnet.compiler import CompilerConfig
+
+    path = tmp_path / 'replacement.c'
+    path.write_text('typedef int Word;\nWord donor(Word value) { return value; }\n')
+    calls = []
+
+    def preprocessor(cfg, source):
+        calls.append(cfg.cmd)
+        return source
+
+    monkeypatch.setattr(donor_unit, 'preprocess_donor_unit', preprocessor)
+    donor = {'name': 'donor', 'meta': None}
+    cache = {}
+    project = {'root': str(tmp_path)}
+    first = CompilerConfig(['cc', '-O2'])
+    second = CompilerConfig(['cc', '-O1'])
+
+    def source(name, config):
+        body, header = donor_unit.replacement(project, donor, name, config, path, cache)
+        assert 'typedef int Word;' in header
+        return body
+
+    assert 'Word alpha(Word value)' in source('alpha', first)
+    assert 'Word beta(Word value)' in source('beta', first)
+    assert 'Word gamma(Word value)' in source('gamma', second)
+    assert calls == [first.cmd, second.cmd]
+
+
+def test_donor_aliases_preserve_format_and_only_replace_complete_code_identifiers():
+    from decompnet.app.source_symbol_recovery import rename
+
+    source = 'f(foo, foobar, foo_2); /* foo */ char *s = "foo"; // f\n'
+    expected = 'foo(other, foobar, foo_2); /* foo */ char *s = "foo"; // f\n'
+    assert rename(source, {'f': 'foo', 'foo': 'other'}) == expected
+    assert rename(source, {'missing': 'other', 'foo': 'foo'}) == source
