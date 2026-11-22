@@ -14431,3 +14431,4 @@ local in both loop expressions. The target-guided dispatcher improved 266 to 146
 changing the 50-record buffer. Reordering the other loop's matrix/pointer/constant setup
 alone stayed at 266. Evidence is a measured improvement and synthetic guard tests. The
 function remains unmatched.
+In one N64 table cleanup built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a draft duplicated a local counter increment in the null and non-null branches of a `do` loop. Moving the increment into a `for` loop update reproduced the linked target exactly (score 370 to 0). The repair requires a positive constant bound, the measured branch difference, and a non-escaping counter that the call and macros cannot observe. Evidence: one saved example and synthetic generation and routing tests.
