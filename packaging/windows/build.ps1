@@ -22,6 +22,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "The MCP gateway build failed with exit code $LASTEXITCODE" }
         uv run --no-project --python 3.12 packaging/build_alignment.py
         if ($LASTEXITCODE -ne 0) { throw "The instruction alignment build failed with exit code $LASTEXITCODE" }
+        uv run --no-project --python 3.12 --with cython --with setuptools packaging/build_fastelf.py  # optional: skips itself without a C compiler
         uv build --wheel --out-dir $wheelDir | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "uv build failed with exit code $LASTEXITCODE" }
     }

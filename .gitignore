@@ -64,3 +64,4 @@ launch-dev.ps1
 !.claude/skills/*/scripts/**
 
 /src/decompnet/bin/decomp-alignment.*
+/src/decompnet/bin/decomp_fastelf.*

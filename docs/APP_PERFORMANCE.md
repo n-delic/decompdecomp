@@ -600,6 +600,17 @@ own mutable view. Local speculative depth starts at two, grows to four when all
 tickets were consumed, and shrinks toward one when feedback invalidates pending
 work. Cancelled/running work retains the original budget accounting.
 
+### Compiled-object symbol reads (Cython)
+
+A candidate's relocations ask for their symbols one at a time, and pyelftools parsed each through its generic struct
+machinery. `native/decomp_fastelf.pyx` decodes an ELF32 symbol table in one pass and `fastelf.py` serves pyelftools'
+own `get_symbol`/`iter_symbols` interface from it (same enum names, same errors for a missing symbol; ELF64 and
+unreadable streams keep pyelftools). `packaging/build_fastelf.py` builds it into `src/decompnet/bin/` when Cython and a
+C compiler are there, like the alignment library; without it nothing changes (`DECOMP_FAST_ELF=0` turns it off).
+On 50 KMC GCC 2.7.2 functions of about 109 instructions, the link took 1.33 ms before and 0.81 ms after, object
+extraction 1.22 ms and 0.67 ms; the link results (code, relocations, verdicts, problems) were identical with and
+without it. A compile of such a function takes about 20 ms, so this is a few percent of a trial.
+
 ### Incremental notification source cursors
 
 Each project's notification cursor now uses a covering `(project_id,id)` event
