@@ -16220,3 +16220,7 @@ with the donor's IDO 7.1 `-O1` profile. Both source/header/profile pairs were
 compiled again and saved by the destination app's exact judge. The similar
 donor search now tries the existing bounded optimization alternatives when a
 search encounters a compiled length mismatch.
+
+### KMC GCC 2.7.2 fixed-point vector blend staging
+
+A saved three-component MIPS blend built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` multiplied two signed halfword inputs by integer gains, added them, and biased negative sums before shifting. Staging each product and rounded shift and reusing the first gain after its last read changed the generated draft's linked difference score from 995 to an exact match. This is one saved example, not a controlled cross-compiler experiment. The candidate requires the complete source shape and six target multiplies and three arithmetic shifts; the judge still verifies every proposed match.

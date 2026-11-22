@@ -29,6 +29,7 @@ from decomprepair import (
     epsilon_predicate_order,
     field_copy_before_clear,
     field_snapshot_copies,
+    fixed_blend_staging,
     float_clamp_scale_stage,
     float_delta_load_order,
     float_intermediate_repairs,
@@ -537,6 +538,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     result += target_memory_schedule_diff_repairs.proposals(source,name,header,toolchain,rows,target,candidate,asm,
                                                              big_endian=big_endian,flags=flags)
     if toolchain.startswith('gcc-2.7.2-kmc'):
+        result += fixed_blend_staging.variants(source, name, rows, header=header)
         result += measured_storage_shapes.variants(source, name, header, rows, asm, big_endian=big_endian)
         result += masked_slot_dispatch.variants(source, name, asm or '', header,
                                                 read_data=read_data, big_endian=big_endian)
