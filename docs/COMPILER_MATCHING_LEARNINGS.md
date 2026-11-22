@@ -16996,3 +16996,45 @@ A... } else { v = t; } B... N: C...`. Every path of B ended in `goto N`, so B fa
   saved registers).
 - Library: `goto_nested_entry_else` in decomprepair 0.5.580 (`goto_structure_repairs`), offered by the draft repairs and
   the deep pass (it is in `AGENT_FAMILIES`); `tests/test_goto_nested_entry_else.py`.
+
+### KMC GCC 2.7.2: an N64 effect spawner, 1397 to 0 in six edits (decomprepair 0.5.581, 0.5.582)
+
+A 374-instruction N64 effect spawner (`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, eleven parameters, a switch over seven
+kinds, a string length kept across calls) stood at 1397 after hundreds of attempts. The saved best was almost the target:
+two missing sign-extension instructions, a case shape, a spill slot eight bytes off, two swapped stores, the table loads
+in another order and one register. Controlled result on one function (the exact judge in-process, no permuter run); the
+compiler explanations below are hypotheses from `cc1 -dg` dumps and the judge's rows, not confirmed in the compiler source.
+
+Edit list (score after each, from the saved best; "alone" is the edit applied to the saved best by itself):
+
+| step | edit | alone | cumulative | what it changes |
+| --- | --- | --- | --- | --- |
+| 1 | the union `{ s32 *pointer; s32 value; } phase` written as two locals | 1458 (worse) | 1458 | the layout constant was one pseudo with the pointer argument, so it sat in `$s0` for the whole function; its own pseudo takes `$a1` |
+| 2 | the signed byte test `((s8) flag) == 0 ... != 0` computed once into an `s32` local | 1403 (worse) | 1223 | the two tests folded to `lbu` and a branch each; one sign-extended value is `lbu; sll 24; sra 24` once (two instructions the target has, and every later branch offset moves by 8 bytes) |
+| 3 | the inner arm `if (flip != 1) { rec->b = 0; } else { goto L33; }` as `{ goto L34; }` (`L34: rec->b = 0;`) | 1158 | 392 | the arm becomes the target's `bnel ...; sb` (a likely branch whose slot is the label's store) instead of `beql` plus a copied store behind a `j` |
+| 4 | `p = &table[row][col]; *p += 1;` as `table[row][col] += 1;`, and the inline helper that reads `col` expanded at both uses | 1197 / 657 (the helper alone is worse) | 22 | the row's `sll/subu` chain and the column load in the target's order; the helper's scope moved the column load ahead |
+| 5 | `0x3C` and `0x28` stores to the record swapped | 1377 | 2 | the first scheduler keeps the order of stores that cannot alias |
+| 6 | the string length `u16 sp14E;` declared in the one block that uses it, not at the top of the function | 1395 | 0 | its spill slot moves from `0x146($sp)` to `0x14e($sp)` |
+
+- What the six have in common: five of them are one-line changes the compiler sees as a different statement order or
+  scope, and none of them changes what the function computes. Steps 1 and 2 are each a loss alone, and 4's two halves are
+  a gain and a loss, so a search that keeps only improvements needs them as pairs (the library offers 1+2 and 4 as one
+  child each).
+- Spill slots (step 6): in `-dg` every spilled pseudo takes an eight-byte slot, numbered by pseudo number, and pseudos
+  are numbered in the order their declarations are expanded (a function-level declaration at the start, a block-level
+  one when the block is entered). The target had one more eight-byte slot ahead of the length than the candidate. A
+  pseudo that cse folds away (step 2's sign-extended copy) still counts as a reference, so it reserves its slot. Declaring
+  the length after it (inside the block) put the slot where the target has it. Failed on the way, each leaving the score
+  at 2: an unused or dead `u16` declared before the length, a `u64`/`s64` length (4993), narrowing helpers
+  (`x = (unsigned)x << 16 >> 16`), an explicit 16-byte alignment attribute, the phantom `long long` the earlier agents had
+  left in the draft. The slot is a numbering fact, not padding, so a padding array moves the wrong slots.
+- Replay from the saved best with the library's families alone, greedy by the exact judge: `element_update_shape` 1397 to
+  1027, `arm_label_share` 788, `phase_storage_split_narrow_share` 22, `allocation_lever` (the field-store swap) 2,
+  `declaration_scope_sink` 0. The pure improvements come first because they score lower; 1 and 2 only land as the pair.
+- Library: decomprepair 0.5.581 (`arm_label_share`, `element_pointer_compound`, `index_helper_unwrap`,
+  `element_update_shape`, `narrow_test_share`, `phase_storage_split`, `phase_storage_split_narrow_share`,
+  `declaration_scope_sink`, and the field-store swap in `allocation_lever`) and 0.5.582 (`field_store_swaps`, so the Deep
+  Permuter's local lane can offer the swap without the operand swaps every function has). They are in the draft
+  repairs, the beam (`draft_repairs.variants`) and `deep_permuter._local_proposals`, and in `AGENT_FAMILIES`;
+  `tests/test_effect_spawner_families.py` checks all three. Not covered: the declaration moves only into a block that holds
+  every reference, and the label share only for sibling arms of one `if`.
