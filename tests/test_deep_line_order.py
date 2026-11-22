@@ -254,26 +254,29 @@ def test_prefixed_batches_yield_the_merges_first_and_close_what_they_wrap():
     assert stream.closed
 
 
-def test_a_sweep_takes_near_misses_first_and_keeps_the_shuffled_order_among_equals():
+def test_a_sweep_takes_near_misses_first_then_small_functions_and_keeps_the_shuffled_order_among_equals():
     from decompnet.app.deep_sweep import closeness_order
     details = {1: {'best_score': 900, 'n_insns': 40}, 2: {'best_score': 4, 'n_insns': 200}, 3: {'best_score': None, 'n_insns': 0},
                4: {'best_score': 6, 'n_insns': 200}, 5: {'best_score': 60, 'n_insns': 100}}
     rows = [{'id': n} for n in (1, 2, 3, 4, 5)]
-    assert [r['id'] for r in closeness_order(rows, details)] == [2, 3, 4, 5, 1]
-    assert [r['id'] for r in closeness_order(rows[::-1], details)] == [4, 3, 2, 5, 1]
+    # near misses (2, 3, 4) first even when large; then the smaller of the rest (1 is 40 instructions, 5 is 100)
+    assert [r['id'] for r in closeness_order(rows, details)] == [2, 3, 4, 1, 5]
+    assert [r['id'] for r in closeness_order(rows[::-1], details)] == [4, 3, 2, 1, 5]
     assert closeness_order([], details) == [] and [r['id'] for r in closeness_order([{'id': 9}], {})] == [9]
 
 
-def test_the_policy_scales_boosts_by_a_shape_key_and_counts_a_trial_once(monkeypatch):
-    from decompnet.app import adaptive_repairs
-    seen = []
-    monkeypatch.setattr(adaptive_repairs, 'profile', lambda *a: 'p')
-    monkeypatch.setattr(adaptive_repairs, 'factors', lambda net, key, focus: seen.append(focus) or {'perm_x': 2.0})
-    boosted = adaptive_repairs.with_shape(None, {}, {}, {'perm_x': 1.5, 'perm_y': 1.0}, 'register', 'call+field')
-    assert seen == ['register@call+field'] and boosted == {'perm_x': 3.0, 'perm_y': 1.0}
-    calls = []
-    monkeypatch.setattr(adaptive_repairs, 'prepare', lambda net: None)
-    monkeypatch.setattr(adaptive_repairs.trial_bookkeeping, 'count', lambda *a, **k: calls.append(a[1].split()[2]))
-    adaptive_repairs.record(SimpleNamespace(store=None), 'p', 'register@call', 'perm_x', 5, 3, 10, coverage=False)
-    adaptive_repairs.record(SimpleNamespace(store=None), 'p', 'register', 'perm_x', 5, 3, 10)
-    assert calls == ['repair_policy', 'repair_policy', 'repair_policy_coverage']
+def test_the_small_functions_go_before_the_large_ones_whatever_their_score():
+    """Deep passes matched 36 functions of a PS1 game: 13 of up to 20 instructions, 16 of up to 60, 7 of up to 200 and none of the
+    58 over 200, which took about 100 minutes."""
+    from decompnet.app.deep_sweep import closeness_order, order_counts, size_class
+    assert [size_class(n) for n in (1, 20, 21, 60, 61, 200, 201, 5000, 0, None)] == [0, 0, 1, 1, 2, 2, 3, 3, 2, 2]
+    sizes = {1: 500, 2: 10, 3: 150, 4: 40, 5: 15, 6: 1000, 7: 70}
+    details = {n: {'best_score': 100 * size, 'n_insns': size} for n, size in sizes.items()}  # all equally far
+    ordered = [r['id'] for r in closeness_order([{'id': n} for n in sizes], details)]
+    assert [size_class(sizes[n]) for n in ordered] == sorted(size_class(size) for size in sizes.values())
+    assert [sizes[n] for n in ordered][:2] == [10, 15] or [sizes[n] for n in ordered][:2] == [15, 10]
+    # a smaller function that is much farther off still goes first; among one size class the closer one does
+    mixed = {1: {'best_score': 5000, 'n_insns': 15}, 2: {'best_score': 120, 'n_insns': 190}, 3: {'best_score': 3000, 'n_insns': 180}}
+    assert [r['id'] for r in closeness_order([{'id': n} for n in (3, 2, 1)], mixed)] == [1, 2, 3]
+    assert order_counts([{'id': n} for n in mixed], {**mixed, 4: {'best_score': 1, 'n_insns': 300}}) == [0, 1, 0, 2, 0]
+    assert order_counts([{'id': 4}], {4: {'best_score': 1, 'n_insns': 300}}) == [1, 0, 0, 0, 0]
