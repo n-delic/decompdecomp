@@ -1501,6 +1501,8 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         Leave a brief handoff only if you learned something. Released before that (fewer compiles than
         the move-on rule), it answers once with what to try instead; call it again to release anyway. A release with
         no compile since you claimed it is not taken, however often you ask: compile first, or end your session.
+        After the 45-minute hand-off clock (45 minutes on the claim and since your last improvement) and an add_note
+        hand-off, the release goes through whatever the compile count says.
 
         Args:
             function: the function you hold
