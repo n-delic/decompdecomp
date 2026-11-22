@@ -95,3 +95,25 @@ What changed:
   had only two compile slots, so deeper windows could not help). With no slot count set, a maximum pass gives each
   lane `max(4, ceil(4 * cores / lanes))` slots, sizes the pool at two slots per core and, with no function count
   set, runs one and a half lanes per core. A number set in the form is still respected.
+
+## SQLite readers in a lane
+
+Sampling a running 32-lane pass (8.5 CPU-seconds of one lane in 10 s) put SQLite at 17% of the lane, and under it
+`sqlite3Init` / `sqlite3InitOne` (parsing the whole database schema) at about a fifth of all lane CPU. A new reading
+connection parses the schema before its first query: 2.2 ms for a new reader against 0.003 ms for the same query on
+a kept one. `Store` kept eight idle readers and closed the rest, and a lane with many compile threads went past
+eight at once all the time, so it opened and closed connections continuously. It now keeps 64 (`READERS_KEPT`) and
+every connection keeps 512 prepared statements (`STATEMENT_CACHE`, Python's default is 128).
+
+## Tried and not adopted
+
+- **RAM disk with `.fseventsd/no_log` for compiler scratch (macOS).** `fseventsd` used 168% CPU on the running pass
+  and the idea was that a volume that is not logged and not indexed would remove it. Measured with six processes
+  creating and deleting files for 8 s: `fseventsd` used the same CPU on the RAM disk as on an ordinary folder, even after
+  remounting with the marker in place, and still delivered events to a watcher. `no_log` stops the history it writes,
+  not the work of receiving the events.
+- **Piping cpp, cc1 and as into each other** (no `func.i` / `func.s`, the three programs running together). The object
+  is byte-identical (KMC GCC 2.7.2) and wall time per compile is lower on an idle machine, but the one-command form
+  needs `bash`, whose start-up cost 4.5 ms of CPU per compile: 12.4 ms of child CPU per compile against 7.9 ms, and the
+  machine was out of CPU, not wall time. A pipeline started from Python without a shell would avoid that but has to
+  carry the watchdog, process tracking and cancellation for three processes.

@@ -334,3 +334,33 @@ def test_queued_writers_wait_in_the_process_without_polling_the_file_lock(tmp_pa
         assert result == [False]
     for writer in writers:writer.join(timeout=3)
     assert sorted(done) == [(0, True), (1, True), (2, True)]
+
+
+def test_a_second_burst_of_readers_reuses_the_connections_the_first_one_kept(tmp_path, monkeypatch):
+    """A new reading connection parses the whole schema (2 ms against 3 microseconds for a kept one), and a deep-search
+    lane with many compile threads went past the old eight-connection pool all the time."""
+    from decompnet import store as store_module
+    store = Store(tmp_path/'burst.db')
+    opened = []
+    real = store_module._ThreadReader
+    monkeypatch.setattr(store_module, '_ThreadReader', lambda *args: opened.append(1) or real(*args))
+    threads = 24
+    assert store_module.READERS_KEPT >= threads
+    def burst():
+        gate = threading.Barrier(threads)
+        def together():
+            conn = store._reader()
+            gate.wait(timeout=5)
+            store._release_reader()
+            return conn
+        with ThreadPoolExecutor(threads) as pool:
+            return list(pool.map(lambda _:together(), range(threads)))
+    try:
+        burst()
+        first = len(opened)
+        assert first == threads and len(store._readers) == threads
+        burst()
+        assert len(opened) == first  # nothing new was opened, so no schema was parsed again
+    finally:
+        store.close_readers()
+        store.conn.close()
