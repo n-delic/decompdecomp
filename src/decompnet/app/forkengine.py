@@ -3816,6 +3816,10 @@ class ForkEngine:
         original="/* machine draft (m2c), tried by autopilot */\n" + drafts.self_contained(text, span, current)
         for _,candidate in carrier_drafts(narrow_drafts([('raw_m2c',original)],meta.get('symbol') or fn['name'],self._known(fp,unit),proj['arch']),meta.get('symbol') or fn['name'],self._known(fp,unit),proj['arch']):
             yield "",candidate
+        from . import draft_cleanup
+        if draft_cleanup.enabled(cfg):
+            for _, source in draft_cleanup.cleaned(original, meta.get('symbol') or fn['name'], proj['arch'], '', self._known(fp, unit)):
+                yield "", source
         if report is not None and not report.get('compiled'):
             from .. import seeds
             from . import initial_draft_repairs

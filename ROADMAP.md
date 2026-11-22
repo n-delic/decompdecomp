@@ -820,6 +820,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Called framed recovery inside dropped raw text | ✓ | ✓ | ✓ scalar MIPS | — | — | ✓ scalar MIPS | — | — build-owned adapter planned | — reader/build adapter planned | — | — ARM/build adapter planned | — own-build adapter planned |
 | Judge | link · compare | link · compare | link · compare | link · compare | objdiff | link · compare | link · compare | objdiff | objdiff | objdiff | objdiff | objdiff |
 | Machine drafts (m2c, Ghidra for x86) | ✓ | ✓ | ✓ | — | ✓ Ghidra | ✓ | ✓ (m2c `gba-gcc-c`) | ✓ | ✓ Ghidra | ✓ Ghidra | — (no assembly to read) | by architecture |
+| Draft cleanup stage (record views, gbi macros) | ✓ | ✓ m2c path | ✓ m2c path | — | — Ghidra drafts planned | ✓ m2c path | ✓ m2c path | ✓ m2c path | — Ghidra drafts planned | — Ghidra drafts planned | — (no assembly to read) | m2c drafts |
 | Compile-tested draft refresh and saved diagnostics | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ m2c | ✓ Ghidra | — | — draft generator planned | ✓ supported draft generators |
 | Initial callback, forwarded-argument and overlapping-frame recovery | ✓ bounded MIPS | ✓ bounded MIPS | ✓ bounded MIPS | — | — | ✓ bounded MIPS | — | — processor reader planned | — processor reader planned | — | — processor reader planned | ✓ MIPS C; other readers planned |
 | Autopilot: free matches from drafts | ✓ | ✓ | ✓ | twins only | — | ✓ | ✓ (demo: 34 matches) | ✓ | ✓ exact drafts of tiny shapes (32-bit); Ghidra's made compilable | ✓ as PC | twins only (no drafts yet) | — |
@@ -1158,6 +1159,12 @@ judge-worker` processes) runs for ROM projects, whose functions carry target byt
 mode (GameCube/Wii/PC/DS) has no standalone exact judge yet: objdiff judges there, so the pass is skipped. Planned: a
 judge worker for project-mode units, then the same pass. It found nothing on the first function it was built for
 (docs/COMPILER_MATCHING_LEARNINGS.md); a register-allocation-priority search is the next step for that kind of diff.
+
+### Draft cleanups for Ghidra drafts
+
+Machine drafts from m2c get cleaned copies judged beside them (`app/draft_cleanup.py`, measured in
+docs/learnings/finding/draft-cleanup-measurement.md). Consoles that draft with Ghidra (`Console.own_drafts`) return
+before that stage; the same record-view rewrite should be measured on their drafts and wired in where it helps.
 
 ## Recently done
 
