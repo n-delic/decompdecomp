@@ -895,3 +895,12 @@ def test_forwarded_pointer_hypothesis_reaches_kmc_proposals(monkeypatch):
     rows = [('r', 'lhu $a2, 0x8a($a0)', 'lhu $v0, 0x8a($a0)')]
     assert ('forward_entry_pointer_hypothesis', 'fixed') in route('void f(void) {}', rows, 'asm')
     assert 'forward_entry_pointer_hypothesis' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
+
+
+def test_hoisted_word_read_reaches_kmc_proposals(monkeypatch):
+    from decomprepair import relocated_global_update
+
+    monkeypatch.setattr(relocated_global_update, 'rewrite_hoisted_word_read', lambda *args: 'direct word')
+    rows = [('r', 'lw $v0, %lo(value)($v0)', 'lw $v0, ($t0)')]
+    assert ('relocated_hoisted_word_read', 'direct word') in route('void f(void) {}', rows, 'asm')
+    assert 'relocated_hoisted_word_read' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
