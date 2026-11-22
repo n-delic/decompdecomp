@@ -15940,3 +15940,7 @@ A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` ini
 ### KMC GCC 2.7.2 record pointer update
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` stored a new pointer in a record, read it back and copied one of its fields before restoring state. Its machine draft read the old pointer before replacing it. Reordering the record writes and pointer read changed the diff score from 215 to an exact linked match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the observed load and store order, field offsets and generated record shape; the judge verifies the candidate.
+
+### KMC GCC 2.7.2 two-list allocation
+
+A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` selected a free entry from two lists or scanned a third list, using one cursor and one shared result. Its machine draft passed an extra unlink argument, wrote the output after unlinking and used separate cursor and result paths. Restoring the single-argument call, write order and shared control flow changed the diff score from 225 to an exact linked match; the call correction alone scored 135. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the observed instructions and source shape and declines a conflicting unlink declaration.
