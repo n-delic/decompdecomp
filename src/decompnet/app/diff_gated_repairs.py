@@ -154,6 +154,7 @@ from decomprepair import (
     measured_nibble_tables,
     measured_null_iteration_store,
     measured_packing_stage,
+    measured_parameter_clock_load,
     measured_pointer_displacement,
     measured_pointer_scale,
     measured_record_byte_offset,
@@ -519,6 +520,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += guard_reset_scheduling.variants(source, name, header, rows)
         result += global_pointer_local_repairs.scoped_field_reads(source, name, rows)
         result += measured_global_rebase.variants(source, name, header, rows, resolve=resolve)
+        result += measured_parameter_clock_load.variants(source, name, header, rows)
         result += measured_byte_search_loop.variants(source, name, header, rows)
         result += measured_indexed_mode_tail.variants(source, name, header, rows)
         result += measured_byte_fallback_return.variants(source, name, header, rows)
