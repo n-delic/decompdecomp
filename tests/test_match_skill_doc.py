@@ -65,5 +65,5 @@ def test_the_skill_says_when_to_add_a_shared_type_and_that_the_app_checks_it():
 
 def test_the_skill_documents_the_mcp_caller_and_the_session_environment():
     text = (SKILL / "SKILL.md").read_text()
-    assert "mcp.py <holder> --list" in text and "do not write your own MCP caller" in " ".join(text.lower().split())
+    assert "mcp.py <holder> --list" in text and "do not write your own mcp caller" in " ".join(text.lower().split())
     assert "setup.py env <holder>" in text and (SKILL / "scripts" / "mcp.py").exists()
