@@ -14824,3 +14824,20 @@ bits and candidate's opposing load order.
 ### Return a found node from a simple list walk
 
 In two private N64 list searches built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the draft copied the current node into a separate result before comparing its key, then cleared the result on a miss. Reconstructing a `while` loop that returns the node directly on a match reproduced both linked targets exactly (score 265 to 0 each). The existing search-loop rewrite now also recognizes this standalone copy, checks the plain field accesses and sees header macros before proposing it. Evidence: two saved functions and synthetic generation and routing tests.
+
+### Reuse an earlier saved float for a paired projection
+
+In a private N64 function built with GCC 2.7.2 KMC and
+`-G0 -mips3 -mgp32 -mfp32 -O2`, the target reused a saved float register
+for a field load consumed by two projection calls. Both builds already
+agreed on an earlier lifetime that loaded a different field into the
+same saved register and subtracted the field from a global. The draft
+held the later projection scale in a different saved register.
+
+Reusing the completed earlier C local for the later field load and
+both projection products moved the exact linked score from 7,960 to
+7,810, preserving all three jump-table relocations and compiling
+without warnings. Delaying the second projection's addition alone
+scored 7,960. Reusing the local for an additional smoothing scale
+regressed to 8,535. Tests bind the prior load and subtraction, both
+calls, both offsets and disjoint lifetimes.
