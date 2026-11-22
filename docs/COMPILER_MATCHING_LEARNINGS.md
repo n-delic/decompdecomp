@@ -13301,3 +13301,4 @@ returns and express the halfword address as a shifted index plus the
 base. On a retail N64 function the linked score went from 968 to 0;
 the old dispatcher produced no candidate and the new rule produced one
 byte-exact candidate.
+On that same function, deriving the defined zero from the already loaded count as `(unsigned short) count ^ ((unsigned int) count & 0xFFFF)` improved the scoped seed from 85 to 75. Both expressions have the same low 16 bits, so their XOR is zero; the generated child retains the existing load and adds no pointer read. Direct self-XOR, self-subtraction and masking by zero all stayed at 85. The exact judge reports 15 remaining register differences; this is one function, not a match. decomp-repair 0.5.339 offers the identity only for the guarded stable-local shape, with synthetic generation and safety tests.

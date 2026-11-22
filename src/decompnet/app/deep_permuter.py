@@ -521,6 +521,8 @@ class Search(Permuter):
                     # list function stuck at 60 under every source order matched once split, only with its call's
                     # global hoisted first, so the proposals are the pair, not two steps a beam would drop
                     ('decomprepair.scheduling_scope.variants', (parent, fn['name'], proj['arch'])),
+                    # Keep an initialized zero distinct through allocation (decomp-repair 0.5.339).
+                    ('decomprepair.zero_conversion_scope.variants', (parent, fn['name'], proj['arch'])),
                     # a guard body's constant initializer hoisted before the guard in its own one-shot scope, with
                     # the copies that preceded the guard sunk into the body (decomp-repair 0.5.284): 10 -> 0 as one
                     # child, 60 and 120 as its halves
