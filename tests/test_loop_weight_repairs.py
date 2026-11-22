@@ -130,3 +130,18 @@ def test_quotient_scope_preserves_existing_line_breaks():
     source='int f(int n)\n{\n  int value;\n  value=n/3;\n  return value;\n}\n'
     expected=source.replace('  value=n/3;','  /*__repair_loop_weight*/do {\n  value=n/3;\n  } while (0);')
     assert expected in [text for _,text in loop_weight_repairs.variants(source,'f')]
+
+
+def test_macro_scope_and_flag_table_families_reach_the_draft_search():
+    source = ('#define FLIP(p) do { *(p) = -*(p); return 1; } while (0)\n'
+              's32 f(f32 *a, s32 c, s8 x, s8 y) {\n'
+              '    if (c == 1) {\n        FLIP(a);\n    }\n'
+              '    if ((x != 0) & (y == 0)) {\n        return 2;\n    }\n'
+              '    if ((x == 0) & (y != 0)) {\n        return 3;\n    }\n'
+              '    return 0;\n}\n')
+    labels = {}
+    texts = draft_repairs.variants(source, 'f', 'mips', labels=labels, limit=400)
+    found = {labels.get(t) for t in texts}
+    assert {'macro_one_shot_unwrap', 'condition_table_anchor'} <= found
+    for family in ('macro_one_shot_unwrap', 'macro_one_shot_rewrap', 'condition_table_order', 'condition_table_anchor', 'compare_operand_stage'):
+        assert family in draft_repairs.AGENT_FAMILIES
