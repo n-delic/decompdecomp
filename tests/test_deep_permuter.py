@@ -1141,6 +1141,27 @@ def test_loop_vector_shape_pass_offers_comparison_scope_with_volatile_load(monke
     assert any('do { present = (short) (zero < count); } while (0);' in c for c in seen)
 
 
+def test_loop_vector_shape_pass_offers_known_zero_conversion(monkeypatch):
+    net = setup(monkeypatch)
+    source = ("int f(void) { volatile int *p;\nlong value;\nint zero;\nint present;\n"
+              "do { value = *p; zero = 0; do { present = (short) (zero < value); } while (0); } while (0); "
+              "return present; }")
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_score=85,best_source=? WHERE name='f'", (source,))
+    fn, proj = net.function(), net.project_row('game')
+    search = deep_permuter.Search(net, 1, 30, Log(), fn)
+    seen = []
+
+    def score(agent, proj, fn, candidate, best, fork):
+        seen.append(candidate)
+        search.tested += 1
+        return 75 if '(unsigned short) value ^ ((unsigned int) value & 0xFFFF)' in candidate else 85
+
+    monkeypatch.setattr(search, '_score', score)
+    assert search.loop_vector_shape_pass(AGENT, proj, dict(fn, best_source=source, name='f'), 85, None) == 75
+    assert any('(unsigned short) value ^ ((unsigned int) value & 0xFFFF)' in c for c in seen)
+
+
 def test_loop_vector_shape_pass_reaches_the_guard_initializer_scope_that_matched_a_timer_loop(monkeypatch):
     """A guard's `i = 0;` hoisted before it in a one-shot scope, the copy before the guard sunk: 10 -> 0 in one child."""
     net = setup(monkeypatch)
