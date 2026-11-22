@@ -16052,6 +16052,23 @@ Two saved MIPS examples built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` 
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` checked three signature bytes. The generated draft's combined condition used different registers and a shared result copy. Staging the input bytes and comparison constants in word locals changed the linked difference score from 250 to an exact match while retaining the integer return type. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the complete source, measured instructions and constants, and resolved addresses for all three byte loads.
 
+### Inline a staged global-backed float capture and reschedule its stores
+
+A private N64 function built with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` read an external float
+before its actor field when both were passed through an inline sum
+helper. The target read the field first. Expressing that capture as
+direct arithmetic and bringing an independent store forward reduced
+the linked score from 855 to 780. Also inlining the terminal union-backed
+capture and transposing two earlier stores from the target order brought
+the score to 675. The original frame, all three jump tables and 3,034
+instructions were retained. This is measured evidence from one function.
+
+Inlining the global capture alone added a delay-slot nop and lost a
+jump-table binding. The trial checks the crossed global and field loads
+and reordered stores on the same base. Every capture remains ahead of
+distinct aligned stores, and the judge must verify the resulting bytes.
+
 ### Scope an accumulator initializer before a setup call
 
 A private N64 function built with
