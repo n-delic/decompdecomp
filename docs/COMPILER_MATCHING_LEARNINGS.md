@@ -13025,3 +13025,11 @@ With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the linked score
 improved from 250 to an exact match. This is one observed match; tests cover
 instruction evidence and ensure the counter is neither escaped nor used on
 the path where initialization is omitted.
+
+### Stage a volatile table base before index scaling (KMC GCC 2.7.2)
+
+With `-G0 -mips3 -mgp32 -mfp32 -O2`, a retail N64 draft scheduled the
+first shift of a 12-byte stride before a relocated volatile pointer load.
+Read the pointer into a local before calculating the byte offset. The
+linked judge went from 60 to 0. The previous dispatcher produced no
+candidate, and the new rewrite produced one byte-exact candidate.
