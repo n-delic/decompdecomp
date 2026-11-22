@@ -1406,6 +1406,11 @@ details.more[open] > summary::before { content: "− "; }
 .compiler-profile { border: 1px solid var(--line); border-radius: 6px; margin: 10px 0; }
 .compiler-profile > summary { padding: 12px; cursor: pointer; }
 .compiler-profile-count { display: block; font-size: 12px; color: var(--muted); margin-top: 6px; }
+.compiler-flag-tip { position: fixed; z-index: 1000; max-width: min(380px, calc(100vw - 16px)); padding: 10px 12px; background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--pop); font-size: 12px; line-height: 1.5; pointer-events: none; }
+.compiler-flag-tip[hidden] { display: none; }
+.compiler-flag-tip b { font-family: var(--mono); }
+.compiler-flag-tip p { margin: 4px 0 0; }
+.compiler-flag-tip-label { display: block; margin-top: 8px; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
 .compiler-flag { cursor: help; border-bottom: 1px dotted var(--muted); }
 .compiler-flag:hover, .compiler-flag:focus-visible { color: var(--fg, inherit); border-bottom-style: solid; }
 .compiler-arguments { display: block; white-space: normal; overflow-wrap: anywhere; font-size: 12px; line-height: 1.6; margin-top: 5px; color: var(--muted); background: transparent; }
