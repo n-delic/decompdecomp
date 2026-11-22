@@ -17077,3 +17077,28 @@ Edit list (score after each, from the saved best; "alone" is the edit applied to
   `deep_permuter._local_proposals` and `AGENT_FAMILIES`; `tests/test_narrow_param_clamp_wiring.py` checks all three. Not
   covered: the cast shape only for `>> 16`, the narrowing only for a parameter read through masks of at most a byte (or
   passed whole to a static helper that masks it), and the flag only for the three-arm clamp whose sign test is `x < 0`.
+
+## Scoring: a different program costs more than a different schedule (`scoring.PENALTY_MEANING`, score version 2)
+
+Evidence level: measured on one N64 game's history (KMC GCC 2.7.2), every attempt recompiled with the app's judge
+in a scratch copy of the project, read only; no saved state changed.
+
+Operand differences cost 10, below one reorder (60), so a source with a wrong store offset, constant, global or call
+outranked correct sources one reorder away. Now a paired instruction whose offset, constant, symbol or call differs
+costs 150 when the other side has no such instruction anywhere (registers set aside); stores in another order,
+branch targets, spill slots and register differences keep their old costs. Matches are untouched (score 0 is bytes).
+
+- The display-list function (318 instructions): its saved best 1825 (writes c+0x20 twice) is 2525 now. Correct
+  one-edit variants of the matched source: a wrong constant or a wrong field 10 -> 150; the OR orders that keep the
+  program 690 -> 690, 3160 -> 4140 (another association builds other intermediate constants: an honest limit, the
+  scorer can't prove two constants equivalent), 6875 -> 7575; the u16/volatile globals 400 -> 400. Its whole
+  history (152 compiled states) came from the broken chain, so none overtakes the 1825 state: the fix for that
+  function is starting again from m2c's draft, not the score.
+- 61 matched functions, 1,020 recompiled history states: ordering of states by score against their token distance to
+  the final match, mean per-function Kendall tau 0.426 (10) / 0.443 (60) / 0.441 (100) / 0.440 (150) / 0.433 (200) /
+  0.420 (300) / 0.394 (500). Near the match (old score <= 1000), pairs where a state with a meaning row outranked one
+  without: 185/901 (10), 110 (60), 85 (150), 50 (200), 27 (300). 150 keeps the ranking of real progress as good as
+  60-100 while halving those inversions; above 200 the ranking of the history degrades.
+- First version paired rows by opcode only: two stores in another order then cost 150 each and correct but
+  reordered states lost (the display-list history went from 10 to 24 "meaning" rows). Charging only instructions the
+  other side lacks fixed that.

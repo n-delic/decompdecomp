@@ -1,6 +1,7 @@
 """Bounded shared proposal batches, generated outside the app interpreter."""
 import hashlib
 import json
+import logging
 import os
 import queue
 import signal
@@ -9,7 +10,7 @@ import sys
 import threading
 import time
 import weakref
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from concurrent.futures import TimeoutError
 from pathlib import Path
 
@@ -19,18 +20,43 @@ from ..network import NetworkError
 from .purpose_work import Executor
 
 MAX_CACHE = 32*1024*1024
+RETRIES = 2  # a request whose worker died is asked again of a fresh one this many times before the pass fails
+log = logging.getLogger('decompdecomp')
+
+
+class WorkerStopped(NetworkError):
+    """The generator process ended while a request was in flight (killed, crashed, replaced). Generation is pure, so
+    the request may be asked again of a fresh worker."""
 
 
 class Worker:
     def __init__(self):
         self.process = subprocess.Popen(limits.capped([sys.executable,str(Path(__file__).with_name('deep_proposal_worker.py'))],memory=2<<30),
-            stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,creationflags=NO_WINDOW,
+            stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,creationflags=NO_WINDOW,
             env={**os.environ,'DECOMP_PROPOSAL_WORKER':'1'},
             start_new_session=os.name!='nt')
         self.lines = queue.Queue(maxsize=1)
         self.closed = threading.Event()
+        self.errors = deque(maxlen=30)  # the worker's last words, for when it stops unexpectedly
         self.reader = threading.Thread(target=self.read,daemon=True,name='deep-proposal-output')
         self.reader.start()
+        threading.Thread(target=self.drain,daemon=True,name='deep-proposal-errors').start()
+
+    def drain(self):
+        try:
+            for line in self.process.stderr:
+                self.errors.append(line.decode(errors='replace').rstrip())
+        except (OSError,ValueError):pass
+
+    def how_it_ended(self):
+        """`exit status 1` / `killed by signal 9` with the worker's last stderr lines, for the log and the error."""
+        try:code=self.process.wait(timeout=1)
+        except subprocess.TimeoutExpired:code=None
+        if code is None:what='did not exit'
+        elif code<0:what=f'killed by signal {-code}'
+        else:what=f'exit status {code}'
+        last=' | '.join(list(self.errors)[-5:])
+        return what+(f'; last output: {last}' if last else '')
 
     def read(self):
         try:
@@ -76,6 +102,10 @@ class Worker:
             while True:
                 check()
                 if write_errors:
+                    if isinstance(write_errors[0],(BrokenPipeError,ConnectionError)) and not self.closed.is_set():
+                        how=self.how_it_ended()  # it ended before reading the request
+                        log.warning('Proposal worker %s stopped before reading a request (%s)',self.process.pid,how)
+                        raise WorkerStopped(f'Local proposal generator stopped ({how.split(";")[0]}). Retry the repair.')
                     raise write_errors[0]
                 try:
                     line = self.lines.get(timeout=.05)
@@ -88,7 +118,10 @@ class Worker:
                     continue
                 break
             if line is None:
-                raise NetworkError('Local proposal generator stopped. Retry the repair.')
+                if self.closed.is_set():raise NetworkError('Local proposal generator stopped. Retry the repair.')
+                how=self.how_it_ended()
+                log.warning('Proposal worker %s stopped during a request (%s)',self.process.pid,how)
+                raise WorkerStopped(f'Local proposal generator stopped ({how.split(";")[0]}). Retry the repair.')
             result = json.loads(line)
             if 'error' in result:
                 raise NetworkError('Local proposal generation failed: '+result['error'])
@@ -111,7 +144,7 @@ class Worker:
             except PermissionError:pass  # (macOS: it exited since poll, a zombie group; stop_process_tree follows)
         stop_process_tree(self.process)
         self.reader.join(timeout=2)
-        for stream in (self.process.stdin,self.process.stdout):
+        for stream in (self.process.stdin,self.process.stdout,self.process.stderr):
             try:stream.close()
             except OSError:pass
 
@@ -135,18 +168,22 @@ class Pool:
     def work(self, request, check):
         with self.lock:self.running += 1
         try:
-            worker = getattr(self.local,'worker',None)
-            if worker is None or worker.closed.is_set():
-                worker = self.local.worker = Worker()
-                with self.lock:
-                    self.workers = [w for w in self.workers if not w.closed.is_set()]+[worker]
             def checkpoint():
                 from .purpose_work import checkpoint as check_owner
                 check_owner()
                 if self.stop.is_set():raise RuntimeError('Proposal generation stopped')
                 check()
-            result = worker.run(request,checkpoint)
-            return result
+            for attempt in range(RETRIES+1):
+                worker = getattr(self.local,'worker',None)
+                if worker is None or worker.closed.is_set():
+                    worker = self.local.worker = Worker()
+                    with self.lock:
+                        self.workers = [w for w in self.workers if not w.closed.is_set()]+[worker]
+                try:
+                    return worker.run(request,checkpoint)
+                except WorkerStopped:  # (run closed it: the next try starts a fresh one)
+                    if attempt == RETRIES:raise
+                    log.info('Asking a fresh proposal worker again (attempt %d of %d)',attempt+2,RETRIES+1)
         finally:
             with self.lock:self.running -= 1
 
