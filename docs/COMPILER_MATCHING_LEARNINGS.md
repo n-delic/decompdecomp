@@ -15862,3 +15862,6 @@ jump tables remain, and uninitialized diagnostics are clean.
 A union that still copied the saved bits was neutral. The recipe
 checks the three-float layout, stack offset and consuming call,
 and proves the old value was positive zero on every incoming path.
+### KMC GCC 2.7.2 indexed mode selection
+
+A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` loaded an indexed table base before masking the index, selected one of two modes and returned the helper's result directly. Its machine draft loaded the base later and merged the result through a shared local. Rewriting the selection as direct returns alone changed the diff score from 210 to 30; staging the base before the index as well produced an exact linked match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the measured instruction sequence and source shape.

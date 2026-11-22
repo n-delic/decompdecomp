@@ -81,6 +81,7 @@ from decomprepair import (
     measured_ido_index_update,
     measured_immediate_repairs,
     measured_indexed_clear,
+    measured_indexed_mode_tail,
     measured_indexed_record_layout,
     measured_indirect_command_records,
     measured_indirect_self_call,
@@ -516,6 +517,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += guard_reset_scheduling.variants(source, name, header, rows)
         result += global_pointer_local_repairs.scoped_field_reads(source, name, rows)
         result += measured_global_rebase.variants(source, name, header, rows, resolve=resolve)
+        result += measured_indexed_mode_tail.variants(source, name, header, rows)
         result += measured_byte_fallback_return.variants(source, name, header, rows)
         result += measured_conditional_call_stage.variants(source, name, header, rows, resolve=resolve)
         result += measured_lookup_owner.variants(source, name, header, rows)
