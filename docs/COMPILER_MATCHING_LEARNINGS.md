@@ -16243,3 +16243,16 @@ allocation-schedule bridge did not improve the score. `-fno-schedule-insns` and 
 ### KMC GCC 2.7.2 counted flag walk
 
 A saved MIPS record-counting function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` tested two flag masks while walking a globally sized array. Its generated draft addressed the count as an offset from another symbol and used nested labels. Resolving the exact count symbol and simplifying the equivalent branches changed the linked difference score from 710 to an exact match. This is one saved example, not a controlled cross-compiler experiment. The candidate checks the original and target symbol addresses, the complete source shape, and the measured halfword load and record stride.
+
+### Separate aliases for one SDK hardware flag
+
+An N64 audio DMA routine compiled from a donor with IDO 7.1
+`-O2 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul -DNON_MATCHING`
+produced 116 bytes, equal in length and instruction bits outside its three
+unresolved data-symbol references to the target. The donor declared separate
+names for a read and two writes, while target relocation evidence placed all
+three references at the same byte. Renaming all three to one C identifier
+produced 112 bytes and changed scheduling. Replacing them with volatile
+absolute-address expressions also produced 112 bytes and missed. Trying
+`-O1` and `-O0` on the donor yielded 148 and 184 bytes respectively.
+Evidence is one isolated cross-game comparison; the function remains open.
