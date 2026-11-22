@@ -334,6 +334,8 @@ class ImportMixin:
                                 console.arch, int(picked.big_endian), json.dumps(cfg), pid))
                     db.execute("DELETE FROM symbols WHERE project_id=?", (pid,))
 
+                from ...rom.shared_entries import intentional
+                shared_entries = intentional(res.functions, console, res.segments)
                 lost = []
                 for name, old in gone.items():
                     for table in ("claims", "attempts", "twin_misses"):
@@ -399,9 +401,21 @@ class ImportMixin:
                         original_name, method = assembly_original_names[fn.name]
                         meta_data['naming'] = {'original_name': original_name, 'name': fn.name,
                                                'method': method, 'at': now}
+                    # A proven shared entry remains open for an exact C match;
+                    # it is neither a truncated target nor an assembly verdict.
+                    old_shared = meta_data.pop('shared_entry', None)
+                    if old_shared and meta_data.get('boundary_override_source') == 'shared_entry':
+                        meta_data.pop('boundary_override', None)
+                        meta_data.pop('boundary_override_source', None)
+                    if (status == 'open' and fn.name in shared_entries and not meta_data.get('boundary_decision')
+                            and not meta_data.get('reopened')):
+                        meta_data['shared_entry'] = shared_entries[fn.name]
+                        meta_data['boundary_override'] = True
+                        meta_data['boundary_override_source'] = 'shared_entry'
                     from ..boundary_repairs import reason as boundary_reason
                     warning = boundary_reason(console, {'target': target.code, 'status': status, 'meta': json.dumps(meta_data)})
-                    if warning:meta_data['boundary_review'] = warning
+                    if warning and meta_data.get('boundary_override_source') != 'shared_entry':
+                        meta_data['boundary_review'] = warning
                     else:meta_data.pop('boundary_review', None)
                     meta = json.dumps(meta_data) if meta_data else None
                     n_insns = console.function_insns(fn)

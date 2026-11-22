@@ -264,6 +264,8 @@ class EditMixin:
             db.execute("UPDATE symbols SET size=? WHERE project_id=? AND name=?", (head.size, proj["id"], fn["name"]))
             db.execute("INSERT OR REPLACE INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
                        (proj["id"], new_name, addr, tail.size, "func"))
+            from ..boundary_repairs import _invalidate_shared_entries
+            _invalidate_shared_entries(db, proj['id'])
             self._event(db, proj["id"], agent_id, kind, detail)
         self._xrefs.pop(proj["id"], None)
         return head, tail, head_padding, tail_padding
@@ -358,6 +360,8 @@ class EditMixin:
                         json.dumps(meta), head["id"]))
             db.execute("UPDATE symbols SET size=? WHERE project_id=? AND name=?",
                        (len(raw), proj["id"], head["name"]))
+            from ..boundary_repairs import _invalidate_shared_entries
+            _invalidate_shared_entries(db, proj['id'])
             self._event(db, proj["id"], None, "boundary", f"joined {', '.join(names)}: {reason[:600]}")
         self._syms.pop(proj["id"], None)
         self._xrefs.pop(proj["id"], None)

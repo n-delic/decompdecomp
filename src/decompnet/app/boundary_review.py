@@ -11,7 +11,8 @@ def refresh(net,proj,console):
         meta = json.loads(row['meta'] or '{}')
         before = dict(meta)
         status = row['status']
-        reason = console.boundary_reason(row['target'] or b'')
+        reason = (None if meta.get('boundary_override_source') == 'shared_entry'
+                  else console.boundary_reason(row['target'] or b''))
         # Only reverse this exact retired automatic rule. Operator/agent/library decisions stay intact.
         if status == 'asm' and meta.get('asm_code') == LEGACY and not any(meta.get(k) for k in ('not_c', 'set_aside', 'asm_twin')) and reason:
             status = 'open'

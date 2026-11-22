@@ -114,6 +114,8 @@ def run(net,slug,changes,log=print):
             db.execute('INSERT OR IGNORE INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,0,?)',(proj['id'],name,address,'unknown'))
         cfg['segments']=[vars(s) for s in split.segments_from_config_data(config)]
         db.execute('UPDATE projects SET config=? WHERE id=?',(json.dumps(cfg),proj['id']))
+        from .boundary_repairs import _invalidate_shared_entries
+        _invalidate_shared_entries(db, proj['id'])
         net._event(db,proj['id'],None,'boundary','Recovered reviewed raw tails: '+', '.join(p['name'] for p in plans))
         # Drop caches before progress rebuilding renders the changed layout.
         for cache in (net._roms,net._syms,net._xrefs,net._ops,net._warmed):cache.pop(proj['id'],None)

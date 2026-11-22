@@ -490,7 +490,7 @@ async function refreshFn(first) {
     };
     $("fnBoundaryReview").hidden = !d.boundary_review;
     $("fnBoundaryRepair").hidden = !d.boundary_review;
-    $("fnBoundaryReview").textContent = d.boundary_review ? `Boundary review: ${d.boundary_review}` : "";
+    $("fnBoundaryReview").textContent = d.boundary_review ? `${d.boundary_override ? "Boundary decision" : "Boundary review"}: ${d.boundary_review}` : "";
     $("fnAside").hidden = !d.set_aside;
     if (d.assembly_verification) {
       const a=d.assembly_verification;
