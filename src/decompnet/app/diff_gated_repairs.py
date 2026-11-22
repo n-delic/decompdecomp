@@ -65,6 +65,7 @@ from decomprepair import (
     measured_callback_repairs,
     measured_carried_loop_test,
     measured_case_float_sign,
+    measured_child_slot_update,
     measured_command_record_cursor,
     measured_command_word_schedule,
     measured_conditional_call_stage,
@@ -545,6 +546,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     result += target_memory_schedule_diff_repairs.proposals(source,name,header,toolchain,rows,target,candidate,asm,
                                                              big_endian=big_endian,flags=flags)
     if toolchain.startswith('gcc-2.7.2-kmc'):
+        result += measured_child_slot_update.variants(source, name, header, rows, flags, resolve)
         result += measured_coordinate_staging.variants(source, name, header, rows)
         result += measured_call_slot_setup.variants(source, name, header, rows, flags, resolve)
         result += measured_field_base_lifetimes.variants(source, name, header, rows)

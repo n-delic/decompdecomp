@@ -2587,3 +2587,21 @@ def test_coordinate_staging_routes_to_kmc_mips(monkeypatch):
     assert 'coordinate_staging_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'coordinate_staging_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
     assert not proposals('void f(void) {}', 'f', '', 'arm', KMC, rows, '')
+
+
+def test_child_slot_update_receives_abi_flags_and_symbol_resolver(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'lw $s1, 4($s1)', 'lw $s0, 4($s2)')]
+    flags = ('-mgp32',)
+    resolve = lambda name: {'record': 0x1000}.get(name)
+
+    def candidate(text, name, header, diff, compiler_flags, resolver):
+        assert compiler_flags is flags and resolver is resolve
+        return [('child_slot_fixture', text)]
+
+    monkeypatch.setattr(diff_gated_repairs.measured_child_slot_update, 'variants', candidate)
+    assert 'child_slot_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, '',
+                                                flags=flags, resolve=resolve))
+    assert 'child_slot_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, '',
+                                                    flags=flags, resolve=resolve))
