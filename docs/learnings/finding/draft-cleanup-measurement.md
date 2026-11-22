@@ -170,3 +170,6 @@ func_800923D0 func_80093220 binarySearchRecords func_80096DFC func_800985A8 func
 osAiSetNextBuffer __cosf guRandom rspStartTask func_800A23E4 guRotateF osInitialize cordicSinCos
 findNearestSearchEntry func_8011A2A0 func_8011AE4C updateMenuCountdown func_8011CC3C
 ```
+
+Follow-up (decomprepair 0.5.662): the stage now also rewrites m2c's byte steps and offers table cursors as indexes;
+measured on the same sample and the whole game in draft-start-candidates.md (142 drafts start better instead of 69).
