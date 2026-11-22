@@ -15880,3 +15880,21 @@ from 260 to 240. Splitting the other clamped value alone did not
 improve the score. The proposal checks the clamped value is
 initialized on entry and dead at the exits. The draft remains
 inexact.
+
+### Reuse the sampled axis holder when the scale already runs in place
+
+In a private linked N64 function built with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, the primary
+sample and its conditional resample were already scaled in place,
+but occupied the target's register for the positive comparison
+bound. The target's axis register had an earlier agreed use for
+a guarded float field. Reusing that dead local for the sample,
+resample, comparisons and scale put both values in the target
+registers and kept the secondary sample in its original register.
+
+This changes ten register operands and lowers the linked score
+from 2,165 to 2,115. All 3,034 instructions and three jump tables
+remain, with clean uninitialized diagnostics. Switching the
+secondary sample as well scored 2,145 or 2,325. The trial checks
+the guard load against the same indexed source occurrence and
+requires liveness and the linked in-place scale to agree.

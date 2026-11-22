@@ -53,3 +53,28 @@ def test_deep_permuter_reuses_the_guarded_local_for_the_sampled_scale_on_kmc():
     assert 'carry = -sample(input, 4, 5);' in candidate and 'carry *= 32.0f;' in candidate
     for arch, compiler in [('arm', 'gcc-2.7.2-kmc'), ('mips', 'gcc-egcs'), ('mips', 'ido-5.3')]:
         assert all(label != FAMILY for label, _ in proposals(SOURCE, 'adjust', '', arch, compiler, ROWS, ''))
+
+
+def test_deep_permuter_reuses_the_saved_axis_when_the_scale_is_already_in_place():
+    source = SOURCE.replace('if (!(carry <= 0.0002f))', 'if (!(carry <= 0.25f))')
+    source = source.replace('    result = axis * 32.0f;\n    result = ((result - old) * 0.1f) + old;',
+                            '    axis *= 32.0f;\n    result = ((axis - old) * 0.1f) + old;')
+    guarded = [(' ', op, op) for op in [
+        'lwc1 $f26, 0x50($s1)', 'lui $at, 0x3e80', 'ori $at, $at, 0', 'mtc1 $at, $f2',
+        'nop', 'c.le.s $f26, $f2',
+    ]]
+    phase = ROWS[3:6] + [(' ', op, op) for op in ['lui $at, 0x3e80', 'ori $at, $at, 0']] + [
+        ('r', 'mtc1 $at, $f22', 'mtc1 $at, $f26'),
+        ROWS[6],
+        ('r', 'c.le.s $f26, $f22', 'c.le.s $f22, $f26'),
+    ] + ROWS[7:10] + [
+        ('r', 'mul.s $f26, $f26, $f6', 'mul.s $f22, $f22, $f6'),
+        ROWS[11],
+        ('r', 'sub.s $f2, $f26, $f0', 'sub.s $f2, $f22, $f0'),
+    ]
+    [candidate] = [text for label, text in proposals(source, 'adjust', '', 'mips',
+                                                    'gcc-2.7.2-kmc', guarded + phase, '') if label == FAMILY]
+    assert 'carry = -sample(input, 4, 5);' in candidate
+    assert 'carry = sample(input, 2, 3);' in candidate
+    assert 'carry *= 32.0f;' in candidate
+    assert FAMILY not in {label for label, _ in proposals(source, 'adjust', '', 'mips', 'ido-5.3', guarded + phase, '')}

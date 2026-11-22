@@ -356,6 +356,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += epsilon_predicate_order.staged_variants(source, name, rows, header=header)
         result += conditional_field_subtract.variants(source, name, rows, header=header)
         result += sampled_phase_axis_stage.variants(source, name, rows, header=header)
+        result += sampled_phase_axis_stage.staged_variants(source, name, rows, header=header)
         result += shared_projection_lifetime.variants(source, name, rows, header=header)
         result += allocation_repairs.measured_slot_orders(source, name, rows, header)
         result += allocation_repairs.measured_array_orders(source, name, rows, header)
