@@ -115,6 +115,7 @@ from decomprepair import (
     relocated_byte_table,
     relocated_global_update,
     relocated_pointer_reloads,
+    saved_range_probe,
     search_exit_loop_repairs,
     shared_return_repairs,
     short_leaf_drafts,
@@ -273,6 +274,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     result += measured_lifetime_shapes.variants(source, name, header, toolchain, rows)
     result += measured_scalar_updates.variants(source, name, header, toolchain, rows, asm)
     if toolchain == 'gcc-2.7.2-kmc':
+        result += saved_range_probe.variants(source, name, rows, header=header)
         result += float_clamp_scale_stage.variants(source, name, rows, header=header)
         result += clamp_return_local.variants(source, name, rows, header=header)
         result += float_delta_load_order.variants(source, name, rows, header=header)

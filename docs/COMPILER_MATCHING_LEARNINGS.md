@@ -14671,3 +14671,19 @@ linked function and synthetic generation and routing tests.
 
 
 In one N64 nested float-copy loop built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the draft recalculated the row offset inside the inner loop, while the target computed it before the loop. Hoisting the invariant offset improved the linked score from 275 to 60; also folding the local column increment into its condition reproduced the linked target exactly (score 0). The rule requires the measured loop shape and local counters. Evidence: one saved example and synthetic generation and routing tests.
+
+### Reuse a completed saved float lifetime for a range probe
+
+In a private N64 function built with GCC 2.7.2 KMC and
+`-G0 -mips3 -mgp32 -mfp32 -O2`, the target used the same saved float
+register for a field preserved around one call and a two-bound probe
+later on. The draft already kept the field in that saved register,
+then gave the probe result and its two comparisons a scratch register.
+
+Reusing the completed field-save local for the later probe restored
+the target's return capture and both comparison operands. The exact
+linked score went from 9,220 to 9,205. Reusing an unrelated local
+scored 9,220, and reusing a smoothing result local scored 9,240.
+Synthetic tests require both target and candidate to agree on the
+earlier field save and restore. They also check that each local's
+uses are confined to its respective lifetime.
