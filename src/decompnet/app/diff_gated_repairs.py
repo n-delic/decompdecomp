@@ -177,6 +177,7 @@ from decomprepair import (
     measured_square_loads,
     measured_stack_records,
     measured_storage_shapes,
+    measured_strided_halfword_copy,
     measured_temporary_repairs,
     measured_thread_addresses,
     measured_two_list_allocation,
@@ -538,6 +539,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_global_rebase.variants(source, name, header, rows, resolve=resolve)
         result += measured_two_list_allocation.variants(source, name, header, rows)
         result += measured_list_key_search.variants(source, name, header, rows, resolve=resolve)
+        result += measured_strided_halfword_copy.variants(source, name, header, rows)
         result += measured_record_pointer_update.variants(source, name, header, rows)
         result += measured_record_ramp.variants(source, name, header, rows)
         result += measured_region_search.variants(source, name, header, rows)

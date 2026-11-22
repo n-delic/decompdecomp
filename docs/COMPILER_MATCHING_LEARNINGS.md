@@ -16063,3 +16063,7 @@ A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` adv
 ### KMC GCC 2.7.2 list key search
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` searched a null-terminated list for a matching word key. The generated draft used explicit jumps and a shared result variable. Returning directly from a conventional list loop changed the linked difference score from 265 to an exact match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the complete generated source, the measured instructions and field offsets, and the resolved list-head address.
+
+### KMC GCC 2.7.2 strided halfword copy
+
+A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` copied a rectangular block of halfwords, advancing the source by four bytes per item and skipping 0x500 bytes after each row. The generated draft used byte pointers and an explicit inner-loop jump. Restoring typed halfword pointers and nested loops changed the linked difference score from 286 to an exact match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the complete generated loop, measured load/store instructions, bounds and strides.
