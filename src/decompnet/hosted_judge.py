@@ -143,7 +143,7 @@ def function_info(net, request: dict) -> dict:
     # What draft_repairs.variants needs beyond the source: families like switch_gap_goto read the jump tables, so a
     # script that calls variants without them never sees those families fire.
     return {"name": fn["name"], "vram": fn["vram"], "target": bytes(fn["target"] or b"").hex(), "unit": fn["unit"],
-            "arch": proj["arch"], "asm": fn["asm"] or "",
+            "arch": proj["arch"], "big_endian": bool(proj["big_endian"]), "asm": fn["asm"] or "",
             "header": net._context(proj["id"], fn["unit"])["header"],
             "tables": [[low, list(targets)] for low, targets in switch_tables.read(net, proj, fn)],
             "callees": draft_repairs.capture_followup_repairs.callee_evidence(net, proj, fn, fn["best_source"] or ""),

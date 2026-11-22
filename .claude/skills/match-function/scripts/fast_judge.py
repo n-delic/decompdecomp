@@ -60,6 +60,7 @@ class Judge:
                         DECOMP_WINDOW="0", DECOMP_TRAY="0")
         self.proc = None
         self.header, self.arch, self.asm = "", "mips", ""
+        self.big_endian = True
         self.tables, self.callees, self.entry_scope = [], "", None
         if vram is None or target_hex is None or toolchain is None:
             info = self.ask({"op": "function", "slug": slug, "name": name, **({"vram": vram} if vram is not None else {})})
@@ -67,6 +68,7 @@ class Judge:
             toolchain = toolchain or info["compiler"]["toolchain"]
             flags = flags if flags is not None else info["compiler"]["flags"]
             self.header, self.arch, self.asm = info.get("header") or "", info.get("arch") or "mips", info.get("asm") or ""
+            self.big_endian = bool(info.get("big_endian", True))
             self.tables = [(low, list(targets)) for low, targets in info.get("tables") or []]
             self.callees, self.entry_scope = info.get("callees") or "", info.get("entry_scope") or None
         self.compiler = {"toolchain": toolchain, "flags": list(flags if flags is not None else

@@ -198,7 +198,23 @@ def generator(judge, name):
                                        limit=None, header=judge.header, tables=getattr(judge, "tables", ()),
                                        callees=getattr(judge, "callees", ""),
                                        entry_scope=getattr(judge, "entry_scope", None))
-        return [(labels.get(text, "unlabelled"), text) for text in texts]
+        found = [(labels.get(text, "unlabelled"), text) for text in texts]
+        # The families that read the judge's differing rows (diff_gated_repairs: the Deep Permuter calls them with
+        # the candidate's diff) are not in draft_repairs.variants; without them a chain never sees what the permuter's
+        # diff-gated lane would offer (boolean_guard_operands' sink, measured_* repairs).
+        from decompnet.app import diff_gated_repairs
+        _, rows = judge.rows(source)
+        seen = {text for _, text in found}
+        try:
+            gated = diff_gated_repairs.proposals(
+                source, name, judge.header, judge.arch, judge.compiler["toolchain"], rows, judge.asm,
+                flags=tuple(judge.compiler["flags"]),
+                big_endian=bool(getattr(judge, "big_endian", True)))
+        except Exception as error:  # a family's bug must not end a chain
+            print(f"note: diff-gated proposals failed ({error})", file=sys.stderr)
+            gated = []
+        found += [(family, text) for family, text in gated if text not in seen and not seen.add(text)]
+        return found
     return generate
 
 

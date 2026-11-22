@@ -33,6 +33,7 @@ def test_the_worker_describes_a_function_so_a_search_needs_only_its_name(tmp_pat
     assert hosted_judge.function_info(net, {"slug": "game", "name": "f16"})["compiler"] == {"toolchain": "ido-7.1", "flags": ["-O1"]}
     # the context the app's draft path gives draft_repairs.variants travels with it (prove_chain.py passes it on)
     assert {"tables", "callees", "entry_scope"} <= set(info) and isinstance(info["tables"], list)
+    assert isinstance(info["big_endian"], bool)
     assert "no project" in hosted_judge.function_info(net, {"slug": "nope", "name": "f3"})["error"]
     assert "0 functions" in hosted_judge.function_info(net, {"slug": "game", "name": "missing"})["error"]
     assert "0 functions" in hosted_judge.function_info(net, {"slug": "game", "name": "f3", "vram": 1})["error"]
@@ -146,3 +147,19 @@ def test_fast_judge_prints_the_score_and_then_the_differing_rows(tmp_path, monke
     assert out[0] == "30" and "1 row differs" in out[1]
     fast.main([str(source), "--slug", "game", "--function", "f1", "--header"])
     assert capsys.readouterr().out.strip() == "typedef int s32;"
+
+
+def test_prove_chain_offers_the_diff_gated_children_the_permuter_would(monkeypatch):
+    """draft_repairs.variants never sees the judge's rows, so a family that reads them (boolean_guard_operands' sink)
+    was invisible to a chain even though the Deep Permuter offers it."""
+    from decompnet.app import diff_gated_repairs, draft_repairs
+    prove = load("prove_chain")
+    seen = {}
+    monkeypatch.setattr(draft_repairs, "variants", lambda source, *a, **k: [source + "// plain"])
+    monkeypatch.setattr(diff_gated_repairs, "proposals", lambda *a, **k: seen.update(args=a, kw=k) or [
+        ("gated", a[0] + "// gated"), ("dup", a[0] + "// plain")])
+    judge = SimpleNamespace(arch="mips", asm="asm", header="h", compiler={"toolchain": "gcc-2.7.2-kmc", "flags": ["-O2"]},
+                            big_endian=False, rows=lambda source: (5, [("r", "a", "b")]))
+    out = prove.generator(judge, "f")("void f(void){}")
+    assert [family for family, _ in out] == ["unlabelled", "gated"]
+    assert seen["args"][5] == [("r", "a", "b")] and seen["kw"]["big_endian"] is False

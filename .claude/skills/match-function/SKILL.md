@@ -352,6 +352,11 @@ says the fix and the library families it names; try those families with `prove_c
   worse alone (145 -> 240 on a 129-instruction list insertion, then 240 -> 0 with a loop key copy). decomp-repair
   `scaffold_strip` writes them out together and offers the child with `loop_invariant_key_copy` (`scaffold_strip_key_copy`);
   if `prove_chain` finds nothing on such a best, check that family fires first, then rewrite by hand and chain from there.
+- **Frame slots: an address-taken scalar is allocated at its first `&`, an array when its scope opens.** Five `s` rows
+  with the scalar's slot below the arrays' in the target mean the arrays belonged to a block after the call: declare
+  them in a block opened after it, in the target's order (no `volatile` needed). decomp-repair `late_aggregate_scope`;
+  the m2c `(flag = p != NULL, a) || (flag = p != NULL, b)` then `flag && q` guard sinks with `boolean_guard_operands`
+  (220 -> 5 -> 0 on a 418-instruction function; docs/learnings/finding/address-taken-scalar-slot-after-block-arrays.md).
 - **Several changes that are each no better alone** are the normal shape of a late match. Offer the combination as
   one child, and keep non-improving children for a second step (`operand_order_pass`'s combined step).
 - **A copy that lands in the wrong register (`$v1` for `$v0`) beside a `goto blockN` join.** m2c writes `v = s;`
@@ -482,7 +487,7 @@ priorities and preferences, `-dS -dR` scheduling), and run the recent repair fam
    and land the fix in step 5. When results plateau, read the diff and choose a new hypothesis.
 
 `prove_chain.py --slug S --function F [SOURCE.c] --families a,b|all` applies the best-scoring child of those families
-step by step (bounded: one judge, capped children and steps; `--list` shows which families produce children) and prints
+(including the diff-gated ones the Deep Permuter calls with the judge's rows) step by step (bounded: one judge, capped children and steps; `--list` shows which families produce children) and prints
 each step's family and score: the cheap answer to "would the library have reached this from here". When edits are each
 worse alone, `--combine 10` merges a stalled step's 10 best children in pairs and triples (off by default: it found
 none on three three-edit functions, whose edits ranked far below the 10 best; narrow `--families` first).
