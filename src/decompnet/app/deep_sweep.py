@@ -38,15 +38,44 @@ def looking(net):
     return progress.view() if progress is not None else nullcontext()
 
 
+SIZE_CLASSES = (20, 60, 200)  # instructions: a function this small is a quick pass, and the small ones are where deep passes match
+
+
+def size_class(instructions):
+    """0..3 for up to 20, 21-60, 61-200 and over 200 instructions; a function of unknown size counts as middling."""
+    if not instructions:
+        return 2
+    return sum(instructions > limit for limit in SIZE_CLASSES)
+
+
 def closeness_order(rows, details):
-    """`rows` (already shuffled; `details` maps an id to its best_score and n_insns) with the near misses first. A function a few instructions from matching is much
-    cheaper to finish than one that differs everywhere, and a sweep that runs out of time should have spent it on
-    those. Coarse buckets of score per instruction (a factor of two apart), so functions about as close keep their
-    shuffled order; a function without a score has no say, the baselines come first anyway."""
-    def bucket(row):
-        score, size = (details.get(row['id']) or {}).get('best_score'), (details.get(row['id']) or {}).get('n_insns') or 0
-        return int(math.log2(1 + 8 * score / max(8, size))) if score else 0
-    return sorted(rows, key=bucket)
+    """`rows` (already shuffled; `details` maps an id to its best_score and n_insns) in the order a sweep should spend its
+    time: near misses first, then the small functions before the large ones.
+
+    A function a few instructions from matching is much cheaper to finish than one that differs everywhere. Past those,
+    size predicts a match better than the starting score: on a PS1 game's 214 completed passes the deep search matched
+    13 of 19 functions up to 20 instructions in 2 s each, 16 of 62 up to 60 in 12 s, 7 of 75 up to 200 in 27 s, and none of
+    the 58 larger ones in 104 s each (a hundred minutes). So: near misses (a score under an eighth of an instruction's
+    worth per instruction, or none yet: the baselines come first anyway), then by size class, then by how close within a
+    class. Closeness is a coarse bucket of score per instruction (a factor of two apart) so functions about as close keep
+    their shuffled order."""
+    return sorted(rows, key=lambda row: order_key(row, details))
+
+
+def order_key(row, details):
+    """(0, 0) for a near miss; otherwise (1 + size class, closeness bucket): what closeness_order sorts by."""
+    info = details.get(row['id']) or {}
+    score, size = info.get('best_score'), info.get('n_insns') or 0
+    closeness = int(math.log2(1 + 8 * score / max(8, size))) if score else 0
+    return (0, 0) if closeness == 0 else (1 + size_class(info.get('n_insns')), closeness)
+
+
+def order_counts(rows, details):
+    """How many of `rows` are near misses, then up to 20, 60, 200 instructions and larger (for the log)."""
+    counts = [0] * (len(SIZE_CLASSES) + 2)
+    for row in rows:
+        counts[order_key(row, details)[0]] += 1
+    return counts
 
 
 def signature(net, proj, fn, minutes, variants, compiler_profiles=None, shared=None, residual=None, *, rank_candidates=None):
@@ -601,8 +630,13 @@ class Sweeps:
                 identities=[r for r in identities if r["id"] not in held]
                 if not order:
                     random.shuffle(identities)
-                    identities = closeness_order(identities, {r['id']: dict(r) for r in self._store(slug).all(
-                        f"SELECT id,best_score,n_insns FROM functions WHERE project_id=? AND status='open' AND {IN_BUILD}", proj['id'])})
+                    details = {r['id']: dict(r) for r in self._store(slug).all(
+                        f"SELECT id,best_score,n_insns FROM functions WHERE project_id=? AND status='open' AND {IN_BUILD}", proj['id'])}
+                    identities = closeness_order(identities, details)
+                    if cycle == 1:
+                        near, *sizes = order_counts(identities, details)
+                        log(f'Searching near misses first ({near}), then smaller functions: {sizes[0]} of up to {SIZE_CLASSES[0]} '
+                            f'instructions, {sizes[1]} of up to {SIZE_CLASSES[1]}, {sizes[2]} of up to {SIZE_CLASSES[2]}, {sizes[3]} larger.')
                     # Restore missing baselines before the bounded search queue fills.
                     identities.sort(key=lambda row: row['id'] not in unscored)
                     order.extend(r["id"] for r in identities)
