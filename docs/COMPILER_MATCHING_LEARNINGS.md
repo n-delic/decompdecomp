@@ -13676,3 +13676,5 @@ The running app also accepted the exact match. Evidence is one real match and sy
 negative generation tests.
 
 One N64 linked-list walk built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` had been drafted as returning `void`, while the target initialized the return register to zero and incremented it on each iteration. Restoring a counter and returning it reproduced the linked target exactly (score 400 to 0). The repair requires both target counter instructions and the simple list-walk shape. Evidence: one saved example and synthetic generation and routing tests.
+
+In one N64 byte-reader built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the draft read from a cursor and returned `cursor + 1` after a conditional field copy. Expressing the read as `*cursor++` and returning the cursor reproduced the linked target exactly (score 310 to 0). The candidate is offered only when the cursor has no intervening source uses and the target shows the advance and return schedule. Evidence: one saved example, plus synthetic generation and routing tests.
