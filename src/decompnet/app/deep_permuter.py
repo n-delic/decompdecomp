@@ -907,12 +907,16 @@ class Search(Permuter):
             break
         return measured
 
-    def repair_conversion_bias(self, agent, proj, fn, state, best):
-        """Use a fresh diff when an anonymous conversion pool prevents a clean link."""
-        from decomprepair import unsigned_float_bias
+    def repair_relocated_source(self, agent, proj, fn, state, best):
+        """Check relocated source repairs before spending the budget on broad mutations."""
+        from decomprepair import direct_relocated_call_base, unsigned_float_bias
 
         source = fn['best_source']
-        if proj['arch'] != 'mips' or not source or source.count('(f64)') < 3 or self.limit - self.tested < 2:
+        if proj['arch'] != 'mips' or not source or self.limit - self.tested < 2:
+            return best
+        bias = source.count('(f64)') >= 3
+        argument = '(s32)' in source and re.search(r'\bchar\s*\*\s*[A-Za-z_]\w*\s*=\s*[A-Za-z_]\w*\s*;', source)
+        if not (bias or argument):
             return best
         profile = compiler_for(self.net.cfg(proj), fn['vram'], fn)
         if not profile['toolchain'].startswith('gcc-2.7.2-kmc'):
@@ -932,11 +936,19 @@ class Search(Permuter):
         self.tested += 1
         self.report()
         _, diff, problems = self.net._judge_with(proj, fn, profile['toolchain'], profile['flags'], source)
-        if diff is None or '.rodata+' not in problems:
+        if diff is None:
             return best
         header = self.net._context(proj['id'], fn['unit'])['header']
-        for family, candidate in unsigned_float_bias.variants(
-                source, fn['name'], header, diff.rows, read_data, bool(proj['big_endian'])):
+        if bias and '.rodata+' in problems:
+            choices = unsigned_float_bias.variants(
+                source, fn['name'], header, diff.rows, read_data, bool(proj['big_endian']))
+        elif argument and not problems:
+            choices = direct_relocated_call_base.variants(source, fn['name'], header, diff.rows)
+        else:
+            return best
+        for family, candidate in choices:
+            if self.tested >= self.limit:
+                break
             state.add(variants=1, repairs=1)
             with repair_trial({'kind': 'deep local repair', 'family': family}):
                 score = self._score_current(agent, proj, fn, candidate, best, None)
@@ -2176,7 +2188,7 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
                     raise NetworkError('The saved C does not compile in the current context; fix its declarations before deep search.')
                 fn = net._function(name, slug)
                 if baseline and not fork and (lane is None or lane.index == 0):
-                    baseline = search.repair_conversion_bias(agent, proj, fn, state, baseline)
+                    baseline = search.repair_relocated_source(agent, proj, fn, state, baseline)
                     fn = net._function(name, slug)
                 if baseline and not fork and (lane is None or lane.index == 0):
                     baseline = search.better_saved_baseline(agent, proj, fn, state, baseline)

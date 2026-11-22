@@ -2741,3 +2741,15 @@ def test_measured_mixed_call_arity_keeps_header_safety():
     assert 'lock(2)' in result['target_call_arity']
     result = dict(proposals(source, 'f', '#define p get()', 'mips', KMC, rows, '\n'.join(target)))
     assert 'target_call_arity' not in result
+
+
+
+def test_direct_relocated_call_base_routes_only_for_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    monkeypatch.setattr(diff_gated_repairs.direct_relocated_call_base, 'variants',
+                        lambda source, name, header, rows: [('direct_call_base_fixture', source)])
+    rows = [('r', 'lui $a1, %hi(assetBase)', 'lui $t0, %hi(assetBase)')]
+    args = ('void f(void) {}', 'f', '', 'mips')
+    assert 'direct_call_base_fixture' in dict(proposals(*args, KMC, rows, ''))
+    assert 'direct_call_base_fixture' not in dict(proposals(*args, EGCS, rows, ''))
