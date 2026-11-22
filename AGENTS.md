@@ -359,6 +359,9 @@ When the user explicitly requests deployment, in the checkout that app runs from
 `uv sync`, stop only that home's app gracefully (SIGTERM, then wait for it to exit), and launch it again
 persistently with the same `DECOMP_HOME`/`DECOMP_PORT` it had: `DECOMP_HOME=<home> <checkout>/.venv/bin/decomp`.
 Preserve all other branches and local changes, then verify it serves its port again and runs the new revision.
+A checkout's app also notices new code by itself (app/code_watch.py: its commit and the installed library versions):
+the sidebar shows a Restart button, which restarts it in place on the same port, and Settings can restart it when nothing is
+working. That is the user's own control; it is not authorization for an agent to restart their app.
 Experiments must still use isolated homes and must not mutate live projects.
 
 When a change requires clients to update, build a fresh shareable macOS app after testing

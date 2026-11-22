@@ -528,6 +528,8 @@ def register(app: App) -> None:
                 workers.configure(net.permuter.parent_threads(settings.data["worker_threads"]))
             if "auto_update" in data:
                 settings.data["auto_update"] = bool(data["auto_update"])
+            if "auto_restart_on_code_change" in data:
+                settings.data["auto_restart_on_code_change"] = bool(data["auto_restart_on_code_change"])
             if "check_updates" in data:
                 settings.data["check_updates"] = bool(data["check_updates"])
             if "auto_compiler" in data:
