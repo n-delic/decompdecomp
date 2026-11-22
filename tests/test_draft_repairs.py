@@ -356,3 +356,20 @@ loop_1:
     labels = {}
     candidates = variants(source, 'find', 'mips', labels=labels, limit=None, header='#define HIDDEN result')
     assert all(labels.get(candidate) != 'goto_search_loop' for candidate in candidates)
+
+
+def test_field_store_tail_is_available_to_drafts():
+    source = '''
+#define M2C_FIELD(expr, type_ptr, offset) (*(type_ptr)((s8 *)(expr) + (offset)))
+void paint(void *obj, int selected) {
+    if (selected) {
+        M2C_FIELD(obj, u8 *, 0) = 0xFE;
+    } else {
+        M2C_FIELD(obj, u8 *, 0) = 0xFF;
+    }
+    M2C_FIELD(obj, u8 *, 3) = 0xFF;
+}
+'''
+    labels = {}
+    candidates = variants(source, 'paint', 'mips', labels=labels, limit=None)
+    assert any(labels.get(candidate) == 'branch_store_tail' for candidate in candidates)

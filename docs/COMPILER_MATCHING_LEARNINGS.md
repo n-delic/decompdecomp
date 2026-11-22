@@ -14841,3 +14841,7 @@ without warnings. Delaying the second projection's addition alone
 scored 7,960. Reusing the local for an additional smoothing scale
 regressed to 8,535. Tests bind the prior load and subtraction, both
 calls, both offsets and disjoint lifetimes.
+
+### Duplicate a common field store into both branches
+
+In a private N64 colour update built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the draft shared an alpha-byte store after two colour branches. Placing that store at the end of each branch reproduced the linked target exactly, improving its score from 350 to 0. The existing branch-tail repair now handles the standard generated field macro with a literal store, while rejecting hidden macro effects and unsafe branch control flow. Evidence: one saved function and synthetic generation and routing tests.
