@@ -11,7 +11,9 @@ from ..network import NetworkError
 from . import donor_sources
 from .source_symbol_recovery import comparable_overlay_code, rename
 
-MAX_PROBES = 16
+# A compiler build per source occurrence. Large aligned callers can have dozens of
+# uses of a shared placeholder, and the search can stop between any two builds.
+MAX_PROBES = 96
 
 
 def _cpp_declaration(header, clean, symbol):

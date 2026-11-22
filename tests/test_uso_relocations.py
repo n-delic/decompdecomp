@@ -638,3 +638,45 @@ def test_overlay_probes_preserve_conflicting_types_for_one_loader_symbol(tmp_pat
     assert not uso_match.link(rebuilt.obj, 'entry', body.code,
                               info | {'relocs': [[at, kind, 4 if index == 1 else index]
                                                 for at, kind, index in info['relocs']]}).exact
+
+
+def test_overlay_probes_cover_a_larger_aligned_caller(tmp_path):
+    from threading import Event
+
+    from decompnet.app.overlay_donor_aliases import retry
+    from decompnet.elfobj import extract_function
+
+    if not toolchains.installed('ido-7.1'):
+        pytest.skip('needs IDO 7.1')
+    cfg = compiler_config(tmp_path, {'compiler': {
+        'toolchain': 'ido-7.1', 'flags': ['-O2', '-G', '0', '-non_shared', '-mips2'],
+    }})
+    header = 'extern void placeholder(int);'
+    calls = '\n'.join(f'placeholder({i});' for i in range(24))
+    source = f'void entry(void) {{\n{calls}\n}}'
+    built = compile_source(cfg, header, source)
+    assert built.ok, built.log
+    body = extract_function(built.obj, 'entry')
+    assert len(body.relocs) == 24
+    info = {'section': 64, 'relocs': [[r.offset, r.type, i] for i, r in enumerate(body.relocs, 1)]}
+    target = uso_match.symbolic_target(uso_match.Target('entry', 0, body.code, [], uso=info))
+    original = uso_match.link(built.obj, 'entry', body.code, info).candidate
+    stop = Event()
+    probes = 0
+
+    def measure(text, context):
+        nonlocal probes
+        probes += 1
+        trial = compile_source(cfg, context, text)
+        assert trial.ok, trial.log
+        return uso_match.link(trial.obj, 'entry', body.code, info).candidate
+
+    stop.set()
+    assert retry(source, header, 'entry', original, target, measure, stop) is None
+    assert probes == 0
+    stop.clear()
+    text, context = retry(source, header, 'entry', original, target, measure, stop)
+    assert probes == 24
+    rebuilt = compile_source(cfg, context, text)
+    assert rebuilt.ok, rebuilt.log
+    assert uso_match.link(rebuilt.obj, 'entry', body.code, info).exact
