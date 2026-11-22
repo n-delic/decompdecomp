@@ -13336,3 +13336,13 @@ On that same function, deriving the defined zero from the already loaded count a
 
 
 Two N64 flag-update functions built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` used `lhu` and `sh` for an indexed flag table that the draft had declared as `char[]`. Casting both reads and writes to `u16 *` recovered exact matches in both cases (score 400 to 0). The target-guided repair proposes this width when the changed load and store both name the same table; the compiler and judge still decide whether it matches. Evidence: two saved examples and a synthetic routing and generation regression, rather than an independently controlled compiler experiment.
+
+### Scan packed byte pairs with byte-sized inputs (KMC GCC 2.7.2)
+
+With `-G0 -mips3 -mgp32 -mfp32 -O2`, a retail N64 scan masked two
+parameters in the preheader, then advanced the byte cursor in either
+mismatch branch's delay slot. Model both parameters and the cursor as
+bytes. Use separate mismatch continuations so each comparison can
+schedule the increment. A public caller corroborated the interface.
+The linked score went from 1,440 to 0, and the dispatcher generated one
+byte-exact candidate.
