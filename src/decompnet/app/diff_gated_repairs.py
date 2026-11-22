@@ -52,6 +52,7 @@ from decomprepair import (
     measured_byte_clear_base,
     measured_byte_fallback_return,
     measured_byte_global_branch,
+    measured_byte_search_loop,
     measured_callback_loop,
     measured_callback_repairs,
     measured_carried_loop_test,
@@ -517,6 +518,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += guard_reset_scheduling.variants(source, name, header, rows)
         result += global_pointer_local_repairs.scoped_field_reads(source, name, rows)
         result += measured_global_rebase.variants(source, name, header, rows, resolve=resolve)
+        result += measured_byte_search_loop.variants(source, name, header, rows)
         result += measured_indexed_mode_tail.variants(source, name, header, rows)
         result += measured_byte_fallback_return.variants(source, name, header, rows)
         result += measured_conditional_call_stage.variants(source, name, header, rows, resolve=resolve)

@@ -15865,3 +15865,7 @@ and proves the old value was positive zero on every incoming path.
 ### KMC GCC 2.7.2 indexed mode selection
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` loaded an indexed table base before masking the index, selected one of two modes and returned the helper's result directly. Its machine draft loaded the base later and merged the result through a shared local. Rewriting the selection as direct returns alone changed the diff score from 210 to 30; staging the base before the index as well produced an exact linked match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the measured instruction sequence and source shape.
+
+### KMC GCC 2.7.2 zero-terminated byte search
+
+A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` searched a zero-terminated byte sequence and returned the matching position, including when the requested byte was zero. Its machine draft used a shared pointer result and duplicated return path. Using a byte-sized search key and a single loop with the zero check before advancing changed the diff score from 245 to an exact linked match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the complete source and instruction patterns and preserves handwritten comments by declining to rewrite them.
