@@ -17648,3 +17648,32 @@ free (the narrowed quotient and the staged values own the eight bytes): 3728 -> 
 scaffold. The function is recorded at 3712 and is not matched; the `phantom_wide` dead block in one arm is still in
 the source because removing it costs 195 (it only moves one store past the colour arithmetic; no faithful spelling found:
 the Gfx member form, a fresh cursor read and the advance placed after the first word all measured the same or worse).
+
+
+## A triangle's vertex addresses built in each arm of the index test: `triangle_arm_calls` (851-instruction ray test)
+
+The same N64 ray test (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, scoring 2) builds a triangle's three vertex addresses
+from a halfword or a byte index triple. m2c writes `a1 = verts + t[0] * 0xC; a2 = t[1] * 3; v0 = t[2];` per arm and one
+call after the `if`/`else` with `verts + a2 * 4` and `verts + v0 * 0xC`, and the earlier saved best kept that with the call
+repeated in each arm. The target has the original's shape: in each arm a pointer to the triple, then the call with
+`verts + tri[k] * 3` (the vertex array a `f32 *`, three floats a vertex). A mini function written that way
+(`if (m->flags & 4) { u16 *t = (u16 *)m->tris + i * 3; build(p, m->verts + t[0] * 3, m->verts + t[1] * 3, m->verts + t[2] * 3); } else { u8 ... }`)
+compiled to the target's arm and tail instruction for instruction, including the `j` into the byte arm's tail: gcc
+cross-jumps the identical tails. m2c's temporaries made the second scheduler load `t[1]` first and shift in another order
+(hypothesis, not confirmed in the compiler source: the arm is scheduled as one block with the temporaries live across it).
+
+| edit | score |
+| --- | --- |
+| saved best (5943 under scoring 2) | 5943 |
+| the three sites rewritten together (`triangle_arm_calls`) | 1418 |
+| one site alone | 7133, 6823 |
+| from the m2c-shaped draft of the same arms (6420) | 1395 |
+| the first site only, from a later saved best (4053) | 3728, every row of the site equal |
+
+Controlled result for the shape; the single sites are worse than the saved best, so the family offers the combination as
+one child first. Also found in the same function: a child of `balanced_pointer_calls` (`if ((unsigned long)sp164 & 0x100) { call } else { call }`
+around a call) scored 4168 -> 4053 by loading a spilled pointer for a dead test; removing it moved 1233 -> 493 because the
+extra load was an extra instruction in a block that had to match one for one. Check such children against the diff's insertions.
+
+Family: decomp-repair `triangle_arm_calls` (0.5.600, wired by the lit-actor wiring PR); `tests/test_triangle_arm_calls_wiring.py`
+checks the draft repairs and the local lane. From the saved best the combined child scores 1418 in the isolated judge.
