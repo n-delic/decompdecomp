@@ -2641,3 +2641,21 @@ def test_loop_key_copy_receives_abi_flags(monkeypatch):
     assert 'loop_key_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, '', flags=flags))
     assert 'loop_key_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, '', flags=flags))
     assert not proposals('void f(void) {}', 'f', '', 'arm', KMC, rows, '', flags=flags)
+
+
+def test_loop_count_pointer_receives_abi_and_symbol_resolver(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('o', 'lui $v0, %hi(records)', 'addiu $s1, $s1, 1')]
+    flags = ('-mgp32',)
+    resolve = lambda name: {'records': 0x1000}.get(name)
+
+    def candidate(text, name, header, diff, compiler_flags, resolver):
+        assert compiler_flags is flags and resolver is resolve
+        return [('count_pointer_fixture', text)]
+
+    monkeypatch.setattr(diff_gated_repairs.measured_loop_count_pointer, 'variants', candidate)
+    assert 'count_pointer_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, '',
+                                                     flags=flags, resolve=resolve))
+    assert 'count_pointer_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, '',
+                                                        flags=flags, resolve=resolve))

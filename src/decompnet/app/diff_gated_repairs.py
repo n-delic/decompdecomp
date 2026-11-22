@@ -167,6 +167,7 @@ from decomprepair import (
     measured_list_key_search,
     measured_list_selection,
     measured_lookup_owner,
+    measured_loop_count_pointer,
     measured_loop_delta_snapshot,
     measured_loop_key_copy,
     measured_loop_search_target,
@@ -551,6 +552,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     result += target_memory_schedule_diff_repairs.proposals(source,name,header,toolchain,rows,target,candidate,asm,
                                                              big_endian=big_endian,flags=flags)
     if toolchain.startswith('gcc-2.7.2-kmc'):
+        result += measured_loop_count_pointer.variants(source, name, header, rows, flags, resolve)
         result += measured_loop_key_copy.variants(source, name, header, rows, flags)
         result += measured_child_slot_update.variants(source, name, header, rows, flags, resolve)
         result += measured_coordinate_staging.variants(source, name, header, rows)
