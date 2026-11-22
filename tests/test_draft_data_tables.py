@@ -61,3 +61,20 @@ def test_every_table_is_supplied_before_constants_take_the_limit_and_padding_is_
     assert all("dlabel " + name in text for name in tables)
     assert ".word 0x00000000" not in text
     assert text.count("dlabel RO_") == draft_data.MAX_SYMBOLS
+
+
+def test_a_table_after_the_last_code_segment_is_read_at_the_functions_own_offset():
+    # A splat config that lists only code leaves the data after it unbacked: the reader finds nothing there, the
+    # ROM at the function's own ROM-to-address offset has the table, and it is still checked against the function.
+    function = {'vram': 0x80004404, 'rom_offset': 0x5004}
+    rom = bytearray(0x100000)
+    table_at = BASE - function['vram'] + function['rom_offset']
+    cases = (0x80004430, 0x80004454, 0x80004438)
+    rom[table_at:table_at + 12] = b"".join(struct.pack(">I", w) for w in cases)
+    unbacked = lambda *_: None  # noqa: E731
+    read = draft_data.beside_code_reader(bytes(rom), function, unbacked)
+    assert draft_data.jump_table_extent("jtbl_800E1DE8", read, set(cases), ">") == (BASE, 12)
+    # What a segment backs is still read from it, and an overlay's wrong guess finds no table.
+    assert draft_data.beside_code_reader(bytes(rom), function, lambda *_: b'\x01')(0x1000, 4) == b'\x01'
+    assert draft_data.jump_table_extent("jtbl_800E1DE8", read, {0x1}, ">") is None
+    assert draft_data.beside_code_reader(bytes(rom), {'vram': None, 'rom_offset': 0}, unbacked)(BASE, 4) is None

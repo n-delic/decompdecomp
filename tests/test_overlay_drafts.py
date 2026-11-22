@@ -205,3 +205,28 @@ def test_mips_table_aliases_leave_ambiguous_and_non_table_relocations_alone():
     assert seeds._mips_table_aliases(asm, 'dlabel RO_8000AB00') == asm
     assert seeds._mips_table_aliases(asm, 'dlabel jtbl_8000AB00\ndlabel jtbl_8000ab00') == asm
     assert seeds._mips_table_aliases(asm, 'dlabel jtbl_8000AB00\ndlabel D_8000AB00') == asm
+
+
+@pytest.mark.parametrize('suffix', ['_raw_slot_03', '_packed_program_02', '_dma_overlay_01'])
+def test_labels_suffixed_with_a_slot_name_are_recovered(suffix):
+    # Imports of games with slot, packed-program and DMA overlays lost these labels, and m2c then found no branch target.
+    text = ASSEMBLY.replace('_overlay_001', suffix)
+    repaired = split.draft_asm(text, NAME, ADDRESS)
+    assert f'.L80001010{suffix}:\n/* 10 ' in repaired
+    assert split.draft_asm(repaired, NAME, ADDRESS) == repaired
+    assert split.function_from_text(NAME, repaired, 'x').labels == {ADDRESS + 16}
+
+
+def test_branches_to_a_function_named_address_inside_the_function_get_a_local_label():
+    # A shared tail another entry jumps into had a symbol, so the branches name `func_80001010` and no label exists.
+    text = ASSEMBLY.replace(OLD_NAME, NAME).replace('.L80001010_overlay_001', 'func_80001010')
+    text = text.replace('/* 8 80001008 03E00008 */ jr $ra', '/* 8 80001008 0C000404 */ jal func_80001010')
+    repaired = split.draft_asm(text, NAME, ADDRESS)
+    assert 'beqz $a0, .L80001010\n' in repaired and '.L80001010:\n/* 10 ' in repaired
+    assert 'jal func_80001010' in repaired  # a call stays a call
+    assert split.draft_asm(repaired, NAME, ADDRESS) == repaired
+    # Outside the function, or the entry itself, nothing changes.
+    far = ASSEMBLY.replace(OLD_NAME, NAME).replace('.L80001010_overlay_001', 'func_80009000')
+    assert split.draft_asm(far, NAME, ADDRESS) == far
+    own = ASSEMBLY.replace(OLD_NAME, NAME).replace('.L80001010_overlay_001', NAME)
+    assert split.draft_asm(own, NAME, ADDRESS) == own
