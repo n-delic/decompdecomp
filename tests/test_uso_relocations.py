@@ -437,3 +437,39 @@ def test_fixed_offset_recovery_declines_a_partially_supported_rebase(tmp_path):
     expected = uso_match.symbolic_target(uso_match.Target('entry', 0, out.code, [], uso=info))
     original = uso_match.link(baseline.obj, 'entry', out.code, info).candidate
     assert offset_retry(source, header, 'entry', original, expected) is None
+
+
+def test_overlay_probes_calls_to_an_empty_donor_placeholder(tmp_path):
+    from threading import Event
+
+    from decompnet.app.overlay_donor_aliases import retry
+    from decompnet.elfobj import extract_function
+
+    if not toolchains.installed('ido-7.1'):
+        pytest.skip('needs IDO 7.1')
+    cfg = compiler_config(tmp_path, {'compiler': {
+        'toolchain': 'ido-7.1', 'flags': ['-O2', '-G', '0', '-non_shared', '-mips2'],
+    }})
+    header = 'placeholder() { }\n'
+    source = 'int entry(int value) { placeholder(value, 4); return placeholder(value); }'
+    original = compile_source(cfg, header, source)
+    assert original.ok, original.log
+    body = extract_function(original.obj, 'entry')
+    assert len(body.relocs) == 2
+    info = {'section': 64, 'relocs': [[r.offset, r.type, i] for i, r in enumerate(body.relocs, 1)]}
+    expected = uso_match.symbolic_target(uso_match.Target('entry', 0, body.code, [], uso=info))
+    baseline = uso_match.link(original.obj, 'entry', body.code, info)
+    assert not baseline.exact
+
+    def measure(text, context):
+        built = compile_source(cfg, context, text)
+        assert built.ok, built.log
+        return uso_match.link(built.obj, 'entry', body.code, info).candidate
+
+    rewritten, context = retry(source, header, 'entry', baseline.candidate, expected, measure, Event())
+    rebuilt = compile_source(cfg, context, rewritten)
+    assert rebuilt.ok, rebuilt.log
+    assert uso_match.link(rebuilt.obj, 'entry', body.code, info).exact
+    wrong = compile_source(cfg, context, rewritten.replace(uso_match.alias(64, 2), uso_match.alias(64, 1)))
+    assert wrong.ok, wrong.log
+    assert not uso_match.link(wrong.obj, 'entry', body.code, info).exact

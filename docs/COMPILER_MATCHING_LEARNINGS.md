@@ -1657,6 +1657,19 @@ functions. Replaying the same inputs with the previous verifier showed
 that two required these changes. All three passed a fresh compile and
 reconstructed the original cartridge together.
 
+### Probe calls to empty old-style C placeholders
+
+With IDO 7.1 `-O2 -G 0 -non_shared -mips2`, a call to an empty old-style
+definition in the preprocessed donor can emit a named relocation. The probe
+can declare an external function with the same C89 return type and argument
+promotions. In the controlled test it distinguishes two calls to one
+placeholder, and the exact judge rejects binding both calls to one target.
+
+A targeted replay on an isolated N64 project saved six of seven candidates
+identified by tracing missing declarations. All six pairs failed when the
+empty-stub signature recovery was disabled. All six saved matches passed a
+fresh compile and reconstructed the same cartridge together.
+
 ### Observation: source layout sensitivity (IDO 5.3)
 
 The existing [IDO guide](../src/decompnet/consoles/n64/guides/ido.md) records a private same-source

@@ -27,6 +27,15 @@ def _cpp_declaration(header, clean, symbol):
     return None
 
 
+def _empty_c_stub(declarations, symbol):
+    """Use the signature of a C89 placeholder without duplicating its empty body."""
+    pattern = re.compile(r'(?:(int|void)\s+)?' + re.escape(symbol) + r'\s*\(\s*\)\s*\{\s*\}')
+    for decl in declarations:
+        if symbol in decl.names and (match := pattern.fullmatch(csource._blank(decl.text).strip())):
+            return f'extern {match[1] or "int"} {symbol}();'
+    return None
+
+
 def local_functions(source, header, name, obj, candidate, target):
     """Externalize direct calls to identifiable functions in the donor text section."""
     if target.arch != 'mips' or not target.linker_relocs or not comparable_overlay_code(candidate, target):
@@ -121,6 +130,8 @@ def retry(source, header, name, candidate, target, measure, stop):
                             and not re.match(r'(?:static|typedef)\b', d.text)
                             and (external.fullmatch(d.text) or prototype.fullmatch(d.text))), None)
         start = len(header)
+        if declaration is None and all(kind == JUMP for (at, kind), ref in actual.items() if ref == symbol):
+            declaration = _empty_c_stub(declarations, symbol)
         if declaration is None:
             linked = _cpp_declaration(header, clean_header, symbol)
             if linked is None:
