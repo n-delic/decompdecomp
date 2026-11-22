@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .. import arch, toolchains
 from ..candidate_work import trial
+from ..compiler import donor_declaration_cache
 from ..network import NetworkError
 from ..permuter_claims import nonexclusive
 from . import donor_sources, donor_unit, exact_match_inputs, prepared_evidence, source_symbol_recovery
@@ -303,6 +304,7 @@ def verify(net, proj, fn, other, donor, names, settings, agent, job, cache, *, r
 
 
 @trial
+@donor_declaration_cache()
 def _try(net, proj, private, fn, source, header, agent, job):
     """Offer one reduced translation unit and one relocation-based retry when the object supports it."""
     reduced = rebound = False

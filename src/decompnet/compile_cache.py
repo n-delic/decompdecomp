@@ -12,7 +12,8 @@ Anything this process cannot fingerprint (a folder no manifest pins, a program f
 VM's copies) compiles as before.
 
 It stores objects, never a verdict: a cached object is linked and compared byte for byte exactly like a fresh one.
-Failures, timeouts and cancelled compiles are never written. Each entry carries a SHA-256 of its contents; a
+Explicit donor verification can also retain definitive declaration errors under a separate key.
+Other failures, timeouts and cancelled compiles are never written. Each entry carries a SHA-256 of its contents; a
 corrupt or truncated one is a miss and is removed. Size is bounded (DECOMP_OBJECT_CACHE_MB, default 1024, 0 turns
 the store off) by removing the least recently used entries.
 """
@@ -22,6 +23,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import struct
 import sys
 import threading
@@ -207,19 +209,44 @@ def _path(entry: bytes, root: Path | None = None) -> Path:
     return (root or directory()) / name[:2] / name
 
 
+_DECLARATION_ERROR = re.compile(
+    r'^cfe: Error: (?:include/context\.h|func\.c), line \d+: '
+    r'(?:redeclaration|redefinition|conflicting types?)\b', re.M)
+
+
+def _donor_error_key(entry):
+    return hashlib.sha256(b'donor declaration error\0' + entry).digest()
+
+
+def load_donor_declaration_error(entry):
+    return _load(_donor_error_key(entry), declaration_error=True)
+
+
+def store_donor_declaration_error(entry, result):
+    if (not result.ok and result.obj is None and _DECLARATION_ERROR.search(result.log)
+            and not re.search(r'timed out|out of memory|exceeded|killed|fatal|segmentation fault', result.log, re.I)):
+        _store(_donor_error_key(entry), result, metric='donor_declaration_cache_stores')
+
+
 def load(entry: bytes):
     """A stored object as a new CompileResult, or None. A damaged entry is removed and is a miss."""
+    return _load(entry)
+
+
+def _load(entry, *, declaration_error=False):
     from .compiler import CompileResult
+
+    metric = 'donor_declaration_cache' if declaration_error else 'object_cache'
     path = _path(entry)
     try:
         data = path.read_bytes()
     except OSError:
-        compile_timing.add('object_cache_misses', 1)
+        compile_timing.add(metric + '_misses', 1)
         return None
     result = _decode(data)
     if result is None:
-        compile_timing.add('object_cache_corrupt', 1)
-        compile_timing.add('object_cache_misses', 1)
+        compile_timing.add(metric + '_corrupt', 1)
+        compile_timing.add(metric + '_misses', 1)
         try:
             path.unlink(missing_ok=True)
         except OSError:
@@ -229,8 +256,12 @@ def load(entry: bytes):
         os.utime(path)  # most recently used: what the sweep keeps
     except OSError:
         pass
-    compile_timing.add('object_cache_hits', 1)
     obj, log, language = result
+    if declaration_error and (obj or not _DECLARATION_ERROR.search(log)):
+        return None
+    compile_timing.add(metric + '_hits', 1)
+    if declaration_error:
+        return CompileResult(False, None, log, language)
     return CompileResult(True, obj, log, language)
 
 
@@ -251,15 +282,20 @@ def _decode(data: bytes):
 
 def _encode(result) -> bytes:
     meta = json.dumps({'log': result.log, 'language': result.language}).encode()
-    payload = META_LENGTH.pack(len(meta)) + meta + result.obj
+    payload = META_LENGTH.pack(len(meta)) + meta + (result.obj or b'')
     return MAGIC + hashlib.sha256(payload).digest() + payload
 
 
 def store(entry: bytes, result) -> None:
     """Keep a successful compile's object. Written whole or not at all (a file beside it, then os.replace), so
     another process reads the old entry, the new one or none, never half. A failure to write never fails a compile."""
+    if result.ok and result.obj is not None:
+        _store(entry, result)
+
+
+def _store(entry, result, *, metric='object_cache_stores'):
     limit = limit_bytes()
-    if not limit or not result.ok or result.obj is None:
+    if not limit:
         return
     data = _encode(result)
     if len(data) > MAX_ENTRY_BYTES or len(data) > limit // 8:
@@ -280,7 +316,7 @@ def store(entry: bytes, result) -> None:
         except OSError:
             pass
         return
-    compile_timing.add('object_cache_stores', 1)
+    compile_timing.add(metric, 1)
     _schedule_sweep(root, limit, len(data))
 
 

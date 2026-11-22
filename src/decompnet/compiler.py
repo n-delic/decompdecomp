@@ -98,6 +98,19 @@ def throughput_slots(enabled, gate=None):
         _LOCAL_SLOTS.reset(token)
 
 
+_DONOR_DECLARATION_CACHE = contextvars.ContextVar('donor_declaration_cache', default=False)
+
+
+@contextmanager
+def donor_declaration_cache():
+    """Allow imported donor verification to reuse definitive declaration diagnostics."""
+    token = _DONOR_DECLARATION_CACHE.set(True)
+    try:
+        yield
+    finally:
+        _DONOR_DECLARATION_CACHE.reset(token)
+
+
 @contextmanager
 def cancellable(check):
     """Make compiler subprocesses stop promptly when their owning background job is cancelled."""
@@ -446,24 +459,39 @@ def _compile_here(cfg: CompilerConfig, context_header: str, source: str, trusted
             result = session.get(key) if session else None
             # The same eligibility and key, plus what an object kept across processes needs (compile_cache.py).
             persistent = compile_cache.key(cfg, key, _sandbox_mode(cfg), _PIPELINE) if result is None else None
+            donor_errors = (_DONOR_DECLARATION_CACHE.get()
+                            and not (cfg.cplusplus and cfg.source_extension == 'c'))
+
+            def load():
+                found = compile_cache.load(persistent)
+                if found is None and donor_errors:
+                    return compile_cache.load_donor_declaration_error(persistent)
+                return found
+
+            def store(result):
+                if result.ok:
+                    compile_cache.store(persistent, result)
+                elif donor_errors:
+                    compile_cache.store_donor_declaration_error(persistent, result)
+
             if result is not None:
                 compile_timing.add('cache_hits', 1)
             elif session:
-                result = compile_cache.load(persistent) if persistent else None
+                result = load() if persistent else None
                 if result is None:
                     from .compile_sharing import current as shared_group
                     group = shared_group()
                     result = group.run(key, build, _CANCEL_CHECK.get()) if group else build()
                     # Checked before storing too: a search cancelled meanwhile writes nothing anywhere.
                     if check := _CANCEL_CHECK.get():check()
-                    if persistent:compile_cache.store(persistent, result)
+                    if persistent:store(result)
                 session.put(key, result)
             elif persistent:
                 def stored():
-                    found = compile_cache.load(persistent)
+                    found = load()
                     if found is not None:return found
                     built = build()
-                    compile_cache.store(persistent, built)
+                    store(built)
                     return built
                 # (No cancellation reaches here: `share` needs a session for that.)
                 result = shared_compile(key, stored)

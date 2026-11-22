@@ -175,3 +175,59 @@ def test_concurrent_writers_leave_only_whole_entries(builds):
     assert all(process.wait(60) == 0 for process in processes)
     assert len(entries()) == 12
     assert not [path for path in compile_cache.directory().glob('*/.*.tmp')]
+
+
+def test_donor_declaration_errors_are_reused_only_for_the_same_inputs(builds, monkeypatch):
+    cfg, calls, tool, include = builds
+    diagnostic = "cfe: Error: include/context.h, line 2: redeclaration of 'label'; previous declaration at line 1"
+    def compile_as(cfg, work, root, source, ext):
+        calls.append(source)
+        return compiler.CompileResult(False, None, diagnostic)
+    monkeypatch.setattr(compiler, '_compile_as', compile_as)
+
+    with compiler.donor_declaration_cache():
+        assert not compile_in_session(cfg).ok
+        assert compile_in_session(cfg).log == diagnostic
+        assert len(calls) == 1
+        compile_in_session(cfg, header='extern int label;')
+        assert len(calls) == 2
+        (include / 'types.h').write_text('typedef short T;\n')
+        compile_in_session(cfg)
+        assert len(calls) == 3
+        (tool / 'cc').write_bytes(b'new compiler')
+        compile_in_session(cfg)
+        assert len(calls) == 4
+    assert not compile_in_session(cfg).ok and len(calls) == 5
+
+
+@pytest.mark.parametrize('failure', [
+    'compiler timed out after 12s',
+    "cfe: Error: func.c, line 7: redefinition of 'x'\nCompiler or build process exceeded memory limit",
+])
+def test_donor_rejection_cache_does_not_store_resource_failures(builds, monkeypatch, failure):
+    cfg, calls, _, _ = builds
+    def compile_as(cfg, work, root, source, ext):
+        calls.append(source)
+        return compiler.CompileResult(False, None, failure)
+    monkeypatch.setattr(compiler, '_compile_as', compile_as)
+    with compiler.donor_declaration_cache():
+        assert compile_in_session(cfg).log == failure
+        assert compile_in_session(cfg).log == failure
+    assert len(calls) == 2 and not entries()
+
+
+def test_donor_cache_keeps_a_fresh_cpp_fallback_after_a_c_error(builds, monkeypatch):
+    cfg, calls, _, _ = builds
+    diagnostic = "cfe: Error: func.c, line 3: redeclaration of 'item'"
+
+    def compile_as(cfg, work, root, source, ext):
+        calls.append(ext)
+        if calls == ['c', 'cpp', 'c', 'cpp']:
+            return compiler.CompileResult(True, b'valid C++ object', '', language='c++')
+        return compiler.CompileResult(False, None, diagnostic)
+
+    monkeypatch.setattr(compiler, '_compile_as', compile_as)
+    with compiler.donor_declaration_cache():
+        assert not compile_in_session(replace(cfg, cplusplus=True)).ok
+        assert compile_in_session(replace(cfg, cplusplus=True)).ok
+    assert calls == ['c', 'cpp', 'c', 'cpp']
