@@ -13600,3 +13600,11 @@ rewrite and its guards (the counter must be read only through its mask, stepped 
 the countdown's temps used nowhere else).
 
 On one N64 function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, a draft treated an indexed pointer table as bytes and then read a word through it. Casting the indexed entry to `u8 **` generated the target pointer load followed by an unsigned byte load, improving the linked score from 270 to 60. Wrapping the masked index assignment in `do { ... } while (0)` changed the return-address save schedule and reproduced the target exactly. Evidence: one saved example, plus synthetic generation and routing tests.
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, an N64 routine was 30 points away after its length
+calculation was repaired. Its only differences were two adjacent callee-saved argument copies in reversed
+order, including their stack saves. Both parameters were used only in byte stores. Exchanging the two
+formals' `u8` and `s32` types reproduced the target, while casts and local copies at the stores did not.
+The gated repair generated one candidate from the 30-point draft and the linked-byte judge scored it 0.
+The running app also accepted the exact match. Evidence is one real match and synthetic positive and
+negative generation tests.
