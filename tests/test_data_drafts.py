@@ -110,6 +110,26 @@ def test_bss_drafts_match_without_agents(project):
     assert first["status"] == "matched" and "s32 D_80000540[2];" in first["source"], (counts, lines)
 
 
+def test_text_the_code_never_reads_by_a_field_is_a_string(project):
+    net = project
+    with net.progress.view():
+        proj = net.project_row("game")
+        at = DATA + 0x10
+
+        def source(raw):
+            return data_drafts.typed(net, proj, at, len(raw), raw)
+
+    assert source(b"Lap %d\0\0\0\0") == ('char D_80000510[10] = "Lap %d";', "")
+    # two strings and the zeros between them, quotes, backslashes, newlines and `?` (trigraphs) escaped
+    assert source(b'say "hi"\n\0\0ok??\\\0')[0] == r'char D_80000510[17] = "say \"hi\"\n\000\000ok\?\?\\";'
+    assert data_drafts._text(b"A\0") is None  # one character: not enough to call it text
+    assert data_drafts._text(b"\0\0\0 \0\0\0\0") is None  # a number like 0x20 is not text
+    assert data_drafts._text(b"Lap %d") is None  # no terminator: not a string
+    assert data_drafts._text(b"caf\xe9\0") is None  # not ASCII
+    net.code_uses[at] = [field(0, 1, "u")]  # read as a byte by the code: its field, not a guess about it
+    assert not source(b"Lap %d\0\0\0\0")[0].startswith("char")
+
+
 def test_values_are_written_exactly():
     assert data_drafts._literal("f32", struct.pack(">f", 1.5), "big") == "1.5f"
     assert data_drafts._literal("f64", struct.pack(">d", 2.0), "big") == "2.0"
