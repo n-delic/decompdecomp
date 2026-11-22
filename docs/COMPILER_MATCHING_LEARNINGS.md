@@ -15591,3 +15591,21 @@ one saved example, with two starting drafts.
 ### KMC GCC 2.7.2 byte-packing accumulator
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` shifted its accumulator, incremented an independent counter, and then ORed in a byte. Its machine draft combined the multiplication and OR after the increment. Splitting the original multiplication and OR into separate assignments around the counter increment changed the diff score from 250 to an exact linked match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the measured instruction ordering and independent, unescaped locals.
+
+### Retain both conditional smoothing gains in a saved float local
+
+A linked N64 function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`
+selected one of two smoothing gains on separate paths. At four blends
+the target loaded either literal into the same saved register and used
+it in the field update. The candidate chose a different register.
+
+Reuse the dead local confirmed by a scaled sample, replacing both
+reaching literal assignments and the gain operand. Each individual
+edit in the measured three-site group scored 3,000 from 3,015. Two
+three-site variants scored 2,970 with nine fixed register operands,
+identical instruction counts, all three jump tables and no
+uninitialized warnings. The full four-site group scored 3,210 when
+it altered scheduling around another call. Deep Permuter emits at
+most four evidence-backed groups, including variants leaving a
+single gain unchanged. The control-flow check rejects any additional
+read of a replaced assignment.
