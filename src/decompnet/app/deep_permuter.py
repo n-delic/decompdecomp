@@ -275,6 +275,7 @@ class Search(Permuter):
         throughput = self.compile_pool.metrics.snapshot() if getattr(self, 'compile_pool', None) else {}
         return {**({'throughput':throughput} if throughput else {}), 'starting_score': self.starting_score, 'starting_percent': percent(self.starting_score),
                 'best_score': self.best, 'best_percent': percent(self.best), 'improvements': self.improvements,
+                'extensions': self.extensions, 'extension_max': EXTEND_MAX if self.extendable else 0,
                 'local_search': self.local_status, 'reviewed_seeds':self.reviewed_seed_result,
                 'allocation_trials':self.allocation_trials,
                 'allocation_diagnostic_compiles':self.allocation_diagnostic_compiles,

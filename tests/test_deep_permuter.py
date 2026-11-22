@@ -227,7 +227,7 @@ def test_live_metrics_count_only_verified_strict_improvements_and_keep_starting_
     assert metrics.pop('history') == [{'tested':0,'score':50},{'tested':2,'score':30},{'tested':5,'score':20},
                                       {'tested':7,'score':0}]
     assert metrics == {'starting_score':50,'starting_percent':95.0,'best_score':0,
-                                'best_percent':100.0,'improvements':3,'local_search':{},
+                                'best_percent':100.0,'improvements':3,'extensions':0,'extension_max':deep_permuter.EXTEND_MAX,'local_search':{},
                                 'allocation_trials':0,'allocation_diagnostic_compiles':0,'reviewed_seeds':{}}
     assert search.log.updates[-1]['improvements'] == 3
 
@@ -1731,3 +1731,12 @@ def test_a_run_that_keeps_improving_spends_the_extended_budget(monkeypatch):
     result = deep_permuter.run(net, 'game', 'f', 1, 2, Log())
     assert result['reason'] == 'Variant limit reached'
     assert result['tested'] > 2  # extended while still improving, then stopped at the cap
+
+
+def test_extensions_are_reported_in_the_progress_metrics(monkeypatch):
+    search = _budget_search(monkeypatch)
+    assert (search.metrics()['extensions'], search.metrics()['extension_max']) == (0, deep_permuter.EXTEND_MAX)
+    search.tested, search.improved_at = 100, (95, time.monotonic())
+    search.check()
+    assert search.metrics()['extensions'] == 1
+    assert _budget_search(monkeypatch, extendable=False).metrics()['extension_max'] == 0
