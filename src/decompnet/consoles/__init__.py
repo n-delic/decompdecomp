@@ -89,6 +89,7 @@ class PortKit:
     # runs the game's translated C (threads, DMA, the hardware's registers), and the library's prototypes
     # (libultra.sigs: each a name, a return type and parameter types, tab-separated); None: no such build yet
     runtimes: tuple = ()  # PortRuntime each, the order the Porting runtime picker offers them
+    runtime_sdk_patterns: object = None  # (owned image bytes, hosted SDK names) -> verified runtime patterns
 
 
 class Console:

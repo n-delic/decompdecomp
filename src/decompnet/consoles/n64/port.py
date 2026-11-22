@@ -241,6 +241,12 @@ def rt64_adapter() -> Path | None:
     return next((library for library in candidates if library.is_absolute() and library.is_file()), None)
 
 
+def runtime_sdk_patterns(image: bytes, hosted: set[str]):
+    from .port_relocated import patterns
+
+    return patterns(image, hosted)
+
+
 KIT = PortKit(
     name="libultraship and Torch",
     summary="libultra's API, a renderer for the game's display lists, input and saves (libultraship); the assets "
@@ -255,6 +261,7 @@ KIT = PortKit(
     boot_globals=boot_globals,
     coprocessor_boot=RSPBOOT,
     wasm=Path(__file__).parent / "port_wasm",
+    runtime_sdk_patterns=runtime_sdk_patterns,
     runtimes=(
         PortRuntime("wasm", "WebAssembly",
                     "decompdecomp’s built-in graphics, audio, input, and N64 services.",

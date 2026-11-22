@@ -629,9 +629,20 @@ u32 w2c_env_osCartRomInit(struct w2c_env *e) {
     }
     return CART_HANDLE;
 }
+int port_sram_dma(uint32_t dram, uint32_t offset, uint32_t size, uint32_t write);
 u32 w2c_env_osEPiStartDma(struct w2c_env *e, u32 handle, u32 mb, u32 dir) {
-    (void)handle;
-    return w2c_env_osPiStartDma(e, mb, 0, dir, be32(mb + 12), be32(mb + 8), be32(mb + 16), be32(mb + 4));
+    u32 dev = be32(mb + 12), dram = be32(mb + 8), size = be32(mb + 16), mq = be32(mb + 4);
+    /* A type-3 PI handle is SRAM; FlashRAM shares its bus window but uses a different command protocol. */
+    if (handle && M[handle + 4] == 3) {
+        u32 bus = dev & 0x1FFFFFFFu;
+        u32 offset = bus >= 0x08000000u ? bus - 0x08000000u : bus;
+        u32 end = stack_end(dram);
+        if (dram >= 0x80000000u && dram < 0x80800000u) end = 0x80800000u;
+        if (!end || size > end - dram || port_sram_dma(dram, offset, size, dir)) return (u32)-1;
+        if (mq) put(mq, mb, 0, 0);
+        return 0;
+    }
+    return w2c_env_osPiStartDma(e, mb, 0, dir, dev, dram, size, mq);
 }
 u32 w2c_env_osEPiReadIo(struct w2c_env *e, u32 handle, u32 dev, u32 data) {
     (void)e; (void)handle;

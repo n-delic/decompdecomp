@@ -168,6 +168,13 @@ const eepromLoad = () => {
   } catch { return null; }
 };
 const eepromSave = (bytes) => { try { localStorage.setItem(saveKey, btoa(String.fromCharCode(...bytes))); } catch {} };
+const sramLoad = () => {
+  try {
+    const text = localStorage.getItem(saveKey + "-sram");
+    return text ? Uint8Array.from(atob(text), (c) => c.charCodeAt(0)) : null;
+  } catch { return null; }
+};
+const sramSave = (bytes) => { try { localStorage.setItem(saveKey + "-sram", btoa(String.fromCharCode(...bytes))); } catch {} };
 
 /* ---------------------------------------------------------------- start */
 async function play(bytes) {
@@ -182,7 +189,7 @@ async function play(bytes) {
     const env = { PORT_VERBOSE: params.get("verbose") || "0" };
     for (const [k, v] of params) if (/^PORT_[A-Z_]+$/.test(k)) env[k] = v;
     await start({ rom, env,
-      io: { frame, audio: sound, input, eepromLoad, eepromSave, gpu: () => gpu, log: (line) => console.log(line),
+      io: { frame, audio: sound, input, eepromLoad, eepromSave, sramLoad, sramSave, gpu: () => gpu, log: (line) => console.log(line),
         error: fail } });
     $("start").hidden = true;
     $("play").hidden = false;

@@ -42,6 +42,7 @@ void port_mips_run(uint32_t entry, uint64_t *r, uint32_t *f);
 void port_mips_leave(const uint64_t *r);
 typedef void (*PortMipsCall)(uint64_t *r, uint32_t *f);
 typedef struct { uint32_t vram; PortMipsCall call; } PortMipsEntry;
+typedef struct { const uint32_t *words, *masks; uint32_t count; PortMipsCall call; } PortMipsPattern;
 const uint32_t port_mips_regs = 0x%(regs)08Xu;
 static inline int64_t S(uint32_t v) { return (int64_t)(int32_t)v; }
 static inline uint32_t BF(f32 v) { uint32_t b; memcpy(&b, &v, 4); return b; }
@@ -260,7 +261,7 @@ def mips_signatures(lls: list[Path], fixed: list[str], hosts: list[Path], librar
 
 def generate(game_h: str, fixed: list[str], hosts: list[Path], library_names=None, defined=(), left_out=(),
              replaced=lambda name: False, varargs=(), byval=None, byval_calls=None, pointer_types=(),
-             *, renames=None) -> tuple[str, dict]:
+             *, renames=None, patterns=()) -> tuple[str, dict]:
     """interp.c's text, and how many of each it has: {"game", "host", "imports"}. `fixed`: the build's rows of
     names and console addresses (`name address kind`); `hosts`: the host's C files (what it answers by name);
     `defined`: imports something else defines already (recompiled C's bridges). Not interpreted, as before them
@@ -321,6 +322,9 @@ def generate(game_h: str, fixed: list[str], hosts: list[Path], library_names=Non
         lines.append(f"static void {bridge}(uint64_t *r, uint32_t *f) {{ (void)f; {_set_result(ret, f'{c}(NULL{args})')} }}")
         table[vram] = bridge
         counts["host"] += 1
+    for name, _, _ in patterns:
+        if name in hosted:
+            used[name] = hosted[name]
     at = 1  # the host's functions the bridges call, declared before them
     lines[at:at] = [f"{ret} {c}(struct w2c_env *" + "".join(f", {t}" for t in types) + ");"
                     for c, ret, types in sorted(used.values())]
@@ -356,6 +360,26 @@ def generate(game_h: str, fixed: list[str], hosts: list[Path], library_names=Non
                      f"\"{name}: no C for it (the interpreter is off): skipped\\n\"); {fail} }} "
                      f"{puts} port_mips_run(0x{vram:08X}u, r, f); port_mips_leave(r); {_returned(ret)} }}")
         counts["imports"] += 1
+    pattern_rows, pattern_calls = [], {}
+    for name, words, masks in patterns:
+        if name not in hosted:
+            continue
+        c, ret, types = hosted[name]
+        if ret not in ("void", "u32", "u64", "f32", "f64"):
+            continue
+        args = "".join(f", {_arg(w, t)}" for w, t in zip(o32(types), types))
+        index = len(pattern_rows)
+        if name not in pattern_calls:
+            pattern_calls[name] = f"H_pattern_{index}"
+            lines.append(f"static void {pattern_calls[name]}(uint64_t *r, uint32_t *f) {{ (void)f; "
+                         f"{_set_result(ret, f'{c}(NULL{args})')} }}")
+        lines.append(f"static const uint32_t pattern_words_{index}[] = {{" + ", ".join(f"0x{w:08X}u" for w in words) + "};")
+        lines.append(f"static const uint32_t pattern_masks_{index}[] = {{" + ", ".join(f"0x{w:08X}u" for w in masks) + "};")
+        pattern_rows.append(f"    {{pattern_words_{index}, pattern_masks_{index}, {len(words)}, {pattern_calls[name]}}},")
+    lines.append("const PortMipsPattern port_mips_patterns[] = {")
+    lines += pattern_rows or ["    {0, 0, 0, 0},"]
+    lines.append("};")
+    lines.append(f"const unsigned port_mips_pattern_count = {len(pattern_rows)};")
     lines += _pointer_entries(pointer_types)
     lines.append("const PortMipsEntry port_mips_calls[] = {")
     lines += [f"    {{0x{v:08X}u, {b}}}," for v, b in sorted(table.items())] or ["    {0, 0},"]

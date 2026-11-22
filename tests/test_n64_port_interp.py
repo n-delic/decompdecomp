@@ -445,3 +445,48 @@ def test_interpreter_preserves_its_frames_when_c_reenters_recompiled_code(tmp_pa
     fields = done.stdout.split()
     assert int(fields[0], 16) == 77
     assert fields[-1] == "1"  # both the recompiler's stack pointer and the interpreted return address survived
+
+
+def test_relocated_sdk_pattern_is_rechecked_after_overlay_changes(tmp_path):
+    """A matched module call uses the host, but replacing that memory restores normal interpretation."""
+    cc = shutil.which('cc') or shutil.which('clang') or shutil.which('gcc')
+    if not cc:
+        pytest.skip('no C compiler')
+    target = CODE + 0x100
+    pattern = [addiu('v0', 'zero', 42), JR_RA, NOP, NOP, NOP, NOP, NOP, NOP]
+    declarations = r'''
+typedef struct { const uint32_t *words, *masks; uint32_t count; PortMipsCall call; } PortMipsPattern;
+static const uint32_t words[] = {%s};
+static const uint32_t masks[] = {%s};
+const PortMipsPattern port_mips_patterns[] = {{words, masks, 8, c_function}};
+const unsigned port_mips_pattern_count = 1;
+''' % (', '.join(str(w) + 'u' for w in pattern), ', '.join(['0xFFFFFFFFu'] * len(pattern)))
+    source = (HARNESS % {'c': C_FUNCTION, 'code': CODE, 'data': DATA}).replace(
+        'const unsigned port_mips_call_count = 1;', 'const unsigned port_mips_call_count = 1;\n' + declarations)
+    harness = tmp_path / 'harness.c'
+    harness.write_text(source)
+    binary = tmp_path / 'interp'
+    built = subprocess.run([cc, '-O1', '-o', str(binary), str(harness), str(MIPS), '-lm'],
+                           capture_output=True, text=True, timeout=120)
+    assert built.returncode == 0, built.stderr
+    # The first call matches the SDK pattern (3 * 10 + 5). Change one instruction and call the same address again.
+    program = [addiu('sp', 'sp', -16), sw('ra', 12, 'sp'), addiu('a0', 'zero', 3), addiu('a1', 'zero', 5),
+               jal(target), NOP, *_data_base(), sw('v0', 0, 't9'),
+               lui('t0', target >> 16), ori('t0', 't0', target & 0xFFFF),
+               lui('t1', addiu('v0', 'zero', 43) >> 16), ori('t1', 't1', addiu('v0', 'zero', 43) & 0xFFFF),
+               sw('t1', 0, 't0'), jal(target), NOP, sw('v0', 4, 't9'),
+               lui('t1', addiu('v0', 'zero', 42) >> 16), ori('t1', 't1', addiu('v0', 'zero', 42) & 0xFFFF),
+               sw('t1', 0, 't0'), jal(target), NOP, lw('ra', 12, 'sp'), JR_RA, addiu('sp', 'sp', 16)]
+    program += [NOP] * (0x100 // 4 - len(program)) + pattern
+    data = tmp_path / 'code.bin'
+    data.write_bytes(b''.join(struct.pack('>I', word) for word in program))
+    result = subprocess.run([str(binary), str(data)], capture_output=True, text=True, timeout=30, check=True)
+    fields = result.stdout.split()
+    assert int(fields[0], 16) == 35
+    assert int(fields[6], 16) == 35 and int(fields[7], 16) == 43
+    assert fields[14] == '2'
+    # A recompiled caller can enter the same function directly, without an interpreted jump first.
+    data.write_bytes(b''.join(struct.pack('>I', word) for word in pattern))
+    result = subprocess.run([str(binary), str(data), '3', '5'], capture_output=True, text=True, timeout=30, check=True)
+    fields = result.stdout.split()
+    assert int(fields[0], 16) == 35 and fields[14] == '1'

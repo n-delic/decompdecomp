@@ -293,14 +293,14 @@ def play(net, slug: str, log=print, *, adapter: Path | None = None) -> dict:
         return view
     repo, cfg, rom = game(net, slug)
     steps = (*build.STEPS, STARTING)
-    program = build.build(repo, console=cfg.get("platform", "n64"), log=log, steps=steps,
+    program = build.build(repo, console=cfg.get("platform", "n64"), log=log, steps=steps, runtime_image=rom,
                           **inputs(net, slug, log))
     build.Progress(log, steps).start(STARTING)
     port = _free_port()
     out = program.parent
     # what the game runs that no function starts, kept beside the project for its next import (runtime_entries)
     from ...consoles.n64.code import RUNTIME_ENTRIES
-    env = {**os.environ, "PORT_LIVE": str(port), "PORT_SAVE": str(out / "game.eep"),
+    env = {**os.environ, "PORT_LIVE": str(port), "PORT_SAVE": str(out / "game.eep"), "PORT_SRAM": str(out / "game.sra"),
            "PORT_ENTRIES": str(rom.parent / RUNTIME_ENTRIES)}
     env.pop("PORT_RT64", None)
     if adapter:

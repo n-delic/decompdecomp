@@ -660,3 +660,45 @@ int main() {
     subprocess.run(["c++", "-std=c++17", "-I", str(KIT / "rt64"), str(source), "-o", str(program)],
                    check=True, capture_output=True, timeout=60)
     subprocess.run([str(program)], check=True, capture_output=True, timeout=30)
+
+
+def test_extended_pi_routes_only_sram_handles_to_the_save_device(tmp_path):
+    cc = shutil.which('cc') or shutil.which('clang') or shutil.which('gcc')
+    if not cc:
+        pytest.skip('no C compiler')
+    function = _function(HOST.read_text(), 'w2c_env_osEPiStartDma')
+    source = tmp_path / 'test.c'
+    source.write_text(r'''
+#include <stdint.h>
+#include <stdio.h>
+typedef uint32_t u32;
+struct w2c_env;
+static uint8_t memory[1024], *M = memory;
+static int sram_calls, pi_calls, messages;
+static uint32_t fields[32];
+static uint32_t be32(uint32_t a) { return fields[a / 4]; }
+static uint32_t stack_end(uint32_t a) { return a >= 0x1000 && a < 0x2000 ? 0x2000 : 0; }
+static void put(uint32_t q, uint32_t msg, int a, int b) { (void)q; (void)msg; (void)a; (void)b; messages++; }
+int port_sram_dma(uint32_t dram, uint32_t offset, uint32_t size, uint32_t write) {
+    sram_calls++; return !(dram == 0x1800 && offset == 0x123 && size == 4 && write == 1);
+}
+u32 w2c_env_osPiStartDma(struct w2c_env *e, u32 mb, u32 pri, u32 dir, u32 dev, u32 dram, u32 size, u32 mq) {
+    (void)e; (void)mb; (void)pri; (void)dir; (void)dev; (void)dram; (void)size; (void)mq; pi_calls++; return 0;
+}
+''' + function + r'''
+int main(void) {
+    fields[(64 + 4) / 4] = 20; fields[(64 + 8) / 4] = 0x1800;
+    fields[(64 + 12) / 4] = 0x08000123; fields[(64 + 16) / 4] = 4;
+    memory[36] = 3; if (w2c_env_osEPiStartDma(0, 32, 64, 1)) return 2;
+    memory[36] = 8; if (w2c_env_osEPiStartDma(0, 32, 64, 1)) return 3;
+    fields[(64 + 8) / 4] = 0x1fff; memory[36] = 3;
+    if (w2c_env_osEPiStartDma(0, 32, 64, 1) != (u32)-1) return 4;
+    printf("%d %d %d\n", sram_calls, pi_calls, messages);
+    return 0;
+}
+''')
+    binary = tmp_path / 'test'
+    built = subprocess.run([cc, '-O1', '-o', str(binary), str(source)], capture_output=True, text=True, timeout=60)
+    assert built.returncode == 0, built.stderr
+    result = subprocess.run([str(binary)], capture_output=True, text=True, check=True, timeout=30)
+    assert result.stdout.strip() == '1 1 1'

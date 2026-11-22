@@ -36,12 +36,12 @@ def _folder(title: str) -> str:
 
 
 def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out=(), library_c=None,
-          library_names=None, function_headers=None, recomp=None) -> Path:
+          library_names=None, function_headers=None, recomp=None, runtime_image=None) -> Path:
     """Build the game for the PC (only what changed), then its host for the Steam Deck: port/wasm/build/steamdeck/
     game. `recomp`: the console's recompiler's output (play.recompiled), whose C runs the functions with no C yet,
     as in the native build (recomp.py)."""
     native.build(repo, console=console, log=log, steps=steps, leave_out=leave_out, library_c=library_c,
-                 library_names=library_names, function_headers=function_headers, recomp=recomp)
+                 library_names=library_names, function_headers=function_headers, recomp=recomp, runtime_image=runtime_image)
     repo = Path(repo).expanduser().resolve()
     host = Path(consoles.get(console).port_kit.wasm)
     if not (host / "window" / "sdl.c").is_file():

@@ -814,3 +814,13 @@ def test_uncompilable_saved_c_uses_original_only_when_its_helpers_are_available(
     assert fallback_failed_sources(errors, sources, repo, out, fixed) == {failed}
     assert not fallback_failed_sources(errors, {failed: out / 'src' / failed}, repo, out, fixed)
     assert not fallback_failed_sources(errors, sources, repo, out, ['broken 0x00001000 func'])
+
+
+def test_loader_with_adjacent_stack_objects_uses_original_code():
+    from pathlib import Path
+
+    from decompnet.port.wasm.build import original_code
+
+    host = Path(__file__).resolve().parents[1] / 'src/decompnet/consoles/n64/port_wasm'
+    manifest = {'game': {'sha1': '79cd1166c365e5809dec9b62e6d40d6032d5db3a'}}
+    assert original_code(host, manifest, ['loader 0x800018A8 func']) == {'loader.c'}

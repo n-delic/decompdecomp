@@ -370,6 +370,7 @@ def test_the_window_kind_is_offered_and_made_on_a_mac_only(tmp_path, monkeypatch
     monkeypatch.setattr(play, "game", lambda net, slug: (repo, {"platform": "n64", "rom": {"title": "RALLY"}}, None))
     monkeypatch.setattr(play, "library", lambda net, slug, log=print: set())
     monkeypatch.setattr(play, "unverified", lambda net, slug, log=print: set())  # (the save is whole)
+    monkeypatch.setattr(play, "relative_bank_code", lambda net, slug, log=print: set())
     monkeypatch.setattr(play, "library_c", lambda net, slug: {})  # (no ultralib units: port/ultralib.py)
     monkeypatch.setattr(play, "library_names", lambda net, slug: {})  # (no library names to rename)
     monkeypatch.setattr(play, "recompiled", lambda net, slug, log=print: None)  # (no recompiled C)

@@ -59,6 +59,11 @@ typedef struct { uint32_t vram; PortMipsCall call; } PortMipsEntry;
 __attribute__((weak)) const PortMipsEntry port_mips_calls[1] = {{0, 0}};
 __attribute__((weak)) const unsigned port_mips_call_count = 0;
 
+/* Full-function, relocation-masked SDK fingerprints for modules the loader can move. */
+typedef struct { const uint32_t *words, *masks; uint32_t count; PortMipsCall call; } PortMipsPattern;
+__attribute__((weak)) const PortMipsPattern port_mips_patterns[1] = {{0, 0, 0, 0}};
+__attribute__((weak)) const unsigned port_mips_pattern_count = 0;
+
 /* PORT_ENTRIES=path: every address the game starts running here (a function's entry: a call, a pointer, a thread),
    each once, appended as it's first seen, so a game that's stopped keeps what it found. The importer reads the
    project's file as evidence of where functions start (consoles/n64/code.py, runtime_entries): a racing game's
@@ -105,15 +110,31 @@ void port_mips_sw(uint32_t a, uint32_t v) { if (!M) M = port_memory(); sw(a, v);
 
 #define CACHE 1024
 static struct { uint32_t vram; PortMipsCall call; } found[CACHE]; /* the last looked up, hit or miss */
+static PortMipsCall with_pattern(uint32_t vram) {
+    if ((vram & 3u) || vram < 0x80000000u || vram >= 0x80800000u) return 0;
+    PortMipsCall match = 0;
+    for (unsigned i = 0; i < port_mips_pattern_count; i++) {
+        const PortMipsPattern *p = &port_mips_patterns[i];
+        if (p->count > (0x80800000u - vram) / 4u) continue;
+        unsigned n = 0;
+        for (; n < p->count; n++) if ((lw(vram + n * 4u) & p->masks[n]) != p->words[n]) break;
+        if (n != p->count) continue;
+        if (match && match != p->call) return 0; /* overlapping SDK identities are not a verdict */
+        match = p->call;
+    }
+    return match;
+}
+
 static PortMipsCall with_c(uint32_t vram) {
     uint32_t slot = (vram >> 2) & (CACHE - 1);
-    if (found[slot].vram == vram) return found[slot].call;
+    if (found[slot].vram == vram && (found[slot].call || !port_mips_pattern_count)) return found[slot].call;
     unsigned lo = 0, hi = port_mips_call_count;
     while (lo < hi) { unsigned mid = (lo + hi) / 2; if (port_mips_calls[mid].vram < vram) lo = mid + 1; else hi = mid; }
     PortMipsCall c = lo < port_mips_call_count && port_mips_calls[lo].vram == vram ? port_mips_calls[lo].call : 0;
     found[slot].vram = vram;
     found[slot].call = c;
-    return c;
+    /* An overlay can be replaced at the same address: neither a match nor a miss is durable. */
+    return c ? c : with_pattern(vram);
 }
 
 /* ---------------------------------------------------------------- each host thread's MIPS stack */
@@ -440,6 +461,8 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
     memcpy(c.r, regs, sizeof c.r);
     memcpy(c.f, fregs, sizeof c.f);
     c.status = 0x2000FF01u;
+    PortMipsCall relocated = with_pattern(entry);
+    if (relocated) { call_c(&c, relocated); goto done; }
     uint32_t pc = entry;
     unsigned long steps = 0;
     int zeros = 0;

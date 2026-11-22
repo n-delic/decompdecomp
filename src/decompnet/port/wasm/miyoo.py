@@ -45,12 +45,12 @@ def _folder(title: str) -> str:
 
 
 def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out=(), library_c=None,
-          library_names=None, function_headers=None, recomp=None) -> Path:
+          library_names=None, function_headers=None, recomp=None, runtime_image=None) -> Path:
     """Build the game for the PC (only what changed), then its host for the Miyoo Mini: port/wasm/build/miyoo/game.
     `recomp`: the console's recompiler's output (play.recompiled), whose C runs the functions with no C yet, as in
     the native build (recomp.py); without it the interpreter runs them, several times slower on the Mini's chip."""
     native.build(repo, console=console, log=log, steps=steps, leave_out=leave_out, library_c=library_c,
-                 library_names=library_names, function_headers=function_headers, recomp=recomp)
+                 library_names=library_names, function_headers=function_headers, recomp=recomp, runtime_image=runtime_image)
     repo = Path(repo).expanduser().resolve()
     kit = consoles.get(console).port_kit
     host = Path(kit.wasm)

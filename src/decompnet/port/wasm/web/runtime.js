@@ -190,7 +190,7 @@ function gpuImports(io, memory) {
 
 /* Start the game from `base` (the folder of the build's files) and `rom` (the player's ROM, bytes). `io`:
    {frame(rgb, w, h), audio(lr, frames, hz), input() -> buttons<<16 | x<<8 | y, eepromLoad() -> bytes,
-   eepromSave(bytes), log(line, stream), error(error), gpu() -> the GPU renderer drawing now, or null (optional)};
+   eepromSave(bytes), sramLoad()/sramSave(bytes), log(line, stream), error(error), gpu() -> the GPU renderer drawing now, or null (optional)};
    `env`: the host's PORT_* options. Resolves once it runs. */
 export async function start({ base = "", rom, io, env = {} }) {
   if (!supported()) throw new Error("This browser can't run the game: it has no WebAssembly.");
@@ -230,6 +230,11 @@ export async function start({ base = "", rom, io, env = {} }) {
       if (saved) bytes().set(saved.subarray(0, size), ptr >>> 0);
     },
     eeprom_save: (ptr, size) => io.eepromSave(bytes().slice(ptr >>> 0, (ptr >>> 0) + size)),
+    sram_load: (ptr, size) => {
+      const saved = io.sramLoad?.();
+      if (saved) bytes().set(saved.subarray(0, size), ptr >>> 0);
+    },
+    sram_save: (ptr, size) => io.sramSave?.(bytes().slice(ptr >>> 0, (ptr >>> 0) + size)),
     frame: (ptr, w, h) => io.frame(bytes().subarray(ptr >>> 0, (ptr >>> 0) + w * h * 3), w, h),
     audio: (ptr, frames, hz) => io.audio(new Int16Array(memory.buffer, ptr >>> 0, frames * 2), frames, hz),
     input: () => io.input(),
@@ -352,6 +357,11 @@ async function startAsyncify({ base = "", rom, io, env = {} }) {
         if (saved) bytes().set(saved.subarray(0, size), ptr >>> 0);
       },
       eeprom_save: (ptr, size) => io.eepromSave(bytes().slice(ptr >>> 0, (ptr >>> 0) + size)),
+      sram_load: (ptr, size) => {
+        const saved = io.sramLoad?.();
+        if (saved) bytes().set(saved.subarray(0, size), ptr >>> 0);
+      },
+      sram_save: (ptr, size) => io.sramSave?.(bytes().slice(ptr >>> 0, (ptr >>> 0) + size)),
       frame: (ptr, w, h) => io.frame(bytes().subarray(ptr >>> 0, (ptr >>> 0) + w * h * 3), w, h),
       audio: (ptr, frames, hz) => io.audio(new Int16Array(memory.buffer, ptr >>> 0, frames * 2), frames, hz),
       input: () => io.input(),

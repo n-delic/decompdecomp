@@ -1,0 +1,2 @@
+# A loader reads a variable-length record across adjacent local objects; a PC compiler need not place them together.
+0x800018A8

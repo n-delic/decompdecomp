@@ -883,7 +883,8 @@ def place_all(out: Path, lls: list[Path], functions: set, zig, env: dict, log, s
 
 
 def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out=(), universal: bool = False,
-          library_c=None, library_names=None, recomp=None, function_headers=None, ensure_host_import=False) -> Path:
+          library_c=None, library_names=None, recomp=None, function_headers=None, ensure_host_import=False,
+          runtime_image=None) -> Path:
     """Build the game in the save repository `repo` for the PC; returns the program (port/wasm/build/game). Only
     what changed since the last build is made again (the keys, above). `steps` are the progress bar's, when a
     caller adds its own after these (play.py); `leave_out`, library files the host provides (gather). A second
@@ -900,11 +901,11 @@ def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out
     with build_turn(repo / "port" / "wasm" / "build", log, resource="native port build"), recomp_turn:
         return _build(repo, console=console, log=log, steps=steps, leave_out=leave_out, universal=universal,
                       library_c=library_c or {}, library_names=library_names or {}, recomp=recomp,
-                      function_headers=function_headers, ensure_host_import=ensure_host_import)
+                      function_headers=function_headers, ensure_host_import=ensure_host_import, runtime_image=runtime_image)
 
 
 def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool = False, library_c=None,
-           library_names=None, recomp=None, function_headers=None, ensure_host_import=False) -> Path:
+           library_names=None, recomp=None, function_headers=None, ensure_host_import=False, runtime_image=None) -> Path:
     kit = consoles.get(console).port_kit
     if kit is None or kit.wasm is None:
         raise NetworkError(f"{consoles.get(console).name} has no WebAssembly build yet (its port kit has no host)")
@@ -971,6 +972,8 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
                                + "; ".join(failed[:3]))
         for name in fallback:
             sources.pop(name)
+            # Browser and cross-builds enumerate this generated folder too; a failed file must not revive a stale object.
+            (out / "src" / name).unlink(missing_ok=True)
         if not sources and not library:
             sources[EMPTY_UNIT] = _empty_unit(out)
             if error := ir(EMPTY_UNIT):
@@ -1060,12 +1063,23 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
     for u in recompiled:
         if u.name == "bridges.c":
             bridged = set(re.findall(r"\b(w2c_env_\w+)\(struct w2c_env \*", u.read_text(encoding="utf-8")))
+    patterns = []
+    image = Path(runtime_image) if runtime_image else repo / ((manifest.get("game") or {}).get("file") or "")
+    runtime_sdk_patterns = getattr(kit, "runtime_sdk_patterns", None)
+    if runtime_sdk_patterns and image.is_file():
+        from .recomp import HOST, _demangle
+
+        hosted = {_demangle(m.group(2)) for path in host.glob("*.c")
+                  for m in HOST.finditer(path.read_text(encoding="utf-8", errors="replace"))}
+        patterns = runtime_sdk_patterns(image.read_bytes(), hosted)
+        if patterns:
+            log(f"identified {len(patterns)} relocated SDK functions for the host")
     interp_c, counts = interp.generate((out / "c" / "game.h").read_text(encoding="utf-8"), fixed,
                                        [*sorted(host.glob("*.c")), *own], library_names, bridged, left_out, replaced,
                                        interp.variadic(lls), interp.by_value(lls), interp.by_value(lls, declared=True),
                                        interp.pointer_types(p.read_text(encoding="utf-8", errors="replace")
                                                             for p in sorted((out / "c").glob("game_*.c"))),
-                                       renames=renamed)
+                                       renames=renamed, patterns=patterns)
     _write(out / "interp.c", interp_c)
     if counts["imports"]:
         log(f"{counts['imports']} functions the game's C calls have no C yet: the interpreter runs them from the ROM")

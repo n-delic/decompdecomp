@@ -279,14 +279,14 @@ def make(repo: Path, kind: str, dest: Path, *, console: str, title: str, rom: di
         sdl = toolchains.ensure("sdl3", log=log) if kind == "window" else None
         steps = (*build.STEPS, PACKING)
         # On macOS the app runs on Apple Silicon and Intel Macs alike, whichever kind exported it.
-        program = build.build(repo, console=console, log=log, steps=steps, universal=True, **inputs)
+        program = build.build(repo, console=console, log=log, steps=steps, universal=True, runtime_image=rom_file, **inputs)
         build.Progress(log, steps).start(PACKING)
         log(f"packing {title} as an app for " + ("Apple Silicon and Intel Macs" if sys.platform == "darwin"
                                                   else "this computer") + (", in a window of its own" if sdl else ""))
         return dest, package_app(program, dest, title, sdl=sdl)
     if kind == "miyoo":
         steps = (*miyoo.STEPS, PACKING)
-        program = miyoo.build(repo, console=console, log=log, steps=steps, **inputs)
+        program = miyoo.build(repo, console=console, log=log, steps=steps, runtime_image=rom_file, **inputs)
         build.Progress(log, steps).start(PACKING)
         log("packing the Miyoo Mini's SD card folders")
         version = " ".join(x for x in (rom.get("title"), rom.get("region"), rom.get("sha1") and f"SHA-1 {rom['sha1']}") if x)
@@ -294,14 +294,14 @@ def make(repo: Path, kind: str, dest: Path, *, console: str, title: str, rom: di
         return folder, folder / "README.txt"
     if kind == "steamdeck":
         steps = (*steamdeck.STEPS, PACKING)
-        program = steamdeck.build(repo, console=console, log=log, steps=steps, **inputs)
+        program = steamdeck.build(repo, console=console, log=log, steps=steps, runtime_image=rom_file, **inputs)
         build.Progress(log, steps).start(PACKING)
         log("packing the Steam Deck's folder")
         version = " ".join(x for x in (rom.get("title"), rom.get("region"), rom.get("sha1") and f"SHA-1 {rom['sha1']}") if x)
         folder = steamdeck.package(program, dest, title, version, rom_file)
         return folder, folder / "README.txt"
     steps = (*web.STEPS, PACKING)
-    folder = web.build(repo, console=console, log=log, steps=steps, simd=simd, **_game_c_only(inputs))
+    folder = web.build(repo, console=console, log=log, steps=steps, simd=simd, runtime_image=rom_file, **_game_c_only(inputs))
     build.Progress(log, steps).start(PACKING)
     if kind == "ios":
         log("packing the offline iPhone/iPad Xcode project")
