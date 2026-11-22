@@ -17979,3 +17979,23 @@ beyond the basic block, so the copy a later call arm reads becomes canonical and
 `if` form has no copy to merge, and the allocator's priority order (3 references over 15 insns against 2 over 18 in the
 ternary's split) differs. A volatile read of the period field in the same function was left as the earlier agent had it.
 Family: decomp-repair `ternary_clamp_split` (0.5.612), reproduced from the saved best (435 -> 0).
+
+## KMC GCC 2.7.2 (`-G0 -mips3 -mgp32 -mfp32 -O2`): the scheduler's alias classes order two adjacent global stores (member store, record global)
+
+A 144-instruction N64 display-list function, saved best 60: its last four instructions were `addiu v1; addiu a2; lui at; sw v1,
+D_8010A4B4; lui at; sw a2, cursor` where the target has `addiu v1; lui at; sw v1; addiu a2; lui at; sw a2` (the cursor is a
+`volatile` global, the other a plain one). Roughly two hundred earlier attempts (statement order, flags, volatility) stayed at 60.
+The `-dS -dR` trace (the scheduling dumps print each block's ready list and priorities) showed the second scheduler's tie: both
+the plain store and the cursor's add had priority 5, and `schedule_select` breaks equal priorities by the memory unit's potential
+hazard, so the store was placed after the add. The plain store had priority 5 only because it depends on the store `4(a2)`
+before it: sched.c `output_dependence` lets any raw pointer store conflict with any global. A store through a structure member
+at a varying address (`MEM_IN_STRUCT_P`) does not conflict with a plain fixed-address global (`true_dependence`,
+`output_dependence`, the comment above `read_dependence`), which drops that store's priority to 3, below the add's 5. The
+read of `D_8010A4D8` before the call has to stay behind the member store, so it has to be a member too (a one-member record
+global, `D_8010A4D8.x`): the member store alone scored 670 (the read floated up), the record global alone 60.
+Edit list (exact judge): `*((s32 *)((char *)temp_a2 + 4)) = v` as `((Gfx *)temp_a2)->w1 = v` with `typedef struct { s32 w0; s32
+w1; } Gfx;` (670 alone), `extern s32 D_8010A4D8;` as `extern W D_8010A4D8;` with `typedef struct { s32 x; } W;` and its read as
+`.x` (60 alone), both: 0. Converting the other raw stores of the block too also scored 0; converting a different subset
+(`tail`'s) scored 60. Controlled (one function, exact judge, same compiler); the mechanism is read from sched.c and the dump.
+Family: decomp-repair `member_alias_pair` (0.5.613), which emits the store and the global as a one-member record, alone and
+together; two of its eight children from the saved best were exact (60 -> 0).
