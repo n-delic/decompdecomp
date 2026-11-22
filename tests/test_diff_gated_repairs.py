@@ -2105,3 +2105,14 @@ def test_byte_search_loop_routes_to_kmc(monkeypatch):
     assert 'byte_search_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'byte_search_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
     assert 'byte_search_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-7.1', rows, ''))
+
+
+def test_parameter_clock_load_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'nop', 'nop')]
+    monkeypatch.setattr(diff_gated_repairs.measured_parameter_clock_load, 'variants',
+                        lambda text, name, header, diff: [('parameter_clock_fixture', text)])
+    assert 'parameter_clock_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'parameter_clock_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+    assert 'parameter_clock_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-7.1', rows, ''))

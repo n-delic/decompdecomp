@@ -15898,3 +15898,6 @@ remain, with clean uninitialized diagnostics. Switching the
 secondary sample as well scored 2,145 or 2,325. The trial checks
 the guard load against the same indexed source occurrence and
 requires liveness and the linked in-place scale to agree.
+### KMC GCC 2.7.2 parameter clock load order
+
+A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` loaded an owner's clock before a nested unit delay when preparing a parameter. Its machine draft loaded the clock later, after a separate parameter-kind store. Staging the clock in a local before the delay load changed the diff score from 210 to an exact linked match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the observed offsets, instruction ordering and source shape.
