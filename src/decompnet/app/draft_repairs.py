@@ -463,7 +463,7 @@ def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels
         scoped = (_generated(loop_sentinel_repairs.variants, source, name, header, arch, asm)
                   + _generated(target_call_constant_repairs.variants, source, name, asm)
                   + _generated(out_of_line_guard_repairs.variants, source, name, header)
-                  + _generated(mips_float_local_reuse.variants, source, name)
+                  + _generated(mips_float_local_reuse.variants, source, name, asm)
                   + _generated(stored_float_zero_repairs.variants, source, name, asm)
                   + _generated(opposing_float_bounds_repairs.variants, source, name, asm)
                   + _generated(vector_output_capture.variants, source, name, asm)

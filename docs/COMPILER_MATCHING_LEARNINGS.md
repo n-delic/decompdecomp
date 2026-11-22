@@ -13350,6 +13350,23 @@ the same center, loads from one base register, and comparisons of the
 results. It generates a candidate only across local statements that preserve
 the inputs. Evidence is one partial live match and synthetic tests.
 
+### KMC GCC 2.7.2: recover a saved float in a call delay slot
+
+A large N64 draft computed the difference of two float fields, one
+scaled, before a call. The compiler moved the result through a saved
+integer register. The target kept it in `$f28` and computed the
+difference in the call's delay slot. Reusing a float declaration from
+an earlier disjoint lifetime restored that scheduling and improved
+the linked score from 17,741 to 16,695 with
+`-G0 -mips3 -mgp32 -mfp32 -O2`. Other tested earlier declarations
+scored 16,705, 16,735 and 16,810. Some unselected alternatives scored
+20,495.
+
+The `saved_float_across_call` family looks for the two target field
+offsets, the saved FPR in the corresponding call delay slot and
+disjoint source lifetimes. It offers a bounded set of nearby earlier
+floats. Evidence is one partial N64 match and synthetic guard tests.
+
 ### KMC GCC 2.7.2: restore a two-value switch with empty low cases
 
 In a large N64 function, the draft combined a nonnegative check and
