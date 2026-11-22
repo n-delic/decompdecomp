@@ -1681,6 +1681,25 @@ identified by tracing missing declarations. All six pairs failed when the
 empty-stub signature recovery was disabled. All six saved matches passed a
 fresh compile and reconstructed the same cartridge together.
 
+### Externalizing IDO overlay constant pools and BSS can change instructions
+
+An isolated N64 replay found compiler-emitted, unnamed section references even
+when all instruction bits outside relocation fields agreed. The object itself
+can identify the float values loaded from its constant pool. Two source
+representations of a named loader binding were tried, a typed array and a
+pointer cast from byte storage. Across nine donor pairs, neither produced
+an additional exact match. In the sampled IDO 7.1 float multiply, the
+external declaration moved the loads to different floating-point registers
+even though it produced the intended named reference and offset.
+
+Two IDO 7.1 NCC BSS cases used a file-local static array and emitted a BSS
+section relocation. Changing it to an external C-linkage array produced the
+intended symbol but did not match either function. In one case the compiler
+grew the function from 64 to 68 bytes and emitted a second HI16 before the
+second store. This separates the loader binding from the code generation
+effect of changing storage class. A retry of either form must still pass
+the full instruction and relocation verdict.
+
 ### Observation: source layout sensitivity (IDO 5.3)
 
 The existing [IDO guide](../src/decompnet/consoles/n64/guides/ido.md) records a private same-source
