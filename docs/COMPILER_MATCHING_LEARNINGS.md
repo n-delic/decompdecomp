@@ -13222,6 +13222,22 @@ Not found by the permuter: the per-arm split and the fresh-local-for-address rew
 should offer, for a joined pointer set by loads from dying addresses, the per-arm split (with the join's store
 duplicated), and, for a parameter reused as a frame address, the fresh local. Neither is written yet.
 
+### KMC GCC 2.7.2: stage both opposing float bounds
+
+With `-G0 -mips3 -mgp32 -mfp32 -O2`, a large N64 function computed the
+upper distance inside the first sign guard and the lower distance inside
+the second. The target computes `current - lower` and then
+`upper - current` after one capture of the current value, before the bound
+comparisons. Separate float locals in that order improved the linked score
+from 27,854 to 26,824. Staging only the lower distance scored 27,344,
+staging the upper distance first scored 26,859, and later placements of the
+lower distance scored 27,624 and 27,874.
+
+The `opposing_float_bounds` repair looks for both target subtractions using
+the same center, loads from one base register, and comparisons of the
+results. It generates a candidate only across local statements that preserve
+the inputs. Evidence is one partial live match and synthetic tests.
+
 ### Retain a zero register through CSE (KMC GCC 2.7.2)
 
 On one N64 function with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`,
