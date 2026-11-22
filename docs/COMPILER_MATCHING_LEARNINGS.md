@@ -16052,6 +16052,23 @@ Two saved MIPS examples built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` 
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` checked three signature bytes. The generated draft's combined condition used different registers and a shared result copy. Staging the input bytes and comparison constants in word locals changed the linked difference score from 250 to an exact match while retaining the integer return type. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the complete source, measured instructions and constants, and resolved addresses for all three byte loads.
 
+### Scope an accumulator initializer before a setup call
+
+A private N64 function built with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` initialized a motion
+accumulator after an unrelated flag guard. KMC placed that move in a
+later countdown branch delay slot, which changed three branch
+encodings. Declaring and initializing the accumulator in a new scope
+after the two reset stores and before the setup call restored those
+branches. The linked score fell from 1,070 to 855 with the original
+frame, all three jump tables and 3,034 instructions.
+
+Placing the declaration at the phase entry scored 1,055. Simply moving
+the unscoped assignment before the guard scored 1,085 and swapped two
+long-lived registers. The trial checks the delayed move and matching
+flag, call and byte offset. It also checks that all uses fit within the
+new scope and that no branch can enter that scope after the initializer.
+
 ### Reuse dead phase locals to recover direct positive zeros
 
 With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, a private N64 function

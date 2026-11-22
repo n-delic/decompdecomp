@@ -2289,6 +2289,24 @@ def test_byte_signature_routes_to_kmc_with_symbol_resolver(monkeypatch):
     assert 'byte_signature_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-7.1', rows, '', resolve=resolver))
 
 
+def test_scoped_float_phase_initializer_is_routed_for_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    source = 'void update(void) {}'
+    rows = [('>', '', 'move $s5, $zero')]
+    trial = diff_gated_repairs.scoped_phase_initializer
+
+    def variant(text, name, received, *, header, max_bytes):
+        assert (text, name, received, header) == (source, 'update', rows, '')
+        assert max_bytes == diff_gated_repairs.MAX_SOURCE_BYTES
+        return [(trial.FAMILY, 'void update(void) { return; }')]
+
+    monkeypatch.setattr(trial, 'variants', variant)
+    for compiler in (KMC, EGCS, 'ido-7.1'):
+        labels = dict(proposals(source, 'update', '', 'mips', compiler, rows, ''))
+        assert (trial.FAMILY in labels) == (compiler == KMC)
+
+
 def test_phase_projection_holders_route_only_for_kmc(monkeypatch):
     from decompnet.app import diff_gated_repairs
 
