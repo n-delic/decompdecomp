@@ -390,6 +390,14 @@ def _manifest(files: dict[str, str], cfg: dict, known_names=()) -> dict:
                     or not isinstance(symbol.get("address"), int) or not isinstance(symbol.get("size", 0), int)
                     or symbol.get("kind", "data") not in SYMBOL_KINDS):
                 raise ValueError(f"symbol {symbol.get('name')!r} has an invalid name, address, size or kind")
+        types = manifest.get("global_types", [])
+        if not isinstance(types, list):
+            raise ValueError("global_types must be a list")
+        for item in types:
+            if (not isinstance(item, dict) or not isinstance(item.get("address"), int)
+                    or not isinstance(item.get("type"), str) or not item["type"] or len(item["type"]) > 80
+                    or not isinstance(item.get("source", ""), str)):
+                raise ValueError("a global type needs an integer address and a type")
         for note in manifest.get("notes", []):
             if (not isinstance(note, dict) or not isinstance(note.get("text"), str)
                     or note.get("function") is not None and not isinstance(note.get("function"), str)
@@ -449,7 +457,7 @@ def _merge_manifest(old, new, current, key: str = ""):
             else:
                 merged[field] = new[field]
         return merged
-    if key in ("layout", "symbols", "set_aside", "notes", "knowledge") \
+    if key in ("layout", "symbols", "set_aside", "notes", "knowledge", "global_types") \
             and all(isinstance(value, list) for value in (old, new, current)):
         def identity(item):
             if key == "knowledge":
@@ -457,6 +465,8 @@ def _merge_manifest(old, new, current, key: str = ""):
             if key == "notes" and isinstance(item, dict):
                 return (item.get("function"), item.get("text"), item.get("by", ""))
             if isinstance(item, dict):
+                if key == "global_types":
+                    return item.get("address")  # (a typed global may still have its D_ name: the address is its identity)
                 return (item.get("name"),item.get("vram")) if key == "set_aside" else item.get("name")
             return None
 
