@@ -16145,3 +16145,7 @@ A saved MIPS byte-fill example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp3
 ### KMC GCC 2.7.2 byte-store branch tail
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` selected between two groups of byte stores followed by a shared byte store. Duplicating that last store into both source arms changed the linked difference score from 350 to an exact match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the measured branch/store sequence and two complete arms containing only byte stores to the same object.
+
+### KMC GCC 2.7.2 packed command and stack halfword
+
+A saved big-endian MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` packed four small fields into two command words. The generated draft combined the fields in a different order and loaded the fifth argument as a word rather than its low halfword. Restoring the measured staging and halfword access changed the linked difference score from 315 to an exact match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the complete source and instruction shape, the big-endian 32-bit ABI, and no conflicting declaration.
