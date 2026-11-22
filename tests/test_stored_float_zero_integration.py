@@ -1,5 +1,6 @@
 """Targeted instruction evidence reaches MIPS draft repair generation."""
 
+from decompnet.app.diff_gated_repairs import proposals
 from decompnet.app.draft_repairs import variants
 
 
@@ -28,3 +29,31 @@ void f(void *arg0, int state) {{
     [candidate] = [text for text in proposed if labels[text] == 'stored_float_zero']
     assert f'{field} = repair_saved_zero.number;' in candidate
     assert '+ repair_saved_zero.number' in candidate
+
+
+def test_measured_kmc_route_tries_the_stack_vector_zero_word():
+    source = '''\
+typedef struct { float x; float y; float z; } Vector;
+void update(void *context) {
+    union { unsigned int bits; float number; } zero;
+    struct { Vector vector; } frame;
+    zero.bits = (unsigned int)context & ~(unsigned int)context;
+    fill(&frame.vector.x);
+    frame.vector.y = zero.number;
+    consume(&frame.vector.x);
+    emit(frame.vector.z);
+}
+'''
+    rows = [
+        (' ', 'jal fill', 'jal fill'),
+        (' ', 'addiu $s0, $sp, 0x20', 'addiu $s0, $sp, 0x20'),
+        (' ', 'move $a0, $s0', 'move $a0, $s0'),
+        (' ', 'jal consume', 'jal consume'),
+        ('r', 'sw $zero, 0x24($sp)', 'sw $s7, 0x24($sp)'),
+    ]
+    family = 'stack_vector_zero_word'
+    [candidate] = [text for label, text in proposals(source, 'update', '', 'mips',
+                                                    'gcc-2.7.2-kmc', rows, '') if label == family]
+    assert 'frame.vector.words[1] = 0;' in candidate
+    assert 'consume(&frame.vector.value.x);' in candidate
+    assert family not in {label for label, _ in proposals(source, 'update', '', 'mips', 'ido-7.1', rows, '')}
