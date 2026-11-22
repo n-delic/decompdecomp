@@ -15111,3 +15111,8 @@ The projection-axis repair accepts this earlier guard when the matched
 load, comparison and store identify the saved register and both source
 loads name the same field. Synthetic tests exercise raw and parenthesized
 products and reject cases where the old guard value is still live.
+
+
+### Stage an event timestamp before initializing its record
+
+Two saved N64 examples built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` initialized an event record before loading its timestamp inputs. The target loaded those inputs first, then stored the event type, payload, next pointer and timestamp. Computing the timestamp in a local before the stores reproduced both linked targets exactly, improving scores 395 to 0 and 325 to 0. Evidence: two saved examples and synthetic source-shape and compiler-routing tests. This is a target-led candidate, not a general semantics-preserving rewrite: moving the loads can change behavior if the event aliases an input, so acceptance still requires the normal byte judge.

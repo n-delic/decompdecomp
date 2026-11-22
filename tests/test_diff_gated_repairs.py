@@ -1740,3 +1740,13 @@ def test_route_measured_branch_state_store(monkeypatch):
                         lambda source, name, diff, header: [('branch_state_store', source)])
     assert 'branch_state_store' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'branch_state_store' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_event_timestamp_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_kmc_event_timestamp, 'variants',
+                        lambda text, name, header, diff: [('event_timestamp_fixture', text)])
+    assert 'event_timestamp_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'event_timestamp_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
