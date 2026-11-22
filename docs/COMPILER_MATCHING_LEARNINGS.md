@@ -1,5 +1,20 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: retain a zero word for a late float update
+
+In one N64 function, the target initialized and reset a zero in
+a saved integer register and transferred its bits into an FPR
+for a late addition. The draft used an independent float zero
+literal at the corresponding clear and addition. A local union
+carrying the unsigned zero bits reduced the linked score from
+28,602 to 28,228 with `-G0 -mips3 -mgp32 -mfp32 -O2`. A float
+local scored 28,668. Initializing the union at its declaration
+scored 28,586. Moving its assignment to immediately before the
+switch scored 28,458. These are measurements on one function.
+The repair requires the target's two zero definitions, transfer
+and store to the same argument field. A separate addressed
+frame aggregate plus the zero carrier scored 27,964.
+
 ### KMC GCC 2.7.2: place a shared case tail at its earlier guard
 
 An N64 draft jumped forward from a case's early guard into a body
