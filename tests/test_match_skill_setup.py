@@ -306,3 +306,45 @@ def test_try_reports_a_refusal_from_the_app(world, tmp_path, monkeypatch):
     with pytest.raises(SystemExit, match="not submitted: .*do not hold"):
         setup.main(["try", "claude-t8", str(cand)])
     setup.main(["stop", "claude-t8"])
+
+
+def test_an_older_app_without_nearest_gets_closest_then_random(world):
+    setup = world[0]
+
+    class OldGateway:
+        def __init__(self, known):
+            self.known, self.calls = known, []
+
+        def call(self, tool, arguments):
+            self.calls.append(arguments)
+            if arguments.get("strategy") not in self.known:
+                raise setup.McpError("claim_function: strategy must be one of easiest, closest, random")
+            if "max_insns" in arguments and "max_insns" not in self.known:
+                raise setup.McpError("claim_function: unexpected keyword argument 'max_insns'")
+            return "## CLAIMED: demo/func_8001"
+
+    old = OldGateway({"closest", "random"})
+    assert setup.claim(old, "", "nearest", 800) == "func_8001"
+    assert old.calls == [{"strategy": "nearest", "max_insns": 800}, {"strategy": "closest", "max_insns": 800},
+                         {"strategy": "closest"}]
+    oldest = OldGateway({"random"})
+    assert setup.claim(oldest, "", "nearest", 800) == "func_8001" and oldest.calls[-1] == {"strategy": "random"}
+
+    class Busy(OldGateway):
+        def call(self, tool, arguments):
+            raise setup.McpError("claim_function: nothing left to claim")
+
+    with pytest.raises(setup.McpError, match="nothing left"):
+        setup.claim(Busy(set()), "", "nearest", 800)  # a real refusal is not retried with another order
+
+
+def test_judge_claim_falls_back_to_closest_on_an_older_app():
+    judge = load("judge")
+    app = judge.App.__new__(judge.App)
+    sent = []
+
+    def call(path, body):
+        sent.append(body["strategy"])
+        return {"name": "f"} if body["strategy"] == "closest" else {"error": "strategy must be one of easiest, closest"}
+    app.call = call
+    assert app.claim("demo", strategy="nearest", max_insns=800) == {"name": "f"} and sent == ["nearest", "closest"]
