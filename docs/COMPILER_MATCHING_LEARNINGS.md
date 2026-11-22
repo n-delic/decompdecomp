@@ -14520,3 +14520,16 @@ definition and reads of the default before the new assignment sites.
 In one N64 list-append function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a draft incremented an uninitialized index and then reloaded the updated count. The target loaded the list base unconditionally, read the old count, stored its increment, and indexed with the old count. Recovering that target-proven sequence reproduced the linked target exactly (score 340 to 0). The rule requires the complete target shape, matching field offsets and an uninitialized local; it intentionally reconstructs behavior where the draft was undefined. Evidence: one saved example and synthetic generation and routing tests.
 
 In one N64 halfword sentinel scan built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, the draft multiplied an index by two before adding it to a `u16 *`, so C scaled the index a second time. Removing the extra factor reduced the linked score from 290 to 280. The target also reserved an unused eight-byte leaf frame; combining the corrected index with the existing frame repair reproduced the linked target exactly (score 0). The rule requires matching masked-index shifts and halfword-load evidence. Evidence: one saved example and synthetic generation and routing tests.
+
+### Stage a signed field before the global float store
+
+In a private N64 function built with GCC 2.7.2 KMC and
+`-G0 -mips3 -mgp32 -mfp32 -O2`, the target read an indirect signed
+halfword before storing a float literal to a global. The candidate
+read the record after that store. Capturing the complete signed value
+in an s32 before the store reproduced the target's eight-instruction
+load, address and comparison sequence. The exact linked score moved
+from 11,265 to 11,145, with all jump tables still linked. Staging only
+the pointer gave 11,265, and capturing the field as s16 gave 12,550.
+The synthetic fixture matches both offsets, the exact float bits and
+the signed comparison bound and covers volatile lookalikes.

@@ -13,6 +13,7 @@ from decomprepair import (
     global_pointer_local_repairs,
     guard_inversion_repairs,
     guard_reset_scheduling,
+    halfword_before_float_store,
     indexed_field_cursor,
     kmc_cast_repairs,
     likely_branch_cursor,
@@ -261,6 +262,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     result += measured_lifetime_shapes.variants(source, name, header, toolchain, rows)
     result += measured_scalar_updates.variants(source, name, header, toolchain, rows, asm)
     if toolchain == 'gcc-2.7.2-kmc':
+        result += halfword_before_float_store.variants(source, name, rows, header=header)
         result += rejected_branch_default.variants(source, name, rows, header=header)
         result += measured_kmc_stack_pointer.variants(source, name, rows)
         result += measured_cursor_schedule.variants(source, name, header, rows, asm or '')
