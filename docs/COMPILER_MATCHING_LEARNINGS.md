@@ -13278,6 +13278,21 @@ the same center, loads from one base register, and comparisons of the
 results. It generates a candidate only across local statements that preserve
 the inputs. Evidence is one partial live match and synthetic tests.
 
+### KMC GCC 2.7.2: widen a mode assigned only small constants
+
+A large N64 draft held a mode in a byte even though every assignment
+was one of four small constants. KMC GCC 2.7.2 with
+`-G0 -mips3 -mgp32 -mfp32 -O2` inserted a mask before comparing that local
+with a byte field. Widening the local to `s32` removed the mask and
+improved the linked score from 20,242 to 19,622. An unsigned word
+produced the same result. The prior width pass tried its first eight
+locals and missed this candidate.
+
+The `narrow_constant_mode` repair prioritizes byte locals assigned
+small literals and compared with a byte field. Tests cover a mode
+beyond the old cap, writes of unknown values and address escape.
+Evidence is a single partial N64 match and synthetic tests.
+
 ### KMC GCC 2.7.2: recover a forwarded float argument at a joined call
 
 A target N64 call copied a saved FPR to `$f12` in its delay slot, and
