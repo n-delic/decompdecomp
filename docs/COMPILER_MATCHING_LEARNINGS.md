@@ -14238,3 +14238,56 @@ lowered the exact linked score from 12,860 to 12,820. The existing
 backward and grouped choices did not improve this baseline. The
 compiler measurement is from the private function. Synthetic tests
 cover both the later declaration and an entry bypassing initialization.
+
+## A display-list function: a struct-member cursor, not a `volatile` one (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, an N64 game, one 318-instruction function, 1825 -> 0)
+
+Evidence level: one function judged by the app's exact judge, plus a controlled four-command snippet. The function emits
+graphics commands through a global cursor: a setup call, four commands, two fill rectangles whose corners are
+screen-size globals and float fields cast to `u32`, ten more commands and two more rectangles. The saved best (1825, 126
+differing rows, 95 of them register) used m2c's shape: `extern void * volatile cursor`, one read into a local,
+`*(s32 *)((char *)p + off) = V;` for every word, the five `cursor = p + 8n` stores in a row, `volatile unsigned short`
+for a screen-size global and a `do { } while (0)` a search had added to make the stores survive.
+
+What the compiler does (read from `cc1 -dl -dg -dS`, not guessed):
+
+- A store through a structure member (`g->w0 = A;`) is "in struct" and never clobbers a scalar global in gcc 2.7.2's
+  alias view; a raw `*(s32 *)(p + off)` store is not "in struct" and does. So with `Gfx *cursor` (non-volatile) and the
+  game's `g = cursor++; g->w0 = A; g->w1 = B;` the cursor is read once for a whole run of commands, while the same
+  stores written raw reload it. `volatile` reproduces the reloads and nothing else, and it is what
+  `volatile_reload` offered; it kept the draft near 1800 and made every register after it wrong.
+- cse deletes a store to a global that a later store overwrites with no memory read between them; the member stores
+  between the advances are what keep the target's five `lui $at; sw` pairs (with raw stores and no `volatile` only the last survived:
+  3155 -> 7710 on the same source).
+- Local allocation orders quantities by `floor_log2(refs) * refs / life`. The `do { } while (0)` doubled the reference
+  weight of the three increments (4 uses over 2 insns, priority 2.0) above the cursor (14 uses over 27 insns, 1.56), so
+  they took `$v0` and the cursor `$v1`; without the wrapper the cursor is `$v0` and every register in the first
+  command block matched.
+- A volatile halfword global cannot give `lh`: gcc loads it `lhu` and widens with `sll; sra` whatever the C says, so
+  the target's `lh $v0, D; addiu -1; andi 0x3ff` is a plain `s16` global. Read as `D & 0x3FF` the same global is `lhu`
+  (combine narrows the sign extension), which is why the target mixes both. As `volatile` it scored 1110 with
+  everything else right, as `u16` 400.
+- The first command word is `0xF6000000 | (D - 1 & 0x3FF) << 14 | (x & 0x3FF) << 2` in the game's macro order (libultra's
+  `gDPFillRectangle`); the opcode literal has to be the first `|` operand. The other association
+  (`lrx | (lry | 0xF6000000)`) scored 3160, `(lry | F6) | lrx` 6875, `lrx | lry | F6` 690.
+- The float fields must be read through a structure (`arg0->f64 + arg0->f58`) so they are reloaded after the stores to
+  the command memory as the target does; as raw casts the same source scored 6270.
+
+The byte-identical source writes each command with a macro (`CMD(a, b)` = `Gfx *_g = cursor++; _g->w0 = a; _g->w1 = b;`
+and `FILLRECT` with libultra's `_SHIFTL` fields), a `Gfx { u32 w0, w1; }` cursor, `s16` globals and `arg0` as a record.
+Not needed: the flags word as a record (a raw cast is the same), `u32` versus `s32` words.
+
+Controlled check (no game data): four commands as m2c wrote them with a `void * volatile` cursor compile to 32
+instructions that differ from the macro form; after `display_cursor_record` they are byte-identical
+(`tests/test_display_cursor_record.py`).
+
+Failed or insufficient: raw `s32` stores with the advances moved in place (7445); the `after` placement of each advance
+(`display_cursor_record_after`) matched the shape but not the order of the first block (4880 on the cleaned draft);
+greedy statement-order descent from the chain's output stalls near 190 differing rows (the order of the loads in the
+rectangles' arguments is the next lever); `volatile` or a cast on the cursor in the macro form (14678).
+
+Added to the permuter (decomp-repair 0.5.373): `display_cursor_record` / `display_cursor_record_after` (the record
+cursor with each advance by its command's words), `or_chain_order` (the literal first in an `|` chain) and
+`volatile_global_plain` / `volatile_global_plain_flip` (a volatile halfword global as the plain global, either
+signedness); `field_struct_view_printed` (already there) covers the float fields, `one_shot_unwrap` exists for the wrapper but offered nothing on this source (the wrapper was removed by hand). What the
+permuter still cannot do: reach the whole chain from the saved best in one run. Each family is a child that scores
+worse alone; only the combination, with the statements of each command in the macro's evaluation order, is exact.
