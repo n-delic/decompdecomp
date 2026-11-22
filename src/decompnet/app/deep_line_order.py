@@ -35,6 +35,22 @@ def rank(parent: str, candidates: list, focus: dict[int, int]) -> list:
     return [candidates[index] for index in order]
 
 
+EXPLORE = 4  # of the candidates that touch no marked line, one in this many is still compiled
+
+
+def thin(parent: str, candidates: list, focus: dict[int, int]) -> list:
+    """`rank`, then only the candidates that touch a marked line plus a quarter of the rest, so the batch written
+    wider than the compile budget (permute.LINE_FOCUS_OVERGENERATION) costs about what a plain one does. A batch
+    that is too small to thin, or touches nothing marked, is only ranked."""
+    ranked = rank(parent, candidates, focus)
+    if not focus or len(ranked) < 8:
+        return ranked
+    hits = sum(1 for candidate in ranked if touched_lines(parent, candidate) & focus.keys())
+    if not hits:
+        return ranked
+    return ranked[:hits + max(1, (len(ranked) - hits) // EXPLORE)]
+
+
 def line_info(net, proj, fn, source: str) -> dict | None:
     """source_lines.mismatches for this source's own compile (through the -g twin when it has no line table), or None
     when it can't be judged here (a project without the ROM judge, a compile error)."""
@@ -90,11 +106,8 @@ def for_function(net, proj, fn, log, then=None, finder=focus_lines):
     known: OrderedDict[str, dict[int, int]] = OrderedDict()
     reported = set()
 
-    def order(parent, candidates):
-        if then is not None:
-            candidates = then(parent, candidates)
-        if parent is None or len(candidates) < 2:
-            return candidates
+    def focus_of(parent):
+        """{line: weight} for `parent`, asked of the compiler once and remembered."""
         key = hashlib.sha1(parent.encode()).hexdigest()
         if key not in known:
             try:
@@ -105,11 +118,22 @@ def for_function(net, proj, fn, log, then=None, finder=focus_lines):
             while len(known) > REMEMBERED:
                 known.popitem(last=False)
         focus = known[key]
-        ranked = rank(parent, list(candidates), focus)
         if focus and key not in reported:
             reported.add(key)
             log('C line focus: differing instructions come from line' + ('s ' if len(focus) > 1 else ' ')
-                + ', '.join(map(str, sorted(focus))) + '; candidates editing them are compiled first.')
-        return ranked
+                + ', '.join(map(str, sorted(focus))) + '; rewrites are kept on them and candidates editing them are compiled first.')
+        return focus
 
+    def order(parent, candidates):
+        if then is not None:
+            candidates = then(parent, candidates)
+        if parent is None or len(candidates) < 2:
+            return candidates
+        return thin(parent, list(candidates), focus_of(parent))
+
+    def lines(parent):
+        """The parent's marked C lines, for the generator job (empty when unknown)."""
+        return sorted(focus_of(parent)) if parent else []
+
+    order.focus = lines
     return order

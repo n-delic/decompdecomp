@@ -37,6 +37,7 @@ def test_order_asks_once_per_parent_logs_once_and_chains_the_next_order():
     assert after(PARENT, [other, marked]) == [marked, other]
     assert after(PARENT, [other, marked]) == [marked, other]
     assert asked == [PARENT] and len(notes) == 1 and 'line 3' in notes[0]
+    assert after.focus(PARENT) == [3] and after.focus(None) == [] and asked == [PARENT]
     assert after(None, [other, marked]) == sorted([other, marked])
 
 
@@ -149,3 +150,14 @@ def test_locator_falls_back_to_the_recorded_map_when_the_twin_gives_nothing_or_f
     monkeypatch.setattr(order, 'line_info', broken)
     assert order.locator(fake_net(), {}, {}, {'a': recorded})('a') is recorded
     assert order.locator(SimpleNamespace(), {}, {}, {'a': recorded})('a') is recorded  # no ROM judge: untouched
+
+
+def test_thin_keeps_every_marked_candidate_and_a_share_of_the_rest_only_for_a_wide_batch():
+    marked = [PARENT.replace('b * 2', f'b * {n}') for n in range(3, 6)]
+    others = [PARENT.replace('a + 1', f'a + {n}') for n in range(2, 11)]
+    focus = {3: order.DIFFERENT}
+    kept = order.thin(PARENT, others + marked, focus)
+    assert kept[:3] == marked and len(kept) == 3 + max(1, len(others) // order.EXPLORE) and set(kept[3:]) <= set(others)
+    assert order.thin(PARENT, others[:5] + marked[:2], focus)[:2] == marked[:2] and len(order.thin(PARENT, others[:5] + marked[:2], focus)) == 7
+    assert order.thin(PARENT, others, focus) == others  # none marked: left in order
+    assert order.thin(PARENT, others + marked, {}) == others + marked

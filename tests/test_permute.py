@@ -1074,3 +1074,23 @@ def test_generator_filters_variants_during_legacy_alias_import(tmp_path, monkeyp
         if stream:assert not gen.failed and not gen.empty
     finally:
         gen.close()
+
+
+@needs_tool
+def test_focus_lines_keep_the_generator_rewriting_the_marked_statement():
+    """The generator (decomp-repair 0.5.578) acts around `focus_lines` most of the time: the marked statement is
+    edited in clearly more variants than with no focus, and the same job without it is unchanged."""
+    source = ("int g(int);\nint f(int a, int b, int d) {\n    int c;\n    int e;\n    c = a * 3;\n    e = d + 7;\n"
+              "    if (b > c) {\n        c = g(b) + a;\n    }\n    e = e * 2;\n    return c + b * 5 + e;\n}\n")
+
+    def edited(**more):
+        gen = permute.Generator()
+        try:
+            variants = gen.batch({"header": "", "source": source, "function": "f", "family": "gcc", "seed": 5, "count": 80, **more})
+        finally:
+            gen.close()
+        assert variants
+        return sum(1 for variant in variants if "c=g(b)+a;" not in re.sub(r"\s+", "", variant)), variants
+    plain, first = edited()
+    focused, _ = edited(focus_lines=[8])
+    assert focused > plain * 1.5 and edited()[1] == first

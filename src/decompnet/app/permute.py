@@ -62,6 +62,7 @@ GENERATOR_SECONDS = 30  # a batch that takes longer is stuck: its randomizer ret
 READ_BYTES = 1 << 16
 MAX_SEED = 2**31  # seeds of the generator's runs: the same function and turn write the same variants
 REWRITE_MISSES = 200  # simple rewrites in a row that change nothing: none applies to the C
+LINE_FOCUS_OVERGENERATION = 2  # variants written per compile slot when C lines are known: deep_line_order.py keeps the ones on them
 SIMPLE_BATCH = 8  # simple rewrites written together, so they compile ahead (and together) while earlier ones are judged
 MAX_INSNS = 400  # default size ceiling; larger functions cost more time per variant
 REPAIR_MAX_INSNS = 1024  # deterministic hypotheses keep their own 32-attempt / 20-second cap
@@ -819,6 +820,12 @@ class Permuter:
                     job = {"header": gen_header, "source": base, "function": name, "family": family,
                            "seed": rng.randrange(MAX_SEED), "count": BATCH, "weight_boosts": boosts if batches % 2 == 0 else {},
                            "trace": True}
+                    # C lines the compiler ties to the differing instructions (deep_line_order.py): the generator keeps
+                    # most rewrites there, and writes extra variants that the batch order then thins to those that do
+                    lines = getattr(getattr(self, 'candidate_order', None), 'focus', lambda _: [])(base)
+                    if lines:
+                        job['focus_lines'] = lines
+                        job['count'] = BATCH * LINE_FOCUS_OVERGENERATION
                     if hasattr(gen, 'chunks'):
                         if gen._closed.is_set():gen = Generator()
                         def check_generation(fn=fn):
