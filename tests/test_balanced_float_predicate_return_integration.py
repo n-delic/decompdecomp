@@ -74,3 +74,64 @@ def test_deep_permuter_routes_balanced_float_predicate_and_return_for_kmc():
     assert 'repair_first_inverted = upper ^ 1;' in candidate and 'axis = next_value(input);' in candidate
     for arch, compiler in [('arm', 'gcc-2.7.2-kmc'), ('mips', 'gcc-egcs'), ('mips', 'ido-5.3')]:
         assert all(label != FAMILY for label, _ in proposals(SOURCE, 'adjust', '', arch, compiler, ROWS, ''))
+
+
+PROJECTION_SOURCE = '''
+void adjust(char *record, float input)
+{
+    float axis;
+    f32 projection;
+    f32 value;
+    f32 prior;
+    f32 result;
+    float horizontal = 0.0f;
+    float vertical = 0.0f;
+    int upper;
+    int lower;
+    axis = input;
+    value = input;
+    upper = 1;
+    if (!(axis <= 0.0002f)) {
+        upper = 0;
+    }
+    lower = 1;
+    if (!(axis >= (-0.0002f))) {
+        lower = 0;
+    }
+    if (((lower ^ 1) | (upper ^ 1)) != 0) {
+        record_event();
+    }
+    projection = *((f32 *) (((char *) record) + 4));
+    horizontal += (projection * angle_sin(axis));
+    vertical += (projection * angle_cos(axis));
+    prior = *((f32 *) (((char *) record) + 8));
+    result = (((value * 0.25f) - prior) * 0.05f) + prior;
+    *((f32 *) (((char *) record) + 8)) = (((value * 0.25f) - prior) * 0.05f) + prior;
+    report(horizontal, vertical, result);
+}
+'''
+EARLY = ROWS[:24]
+LATE = [
+    (' ', 'jal angle_cos', 'jal angle_cos'),
+    (' ', 'add.s $f12, $f12, $f20', 'add.s $f12, $f12, $f20'),
+    ('o', 'nop', ''),
+    ('o', 'mul.s $f0, $f26, $f0', ''),
+    (' ', 'lui $at, 0x3e80', 'lui $at, 0x3e80'),
+    (' ', 'ori $at, $at, 0', 'ori $at, $at, 0'),
+    (' ', 'mtc1 $at, $f8', 'mtc1 $at, $f8'),
+    (' ', 'nop', 'nop'),
+    ('r', 'mul.s $f26, $f30, $f8', 'mul.s $f2, $f30, $f8'),
+    (' ', 'lwc1 $f6, 8($s1)', 'lwc1 $f6, 8($s1)'),
+    ('o', '', 'mul.s $f0, $f26, $f0'),
+    ('r', 'sub.s $f2, $f26, $f6', 'sub.s $f2, $f2, $f6'),
+]
+PROJECTION_ROWS = EARLY + LATE
+
+
+def test_deep_permuter_pairs_projection_scale_and_predicate_for_kmc():
+    [candidate] = [text for label, text in proposals(PROJECTION_SOURCE, 'adjust', '', 'mips',
+                                                    'gcc-2.7.2-kmc', PROJECTION_ROWS, '') if label == 'balanced_projection_scale']
+    assert 'repair_guard_fold_bits = upper ^ 1;' in candidate
+    assert 'projection = value * 0.25f;' in candidate
+    for arch, toolchain in [('arm', 'gcc-2.7.2-kmc'), ('mips', 'ido-5.3'), ('mips', 'gcc-egcs')]:
+        assert all(label != 'balanced_projection_scale' for label, _ in proposals(PROJECTION_SOURCE, 'adjust', '', arch, toolchain, PROJECTION_ROWS, ''))
