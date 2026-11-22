@@ -14799,3 +14799,7 @@ and the instruction count, and scored 8,210 with no warnings. The
 repaired count still uses the opposite physical registers for the
 copy and predicate. Tests verify both witnesses and prove the
 borrowed snapshot local is dead at the insert point.
+
+### Stage a disjoint field ahead of reset loops
+
+In a private N64 reset function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the target loaded a word field before two short clearing loops and reused one counter. The draft loaded the field after the loops, used separate counters and initialized the second cursor before its loop. Staging the word before the loops, sharing the counter and computing the second cursor at the start of each iteration reproduced the linked target exactly (score 320 to 0). Staging the field alone scored 240; moving the cursor alone scored 110; combining those without sharing the counter scored 30. The rule checks the measured load order, counter lifetimes and that neither loop writes the staged word. Evidence: one saved function and synthetic generation and routing tests.

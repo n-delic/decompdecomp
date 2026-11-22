@@ -1584,3 +1584,13 @@ def test_interpolation_calls_route_to_kmc(monkeypatch):
                         lambda text, name, header, diff: [('interpolation_fixture', text)])
     assert 'interpolation_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'interpolation_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_reset_loops_route_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_reset_loops, 'variants',
+                        lambda text, name, header, diff: [('reset_loop_fixture', text)])
+    assert 'reset_loop_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'reset_loop_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
