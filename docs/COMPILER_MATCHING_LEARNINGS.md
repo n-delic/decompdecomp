@@ -1,5 +1,15 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: store the selected halfword at each branch end
+
+Two branches in an N64 draft each selected a constant and wrote a
+word field before a shared halfword store. Replacing the shared store
+with the selected constant at each arm end reduced the linked score
+from 310 to 100 under `-G0 -mips3 -mgp32 -mfp32 -O2`. Adjusting the
+constant assignment order or spelling the choice as a ternary did not
+improve the baseline. The repair requires a matching halfword address
+with a changed value register and a target constant setup nearby.
+
 ### KMC GCC 2.7.2: inline a single-use indexed record address
 
 In one N64 draft the address and first word of an indexed 12-byte

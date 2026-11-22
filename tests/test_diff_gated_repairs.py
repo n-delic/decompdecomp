@@ -1730,3 +1730,13 @@ def test_varbyte_lookup_routes_to_kmc(monkeypatch):
                         lambda text, name, header, diff, asm: [('varbyte_lookup_fixture', text)])
     assert 'varbyte_lookup_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'varbyte_lookup_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_route_measured_branch_state_store(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'sh $v0, 0x7a($s2)', 'sh $v1, 0x7a($s2)')]
+    monkeypatch.setattr(diff_gated_repairs.branch_tail_distribution, 'measured_state_store_arms',
+                        lambda source, name, diff, header: [('branch_state_store', source)])
+    assert 'branch_state_store' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'branch_state_store' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))

@@ -11,6 +11,7 @@ from decomprepair import (
     balanced_projection_scale,
     balanced_signed_selector_increment,
     boolean_guard_operands,
+    branch_tail_distribution,
     byte_cursor_postincrements,
     clamp_return_local,
     clamp_saved_argument_lifetime,
@@ -310,6 +311,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += allocation_repairs.measured_slot_orders(source, name, rows, header)
         result += allocation_repairs.measured_array_orders(source, name, rows, header)
         result += guard_load_order.variants(source, name, rows, header)
+        result += branch_tail_distribution.measured_state_store_arms(source, name, rows, header)
         result += local_inline_repairs.measured_record_copy_inline(source, name, rows, header)
         result += clamp_saved_argument_lifetime.variants(source, name, rows, header=header)
         result += balanced_clamp_argument_stage.variants(source, name, rows, header=header)
