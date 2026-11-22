@@ -16061,6 +16061,42 @@ Two saved MIPS examples built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` 
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` checked three signature bytes. The generated draft's combined condition used different registers and a shared result copy. Staging the input bytes and comparison constants in word locals changed the linked difference score from 250 to an exact match while retaining the integer return type. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the complete source, measured instructions and constants, and resolved addresses for all three byte loads.
 
+### Split the float load and sum when a stack input crosses a field load
+
+In a private N64 function built with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, a stack-backed float and
+an actor field load appeared in opposite orders in the target and
+candidate. Keeping the disjoint stores in place, separating all six
+field reads from their additions, and capturing the stack-backed
+update before the neighboring scalar update reduced the linked score
+from 385 to 365. Independent compound stores and an early store
+interleaved with the terminal addition did not improve on this.
+
+Sharing an existing zero's float view for the first global reset and
+moving the unescaped local copy across the setup call reduced the
+score from 365 to 360. Both measured trials retained the original
+frame, all three jump tables and 3,034 instructions.
+
+### Restore a natural pointer spill through the shared reset word
+
+A private N64 function built with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` stored a cached pointer in
+an explicit frame member. The target used a separate register at entry
+and at two nested reloads, and its final call filled the global
+arguments before reloading the pointer. Keeping the pointer as a
+scalar alone displaced an accumulator and lost the jump-table
+bindings. Reusing a known zero word in repeated calls restored the
+natural pointer spill and final call order.
+
+Removing the unused frame tail restored the original frame and slot,
+reducing the linked score from 675 to 390. Sharing that zero's float
+view for the first stack reset brought the score to 385. Both linked
+trials retained 3,034 instructions and all three jump tables. The
+repeated calls themselves still differ in the register that supplies
+zero. This is one measured case. The trial checks pointer loads,
+register use, reset word ownership and entry into the reset scope
+before asking the judge to test the change.
+
 ### Inline a staged global-backed float capture and reschedule its stores
 
 A private N64 function built with
@@ -16248,3 +16284,63 @@ A combined multiply/shift/add expression also scored 10, fixing the load registe
 to the shift destination and following addition. Staging the loads, adding unused wide locals, and the existing
 allocation-schedule bridge did not improve the score. `-fno-schedule-insns` and `-fno-schedule-insns2` scored
 1045 and 460 respectively; disabling CSE follow-jumps, peephole or strength reduction retained 10.
+
+### KMC GCC 2.7.2 counted flag walk
+
+A saved MIPS record-counting function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` tested two flag masks while walking a globally sized array. Its generated draft addressed the count as an offset from another symbol and used nested labels. Resolving the exact count symbol and simplifying the equivalent branches changed the linked difference score from 710 to an exact match. This is one saved example, not a controlled cross-compiler experiment. The candidate checks the original and target symbol addresses, the complete source shape, and the measured halfword load and record stride.
+
+### Separate aliases for one SDK hardware flag
+
+An N64 audio DMA routine compiled from a donor with IDO 7.1
+`-O2 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul -DNON_MATCHING`
+produced 116 bytes, equal in length and instruction bits outside its three
+unresolved data-symbol references to the target. The donor declared separate
+names for a read and two writes, while target relocation evidence placed all
+three references at the same byte. Renaming all three to one C identifier
+produced 112 bytes and changed scheduling. Replacing them with volatile
+absolute-address expressions also produced 112 bytes and missed. Trying
+`-O1` and `-O0` on the donor yielded 148 and 184 bytes respectively.
+Evidence is one isolated cross-game comparison; the function remains open.
+
+### KMC GCC 2.7.2 signed table index and setup pointers
+
+A saved MIPS setup function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` read a byte through a signed table index, then wrote several fields through a global pointer. Staging the table base before the index reduced the draft's linked difference score from 310 to 90; keeping the two measured pointer snapshots for the subsequent stores produced an exact match. This is one saved example, not a controlled cross-compiler experiment. The candidate checks the complete source shape, 32-bit ABI, resolved table address and the target load/store order.
+### Split temporary lifetimes across branch joins
+
+On one N64 function, `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` produced a saved score of 15: the
+only three instruction differences used `$a2` for a byte-clamp sum where the target used `$v0`. The exact
+standalone judge reproduced 15. Splitting the shared sum local scored 100; splitting and moving the sum into
+the guarded branch scored 85, recovering the sum register but changing other allocations. Reusing the earlier
+pointer for the later store scored 520. These are measurements on one function, not controlled compiler tests.
+
+The `reused_temp_split` family also offered an unsafe candidate on that saved source: it renamed a write in one
+branch and the read after the join, leaving the new local undefined on the other branch. Reaching-definition
+checks now reject such splits and splits that leave a read outside the renamed span using an older value. A
+controlled regression covers both joins and confirms that a branch-local split remains available.
+
+
+### KMC GCC 2.7.2 field-store pointer lifetimes
+
+A saved MIPS setup function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` loaded a global pointer, stored fields through it and passed it to calls. Keeping the measured pointer for the later store and call changed the generated draft's linked difference score from 300 to 20; also retaining the earlier measured pointer for its store and call produced an exact match. This is one saved example, not a controlled cross-compiler experiment. The candidates check the relevant load/store/call instructions and offer the two lifetime changes separately and together for the judge to evaluate.
+
+A follow-up on the same N64 function reused an earlier unsigned local for the first packed-color phase,
+then moved the shade sum into its guard: the exact standalone judge measured 15 → 25 → 10, and the running
+app recorded 10. The two remaining differences use `$a2` instead of `$a0` for an earlier load and shift.
+`guard_temp_sink` now emits the second step for an attached brace, placing the assignment after safe C89
+body declarations. On the score-25 seed its generated child measured 10 in the exact standalone judge.
+This is one function's measurement, not a controlled compiler regression.
+
+
+### KMC GCC 2.7.2 shared slot and forwarded call argument
+
+A saved MIPS setup function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` stored two pointers into adjacent globals before a conditional call. Its generated draft omitted the incoming first call argument. Restoring that argument, holding the shared slot address in a local, and making the conditional store volatile to reproduce its position before the call changed the draft's linked difference score from 845 to an exact match. This is one saved example, not a controlled cross-compiler experiment. The candidate requires the complete source pattern, matching resolved slot addresses, the 32-bit ABI and the target's call and delay-slot instructions.
+
+### IDO C++ implicit method calls in overlays
+
+An isolated N64 overlay donor built with IDO 7.1 using `-O2 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul -DNON_MATCHING` produced 696 bytes identical to the target, but two calls still referred to a mangled C++ method instead of the loader's symbol. Replacing the two implicit method calls with C-linkage calls that pass `this` explicitly preserved all 696 bytes and satisfied both loader relocations. This is one observed candidate, not a cross-compiler result. A compiler-backed regression also checks that a different loader binding is rejected; every proposed rewrite still needs the exact judge.
+
+The phase reuse and guard sink must be offered together: the first step alone scores 25 from 15, while the
+combined child scores 10. `merge_integer_lifetimes` now emits the combined candidate using control-flow
+liveness and reaching definitions, only for a signed phase read through a parenthesized byte mask. The focused
+Deep Permuter lane offers it directly, since the general proposal cap omitted it on this source. The exact
+standalone judge measured the generated combined child at 10 from 15; this remains one function's evidence.

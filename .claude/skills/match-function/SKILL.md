@@ -88,7 +88,9 @@ The gateway deduplicates pending calls by connection, tool and arguments.
 - If the client loses the response without a gateway receipt, recover with `get_claims` for a claim
   or the recorded verdict and history for a submission before retrying. Keep the canonical name and
   current claim token, and wait for the claim to be confirmed before submitting.
-- Keep the claim across submissions. A compile renews it. Reacquire the same function if it expires.
+- Keep the claim across submissions. A compile renews it. If it expires, reclaim the same
+  function when available. If the app ends the claim for low progress, continue in the isolated judge
+  during the retry cooldown. Reclaim for a measured candidate once the app allows it.
 - On completion or stop, check `get_claims`. If the claim is still held, use `release_function`
   with its current token. Follow the tool's release guidance if the claim has no compile yet.
 
@@ -284,7 +286,9 @@ the shape is decided by a compiler pass, not by how you spell the C. Stop writin
    Start with a small batch and score serially through one local judge worker. If using MCP
    `try_local_repairs`, pass exactly one family and a small explicit `max_trials`. A call with no
    family selects repairs automatically.
-3. Compare the exact diff to the seed. Confirm the best useful candidate with `compile_and_diff`.
+3. Compare the exact diff to the seed. Use `compile_and_diff` to confirm a measured
+   improvement or exact candidate. Score ties and regressions in the isolated judge to preserve the
+   live claim's compile budget.
    If the family misses the shape or routing skips it, prove the missing behavior with a regression
    and land the fix in step 5. When results plateau, read the diff and choose a new hypothesis.
 

@@ -1483,3 +1483,60 @@ void f(void) {
     monkeypatch.setattr(search, '_score', score)
     assert search.loop_vector_shape_pass(AGENT, net.project_row('game'), fn, 170, None) == 0
     assert expected in seen
+
+
+def test_reused_temp_split_lane_rejects_a_branch_join_with_old_values(monkeypatch):
+    from decompnet.app import generation_calls
+    from decomprepair.reused_temp_split_repairs import variants
+
+    net = setup(monkeypatch)
+    fn, proj = net.function(), net.project_row('game')
+    source = '''int f(int mode, int input) {
+    int value;
+    value = 1;
+    if (mode) {
+        value = input;
+    } else {
+        value = 0;
+    }
+    return value;
+}'''
+    monkeypatch.setattr(generation_calls, 'library', lambda calls: [
+        variants(*arguments) if name == 'decomprepair.reused_temp_split_repairs.variants' else []
+        for name, arguments, *_ in calls
+    ])
+    search = deep_permuter.Search(net, 1, 10, Log(), fn)
+    proposals, _ = search._local_proposals(source, proj, fn, [])
+    assert not any(family == 'reused_temp_split' and 'value_b2 = 0;' in candidate
+                   for family, candidate in proposals)
+
+
+def test_masked_phase_merge_and_guard_sink_reach_focused_lane(monkeypatch):
+    from decompnet.app import generation_calls
+    from decomprepair.integer_lifetime_repairs import masked_phase_reuse
+
+    net = setup(monkeypatch)
+    fn, proj = net.function(), net.project_row('game')
+    source = '''int f(int input, int color) {
+    u32 earlier;
+    s32 phase;
+    earlier = input;
+    sink(earlier);
+    phase = color;
+    sink((phase & 0xff) << 16);
+    phase = input;
+    if (color != 255) {
+        int copy = input;
+        if (phase < 0) sink(copy);
+    }
+    return 0;
+}'''
+    monkeypatch.setattr(generation_calls, 'library', lambda calls: [
+        masked_phase_reuse(*arguments) if name == 'decomprepair.integer_lifetime_repairs.masked_phase_reuse' else []
+        for name, arguments, *_ in calls
+    ])
+    search = deep_permuter.Search(net, 1, 10, Log(), fn)
+    proposals, _ = search._local_proposals(source, proj, fn, [])
+    assert any(family == 'merge_integer_lifetimes' and 'earlier = color;' in candidate
+               and 'int copy = input;\n        phase = input;' in candidate
+               for family, candidate in proposals)

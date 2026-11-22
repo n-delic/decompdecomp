@@ -2514,3 +2514,65 @@ def test_fixed_blend_routes_only_to_kmc_mips(monkeypatch):
     assert 'fixed_blend_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'fixed_blend_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
     assert not proposals('void f(void) {}', 'f', '', 'arm', KMC, rows, '')
+
+
+def test_flag_count_loop_receives_project_symbol_resolver(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'lw $v0, 0($a0)', 'lw $v1, 0($a0)')]
+    resolve = lambda name: {'bound': 0x1000}.get(name)
+
+    def candidate(text, name, header, diff, resolver):
+        assert resolver is resolve
+        return [('flag_count_fixture', text)]
+
+    monkeypatch.setattr(diff_gated_repairs.measured_flag_count_loop, 'variants', candidate)
+    assert 'flag_count_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, '', resolve=resolve))
+    assert 'flag_count_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, '', resolve=resolve))
+
+
+def test_indexed_setup_receives_target_flags_and_symbol_resolver(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'lw $v0, 0($a0)', 'lw $v1, 0($a0)')]
+    flags = ('-mgp32',)
+    resolve = lambda name: {'table': 0x1000}.get(name)
+
+    def candidate(text, name, header, diff, compiler_flags, resolver):
+        assert compiler_flags is flags and resolver is resolve
+        return [('indexed_setup_fixture', text)]
+
+    monkeypatch.setattr(diff_gated_repairs.measured_indexed_setup, 'variants', candidate)
+    assert 'indexed_setup_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, '',
+                                                     flags=flags, resolve=resolve))
+    assert 'indexed_setup_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, '',
+                                                         flags=flags, resolve=resolve))
+
+
+def test_field_base_lifetimes_route_only_to_kmc_mips(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'lw $v0, 0($a0)', 'lw $v1, 0($a0)')]
+    monkeypatch.setattr(diff_gated_repairs.measured_field_base_lifetimes, 'variants',
+                        lambda text, name, header, diff: [('field_base_fixture', text)])
+    assert 'field_base_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'field_base_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+    assert not proposals('void f(void) {}', 'f', '', 'arm', KMC, rows, '')
+
+
+def test_call_slot_setup_receives_abi_flags_and_symbol_resolver(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'sw $a0, 0($a3)', 'sw $a1, 0($a3)')]
+    flags = ('-mgp32',)
+    resolve = lambda name: {'slot': 0x1000}.get(name)
+
+    def candidate(text, name, header, diff, compiler_flags, resolver):
+        assert compiler_flags is flags and resolver is resolve
+        return [('call_slot_fixture', text)]
+
+    monkeypatch.setattr(diff_gated_repairs.measured_call_slot_setup, 'variants', candidate)
+    assert 'call_slot_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, '',
+                                                flags=flags, resolve=resolve))
+    assert 'call_slot_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, '',
+                                                    flags=flags, resolve=resolve))

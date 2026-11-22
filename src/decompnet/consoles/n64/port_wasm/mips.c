@@ -196,13 +196,19 @@ static void mul64(uint64_t a, uint64_t b, uint64_t *hi, uint64_t *lo) {
     *hi = hh + (lh >> 32) + (hl >> 32) + (mid >> 32);
 }
 
+/* Builds without N64Recomp have no recompiled stack to hand over. */
+__attribute__((weak)) uint32_t port_recomp_stack_enter(uint32_t sp) { (void)sp; return 0; }
+__attribute__((weak)) void port_recomp_stack_leave(uint32_t saved) { (void)saved; }
+
 static void call_c(Cpu *c, PortMipsCall fn) {
     int slot = thread_slot();
     uint32_t saved = stack_top[slot];
     /* interpreted code it calls goes below this frame, and below the buffer a variadic callee's extra arguments are
        copied into (port_mips_varargs) */
     stack_top[slot] = ((uint32_t)c->r[29] - 16u - 4u * VARARGS) & ~7u;
+    uint32_t recomp_saved = port_recomp_stack_enter(stack_top[slot]);
     fn(c->r, c->f);
+    port_recomp_stack_leave(recomp_saved);
     stack_top[slot] = saved;
     c->r[0] = 0;
 }

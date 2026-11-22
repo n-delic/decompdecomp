@@ -413,3 +413,35 @@ def test_tlb_probe_maps_a_compatibility_stack_pair(run):
     assert result["v0"] == 0
     assert result["v1"] == (0x1403F000 >> 6) | 2
     assert run(words, 0x20000000)["v0"] == 0x80000000
+
+
+def test_interpreter_preserves_its_frames_when_c_reenters_recompiled_code(tmp_path):
+    """A C callback can re-enter recompiled code while an interpreted caller has a live return address."""
+    from decompnet.port.wasm import recomp
+
+    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if not cc:
+        pytest.skip("no C compiler")
+    # Use the runtime's actual stack handoff, with a small stand-in for a recompiled callee that writes its frame.
+    runtime = recomp.BRIDGE_RUNTIME.split("void port_recomp_thread", 1)[0]
+    source = HARNESS % {"c": C_FUNCTION, "code": CODE, "data": DATA}
+    source = source.replace("static int c_calls;", runtime + "\nstatic int c_calls;")
+    source = source.replace("(void)f; c_calls++; r[2]", "(void)f; c_calls++; memset(mem + port_recomp_sp - 4, 0, 4); r[2]")
+    source = source.replace("port_mips_enter(r, f, 8);", "port_mips_enter(r, f, 8); port_recomp_sp = (uint32_t)r[29];")
+    source = source.replace("printf(\" %d %08X %08X\\n\", c_calls, __builtin_bswap32(w0), __builtin_bswap32(w1));",
+                            "printf(\" %d %08X %08X %d\\n\", c_calls, __builtin_bswap32(w0), __builtin_bswap32(w1), "
+                            "port_recomp_sp == (uint32_t)r[29] && (uint32_t)r[31] == 0xFFFFFFF0u);")
+    harness = tmp_path / "harness.c"
+    harness.write_text(source)
+    program = tmp_path / "interp"
+    done = subprocess.run([cc, "-O1", "-o", str(program), str(harness), str(MIPS), "-lm"],
+                          capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr
+    words = [addiu("sp", "sp", -16), sw("ra", 12, "sp"), jal(C_FUNCTION), NOP,
+             addiu("v0", "zero", 77), lw("ra", 12, "sp"), JR_RA, addiu("sp", "sp", 16)]
+    code = tmp_path / "code.bin"
+    code.write_bytes(b"".join(struct.pack(">I", word) for word in words))
+    done = subprocess.run([str(program), str(code)], capture_output=True, text=True, timeout=30, check=True)
+    fields = done.stdout.split()
+    assert int(fields[0], 16) == 77
+    assert fields[-1] == "1"  # both the recompiler's stack pointer and the interpreted return address survived

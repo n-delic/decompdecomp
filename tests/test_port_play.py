@@ -183,3 +183,22 @@ def test_parallel_build_keys_never_publish_a_hash_before_its_includes(tmp_path):
         finally:
             release.set()
         assert first.result(timeout=5) == second
+
+
+def test_relative_analysis_bank_c_is_left_for_runtime_loading(tmp_path):
+    import json
+
+    from decompnet.app.engine import RomNetwork
+
+    net = RomNetwork(tmp_path / 'app.db', tmp_path)
+    segments = [{'name': 'main', 'rom_start': 0x1000, 'rom_end': 0x2000, 'vram': 0x80000400},
+                {'name': 'donor_uso_123', 'rom_start': 0x2000, 'rom_end': 0x2100, 'vram': 0}]
+    with net.store.tx() as db:
+        pid = db.execute('INSERT INTO projects(slug,name,arch,big_endian,root,config) VALUES(?,?,?,?,?,?)',
+                         ('game', 'game', 'mips', 1, str(tmp_path),
+                          json.dumps({'kind': 'rom', 'platform': 'n64', 'segments': segments}))).lastrowid
+    with net.project_store(pid).tx() as db:
+        for name, offset in (('native', 0x1100), ('banked', 0x2020)):
+            db.execute('INSERT INTO functions(project_id,name,size,n_insns,status,rom_offset) VALUES(?,?,?,?,?,?)',
+                       (pid, name, 16, 4, 'matched', offset))
+    assert play.relative_bank_code(net, 'game', log=lambda line: None) == {'banked.c'}

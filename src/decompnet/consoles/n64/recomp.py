@@ -388,13 +388,28 @@ def _invalid_bodies(out: Path, errors: list[str]) -> dict[str, str]:
     return bad
 
 
+def analysis_banks(segments: list[dict]) -> list[dict]:
+    """Relative USO/UV donor banks appended to an analysis image have no fixed runtime addresses."""
+    return [s for s in segments if s.get("vram") == 0 and s.get("name", "").startswith(("donor_uso_", "donor_uv_"))]
+
+
+def banked_functions(segments: list[dict], functions: list[dict]) -> list[dict]:
+    banks = analysis_banks(segments)
+    return [f for f in functions if any(s["rom_start"] <= f["rom"] < s["rom_end"] for s in banks)]
+
+
 def recompile(program: Path, rom_path: Path, segments: list[dict], functions: list[dict], out: Path, log=print,
               stop=lambda: False) -> dict:
     """Run N64Recomp over the split into `out` and check what it writes; returns (and writes to out/recomp.json) its
     summary."""
     rom = Path(rom_path).read_bytes()
-    segments = [s for s in segments if s["rom_end"] > s["rom_start"]]
-    usable = [f for f in functions if f["size"] > 0 and not f["vram"] & 3 and not f["size"] & 3 and not f["rom"] & 3]
+    banks = analysis_banks(segments)
+    banked = {f["name"] for f in banked_functions(banks, functions)}
+    segments = [s for s in segments if s["rom_end"] > s["rom_start"] and s not in banks]
+    usable = [f for f in functions if f["name"] not in banked and f["size"] > 0 and not f["vram"] & 3
+              and not f["size"] & 3 and not f["rom"] & 3]
+    if banked:
+        log(f"leaving {len(banked)} relative overlay-bank functions for runtime loading and interpretation")
     # a function between the split's segments (code the split left as data, matched C the project has for it
     # anyway) is a section of its own
     outside = sorted((f for f in usable if _segment(segments, f["vram"]) is None), key=lambda f: f["rom"])
@@ -454,9 +469,16 @@ def load(root: Path) -> dict | None:
     """The last run's summary for a project folder, or None."""
     f = folder(root) / "recomp.json"
     try:
-        return json.loads(f.read_text(encoding="utf-8"))
+        summary = json.loads(f.read_text(encoding="utf-8"))
     except (FileNotFoundError, ValueError):
         return None
+    # Older builds included bank-relative donor offsets as if they were runtime addresses. Rebuild those results
+    # on the next Play or Export; a valid saved result and its progress otherwise remain untouched.
+    try:
+        sections = tomllib.loads((f.parent / "syms.toml").read_text(encoding="utf-8")).get("section", [])
+    except (OSError, ValueError):
+        return summary
+    return None if analysis_banks(sections) else summary
 
 
 DEFINED = re.compile(r"^RECOMP_FUNC void (\w+)\(", re.M)

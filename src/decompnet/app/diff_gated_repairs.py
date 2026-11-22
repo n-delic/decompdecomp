@@ -60,6 +60,7 @@ from decomprepair import (
     measured_byte_loop_key,
     measured_byte_search_loop,
     measured_byte_signature,
+    measured_call_slot_setup,
     measured_callback_loop,
     measured_callback_repairs,
     measured_carried_loop_test,
@@ -74,6 +75,8 @@ from decomprepair import (
     measured_cursor_schedule,
     measured_event_frame_capture,
     measured_expression_repairs,
+    measured_field_base_lifetimes,
+    measured_flag_count_loop,
     measured_flag_reload,
     measured_float_argument_pair,
     measured_float_grid_stores,
@@ -98,6 +101,7 @@ from decomprepair import (
     measured_indexed_clear,
     measured_indexed_mode_tail,
     measured_indexed_record_layout,
+    measured_indexed_setup,
     measured_indirect_command_records,
     measured_indirect_self_call,
     measured_interpolation_calls,
@@ -198,6 +202,7 @@ from decomprepair import (
     measured_wide_division_stride,
     measured_word_byte_packing,
     measured_zero_record_pairs,
+    natural_pointer_spill,
     ordered_halfword_updates,
     oscillator_phase_hold,
     packed_matrix_conversion,
@@ -411,6 +416,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += balanced_selector_zero.variants(source, name, rows, header=header, max_bytes=MAX_SOURCE_BYTES)
         result += phase_projection_holders.variants(source, name, rows, header=header, max_bytes=MAX_SOURCE_BYTES)
         result += scoped_phase_initializer.variants(source, name, rows, header=header, max_bytes=MAX_SOURCE_BYTES)
+        result += scoped_phase_initializer.shared_zero_variants(source, name, rows, header)
         result += balanced_inline_writeback.variants(source, name, rows, header=header, max_bytes=MAX_SOURCE_BYTES)
         result += balanced_reset_copy.variants(source, name, rows, header=header, max_bytes=MAX_SOURCE_BYTES)
         result += balanced_float_predicate_return.variants(source, name, rows, header=header)
@@ -538,6 +544,10 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     result += target_memory_schedule_diff_repairs.proposals(source,name,header,toolchain,rows,target,candidate,asm,
                                                              big_endian=big_endian,flags=flags)
     if toolchain.startswith('gcc-2.7.2-kmc'):
+        result += measured_call_slot_setup.variants(source, name, header, rows, flags, resolve)
+        result += measured_field_base_lifetimes.variants(source, name, header, rows)
+        result += measured_indexed_setup.variants(source, name, header, rows, flags, resolve)
+        result += measured_flag_count_loop.variants(source, name, header, rows, resolve)
         result += fixed_blend_staging.variants(source, name, rows, header=header)
         result += measured_storage_shapes.variants(source, name, header, rows, asm, big_endian=big_endian)
         result += masked_slot_dispatch.variants(source, name, asm or '', header,
@@ -597,6 +607,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += loop_counter_roles_repairs.guarded_reuse_variants(source, name, rows)
         result += measured_float_grid_stores.variants(source, name, rows)
         result += measured_staged_float_order.variants(source, name, rows, header)
+        result += natural_pointer_spill.variants(source, name, rows, header)
         result += measured_forwarded_pointer.variants(source, name, header, asm or '')
         result += float_intermediate_repairs.repeated_products(source, name, rows)
         result += measured_expression_repairs.variants(source,name,header,rows)
