@@ -475,7 +475,11 @@ def test_overlay_probes_calls_to_an_empty_donor_placeholder(tmp_path):
     assert not uso_match.link(wrong.obj, 'entry', body.code, info).exact
 
 
-def test_anonymous_object_pool_requires_cartridge_bytes_and_original_loader_sites(tmp_path):
+@pytest.mark.parametrize(('ctype', 'suffix', 'fmt', 'opcode'), [
+    ('float', 'f', '>f', 0x31),
+    ('double', '', '>d', 0x35),
+])
+def test_anonymous_object_pool_requires_cartridge_bytes_and_original_loader_sites(tmp_path, ctype, suffix, fmt, opcode):
     import json
 
     from decompnet.elfobj import extract_function
@@ -485,12 +489,13 @@ def test_anonymous_object_pool_requires_cartridge_bytes_and_original_loader_site
     cfg = compiler_config(tmp_path, {'compiler': {
         'toolchain': 'ido-7.1', 'flags': ['-O2', '-G', '0', '-non_shared', '-mips2'],
     }})
-    obj = compile_source(cfg, '', 'float entry(void) { return 0.4f; }')
+    obj = compile_source(cfg, '', f'{ctype} entry(void) {{ return 0.4{suffix}; }}')
     assert obj.ok, obj.log
     fn = extract_function(obj.obj, 'entry')
     assert [r.type for r in fn.relocs] == [5, 6]
     code = bytearray(fn.code)
     load = fn.relocs[1].offset
+    assert code[load] >> 2 == opcode
     code[load+2:load+4] = (32).to_bytes(2, 'big')
 
     def record(kind, body):
@@ -502,7 +507,7 @@ def test_anonymous_object_pool_requires_cartridge_bytes_and_original_loader_site
         return (bytes(64) + struct.pack('>III', 0x12345678, 1, 1) + b'pool.uso\0'
                 + struct.pack('>IIII', 0x12345678, 0, 0, 0)
                 + record(1, symbols) + record(2, relocs) + record(4, rodata_relocs)
-                + record(5, bytes(4) + bytes(code)) + record(7, bytes(32) + struct.pack('>f', value))
+                + record(5, bytes(4) + bytes(code)) + record(7, bytes(32) + struct.pack(fmt, value))
                 + record(11, b''))
 
     def placement(image):
@@ -513,7 +518,7 @@ def test_anonymous_object_pool_requires_cartridge_bytes_and_original_loader_site
 
     image = cartridge(0.4)
     info = placement(image)
-    assert info['pool_loads'] == [[load, 1, struct.pack('>f', 0.4).hex()]]
+    assert info['pool_loads'] == [[load, 1, struct.pack(fmt, 0.4).hex()]]
     older = {key: value for key, value in info.items() if key != 'pool_loads'}
     row = {'id': 1, 'rom_offset': info['section'] + 4, 'target': bytes(code),
            'meta': json.dumps({'uso': older | {'native': True}})}
@@ -522,9 +527,26 @@ def test_anonymous_object_pool_requires_cartridge_bytes_and_original_loader_site
     assert not uso_match.link(obj.obj, 'entry', bytes(code), info | {'pool_loads': []}).exact
     assert uso_match.link(obj.obj, 'entry', bytes(code), info).exact
     assert uso.rebuild(image, [('entry', info, obj.obj)]) == image
-    wrong = cartridge(0.7)
+    wrong = cartridge(0.4000000000000001 if ctype == 'double' else 0.7)
     assert not uso_match.link(obj.obj, 'entry', bytes(code), placement(wrong)).exact
     with pytest.raises(ValueError, match='constant pool metadata'):
         uso.rebuild(wrong, [('entry', info, obj.obj)])
-    relocated = cartridge(0.4, struct.pack('>III', 0x14, 32, 0))
+    relocated = cartridge(0.4, struct.pack('>III', 0x14, 32 + struct.calcsize(fmt) - 4, 0))
     assert placement(relocated)['pool_loads'] == []
+
+
+def test_refresh_adds_wider_pool_read_to_existing_metadata(monkeypatch):
+    import json
+
+    code = struct.pack('>III', 0x3C020000, 0xC4400000, 0xD4420008)
+    region = uso.Text('pool.uso', 128, code, False, relocations=((0, 5, 1), (4, 6, 1), (8, 6, 1)),
+                      rodata=bytes(range(16)), rodata_bases=(1,), rodata_relocations=())
+    monkeypatch.setattr(uso, 'read', lambda image: [region])
+    old_load = [4, 1, '00010203']
+    info = {'section': 128, 'start': 0, 'size': len(code), 'native': True,
+            'relocs': [[0, 5, 1], [4, 6, 1], [8, 6, 1]], 'pool_loads': [old_load]}
+    row = {'id': 1, 'rom_offset': 128, 'target': code, 'meta': json.dumps({'uso': info})}
+    _, refreshed = next(uso.metadata_updates(b'', {}, [row]))
+    assert json.loads(refreshed)['uso']['pool_loads'] == [old_load, [8, 1, '08090a0b0c0d0e0f']]
+    stale = info | {'pool_loads': [[4, 1, '00010204']]}
+    assert list(uso.metadata_updates(b'', {}, [row | {'meta': json.dumps({'uso': stale})}])) == []
