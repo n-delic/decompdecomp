@@ -413,3 +413,27 @@ def test_distinct_donor_references_preserve_two_relocations_to_one_loader_bindin
     assert compiled.ok, compiled.log
     result = uso_match.link(compiled.obj, 'entry', body.code, info)
     assert result.instructions_exact and not result.exact
+
+
+def test_fixed_offset_recovery_declines_a_partially_supported_rebase(tmp_path):
+    from decompnet.app.overlay_donor_aliases import offset_retry
+    from decompnet.elfobj import extract_function
+
+    if not toolchains.installed('ido-7.1'):
+        pytest.skip('needs IDO 7.1')
+    cfg = compiler_config(tmp_path, {'compiler': {
+        'toolchain': 'ido-7.1', 'flags': ['-O2', '-G', '0', '-non_shared', '-mips2'],
+    }})
+    header = 'extern volatile int mixed[128]; extern volatile int separate[128]; extern void consume(int);'
+    source = 'int entry(void) { consume(mixed[2]); consume(separate[1]); return mixed[3]; }'
+    baseline = compile_source(cfg, header, source)
+    assert baseline.ok, baseline.log
+    desired = compile_source(cfg, header, source.replace('mixed[2]', 'mixed[9]').replace(
+        'mixed[3]', 'mixed[11]').replace('separate[1]', 'separate[2]'))
+    assert desired.ok, desired.log
+    out = extract_function(desired.obj, 'entry')
+    indices = {'mixed': 1, 'separate': 2, 'consume': 3}
+    info = {'section': 64, 'relocs': [[r.offset, r.type, indices[r.symbol]] for r in out.relocs]}
+    expected = uso_match.symbolic_target(uso_match.Target('entry', 0, out.code, [], uso=info))
+    original = uso_match.link(baseline.obj, 'entry', out.code, info).candidate
+    assert offset_retry(source, header, 'entry', original, expected) is None

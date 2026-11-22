@@ -1642,6 +1642,21 @@ functions and saved 10. Replaying the previous verifier on those same inputs
 showed that nine required per-use rebinding. All 10 passed a fresh compile and
 exact verification after reopening.
 
+### Combine overlay addend and binding recovery
+
+IDO 7.1 `-O2 -G 0 -non_shared -mips2` can emit individual HI16/LO16
+addends for different uses of one declaration. A controlled case with a
+second, consistently shifted object confirms that applying only its delta
+leaves other relocations unresolved. The uniform rebase now yields to
+per-use probing when some required deltas are incompatible or undeclared.
+Probe names are unique to the occurrence so they cannot merge with an existing
+donor name during measurement.
+
+A private 100-candidate replay on an isolated N64 project saved three
+functions. Replaying the same inputs with the previous verifier showed
+that two required these changes. All three passed a fresh compile and
+reconstructed the original cartridge together.
+
 ### Observation: source layout sensitivity (IDO 5.3)
 
 The existing [IDO guide](../src/decompnet/consoles/n64/guides/ido.md) records a private same-source
@@ -13791,3 +13806,5 @@ entry pointer to `$v0` (30-500).
 
 Added to the permuter: `goto_tail_order`, `switch_variable_split`, `prelude_pointer_inline` (decomp-repair 0.5.331); each
 reproduces its step from the saved source (3685 -> 3015, 2245 -> 1285 -> 1245, 1245 -> 1140).
+
+In one N64 function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, inverting a braced null-return guard around a field store reproduced the linked target exactly (score 400 to 0). The existing guard inversion had missed the draft because it treated the guard's closing brace as the function end. Evidence: one saved example plus library and app generation regressions.
