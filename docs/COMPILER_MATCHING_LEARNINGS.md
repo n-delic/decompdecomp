@@ -15413,3 +15413,8 @@ register operands changed. Reusing a different existing float was
 neutral. Evidence includes one private linked function, with three
 intact jump tables and clean uninitialized diagnostics, and synthetic
 instruction, source guard and Deep Permuter routing tests.
+
+
+### Capture an initial count and reserve stack event space
+
+A saved N64 initializer built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` stored a configuration count before another field, while the target loaded the count first and stored it after that field. The target also reserved 16 more stack bytes around a local event. Staging the count alone improved the linked score from 305 to 8; reserving the smallest measured halfword array that gives the target frame as well reproduced the target exactly (score 0). Evidence: one saved example and synthetic source, frame and routing tests. The frame establishes reserved space rather than the full event type, and moving the load can matter for aliased inputs, so this target-led candidate is verified by the byte judge.
