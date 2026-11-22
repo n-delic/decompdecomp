@@ -2299,3 +2299,15 @@ def test_guarded_signed_byte_routes_to_kmc(monkeypatch):
     assert 'guarded_byte_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'guarded_byte_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
     assert 'guarded_byte_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-7.1', rows, ''))
+
+
+def test_list_key_search_routes_to_kmc_with_resolver(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'nop', 'nop')]
+    resolver = lambda symbol: 123  # noqa: E731
+    monkeypatch.setattr(diff_gated_repairs.measured_list_key_search, 'variants',
+                        lambda text, name, header, diff, resolve: [('list_key_fixture', text)] if resolve is resolver else [])
+    assert 'list_key_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, '', resolve=resolver))
+    assert 'list_key_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, '', resolve=resolver))
+    assert 'list_key_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-7.1', rows, '', resolve=resolver))

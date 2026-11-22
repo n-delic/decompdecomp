@@ -147,6 +147,7 @@ from decomprepair import (
     measured_kmc_wrappers,
     measured_lifetime_shapes,
     measured_list_head_insert,
+    measured_list_key_search,
     measured_list_selection,
     measured_lookup_owner,
     measured_loop_delta_snapshot,
@@ -536,6 +537,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += global_pointer_local_repairs.scoped_field_reads(source, name, rows)
         result += measured_global_rebase.variants(source, name, header, rows, resolve=resolve)
         result += measured_two_list_allocation.variants(source, name, header, rows)
+        result += measured_list_key_search.variants(source, name, header, rows, resolve=resolve)
         result += measured_record_pointer_update.variants(source, name, header, rows)
         result += measured_record_ramp.variants(source, name, header, rows)
         result += measured_region_search.variants(source, name, header, rows)
