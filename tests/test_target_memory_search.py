@@ -76,6 +76,17 @@ CASES = [
      diff('andi $v1, $a1, 0xfff|lui $a0, 0xed00|or $v1, $v1, $a0|or $v0, $v0, $v1|sw $v0, 0($t0)',
           'lui $a0, 0xed00|andi $v1, $a1, 0xfff|or $v0, $v1, $a0|or $v0, $a2, $v0|sw $v0, 0($t0)'),
      '', 'b=(y&0xfff) | 0xed000000U; out=x | b;'),
+    ('byte_countdown_load_order',KMC,
+     'static inline s8 read_byte(char *p, int i) { return *((s8 *) (p + i)); }\n'
+     'int f(char *record) {\n'
+     '    s32 value;\n'
+     '    value = read_byte((char *) record, 12);\n'
+     '    *((u8 *) (((char *) record) + 4)) = (u8) ((*((u8 *) (((char *) record) + 4))) - 1);\n'
+     '    if (value < read_byte((char *) record, 16)) return value;\n'
+     '    return 0;\n}',
+     diff('lbu $v0, 4($s1)|lb $v1, 12($s1)|lb $a0, 16($s1)|addiu $v0, $v0, -1|sb $v0, 4($s1)',
+          'lb $v0, 12($s1)|lbu $v1, 4($s1)|lb $a0, 16($s1)|addiu $v1, $v1, -1|sb $v1, 4($s1)'),
+     '', '(u8) (repair_countdown_byte - 1)'),
 ]
 
 

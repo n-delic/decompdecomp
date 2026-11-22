@@ -2,6 +2,7 @@
 
 import re
 
+from decomprepair import byte_countdown_order
 from decomprepair import target_arithmetic_repairs as arithmetic
 from decomprepair import target_memory_repairs as memory
 
@@ -266,6 +267,8 @@ def proposals(source,name,header,rows,asm,target,candidate,toolchain, *, big_end
         offsets = _timer_fields(target,candidate)
         return memory.direct_timer(source,name,header,offsets) if offsets else []
     result = []
+    if toolchain.startswith('gcc-2.7.2-kmc'):
+        result += byte_countdown_order.variants(source, name, rows, header=header)
     symbols = set(_increment_sites(target,True)) & set(_increment_sites(candidate,False))
     if symbols:
         result += memory.volatile_postfix(source,name,header,symbols)

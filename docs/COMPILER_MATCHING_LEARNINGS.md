@@ -14127,3 +14127,16 @@ improvement. The function remains unmatched. Evidence is one measured improvemen
 tests for incomplete register evidence, aliased locals, and jump paths.
 
 In one N64 byte-store routine built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the draft typed the shifted input as `u8`, making its upper-byte stores zero. Widening it to `u32` reproduced the linked target exactly (score 315 to 0); `s32` scored 600. The narrow-widening family now also tries unsigned word parameters when an unsigned narrow parameter is shifted beyond its width. Evidence: one saved example plus synthetic generation and app routing tests.
+
+### Stage an unsigned countdown load ahead of signed byte comparisons
+
+In a private N64 function compiled with GCC 2.7.2 KMC and
+`-G0 -mips3 -mgp32 -mfp32 -O2`, the target loaded an unsigned countdown
+byte before reading two distinct signed bytes from the same record. The
+candidate read the first signed byte before the unsigned load. Capturing
+the original unsigned byte in a local before that read preserved its
+wrapping decrement and lowered the exact linked score from 13,090 to
+12,860. The library-generated candidate reproduced the measured score.
+Staging only the final call arguments did not improve the result. This
+is private linked compiler evidence. Synthetic tests cover the measured
+instruction shape, distinct offsets and volatile input rejection.
