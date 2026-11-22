@@ -621,3 +621,26 @@ def test_overlapping_banks_link_to_separate_rom_offsets(tmp_path):
                    cwd=tmp_path,check=True,capture_output=True)
     subprocess.run([str(objcopy),'-O','binary','game.elf','game.z64'],cwd=tmp_path,check=True,capture_output=True)
     assert (tmp_path/'game.z64').read_bytes()==original
+
+
+def test_export_keeps_fallthrough_entries_separate():
+    from decompnet.rom.export import _fallthrough_entries, _symbol_lines
+
+    class Console:
+        def boundary_reason(self, target):
+            return 'falls through' if target == b'prefix' else None
+
+    class Network:
+        def symbols(self, project):
+            return type('Symbols', (), {'by_name': {}})()
+
+    rows = [dict(name='prefix', vram=0x80001000, rom_offset=0x100, size=4, target=b'prefix'),
+            dict(name='entry', vram=0x80001004, rom_offset=0x104, size=8, target=b'return'),
+            dict(name='other_bank', vram=0x8000100C, rom_offset=0x200, size=4, target=b'prefix')]
+    unsized = _fallthrough_entries(rows, Console())
+    assert unsized == {'prefix'}
+    assert _symbol_lines(Network(), {'id': 1}, rows, unsized=unsized) == [
+        'prefix = 0x80001000; // type:func',
+        'entry = 0x80001004; // type:func size:0x8',
+        'other_bank = 0x8000100C; // type:func size:0x4',
+    ]
