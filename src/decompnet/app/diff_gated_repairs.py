@@ -19,6 +19,7 @@ from decomprepair import (
     conditional_field_subtract,
     counted_switch_advance,
     direct_mapped_address,
+    epsilon_predicate_order,
     field_snapshot_copies,
     float_clamp_scale_stage,
     float_delta_load_order,
@@ -309,6 +310,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     if toolchain == 'gcc-2.7.2-kmc':
         result += boolean_guard_operands.variants(source, name, rows, header)
         result += balanced_projection_scale.variants(source, name, rows, header=header)
+        result += epsilon_predicate_order.staged_variants(source, name, rows, header=header)
         result += conditional_field_subtract.variants(source, name, rows, header=header)
         result += sampled_phase_axis_stage.variants(source, name, rows, header=header)
         result += shared_projection_lifetime.variants(source, name, rows, header=header)
