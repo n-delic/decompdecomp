@@ -16032,3 +16032,25 @@ Two saved MIPS examples built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` 
 ### KMC GCC 2.7.2 staged byte signature
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` checked three signature bytes. The generated draft's combined condition used different registers and a shared result copy. Staging the input bytes and comparison constants in word locals changed the linked difference score from 250 to an exact match while retaining the integer return type. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the complete source, measured instructions and constants, and resolved addresses for all three byte loads.
+
+### Reuse dead phase locals to recover direct positive zeros
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, a private N64 function
+already held a sampled axis and a blend gain in saved floating-point
+registers. Both values were dead before the next projection. Reusing the
+axis local for the reload and the gain local for the absolute result lets
+the first projection accumulate into its initialized local. The two
+positive-zero expressions now compile to direct transfers with their
+original delay instructions. The linked score fell from 1,755 to 1,260
+with all 3,034 instructions and all three jump tables. This allocation
+swapped the general-purpose registers for the two motion accumulators.
+
+Moving the first accumulator's zero initialization across an intervening
+guard that never reads it restored those two register assignments and
+scored 1,245. The prologue and all jump tables remained intact. The staged
+stack storage remains reserved to preserve the frame layout. Removing the
+stages without changing the projection left the last jump table unresolved.
+Changing the accumulation alone displaced other saved registers and left two
+tables unresolved. These are pinned compiler replays against one private
+function. Synthetic regressions cover the observed operand relationships and
+the requirement that the reused locals are dead on every outgoing path.
