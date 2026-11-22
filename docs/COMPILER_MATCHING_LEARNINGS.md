@@ -13063,3 +13063,12 @@ recovered the call sequence. With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32
 -O2 -g3`, the linked score improved from 235 to 160, then to an exact match.
 This is one observed match; synthetic tests cover the target instruction,
 prototype conflicts and unique simple call guard.
+
+### Copy a non-null call result after its guard (KMC GCC 2.7.2)
+
+With `-G0 -mips3 -mgp32 -mfp32 -O2`, the draft copied a pointer out of
+the return register before its null test and delay-slot store. Leave both
+uses on the original local and introduce the copy inside the non-null
+branch for the field accesses. The linked judge went from 70 to 0.
+The previous dispatcher generated no candidate and the new rule
+generated one byte-exact candidate.
