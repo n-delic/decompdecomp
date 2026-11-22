@@ -172,6 +172,7 @@ from decomprepair import (
     measured_storage_shapes,
     measured_temporary_repairs,
     measured_thread_addresses,
+    measured_two_list_allocation,
     measured_varbyte_lookup,
     measured_wide_division_stride,
     measured_zero_record_pairs,
@@ -524,6 +525,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += guard_reset_scheduling.variants(source, name, header, rows)
         result += global_pointer_local_repairs.scoped_field_reads(source, name, rows)
         result += measured_global_rebase.variants(source, name, header, rows, resolve=resolve)
+        result += measured_two_list_allocation.variants(source, name, header, rows)
         result += measured_record_pointer_update.variants(source, name, header, rows)
         result += measured_magnitude_conversion.variants(source, name, header, rows)
         result += measured_command_word_schedule.variants(source, name, header, rows)
