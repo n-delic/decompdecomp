@@ -329,3 +329,17 @@ def test_deep_search_labels_the_entry_stub_as_sdk_code(monkeypatch, tmp_path):
     row = net._function('func_80000400', slug)
     assert row['status'] == 'asm' and detail(proj, row)['kind'] == 'sdk'
     assert net.function_detail(slug, row['name'], include_hints=False)['display_name'] == 'entrypoint'
+
+
+def test_other_libultra_builds_of_the_cache_routines_are_in_the_table():
+    # osInvalICache and its siblings were open for agents in games whose libultra assembled them differently
+    # (the digest table held one build's bytes). No SDK bytes here: the table, its sizes and a body that isn't one.
+    from decompnet.consoles.n64 import sdk_assembly as table
+    names = {}
+    for digest, (name, size, variant, reference) in table.KNOWN.items():
+        assert len(digest) == 64 and size % 4 == 0 and size in table.SIZES and reference.endswith('.s')
+        names.setdefault(name, []).append(size)
+    for name in ('osInvalICache', 'osInvalDCache', 'osWritebackDCache', 'osWritebackDCacheAll'):
+        assert name in names
+    assert len(table.KNOWN['713e7b78373df6fbf3d030b5237e9c1e2148c9443cbfdf938f2e8ffdf8e2d326'][0]) and 40 in table.SIZES
+    assert table.identify(bytes(116)) is None and table.identify(bytes(40)) is None

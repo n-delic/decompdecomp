@@ -97,3 +97,11 @@ def test_mips_code_no_compiler_makes():
     assert "system call" in mips_reason(le(0x24030010, 0x0000000C, 0x03E00008, 0), False, "ps2")  # li v1, 0x10; syscall
     # but break is GCC's own: a divide with its divide-by-zero check is compiled code
     assert mips_reason(le(0x0085001A, 0x14A00002, 0, 0x0007000D, 0x00001012, 0x03E00008, 0), False, "ps2") is None
+
+
+def test_n64_cache_routines_are_set_aside_as_assembly():
+    # libultra's osInvalICache: cache 0x10, 0($a0) in a loop. No C makes it, so agents must not claim it
+    # (decomprepair 0.5.610 added the rule; 63 such functions were open in one user's projects).
+    from decompnet import consoles
+    code = b''.join(w.to_bytes(4, 'big') for w in (0xBC900000, 0x03E00008, 0))
+    assert 'cache' in (consoles.get('n64').asm_reason(code) or '')

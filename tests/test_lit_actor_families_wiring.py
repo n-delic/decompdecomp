@@ -74,9 +74,24 @@ PICK = HEADER + '''void pick(u8 *arg0, u8 *spare, s32 flags)
   use(idx, sp29);
 }
 '''
+COUNTER = HEADER + '''extern u8 gCount;
+void counter(u8 *arg0, s32 idx)
+{
+  u8 var_v1;
+  u8 var_a3;
+  var_v1 = gCount + 1;
+  if (gCount < 0xAU)
+  {
+    var_a3 = arg0[1];
+    gCount = var_v1;
+    use(arg0, idx, var_a3);
+  }
+}
+'''
 EXPECTED = {'cursor': {'display_cursor_record_ordered', 'display_value_stage'}, 'copies': {'shared_copy_local_direct'},
-            'quotient': {'narrow_quotient_local'}, 'pick': {'selected_argument_call_split'}}
-SOURCES = {'cursor': CURSOR, 'copies': COPIES, 'quotient': QUOTIENT, 'pick': PICK}
+            'quotient': {'narrow_quotient_local'}, 'pick': {'selected_argument_call_split'},
+            'counter': {'guarded_increment_sink'}}
+SOURCES = {'cursor': CURSOR, 'copies': COPIES, 'quotient': QUOTIENT, 'pick': PICK, 'counter': COUNTER}
 
 
 def test_the_families_are_known_to_the_agents():

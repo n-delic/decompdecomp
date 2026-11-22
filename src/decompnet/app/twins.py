@@ -577,6 +577,10 @@ class Twins:
         console = self.net.console(proj)
         from .boundary_review import refresh
         refresh(self.net,proj,console)
+        # SDK code is SDK, not assembly (AGENTS.md): a routine whose identity is known is filed as that first, and
+        # only what is left goes by `asm_reason`.
+        from .sdk_assembly import discover_known
+        discover_known(self.net, proj)
         marks = []
         for r in self.net.project_store(proj['id']).all("SELECT id, target, meta FROM functions WHERE project_id=? AND status='open'", proj["id"]):
             if '"reopened"' not in (r["meta"] or "") and (why := console.asm_reason(r["target"] or b"")):

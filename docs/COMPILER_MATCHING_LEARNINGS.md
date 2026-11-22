@@ -13737,6 +13737,27 @@ The `global_first_element` repair offers the measured change for a single call
 argument read; unit tests cover its shape and reject other uses. This is one
 observed near-match, not a controlled compiler regression.
 
+### A scalar flag read as `g[0]` stays behind earlier stores (KMC GCC 2.7.2)
+
+One 185-instruction N64 menu function, `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`: two sprite blocks each store
+a bit-field word and two halfwords through `pair->first` / `pair->second`, then test a one-byte global flag. The
+target loads the flag after the stores; ours hoisted `lui/lbu` above them, which also took a register
+(`$a0` for the flag, the sprite pointer moved to `$a1`). The saved best (340 under the old scale, 1460 re-judged)
+carried a `register` local, a `do { } while (0)` fence, a `volatile u16` field and a `*(volatile u8 *)&flag` read.
+Removing all of that gave 910, and declaring the flag `extern u8 flag[];` with the tests written `flag[0]`
+gave 0 with no scaffolding. `volatile` on the field plus a volatile flag declaration reached 630, never 0.
+
+Rule (hypothesis read from `sched.c`, with the measured change as the evidence): `true_dependence` treats a store
+through a struct pointer (`MEM_IN_STRUCT_P`, varying address, not QImode) as not conflicting with a read of a
+plain global (not in a struct, fixed address), so sched1 may move the flag load above it. An array element is
+`MEM_IN_STRUCT_P`, the exclusion no longer applies and the load keeps its place. One function, not a controlled
+regression. Failed: volatile on the flag declaration alone (identical to plain), volatile on the bit-field
+(1600), the word-update spelling of the bit-field (4135).
+
+decomp-repair 0.5.609 widens `global_first_element` from a single call argument to every read of the scalar at
+once (conditions, operands, arguments, and `*(volatile T *)&g` reads), refusing written, addressed, incremented or
+other-function uses; from the 910 source it emits the exact child among its five.
+
 ### Loop-invariant copies and delay slots around global loop bounds (KMC GCC 2.7.2)
 
 One 330-instruction N64 function (three bonus-object loops over a global slot count, switch on a scene byte)
@@ -17880,3 +17901,63 @@ instruction). Controlled tests for the classifier: `tests/test_steering.py`. A f
 headers as non-reads and `return r` as a declaration, and tagged 80% of the candidates as dead and uncompilable: the removal run
 was how those were found, and each is a test now.
 
+## The lit-actor drawer matched: 3712 -> 0 (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, scoring 2)
+
+Same 842-instruction N64 lit-actor drawer as the entries above; one function, isolated judge (`judge-worker`) per step,
+confirmed by the app (matched, best 0). The edits, from the saved best, with scores:
+
+| step | edit | alone | running |
+|---|---|---|---|
+| 1 | global counter bumped inside its guard: `if (G < 10) { G++; f(..., sp23, sp24, sp25); }` instead of m2c's `v = G + 1;` before the `if`, with the arm's copies and the identity inline helpers (`inline_fn2`) around the call's arguments removed; the matrix pool the same way (`if (used < limit) { used++; ... used << 6 }`) | worse alone (counter 4075, pool 5342) | 3640 together |
+| 2 | the two `D9` commands as two records (`g = cursor; cursor = g + 1; g->w0 = ..; g->w1 = ..;` twice) instead of `cursor = t + 2; cursor = t + 4;` (existing `display_cursor_record`) | 5217 | 1370 |
+| 3 | the `do { } while (0)` wrappers a previous search put around two arms and the pool block removed | | 1005 (also fixed the swapped `$s0`/`$s4`) |
+| 4 | a temp m2c reused for two fields (`t = p[0x7F]; ...; t = p[0x80];`) split into one temp per field (twice) | | 955, 905 |
+| 5 | in the `0x2000` arm, the alpha byte `p[0x82]` read in `w1 = col \| p[0x82]` after `w0` is stored | | 275 |
+| 6 | `phantom_wide` and its `do/while (0)` removed, stray arguments to one-argument callees dropped | | 320 |
+| 7 | the cursor local shared by three `FA` blocks (one per branch) split into one per block | | 170 |
+| 8 | `sPrimTintB` read in place instead of reusing the red component's local | | 70 |
+| 9 | the `& 1` block's word written as one expression (alpha last) | | 10 |
+| 10 | the red product shifted through the same identity helper as green (`inline_fn23(r) << 24`) | | 0 |
+
+Compiler facts (each checked in the dumps; the cause in the source is noted where read):
+- flow.c deletes a store to a global when the next store (scanning backwards) is to the same address with no memory
+  access between (`last_mem_set`, read in flow.c): two `cursor =` in a row lose the first. Writing each command's words
+  between its advances keeps it; cse keeps the cursor's value across the member stores (MEM_IN_STRUCT, hypothesis).
+- `do { } while (0)` doubles a pseudo's reference count; `floor_log2(n) * n` makes short temps gain most, so the
+  `x >> 1` temp outranked the loaded byte in local-alloc and the arms' arithmetic took the wrong registers.
+- global.c pass 0 skips registers another conflicting pseudo prefers and registers not yet used; with the wrappers
+  gone the 0x20 pointer outranked the 0x18 one and took `$s4` as in the target.
+- An identity `inline` helper around a call argument still changes the RTL (inline integration copies), which here
+  broke the cross-jumping of two arms' identical call tails.
+Scaffolding left: the identity helper `inline_fn23` on the red and green products (step 10). Family:
+decomp-repair `guarded_increment_sink` (0.5.607) emits step 1 as one child; steps 3-10 are not yet families.
+
+
+### Follow-up: the first load staged (`entry_scheduling_scope`, 0.5.611)
+
+The loop-note barrier attaches to the first insn after it (sched.c `sched_analyze_insn`: that insn depends on every earlier
+register and memory access, and every later insn on it). With `var_fs1 = arg5;` first in the run the anchor was the `mov.s`,
+which therefore came before the first `lwc1`; the target has the `lwc1 $f2,($a3)` first. Reading the first product's
+dereference into a local as the run's first statement (`tx = *arg3;`, the product uses `tx`) put the load first and also fixed
+the float registers of the x component: 140 -> 70 in the isolated judge. From the unwrapped state the family's children score
+580 -> 265 (wrapped), 200 (staged), 140 (copies), 80 (staged with copies). Hypothesis from reading sched.c and the dumps.
+Still open at 70: the z component's add (`add.s $f2,$f2,$f0` for `$f0,$f0,$f2`, the F4 and product groups tie in local-alloc
+priority and the qty number breaks it the other way) and the position of `lw $v0,0x58($v0)` against `sw $s7,0x10c`.
+
+## KMC GCC 2.7.2 (`-G0 -mips3 -mgp32 -mfp32 -O2`): a search's "not found" value on the exit path, and a call-argument loop's own variable
+
+A 219-instruction N64 function with four table searches (`while (WORD(e) != -1) { found = e; if (HALF(e+4) == key) break;
+e += WORD(e); found = 0; }` inside a loop over a key list), saved best 285, 57 register-only rows: the key in `$a0`, `found` in `$v1`,
+the `-1` in `$a2` where the target has `$v1`, `$v0`, `$a0`. Edit list, each scored with the app's judge:
+1. `found` set only on the exits (`if (T) { found = e; goto L; }` in the loop, `found = 0; L:;` after it): 285 -> 180. The
+   `-dg` conflict table showed `found` conflicting with hard register 2 because it was live across the loop's loaded word;
+   the target shares `$v0` and fills both exits' delay slots with the two assignments. Controlled (all four loops).
+2. The variable `lookup` is also the argument of another loop's call (`f(lookup, table)`): the copy into `$a0` leaves a
+   preference for `$a0` on the pseudo (`82 preferences: 4`); a separate local for that loop: 180 -> 20. Hypothesis for the
+   mechanism, measured effect.
+3. The group's `(u32)WORD(g + 12) + (u32)g` operand order: 20 -> 15. 4. A local of its own for the last block's
+   pointer (`tail`, written `inline_fn((u16 *)(...))` as the saved best did) in place of the loop's `entry`: 15 -> 0.
+Failed: `for (;;)` with the zero on the exit (3450), `if (found-ness)` after the loop (4912, 2735), a ternary after the loop (4955),
+`found = 0` before the loop with none at the bottom (2985), the break form without the goto (1805), `tail` as a plain sum (600).
+Families: decomp-repair `loop_exit_value_block` and `argument_loop_split` (0.5.608), both reproduced from the saved best
+(285 -> 180 -> 20). Steps 3 and 4 are not yet families.
