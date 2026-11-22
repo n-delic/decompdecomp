@@ -906,24 +906,35 @@ def _finish(source,name,proposals,labels,allocation_candidates,limit):
     for text in proposals:
         labels.setdefault(text,'expression_or_near_repair')
     # Round-robin families so a new family cannot crowd existing repairs out of a short pass.
-    groups = {}
+    from itertools import chain, islice, zip_longest
+
     from decomprepair.repair_preflight import invalid_call
 
     from .repair_generation import ACTIVE
-    for text in dict.fromkeys(proposals):
-        if text == source:
-            continue
-        if ACTIVE.get() is None and invalid_call(text, name):
-            continue
-        groups.setdefault(labels[text],[]).append(text)
-    # Missing argument positions and unknown-object types need refinement before speculative
-    # call scopes; adding a scope family must not displace this existing short preflight lane.
     from .repair_ranking import GUARDED, STRUCTURAL
-    first=('m2c_refinement',)+GUARDED+STRUCTURAL
-    groups={**{family:groups[family] for family in first if family in groups},**groups}
-    ordered = []
-    while any(groups.values()):
-        for items in groups.values():
-            if items:
-                ordered.append(items.pop(0))
-    return ordered if limit is None else ordered[:limit]
+
+    groups = {}
+    for position, text in enumerate(dict.fromkeys(proposals)):
+        if text != source:
+            groups.setdefault(labels[text], []).append((position, text))
+    preflight = ACTIVE.get() is None
+
+    # The first valid proposal sets each family's original insertion order.
+    # Keep the rest lazy so candidates beyond the search limit need no preflight.
+    families = []
+    for family, items in groups.items():
+        valid = filter(lambda item: not invalid_call(item[1], name), items) if preflight else iter(items)
+        head = next(valid, None)
+        if head is not None:
+            families.append((family, head[0], chain((head,), valid)))
+
+    first = ('m2c_refinement',) + GUARDED + STRUCTURAL
+    priority = {family: i for i, family in enumerate(dict.fromkeys(first))}
+    families.sort(key=lambda item: (priority.get(item[0], len(first)), item[1]))
+    ordered = (item[1] for batch in zip_longest(*(stream for _, _, stream in families))
+               for item in batch if item is not None)
+    if limit is None:
+        return list(ordered)
+    if limit < 0:
+        return list(ordered)[:limit]
+    return list(islice(ordered, limit))
