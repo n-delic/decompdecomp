@@ -100,6 +100,31 @@ def test_the_tool_keeps_every_objects_copy(monkeypatch, tmp_path):
     assert len(tool.table([archive], {"a" * 40})) == 3
 
 
+def test_the_tool_labels_libultra_archives_and_leaves_out_what_other_tables_name():
+    tool = _tool()
+    assert tool.label(Path("/sdk/2.0I Nintendo_64_Developers_OS-Library_IRIX_v2.0I/usr/lib/libultra_d.a"), "libultra") == "2.0I/libultra_d"
+    assert tool.label(Path("/sdk/NINTENDO 64 OS2.0L/lib/libgultra_rom.a"), "libultra") == "2.0L/libgultra_rom"
+    for wrong in ("/sdk/2.0K/libgn_audio.a", "/sdk/2.0K/libultrahost.a", "/sdk/lib/libultra.a"):
+        with pytest.raises(SystemExit):
+            tool.label(Path(wrong), "libultra")
+
+
+def test_the_libultra_table_is_the_sdks_own_builds_beyond_the_other_tables():
+    table = Path(N64.sdk_tables[-1])
+    assert table.name == "libultra_signatures.tsv"
+    lines = table.read_text(encoding="utf-8").splitlines()
+    assert lines[0].startswith("# libultra 2.0I-2.0L,") and "no code" in lines[0]
+    rows = [line.split("\t") for line in lines if not line.startswith("#")]
+    assert len(rows) > 300
+    names = {name for _, _, name, _ in rows}
+    assert {"__ll_mod", "__osDequeueThread", "alUnlink", "alSeqFileNew"} <= names
+    others = {line.split("\t")[0] for other in (Path(N64.sdk_table), Path(N64.sdk_tables[0]))
+              for line in other.read_text(encoding="utf-8").splitlines() if not line.startswith("#")}
+    for fingerprint, size, name, builds in rows:
+        assert re.fullmatch(r"[0-9a-f]{40}", fingerprint) and int(size) >= 32 and name and fingerprint not in others
+        assert all(re.fullmatch(r"2\.0[I-L]/libg?ultra(_d|_rom)?", b) for b in builds.split(","))
+
+
 def test_no_fingerprint_is_in_both_tables():
     ultralib = {line.split("\t")[0] for line in Path(N64.sdk_table).read_text(encoding="utf-8").splitlines()
                 if not line.startswith("#")}

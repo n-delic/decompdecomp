@@ -407,7 +407,12 @@ def known_identity(console, cfg, code, *, has_relocs=False):
         if found and (not found.get('from_c') or cfg.get(SETTING, True)):
             return found
     if not has_relocs:
-        return console.sdk_assembly_identity(code)
+        found = console.sdk_assembly_identity(code)
+        # SDK library C with no relocation (the console's exact-body table) follows the same project setting as the
+        # linked image's C above; the entry stub and the handwritten assembly are not C and are always identified
+        if found and found.get('from_c') and not cfg.get(SETTING, True):
+            return None
+        return found
 
 
 def known_proof(console, proj, fn):
@@ -419,6 +424,9 @@ def known_proof(console, proj, fn):
         return None
     if found.get('evidence'):
         evidence = found['evidence']
+    elif found.get('from_c') and not found.get('image_sha1'):
+        evidence = ('Exact complete bytes of SDK library C code with no relocations, from the SDK\'s own libultra builds; '
+                    'excluded from C matching by the library setting.')
     elif found.get('from_c'):
         evidence = 'Exact SDK library C bytes in a known linked image; excluded from C matching by the library setting.'
     elif found.get('image_sha1'):

@@ -221,7 +221,10 @@ class Nintendo64(Console):
     # n_audio (libgn_audio.a 2.0J-2.0L), which ultralib doesn't rebuild: the SDK archives' fingerprints and names
     # plus hand-written runtime code that cartridges share but no archive rebuilds (fingerprints of functions found
     # byte for byte, relocations aside, in unrelated games: runtime_signatures.tsv)
-    sdk_tables = (str(Path(__file__).with_name("naudio_signatures.tsv")), str(Path(__file__).with_name("runtime_signatures.tsv")))
+    # libultra as the SDK's own archives built it (SGI's cc for 2.0I, GCC for 2.0J-2.0L), beyond what the rebuild above
+    # names (libultra_signatures.tsv: tools/naudio_signatures.py --library libultra)
+    sdk_tables = (str(Path(__file__).with_name("naudio_signatures.tsv")), str(Path(__file__).with_name("runtime_signatures.tsv")),
+                  str(Path(__file__).with_name("libultra_signatures.tsv")))
 
     def sdk_assembly_identity(self, code, big_endian=True):
         return sdk_assembly.identify(code, big_endian)

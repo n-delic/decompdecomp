@@ -97,7 +97,8 @@ def test_builtin_pack_metadata_has_complete_body_sizes():
         'guMtxF2L', 'guMtxL2F', '__osPopThread',
         'osInvalDCache', 'osInvalICache', 'osWritebackDCache', 'bcopy', 'guScaleF',
     }
-    assert {entry[1] for entry in pack.KNOWN.values()} | {size for size, _ in pack._MTX_CAT_ASM} == set(pack.SIZES)
+    assert ({entry[1] for entry in pack.KNOWN.values()} | {size for size, _ in pack._MTX_CAT_ASM}
+            | {entry[1] for entry in pack.KNOWN_C.values()}) == set(pack.SIZES)
     assert all(len(digest)==64 and int(digest,16)>=0 and row[1]%4==0 for digest,row in pack.KNOWN.items())
 
 
@@ -360,3 +361,34 @@ def test_sdk_archive_fingerprints_are_unambiguous_and_cover_every_build():
                      'bzero', 'bcmp', 'osDelay'}
     assert all(not name.startswith('_b') or name.startswith('__') for name in names)  # _bcopy/_bzero are bcopy/bzero
     assert all(row[1] in pack.SIZES and row[3].endswith('.s') for row in pack.KNOWN.values())
+
+
+def test_library_c_bodies_are_identified_as_c_and_follow_the_library_setting(monkeypatch):
+    from decompnet.app.sdk_assembly import SETTING, known_identity
+
+    code = bytes.fromhex('24020001') * 10  # synthetic body, no SDK bytes
+    digest = hashlib.sha256(code).hexdigest()
+    monkeypatch.setattr(pack, 'KNOWN_C', {digest: ('alToy', 40, 'libultra 2.0I')})
+    monkeypatch.setattr(pack, 'SIZES', (*pack.SIZES, 40))
+    monkeypatch.setattr(N64, 'sdk_assembly_sizes', pack.SIZES)
+    found = known_identity(N64, {'kind': 'rom'}, code)
+    assert found['name'] == 'alToy' and found['from_c'] and found['corpus'] == 'libultra C library'
+    assert known_identity(N64, {'kind': 'rom', SETTING: False}, code) is None  # the project asked for C matching
+    assert known_identity(N64, {'kind': 'rom'}, code, has_relocs=True) is None
+    assert known_identity(N64, {'kind': 'rom'}, code + bytes(4)) is None
+    # (assembly is not C: the setting never hides it)
+    asm = bytes.fromhex('24020001') * 11
+    monkeypatch.setattr(pack, 'KNOWN', {hashlib.sha256(asm).hexdigest(): ('asmToy', 44, 'test', 'toy.s')})
+    monkeypatch.setattr(pack, 'SIZES', (*pack.SIZES, 44))
+    monkeypatch.setattr(N64, 'sdk_assembly_sizes', pack.SIZES)
+    assert known_identity(N64, {'kind': 'rom', SETTING: False}, asm)['name'] == 'asmToy'
+
+
+def test_the_library_c_table_is_complete_functions_with_one_name_each():
+    assert len(pack.KNOWN_C) > 150
+    names = {name for name, _, _ in pack.KNOWN_C.values()}
+    assert {'__ll_mod', '__ull_divremi', '__osDequeueThread', 'alUnlink', 'alHeapInit', '__osSumcalc'} <= names
+    assert not set(pack.KNOWN_C) & set(pack.KNOWN)
+    for digest, (name, size, variant) in pack.KNOWN_C.items():
+        assert len(digest) == 64 and int(digest, 16) >= 0 and size % 4 == 0 and size >= 32 and size in pack.SIZES
+        assert name and '.' not in name and variant.startswith('libultra 2.0')
