@@ -1655,3 +1655,14 @@ def test_list_selection_routes_to_kmc(monkeypatch):
                         lambda text, name, header, diff: [('list_selection_fixture', text)])
     assert 'list_selection_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'list_selection_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_route_measured_equal_size_array_stack_shift():
+    source = 'void f(void) { float sp40[3]; float sp50[3]; sink(sp40, sp50); }'
+    rows = [('i', 'sw $v1, 0x40($sp)', 'sw $v0, 0x30($sp)'),
+            ('s', 'sw $a1, 0x44($sp)', 'sw $a1, 0x34($sp)'),
+            ('s', 'sw $a2, 0x50($sp)', 'sw $a2, 0x40($sp)'),
+            ('s', 'lw $a1, 0x54($sp)', 'lw $a1, 0x44($sp)')]
+    expected = 'void f(void) { float sp50[3]; float sp40[3]; sink(sp40, sp50); }'
+    assert ('spill_declaration_order', expected) in proposals(source, 'f', '', 'mips', KMC, rows, '')
+    assert all(label != 'spill_declaration_order' for label, _ in proposals(source, 'f', '', 'mips', KMC, rows[:-1], ''))
