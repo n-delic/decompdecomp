@@ -14533,3 +14533,14 @@ from 11,265 to 11,145, with all jump tables still linked. Staging only
 the pointer gave 11,265, and capturing the field as s16 gave 12,550.
 The synthetic fixture matches both offsets, the exact float bits and
 the signed comparison bound and covers volatile lookalikes.
+
+### Split a temporary even when its generated name is already in use
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, a rendering
+routine reused a word-sized local for an address calculation and a later
+resource validity check. The target used a different register for the
+validity check. Splitting the later load and its check into a fresh local
+reproduced the target's register choice and improved the linked score
+from 136 to 126. The previous generator skipped this split because the
+candidate already declared its preferred name. Evidence is one measured
+scratch replay and a synthetic regression for repeated name collisions.
