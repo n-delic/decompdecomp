@@ -1572,6 +1572,19 @@ replay confirmed that three required the data rebase and four already passed
 ordinary donor verification. This fixture exercises compiler-emitted
 relocations and keeps the destination loader's byte and symbol checks.
 
+### Attribute separate overlay data references from one donor declaration
+
+A controlled IDO 7.1 NCC test with `-O2 -mips2 -G 0 -non_shared` uses an external
+volatile C-linkage array before and after a call. Renaming one use at a time
+identifies its compiler-emitted HI16/LO16 locations. The retry can then bind the
+uses to different loader symbols or rebase them by distinct byte deltas under
+one loader symbol. The ordinary exact judge rejects a deliberately wrong delta.
+
+A private trial replayed one candidate for each of 178 outstanding overlay
+functions and saved 10. Replaying the previous verifier on those same inputs
+showed that nine required per-use rebinding. All 10 passed a fresh compile and
+exact verification after reopening.
+
 ### Observation: source layout sensitivity (IDO 5.3)
 
 The existing [IDO guide](../src/decompnet/consoles/n64/guides/ido.md) records a private same-source

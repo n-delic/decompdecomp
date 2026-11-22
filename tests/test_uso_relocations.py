@@ -220,3 +220,53 @@ def test_overlay_data_rebase_preserves_compiler_relocations_and_exact_bytes(tmp_
     wrong = compile_source(cfg, context, changed.replace(f'+ ({delta})', f'+ ({delta + 4})'))
     assert wrong.ok, wrong.log
     assert not uso_match.link(wrong.obj, 'example', b.code, info).exact
+
+
+@pytest.mark.parametrize('changed_offsets,shared_binding', [(False, False), (True, False), (True, True)])
+def test_overlay_probes_a_c_linkage_data_declaration_in_cpp(tmp_path, changed_offsets, shared_binding):
+    from threading import Event
+
+    from decompnet.app.overlay_donor_aliases import retry
+    from decompnet.elfobj import extract_function
+
+    toolchain = 'ido-7.1-ncc'
+    if not toolchains.installed(toolchain):
+        pytest.skip('needs IDO 7.1 NCC')
+    cfg = compiler_config(tmp_path, {'compiler': {'toolchain': toolchain, 'flags': ['-O2', '-mips2', '-G', '0', '-non_shared']}})
+    header = 'extern "C" { extern volatile int data_word[64]; void consume(int); }'
+    donor = 'extern "C" int example() { consume(data_word[2]); return data_word[3]; }'
+    section = 64
+    first, second, call = (uso_match.alias(section, i) for i in (1, 2, 3))
+    if shared_binding:
+        second = first
+        donor = donor.replace('data_word', first)
+        header = header.replace('data_word', first)
+    baseline = compile_source(cfg, header, donor)
+    assert baseline.ok, baseline.log
+    expected_header = f'extern "C" {{ extern volatile int {first}[64]; extern volatile int {second}[64]; void {call}(int); }}'
+    i, j = (9, 11) if changed_offsets else (2, 3)
+    expected_c = f'extern "C" int example() {{ {call}({first}[{i}]); return {second}[{j}]; }}'
+    expected = compile_source(cfg, expected_header, expected_c)
+    assert expected.ok, expected.log
+    wanted = extract_function(expected.obj, 'example')
+    indices = {second: 2, first: 1, call: 3}
+    info = {'section': section, 'relocs': [[r.offset, r.type, indices[r.symbol]] for r in wanted.relocs]}
+    original = uso_match.link(baseline.obj, 'example', wanted.code, info)
+    assert not original.exact
+    target = uso_match.symbolic_target(uso_match.Target('example', 0, wanted.code, [], uso=info))
+
+    def measure(text, context):
+        built = compile_source(cfg, context, text)
+        assert built.ok, built.log
+        return uso_match.link(built.obj, 'example', wanted.code, info).candidate
+
+    source, header = retry(donor, header, 'example', original.candidate, target, measure, Event())
+    built = compile_source(cfg, header, source)
+    assert built.ok, built.log
+    assert uso_match.link(built.obj, 'example', wanted.code, info).exact
+    assert 'decomp_donor_probe_' not in source + header
+    if changed_offsets:
+        assert '+ (28)' in source
+        wrong = compile_source(cfg, header, source.replace('+ (28)', '+ (24)'))
+        assert wrong.ok, wrong.log
+        assert not uso_match.link(wrong.obj, 'example', wanted.code, info).exact
