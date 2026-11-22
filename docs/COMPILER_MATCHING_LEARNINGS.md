@@ -1,5 +1,14 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: stage a bounded masked product
+
+In a private N64 draft, assigning a masked index to its unsigned
+destination before multiplying improved the linked score from 4,325
+to 4,290 with `-G0 -mips3 -mgp32 -mfp32 -O2`. A fresh local and a
+`do { ... } while (0)` block each scored 4,325. The repair tries
+individual sites because the same rewrite elsewhere can regress.
+The function remains unmatched.
+
 ### KMC GCC 2.7.2: preserve fixed high bits during random cast generation
 
 A native cast mutation wrapped a packed command operand in
