@@ -370,6 +370,60 @@ _DATA = re.compile(
     r'\s*((?:\[\s*\d*\s*\]\s*)*)\s*;')
 
 
+def _top_level_starts(clean, matches, *, unconditional=True):
+    directives = list(re.finditer(r'(?m)^[ \t]*\#[^\n]*(?:\\\n[^\n]*)*', clean))
+    events = sorted([(match.start(), False, match) for match in matches]
+                    + [(directive.start(), True, directive) for directive in directives], key=lambda item: item[0])
+    cursor = depth = conditional = 0
+    result = set()
+    for start, directive, match in events:
+        if start < cursor:
+            continue
+        segment = clean[cursor:start]
+        depth += segment.count('{') - segment.count('}')
+        if directive:
+            kind = re.match(r'\s*\#\s*(\w+)', match[0])
+            if kind and kind[1] in ('if', 'ifdef', 'ifndef'):
+                conditional += 1
+            elif kind and kind[1] == 'endif':
+                conditional = max(0, conditional - 1)
+            cursor = match.end()
+        elif depth == 0 and (conditional == 0 or not unconditional):
+            result.add(start)
+            cursor = start
+        else:
+            cursor = start
+    return result
+
+
+def _zero_data_types(clean):
+    """Find scalar and plain aggregate typedefs that need no C++ initialization."""
+    types = {'char', 'short', 'int', 'long', 'signed', 'unsigned', 'float', 'double'}
+    scalar = re.compile(r'\btypedef\s+([A-Za-z_]\w*(?:\s+[A-Za-z_]\w*)*)\s+([A-Za-z_]\w*)\s*;')
+    aggregate = re.compile(r'\btypedef\s+struct(?:\s+[A-Za-z_]\w*)?\s*\{([^{}]*)\}\s*([A-Za-z_]\w*)\s*;')
+    field = re.compile(r'([A-Za-z_]\w*(?:\s+[A-Za-z_]\w*)*)\s+[A-Za-z_]\w*(?:\s*\[\s*\d+\s*\])*')
+    scalars, aggregates = list(scalar.finditer(clean)), list(aggregate.finditer(clean))
+    top_level = _top_level_starts(clean, [*scalars, *aggregates])
+    macros = set(re.findall(r'(?m)^[ \t]*\#[ \t]*(?:define|undef)[ \t]+([A-Za-z_]\w*)', clean))
+
+    while True:
+        found = set()
+        for match in scalars:
+            if match.start() in top_level and set(match[1].split()) <= types:
+                found.add(match[2])
+        for match in aggregates:
+            fields = match[1].split(';')
+            if match.start() not in top_level or fields[-1].strip():
+                continue
+            parsed = [field.fullmatch(value.strip()) for value in fields[:-1]]
+            if parsed and all(item and set(item[1].split()) <= types for item in parsed):
+                found.add(match[2])
+        found -= macros
+        if found <= types:
+            return types
+        types.update(found)
+
+
 def globalize_zero_data(header, candidate, target):
     """Expose simple private zero-initialized objects for a measured binding retry."""
     if (candidate is None or not any(r.symbol in ('.bss', '.sbss') for r in candidate.relocs)
@@ -377,11 +431,13 @@ def globalize_zero_data(header, candidate, target):
         return None
     changes, names = [], set()
     clean = csource._blank(header)
-    scalar = r'(?:char|short|int|long|signed|unsigned|float|double)'
+    scalar = '(?:' + '|'.join(map(re.escape, sorted(_zero_data_types(clean)))) + ')'
     pattern = r'\bstatic\s+(?:' + scalar + r'\s+)+([A-Za-z_]\w*)\s*(?:\[\s*\d+\s*\]\s*)*;'
-    for match in re.finditer(pattern, clean):
-        prefix = clean[:match.start()]
-        if prefix.count('{') != prefix.count('}') or prefix[prefix.rfind('\n') + 1:].lstrip().startswith('#'):
+    matches = list(re.finditer(pattern, clean))
+    top_level = _top_level_starts(clean, matches, unconditional=False)
+    for match in matches:
+        line = clean[clean.rfind('\n', 0, match.start()) + 1:match.start()]
+        if match.start() not in top_level or line.lstrip().startswith('#'):
             continue
         names.add(match[1])
         changes.append((match.start(), match.start() + len('static ')))
