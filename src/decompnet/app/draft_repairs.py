@@ -397,7 +397,7 @@ def _worker_batch(request, check, handlers=None):
     import time
 
     from . import library_skew
-    from .deep_proposals import Worker
+    from .deep_proposals import RETRIES, Worker, WorkerStopped, log
 
     library_skew.ensure()
     check()
@@ -415,7 +415,16 @@ def _worker_batch(request, check, handlers=None):
         if worker is None or worker.closed.is_set():
             worker = Worker()
             worker.epoch = library_skew.EPOCH
-        result = worker.run(request, check, handlers)
+        for attempt in range(RETRIES + 1):
+            try:
+                result = worker.run(request, check, handlers)
+                break
+            except WorkerStopped:  # it ended mid-request (generation is pure): ask a fresh one
+                if attempt == RETRIES:
+                    raise
+                log.info('Asking a fresh proposal worker again (attempt %d of %d)', attempt + 2, RETRIES + 1)
+                worker = Worker()
+                worker.epoch = library_skew.EPOCH
         with _IDLE_LOCK:
             worker.idle_since = time.monotonic()
             if getattr(worker, 'epoch', 0) == library_skew.EPOCH:
