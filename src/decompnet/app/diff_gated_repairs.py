@@ -40,6 +40,7 @@ from decomprepair import (
     measured_address_repairs,
     measured_after_call_reload,
     measured_be16_cursor,
+    measured_branch_halfword_store,
     measured_byte_clamp,
     measured_callback_loop,
     measured_callback_repairs,
@@ -365,6 +366,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_kmc_cursor_switch.variants(source, name, header, rows)
         result += measured_kmc_field_pointer.variants(source, name, header, rows)
         result += measured_masked_halfword_read.variants(source, name, header, rows)
+        result += measured_branch_halfword_store.variants(source, name, header, rows)
         result += measured_kmc_event_field_order.variants(source, name, header, rows)
         result += measured_kmc_event_timestamp.variants(source, name, header, rows)
         result += measured_kmc_halfword_flag_table.variants(source, name, header, rows)
