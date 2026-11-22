@@ -1287,3 +1287,14 @@ def test_event_field_order_routes_to_kmc(monkeypatch):
                         lambda text, name, header, diff: [('event_field_order_fixture', text)])
     assert 'event_field_order_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'event_field_order_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+
+def test_halfword_flag_table_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_kmc_halfword_flag_table, 'variants',
+                        lambda text, name, header, diff: [('halfword_flag_fixture', text)])
+    assert 'halfword_flag_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'halfword_flag_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
