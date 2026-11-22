@@ -16490,3 +16490,7 @@ A saved MIPS teardown function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp3
 ### Word-aligned wide division load (GCC 2.7.2 KMC)
 
 With `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a saved split-helper draft scored 210; byte-indexing its pointer and reconstructing the 64-bit helper arguments matched exactly. The target reads the dividend with two word loads. A `u64` typedef with `__attribute__((aligned(4)))` preserves that word-alignment requirement and still matches exactly through the app's judge. This is one saved example with its original compiler and linked byte comparison; it does not establish an eight-byte alignment guarantee for other inputs.
+
+### Float literal in the first argument register (GCC 2.7.2 KMC)
+
+With `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a saved draft passed the integer bits `0x3f800000` to an unknown single-argument prototype and scored 265. The target loads those bits into `$f12`; changing the prototype to `f32` and the argument to `1.0f` matched exactly with the original compiler and linked byte comparison. This is one saved example; the target-guided search checks both the float-register setup and the draft's integer-register setup before prioritizing the existing float-bit repair.
