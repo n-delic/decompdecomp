@@ -391,3 +391,34 @@ def test_shared_assignment_inline_is_proposed_by_the_drafts_and_the_deep_permute
     assert any('erase(base - 0x28, base, 1);' in text and 'var_a0' not in text
                for text, family in labels.items() if family == 'shared_assignment_inline')
     assert "'shared_assignment_inline.variants'" in inspect.getsource(deep_permuter)
+
+
+def test_caller_save_slot_drop_is_proposed_and_known_to_agents():
+    """m2c's caller-save round trip through a stack local (`slot = copy; copy = slot;` around a call) came off by hand
+    on a KMC gcc 2.7.2 collision sweep (4737 -> 4497 with the copy folded); drafts and the beam offer both children."""
+    source = """\
+s32 g(s32);
+void f(s32 *p, s32 n)
+{
+  s32 mask;
+  s32 slot;
+  s32 copy;
+  s32 i;
+  mask = *p & 0xFF;
+  slot = mask;
+  copy = mask;
+  for (i = 0; i < n; i++)
+  {
+    if (copy & p[i])
+    {
+      slot = copy;
+      copy = slot;
+      g(i);
+    }
+  }
+}
+"""
+    labels = {}
+    draft_repairs.variants(source, 'f', 'mips', labels=labels, limit=None)
+    assert {'caller_save_slot_drop', 'caller_save_slot_drop_fold'} <= set(labels.values())
+    assert {'caller_save_slot_drop', 'caller_save_slot_drop_fold'} <= set(draft_repairs.AGENT_FAMILIES)
