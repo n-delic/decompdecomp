@@ -17677,3 +17677,32 @@ extra load was an extra instruction in a block that had to match one for one. Ch
 
 Family: decomp-repair `triangle_arm_calls` (0.5.600, wired by the lit-actor wiring PR); `tests/test_triangle_arm_calls_wiring.py`
 checks the draft repairs and the local lane. From the saved best the combined child scores 1418 in the isolated judge.
+
+
+## Sibling loops' counters shared: `arm_variable_share` (851-instruction ray test)
+
+The same N64 ray test (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, scoring 2) walks a mesh's triangles with a counted loop
+per index width (halfword table in one arm of an `if`, byte table in the other), and again in two loops over a room's
+meshes. m2c gave each loop its own counter and its own derived index (`var_s0`/`var_s0_2`, `idx`/`idx_2`); an earlier search had
+tied one pointer and one index together through a union. The target allocates the same registers in both arms of the mesh
+loops: counter `$s0`, the mesh `$s1`, the reduced pointer `$s2`, the list object `$s3`, the triangle pointer `$s4`, the index
+`$s5`. gcc 2.7.2 allocates saved registers by `floor_log2(uses) * uses / live_length`, one pseudo per source variable, so with
+one counter and one index shared by the two arms (their pointers and reduced pointers left apart, one per arm) the counter's
+priority passes the mesh pointer's and the order comes out as the target's (hypothesis from `-dl -dg`, not confirmed in the
+compiler source).
+
+| edit | score |
+| --- | --- |
+| state after the plane arms and the removed scaffolding, arg0 read directly | 740 |
+| mesh loops: counter and index shared, union removed (counters alone: worse) | 850 |
+| room loops' counters shared as well | 645 |
+| room `and` operands swapped (`sp19E & flags`), the room u8 loop's counter initialised before its guard | 625, 565 |
+| everything shared incl. pointers and reduced pointers | 1160 |
+
+Controlled result in this function: all four loops' registers equal the target's. One function, not a regression test.
+Failed: merging the data temporaries that are assigned the same first value in both arms (a flag word, the vertex base)
+made it worse (1565): only counters and what is a plain conversion of one are shared.
+
+Family: decomp-repair `arm_variable_share` (0.5.601). It emits every pair at once, then each alone, and reproduces the chain from
+the pre-merge state (830 -> 565 in the isolated judge). `tests/test_arm_variable_share_wiring.py` checks the draft repairs and the
+local lane.
