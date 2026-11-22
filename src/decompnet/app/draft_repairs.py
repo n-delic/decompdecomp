@@ -42,6 +42,7 @@ from decomprepair import (
     byte_address_inline_repairs,
     byte_increment_repairs,
     call_assignment_repairs,
+    call_carrier_pointer_split,
     call_count_repairs,
     call_index_split_repairs,
     call_index_staging_repairs,
@@ -438,6 +439,7 @@ AGENT_FAMILIES += (guarded_pointer_copy.FAMILY,) + shifted_byte_lifetime.FAMILIE
 AGENT_FAMILIES += loop_weight_set_repairs.FAMILIES
 AGENT_FAMILIES += entry_constant_local.FAMILIES + store_temp_inline.FAMILIES
 AGENT_FAMILIES += float_sum_store_fence.FAMILIES + shared_assignment_inline.FAMILIES
+AGENT_FAMILIES += call_carrier_pointer_split.FAMILIES
 AGENT_FAMILIES += loop_guard_counter_compare.FAMILIES
 AGENT_FAMILIES += phase_donor_repairs.FAMILIES
 AGENT_FAMILIES += caller_save_slot_drop.FAMILIES
@@ -917,6 +919,9 @@ def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels
                    # (a local m2c assigned one expression in several places, written where it is read: a 490-instruction KMC menu
                    # function 60 -> 0, two saved registers swapped by an extra reference; decomprepair 0.5.646)
                    shared_assignment_inline,
+                   # (stray trailing pointer arguments dropped and a reused pointer local split, as one child: a 140-instruction KMC
+                   # menu function 60 -> 0, each half alone 790 and 60; decomprepair 0.5.650)
+                   call_carrier_pointer_split,
                    # (a loop's entry guard as the counter's compare, which gives the frame an unaccessed 8-byte spill slot, with each
                    # disjoint_local_merge of the guarded text as one child: a 401-instruction KMC loader 22 -> 0; decomprepair 0.5.640)
                    loop_guard_counter_compare,
