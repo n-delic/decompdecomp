@@ -217,6 +217,7 @@ from decomprepair import (
     loop_top_label_repairs,
     loop_weight_repairs,
     loop_weight_set_repairs,
+    m2c_spelling,
     macro_address_repairs,
     macro_repairs,
     macro_scope_weight,
@@ -443,6 +444,7 @@ AGENT_FAMILIES += call_carrier_pointer_split.FAMILIES
 AGENT_FAMILIES += loop_guard_counter_compare.FAMILIES
 AGENT_FAMILIES += phase_donor_repairs.FAMILIES
 AGENT_FAMILIES += caller_save_slot_drop.FAMILIES
+AGENT_FAMILIES += ('m2c_spelling',)
 AGENT_FAMILIES += param_loop_carrier.FAMILIES + assignment_guard_sink.FAMILIES + default_arm_goto.FAMILIES + index_shift_spelling.FAMILIES
 AGENT_FAMILIES += (arm_label_share_repairs.FAMILIES + declaration_scope_sink_repairs.FAMILIES + element_update_repairs.FAMILIES
                    + narrow_test_share_repairs.FAMILIES + phase_storage_split_repairs.FAMILIES
@@ -713,6 +715,8 @@ def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels
     early = early + _generated(index_shift_spelling.variants,source,name)
     # (m2c's caller-saved round trip through a stack local, dropped, and the copy that fed it folded; decomprepair.caller_save_slot_drop)
     early = early + _generated(caller_save_slot_drop.variants,source,name)
+    # (m2c's M2C_FIELD and M2C_UNK spellings written as the plain C the families read, as one child; decomprepair.m2c_spelling)
+    early = early + _generated(m2c_spelling.variants,source,name)
     # (a local initialised before a label that a goto enters past it, set at the label, with the byte index widened first; decomprepair.label_entry_initializer_repairs)
     early = early + _generated(label_entry_initializer_repairs.variants,source,name)
     # (m2c's cursor walk over a global array, written back as the indexed loop; decomprepair.pointer_walk_index_repairs)
