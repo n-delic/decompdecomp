@@ -104,3 +104,12 @@ def test_passes_py_asks_the_worker_and_prints_its_text(tmp_path, monkeypatch, ca
     (tmp_path / "c.c").write_text("int f(void){return 0;}")
     module.main([str(tmp_path / "c.c"), "--slug", "g", "--function", "f", "--passes", "greg,sched2"])
     assert capsys.readouterr().out.strip() == "passes for greg,sched2"
+
+
+def test_the_skills_report_lists_every_pseudo_not_just_the_first_sixteen():
+    values = [{"pseudo": 100 + i, "aliases": [], "hard_register": 16 + i % 8, "allocation_rank": i, "references": 4,
+               "live_insns": 10 + i, "legacy_weight": 0.5} for i in range(20)]
+    values.append({"pseudo": 200, "aliases": [], "hard_register": -1, "allocation_rank": 20})
+    text = compiler_passes.render({"allocation": {"values": values}}, (), "candidate", rows=None)
+    assert "pseudo 119" in text and "pseudo 200 (temp) -> spilled to the stack" in text
+    assert "pseudo 119" not in compiler_passes.render({"allocation": {"values": values}}, (), "candidate")

@@ -84,7 +84,7 @@ def report(net, proj, fn, source, passes=SKILL_PASSES):
     """What the skill's passes.py prints: the allocation priority table, register preferences, scheduling orders and
     where the compiler's source is. Diagnostic only, like the tool: nothing is recorded or judged."""
     result, profile = diagnose(net, proj, fn, source, passes, SKILL_EXCERPT_CHARS)
-    out = [render(result, (), 'candidate')]
+    out = [render(result, (), 'candidate', rows=None)]
     if prefs := preferences(result):
         out += ['', 'Register preferences (greg):', *prefs]
     for phase in ('sched', 'sched2'):
@@ -108,7 +108,12 @@ def source_line(compiler):
             f"cse.c, loop.c, combine.c): {where} ({toolchains.get(toolchains.source_id(compiler)).description})")
 
 
-def render(result, passes, revision):
+def hard_name(hard):
+    """`hard reg N`, or `spilled to the stack` for a pseudo the allocator gave no register (the dump's -1)."""
+    return 'spilled to the stack' if hard is None or hard < 0 else f'hard reg {hard}'
+
+
+def render(result, passes, revision, rows=TABLE_ROWS):
     out = [f"Compiler passes for revision {revision} ({result.get('toolchain')}, flags "
            f"{' '.join(result.get('original_flags') or [])} -da; diagnostic only, nothing recorded)."]
     if not result.get('output_unchanged'):
@@ -116,13 +121,15 @@ def render(result, passes, revision):
     table = (result.get('allocation') or {}).get('values') or []
     if table:
         out += ["", "Register allocation, in the order GCC allocated (priority = floor_log2(refs)*refs/live insns):"]
-        for v in table[:TABLE_ROWS]:
+        # #match-function: the skill's report names every pseudo (rows=None): the tail of the table is where a value
+        # that lost a saved register shows up, and 16 rows hid the pseudo that explained a stack-slot difference.
+        for v in table[:rows]:
             names = ','.join(v.get('aliases') or []) or 'temp'
             weight = v.get('legacy_weight')
             out.append(f"{v['allocation_rank'] + 1:>3}. pseudo {v['pseudo']} ({names}): {v['references']} refs, "
-                       f"{v['live_insns']} live, priority {weight:.3f} -> hard reg {v['hard_register']}"
+                       f"{v['live_insns']} live, priority {weight:.3f} -> {hard_name(v['hard_register'])}"
                        if weight is not None else
-                       f"{v['allocation_rank'] + 1:>3}. pseudo {v['pseudo']} ({names}) -> hard reg {v['hard_register']}")
+                       f"{v['allocation_rank'] + 1:>3}. pseudo {v['pseudo']} ({names}) -> {hard_name(v['hard_register'])}")
     for phase in passes:
         row = (result.get('phases') or {}).get(phase)
         if not row:
