@@ -2,29 +2,78 @@
 import json
 import math
 
+from . import trial_bookkeeping
+
 SCHEMA='''CREATE TABLE IF NOT EXISTS repair_sequence_costs(
  profile TEXT, focus TEXT, prefix TEXT, family TEXT,
  attempted INTEGER, identical INTEGER, unknown_output INTEGER, failed INTEGER,
  elapsed_ms REAL, timed INTEGER, improved INTEGER, exact INTEGER, PRIMARY KEY(profile,focus,prefix,family))'''
+OUTCOMES_SCHEMA="""CREATE TABLE IF NOT EXISTS repair_sequence_outcomes(
+          profile TEXT, focus TEXT, prefix TEXT, family TEXT, attempted INTEGER,
+          changed INTEGER, improved INTEGER, exact INTEGER,
+          PRIMARY KEY(profile,focus,prefix,family))"""
+# Both tables are counters: a search queues each trial's increment (one row per key per batch, see trial_bookkeeping)
+# instead of committing three transactions per local repair, which was 5% of a lane's CPU in the writer gate.
+COSTS_COUNT='''INSERT INTO repair_sequence_costs VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+          ON CONFLICT(profile,focus,prefix,family) DO UPDATE SET attempted=attempted+excluded.attempted,
+          identical=identical+excluded.identical,unknown_output=unknown_output+excluded.unknown_output,
+          failed=failed+excluded.failed,elapsed_ms=elapsed_ms+excluded.elapsed_ms,timed=timed+excluded.timed,improved=improved+excluded.improved,exact=exact+excluded.exact'''
+COSTS_COLUMNS=('attempted','identical','unknown_output','failed','elapsed_ms','timed','improved','exact')
+OUTCOMES_COUNT='''INSERT INTO repair_sequence_outcomes VALUES(?,?,?,?,?,?,?,?)
+          ON CONFLICT(profile,focus,prefix,family) DO UPDATE SET attempted=attempted+excluded.attempted,
+          changed=changed+excluded.changed,improved=improved+excluded.improved,exact=exact+excluded.exact'''
+OUTCOMES_COLUMNS=('attempted','changed','improved','exact')
+
+
+def prepare(net):
+    """Both tables exist (once for this engine: the CREATEs were a transaction for every trial)."""
+    if not getattr(net,'_sequence_tables',False):
+        with net.store.tx() as db:
+            db.execute(SCHEMA)
+            db.execute(OUTCOMES_SCHEMA)
+        net._sequence_tables=True
 
 
 def record(net,profile,focus,prefix,family,before,after,elapsed_ms,*,failed=False,improved=False,exact=False):
     timed=isinstance(elapsed_ms,(int,float)) and not isinstance(elapsed_ms,bool) and math.isfinite(elapsed_ms) and elapsed_ms>=0
     known=before is not None and after is not None
-    with net.store.tx() as db:
-        db.execute(SCHEMA)
-        db.execute('''INSERT INTO repair_sequence_costs VALUES(?,?,?,?,1,?,?,?,?,?,?,?)
-          ON CONFLICT(profile,focus,prefix,family) DO UPDATE SET attempted=attempted+1,
-          identical=identical+excluded.identical,unknown_output=unknown_output+excluded.unknown_output,
-          failed=failed+excluded.failed,elapsed_ms=elapsed_ms+excluded.elapsed_ms,timed=timed+excluded.timed,improved=improved+excluded.improved,exact=exact+excluded.exact''',
-          (profile,focus,json.dumps(list(prefix)),family,int(known and before==after),int(not known),int(failed),
-           elapsed_ms if timed else 0,int(timed),int(improved),int(exact)))
+    prepare(net)
+    trial_bookkeeping.count(net.store,COSTS_COUNT,
+          (profile,focus,json.dumps(list(prefix)),family,1,int(known and before==after),int(not known),int(failed),
+           elapsed_ms if timed else 0,int(timed),int(improved),int(exact)),
+          4,lambda old,new:trial_bookkeeping.sums(old,new,4),immediate=bool(improved or exact))
+
+
+def record_outcome(net,profile,focus,prefix,family,changed,improved,exact):
+    prepare(net)
+    trial_bookkeeping.count(net.store,OUTCOMES_COUNT,
+          (profile,focus,json.dumps(list(prefix)),family,1,int(changed),int(improved),int(exact)),
+          4,lambda old,new:trial_bookkeeping.sums(old,new,4),immediate=bool(improved or exact))
+
+
+def _overlay(net,sql,columns,rows,profile,focus,prefix):
+    """`rows` (dicts by family) plus the counts this search has queued under `sql` and not yet written."""
+    kept={r['family']:dict(r) for r in rows}
+    encoded=json.dumps(list(prefix))
+    for (queued_profile,queued_focus,queued_prefix,family),args in trial_bookkeeping.pending_counters(net.store,sql).items():
+        if (queued_profile,queued_focus,queued_prefix)==(profile,focus,encoded):
+            row=kept.setdefault(family,{'profile':profile,'focus':focus,'prefix':encoded,'family':family,**dict.fromkeys(columns,0)})
+            for column,amount in zip(columns,args[4:]):row[column]+=amount
+    return [kept[family] for family in sorted(kept)]
+
+
+def outcome_rows(net,profile,focus,prefix):
+    """The outcome rows of one profile, focus and prefix as a flush then a read would give them (table, then queue)."""
+    stored=[dict(r) for r in net.store.all('SELECT * FROM repair_sequence_outcomes WHERE profile=? AND focus=? AND prefix=?',
+        profile,focus,json.dumps(list(prefix)))] if net.store.one("SELECT 1 FROM sqlite_master WHERE type='table' AND name='repair_sequence_outcomes'") else []
+    return _overlay(net,OUTCOMES_COUNT,OUTCOMES_COLUMNS,stored,profile,focus,prefix)
 
 
 def listing(net,profile,focus,prefix):
     if not net.store.one("SELECT 1 FROM sqlite_master WHERE type='table' AND name='repair_sequence_costs'"):return []
-    return [dict(r) for r in net.store.all('SELECT * FROM repair_sequence_costs WHERE profile=? AND focus=? AND prefix=? ORDER BY family',
+    stored=[dict(r) for r in net.store.all('SELECT * FROM repair_sequence_costs WHERE profile=? AND focus=? AND prefix=? ORDER BY family',
                                          profile,focus,json.dumps(list(prefix)))]
+    return _overlay(net,COSTS_COUNT,COSTS_COLUMNS,stored,profile,focus,prefix)
 
 
 def rank(net,profile,focus,prefix,rows):
@@ -53,8 +102,7 @@ def brief(net,profile,focus,prefix=()):
 
 
 def order_families(net,profile,focus,prefix,families):
-    if not net.store.one("SELECT 1 FROM sqlite_master WHERE type='table' AND name='repair_sequence_outcomes'"):return families
-    rows={r['family']:dict(r) for r in net.store.all('SELECT * FROM repair_sequence_outcomes WHERE profile=? AND focus=? AND prefix=?',
-        profile,focus,json.dumps(list(prefix)))}
+    if not net.store.one("SELECT 1 FROM sqlite_master WHERE type='table' AND name='repair_sequence_outcomes'") and not trial_bookkeeping.pending_counters(net.store,OUTCOMES_COUNT):return families
+    rows={r['family']:r for r in outcome_rows(net,profile,focus,prefix)}
     return [r['family'] for r in rank(net,profile,focus,prefix,
         [rows.get(f,dict(family=f,improved=0,exact=0)) for f in families])]

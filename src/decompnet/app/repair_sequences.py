@@ -43,28 +43,18 @@ def observe(net, profile, focus, prefix, family, before, after, prior_output, ou
     from . import repair_sequence_metrics
     repair_sequence_metrics.record(net,profile,focus,prefix,family,prior_output,output,elapsed_ms,failed=after is None,improved=after is not None and after<before,exact=exact and after==0)
     if after is None or prior_output is None or output is None:return
-    prepare(net)
-    with net.store.tx() as db:
-        db.execute("""CREATE TABLE IF NOT EXISTS repair_sequence_outcomes(
-          profile TEXT, focus TEXT, prefix TEXT, family TEXT, attempted INTEGER,
-          changed INTEGER, improved INTEGER, exact INTEGER,
-          PRIMARY KEY(profile,focus,prefix,family))""")
-        db.execute("""INSERT INTO repair_sequence_outcomes VALUES(?,?,?,?,1,?,?,?)
-          ON CONFLICT(profile,focus,prefix,family) DO UPDATE SET attempted=attempted+1,
-          changed=changed+excluded.changed,improved=improved+excluded.improved,exact=exact+excluded.exact""",
-          (profile,focus,json.dumps(list(prefix)),family,int(output!=prior_output),int(after<before),int(exact)))
+    repair_sequence_metrics.record_outcome(net,profile,focus,prefix,family,output!=prior_output,after<before,exact)
 
 
 def productive(net, profile, focus, prefix):
     # Require two improvements or four changed outputs before nonmatching history affects ordering.
     # Existing exact recipes lead, and callers retain ordinary exploration.
-    table=net.store.one("SELECT name FROM sqlite_master WHERE type='table' AND name='repair_sequence_outcomes'")
-    if not table:return []
-    rows=net.store.all("""SELECT * FROM repair_sequence_outcomes WHERE profile=? AND focus=? AND prefix=?
-      AND ((improved>=2 AND changed>=2) OR (attempted>=4 AND changed>=4 AND changed*2>=attempted)) ORDER BY (improved+3.0*exact)/attempted DESC,changed*1.0/attempted DESC,family LIMIT 8""",
-      profile,focus,json.dumps(list(prefix)))
-    from .repair_sequence_metrics import rank
-    return [r['family'] for r in rank(net,profile,focus,prefix,rows)]
+    from .repair_sequence_metrics import outcome_rows, rank
+    # (the table's own filter and order, applied to the stored rows and this search's queued counts)
+    rows=[r for r in outcome_rows(net,profile,focus,prefix)
+          if (r['improved']>=2 and r['changed']>=2) or (r['attempted']>=4 and r['changed']>=4 and r['changed']*2>=r['attempted'])]
+    rows.sort(key=lambda r:(-(r['improved']+3.0*r['exact'])/r['attempted'],-r['changed']*1.0/r['attempted'],r['family']))
+    return [r['family'] for r in rank(net,profile,focus,prefix,rows[:8])]
 
 
 def next_families(net, profile, focus, prefix):
