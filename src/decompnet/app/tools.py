@@ -29,6 +29,7 @@ from . import (
     compiler_experiments,
     compiler_passes,
     focused_agents,
+    learnings_search,
     local_experiments,
     polish_automation,
     repair_search,
@@ -775,6 +776,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
         net.try_compiler(agent, slug, function, compiler, flags, source),
     "search_notes": lambda net, agent, slug, query: net.search_notes(slug, query),
     "find_similar": lambda net, agent, slug, function, limit=5: net.find_similar(slug, function, limit),
+    "search_learnings": lambda net, agent, slug, symptom, top=5: learnings_search.run(net, agent, slug, symptom, top),
     "guide": lambda net, agent, slug, topic="": guide_text(topic, net.overview(slug).get("platform")),
     "read_file": lambda net, agent, slug, path, start=1, count=200:
         net.forks.read_file(_fork(net, slug, "read_file"), path, start, count),
@@ -791,7 +793,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
 
 READ_ONLY = frozenset({"search_repair_examples", "get_repair_examples", "get_search_brief","get_boundary_evidence", "get_claims", "resolve_addresses", "project_info", "get_function", "last_diff", "get_context", "read_data", "get_class",
                        "guess_struct", "compiler_map", "list_functions", "search_flags", "search_notes",
-                       "find_similar", "guide", "read_file", "search_code", "file_status", "standins_for",
+                       "find_similar", "search_learnings", "guide", "read_file", "search_code", "file_status", "standins_for",
                        "port_readiness", "get_data_unit", "check_for_pc", "watch_in_emulator"})
 
 # Read-only tools that read a function's saved C or the headers: they read the saved folder first (an edit made there
@@ -1170,7 +1172,7 @@ ALWAYS_LOAD = agents.TOOL_META
 # Tools that read, claim or note without compiling: they share a lane no compile can fill.
 QUICK_TOOLS = frozenset({
     'guide', 'project_info', 'get_claims', 'list_functions', 'get_function', 'get_assembly', 'get_context',
-    'last_diff', 'search_notes', 'read_file', 'search_code', 'file_status', 'get_class', 'compiler_map',
+    'last_diff', 'search_notes', 'search_learnings', 'read_file', 'search_code', 'file_status', 'get_class', 'compiler_map',
     'get_candidate', 'get_compiler_trial', 'get_search_brief', 'family_targets', 'get_boundary_evidence',
     'resolve_addresses', 'read_data', 'standins_for', 'claim_function', 'claim_readable', 'release_function', automatic_assignment.RELEASE,
     'search_repair_examples', 'get_repair_examples', 'upvote_repair_example',
@@ -1816,6 +1818,12 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         """Functions whose instructions look like this one's (copy-pasted code, the same inlined helper,
         template instances), matched ones first, with the matching source of the best one. Start there."""
         return await run(ctx, "find_similar", function=function, limit=limit)
+
+    @tool
+    async def search_learnings(ctx: Context, symptom: str, top: int = 5) -> str:
+        """The recorded compiler-matching evidence, ranked by a symptom ("register swap", "store too early", "frame
+        size", "hoisted constant"): each entry's fix and the repair families that make it (try them with prove_chain)."""
+        return await run(ctx, "search_learnings", symptom=symptom, top=top)
 
     @tool
     async def guide(ctx: Context, topic: str = "") -> str:

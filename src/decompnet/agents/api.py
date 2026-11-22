@@ -588,6 +588,8 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
         "score_permutations": ("Judge up to 64 statement orders (2-6 exact whole lines) or combinations of 2-6 old/new patches with the exact judge; only a candidate beating the saved best is recorded, else nothing and no move-on count.",
                                s(function=st("function",True),revision=st("candidate revision",True),statements={"type":"array","maxItems":6,"items":{"type":"string"}},
                                  patches={"type":"array","maxItems":6,"items":{"type":"object","properties":{"old":{"type":"string"},"new":{"type":"string"},"occurrence":{"type":"integer"}},"required":["old","new"]}},max=it("at most 64"))),
+        "search_learnings": ("Recorded compiler-matching evidence ranked by a symptom (register swap, store too early, frame size): each entry's fix and its repair families.",
+                             s(symptom=st("the symptom in a few words", True), top=it("entries, at most 10"))),
         "get_search_brief": ("Read allocation lines, failed experiments and reviewed roots; no compile.",
                              s(function=st("function",True), base={"type":"string","enum":["current","saved_best"]})),
         "review_search_seed": ("Review a diagnostic seed for deep search. Changed/unknown signatures stay diagnostic-only.",s(function=st("function",True),trial_id=st("trial ID",True),review_note=st("Why this seed; caller/interface checks"),enabled=bo("Enable seed; false disables"))),
