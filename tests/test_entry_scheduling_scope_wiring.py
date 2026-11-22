@@ -62,3 +62,9 @@ def test_the_family_reaches_the_deep_passes_local_lane():
     finally:
         monkeypatch.undo()
     assert FAMILY in {family for family, _ in proposals}
+
+
+def test_the_first_load_staged_child_is_offered_through_the_draft_repairs():
+    labels = {}
+    texts = draft_repairs.variants(seeds.M2C_MACROS + SOURCE, 'cast', 'mips', '', FLAGS, labels, limit=None, header=HEADER)
+    assert any(labels.get(t) == FAMILY and 'staged_dir = *dir;' in t for t in texts)

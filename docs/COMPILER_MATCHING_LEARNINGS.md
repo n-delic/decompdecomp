@@ -17870,6 +17870,18 @@ Compiler facts (each checked in the dumps; the cause in the source is noted wher
 Scaffolding left: the identity helper `inline_fn23` on the red and green products (step 10). Family:
 decomp-repair `guarded_increment_sink` (0.5.607) emits step 1 as one child; steps 3-10 are not yet families.
 
+
+### Follow-up: the first load staged (`entry_scheduling_scope`, 0.5.611)
+
+The loop-note barrier attaches to the first insn after it (sched.c `sched_analyze_insn`: that insn depends on every earlier
+register and memory access, and every later insn on it). With `var_fs1 = arg5;` first in the run the anchor was the `mov.s`,
+which therefore came before the first `lwc1`; the target has the `lwc1 $f2,($a3)` first. Reading the first product's
+dereference into a local as the run's first statement (`tx = *arg3;`, the product uses `tx`) put the load first and also fixed
+the float registers of the x component: 140 -> 70 in the isolated judge. From the unwrapped state the family's children score
+580 -> 265 (wrapped), 200 (staged), 140 (copies), 80 (staged with copies). Hypothesis from reading sched.c and the dumps.
+Still open at 70: the z component's add (`add.s $f2,$f2,$f0` for `$f0,$f0,$f2`, the F4 and product groups tie in local-alloc
+priority and the qty number breaks it the other way) and the position of `lw $v0,0x58($v0)` against `sw $s7,0x10c`.
+
 ## KMC GCC 2.7.2 (`-G0 -mips3 -mgp32 -mfp32 -O2`): a search's "not found" value on the exit path, and a call-argument loop's own variable
 
 A 219-instruction N64 function with four table searches (`while (WORD(e) != -1) { found = e; if (HALF(e+4) == key) break;
