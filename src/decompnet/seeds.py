@@ -485,6 +485,8 @@ def _compilable(source: str | None, name='', asm='', header='', toolchain=None, 
         return source
     from decomprepair import large_switch_drafts
     source = large_switch_drafts.rewrite(source) or source
+    from decomprepair import m2c_undeclared_drafts
+    source = m2c_undeclared_drafts.rewrite(source, name, asm, header) or source
     if asm:
         from decomprepair import draft_call_recovery
 
