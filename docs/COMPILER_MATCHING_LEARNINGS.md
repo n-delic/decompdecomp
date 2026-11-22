@@ -16076,6 +16076,32 @@ Two saved MIPS examples built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` 
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` checked three signature bytes. The generated draft's combined condition used different registers and a shared result copy. Staging the input bytes and comparison constants in word locals changed the linked difference score from 250 to an exact match while retaining the integer return type. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the complete source, measured instructions and constants, and resolved addresses for all three byte loads.
 
+### Recover a native float spill without forwarding a late reset from memory
+
+In a private N64 function built with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, two writebacks
+used the same explicit stack float as the target. The target loaded
+it through the F16 reload scratch. Moving the float into an ordinary
+local before the cached pointer and removing unused frame padding
+let the compiler allocate the original stack slot and reload.
+
+The early RTL gave both late reset stores the same saved-word
+source. CSE then replaced the second source with a load from the
+just-stored global. Moving an existing actor store between the
+resets still forwarded that load. A new definition of the cleared
+word between the two stores broke the equivalence. The later combine
+pass removed the shift pair on the known zero. The trial also
+stages the setup copies and the independent float writebacks before
+asking the judge.
+
+The combined private replay reduced the linked score from 320 to
+175 while retaining the original frame, all 3,034 instructions
+and all three jump tables. Exchanging two pairs of independent
+field stores improved it to 155 and matched the entire final float
+writeback. Exchanging only the first pair scored 185. Both native
+reloads and the late paired reset stores matched. This is one
+private function under this profile.
+
 ### Balance a shared reset between phase stores and later calls
 
 In a private N64 function built with
