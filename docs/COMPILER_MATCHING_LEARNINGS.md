@@ -15798,3 +15798,15 @@ are in register allocation and index scheduling.
 ### KMC GCC 2.7.2 conditional global and call staging
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` loaded a condition pointer before a separate zero store and staged an owner argument in each path before a shared call. Its machine draft scheduled the load after the store and forwarded the argument directly. Staging the condition pointer alone changed the diff score from 245 to 170; staging the call argument as well produced an exact linked match. This is one saved example, not a controlled cross-compiler experiment. The proposal checks both global relocations against their source offsets and requires the observed source and instruction patterns.
+
+### Split successive volatile pointer snapshots
+
+In the same private N64 example with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, separate locals for
+successive volatile pointer loads improved the linked score from
+165 to 60 without moving any volatile read or field store. Two
+individual lifetime changes scored 130, while others were neutral
+or worse. Splitting the complete group resolved the register
+differences and left only a moved index shift. The proposal requires
+a flat conditional arm with nonescaping locals that are dead after
+the arm.
