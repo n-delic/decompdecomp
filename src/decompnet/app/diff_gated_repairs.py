@@ -68,6 +68,7 @@ from decomprepair import (
     measured_halfword_index,
     measured_halfword_stores,
     measured_halfword_switch,
+    measured_ido_byte_cursor,
     measured_immediate_repairs,
     measured_indexed_clear,
     measured_indexed_record_layout,
@@ -443,6 +444,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_kmc_wrappers.variants(source, name, header, rows)
         result += measured_stack_records.variants(source, name, header, rows)
     if toolchain.startswith('ido-7.1'):
+        result += measured_ido_byte_cursor.variants(source, name, header, rows)
         # IDO 7.1 keeps the word of a local nothing reads: the frame's growth says how many, its declaration where
         # (measured on a bit-stream reader; ido-5.3 is left out until a match there shows the same)
         result += stack_padding_repairs.frame_word_candidates(source, name, arch, rows)
