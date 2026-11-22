@@ -78,7 +78,7 @@ def counted_transactions(store):
     return calls
 
 
-def test_bookkeeping_groups_misses_and_flushes_before_a_policy_read(monkeypatch):
+def test_bookkeeping_groups_misses_and_a_policy_read_sees_them_without_a_flush(monkeypatch):
     net = FakeNet();adaptive_repairs.prepare(net);experiment_evidence.prepare(net)
     clock = [0.];monkeypatch.setattr(trial_bookkeeping.time, 'monotonic', lambda: clock[0])
     calls = counted_transactions(net.store)
@@ -86,9 +86,11 @@ def test_bookkeeping_groups_misses_and_flushes_before_a_policy_read(monkeypatch)
         for _ in range(10):adaptive_repairs.record(net, 'profile', 'focus', 'family', 40, 40)
         assert not calls
         adaptive_repairs.factors(net, 'profile', 'focus')
-        assert len(calls) == 1
-        assert net.store.one("SELECT attempted FROM repair_policy")['attempted'] == 10
+        assert not calls  # the read adds the queued counts to the stored rows: no transaction
+        assert adaptive_repairs.policy_rows(net, 'profile', 'focus')[0]['attempted'] == 10
+        assert not net.store.one("SELECT attempted FROM repair_policy")  # (still queued)
     assert len(calls) == 1
+    assert net.store.one("SELECT attempted FROM repair_policy")['attempted'] == 10
 
 
 def test_wins_and_matches_are_immediate_and_cancellation_flushes_misses(monkeypatch):
@@ -351,3 +353,48 @@ def test_the_batched_history_starts_from_the_saved_one_and_a_new_scope_starts_ov
     with trial_bookkeeping.scope():
         search_evidence._remember_fingerprint(net, fn, 'scope-b', 'other', {'output': 'o', 'family': 'f'})
     assert saved_history(net, fn) == {'scope': 'scope-b', 'history': [['other', 'o', 'f']]}
+
+
+def test_policy_reads_see_the_batch_without_flushing_it(monkeypatch):
+    import random
+    net = FakeNet();adaptive_repairs.prepare(net);experiment_evidence.prepare(net)
+    monkeypatch.setattr(trial_bookkeeping.time, 'monotonic', lambda: 0.)
+    calls = counted_transactions(net.store)
+    random.seed(5)
+    families = [f'family-{i}' for i in range(6)]
+    with trial_bookkeeping.scope():
+        for step in range(300):
+            family = random.choice(families)
+            score = random.choice([None, 10, 40, 40, 40, 60])
+            adaptive_repairs.record(net, 'profile', 'focus', family, 40, score, random.randint(1, 9), origin='deep permuter')
+            adaptive_repairs.record(net, 'other', 'focus', family, 40, 40)  # (another profile: not part of the answer)
+            if step % 25 == 24:
+                before = len(calls)
+                seen = adaptive_repairs.factors(net, 'profile', 'focus')
+                assert len(calls) == before  # reading the policy is not a transaction
+                rows = adaptive_repairs.policy_rows(net, 'profile', 'focus')
+                trial_bookkeeping.flush(net.store)
+                assert rows == [dict(r) for r in net.store.all(
+                    "SELECT * FROM repair_policy WHERE profile='profile' AND focus='focus' ORDER BY family")]
+                assert adaptive_repairs.factors(net, 'profile', 'focus') == seen
+
+
+def test_input_effect_reads_see_the_batch_without_flushing_it(monkeypatch):
+    import random
+    net = FakeNet();experiment_evidence.prepare(net);fn = net.function()
+    monkeypatch.setattr(trial_bookkeeping.time, 'monotonic', lambda: 0.)
+    store = experiment_evidence.prepare(net, fn['project_id']);calls = counted_transactions(store)
+    random.seed(9)
+    with trial_bookkeeping.scope():
+        for step in range(200):
+            family = random.choice(['a', 'b', 'c', 'd'])
+            experiment_evidence.record(net, fn, 'scope', family, 'int f(){return 1;}', random.choice(['int f(){return 1;}', 'int f(){return 2;}']),
+                                       40, random.choice([None, 40, 40, 60]), 'out', random.choice(['out', 'other']), random.randint(1, 9), compact=True)
+            if step % 20 == 19:
+                before = len(calls)
+                rows = experiment_evidence.effect_rows(store, fn['id'], 'scope')
+                assert len(calls) == before
+                trial_bookkeeping.flush(store)
+                stored = [dict(r) for r in store.all("SELECT * FROM repair_input_effects WHERE function_id=? AND scope='scope' ORDER BY family", fn['id'])]
+                columns = experiment_evidence.EFFECT_COLUMNS
+                assert [{k: r[k] for k in ('family', *columns)} for r in rows] == [{k: r[k] for k in ('family', *columns)} for r in stored]
