@@ -704,8 +704,8 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "compiler_experiments": compiler_experiments.run,
     "compiler_passes": lambda net, agent, slug, function, revision, passes=None:
         compiler_passes.run(net, agent, slug, function, revision, passes),
-    "score_permutations": lambda net, agent, slug, function, revision, statements=None, patches=None, max=64:
-        score_permutations.run(net, agent, slug, function, revision, statements, patches, max),
+    "score_permutations": lambda net, agent, slug, function, revision, statements=None, patches=None, max=64, marked='':
+        score_permutations.run(net, agent, slug, function, revision, statements, patches, max, marked),
     "prove_chain": lambda net, agent, slug, function, revision, families=None, steps=4, children=40:
         prove_chain.run(net, agent, slug, function, revision, families, steps, children),
     "get_compiler_trial": compiler_experiments.retrieve,
@@ -1385,12 +1385,13 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
 
     @tool
     async def score_permutations(ctx: Context, function: str, revision: str, statements: list[str] | None = None,
-                                 patches: list[dict] | None = None, max: int = 64) -> str:
-        """Judge up to 64 candidates at once with the exact judge: every order of 2-6 statements (exact whole lines
-        of your candidate), or every combination of 2-6 old/new patches. Only a candidate that beats the saved best
-        is recorded (through compile_and_diff); otherwise nothing is recorded and no move-on count is spent. ROM projects."""
+                                 patches: list[dict] | None = None, max: int = 64, marked: str = '') -> str:
+        """Judge many candidates at once with the exact judge: every order of 2-6 statements (exact whole lines of
+        your candidate), every combination of 2-6 old/new patches (up to 64), or every combination marked in a full
+        source (`marked`: /*{*/a/*|*/b/*}*/ alternatives, /*permute{*/ one statement per line /*}permute*/; up to
+        2000, 5 minutes). Only a candidate beating the saved best is recorded; else nothing, no move-on count. ROM projects."""
         return await run(ctx, 'score_permutations', function=function, revision=revision, statements=statements,
-                         patches=patches, max=max)
+                         patches=patches, max=max, marked=marked)
 
     @tool
     async def prove_chain(ctx: Context, function: str, revision: str, families: list[str] | None = None,

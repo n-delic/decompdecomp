@@ -76,3 +76,33 @@ def test_compiler_passes_names_where_the_compilers_source_is(tmp_path, monkeypat
     assert "isn't downloaded yet" in compiler_passes.source_line("gcc-2.7.2-kmc")
     monkeypatch.setattr(toolchains, "source_for", lambda c: tmp_path / "gcc-2.7.2-kmc-source")
     assert str(tmp_path / "gcc-2.7.2-kmc-source") in compiler_passes.source_line("gcc-2.7.2-kmc")
+
+
+def test_a_marked_source_grids_every_combination_up_to_the_cap():
+    marked = ('void f(void) {\n    x = /*{*/a + b/*|*/b + a/*}*/;\n    /*permute{*/\n    g1 = 1;\n    g2 = 2;\n'
+              '    g3 = 3;\n    /*}permute*/\n}')
+    rows = score_permutations.grid(marked)
+    assert len(rows) == 2 * 6 and len({text for _, text in rows}) == 12
+    assert all('/*' not in text for _, text in rows)
+    assert any('b + a' in text and text.index('g3') < text.index('g1') for _, text in rows)
+    assert score_permutations.MAX_GRID >= 2000 > score_permutations.MAX
+    big = 'void f(void) {\n    /*permute{*/\n' + ''.join(f'    g{i} = {i};\n' for i in range(7)) + '    /*}permute*/\n}'
+    with pytest.raises(NetworkError, match='5040 candidates'):
+        score_permutations.grid(big)
+    with pytest.raises(NetworkError, match='no matching'):
+        score_permutations.grid('x = /*{*/a/*|*/b;')
+    with pytest.raises(NetworkError, match='Mark at least one'):
+        score_permutations.grid('x = a;')
+
+
+def test_a_grid_that_runs_out_of_time_keeps_what_it_judged():
+    class Pool:
+        def judge_many(self, sources, chunk=0):
+            return [len(s) for s in sources]
+    calls = []
+
+    def check():
+        calls.append(1)
+        if len(calls) > 2:
+            raise TimeoutError
+    assert score_permutations.judge_until(Pool(), ['a', 'bb', 'ccc', 'dddd', 'eeeee'], check, 2) == [1, 2, 3, 4]
