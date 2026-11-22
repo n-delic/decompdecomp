@@ -277,6 +277,22 @@ def _null_epilogue(rows,asm):
     return False
 
 
+def _indexed_load_order(rows):
+    """Look for the same indexed word load moving across arithmetic."""
+    left = [(i,MEMORY.fullmatch(a)) for i,(mark,a,_) in enumerate(rows) if mark!=' ']
+    right = [(i,GLOBAL.fullmatch(b)) for i,(mark,_,b) in enumerate(rows) if mark!=' ']
+    for i,a in left:
+        if not a or a['op']!='lw' or a['base']=='$sp':
+            continue
+        for j,b in right:
+            if not b or (a['reg'],a['base'])!=(b[1],b[3]) or i>=j:
+                continue
+            if any(mark==' ' and re.match(r'(?:sll|addu|subu)\s',x)
+                   for mark,x,_ in rows[i+1:j]):
+                return True
+    return False
+
+
 def proposals(source,name,header,toolchain,rows,target,candidate,asm,*,big_endian=False,flags=()):
     if toolchain.startswith('ido-5.3'):
         evidence = [(repairs.zero_chain,_zero_chain(target,candidate))]
@@ -291,5 +307,6 @@ def proposals(source,name,header,toolchain,rows,target,candidate,asm,*,big_endia
             (repairs.packed_word,_packed_word(target,candidate,big_endian) if '-fstrict-aliasing' not in flags else set()),
             (repairs.inline_invariants,_inline_order(rows,asm)),
             (repairs.null_epilogue,_null_epilogue(rows,asm)),
+            (repairs.indexed_load_before_arithmetic,_indexed_load_order(rows) if toolchain.startswith('gcc-2.7.2-kmc') else False),
         ]
     return repairs.variants(source,name,header,[(method,witness) for method,witness in evidence if witness])

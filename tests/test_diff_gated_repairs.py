@@ -1416,3 +1416,15 @@ def test_varbyte_initialization_routes_to_kmc(monkeypatch):
                         lambda text, name, header, diff: [('varbyte_initialization_fixture', text)])
     assert 'varbyte_initialization_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'varbyte_initialization_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_indexed_load_schedule_requires_an_earlier_target_load():
+    source = 'extern int table; int f(int i, int n) { return *(int *)((char *)&table + 16 + (i * 4)) + (n * 20); }'
+    rows = [('<', 'lw $v1, 16($v1)', ''),
+            (' ', 'sll $v0, $a1, 2', 'sll $v0, $a1, 2'),
+            ('>', '', 'lw $v1, %lo(table)($v1)')]
+    def families(toolchain, diff):
+        return {family for family, _ in proposals(source, 'f', '', 'mips', toolchain, diff, '')}
+    assert 'indexed_load_before_arithmetic' in families(KMC, rows)
+    assert 'indexed_load_before_arithmetic' not in families(KMC, list(reversed(rows)))
+    assert 'indexed_load_before_arithmetic' not in families('ido-7.1', rows)

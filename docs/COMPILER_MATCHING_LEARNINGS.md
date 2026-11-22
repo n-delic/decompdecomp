@@ -14214,3 +14214,4 @@ because a branch preceded the base load. Validating the early exits and checking
 along the loop exposed all 32 entries to Deep Permuter. The existing draft still scores 80
 with an unresolved relocation. Disabling either scheduler or delayed branches did not link the draft.
 Evidence is one validated retail table and synthetic big- and little-endian control-flow tests.
+One saved N64 indexed-load function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` loaded a word after part of a separate multiplication, while the target loaded it first. Saving the side-effect-free indexed word read in a local before the return arithmetic reproduced the linked target exactly (score 320 to 0). Commuting the addition did not match. The diff-gated repair requires the earlier target load and rejects volatile operands, macros and side effects. Evidence: one saved example and synthetic generation and routing tests.
