@@ -15333,3 +15333,7 @@ A saved N64 function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` tre
 ### Recover nibble-indexed byte and halfword tables
 
 A saved N64 function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1` read a byte table and three halfword tables as word globals, scaling their indexes incorrectly. Declaring the observed byte and halfword arrays corrected the widths and improved the linked score from 255 to 35. Inlining the high-nibble index into both lookups reproduced the target exactly (score 0). Evidence: one saved example and synthetic source, target and routing tests. The candidate requires the measured lookup and shift instructions and matching table symbols, then the byte judge verifies it.
+
+### Keep a ring pointer through the guarded update
+
+A saved N64 ring update built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` repeatedly read a global pointer around an indexed store. The target retained the original pointer in a register. Capturing the pointer before its null guard and reusing it reproduced the linked target exactly (score 290 to 0). Evidence: one saved example and synthetic source, target and routing tests. This is a target-led reconstruction: if the indexed store aliases the global, capturing changes the draft's behavior. The candidate requires the measured target load and store sequence and is checked by the byte judge.
