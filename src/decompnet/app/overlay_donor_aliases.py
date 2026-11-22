@@ -17,7 +17,11 @@ MAX_PROBES = 96
 
 
 def _cpp_declaration(header, clean, symbol):
-    """Find an external function or data declaration in a C linkage block."""
+    """Find an external function or data declaration with C linkage."""
+    pattern = r'\bextern\s+"C"\s+[^;{}=#]+\b' + re.escape(symbol) + r'\s*\([^;{}=#]*\)\s*;'
+    for declaration in re.finditer(pattern, header):
+        if clean[declaration.start():declaration.start() + len('extern')] == 'extern':
+            return declaration[0], declaration.end()
     for block in re.finditer(r'\bextern\s+"C"\s*\{([^{}]*)\}', header):
         if clean[block.start():block.start() + len("extern")] != "extern":
             continue
@@ -176,11 +180,11 @@ def retry(source, header, name, candidate, target, measure, stop, *, separate=No
                     declaration = _external_prototype(text[slice(*definition)], symbol)
                     if declaration:
                         break
+        linked = _cpp_declaration(header, clean_header, symbol)
+        if linked:
+            declaration, start = linked
         if declaration is None:
-            linked = _cpp_declaration(header, clean_header, symbol)
-            if linked:
-                declaration, start = linked
-            elif direct_call:
+            if direct_call:
                 # Try C89's implicit declaration. The probe must still preserve all instruction bytes.
                 declaration = f'extern int {symbol}();'
             else:

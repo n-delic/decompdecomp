@@ -77,7 +77,7 @@ def test_yay0_rebuild_uses_literals_and_verifies_back_references():
     assert uso._yay0(compressed, changed[:-1] + b'q') is None
 
 
-@pytest.mark.parametrize("cpp", [False, True])
+@pytest.mark.parametrize("cpp", [False, True, 'direct'])
 def test_overlay_replays_distinct_loader_calls_from_one_donor_placeholder(tmp_path, cpp):
     import threading
     from unittest.mock import Mock
@@ -94,6 +94,8 @@ def test_overlay_replays_distinct_loader_calls_from_one_donor_placeholder(tmp_pa
     if cpp:
         header = 'extern "C" { void placeholder(int); }\ninline void first_call() { placeholder(1); }'
         source = 'extern "C" void example() { first_call(); placeholder(2); }'
+        if cpp == 'direct':
+            header = 'extern "C" void placeholder(int);\ninline void first_call() { placeholder(1); }'
     section = 64
     first, second = uso_match.alias(section, 1), uso_match.alias(section, 2)
     original = compile_source(cfg, header, source)
