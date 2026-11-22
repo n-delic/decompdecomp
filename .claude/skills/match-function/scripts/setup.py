@@ -303,6 +303,7 @@ def start(args):
         gateway.start()
         strategy = "random" if args.random else "nearest"
         info["function"] = claim(gateway, args.function or "", strategy, args.max_size)
+        info["started"] = time.time()  # the hand-off clock's start (clock.py HOLDER)
         write_connection(root, info)
         info["renew_pid"] = start_renewal(root, args.interval)
     except BaseException as error:

@@ -121,6 +121,7 @@ def test_a_session_claims_once_over_mcp_and_is_removed_by_stop(world, capsys):
     text = (root / "connection.json").read_text()
     connection = json.loads(text)
     assert connection["function"] == "func_8001" and connection["token"] == "bearer-s3cret"
+    assert connection["started"] > 0  # the hand-off clock's start
     assert connection["gateway_url"].endswith(f":{app.servers[1].server_port}/mcp")
     assert oct((root / "connection.json").stat().st_mode & 0o777) == "0o600"
     assert app.creates == [{"action": "create", "slug": "demo"}]  # the window API only makes the connection
