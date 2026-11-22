@@ -75,6 +75,35 @@ def graphics_spans(image):
                 and sum(0x01000400 <= target < 0x01000800 for target in branches) >= 3):
             yield start, end
 
+    # A graphics microcode family starts with vector setup. Its linked
+    # overlays can extend past the 4 KiB task image, ending at the next
+    # vector program or a separately recognizable CPU interrupt routine.
+    entry = bytes.fromhex('4a00002cc81f201bc81e201c')
+    overlay = bytes.fromhex('080007f6201f108c200c4000400b5800')
+    entries = [match.start() for match in re.finditer(re.escape(entry), image)]
+    for index, start in enumerate(entries):
+        end = start+0x1000
+        if start % 16 or end+len(overlay) > len(image) or image[end:end+len(overlay)] != overlay:
+            continue
+        words = struct.unpack_from('>1024I', image, start)
+        targets = {word & 0x3ffffff for word in words if word >> 26 in (2, 3)}
+        if (sum(map(_vector, words)) < _MIN_VECTORS
+                or sum(0x400 <= target < 0x800 for target in targets) < 3):
+            continue
+        following = entries[index+1] if index+1 < len(entries) else 0
+        if end < following <= end+0x800:
+            tail = struct.unpack_from(f'>{(following-end)//4}I', image, end)
+            if sum(map(_vector, tail)) >= _MIN_VECTORS:
+                yield start, following
+                continue
+        for at in range(end+0x100, min(end+0x400, len(image)-20), 4):
+            a, b, c, d, e = struct.unpack_from('>5I', image, at)
+            if (a >> 16 == 0x3c0a and b >> 16 == 0x254a and c == 0x8d4b0000
+                    and d == 0x316bff00 and e == 0x40086000
+                    and b'\x03\xe0\x00\x08' in image[at:at+256]):
+                yield start, at
+                break
+
 
 def trim(image, found, known, log=print):
     """Trim a vector-code prefix only where scalar calls establish the CPU boundary."""

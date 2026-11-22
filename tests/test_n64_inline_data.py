@@ -87,3 +87,22 @@ def test_audio_coprocessor_suffix_is_data_even_if_the_text_mapping_ends_inside_i
     segments = yaml.safe_load(config.read_text())['segments'][0]['subsegments']
     assert segments[1][:2] == [start, 'rodata']
     assert segments[2] == [start + 20, 'data']
+
+
+def test_unentered_boot_padding_requires_call_and_terminal_break():
+    import struct
+
+    image = bytearray(0x80)
+    struct.pack_into('>3I', image, 0x28, 0x0c000010, 0, 0x0001008d)
+    struct.pack_into('>I', image, 0x40, 0x27bdffe0)
+    ranges = [(0x20, 0x34, 0x80000020), (0x34, 0x80, 0x80000034)]
+    assert list(inline_data._startup_padding(image, ranges)) == [(0x34, 0x40)]
+    struct.pack_into('>I', image, 0x50, 0x0c00000d)
+    assert not list(inline_data._startup_padding(image, ranges))
+
+
+def test_unaligned_store_filler_after_return_is_data():
+    import struct
+
+    image = struct.pack('>2I', 0x03e00008, 0)+bytes.fromhex('ffffffff 00000000')*5+bytes.fromhex('27bdffe0')
+    assert (8, 48) in list(inline_data.spans(image))

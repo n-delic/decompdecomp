@@ -72,3 +72,26 @@ def test_audio_text_before_bootstrap_accepts_pointer_first_entry(boot):
     assert list(audio_spans(image)) == [(0, 0x1000)]
     image[0x100:0x200] = bytes(0x100)
     assert not list(audio_spans(image))
+
+
+def test_vector_graphics_overlays_stop_before_cpu_routine():
+    from decompnet.consoles.n64.rsp_prefix import graphics_spans
+
+    entry = bytes.fromhex('4a00002cc81f201bc81e201c')
+    overlay = bytes.fromhex('080007f6201f108c200c4000400b5800')
+    image = bytearray(0x2800)
+    for start in (0x100, 0x14a0):
+        image[start:start+12] = entry
+        for i in range(64):
+            struct.pack_into('>I', image, start+0x100+i*4, 0x4a000037)
+        for i in range(3):
+            struct.pack_into('>I', image, start+0x300+i*4, 0x0c000400+i)
+        image[start+0x1000:start+0x1010] = overlay
+    for i in range(64):
+        struct.pack_into('>I', image, 0x1100+0x40+i*4, 0x4a000037)
+    cpu = bytes.fromhex('3c0a8001254a11608d4b0000316bff0040086000')
+    image[0x2640:0x2640+len(cpu)] = cpu
+    image[0x2660:0x2664] = bytes.fromhex('03e00008')
+    assert list(graphics_spans(image)) == [(0x100, 0x14a0), (0x14a0, 0x2640)]
+    image[0x2640:0x2644] = bytes(4)
+    assert list(graphics_spans(image)) == [(0x100, 0x14a0)]
