@@ -27,6 +27,9 @@ submitted with `setup.py try`):
 | m2c's caller-save round trip `sp1A0 = var_t2; var_t2 = sp1A0;` and its first store dropped, `var_t2 = temp_t2` folded | 4497 |
 | one counter for both loops of the first triangle pair (the app's `loop_counter_reassign`, found by its local pass) | 4387 |
 | the shared tail `if (arg0 != NULL) { *(SweepVec *) arg2 = vec28; return 1; } return 0;` with `arg0 = NULL;` before the `goto` that reaches it | 3992 |
+| the triangle base `obj->0x34` read in each call argument, not staged in a temp before the call (its `lw` sits after `lhu (\$s3)`: sched1 places a single-set pseudo late) | 3632 |
+| `u16 *` back for the two halfword loops: m2c_refinement had made them `char *` with `+= 3`, a 3-byte walk where the code steps 6 | 3332 |
+| `(u8) ((word >> 0x11) & 0x3F) & arg7`: the mask then stays on the field (`andi $v0,$v0,0x3f; and $v0,$v0,$t3`), not on the argument | 3322 |
 
 The flag: the target keeps the constant 1 in `$a0` and copies it to `$s2` at each way out. A separate `keep` is
 needed, and its width must differ from the flag's: with both `s32` (or both `u16`) global.c gives them one register
@@ -57,4 +60,4 @@ score by hundreds (the unprototyped call, the dropped arguments, the hoisted cou
 or removing instructions the target doesn't have or has). Judge a large function by `regions.py`'s non-offset rows
 (`r`, `o`, `<`, `>`, `|`, `s`) as well as the total. caller-save.c making the save slot is read in the 2.7.2 source;
 the declaration-order rule for spill slots is a hypothesis measured here. Library: decomprepair
-`caller_save_slot_drop` (0.5.644), `m2cfix.refine_draft` keeps float-parameter prototypes (0.5.643).
+`caller_save_slot_drop` (0.5.644), `m2cfix.refine_draft` keeps float-parameter prototypes (0.5.643) and element-stepped typed pointers (decomp-repair #1225).
