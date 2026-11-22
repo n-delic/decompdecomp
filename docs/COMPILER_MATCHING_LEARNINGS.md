@@ -16584,8 +16584,8 @@ Chain from the saved draft (each score is the exact judge):
 
 What decided each step (GCC 2.7.2):
 - Spill slots are numbered by pseudo number: slots grow in declaration order of the spilled pseudos, so the exit
-  flag has to be declared before the narrowed flag for the target's `0x147` / `0x14c` layout (175 with them swapped
-  would be 260). A parameter that is spilled keeps its pseudo's slot, not its incoming home slot.
+  flag has to be declared before the narrowed flag for the target's `0x147` / `0x14c` layout (185 with them swapped,
+  175 in the target order). A parameter that is spilled keeps its pseudo's slot, not its incoming home slot.
 - `while ((done & 1) == 0)` on a `u8` that is only ever 0 or 1 gives `lbu $t0; move $v0, $t0; beqz`: the plain
   test reloads straight into the branch register. `done == 0`, `!(s32) done`, `(u8) done == 0` and a statement
   expression all gave the plain `lbu $v0` (identical RTL).
@@ -16599,7 +16599,7 @@ What decided each step (GCC 2.7.2):
 
 Failed: dropping the volatile alone (2927 with the junk arm), `s8 arg4` as the parameter type (the byte spill is
 slot `0x144` and the frame grows by 8), a statement-expression temporary for the exit test (460), the narrowing
-inside the loop only (811, because it is no longer hoisted).
+placed at its use inside a case (811, because it is no longer hoisted).
 
 decomp-repair 0.5.562 `spill_shape_repairs`: `volatile_read_drop`, `volatile_state_unwrap`, `narrow_copy_merge`,
 `identical_arm_collapse`, `flag_exit_mask_test`, `preloop_assignment_swap`, `loop_constant_stage`.
