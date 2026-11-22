@@ -15810,3 +15810,23 @@ or worse. Splitting the complete group resolved the register
 differences and left only a moved index shift. The proposal requires
 a flat conditional arm with nonescaping locals that are dead after
 the arm.
+
+### Split a saved float capture from a conditional blend gain
+
+In a private N64 function built with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, an absolute-value
+capture and a later conditional blend gain shared one C local.
+Rebinding only the gain to the existing saved float local
+corrected both constant materializations and the multiply.
+It also moved the earlier result copy into a different call's
+delay slot, raising the linked score from 2,185 to 2,425.
+
+Use the earlier dead field-snapshot local for the capture and its
+only multiply, and keep the separately witnessed local for the
+gain. That keeps the earlier call sequence and fixes the three
+gain operands, for a linked score of 2,170. The instruction count
+and all three jump tables agree, and the compiler reported no
+uninitialized values. A new capture local scored 2,425, and
+sharing the gain local with the capture shifted the final table.
+The trial checks liveness and reaching definitions before
+reusing a snapshot local.
