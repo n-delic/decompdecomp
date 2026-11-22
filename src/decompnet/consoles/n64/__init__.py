@@ -9,6 +9,7 @@
 - loader_code.py: full-bank closed-body recovery with CPU call, callback and adjacency evidence.
 - loader_mapping.py: bank mappings corroborated by constant arguments to independent loader helpers.
 - indexed_overlays.py: shared RAM slots and DMA bounds recovered from loader arrays and cache calls.
+- indexed_runtime_code.py: executable archive members mapped at their declared runtime addresses.
 - level_overlay_table.py: shared-slot level banks and adjacent helpers verified from loader instructions.
 - inferred_overlays.py: overlapping code-bank mappings supported by independently called local entries.
 - inline_data.py: verified constants and alignment bytes embedded among code.

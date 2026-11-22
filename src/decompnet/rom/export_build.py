@@ -598,6 +598,12 @@ def build() -> bool:
                 if not verify_analysis(original, out, boot_ranges):
                     fail("Rebuilt code differs from the original compressed boot programs.")
                 out = original
+            elif cartridge.get("indexed_archive"):
+                from decompnet.consoles.n64.indexed_runtime_code import verify_analysis
+
+                if not verify_analysis(original, out):
+                    fail("Rebuilt code differs from the original compressed archive members.")
+                out = original
             else:
                 out = rebuild_cartridge(out, original, cartridge["blocks"])
             (ROOT / B["output"]).write_bytes(out)

@@ -502,6 +502,7 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
         copied_overlays,
         dma_overlays,
         indexed_overlays,
+        indexed_runtime_code,
         level_overlay_table,
         named_dma,
         overlays,
@@ -517,6 +518,8 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
     rom = (workdir / image).read_bytes()
     original_rom = rom
     taken = split.code_ranges(config)
+    if taken and (result := indexed_runtime_code.add(config,workdir,image,rom,taken,log)):
+        return result
     if taken and (result := resident_deflate.add(config,workdir,image,rom,taken,log)):
         return result
     if taken and not skip_replacing_boot and boot_brs.find(rom, taken):
