@@ -365,6 +365,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += float_delta_load_order.variants(source, name, rows, header=header)
         result += counted_switch_advance.variants(source, name, rows, header=header)
         result += oscillator_phase_hold.variants(source, name, rows, header=header)
+        result += oscillator_phase_hold.product_variants(source, name, rows, header=header)
         result += halfword_before_float_store.variants(source, name, rows, header=header)
         result += rejected_branch_default.variants(source, name, rows, header=header)
         result += measured_kmc_stack_pointer.variants(source, name, rows)

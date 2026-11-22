@@ -57,3 +57,57 @@ def test_deep_permuter_routes_saved_axes_through_the_measured_mips_path():
     assert 'filtered = ((axis_x - old) * 0.1f) + old;' in revised
     for arch, compiler in [('arm', 'gcc-2.7.2-kmc'), ('mips', 'ido-5.3'), ('mips', 'gcc-4.4.0-n64')]:
         assert all(label != FAMILY for label, _ in proposals(SOURCE, 'update', '', arch, compiler, ROWS, ''))
+
+
+PRODUCT_SOURCE = """\
+extern f32 phase;
+extern f32 axis_z;
+f32 wave(f32 phase);
+f32 poll(s32 slot, s32 x, s32 y);
+void update(f32 *axis_x_out, s32 slot)
+{
+    f32 holder;
+    f32 axis_x;
+    f32 input;
+    f32 carry_x;
+    f32 carry_z;
+    f32 product;
+    f32 drive;
+    drive = wave(phase);
+    axis_x = wave(phase + 1.0f);
+    carry_x = 0.0f;
+    carry_z = 0.0f;
+    product = drive * (wave(phase * 3.0f) * 0.1f);
+    axis_z = product;
+    *axis_x_out = axis_x;
+    phase += 0.01f;
+    input = poll(slot, 4, 5);
+    carry_x += axis_x;
+    carry_z += product;
+    report(carry_x, carry_z, input);
+    holder = poll(slot, 2, 3) * 0.5f;
+    report(holder);
+}
+"""
+PRODUCT_OPS = [
+    'jal wave', 'nop', 'mul.s $f0, $f0, $f22', 'mul.s $f24, $f20, $f0',
+    'swc1 $f24, %lo(axis_z)($at)', 'jal poll', 'addiu $a2, $zero, 5',
+    'mtc1 $s2, $f16', 'nop', 'add.s $f16, $f16, $f24', 'mfc1 $s2, $f16',
+]
+PRODUCT_ROWS = [('r' if '$f24' in op else ' ', op, op.replace('$f24', '$f20')) for op in PRODUCT_OPS]
+PRODUCT_ROWS += [(' ', op, op) for op in [
+    'addiu $a1, $zero, 2', 'jal poll', 'addiu $a2, $zero, 3',
+    'lui $at, 0x3f00', 'ori $at, $at, 0', 'mtc1 $at, $f6', 'nop',
+    'mul.s $f24, $f0, $f6', *(['nop'] * 10),
+]]
+
+
+def test_deep_permuter_reuses_the_oscillation_product_holder_for_kmc():
+    label = 'saved_oscillator_product_holder'
+    [candidate] = [text for family, text in proposals(PRODUCT_SOURCE, 'update', '', 'mips',
+                                                     'gcc-2.7.2-kmc', PRODUCT_ROWS, '') if family == label]
+    assert 'holder = drive * (wave(phase * 3.0f) * 0.1f);' in candidate
+    assert 'axis_z = holder;' in candidate
+    assert 'carry_z += holder;' in candidate
+    assert label not in {family for family, _ in proposals(PRODUCT_SOURCE, 'update', '', 'mips',
+                                                           'ido-7.1', PRODUCT_ROWS, '')}
