@@ -67,6 +67,25 @@ def test_uso_rejects_unsupported_or_duplicate_relocation_records():
         assert region.relocations is None
 
 
+def test_overlay_jump_table_allows_unrelated_arithmetic_in_delay_slot():
+    from .test_mips_indirect_audit import fixture
+
+    image, _ = fixture()
+    code = bytearray(image[0x1000:0x103C])
+    code[8:12] = (0x306500F0).to_bytes(4, 'big')  # andi a1, v1, 0xf0
+    code[16:20] = (0x3C010000).to_bytes(4, 'big')
+    code[24:28] = (0x8C220020).to_bytes(4, 'big')
+    rodata = bytes(0x20) + struct.pack('>II', 36, 44)
+    region = uso.Text('table', 64, bytes(code), False, rodata=rodata, rodata_bases=(1,),
+                      text_bases=(2,), rodata_relocations=((0x20, 2, 2), (0x24, 2, 2)))
+    relocs = [[16, 5, 1], [24, 6, 1]]
+    assert uso.function_jump_tables(region, 0, len(code), relocs) == [[24, 1, [36, 44]]]
+    code[8:12] = (0x306300F0).to_bytes(4, 'big')  # overwrites the table index
+    from dataclasses import replace
+
+    assert not uso.function_jump_tables(replace(region, data=bytes(code)), 0, len(code), relocs)
+
+
 def test_overlay_defined_zero_data_requires_explicit_loader_binding(tmp_path, monkeypatch):
     from contextlib import nullcontext
     from inspect import unwrap

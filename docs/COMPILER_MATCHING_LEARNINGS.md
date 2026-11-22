@@ -16418,3 +16418,7 @@ repair-lane test covers proposal routing, not a separate compiler experiment.
 ### KMC GCC 2.7.2 single-use loop comparison key
 
 A saved MIPS record search built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` compared each record against an incoming scalar key. Copying the key to a local before the loop changed the partially repaired draft's linked difference score from 55 to an exact match by changing register allocation. This is one saved example, not a controlled cross-compiler experiment. The candidate requires a single source use in a backward loop comparison, the target's unchanged argument-register branch and mismatched register allocation, and rejects unknown macros and address escapes.
+
+### IDO guarded switch delay-slot arithmetic
+
+An isolated N64 overlay function built with IDO 7.1 using `-O2 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul -DNON_MATCHING` scheduled an unrelated `andi` in the delay slot of a switch bounds branch. The bounded table has 15 entries whose loader relocations and destinations were checked against the original overlay. The former recognizer missed it because it accepted only a move, stack spill, or no-op in that slot. Controlled tests now accept nontrapping immediate arithmetic that leaves both the index and guard result intact, and reject writes to either register or a trapping `addi`. This is one observed compiler shape, not a cross-compiler study.

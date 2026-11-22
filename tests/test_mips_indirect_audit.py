@@ -28,6 +28,20 @@ def test_guarded_switch_follows_all_cases_only_with_explicit_mapping():
         assert not result['unresolved_transfers']
 
 
+@pytest.mark.parametrize('word,valid', [
+    (0x306500F0, True),   # andi a1, v1, 0xf0
+    (0x24650001, True),   # addiu a1, v1, 1
+    (0x306300F0, False),  # the scaled index is overwritten
+    (0x306200F0, False),  # the guard result is overwritten
+    (0x20650001, False),  # trapping addi is not an ordinary scheduler slot
+])
+def test_guarded_switch_allows_only_safe_immediate_delay_slots(word, valid):
+    image, ranges = fixture()
+    image[0x1008:0x100C] = word.to_bytes(4, 'big')
+    result = jump_table(image, 0x1000, 0x103C, 0x80001000, 0x101C, 'big', ranges)
+    assert (result is not None and result['state'] == 'validated') is valid
+
+
 def test_bad_bounds_targets_guard_bypass_and_conflicting_mappings_stay_unresolved():
     image,ranges=fixture()
     image[0x1104:0x1108]=(0x80002000).to_bytes(4,'big')
