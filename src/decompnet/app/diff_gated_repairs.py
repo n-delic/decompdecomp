@@ -193,6 +193,7 @@ from decomprepair import (
     stack_fill_drafts,
     stack_header_buffer,
     stack_read_retry,
+    stored_float_zero_repairs,
     switch_pointer_calls,
     symbol_width_repairs,
     target_string_repairs,
@@ -383,6 +384,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += clamp_return_local.variants(source, name, rows, header=header)
         result += float_delta_load_order.variants(source, name, rows, header=header)
         result += vector_output_capture.ordered_snapshot_variants(source, name, rows)
+        result += stored_float_zero_repairs.stack_word_variants(source, name, rows, header=header, max_bytes=MAX_SOURCE_BYTES)
         result += counted_switch_advance.variants(source, name, rows, header=header)
         result += oscillator_phase_hold.variants(source, name, rows, header=header)
         result += oscillator_phase_hold.product_variants(source, name, rows, header=header)

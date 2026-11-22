@@ -15843,3 +15843,22 @@ block removed the undefined read and improved the linked score from
 7,993 to 7,967. This remained an inexact draft. The proposal checks
 for an ordinary uninitialized local with no prior uses and retains
 the first arm's lexical scope and physical lines.
+
+### Clear a stack vector component with a word store
+
+In a private linked N64 function built with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, the target clears a
+stack vector component with a store from `$zero` in a call delay
+slot. The draft copied the same zero bits from a saved register.
+A float literal alone used a saved floating-point zero and raised
+the score by 195.
+
+A union of the original three-float record and three 32-bit
+words gives the compiler an integer literal for that one clear.
+The other reads, writes and addresses retain the original float
+record type. The linked score goes from 2,170 to 2,165 with only
+that store operand changed. All 3,034 instructions and three
+jump tables remain, and uninitialized diagnostics are clean.
+A union that still copied the saved bits was neutral. The recipe
+checks the three-float layout, stack offset and consuming call,
+and proves the old value was positive zero on every incoming path.
