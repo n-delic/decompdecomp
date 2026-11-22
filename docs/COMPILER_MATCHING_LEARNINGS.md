@@ -13346,3 +13346,25 @@ bytes. Use separate mismatch continuations so each comparison can
 schedule the increment. A public caller corroborated the interface.
 The linked score went from 1,440 to 0, and the dispatcher generated one
 byte-exact candidate.
+
+### KMC GCC 2.7.2: reuse a dead return local for an earlier load
+
+On one N64 function with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`,
+reusing the later return-value local for an earlier halfword load changed
+its register allocation. Starting with a one-argument callee declaration
+consistent with a matched callee, the exact isolated judge improved from
+30 to 15; the saved two-argument candidate remained better at 5, and this
+is not a match. The `dead_local_stage` repair offers the reuse when the
+outer local is untouched and unaliased, has the same type, and is safely
+overwritten after the inner value's last use. A synthetic regression covers
+the rewrite and its guards; this is one function, not a controlled
+cross-game result.
+
+The saved candidate's only differing instruction reads an argument register
+where the target reads a saved register. Widening its signed halfword local
+fixed that operand but delayed argument setup and scored 60. Adding a
+redundant unsigned-halfword normalization after the table index scored 30,
+and scheduling scopes did not restore the target ordering. GCC's RTL showed
+the short local's early sign-extension copy being reused by CSE, while the
+word local left the subtraction on the saved register and emitted the call
+argument copy later. These are failed experiments, not a source match.
