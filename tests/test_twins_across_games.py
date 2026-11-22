@@ -382,3 +382,32 @@ def test_saved_whole_donor_unit_reverifies_and_exports_only_its_entry(built, tmp
     manifest = json.loads((Path(out['path']) / 'build.json').read_text())
     entry = next(row for row in manifest['functions'] if row['vram'] == fn['vram'])
     assert entry['entry_only']
+
+
+def test_donor_replay_uses_original_declarations_after_alias_collision(built, tmp_path, monkeypatch):  # noqa: F811
+    from decompnet.app import donor_build, donor_sources
+    from decompnet.app.twins import Job
+    from decompnet.project import compiler_for
+
+    net = RomNetwork(tmp_path / 'decomp.db', tmp_path)
+    slug = net.import_rom(ROM, confirmed=True, log=lambda *_: None)
+    agent, _ = net.local_agent('autopilot')
+    net.split_function(agent, slug, 'func_800007C4', '0x800007D0')
+    proj = net._project(slug)
+    fn = net._function('func_800007D0', slug)
+    root = tmp_path / 'donor'
+    root.mkdir()
+    header = 'typedef int s32;\nextern void first(int *);\nextern void second(float *);\n'
+    (root / 'unit.c').write_text(header + CLAMP)
+    (root / 'objdiff.json').write_text(json.dumps({'units': [
+        {'name': 'unit', 'metadata': {'source_path': 'unit.c'}}
+    ]}))
+    donor = {'name': fn['name'], 'unit': 'unit', 'meta': None}
+    profile = compiler_for(net.cfg(proj), fn['vram'], fn)
+    monkeypatch.setattr(donor_sources, 'imported', lambda *_: [])
+    result = donor_build.verify(net, proj, fn, {'root': str(root)}, donor,
+                                {'first': 'common', 'second': 'common'}, profile, agent, Job(), {})
+    assert result == ('match', 'Verified using compiled donor bindings.')
+    saved = net._function(fn['name'], slug)
+    saved_header = net._context(proj['id'], saved['unit'])['header']
+    assert 'first(int *);' in saved_header and 'second(float *);' in saved_header

@@ -272,6 +272,15 @@ def verify(net, proj, fn, other, donor, names, settings, agent, job, cache, *, r
                 whole_reason = whole_reason or reason
                 if accepted:
                     return 'match', 'Verified from a saved donor translation unit.'
+                if (names and not job.stop.is_set()
+                        and re.search(r'redeclar|redefin|conflicting (?:types?|declarations?)', reason, re.I)):
+                    # The donor's names can collide when several declarations acquire
+                    # the same destination spelling. Let emitted relocations guide the retry.
+                    original = donor_unit.candidate(other, donor, {donor['name']: fn['name']}, invocation, cache)
+                    if original and original != whole:
+                        accepted, reason = _try(net, current, private, fn, *original, agent, job)
+                        if accepted:
+                            return 'match', 'Verified using compiled donor bindings.'
         for body, header, _ in donor_sources.imported(net, other, donor, cache):
             if job.stop.is_set():
                 return 'skip', 'Search stopped.'
