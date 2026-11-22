@@ -30,6 +30,7 @@ from decomprepair import (
     field_copy_before_clear,
     field_snapshot_copies,
     fixed_blend_staging,
+    float_bit_argument_repairs,
     float_clamp_scale_stage,
     float_delta_load_order,
     float_intermediate_repairs,
@@ -395,6 +396,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     result += measured_lifetime_shapes.variants(source, name, header, toolchain, rows)
     result += measured_scalar_updates.variants(source, name, header, toolchain, rows, asm)
     if toolchain == 'gcc-2.7.2-kmc':
+        result += float_bit_argument_repairs.target_variants(source, name, header, arch, flags, rows)
         result += boolean_guard_operands.variants(source, name, rows, header)
         result += balanced_projection_scale.variants(source, name, rows, header=header)
         result += balanced_predicate_projection.variants(source, name, rows, header=header)

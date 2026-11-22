@@ -2677,3 +2677,13 @@ def test_teardown_pointer_order_receives_abi_and_symbol_resolver(monkeypatch):
                                                        flags=flags, resolve=resolve))
     assert 'teardown_pointer_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, '',
                                                            flags=flags, resolve=resolve))
+
+
+def test_float_bit_argument_route_uses_target_float_register():
+    source = 's32 scale(M2C_UNK);\nvoid f(void) { scale(0x3F800000); }\n'
+    rows = [('o', 'lui $at, 0x3f80', 'jal scale'),
+            ('o', 'mtc1 $at, $f12', 'lui $a0, 0x3f80'),
+            ('o', 'jal scale', ''), ('<', 'nop', '')]
+    result = dict(proposals(source, 'f', '', 'mips', KMC, rows, '', flags=('-mgp32',)))
+    assert 'scale(1.0f)' in result['float_argument_bits']
+    assert 'float_argument_bits' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, '', flags=('-mgp32',)))
