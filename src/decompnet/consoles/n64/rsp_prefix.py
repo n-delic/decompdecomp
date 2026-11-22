@@ -62,6 +62,22 @@ def graphics_spans(image):
     """Find a bootstrap variant and its vector-rich 4 KiB graphics program."""
     from .port import RSPBOOT
 
+    # This bootstrap also precedes graphics text whose first instruction
+    # jumps into IMEM; the vector body corroborates the entire task image.
+    for match in re.finditer(re.escape(RSPBOOT), image):
+        start = match.start()
+        code = start + 0xd0
+        end = code + 0x1000
+        if start % 16 or end > len(image):
+            continue
+        words = struct.unpack_from('>1024I', image, code)
+        first = words[0]
+        targets = {word & 0x03ffffff for word in words if word >> 26 in (2, 3)}
+        if (first >> 26 == 2 and 0x01000400 <= first & 0x03ffffff < 0x01000800
+                and sum(map(_vector, words)) >= _MIN_VECTORS
+                and sum(0x01000400 <= target < 0x01000800 for target in targets) >= 3):
+            yield start, end
+
     signature = bytes.fromhex('342100010900041a') + RSPBOOT[4:]
     for match in re.finditer(re.escape(signature), image):
         start = match.start()

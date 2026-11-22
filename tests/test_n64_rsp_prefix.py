@@ -113,3 +113,19 @@ def test_vector_overlay_before_called_cpu_frame():
     assert list(graphics_spans(image)) == [(start, 0x12a0)]
     image[0x12a4:0x12a8] = bytes(4)
     assert not list(graphics_spans(image))
+
+
+def test_standard_boot_and_jump_to_vector_graphics():
+    from decompnet.consoles.n64.port import RSPBOOT
+    from decompnet.consoles.n64.rsp_prefix import graphics_spans
+
+    image = bytearray(0xd0 + 0x1000)
+    image[:len(RSPBOOT)] = RSPBOOT
+    struct.pack_into('>I', image, 0xd0, 0x090005e8)
+    for i in range(64):
+        struct.pack_into('>I', image, 0x100 + 4*i, 0x4a000000)
+    for i in range(3):
+        struct.pack_into('>I', image, 0x200 + 4*i, 0x09000400 + i)
+    assert list(graphics_spans(image)) == [(0, len(image))]
+    image[0x100:0x200] = bytes(0x100)
+    assert not list(graphics_spans(image))
