@@ -7,6 +7,7 @@ from difflib import SequenceMatcher
 from itertools import chain
 
 from .. import similarity, toolchains
+from ..elfobj import Reloc, mask_relocs
 from ..network import NetworkError
 from ..project import compiler_for
 from . import donor_build, donor_relocations, free_candidates
@@ -14,17 +15,37 @@ from .cross_game_progress import report
 from .twins import Print, renames
 
 MIN_SCORE = .84
+MIN_ORDER_WITH_OPERANDS = .74
+MIN_OPERAND_AGREEMENT = .60
 MAX_SHORTLIST = 24
 MAX_TRIALS = 3
+MAX_OPERAND_SHORTLIST = 40
+MAX_OPERAND_TRIALS = 2
 
 
 def _grams(ops):
     return set(zip(ops, ops[1:], ops[2:]))
 
 
+def _rank_pair(ops, words, donor_ops, donor_words):
+    """Keep the order score and measure operand agreement within the aligned runs."""
+    matcher = SequenceMatcher(None, ops, donor_ops, autojunk=False)
+    order = matcher.ratio()
+    equal = sum(words[run.a + i] == donor_words[run.b + i]
+                for run in matcher.get_matching_blocks() for i in range(run.size))
+    return order, 2 * equal / (len(words) + len(donor_words))
+
+
+def _words(code, relocs, big):
+    masked = mask_relocs(code, relocs, 'mips', big)
+    return tuple(masked[i:i + 4] for i in range(0, len(masked) - 3, 4))
+
+
 class Index:
     def __init__(self, entries, big, cpu, stop):
+        self.big = big
         self.entries = {}
+        self.words = {}
         self.shingles = defaultdict(set)
         for donor, fingerprint, code in entries:
             if stop.is_set():
@@ -33,23 +54,37 @@ class Index:
             fid = donor['id']
             grams = _grams(ops)
             self.entries[fid] = donor, fingerprint, code['target'], ops, len(grams)
+            self.words[fid] = _words(code['target'], [Reloc(at, kind, '', 0) for at, kind in fingerprint.layout], big)
             for gram in grams:
                 self.shingles[gram].add(fid)
 
-    def shortlist(self, code, ops, excluded=()):
+    def shortlist(self, code, ops, excluded=(), *, relocs=()):
         grams = _grams(ops)
         counts = Counter(chain.from_iterable(self.shingles.get(gram, ()) for gram in grams))
         rough = []
         for fid, shared in counts.items():
             _, _, donor_code, donor_ops, total = self.entries[fid]
-            if (fid in excluded or donor_code == code
-                    or not .75 <= len(donor_ops) / len(ops) <= 1 / .75):
+            ratio = len(donor_ops) / len(ops)
+            if fid in excluded or donor_code == code or not .65 <= ratio <= 1 / .65:
                 continue
-            rough.append((2 * shared / (len(grams) + total), fid))
-        candidates = [fid for _, fid in sorted(rough, reverse=True)[:MAX_SHORTLIST]]
-        ranked = [(similarity.score(ops, self.entries[fid][3]), fid) for fid in candidates]
-        return [self.entries[fid] for score, fid in sorted(ranked, reverse=True)[:MAX_TRIALS]
-                if score >= MIN_SCORE]
+            rough.append((2 * shared / (len(grams) + total), fid, ratio))
+        ordered = sorted(rough, reverse=True)
+        primary = [fid for _, fid, ratio in ordered if .75 <= ratio <= 1 / .75][:MAX_SHORTLIST]
+        extra = [fid for _, fid, _ in ordered[:MAX_OPERAND_SHORTLIST]]
+        words = _words(code, relocs, self.big)
+        scores = {fid: _rank_pair(ops, words, self.entries[fid][3], self.words[fid])
+                  for fid in dict.fromkeys(primary + extra)}
+        normal = sorted(((scores[fid][0], fid) for fid in primary if scores[fid][0] >= MIN_SCORE),
+                        reverse=True)[:MAX_TRIALS]
+        selected = {fid for _, fid in normal}
+        # Keep the original mnemonic-only candidates. Operand agreement can add
+        # plausible shifted bodies without hiding donors that are valid today.
+        fallback = []
+        for fid in extra:
+            order, operands = scores[fid]
+            if fid not in selected and order >= MIN_ORDER_WITH_OPERANDS and operands >= MIN_OPERAND_AGREEMENT:
+                fallback.append((order + operands / 5, fid))
+        return [self.entries[fid] for _, fid in normal + sorted(fallback, reverse=True)[:MAX_OPERAND_TRIALS]]
 
 
 def aliases(fingerprint, donor_ops, target, target_ops, donor_name, target_name):
@@ -79,7 +114,8 @@ def run(twins, agent, proj, other, hits, units, settings, job, checked):
     store = net.project_store(proj['id'])
     from .similar_matches import MAX_BYTES, MIN_BYTES
 
-    rows = store.all("SELECT id,target FROM functions WHERE project_id=? AND status='open' "
+    rows = store.all("SELECT id,name,target,relocs,vram,meta,unit,size,rom_offset FROM functions "
+                     "WHERE project_id=? AND status='open' "
                      "AND size BETWEEN ? AND ? ORDER BY id", proj['id'], MIN_BYTES, MAX_BYTES)
     def exhausted():
         return job.stop.is_set() or (hasattr(job, 'reuse_limit') and free_candidates.exhausted(job))
@@ -92,7 +128,9 @@ def run(twins, agent, proj, other, hits, units, settings, job, checked):
         if not code:
             continue
         ops = similarity.mips_mnemonics(code, big, cpu=cpu)
-        for donor, fingerprint, _, donor_ops, _ in index.shortlist(code, ops, checked.get(row['id'], ())):
+        target = net._target_obj(row, proj)
+        candidates = index.shortlist(code, ops, checked.get(row['id'], ()), relocs=target.relocs)
+        for donor, fingerprint, _, donor_ops, _ in candidates:
             if exhausted():
                 break
             fn = store.one("SELECT * FROM functions WHERE id=? AND status='open'", row['id'])
@@ -108,7 +146,7 @@ def run(twins, agent, proj, other, hits, units, settings, job, checked):
                 profiles.pop()
             if not profiles and not replacement:
                 continue
-            names = aliases(fingerprint, donor_ops, net._target_obj(fn, proj), ops, name, fn['name'])
+            names = aliases(fingerprint, donor_ops, target, ops, name, fn['name'])
             if console.export_overlay(net._rom_target(fn)) is not None:
                 names = donor_relocations.separate_overlay_references(console, names)
             report(job, 'Checking similar imported source', game=other['name'], function=fn['name'],

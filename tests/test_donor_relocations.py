@@ -87,3 +87,44 @@ def test_short_verified_c_uses_the_destination_name(pair, monkeypatch):
     assert pair.twins.across_games('destination', job) == 1
     assert pair.twins.reuse_names('destination', job) == 0
     assert pair._function('new', 'destination')['name'] == 'new'
+
+
+def test_imported_similarity_prefers_agreeing_operands_when_opcodes_tie():
+    from struct import pack
+
+    from decompnet import similarity
+    from decompnet.app.imported_similarity import Index
+
+    def code(register, field):
+        return pack('>8I', 0x27BDFFE8, 0xAFBF0014, 0x0C000000 | field, 0,
+                    0x24020004 | register << 21, 0x8FBF0014, 0x03E00008, 0x27BD0018)
+
+    wanted = code(4, 0x9000)
+    entries = [
+        ({'id': 1}, Print('close', ['callee'], 32, layout=[(8, 4)]), {'target': code(4, 0x1000)}),
+        *[({'id': i}, Print('other', ['callee'], 32, layout=[(8, 4)]), {'target': code(i + 4, 0x9000)})
+          for i in (2, 3, 4)],
+    ]
+    ops = similarity.mips_mnemonics(wanted)
+    assert all(similarity.mips_mnemonics(entry['target']) == ops for _, _, entry in entries)
+    index = Index(entries, True, '', Job().stop)
+    picked = index.shortlist(wanted, ops, relocs=[Reloc(8, 4, 'callee', 0)])
+    assert [entry[0]['id'] for entry in picked] == [4, 3, 2, 1]
+
+
+def test_imported_similarity_accepts_a_larger_body_with_agreeing_operands():
+    from struct import pack
+
+    from decompnet import similarity
+    from decompnet.app.imported_similarity import Index
+
+    body = [0x24820001, 0xAC620000, 0x24820002, 0xAC620004, 0x24820003, 0xAC620008,
+            0x24820004, 0xAC62000C, 0x24820005, 0xAC620010, 0x03E00008, 0x00000000]
+    target = pack('>12I', *body)
+    donor_code = pack('>17I', *body[:4], *([0x00851025] * 5), *body[4:])
+    target_ops = similarity.mips_mnemonics(target)
+    donor_ops = similarity.mips_mnemonics(donor_code)
+    assert similarity.score(target_ops, donor_ops) < .84
+    fingerprint = Print('larger', [], len(donor_code), layout=[])
+    index = Index([({'id': 1}, fingerprint, {'target': donor_code})], True, '', Job().stop)
+    assert index.shortlist(target, target_ops)[0][0]['id'] == 1
