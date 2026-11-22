@@ -15457,3 +15457,7 @@ sequence, source guards and KMC Deep Permuter routing.
 ### Forward an entry argument and advance command records
 
 A saved N64 command builder compiled with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` omitted the unchanged first argument to an indirect call and used byte-offset stores for the returned commands. The target left the entry argument in `$a0`, advanced the second argument in `$a1`, and used an eight-byte command cursor. Passing the first argument and expressing the returned commands as two-word records reproduced the linked target exactly (score 325 to 0). Evidence: one saved example and synthetic source, instruction and routing tests. The candidate requires the unchanged entry register, measured command constants and target cursor sequence and is checked by the byte judge.
+
+### Delay a local flag value into its guarded branch
+
+A saved N64 flag update built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1` computed an OR mask before a byte-field guard, while the target placed it in the branch delay slot. Moving the local computation to the beginning of the branch reproduced the linked target exactly (score 380 to 0). Evidence: one saved example and synthetic source, instruction and routing tests. The candidate requires the measured guard and mask sequence, and the local must have no uses after the branch; the byte judge verifies the result.

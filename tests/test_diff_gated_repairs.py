@@ -1920,3 +1920,13 @@ def test_indirect_command_records_route_to_kmc(monkeypatch):
                         lambda text, name, header, diff: [('indirect_command_records_fixture', text)])
     assert 'indirect_command_records_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'indirect_command_records_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_guarded_flag_value_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_guarded_flag_value, 'variants',
+                        lambda text, name, header, diff: [('guarded_flag_fixture', text)])
+    assert 'guarded_flag_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'guarded_flag_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
