@@ -15795,3 +15795,6 @@ preserves the source predicates and any intervening reads. Correcting
 a separate branch operand using its target relocation reduced the
 score another 20 points, from 185 to 165. The remaining differences
 are in register allocation and index scheduling.
+### KMC GCC 2.7.2 conditional global and call staging
+
+A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` loaded a condition pointer before a separate zero store and staged an owner argument in each path before a shared call. Its machine draft scheduled the load after the store and forwarded the argument directly. Staging the condition pointer alone changed the diff score from 245 to 170; staging the call argument as well produced an exact linked match. This is one saved example, not a controlled cross-compiler experiment. The proposal checks both global relocations against their source offsets and requires the observed source and instruction patterns.
