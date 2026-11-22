@@ -33,6 +33,26 @@ from ..network import GAME_CODE, IN_BUILD, Agent, NetworkError
 from . import polish_checklist
 from .function_names import needs_name
 
+
+def steering_checklist(net, fn, source: str) -> str:
+    """Polishing's lines about code recorded as dead-looking (steering.py): pieces that only steered the compiler
+    are tried out first (the judge still decides, as for every rewrite); pieces that emit target instructions stay."""
+    from .. import steering
+    flat = " ".join(source.split())
+    found = [decoded for row in net.project_store(fn["project_id"]).all(
+        "SELECT steering FROM attempts WHERE function_id=? AND steering IS NOT NULL ORDER BY id DESC LIMIT 40", fn["id"])
+        if (decoded := steering.decode(row["steering"])) and any(c in flat for c in decoded["added"])]
+    scaffolding = [c for f in found if f["tag"] == steering.STEERING for c in f["added"]]
+    original = [c for f in found if f["tag"] == steering.ORIGINAL for c in f["added"]]
+    text = ""
+    if scaffolding:
+        text += ("- try removing these first, recorded as steering only (they emit nothing the target has): "
+                 + "; ".join(f"`{c}`" for c in dict.fromkeys(scaffolding)) + ". Keep one only if the rewrite stops matching.\n")
+    if original:
+        text += ("- keep these, recorded as matching a target instruction (plausibly original code): "
+                 + "; ".join(f"`{c}`" for c in dict.fromkeys(original)) + ".\n")
+    return text
+
 CLAIM_SECONDS = 30 * 60
 # The order polishing takes functions in (starred ones first): SMALL_INSNS to BIG_INSNS biggest first, where the logic
 # people want to read is; then bigger ones, smallest first (a readable rewrite of 2,000 instructions is a project of
@@ -385,6 +405,7 @@ class Readability:
                 + prepared + polish_checklist.brief(options, pc_tool=pc_tool) + "\nMake it readable without changing what the compiler makes of it:\n" + names +
                 "- give parameters and locals meaningful names; write one comment saying what the function does;\n"
                 "- keep the statement order, casts and temporaries that matching requires.\n"
+                + steering_checklist(self.net, fn, source)
                 + ("- it's a big function: rename and comment in place, statement for statement; don't restructure it "
                    "(one slip anywhere in it and the rewrite is refused).\n" if fn["n_insns"] > BIG_INSNS else "") +
                 "Prefer polish_function with a JSON local rename map and a one-line comment; it keeps physical lines intact. "

@@ -290,6 +290,7 @@ MIGRATIONS = [
     ("attempts", "score_improved", "INTEGER"),
     ("notes", "session_id", "INTEGER"),
     ("attempts", "handoff_inputs", "TEXT"),
+    ("attempts", "steering", "TEXT"),                          # steering.py: a dead-looking variant's tag, as JSON
     ("attempts", "diff_digest", "TEXT"),                       # network.diff_digest: same score, different diff
     ("notes", "handoff_inputs", "TEXT"),
     ("notes", "score_before", "INTEGER"),

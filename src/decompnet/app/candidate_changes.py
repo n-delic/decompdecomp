@@ -16,13 +16,13 @@ def describe(net, agent, fn, source):
     origin=getattr(net,'_candidate_origins',{}).get((agent.id,fn['id']),{})
     if origin.get('revision')!=revision:
         origin={}
-    row=net.project_store(fn['project_id']).one('SELECT a.id,a.source,a.score,a.score_before,a.score_improved,a.via,a.agent_id '
+    row=net.project_store(fn['project_id']).one('SELECT a.id,a.source,a.score,a.score_before,a.score_improved,a.via,a.agent_id,a.steering '
                       'FROM attempts a WHERE a.function_id=? AND a.id=?',
                       fn['id'],origin.get('attempt')) if origin.get('attempt') else None
     if row is None:
         # Saved-best lookups use the score index; arbitrary revisions search only recent history.
         score=0 if source==fn['matched_source'] else fn['best_score'] if source==fn['best_source'] else None
-        columns='a.id,a.source,a.score,a.score_before,a.score_improved,a.via,a.agent_id '
+        columns='a.id,a.source,a.score,a.score_before,a.score_improved,a.via,a.agent_id,a.steering '
         if score is not None:
             row=net.project_store(fn['project_id']).one('SELECT '+columns+'FROM attempts a '
                               'WHERE a.function_id=? AND a.score=? AND a.source=? ORDER BY a.id DESC LIMIT 1',
@@ -46,6 +46,9 @@ def describe(net, agent, fn, source):
         else:
             text+='; did not compile'
         parts.append(text)
+        from .. import steering
+        if found := steering.decode(row['steering']):
+            parts.append(steering.describe(found))
         provenance=net.project_store(fn['project_id']).one('SELECT provenance FROM repair_attempt_provenance WHERE attempt_id=?',row['id'])
         if provenance:
             p=json.loads(provenance['provenance'])

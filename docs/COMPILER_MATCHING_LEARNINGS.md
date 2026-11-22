@@ -17838,3 +17838,45 @@ labels are offered as one child (`after_c` + the shared block copy: 1150 -> 0 in
 `volatile` gate of `local_flow` also changed (0.5.604): a `volatile` declaration outside the function or a cast of a global's
 address inside it no longer makes the flow give no advice, so the families built on it (about forty) run on a saved best that
 reads status words that way (that saved best went from no variants to 157, best 2985).
+
+### KMC GCC 2.7.2: how often dead-looking code in a matched source is real
+
+Question: when a matched source holds a statement that looks dead (a local nobody reads, a statement with no effect, a
+`do { } while (0)`, an `if` with the same arm twice), does removing it break the match, and if so, does the instruction it
+emitted line up with the target (plausibly original) or did only register allocation and scheduling move (scaffolding)?
+
+Method (read-only): every matched function of one N64 game built with KMC GCC 2.7.2 `-O2` (1,653 saved matching sources, each
+re-judged first: all 198 with candidates judged 0 before any edit). The statements that look dead are the ones
+`steering.dead_looking` finds against an empty parent (conservative: a never-read local, a no-effect expression, an empty
+`do/while (0)`, identical `if` arms; a write whose value comes from a call becomes the bare call). Each unit (a never-read local's
+declaration and every write to it) was removed on its own, the function recompiled with its own profile and judged by the app's
+judge in a separate process, nothing saved. A removal that breaks the match is "target instruction" when the instructions it
+loses (opcode and operand shapes, registers and symbols set aside) are ones the matching code, hence the target, has, and
+"steering only" when the multiset of instruction shapes is unchanged and only allocation or order moved. Nothing in the project
+was modified.
+
+Result: 198 of 1,653 matched functions (12%) have at least one candidate: 433 removals.
+- 367 (85%) change nothing: the byte-identical match survives. Truly dead; safe to drop (345 never-read locals, 21 identical `if`
+  arms, 1 empty `do/while (0)`). Mostly leftovers of the draft the matching code started from (`temp_v0_2`, `var_a2_3`).
+- 52 (12%) break the match and lose target instructions: 26 only move the stack pointer (a pad local or `volatile` scratch
+  that sizes the frame: `volatile s32 pad[2]`, `char __repair_stack_padding[8]`), 26 lose real instructions: a stack array whose
+  elements are stored but never read (GCC 2.7.2 keeps those stores), `(void)&sp68;` that takes the address of a stack local (the
+  `addiu a3, sp, N` it feeds), a pointer local that fixes which register holds a base (`u8 *entry = buffer + offset`: 29
+  instructions move).
+- 2 (0.5%) break the match with the same instructions in another allocation or order: `long long phantom_wide = arg3;` and one
+  `do { } while (0);` (in a function of about 180 instructions). Steering only.
+- 12 (2.8%) did not compile after the removal (multi-dimensional local arrays and struct locals whose declarations the unit
+  cut only partly): left out of the percentages above.
+Per function: 167 functions have at least one removal with no effect, 44 at least one removal that loses target instructions,
+2 a steering-only piece.
+
+What it suggests: dead-looking code in a saved match is almost always dead (85%) or a real frame or stack effect (12%); pure
+steering is rare (0.5%) in what ended up saved, so the tag should not be read as a verdict. Classify, never reject: the
+judge's byte comparison stays the only gate, and a variant that adds dead-looking code and improves the score is kept with a
+tag (`attempts.steering`). Polishing tries the whole unread local first (cheap: it succeeds 85% of the time) and keeps pieces
+tagged as matching a target instruction or as frame-sizing pads. Evidence level: one game, one compiler, single removals (two
+steering pieces could cover each other, and a removal that breaks alone can still be replaced by another spelling of the same
+instruction). Controlled tests for the classifier: `tests/test_steering.py`. A first version read `if (n != 0)` and `switch (m)`
+headers as non-reads and `return r` as a declaration, and tagged 80% of the candidates as dead and uncompilable: the removal run
+was how those were found, and each is a test now.
+

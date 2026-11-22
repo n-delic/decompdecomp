@@ -21,7 +21,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import agent_notes, agents, claim_routing, routing_experiment, scoring
+from . import agent_notes, agents, claim_routing, routing_experiment, scoring, steering
 from .candidate_work import trial
 from .compiler import compile_source
 from .elfobj import FunctionObj, Reloc, extract_function
@@ -2471,6 +2471,7 @@ class Network:
         now = time.time()
         compiled = score is not None if compiled is None else compiled
         improved = False
+        steering = self._steering(fn, source, score, mismatch_rows, best=best)  # (compiles outside the writer)
         with store.tx(wait=write_wait) as db:
             if before_record is not None:
                 before_record()  # scoped callers can reject revoked or stale work before any writes
@@ -2565,8 +2566,9 @@ class Network:
                 self._release_matched_claim(db,fn['id'],agent.id)
                 if not already_matched:
                     self._event(db, fn["project_id"], agent.id, "match", fn["name"])
-            db.execute('UPDATE attempts SET score_before=?,score_improved=? WHERE id=?',
-                       (current['best_score'], int(bool(improved or (matched and not stale and current['status'] != 'matched'))), attempt))
+            db.execute('UPDATE attempts SET score_before=?,score_improved=?,steering=? WHERE id=?',
+                       (current['best_score'], int(bool(improved or (matched and not stale and current['status'] != 'matched'))),
+                        steering, attempt))
 
         if stale:
             raise NetworkError("Compiler settings changed while this candidate was compiling. Your attempt is saved; compile it again with today's settings.")
@@ -2579,6 +2581,48 @@ class Network:
             store.after_commit(lambda: self.on_match(store.one("SELECT * FROM projects WHERE id=?", fn["project_id"]), fn["id"], agent))
         elif improved:
             self.on_improvement(store.one("SELECT * FROM projects WHERE id=?", fn["project_id"]), fn["id"])
+
+    PARENT_ROWS_KEPT = 64
+
+    def _steering(self, fn, source: str, score: int | None, rows, *, best: bool = True) -> str | None:
+        """The steering tag of an attempt (steering.py): set only on a variant that beats the function's saved best
+        and adds dead-looking code, so most attempts cost nothing here. Never blocks or raises: a variant that can't be
+        classified is recorded untagged. Remembers the rows of every improving variant, the next one's parent."""
+        try:
+            if score is None or not rows or not best or fn["status"] == "matched":
+                return None
+            parent, parent_score = fn["best_source"], fn["best_score"]
+            improves = parent_score is None or score < parent_score
+            if improves:
+                kept = self.__dict__.setdefault("_parent_rows", {})
+                kept[fn["id"], hashlib.sha256(source.encode()).hexdigest()] = list(rows)
+                while len(kept) > self.PARENT_ROWS_KEPT:
+                    del kept[next(iter(kept))]
+            if not improves or not parent or parent == source or not steering.dead_looking(parent, source):
+                return None
+            return steering.encode(steering.classify(self.parent_rows(fn, parent), rows, parent, source))
+        except Exception:
+            logging.getLogger("decompdecomp").debug("steering tag skipped", exc_info=True)
+            return None
+
+    def parent_rows(self, fn, source: str):
+        """The judge's rows for `source` (a variant's parent) against the target: what this process judged most
+        recently, else compiled again in ROM mode. None: a project's build can't compile a second source beside the
+        one on disk, so a variant whose parent this process never judged goes untagged there."""
+        key = (fn["id"], hashlib.sha256(source.encode()).hexdigest())
+        found = getattr(self, "_parent_rows", {}).get(key)
+        if found is not None:
+            return found
+        store = self.project_store(fn["project_id"])
+        proj = store.one("SELECT * FROM projects WHERE id=?", fn["project_id"])
+        if not getattr(self, "is_rom", lambda _: False)(proj):
+            return None
+        ctx = self._context(proj["id"], fn["unit"])
+        result = self._attempt_compilation(proj, ctx["header"], source, fn)
+        if not result.ok:
+            return None
+        cand, verdict, _ = self._evaluate(fn, proj, result.obj)
+        return None if cand is None else self._score_candidate(fn, proj, cand, verdict).rows
 
     def _replace_match(self, db, current, agent: Agent, source: str) -> None:
         """An already matched function's new exact source (the judge verified it) is the saved one. The previous
