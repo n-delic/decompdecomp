@@ -15198,3 +15198,8 @@ nearby scratch float scored 6,425. The measured family matches the exact
 reordering around the call, with the same field offsets, call and
 immediate argument. Synthetic coverage checks that the load moves across
 only the second clear.
+
+
+### Recover a pair of leading float arguments
+
+Two saved N64 functions built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1` passed float bit patterns to a callee whose draft prototype named two integer parameters. The target loaded the same constants into `$f12` and `$f14` before the call. Changing the first two prototype parameters to `f32` and writing the corresponding float literals reproduced both linked targets exactly (each score 355 to 0). Evidence: two saved examples and synthetic source, register and routing tests. The candidate requires a matching target sequence, a unique local prototype and call, and literal bits equal to the observed constants; the byte judge verifies the result.
