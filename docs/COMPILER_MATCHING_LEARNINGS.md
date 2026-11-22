@@ -14621,3 +14621,18 @@ site and 9,265 at all four sites. Staging the bound alone did not
 improve the score. Synthetic tests require the witnessed call, field
 offset, lower-bound bits and candidate register swap. They reject an
 address-taken local and exercise an inline field accessor.
+
+### Spread staging attempts across a long candidate list
+
+In a private N64 scratch replay with `gcc-2.7.2-kmc -G0 -mips3 -mgp32
+-mfp32 -O2`, some dead-local staging winners appeared hundreds of candidates
+into the source-ordered list. Visiting the start and then the midpoints of
+progressively smaller intervals preserves the candidate set and samples more
+source regions before the compile budget runs out. Targeted initialized-load
+variants still lead the list.
+
+With 32 compiles per function, the original order improved five of 11
+scratch baselines with known staging winners. The spread order improved nine.
+Two of those baselines also reproduced the gain through the app's candidate
+collector, falling from 3,057 to 3,027 and from 13,328 to 12,993. This is a
+replay on known positive examples. All inspected winners remain unmatched.
