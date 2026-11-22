@@ -14291,3 +14291,42 @@ cursor with each advance by its command's words), `or_chain_order` (the literal 
 signedness); `field_struct_view_printed` (already there) covers the float fields, `one_shot_unwrap` exists for the wrapper but offered nothing on this source (the wrapper was removed by hand). What the
 permuter still cannot do: reach the whole chain from the saved best in one run. Each family is a child that scores
 worse alone; only the combination, with the statements of each command in the macro's evaluation order, is exact.
+
+## KMC GCC 2.7.2 -O2 (N64): a byte-unpacking function with an inlined two-table lookup, 380 -> 0 (one function)
+
+`gcc-2.7.2-kmc`, `-G0 -mips3 -mgp32 -mfp32 -O2`. A function that unpacks a low and a high bound from one word, draws a
+random value between them, packs a result word and then calls a small inlined helper (a lookup in one of two byte
+tables, compared with the key). Saved best 380, one differing row in the diff (`andi $s1,$v1,0xffff` where the target
+has `move $s1,$v1`) and then, once that was fixed, three more places. One function, so this is hand evidence, not a
+controlled result; the edits are in the order that was measured (each score is from the one before):
+
+1. The bound pair as `u16` (`u16 hi, lo;`, `lo = (u16)(w >> 8)`, `u16 tmp`, `(u8)hi < (u8)lo`): 380 -> 970 -> 770 ->
+   510. Each part alone is worse. A zero-extended 16-bit local is a `subreg`, so the later `& 0xFF` folds into the `andi`
+   the game's mask helper already made, and the copy into the register stays a plain `move`.
+2. The second mask through the game's mask helper (`helper(lo) + r` for `(lo & 0xFF) + r`): 510 -> 180. With the
+   narrowed local the compiler no longer shares the two masks unless both name the same inline function.
+3. The packed store's constant staged in a local (`q = low_field | 0x19; word = high_field | q;`): 160 -> 95 (the target
+   does the `ori` on the low field before the `or`; combine reassociates any one-line spelling).
+4. The helper's compare written into each arm, the first arm `!=` and the second `==`, then three smaller edits
+   (255 -> 80 -> 60 -> 0): the first jump pass merges identical arm tails and leaves one compare with one register pair;
+   the target's arms have swapped temporaries, so its compare was in each arm and only the jump pass after allocation
+   merged them. Written alike (`==` both) the arms never mirror (755). The key copy is pinned with `key = 0; key = y;`
+   because cse otherwise forwards the key into the arms and deletes the copy (the key then ranks above it in `global.c`'s
+   order: 3/10 against 3/11 for the copy, so the copy got the last register); the first arm tests the loaded byte in the
+   condition (80 -> 60); the second arm's address built in a base and an offset local (60 -> 0, it reorders the `lui`
+   and `sll` the second scheduler had tied).
+
+Register order was read from `cc1 -dl -dg`: the `regs to allocate` line is the allocation order, priority
+`floor_log2(refs) * refs / live_length` truncated, ties by pseudo number, which is why a copy living one instruction
+longer than its neighbours took the wrong register.
+
+Failed: declaration order of the helper's locals (no effect: pseudos are numbered at first use), `u8`/`u32`/`s32` types
+of the helper's locals, a ternary lookup (435), the compare in each arm written alike (755), a comma expression or an
+early use of the byte to move the copy (no change), `cur = 0` alone without the second assignment (255).
+
+Added to the permuter (decomp-repair 0.5.374): `masked_byte_pair` (steps 1 and 2 as one child, step 1 alone too; the
+saved best scored 180 and 510), `or_constant_stage` (step 3; 315 alone) and `compare_into_arms` (step 4; three
+cumulative children, 345, 325 and 265 alone). From the saved best the three applied in sequence scored 265, 65, 0
+(`tests/test_byte_pair_compare_arms.py` checks they are offered and compile; the library's `test_byte_pair_chain.py`
+checks they compose). What the permuter still cannot do: choose the pin (`key = 0; key = y;`) without the shape that
+needs it, or find the first arm's polarity change by score, since written alike it measures 755 against the best's 380.
