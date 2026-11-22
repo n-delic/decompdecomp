@@ -14988,3 +14988,18 @@ and no warnings. Renaming the sample local without the in-place
 multiply scored 7,605. The repair checks the old field and compare,
 the sample's literal inputs and the scale, and verifies that no
 control-flow edge bypasses the new lifetime's initialization.
+
+### Reuse the saved field for a guarded double and subtract
+
+In a private N64 function built with GCC 2.7.2 KMC and
+`-G0 -mips3 -mgp32 -mfp32 -O2`, both target and candidate previously
+loaded a field into a saved float and subtracted it from a global.
+For a later repeat, the target kept the same saved register while
+doubling the field in a branch delay slot. The draft used a scratch
+register for that later load, double and subtraction.
+
+Reusing the completed saved local restored the three registers and
+moved the exact linked score from 7,495 to 7,480 with no warning and
+all three table relocations. An unrelated local scored 7,600.
+The tests require the agreeing older subtraction, the same field
+and flag, and dead local lifetimes verified from control flow.

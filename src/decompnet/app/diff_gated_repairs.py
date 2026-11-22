@@ -14,6 +14,7 @@ from decomprepair import (
     clamp_return_local,
     clamp_saved_argument_lifetime,
     clamped_field_reload,
+    conditional_field_subtract,
     counted_switch_advance,
     direct_mapped_address,
     field_snapshot_copies,
@@ -296,6 +297,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     result += measured_scalar_updates.variants(source, name, header, toolchain, rows, asm)
     if toolchain == 'gcc-2.7.2-kmc':
         result += boolean_guard_operands.variants(source, name, rows, header)
+        result += conditional_field_subtract.variants(source, name, rows, header=header)
         result += sampled_phase_axis_stage.variants(source, name, rows, header=header)
         result += shared_projection_lifetime.variants(source, name, rows, header=header)
         result += allocation_repairs.measured_slot_orders(source, name, rows, header)
