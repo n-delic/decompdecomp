@@ -17,6 +17,13 @@ assert.equal(ctx.compilerPartGroups(parts, 'range', 'address-desc')[0].start, 70
 assert.equal(parts[0].start, 30); // grouping never mutates the source configuration
 assert.equal(ctx.compilerPartGroups([], 'settings').length, 0);
 assert.equal(ctx.compilerPartGroups([{start:0,end:1,compiler:'Custom',flags:''}])[0].functions, null);
+// Hover help: each known argument is its own titled element; unknown ones stay plain text and html is escaped.
+const flagHtml = ctx.compilerFlagsHtml('-G0 -mips3 -O2 -mcpu=VR4300 -fwhatever <x>');
+assert.match(flagHtml, /<span class="compiler-flag"[^>]*title="-O2: [^"]+">-O2<\/span>/);
+assert.match(flagHtml, /title="-G0: /); assert.match(flagHtml, /title="-mcpu=VR4300: Schedule[^"]*N64/);
+assert.ok(!flagHtml.includes('title="-fwhatever')); assert.ok(flagHtml.includes('-fwhatever &lt;x&gt;'));
+assert.match(ctx.compilerFlagsHtml('-G 0'), />-G 0<\/span>/);
+assert.equal(ctx.compilerFlagsHtml(''), '');
 console.log('compiler groups passed');
 
 // ROM overview responses omit kind; the profile migration action must still appear.
