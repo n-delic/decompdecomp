@@ -28,6 +28,7 @@ from . import (
     claim_state,
     compiler_experiments,
     compiler_passes,
+    compiler_source,
     focused_agents,
     learnings_search,
     local_experiments,
@@ -708,6 +709,8 @@ HANDLERS: dict[str, Callable[..., str]] = {
         score_permutations.run(net, agent, slug, function, revision, statements, patches, max, marked),
     "prove_chain": lambda net, agent, slug, function, revision, families=None, steps=4, children=40:
         prove_chain.run(net, agent, slug, function, revision, families, steps, children),
+    "compiler_source": lambda net, agent, slug, compiler, function_name: compiler_source.run(net, agent, slug, compiler,
+                                                                                             function_name),
     "get_compiler_trial": compiler_experiments.retrieve,
     "review_search_seed": reviewed_search_seeds.review,
     "get_search_brief": search_brief.read,
@@ -796,7 +799,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
 
 READ_ONLY = frozenset({"search_repair_examples", "get_repair_examples", "get_search_brief","get_boundary_evidence", "get_claims", "resolve_addresses", "project_info", "get_function", "last_diff", "get_context", "read_data", "get_class",
                        "guess_struct", "compiler_map", "list_functions", "search_flags", "search_notes",
-                       "find_similar", "search_learnings", "guide", "read_file", "search_code", "file_status", "standins_for",
+                       "find_similar", "search_learnings", "compiler_source", "guide", "read_file", "search_code", "file_status", "standins_for",
                        "port_readiness", "get_data_unit", "check_for_pc", "watch_in_emulator"})
 
 # Read-only tools that read a function's saved C or the headers: they read the saved folder first (an edit made there
@@ -1401,6 +1404,12 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         source beating the saved best is recorded; otherwise nothing, and no move-on count. ROM projects."""
         return await run(ctx, 'prove_chain', function=function, revision=revision, families=families, steps=steps,
                          children=children)
+
+    @tool
+    async def compiler_source(ctx: Context, compiler: str, function_name: str) -> str:
+        """Read one function or macro of a compiler pass from the compiler's installed source (e.g. "gcc-2.7.2-kmc",
+        "birthing_insn_p"; sched.c, local-alloc.c, global.c, loop.c...): the rule behind your last rows. Bounded."""
+        return await run(ctx, 'compiler_source', compiler=compiler, function_name=function_name)
 
     @tool
     async def compiler_experiments(ctx: Context, function: str, revision: str, trials: list[CompilerTrial]) -> str:
