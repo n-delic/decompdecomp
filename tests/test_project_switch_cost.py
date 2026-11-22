@@ -28,7 +28,7 @@ def test_library_report_reads_only_fingerprints_present_in_game(tmp_path,monkeyp
     read = []
     def measured(sql,*args):
         rows = all_rows(sql,*args)
-        if 'FROM sdk_signatures' in sql:
+        if 'FROM sdk_signatures' in sql and 'DISTINCT corpus' not in sql:  # (the corpus list is a few rows, not the library)
             read.append(len(rows))
         return rows
     monkeypatch.setattr(net.store,'all',measured)

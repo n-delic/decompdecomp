@@ -48,10 +48,10 @@ def offered(source, family):
 
 
 def test_each_step_is_offered():
-    moved, = offered(SOURCE, 'delay_slot_duplicate')
+    # (two children now: the repair on m2c's source, and again with its M2C_FIELD macros expanded; either serves)
+    moved = offered(SOURCE, 'delay_slot_duplicate')[0]
     assert moved.count('var_v0 = arg0 * 2;') == 1 and '        h(arg0);\n    }\n    var_v0 = arg0 * 2;' in moved
-    wide, = offered(SOURCE, 'symbol_access_width')
-    assert '*(s32 *)(D_8010D784 + temp_v0) = arg0;' in wide
+    assert any('*(s32 *)(D_8010D784 + temp_v0) = arg0;' in wide for wide in offered(SOURCE, 'symbol_access_width'))
     record = offered(SOURCE, 'inferred_record_layout')
     assert record and '((__repair_record_temp_a0*)temp_a0)->field_2 = 1U;' in record[0]
     assert {'delay_slot_duplicate', 'symbol_access_width'} <= set(draft_repairs.AGENT_FAMILIES)
@@ -77,5 +77,5 @@ def test_kmc_no_longer_keeps_the_duplicate_across_the_call(tmp_path):
         md = capstone.Cs(capstone.CS_ARCH_MIPS, capstone.CS_MODE_MIPS64 + capstone.CS_MODE_BIG_ENDIAN)
         return {i.op_str.split(',')[0] for i in md.disasm(code, 0) if i.mnemonic == 'sw' and '($sp)' in i.op_str}
     # m2c's copy before the call lives in a saved register; computed after the `if`, it needs none
-    moved, = offered(SOURCE, 'delay_slot_duplicate')
+    moved = offered(SOURCE, 'delay_slot_duplicate')[0]  # (the first of two: see test_each_step_is_offered)
     assert len(saved(moved)) < len(saved(SOURCE))
