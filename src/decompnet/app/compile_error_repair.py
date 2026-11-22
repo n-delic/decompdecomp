@@ -24,7 +24,7 @@ def candidates(compile_source, source, *, rounds=ROUNDS, check_cancel=None):
                 yield FAMILY, source
             return
         if 'source too large' in str(result.log).lower():
-            # the compiler takes at most 64 KB: a big function's draft spends a fifth on comments and indentation
+            # the compiler takes at most compiler.MAX_SOURCE_BYTES: a big function's draft spends two fifths on comments and indentation
             smaller = compile_error_repairs.compact(source)
             if smaller is None:
                 return
