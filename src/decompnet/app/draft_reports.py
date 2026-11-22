@@ -7,7 +7,7 @@ import time
 PREFIX = 'machine-draft:'
 GENERATION_PREFIX = 'machine-draft-generation:'
 # Bump when optional initial-draft trials change, so completed misses can retry.
-REPAIR_REVISION = 6
+REPAIR_REVISION = 7  # 7: drafts repaired from the compiler's diagnostics (app/compile_error_repair.py), so functions with no saved C retry
 
 
 def generation(net, fid, *, project_id=None):
