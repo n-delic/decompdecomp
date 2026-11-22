@@ -17415,3 +17415,36 @@ declarations moved before the group). From the saved best, children score 100 an
 moved) 0 in the isolated judge; `tests/test_float_pun_depun_wiring.py` checks the draft repairs and the local lane.
 Not covered: the step from the plain natural source (cached field reads, the volatile read, the staging of the
 differences), which is a separate family still to write.
+
+## An array's frame slot comes at its declaration, an addressed scalar's at its first `&` (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`)
+
+An 842-instruction N64 lit-actor drawer (a function with fifteen `u8 spXX` locals whose addresses are passed to a light
+lookup, one `f32 sp30[3]` vector passed to a rotate helper, and a frame eight bytes larger than its locals) sat at a
+saved best of 10895 under scoring 2 (7955 under scoring 1) with the right frame size but every local at the wrong
+offset: the target has the byte locals at `0x20(sp)`..`0x2e(sp)` and the vector at `0x30(sp)`, the best had the vector
+at `0x28` and the bytes at `0x38`. Earlier sessions tried a flat array, a 5x3 array and an RGB struct for the bytes
+(9219 to 9270), padding before and after, and reordering the scalar declarations (ties).
+
+Hypothesis, not confirmed in the compiler source: an array (BLKmode) or a `volatile` local takes its frame slot when its
+declaration is expanded, while a scalar whose address is taken takes one when the first `&` is expanded, later in the
+code than the opening of the function (the parser has not seen the `&` yet when the declaration is expanded, so the
+scalar first lives in a pseudo and `put_var_into_stack` moves it when it meets the `&`). Slots grow upward in
+allocation order, so everything declared as an array or `volatile` at the top of the function sits below every
+addressed scalar, whatever the declaration order. The agents' scratch (`volatile u64 padding;`, eight bytes that only
+reserve frame) pushed the bytes up by eight as well.
+
+| edit | score |
+| --- | --- |
+| saved best (vector and padding declared at the top; bytes at `0x38`, vector at `0x28`) | 10895 |
+| the vector declared at the start of the `switch` body that uses it, padding left at the top | 10895 |
+| the vector alone moved, no padding (frame 0x60, bytes and vector at the target's offsets) | 10718 |
+| the vector and the unused `volatile u64` declared at the start of the switch body, padding after the vector | 10702 |
+
+Controlled result: the offsets of all sixteen locals and the frame size now match the target; the score barely moves
+because a stack-offset difference costs 1 each and the function's remaining difference is scheduling (see below).
+One function, not a regression test of the compiler.
+
+Family: decomp-repair `array_declaration_scope_sink` (0.5.594, in `declaration_scope_sink_repairs`): a top-level array
+whose every reference lies in one block (a switch body included) is declared at the start of that block, and a child
+moves the unused `volatile` scratch with it. `tests/test_array_declaration_scope_sink_wiring.py` checks the draft repairs
+and the local lane. From the saved best the combined child scores 10702 in the isolated judge.
