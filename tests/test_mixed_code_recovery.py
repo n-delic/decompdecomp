@@ -41,12 +41,13 @@ def asm(path,words,start,*,raw=False,big=True):
     path.write_text('\n'.join(lines)+'\n')
 
 
-def project(tmp_path,*,call=True,explicit=False,overlap=False,big=True,console_id=None):
+def project(tmp_path,*,body=BODY,call=True,pointer=False,explicit=False,overlap=False,big=True,console_id=None):
     console=get(console_id or ('n64' if big else 'ps'))
     caller=[0x27BDFFE8,0xAFBF0014,0x0C000000|((BASE+0x40)>>2)&0x3FFFFFF,0,
             0x8FBF0014,0x27BD0018,0x03E00008,0]
     if not call:caller[2]=0
-    words=caller+[0x7000003F]*8+BODY+[0]*10
+    if pointer:caller[2:4]=[0x3C048000|BASE>>16&0,0x24841000|(BASE+0x40)&0xFFFF]
+    words=caller+[0x7000003F]*8+body+[0]*10
     rom=packed(words,big);(tmp_path/'rom.bin').write_bytes(rom)
     cfg={'options':{},'segments':[{'name':'unit','type':'code','start':0,'vram':BASE,
          'subsegments':[[0,'c','unit']]+([[32,'data','data']] if explicit else [])},[len(rom)]]}
@@ -189,3 +190,23 @@ def test_a_call_inside_a_declared_slot_can_recover_its_own_bank(tmp_path):
     raw.write_text('\n'.join(lines[:-1])+'\n')
     assert mixed_code.refine(path,tmp_path,'rom.bin',console,log=lambda _:None)
     assert any(s[0]==64 for s in yaml.safe_load(path.read_text())['segments'][0]['subsegments'])
+
+
+def test_a_body_reached_only_through_a_built_pointer_is_recovered_too(tmp_path):
+    """A callback or handler-table entry has no jal; the address its owner builds is the same independent evidence."""
+    path,console=project(tmp_path,call=False,pointer=True)
+    assert mixed_code.refine(path,tmp_path,'rom.bin',console,log=lambda _:None)
+    subs=yaml.safe_load(path.read_text())['segments'][0]['subsegments']
+    assert [s[0] for s in subs]==[0,0x20,0x40,0x58]
+
+
+def test_a_quiet_body_that_calls_a_known_function_is_recovered_but_a_leaf_like_table_is_not(tmp_path):
+    """Nothing calls or points at it; the $ra spill/restore and a call into the project's own code corroborate it."""
+    quiet=[0x27BDFFE8,0xAFBF0014,0x0C000000|(BASE>>2)&0x3FFFFFF,0,0x8FBF0014,0x03E00008,0x27BD0018]
+    path,console=project(tmp_path,body=quiet,call=False)
+    assert mixed_code.refine(path,tmp_path,'rom.bin',console,log=lambda _:None)
+    subs=yaml.safe_load(path.read_text())['segments'][0]['subsegments']
+    assert 0x40 in [s[0] for s in subs]
+    other=tmp_path/'b';other.mkdir()
+    path,console=project(other,call=False)  # BODY calls nothing: stays raw
+    assert not mixed_code.refine(path,other,'rom.bin',console,log=lambda _:None)
