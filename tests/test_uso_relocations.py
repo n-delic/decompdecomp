@@ -143,8 +143,33 @@ def test_overlay_defined_zero_data_requires_explicit_loader_binding(tmp_path, mo
         assert not uso_match.link(wrong.obj, 'example', body.code, info).exact
 
 
+def test_overlay_explicit_binding_preserves_c_donor_expressions(tmp_path):
+    from decompnet.app.overlay_donor_aliases import explicit_symbol_bindings
+    from decompnet.elfobj import extract_function
+
+    if toolchains.installed('ido-5.3') is None:
+        pytest.skip('needs IDO 5.3')
+    cfg = compiler_config(tmp_path, {'compiler': {'toolchain': 'ido-5.3', 'flags': toolchains.get('ido-5.3').flags}})
+    header = 'extern int donor_data;'
+    source = 'int example(void) { return donor_data + 1; }'
+    built = compile_source(cfg, header, source)
+    assert built.ok, built.log
+    body = extract_function(built.obj, 'example')
+    info = {'section': 64, 'start': 0, 'size': len(body.code),
+            'relocs': [(r.offset, r.type, 1) for r in body.relocs]}
+    target = uso_match.symbolic_target(uso_match.Target('example', 0, body.code, [], uso=info))
+    baseline = uso_match.link(built.obj, 'example', body.code, info)
+    assert baseline.instructions_exact and not baseline.exact
+    rebound, context = explicit_symbol_bindings(source, header, baseline.candidate, target,
+                                               uso_match.separate_reference)
+    assert rebound == source
+    result = compile_source(cfg, context, rebound)
+    assert result.ok, result.log
+    assert uso_match.link(result.obj, 'example', body.code, info).exact
+
+
 def test_overlay_cpp_method_calls_keep_loader_binding(tmp_path):
-    from decompnet.app.overlay_donor_aliases import cpp_generated_bindings, cpp_methods
+    from decompnet.app.overlay_donor_aliases import cpp_methods, explicit_symbol_bindings
     from decompnet.elfobj import extract_function, unmangle
 
     if toolchains.installed('ido-7.1-ncc') is None:
@@ -162,8 +187,8 @@ def test_overlay_cpp_method_calls_keep_loader_binding(tmp_path):
     target = uso_match.symbolic_target(uso_match.Target('example', 0, raw.code, [], uso=info))
     baseline = uso_match.link(original.obj, 'example', raw.code, info)
     assert baseline.instructions_exact and not baseline.exact
-    marker_source, marker_header = cpp_generated_bindings(source, header, baseline.candidate, target,
-                                                         uso_match.separate_reference)
+    marker_source, marker_header = explicit_symbol_bindings(source, header, baseline.candidate, target,
+                                                           uso_match.separate_reference)
     marker_build = compile_source(cfg, marker_header, marker_source)
     assert marker_build.ok, marker_build.log
     assert uso_match.link(marker_build.obj, 'example', raw.code, info).exact
@@ -182,7 +207,8 @@ def test_overlay_cpp_method_calls_keep_loader_binding(tmp_path):
     assert cpp_methods(source, header, 'example', baseline.candidate, split, uso_match.separate_reference) is None
 
 
-def test_overlay_cpp_generated_symbols_use_explicit_object_bindings(tmp_path, monkeypatch):
+@pytest.mark.parametrize('vtable_offset', [0, 0x17FFF, 0x18000, -4])
+def test_overlay_cpp_generated_symbols_use_explicit_object_bindings(tmp_path, monkeypatch, vtable_offset):
     from contextlib import nullcontext
     from inspect import unwrap
     from threading import Event
@@ -191,7 +217,7 @@ def test_overlay_cpp_generated_symbols_use_explicit_object_bindings(tmp_path, mo
 
     from decompnet import consoles
     from decompnet.app import donor_build, exact_match_inputs
-    from decompnet.app.overlay_donor_aliases import cpp_generated_bindings
+    from decompnet.app.overlay_donor_aliases import explicit_symbol_bindings
     from decompnet.elfobj import extract_function
 
     if toolchains.installed('ido-7.1-ncc') is None:
@@ -210,38 +236,47 @@ def test_overlay_cpp_generated_symbols_use_explicit_object_bindings(tmp_path, mo
     kinds = {4: 0x11, 5: 0x13, 6: 0x12}
     records = b''.join(struct.pack('>III', (indices[r.symbol] << 4) | (kinds[r.type] & 15), r.offset + 4, 1)
                        for r in body.relocs)
-    cartridge = bytes(64) + _module(bytes(4) + body.code, relocations=records)
+    target_code = bytearray(body.code)
+    for reloc in body.relocs:
+        if reloc.symbol == '__vtbl__5Child':
+            value = ((vtable_offset + 0x8000) >> 16) & 0xFFFF if reloc.type == 5 else vtable_offset & 0xFFFF
+            target_code[reloc.offset + 2:reloc.offset + 4] = value.to_bytes(2, 'big')
+    target_code = bytes(target_code)
+    cartridge = bytes(64) + _module(bytes(4) + target_code, relocations=records)
     region, = uso.read(cartridge)
     info = {'section': region.offset, 'start': 4, 'size': len(body.code),
             'relocs': uso.function_relocations(region, 4, len(body.code))}
-    target = uso_match.symbolic_target(uso_match.Target('example', 4, body.code, [], uso=info))
-    sink = uso_match.alias(region.offset, 3)
-    header, source = header.replace('sink', sink), source.replace('sink', sink)
+    target = uso_match.symbolic_target(uso_match.Target('example', 4, target_code, [], uso=info))
     original = compile_source(cfg, header, source)
     assert original.ok, original.log
-    baseline = uso_match.link(original.obj, 'example', body.code, info)
-    assert baseline.instructions_exact and not baseline.exact
-    rebound, context = cpp_generated_bindings(source, header, baseline.candidate, target, uso_match.separate_reference)
+    baseline = uso_match.link(original.obj, 'example', target_code, info)
+    assert not baseline.exact
+    rebound, context = explicit_symbol_bindings(source, header, baseline.candidate, target, uso_match.separate_reference)
     built = compile_source(cfg, context, rebound)
     assert built.ok, built.log
-    assert uso_match.link(built.obj, 'example', body.code, info).exact
+    assert uso_match.link(built.obj, 'example', target_code, info).exact
     assert uso.rebuild(cartridge, [('example', info, built.obj)]) == cartridge
     wrong = compile_source(cfg, context.replace('_sym_1__ref1', '_sym_2__ref1'), rebound)
     assert wrong.ok, wrong.log
-    assert not uso_match.link(wrong.obj, 'example', body.code, info).exact
+    assert not uso_match.link(wrong.obj, 'example', target_code, info).exact
     wrong_context = context.replace('decomp_overlay_bind___ct__4BaseFi = ',
                                     'decomp_overlay_bind___ct__4BaseFi = 1 + ')
     wrong = compile_source(cfg, wrong_context, rebound)
     assert wrong.ok, wrong.log
-    assert not uso_match.link(wrong.obj, 'example', body.code, info).exact
+    assert not uso_match.link(wrong.obj, 'example', target_code, info).exact
+    vtable_line = next(line for line in context.splitlines() if 'void *decomp_overlay_bind___vtbl__' in line)
+    wrong_context = context.replace(vtable_line, vtable_line.removesuffix(';') + ' + 1;')
+    wrong = compile_source(cfg, wrong_context, rebound)
+    assert wrong.ok, wrong.log
+    assert not uso_match.link(wrong.obj, 'example', target_code, info).exact
 
     console = consoles.of({'platform': 'n64'})
     record = Mock()
     net = SimpleNamespace(
         _compile=lambda _project, h, s, _fn: compile_source(cfg, h, s),
         _evaluate=lambda _fn, _project, obj: (lambda result: (result.candidate, result.exact, result.problems))(
-            uso_match.link(obj, 'example', body.code, info)),
-        _rom_target=lambda _fn: uso_match.Target('example', 4, body.code, [], uso=info),
+            uso_match.link(obj, 'example', target_code, info)),
+        _rom_target=lambda _fn: uso_match.Target('example', 4, target_code, [], uso=info),
         _target_obj=lambda *_: target, console=lambda _: console, _record=record,
         progress=SimpleNamespace(judging=lambda *_args, **_kwargs: nullcontext()))
     monkeypatch.setattr(exact_match_inputs, 'capture', lambda *_: {})
@@ -253,7 +288,7 @@ def test_overlay_cpp_generated_symbols_use_explicit_object_bindings(tmp_path, mo
     saved = record.call_args.kwargs['exact_inputs']
     replayed = compile_source(cfg, saved['header'], saved['source'])
     assert replayed.ok, replayed.log
-    assert uso_match.link(replayed.obj, 'example', body.code, info).exact
+    assert uso_match.link(replayed.obj, 'example', target_code, info).exact
 
 
 def test_yay0_rebuild_uses_literals_and_verifies_back_references():
