@@ -1324,6 +1324,13 @@ reach it. No AI tokens are used by these searches.
 
 For a longer search of one function, open its drawer and expand **Deep permuter · this function**.
 Choose a time limit and maximum candidate compiles, then select **Run deep permuter**.
+
+Deep searches give targeted repairs most of the initial budget. A short random probe
+can earn more time and candidate trials by improving the score. If targeted repairs
+paused for that probe, the search gives them any remaining budget when it ends.
+The current diff prioritises relevant repair families and limits speculative
+storage, declaration order and global type trials.
+
 **Threads per function** runs independent candidate paths concurrently; targeted repairs are divided
 between workers and random paths use different seeds. The project pass also has **Functions at a time**
 (the former Parallel threads setting). For example, 2 functions × 4 threads uses up to 8 search workers.

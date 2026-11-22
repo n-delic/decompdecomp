@@ -44,7 +44,7 @@ from ..compile_sessions import batched
 from ..forks.project import ForkError
 from ..hostenv import NO_WINDOW
 from ..network import NetworkError
-from ..permuter import mutate
+from ..permuter import MUTATIONS, mutate
 from ..project import compiler_for
 from ..repair_feedback import trial as repair_trial
 from . import draft_repairs, local_claims, switch_tables, workers
@@ -165,6 +165,23 @@ class TracedVariant(str):
         # Copying or pickling a variant (it crosses worker boundaries) rebuilt it from the text alone and failed with
         # "missing 1 required positional argument: 'lineage'", stopping a long Deep Permuter run.
         return (str(self), self.lineage)
+
+
+class RewriteRandom(random.Random):
+    """Observe the library's selected fallback mutation without changing its random draws."""
+
+    def choice(self, choices):
+        selected = super().choice(choices)
+        if callable(selected) and selected in MUTATIONS:
+            self.rewrite = 'simple_' + selected.__name__.lstrip('_')
+        return selected
+
+    def variant(self, source, focus, header):
+        self.rewrite = None
+        candidate = mutate(source, self, focus, header=header)
+        if candidate and self.rewrite:
+            return TracedVariant(candidate, [self.rewrite])
+        return candidate
 
 
 class GenerationStopped(Exception):
@@ -664,6 +681,15 @@ class Permuter:
 
     @buffered
     @batched
+    def _start_random_window(self):
+        pass
+
+    def _random_trials_remaining(self):
+        return None
+
+    def _random_budget_available(self):
+        return True
+
     def _permute(self, agent, proj, fn, st: State) -> None:
         seconds = self.seconds
         preflight_deadline = time.monotonic() + seconds
@@ -691,7 +717,7 @@ class Permuter:
         fork = self.net.fork_slug(proj["slug"])
         from . import random_safety
         from .progress import ProgressMoved
-        rng = random.Random(f"{fn['id']}-{fn['permuted']}"+getattr(self, "random_salt", ""))
+        rng = RewriteRandom(f"{fn['id']}-{fn['permuted']}"+getattr(self, "random_salt", ""))
         gen = None
         header = ''
         held = ExitStack()
@@ -749,9 +775,10 @@ class Permuter:
             from .search_frontier import Frontier
             frontier = self.search_frontier = Frontier()
             frontier.offer(best_src, best, rows, arch=proj['arch'])
+            self._start_random_window()
             batches = misses = 0
             refused, taken = None, 0  # the last refusal of a variant (NetworkError), variants the project took
-            while time.monotonic() < deadline and best > 0 and not st.stop.is_set():
+            while time.monotonic() < deadline and best > 0 and not st.stop.is_set() and self._random_budget_available():
                 if gen is not None:
                     # a batch of decomp-permuter's variants, of the C the turn started from and of the best so far in
                     # turn: from the best alone, rewrites piled on rewrites and got stuck on one of nine near misses of
@@ -796,7 +823,7 @@ class Permuter:
                         if gen._closed.is_set():gen = Generator()
                         def check_generation(fn=fn):
                             random_safety.checkpoint(self.net, fn)
-                            if st.stop.is_set() or time.monotonic() >= deadline:
+                            if st.stop.is_set() or time.monotonic() >= deadline or not self._random_budget_available():
                                 raise GenerationStopped()
                         batch = self._stream_variants(gen.chunks(job, check_generation), agent, proj, fn, fork)
                     else:
@@ -812,7 +839,7 @@ class Permuter:
                     # Several siblings at a time, as the generator's batches are: one at a time, each was compiled and
                     # judged before the next was written, so a deep search's compile slots sat idle (99.7% of a lane's
                     # compiles ran inline on a game whose C decomp-permuter couldn't read).
-                    written = [mutate(base, rng, focus, header=simple_header) for _ in range(SIMPLE_BATCH)]
+                    written = [rng.variant(base, focus, simple_header) for _ in range(SIMPLE_BATCH)]
                     # none of them applies to this C (lerp's `a + (b - a) * t`): a minute of trying burnt a core
                     misses = 0 if any(written) else misses + len(written)
                     if misses >= REWRITE_MISSES:
@@ -820,14 +847,15 @@ class Permuter:
                     written = list(dict.fromkeys(cand for cand in written if cand))
                     batch = self._stream_variants((chunk for chunk in [written]), agent, proj, fn, fork) if written else []
                 for cand in batch:
-                    if cand is None or time.monotonic() >= deadline or st.stop.is_set():
+                    if cand is None or time.monotonic() >= deadline or st.stop.is_set() or not self._random_budget_available():
                         break
                     if random_safety.unsafe_update(fn['best_source'], cand):
                         continue  # reject introduced update chains or empty constant-loop scaffolding
                     lineage = getattr(cand, 'lineage', None)
                     cand = m2cfix.static_helpers(cand)  # (a global helper would not link: m2cfix.py)
                     st.add(variants=1)
-                    provenance = {'kind': 'random rewrite', 'family': lineage[-1] if lineage else 'random_rewrite_unattributed',
+                    unattributed = 'random_generator_unattributed' if gen else 'random_simple_unattributed'
+                    provenance = {'kind': 'random rewrite', 'family': lineage[-1] if lineage else unattributed,
                                   'lineage': lineage or [], 'base_source_sha256': hashlib.sha256(base.encode()).hexdigest(),
                                   'source_sha256': hashlib.sha256(cand.encode()).hexdigest()}
                     started = time.monotonic()
@@ -892,7 +920,8 @@ class Permuter:
     def _stream_variants(self, chunks, agent, proj, fn, fork):
         try:
             for chunk in chunks:
-                sources = [m2cfix.static_helpers(cand) for cand in chunk]
+                allowance = self._random_trials_remaining()
+                sources = [m2cfix.static_helpers(cand) for cand in chunk[:allowance]]
                 if hasattr(self, '_prime_trials'):
                     self._prime_trials(agent, proj, fn, sources, fork)
                 from .deep_compilation import chunk as compile_chunk
