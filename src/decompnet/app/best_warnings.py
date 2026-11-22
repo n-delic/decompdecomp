@@ -138,3 +138,20 @@ def brief_lines(fn) -> list[str]:
                 "but a source scored by bytes can also be another program): " + "; ".join(found[:SHOWN]) + more
             + ". Check these against the target before building on it; the machine draft keeps the program's "
               "stores and reads."]
+
+
+def stalled(fn) -> bool:
+    """Whether an unmatched function's best has stalled: helpers gave it up (ESCALATE_AFTER) or it shows warning
+    signs. Then the decompiler's draft is offered as a second start (draft_lines, Search.draft_restart_pass)."""
+    from ..network import ESCALATE_AFTER
+    return fn["status"] != "matched" and bool(fn["best_source"]) and (
+        (fn["abandons"] or 0) >= ESCALATE_AFTER or bool(warnings(fn["best_source"])))
+
+
+def draft_lines(fn) -> list[str]:
+    """The brief's machine draft beside a stalled best: a best can be another program, and the draft's stores and
+    reads follow the program's."""
+    if not fn["seed"] or not stalled(fn):
+        return []
+    return ["", "### Machine draft (m2c), a second start: the saved best has stalled. The draft's stores and reads "
+                "follow the program; if the best's don't, start again from here", "```c", fn["seed"].strip(), "```"]
