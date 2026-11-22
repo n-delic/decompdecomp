@@ -2370,6 +2370,21 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
         proj, fn = net.project_row(slug), net._function(name, slug)
         if fn['status'] == 'matched':
             reason = 'Matched'
+        if (reason not in ('Matched', 'Exact diagnostic needs ordinary review', PROFILE_LEAD) and not net.fork_slug(slug)
+                and slug not in net.links and (lane is None or lane.index == 0)):
+            # The first move: the saved C under the project's other compilers, so a function that already matches
+            # under one never spends its allowance on permutations.
+            if not search._hold(agent, fn, count_turn=False):
+                raise NetworkError('This function was claimed meanwhile; try again after it is released.')
+            try:
+                from . import deep_profile_sweep
+                if deep_profile_sweep.run(search, agent, proj, fn, _candidate_source(fn, fn['best_score'])):
+                    search.best = 0
+            finally:
+                search._let_go(agent, fn)
+            proj, fn = net.project_row(slug), net._function(name, slug)
+            if fn['status'] == 'matched':
+                reason = 'Matched'
         if reason not in ('Matched', 'Exact diagnostic needs ordinary review', PROFILE_LEAD):
             if not search._hold(agent, fn, count_turn=False):
                 raise NetworkError('This function was claimed meanwhile; try again after it is released.')
