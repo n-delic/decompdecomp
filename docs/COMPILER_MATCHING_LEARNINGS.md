@@ -14879,3 +14879,18 @@ callee address, the float argument position and the dead result.
 ### Restore a measured post-store flag reload
 
 In a private N64 flag update built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the target stored its selected flag value and reloaded it before testing a separate bit. The draft read the word before the store and used a different branch-delay register. Staging the call and clear mask, using volatile word accesses, and moving the bit test's reload after the store reproduced the linked target exactly (score 275 to 0). Volatile accesses alone scored 390 and moving the read alone scored 330. The candidate requires the observed load/store order and disjoint modified and tested bits; volatile accesses preserve the target's measured memory operations. Evidence: one saved function and synthetic generation and routing tests.
+
+### Reuse the saved float for the scale and the clamped argument
+
+In a private N64 function built with GCC 2.7.2 KMC and
+`-G0 -mips3 -mgp32 -mfp32 -O2`, the target used one saved float
+register for a sampled scale and the later reload passed in the fourth
+argument. Another sampling call already agreed on that saved register.
+The draft used a scratch register for both ends of the clamp.
+
+Reusing the other sample's dead local at either end recovered two
+exact instructions and lowered the score from 7,620 to 7,610.
+Reusing it at both ends scored 7,600, with all three jump-table
+relocations and no warnings. One unrelated holder scored 7,675.
+Tests require both ends of the clamp, the agreeing sample call
+with its two literal arguments and disjoint local lifetimes.
