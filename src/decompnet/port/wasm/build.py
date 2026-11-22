@@ -231,7 +231,8 @@ def big_endian_bitfields(text: str) -> str:
     result, i = [], 0
     while i < len(lines):
         run = []
-        while i + len(run) < len(lines) and (m := _BITFIELD.match(lines[i + len(run)])) and int(m.group(5)):
+        while (i + len(run) < len(lines) and ":" in lines[i + len(run)]
+               and (m := _BITFIELD.match(lines[i + len(run)])) and int(m.group(5))):
             run.append(m)
         if not run:
             result.append(lines[i])

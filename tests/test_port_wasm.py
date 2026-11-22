@@ -774,3 +774,15 @@ def test_idle_rewrite_leaves_do_while_trailers_alone(body):
     assert ido_c(f"void f(void) {{ {body} }}") == f"void f(void) {{ {body} }}"
     mixed = ido_c(f"void f(void) {{ {body} while (1); }}")
     assert f"{body} for (;;) port_idle_forever();" in mixed
+
+
+def test_bitfield_conversion_preserves_ordinary_lines_around_fields():
+    from decompnet.port.wasm.build import big_endian_bitfields
+
+    source = ('struct flags {\n' + '    int ordinary;\n' * 1000
+              + '    u32 a:3;\n    u32 b:29;\n'
+              + '    int after; // note: 4;\n};\n')
+    result = big_endian_bitfields(source)
+    assert result.count('    int ordinary;\n') == 1000
+    assert result.index('u32 b : 29;') < result.index('u32 a : 3;')
+    assert '    int after; // note: 4;\n' in result
