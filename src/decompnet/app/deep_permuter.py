@@ -438,6 +438,9 @@ class Search(Permuter):
         # a 231-instruction key/velocity dispatch (decomp-repair 0.5.583): a halfword cast shifted out, the halfword id
         # local, a byte-masked parameter narrowed with its helper, a range flag before a clamp, and the chain of them
         calls.append((L + 'narrow_param_clamp_repairs.variants', (source, name)))
+        # a 205-instruction line-segment test (decomp-repair 0.5.584): the final guarded zero return as one labelled return,
+        # the later zero returns and the guard-then-return forms jumping to it (20 -> 0 from the saved best, as a chain)
+        calls.append((L + 'zero_exit_label_repairs.variants', (source, name)))
         # Existing saved drafts can still use their original address-based entry name.
         calls.append((L + 'scoped_byte_read_call.variants', (source, name, arch, asm, header)))
         if arch == 'mips' and (vram := dict(fn).get('vram')) is not None:
