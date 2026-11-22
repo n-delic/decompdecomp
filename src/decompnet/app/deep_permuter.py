@@ -441,6 +441,9 @@ class Search(Permuter):
         # a 205-instruction line-segment test (decomp-repair 0.5.584): the final guarded zero return as one labelled return,
         # the later zero returns and the guard-then-return forms jumping to it (20 -> 0 from the saved best, as a chain)
         calls.append((L + 'zero_exit_label_repairs.variants', (source, name)))
+        # an 84-instruction N64 initialiser (decomp-repair 0.5.585): the second loop's starts and steps wrapped together,
+        # the induction pointer three deep, after the union and reused-offset splits (30 -> 0 from the saved best)
+        calls.append((L + 'loop_weight_set_repairs.variants', (source, name)))
         # Existing saved drafts can still use their original address-based entry name.
         calls.append((L + 'scoped_byte_read_call.variants', (source, name, arch, asm, header)))
         if arch == 'mips' and (vram := dict(fn).get('vram')) is not None:

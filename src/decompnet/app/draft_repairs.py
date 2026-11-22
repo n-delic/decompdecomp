@@ -179,6 +179,7 @@ from decomprepair import (
     loop_tail_update_order_repairs,
     loop_top_label_repairs,
     loop_weight_repairs,
+    loop_weight_set_repairs,
     macro_address_repairs,
     macro_repairs,
     macro_scope_weight,
@@ -377,6 +378,7 @@ AGENT_FAMILIES = constant_store_bracket.FAMILIES + statement_group_orders.FAMILI
                   'split_integer_phase','paired_integer_lifetimes','initialization_cluster')
 
 AGENT_FAMILIES += (guarded_pointer_copy.FAMILY,) + shifted_byte_lifetime.FAMILIES
+AGENT_FAMILIES += loop_weight_set_repairs.FAMILIES
 AGENT_FAMILIES += (arm_label_share_repairs.FAMILIES + declaration_scope_sink_repairs.FAMILIES + element_update_repairs.FAMILIES
                    + narrow_test_share_repairs.FAMILIES + phase_storage_split_repairs.FAMILIES
                    + narrow_param_clamp_repairs.FAMILIES)
@@ -829,6 +831,12 @@ def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels
     # parameter read only through byte masks as a `u8` (with the static helper it is passed to), the range test computed
     # before a clamp's sign test, and all of them as one child (500 -> 0 from the saved best).
     for family, text in _generated(narrow_param_clamp_repairs.variants, source, name):
+        proposals.append(text)
+        labels[text] = family
+    # every start and step of the second loop's locals wrapped in one-shot scopes at once, after the union and
+    # reused-offset splits (decomprepair 0.5.585; an 84-instruction N64 initialiser, 30 -> 0): loop_weight_scope offers
+    # one statement per child and each child alone stays on the plateau
+    for family, text in _generated(loop_weight_set_repairs.variants, source, name, header):
         proposals.append(text)
         labels[text] = family
     for family, text in _generated(indexed_record_repairs.variants, source, name, header, arch, asm):
