@@ -45,3 +45,37 @@ def test_deep_permuter_retains_the_conditional_blend_gain_for_kmc():
     assert 'holder = 0.25f;' in candidate and 'holder = 0.5f;' in candidate
     assert 'next = ((axis - current) * holder) + current;' in candidate
     assert FAMILY not in {label for label, _ in proposals(SOURCE, 'update', '', 'mips', 'ido-7.1', ROWS, '')}
+
+
+def test_deep_permuter_can_split_the_earlier_capture_from_the_gain_for_kmc():
+    source = SOURCE.replace('    f32 holder;', '''\
+    typedef struct { f32 value; } LocalRecord;
+    f32 holder;
+    f32 snapshot;
+    f32 scaled;''').replace('    if (mode) {', '''\
+    gain = magnitude(axis);
+    if (probe(record)) {
+        snapshot = *((f32 *) (((char *) record) + 0x24));
+        notify(record);
+        *((f32 *) (((char *) record) + 0x24)) = snapshot;
+    } else {
+        scaled = gain * 5.0f;
+        report(scaled);
+    }
+    if (mode) {''')
+    ahead = [
+        (' ', 'jal magnitude', 'jal magnitude'),
+        (' ', 'nop', 'nop'),
+        ('r', 'mov.s $f24, $f0', 'mov.s $f20, $f0'),
+        (' ', 'lwc1 $f20, 0x24($s0)', 'lwc1 $f20, 0x24($s0)'),
+        (' ', 'jal notify', 'jal notify'),
+        (' ', 'nop', 'nop'),
+        (' ', 'swc1 $f20, 0x24($s0)', 'swc1 $f20, 0x24($s0)'),
+    ]
+    family = 'split_capture_and_conditional_gain'
+    [candidate] = [text for label, text in proposals(source, 'update', '', 'mips',
+                                                    'gcc-2.7.2-kmc', ahead + ROWS, '') if label == family]
+    assert 'snapshot = magnitude(axis);' in candidate
+    assert 'scaled = snapshot * 5.0f;' in candidate
+    assert 'next = ((axis - current) * holder) + current;' in candidate
+    assert family not in {label for label, _ in proposals(source, 'update', '', 'mips', 'ido-7.1', ahead + ROWS, '')}
