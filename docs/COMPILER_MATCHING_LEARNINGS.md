@@ -13468,3 +13468,10 @@ first). decomp-repair 0.5.345 adds the `through` reading, a merged child over al
 from the saved best it now emits the exact source. Failed here: typed prototypes, reordered temporaries, wrapping each
 argument in a loop fence, other expression forms of the byte and halfword arguments.
 A saved N64 function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1` used a halfword flag table and a word table, while its draft inferred both as byte arrays. Casting the two independently indexed reads to `u16 *` and `u32 *` reproduced the linked target exactly (score 400 to 0); a signed halfword cast left a 200-point difference. The target-guided repair offers each evidenced correction and their combination, while leaving stores alone. Evidence: one saved example and synthetic generation and routing regressions.
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, a saved N64 function with repeated volatile float table reads
+scored 310. Staging the first read in a local within its block scored 280. Staging its table base there as well
+scored 265 while preserving the original temporary assignment and the number and order of the volatile reads.
+The previous target-guided dispatcher yielded no proposal for the draft. The new rule emitted one candidate
+that scored 265 through the linked-byte judge. Evidence is one measured improvement and synthetic routing and
+rewrite regressions. The function remains unmatched.
