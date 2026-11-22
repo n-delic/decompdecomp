@@ -1428,3 +1428,19 @@ def test_indexed_load_schedule_requires_an_earlier_target_load():
     assert 'indexed_load_before_arithmetic' in families(KMC, rows)
     assert 'indexed_load_before_arithmetic' not in families(KMC, list(reversed(rows)))
     assert 'indexed_load_before_arithmetic' not in families('ido-7.1', rows)
+
+
+def test_byte_or_complement_narrowing_is_kmc_diff_gated():
+    source = '''void f(void *p) {
+        u8 tmp;
+        tmp = M2C_FIELD(p, u8 *, 2) | ~M2C_FIELD(p, u8 *, 1) | 0x90;
+        M2C_FIELD(p, u8 *, 2) = tmp;
+    }'''
+    rows = [(' ', 'nor $v1, $zero, $v1', 'nor $v0, $zero, $v0'),
+            (' ', 'or $v0, $v0, $v1', 'or $v1, $v1, $v0'),
+            ('|', 'ori $v0, $v0, 0x90', 'addiu $v0, $zero, -0x70')]
+    def families(toolchain, diff):
+        return {label for label, _ in proposals(source, 'f', '', 'mips', toolchain, diff, '')}
+    assert 'byte_or_complement_narrow' in families(KMC, rows)
+    assert 'byte_or_complement_narrow' not in families('ido-7.1', rows)
+    assert 'byte_or_complement_narrow' not in families(KMC, [])
