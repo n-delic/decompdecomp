@@ -1152,10 +1152,16 @@ def test_targeted_register_pass_compiles_bitwise_and_float_lifetime_candidates(m
     monkeypatch.setattr(search, '_score', score)
     search.winner_diff = ([('r', 'and $v0, $v0, $v1', 'and $v0, $v1, $v0')], '')
     assert search.operand_order_pass(AGENT, proj, fn, 5, None) == 5
-    assert len(seen) == 2 and any('a = b & a' in candidate for candidate in seen)
+    assert any('a = b & a' in candidate for candidate in seen)
+    # The operand swap is the repair under test. Other local families (statement reordering) now also propose
+    # candidates for the same near miss, so the count is not pinned.
+    assert 2 <= len(seen) <= 12
 
     # Give the independent floating fixture its own compile allowance.
     search.tested = 0
+    # More local families now propose first for a float near miss and the pass spends half the allowance, so give
+    # the float repair room behind them rather than pinning its position in the proposal order.
+    search.limit = 60
     seen.clear()
     field = 'M2C_FIELD(obj, f32 *, 4)'
     draft = f'void f(void *obj) {{ {field} = (compute({field}) * 0.5f) + {field}; }}'
@@ -1420,9 +1426,11 @@ def test_deep_search_sets_aside_hand_written_assembly_instead_of_searching_it(mo
     monkeypatch.setattr(deep_permuter, '_run', lambda *a, **k: pytest.fail('searched hand-written assembly'))
     log = Log()
     result = deep_permuter.run(net, 'game', 'f', 30, 10, log)
-    assert not result['matched'] and result['tested'] == 0 and 'addi' in result['reason']
+    # The N64 entry stub is now recognised as SDK boot code (library detection), so it is set aside under that
+    # label before any search; it no longer names its first instruction.
+    assert not result['matched'] and result['tested'] == 0 and 'SDK library code' in result['reason']
     row = net.function()
-    assert row['status'] == 'asm' and 'addi' in json.loads(row['meta'])['asm_code']
+    assert row['status'] == 'asm' and 'excluded from C matching' in json.loads(row['meta'])['asm_code']
 
 
 def test_deep_search_leaves_a_function_the_user_gave_back_to_the_agents(monkeypatch):
