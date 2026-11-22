@@ -14687,3 +14687,6 @@ scored 9,220, and reusing a smoothing result local scored 9,240.
 Synthetic tests require both target and candidate to agree on the
 earlier field save and restore. They also check that each local's
 uses are confined to its respective lifetime.
+
+
+In one N64 slot loop built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the draft carried a synthetic first-iteration flag initialized to a constant, while the target computed the index test before entering and in the loop delay slot. Reconstructing the equivalent bounded `for` loop and its direct condition reproduced the linked target exactly (score 335 to 0). The rule requires the measured branch shape and the complete bounded source form. Evidence: one saved example and synthetic generation and routing tests.
