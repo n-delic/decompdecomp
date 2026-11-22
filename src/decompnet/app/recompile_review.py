@@ -55,11 +55,14 @@ def findings(net, proj, summary):
                  or (row["vram"] is not None and row["vram"] < vram + size
                      and vram < row["vram"] + row["size"]) for row in rows):
             reason = "Overlaps a function in the current split. Review its boundary separately."
-        elif not any(lo <= offset and offset + size <= hi and base + offset - lo == vram
-                     for lo, hi, base in ranges):
-            reason = "Outside a declared code range. Review the code and data boundaries separately."
+        # Not a block (a user of a game whose code splat filed as data could never add what the scan found):
+        # the range was found by decoding code at a real call site, and picking the function is the user's
+        # confirmation that these bytes are code. The row says so, and the split keeps it on a reimport.
+        outside = not reason and not any(lo <= offset and offset + size <= hi and base + offset - lo == vram
+                                         for lo, hi, base in ranges)
         result.append({**entry, "rom": offset, "unit": owner.name if owner else None,
-                       "blocked": reason, "added": exact["name"] if exact else None})
+                       "blocked": reason, "added": exact["name"] if exact else None,
+                       "outside_range": outside})
     return result
 
 

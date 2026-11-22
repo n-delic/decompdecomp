@@ -377,6 +377,7 @@ function renderRecompileDiscoveries(report) {
   const eligible = new Set();
   for (const row of rows) {
     const item = document.createElement("li");
+    if (row.blocked) item.className = "blocked";
     const label = document.createElement("label");
     const input = document.createElement("input");
     input.type = "checkbox";
@@ -396,12 +397,17 @@ function renderRecompileDiscoveries(report) {
     const range = document.createElement("span"); range.className = "small muted";
     range.textContent = `${hex(row.vram)} · ROM ${hex(row.rom)} · ${row.size.toLocaleString()} bytes`;
     const evidence = document.createElement("p"); evidence.className = "small muted";
-    evidence.textContent = row.why + (row.blocked ? ` · ${row.blocked}` : "");
+    evidence.textContent = row.why + (row.blocked ? ` · Can't be added: ${row.blocked}` : "")
+      + (row.outside_range ? " · Outside the split's declared code ranges: adding it files these bytes as code." : "");
     item.append(label, range, evidence);
     if (row.unit) item.append(recompilePreview(state, row));
     fragment.append(item);
   }
   for (const address of selected) if (!eligible.has(address)) selected.delete(address);
+  state.eligible = eligible;
+  const blocked = rows.length - eligible.size;
+  $("portDiscoverySummary").textContent = `${eligible.size.toLocaleString()} can be added`
+    + (blocked ? ` · ${blocked.toLocaleString()} can't (the reason is on each row)` : "") + ".";
   $("portDiscoveryTitle").textContent = rows.length ? `Missing functions (${rows.length.toLocaleString()})` : "Missing functions";
   list.replaceChildren(fragment);
   updateRecompileSelection();
@@ -451,6 +457,10 @@ function updateRecompileSelection() {
   const state = recompileReview, button = $("portDiscoveryAdd");
   const busy = recompileRun?.slug === S.slug;
   const count = state?.slug === S.slug ? state.selected.size : 0;
+  const all = $("portDiscoveryAll"), eligible = state?.slug === S.slug ? state.eligible?.size || 0 : 0;
+  all.disabled = !!busy || !eligible;
+  all.checked = !!eligible && count === eligible;
+  all.indeterminate = count > 0 && count < eligible;
   button.disabled = !!busy || !count;
   button.textContent = count ? `Add selected to split (${count.toLocaleString()})` : "Add selected to split";
   if (state?.slug === S.slug) for (const input of state.inputs) input.disabled = !!busy;
@@ -920,6 +930,14 @@ function attachPlay(play) {
 if ($("portPanel")) {
   $("portRecompile").onclick = () => runRecompile();
   $("portRecompileStop").onclick = stopRecompile;
+  $("portDiscoveryAll").onchange = (event) => {
+    const review = recompileReview;
+    if (review?.slug !== S.slug) return;
+    review.selected.clear();
+    if (event.target.checked) for (const address of review.eligible) review.selected.add(address);
+    for (const input of review.inputs) input.checked = event.target.checked;
+    updateRecompileSelection();
+  };
   $("portDiscoveryAdd").onclick = () => {
     const review = recompileReview;
     if (review?.slug === S.slug && review.selected.size) {

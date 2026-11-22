@@ -2282,6 +2282,10 @@ img.rom-preview-media { image-rendering:pixelated; background:var(--bg-alt); bor
 .port-discoveries { border-top: 1px solid var(--line); padding-top: 10px; display: grid; gap: 8px; min-width: 0; }
 .port-discoveries h4 { margin: 0; }
 .port-discovery-list { list-style: none; margin: 0; padding: 0; max-height: 26rem; overflow: auto; }
+.port-discovery-bar { display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: center; }
+.port-discovery-bar label { display: inline-flex; gap: 6px; align-items: center; }
+.port-discovery-list li.blocked > label { opacity: .55; }
+.port-discovery-list li.blocked > label code { text-decoration: line-through; }
 .port-discovery-list li { padding: 8px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
 .port-discovery-list label { margin-inline-end: 8px; }
 .port-discovery-list input { margin-inline-end: 8px; }

@@ -322,3 +322,26 @@ def test_review_adds_only_selected_original_bytes_and_retains_them_on_reimport(p
     assert "Overlaps" in recompile_review.findings(net, proj, summary)[1]["blocked"]
     with pytest.raises(NetworkError, match="Overlaps"):
         recompile_review.add(net, "game", 1.0, [unselected], log)
+
+
+def test_review_can_add_a_function_outside_the_declared_code_ranges(project):
+    """A game whose code splat filed as data (the range check used to block every such function)."""
+    from decompnet.app import recompile_review
+
+    net, root = project
+    image = homemade_rom()
+    start = 0x80000440
+    (root / "splat.yaml").write_text(
+        "segments:\n  - {name: main, type: code, start: 0x1000, vram: 0x80000400, subsegments: "
+        "[[0x1000, asm], [0x1040, bin]]}\n  - [0x1100]\n")
+    summary = {"at": 1.0, "found": recomp.discover(image, SEGMENTS, SPLIT, 0x80000400),
+               "image_sha1": hashlib.sha1(image).hexdigest()}
+    out = recomp.folder(root)
+    out.mkdir(parents=True)
+    (out / "recomp.json").write_text(json.dumps(summary))
+    proj = net.project_row("game", sync=False)
+    row = recompile_review.findings(net, proj, summary)[0]
+    assert row["outside_range"] and not row["blocked"]
+    assert recompile_review.add(net, "game", 1.0, [start], _review_log())["added"] == [
+        {"name": "func_80000440", "vram": start}]
+    assert net.project_store(proj["id"]).one("SELECT 1 FROM functions WHERE vram=?", start)
