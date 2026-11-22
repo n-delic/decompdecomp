@@ -467,8 +467,13 @@ CONNECTION_PRAGMAS = ("PRAGMA synchronous=NORMAL", "PRAGMA temp_store=MEMORY", f
 WRITER_CACHE_KIB = 32 * 1024
 READER_CACHE_KIB = 8 * 1024
 # Idle reading connections each Store keeps. Busier moments open more and close them when done: one connection
-# per thread for ever left ~2,700 open, each with a cold cache and its functions registered again.
-READERS_KEPT = 8
+# per thread for ever left ~2,700 open, each with a cold cache and its functions registered again. But a new
+# connection also parses the whole database schema before its first query, and a deep-search lane with many
+# compile threads kept going past eight at once: sampled on a running 32-lane pass, that schema parsing
+# (sqlite3InitOne) was a fifth of a lane's CPU. An idle reader costs little, so the pool is wide.
+READERS_KEPT = 64
+# Prepared statements each connection keeps (Python's default is 128): the app's distinct queries outnumber that.
+STATEMENT_CACHE = 512
 # Bounds the statistics PRAGMA optimize gathers per index at startup (SQLite's suggested value): a project
 # that was never analyzed is analyzed approximately in milliseconds, not by reading every row.
 ANALYSIS_LIMIT = 400
@@ -491,7 +496,7 @@ class _ThreadReader:
     """
     def __init__(self,path,header_codec,repair_archive=None):
         from .payload_storage import Connection
-        self.conn=sqlite3.connect(Path(path).resolve().as_uri()+'?mode=rw' if str(path)!=':memory:' else path,uri=str(path)!=':memory:',isolation_level=None,check_same_thread=False,factory=Connection)
+        self.conn=sqlite3.connect(Path(path).resolve().as_uri()+'?mode=rw' if str(path)!=':memory:' else path,uri=str(path)!=':memory:',isolation_level=None,check_same_thread=False,factory=Connection,cached_statements=STATEMENT_CACHE)
         try:
             self.conn.row_factory=sqlite3.Row
             if repair_archive is not None:
@@ -546,7 +551,7 @@ class Store:
         """Open a database the app has already set up (ATTACH_ONLY): its connection functions, none of its DDL."""
         from .payload_storage import Connection
         self.conn = sqlite3.connect(Path(self.path).resolve().as_uri()+'?mode=rw', uri=True, check_same_thread=False,
-                                    isolation_level=None, factory=Connection)
+                                    isolation_level=None, factory=Connection, cached_statements=STATEMENT_CACHE)
         self.conn.row_factory = sqlite3.Row
         self._migration_admin = False
         self.conn.create_function('storage_migration_admin',0,lambda:int(self._migration_admin))
@@ -576,7 +581,7 @@ class Store:
     def _initialize(self):
         from .payload_storage import Connection
         location = Path(self.path).resolve().as_uri()+'?mode=rw' if self.require_existing else self.path
-        self.conn = sqlite3.connect(location, uri=self.require_existing, check_same_thread=False, isolation_level=None,factory=Connection)
+        self.conn = sqlite3.connect(location, uri=self.require_existing, check_same_thread=False, isolation_level=None,factory=Connection,cached_statements=STATEMENT_CACHE)
         self.conn.row_factory = sqlite3.Row
         self._migration_admin = False
         self.conn.create_function('storage_migration_admin',0,lambda:int(self._migration_admin))
