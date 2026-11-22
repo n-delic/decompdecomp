@@ -439,6 +439,8 @@ class Search(Permuter):
                  (L + 'float_sum_store_fence.variants', (source, name)),
                  # a loop's entry guard as the counter's compare (an unaccessed 8-byte spill slot) with each local merge as one child
                  (L + 'loop_guard_counter_compare.variants', (source, name)),
+                 # a later phase's clamp variable, record pointer and product through the earlier phase's dead locals, one child
+                 (L + 'phase_donor_repairs.variants', (source, name)),
                  (L + 'join_clamp_sum_repairs.variants', (source, name)),
                  (L + 'crossing_scope_unwrap.variants', (source, name)),
                  # a switch case's temporaries split and its flag update folded in one child, and record

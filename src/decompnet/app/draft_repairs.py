@@ -258,6 +258,7 @@ from decomprepair import (
     passthrough_argument_repairs,
     pattern_repairs,
     phantom_local_repairs,
+    phase_donor_repairs,
     phase_lifetime_repairs,
     phase_storage_split_repairs,
     phase_union_repairs,
@@ -432,6 +433,7 @@ AGENT_FAMILIES += loop_weight_set_repairs.FAMILIES
 AGENT_FAMILIES += entry_constant_local.FAMILIES + store_temp_inline.FAMILIES
 AGENT_FAMILIES += float_sum_store_fence.FAMILIES
 AGENT_FAMILIES += loop_guard_counter_compare.FAMILIES
+AGENT_FAMILIES += phase_donor_repairs.FAMILIES
 AGENT_FAMILIES += (arm_label_share_repairs.FAMILIES + declaration_scope_sink_repairs.FAMILIES + element_update_repairs.FAMILIES
                    + narrow_test_share_repairs.FAMILIES + phase_storage_split_repairs.FAMILIES
                    + narrow_param_clamp_repairs.FAMILIES + search_loop_field_reload.FAMILIES + accumulation_run_scope.FAMILIES
@@ -894,6 +896,9 @@ def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels
                    # (a loop's entry guard as the counter's compare, which gives the frame an unaccessed 8-byte spill slot, with each
                    # disjoint_local_merge of the guarded text as one child: a 401-instruction KMC loader 22 -> 0; decomprepair 0.5.640)
                    loop_guard_counter_compare,
+                   # (a second phase's clamp variable, record pointer and product written through the first phase's dead locals, as one
+                   # child: a 181-instruction N64 function 40 -> 0, 8 register rows; decomprepair phase_donor)
+                   phase_donor_repairs,
                    outer_cursor_entry_copy_repairs, loaded_pointer_reuse_repairs, entry_base_init_repairs,
                    live_range_retarget_repairs, pointer_local_merge_repairs, identical_arm_collapse_repairs):
         for family, text in _generated(module.variants, source, name):
