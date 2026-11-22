@@ -228,3 +228,17 @@ PYTHONPATH=src uv run --locked python tools/benchmark_deep_pipeline.py \
 
 Set `DECOMP_NATIVE_CANDIDATE_CHECKS=0` for the cache-only run. For the baseline,
 use the same benchmark fixture with the application code from before this change.
+
+## Where the processor goes, in the running app
+
+The app and each helper process it starts (the proposal workers that run the decomp-repair library, the permuter
+worker) sample their own threads twice a second (`thread_cpu.py`; under 1% of a core) and charge the kernel's CPU time to
+the code each thread is in. Reports are `<home>/.decomp/logs/thread-cpu*.log` (and a `.json` twin), rewritten every
+minute; code inside decomprepair and decompassets is named by module. To add every process up:
+
+```bash
+uv run python -m decompnet.thread_cpu            # this edition's home; or pass a logs folder
+```
+
+Compiler processes are not Python: their time is in `compile_timing` (the run's `throughput`). `DECOMP_THREAD_CPU=0`
+turns all of it off. Helper reports older than a day are removed when a helper starts.

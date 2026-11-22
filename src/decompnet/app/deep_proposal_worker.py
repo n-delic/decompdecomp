@@ -14,7 +14,8 @@ def ask(op, *args):
 
 
 def main():
-    from decompnet import compile_timing
+    from decompnet import compile_timing, thread_cpu
+    thread_cpu.start_worker('proposal')  # where the repair library's CPU goes: logs/thread-cpu-proposal-<pid>.log
     from decompnet.app import draft_repairs
     from decompnet.app.repair_generation import PARTITION, cut_off, session
     cache_owner = SimpleNamespace()
