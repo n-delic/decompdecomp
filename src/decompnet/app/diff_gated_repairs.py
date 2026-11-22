@@ -9,6 +9,7 @@ from decomprepair import (
     balanced_clamp_argument_stage,
     balanced_clamp_predicates,
     balanced_float_predicate_return,
+    balanced_inline_writeback,
     balanced_predicate_projection,
     balanced_projection_scale,
     balanced_selector_zero,
@@ -183,6 +184,7 @@ from decomprepair import (
     measured_two_list_allocation,
     measured_varbyte_lookup,
     measured_wide_division_stride,
+    measured_word_byte_packing,
     measured_zero_record_pairs,
     ordered_halfword_updates,
     oscillator_phase_hold,
@@ -394,6 +396,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += balanced_signed_selector_increment.variants(source, name, rows, header=header)
         result += balanced_selector_zero.variants(source, name, rows, header=header, max_bytes=MAX_SOURCE_BYTES)
         result += phase_projection_holders.variants(source, name, rows, header=header, max_bytes=MAX_SOURCE_BYTES)
+        result += balanced_inline_writeback.variants(source, name, rows, header=header, max_bytes=MAX_SOURCE_BYTES)
         result += balanced_float_predicate_return.variants(source, name, rows, header=header)
         result += clamped_field_reload.variants(source, name, rows, header=header)
         result += saved_range_probe.variants(source, name, rows, header=header)
@@ -554,6 +557,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_conditional_call_stage.variants(source, name, header, rows, resolve=resolve)
         result += measured_lookup_owner.variants(source, name, header, rows)
         result += measured_branch_byte_stores.variants(source, name, header, rows)
+        result += measured_word_byte_packing.variants(source, name, header, rows)
         result += measured_wide_division_stride.variants(source, name, header, rows)
         result += measured_slot_flip_copy.variants(source, name, header, rows, resolve=resolve)
         result += measured_conditional_flag_owner.variants(source, name, header, rows, resolve=resolve)
