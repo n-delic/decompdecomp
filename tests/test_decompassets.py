@@ -41,3 +41,20 @@ def test_the_library_never_imports_the_app():
     for path in Path(decompassets.__file__).parent.rglob("*.py"):
         assert "decompnet" not in path.read_text(), path
 
+
+
+def test_chunked_package_image_reaches_the_console_preview():
+    import struct
+
+    from decompnet.consoles import get
+
+    data = (b'PKG\0' + struct.pack('<I', 0x210) + struct.pack('>II4BI', 1, 24, 1, 1, 1, 0, 16)
+            + bytes(8) + b'\xff\xff' * 256)
+    stream = b''.join(b'\x00' + data[i:i+8] for i in range(0, len(data), 8)) + b'\x03\x00\x00'
+    image = bytes(16) + stream + bytes(-len(stream) % 4)
+    console = get('n64')
+    assets = [asset for asset in console.asset_regions(image) if asset.get('layout') == 'chunked-package-image']
+    assert len(assets) == 1
+    preview = console.asset_preview(image, assets[0], {})
+    assert preview['media'] == 'image' and preview['details']['width'] == 8
+    assert preview['data_url'].startswith('data:image/png;base64,')
