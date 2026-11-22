@@ -885,3 +885,13 @@ def test_indirect_self_call_hypothesis_reaches_kmc_proposals(monkeypatch):
     rows = [('|', 'nop', 'move $a0, $v1')]
     assert ('indirect_self_call_void_hypothesis', 'fixed') in route('void f(void) {}', rows, 'asm')
     assert 'indirect_self_call_void_hypothesis' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
+
+
+def test_forwarded_pointer_hypothesis_reaches_kmc_proposals(monkeypatch):
+    from decomprepair import measured_forwarded_pointer
+
+    monkeypatch.setattr(measured_forwarded_pointer, 'variants',
+                        lambda *args: [('forward_entry_pointer_hypothesis', 'fixed')])
+    rows = [('r', 'lhu $a2, 0x8a($a0)', 'lhu $v0, 0x8a($a0)')]
+    assert ('forward_entry_pointer_hypothesis', 'fixed') in route('void f(void) {}', rows, 'asm')
+    assert 'forward_entry_pointer_hypothesis' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
