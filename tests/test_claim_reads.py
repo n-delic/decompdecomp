@@ -38,7 +38,7 @@ def test_claim_history_reads_come_from_covering_indexes_without_sorting(tmp_path
     args = {"retry_grants": "[]", "batch_sdk": "[]", "batch_unit": None, "batch_limit": None, "model_tried": "[]",
             "stalled": "[]", "sdk": "[]", "pid": pid, "agent": 1, "kin": "[1]", "cooled": 0, "overall": .5,
             "route_preferred": "[]", "route_deferred": "[]", "name": "worker", "mine": 0,
-            "custom": False, "below": None, "tries": None,
+            "custom": False, "below": None, "tries": None, "max_insns": None,
             "machine_pending": "[]"}
     claim = [row[3] for row in net.store.conn.execute("EXPLAIN QUERY PLAN " + network.claim_query("easiest"), args)]
     on_events = [step for step in claim if "events" in step and "idx_events_project_time" not in step]
