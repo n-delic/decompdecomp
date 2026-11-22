@@ -15443,3 +15443,8 @@ named bound in both comparisons and embedding the field load in the
 first comparison were neutral. Evidence includes one private linked
 function and synthetic tests for the two constants, compare and store
 sequence, source guards and KMC Deep Permuter routing.
+
+
+### Forward an entry argument and advance command records
+
+A saved N64 command builder compiled with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` omitted the unchanged first argument to an indirect call and used byte-offset stores for the returned commands. The target left the entry argument in `$a0`, advanced the second argument in `$a1`, and used an eight-byte command cursor. Passing the first argument and expressing the returned commands as two-word records reproduced the linked target exactly (score 325 to 0). Evidence: one saved example and synthetic source, instruction and routing tests. The candidate requires the unchanged entry register, measured command constants and target cursor sequence and is checked by the byte judge.
