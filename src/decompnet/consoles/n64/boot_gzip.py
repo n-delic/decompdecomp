@@ -15,6 +15,8 @@ MAX_MEMBER = 4 * 1024 * 1024
 # text member. Their consumers load them as data. Match the full audited spans
 # so versions that change a table still go through the normal boundary review.
 INLINE_TABLES = (
+    (bytes.fromhex('8005a6848005a6848005a6648005a670'), 64,
+     '89861ba83028659d467c7a8de5b65f5f4ec558f35c354c57fb3e6111645bab49'),
     (bytes.fromhex('07aa01010003ffffffff00200020000a'), 0x8b0,
      'dfdd210625ae3bc5e40b86cd8e9f8d49191034b39213eb46e833354f006eb4ad'),
     (bytes.fromhex('00000008000000000000000403020100'), 0xf50,
@@ -226,10 +228,12 @@ def inline_tables(text):
 def add(config, workdir, image, rom, boot_ranges, log):
     if not (programs := find(rom, boot_ranges)):
         return None
-    from . import boot_brs
+    from . import boot_brs, boot_lzss
     from .boot_mapping import extend_startup_trap
 
     extend_startup_trap(config, rom, log)
+    if boot_lzss.find(rom, boot_ranges):
+        boot_lzss.extend_boot(config, rom, log)
     cfg = yaml.safe_load(config.read_text(encoding='utf-8'))
     segments = cfg['segments']
     segments.pop()
@@ -253,7 +257,13 @@ def add(config, workdir, image, rom, boot_ranges, log):
             start += 8
             vram += 8
             text = text[8:]
-        parts = [[start, 'c', name]]
+        sections = boot_lzss.startup_sections(text, vram) if boot_lzss.find(rom, boot_ranges) else None
+        if sections:
+            entry_end, code_start = sections
+            parts = [[start, 'hasm'], [start + entry_end, 'data', f'{name}_startup_data'],
+                     [start + code_start, 'c', name]]
+        else:
+            parts = [[start, 'c', name]]
         for before, after in inline_tables(text):
             parts.extend([[start + before, 'rodata', f'{name}_table_{before:X}'],
                           [start + after, 'c', f'{name}_text_{after:X}']])

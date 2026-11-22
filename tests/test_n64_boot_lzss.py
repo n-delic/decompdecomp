@@ -45,3 +45,35 @@ def test_boot_trap_before_a_helper_stays_in_startup(tmp_path):
     main = yaml.safe_load(path.read_text())['segments'][1]
     assert main['start'] == 0x1014
     assert main['subsegments'] == [[0x1014, 'c', 'main']]
+
+
+def test_indirect_loader_call_and_nonreturning_startup():
+    from decompnet.consoles.n64.boot_lzss import _indirect_call, startup_sections
+
+    target = 0x8004ba20
+    loader = struct.pack('>5I', 0x3c108005, 0x0c012d19, 0x2610ba20, 0x0200f809, 0)
+    assert _indirect_call(loader, 0, len(loader), target)
+    assert not _indirect_call(loader, 0, len(loader), target + 4)
+    text = bytearray(0x80)
+    struct.pack_into('>4I', text, 0, 0x3c1d803f, 0x0c000110, 0, 0x0000000d)
+    struct.pack_into('>I', text, 0x40, 0x27bdffe0)
+    assert startup_sections(text, 0x80000400) == (20, 0x40)
+
+
+def test_recover_directly_called_loader_past_boot_split(tmp_path):
+    import yaml
+
+    from decompnet.consoles.n64.boot_lzss import extend_boot
+
+    path = tmp_path / 'game.yaml'
+    path.write_text(yaml.safe_dump({'segments': [
+        {'name': 'entry', 'start': 0x1000, 'vram': 0x80000400, 'subsegments': [[0x1000, 'hasm']]},
+        {'name': 'main', 'start': 0x1014, 'vram': 0x80000414, 'follows_vram': 'entry',
+         'subsegments': [[0x1014, 'c', 'main']]},
+        {'type': 'bin', 'start': 0x1040, 'follows_vram': 'main'}, [0x2000]]}))
+    image = bytearray(0x2000)
+    struct.pack_into('>I', image, 0x1000, 0x0c000114)
+    struct.pack_into('>I', image, 0x1050, 0x27bdffe0)
+    struct.pack_into('>2I', image, 0x1060, 0x03e00008, 0x27bd0020)
+    assert extend_boot(path, image, lambda _: None)
+    assert yaml.safe_load(path.read_text())['segments'][2]['start'] == 0x1068
