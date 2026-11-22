@@ -72,3 +72,36 @@ def test_import_uses_raw_bytes_and_preserves_native_bindings(tmp_path):
     assert wrong.ok, wrong.log
     with pytest.raises(ValueError, match='no longer matches'):
         uso.rebuild(original, [('test_entry', metadata, wrong.obj)])
+
+
+def _mio0_literals(data):
+    masks = b'\xff' * ((len(data)+7)//8)
+    start = 16 + len(masks)
+    return b'MIO0' + struct.pack('>3I', len(data), start, start) + masks + data
+
+
+def test_imports_compressed_modules_and_preserves_cartridge(tmp_path):
+    from decompnet.rom.split import SplitResult
+
+    code = bytes.fromhex('27bdffe8 afbf0014 0c000000 00000000 8fbf0014 27bd0018 03e00008 00000000')
+    common = struct.pack('>7I4s2I', 16, 0, len(code), 0, 0, 16, 1, b'CODE', 0, 0)
+    relocation = struct.pack('>I', (2 << 22) | 4) + bytes(4)
+    def compressed(tag, data):
+        return _chunk(b'GZIP', tag + struct.pack('>I', len(data)) + _mio0_literals(data))
+    chunks = (_chunk(b'PAD ', bytes(4)) * 2 + _chunk(b'COMM', common)
+              + compressed(b'CODE', code) + _chunk(b'MDBG', bytes(32)) + compressed(b'RELA', relocation))
+    original = bytes(4) + _chunk(b'FORM', b'MODU' + chunks)
+    module, = uv_modules.read(original)
+    assert module.compressed and module.code == code
+    image = tmp_path / 'rom.z64'
+    image.write_bytes(original)
+    result = SplitResult([], [], [], {}, tmp_path/'splat.yaml', 'IDO', '', image=image.name)
+    uso.add_to_split(result, tmp_path, original, lambda *_: None)
+    function, = result.functions
+    assert function.uso['relocs'] == [[8, 4, 1]]
+    region, = uv_modules.text_regions(original)
+    cartridge = bytearray(original)
+    uso.replace_text(cartridge, region, code)
+    assert cartridge == original
+    with pytest.raises(ValueError, match='differs'):
+        uso.replace_text(cartridge, region, bytes(len(code)))
