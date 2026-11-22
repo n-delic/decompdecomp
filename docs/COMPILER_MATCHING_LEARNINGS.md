@@ -16362,3 +16362,7 @@ the function as matched. This is one function's measurement, not a controlled co
 ### KMC GCC 2.7.2 child pointer and indexed slot updates
 
 A saved MIPS function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` updated a child object and two indexed table fields. Reusing the incoming pointer for its child while retaining the original pointer changed the generated draft's linked difference score from 285 to 30. Staging the measured table addresses then produced an exact match. This is one saved example, not a controlled cross-compiler experiment. The candidate requires the full source shape, matching symbol address, 32-bit ABI and the observed child and table instructions.
+
+### IDO generated C++ overlay references
+
+An isolated N64 overlay function built with IDO 7.1 using `-O2 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul -DNON_MATCHING` compiled to the original 588 instruction bytes, but its generated base-constructor call and vtable address used C++ symbols rather than the loader's names. Explicit object-file binding declarations preserved the generated instructions and allowed the overlay linker to verify both loader records. This is one observed function, not a cross-compiler result. A compiler-backed regression checks constructor and vtable bindings, a wrong symbol, a nonzero marker addend, and cartridge reconstruction.

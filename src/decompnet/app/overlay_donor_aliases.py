@@ -170,6 +170,41 @@ def cpp_methods(source, header, name, candidate, target, separate):
     return source[:span[0]] + body + source[span[1]:], header + '\n' + '\n'.join(declarations) + '\n'
 
 
+def cpp_generated_bindings(source, header, candidate, target, separate):
+    """Declare loader bindings for method and vtable names emitted by C++."""
+    if candidate is None or target.arch != 'mips' or not comparable_overlay_code(candidate, target):
+        return None
+    expected = {(r.offset, r.type): r.symbol for r in target.relocs}
+    grouped = defaultdict(set)
+    for reloc in candidate.relocs:
+        if not re.fullmatch(r'(?:__(?:ct|dt|vtbl)__[A-Za-z0-9_]+|[A-Za-z_]\w*__\d+[A-Za-z_]\w*F\w*)',
+                            reloc.symbol):
+            continue
+        wanted = expected.get((reloc.offset, reloc.type))
+        if wanted is None:
+            return None
+        grouped[reloc.symbol].add(wanted)
+    if not grouped:
+        return None
+    clean = csource._blank(source + '\n' + header)
+    additions = []
+    for number, (symbol, targets) in enumerate(sorted(grouped.items()), 1):
+        if len(targets) != 1:
+            return None
+        binding, = targets
+        marker = 'decomp_overlay_bind_' + symbol
+        if re.search(r'\b' + re.escape(marker) + r'\b', clean):
+            return None
+        ref = next((ref for i in range(number, number + 512)
+                    if (ref := separate(binding, i)) != binding
+                    and not re.search(r'\b' + re.escape(ref) + r'\b', clean)), None)
+        if not ref:
+            return None
+        clean += '\n' + ref
+        additions.append(f'extern "C" unsigned char {ref}[];\nvoid *{marker} = {ref};')
+    return source, header + '\n' + '\n'.join(additions) + '\n'
+
+
 def retry(source, header, name, candidate, target, measure, stop, *, separate=None):
     """Return one rewrite, supported by compiler probes, for the ordinary exact judge."""
     if not comparable_overlay_code(candidate, target):
