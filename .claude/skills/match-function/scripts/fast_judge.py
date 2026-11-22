@@ -89,6 +89,12 @@ class Judge:
     def score(self, source):
         return self.judge(source).get("score")
 
+    def rows(self, source):
+        """(score, rows): the exact score and every row of the judge's diff, (marker, target, candidate) each; the
+        rows say which of the target's instructions differ (prove_chain.py's row-coverage combinations)."""
+        reply = self.ask(dict(self.request, source=source, raw_rows=True))
+        return reply.get("score"), [tuple(row) for row in reply.get("rows") or []]
+
     def close(self):
         if self.proc:
             self.proc.kill()

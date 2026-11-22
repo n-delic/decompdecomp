@@ -644,7 +644,7 @@ class Search(Permuter):
         thirty from different families are composed in pairs where their edits touch different lines, the pairs
         (at most pair_search.PAIR_BUDGET) are judged too, and an improvement goes through the ordinary path so it is
         saved and verified. A single child that already improves is taken first, like the other passes."""
-        from . import judge_pool, pair_search
+        from . import judge_pool, pair_search, row_coverage
         rows = self.winner_diff[0] if self.winner_diff else ()
         if fork or not best or not rows or self.limit - self.tested < 4 or self.deadline - time.monotonic() < 90:
             return best
@@ -664,7 +664,19 @@ class Search(Permuter):
         self.log(f'Searching pairs of repairs: judging {len(kids)} single children, then pairs of the best '
                  f'{pair_search.TOP_K} from different families.')
         with judge_pool.JudgePool(proj['slug'], fn, own['toolchain'], flags, size=self.PAIR_WORKERS) as pool:
-            scores = pool.judge_many([child for _, child in kids], self.check)
+            cover = parent_bad = None
+            if pair_search.row_coverage_enabled(self.net.cfg(proj)):
+                # the rows of each judgment too: a child that fixes a row of the difference is kept whatever its
+                # total (app/row_coverage.py; off by default: docs/learnings/finding/row-coverage-combinations.md)
+                parent_score, parent_rows = pool.judge_rows(source)
+                judged = pool.judge_rows_many([child for _, child in kids], self.check)
+                scores = [score for score, _ in judged]
+                if parent_score is not None and parent_rows:
+                    parent_bad = row_coverage.bad(parent_rows)
+                    cover = {child: row_coverage.coverage(parent_bad, child_rows)
+                             for (_, child), (score, child_rows) in zip(kids, judged) if score is not None and child_rows}
+            else:
+                scores = pool.judge_many([child for _, child in kids], self.check)
             singles = [(score, family, child) for (family, child), score in zip(kids, scores) if score is not None]
             if pool.errors:
                 self.log('Pair search could not judge here: ' + pool.errors[0][:200])
@@ -674,7 +686,8 @@ class Search(Permuter):
             else:
                 found = pair_search.search(
                     pool.judge_many, source, singles, best, check=self.check, log=self.log,
-                    regenerate=lambda parent: self._local_proposals(parent, proj, fn, rows)[0], skip=self.local_seen)
+                    regenerate=lambda parent: self._local_proposals(parent, proj, fn, rows)[0], skip=self.local_seen,
+                    cover=cover, parent_bad=parent_bad)
                 found = (found[0], found[1], found[2], found[3] + len(kids))
         self.tested += max(1, found[3] // 50)
         self.report()

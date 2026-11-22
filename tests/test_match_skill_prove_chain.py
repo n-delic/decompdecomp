@@ -144,3 +144,35 @@ def test_merge_refuses_children_that_touch_the_same_tokens():
     base = "a = 1; b = 2;"
     assert prove_chain.merge(base, ["a = 3; b = 2;", "a = 1; b = 4;"]) == "a = 3; b = 4;"
     assert prove_chain.merge(base, ["a = 3; b = 2;", "a = 5; b = 2;"]) is None
+
+
+# Edits that are each worse alone: the match needs all three of "A", "B" and "C" (rows 0-2), and while only some are in
+# rows 3-5 are wrong too, so every single child (one fixed row, three broken) ranks below 30 harmless ones and a
+# score-ranked search never merges them.
+ROW_BASE = "a0 b0 c0 n0"
+
+
+def toy_rows(text):
+    has = ["A" in text.split(), "B" in text.split(), "C" in text.split()]
+    partial = any(has) and not all(has)
+    marks = [" " if h else "|" for h in has] + ["|" if partial else " "] * 3
+    return [(m, f"i{k}", f"i{k}") for k, m in enumerate(marks)]
+
+
+def toy_rows_score(text):
+    return sum(1 for m, _, _ in toy_rows(text) if m != " ") * 100
+
+
+def toy_generate(text):
+    out = [("fam_c", text.replace("c0", "C")), ("fam_a", text.replace("a0", "A")), ("fam_b", text.replace("b0", "B"))]
+    return out + [(f"noise{i}", text.replace("n0", f"n{i + 1}")) for i in range(30)]
+
+
+def test_combine_with_rows_finds_edits_that_each_score_worse_alone():
+    final, best, _ = prove_chain.prove(
+        ROW_BASE, toy_generate, toy_rows_score, None, steps=1, children=40, log=lambda _: None,
+        combine=5, combine_limit=60, rows=lambda t: (toy_rows_score(t), toy_rows(t)))
+    assert best == 0 and final.split()[:3] == ["A", "B", "C"]
+    _, without, _ = prove_chain.prove(ROW_BASE, toy_generate, toy_rows_score, None, steps=1, children=40,
+                                      log=lambda _: None, combine=5, combine_limit=60)
+    assert without > 0

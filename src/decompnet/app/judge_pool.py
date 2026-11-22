@@ -88,6 +88,30 @@ class JudgePool:
             return None
         return reply.get('score')
 
+    def judge_rows(self, source):
+        """(score, rows) of one source: the exact score and every row of the judge's diff, (marker, target,
+        candidate) each (None, [] when it did not compile or could not be judged)."""
+        worker = self.workers.get()
+        try:
+            reply = worker.ask(dict(self.request, source=source, raw_rows=True))
+        finally:
+            self.workers.put(worker)
+        if reply is None:
+            return None, []
+        if 'error' in reply:
+            self.errors.append(reply['error'])
+            return None, []
+        return reply.get('score'), [tuple(row) for row in reply.get('rows') or []]
+
+    def judge_rows_many(self, sources, check=lambda: None, chunk=64):
+        """[(score, rows)] in the order of `sources` (judge_rows for each; `check` runs between chunks)."""
+        out = []
+        with ThreadPoolExecutor(max_workers=len(self.all)) as executor:
+            for at in range(0, len(sources), chunk):
+                check()
+                out += list(executor.map(self.judge_rows, sources[at:at + chunk]))
+        return out
+
     def judge_many(self, sources, check=lambda: None, chunk=64):
         """Scores in the order of `sources`. `check` runs between chunks (cancellation, deadline)."""
         scores = []
