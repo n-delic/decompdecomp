@@ -195,8 +195,9 @@ def find(rom, boot_ranges):
     pointer = _pointer_find(rom, boot_ranges)
     if pointer:
         return pointer
-    from . import boot_brs, boot_lzss, boot_raw_deflate
-    return boot_raw_deflate.find(rom, boot_ranges) or boot_brs.find(rom, boot_ranges) or boot_lzss.find(rom, boot_ranges)
+    from . import boot_brs, boot_lzss, boot_raw_deflate, boot_refpack
+    return (boot_raw_deflate.find(rom, boot_ranges) or boot_brs.find(rom, boot_ranges)
+            or boot_lzss.find(rom, boot_ranges) or boot_refpack.find(rom, boot_ranges))
 
 
 def verify_analysis(rom, expanded, boot_ranges):

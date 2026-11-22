@@ -323,7 +323,7 @@ def _asset_read(net,slug,data,read, *, detect=False):
         if hashlib.sha256(image).hexdigest()!=data['image_hash']:raise NetworkError('The image changed. Reopen ROM Explorer before previewing assets.')
         offset=asset_formats.integer(options.get('offset',row['start']),'Data offset',0,len(image)-1) if options.get('source','rom')=='rom' else row['start']
         header=image[offset:offset+4]
-        compressed=header[:3]==b'EDL' and len(header)==4 and (header[3]&127)<=2 or header in (b'Yaz0',b'Yay0',b'MIO0',b'RNC\x01',b'RNC\x02') or header.startswith(b'\x1f\x8b\x08') or len(header)>=2 and header[0]==0x78 and int.from_bytes(header[:2],'big')%31==0
+        compressed=header[:3]==b'EDL' and len(header)==4 and (header[3]&127)<=2 or header in (b'Yaz0',b'Yay0',b'MIO0',b'RNC\x01',b'RNC\x02') or header.startswith((b'\x1f\x8b\x08',b'\x10\xfb')) or len(header)>=2 and header[0]==0x78 and int.from_bytes(header[:2],'big')%31==0
         auto_decode=not using_detected and options.get('source','rom')=='rom' and options.get('format','auto')=='auto' and compressed
         scene=net.console(proj).asset_scene(image,detected,selection,list({r['detected_asset']['offset']:r['detected_asset'] for r in state['report']['regions'] if r.get('detected_asset')}.values())) if using_detected else None
         if scene is not None:
