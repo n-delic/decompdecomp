@@ -319,3 +319,27 @@ def test_the_voice_chain_walk_steps_are_proposed_and_known_to_agents():
     assert {'param_loop_carrier', 'redefined_web_split'} <= set(chained.values())
     assert {'param_loop_carrier', 'redefined_web_split', 'assignment_guard_sink', 'default_arm_goto',
             'index_shift_spelling'} <= set(draft_repairs.AGENT_FAMILIES)
+
+
+def test_the_caller_save_slot_drop_children_are_proposed_and_known_to_agents():
+    """m2c writes gcc's caller-save round trip as a stack local (`slot = x;` before a call, `x = slot;` after); the
+    compiler makes that save itself, so the local is dropped, and the copy that fed it folded (decomprepair 0.5.645)."""
+    source = """\
+void f(u32 word) {
+    u32 mask;
+    u32 slot;
+    u32 copy;
+    mask = word & 0xFF;
+    slot = mask;
+    copy = mask;
+    slot = copy;
+    copy = slot;
+    g(copy);
+    h(copy);
+}
+"""
+    labels = {}
+    out = draft_repairs.variants(source, 'f', 'mips', labels=labels, limit=None)
+    assert {'caller_save_slot_drop', 'caller_save_slot_drop_fold'} <= set(labels.values())
+    assert any('slot' not in text and 'copy' not in text for text in out if labels.get(text) == 'caller_save_slot_drop_fold')
+    assert {'caller_save_slot_drop', 'caller_save_slot_drop_fold'} <= set(draft_repairs.AGENT_FAMILIES)

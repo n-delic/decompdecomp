@@ -51,6 +51,7 @@ from decomprepair import (
     call_scope_repairs,
     call_site_prototype_repairs,
     callee_prototype_repairs,
+    caller_save_slot_drop,
     captured_control_repairs,
     captured_index_repairs,
     captured_repairs,
@@ -438,6 +439,7 @@ AGENT_FAMILIES += entry_constant_local.FAMILIES + store_temp_inline.FAMILIES
 AGENT_FAMILIES += float_sum_store_fence.FAMILIES
 AGENT_FAMILIES += loop_guard_counter_compare.FAMILIES
 AGENT_FAMILIES += phase_donor_repairs.FAMILIES
+AGENT_FAMILIES += caller_save_slot_drop.FAMILIES
 AGENT_FAMILIES += param_loop_carrier.FAMILIES + assignment_guard_sink.FAMILIES + default_arm_goto.FAMILIES + index_shift_spelling.FAMILIES
 AGENT_FAMILIES += (arm_label_share_repairs.FAMILIES + declaration_scope_sink_repairs.FAMILIES + element_update_repairs.FAMILIES
                    + narrow_test_share_repairs.FAMILIES + phase_storage_split_repairs.FAMILIES
@@ -706,6 +708,8 @@ def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels
     early = early + _generated(default_arm_goto.variants,source,name)
     # (an address's index product spelled as a shift, and back; decomprepair.index_shift_spelling)
     early = early + _generated(index_shift_spelling.variants,source,name)
+    # (m2c's caller-saved round trip through a stack local, dropped, and the copy that fed it folded; decomprepair.caller_save_slot_drop)
+    early = early + _generated(caller_save_slot_drop.variants,source,name)
     # (a local initialised before a label that a goto enters past it, set at the label, with the byte index widened first; decomprepair.label_entry_initializer_repairs)
     early = early + _generated(label_entry_initializer_repairs.variants,source,name)
     # (m2c's cursor walk over a global array, written back as the indexed loop; decomprepair.pointer_walk_index_repairs)
