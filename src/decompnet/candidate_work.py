@@ -49,6 +49,8 @@ def trial(function):
 
 
 def elf(data, factory):
+    from . import fastelf
+    factory = fastelf.factory(factory)
     value = current()
     if value is None:return factory(BytesIO(data))
     snapshot = bytes(data)

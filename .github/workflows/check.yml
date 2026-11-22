@@ -29,6 +29,8 @@ jobs:
       - run: uv run --locked python packaging/build_alignment.py
       - run: uv run --locked python -c "from decompnet import instruction_alignment; from decompnet.app import deep_candidate_order, random_safety; assert instruction_alignment._kernel() and deep_candidate_order._kernel() and random_safety._kernel()"
       - run: uv run --locked pytest -q -o addopts= tests/test_instruction_alignment.py tests/test_deep_candidate_order.py tests/test_random_safety.py
+      - run: uv run --no-project --python 3.12 --with cython --with setuptools packaging/build_fastelf.py
+      - run: uv run --locked pytest -q -o addopts= tests/test_fastelf.py
 
   windows:
     needs: check

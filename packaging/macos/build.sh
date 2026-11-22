@@ -15,6 +15,7 @@ case "$ARCH" in arm64|x86_64) ;; *) echo "Unsupported Mac architecture: $ARCH" >
 
 "$PYTHON" "$ROOT/packaging/build_gateway.py"  # the MCP gateway, carried in the wheel (docs/MCP_GATEWAY.md)
 "$PYTHON" "$ROOT/packaging/build_alignment.py"
+uv run --no-project --python 3.12 --with cython --with setuptools "$ROOT/packaging/build_fastelf.py" || echo "The optional symbol decoder was not built."
 uv build --wheel --out-dir "$WORK/wheel" "$ROOT" >/dev/null
 APP="$WORK/decompdecomp.app"
 CONTENTS="$APP/Contents"
