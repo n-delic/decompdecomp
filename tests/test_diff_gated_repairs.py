@@ -1222,3 +1222,13 @@ def test_masked_byte_index_routes_to_kmc(monkeypatch):
                         lambda text, name, header, diff: [('byte_index_fixture', text)])
     assert 'byte_index_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'byte_index_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_split_table_index_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_kmc_split_table_index, 'variants',
+                        lambda text, name, header, diff: [('split_table_fixture', text)])
+    assert 'split_table_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'split_table_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))

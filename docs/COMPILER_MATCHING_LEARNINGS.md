@@ -12943,3 +12943,13 @@ Assign the scaled result back to the unsigned local before storing it.
 The linked score went from 40 to 30 on a retail N64 function. The previous
 dispatcher proposed nothing and the rewrite removed both register differences.
 Four earlier save and move differences remain.
+
+### KMC GCC 2.7.2: split a masked index into table-selection branches
+
+The preceding byte-index repair left three register differences in an
+isolated lookup draft. Moving the pure masked index copy into both arms of
+the table-selection branch recovered those registers. With
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1`, the two repairs together
+improved the linked score from 220 to 15, then to an exact match. Changing
+only the copied local's type or qualifiers had left the score at 15. This is
+one observed match; synthetic tests cover the source and instruction guards.
