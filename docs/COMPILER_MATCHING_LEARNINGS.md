@@ -14766,3 +14766,7 @@ and check through control flow that the reused float is dead.
 ### Stage repeated fixed-point products
 
 In a private N64 matrix function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the draft multiplied each halfword directly by a word before shifting and storing. The target kept the product in a different register and scheduled the stores after the next halfword load. Staging each load and product in one shared signed word local, with the load, multiply and store on one source line, reproduced the linked target exactly (score 395 to 0). Putting the store on the next source line scored 320; staging only the product scored 620. The candidate requires matching instruction evidence and ordinary nonvolatile pointer fields. Evidence: one saved function and synthetic generation and routing tests.
+
+### Stage signed lookup results in interpolation
+
+In two private N64 lookup interpolators built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the target sign-extended the first signed-halfword call result before the second call, while each draft deferred the conversion. Staging the first result in a signed word local and the difference between the second result and the narrowed first result in another local reproduced both linked targets exactly, from score 255 to 0 each. Staging only the first result scored 60; staging only the difference scored 195. The candidate checks the call, local types and measured ordering. Evidence: two saved functions and synthetic generation and routing tests.

@@ -1574,3 +1574,13 @@ def test_matrix_products_route_to_kmc(monkeypatch):
                         lambda text, name, header, diff: [('matrix_product_fixture', text)])
     assert 'matrix_product_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'matrix_product_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_interpolation_calls_route_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_interpolation_calls, 'variants',
+                        lambda text, name, header, diff: [('interpolation_fixture', text)])
+    assert 'interpolation_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'interpolation_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
