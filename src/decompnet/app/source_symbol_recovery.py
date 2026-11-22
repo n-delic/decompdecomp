@@ -6,7 +6,7 @@ from elftools.common.exceptions import ELFError
 from elftools.elf.elffile import ELFFile
 from elftools.elf.relocation import RelocationSection
 
-from ..elfobj import _function_symbols
+from ..elfobj import _function_symbols, mask_relocs
 from ..forks.csource import _blank
 
 MAX_HELPER_BYTES = 256
@@ -20,9 +20,20 @@ def rename(text, aliases):
     return text
 
 
+def comparable_overlay_code(candidate, target):
+    """Compare raw code after excluding only fields the overlay linker can resolve."""
+    if candidate is None:
+        return False
+    if not target.linker_relocs:
+        return candidate.code == target.code
+    def comparable(code):
+        return mask_relocs(code, target.linker_relocs, target.arch, target.big_endian)
+    return comparable(candidate.code) == comparable(target.code)
+
+
 def relocation_aliases(candidate, target):
     """Propose aliases for loader symbols when raw code and the relocation sites agree."""
-    if candidate is None or candidate.code != target.code:
+    if not comparable_overlay_code(candidate, target):
         return {}
     expected = {(r.offset, r.type): r.symbol for r in target.relocs}
     actual = {(r.offset, r.type): r.symbol for r in candidate.relocs}

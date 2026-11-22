@@ -1474,6 +1474,15 @@ R_MIPS_26 calls. The exact overlay judge correctly rejected both approaches.
 Declaring the common loader symbol can resolve the compile error, but the
 encoded offsets still require independent overlay-local linking evidence.
 
+A loader-grade retry resolved the two address forms independently: IDO emits an
+undefined direct call to a specific overlay-local alias, and the overlay linker
+resolves that alias using validated loader metadata. The linker compares the
+whole function and original loader bindings after resolving the call. This
+produced 33 verified matches on the isolated N64 copy. Reopening it and
+rebuilding the affected overlays from those compiled objects reproduced the
+cartridge bytes. Changing a call to a second alias under the same base symbol
+fails the controlled regression.
+
 ### Observation: source layout sensitivity (IDO 5.3)
 
 The existing [IDO guide](../src/decompnet/consoles/n64/guides/ido.md) records a private same-source

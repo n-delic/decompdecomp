@@ -57,6 +57,8 @@ class FunctionObj:
     relocs: list[Reloc] = field(default_factory=list)
     cpu: str = ""  # its processor's variant when capstone can't read it (Console.cpu_variant: "allegrex"), else ""
 
+    linker_relocs: list[Reloc] = field(default_factory=list)  # fields a pre-relocation overlay linker can resolve
+
     def normalized(self) -> bytes:
         return mask_relocs(self.code, self.relocs, self.arch, self.big_endian)
 

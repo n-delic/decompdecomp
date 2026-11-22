@@ -28,6 +28,7 @@ class Text:
     entries: tuple[int, ...] = ()
     stored_size: int = 0
     relocations: tuple[tuple[int, int, int], ...] | None = None  # (text offset, ELF kind, symbol index)
+    text_bases: tuple[int, ...] = ()  # zero-valued text-section symbols in the loader table
 
 
 
@@ -107,9 +108,15 @@ def _text(rom, name, at, end):
             if len(symbols) % 12:
                 return result
             # A zero-valued text symbol is an import, not entry-point evidence.
-            entries = {value for tag, value, _ in struct.iter_unpack('>III', symbols)
-                       if (tag >> 16) & 0xFF == 0x52 and 0 < value < len(result.data) and value % 4 == 0}
-            return replace(result, entries=tuple(sorted(entries)),
+            entries = set()
+            text_bases = []
+            for index, (tag, value, _) in enumerate(struct.iter_unpack('>III', symbols)):
+                symbol_type = (tag >> 16) & 0xFF
+                if symbol_type == 0x52 and 0 < value < len(result.data) and value % 4 == 0:
+                    entries.add(value)
+                if symbol_type == 0x54 and value == 0:
+                    text_bases.append(index)
+            return replace(result, entries=tuple(sorted(entries)), text_bases=tuple(text_bases),
                            relocations=_relocations(relocations, len(symbols) // 12, len(result.data)))
         sections.add(kind)
         compressed = bool(flags & 0x10000)
@@ -159,6 +166,41 @@ def function_relocations(region, start, size):
     return [[at - start, kind, index] for at, kind, index in relocs[begin:end]]
 
 
+def function_local_calls(region, start, size, relocs):
+    """Return validated module-relative direct calls, as site, base symbol and byte offset."""
+    targets = []
+    bases = set(getattr(region, 'text_bases', ()))
+    for at, kind, index in relocs or ():
+        if kind != 4 or index not in bases or not 0 <= at <= size - 4:
+            continue
+        word = int.from_bytes(region.data[start + at:start + at + 4], 'big')
+        offset = (word & 0x03ffffff) << 2
+        if word >> 26 == 3 and 0 < offset <= len(region.data) - 4:
+            targets.append([at, index, offset])
+    return targets
+
+
+def metadata_updates(image, banks, rows):
+    """Upgrade saved overlay metadata only where the loader records and whole body still agree."""
+    import json
+
+    regions = {region.offset: region for region in read(image)}
+    for row in rows:
+        meta = json.loads(row['meta'] or '{}')
+        info = meta.get('uso')
+        if not info or info.get('local_calls') or info.get('relocs') is None:
+            continue
+        region = regions.get(info['section'])
+        start, size = info['start'], info['size']
+        if (region is None or banks.get(str(region.offset)) != row['rom_offset'] - start
+                or region.data[start:start + size] != row['target']
+                or function_relocations(region, start, size) != info['relocs']):
+            continue
+        if calls := function_local_calls(region, start, size, info['relocs']):
+            info['local_calls'] = calls
+            yield row['id'], json.dumps(meta)
+
+
 def replace_text(cartridge, region, text):
     if len(text) != len(region.data):
         raise ValueError('USO text length changed')
@@ -192,6 +234,9 @@ def rebuild(image, entries):
                     or function_relocations(region, start, size) != info['relocs']):
                 raise ValueError(f'Overlay function placement at 0x{offset:X}+0x{start:X} has changed')
             end = start + size
+            local_calls = function_local_calls(region, start, size, info['relocs'])
+            if info.get('local_calls') and info['local_calls'] != local_calls:
+                raise ValueError(f'Overlay local call metadata at 0x{offset:X}+0x{start:X} has changed')
             verified = link(obj, name, region.data[start:end], info)
             if not verified.exact:
                 details = ', '.join(verified.problems) or 'text bytes differ'
@@ -271,7 +316,10 @@ def add_to_split(result: "SplitResult", workdir: "Path", original: bytes, log) -
         for a, b, v in bodies:
             entry = f'func_{v:08X}_{kind}_{region.offset:X}'
             fn = function_from_bytes(entry, region.data[a:b], start + a, v, name)
-            fn.uso = {'section': region.offset, 'start': a, 'size': b - a, 'relocs': function_relocations(region, a, b - a)}
+            relocs = function_relocations(region, a, b - a)
+            fn.uso = {'section': region.offset, 'start': a, 'size': b - a, 'relocs': relocs}
+            if local_calls := function_local_calls(region, a, b - a, relocs):
+                fn.uso['local_calls'] = local_calls
             result.functions.append(fn)
         functions, banks = counts.get(kind, (0, 0))
         counts[kind] = functions+len(bodies), banks+1
