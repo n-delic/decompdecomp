@@ -84,3 +84,21 @@ int example(int *input) {
     proposals = draft_repairs.variants(source, 'example', 'mips', flags=('-mgp32',), labels=labels)
     [split] = [candidate for candidate in proposals if labels[candidate] == 'split_pointer_integer_phase']
     assert 'return __repair_phase_storage_value;' in split
+
+
+def test_draft_repairs_offer_whole_array_byte_address():
+    from decompnet.app import draft_repairs
+
+    source = """
+extern int grid[][7];
+void example(unsigned int row, unsigned int column) {
+    int *cell;
+    cell = &grid[row][column];
+    ++*cell;
+}
+"""
+    labels = {}
+    proposals = draft_repairs.variants(source, 'example', 'mips', labels=labels)
+    [address] = [candidate for candidate in proposals if labels[candidate] == 'linear_row_address']
+    assert '(char *)&grid' in address
+    assert 'sizeof(grid[0][0])' in address

@@ -15621,6 +15621,19 @@ instruction differences. Keeping the unused integer member in the
 pointer union scored the same. The automatic proposal checks direct
 member uses, disjoint liveness, and a dominating write before every
 read. This is a single saved example.
+
+
 ### KMC GCC 2.7.2 paired zero initializers
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` initialized three adjacent word pairs as 64-bit zeros. Its machine draft emitted six separate zero stores. Combining the global pair alone changed the diff score from 230 to 20; combining all three pairs produced an exact linked match. This is one saved example, not a controlled cross-compiler experiment. The proposal checks the relocated global addresses, the generated record's word layout and the target stores; the normal judge checks the resulting candidate. The 64-bit pointer accesses assume their addresses meet the source type's alignment requirements.
+
+### Use whole-array byte strides for one element address
+
+In the same private N64 switch sample with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, spelling a two-dimensional
+element address as an offset from the whole array changed the schedule
+of its row and column arithmetic. The linked score fell from 372 to
+317 with all jump-table bytes matching. Applying this form to both
+table references did not reproduce the improvement. The proposal
+keeps each index evaluation once and derives both strides from the
+array's declared type using `sizeof`. This is one saved example.
