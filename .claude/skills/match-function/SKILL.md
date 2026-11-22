@@ -336,6 +336,11 @@ says the fix and the library families it names; try those families with `prove_c
 - **`local_flow` declined on any `volatile` in the text** until 0.5.604, so a saved best with `*(volatile T *)&global`
   reads had no variants from the ~40 flow-based families. Only a volatile local still declines; check
   `local_flow.analyze(source, name)` is not None before concluding the permuter has nothing.
+- **A saved best full of search scaffolding (union around a pointer and an integer, `if (x) { S } else { S }`, identity
+  inline, copies of one cast, word locals every use truncates) is a dead end for a greedy chain**: each removal is neutral or
+  worse alone (145 -> 240 on a 129-instruction list insertion, then 240 -> 0 with a loop key copy). decomp-repair
+  `scaffold_strip` writes them out together and offers the child with `loop_invariant_key_copy` (`scaffold_strip_key_copy`);
+  if `prove_chain` finds nothing on such a best, check that family fires first, then rewrite by hand and chain from there.
 - **Several changes that are each no better alone** are the normal shape of a late match. Offer the combination as
   one child, and keep non-improving children for a second step (`operand_order_pass`'s combined step).
 - **A copy that lands in the wrong register (`$v1` for `$v0`) beside a `goto blockN` join.** m2c writes `v = s;`
