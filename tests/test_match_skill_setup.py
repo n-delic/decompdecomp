@@ -4,6 +4,7 @@ A stand-in for the app answers the three calls the skill's judge.py makes (funct
 touches a real app or claims a real function."""
 import importlib.util
 import json
+import shlex
 import subprocess
 import sys
 import threading
@@ -29,6 +30,14 @@ class FakeApp:
 
     def __init__(self, home):
         self.claims, self.revokes, self.status, self.creates, self.busy = [], [], "open", [], 0
+        self.calls, self.answers = [], ["ok"]  # the other tools' calls, and what they answer (the last repeats)
+        self.tools = [
+            {"name": "add_note", "description": "Add a note.", "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "get_function", "description": "Read a function.\nMore.", "inputSchema": {
+                "type": "object", "properties": {"function": {"type": "string"}}, "required": ["function"]}},
+            {"name": "report_repair", "description": "Report what the repair was.", "inputSchema": {
+                "type": "object", "properties": {"function": {"type": "string", "description": "which"},
+                                                 "category": {"type": "string", "enum": ["register", "other"]}}}}]
         outer = self
 
         class Window(BaseHTTPRequestHandler):
@@ -63,7 +72,13 @@ class FakeApp:
                     return self.reply({}, 202)
                 if body["method"] == "initialize":
                     return self.reply({"jsonrpc": "2.0", "id": body["id"], "result": {"serverInfo": {"name": "decomp"}}})
+                if body["method"] == "tools/list":
+                    return self.reply({"jsonrpc": "2.0", "id": body["id"], "result": {"tools": outer.tools}})
                 args = body["params"]["arguments"]
+                if body["params"]["name"] != "claim_function":
+                    outer.calls.append((body["params"]["name"], args))
+                    text = outer.answers.pop(0) if len(outer.answers) > 1 else outer.answers[0]
+                    return self.reply({"jsonrpc": "2.0", "id": body["id"], "result": {"content": [{"type": "text", "text": text}]}})
                 outer.claims.append(args)
                 if outer.busy:
                     outer.busy -= 1
@@ -387,3 +402,70 @@ def test_reclaim_with_no_name_claims_the_nearest_and_refuses_the_released_one(wo
         assert json.loads((setup.session_dir("claude-r2") / "connection.json").read_text())["function"] == ""
     finally:
         setup.main(["stop", "claude-r2"])
+
+
+def test_mcp_lists_describes_and_calls_tools_over_the_sessions_connection(world, capsys):
+    setup, app, home, primary = world
+    mcp = load("mcp")
+    mcp.setup.TMP = setup.TMP
+    assert start(setup, home, primary, "--holder", "claude-m1") == 0
+    try:
+        capsys.readouterr()
+        assert mcp.run(["claude-m1", "--list"]) == 0
+        listing = capsys.readouterr().out
+        assert "get_function" in listing and "Read a function." in listing and "More." not in listing
+        assert mcp.run(["claude-m1", "report_repair", "--help"]) == 0
+        helped = capsys.readouterr().out
+        assert "one of: register, other" in helped and "bearer-s3cret" not in helped
+        app.answers = ["the function text"]
+        assert mcp.run(["claude-m1", "get_function", '{"function": "func_8001"}']) == 0
+        assert "the function text" in capsys.readouterr().out
+        assert app.calls == [("get_function", {"function": "func_8001"})]
+        with pytest.raises(SystemExit, match="category='bogus' is not valid; use one of: register, other"):
+            mcp.run(["claude-m1", "report_repair", '{"category": "bogus"}'])
+        with pytest.raises(SystemExit, match="no tool 'nope'"):
+            mcp.run(["claude-m1", "nope"])
+        assert len(app.calls) == 1  # a refused call never reached the app
+    finally:
+        setup.main(["stop", "claude-m1"])
+
+
+def test_mcp_repeats_a_still_running_answer_but_never_an_accepted_one(world, monkeypatch, capsys):
+    setup, app, home, primary = world
+    mcp = load("mcp")
+    mcp.setup.TMP = setup.TMP
+    monkeypatch.setattr(setup.time, "sleep", lambda _: None)
+    monkeypatch.setattr(mcp.setup.time, "sleep", lambda _: None)
+    assert start(setup, home, primary, "--holder", "claude-m2") == 0
+    try:
+        capsys.readouterr()
+        app.answers = ["add_note is still running; repeat exactly the same call", "add_note is still running; repeat exactly "
+                       "the same call", "noted"]
+        assert mcp.run(["claude-m2", "add_note", '{"function": "f"}']) == 0
+        assert [c[0] for c in app.calls] == ["add_note"] * 3 and "noted" in capsys.readouterr().out
+        app.calls.clear()
+        app.answers = ["accepted: still running in the app, do not repeat this call"]
+        assert mcp.run(["claude-m2", "add_note"]) == 0
+        assert len(app.calls) == 1 and "accepted" in capsys.readouterr().out
+    finally:
+        setup.main(["stop", "claude-m2"])
+
+
+def test_env_prints_evalable_lines_without_the_token_and_setup_ends_with_them(world, capsys):
+    setup, app, home, primary = world
+    assert start(setup, home, primary, "--holder", "claude-e1") == 0
+    try:
+        started = capsys.readouterr().out
+        assert setup.main(["env", "claude-e1"]) == 0
+        line = capsys.readouterr().out.strip()
+        assert line in started and "bearer-s3cret" not in line
+        words = shlex.split(line)
+        assert words[0] == "export"
+        env = dict(word.split("=", 1) for word in words[1:])
+        root = setup.session_dir("claude-e1")
+        assert env == {"UV_PROJECT_ENVIRONMENT": str(root / "venv"), "DECOMP_HOME": str(home),
+                       "DECOMP_PORT": str(app.servers[0].server_port)}
+    finally:
+        setup.main(["stop", "claude-e1"])
+    with pytest.raises(SystemExit, match="no session"):
+        setup.main(["env", "claude-e1"])

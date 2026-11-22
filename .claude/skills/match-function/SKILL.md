@@ -78,7 +78,16 @@ through MCP first when you learned something.
 function). It calls `compile_and_diff` over the session's own MCP connection, the one that holds the claim, and prints the
 app's verdict. Use it for every submit and confirmation; do not write your own gateway client, and do not use `judge.py try`
 in a session (its claim belongs to the connection, so it answers HTTP 400). `judge.py try` is for a claim made with
-`judge.py claim` only. `last_diff` and the rest stay MCP calls from your client.
+`judge.py claim` only.
+
+**Any other MCP tool: `mcp.py <holder> <tool> ['{"json":"args"}']`** (`get_function`, `get_candidate`, `get_assembly`,
+`last_diff`, `report_repair`, `add_note`, ...) over the same connection, printing the result. `mcp.py <holder> --list` lists
+the tools; `mcp.py <holder> <tool> --help` shows a tool's arguments with their allowed values (for `report_repair`, the valid
+categories, read from the app's own schema; a wrong category is refused with them). It repeats a "still running" reply for
+you and never repeats an "accepted ... do not repeat" one. Do not write your own MCP caller or gateway client.
+
+**The session's environment: `setup.py env <holder>`** prints `export UV_PROJECT_ENVIRONMENT=... DECOMP_HOME=...
+DECOMP_PORT=...` (the token is never printed); `eval "$(setup.py env <holder>)"` in a new shell, and `setup.py` itself ends with the same line.
 
 The other scripts, run with that venv's python (`$UV_PROJECT_ENVIRONMENT/bin/python`): `fast_judge.py FILE.c --slug S
 --function F [--diff [--rows N|all]]` (score, and the app's differing rows: 60 by default, then a "... N more rows" line; `--rows all` shows every row; a session's worktree off an older origin/main may lack `--rows`: `git pull --rebase` there and `setup.py sync <holder>`), `passes.py FILE.c --slug S --function F` (allocation
@@ -112,7 +121,7 @@ Call `project_info` and verify that the connection is scoped to the requested pr
 connection throughout the run so the app keeps attempts and claims under one identity.
 If the endpoint disappears, check the running app's advertised gateway port and verify
 `project_info` again before sending mutations. An app restart can retire a temporary endpoint.
-If sending raw MCP requests, use a distinct JSON-RPC ID for each request, including retries.
+In a session, `mcp.py` (above) sends the requests; only a client with no session writes raw ones: use a distinct JSON-RPC ID for each request, including retries.
 The gateway deduplicates pending calls by connection, tool and arguments.
 
 ## Claim one function
