@@ -24,7 +24,7 @@ def test_filter_preserves_other_methods_and_weights():
     assert useful_rewrite() == 'kept'
 
 
-@pytest.mark.parametrize('name',['perm_refer_to_var','perm_alias_array','perm_remove_ast'])
+@pytest.mark.parametrize('name',['perm_refer_to_var','perm_alias_array','perm_remove_ast','perm_var_cond_block'])
 def test_audited_unproven_reads_aliases_and_effect_removal_are_not_selected(name):
     def unsafe():raise AssertionError('must not run')
     unsafe.__name__=name
@@ -45,9 +45,10 @@ original=permuter_gen.supported_methods
 calls=0
 def checked(methods):
     global calls
-    assert any(m.__name__=='perm_add_self_assignment' for m,w in methods)
+    names={m.__name__ for m,w in methods}
+    assert {'perm_add_self_assignment','perm_var_cond_block'} <= names
     result=original(methods)
-    assert result and all(m.__name__ not in {'perm_add_self_assignment','perm_remove_var'} for m,w in result)
+    assert result and all(m.__name__ not in {'perm_add_self_assignment','perm_remove_var','perm_var_cond_block'} for m,w in result)
     calls+=1
     return result
 permuter_gen.supported_methods=checked
@@ -65,7 +66,7 @@ assert calls>0
     assert rows[-1] == {'done': True}
     variants = [r for r in rows if 'variant' in r]
     assert variants and not any('error' in r for r in rows)
-    assert all(not set(r.get('lineage', [])) & {'perm_add_self_assignment','perm_remove_var'} for r in variants)
+    assert all(not set(r.get('lineage', [])) & {'perm_add_self_assignment','perm_remove_var','perm_var_cond_block'} for r in variants)
 
 
 @pytest.mark.parametrize('trace',[False,True])

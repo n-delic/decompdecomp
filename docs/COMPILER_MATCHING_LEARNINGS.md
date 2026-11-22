@@ -1,5 +1,16 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: reject random predicates with uninitialized reads
+
+A native conditional-block mutation duplicated accounting statements
+under a predicate that read a pointer before its initialization. Its
+linked score improved from 815 to 495, and descendants reached 355,
+with `-G0 -mips3 -mgp32 -mfp32 -O2`. The pinned compiler reported
+the uninitialized read with `-Wall -Wuninitialized`. Removing the
+artificial predicate and retaining the common statements gave a
+warning-clean draft at 785. The generator excludes that native
+mutation before either traced or untraced candidate selection.
+
 ### KMC GCC 2.7.2: correct the byte selected from a table
 
 A big-endian N64 draft loaded a halfword through a signed-byte identity
