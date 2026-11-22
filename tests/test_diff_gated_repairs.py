@@ -1839,3 +1839,13 @@ def test_byte_global_branch_routes_to_kmc(monkeypatch):
                         lambda text, name, header, diff: [('byte_global_branch_fixture', text)])
     assert 'byte_global_branch_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'byte_global_branch_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_record_byte_offset_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_record_byte_offset, 'variants',
+                        lambda text, name, header, diff: [('record_byte_offset_fixture', text)])
+    assert 'record_byte_offset_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'record_byte_offset_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
