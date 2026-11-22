@@ -8,6 +8,7 @@ from ..compiler import DONOR_UNIT_HEADER, MAX_DONOR_UNIT_BYTES, SourceRejected, 
 from ..forks import csource
 from ..forks.project import ForkProject
 from ..forks.source_paths import readable
+from ..network import NetworkError
 from . import donor_sources
 
 
@@ -39,6 +40,32 @@ def _preprocess(path, root, invocation, *, original_parent=None):
     return (re.sub(r'(?m)^[ \t]*#[^\n]*', '', text) if text is not None else None), reader
 
 
+def _owned_span(text, entry):
+    span = csource.find(text, entry)
+    if span:
+        return span
+    # A macro can spell a declaration's return type. Hide it from the source
+    # parser only. The donor's real preprocessor decides what it means.
+    prefix = re.search(r'(?m)^[ \t]*([A-Za-z_]\w*\([^\n;{}]*?\))[ \t]+' + re.escape(entry) + r'[ \t]*\(',
+                       csource._blank(text))
+    if not prefix:
+        return None
+    start, end = prefix.span(1)
+    return csource.find(text[:start] + 'int'.ljust(end - start) + text[end:], entry)
+
+
+def has_owned_definition(root, unit, entry):
+    path = readable(root, unit)
+    if path is None:
+        return False
+    try:
+        text = donor_sources.DonorReader({'root': str(root)}).file(path)
+    except (NetworkError, OSError):
+        return False
+    span = _owned_span(text, entry)
+    return bool(span and not csource.is_stub(text[slice(*span)]))
+
+
 def candidate(other, donor, names, invocation, cache):
     """Snapshot the compiler's selected translation unit with its entry in the editable source."""
     if 'unit' not in donor.keys():
@@ -62,7 +89,7 @@ def candidate(other, donor, names, invocation, cache):
     if text is None:
         return None
     if entry not in spans:
-        original_span = csource.find(original_text, entry)
+        original_span = _owned_span(original_text, entry)
         spans[entry] = (csource.find(text, entry)
                         if original_span and not csource.is_stub(original_text[slice(*original_span)]) else None)
     span = spans[entry]
