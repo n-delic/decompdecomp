@@ -49,6 +49,7 @@ from .trial_bookkeeping import buffered
 
 AFTER_RANDOM_TRIALS = 32
 RANDOM_TRIAL_WINDOW = 64
+DRAFT_RESTART_TRIALS = 24  # candidates a stalled function's draft chain may judge in one search
 RANDOM_SECONDS_WINDOW = 30
 LOCAL_PAUSES = {'phase_budget', 'burst_budget'}
 
@@ -437,6 +438,12 @@ class Search(Permuter):
         # a 231-instruction key/velocity dispatch (decomp-repair 0.5.583): a halfword cast shifted out, the halfword id
         # local, a byte-masked parameter narrowed with its helper, a range flag before a clamp, and the chain of them
         calls.append((L + 'narrow_param_clamp_repairs.variants', (source, name)))
+        # a 205-instruction line-segment test (decomp-repair 0.5.584): the final guarded zero return as one labelled return,
+        # the later zero returns and the guard-then-return forms jumping to it (20 -> 0 from the saved best, as a chain)
+        calls.append((L + 'zero_exit_label_repairs.variants', (source, name)))
+        # an 84-instruction N64 initialiser (decomp-repair 0.5.585): the second loop's starts and steps wrapped together,
+        # the induction pointer three deep, after the union and reused-offset splits (30 -> 0 from the saved best)
+        calls.append((L + 'loop_weight_set_repairs.variants', (source, name)))
         # Existing saved drafts can still use their original address-based entry name.
         calls.append((L + 'scoped_byte_read_call.variants', (source, name, arch, asm, header)))
         if arch == 'mips' and (vram := dict(fn).get('vram')) is not None:
@@ -1027,6 +1034,72 @@ class Search(Permuter):
                     if updated['best_source'] == child or updated['status'] == 'matched':
                         self.log(f'Repaired a saved draft: {best:,} → {score:,}.')
                         return score
+        return best
+
+    def draft_restart_pass(self, agent, proj, fn, state, best):
+        """A stalled function climbs again from the decompiler's own draft (functions.seed), a second seed beside the
+        saved best. A best can score well and be another program (its stores placed for the schedule, a field
+        written twice: COMPILER_MATCHING_LEARNINGS.md, "stored saved best is not the game's program"), and then no
+        rewrite that keeps meaning reaches the match from it, while the draft's stores follow the program. The chain
+        keeps its own current source and saves only what beats the saved best, like any candidate."""
+        from .. import candidate_quality
+        from . import best_warnings, generation_calls, source_preparation
+        from .function_names import canonical_source
+
+        draft = fn['seed']
+        stalled = best_warnings.stalled(fn)
+        allowance = min(DRAFT_RESTART_TRIALS, max(0, (self.limit - self.tested) // 3))
+        if (not draft or not stalled or proj['arch'] != 'mips' or allowance < 2
+                or not hasattr(self.net, '_judge_with')):
+            return best
+        header = self.net._context(proj['id'], fn['unit'])['header']
+        profile = compiler_for(self.net.cfg(proj), fn['vram'], fn)
+        snapshot = source_preparation.inputs(self.net, proj, fn)
+        source = canonical_source(fn, draft)
+        seen = {canonical_source(fn, fn['best_source']), source}
+        stop = self.tested + allowance
+        self.log('The saved best has stalled; climbing again from the machine draft.')
+        self.tested += 1
+        exact, diff, problems = self.net._judge_with(proj, fn, profile['toolchain'], profile['flags'], source)
+        if problems or diff is None:
+            return best
+        current_score = diff.score
+        while self.tested < stop:
+            step = None
+            for family, child in generation_calls.generate(
+                    'diff_gated_repairs.proposals',
+                    (source, fn['name'], header, proj['arch'], profile['toolchain'], diff.rows, fn['asm']),
+                    dict(flags=profile['flags'], big_endian=bool(proj['big_endian']))):
+                if self.tested >= stop:
+                    break
+                if child in seen or candidate_quality.reported_source(self.net, fn, child):
+                    continue
+                seen.add(child)
+                self.check()
+                current = self.net._function(fn['name'], proj['slug'])
+                project = self.net.project_row(proj['slug'])
+                if current['status'] != 'open' or source_preparation.inputs(self.net, project, current) != snapshot:
+                    return best
+                self.tested += 1
+                state.add(variants=1, repairs=1)
+                ok, child_diff, child_problems = self.net._judge_with(proj, fn, profile['toolchain'], profile['flags'], child)
+                if child_problems or child_diff is None:
+                    continue
+                if child_diff.score < best:  # the saved best's own judge records it
+                    with repair_trial({'kind': 'deep local repair', 'family': f'draft_restart:{family}'}):
+                        score = self._score_current(agent, project, current, child, best, None)
+                    if score is not None and score < best:
+                        self.log(f'The machine draft\'s chain beat the saved best: {best:,} → {score:,}.')
+                        best = score
+                        if best == 0:
+                            return 0
+                if child_diff.score < current_score:
+                    step = (child, child_diff)
+                    break
+            if step is None:
+                break
+            source, diff = step
+            current_score = diff.score
         return best
 
     def near_register_pass(self, agent, proj, fn, state, best, fork):
@@ -2213,6 +2286,9 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
                     fn = net._function(name, slug)
                 if baseline and not fork and (lane is None or lane.index == 0):
                     baseline = search.repair_saved_drafts(agent, proj, fn, state, baseline)
+                    fn = net._function(name, slug)
+                if baseline and not fork and (lane is None or lane.index == 0):
+                    baseline = search.draft_restart_pass(agent, proj, fn, state, baseline)
                     fn = net._function(name, slug)
                 measured_baseline = baseline
                 relabel = baseline and not fork and search.can_relabel_switch(fn)

@@ -16997,6 +16997,34 @@ A... } else { v = t; } B... N: C...`. Every path of B ended in `goto N`, so B fa
 - Library: `goto_nested_entry_else` in decomprepair 0.5.580 (`goto_structure_repairs`), offered by the draft repairs and
   the deep pass (it is in `AGENT_FAMILIES`); `tests/test_goto_nested_entry_else.py`.
 
+### KMC GCC 2.7.2: four edits that only pay off together (`allocation_weight_combination`)
+
+A 284-instruction N64 function (`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, a pointer chain whose first link m2c copied into
+a stack local) stood at 80 with only the chain's register wrong (`$a3` where the target has `$t0`). Controlled result on one
+function (exact judge, no permuter run); the explanations are hypotheses from `cc1 -dl -dg` dumps, not confirmed in the
+compiler source. Four edits, each alone no better than 80, reach 65 only together:
+
+| edit | alone | what it is |
+|---|---|---|
+| D `spill_slot_copy_collapse` | 1596 | `temp = &b[n]; next = &temp[n]; ...; slot = temp;` written through `slot` (copy dropped) |
+| U `weight_scope_unwrap` | 320 | the function-body `do { } while (0);` (it holds m2c's labels and gotos, all inside) made a plain block |
+| I inner call scopes | 160 | the inner `do { call(); } while (0);` removed |
+| S `init_sink_into_guard` | 80 | `v = NULL;` before `if (arg0 != NULL) {` moved to the block's first statement |
+
+Pairs and triples: DU 230, DUI 115, DUS 190, UIS 155, DI/DIS 1675, DS 1596, UI 205, US 280, IS 160; all four 65.
+Hypotheses: (1) flow.c counts a reference once per loop depth, so inside a one-shot `do { } while (0);` every use doubles and
+global.c's `floor_log2(uses) * uses / length` ranking changes: with the wrapper the stack slot's pseudo (6 uses, length 44,
+0.27) outranked the call-crossing pointer (10 uses, 117, 0.26) and took `$fp`; without it the slot's 3 references rank
+below (0.07 against 0.085) and the slot stays in memory; (2) a stack local that is itself the spilled pseudo gets its
+chain's first add through the reload register ($t0), while a copy keeps a local-alloc pseudo ($a3); (3) the
+init moved into the guard leaves the prologue's save order to the second scheduler as the target has it. What did not work:
+changing the size expression (`A*8 + t + t + C`) in every form tried left 65 (the chain is merged by combine unless a third
+use of the product exists, still unsolved).
+- Library: decomprepair 0.5.586 (`allocation_weight_combination`: `weight_scope_unwrap`, `spill_slot_copy_collapse`,
+  `init_sink_into_guard`, `weight_combination` with every subset of the edits that apply), offered by the draft repairs,
+  `deep_permuter` children and the local lane (all call `draft_repairs.variants`; the families are in `AGENT_FAMILIES`);
+  `tests/test_allocation_weight_combination.py`.
+
 ### KMC GCC 2.7.2: an N64 effect spawner, 1397 to 0 in six edits (decomprepair 0.5.581, 0.5.582)
 
 A 374-instruction N64 effect spawner (`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, eleven parameters, a switch over seven
@@ -17077,6 +17105,74 @@ Edit list (score after each, from the saved best; "alone" is the edit applied to
   `deep_permuter._local_proposals` and `AGENT_FAMILIES`; `tests/test_narrow_param_clamp_wiring.py` checks all three. Not
   covered: the cast shape only for `>> 16`, the narrowing only for a parameter read through masks of at most a byte (or
   passed whole to a static helper that masks it), and the flag only for the three-arm clamp whose sign test is `x < 0`.
+
+## KMC GCC 2.7.2: the zero return that kept its own branch (decomprepair 0.5.584, `zero_exit_label`)
+
+Evidence level: one N64 function (a 205-instruction line-segment test), `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`,
+the isolated judge-worker, no permuter run. Controlled regression is the synthetic test in
+`tests/test_zero_exit_label_wiring.py`; the 20 -> 0 is one function.
+
+The saved best was 20, four register rows: the final `if (!(a | b)) goto L; return var_condition_bit; L:` kept the
+returned bit alive into `$a1`, so the first `or` read `$a1` where the game reads `$v1`. Returning the second compare's
+bit (`$v1`) gave 5 (`move $v0,$v1` where the game has `move $v0,$zero`); a literal `return 0;` gave 520, because the
+guard was then one inverted `bnel` to the shared zero return instead of the game's `beqz; nop; j; move $v0,$zero`.
+Hypothesis from the cc1 dumps (not confirmed in jump.c): the second jump pass cross-jumps identical `v0 = 0; goto end`
+tails into the first copy, and the guard directly before the final zero return is then inverted. In a minimal copy of
+the function the inversion appears as soon as two plain `return 0;` exits (or one plus a returned zero-only variable)
+exist; one plain `return 0;` and any non-constant return does not trigger it.
+
+Three edits, none of which moved the score alone (each pair stayed at 520, the first alone at 520), together gave 0:
+1. the final return becomes the one labelled zero return (`__zero_exit: return 0;`);
+2. the trailing returns of variables that only ever hold 0 (`return __repair_phase_...;`) become `goto __zero_exit;`;
+3. both bounding guards `if (c) { return 0; } goto next;` become `if (!(c)) goto next; goto __zero_exit;`.
+
+Failed attempts worth not repeating: a single variable shared by every zero return, `goto` for every exit (the two
+guards' compares then merged their tails, 1400), moving the trailing returns before the body (1400, the layout
+changed), `-f` flags (`-fno-thread-jumps`, `-fno-crossjumping` do not exist or change nothing), and the existing
+`shared_return` family (it needs two to four literal returns of one value and never sees a returned zero variable or
+the guard form). The family offers the label alone, with the trailing exits, with the guards, and the chain; it is in
+the draft repairs, the beam (`draft_repairs.variants`), `deep_permuter._local_proposals` and `AGENT_FAMILIES`
+(`tests/test_zero_exit_label_wiring.py` checks all three). From the saved best the chain child scores 0; the other
+three score 520. Not covered: only a final return that is `return 0;` or a variable an earlier guard on a copy of it
+forced to 0, and only guards whose body is a bare zero return followed by `goto`.
+
+## KMC GCC 2.7.2: saved registers in the wrong order, fixed by weighting the second loop's locals together (decomprepair 0.5.585, `loop_weight_set`)
+
+Evidence level: one function (an 84-instruction N64 initialiser with two `goto` loops over the same record, `gcc-2.7.2-kmc
+-G0 -mips3 -mgp32 -mfp32 -O2`, saved best 30, recorded 0 in the app's judge), every step scored with the app's own
+judge-worker in a scratch copy; the allocation tables are `cc1 -dl -dg`. The compiler's reasons are hypotheses from those
+dumps, not confirmed in its source.
+
+The saved best (30) differed only in the first loop: the target keeps the flag's address and the table offset in `$a1`/`$a0`
+(pseudos that never cross a call), the draft kept them in `$s3`/`$s4`, because a union (`__repair_phase_storage`) and the
+offset local `first_offset` each served both loops, so one pseudo crossed the second loop's call.
+
+| step | score | what it changes |
+| --- | --- | --- |
+| saved best | 30 | union and `first_offset` shared by both loops |
+| `phase_storage_split` | 110 | pointer and value become two locals (alone worse) |
+| `reused_temp_split` on `first_offset` | 135 | the second loop's offset is its own pseudo; loop 1 now uses `$a1`/`$a0` as the target, the saved registers are permuted |
+| 1,260 statement orders of the second loop's updates | 135 | no effect: statement order does not reach the priorities |
+| each start/step wrapped at depth 0..3, hill climbing, then 4,096 and 12,000 samples of six to eleven sites | 45, then 0 | one match in the random samples |
+| uniform depth per local: counter 1, value 1, offset 1, induction pointer 3 | 0 | three of 256 combinations |
+| every start/step of the second loop wrapped once (pointer too) | 85 | the pointer's three-deep wrapper is needed |
+| the same with depth 2 | 110 | |
+| each local alone at depth 3 over the rest at 1 | 0 for the induction pointer only | |
+
+The table before (refs / live length, priority = floor_log2(refs) x refs / length): value 8/32 (0.75), counter 11/49 (0.67),
+`temp_s5` 9/55 (0.49), offset 5/31 (0.32); the target wants counter, value, offset, `temp_s5`. After: counter 18/49,
+value 14/32, offset 10/31, `temp_s5` 12/55, pointer 15/30, which gives the target's `$s2..$s5`, `$s1`. Each `do { x += 8; }
+while (0);` is one loop more round that reference at no instruction cost (`loop_weight_scope`'s lever); the saved registers
+need several of them at once. One statement at a time never left the plateau (45 at best), which is why the greedy lane
+could not find it.
+
+`loop_weight_set` offers the set: the union split and the offset split first, then every start and step of the locals that
+run into the second loop (and the first loop's step of the shared counter) at depth 1, with each stepped local three deep
+in turn, and the depth-2 form. From the saved best the first call returns the exact child (0). It is in the draft repairs,
+the beam (`draft_repairs.variants`), `deep_permuter._local_proposals` and `AGENT_FAMILIES`
+(`tests/test_loop_weight_set_wiring.py`). Not covered: a set that wants different depths for locals other than the
+induction pointer, and sources that are `for` loops (natural loops were strength-reduced into three pointers and scored 2863;
+under `-fno-strength-reduce` they gave multiplies).
 
 ## Scoring: a different program costs more than a different schedule (`scoring.PENALTY_MEANING`, score version 2)
 
