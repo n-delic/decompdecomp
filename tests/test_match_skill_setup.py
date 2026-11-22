@@ -348,3 +348,42 @@ def test_judge_claim_falls_back_to_closest_on_an_older_app():
         return {"name": "f"} if body["strategy"] == "closest" else {"error": "strategy must be one of easiest, closest"}
     app.call = call
     assert app.claim("demo", strategy="nearest", max_insns=800) == {"name": "f"} and sent == ["nearest", "closest"]
+
+
+def test_a_released_function_is_never_renewed_again_and_a_reclaimed_one_is(world):
+    setup, app, home, primary = world
+    assert start(setup, home, primary, "--holder", "claude-r1", "func_9000") == 0
+    root = setup.session_dir("claude-r1")
+    try:
+        assert wait_for(lambda: {"function": "func_9000", "fallback": False} in app.claims[1:])
+        assert setup.main(["release", "claude-r1"]) == 0
+        info = json.loads((root / "connection.json").read_text())
+        assert info["function"] == "" and info["released"] == ["func_9000"] and info["token"] == "bearer-s3cret"
+        time.sleep(0.5)  # a renewal already under way finishes; none starts after it
+        seen = len(app.claims)
+        time.sleep(3.5)  # several 1-second cycles
+        assert len(app.claims) == seen  # nothing claimed: the loop has no function to renew
+        assert (root / "renew.pid").exists()  # and it keeps running for the next one
+        with pytest.raises(SystemExit, match="released by this session"):
+            setup.main(["reclaim", "claude-r1", "func_9000"])
+        assert setup.main(["reclaim", "claude-r1", "func_9100"]) == 0
+        assert app.claims[seen] == {"function": "func_9100", "fallback": False}
+        assert json.loads((root / "connection.json").read_text())["function"] == "func_9100"
+        mark = len(app.claims)
+        assert wait_for(lambda: len(app.claims) >= mark + 2)
+        assert {c.get("function") for c in app.claims[mark:]} == {"func_9100"}  # renewed: the new one only
+    finally:
+        setup.main(["stop", "claude-r1"])
+
+
+def test_reclaim_with_no_name_claims_the_nearest_and_refuses_the_released_one(world):
+    setup, app, home, primary = world
+    assert start(setup, home, primary, "--holder", "claude-r2") == 0  # the fake app answers func_8001 to a pick
+    try:
+        setup.main(["release", "claude-r2"])
+        with pytest.raises(SystemExit, match="released by this session"):
+            setup.main(["reclaim", "claude-r2"])  # the app handed back the function it let go
+        assert app.claims.count({"strategy": "nearest", "max_insns": 800}) == 2
+        assert json.loads((setup.session_dir("claude-r2") / "connection.json").read_text())["function"] == ""
+    finally:
+        setup.main(["stop", "claude-r2"])

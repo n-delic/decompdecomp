@@ -17,6 +17,12 @@ read a function's status.
     setup.py try HOLDER CAND.c [FUNC]                   submit a candidate to the app as this session (compile_and_diff over
                                                         the session's own MCP connection, which holds the claim) and print
                                                         the app's verdict; FUNC defaults to the claimed function
+    setup.py release HOLDER                             after `release_function`: the renewal stops renewing the released
+                                                        function and never claims it again
+    setup.py reclaim HOLDER [FUNC] [--random] [--max-size N]
+                                                        claim another function (FUNC, or the nearest/random one, as at
+                                                        start) and renew that one from now on; a released function is
+                                                        refused
     setup.py stop HOLDER                                stop the renewal, revoke the connection (that frees its
                                                         claim, even with no compile yet), remove /tmp/dd-HOLDER/
 
@@ -205,9 +211,12 @@ def sync_session(holder):
 
 
 def write_connection(root, data):
+    """Replaced whole in one step, so the renewal loop reading it never sees half a file."""
     path = root / "connection.json"
-    path.write_text(json.dumps(data, indent=2))
-    path.chmod(0o600)
+    temporary = root / "connection.json.tmp"
+    temporary.write_text(json.dumps(data, indent=2))
+    temporary.chmod(0o600)
+    os.replace(temporary, path)
 
 
 def gateway_url(home):
@@ -241,8 +250,10 @@ def start_renewal(root, interval):
 
 
 def renew_loop(root, interval):
-    """Claim the same function again every `interval` seconds (an own claim claimed again is renewed), until it
-    matches, the session folder is removed, or this process is told to stop. Errors are logged and retried."""
+    """Claim the session's current function again every `interval` seconds (an own claim claimed again is renewed),
+    until it matches, the session folder is removed, or this process is told to stop. The function is read from
+    connection.json each cycle: `setup.py release` empties it and `reclaim` changes it, so a released function is
+    never claimed again. Errors are logged and retried."""
     root = Path(root)
     info = json.loads((root / "connection.json").read_text())
     app = judge.App(info["home"])
@@ -251,18 +262,65 @@ def renew_loop(root, interval):
     signal.signal(signal.SIGTERM, lambda *_: stop.append(1))
     while not stop and (root / "renew.pid").exists():
         try:
-            if app.function(info["slug"], info["function"]).get("status") == "matched":
-                print(f"{info['function']} matched; the claim needs no renewing", flush=True)
+            current = json.loads((root / "connection.json").read_text())
+            function = current.get("function") or ""
+            if not function or function in current.get("released", []):
+                print(time.strftime("%H:%M:%S"), "no claimed function; nothing to renew", flush=True)
+            elif app.function(current["slug"], function).get("status") == "matched":
+                print(f"{function} matched; the claim needs no renewing", flush=True)
                 break
-            claim(gateway, info["function"])
-            print(time.strftime("%H:%M:%S"), "renewed", flush=True)
-        except (McpError, SystemExit) as error:
+            else:
+                claim(gateway, function)
+                print(time.strftime("%H:%M:%S"), "renewed", function, flush=True)
+        except (McpError, SystemExit, OSError, ValueError) as error:
             print(time.strftime("%H:%M:%S"), f"not renewed: {error}", flush=True)
         for _ in range(int(interval)):  # short sleeps so a stop is prompt
             if stop or not (root / "renew.pid").exists():
                 break
             time.sleep(1)
     (root / "renew.pid").unlink(missing_ok=True)
+
+
+def release_session(holder):
+    """Record that the session let its function go (after `release_function`): the renewal stops claiming it."""
+    root = session_dir(holder)
+    info = read_session(root)
+    function = info.get("function") or ""
+    if function:
+        info["released"] = sorted({*info.get("released", []), function})
+    info["function"] = ""
+    write_connection(root, info)
+    print(f"{holder}: {function or 'no function'} released; the renewal no longer renews it", flush=True)
+    return 0
+
+
+def reclaim_session(holder, function="", strategy="nearest", max_insns=NEAREST_MAX_INSNS):
+    """Claim another function for a session that released its first, and make it the one the renewal renews."""
+    root = session_dir(holder)
+    info = read_session(root)
+    if function and function in info.get("released", []):
+        sys.exit(f"{function} was released by this session; claim another function")
+    gateway = Gateway(info["gateway_url"], info["token"])
+    try:
+        gateway.start()
+        claimed = claim(gateway, function, strategy, max_insns)
+    except McpError as error:
+        sys.exit(f"nothing reclaimed: {error}")
+    if claimed in info.get("released", []):  # the app handed back the function this session let go
+        sys.exit(f"{claimed} was released by this session and was claimed again; release it with its claim token and "
+                 f"ask for another function")
+    info = read_session(root)  # fresh: the claim took a while
+    info["function"], info["started"] = claimed, time.time()
+    write_connection(root, info)
+    print(f"{holder}: claimed {claimed}; the renewal now renews it", flush=True)
+    return 0
+
+
+def read_session(root):
+    try:
+        return json.loads((root / "connection.json").read_text())
+    except (OSError, ValueError):
+        sys.exit(f"no session in {root}: start one with `setup.py SLUG [FUNC]`")
 
 
 def try_candidate(holder, path, function=""):
@@ -414,6 +472,19 @@ def main(argv):
         if len(argv) not in (3, 4):
             sys.exit(__doc__)
         return try_candidate(argv[1], argv[2], argv[3] if len(argv) == 4 else "")
+    if argv[:1] == ["release"]:
+        if len(argv) != 2:
+            sys.exit(__doc__)
+        return release_session(holder_name(argv[1]))
+    if argv[:1] == ["reclaim"]:
+        parser = argparse.ArgumentParser(prog="setup.py reclaim")
+        parser.add_argument("holder")
+        parser.add_argument("function", nargs="?", default="")
+        parser.add_argument("--random", action="store_true")
+        parser.add_argument("--max-size", type=int, default=NEAREST_MAX_INSNS)
+        args = parser.parse_args(argv[1:])
+        return reclaim_session(holder_name(args.holder), args.function, "random" if args.random else "nearest",
+                               args.max_size)
     if argv[:1] == ["stop"]:
         if len(argv) != 2:
             sys.exit(__doc__)
