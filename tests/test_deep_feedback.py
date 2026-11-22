@@ -305,3 +305,51 @@ def test_failed_mips_baseline_tries_measured_repairs_before_saved_attempts(monke
     search = deep_permuter.Search(net, 1, 10, Log(), net.function())
     assert search._baseline(AGENT, net.project_row('game'), net.function(), State(), None) == (0, 2)
     assert net.function()['status'] == 'matched'
+
+
+@pytest.mark.parametrize('changed', [False, True])
+def test_worse_saved_draft_can_supply_repair_evidence(monkeypatch, changed):
+    from decompnet.app import generation_calls, source_preparation
+
+    net = setup(monkeypatch)
+    current = 'int f(int x) { return x; }'
+    historical = 'int f(int x) { return x + 1; }'
+    repaired = 'int f(int x) { return x + 2; }'
+    rows = [('r', 'target', 'candidate')]
+    with net.store.tx() as db:
+        db.execute('UPDATE functions SET best_source=?,best_score=40', (current,))
+        db.executemany('INSERT INTO attempts(function_id,score,compiled,source) VALUES(1,?,1,?)',
+                       [(40, current), (70, historical), (71, historical)])
+    monkeypatch.setattr(source_preparation, 'inputs', lambda net, proj, fn: fn['best_source'])
+    generated = []
+    scored = []
+
+    def judge(proj, fn, toolchain, flags, source):
+        assert source == historical
+        return False, SimpleNamespace(score=70, rows=rows), ''
+
+    def generate(name, args, kwargs):
+        assert name == 'diff_gated_repairs.proposals'
+        assert args[0] == historical and args[5] == rows
+        generated.append(historical)
+        if changed:
+            with net.store.tx() as db:
+                db.execute("UPDATE functions SET best_source='new winner',best_score=30")
+        return [('example_repair', repaired)]
+
+    def score(self, agent, proj, fn, source, threshold, fork):
+        assert threshold == 40
+        scored.append(source)
+        self.tested += 1
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET best_source=?,best_score=0,status='matched'", (source,))
+        return 0
+
+    net._judge_with = judge
+    monkeypatch.setattr(generation_calls, 'generate', generate)
+    monkeypatch.setattr(deep_permuter.Search, '_score_current', score)
+    search = deep_permuter.Search(net, 1, 6, Log(), net.function())
+    assert search.repair_saved_drafts(AGENT, net.project_row('game'), net.function(), State(), 40) == (40 if changed else 0)
+    assert generated == [historical]
+    assert scored == ([] if changed else [repaired])
+    assert search.tested == (1 if changed else 2)

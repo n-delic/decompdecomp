@@ -13322,6 +13322,23 @@ the same center, loads from one base register, and comparisons of the
 results. It generates a candidate only across local statements that preserve
 the inputs. Evidence is one partial live match and synthetic tests.
 
+### KMC GCC 2.7.2: stage a vector component in its saved accumulator
+
+An N64 draft waited to consume a component from a stack vector until
+a later expression with another call. The target loads that component
+and adds it to a saved accumulator immediately after the vector
+producer, before another call. Staging the additions there and using
+the previously initialized float zero improved the linked score from
+19,232 to 18,356 under `-G0 -mips3 -mgp32 -mfp32 -O2`. A literal float zero
+scored 19,026, and a compound subtraction from the accumulator scored
+18,716. Moving both horizontal accumulators together in earlier trials
+regressed the score.
+
+The `vector_accumulator_stage` repair requires the stack offset, float
+data flow and return transfer to the same saved register. A stored zero
+is offered only for verified word initialization on the path to the
+rewrite. Evidence is one partial match and synthetic guard tests.
+
 ### KMC GCC 2.7.2: stage an entry pointer around a signed flag
 
 In one large N64 function, the target read two pointers and a signed
@@ -13690,4 +13707,87 @@ negative generation tests.
 
 One N64 linked-list walk built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` had been drafted as returning `void`, while the target initialized the return register to zero and incremented it on each iteration. Restoring a counter and returning it reproduced the linked target exactly (score 400 to 0). The repair requires both target counter instructions and the simple list-walk shape. Evidence: one saved example and synthetic generation and routing tests.
 
+## A record search and an edge-linking loop: the counter's priority sits between two registers (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, an N64 game, one 181-instruction function, 155 -> 0)
+
+Controlled result for one function (181 instructions); each step measured with the app's judge-worker.
+
+| step | edit | score |
+|---|---|---|
+| 0 | saved best (m2c's goto/pointer-walk loops, a carried `id`, `volatile unsigned short pad`, a duplicate-arm `if (edge)`) | 155 |
+| 1 | search loop reads the entry where it compares: `do { if (*entry == key) {...} entry += 4; map += 8; } while (*entry != sentinel);` (the `id` copy dropped, entry on the left of `==`) | 135 |
+| 2 | row address `sSearchEntries[i]` for the byte-offset sum, `for`-shaped `i < pointCount` | 125 |
+| 3 | edge loop as two natural `for (j = 0; j < 16; j++) { if (rows[a].links[j] == 0) { ...; break; } }` loops under `if (edgeCount > 0) do { ... k++ } while (k < edgeCount)`, no duplicate arm | 114 |
+| 4 | the edge loop's induction pointer is `edges[k]` (a giv loop.c makes: its copy lands after the count copy in the preheader, as the target's does) | 114 (registers only) |
+| 5 | `i * sizeof(SearchRow) + (s32) sSearchEntries` (the base register second, as the target adds them) | 109 |
+| 6 | drop the unreferenced `volatile unsigned short pad` (measured on the pointer-walk form of the edge loop, with the start wrapped in place) | 35 |
+| 7 | on the `edges[k]` form without the pad: the counter start `do { do { do { k = 0; } while (0); } while (0); } while (0);` placed before the `if (edgeCount > 0)` that guards the loop | 0 |
+
+Steps 3-5 were measured as one state (109-114 across the spellings), not as separate gains; steps 6 and 7 were measured on the two forms of the edge loop named in the rows.
+
+What decided step 7 is the allocator, read with `cc1 -dl -dg`: each temporary gets registers in order of
+`floor_log2(refs) * refs / live length`, a reference counting once per loop it sits in. The target gives the counter the
+first temporary, the induction pointer the second, the row base the third; the natural source had the pointer
+(9 references, length 57, 0.474) above the counter (7, 59, 0.237) above nothing it should outrank. Three loops around
+the start make ten references and the guard in front lengthens its range to just under the halfword `a` (0.5): 0.49,
+between `a` and the pointer, which is the target's order. One loop (nine references, 0.458) was still under the pointer;
+an extra reference to `a` instead raised the pointer too, since its load shared the statement. Failed: the start
+wrapped in place (35), a for-loop with the init in its header (154-384), pointer form with the initialisers reordered
+(preheader insns in a different order: the target's copy of the base comes last because loop.c writes it), wrapping the
+loads of `a`/`b` (raises the induction pointer), temporaries for the two row addresses (109-2234), spelling `rows[a]` as
+`rows + a`, `(u8 *) rows + a * 24` or `a * 24 + (s32) rows` (all 120). With the `volatile` pad kept the same source stayed
+at 49-59: a `volatile` anywhere in the function switched the loop-weight family off.
+
+Permuter: no existing family (library walk over the saved source, one child each) improved the saved 155.
+decomp-repair 0.5.353 adds `loaded_search_fold` (step 1: 155 -> 135 on its own), `loop_weight_scope` for a counter's
+constant start in place or ahead of its guard (step 7), and tolerates an unreferenced volatile scratch, with
+`unused_frame_padding_drop` (step 6). From the natural-loop source with the pad kept, the family's children reach 59; with
+the drop one child scores 0. Not yet offered: m2c's forward/reverse goto link loops rewritten as the two `for` loops
+(step 3), `sSearchEntries[i]` for the byte-offset row address (step 2), the base-register-second spelling (step 5), the
+giv form of the induction pointer (step 4). The edit list is the to-do list for them.
+
 In one N64 byte-reader built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the draft read from a cursor and returned `cursor + 1` after a conditional field copy. Expressing the read as `*cursor++` and returning the cursor reproduced the linked target exactly (score 310 to 0). The candidate is offered only when the cursor has no intervening source uses and the target shows the advance and return schedule. Evidence: one saved example, plus synthetic generation and routing tests.
+
+## KMC GCC 2.7.2, an N64 game's 400-instruction state-machine switch (one function; 2825 -> 10, evidence level: one function, controlled by the app's judge)
+
+Compiler `gcc-2.7.2-kmc`, flags `-G0 -mips3 -mgp32 -mfp32 -O2`. Edit list from the saved best (score each step):
+
+| edit | score |
+|---|---|
+| saved best | 2825 |
+| `temp_s0 = temp_s5 * 2;` dropped from every arm, computed once after the switch (the register the arms shared had been tied to the `lb` byte) | 3700 (needs the next rows) |
+| the shared `*(ptr + 0x7A) = v` label moved to the end of the switch (target falls through into it) and the arms' identical `if (x) {A} else {A}` guard removed | 3685 |
+| the two arms' `ptr = ...; v = 4;` written in the other order in one of them | 3015 |
+| the byte cast dropped on one case-8 arm's compare | 2625 |
+| case 9 written as two tails (`if (r != 0) {T} else {Z; T'}`) | 2245 |
+| `temp_v1` (selector) and `stateDest` split from the tail value/pointer (`stateVal`, `tailPtr`) | 1285, 1245 |
+| first-block `lw ptr` written inline at both uses instead of a named local | 1140 |
+| `s8` temp with no `(int)` cast in case 0, `frame_pad` removed, `func_8000A270(temp_a0_3)` passing its argument, `var_s4 = temp_s1` after the inner `if` | 565 |
+| statement order of the entry block (grid over 560 orders and spellings) | 10 |
+
+Compiler facts behind them:
+
+- **Cross-jumping merges arms that end in identical moves and the same jump, after register allocation.** Two arms
+  `call; ptr = x; v = 4; goto L;` become one arm plus a `j`; the target kept both tails. Writing the two statements of one
+  arm in the other order stops it (the scheduler restores the order, the jump pass compares first): 3685 -> 3015. Re-ordering the
+  call's own argument load had no effect.
+- **A named variable that the arms assign again is a global pseudo; a block-local anonymous pseudo is allocated first
+  and gets the low registers.** The entry `lw $a0, 0x68($s3)` came out `$a1` while the table base took `$a0`, and the
+  `move $s6, $a1` then waited for the load (WAR on `$a1`): the saved-register save order changed with it. Writing the
+  pointer expression at both uses (no local) gave the target's registers and prologue.
+- **A selector that is also assigned constants inside the switch lives across every arm**, so the tails' pseudos were
+  pushed to `$a1/$a2` where the target has `$v0/$v1`. Giving the arm values their own variable fixed all tails at once.
+- **`s8 x = p->0xE; if (p->0xF != x) p->0x10 = x;` writes `move $a1, $v1` before the store** (an `int` x does not),
+  so a stored copy that the target shows is the `s8` local, not an extra statement. An `(int)` cast on the compare makes it
+  `lbu` plus `sll/sra`.
+- **A callee's argument can be a value the caller already loaded for the compare** (`lw $a0, 8($s2)` then `jal` with no
+  other load): the prototype takes the argument; with `(void)` the value was in `$v0`.
+- `frame_pad[2]` (volatile) had to go once the stack locals changed; the frame follows the locals, not the pad.
+
+Not solved at 10 (the saved best is judged 10; a later session may take it from there). Sched1 puts the `var_s4` chain first whatever the statement order, the chain order follows the variable (swapping which variable gets the 0xE chain moved it), and a two-statement `p = x*0xE8; p = p + base` is the only spelling that orders the 0xE chain first (the second set of the same pseudo), which is also what writes `sll $s1`. Tried without effect: an idx scratch variable (single or shared by both chains, one or two sets), `do {} while (0)` fences on either chain, an `inline` helper for either or both addresses, struct-array indexing, a named entry pointer with all statement orders, declaration order, a copy through a second variable.
+
+Open row: the target's `sll $v0,$v0,3; addu $s1,$v0,$a1` (temp then add) against `sll $s1,$v0,3; addu $s1,$s1,$a1`
+for a two-statement `p = x * 0xE8; p = p + base;`. Combined spellings put the other index chain first and flip the
+entry pointer to `$v0` (30-500).
+
+Added to the permuter: `goto_tail_order`, `switch_variable_split`, `prelude_pointer_inline` (decomp-repair 0.5.331); each
+reproduces its step from the saved source (3685 -> 3015, 2245 -> 1285 -> 1245, 1245 -> 1140).

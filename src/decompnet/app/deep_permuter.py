@@ -875,6 +875,65 @@ class Search(Permuter):
             break
         return measured
 
+    def repair_saved_drafts(self, agent, proj, fn, state, best):
+        """A worse saved draft can expose compiler evidence that the winner lacks."""
+        from .. import candidate_quality
+        from . import deep_source_recovery, generation_calls, source_preparation
+        from .function_names import canonical_source
+
+        allowance = min(12, max(0, (self.limit - self.tested) // 3))
+        if proj['arch'] != 'mips' or allowance < 2 or not hasattr(self.net, '_judge_with'):
+            return best
+        store = self.net.project_store(proj['id'])
+        attempts = deep_source_recovery.saved_attempts(store, fn['id'])
+        if not attempts:
+            return best
+        header = self.net._context(proj['id'], fn['unit'])['header']
+        profile = compiler_for(self.net.cfg(proj), fn['vram'], fn)
+        snapshot = None
+        seen = {canonical_source(fn, fn['best_source'])}
+        stop = self.tested + allowance
+        for historical in deep_source_recovery.saved_sources(store, attempts):
+            if self.tested + 1 >= stop:
+                break
+            source = canonical_source(fn, historical)
+            if source in seen or candidate_quality.reported_source(self.net, fn, source):
+                continue
+            if snapshot is None:
+                snapshot = source_preparation.inputs(self.net, proj, fn)
+            self.check()
+            seen.add(source)
+            self.tested += 1
+            self.report()
+            exact, diff, problems = self.net._judge_with(proj, fn, profile['toolchain'], profile['flags'], source)
+            if problems or diff is None:
+                continue
+            choices = ([('rechecked_saved_attempt', source)] if exact else generation_calls.generate(
+                'diff_gated_repairs.proposals',
+                (source, fn['name'], header, proj['arch'], profile['toolchain'], diff.rows, fn['asm']),
+                dict(flags=profile['flags'], big_endian=bool(proj['big_endian']))))
+            for family, child in choices[:2]:
+                if self.tested >= stop:
+                    return best
+                if (child != source and child in seen) or candidate_quality.reported_source(self.net, fn, child):
+                    continue
+                seen.add(child)
+                self.check()
+                current = self.net._function(fn['name'], proj['slug'])
+                project = self.net.project_row(proj['slug'])
+                if (current['status'] != 'open' or current['best_score'] != fn['best_score']
+                        or source_preparation.inputs(self.net, project, current) != snapshot):
+                    return best
+                state.add(variants=1, repairs=1)
+                with repair_trial({'kind': 'deep local repair', 'family': family}):
+                    score = self._score_current(agent, project, current, child, best, None)
+                if score is not None and score < best:
+                    updated = self.net._function(fn['name'], proj['slug'])
+                    if updated['best_source'] == child or updated['status'] == 'matched':
+                        self.log(f'Repaired a saved draft: {best:,} → {score:,}.')
+                        return score
+        return best
+
     def near_register_pass(self, agent, proj, fn, state, best, fork):
         rows = self.winner_diff[0] if self.winner_diff else ()
         if not allocation_search.near_registers(rows, proj['arch']):
@@ -2017,6 +2076,9 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
                 fn = net._function(name, slug)
                 if baseline and not fork and (lane is None or lane.index == 0):
                     baseline = search.better_saved_baseline(agent, proj, fn, state, baseline)
+                    fn = net._function(name, slug)
+                if baseline and not fork and (lane is None or lane.index == 0):
+                    baseline = search.repair_saved_drafts(agent, proj, fn, state, baseline)
                     fn = net._function(name, slug)
                 measured_baseline = baseline
                 relabel = baseline and not fork and search.can_relabel_switch(fn)
