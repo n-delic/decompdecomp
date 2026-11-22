@@ -11,6 +11,7 @@ from decomprepair import (
     balanced_float_predicate_return,
     balanced_predicate_projection,
     balanced_projection_scale,
+    balanced_selector_zero,
     balanced_sign_field_clamp,
     balanced_signed_selector_increment,
     boolean_guard_operands,
@@ -384,6 +385,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += scaled_blend_input.variants(source, name, rows, header=header)
         result += projection_argument_before_store.variants(source, name, rows, header=header)
         result += balanced_signed_selector_increment.variants(source, name, rows, header=header)
+        result += balanced_selector_zero.variants(source, name, rows, header=header, max_bytes=MAX_SOURCE_BYTES)
         result += balanced_float_predicate_return.variants(source, name, rows, header=header)
         result += clamped_field_reload.variants(source, name, rows, header=header)
         result += saved_range_probe.variants(source, name, rows, header=header)

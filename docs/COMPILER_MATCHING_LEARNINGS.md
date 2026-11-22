@@ -15964,3 +15964,25 @@ A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` loa
 ### KMC GCC 2.7.2 masked byte table index
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` selected between three byte tables using a masked byte index. Narrowing the index reduced the linked difference score from 220 to 15, but the draft's extra copy still forced a different register. Reusing the same masked index instead of the unchanged copy produced an exact match. This is one saved example, not a controlled cross-compiler experiment; the proposal checks that both locals remain unchanged and the copy cannot escape.
+
+### Balance a signed selector repair with scoped positive-zero reads
+
+In a private N64 function built with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, the early signed
+byte countdown needed its direct field decrement to recover the
+branch-delay copy. Two identical guarded arms kept an unnecessary
+selector lifetime. Removing those guards and expressing the same
+square in each signed multiplier arm restored the early
+dispatch, but the final jump table no longer linked.
+
+The quieter fallback and a later greater-than-zero test were
+reusing an earlier floating-point zero. Give each operation a
+positive-zero value through one previously unused stack word
+with the same layout. This trial makes the two materializations
+independent, restores 21 branch operands and links all three jump
+tables with 3,034 instructions. The linked score goes from
+2,095 to 1,755, with clean uninitialized diagnostics. The two
+staging sequences still differ from the target's register
+materializations. Either stage alone left the final jump table
+unresolved. Separate new stack locals scored 1,789 and moved
+the save area, while the existing frame word preserves it.

@@ -2216,3 +2216,23 @@ def test_masked_byte_index_can_reuse_copy_in_table_lookups():
     candidates = dict(proposals(source, 'f', '', 'mips', KMC, rows, ''))
     assert 'table[(index & 0xFF)]' in candidates['measured_masked_byte_index_reuse']
     assert 'measured_masked_byte_index_reuse' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_balanced_selector_zero_trial_is_routed_with_actual_diff_evidence(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    balanced_selector_zero = diff_gated_repairs.balanced_selector_zero
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'mov.s $f22, $f24', 'mov.s $f22, $f20')]
+
+    def synthetic_variant(source, name, received, *, header, max_bytes):
+        assert (source, name, received, header) == ('void update(void) {}', 'update', rows, '')
+        assert max_bytes == diff_gated_repairs.MAX_SOURCE_BYTES
+        return [(balanced_selector_zero.FAMILY, 'void update(void) { return; }')]
+
+    monkeypatch.setattr(balanced_selector_zero, 'variants', synthetic_variant)
+    for compiler in ('gcc-2.7.2-kmc', 'ido-7.1'):
+        variants = diff_gated_repairs.proposals('void update(void) {}', 'update', '', 'mips', compiler, rows, '')
+        labels = {label for label, _ in variants}
+        assert (balanced_selector_zero.FAMILY in labels) == (compiler == 'gcc-2.7.2-kmc')
