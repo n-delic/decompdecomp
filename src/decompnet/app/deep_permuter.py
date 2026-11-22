@@ -462,6 +462,10 @@ class Search(Permuter):
         # the same ray and triangle test from its plain source (decomp-repair 0.5.595): a local record's fields staged in
         # scalars and the direction vector's repeated reads cached (7935 -> 650, then two statement moves to 0)
         calls.append((L + 'field_scalar_stage.variants', (source, name)))
+        # a 364-instruction recency-list cache lookup (decomp-repair 0.5.597, walk_shape_repairs): the log pointer written
+        # at each store, the condition's value captured, a sum reused, the shared scratch declared in the arms, folds
+        # kept apart, the node held in a handle, then the store moves (2820 -> 870 as one child, then 595, 535, 30, 0)
+        calls.append((L + 'walk_shape_repairs.variants', (source, name)))
         # a texture-loader-sized N64 function (decomp-repair 0.5.593, counted_loop_shapes): counted loops as for loops over
         # one counter, each step and the chain (99 -> 0 from the saved best)
         calls.append((L + 'counted_loop_shapes.variants', (source, name)))
