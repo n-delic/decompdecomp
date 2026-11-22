@@ -1,5 +1,16 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: swap declarations for reciprocal spill offsets
+
+In an N64 scratch draft, two word stores from the same register had
+reciprocal stack offsets. Swapping the two uninitialized declarations
+whose names recorded those offsets reduced the linked score from 873
+to 869 under `-G0 -mips3 -mgp32 -mfp32 -O2`. Moving either declaration
+adjacent to the other or changing the unused frame padding did not
+improve on the baseline. This is a measured improvement on one linked
+function. The Deep Permuter proposes the swap from the diff and judges
+it under the normal compiler budget.
+
 ### KMC GCC 2.7.2: retain a zero word for a late float update
 
 In one N64 function, the target initialized and reset a zero in
