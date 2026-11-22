@@ -142,6 +142,9 @@ a.ghost, a.primary { text-decoration: none; }
 .nav-filter[hidden] { display: none; }
 .nav-projects { display: grid; gap: 2px; }
 .nav-proj { display: grid; gap: 5px; padding: 8px 9px 9px; border-radius: var(--r); text-decoration: none; border: 1px solid transparent; }
+/* With hundreds of projects the browser lays out and paints every row on each scroll frame: off-screen rows are
+   skipped (their remembered height keeps the scrollbar steady), and each row is its own paint unit. */
+.nav-proj { content-visibility: auto; contain-intrinsic-size: auto 60px; }
 .nav-proj:hover { background: var(--bg-alt); }
 .nav-proj.on { background: var(--panel); border-color: var(--line); }
 .np-top { display: flex; align-items: center; gap: 7px; min-width: 0; }
