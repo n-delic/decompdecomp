@@ -1,5 +1,15 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: give the last table comparison its own pointer
+
+A pointer reused for several table lookups in an N64 draft allocated
+the final table base in a different register from the target. A local
+pointer confined to the last comparison guard improved the linked
+score from 100 to 45 with `-G0 -mips3 -mgp32 -mfp32 -O2`. Splitting
+the earlier two table walks instead scored 60. Reordering the two
+address expressions did not improve the baseline. The repair uses
+the linked table relocation pair and the local's final read.
+
 ### KMC GCC 2.7.2: store the selected halfword at each branch end
 
 Two branches in an N64 draft each selected a constant and wrote a
