@@ -959,3 +959,34 @@ def test_table_loop_chain_is_offered_to_the_deep_permuter(monkeypatch):
     assert 'byte_offset_table_index' in families
     first = next(child for family, child in proposals if family == 'byte_offset_table_index')
     assert '((s16 *) (((s8 *) (&D_80100004)) + off))' in first
+
+
+def test_loop_cursor_pass_scores_fixed_index_through_advancing_cursor(monkeypatch):
+    from tests.test_permute import AGENT
+
+    net = setup(monkeypatch)
+    source = """int f(u8 *records, u8 n) {
+    u8 *cursor = records;
+    u8 *anchor;
+    u8 limit;
+    u32 index;
+    int sum;
+    limit = n;
+    index = 0;
+    sum = 0;
+    anchor = cursor + 2;
+    do {
+        sum += anchor[((s32) (index * 3)) - 1] + anchor[index * 3];
+        cursor += 3;
+        index += 1;
+    } while (index < limit);
+    return sum;
+}
+"""
+    fn = {**net.function(), 'name': 'f', 'best_source': source}
+    search = deep_permuter.Search(net, 1, 1, Log())
+    tried = []
+    monkeypatch.setattr(search, '_score', lambda agent, proj, fn, candidate, best, fork: tried.append(candidate) or 15)
+
+    assert search.loop_cursor_pass(AGENT, net.project_row('game'), fn, 35, None) == 15
+    assert any('sum += cursor[1] + cursor[2];' in candidate for candidate in tried)

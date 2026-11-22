@@ -15721,3 +15721,15 @@ in an intermediate local scored the same. The direct form kept the
 instruction count and three jump tables and passed uninitialized
 diagnostics. The recipe requires the matching first transfer and
 rejects negative zero, additional reads and unproved incoming paths.
+
+### Fold fixed-stride reads into the advancing cursor
+
+In one private N64 decoder built with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, the draft read two
+bytes through a fixed offset pointer and a record counter, while
+another pointer walked the same records. Addressing all three bytes
+through the advancing pointer reduced the linked score from 415
+to 405. Replays of older eligible drafts of that same function
+showed the same ten-point reduction. The proposal checks that the
+fixed pointer and counter are initialized on entry and that the
+cursor and count advance together. This remains an inexact draft.
