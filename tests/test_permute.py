@@ -40,6 +40,7 @@ class FakeNet:
     links: dict = {}
     project_store = Network.project_store
     project_stores = Network.project_stores
+    _event = Network._event  # library detection records its own event when it sets a boot stub aside
 
     def __init__(self):
         self.store = Store(IN_MEMORY)

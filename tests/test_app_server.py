@@ -3673,7 +3673,8 @@ def test_deep_maximum_options_reach_jobs_and_reject_invalid_limits(app, monkeypa
     starts=[]
     monkeypatch.setattr(net.deep_sweeps,'start',lambda *args:starts.append(args) or {'job':'maximum-pass'})
     assert client.post('/api/permuter/pass',json=payload,headers={'X-Decomp':'1'}).status_code==200
-    assert starts[0][-2:]==(True,10)
+    # start() takes rank_candidates last (after maximum_throughput, compile_slots), which defaults to False.
+    assert starts[0][-3:]==(True,10,False)
 
 
 def test_repository_fork_owner_job_guard_and_rediscovery(app,monkeypatch):
