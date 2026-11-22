@@ -48,3 +48,20 @@ Findings:
 
 Method limits: one game, one compiler; first-variant only for the stage. The raw draft is always judged first and stays
 the stored seed, so a worse cleaned copy costs one compile and never replaces a best.
+
+## Follow-up: the families on m2c's own spelling (decomprepair 0.5.647)
+
+Survey (90 stratified matched functions of the same game, every library family callable from source alone, ~460):
+170 families produce a child on raw drafts, 177 on the matched sources. The shared blocker was spelling: with
+`M2C_FIELD` and `M2C_UNK` written out (`m2c_spelling.plain`, the draft's own macro expansion; all 81 compiling drafts
+score identically), captured_index 0 -> 22 drafts, captured 3 -> 22, temporary_hoist 57 -> 78, expression_locals
+42 -> 64, assignment_use 32 -> 50, local_inline 20 -> 35; families reading the macro itself (field_struct_view)
+need the raw spelling, so `draft_repairs` asks both. `counter_derived_offset` now reads m2c's do-while walk
+(0 -> 16 of 1,422 drafts). The if-tree/compare-tree/range switch families do fire on m2c (2, 2, 1 of 1,422 drafts):
+rare shapes, not spelling. m2c never writes `volatile`, so (g) has nothing to fire on.
+
+Scores (isolated judge, first child, Δ vs raw draft): no newly firing family helps on average as a deterministic
+cleanup (captured +434 mean, 0/20 better; counter_derived_offset +548, 0/2; temporary_hoist +20, 2/5; the best,
+captured_index, 0 / 0), so none joins `draft_cleanup`. Interleaved into a draft's 20 proposals, the written-out
+children were neutral (2 better, 3 worse best child), so they follow the raw ones. prove_chain (all families, 4 steps,
+40 children) on 10 raw drafts: 8,130 before and after (the 40-child cap keeps the appended children out).
