@@ -13368,3 +13368,5 @@ and scheduling scopes did not restore the target ordering. GCC's RTL showed
 the short local's early sign-extension copy being reused by CSE, while the
 word local left the subtraction on the saved register and emitted the call
 argument copy later. These are failed experiments, not a source match.
+
+In the same function, the initialized 75-point seed had competing loop counter and flag allocation priorities of 14/49 and 12/41 in GCC's allocation dumps. Moving an independent flag reset before the counter increment changed their allocation order and improved the exact judge score from 75 to 25, leaving five address/load register differences. This is one measured function. decomp-repair 0.5.342 extends `statement_interleave` to offer that guarded adjacent swap even with unrelated volatile pointer loads; a synthetic regression checks lane routing and branch safety.
