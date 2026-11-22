@@ -17369,6 +17369,55 @@ scores 0 in one proposal (`tests/test_argument_spill_tail_wiring.py` checks it o
 repairs and the local lane). Not covered: a slot assigned from an expression rather than a parameter, a tail longer than
 four statements or containing a branch, and a sum whose operands are not both calls.
 
+## Counted loops as `for` loops over one counter, and the frame bytes a pre-test loop keeps (N64, KMC GCC 2.7.2)
+
+A 227-instruction N64 table loader with four counted loops (the first over a halfword table, two over fixed-size
+records, the fourth a nibble swap with an inner byte loop). `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` (the project
+default, unchanged), scored with the app's judge-worker, no Deep Permuter run, current scoring (version 2). Compiler
+explanations are hypotheses read from measured frames and `cc1 -dl -dg` tables, not from the compiler's source; the
+numbers are one function (controlled in the sense that each row is the previous source plus one edit, with the ablation
+column from the matching source with that one edit undone).
+
+Saved best 99: m2c's `if (n != 0) { do { ...; i += 1; } while (i < n); }` for each loop, a walked pointer in the first
+loop, explicit strides (`s = 0; ... s += 0xC;`) in two, a separate counter for the last, and `u32 unusedScratch[8];` to
+give the 0x68 frame. Its rows were the two spill slots at 0x34/0x3C (the target has them at 0x14/0x1C) and register
+swaps in the second half.
+
+| edit | score after | undone from the match |
+| --- | --- | --- |
+| saved best | 99 | |
+| last loop's counter merged into the others' (`loop_counter_share`; `disjoint_local_merge` also offers it) | 320 | 55 |
+| first loop's pointer walk as `base[i]`, step last (`loop_pointer_to_index`) | 315 | 210 |
+| strides read as `i * 0xC` (`loop_stride_from_counter`) | 295 | |
+| every guarded loop as `for (i = 0; ...)` and the scratch array dropped (`counted_for_loop_frame`) | 35 | |
+| `v = i * 8; v += (s32) p;` instead of a fresh pointer temporary (`scaled_address_accumulate`) | 20 | |
+| `t = (void *) (i * 0xC + (s32) p);` (`integer_address_sum`) | 15 | |
+| `p = (u32) (w * h); if (!f) { p >>= 1; if (p != 0) ... }` (`product_shift_in_arm`) | 5 | |
+| `(u32) p + (u32) q` in the limit compare (`limit_sum_operand_casts`) | 0 | |
+
+Hypotheses for what each edit changes. The `for` form: each pre-test loop of the matching source added 8 bytes to the frame
+with no `sp` access (cc1's table listed a temporary with no uses and no register, which reload had given a slot), so four
+loops were the 0x20 bytes the saved best had padded with an array; the array put the two real spills above it, the loops put
+them below, as in the target. Without the array, the frame grew 8 bytes per converted loop (one loop 0x50, two 0x58, four 0x68 against 0x48
+with none), and with the array kept the loops overshoot, so neither edit is good alone. The pointer walk: loop.c's giv for `base[i]` is the
+pointer the target walks, and with the counter as the long pseudo (30 uses over 88 insns, priority 1.36 against the giv's
+1.69 with the explicit pointer, floor_log2(uses) * uses / live length) the saved registers came out swapped; the
+index form plus a shared counter put the counter's use count at 32 (log2 5) and ahead. The scaled-register sum and the
+integer address sum: the operand order of the `addu` (cse puts the higher pseudo first) and the register the sum lands in
+(the dying scaled register, `$a0`). The shift in its arm: the shifted value shares the product's register when the flag
+test's register is still live at the shift; the two-statement form let the shift take `$v0`.
+
+Failed or neutral: a volatile struct holding the two slots plus a pad array (260; the memory objects change the
+schedule and the allocation), an address-taken scalar and a struct field for the slots (844, 260), each counter its own
+variable (299, the extra slots do not appear), loops 2-4 sharing a counter but loop 1 separate (484), the existing repair
+families on the saved best (best 79).
+
+Families: decomp-repair `counted_loop_shapes` (0.5.593): the families named in the table and the chain child
+`counted_loop_chain`. From the saved best the chain child scores 0 in one proposal through `draft_repairs.variants`
+(`tests/test_counted_loop_shapes_wiring.py` checks it on a synthetic function through the draft repairs and the local
+lane). Not covered: a counter stepped by more than one, a guard that is not the loop's first test, signed counters, and
+loops whose counter step is not the last statement (the pointer-to-index step handles the one place m2c moved it).
+
 ## A float/integer union pun hid the allocator's own choice; the plain float and one declaration order matched (178 instructions)
 
 Evidence level: one function (an N64 ray-and-triangle test: a vector difference, a cross product, three dot products, a
