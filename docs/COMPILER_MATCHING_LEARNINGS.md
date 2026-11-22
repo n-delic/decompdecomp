@@ -15544,3 +15544,17 @@ incoming labels and requires the observed calls to consume the snapshot.
 ### KMC GCC 2.7.2 previous global pointer
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` loaded a global pointer before installing a replacement and saving the old value. Its machine draft instead read an uninitialized local and loaded the global after overwriting it. Moving the load earlier while retaining the draft's base-plus-offset expression changed the diff score from 220 to 445; using the directly relocated global symbol as well produced an exact linked match (score 0). The proposal verifies that the symbol resolves to the original base plus the field offset and checks the observed loads and stores. This is one saved example rather than a controlled cross-compiler experiment.
+
+### KMC GCC 2.7.2 narrow zero tests before a switch join
+
+In one private N64 scratch replay with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, two zero tests on the
+same signed-byte conversion compiled without the target's shift.
+Expressing both as an unsigned 32-bit shift by 24 preserved the zero
+test and restored the linked jump-table entries. The original draft
+scored 1,397 with a jump-table mismatch. The shift variant passed the
+table check at 1,478 and remained inexact. Making the local volatile
+also passed the table check, but changed stack accesses and scored
+2,327. The repair generator uses the target's sign-extension
+instruction pair and requires both test polarities on a known integer
+local. This is a saved example, with no cross-compiler measurement.
