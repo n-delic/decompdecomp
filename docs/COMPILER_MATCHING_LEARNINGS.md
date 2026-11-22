@@ -16603,3 +16603,33 @@ placed at its use inside a case (811, because it is no longer hoisted).
 
 decomp-repair 0.5.562 `spill_shape_repairs`: `volatile_read_drop`, `volatile_state_unwrap`, `narrow_copy_merge`,
 `identical_arm_collapse`, `flag_exit_mask_test`, `preloop_assignment_swap`, `loop_constant_stage`.
+
+## A big draw function: clamp arm stores, array store order and a global field read first (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2 -fno-strength-reduce`, an N64 game, one 731-instruction function, 1009 -> 619 and open)
+
+Evidence level: one function, controlled chain (each step scored with the app's own judge from the saved best; the three
+decomp-repair 0.5.563 families reproduce 1009 -> 979 -> 919 -> 619 from the saved source).
+
+| step | edit | score |
+| --- | --- | --- |
+| 0 | saved best (autopilot draft: `var = -0xDC; if (x < -0xDC \|\| (var = 0xDC, !(x < 0xDD))) dst = var;` and a `goto`-join twin) | 1009 |
+| 1 | both clamps as `if (x < -K) dst = -K; else if (x >= K+1) dst = K;` (`clamp_arm_stores`) | 979 |
+| 2 | `spA58[1] = 0; spA58[2] = v;` written `spA58[2] = v; spA58[1] = 0;` (`adjacent_array_store_order`) | 919 |
+| 3 | `temp = M2C_FIELD(sRenderState, s32 *, 0x74C) + (n << 6);` as `base = M2C_FIELD(...)` first in the block, `temp = base + (n << 6)` (`global_field_load_stage`) | 619 |
+
+What decided each step (GCC 2.7.2):
+- A clamp value shared by two arms (`var` set before the test and again inside it) is live across the compare, so it
+  gets a register of its own; the target's `li $v0,-0xDC` sits in the delay slot of a branch that already read `$v0`
+  (the slti result), and its two arms share one `sh`. Constants assigned in the arms give exactly that.
+- The first scheduler keeps the source order of a stack array's independent stores, and a load of a global pointer's
+  field written after nine float stores stays after them (the target's `lw`/`lw` sit after the first `mul.s`). An
+  early temporary is enough; no `register`, no `volatile`.
+- loop.c hoists at most the top few loop invariants, ranked by life x savings (dumped with `-dL`: "move-insn savings N
+  moved to"). Making the stack-array address a user pointer variable freed a slot, so a loop-constant `0xDA380003` was
+  hoisted and spilled instead of staying inline: scores 2700-3000. Keep that address a temporary.
+- Not yet found (open at 619): the case that builds `3 * x + 2` for the stream-slot sizes wants its value in `$v0`; the
+  autopilot's `var_s6` shared with the loop's byte offset gives the counter two more uses and the right allocation
+  order (counter before the matrix pointer) but puts that value in `$s6`; written as its own variable the counter and
+  the matrix pointer tie (0.1475 vs 0.1481) and swap `$s6`/`$s7`. Variants tried: an extra use, a user pointer, all 24
+  orders of the four preheader assignments, `while`/`for`/`goto`-join loop forms.
+
+decomp-repair 0.5.563: `clamp_arm_stores`, `adjacent_array_store_order`, `global_field_load_stage`.
