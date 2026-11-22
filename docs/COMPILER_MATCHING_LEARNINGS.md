@@ -16091,3 +16091,8 @@ the three position components left the last table unresolved. Synthetic
 regressions require the linked countdown, transfer and six field
 offsets. The rewrite checks that the original operands are float values
 to preserve the arithmetic width.
+
+
+### KMC GCC 2.7.2 saved pointer for a final call
+
+A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` freed two owned blocks and then freed their owner. Its draft reused one saved register for the owner, while the target kept a separate copy for the final call. Copying the unchanged pointer at entry and using the copy for that call changed the linked difference score from 374 to an exact match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the measured saved-register moves and rejects a parameter that is reassigned or whose address escapes.

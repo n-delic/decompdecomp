@@ -2351,3 +2351,14 @@ def test_balanced_inline_field_writeback_is_routed_for_kmc(monkeypatch):
     for compiler in (KMC, EGCS, 'ido-7.1'):
         labels = dict(proposals(source, 'update', '', 'mips', compiler, rows, ''))
         assert (trial.FAMILY in labels) == (compiler == KMC)
+
+
+def test_saved_pointer_copy_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'nop', 'nop')]
+    monkeypatch.setattr(diff_gated_repairs.measured_saved_pointer_copy, 'variants',
+                        lambda text, name, header, diff: [('saved_pointer_fixture', text)])
+    assert 'saved_pointer_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'saved_pointer_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+    assert 'saved_pointer_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-7.1', rows, ''))
