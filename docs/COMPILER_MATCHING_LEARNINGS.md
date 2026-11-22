@@ -15701,3 +15701,6 @@ Moving the reset to their join improved the linked score from 460
 to 390. The text remains inexact. The proposal requires flat arms,
 an ordinary declared global, a distinct scalar local and no macro
 or control transfer in the arms.
+### KMC GCC 2.7.2 slot flip and indexed copy
+
+A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` flipped a global slot and used its reloaded value to copy an indexed word. Its machine draft addressed the slot through a displaced global and folded the copy into one assignment. Restoring a verified direct symbol, staging the read before moving the destination base, and expressing the source offset as subtraction of a negated index changed the diff score from 210 to an exact linked match. Staging and rebasing alone scored 5. This is one saved example, not a controlled cross-compiler experiment; the proposal checks the resolved global address and the full measured instruction and source patterns.

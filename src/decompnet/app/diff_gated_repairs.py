@@ -155,6 +155,7 @@ from decomprepair import (
     measured_saved_global,
     measured_scalar_updates,
     measured_signed_offset_helper,
+    measured_slot_flip_copy,
     measured_square_loads,
     measured_stack_records,
     measured_storage_shapes,
@@ -504,6 +505,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += guard_reset_scheduling.variants(source, name, header, rows)
         result += global_pointer_local_repairs.scoped_field_reads(source, name, rows)
         result += measured_global_rebase.variants(source, name, header, rows, resolve=resolve)
+        result += measured_slot_flip_copy.variants(source, name, header, rows, resolve=resolve)
         result += measured_conditional_flag_owner.variants(source, name, header, rows, resolve=resolve)
         result += measured_zero_record_pairs.variants(source, name, header, rows, resolve=resolve)
         result += measured_packing_stage.variants(source, name, header, rows)
