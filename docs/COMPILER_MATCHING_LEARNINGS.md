@@ -1642,6 +1642,21 @@ functions and saved 10. Replaying the previous verifier on those same inputs
 showed that nine required per-use rebinding. All 10 passed a fresh compile and
 exact verification after reopening.
 
+### Combine overlay addend and binding recovery
+
+IDO 7.1 `-O2 -G 0 -non_shared -mips2` can emit individual HI16/LO16
+addends for different uses of one declaration. A controlled case with a
+second, consistently shifted object confirms that applying only its delta
+leaves other relocations unresolved. The uniform rebase now yields to
+per-use probing when some required deltas are incompatible or undeclared.
+Probe names are unique to the occurrence so they cannot merge with an existing
+donor name during measurement.
+
+A private 100-candidate replay on an isolated N64 project saved three
+functions. Replaying the same inputs with the previous verifier showed
+that two required these changes. All three passed a fresh compile and
+reconstructed the original cartridge together.
+
 ### Observation: source layout sensitivity (IDO 5.3)
 
 The existing [IDO guide](../src/decompnet/consoles/n64/guides/ido.md) records a private same-source

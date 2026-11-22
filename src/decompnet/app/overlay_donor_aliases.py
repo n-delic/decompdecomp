@@ -138,11 +138,11 @@ def retry(source, header, name, candidate, target, measure, stop):
         extras.add((start, additions))
         for occurrence in re.finditer(r'\b' + re.escape(symbol) + r'\b', clean_source):
             if span[0] <= occurrence.start() < span[1]:
-                probes.append((False, symbol, occurrence.start(), occurrence.end(), names))
+                probes.append((False, symbol, occurrence.start(), occurrence.end()))
         if start < len(header):
             for occurrence in re.finditer(r'\b' + re.escape(symbol) + r'\b', clean_header):
                 if occurrence.start() >= start:
-                    probes.append((True, symbol, occurrence.start(), occurrence.end(), names))
+                    probes.append((True, symbol, occurrence.start(), occurrence.end()))
     if not 0 < len(probes) <= MAX_PROBES:
         return None
     def with_declarations(edits=()):
@@ -153,26 +153,23 @@ def retry(source, header, name, candidate, target, measure, stop):
             text = text[:start] + replacement + text[end:]
         return text
 
-    context = with_declarations()
     edits = []
-    for in_header, symbol, start, end, names in probes:
+    for index, (in_header, symbol, start, end) in enumerate(probes):
         if stop.is_set():
             return None
-        probe = next(iter(sorted(names - {symbol})), None)
-        temporary = None
-        if probe is None:
-            probe = f'decomp_donor_probe_{len(edits)}'
-            pattern = re.compile(r'\b' + probe + r'\b')
-            if pattern.search(clean_header) or pattern.search(clean_source):
-                return None
-            original, insert_at = originals[symbol]
-            temporary = insert_at, '\n' + rename(original, {symbol: probe}) + '\n'
+        # The destination name might already be used in the donor. An independent
+        # probe keeps the compiler from merging it with another reference.
+        probe = f'decomp_donor_probe_{index}'
+        pattern = re.compile(r'\b' + probe + r'\b')
+        if pattern.search(clean_header) or pattern.search(clean_source):
+            return None
+        original, insert_at = originals[symbol]
+        addition = '\n' + rename(original, {symbol: probe}) + '\n'
         probe_source = source if in_header else source[:start] + probe + source[end:]
-        probe_edits = [(start, end, probe)] if in_header else []
-        if temporary:
-            insert_at, decl = temporary
-            probe_edits.append((insert_at, insert_at, decl))
-        probe_context = with_declarations(probe_edits) if probe_edits else context
+        probe_context = header
+        if in_header:
+            probe_context = probe_context[:start] + probe + probe_context[end:]
+        probe_context = probe_context[:insert_at] + addition + probe_context[insert_at:]
         result = measure(probe_source, probe_context)
         if result is None or result.code != candidate.code or len(result.relocs) != len(actual):
             return None
@@ -232,7 +229,7 @@ def _offset_expression(declaration, alias, delta):
     return f'(*({cast})((unsigned char *)&{alias} + ({delta})))'
 
 
-def offset_retry(source, header, name, candidate, target):
+def offset_retry(source, header, name, candidate, target, *, separate=None):
     """Rebase an explicitly declared object by a consistent compiled HI16/LO16 delta."""
     from .source_symbol_recovery import overlay_bindings
 
@@ -245,9 +242,18 @@ def offset_retry(source, header, name, candidate, target):
     groups = defaultdict(list)
     for relocation in candidate.relocs:
         groups[relocation.symbol].append(relocation)
-    offsets = {symbol: delta for symbol, sites in groups.items() if (delta := _offset_delta(sites, expected))}
+    offsets = {}
+    for symbol, sites in groups.items():
+        if not any(r.type in (HIGH, LOW) and r.addend != expected[r.offset, r.type].addend for r in sites):
+            continue
+        delta = _offset_delta(sites, expected)
+        if delta is None:
+            return None  # separate uses may need different deltas
+        offsets[symbol] = delta
     if not offsets:
         return None
+    if separate:
+        aliases = separate(aliases)
 
     bound = {}
     declarations = []
@@ -264,7 +270,7 @@ def offset_retry(source, header, name, candidate, target):
             declarations.append(f'extern unsigned char {alias}[];')
         bound[symbol] = _offset_expression(match, alias, offsets[symbol])
     span = csource.find(source, name)
-    if not bound or span is None:
+    if bound.keys() != offsets.keys() or span is None:
         return None
     start, end = span
     direct = {old: new for old, new in aliases.items() if old not in bound}

@@ -371,7 +371,11 @@ def _try(net, proj, private, fn, source, header, agent, job):
                 from . import overlay_donor_aliases
 
                 expected = net._target_obj(fn, proj)
-                rebound_data = overlay_donor_aliases.offset_retry(source, header, fn['name'], candidate, expected)
+                def separate(aliases):
+                    return donor_relocations.separate_overlay_references(net.console(proj), aliases)
+
+                rebound_data = overlay_donor_aliases.offset_retry(
+                    source, header, fn['name'], candidate, expected, separate=separate)
                 aliases = source_symbol_recovery.relocation_aliases(candidate, expected)
                 if rebound_data:
                     variants = [('overlay-data-offsets', *rebound_data)]
@@ -379,7 +383,7 @@ def _try(net, proj, private, fn, source, header, agent, job):
                         source, header, fn['name'], result.obj, candidate, expected)):
                     variants = [('overlay-local-functions', *local)]
                 elif aliases:
-                    aliases = donor_relocations.separate_overlay_references(net.console(proj), aliases)
+                    aliases = separate(aliases)
                     variants = [('overlay-symbols', source_symbol_recovery.rename(source, aliases),
                                  source_symbol_recovery.rename(header, aliases))]
                 else:
