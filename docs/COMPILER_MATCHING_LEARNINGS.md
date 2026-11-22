@@ -13404,3 +13404,13 @@ argument copy later. These are failed experiments, not a source match.
 In the same function, the initialized 75-point seed had competing loop counter and flag allocation priorities of 14/49 and 12/41 in GCC's allocation dumps. Moving an independent flag reset before the counter increment changed their allocation order and improved the exact judge score from 75 to 25, leaving five address/load register differences. This is one measured function. decomp-repair 0.5.342 extends `statement_interleave` to offer that guarded adjacent swap even with unrelated volatile pointer loads; a synthetic regression checks lane routing and branch safety.
 
 On one N64 character-classification function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a draft indexed the address of a word-typed global and generated a scaled word load. Casting that address to `u8 *` before indexing generated the target byte load and reproduced the linked match (score 310 to 0). The repair requires the target byte load, the candidate word load from the same symbol, and the extra word scaling. Evidence: one saved example plus synthetic generation and routing regressions, not a controlled compiler experiment.
+
+### Recover a masked lookup switch with shared tails (KMC GCC 2.7.2)
+
+With `-G0 -mips3 -mgp32 -mfp32 -O2`, a public caller corroborated a
+one-argument resource lookup. Enumerate the categories of its masked
+comparison tree and recover the case-specific bounds, table reads, fixed
+buffer and recursive fallback. Compile the resulting C switch with its
+cases in ascending order. The linked judge went from 11,760 to 0, and
+the new dispatcher rule generated one byte-exact candidate. Existing
+comparison-tree rules produced no candidate for the draft with jumps.
