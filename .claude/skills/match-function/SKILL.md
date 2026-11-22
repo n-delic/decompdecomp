@@ -64,6 +64,15 @@ credential. If the gateway or project connection is missing, report which depend
 and continue read-only investigation or isolated scoring while setup is pending. Do not send claims
 through the window API or restart the app.
 
+If the app is running without an accessible window, create the same dedicated connection through its local
+configuration endpoint: read `port` and `secret` from that home’s `.decomp/server.json`, then POST JSON
+`{"action":"create","slug":"PROJECT_SLUG"}` to `http://127.0.0.1:PORT/api/manual-mcp` with
+`Content-Type: application/json`, `X-Decomp: 1`, and `User-Agent: decompdecomp-window/SECRET`.
+The response contains the project-scoped bearer token. Keep the response and secret private (a scratch file
+with mode 0600 if needed); do not print them. Use the separately advertised Rust gateway port for every MCP
+call, including claims and judging. This endpoint only creates the connection; it is not a claim or judge API.
+If the app or gateway is unavailable, do not start or restart it; continue read-only or isolated work.
+
 Call `project_info` and verify that the connection is scoped to the requested project. Use the same
 connection throughout the run so the app keeps attempts and claims under one identity.
 If the endpoint disappears, check the running app's advertised gateway port and verify
