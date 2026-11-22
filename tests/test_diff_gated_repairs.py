@@ -2236,3 +2236,14 @@ def test_balanced_selector_zero_trial_is_routed_with_actual_diff_evidence(monkey
         variants = diff_gated_repairs.proposals('void update(void) {}', 'update', '', 'mips', compiler, rows, '')
         labels = {label for label, _ in variants}
         assert (balanced_selector_zero.FAMILY in labels) == (compiler == 'gcc-2.7.2-kmc')
+
+
+def test_region_search_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'nop', 'nop')]
+    monkeypatch.setattr(diff_gated_repairs.measured_region_search, 'variants',
+                        lambda text, name, header, diff: [('region_search_fixture', text)])
+    assert 'region_search_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'region_search_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+    assert 'region_search_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-7.1', rows, ''))
