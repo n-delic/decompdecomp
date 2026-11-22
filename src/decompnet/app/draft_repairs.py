@@ -107,6 +107,7 @@ from decomprepair import (
     duplicate_return_node_repairs,
     element_update_repairs,
     entry_base_init_repairs,
+    entry_constant_local,
     entry_parameter_copy_repairs,
     entry_pointer_capture,
     entry_scheduling_scope,
@@ -324,6 +325,7 @@ from decomprepair import (
     store_address_repairs,
     store_expression_forms,
     store_result_repairs,
+    store_temp_inline,
     store_value_first_repairs,
     stored_compare_repairs,
     stored_float_zero_repairs,
@@ -416,6 +418,7 @@ AGENT_FAMILIES = goto_loop_invariants.FAMILIES + entry_scope_split.FAMILIES + me
 
 AGENT_FAMILIES += (guarded_pointer_copy.FAMILY,) + shifted_byte_lifetime.FAMILIES + float_constant_loop_pin.FAMILIES + dead_local_constant_compare.FAMILIES
 AGENT_FAMILIES += loop_weight_set_repairs.FAMILIES
+AGENT_FAMILIES += entry_constant_local.FAMILIES + store_temp_inline.FAMILIES
 AGENT_FAMILIES += (arm_label_share_repairs.FAMILIES + declaration_scope_sink_repairs.FAMILIES + element_update_repairs.FAMILIES
                    + narrow_test_share_repairs.FAMILIES + phase_storage_split_repairs.FAMILIES
                    + narrow_param_clamp_repairs.FAMILIES + search_loop_field_reload.FAMILIES + accumulation_run_scope.FAMILIES
@@ -857,6 +860,10 @@ def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels
                    # (a compare's literal routed through a local the next statement reassigns: the literal becomes a
                    # global-allocator pseudo and takes $v1, 10 -> 0 on a KMC predicate; decomprepair 0.5.628)
                    dead_local_constant_compare,
+                   # (a loop's compared byte constant as a local set among the entry assignments, where loop.c's hoisted li sits in
+                   # the prologue; a temp read only by the next line's store written into it, so the destination address is built
+                   # first: a 219-instruction KMC sequencer function 140 -> 30 -> 0 and 220 -> 160; decomprepair 0.5.631)
+                   entry_constant_local, store_temp_inline,
                    outer_cursor_entry_copy_repairs, loaded_pointer_reuse_repairs, entry_base_init_repairs,
                    live_range_retarget_repairs, pointer_local_merge_repairs, identical_arm_collapse_repairs):
         for family, text in _generated(module.variants, source, name):
