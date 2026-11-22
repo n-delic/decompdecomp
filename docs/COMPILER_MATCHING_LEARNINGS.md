@@ -13278,6 +13278,25 @@ the same center, loads from one base register, and comparisons of the
 results. It generates a candidate only across local statements that preserve
 the inputs. Evidence is one partial live match and synthetic tests.
 
+### KMC GCC 2.7.2: recover a forwarded float argument at a joined call
+
+A target N64 call copied a saved FPR to `$f12` in its delay slot, and
+the following consumer received the same saved value through `$a1`.
+The producer reads `$f12` on entry. The draft's producer prototype had
+no parameters, and it forwarded a merged local that held either zero
+or the producer's result to the consumer.
+
+Recovering the prototype and spelling the consumer separately in each
+arm improved the score from 21,427 to 20,577 with
+`-G0 -mips3 -mgp32 -mfp32 -O2`. Splitting alone scored 20,772, and the
+argument alone left the score at 21,427. Wrapping the preceding call in
+a one-shot loop scored 20,697 with the two useful edits. The generated
+child passed the warning check. A further child of the existing
+`mips_float_local_reuse` family reused a disjoint floating local and
+scored 20,276 from that source. Evidence is one observed partial match
+and synthetic tests for matching MIPS argument registers and safe
+branches.
+
 ### KMC GCC 2.7.2: reorder switch arms with local labels
 
 A two-arm state switch in a large N64 function stored state in a shared
