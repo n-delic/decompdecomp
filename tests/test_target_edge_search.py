@@ -857,3 +857,12 @@ def test_ido_frame_growth_reaches_unused_word_proposals_even_when_the_spill_slot
     assert 'inferred_frame_reservation' not in dict(route(source, rows, '', compiler='ido-5.3'))
     assert not [1 for family, _ in route(source, [(' ', a, a) for _, a, _ in rows], '', compiler='ido-7.1')
                 if family == 'inferred_frame_reservation']
+
+
+def test_relocated_increment_reaches_kmc_proposals(monkeypatch):
+    from decomprepair import relocated_global_update
+
+    monkeypatch.setattr(relocated_global_update, 'rewrite_increment', lambda *args: 'direct increment')
+    rows = [('r', 'lui $v0, %hi(state)', 'lui $a0, %hi(state)')]
+    assert ('relocated_global_increment', 'direct increment') in route('void f(void) {}', rows, 'asm')
+    assert 'relocated_global_increment' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
