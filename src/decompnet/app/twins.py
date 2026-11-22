@@ -1484,6 +1484,14 @@ class Twins:
                         if outcome == 'miss' and overlay_names is not None and overlay_names != names and not job.stop.is_set():
                             outcome, why = donor_build.verify(
                                 self.net, proj, b, other, a, overlay_names, settings, agent, job, build.headers)
+                        if outcome != 'match' and unit is not None and not job.stop.is_set():
+                            fallback_settings = build.fallback_for_unit(unit, settings)
+                            if fallback_settings:
+                                alternate, detail = donor_build.verify(
+                                    self.net, proj, b, other, a, trial_names, fallback_settings, agent, job,
+                                    build.headers)
+                                if alternate == 'match' or not why:
+                                    outcome, why = alternate, detail
                     except (NetworkError, OSError, ValueError) as error:
                         outcome, why = 'skip', str(error)
                 if outcome != 'match' and source is not None and not known_miss and not (job and job.stop.is_set()):

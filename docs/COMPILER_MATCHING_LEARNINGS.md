@@ -1467,6 +1467,19 @@ The trial uses the donor's declared C++ replacement and the receiving function's
 relocation evidence, with the ordinary compile and link verdict required before
 saving the per-function profile.
 
+### IDO per-object recipes for replacement C
+
+In a controlled IDO 7.1 regression, the same replacement source builds different
+function bytes with `-G 0 -non_shared -O0` and `-G 0 -non_shared -O2`. Reading
+the explicit replacement object recipe reproduces the latter bytes when the
+resident object declares the former flags. The application retains the previous
+profile as a fallback and still requires the destination's byte verdict.
+
+A targeted private replay saved 23 functions from an isolated N64 copy. The
+previous profile and verifier matched those same 23 under a read-only control
+replay, so this sample does not measure a new match-rate gain from recipe
+parsing.
+
 ### IDO 7.1 overlay calls with encoded offsets
 
 An isolated N64 audit found 70 open overlay functions with nonzero R_MIPS_26

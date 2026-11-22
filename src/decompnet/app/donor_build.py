@@ -16,6 +16,7 @@ _ASSIGNMENT = re.compile(r'([A-Za-z_]\w*)\s*(:=|\?=|\+=|=)\s*(.*)')
 _REFERENCE = re.compile(r'\$\(([A-Za-z_]\w*)\)')
 _IDO = re.compile(r'(?:^|/)ido-static-recomp/build/(5\.3|7\.1)/out/cc$')
 _NCC = re.compile(r'(?:^|/)ido-static-recomp/build/7\.1/out/NCC$')
+_CC_RECIPE = re.compile(r'\$\(CC\) -c (.+) -o \$@ (?:build/(?:non_matching/)?)?\$<$')
 _NCC_RECIPE = re.compile(r'\$\(NCC\) -c (.+) -o \$@ \$<$')
 _FLAG = re.compile(r'-(?:O[0-3]|mips[1-4]|32|non_shared|Xcpluscomm|Wab,-r4300_mul|Wo,-zcopy:[01]|'
                    r'g[0-3]?|G\d+|D[A-Za-z_]\w*(?:=[\w.+-]+)?|U[A-Za-z_]\w*)$')
@@ -35,6 +36,7 @@ class Settings:
         self.replacements = {}
         self.recipe_defines = {}
         self.cpp_recipes = {}
+        self.c_recipes = {}
         path = project.root / 'Makefile'
         if not path.is_file() or not path.resolve().is_relative_to(project.root.resolve()) or path.stat().st_size > 2**20:
             return
@@ -46,6 +48,11 @@ class Settings:
                 if recipe:
                     for target in recipe_targets:
                         self.cpp_recipes[target] = recipe[1]
+                recipe = _CC_RECIPE.fullmatch(line.strip()) if not depth else None
+                if recipe:
+                    for target in recipe_targets:
+                        if '%' not in target:
+                            self.c_recipes.setdefault(target, set()).add(recipe[1])
                 if line.lstrip().startswith('$(CC) -c '):
                     defines = tuple(_DEFINE.findall(line))
                     for target in recipe_targets:
@@ -78,7 +85,7 @@ class Settings:
                         entries.clear()
                     entries.update(self._replacement_entries(assignment[3]))
             if colon and assignment and assignment[1] in ('CC', *_FLAG_VARIABLES):
-                for name in target.split():
+                for name in recipe_targets:
                     self.overrides.setdefault(name, []).append(assignment.groups())
 
     def _replacement_entries(self, value):
@@ -102,7 +109,7 @@ class Settings:
         elif op != '?=' or name not in variables:
             variables[name] = value
 
-    def for_unit(self, unit):
+    def for_unit(self, unit, *, prefer_recipe=True):
         if not unit.source or not unit.source.endswith('.c'):
             return None
         scratch = unit.scratch or {}
@@ -112,6 +119,10 @@ class Settings:
         variables = self.variables.copy()
         for assignment in self.overrides.get(target, ()):
             self._assign(variables, assignment)
+
+        exact = self._c_recipe_profile(target, variables) if prefer_recipe else None
+        if exact:
+            return exact
 
         groups = [self._expand(variables.get(group, ''), variables) for group in _FLAG_VARIABLES]
         recipe = self.recipe_defines.get(target)
@@ -130,6 +141,24 @@ class Settings:
         if not match or not target:
             return None
         return self._profile(match[1], [*groups, ' '.join(literal)])
+
+    def fallback_for_unit(self, unit, primary):
+        if not unit.base or not unit.base.is_relative_to(self.root):
+            return None
+        if unit.base.relative_to(self.root).as_posix() not in self.c_recipes:
+            return None
+        settings = self.for_unit(unit, prefer_recipe=False)
+        return settings if settings != primary else None
+
+    def _c_recipe_profile(self, target, variables):
+        recipes = self.c_recipes.get(target, ())
+        if len(recipes) != 1:
+            return None
+        match = _IDO.search(self._expand(variables.get('CC', ''), variables).strip())
+        flags = self._expand(next(iter(recipes)), variables)
+        if not match or not flags or '$' in flags:
+            return None
+        return self._profile(match[1], [flags])
 
     @staticmethod
     def _expand(value, variables):
@@ -156,7 +185,11 @@ class Settings:
         if not path.is_relative_to(self.root.resolve()) or not path.is_file():
             return None
         if path.suffix == '.c':
-            return path, None
+            target = artifact.removesuffix('.linked.elf.bound.elf')
+            variables = self.variables.copy()
+            for assignment in self.overrides.get(target, ()):
+                self._assign(variables, assignment)
+            return path, self._c_recipe_profile(target, variables)
         driver = self._expand(self.variables.get('NCC', ''), self.variables)
         recipe = self.cpp_recipes.get(artifact)
         if recipe is None:
@@ -206,14 +239,19 @@ def verify(net, proj, fn, other, donor, names, settings, agent, job, cache, *, r
         whole_reason = ''
         if replacement is not None:
             path, replacement_settings = replacement
-            profile = replacement_settings or settings
-            if profile and toolchains.installed(profile['toolchain']) is not None:
+            profiles = [replacement_settings or settings]
+            if path.suffix == '.c' and settings and settings != profiles[0]:
+                profiles.append(settings)
+            for profile in profiles:
+                if not profile or toolchains.installed(profile['toolchain']) is None or job.stop.is_set():
+                    continue
                 trial = {**dict(current), 'config': json.dumps(prepared_evidence.scoped_config(current, fn, profile))}
                 try:
                     _, invocation = net._invocation(trial, fn)
                     lead = donor_unit.replacement(other, donor, fn['name'], invocation, path)
                     if lead:
-                        accepted, whole_reason = _try(net, current, trial, fn, *lead, agent, job)
+                        accepted, why = _try(net, current, trial, fn, *lead, agent, job)
+                        whole_reason = whole_reason or why
                         if accepted:
                             return 'match', 'Verified from the donor build’s replacement source.'
                 except (NetworkError, OSError, ValueError):

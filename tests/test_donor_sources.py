@@ -189,3 +189,69 @@ def test_cpp_replacement_uses_pinned_driver_and_literal_recipe(tmp_path):
     assert settings.replacement_source(unit, 'unlisted') is None
     assert toolchains.path(profile['toolchain']) == toolchains.path('ido-7.1')
     assert toolchains.get(profile['toolchain']).source_extension == 'cpp'
+
+
+def test_literal_c_recipe_uses_the_selected_recipe_flags_for_each_object(tmp_path):
+    from types import SimpleNamespace
+
+    from decompnet.app.donor_build import Settings
+
+    root = tmp_path
+    (root / 'src').mkdir()
+    replacement = root / 'src' / 'replacement.c'
+    replacement.write_text('int entry(void) { return 3; }\n')
+    (root / 'Makefile').write_text(
+        'CC := tools/ido-static-recomp/build/7.1/out/cc\n'
+        'CFLAGS := -G 0 -non_shared\nOPT_FLAGS := -O2\n'
+        'build/src/unit.c.o: REPLACE_FUNC_BODY += entry=build/src/replacement.c.o\n'
+        'build/src/unit.c.o: src/unit.c\n'
+        '\t$(CC) -c $(CFLAGS) -O3 -DNATIVE -o $@ build/$<\n'
+        'build/src/replacement.c.o: CC := tools/ido-static-recomp/build/5.3/out/cc\n'
+        'build/src/replacement.c.o: src/replacement.c\n'
+        '\t$(CC) -c $(CFLAGS) -O1 -o $@ $<\n')
+    profiles = Settings(SimpleNamespace(root=root))
+    unit = SimpleNamespace(base=root / 'build/src/unit.c.o', source='src/unit.c', scratch=None)
+    assert profiles.for_unit(unit) == {
+        'toolchain': 'ido-7.1', 'flags': ['-G', '0', '-non_shared', '-O3', '-DNATIVE']}
+    assert profiles.replacement_source(unit, 'entry') == (replacement, {
+        'toolchain': 'ido-5.3', 'flags': ['-G', '0', '-non_shared', '-O1']})
+    assert profiles.fallback_for_unit(unit, profiles.for_unit(unit)) == {
+        'toolchain': 'ido-7.1', 'flags': ['-G', '0', '-non_shared', '-O2', '-DNATIVE']}
+
+
+def test_a_replacement_recipe_can_reproduce_bytes_its_resident_profile_cannot(tmp_path):
+    from types import SimpleNamespace
+
+    import pytest
+
+    from decompnet import toolchains
+    from decompnet.app.donor_build import Settings
+    from decompnet.compiler import compile_source
+    from decompnet.elfobj import extract_function
+    from decompnet.project import compiler_config
+
+    if not toolchains.installed('ido-7.1'):
+        pytest.skip('requires the installed pinned IDO 7.1 compiler')
+    (tmp_path / 'src').mkdir()
+    path = tmp_path / 'src' / 'body.c'
+    source = 'int entry(int x) { int result = x; if (result) result += 1; return result; }'
+    path.write_text(source)
+    (tmp_path / 'Makefile').write_text(
+        'CC := tools/ido-static-recomp/build/7.1/out/cc\n'
+        'CFLAGS := -G 0 -non_shared\nOPT_FLAGS := -O0\n'
+        'build/src/resident.c.o: REPLACE_FUNC_BODY += entry=build/src/body.c.o\n'
+        'build/src/body.c.o: src/body.c\n'
+        '\t$(CC) -c $(CFLAGS) -O2 -o $@ $<\n')
+    settings = Settings(SimpleNamespace(root=tmp_path))
+    unit = SimpleNamespace(base=tmp_path / 'build/src/resident.c.o', source='src/resident.c', scratch=None)
+    _, replacement = settings.replacement_source(unit, 'entry')
+
+    def code(profile):
+        cfg = compiler_config(tmp_path, {'compiler': profile})
+        result = compile_source(cfg, '', source)
+        assert result.ok, result.log
+        return extract_function(result.obj, 'entry').code
+
+    expected = {'toolchain': 'ido-7.1', 'flags': ['-G', '0', '-non_shared', '-O2']}
+    assert code(replacement) == code(expected)
+    assert code(settings.for_unit(unit)) != code(expected)
