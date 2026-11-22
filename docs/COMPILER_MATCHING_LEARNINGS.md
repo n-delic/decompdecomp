@@ -14544,3 +14544,7 @@ reproduced the target's register choice and improved the linked score
 from 136 to 126. The previous generator skipped this split because the
 candidate already declared its preferred name. Evidence is one measured
 scratch replay and a synthetic regression for repeated name collisions.
+
+
+
+In one N64 counted-call loop built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1`, a draft read a halfword count through a word pointer, scaled a record address twice and used the call index before assigning it. Recovering the halfword loads, byte-addressed record stride and current loop index reproduced the linked target exactly (score 300 to 0). The rule requires matching entry and latch table loads, target stride and call evidence; it reconstructs undefined draft behavior. Evidence: one saved example and synthetic generation and routing tests.

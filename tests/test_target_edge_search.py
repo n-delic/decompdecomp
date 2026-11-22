@@ -866,3 +866,12 @@ def test_relocated_increment_reaches_kmc_proposals(monkeypatch):
     rows = [('r', 'lui $v0, %hi(state)', 'lui $a0, %hi(state)')]
     assert ('relocated_global_increment', 'direct increment') in route('void f(void) {}', rows, 'asm')
     assert 'relocated_global_increment' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
+
+
+def test_halfword_count_loop_reaches_kmc_proposals(monkeypatch):
+    from decomprepair import measured_kmc_halfword_count_loop
+
+    monkeypatch.setattr(measured_kmc_halfword_count_loop, 'variants', lambda *args: [('recover_halfword_count_loop', 'fixed')])
+    rows = [('r', 'sll $v0, $v0, 1', 'sll $v0, $v0, 3')]
+    assert ('recover_halfword_count_loop', 'fixed') in route('void f(void) {}', rows, 'asm')
+    assert 'recover_halfword_count_loop' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
