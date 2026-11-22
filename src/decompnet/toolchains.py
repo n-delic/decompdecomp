@@ -78,6 +78,7 @@ class Toolchain:
     headers: list[str] = field(default_factory=list)  # shared compiler header packs
     local_files: list[str] = field(default_factory=list)
     local_places: list[str] = field(default_factory=list)
+    compiler_source: str = ""  # the `*-source` entry holding the GCC source nearest this compiler (source_for)
 
     def __post_init__(self):
         self.requires = [*self.requires, *(h for h in self.headers if h not in self.requires)]
@@ -476,15 +477,19 @@ def _deb_data(deb: Path, out: Path) -> Path:
     raise ToolchainError(f"{deb.name} has no data.tar")
 
 
-def _extract(archive: Path, dest: Path, subdir: str | None, keep: dict[str, str] | None = None) -> None:
+def _extract(archive: Path, dest: Path, subdir: str | None, keep: dict[str, str] | None = None,
+             drop: list[str] | tuple[str, ...] = ()) -> None:
     """Unpack an archive (or its `subdir`) into `dest`. `keep`: {path in it: where it goes in dest}, and nothing else:
     a compiler's archive is often a whole install (its IDE, libraries, the C runtime's sources: 700 MB for Visual C++
     2010) of which a build needs the compiler and headers. Two paths may go to one folder: they're merged."""
     prefix = f"{subdir.strip('/')}/" if subdir else ""
     wanted = None if keep is None else [prefix + k.strip("/") for k in keep]
+    dropped = [prefix + d.strip("/") for d in drop]  # (a compiler source's testsuite and other languages)
 
     def take(name: str) -> bool:
         name = name.rstrip("/")
+        if any(name == d or name.startswith(d + "/") for d in dropped):
+            return False
         return wanted is None or any(name == w or name.startswith(w + "/") for w in wanted)
 
     with tempfile.TemporaryDirectory(dir=dest.parent) as tmp:
@@ -635,7 +640,52 @@ def install(tid: str, *, accept_license: bool = False, force: bool = False, log=
     with _INSTALLING:
         lock = _installs.setdefault(tid, threading.RLock())
     with lock:
-        return _install(tid, accept_license=accept_license, force=force, log=log, linux=linux, vm=vm)
+        where = _install(tid, accept_license=accept_license, force=force, log=log, linux=linux, vm=vm)
+    fetch_source(tid, log=log)
+    return where
+
+
+def source_id(compiler: str) -> str | None:
+    """The `*-source` entry with the GCC source nearest `compiler` (toolchains.toml), or None: proprietary compilers
+    (IDO, Metrowerks, SN Systems, Visual C++...) have no public source."""
+    tc = _registered(compiler)
+    return (tc.compiler_source or None) if tc is not None else None
+
+
+def source_for(compiler: str) -> Path | None:
+    """Where the installed source of `compiler` is (its passes: sched.c, local-alloc.c, global.c, reorg.c...), or None
+    when it has none or it isn't downloaded yet. Read-only reading material for agents; never built."""
+    sid = source_id(compiler)
+    return path(sid, False) if sid and installed(sid, False) else None
+
+
+def fetch_source(compiler: str, log=print) -> Path | None:
+    """Download a free compiler's source beside it (installed with the compiler, and on the next install pass for
+    one installed before). Never fails the compiler: a download that fails is logged and tried again next time."""
+    sid = source_id(compiler)
+    try:
+        if not sid or get(compiler).proprietary or installed(compiler) is None:
+            return None
+        if installed(sid, False) is not None:
+            return path(sid, False)
+        with _INSTALLING:
+            lock = _installs.setdefault(sid, threading.RLock())
+        with lock:
+            return _install(sid, accept_license=False, force=False, log=log, linux=False, vm=False)
+    except Exception as error:  # noqa: BLE001 - reading material: the compiler works without it
+        log(f"{sid}: its source couldn't be downloaded ({error}); it will be tried again on the next install")
+        return None
+
+
+def fetch_missing_sources(log=print) -> list[str]:
+    """The sources of installed compilers that don't have theirs yet (installed before sources existed, or whose
+    download failed): Setup's install pass and Install all run it. Returns the ids now installed."""
+    done = []
+    for tid, tc in registry().items():
+        sid = tc.compiler_source
+        if sid and installed(sid, False) is None and installed(tid) is not None and fetch_source(tid, log=log):
+            done.append(sid)
+    return list(dict.fromkeys(done))
 
 
 def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | None, vm: bool | None) -> Path:
@@ -748,7 +798,11 @@ def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | 
             else:
                 into = dest / part.get("into", "")  # a pack of several versions: each in its own folder
                 into.mkdir(parents=True, exist_ok=True)
-                _extract(archive, into, part.get("subdir"), part.get("keep"))
+                _extract(archive, into, part.get("subdir"), part.get("keep"), part.get("drop", ()))
+                if inner := part.get("inner"):  # a source release that is an archive in an archive (Sony's EE GCC)
+                    nested = into / inner["file"]
+                    _extract(nested, into, inner.get("subdir"), inner.get("keep"), inner.get("drop", ()))
+                    nested.unlink()
                 for folder in part.get("mkdir", ()):  # the POSIX root of an MSYS2 program needs them (#130)
                     (into / folder).mkdir(parents=True, exist_ok=True)
                 if part.get("executable"):  # archives that don't record the executable bit

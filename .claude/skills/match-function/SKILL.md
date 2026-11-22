@@ -311,10 +311,9 @@ the shape is decided by a compiler pass, not by how you spell the C. Stop writin
    `local-alloc.c`/`global.c`, `sched.c`, `reorg.c`, `stmt.c`/`expr.c` for how C turns into RTL). Reading the pass
    tells you which *input* it keys on (a label's use count, whether a block is reached by a fall-through, whether
    a constant is a CONST_INT in a register or an operand, a variable's `REG_USERVAR_P`), and that is the C you
-   must write. The source is a reference, not game data. GCC upstream source is being added under the
-   toolchains folder (a separate PR): if present, see `toolchains.toml` for the `*-source` entries and read it there.
-   Otherwise a copy already on the machine (a decomp project's `tools/`, `ultralib-source`) needs no download; a new
-   download needs the user's yes, outside the repo. Don't search the whole filesystem for `sched.c`/`loop.c`/`cse.c`.
+   must write. The app installs each free compiler's source with it, in the toolchains folder as `<id>-source`
+   (`toolchains.source_for("<compiler>")` gives the path, and `compiler_passes` prints it); IDO, Metrowerks, SN's own
+   builds and Visual C++ have none. Don't search the whole filesystem for `sched.c`/`loop.c`/`cse.c`.
 3. **Turn the finding into a rewrite.** The pass's rule is the permuter's guide: a family in decomp-repair that
    produces the source shape the rule needs (step 5). Record the rule, not only the spelling, in
    COMPILER_MATCHING_LEARNINGS.md ("jump.c inverts `if (x) goto A; goto B;` unless an insn sits between them" is

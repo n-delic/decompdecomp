@@ -317,7 +317,9 @@ subsets of these observations, not the complete historical search. Exact results
 original variable names, types or source spelling. See `docs/COMPILER_MATCHING_LEARNINGS.md`.
 
 For stubborn misses, Repair examples' GCC diagnostics now compare frozen before/after allocator and
-scheduler phases (`compiler_passes(function, revision, passes=[...])` dumps them for your candidate). Compare `lreg`/`greg` assignments and lifetimes with `sched`/`sched2`/`dbr`, only when
+scheduler phases (`compiler_passes(function, revision, passes=[...])` dumps them for your candidate, and names where
+the compiler's source is: `gcc-2.7.2-kmc-source` in the toolchains folder, decompals' reconstruction with `sched.c`,
+`local-alloc.c`, `global.c`, `reorg.c` at its top). Compare `lreg`/`greg` assignments and lifetimes with `sched`/`sched2`/`dbr`, only when
 both diagnostic builds preserve ordinary output. Pseudo numbering changes are not causal proof. New
 captures can run bounded ablation automatically; use the retained edit set as a hypothesis for a local
 family, keeping the original exact source until a separate ordinary judge accepts any replacement.
