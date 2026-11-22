@@ -422,3 +422,22 @@ void f(s32 *p, s32 n)
     draft_repairs.variants(source, 'f', 'mips', labels=labels, limit=None)
     assert {'caller_save_slot_drop', 'caller_save_slot_drop_fold'} <= set(labels.values())
     assert {'caller_save_slot_drop', 'caller_save_slot_drop_fold'} <= set(draft_repairs.AGENT_FAMILIES)
+
+
+def test_the_m2c_spelling_child_is_proposed_and_known_to_agents():
+    """A raw m2c draft spells fields `M2C_FIELD(p, T *, K)` and `M2C_UNK`; most families read `*(T *)((u8 *)p + K)` and
+    `s32`, so the draft in plain spelling is offered as one child they can then act on (decomprepair 0.5.650)."""
+    source = """\
+#ifndef M2C_DEFINES
+#define M2C_DEFINES
+typedef s32 M2C_UNK;
+#define M2C_FIELD(expr, type_ptr, offset) (*(type_ptr)((s8 *)(expr) + (offset)))
+#endif
+M2C_UNK f(void *p) {
+    return M2C_FIELD(p, s32 *, 8);
+}
+"""
+    labels = {}
+    out = draft_repairs.variants(source, 'f', 'mips', labels=labels, limit=None)
+    assert 'm2c_spelling' in set(labels.values()) and 'm2c_spelling' in draft_repairs.AGENT_FAMILIES
+    assert any('M2C_FIELD(p' not in text.split('#endif')[-1] for text, label in labels.items() if label == 'm2c_spelling' and text in out)
