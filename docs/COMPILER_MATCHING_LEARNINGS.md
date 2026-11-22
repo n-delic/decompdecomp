@@ -13322,6 +13322,23 @@ the same center, loads from one base register, and comparisons of the
 results. It generates a candidate only across local statements that preserve
 the inputs. Evidence is one partial live match and synthetic tests.
 
+### KMC GCC 2.7.2: stage a vector component in its saved accumulator
+
+An N64 draft waited to consume a component from a stack vector until
+a later expression with another call. The target loads that component
+and adds it to a saved accumulator immediately after the vector
+producer, before another call. Staging the additions there and using
+the previously initialized float zero improved the linked score from
+19,232 to 18,356 under `-G0 -mips3 -mgp32 -mfp32 -O2`. A literal float zero
+scored 19,026, and a compound subtraction from the accumulator scored
+18,716. Moving both horizontal accumulators together in earlier trials
+regressed the score.
+
+The `vector_accumulator_stage` repair requires the stack offset, float
+data flow and return transfer to the same saved register. A stored zero
+is offered only for verified word initialization on the path to the
+rewrite. Evidence is one partial match and synthetic guard tests.
+
 ### KMC GCC 2.7.2: stage an entry pointer around a signed flag
 
 In one large N64 function, the target read two pointers and a signed
