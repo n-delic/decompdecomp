@@ -14875,3 +14875,7 @@ scored 8,225 or worse. The capture recovered the float reload,
 transfer and delay nop, while the chosen float register still
 differed. Synthetic tests check both earlier slot witnesses, the
 callee address, the float argument position and the dead result.
+
+### Restore a measured post-store flag reload
+
+In a private N64 flag update built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the target stored its selected flag value and reloaded it before testing a separate bit. The draft read the word before the store and used a different branch-delay register. Staging the call and clear mask, using volatile word accesses, and moving the bit test's reload after the store reproduced the linked target exactly (score 275 to 0). Volatile accesses alone scored 390 and moving the read alone scored 330. The candidate requires the observed load/store order and disjoint modified and tested bits; volatile accesses preserve the target's measured memory operations. Evidence: one saved function and synthetic generation and routing tests.
