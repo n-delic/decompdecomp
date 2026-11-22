@@ -307,3 +307,23 @@ def test_wide_text_gap_keeps_a_called_scheduled_entry_on_the_existing_mapping():
     assert close_gaps(image, ranges, [(0x1000, 0x1100, base + 0x1000)]) == ranges
     put(0, 0, 0)
     assert close_gaps(image, ranges) == ranges
+
+
+def test_middle_code_mapping_requires_neighbours_and_independent_calls():
+    from decompnet.consoles.n64.code import reconcile_between
+
+    base = 0x80300000
+    size = 16 * 32
+    middle = base + size
+    left = _code(base, 16, calls_into=middle)
+    center = _code(middle, 16, calls_into=middle)
+    right = _code(base + 2 * size, 16)
+    ranges = [(0, size, base), (size, 2 * size, middle - 8),
+              (2 * size, 3 * size, base + 2 * size)]
+    expected = [ranges[0], (size, 2 * size, middle), ranges[2]]
+    assert reconcile_between(left + center + right, ranges) == expected
+    assert reconcile_between(_code(base, 16) + center + right, ranges) == ranges
+    old_calls = b''.join(struct.pack('>8I', *_function(middle+i*32, middle-8+i*32)) for i in range(16))
+    assert reconcile_between(left + old_calls + right, ranges) == ranges
+    different = [*ranges[:2], (2 * size, 3 * size, base + 2 * size + 16)]
+    assert reconcile_between(left + center + right, different) == different
