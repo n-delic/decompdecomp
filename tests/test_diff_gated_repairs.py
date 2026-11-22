@@ -1444,3 +1444,26 @@ def test_byte_or_complement_narrowing_is_kmc_diff_gated():
     assert 'byte_or_complement_narrow' in families(KMC, rows)
     assert 'byte_or_complement_narrow' not in families('ido-7.1', rows)
     assert 'byte_or_complement_narrow' not in families(KMC, [])
+
+
+def test_counted_null_table_loop_is_kmc_diff_gated():
+    source = '''void f(void *p) {
+        s32 index; s32 table; s32 value;
+        index = 0;
+        do {
+            table = M2C_FIELD(p, s32 *, 0x38);
+            if (table == 0) { index += 1; }
+            else {
+                value = M2C_FIELD(((index * 4) + table), s32 *, 0x30);
+                index += 1;
+                if (value != 0) { free_item(value); }
+            }
+        } while (index < 12);
+    }'''
+    rows = [('|', 'beql $v1, $zero, 0x40', 'bnez $v1, 0x2c'),
+            ('>', '', 'j f+0x44')]
+    def families(toolchain, diff):
+        return {label for label, _ in proposals(source, 'f', '', 'mips', toolchain, diff, '')}
+    assert 'counted_null_table_for' in families(KMC, rows)
+    assert 'counted_null_table_for' not in families('ido-7.1', rows)
+    assert 'counted_null_table_for' not in families(KMC, [])
