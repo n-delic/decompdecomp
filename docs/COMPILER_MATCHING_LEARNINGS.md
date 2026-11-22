@@ -1,5 +1,9 @@
 # Compiler matching learning log
 
+> **New evidence goes in its own file** under `docs/learnings/<kind>/<name>.md` (`python tools/learnings.py new ...`,
+> see `docs/learnings/README.md`), not in this file: one shared file made every pull request that recorded evidence
+> conflict with the others. This file keeps the older entries, which guides and code comments cite by section title.
+
 ### KMC GCC 2.7.2: an early ordinary store and the first scheduler
 
 On one private N64 function, the saved source scored 15 under both `-G0 -mips3 -mgp32 -mfp32 -O2` and those
@@ -1498,6 +1502,9 @@ select the correct entry-specific profile, including for overlays.
 The lower score is a scratch measurement, and the function remains unmatched.
 
 ## How to add a finding
+
+Write it as a new file in `docs/learnings/` (`python tools/learnings.py new function|finding|experiment NAME`); do not
+append here. What an entry records:
 
 Record the compiler **version and flags**, processor/ABI, original mismatch, source change, measured
 result, evidence location, and remaining uncertainty. Distinguish a controlled same-input experiment
