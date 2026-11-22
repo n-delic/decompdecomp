@@ -1,5 +1,14 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: a jump can bypass temporary-split initialization
+
+With `-G0 -mips3 -mgp32 -mfp32 -O2`, splitting a reused loop
+counter in a private N64 draft reduced its linked score from 320 to 55.
+A jump into the loop skipped the new counter's only initialization.
+Moving the initialization to the shared entry scored 65 and kept the
+counter defined on both paths. The split generator now skips incoming
+jumps into the renamed interval. The function remains unmatched.
+
 ### KMC GCC 2.7.2: pair a signed loop entry with a halfword counter
 
 A private N64 draft with a masked loop index scored 170 under
