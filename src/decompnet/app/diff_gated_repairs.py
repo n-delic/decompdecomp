@@ -28,6 +28,7 @@ from decomprepair import (
     masked_slot_dispatch,
     measured_address_repairs,
     measured_after_call_reload,
+    measured_byte_clamp,
     measured_callback_loop,
     measured_callback_repairs,
     measured_carried_loop_test,
@@ -300,6 +301,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_kmc_call_setup.variants(source, name, header, rows)
         result += measured_kmc_call_stores.variants(source, name, header, rows, resolve)
         result += measured_carried_loop_test.variants(source, name, header, rows)
+        result += measured_byte_clamp.variants(source, name, header, rows)
         result += measured_after_call_reload.variants(source, name, header, asm or '', resolve)
         result += measured_indirect_self_call.variants(source, name, header, rows, asm or '', resolve)
         result += measured_kmc_command.variants(source, name, header, rows)

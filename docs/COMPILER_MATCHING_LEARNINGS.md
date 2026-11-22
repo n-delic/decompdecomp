@@ -14729,3 +14729,7 @@ of the source axis.
 ### Inline component square loads
 
 In one N64 function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a draft loaded each 32-bit component into a local before squaring it. Inlining the loads into their corresponding stores and putting each store on its own line removed the extra load stalls and reproduced the linked target exactly, improving its score from 260 to 0. Inlining all loads without separating two stores that shared a source line scored 100. The candidate is restricted to the measured straight-line, nonvolatile word-load shape. Evidence: one saved function and synthetic generation and routing tests.
+
+### Byte-indexed inferred global and early clamp return
+
+In a private N64 function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, an inferred word-sized global made a byte-table index scale by four, while a local holding the return value changed the branch and result registers. Treating the global displacement and halfword index as bytes improved the linked score from 350 to 210. Also expressing the zero-result guard as an early return reproduced the linked target exactly (score 0). The candidate requires the observed missing index shift and preserves the guarded work. Evidence: one saved function and synthetic generation and routing tests.

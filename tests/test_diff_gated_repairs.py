@@ -1554,3 +1554,13 @@ def test_square_loads_route_to_kmc(monkeypatch):
                         lambda text, name, header, diff: [('square_load_fixture', text)])
     assert 'square_load_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'square_load_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_byte_clamp_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_byte_clamp, 'variants',
+                        lambda text, name, header, diff: [('byte_clamp_fixture', text)])
+    assert 'byte_clamp_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'byte_clamp_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
