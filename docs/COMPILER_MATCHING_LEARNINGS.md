@@ -13859,11 +13859,16 @@ Compiler facts behind them:
   other load): the prototype takes the argument; with `(void)` the value was in `$v0`.
 - `frame_pad[2]` (volatile) had to go once the stack locals changed; the frame follows the locals, not the pad.
 
-Not solved at 10 (the saved best is judged 10; a later session may take it from there). Sched1 puts the `var_s4` chain first whatever the statement order, the chain order follows the variable (swapping which variable gets the 0xE chain moved it), and a two-statement `p = x*0xE8; p = p + base` is the only spelling that orders the 0xE chain first (the second set of the same pseudo), which is also what writes `sll $s1`. Tried without effect: an idx scratch variable (single or shared by both chains, one or two sets), `do {} while (0)` fences on either chain, an `inline` helper for either or both addresses, struct-array indexing, a named entry pointer with all statement orders, declaration order, a copy through a second variable.
+Solved later (10 -> 0, see the next paragraph). Sched1 puts the `var_s4` chain first whatever the statement order, the chain order follows the variable (swapping which variable gets the 0xE chain moved it), and a two-statement `p = x*0xE8; p = p + base` is the only spelling that orders the 0xE chain first (the second set of the same pseudo), which is also what writes `sll $s1`. Tried without effect: an idx scratch variable (single or shared by both chains, one or two sets), `do {} while (0)` fences on either chain, an `inline` helper for either or both addresses, struct-array indexing, a named entry pointer with all statement orders, declaration order, a copy through a second variable.
 
 Open row: the target's `sll $v0,$v0,3; addu $s1,$v0,$a1` (temp then add) against `sll $s1,$v0,3; addu $s1,$s1,$a1`
 for a two-statement `p = x * 0xE8; p = p + base;`. Combined spellings put the other index chain first and flip the
-entry pointer to `$v0` (30-500).
+entry pointer to `$v0` (30-500). Closed by two edits together: fold the two sets into one expression
+(`p = base + x * 0xE8;`, 500 alone) and add a no-op set `p = q;` right after the switch arm's copy `q = p;` (10 alone,
+exact together; it costs no instruction). What ordered the chains was that `p` is set more than once anywhere in the
+function, not the second set beside the product: with that set elsewhere, the product's last shift gets a fresh
+pseudo (`$v0`). A dead `p = 0` there is deleted and does not count; merging an unrelated later `p`-shaped local into `p`
+also fixes the order but swaps `$s1`/`$s2` (285). Added to the permuter as `copy_back_set` (decomp-repair 0.5.358).
 
 Added to the permuter: `goto_tail_order`, `switch_variable_split`, `prelude_pointer_inline` (decomp-repair 0.5.331); each
 reproduces its step from the saved source (3685 -> 3015, 2245 -> 1285 -> 1245, 1245 -> 1140).
