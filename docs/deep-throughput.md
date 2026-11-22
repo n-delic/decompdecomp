@@ -141,3 +141,8 @@ read, rewrote and committed a function's output history for every candidate that
 memory and queues one row per function per batch, so the gate is taken once a batch); `adaptive_repairs.factors`
 (3%) and `experiment_evidence.factors` (2%), which flush the batch before every policy read, which still costs a
 transaction per read.
+
+`adaptive_repairs.factors` and `experiment_evidence.factors` no longer flush the batch before reading: they add the
+counters this search has queued (`trial_bookkeeping.pending_counters`) to the stored rows, in the table's order, which
+is what a flush followed by the read returned. Before, the policy read before each batch of candidates forced a
+writer transaction each time, so the batch never batched (the 3% and 2% entries above, in the writer gate).

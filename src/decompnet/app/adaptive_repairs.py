@@ -43,6 +43,13 @@ def prepare(net):
         net._repair_policy_ready = True
 
 
+POLICY_COUNT = """INSERT INTO repair_policy VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(profile,focus,family)
+        DO UPDATE SET attempted=attempted+excluded.attempted, improved=improved+excluded.improved,
+        matched=matched+excluded.matched, failed=failed+excluded.failed,
+        elapsed_ms=elapsed_ms+excluded.elapsed_ms"""
+POLICY_COLUMNS = ('attempted', 'improved', 'matched', 'failed', 'elapsed_ms')
+
+
 def record(net, key, focus, family, baseline, score, elapsed_ms=0, origin="local experiments", *, exact=None, coverage=True):
     """Called once per measured trial; unknown/failed results count as spent work, not wins."""
     if not family or not isinstance(baseline, (int, float)) or not math.isfinite(baseline):
@@ -51,10 +58,7 @@ def record(net, key, focus, family, baseline, score, elapsed_ms=0, origin="local
     improved = isinstance(score, (int, float)) and 0 <= score < baseline
     matched = improved and score == 0 and (exact is None or exact is True)
     now = time.time()
-    trial_bookkeeping.count(net.store, """INSERT INTO repair_policy VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(profile,focus,family)
-        DO UPDATE SET attempted=attempted+excluded.attempted, improved=improved+excluded.improved,
-        matched=matched+excluded.matched, failed=failed+excluded.failed,
-        elapsed_ms=elapsed_ms+excluded.elapsed_ms""",
+    trial_bookkeeping.count(net.store, POLICY_COUNT,
         (key, focus, family, 1, int(improved), int(matched), int(score is None), max(0, int(elapsed_ms))),
         3, lambda old, new: trial_bookkeeping.sums(old, new, 3))
     if not coverage:  # (a second key for the same trial, such as the statement's shape: one trial in the coverage totals)
@@ -65,11 +69,26 @@ def record(net, key, focus, family, baseline, score, elapsed_ms=0, origin="local
         1, lambda old, new: trial_bookkeeping.sums(old, new, 1, first={1}, last={2}), immediate=improved)
 
 
+def policy_rows(net, key, focus):
+    """The stored rows of one profile and focus, plus what this search has counted and not yet written, in the order
+    the table gives them (by family): the same rows a flush followed by the read would return, without the
+    transaction (the policy is read before every batch of candidates, and a flush each time kept the batch from
+    batching: 18% of a lane's writer time)."""
+    rows = {row['family']: dict(row) for row in net.store.all(
+        'SELECT * FROM repair_policy WHERE profile=? AND focus=?', key, focus)}
+    for (profile, queued_focus, family), args in trial_bookkeeping.pending_counters(net.store, POLICY_COUNT).items():
+        if profile == key and queued_focus == focus:
+            row = rows.setdefault(family, {'profile': key, 'focus': focus, 'family': family,
+                                           **dict.fromkeys(POLICY_COLUMNS, 0)})
+            for column, amount in zip(POLICY_COLUMNS, args[3:]):
+                row[column] += amount
+    return [rows[family] for family in sorted(rows)]
+
+
 def factors(net, key, focus):
-    trial_bookkeeping.flush(net.store)
     prepare(net)
     result = {}
-    rows=net.store.all('SELECT * FROM repair_policy WHERE profile=? AND focus=?', key, focus)
+    rows = policy_rows(net, key, focus)
     times=[r['elapsed_ms']/r['attempted'] for r in rows if r['attempted']>=MIN_TRIALS and r['elapsed_ms']>0]
     typical=statistics.median(times) if times else None
     for row in rows:

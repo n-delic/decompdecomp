@@ -64,19 +64,37 @@ def output(candidate):
                                sorted(r.key() for r in candidate.relocs))).encode()).hexdigest()
 
 
+EFFECT_COUNT = """INSERT INTO repair_input_effects VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(function_id,scope,family) DO UPDATE SET attempted=attempted+excluded.attempted,
+        no_edit=no_edit+excluded.no_edit,same_output=same_output+excluded.same_output,
+        worse=worse+excluded.worse,failed=failed+excluded.failed,improved=improved+excluded.improved,
+        elapsed_ms=elapsed_ms+excluded.elapsed_ms,
+        last_edits=CASE WHEN excluded.updated_at>=updated_at THEN excluded.last_edits ELSE last_edits END,
+        updated_at=MAX(updated_at,excluded.updated_at)"""
+EFFECT_COLUMNS = ('attempted', 'no_edit', 'same_output', 'worse', 'failed', 'improved', 'elapsed_ms')
+
+
+def effect_rows(store, function_id, scope_key):
+    """The stored rows of one function and scope plus this search's queued counts, in table order (by family): what a
+    flush followed by the read would give, without the transaction."""
+    rows = {row['family']: dict(row) for row in store.all(
+        'SELECT * FROM repair_input_effects WHERE function_id=? AND scope=?', function_id, scope_key)}
+    for (queued_function, queued_scope, family), args in trial_bookkeeping.pending_counters(store, EFFECT_COUNT).items():
+        if queued_function == function_id and queued_scope == scope_key:
+            row = rows.setdefault(family, {'function_id': function_id, 'scope': scope_key, 'family': family,
+                                           **dict.fromkeys(EFFECT_COLUMNS, 0)})
+            for column, amount in zip(EFFECT_COLUMNS, args[3:10]):
+                row[column] += amount
+    return [rows[family] for family in sorted(rows)]
+
+
 def record(net, fn, key, family, before, after, baseline, score, prior_output, measured_output, elapsed_ms, *, compact=False):
     store = prepare(net,fn['project_id'])
     changes = ([{'before_start':0, 'before_end':len(before), 'after_start':0, 'after_end':len(after)}]
                if compact and before != after else [] if compact else edits(before, after))
     improved = score is not None and score < baseline
     same = prior_output is not None and prior_output == measured_output
-    trial_bookkeeping.count(store, """INSERT INTO repair_input_effects VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
-        ON CONFLICT(function_id,scope,family) DO UPDATE SET attempted=attempted+excluded.attempted,
-        no_edit=no_edit+excluded.no_edit,same_output=same_output+excluded.same_output,
-        worse=worse+excluded.worse,failed=failed+excluded.failed,improved=improved+excluded.improved,
-        elapsed_ms=elapsed_ms+excluded.elapsed_ms,
-        last_edits=CASE WHEN excluded.updated_at>=updated_at THEN excluded.last_edits ELSE last_edits END,
-        updated_at=MAX(updated_at,excluded.updated_at)""",
+    trial_bookkeeping.count(store, EFFECT_COUNT,
         (fn['id'],key,family,1,int(not changes),int(bool(changes) and same),
          int(score is not None and score > baseline),int(bool(changes) and score is None),
          int(improved),max(0,round(elapsed_ms)),json.dumps(changes),time.time()),
@@ -85,9 +103,8 @@ def record(net, fn, key, family, before, after, baseline, score, prior_output, m
 
 def factors(net, proj, fn):
     store = prepare(net,fn['project_id'])
-    trial_bookkeeping.flush(store)
     key = scope(net,proj,fn)
-    rows = store.all('SELECT * FROM repair_input_effects WHERE function_id=? AND scope=?',fn['id'],key)
+    rows = effect_rows(store,fn['id'],key)
     result = {}
     for row in rows:
         if row['improved']:

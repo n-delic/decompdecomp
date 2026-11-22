@@ -76,6 +76,17 @@ def lookup(store, key):
     return buffer['values'].get(key) if buffer is not None else None
 
 
+def pending_counters(store, sql):
+    """The counter rows `count` has queued for `store` under this exact SQL and not yet written: {key arguments: the
+    queued arguments}. A reader that needs the totals can add these to the stored rows instead of flushing the batch,
+    which is a transaction through the project's single writer each time."""
+    value = current()
+    buffer = next((b for b in value.buffers if b['store'] is store), None) if value is not None else None
+    if buffer is None:
+        return {}
+    return {slot[1]: args for slot, args in buffer['counters'].items() if slot[0] == sql}
+
+
 def submit(store, statements, *, immediate=False, memo=None):
     value = current()
     if value is None:
