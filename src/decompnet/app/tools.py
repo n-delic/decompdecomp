@@ -32,6 +32,7 @@ from . import (
     learnings_search,
     local_experiments,
     polish_automation,
+    prove_chain,
     repair_search,
     reviewed_search_seeds,
     score_permutations,
@@ -705,6 +706,8 @@ HANDLERS: dict[str, Callable[..., str]] = {
         compiler_passes.run(net, agent, slug, function, revision, passes),
     "score_permutations": lambda net, agent, slug, function, revision, statements=None, patches=None, max=64:
         score_permutations.run(net, agent, slug, function, revision, statements, patches, max),
+    "prove_chain": lambda net, agent, slug, function, revision, families=None, steps=4, children=40:
+        prove_chain.run(net, agent, slug, function, revision, families, steps, children),
     "get_compiler_trial": compiler_experiments.retrieve,
     "review_search_seed": reviewed_search_seeds.review,
     "get_search_brief": search_brief.read,
@@ -807,7 +810,7 @@ PUBLISH_AFTER = frozenset({"edit_context", "rename_symbol", "split_function", "j
 
 # Tools whose work is judging a candidate: the check before them reads only what a judge reads.
 JUDGE_TOOLS = frozenset({"compile_and_diff", "compile_patch", "compile_variants", "compile_family", "try_local_repairs",
-                         "try_compiler", "compiler_experiments", "compiler_passes", "score_permutations",
+                         "try_compiler", "compiler_experiments", "compiler_passes", "score_permutations", "prove_chain",
                          # (they read and write the database, not the saved files: release_function waited 3.2 s
                          # a call for the project's lock, behind other helpers' full checks)
                          "claim_function", "release_function", automatic_assignment.RELEASE, "add_note"})
@@ -818,7 +821,7 @@ REPAIR_CAPTURE_TOOLS = frozenset({'compile_and_diff', 'compile_patch', 'compile_
 
 ROM_ONLY = {"watch_in_emulator","compare_behaviour","compare_candidate_behaviour","get_data_unit","compile_data","claim_data","release_data","claim_port_fix","release_port_fix","check_for_pc","fix_for_pc","claim_asset_region","inspect_asset_region","preview_asset_region","propose_asset_region","defer_asset_region","review_search_seed","get_boundary_evidence", "suggest_boundary", "get_context", "edit_context", "split_function", "redraft", "search_flags",
             # GCC pass dumps and the standalone judge worker are ROM-mode (compiler_passes.py, score_permutations.py)
-            "compiler_passes", "score_permutations"}
+            "compiler_passes", "score_permutations", "prove_chain"}
 FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions", "tidy_done", "tidy_file",
              "standins_for"}
 LTCG_ONLY = {"standins_for"}  # only projects of games built with link-time code generation have harness/ files
@@ -1388,6 +1391,15 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         is recorded (through compile_and_diff); otherwise nothing is recorded and no move-on count is spent. ROM projects."""
         return await run(ctx, 'score_permutations', function=function, revision=revision, statements=statements,
                          patches=patches, max=max)
+
+    @tool
+    async def prove_chain(ctx: Context, function: str, revision: str, families: list[str] | None = None,
+                          steps: int = 4, children: int = 40) -> str:
+        """Would the repair library reach the match from here? Applies the best child of the named families (default
+        all) step by step, judged with the exact judge (at most 8 steps, 80 children a step, 2 minutes). Only a final
+        source beating the saved best is recorded; otherwise nothing, and no move-on count. ROM projects."""
+        return await run(ctx, 'prove_chain', function=function, revision=revision, families=families, steps=steps,
+                         children=children)
 
     @tool
     async def compiler_experiments(ctx: Context, function: str, revision: str, trials: list[CompilerTrial]) -> str:
