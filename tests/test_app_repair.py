@@ -61,6 +61,9 @@ def test_repair_keeps_source_untouched_until_review(repair, monkeypatch):
         assert patched.wait(10)
         assert service.start("failed", "Reviewed diagnostic.") == jid
         assert service.preview("failed")["repair"] == jid
+        assert app_repair.recent_repairs(service.jobs) == [{
+            "source": "failed", "task": "build", "started": service.jobs.jobs[jid]["t"], "state": "running",
+        }]
         assert service.jobs.jobs[jid]["progress"]["repair_messages"] == ["Codex: I reproduced the failure."]
         service.message(jid, "Run the focused regression.")
         assert service.jobs.jobs[jid]["progress"]["repair_pending"]
@@ -76,6 +79,8 @@ def test_repair_keeps_source_untouched_until_review(repair, monkeypatch):
     while job["state"] == "running" and time.monotonic() < deadline:
         time.sleep(.01)
     assert job["state"] == "done", job.get("error")
+    assert app_repair.recent_repairs(service.jobs)[0]["state"] == "done"
+    assert service.preview("failed")["repair"] == jid
     assert "You: Run the focused regression." in job["progress"]["repair_messages"]
     with pytest.raises(NetworkError, match="no longer taking messages"):
         service.message(jid, "Too late.")

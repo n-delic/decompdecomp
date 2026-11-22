@@ -89,6 +89,22 @@ def desktop(request, app):
     return secrets.compare_digest(window.request_token(request), app.secret)
 
 
+def recent_repairs(jobs):
+    """Expose the latest repair for each failed job without loading its transcript or patch."""
+    with jobs._lock:
+        repairs = {}
+        for job in reversed(jobs.jobs.values()):
+            source = job.get("repair_source")
+            if not source or job["kind"] != KIND or source in repairs:
+                continue
+            repairs[source] = {
+                "source": source, "task": jobs.jobs[source]["kind"], "started": job["t"],
+                "state": "stopping" if job["state"] == "running" and jobs.cancel_events[job["id"]].is_set()
+                else job["state"],
+            }
+        return list(repairs.values())
+
+
 def checkout():
     if not available():
         raise NetworkError("Run decompdecomp from a Git checkout to propose an app repair.")

@@ -42,8 +42,26 @@ function renderBackgroundWork(data){
   $('backgroundCount').textContent=`— ${data.items.length} active jobs & services`;
   $('backgroundCpuNote').textContent=data.cpu_note;
   $('backgroundLatency').textContent=(data.slow_operations || []).slice(-20).reverse().map(row=>`${row.kind} ${row.route || ''}: ${row.seconds.toFixed(2)}s`).join(' · ') || 'No slow operations recorded.';
+  renderBackgroundRepairs(data.app_repairs || []);
   backgroundThreadDetails=mergeBackgroundActivity(data);
   renderBackgroundActivity();
+}
+function renderBackgroundRepairs(repairs) {
+  $('backgroundRepairs').hidden = !repairs.length;
+  const active = repairs.filter(row => ['running', 'stopping'].includes(row.state)).length;
+  $('backgroundRepairCount').textContent = active ? `${active} active` : String(repairs.length);
+  const list = $('backgroundRepairRows');
+  const labels = {running: 'Running', stopping: 'Stopping', done: 'Completed', error: 'Failed', cancelled: 'Cancelled'};
+  const content = repairs.map(row => `<div class="row">
+    <span class="grow"><b>${esc(row.task)}</b><br><span class="small muted">${esc(labels[row.state] || row.state)} · ${esc(new Date(row.started * 1000).toLocaleString())}</span></span>
+    <button class="ghost small-btn" type="button" data-repair-source="${esc(row.source)}">Open conversation</button>
+  </div>`).join('');
+  if (list._repairContent === content) return;
+  list._repairContent = content;
+  list.innerHTML = content;
+  list.querySelectorAll('[data-repair-source]').forEach(button => {
+    button.onclick = () => openAppRepair(button.dataset.repairSource);
+  });
 }
 function mergeBackgroundActivity(data){
   const threads=data.thread_details || data.threads.map(name=>({name,role:'Other',purpose:'Thread details unavailable; update the app.',cpu_state:'unavailable'}));

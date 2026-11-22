@@ -2757,13 +2757,21 @@ def test_room_retry_all_processes_snapshot_beyond_five_and_continues_errors(app,
     assert job['state']=='done' and calls==[rows[0]['key']]
 
 
-def test_background_work_routes_are_guarded(app):
+def test_background_work_routes_are_guarded(app, monkeypatch):
+    from decompnet.app.routes import state
+
     client, *_=app
+    monkeypatch.setattr(state, "repair_available", lambda: False)
     endpoint='/api/background-work'
     assert client.get(endpoint, headers={'User-Agent':'external'}).status_code==401
     assert client.get(endpoint).status_code==200
     snapshot=client.get(endpoint).json()
     assert 'cpu_note' in snapshot and 'threads' in snapshot
+    assert "app_repairs" not in snapshot
+    monkeypatch.setattr(state, "repair_available", lambda: True)
+    repair = {"source": "failed-build", "task": "build", "started": 1, "state": "done"}
+    monkeypatch.setattr(state, "recent_repairs", lambda jobs: [repair])
+    assert client.get(endpoint).json()["app_repairs"] == [repair]
     assert client.post(endpoint,json={'kind':'service','key':'x'}).status_code==403
     assert client.post(endpoint,json={'kind':'service','key':'x'},headers={'X-Decomp':'1'}).status_code==400
 

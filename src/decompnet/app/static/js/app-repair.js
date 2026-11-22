@@ -25,6 +25,7 @@ function openAppRepair(source) {
         <p class="small muted">Remove private details before sending. Codex CLI uses AI tokens to investigate and test a patch in a separate worktree and saves the session locally so it can receive follow-up messages.</p>
         <button type="button" class="primary" data-start>Start repair</button>
       </div>
+      <p class="small muted" data-reopen hidden>Find this conversation under Background work → App repairs.</p>
       <button type="button" class="ghost" data-stop hidden>Stop</button>
       <pre class="joblog" data-work hidden></pre>
       <section data-conversation hidden>
@@ -97,6 +98,7 @@ function openAppRepair(source) {
 
   async function track(id) {
     jid = id;
+    get("[data-reopen]").hidden = false;
     preview.hidden = true;
     conversation.hidden = true;
     messages.textContent = "";

@@ -1106,6 +1106,10 @@
 
 <main id="backgroundPage" class="view" hidden>
   <header class="page-head"><p class="eyebrow">This computer</p><h1>Background work</h1><p class="muted">See active jobs, agents and project services. Stop requests preserve saved work; a running compile may need to finish first.</p></header>
+  <details class="panel settings-disclosure" id="backgroundRepairs" hidden>
+    <summary class="panel-head"><h2>App repairs <span class="disclosure-context" id="backgroundRepairCount"></span></h2></summary>
+    <div class="pad" id="backgroundRepairRows"></div>
+  </details>
   <section class="panel"><header class="panel-head"><h2>Activity <span class="disclosure-context" id="backgroundCount"></span></h2><button id="backgroundRefresh" class="ghost small-btn" type="button">Refresh</button></header><div class="pad">
     <div class="background-metrics"><div><span class="small muted">App CPU</span><strong id="backgroundCpu">Measuring…</strong></div><div><span class="small muted">Live threads</span><strong id="backgroundThreads">—</strong></div></div>
     <p class="small muted" id="backgroundCpuNote"></p>

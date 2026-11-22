@@ -26,7 +26,7 @@ from ...rom.export import ExportError
 from .. import build_info, cleanup, edition, picker, repository_setup, saves, updates, window
 from ..app_repair import KIND as APP_REPAIR_KIND
 from ..app_repair import available as repair_available
-from ..app_repair import desktop
+from ..app_repair import desktop, recent_repairs
 from ..engine import COMPILERS, TOOLS
 from ..support import MAX_DISC, job_error, static_file
 from . import App
@@ -589,7 +589,13 @@ def register(app: App) -> None:
                 data = await body(request)
                 operation = monitor.resume if data.get('action') == 'resume' else monitor.stop
                 return JSONResponse(await call(operation, str(data.get('kind','')), str(data.get('key',''))))
-            snapshot = await (app.ui_call or call)(monitor.snapshot)
+            def background_snapshot():
+                snapshot = monitor.snapshot()
+                if repair_available() and desktop(request, app):
+                    snapshot["app_repairs"] = recent_repairs(jobs)
+                return snapshot
+
+            snapshot = await (app.ui_call or call)(background_snapshot)
             return JSONResponse(snapshot | {'worker_setting':settings.data.get('worker_threads',0),
                                              'maintenance_cpu_percent':settings.data.get('maintenance_cpu_percent',0)})
         except NetworkError as error:
