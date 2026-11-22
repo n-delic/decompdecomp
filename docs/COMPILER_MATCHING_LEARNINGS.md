@@ -1730,6 +1730,15 @@ second store. This separates the loader binding from the code generation
 effect of changing storage class. A retry of either form must still pass
 the full instruction and relocation verdict.
 
+A follow-up read the owning loader record and the cartridge's read-only data
+section directly. Six functions had 23 supported single-precision loads
+whose object bytes equalled the cartridge data at the destination offsets.
+Five of the six had that evidence for all of their anonymous constant loads.
+In the remaining function, four of twelve loads met the single-precision
+section-base criteria. Instruction bits outside the original relocation
+fields agreed for each measured function. This was a read-only comparison.
+It establishes candidate data for a future exact link and confers no match.
+
 ### Observation: source layout sensitivity (IDO 5.3)
 
 The existing [IDO guide](../src/decompnet/consoles/n64/guides/ido.md) records a private same-source
