@@ -590,6 +590,8 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                                  patches={"type":"array","maxItems":6,"items":{"type":"object","properties":{"old":{"type":"string"},"new":{"type":"string"},"occurrence":{"type":"integer"}},"required":["old","new"]}},max=it("at most 64"))),
         "search_learnings": ("Recorded compiler-matching evidence ranked by a symptom (register swap, store too early, frame size): each entry's fix and its repair families.",
                              s(symptom=st("the symptom in a few words", True), top=it("entries, at most 10"))),
+        "prove_chain": ("Greedy chain of repair-library families from a candidate revision, judged exactly (at most 8 steps, 80 children a step); only a final source beating the saved best is recorded. ROM projects.",
+                        s(function=st("function",True),revision=st("candidate revision",True),families={"type":"array","items":{"type":"string"},"description":"family names; omit for all"},steps=it("at most 8"),children=it("children judged a step, at most 80"))),
         "get_search_brief": ("Read allocation lines, failed experiments and reviewed roots; no compile.",
                              s(function=st("function",True), base={"type":"string","enum":["current","saved_best"]})),
         "review_search_seed": ("Review a diagnostic seed for deep search. Changed/unknown signatures stay diagnostic-only.",s(function=st("function",True),trial_id=st("trial ID",True),review_note=st("Why this seed; caller/interface checks"),enabled=bo("Enable seed; false disables"))),
