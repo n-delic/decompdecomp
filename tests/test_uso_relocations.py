@@ -67,6 +67,82 @@ def test_uso_rejects_unsupported_or_duplicate_relocation_records():
         assert region.relocations is None
 
 
+def test_overlay_defined_zero_data_requires_explicit_loader_binding(tmp_path, monkeypatch):
+    from contextlib import nullcontext
+    from inspect import unwrap
+    from threading import Event
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from decompnet import consoles
+    from decompnet.app import donor_build, exact_match_inputs
+    from decompnet.app.overlay_donor_aliases import defined_data_bindings, globalize_zero_data
+    from decompnet.elfobj import extract_function
+
+    if toolchains.installed('ido-5.3') is None:
+        pytest.skip('needs IDO 5.3')
+    cfg = compiler_config(tmp_path, {'compiler': {'toolchain': 'ido-5.3', 'flags': toolchains.get('ido-5.3').flags}})
+    header = 'static float values[2]; static float other;'
+    source = 'float example(void) { return values[0] + values[1] + other; }'
+    original = compile_source(cfg, header, source)
+    assert original.ok, original.log
+    body = extract_function(original.obj, 'example')
+    assert body and {r.type for r in body.relocs} == {5, 6}
+    assert {r.symbol for r in body.relocs} == {'.bss'}
+    records = b''.join(struct.pack('>III', 0x13 if r.type == 5 else 0x12, r.offset + 4, 1)
+                       for r in body.relocs)
+    cartridge = bytes(64) + _module(bytes(4) + body.code, relocations=records)
+    region, = uso.read(cartridge)
+    info = {'section': region.offset, 'start': 4, 'size': len(body.code),
+            'relocs': uso.function_relocations(region, 4, len(body.code))}
+    target = uso_match.symbolic_target(uso_match.Target('example', 4, body.code, [], uso=info))
+    initial = uso_match.link(original.obj, 'example', body.code, info)
+    assert initial.instructions_exact and not initial.exact
+    context, names = globalize_zero_data(header, initial.candidate, target)
+    assert names == {'values', 'other'}
+    globalized = compile_source(cfg, context, source)
+    assert globalized.ok, globalized.log
+    candidate = uso_match.link(globalized.obj, 'example', body.code, info).candidate
+    rebound, context = defined_data_bindings(source, context, candidate, target, names,
+                                             lambda aliases: aliases, uso_match.data_reference)
+    built = compile_source(cfg, context, rebound)
+    assert built.ok, built.log
+    assert uso_match.link(built.obj, 'example', body.code, info).exact
+    assert uso.rebuild(cartridge, [('example', info, built.obj)]) == cartridge
+    console = consoles.of({'platform': 'n64'})
+    placement = uso_match.Target('example', 4, body.code, [], uso=info)
+    record = Mock()
+    net = SimpleNamespace(
+        _compile=lambda _project, h, s, _fn: compile_source(cfg, h, s),
+        _evaluate=lambda _fn, _project, obj: (lambda result: (result.candidate, result.exact, result.problems))(
+            uso_match.link(obj, 'example', body.code, info)),
+        _rom_target=lambda _fn: placement, _target_obj=lambda *_: target,
+        console=lambda _: console, _record=record,
+        progress=SimpleNamespace(judging=lambda *_args, **_kwargs: nullcontext()))
+    monkeypatch.setattr(exact_match_inputs, 'capture', lambda *_: {})
+    monkeypatch.setattr(donor_build, 'acceptable', lambda *_: True)
+    fn = {'name': 'example', 'size': len(body.code), 'id': 1}
+    accepted, _ = unwrap(donor_build._try)(net, {'slug': 'test', 'arch': 'mips'}, {}, fn, source, header,
+                                          SimpleNamespace(id=1), SimpleNamespace(stop=Event()))
+    assert accepted
+    saved = record.call_args.kwargs['exact_inputs']
+    replayed = compile_source(cfg, saved['header'], saved['source'])
+    assert replayed.ok, replayed.log
+    assert uso_match.link(replayed.obj, 'example', body.code, info).exact
+    assert '_data_8__ref' in context
+    for wrong_context in (context.replace('_data_8__ref', '_data_4__ref'),
+                          context.replace('_sym_1_data_', '_sym_2_data_'),
+                          context.replace('[2];', '[2] = {1};', 1)):
+        wrong_source = rebound
+        if '_data_4__ref' in wrong_context:
+            wrong_source = rebound.replace('_data_8__ref', '_data_4__ref')
+        if '_sym_2_data_' in wrong_context:
+            wrong_source = wrong_source.replace('_sym_1_data_', '_sym_2_data_')
+        wrong = compile_source(cfg, wrong_context, wrong_source)
+        assert wrong.ok, wrong.log
+        assert not uso_match.link(wrong.obj, 'example', body.code, info).exact
+
+
 def test_overlay_cpp_method_calls_keep_loader_binding(tmp_path):
     from decompnet.app.overlay_donor_aliases import cpp_methods
     from decompnet.elfobj import extract_function, unmangle

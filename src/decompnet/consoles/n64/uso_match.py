@@ -27,11 +27,19 @@ def local_alias(section, index, offset):
 
 _REFERENCE = re.compile(r'(uso_[0-9A-F]+_sym_[0-9]+(?:_text_[0-9A-F]+)?)__ref[1-9][0-9]*')
 _BINDING = re.compile(r'uso_[0-9A-F]+_sym_[0-9]+(?:_text_[0-9A-F]+)?')
+_DATA_BINDING = re.compile(r'(uso_[0-9A-F]+_sym_[0-9]+)_data_([0-9A-F]+)__ref([1-9][0-9]*)')
 
 
 def separate_reference(binding, number):
     """Give the compiler a distinct name that resolves to the same loader record."""
     return f'{binding}__ref{number}' if _BINDING.fullmatch(binding) else binding
+
+
+def data_reference(binding, offset, number):
+    """Name an explicit zero-initialized object within a loader symbol."""
+    if re.fullmatch(r'uso_[0-9A-F]+_sym_[0-9]+', binding) and 0 <= offset < 0x8000 and number > 0:
+        return f'{binding}_data_{offset:X}__ref{number}'
+    return None
 
 
 def _local_calls(info):
@@ -138,6 +146,56 @@ def _pool_fields(elf, raw, code, target, expected, info, entry):
     return verified
 
 
+def _defined_data_fields(elf, raw, target, expected, section):
+    """Link explicitly named zero-initialized definitions to their loader binding.
+
+    A compiler may generate different instructions for a definition and an
+    extern declaration. The source must name both the binding and its offset;
+    anonymous section symbols never authorize this link.
+    """
+    groups = defaultdict(list)
+    for item in raw:
+        symbol = item['symtab'].get_symbol(item['symidx'])
+        if _DATA_BINDING.fullmatch(symbol.name):
+            groups[symbol.name].append((item, symbol))
+    verified = {}
+    for name, uses in groups.items():
+        match = _DATA_BINDING.fullmatch(name)
+        binding, offset = match[1], int(match[2], 16)
+        if offset >= 0x8000:
+            continue
+        item, symbol = uses[0]
+        shndx = symbol['st_shndx']
+        if (not isinstance(shndx, int) or symbol['st_info']['bind'] != 'STB_GLOBAL'
+                or symbol['st_info']['type'] != 'STT_OBJECT' or not symbol['st_size']):
+            continue
+        data = elf.get_section(shndx)
+        if (data['sh_type'] != 'SHT_NOBITS' or data['sh_flags'] & 3 != 3
+                or symbol['st_value'] + symbol['st_size'] > data['sh_size']):
+            continue
+        kinds = {r['type'] for r, _ in uses}
+        if kinds != {5, 6}:
+            continue
+        fields = {}
+        for reloc, _ in uses:
+            at, kind = reloc['off'], reloc['type']
+            wanted = expected.get(at)
+            if (reloc['rela'] or not wanted or wanted[0] != kind
+                    or binding != alias(section, wanted[1])):
+                break
+            value = reloc['value']
+            actual = int.from_bytes(target[at + 2:at + 4], 'big')
+            if kind == 5:
+                if value or actual:
+                    break
+            elif value >= 0x8000 or value + offset >= 0x8000 or actual != value + offset:
+                break
+            fields[at] = actual
+        else:
+            verified.update(fields)
+    return verified
+
+
 def link(obj, name, target, info):
     section = info['section']
     expected = {at: (kind, index) for at, kind, index in info['relocs'] or ()}
@@ -154,6 +212,7 @@ def link(obj, name, target, info):
         code = elf.get_section(shndx).data()[start:start + size]
         raw = raw_relocs(elf, shndx, start, size, code)
         pool = _pool_fields(elf, raw, code, target, expected, info, entry)
+        defined_data = _defined_data_fields(elf, raw, target, expected, section)
     except (ELFError, ValueError, TypeError, IndexError):
         return LinkResult(None, False, ['The compiler object could not be read as overlay text.'])
 
@@ -166,8 +225,9 @@ def link(obj, name, target, info):
         at, kind = item['off'], item['type']
         symbol = item['symtab'].get_symbol(item['symidx'])
         binding = symbol.name
-        if at in pool:
-            candidate.append(Reloc(at, kind, alias(section, expected[at][1]), pool[at]))
+        if at in pool or at in defined_data:
+            value = pool[at] if at in pool else defined_data[at]
+            candidate.append(Reloc(at, kind, alias(section, expected[at][1]), value))
         else:
             candidate.append(Reloc(at, kind, binding, item['value']))
         distinct = _REFERENCE.fullmatch(binding)
@@ -188,6 +248,9 @@ def link(obj, name, target, info):
                     valid = True
         if at in pool and at not in seen:
             linked[at+2:at+4] = pool[at].to_bytes(2, 'big')
+            valid = True
+        if at in defined_data and at not in seen:
+            linked[at+2:at+4] = defined_data[at].to_bytes(2, 'big')
             valid = True
         if not valid:
             wanted = alias(section, original[1]) if original else 'no relocation'

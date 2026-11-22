@@ -316,6 +316,56 @@ _DATA = re.compile(
     r'\s*((?:\[\s*\d*\s*\]\s*)*)\s*;')
 
 
+def globalize_zero_data(header, candidate, target):
+    """Expose simple private zero-initialized objects for a measured binding retry."""
+    if (candidate is None or not any(r.symbol in ('.bss', '.sbss') for r in candidate.relocs)
+            or not comparable_overlay_code(candidate, target, masked=_data_fields(target))):
+        return None
+    changes, names = [], set()
+    clean = csource._blank(header)
+    scalar = r'(?:char|short|int|long|signed|unsigned|float|double)'
+    pattern = r'\bstatic\s+(?:' + scalar + r'\s+)+([A-Za-z_]\w*)\s*(?:\[\s*\d+\s*\]\s*)*;'
+    for match in re.finditer(pattern, clean):
+        prefix = clean[:match.start()]
+        if prefix.count('{') != prefix.count('}') or prefix[prefix.rfind('\n') + 1:].lstrip().startswith('#'):
+            continue
+        names.add(match[1])
+        changes.append((match.start(), match.start() + len('static ')))
+    if not names:
+        return None
+    for start, end in reversed(changes):
+        header = header[:start] + header[end:]
+    return header, names
+
+
+def defined_data_bindings(source, header, candidate, target, names, separate, data_reference):
+    """Name globalized objects using the aligned loader symbol and measured offset."""
+    from .source_symbol_recovery import overlay_bindings
+
+    aliases = overlay_bindings(candidate, target, masked=_data_fields(target))
+    if not aliases:
+        return None
+    expected = {(r.offset, r.type): r for r in target.relocs}
+    groups = defaultdict(list)
+    for reloc in candidate.relocs:
+        if reloc.symbol in names:
+            groups[reloc.symbol].append(reloc)
+    if not groups:
+        return None
+    bound = {}
+    for number, (name, sites) in enumerate(sorted(groups.items()), 1):
+        if any(r.type not in (HIGH, LOW) for r in sites):
+            return None
+        offset = _offset_delta(sites, expected)
+        if offset is None or (reference := data_reference(aliases[name], offset, number)) is None:
+            return None
+        if re.search(r'\b' + re.escape(reference) + r'\b', csource._blank(source + header)):
+            return None
+        bound[name] = reference
+    direct = separate({old: new for old, new in aliases.items() if old not in bound})
+    return named_bindings(source, header, candidate, direct | bound)
+
+
 def _data_fields(target):
     return [*target.linker_relocs, *(r for r in target.relocs if r.type in (HIGH, LOW))]
 

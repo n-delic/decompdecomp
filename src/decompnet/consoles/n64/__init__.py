@@ -243,6 +243,11 @@ class Nintendo64(Console):
 
         return separate_reference(binding, number)
 
+    def overlay_data_reference(self, binding, offset, number):
+        from .uso_match import data_reference
+
+        return data_reference(binding, offset, number)
+
     def overlay_cartridge_placement(self, fn, cfg):
         import json
 
