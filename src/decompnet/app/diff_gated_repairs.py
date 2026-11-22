@@ -53,6 +53,7 @@ from decomprepair import (
     measured_callback_repairs,
     measured_carried_loop_test,
     measured_command_record_cursor,
+    measured_conditional_flag_owner,
     measured_control_flow,
     measured_cursor_loop_tail,
     measured_cursor_publish,
@@ -358,6 +359,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += trig_axis_reuse.variants(source, name, rows, header=header)
         result += projection_gain.variants(source, name, rows, header=header)
         result += quadratic_sign_holder.variants(source, name, rows, header=header)
+        result += quadratic_sign_holder.arm_variants(source, name, rows, header=header)
         result += smoothing_call_before_read.variants(source, name, rows, header=header)
         result += conditional_smoothing_gain.variants(source, name, rows, header=header)
         result += scaled_blend_input.variants(source, name, rows, header=header)
@@ -502,6 +504,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += guard_reset_scheduling.variants(source, name, header, rows)
         result += global_pointer_local_repairs.scoped_field_reads(source, name, rows)
         result += measured_global_rebase.variants(source, name, header, rows, resolve=resolve)
+        result += measured_conditional_flag_owner.variants(source, name, header, rows, resolve=resolve)
         result += measured_zero_record_pairs.variants(source, name, header, rows, resolve=resolve)
         result += measured_packing_stage.variants(source, name, header, rows)
         result += measured_loop_search_target.variants(source, name, header, rows)

@@ -15672,6 +15672,26 @@ with exact jump-table data. An earlier linear address form scored
 views and the column helper's single read, then derives the strides
 with `sizeof`. The candidate still has instruction differences.
 
+### Inline a shared square into its two signed branches
+
+In a private linked N64 function compiled with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, two response curves saved a
+square in a temporary before selecting a multiplier and offset. The
+target squared the same input in the branch delay slot, but exchanged
+the square and multiplier registers with the candidate.
+
+Place the same square expression in each mutually exclusive arm.
+KMC still emits one square. Both factors and the offset remain
+unchanged, and ten register operands match after applying the two
+independent rewrites. The linked score fell from 2,940 to 2,890.
+Each single rewrite scored 2,915. Commuting the multiply or changing
+the temporary was neutral. Precomputing the square in the axis local
+and retaining its sign separately scored 3,150. The selected source
+kept all three jump tables and passed uninitialized diagnostics.
+### KMC GCC 2.7.2 conditional flag owner
+
+A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` retained a global object pointer across a conditional flag update and shared store. Its machine draft reloaded the pointer before the store. Loading the owner separately inside each path and reusing it at the shared store changed the diff score from 240 to an exact linked match; hoisting the load above the branch instead scored 340. This is one saved example, not a controlled cross-compiler experiment. The proposal checks the target relocation against the source's base plus displacement and requires the measured control-flow and instruction patterns.
+
 ### Sink a common global reset past a local assignment
 
 In one private N64 example built with
