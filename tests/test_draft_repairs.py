@@ -471,3 +471,22 @@ float f(float x, float y, int enabled) {
     [clamp] = [candidate for candidate in proposals if labels[candidate] == 'split_float_clamp_lifetime']
     assert 'float __repair_clamped_float = x / y;' in clamp
     assert 'value = x + y;' in clamp
+
+
+def test_shifted_byte_lifetime_is_offered_to_the_permuter():
+    source = '''
+void f(Voice *v, Note *n) {
+    u32 pitch;
+    u32 w;
+    pitch = ((u32) (((u8 *) n)[2] * v->rate)) >> 7;
+    pitch += ((u8 *) n)[1] << 16;
+    w = n->word;
+    use(pitch, w);
+}
+'''
+    labels = {}
+    children = variants(source, 'f', 'mips', labels=labels, header='typedef volatile u32 vu32;')
+    assert any(labels.get(child) == 'shifted_byte_lifetime' and
+               'if (__repair_shifted_byte & 1)' in child for child in children)
+    assert not any(labels.get(child) == 'shifted_byte_lifetime'
+                   for child in variants(source, 'f', 'x86', labels=labels))
