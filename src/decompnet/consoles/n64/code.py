@@ -616,6 +616,17 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
         words = struct.unpack_from(f'>{(end-start)//4}I', rom, start)
         called.update(jal_targets(words, entry))
     found = complete_tails(rom, found, taken, called=called)
+    # A complete framed tail can overlap a different inferred ROM bank at the
+    # same runtime address. Keep both only when exclusive scopes can hold them.
+    expanded = complete_tails(rom, found, taken, called=called, allow_inferred_overlap=True)
+    expanded_scoped = set(scoped)
+    for lo, hi, base in expanded:
+        for other, other_end, other_base in expanded:
+            if lo != other and base < other_base+other_end-other and other_base < base+hi-lo:
+                expanded_scoped.update((lo, other))
+    safe_expanded = inferred_overlays.safe_scopes(expanded, expanded_scoped, taken)
+    if safe_expanded is not None:
+        found, scoped = expanded, safe_expanded
     found = inferred_overlays.drop_pointer_fragments(rom, found, taken)
     scoped &= {start for start,_,_ in found}
     safe = inferred_overlays.safe_scopes(found, scoped, taken)

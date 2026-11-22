@@ -87,3 +87,13 @@ def test_called_tail_accepts_a_straight_line_stack_pop_before_return():
     words = [0x03e00008, 0] + [0x3c028001] * 8 + [0x27bdffe8, 0, 0x27bd0018, 0x03e00008, 0]
     rom = struct.pack('>' + str(len(words)) + 'I', *words)
     assert complete(rom, [(0, 12, 0x80001000)], called={0x80001008}) == [(0, len(rom), 0x80001000)]
+
+
+def test_complete_tail_can_overlap_only_an_inferred_bank_when_scoped():
+    body = image([0]*20+[0x03e00008, 0x27bd0018])
+    rom = body + bytes(64)
+    first = (0, 12, 0x80001000)
+    other = (len(body), len(rom), 0x80001020)
+    assert complete(rom, [first, other])[0] == first
+    assert complete(rom, [first, other], allow_inferred_overlap=True)[0] == (0, len(body), 0x80001000)
+    assert complete(rom, [first], [other], allow_inferred_overlap=True)[0] == first
