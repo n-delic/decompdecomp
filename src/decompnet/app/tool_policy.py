@@ -9,7 +9,7 @@ REQUIRED = {'project_info', 'claim_function', 'get_function', 'compile_and_diff'
 KEY = 'agent-disabled-tools'
 
 
-MATCHING = REQUIRED | {'get_search_brief','get_claims','get_candidate','compile_patch','compile_variants','compiler_passes','score_permutations','prove_chain','get_assembly','last_diff',
+MATCHING = REQUIRED | {'get_search_brief','get_claims','get_candidate','compile_patch','compile_variants','compiler_passes','compiler_source','score_permutations','prove_chain','get_assembly','last_diff',
     'try_local_repairs','compile_family','family_targets','get_context','edit_context','redraft',
     'report_candidate_issue','add_note','search_notes','share_knowledge','find_similar','search_learnings','guide',
     'read_file','search_code','edit_file','file_status','standins_for'}

@@ -592,6 +592,8 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                              s(symptom=st("the symptom in a few words", True), top=it("entries, at most 10"))),
         "prove_chain": ("Greedy chain of repair-library families from a candidate revision, judged exactly (at most 8 steps, 80 children a step); only a final source beating the saved best is recorded. ROM projects.",
                         s(function=st("function",True),revision=st("candidate revision",True),families={"type":"array","items":{"type":"string"},"description":"family names; omit for all"},steps=it("at most 8"),children=it("children judged a step, at most 80"))),
+        "compiler_source": ("One function or macro of a compiler pass from the compiler's installed source (GCC builds), with its comment; bounded.",
+                            s(compiler=st("compiler ID, e.g. gcc-2.7.2-kmc",True),function_name=st("e.g. birthing_insn_p, qty_compare, find_reg",True))),
         "get_search_brief": ("Read allocation lines, failed experiments and reviewed roots; no compile.",
                              s(function=st("function",True), base={"type":"string","enum":["current","saved_best"]})),
         "review_search_seed": ("Review a diagnostic seed for deep search. Changed/unknown signatures stay diagnostic-only.",s(function=st("function",True),trial_id=st("trial ID",True),review_note=st("Why this seed; caller/interface checks"),enabled=bo("Enable seed; false disables"))),
