@@ -15936,3 +15936,7 @@ the exact observed field offset.
 ### KMC GCC 2.7.2 magnitude conversion
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` initialized a magnitude from a phase, negated it only when negative and staged a double-to-float conversion before multiplication. Its machine draft assigned an unused local and left the magnitude uninitialized on the nonnegative path. Initializing the magnitude alone changed the diff score from 235 to 300; staging the final conversion as well produced an exact linked match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the measured floating-point instructions and generated record shape.
+
+### KMC GCC 2.7.2 record pointer update
+
+A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` stored a new pointer in a record, read it back and copied one of its fields before restoring state. Its machine draft read the old pointer before replacing it. Reordering the record writes and pointer read changed the diff score from 215 to an exact linked match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the observed load and store order, field offsets and generated record shape; the judge verifies the candidate.

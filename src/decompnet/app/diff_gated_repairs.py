@@ -160,6 +160,7 @@ from decomprepair import (
     measured_pointer_displacement,
     measured_pointer_scale,
     measured_record_byte_offset,
+    measured_record_pointer_update,
     measured_reset_loops,
     measured_ring_global_capture,
     measured_saved_global,
@@ -523,6 +524,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += guard_reset_scheduling.variants(source, name, header, rows)
         result += global_pointer_local_repairs.scoped_field_reads(source, name, rows)
         result += measured_global_rebase.variants(source, name, header, rows, resolve=resolve)
+        result += measured_record_pointer_update.variants(source, name, header, rows)
         result += measured_magnitude_conversion.variants(source, name, header, rows)
         result += measured_command_word_schedule.variants(source, name, header, rows)
         result += measured_parameter_clock_load.variants(source, name, header, rows)
