@@ -25,6 +25,7 @@ import time
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from io import BytesIO
+from itertools import chain
 from pathlib import Path
 
 from .. import arch, similarity
@@ -38,9 +39,10 @@ log = logging.getLogger("decompdecomp")
 IDENT = re.compile(r"^[A-Za-z_]\w*$")
 _MACHINE = {"EM_PPC": ("ppc", "big"), "EM_PPC64": ("ppc64", "big"), "EM_MIPS": ("mips", None), "EM_ARM": ("arm", "little"),
             "EM_X86_64": ("x86_64", "little")}
-_CACHE_VERSION = 9  # of twins.json: 2 added why code is hand-written assembly, 3 ARM's BIOS call stubs, 4 ARM's
+_CACHE_VERSION = 10  # of twins.json: 2 added why code is hand-written assembly, 3 ARM's BIOS call stubs, 4 ARM's
 # system instructions, 5 COFF objects (PC) and the C names of their symbols, 6 MIPS NOP-only targets, 7 x86-64 ELF
-# objects (PS4), 8 stores the masked prefix for locating donor code inside a ROM function; 9 stores the ELF relocation layout.
+# objects (PS4), 8 stores the masked prefix for locating donor code inside a ROM function; 9 stores the ELF relocation layout;
+# 10 stores the raw function digest for ordering donor candidates.
 # A twin's code that didn't match isn't tried again for this long while neither function's code changes (the
 # same source gives the same result): every agent start's pass would otherwise redo hundreds of compiles (Mario
 # Party 6: about 900, 15 minutes beside the agents). After a while it's tried again: a header can have changed.
@@ -82,6 +84,7 @@ class Print:
     name: str = ""  # how C writes the function's own name, where its symbol isn't that (Visual C++'s _f@8: f)
     prefix: str = ""  # first eight masked bytes, for finding a function inside a merged ROM entry
     layout: list[tuple[int, int]] | None = None  # ELF relocation offsets and types
+    raw_digest: str = ""  # rank identical instruction bytes before masked matches
 
 
 def _mask(code: bytearray, relocs: list[tuple[int, int]], arch: str, order: str) -> None:
@@ -100,6 +103,10 @@ def _key(code: bytes, layout: list[tuple[int, int]]) -> str:
     return digest.hexdigest()
 
 
+def _raw_digest(code: bytes) -> str:
+    return hashlib.blake2b(code, digest_size=16).hexdigest()
+
+
 def coff_prints(data: bytes) -> dict[str, Print]:
     """object_prints for a COFF object (a PC project's targets: a section per function), its names as C writes them
     (coffobj.c_name: `_func_0041B470@8` is func_0041B470), so a twin's code is renamed where its C says them; a jump
@@ -116,7 +123,7 @@ def coff_prints(data: bytes) -> dict[str, Print]:
         _mask(code, [(off, kind) for off, kind, *_ in relocs], processor, "little")
         refs = [f"$L+{value:X}" if section else coffobj.c_name(name) for _, _, name, section, value in relocs]
         out[owner] = Print(_key(bytes(code), [(off, kind) for off, kind, *_ in relocs]), refs, len(raw),
-                           name=coffobj.c_name(owner))
+                           name=coffobj.c_name(owner), raw_digest=_raw_digest(raw))
     return out
 
 
@@ -168,6 +175,7 @@ def object_prints(data: bytes) -> dict[str, Print]:
         section_modes = sorted(modes[shndx])
         for s in syms:
             lo = s["st_value"] & ~1 if arch_id == "arm" else s["st_value"]  # (bit 0: a Thumb function)
+            function = raw[lo:lo + s["st_size"]]
             mine = [(o - lo, t, n) for o, t, n in rels if lo <= o < lo + s["st_size"]]
             facts = {}
             if arch_id == "arm":  # its mode: bit 0, else the mapping symbol it starts under (dsd's objects)
@@ -176,16 +184,18 @@ def object_prints(data: bytes) -> dict[str, Print]:
             out[s.name] = Print(_key(bytes(code[lo:lo + s["st_size"]]), [(o, t) for o, t, _ in mine]),
                                 [n for _, _, n in mine], s["st_size"],
                                 prefix=code[lo:lo + 8].hex(), layout=[(o, t) for o, t, _ in mine],
-                                asm=(reason(raw[lo:lo + s["st_size"]], order == "big", **facts) or "") if reason else "")
+                                asm=(reason(function, order == "big", **facts) or "") if reason else "",
+                                raw_digest=_raw_digest(function))
     return out
 
 
 def rom_print(fn, arch: str, big_endian: bool, label) -> Print:
     """Fingerprint of a ROM project's function, from its target bytes and the addresses its relocations fill in."""
     relocs = sorted((int(r[0]), int(r[1]), int(r[2])) for r in json.loads(fn["relocs"] or "[]") if len(r) >= 3)
-    code = mask_relocs(fn["target"] or b"", [Reloc(o, t, "", 0) for o, t, _ in relocs], arch, big_endian)
+    raw = fn["target"] or b""
+    code = mask_relocs(raw, [Reloc(o, t, "", 0) for o, t, _ in relocs], arch, big_endian)
     return Print(_key(code, [(o, t) for o, t, _ in relocs]), [label(a) for _, _, a in relocs], len(fn["target"] or b""),
-                 [a for _, _, a in relocs])
+                 [a for _, _, a in relocs], raw_digest=_raw_digest(raw))
 
 
 def rom_renames(syms, source: str, a: Print, b: Print, a_name: str, b_name: str, syms_b=None) -> dict[str, str] | None:
@@ -367,7 +377,7 @@ class Twins:
         revision = self.net.project_store(proj['id']).read_version('fingerprints', proj['id'])
         def build():
             return {str(fid): asdict(p) for fid, p in self._build_rom_prints(proj).items()}
-        values = persistent(self.net.project_store(proj['id']), ('rom-fingerprints', proj['id']), (2, revision, self._print_generations[proj['id']]), build)
+        values = persistent(self.net.project_store(proj['id']), ('rom-fingerprints', proj['id']), (3, revision, self._print_generations[proj['id']]), build)
         return {int(fid): Print(**value) for fid, value in values.items()}
 
     def _build_rom_prints(self, proj) -> dict[int, Print]:
@@ -423,14 +433,14 @@ class Twins:
                     prints = object_prints(unit.target.read_bytes())
                 except Exception:  # an object pyelftools can't read: no twins for it
                     prints = {}
-                entry = {"mtime": mtime, "prints": {k: [p.key, p.refs, p.size, p.asm, p.name, p.prefix, p.layout] for k, p in prints.items()}}
+                entry = {"mtime": mtime, "prints": {k: [p.key, p.refs, p.size, p.asm, p.name, p.prefix, p.layout, p.raw_digest] for k, p in prints.items()}}
                 cache[uname] = entry
                 changed = True
             for r in urows:
                 sym = json.loads(r["meta"] or "{}").get("symbol") or r["name"].split("@")[0]
                 p = entry["prints"].get(sym)
                 if p:
-                    out[r["id"]] = Print(p[0], p[1], p[2], asm=p[3], name=p[4], prefix=p[5], layout=p[6])
+                    out[r["id"]] = Print(p[0], p[1], p[2], asm=p[3], name=p[4], prefix=p[5], layout=p[6], raw_digest=p[7])
         if changed:
             try:
                 cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1401,7 +1411,8 @@ class Twins:
         units = {unit.name: unit for unit in fp.units()} if build else {}
         merged = merged_candidates(self.net, proj, theirs.values(), job) if manual else {}
         relaxed = donor_relocations.candidates(self.net, proj, theirs.values(), job) if manual else {}
-        label = self.net.symbols(proj['id']).label if relaxed else None
+        identical = donor_relocations.identical_targets(mine, theirs.values(), job) if manual else {}
+        label = self.net.symbols(proj['id']).label if relaxed or identical else None
         donors = self.net.project_store(other['id']).all(
             "SELECT id,project_id,name,unit,meta FROM functions WHERE project_id=? AND status='matched'", other["id"])
         if manual:
@@ -1417,12 +1428,16 @@ class Twins:
                     return (0, count)
                 return (1 if key in merged else 2, 0)
             donors.sort(key=priority)
-        for a in donors:
+        # Exhaust identical bytes across all donor files before fanning out
+        # through masked fingerprints that can describe many unrelated functions.
+        exact_donors = ((a, True) for a in donors if a['id'] in theirs
+                        and theirs[a['id']].raw_digest in identical)
+        for a, identical_only in chain(exact_donors, ((a, False) for a in donors)):
             pa = theirs.get(a["id"])
             if pa is None or pa.asm:
                 continue
             found = list(wanted.get(pa.key, ()))
-            if pa.key in merged and not job.stop.is_set():
+            if not identical_only and pa.key in merged and not job.stop.is_set():
                 try:
                     repaired = recover(self, proj, other, fp, a, pa, merged[pa.key], job)
                 except NetworkError as error:
@@ -1433,8 +1448,11 @@ class Twins:
                     mine[row['id']] = fingerprint
                     wanted.setdefault(pa.key, []).append(row['id'])
                     found.append(row['id'])
-            extra = relaxed.get(pa.key, ())
-            for b_id in dict.fromkeys([*found, *extra]):
+            same_bytes = identical.get(pa.raw_digest, ())
+            candidates = same_bytes if identical_only else dict.fromkeys([*found, *relaxed.get(pa.key, ())])
+            for b_id in candidates:
+                if not identical_only and b_id in same_bytes:
+                    continue
                 if job is not None and (job.stop.is_set() or (bounded and (
                         job.reuse_attempts >= job.reuse_limit or time.monotonic() >= job.reuse_deadline))):
                     return matched
@@ -1443,11 +1461,11 @@ class Twins:
                     continue
                 if b["size"] != pa.size:  # A recovered boundary can shorten an entry from the initial index.
                     continue
-                target = (mine[b_id] if b_id in found else donor_relocations.donor_refs(pa, b, label))
-                if target is None:
-                    continue
+                target = mine.get(b_id)
+                if target is None or target.key != pa.key:
+                    target = donor_relocations.donor_refs(pa, b, label) if pa.layout is not None else None
                 donor_name = pa.name or a["name"].split("@")[0]
-                names = renames(pa, target, donor_name, b["name"])
+                names = renames(pa, target, donor_name, b["name"]) if target else None
                 overlay_names = donor_relocations.overlay_names(self.net, proj, b, pa, donor_name) if build else None
                 if names is None:
                     names = overlay_names
