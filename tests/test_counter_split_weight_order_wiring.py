@@ -44,7 +44,12 @@ void walk(void *arg0, s32 mode, s32 *out) {
 def test_the_families_are_proposed_labelled_and_known():
     labels = {}
     result = draft_repairs.variants(DRAFT, NAME, 'mips', labels=labels, limit=None)
-    assert set(FAMILIES) <= set(labels.values())
+    # preheader_run_order's orders are also produced by allocation_lever and statement_group_order, and the later label
+    # wins on identical text, so its own children are checked as offered instead of as labelled
+    assert {'reused_counter_split_scope'} <= set(labels.values())
+    from decomprepair import preheader_run_order
+    children = preheader_run_order.variants(DRAFT, NAME)
+    assert children and all(text in result for _, text in children)
     split = next(t for t in result if labels.get(t) == 'reused_counter_split_scope')
     assert '/*__repair_loop_weight*/do { var_s6_b1 = 0; } while (0);' in split
     # the loop-weight families work on a source that keeps m2c's own macros
