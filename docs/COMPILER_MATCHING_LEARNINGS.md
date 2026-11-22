@@ -13265,6 +13265,21 @@ the same center, loads from one base register, and comparisons of the
 results. It generates a candidate only across local statements that preserve
 the inputs. Evidence is one partial live match and synthetic tests.
 
+### KMC GCC 2.7.2: reorder switch arms with local labels
+
+A two-arm state switch in a large N64 function stored state in a shared
+tail inside one arm. Every incoming goto to its ordinary label came
+from that same arm. With `-G0 -mips3 -mgp32 -mfp32 -O2`, putting the arms
+in target order improved the linked score from 22,652 to 21,427. Adding
+a default break at different positions or reshaping the inner guarded
+counter left the score unchanged within each case order. The candidate
+was warning-clean.
+
+The `switch_case_local_label_order` repair checks every named label's
+entrances and a direct arm exit, then tries the smaller direct reorders
+first. Evidence is one partial N64 match and synthetic tests for local
+labels, external entries and conditional exits.
+
 ### KMC GCC 2.7.2: capture a vector result before another store
 
 On a large N64 function, the target loaded all three floats from an
