@@ -3,12 +3,14 @@ from contextlib import ExitStack
 
 from . import deep_compilation
 
+MAXIMUM_DEPTH=8  # measured: 24 compile slots were 15% busy at a depth of two to four
+
 
 class Window:
     def __init__(self,search,agent,proj,fn,fork):
         self.search,self.agent,self.proj,self.fn,self.fork=search,agent,proj,fn,fork
         self.stack=ExitStack()
-        self.depth=2
+        self.depth=3
         self.tickets=[]
 
     def ensure(self,sources):
@@ -19,7 +21,7 @@ class Window:
         if ticket is not None and not ticket.counted:return
         if self.tickets:
             useful=sum(ticket.counted for ticket in self.tickets)
-            self.depth = min(4,self.depth+1) if useful == len(self.tickets) else max(1,self.depth-1)
+            self.depth = min(MAXIMUM_DEPTH,self.depth+1) if useful == len(self.tickets) else max(1,self.depth-1)
         self.stack.close();self.stack=ExitStack()
         search.check()  # Closing a window charges every discarded running compile.
         count=min(self.depth,pool.count,max(0,search.limit-search.tested))

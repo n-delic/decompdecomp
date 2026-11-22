@@ -12,6 +12,7 @@ from decompnet import compile_sessions, compiler
 @pytest.fixture
 def builds(tmp_path, monkeypatch):
     monkeypatch.setenv('DECOMP_HOME', str(tmp_path / 'scratch'))
+    monkeypatch.setattr(compile_sessions, 'RECHECK_SECONDS', 0)  # (these tests edit headers between two compiles)
     include = tmp_path / 'include';include.mkdir()
     (include / 'types.h').write_bytes(b'typedef int T;\r\n')
     cfg = compiler.CompilerConfig(['fake-cc'], sandbox='none', identity=('test',), include_dirs=(str(include),))
@@ -207,3 +208,31 @@ def test_external_command_include_inputs_bypass_object_cache(builds, args):
     with compile_sessions.session():
         for _ in range(2):compiler.compile_source(cfg, '', 'int entry(){return 1;}')
     assert len(calls) == 2
+
+
+def test_headers_are_trusted_for_the_recheck_window_then_read_again(builds, monkeypatch):
+    cfg, calls, include = builds
+    monkeypatch.setattr(compile_sessions, 'RECHECK_SECONDS', 60)
+    clock = [100.]
+    monkeypatch.setattr(compile_sessions.time, 'monotonic', lambda: clock[0])
+    reads = []
+    from decompnet import compile_headers
+    real = compile_headers.read
+    monkeypatch.setattr(compile_headers, 'read', lambda roots: reads.append(roots) or real(roots))
+    staged = []
+    real_stage = compile_headers.stage
+    monkeypatch.setattr(compile_headers, 'stage', lambda *args: staged.append(1) or real_stage(*args))
+    def run(source):
+        compiler.compile_source(cfg, 'int x;', source)
+    with compile_sessions.session():
+        for index in range(5):run(f'int entry(){{return {index};}}')
+        assert len(reads) == 1 and len(staged) == 1 and len(calls) == 5
+        (include / 'types.h').write_bytes(b'typedef long T;\n')
+        run('int entry(){return 9;}')  # still inside the window: the earlier bytes
+        assert len(reads) == 1
+        clock[0] += 61
+        run('int entry(){return 10;}')
+        assert len(reads) == 2 and len(staged) == 2
+        assert (calls[-1][0] / 'include' / 'types.h').read_bytes() == b'typedef long T;\n'
+        run('int entry(){return 11;}')
+        assert len(reads) == 2 and len(staged) == 2

@@ -14,9 +14,12 @@ _current = ContextVar('trial_bookkeeping', default=None)
 
 class Batch:
     def __init__(self, maximum=False):
-        self.max_bytes = (4 if maximum else 1)*1024*1024
-        self.max_statements = 256 if maximum else 64
-        self.seconds = 1 if maximum else .5
+        # Advisory counters only (verified game work is never queued here), and a crash loses at most this window of
+        # them. Every flush is one transaction through the project's single writer, which a 12-lane search kept
+        # busy half the time (10,642 transactions of 18.7 ms in 6 minutes): memory is cheaper than writer time.
+        self.max_bytes = (64 if maximum else 8)*1024*1024
+        self.max_statements = 8192 if maximum else 512
+        self.seconds = 10 if maximum else 2
         self.owner = threading.get_ident()
         self.buffers = []  # Identity-based: test adapters need not be hashable.
         self.started = time.monotonic()
