@@ -1,5 +1,15 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: sink a repeated null flag to the final guard
+
+An N64 draft saved the same pointer null check in both comma paths and
+read the flag only in the final guard. Moving the null check to that
+use reproduced the target compare and register AND. The linked score
+dropped from 265 to 50 with `-G0 -mips3 -mgp32 -mfp32 -O2`.
+Changing boolean spelling or integer storage while retaining both
+assignments did not improve the baseline. The repair requires a stable,
+ordinary local pointer, the two flag writes and a single final read.
+
 ### KMC GCC 2.7.2: order independent loads inside a comma guard
 
 Moving a nested field read before two local vector loads and placing the

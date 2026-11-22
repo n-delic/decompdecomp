@@ -1686,3 +1686,17 @@ def test_global_offset_reuse_routes_to_kmc(monkeypatch):
                         lambda text, name, header, diff, asm: [('global_offset_fixture', text)])
     assert 'global_offset_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'global_offset_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_kmc_routes_repeated_null_flag_sink():
+    source = ('void f(void) { int flag; void *left; void *right; '
+              'left = load(); right = load(); '
+              'if (((flag = left != NULL, first()) || (flag = left != NULL, second())) '
+              '&& (flag && right != NULL)) { sink(); } }')
+    rows = [('r', 'sltu $v0, $zero, $s4', 'sltu $a0, $zero, $s4'),
+            ('|', 'sltu $v0, $zero, $s4', 'nop'),
+            ('r', 'sltu $v1, $zero, $s2', 'sltu $v0, $zero, $s2'),
+            ('r', 'and $v0, $v0, $v1', 'and $v0, $a0, $v0')]
+    expected = source.replace('flag = left != NULL, ', '').replace('flag && right', 'left != NULL && right')
+    assert ('boolean_guard_operands', expected) in proposals(source, 'f', '', 'mips', KMC, rows, '')
+    assert all(label != 'boolean_guard_operands' for label, _ in proposals(source, 'f', '', 'mips', EGCS, rows, ''))
