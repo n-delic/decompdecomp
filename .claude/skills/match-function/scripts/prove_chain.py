@@ -8,13 +8,15 @@ those from the chosen families, scores them one by one with the standalone judge
 child that beats the current score. It stops at 0, when no child improves, or after --steps. Bounded: --children caps
 the children scored per step (default 80, about 8 seconds of judging), one judge worker, nothing parallel.
 
-With --combine K (default 0: off), a step where no single child improves tries combinations before stopping: the K
-best compiling children of that step merged two at a time, then three at a time, each merge only when the children's
-edits touch different parts of the source (`merge`). Several learnings needed edits that are each worse alone and
-exact together (walked-table-index: three; call-carrier-pointer-split, collapsed-guard-lifetime-merge: two). At most
-C(K,2) + C(K,3) merges (165 for K=10), only on a stalled step; --combine-limit caps them. On three such functions
-from their saved bests it found none (the edits they needed rank far below the K best alone, or no family offers
-them apart): name the families you suspect (--families) so the K best are theirs.
+With --combine K (default 0: off), a step where no single child improves tries combinations before stopping: children
+of that step merged two at a time, then three at a time, each merge only when the children's edits touch different
+parts of the source (`merge`). Several learnings needed edits that are each worse alone and exact together
+(walked-table-index: three; call-carrier-pointer-split, collapsed-guard-lifetime-merge: two). Children are ranked by
+the rows of the target's difference they fix (the judge's rows against the parent's: `row_coverage`), not by total
+score alone: a child that fixes at least one differing row is kept though its total is worse, and combinations of
+children that each fix rows of their own come first, fewest predicted differing rows first. The K best by score are
+combined as before after those. At most --combine-limit merges are judged, only on a stalled step. `--no-rows` ranks
+by score alone (the older search; docs/learnings/finding/row-coverage-combinations.md has the comparison).
 
     prove_chain.py --slug SLUG --function FUNC [SOURCE.c] [--families a,b,c | all] [--steps 8] [--children 80]
                    [--combine 10] [--out BEST.c] [--list]
@@ -35,9 +37,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fast_judge  # noqa: E402
 
+from decompnet.app import row_coverage  # noqa: E402
+
 DEFAULT_STEPS = 8
 DEFAULT_CHILDREN = 80
-DEFAULT_COMBINE = 0  # off: measured on three three-edit learnings, it found none (docs/learnings/finding/draft-start-candidates.md)
+DEFAULT_COMBINE = 0  # off: on three three-edit learnings neither the score nor the row ranking found one (docs/learnings/finding/draft-start-candidates.md, docs/learnings/experiment/row-coverage-combinations.md)
 DEFAULT_COMBINE_LIMIT = 200
 TOKEN = re.compile(r"[A-Za-z_]\w*|0[xX][0-9a-fA-F]+|\d+|\s+|.", re.S)
 
@@ -69,6 +73,29 @@ def merge(base, children):
     return "".join(out + tokens[at:])
 
 
+def row_combinations(base, scored, cover, parent_bad, k=DEFAULT_COMBINE, limit=DEFAULT_COMBINE_LIMIT):
+    """[(families joined by +, merged source)] of the children that fix rows of the parent's difference (`cover`:
+    {child: (fixed, broken)}, row_coverage.coverage), in pairs and triples that each fix rows of their own,
+    those predicted to leave the fewest rows first; at most `limit`. Children from one family are not combined
+    (their edits are alternatives)."""
+    items = [(score, family, child, cover[child]) for score, family, child in scored if child in cover]
+    kept = row_coverage.rank_children(items, max(k, 1) * 3, per_family=3)
+    out, seen = [], {base}
+    for _, group in row_coverage.groups(parent_bad, [item[3] for item in kept], limit=limit * 6):
+        members = [kept[i] for i in group]
+        if len({m[1] for m in members}) < len(members):
+            continue
+        merged = members[0][2]
+        for member in members[1:]:
+            merged = merge(base, [merged, member[2]]) if merged is not None else None
+        if merged is not None and merged not in seen:
+            seen.add(merged)
+            out.append(("+".join(m[1] for m in members), merged))
+            if len(out) >= limit:
+                break
+    return out
+
+
 def combinations(base, scored, k=DEFAULT_COMBINE, limit=DEFAULT_COMBINE_LIMIT):
     """[(families joined by +, merged source)] of the k best scored children (`scored`: [(score, family, child)]),
     pairs first, then triples whose three pairs all merged; at most `limit`."""
@@ -91,9 +118,11 @@ def combinations(base, scored, k=DEFAULT_COMBINE, limit=DEFAULT_COMBINE_LIMIT):
 
 
 def prove(source, generate, score, families, steps=DEFAULT_STEPS, children=DEFAULT_CHILDREN, log=print,
-          combine=DEFAULT_COMBINE, combine_limit=DEFAULT_COMBINE_LIMIT):
+          combine=DEFAULT_COMBINE, combine_limit=DEFAULT_COMBINE_LIMIT, rows=None):
     """The greedy chain. `generate(source) -> [(family, child)]`, `score(source) -> int | None` (None: didn't
     compile, never an improvement). A stalled step tries `combine` best children merged in pairs and triples.
+    `rows(source) -> (score, rows)` (Judge.rows) adds the row-level ranking of those combinations: children are
+    judged with their rows, and the combinations of those that fix rows of the difference go first.
     Returns (final source, final score, [(family, score)])."""
     current, best = source, score(source)
     if best is None:
@@ -112,13 +141,22 @@ def prove(source, generate, score, families, steps=DEFAULT_STEPS, children=DEFAU
         if cut > 0:
             log(f"step {step}  note: {cut} of {len(options)} children cut off by --children {children}; "
                 f"raise it (or name --families) if the right child may be among them")
-        scored = []
+        scored, cover = [], {}
+        parent_bad = row_coverage.bad(rows(current)[1]) if rows and combine else None
         for family, child in options[:children]:
-            result = score(child)
+            if parent_bad:
+                result, child_rows = rows(child)
+                if result is not None and child_rows:
+                    cover[child] = row_coverage.coverage(parent_bad, child_rows)
+            else:
+                result = score(child)
             if result is not None:
                 scored.append((result, family, child))
         if (not scored or min(row[0] for row in scored) >= best) and combine and len(scored) > 1:
-            merged = combinations(current, scored, combine, combine_limit)
+            merged = row_combinations(current, scored, cover, parent_bad, combine, combine_limit) if cover else []
+            have = {child for _, child in merged}
+            merged += [pair for pair in combinations(current, scored, combine, combine_limit) if pair[1] not in have]
+            merged = merged[:combine_limit]
             tried = []
             for family, child in merged:
                 result = score(child)
@@ -174,6 +212,7 @@ def main(argv=None):
     ap.add_argument("--combine", type=int, default=DEFAULT_COMBINE,
                     help="on a stalled step, merge the best K children in pairs and triples (0: off)")
     ap.add_argument("--combine-limit", type=int, default=DEFAULT_COMBINE_LIMIT)
+    ap.add_argument("--no-rows", action="store_true", help="rank combinations by total score alone (the older search)")
     ap.add_argument("--out")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--home")
@@ -197,7 +236,8 @@ def main(argv=None):
             return
         families = None if a.families == "all" else {f.strip() for f in a.families.split(",") if f.strip()}
         final, _, _ = prove(source, generate, judge.score, families, a.steps, a.children,
-                            combine=a.combine, combine_limit=a.combine_limit)
+                            combine=a.combine, combine_limit=a.combine_limit,
+                            rows=None if a.no_rows else judge.rows)
         if a.out:
             Path(a.out).write_text(final)
             print(f"final source -> {a.out}")

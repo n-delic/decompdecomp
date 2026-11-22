@@ -28,6 +28,16 @@ def score(text):
     return 0 if a and b else 60 if a else 90 if b else 40
 
 
+def deep_cfg(net, proj):
+    return dict(type(net).cfg(net, proj))
+
+
+def toy_rows(text):
+    """The judge's rows of the toy: one row per needed edit, and a third that always matches."""
+    return [(' ' if '1 + 0' in text else '|', 'addiu a', 'addiu b'), (' ' if 'b + 0' in text else '|', 'sw a', 'sw b'),
+            (' ', 'jr', 'jr')]
+
+
 def test_merge_applies_both_edits_when_they_touch_different_lines():
     assert pair_search.merge(BASE, EDIT_A, EDIT_B) == BOTH
     assert pair_search.merge(BASE, EDIT_B, EDIT_A) == BOTH
@@ -91,7 +101,8 @@ def test_clashing_edits_are_asked_again_for_the_first_children_only():
     assert any(label == 'paren+one_zero' for label, _ in pairs) is False   # a regenerated child of the same family is skipped
 
 
-def test_the_deep_permuters_pair_pass_adopts_a_pair_the_ordinary_judge_confirms(monkeypatch):
+@pytest.mark.parametrize('rows_on', [False, True])
+def test_the_deep_permuters_pair_pass_adopts_a_pair_the_ordinary_judge_confirms(monkeypatch, rows_on):
     from tests.test_permute import AGENT
 
     net = setup(monkeypatch)
@@ -102,6 +113,8 @@ def test_the_deep_permuters_pair_pass_adopts_a_pair_the_ordinary_judge_confirms(
     search.winner_diff = ([('r', 'target', 'candidate')], '')
     monkeypatch.setattr(deep_permuter, '_candidate_source', lambda fn, best: BASE)
     monkeypatch.setattr(net, '_function', lambda name, slug: fn)
+    if rows_on:  # the row-level ranking (project setting pair_row_coverage) reaches the same pair
+        monkeypatch.setattr(net, 'cfg', lambda proj: {**deep_cfg(net, proj), 'pair_row_coverage': True})
     monkeypatch.setattr(search, '_local_proposals', lambda source, proj, fn, rows: (
         [('one_zero', EDIT_A), ('add_zero', EDIT_B)] if source == BASE else [], []))
     pools = []
@@ -113,6 +126,12 @@ def test_the_deep_permuters_pair_pass_adopts_a_pair_the_ordinary_judge_confirms(
 
         def judge_many(self, sources, check=lambda: None):
             return [score(text) for text in sources]
+
+        def judge_rows(self, source):
+            return score(source), toy_rows(source)
+
+        def judge_rows_many(self, sources, check=lambda: None):
+            return [self.judge_rows(text) for text in sources]
 
         def __enter__(self):
             return self
