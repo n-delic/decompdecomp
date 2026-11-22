@@ -1,5 +1,6 @@
 """Private cross-game trials using a donor file's declared IDO build settings."""
 
+import hashlib
 import json
 import re
 import shlex
@@ -386,6 +387,7 @@ def _try(net, proj, private, fn, source, header, agent, job, *, compiled_literal
     globalized_names = None
     data_bound = False
     local_fallback = None
+    switch_seen = set()
     evidence = exact_match_inputs.capture(net, private, fn, {'header': header}, source)
     while not job.stop.is_set():
         result = net._compile(private, header, source, fn)
@@ -532,6 +534,17 @@ def _try(net, proj, private, fn, source, header, agent, job, *, compiled_literal
                     console.separate_overlay_reference)
                 if rewritten:
                     variants = [('overlay-cpp-methods', *rewritten)]
+        if not variants and candidate is not None and len(switch_seen) < 8:
+            from . import donor_switch_tables
+
+            def switch_key(text, header=header):
+                return hashlib.sha256((text + '\0' + header).encode()).digest()
+
+            switch_seen.add(switch_key(source))
+            for _, revised in donor_switch_tables.variants(net, proj, fn, source, result.obj, candidate):
+                if switch_key(revised) not in switch_seen:
+                    variants = [('overlay-switch-labels', revised, header)]
+                    break
         if not variants:
             if local_fallback:
                 from . import overlay_donor_aliases
@@ -550,6 +563,8 @@ def _try(net, proj, private, fn, source, header, agent, job, *, compiled_literal
         family, source, header = variants[0]
         if family == 'overlay-explicit-bindings':
             explicit_rebound = True
+        elif family == 'overlay-switch-labels':
+            pass
         elif family == 'overlay-globalize-data':
             pass
         elif family == 'overlay-defined-data':
