@@ -16015,3 +16015,7 @@ A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` sea
 ### KMC GCC 2.7.2 byte-to-record ramp
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` interpolated between byte endpoints and wrote a sequence of records. Its generated draft used different local widths and a loop tail that led to a different register allocation. Restoring the measured locals and loop shape changed the linked difference score from 215 to an exact match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the measured instructions, offsets and complete generated source shape; the judge verifies the candidate.
+
+### KMC GCC 2.7.2 bounded pointer searches
+
+Two saved MIPS examples built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` searched a bounded pointer table and incremented or decremented a byte in the matching record. Correcting the table entry load reduced each linked difference score from 210 to 10. Restoring the measured halfword index and initialization order produced exact matches for both. These are two related saved examples, not a controlled cross-compiler experiment. The proposal requires the complete generated loop, the measured instructions and a resolved table address; the judge verifies each candidate.
