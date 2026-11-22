@@ -13,7 +13,8 @@ code behind the `compiler_passes` tool, and prints
     passes.py CAND.c --slug SLUG --function FUNC [--passes greg,sched,sched2]
 
 Diagnostic only: nothing is recorded or judged, no claim is needed. GCC-family compilers only (not IDO or Metrowerks);
-the candidate must define FUNC. Uses the judge worker (fast_judge.py), so the same `decomp` and DECOMP_HOME rules apply.
+the candidate must define FUNC. Comments are blanked first (preprocess.py: the pinned classic cpp aborts on some
+comments), line numbers kept. Uses the judge worker (fast_judge.py), so the same `decomp` and DECOMP_HOME rules apply.
 """
 import argparse
 import sys
@@ -21,6 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fast_judge  # noqa: E402
+import preprocess  # noqa: E402
 
 
 def main(argv=None):
@@ -33,7 +35,7 @@ def main(argv=None):
     a = ap.parse_args(argv)
     judge = fast_judge.Judge(a.slug, a.function, home=a.home)
     try:
-        request = {"op": "passes", "slug": a.slug, "name": a.function, "source": Path(a.source).read_text()}
+        request = {"op": "passes", "slug": a.slug, "name": a.function, "source": preprocess.strip_comments(Path(a.source).read_text())}
         if a.passes:
             request["passes"] = [p.strip() for p in a.passes.split(",") if p.strip()]
         print(judge.ask(request)["text"])

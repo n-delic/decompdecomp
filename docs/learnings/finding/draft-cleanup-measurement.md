@@ -2,7 +2,7 @@
 title: which source cleanups improve m2c's first draft, measured against matched functions
 kind: finding
 compiler: gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 (an N64 game's own profiles)
-evidence: 90 matched functions of one N64 game
+evidence: observation
 date: 2026-11-22
 ---
 

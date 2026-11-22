@@ -417,7 +417,7 @@ the shape is decided by a compiler pass, not by how you spell the C. Stop writin
 4. **Register-only rows: dump priorities, not passes.** `passes.py CAND.c --slug S --function F` prints the allocation
    priority table (refs, live length, priority, register), each pseudo's register preference and both schedulers'
    instruction order with the project's compiler and flags, and where the compiler's source is; compare with the
-   target's register order and change uses/live ranges (above, in 3). The raw `-dl -dg` dump is the same thing by hand. An empty `.lreg` means cc1 didn't get the
+   target's register order and change uses/live ranges (above, in 3). The raw `-dl -dg` dump is the same thing by hand. If you preprocess by hand, run `preprocess.py CAND.c -o CAND.nc.c` first: the pinned KMC `cpp` aborts (exit 134) on commented drafts (the app blanks `//` comments itself for the same cpp: an apostrophe in one reads as an unterminated constant), so the comments go (blanks, line numbers kept); `passes.py` does it for you. An empty `.lreg` means cc1 didn't get the
    flag or failed to parse: run the compiler's own `gcc -E` first and strip comments.
 
 **Stuck near 0:** no long blind or random searches. Decode the rows, read the cc1 dumps (`-dl -dg` allocation
