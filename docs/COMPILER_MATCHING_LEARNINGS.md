@@ -16071,3 +16071,23 @@ A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` cop
 ### KMC GCC 2.7.2 word-to-byte packing
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` split a word into four byte stores. The generated draft declared its value as an unsigned byte, causing the compiler to store zero for the upper bytes. Widening the parameter to an unsigned word changed the linked difference score from 315 to an exact match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the complete source, all measured shifts and store offsets, and no conflicting function declaration.
+
+### Balance a signed countdown with inline field sums
+
+In a private N64 function built with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, a direct signed-byte
+field decrement restored a move in a branch delay slot. It also shifted
+the last jump table by one instruction. Expressing all six staged field
+sums through a shared inline load-and-add function gave the scheduler
+independent stores to place between the final integer-to-float transfer
+and its sum. That removed the preceding delay instruction and restored
+the table positions. The linked score fell from 1,245 to 1,115, with all
+3,034 instructions and all three jump tables. Several writeback
+registers and the store order still differ.
+
+Both argument orders in the inline helper produced the same linked
+instructions. Using it only for the speed and roll fields or only for
+the three position components left the last table unresolved. Synthetic
+regressions require the linked countdown, transfer and six field
+offsets. The rewrite checks that the original operands are float values
+to preserve the arithmetic width.
