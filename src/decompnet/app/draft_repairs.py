@@ -27,6 +27,7 @@ from decomprepair import (
     arm_pointer_split_repairs,
     arm_switch_volatile_chain,
     arm_variable_share,
+    assignment_guard_sink,
     assignment_tree_switch_repairs,
     assignment_use_repairs,
     bit_predicate_repairs,
@@ -99,6 +100,7 @@ from decomprepair import (
     declaration_scope_hoist,
     declaration_scope_sink_repairs,
     decoded_byte_repairs,
+    default_arm_goto,
     default_else_repairs,
     deferred_store_repairs,
     delay_slot_duplicate_repairs,
@@ -166,6 +168,7 @@ from decomprepair import (
     identity_lifetime_repairs,
     if_tree_switch_repairs,
     increment_expression_repairs,
+    index_shift_spelling,
     indexed_record_repairs,
     inferred_layout_repairs,
     init_placement_repairs,
@@ -251,6 +254,7 @@ from decomprepair import (
     outer_cursor_entry_copy_repairs,
     paired_call_argument_inline_repairs,
     param_address_local_repairs,
+    param_loop_carrier,
     param_mask_repairs,
     parameter_copy_drop_repairs,
     parameter_mask_drop_repairs,
@@ -434,6 +438,7 @@ AGENT_FAMILIES += entry_constant_local.FAMILIES + store_temp_inline.FAMILIES
 AGENT_FAMILIES += float_sum_store_fence.FAMILIES
 AGENT_FAMILIES += loop_guard_counter_compare.FAMILIES
 AGENT_FAMILIES += phase_donor_repairs.FAMILIES
+AGENT_FAMILIES += param_loop_carrier.FAMILIES + assignment_guard_sink.FAMILIES + default_arm_goto.FAMILIES + index_shift_spelling.FAMILIES
 AGENT_FAMILIES += (arm_label_share_repairs.FAMILIES + declaration_scope_sink_repairs.FAMILIES + element_update_repairs.FAMILIES
                    + narrow_test_share_repairs.FAMILIES + phase_storage_split_repairs.FAMILIES
                    + narrow_param_clamp_repairs.FAMILIES + search_loop_field_reload.FAMILIES + accumulation_run_scope.FAMILIES
@@ -693,6 +698,14 @@ def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels
     early = early + _generated(arm_switch_volatile_chain.variants,source,name)
     # (a loop counter the code after the loop reuses for another value: its own local, the value's run weighted, the next counter's init sunk; decomprepair.loop_counter_value_split)
     early = early + _generated(loop_counter_value_split.variants,source,name)
+    # (a dead parameter reused as the loop's carrier with the body's mid-block reload in a local of its own, as one child; decomprepair.param_loop_carrier)
+    early = early + _generated(param_loop_carrier.variants,source,name)
+    # (an assignment sunk past the guard that follows it; decomprepair.assignment_guard_sink)
+    early = early + _generated(assignment_guard_sink.variants,source,name)
+    # (a default value written as the else arm a guard's skip jumps into; decomprepair.default_arm_goto)
+    early = early + _generated(default_arm_goto.variants,source,name)
+    # (an address's index product spelled as a shift, and back; decomprepair.index_shift_spelling)
+    early = early + _generated(index_shift_spelling.variants,source,name)
     # (a local initialised before a label that a goto enters past it, set at the label, with the byte index widened first; decomprepair.label_entry_initializer_repairs)
     early = early + _generated(label_entry_initializer_repairs.variants,source,name)
     # (m2c's cursor walk over a global array, written back as the indexed loop; decomprepair.pointer_walk_index_repairs)

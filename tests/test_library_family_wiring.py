@@ -245,3 +245,77 @@ void f(s32 a, void *p, void *q) {
     assert 'label_entry_initializer' in set(labels.values())
     assert any('entry: v_wide = v;\n        base = &tbl;' in text for text in out)
     assert 'label_entry_initializer' in draft_repairs.AGENT_FAMILIES
+
+
+_WALK = """\
+s32 walk(u32 id)
+{
+    s32 ret = -1;
+    s32 head;
+    s32 slot;
+    s32 next;
+    Node *node;
+    Node *found;
+    u32 key;
+    head = -1;
+    if (id != -1U)
+    {
+        found = NULL;
+        node = first;
+        if (node != NULL)
+        {
+            for (;;)
+            {
+                key = node->key;
+                if (key == id)
+                {
+                    found = node;
+                }
+                else
+                {
+                    found = NULL;
+                    if (id >= key)
+                    {
+                        node = node->link;
+                        if (node != NULL)
+                        {
+                            continue;
+                        }
+                    }
+                }
+                break;
+            }
+        }
+        if (found != NULL) head = found->head;
+    }
+    while (head != -1)
+    {
+        slot = (head & 0xFF) * 0x1A0;
+        next = *(s32 *)(table + slot);
+        if (*(s32 *)(check + slot) == head)
+        {
+            use(table + slot);
+            head = *(u8 *)(table + slot + 0x63);
+            last[head * 4] = 1;
+            ret = 0;
+        }
+        head = next;
+    }
+    return ret;
+}
+"""
+
+
+def test_the_voice_chain_walk_steps_are_proposed_and_known_to_agents():
+    """A voice-chain walk went 1705 -> 1330 -> 905 -> 0 by sinking an assignment past its guard, writing the default as the
+    else arm the guard jumps into, and making the dead parameter the loop's carrier with the body's reload split off; an
+    address spelled `idx * 4` kept hoisting its symbol until it was `idx << 2` (decomprepair 0.5.645)."""
+    labels = {}
+    draft_repairs.variants(_WALK, 'walk', 'mips', labels=labels, limit=None)
+    assert {'assignment_guard_sink', 'default_arm_goto', 'index_shift_spelling'} <= set(labels.values())
+    chained = {}
+    guarded = next(text for text, label in labels.items() if label == 'default_arm_goto')
+    draft_repairs.variants(guarded, 'walk', 'mips', labels=chained, limit=None)
+    assert {'param_loop_carrier', 'redefined_web_split'} <= set(chained.values())
+    assert {'param_loop_carrier', 'redefined_web_split', 'assignment_guard_sink', 'default_arm_goto',
+            'index_shift_spelling'} <= set(draft_repairs.AGENT_FAMILIES)
