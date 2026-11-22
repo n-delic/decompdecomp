@@ -109,6 +109,7 @@ from decomprepair import (
     field_struct_view_repairs,
     field_width_repairs,
     flag_returns_repairs,
+    flag_word_bitfield_repairs,
     float_bit_argument_repairs,
     float_forwarded_argument,
     float_hold_reuse_repairs,
@@ -385,7 +386,8 @@ AGENT_FAMILIES += (guarded_pointer_copy.FAMILY,) + shifted_byte_lifetime.FAMILIE
 AGENT_FAMILIES += loop_weight_set_repairs.FAMILIES
 AGENT_FAMILIES += (arm_label_share_repairs.FAMILIES + declaration_scope_sink_repairs.FAMILIES + element_update_repairs.FAMILIES
                    + narrow_test_share_repairs.FAMILIES + phase_storage_split_repairs.FAMILIES
-                   + narrow_param_clamp_repairs.FAMILIES + search_loop_field_reload.FAMILIES + accumulation_run_scope.FAMILIES)
+                   + narrow_param_clamp_repairs.FAMILIES + search_loop_field_reload.FAMILIES + accumulation_run_scope.FAMILIES
+                   + flag_word_bitfield_repairs.FAMILIES)
 
 LIMIT = 20
 _IDENT = r'[A-Za-z_]\w*'
@@ -614,6 +616,9 @@ def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels
     # (the final `if (!x) goto L; return v; L:` return as one labelled zero return that the other zero exits and the
     # guard-then-return forms jump to, so jump2 keeps its out-of-line branch; decomprepair.zero_exit_label_repairs)
     early = early + _generated(zero_exit_label_repairs.variants,source,name)
+    # (a masked flag-word update with a byte stored over it as bit-fields, the volatile pointer dropped and the first
+    # literal store moved ahead of the coordinate stores, a 34-instruction object placer, 15 -> 0; decomprepair.flag_word_bitfield_repairs)
+    early = early + _generated(flag_word_bitfield_repairs.variants,source,name)
     # (an assignment m2c placed after its local's first read moved up to it; decomprepair.read_before_assign_repairs)
     early = early + _generated(read_before_assign_repairs.variants,source,name)
     # (an empty case m2c invented, its `/* irregular */` break, dropped; decomprepair.irregular_case_repairs)

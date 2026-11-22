@@ -17251,3 +17251,34 @@ Families in decomprepair 0.5.587: `record_search_for_loop` (the whole counted lo
 calls (`tests/test_search_loop_field_reload_wiring.py`); all three are in the draft repairs, the beam and
 `deep_permuter._local_proposals`. Not covered: m2c's `goto` form of the same search (the family reads the `for (;;)`
 shape with `kt`/`p`/`k++` and a `continue`), and loops whose records are not 8-byte structs read through one pointer field.
+
+## A masked flag word with a byte stored over it, as bit-fields (KMC GCC 2.7.2, N64)
+
+Evidence level: one function (a 34-instruction object placer: a cached object pointer, three halfword globals copied
+into it, a constant scale, a masked flag word and a byte stored over its top; matched, judge 0 in the app), each step
+scored with the app's judge-worker from the saved best (`-G0 -mips3 -mgp32 -mfp32 -O2`, no permuter run). The
+compiler explanation is a hypothesis, not confirmed in the compiler source.
+
+The saved best sat at 15 for many agents: three register differences, the first coordinate global read through `$v0`
+where the target uses `$a1`. It used a `volatile` object pointer, staged locals and the arithmetic
+`flags = obj->flags; obj->flags = (flags & ~0xfc) | 0x1c; *(volatile u8 *)&obj->flags = color;`. Nearly thirty
+spellings of the coordinate (widths, order, `register`, signedness, a reused local, a pointer cache) all stayed at 15.
+
+| edit | what changed | alone / combined |
+| --- | --- | --- |
+| flag word as `u32 color:8; u32 mid:16; u32 kind:6; u32 low:2;`, `obj->kind = 7; obj->color = color;` | the same `lw; and; ori; sw; sb` | 775 (volatile pointer kept) |
+| drop `volatile` on the object pointer | plain field accesses | 265 |
+| the constant `obj->scale = 0x1000;` before the first coordinate store | the scheduler's order of the halfword stores | 0 |
+
+Hypothesis: the volatile pointer made each access a barrier, so the three coordinate loads were one long range; plain
+accesses let the first coordinate end before the scale constant, so it takes `$a1` as the target has. The hoist alone
+(volatile kept or dropped, arithmetic form) does not reach 0 (1260 with the bit-field but no drop). The inlined form
+(`obj->x = D_800E0EE0;` with no locals, scale first) also scores 0, plain or volatile global: the match is the
+store order plus the bit-field word, not the locals. The `u32` x widening, `register`, reordering the coordinate loads
+and a reused local, tried alone before, did nothing.
+
+Family: decomp-repair `flag_word_bitfield` (0.5.589): the bit-field spelling, the volatile drop, the literal-store
+hoist and the chain; from the saved best the chain child scores 0 (`tests/test_flag_word_bitfield_wiring.py`), in the
+draft repairs, the beam and `deep_permuter._local_proposals`. Big-endian only (the bit order and the top-byte store
+read the word as MSB-first). Not covered: a word whose other fields are also read elsewhere in the function (the
+member is replaced, so those reads fail to compile), a mask that is not one run of bits, and little-endian games.
