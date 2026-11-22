@@ -246,6 +246,7 @@ from decomprepair import (
     shared_offset_repairs,
     shared_product_repairs,
     shared_return_repairs,
+    shifted_byte_lifetime,
     short_counter_loop_repairs,
     signed_division_repairs,
     slot_helper_repairs,
@@ -346,7 +347,7 @@ AGENT_FAMILIES = nested_join_hoist_repairs.FAMILIES + paired_call_argument_inlin
                   'terminal_early_return','member_store_replay','scalar_global_address','split_mask_stores',
                   'split_integer_phase','paired_integer_lifetimes','initialization_cluster')
 
-AGENT_FAMILIES += (guarded_pointer_copy.FAMILY,)
+AGENT_FAMILIES += (guarded_pointer_copy.FAMILY,) + shifted_byte_lifetime.FAMILIES
 
 LIMIT = 20
 _IDENT = r'[A-Za-z_]\w*'
@@ -577,6 +578,8 @@ def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels
     early = early + _generated(guarded_do_for_repairs.variants,source,name)
     # (m2c's local copy of a parameter the game changed in place, dropped; decomprepair.parameter_copy_drop_repairs)
     early = early + _generated(parameter_copy_drop_repairs.variants,source,name)
+    if arch == "mips":
+        early = _generated(shifted_byte_lifetime.variants, source, name, header) + early
     for family,text in early:
         proposals.append(text);labels[text]=family
     for family,text in _generated(copy_shape_repairs.variants, source,name,header) + _generated(capture_followup_repairs.variants, source,name,header,callees):

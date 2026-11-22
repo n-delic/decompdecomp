@@ -16226,3 +16226,16 @@ search encounters a compiled length mismatch.
 A saved three-component MIPS blend built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` multiplied two signed halfword inputs by integer gains, added them, and biased negative sums before shifting. Staging each product and rounded shift and reusing the first gain after its last read changed the generated draft's linked difference score from 995 to an exact match. This is one saved example, not a controlled cross-compiler experiment. The candidate requires the complete source shape and six target multiplies and three arithmetic shifts; the judge still verifies every proposed match.
 
 A follow-up found the missing combination on the same function: a volatile byte read retains the target's `andi 0xff`, but using the multiplication inline materializes the global address and scores 435. Assigning the scaled index to a signed `int` temporary immediately before that read restores the target's indexed addressing; the exact standalone app judge scores the generated full-byte candidate 0 from the saved score-10 seed. The byte is read once, and the comparison covers all eight bits. `last_byte_mask` now emits that combined form for signed integer parameters; the library and app routing regressions verify the proposal. This is one function's measured result.
+### A shifted byte as an allocation lifetime
+
+Compiler: `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`. On one N64 function (99 instructions), the exact
+standalone judge reproduced the saved score 10: the two loads feeding a multiply used each other's registers.
+Staging the shifted byte in an initialized `u32`, commutating the multiply, and putting the next ordinary member
+read in identical arms guarded by `shifted_byte & 1` scored 0. The guard is always false because the byte was
+shifted left by 16; both arms perform the same read. This is one function, not a controlled compiler regression.
+The `shifted_byte_lifetime` family emits the combination as one candidate.
+
+A combined multiply/shift/add expression also scored 10, fixing the load registers but moving the two differences
+to the shift destination and following addition. Staging the loads, adding unused wide locals, and the existing
+allocation-schedule bridge did not improve the score. `-fno-schedule-insns` and `-fno-schedule-insns2` scored
+1045 and 460 respectively; disabling CSE follow-jumps, peephole or strength reduction retained 10.
