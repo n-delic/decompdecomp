@@ -444,6 +444,8 @@ class Search(Permuter):
                  (L + 'call_carrier_pointer_split.variants', (source, name)),
                  # an identical-arm guard on an unassigned local collapsed and two integer locals merged, as one child (each half alone worse)
                  (L + 'collapsed_guard_lifetime_merge.variants', (source, name)),
+                 # a byte string walked by a pointer written as the index loop it came from (the pointer's start moves after the jump table's address)
+                 (L + 'string_walk_index.variants', (source, name)),
                  # a loop's entry guard as the counter's compare (an unaccessed 8-byte spill slot) with each local merge as one child
                  (L + 'loop_guard_counter_compare.variants', (source, name)),
                  # a later phase's clamp variable, record pointer and product through the earlier phase's dead locals, one child
