@@ -16276,3 +16276,7 @@ produced 112 bytes and changed scheduling. Replacing them with volatile
 absolute-address expressions also produced 112 bytes and missed. Trying
 `-O1` and `-O0` on the donor yielded 148 and 184 bytes respectively.
 Evidence is one isolated cross-game comparison; the function remains open.
+
+### KMC GCC 2.7.2 signed table index and setup pointers
+
+A saved MIPS setup function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` read a byte through a signed table index, then wrote several fields through a global pointer. Staging the table base before the index reduced the draft's linked difference score from 310 to 90; keeping the two measured pointer snapshots for the subsequent stores produced an exact match. This is one saved example, not a controlled cross-compiler experiment. The candidate checks the complete source shape, 32-bit ABI, resolved table address and the target load/store order.
