@@ -57,6 +57,7 @@ from decomprepair import (
     measured_kmc_flag_update,
     measured_kmc_flow,
     measured_kmc_global_stores,
+    measured_kmc_halfword_count_loop,
     measured_kmc_halfword_flag_table,
     measured_kmc_indexed_byte_table,
     measured_kmc_indirect_byte_table,
@@ -283,6 +284,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_kmc_field_pointer.variants(source, name, header, rows)
         result += measured_kmc_event_field_order.variants(source, name, header, rows)
         result += measured_kmc_halfword_flag_table.variants(source, name, header, rows)
+        result += measured_kmc_halfword_count_loop.variants(source, name, header, rows)
         result += measured_kmc_indexed_byte_table.variants(source, name, header, rows)
         result += measured_kmc_inferred_table_widths.variants(source, name, header, rows)
         result += measured_kmc_indirect_byte_table.variants(source, name, header, rows)
