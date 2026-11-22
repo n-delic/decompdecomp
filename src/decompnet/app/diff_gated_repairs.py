@@ -5,6 +5,7 @@ import re
 from decomprepair import (
     aligned_allocator_request,
     aligned_stack_read,
+    balanced_clamp_argument_stage,
     balanced_float_predicate_return,
     balanced_signed_selector_increment,
     byte_cursor_postincrements,
@@ -285,6 +286,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     result += measured_lifetime_shapes.variants(source, name, header, toolchain, rows)
     result += measured_scalar_updates.variants(source, name, header, toolchain, rows, asm)
     if toolchain == 'gcc-2.7.2-kmc':
+        result += balanced_clamp_argument_stage.variants(source, name, rows, header=header)
         result += trig_axis_reuse.variants(source, name, rows, header=header)
         result += smoothing_call_before_read.variants(source, name, rows, header=header)
         result += balanced_signed_selector_increment.variants(source, name, rows, header=header)
