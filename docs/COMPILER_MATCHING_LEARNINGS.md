@@ -16280,3 +16280,15 @@ Evidence is one isolated cross-game comparison; the function remains open.
 ### KMC GCC 2.7.2 signed table index and setup pointers
 
 A saved MIPS setup function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` read a byte through a signed table index, then wrote several fields through a global pointer. Staging the table base before the index reduced the draft's linked difference score from 310 to 90; keeping the two measured pointer snapshots for the subsequent stores produced an exact match. This is one saved example, not a controlled cross-compiler experiment. The candidate checks the complete source shape, 32-bit ABI, resolved table address and the target load/store order.
+### Split temporary lifetimes across branch joins
+
+On one N64 function, `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` produced a saved score of 15: the
+only three instruction differences used `$a2` for a byte-clamp sum where the target used `$v0`. The exact
+standalone judge reproduced 15. Splitting the shared sum local scored 100; splitting and moving the sum into
+the guarded branch scored 85, recovering the sum register but changing other allocations. Reusing the earlier
+pointer for the later store scored 520. These are measurements on one function, not controlled compiler tests.
+
+The `reused_temp_split` family also offered an unsafe candidate on that saved source: it renamed a write in one
+branch and the read after the join, leaving the new local undefined on the other branch. Reaching-definition
+checks now reject such splits and splits that leave a read outside the renamed span using an older value. A
+controlled regression covers both joins and confirms that a branch-local split remains available.

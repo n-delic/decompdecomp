@@ -25,3 +25,22 @@ entered:
     proposals = draft_repairs.variants(safe, 'f', 'mips', labels=labels)
     assert any(labels.get(candidate) == 'reused_temp_split' and 'sink(counter_b1);' in candidate
                for candidate in proposals)
+
+
+def test_draft_repair_preserves_reaching_values_at_branch_join():
+    source = '''
+void f(int mode, int input) {
+    int value;
+    value = 1;
+    if (mode) {
+        value = input;
+    } else {
+        value = 0;
+    }
+    sink(value);
+}
+'''
+    labels = {}
+    proposals = draft_repairs.variants(source, 'f', 'mips', labels=labels)
+    assert not any(labels.get(candidate) == 'reused_temp_split' and 'value_b2 = 0;' in candidate
+                   for candidate in proposals)
