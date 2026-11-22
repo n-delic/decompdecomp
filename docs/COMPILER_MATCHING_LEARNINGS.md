@@ -15284,3 +15284,8 @@ The proposed edit requires the measured earlier and later pointer
 loads, the same call, the same pointer and flag offsets, and the
 measured mask. It has synthetic coverage for the escaped pointer and
 for calls that already use the old pointer value.
+
+
+### Apply record offsets in bytes to word globals
+
+A saved N64 initializer built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` multiplied a record index by `0x184` and added it to word-global pointers, unintentionally scaling the byte offset by four. Casting those bases to byte pointers before addition fixed the scaling but scored 315; also inlining the pure offset at both uses reproduced the linked target exactly (score 320 to 0). Evidence: one saved example and synthetic source, target and routing tests. The candidate corrects the draft's address calculation only for the measured record stride and target symbols and is verified by the byte judge.

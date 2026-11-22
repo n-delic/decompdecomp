@@ -135,6 +135,7 @@ from decomprepair import (
     measured_null_iteration_store,
     measured_pointer_displacement,
     measured_pointer_scale,
+    measured_record_byte_offset,
     measured_reset_loops,
     measured_scalar_updates,
     measured_square_loads,
@@ -364,6 +365,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_indexed_clear.variants(source, name, header, rows)
         result += measured_global_offset_reuse.variants(source, name, header, rows, asm or '')
         result += measured_list_selection.variants(source, name, header, rows)
+        result += measured_record_byte_offset.variants(source, name, header, rows)
         result += measured_list_head_insert.variants(source, name, header, rows)
         result += measured_be16_cursor.variants(source, name, header, rows)
         result += measured_forwarded_counter.variants(source, name, header, rows, asm or '')
