@@ -8,8 +8,16 @@ those from the chosen families, scores them one by one with the standalone judge
 child that beats the current score. It stops at 0, when no child improves, or after --steps. Bounded: --children caps
 the children scored per step (default 80, about 8 seconds of judging), one judge worker, nothing parallel.
 
+With --combine K (default 0: off), a step where no single child improves tries combinations before stopping: the K
+best compiling children of that step merged two at a time, then three at a time, each merge only when the children's
+edits touch different parts of the source (`merge`). Several learnings needed edits that are each worse alone and
+exact together (walked-table-index: three; call-carrier-pointer-split, collapsed-guard-lifetime-merge: two). At most
+C(K,2) + C(K,3) merges (165 for K=10), only on a stalled step; --combine-limit caps them. On three such functions
+from their saved bests it found none (the edits they needed rank far below the K best alone, or no family offers
+them apart): name the families you suspect (--families) so the K best are theirs.
+
     prove_chain.py --slug SLUG --function FUNC [SOURCE.c] [--families a,b,c | all] [--steps 8] [--children 80]
-                   [--out BEST.c] [--list]
+                   [--combine 10] [--out BEST.c] [--list]
 
 SOURCE.c defaults to the app's saved best (read through the app, no claim). `--list` prints which families produce
 children for the source and how many, then exits (a family that produces none cannot be in the chain). Each step prints
@@ -18,6 +26,9 @@ It scores with the app's judge, so a chain that reaches 0 is a candidate for com
 Run it with the python of a setup.py session (it imports decompnet): `$UV_PROJECT_ENVIRONMENT/bin/python prove_chain.py`.
 """
 import argparse
+import difflib
+import itertools
+import re
 import sys
 from pathlib import Path
 
@@ -26,11 +37,64 @@ import fast_judge  # noqa: E402
 
 DEFAULT_STEPS = 8
 DEFAULT_CHILDREN = 80
+DEFAULT_COMBINE = 0  # off: measured on three three-edit learnings, it found none (docs/learnings/finding/draft-start-candidates.md)
+DEFAULT_COMBINE_LIMIT = 200
+TOKEN = re.compile(r"[A-Za-z_]\w*|0[xX][0-9a-fA-F]+|\d+|\s+|.", re.S)
 
 
-def prove(source, generate, score, families, steps=DEFAULT_STEPS, children=DEFAULT_CHILDREN, log=print):
+def _edits(base, child):
+    """The child as token edits of `base`: [(start, end, replacement tokens)] over base's tokens."""
+    left, right = TOKEN.findall(base), TOKEN.findall(child)
+    ops = difflib.SequenceMatcher(None, left, right, autojunk=False).get_opcodes()
+    return left, [(a, b, right[c:d]) for tag, a, b, c, d in ops if tag != "equal"]
+
+
+def merge(base, children):
+    """One source with every child's edits of `base`, or None when two of them touch the same tokens (or insert at
+    the same place): then they are not independent edits and their merge would be a guess."""
+    tokens, edits = None, []
+    for child in children:
+        tokens, own = _edits(base, child)
+        if not own:
+            return None
+        edits += own
+    edits.sort(key=lambda e: (e[0], e[1]))
+    for (a1, b1, _), (a2, b2, _) in zip(edits, edits[1:]):
+        if a2 < b1 or (a1 == a2 and (a1 == b1 or a2 == b2)):
+            return None
+    out, at = [], 0
+    for a, b, replacement in edits:
+        out += tokens[at:a] + replacement
+        at = b
+    return "".join(out + tokens[at:])
+
+
+def combinations(base, scored, k=DEFAULT_COMBINE, limit=DEFAULT_COMBINE_LIMIT):
+    """[(families joined by +, merged source)] of the k best scored children (`scored`: [(score, family, child)]),
+    pairs first, then triples whose three pairs all merged; at most `limit`."""
+    top = sorted(scored, key=lambda row: row[0])[:k]
+    out, pairs, seen = [], set(), set()
+    for size in (2, 3):
+        for group in itertools.combinations(range(len(top)), size):
+            if len(out) >= limit:
+                return out
+            if size == 3 and not all(p in pairs for p in itertools.combinations(group, 2)):
+                continue
+            merged = merge(base, [top[i][2] for i in group])
+            if merged is None or merged in seen or merged == base:
+                continue
+            if size == 2:
+                pairs.add(group)
+            seen.add(merged)
+            out.append(("+".join(top[i][1] for i in group), merged))
+    return out
+
+
+def prove(source, generate, score, families, steps=DEFAULT_STEPS, children=DEFAULT_CHILDREN, log=print,
+          combine=DEFAULT_COMBINE, combine_limit=DEFAULT_COMBINE_LIMIT):
     """The greedy chain. `generate(source) -> [(family, child)]`, `score(source) -> int | None` (None: didn't
-    compile, never an improvement). Returns (final source, final score, [(family, score)])."""
+    compile, never an improvement). A stalled step tries `combine` best children merged in pairs and triples.
+    Returns (final source, final score, [(family, score)])."""
     current, best = source, score(source)
     if best is None:
         raise SystemExit("the starting source doesn't compile with the judge: fix that first (is its name the function's?)")
@@ -53,6 +117,15 @@ def prove(source, generate, score, families, steps=DEFAULT_STEPS, children=DEFAU
             result = score(child)
             if result is not None:
                 scored.append((result, family, child))
+        if (not scored or min(row[0] for row in scored) >= best) and combine and len(scored) > 1:
+            merged = combinations(current, scored, combine, combine_limit)
+            tried = []
+            for family, child in merged:
+                result = score(child)
+                if result is not None:
+                    tried.append((result, family, child))
+            log(f"step {step}  no single child improves; {len(tried)} of {len(merged)} merges of the best {combine} scored")
+            scored += tried
         if not scored or min(row[0] for row in scored) >= best:
             log(f"step {step}  no child of {len(options)} improves on {best} (scored {len(scored)}): stopped")
             break
@@ -98,6 +171,9 @@ def main(argv=None):
     ap.add_argument("--families", default="all", help="comma separated family names, or all")
     ap.add_argument("--steps", type=int, default=DEFAULT_STEPS)
     ap.add_argument("--children", type=int, default=DEFAULT_CHILDREN)
+    ap.add_argument("--combine", type=int, default=DEFAULT_COMBINE,
+                    help="on a stalled step, merge the best K children in pairs and triples (0: off)")
+    ap.add_argument("--combine-limit", type=int, default=DEFAULT_COMBINE_LIMIT)
     ap.add_argument("--out")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--home")
@@ -120,7 +196,8 @@ def main(argv=None):
                 print(f"{n:5}  {family}")
             return
         families = None if a.families == "all" else {f.strip() for f in a.families.split(",") if f.strip()}
-        final, _, _ = prove(source, generate, judge.score, families, a.steps, a.children)
+        final, _, _ = prove(source, generate, judge.score, families, a.steps, a.children,
+                            combine=a.combine, combine_limit=a.combine_limit)
         if a.out:
             Path(a.out).write_text(final)
             print(f"final source -> {a.out}")
