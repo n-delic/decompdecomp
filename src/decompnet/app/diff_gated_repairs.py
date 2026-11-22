@@ -20,6 +20,7 @@ from decomprepair import (
     counted_switch_advance,
     direct_mapped_address,
     epsilon_predicate_order,
+    field_copy_before_clear,
     field_snapshot_copies,
     float_clamp_scale_stage,
     float_delta_load_order,
@@ -331,6 +332,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += saved_range_probe.variants(source, name, rows, header=header)
         result += float_clamp_scale_stage.variants(source, name, rows, header=header)
         result += wide_update_before_flags.variants(source, name, rows, header=header)
+        result += field_copy_before_clear.variants(source, name, rows, header=header)
         result += clamp_return_local.variants(source, name, rows, header=header)
         result += float_delta_load_order.variants(source, name, rows, header=header)
         result += counted_switch_advance.variants(source, name, rows, header=header)
