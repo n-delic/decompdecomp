@@ -2537,6 +2537,10 @@ function renderDeepMetricDrawer() {
   const intro = eligible ? "Functions found eligible in the latest candidate check. Select a function to inspect it."
     : attention ? "Searches that stopped for the current inputs. Open a function to inspect it; the reason and next step are shown below." : active ? "Live searches for this project. Select a function to inspect it."
     : "Saved deep-permuter results since the last metrics reset, across runs. Improved includes functions that reached a match.";
+  // Failed searches and functions with no saved C are different problems with different fixes (the
+  // panel's "need attention" count is the first group only), so the drawer names each group.
+  const attentionHead = (row, i) => !attention ? "" : (i && (row.kind === "source") === (rows[i - 1].kind === "source") ? "" :
+    `<li class="deep-attention-heading"><h4>${row.kind === "source" ? "No saved C to search" : "Searches that failed"} · ${rows.filter(r => (r.kind === "source") === (row.kind === "source")).length.toLocaleString()}</h4></li>`);
   const html = `<p class="small muted">${intro}</p>` + (eligible ? checkDetails
     : `<p><b>${rows.length.toLocaleString()} function${rows.length === 1 ? "" : "s"}</b></p>`) + (rows.length
     ? `<ul class="${eligible ? "deep-issue-functions" : "deep-metric-list"}">${rows.map((row, i) => {
@@ -2547,7 +2551,7 @@ function renderDeepMetricDrawer() {
       const info = attention ? deepAttentionReason(row) : active ? `${row.phase || "Searching"}${row.current_family ? " · " + row.current_family : ""} · ${(row.tested || 0).toLocaleString()} candidates tested`
         : `Score ${row.starting_score} → ${row.new_score}${row.new_score === 0 ? " · Byte-for-byte match" : ""}`;
       const updated = !active && row.updated_at ? `<p class="small muted">Last improvement: <time datetime="${esc(new Date(row.updated_at * 1000).toISOString())}">${esc(new Date(row.updated_at * 1000).toLocaleString())}</time></p>` : "";
-      return `<li><header><button type="button" class="ghost small-btn mono" data-deep-metric-function="${i}">${esc(row.function)}</button>${attention ? "" : `<span class="deep-metric-match">${esc(before)} → <b>${esc(after)}</b></span>`}</header><p><b>${esc(info)}</b></p>${attention ? `<p class="small muted">${esc(deepAttentionAction(row))}</p><details><summary>Technical details</summary><p class="small mono">${esc(row.error || "No additional details.")}</p></details>` : updated}</li>`;
+      return `${attentionHead(row, i)}<li><header><button type="button" class="ghost small-btn mono" data-deep-metric-function="${i}">${esc(row.function)}</button>${attention ? "" : `<span class="deep-metric-match">${esc(before)} → <b>${esc(after)}</b></span>`}</header><p><b>${esc(info)}</b></p>${attention ? `<p class="small muted">${esc(deepAttentionAction(row))}</p><details><summary>Technical details</summary><p class="small mono">${esc(row.error || "No additional details.")}</p></details>` : updated}</li>`;
     }).join("")}</ul>` : `<p class="deep-metric-empty">${eligible ? source ? "No eligible functions found in this check." : "Start a search to check candidates." : attention ? "No functions currently need attention." : active ? "No functions are being searched right now." : kind === "matched" ? "No matches from the deep permuter yet. Verified matches will appear here." : "No improvements from the deep permuter yet. Verified improvements will appear here."}</p>`);
   if (body._deepMetricHtml === html) return;
   const scrollTop = body.scrollTop;

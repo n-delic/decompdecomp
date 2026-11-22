@@ -212,7 +212,7 @@ def issues(store, pid):
           AND (f.best_score IS NULL OR f.best_source IS NULL)
         ORDER BY f.name""", PREFIX, pid)
     return [{'function': row['name'], 'error': row['reason'],
-             'action': 'Open the function to inspect its machine draft or submit C that compiles.'} for row in rows]
+             'action': 'Open the function to inspect its machine draft or submit C that compiles.', 'kind': 'source'} for row in rows]
 
 
 def reset(db, pid):

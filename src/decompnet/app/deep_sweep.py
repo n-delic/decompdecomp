@@ -329,7 +329,7 @@ class Sweeps:
                 action = 'Check this function’s compiler settings and test its saved C.'
             else:
                 action = 'Open the function to inspect its saved C and compiler settings.'
-            issues.append({'function': fn['name'], 'error': error, 'action': action})
+            issues.append({'function': fn['name'], 'error': error, 'action': action, 'kind': 'search'})
         return sorted(issues, key=lambda issue: issue['function'])
 
     def recover_room_transport(self, slug):
