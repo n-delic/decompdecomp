@@ -166,6 +166,67 @@ const COMPILER_FLAG_HELP = [
   [/^\/nologo$/, "MSVC: hide the startup banner."],
 ];
 
+/* What a flag does to the assembly, so people can tell from a disassembly that it is in use. Only flags whose effect
+   is recognisable are listed; the rest keep just their description. Same matching rules as COMPILER_FLAG_HELP. */
+const COMPILER_FLAG_TELLS = [
+  [/^-O0$/, "Every local is loaded from and stored back to the stack around each statement; no values stay in registers; many redundant lw/sw pairs and nops."],
+  [/^-O1$/, "Locals mostly live in registers, but delay slots are often left as nop and loads are not hoisted."],
+  [/^-O2$/, "Delay slots are filled with useful instructions, locals sit in registers, repeated expressions are computed once, and loads are moved ahead of the instruction that uses them."],
+  [/^-O3$/, "Like -O2 with small functions copied into their callers and loops unrolled, so fewer jal calls and longer functions."],
+  [/^-g[0-3]?$/, "No difference in the instructions themselves, but at -O0 variables are kept in memory so they can be inspected."],
+  [/^-G\s*0$|^-G0$/, "Globals are reached with lui+addiu/lw pairs (%hi/%lo) and never as an offset from $gp."],
+  [/^-G\s*[1-9]\d*$|^-G[1-9]\d*$/, "Small globals are reached as lw $reg, offset($gp) in one instruction instead of a lui+lw pair."],
+  [/^-mips[1-5]$/, "mips2 and up use branch-likely (beql, bnel) and ll/sc; mips3 adds 64-bit ops (daddu, dsll, ld, sd) and a 64-bit move for doubles; mips1 has load delay slots filled with nop."],
+  [/^-mgp32$/, "64-bit values (long long, doubles in integer registers) take a pair of 32-bit registers."],
+  [/^-mgp64$/, "64-bit values are held in one register and moved with daddu, ld and sd."],
+  [/^-mfp32$/, "Doubles are held in an even/odd pair of FP registers, e.g. lwc1 $f0 and $f1 for one double instead of a single ldc1."],
+  [/^-mfp64$/, "Doubles use one FP register each, loaded with ldc1/sdc1; odd FP registers hold separate values."],
+  [/^-mhard-float$/, "Float maths appears as add.s, mul.s, div.d and friends, with no calls to __addsf3 or __muldf3 style helpers."],
+  [/^-msoft-float$/, "Every float operation is a jal to a library routine such as __addsf3; no FPU instructions appear."],
+  [/^-mgas$/, "Assembler macros such as li, la and move are expected in the output, and the compiler leaves delay slots to the assembler's rules."],
+  [/^-mcpu=VR4300$/, "Instruction order is tuned for the VR4300's pipeline, so multiplies and loads are spaced to avoid its stalls."],
+  [/^-mcpu=R3000$|^-mcpu=r3000$/, "Instruction order is tuned for the R3000, which needs a nop or an unrelated instruction after every load."],
+  [/^-fno-schedule-insns$/, "Instructions stay in source order before register allocation: a load is followed directly by its user, and delay slots are filled later rather than loads moving up."],
+  [/^-fno-schedule-insns2$/, "No reordering after register allocation: expect a nop in delay slots and in the cycle after a load."],
+  [/^-fschedule-insns2?$/, "Loads are moved up ahead of unrelated instructions and delay slots are filled with useful work."],
+  [/^-fno-peephole2?$/, "Short sequences are left as written: moves that could be merged or removed stay in."],
+  [/^-fno-gcse$/, "The same expression is recomputed in different blocks instead of once into a register."],
+  [/^-fno-defer-pop$/, "After each call the stack pointer is adjusted straight away (addiu $sp, $sp, N) instead of one adjustment for several calls."],
+  [/^-fno-optimize-sibling-calls$/, "A call just before a return is jal followed by the normal epilogue, rather than a plain j to the callee."],
+  [/^-foptimize-sibling-calls$/, "A function's last call becomes j target, with no return address saved for it."],
+  [/^-fomit-frame-pointer$/, "Locals are addressed from $sp only; $fp is not saved or set up in the prologue."],
+  [/^-fno-omit-frame-pointer$/, "The prologue saves $fp and sets it to $sp (move $fp, $sp); locals are addressed from $fp."],
+  [/^-funroll-loops$/, "Loop bodies are repeated several times with one branch per group of iterations."],
+  [/^-fstrength-reduce$/, "Loops step a pointer (addiu $a0, $a0, 4) instead of recomputing index*size with a shift or multiply."],
+  [/^-fno-strength-reduce$/, "Loops compute address = base + index * size each time, using sll or mult."],
+  [/^-fno-inline$/, "Small helper functions stay as separate jal calls."],
+  [/^-finline-functions$/, "Small functions are copied into their callers, so some calls are missing."],
+  [/^-fno-builtin$/, "Struct copies and zeroing show up as jal memcpy / memset calls instead of unrolled lw/sw sequences."],
+  [/^-fpic$|^-fPIC$|^-mabicalls$/, "Calls load the target from $gp/$t9 (lw $t9, %call16(f)($gp); jalr $t9) and functions start by setting up $gp."],
+  [/^-mno-abicalls$|^-fno-pic$/, "Calls are plain jal to a fixed address, with no $gp or $t9 set-up at the top of functions."],
+  [/^-mlong-calls$/, "Each call loads the address into a register (lui+addiu) and uses jalr instead of jal."],
+  [/^-mcheck-zero-division$/, "Each div is followed by a check of the divisor: bnez + break 7 (or teq)."],
+  [/^-mno-check-zero-division$/, "div and divu are used with no divisor check after them."],
+  [/^-mdivide-breaks$/, "The zero-divisor check after div is a bnez over a break 7."],
+  [/^-mdivide-traps$/, "The zero-divisor check after div is a single teq $divisor, $zero."],
+  [/^-mfix4300$/, "Extra nops or reordering around mult/div so one is never started while another is in flight."],
+  [/^-mexplicit-relocs$/, "The output uses %hi/%lo relocation pairs directly, so lui/addiu stay a fixed pair."],
+  [/^-fsigned-char$/, "Plain char loads use lb (sign-extend)."],
+  [/^-funsigned-char$/, "Plain char loads use lbu (zero-extend)."],
+  [/^-fshort-enums$/, "Enum variables are loaded and stored as bytes or halfwords (lbu/sb, lhu/sh) instead of words."],
+  [/^-ffast-math$/, "Float compares and divides may be rewritten, e.g. x / c becomes x * (1/c) with a constant."],
+  [/^-fno-delayed-branch$/, "Every branch and jump is followed by a nop."],
+  [/^\/Oy-$/, "Functions begin with push ebp / mov ebp, esp and locals use [ebp-N]."],
+  [/^\/Oy$/, "Functions have no ebp frame; locals use [esp+N]."],
+  [/^\/Ob0$/, "Even tiny functions stay as separate calls."],
+  [/^\/Gy$/, "Each function sits in its own COMDAT section, so the linker can drop or reorder them."],
+];
+
+function compilerFlagTell(arg) {
+  for (const [pattern, text] of COMPILER_FLAG_TELLS) if (pattern.test(arg)) return text;
+  return "";
+}
+
 function compilerFlagHelp(arg) {
   for (const [pattern, text] of COMPILER_FLAG_HELP) if (pattern.test(arg)) return text;
   // Generic fallbacks, only after every specific rule had its chance.
@@ -175,7 +236,8 @@ function compilerFlagHelp(arg) {
 }
 
 /* Wraps each argument in a hoverable, keyboard-focusable span. A flag's value (-G 0, -mips 3) stays with it
-   when the next token is not itself an argument. */
+   when the next token is not itself an argument. The text sits in data attributes and is shown by the tooltip below
+   (instantly, unlike the browser's title), and in aria-label for screen readers. */
 function compilerFlagsHtml(flags, escape = (s) => String(s).replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"})[c])) {
   const tokens = (Array.isArray(flags) ? flags.join(" ") : String(flags || "")).split(/\s+/).filter(Boolean);
   const out = [];
@@ -185,7 +247,42 @@ function compilerFlagsHtml(flags, escape = (s) => String(s).replace(/[&<>"']/g, 
     const takesValue = /^-(G|I|D|o|mips|proc|fp|inline|sdata2?|enum|lang|str|char|std)$/.test(arg) && next && !/^[-/]/.test(next);
     if (takesValue) arg += " " + tokens[++i];
     const help = compilerFlagHelp(arg) || compilerFlagHelp(tokens[i]);
-    out.push(help ? `<span class="compiler-flag" tabindex="0" title="${escape(arg + ": " + help)}">${escape(arg)}</span>` : escape(arg));
+    const tell = compilerFlagTell(arg) || compilerFlagTell(tokens[i]);
+    out.push(help ? `<span class="compiler-flag" tabindex="0" data-flag-help="${escape(help)}"${tell ? ` data-flag-tell="${escape(tell)}"` : ""} aria-label="${escape(arg + ": " + help + (tell ? " In the assembly: " + tell : ""))}">${escape(arg)}</span>` : escape(arg));
   }
   return out.join(" ");
+}
+
+/* One shared tooltip for every .compiler-flag, shown at once on hover or focus. */
+if (typeof document !== "undefined" && document.addEventListener) {
+  let tip = null, current = null;
+  const hide = () => { if (tip) tip.hidden = true; current = null; };
+  const show = (el) => {
+    if (el === current) return;
+    current = el;
+    if (!tip) {
+      tip = document.createElement("div");
+      tip.className = "compiler-flag-tip"; tip.setAttribute("role", "tooltip"); tip.hidden = true;
+      document.body.appendChild(tip);
+    }
+    tip.textContent = "";
+    const name = document.createElement("b"); name.textContent = el.textContent; tip.appendChild(name);
+    const help = document.createElement("p"); help.textContent = el.dataset.flagHelp; tip.appendChild(help);
+    if (el.dataset.flagTell) {
+      const label = document.createElement("span"); label.className = "compiler-flag-tip-label"; label.textContent = "In the assembly"; tip.appendChild(label);
+      const tell = document.createElement("p"); tell.textContent = el.dataset.flagTell; tip.appendChild(tell);
+    }
+    tip.hidden = false;
+    const r = el.getBoundingClientRect(), t = tip.getBoundingClientRect(), pad = 8;
+    const left = Math.max(pad, Math.min(r.left, innerWidth - t.width - pad));
+    const below = r.bottom + 6 + t.height <= innerHeight - pad || r.top - 6 - t.height < pad;
+    tip.style.left = left + "px";
+    tip.style.top = (below ? r.bottom + 6 : r.top - 6 - t.height) + "px";
+  };
+  const target = (e) => e.target && e.target.closest ? e.target.closest(".compiler-flag") : null;
+  document.addEventListener("mouseover", (e) => { const el = target(e); if (el) show(el); else if (current) hide(); });
+  document.addEventListener("focusin", (e) => { const el = target(e); if (el) show(el); });
+  document.addEventListener("focusout", (e) => { if (target(e)) hide(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") hide(); });
+  document.addEventListener("scroll", hide, true);
 }
