@@ -1,5 +1,14 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: split a reassigned incoming parameter
+
+In a controlled N64 experiment with `-G0 -mips3 -mgp32 -mfp32 -O2`, a source variant reused an incoming
+integer parameter for an unrelated later halfword load. GCC copied the incoming value to a second register at
+entry; the exact judge scored it 125. Splitting the later assignment and its uses into a same-type local removed
+that copy and scored 15. The 125-point source was constructed from the existing 15-point candidate, so this is a
+regression recovery, not a new match. Staging the incoming argument without splitting the parameter retained the
+copy and scored 125. The target remains unmatched.
+
 ### KMC GCC 2.7.2: vary independent float capture and store orders together
 
 A private N64 draft scored 1,115 with `-G0 -mips3 -mgp32 -mfp32 -O2`.
