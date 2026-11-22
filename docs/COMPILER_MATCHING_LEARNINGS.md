@@ -13234,3 +13234,12 @@ remained at 5, as did several redundant back-edge variants. A volatile local
 scored 2084 and moving the copy scored 30. The generated child and Deep repair
 lane were tested; this is one observed function, not a controlled cross-game
 result.
+
+### KMC GCC 2.7.2: reorder disjoint event-field stores
+
+Two isolated audio-event drafts stored a masked word and a halfword constant
+in the opposite order from the target. Swapping the two adjacent writes to
+disjoint fields recovered the target sequence. With `gcc-2.7.2-kmc -G0
+-mips3 -mgp32 -mfp32 -O2` (one example also used `-g3`), both linked scores
+improved from 120 to exact matches. These are two observed matches;
+synthetic tests cover the target order, disjoint offsets and source guards.
