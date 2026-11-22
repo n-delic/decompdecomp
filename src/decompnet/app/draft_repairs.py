@@ -394,6 +394,7 @@ from decomprepair import (
     volatile_reload_repairs,
     volatile_slot_demotion_repairs,
     walk_shape_repairs,
+    walked_table_index_repairs,
     widened_field_read_repairs,
     width_promotion_repairs,
     word_block_copy_repairs,
@@ -452,6 +453,7 @@ AGENT_FAMILIES += collapsed_guard_lifetime_merge.FAMILIES
 AGENT_FAMILIES += arm_argument_copy_join.FAMILIES
 AGENT_FAMILIES += string_walk_index.FAMILIES
 AGENT_FAMILIES += ladder_result_narrow.FAMILIES
+AGENT_FAMILIES += walked_table_index_repairs.FAMILIES
 AGENT_FAMILIES += loop_guard_counter_compare.FAMILIES
 AGENT_FAMILIES += phase_donor_repairs.FAMILIES
 AGENT_FAMILIES += caller_save_slot_drop.FAMILIES
@@ -973,6 +975,10 @@ def _spelled(source: str, name: str, arch: str, asm: str = '', flags=(), labels=
                    # (an identical-arm guard on an unassigned local collapsed and two integer locals merged, as one child: a 74-instruction
                    # KMC audio function 60 -> 0, the collapse alone 110 and the merge alone 690; decomprepair 0.5.652)
                    collapsed_guard_lifetime_merge,
+                   # (a byte-cursor table walk, its shared offset local and a void tail written back as the indexed loop, as one child: a
+                   # 108-instruction KMC function 100 -> 0, the indexed read alone 2083, the offset alone 2287 and the tail alone 720;
+                   # decomprepair 0.5.656)
+                   walked_table_index_repairs,
                    # (a call's first argument copied on two paths of the switch before it, with the masked store value in its own local,
                    # as one child: a 150-instruction KMC effect spawner 60 -> 0, the local alone 520 and the copy on four paths 115;
                    # decomprepair 0.5.654)
