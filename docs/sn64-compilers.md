@@ -73,7 +73,9 @@ The application was not reinstalled and no live compiler ranges were applied.
 | `sn-n64-272-0004` | Original SN compiler/assembler, preserved-pack conversion | Real C compilation and linked byte checks on macOS |
 | `sn-n64-272-0006` | Original SN compiler/assembler, preserved-pack conversion | Real C compilation and linked byte checks on macOS |
 
-Downloads and the reconstructed source commit are checksum pinned. The source
+Downloads and the reconstructed source commit are checksum pinned. The reconstruction's own source tree
+(`sn64-gcc-2.7.2-source`, from decompals/SN64-gcc, GPL by derivation from GCC) is installed with it for reading;
+the original SN builds have none. The source
 build adds only a host assertion-reporting helper required by Apple's runtime;
 it does not patch target code generation. PM and EGCS Intel binaries require
 Rosetta on Apple Silicon. Linux packs and Windows through WSL are configured,

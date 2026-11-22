@@ -808,6 +808,19 @@ def test_every_free_gcc_family_compiler_names_a_pinned_source_and_proprietary_on
     assert toolchains.source_id("gcc-2.7.2-kmc") == "gcc-2.7.2-kmc-source"
 
 
+def test_reconstructed_sn64_reads_its_own_pinned_source_not_plain_gnu():
+    reg = toolchains.registry()
+    assert toolchains.source_id("sn-n64-272-970404") == "sn64-gcc-2.7.2-source"
+    src = reg["sn64-gcc-2.7.2-source"]
+    (part,) = src.parts
+    assert len(part["sha256"]) == 64 and "decompals/SN64-gcc/tar.gz/2c037f330a99b514e5b53c66f1c63f90d8a15302" in part["url"]
+    assert part["subdir"].endswith("/2.7.2-970404")
+    assert "licence file" in src.description and "GPL by derivation" in src.description
+    # the original (proprietary) SN builds stay without a source
+    for tid in ("sn-n64-272-0001", "sn-n64-272-0004", "sn-n64-272-0006", "sn-n64-281"):
+        assert toolchains.source_id(tid) is None
+
+
 def _tarball(tc_root, name, files):
     folder = tc_root / f"{name}-tree"
     for rel, text in files.items():

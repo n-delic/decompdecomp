@@ -10,6 +10,11 @@
 #
 # Each part lists its host platforms. Windows uses native tools where available, and Linux-only compilers
 # through WSL 2 (wsl.py). A part for wsl-x86_64 replaces the Linux archive there (a .deb Windows can unpack).
+# Compiler sources: a free GCC-family compiler names the `*-source` entry (`compiler_source`) holding the GCC source
+# nearest it, installed beside it for agents to read its passes (`source_for`). The reconstructed SN64 2.7.2
+# (`sn-n64-272-970404`) reads decompals/SN64-gcc's own tree (`sn64-gcc-2.7.2-source`), a community reconstruction
+# that is GPL by derivation from GCC though its repository has no licence file. The original SN Systems builds
+# (proprietary) have no source entry.
 # macOS uses its pinned builds directly; Intel-only parts need Rosetta on Apple Silicon.
 # Windows compilers run natively on Windows and through wibo on Linux and macOS; a pack with `wine = true` (Visual C++
 # 2017, which wibo can't run) goes through wine there instead, which the user installs (wine.py).
@@ -1672,7 +1677,7 @@ name = "GNU GCC 2.7.2 source"
 kind = "tool"
 license = "GPL-2.0-or-later"
 source = "https://ftp.gnu.org/old-gnu/gcc/gcc-2.7.2.tar.gz"
-description = "Source to read for gcc-2.7.2-psx, gcc-2.7.2-cdk(-psx): the PSY-Q and Cygnus CDK builds carry vendor changes not in GNU 2.7.2; PlayStation patches in psx-patches/. The SN Systems N64 builds (proprietary) are 2.7.2-based too.."
+description = "Source to read for gcc-2.7.2-psx, gcc-2.7.2-cdk(-psx): the PSY-Q and Cygnus CDK builds carry vendor changes not in GNU 2.7.2; PlayStation patches in psx-patches/. The reconstructed SN64 2.7.2 has its own source entry; the original SN Systems builds (proprietary) have none."
 [["gcc-2.7.2-source".parts]]
 url = "https://ftp.gnu.org/old-gnu/gcc/gcc-2.7.2.tar.gz"
 sha256 = "7cd8bce5c3aeec59a72ecc2d3d5123864a817b14cdbd0680b1a969c3bccc5da5"
@@ -1698,6 +1703,19 @@ file = "mips-gcc-2.7.2-e6271f14b095d7d8b2638c2b5e07d0d5cd05bc14.tar.gz"
 subdir = "mips-gcc-2.7.2-e6271f14b095d7d8b2638c2b5e07d0d5cd05bc14"
 drop = ["testsuite"]
 
+
+["sn64-gcc-2.7.2-source"]
+name = "SN64 GCC 2.7.2 source (decompals/SN64-gcc 2.7.2-970404)"
+kind = "tool"
+license = "GPL-2.0-or-later"
+source = "decompals/SN64-gcc @ 2c037f3 (2.7.2-970404)"
+description = "Source to read for sn-n64-272-970404: community reconstruction of SN64's GCC 2.7.2 (GPL by derivation from GCC; the repository has no licence file). Only the 2.7.2-970404 tree's compiler passes and headers (sched.c, reorg.c, config/mips/ ...); the C++ and Objective-C front ends are left out. The original SN Systems builds are proprietary and have no source."
+[["sn64-gcc-2.7.2-source".parts]]
+url = "https://codeload.github.com/decompals/SN64-gcc/tar.gz/2c037f330a99b514e5b53c66f1c63f90d8a15302"
+sha256 = "51ddf17004bd74e738941c71fe6532e0dfe2d02822e0029c3624620a02da3eb7"
+file = "sn64-gcc-2c037f330a99b514e5b53c66f1c63f90d8a15302.tar.gz"
+subdir = "SN64-gcc-2c037f330a99b514e5b53c66f1c63f90d8a15302/2.7.2-970404"
+drop = ["cp", "objc", "intl", "testsuite"]
 
 ["gcc-2.8.0-source"]
 name = "GNU GCC 2.8.0 source"
@@ -2094,7 +2112,7 @@ platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
 
 
 ["sn-n64-272-970404"]
-compiler_source = "gcc-2.7.2-source"
+compiler_source = "sn64-gcc-2.7.2-source"
 family = "gcc"
 name = "Reconstructed SN64 GCC 2.7.2 (970404)"
 platform = "N64"
