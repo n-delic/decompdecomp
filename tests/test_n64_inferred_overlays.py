@@ -115,3 +115,24 @@ def test_terminated_pointer_words_do_not_become_independent_code_scopes():
     assert inferred_overlays.drop_pointer_fragments(bytes(image), found) == [found[0], found[4]]
     struct.pack_into('>I', image, 0, 0x08000000 | ((0x80202004 >> 2) & 0x3ffffff))
     assert inferred_overlays.drop_pointer_fragments(bytes(image), found) == found
+
+
+def test_nearby_mapping_requires_closed_entries_and_internal_and_external_calls():
+    image = bytearray(0x5000)
+    lo, hi, correct = 0x1000,0x4000,0x80301000
+    def jal(target):
+        return 0x0c000000 | ((target>>2)&0x3ffffff)
+    for i in range(12):
+        at = lo+i*64
+        # The complete framed body is not closed when entered eight bytes late.
+        struct.pack_into('>8I',image,at,0x27bdfff0,0xafbf000c,0x24020001,0,
+                         0x8fbf000c,0,0x03e00008,0x27bd0010)
+        struct.pack_into('>I',image,0x3000+4*i,jal(correct+i*64))
+        if i < 4:
+            struct.pack_into('>I',image,4*i,jal(correct+i*64))
+    found = [(lo,hi,correct-8)]
+    taken = [(0,0x100,0x80001000)]
+    result, scoped = inferred_overlays.recover(bytes(image),found,taken)
+    assert result == [(lo,hi,correct)] and lo in scoped
+    image[:16] = bytes(16)
+    assert inferred_overlays.recover(bytes(image),found,taken)[0] == found

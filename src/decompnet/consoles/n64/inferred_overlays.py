@@ -46,6 +46,45 @@ def _entry_mapping(image, lo, hi, vram, callers, taken, check):
     return choices[0] if len(choices) == 1 else None
 
 
+def _called_mapping(image, lo, hi, vram, callers, taken, check):
+    """Correct a nearby alignment only when independent calls reach closed framed functions."""
+    from ...arch.mips_code_recovery import called_extent
+
+    old = vram-lo
+    if old%16 == 0 or hi-lo < 4096:
+        return None
+    groups = [set(),set()]
+    for start,end,base in callers:
+        check()
+        if start < 0 or end > len(image) or start >= end or (start|end)%4:
+            continue
+        words = struct.unpack_from(f'>{(end-start)//4}I',image,start)
+        groups[start == lo and end == hi].update(
+            0x80000000 | ((word&0x3ffffff)<<2) for word in words if word>>26 == 3)
+    def score(mapping):
+        counts = []
+        for targets in groups:
+            total = 0
+            for target in targets:
+                at = target-mapping
+                if lo <= at < hi-8 and called_extent(image,at,hi,target,cpu='vr4300'):
+                    total += 1
+            counts.append(total)
+        return counts
+    prior = score(old)
+    choices = []
+    for delta in range(-15,16):
+        mapping = old+delta
+        address = lo+mapping
+        if (mapping%16 or not 0x80000400 <= address < address+hi-lo <= 0x80800000
+                or any(base < address+hi-lo and address < base+end-start for start,end,base in taken)):
+            continue
+        outside,inside = score(mapping)
+        if inside >= 8 and outside >= 3 and inside+outside >= 4*max(1,sum(prior)):
+            choices.append(address)
+    return choices[0] if len(choices) == 1 else None
+
+
 def recover(image, found, taken=(), check=lambda: None, *, changed=()):
     """Return corrected inferred ranges and the starts needing independent splat scopes."""
     result = list(found)
@@ -54,7 +93,8 @@ def recover(image, found, taken=(), check=lambda: None, *, changed=()):
         check()
         if lo < 0 or hi - lo < 4096 or hi > len(image) or (lo | hi) % 4:
             continue
-        if corrected := _entry_mapping(image, lo, hi, vram, (*taken, *found), taken, check):
+        if corrected := (_entry_mapping(image, lo, hi, vram, (*taken, *found), taken, check)
+                         or _called_mapping(image, lo, hi, vram, (*taken, *found), taken, check)):
             result[index] = (lo, hi, corrected)
             changed.add(lo)
             continue
