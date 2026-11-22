@@ -431,6 +431,7 @@ class Search(Permuter):
                  # (decomprepair 0.5.631)
                  (L + 'entry_constant_local.variants', (source, name)),
                  (L + 'store_temp_inline.variants', (source, name)),
+                 (L + 'join_clamp_sum_repairs.variants', (source, name)),
                  # a switch case's temporaries split and its flag update folded in one child, and record
                  # field stores beside a scalar global's store written raw (MEM_IN_STRUCT_P keeps their order)
                  (L + 'case_split_combinations.variants', (source, name)),
