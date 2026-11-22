@@ -18046,3 +18046,47 @@ w1; } Gfx;` (670 alone), `extern s32 D_8010A4D8;` as `extern W D_8010A4D8;` with
 (`tail`'s) scored 60. Controlled (one function, exact judge, same compiler); the mechanism is read from sched.c and the dump.
 Family: decomp-repair `member_alias_pair` (0.5.613), which emits the store and the global as a one-member record, alone and
 together; two of its eight children from the saved best were exact (60 -> 0).
+
+## A text renderer written with libultra macros: 9335 -> 0 (565 instructions, KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, scoring 2)
+
+An N64 menu-text function (a character loop with a `switch` of control codes, a kerning table lookup, and a
+`gDPLoadTextureBlock_4b` + one `gSPTextureRectangle` per glyph), saved best 9335 with a `volatile` cursor, `__repair_*`
+record casts and a `volatile u64` frame pad. Edit list (scores are the app's judge on the work-in-progress source; the
+last rows are controlled in the sense that each was measured alone against the row before):
+
+| # | edit | score |
+|---|---|---|
+| 1 | rewritten as the SDK's own macros, `pkt = cursor++` on a plain (non-volatile) `Gfx *` global, `Gfx` a union with a `u32 words` pair | 21920 -> 3770 |
+| 2 | the 4-bit block load as `gDPLoadTextureBlock_4b(pkt, tex, 4, ENT.w + 1, ENT.h + 1, ...)` with `ENT` the table entry spelled out at each use | (in 1) |
+| 3 | `s`/`t` of the rectangle's RDPHALF_1 in named locals computed before the `hires` branch | 3770 |
+| 4 | `ya`, `xl` not named: the macro arguments spelled out | 3460 -> 3205 |
+| 5 | colour word and glyph index one `u32` variable (disjoint arms) | 3015 -> 2965 (the colour word's `$a2` -> `$t2`, 24 rows) |
+| 6 | newline `y += 3 + font->gt->lh` in one statement | 2965 -> 2035 |
+| 7 | the kerning search a plain `for (k = 0; k < kern[prev].n; k++)` over `font->kern` and `(ch & 0xFF)` written in the body | 1870 -> 5 |
+| 8 | `k * 2 + pairs` operand order | 5 -> 0 |
+
+Compiler facts (read in cse.c, loop.c and global.c of the installed source; each checked against the dumps):
+- A store through a structure member (`_g->words.w0 = ..`) calls `invalidate_memory` with `nonscalar`, which removes every
+  table entry that is `in_struct` or has a varying address, but not a scalar global: `pkt = glistp++` evaluated three
+  times (`gSPTextureRectangle` names `pkt` three times) becomes one load and three `lui $at; sw` stores, while the loads
+  through the font and table pointers are repeated after the stores. A `volatile` cursor (the saved best) gets the repeated
+  loads for the wrong reason and then also repeats the cursor read; the label of the divide's branch ends the extended
+  basic block, which is why the second group of macros reads the cursor again.
+- `MAX(1, x)` as the divisor of `CALC_DXT_4b`: fold distributes `n / (c ? 1 : x)` into the arms, so the arm with the
+  constant divides by nothing (the target's `blezl ... andi`); m2c's three-way `if` is this.
+- `(s << 16) | t` where the shifts' operands are named `u16` locals gets `(subreg:SI t)` first in combine and swaps the
+  operands; with `s32` locals and `_SHIFTL` masks cse cannot fold `(x << 5) << 16` into `x << 21` across the arms (the mask
+  is between them) and combine drops the mask afterwards from `nonzero_bits`.
+- A `for` loop's test is duplicated before the loop (the pre-test `beqz` of the target) and loop.c scans from that test,
+  so `loop_reg_used_before_p` is true for the loop's address register: the entry address stays inside the loop. The
+  invariant `font->kern` load and `ch & 0xFF` in the body are hoisted by loop.c as new loads and cse2 turns them into the
+  `move $t0,$v1` / `move $a3,$a1` copies. Caching them in locals before the loop (or a `volatile` cast on the read) loses
+  both. The pre-test `for` loop also is what keeps the frame's extra 8 bytes: with it the `volatile u64` pad was not needed.
+- Hard registers of a global pseudo come from global.c's first free choice after the ones local-alloc took: sharing one
+  variable between disjoint roles gives it the sum of the uses and a longer range (`disjoint_local_merge`).
+Scaffolding the match relies on: the case-9 arm written twice (`if (ox) { x = ((x >> 4) + 1) << 4; break; } else { the
+same }`), an identical-arms duplicate that only adds references to `x` so its priority passes the parameter's (without it
+225, `$s1`/`$s2` swapped). Everything else is plausible source. Family: decomp-repair `disjoint_local_merge` now pairs a
+`u32` and an `s32` local and pairs inside one loop body that are assigned before they are read (it took the saved
+draft's newline temporary and the colour word to 2617 from 3037 on the work-in-progress source). Steps 1-4 and 7 are not
+families yet: a recogniser for m2c's raw display-list stores as SDK macros, and un-caching a loop's invariants, are the gaps.
