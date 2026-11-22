@@ -704,7 +704,7 @@ def split_rom(workdir: Path, rom_name: str = "rom.z64", console=None, picked: Pi
     platform = console.splat_platform if console is not None else ""
     original = _readable_for_splat(workdir / rom_name, as_ps2=bool(platform)) if objcopy else None
     try:
-        out = _splat(args, workdir, log)
+        out = console.splat_create_config(args, workdir, log) if console is not None else _splat(args, workdir, log)
     finally:
         if original is not None:  # the user's program, as it was
             (workdir / rom_name).write_bytes(original)

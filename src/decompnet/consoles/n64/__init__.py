@@ -366,6 +366,11 @@ class Nintendo64(Console):
         by_guess = {c.guess: c.id for c in self.compilers if c.guess}
         return by_guess.get(splat_guess) or by_guess.get(info.get("compiler_guess", "")) or self.compilers[0].id
 
+    def splat_create_config(self, args, workdir, log):
+        from .splat_config import create
+
+        return create(args, workdir, log)
+
     def add_code(self, config: Path, workdir: Path, image: str, picked: Picked, log=print) -> str:
         from .code import add_segments
         from .inline_data import apply

@@ -298,6 +298,12 @@ class Console:
         whose code keeps a minimal TOC. None by default."""
         return []
 
+    def splat_create_config(self, args, workdir, log):
+        """Create the initial splat configuration for a copied image."""
+        from ..rom.split import _splat
+
+        return _splat(args, workdir, log)
+
     def add_code(self, config: Path, workdir: Path, image: str, picked: Picked, log=print) -> str:
         """Before splat splits: code its own look misses (segments loaded later, overlays), added to its config.
         Returns the image splat reads."""
