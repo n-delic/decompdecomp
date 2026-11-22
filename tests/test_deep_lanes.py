@@ -137,3 +137,44 @@ def test_idle_lanes_are_trimmed_and_started_again_on_demand(net):
     finally:
         lanes.close()
     assert lanes.started == 0
+
+
+@pytest.mark.parametrize('disconnect', [False, True])
+def test_remote_metrics_are_forwarded_and_gauges_clear_when_turn_ends(net, monkeypatch, disconnect):
+    from queue import Queue
+    from types import SimpleNamespace
+
+    from decompnet.app.deep_throughput import Metrics
+
+    metrics = Metrics()
+    snapshots = []
+    log = Log()
+    log.compile_pool = SimpleNamespace(metrics=metrics)
+    log.refresh_metrics = lambda: snapshots.append(metrics.snapshot())
+
+    class Lane:
+        def __init__(self):
+            self.messages = Queue()
+
+        def send(self, request):
+            ident = request['ident']
+            self.messages.put({'ident': ident, 'kind': 'metrics', 'live': {'executing': 2, 'waiting_search': 1},
+                               'values': {'rank_literals_cpu_ns': 1_000_000, 'rank_batches': 1}})
+            self.messages.put(None if disconnect else {'ident': ident, 'kind': 'reply', 'result': {}})
+
+        def alive(self):
+            return True
+
+        def close(self):
+            pass
+
+    lanes = deep_lanes.Lanes(net, 2, 4)
+    monkeypatch.setattr(lanes, '_take', lambda _: Lane())
+    if disconnect:
+        with pytest.raises(deep_lanes.Unavailable):
+            lanes.search('game', 'f', 1, 10, log)
+    else:
+        assert lanes.search('game', 'f', 1, 10, log) == {}
+    assert [v['active_compiles'] for v in snapshots] == [2, 0]
+    assert [v['compiler_waiting_search'] for v in snapshots] == [1, 0]
+    assert [v['rank_literals_cpu_seconds'] for v in snapshots] == [.001, .001]

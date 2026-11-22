@@ -100,6 +100,7 @@ def test_shared_sweep_pool_lives_across_functions_and_closes_after_cancel(monkey
     class Pool:
         def __init__(self,count,maximum=False):
             self.count=count;self.maximum=maximum;self.closed=False;pools.append(self)
+            self.metrics=deep_throughput.Metrics()
         def close(self):self.closed=True
     monkeypatch.setattr(deep_compilation,'Pool',Pool)
     @deep_throughput.sweep

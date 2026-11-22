@@ -83,3 +83,30 @@ def test_bursts_coalesce_and_trailing_timer_flushes_latest(monkeypatch):
     activity.update('a', finished=True)
     assert snapshots[-1]['workers'] == []
     assert snapshots[-1]['recent_workers'][0]['tested'] == 99
+
+
+def test_pass_throughput_supersedes_the_last_workers_snapshot():
+    from types import SimpleNamespace
+
+    from decompnet.app.deep_throughput import Metrics
+
+    metrics = Metrics()
+    metrics.remote_slots = 4
+    metrics.set_remote(1, {'executing': 2, 'waiting_search': 1, 'proposal_workers': 1})
+    metrics.set_remote(2, {'executing': 1, 'waiting_shared': 2})
+    metrics.add('rank_literals_cpu_ns', 2_400_000)
+    metrics.add('rank_batches', 2)
+    metrics.add('rank_candidates', 16)
+    snapshots = []
+    activity = Activity(SimpleNamespace(compile_pool=SimpleNamespace(metrics=metrics), progress=snapshots.append))
+    activity.publish({'throughput': {'active_compiles': 1, 'compile_slots': 2}})
+    throughput = snapshots[-1]['throughput']
+    assert (throughput['active_compiles'], throughput['compile_slots']) == (3, 4)
+    assert (throughput['compiler_waiting_search'], throughput['compiler_waiting_shared']) == (1, 2)
+    assert throughput['active_proposal_workers'] == 1
+    assert throughput['rank_literals_cpu_seconds'] == .0024
+    assert (throughput['rank_batches'], throughput['rank_candidates']) == (2, 16)
+    metrics.set_remote(1, None)
+    activity.publish({})
+    assert snapshots[-1]['throughput']['active_compiles'] == 1
+    assert snapshots[-1]['throughput']['rank_batches'] == 2

@@ -11,9 +11,9 @@ import sys
 import threading
 import time
 from collections import OrderedDict
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 
-from .. import claim_stalls, compiler, scoring, stamped
+from .. import claim_stalls, compile_timing, compiler, scoring, stamped
 from ..candidate_work import preparation as candidate_preparation
 from ..candidate_work import trial
 from ..compile_sessions import batched
@@ -1970,8 +1970,9 @@ def _full_run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, 
     previous_pool = getattr(log, 'compile_pool', None)
     pool = previous_pool or deep_compilation.Pool(deep_throughput.width(maximum_throughput, compile_slots), maximum=maximum_throughput)
     log.compile_pool = pool
-    admission = compiler._SLOTS.capacity(pool.count)
-    admission.__enter__()
+    admission = ExitStack()
+    admission.enter_context(compiler._SLOTS.capacity(pool.count))
+    admission.enter_context(compile_timing.collect(pool.metrics))
     try:
         tried_twin = 0
         twins = getattr(net, 'twins', None) if slug not in net.links else None
@@ -2024,7 +2025,7 @@ def _full_run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, 
         try:
             if previous_pool is None:pool.close()
         finally:
-            admission.__exit__(None,None,None)
+            admission.close()
             log.compile_pool = previous_pool
             lock.release()
 

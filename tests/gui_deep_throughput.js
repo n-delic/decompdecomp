@@ -28,3 +28,5 @@ assert.match(line,/2\/16 compiles active/);
 assert.match(line,/waiting now 4 \(search 1, background 0, shared 3\)/);
 assert.match(line,/16\/16 shared compiler slots busy/);
 assert.doesNotMatch(text({compiler_waiting_search:0,compiler_waiting_background:0,compiler_waiting_shared:0}),/waiting now/);
+assert.match(text({rank_literals_cpu_seconds:.006,rank_batches:4}),/literal extraction 0.006 CPU s across 4 ranked batches \(1.50 ms\/batch\)/);
+assert.doesNotMatch(text({rank_batches:0}),/literal extraction/);

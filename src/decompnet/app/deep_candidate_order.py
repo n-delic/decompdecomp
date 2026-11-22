@@ -1,11 +1,12 @@
 """Order a bounded batch of already generated candidates before compiler admission."""
 import json
 import re
+import time
 from functools import lru_cache
 
 from decomprepair.repair_tokens import tokens
 
-from .. import arch
+from .. import arch, compile_timing
 
 _LITERAL = re.compile(r'(0[xX][0-9a-fA-F]+|0[0-7]*|[1-9][0-9]*)[uUlL]*')
 
@@ -39,13 +40,18 @@ def for_function(project, function, log):
         nonlocal reported
         if parent is None or len(candidates) < 2:
             return candidates
+        started = time.thread_time_ns()
         base = parent_literals(parent)
+        literals = [_literals(candidate) for candidate in candidates]
+        compile_timing.add('rank_literals_cpu_ns', time.thread_time_ns() - started)
+        compile_timing.add('rank_batches', 1)
+        compile_timing.add('rank_candidates', len(candidates))
 
-        def distance(candidate):
+        def distance(values):
             return min(((value ^ expected).bit_count()
-                        for value in _literals(candidate) - base for expected in target), default=33)
+                        for value in values - base for expected in target), default=33)
 
-        ranked = sorted(candidates, key=distance)
+        ranked = [candidate for candidate, _ in sorted(zip(candidates, literals), key=lambda item: distance(item[1]))]
         if not reported and ranked != candidates:
             log('CPU constant ranking reordered a random candidate batch.')
             reported = True

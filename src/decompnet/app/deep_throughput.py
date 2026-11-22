@@ -23,6 +23,11 @@ def width(maximum, slots):
     return slots or (min(256,max(1, os.cpu_count() or 1)) if maximum else compiler.concurrency_limit())
 
 
+LIVE_COMPILER_COUNTERS = ('executing', 'waiting_search', 'waiting_background', 'waiting_shared')
+LIVE_WORKER_COUNTERS = (*LIVE_COMPILER_COUNTERS, 'proposal_workers')
+RANK_COUNTERS = ('rank_literals_cpu_ns', 'rank_batches', 'rank_candidates')
+
+
 class Metrics:
     def __init__(self):
         self.lock = threading.Lock()
@@ -31,6 +36,8 @@ class Metrics:
         self.started = time.monotonic()
         self.cpu = time.process_time()
         self.first_exact_invocations = None
+        self.remote_slots = 0
+        self.remote_live = {}
 
     def add(self, key, value):
         with self.lock:
@@ -40,6 +47,17 @@ class Metrics:
                 if not self.rates or self.rates[-1][0]!=tick:self.rates.append((tick,{}))
                 bucket=self.rates[-1][1]
                 bucket[key]=bucket.get(key,0)+value
+
+    def set_remote(self, ident, values):
+        with self.lock:
+            if values:
+                self.remote_live[ident] = values
+            else:
+                self.remote_live.pop(ident, None)
+
+    def counts(self):
+        with self.lock:
+            return dict(self.values, proposal_workers=getattr(getattr(self, 'proposals', None), 'running', 0))
 
     def exact(self):
         with self.lock:
@@ -51,6 +69,11 @@ class Metrics:
         elapsed = max(.001, now-self.started)
         with self.lock:
             values = dict(self.values)
+            local_busy = any(values.get(key, 0) for key in LIVE_COMPILER_COUNTERS)
+            values['proposal_workers'] = getattr(getattr(self, 'proposals', None), 'running', 0)
+            for worker in self.remote_live.values():
+                for key in LIVE_WORKER_COUNTERS:
+                    values[key] = values.get(key, 0) + worker.get(key, 0)
             first_exact=self.first_exact_invocations
             recent={}
             for tick,bucket in self.rates:
@@ -58,16 +81,22 @@ class Metrics:
                     for key,value in bucket.items():recent[key]=recent.get(key,0)+value
         rate_seconds=min(5,elapsed)
         gate = getattr(self,'gate',None)
-        return {'active_proposal_workers':getattr(getattr(self,'proposals',None),'running',0),
+        slots = self.remote_slots
+        if gate and (not slots or local_busy):
+            slots += gate.limit
+        return {'active_proposal_workers':values['proposal_workers'],
                 'active_compiles':values.get('executing',0),
                 'shared_active_compiles':getattr(compiler._SLOTS,'active',0),
-                'shared_compile_slots':getattr(compiler._SLOTS,'limit',0),
+                'shared_compile_slots':getattr(compiler._SLOTS,'limit',0) if not self.remote_slots else 0,
                 **{'compiler_waiting_'+name:values.get('waiting_'+name,0) for name in ('search','background','shared')},
                 **{'compiler_queue_'+name+'_seconds':values.get('queue_'+name,0) for name in ('search','background','shared')},
                 'pool_compiler_invocations':values.get('invocations',0),
                 'pool_compile_requests':values.get('requests',0),
                 'pool_compiler_invocations_at_first_exact':first_exact,
-                'compile_slots':gate.limit if gate else 0,
+                'compile_slots':slots,
+                'rank_literals_cpu_seconds':values.get('rank_literals_cpu_ns', 0) / 1e9,
+                'rank_batches':values.get('rank_batches', 0),
+                'rank_candidates':values.get('rank_candidates', 0),
                 'maximum_throughput':getattr(self,'maximum',False),
                 'candidates_per_second':recent.get('considered',0)/rate_seconds,
                 'generated_per_second':recent.get('generated',0)/rate_seconds,
@@ -75,7 +104,7 @@ class Metrics:
                 'compile_requests_per_second':recent.get('requests',0)/rate_seconds,
                 'compiler_queue_seconds':values.get('queue',0),
                 'compiler_setup_seconds':values.get('setup',0),
-                'compiler_slot_utilization_percent':min(100,max(0,100*values.get('execute',0)/(elapsed*gate.limit))) if gate and gate.limit else 0,
+                'compiler_slot_utilization_percent':min(100,max(0,100*values.get('execute',0)/(elapsed*slots))) if slots else 0,
                 'generation_seconds':values.get('generation',0),
                 'local_proposal_generation_seconds':values.get('proposal_generation',0),
                 'cleanup_generation_seconds':values.get('cleanup_generation',0),
@@ -116,7 +145,8 @@ def sweep(function):
         previous = getattr(log, 'compile_pool', None)
         log.compile_pool = pool
         try:
-            with compiler._SLOTS.capacity(pool.count):return function(self,slug,minutes,variants,log,*args,**kwargs)
+            with compiler._SLOTS.capacity(pool.count), compile_timing.collect(pool.metrics):
+                return function(self,slug,minutes,variants,log,*args,**kwargs)
         finally:
             try:pool.close()
             finally:log.compile_pool = previous

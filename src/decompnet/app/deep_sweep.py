@@ -566,6 +566,8 @@ class Sweeps:
         compile_pool = getattr(log, 'compile_pool', None)
         log.deep_lanes = (deep_lanes.Lanes(self.net, count, getattr(compile_pool, 'count', 0), maximum=maximum)
                           if count > 1 and slug not in self.net.links and deep_lanes.enabled() else None)
+        if log.deep_lanes is not None:
+            compile_pool.metrics.remote_slots = log.deep_lanes.count * log.deep_lanes.slots
         stats['activity'].publish({'cycle': cycle, 'loop': loop,
             'preparation': {'checked': 0, 'total': 0, 'eligible': 0, 'waiting': 0, 'done': False}}, force=True)
         try:
@@ -743,6 +745,7 @@ class Sweeps:
         function_log.compile_pool = getattr(log, 'compile_pool', None)
         function_log.check_cancel = log.check_cancel
         function_log.progress = progress
+        function_log.refresh_metrics = activity.refresh_metrics
         try:
             cfg = self.config(slug)
             count = cfg.get('compiler_profiles', 1)

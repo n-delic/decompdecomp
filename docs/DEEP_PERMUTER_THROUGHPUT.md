@@ -148,3 +148,32 @@ for backend in current cpu metal; do
     --replay-order "$backend" --ranker "$TMPDIR/deep-candidate-rank"
 done
 ```
+
+## Reading a live project pass
+
+The throughput line under **Deep Permuter → Activity** reports active compiler
+slots and waiters across the pass's workers. Each worker reports a snapshot about
+twice a second, so the active count can miss short compiles. The average slot
+utilization includes short compiles through accumulated compiler time. The slot
+count reflects the allocations to worker processes, which can differ from the
+number entered in settings when the app divides capacity among those processes.
+Work elsewhere in the app is outside the pass count.
+
+When CPU constant ranking is enabled and has scored a batch, the same line shows
+total thread CPU time spent extracting C literals, the number of ranked batches
+and the average CPU milliseconds per batch. The total includes parent extraction
+on cache misses across all workers. It excludes sorting, distance calculations
+and time spent waiting for a CPU. A low active count with few compiler waiters
+suggests the compiler queue has room for more work.
+
+### Rust extraction experiment
+
+On an Apple M5 Max, an optimized Rust byte scanner called in-process through
+`ctypes` processed batches of eight ASCII candidate texts in a median of
+0.023 ms versus 0.673 ms for the current Python extractor, including FFI and
+result conversion. The inputs were 128 saved, open-function bodies from a local
+MIPS project with synthetic edits. The prototype matched Python's results on
+all 1,024 candidate texts and on 1,000 generated token edge cases. This measured
+literal extraction only. A production scanner needs wider token parity coverage,
+including Python fallback for unsupported input, and a full-search benchmark to
+measure actual throughput. The live timing uses the current Python extractor.

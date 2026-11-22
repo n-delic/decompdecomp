@@ -48,6 +48,13 @@ class Activity:
             self.summary.update(value)
             self._schedule(urgent)
 
+    def refresh_metrics(self):
+        with self.lock:
+            if self.timer is None:
+                self.timer = threading.Timer(PUBLISH_SECONDS, self._flush)
+                self.timer.daemon = True
+                self.timer.start()
+
     def prepare(self, checked, total, candidates, waiting, *, done=False):
         with self.lock:
             self.candidates = candidates
@@ -81,6 +88,8 @@ class Activity:
             self.timer = None
         self.last_publish = time.monotonic()
         summary = dict(self.summary)
+        if pool := getattr(self.log, 'compile_pool', None):
+            summary['throughput'] = pool.metrics.snapshot()
         if prep := summary.get('preparation'):
             # The scanner only appends. Copy the published prefix so counts and names agree.
             summary['preparation'] = {**prep, 'candidates': self.candidates[:prep['eligible']]}
