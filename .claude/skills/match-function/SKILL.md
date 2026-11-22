@@ -347,6 +347,12 @@ says the fix and the library families it names; try those families with `prove_c
 - **`local_flow` declined on any `volatile` in the text** until 0.5.604, so a saved best with `*(volatile T *)&global`
   reads had no variants from the ~40 flow-based families. Only a volatile local still declines; check
   `local_flow.analyze(source, name)` is not None before concluding the permuter has nothing.
+- **A scratch local assigned in every arm of a switch (registers only differ, `packet`/word pairs in `$a0`/`$v1` swapped
+  in all of them).** One top-level name for the cursor and the command words is one global pseudo with a huge reference
+  count, allocated before the short per-arm pseudos the target has; one local per arm gets the target's registers, but
+  each arm alone is worse (its tail stops cross-jumping with the others'), so all 24 webs go at once (365 -> 0).
+  decomp-repair `local_web_split` offers it as one child; a chain of one-arm children never finds it
+  (docs/learnings/function/display-list-arm-locals.md).
 - **A saved best full of search scaffolding (union around a pointer and an integer, `if (x) { S } else { S }`, identity
   inline, copies of one cast, word locals every use truncates) is a dead end for a greedy chain**: each removal is neutral or
   worse alone (145 -> 240 on a 129-instruction list insertion, then 240 -> 0 with a loop key copy). decomp-repair
