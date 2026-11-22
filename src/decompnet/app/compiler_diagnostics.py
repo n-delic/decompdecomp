@@ -55,8 +55,8 @@ def allocated_output(raw):
     return hashlib.sha256(repr(payload).encode()).hexdigest()
 
 
-def phase_summary(work, name=None, arch=None, excerpts=()):
-    """`excerpts`: phases whose text (the function's part, bounded: EXCERPT_CHARS) is kept for an agent to read."""
+def phase_summary(work, name=None, arch=None, excerpts=(), excerpt_chars=EXCERPT_CHARS):
+    """`excerpts`: phases whose text (the function's part, bounded: `excerpt_chars`) is kept for an agent to read."""
     texts = {}
     result = {}; remaining = 4*1024*1024
     for path in sorted(Path(work).glob('func.*')):
@@ -83,7 +83,7 @@ def phase_summary(work, name=None, arch=None, excerpts=()):
         if phase in excerpts:
             from .rtl_value_trace import function as function_text
             body = (function_text(text, name) if name else '') or text
-            excerpt = {'excerpt': body[:EXCERPT_CHARS], 'excerpt_cut': len(body) > EXCERPT_CHARS}
+            excerpt = {'excerpt': body[:excerpt_chars], 'excerpt_cut': len(body) > excerpt_chars}
         result[phase] = {**excerpt, 'allocation_priority':priority,
                          'loop_begin_notes':len(re.findall(r'NOTE_INSN_LOOP_BEG',text)),
                          'lifetimes':lifetimes[:32],'file':path.name,'bytes':path.stat().st_size,'truncated':path.stat().st_size>len(raw),
@@ -99,7 +99,7 @@ def phase_summary(work, name=None, arch=None, excerpts=()):
                 'allocation':gcc_allocation.summarize(texts,name,arch)} if name else {})}
 
 
-def diagnose(profile, header, source, name, *, root='.', baseline_obj=None, on_compile=lambda: None, excerpts=()):
+def diagnose(profile, header, source, name, *, root='.', baseline_obj=None, on_compile=lambda: None, excerpts=(), excerpt_chars=EXCERPT_CHARS):
     tid = profile.get('toolchain','')
     if not tid or 'cmd' in profile or not toolchains.installed(tid):
         return {'skipped':'Diagnostics require an already installed pinned compiler; nothing is downloaded.'}
@@ -117,7 +117,7 @@ def diagnose(profile, header, source, name, *, root='.', baseline_obj=None, on_c
         baseline_obj = baseline.obj
     captured = {}
     def collect(work):
-        captured.update(phase_summary(work,name,tc.arch,excerpts))
+        captured.update(phase_summary(work,name,tc.arch,excerpts,excerpt_chars))
     with capture_artifacts(collect):
         on_compile()
         diagnostic = compile_source(replace(cfg,cmd=[*cfg.cmd,'-da']),header,source)

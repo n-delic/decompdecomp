@@ -10,6 +10,8 @@ no move-on count; the judge still decides.
 Project mode (a public decomp's own build) has no such tool yet: its units compile through the project's build
 system rather than the app's compiler adapter, and most of those compilers (Metrowerks, MSVC) print no pass dumps
 (ROADMAP.md)."""
+import re
+
 from ..network import NetworkError
 from ..project import compiler_for
 from . import agent_tokens, compiler_diagnostics
@@ -34,14 +36,63 @@ def run(net, agent, slug, function, revision, passes=None):
     if actual != revision:
         raise agent_tokens.stale(net, agent, fn, revision, source, actual)
     proj = net._project(slug)
+    result, profile = diagnose(net, proj, fn, source, passes)
+    return render(result, passes, revision) + source_line(result.get('toolchain') or profile.get('toolchain'))
+
+
+def diagnose(net, proj, fn, source, passes, excerpt_chars=compiler_diagnostics.EXCERPT_CHARS):
+    """The isolated diagnostic compile of `source` under the function's own profile (the tool's and the skill's
+    passes.py share it): (result, profile)."""
     header = net._context(proj['id'], fn['unit'])['header']
     profile = compiler_for(net.cfg(proj), fn['vram'], fn)
-    result = compiler_diagnostics.diagnose(profile, header, source, fn['name'], root=proj['root'], excerpts=passes)
+    result = compiler_diagnostics.diagnose(profile, header, source, fn['name'], root=proj['root'], excerpts=passes,
+                                           excerpt_chars=excerpt_chars)
     if result.get('skipped'):
         raise NetworkError(f"{result['skipped']} compiler_passes needs a pinned, installed GCC-family compiler "
                            f"(this function's is {profile.get('toolchain') or 'a custom command'}); use compile_variants "
                            "and guide(\"near-match\") instead.")
-    return render(result, passes, revision) + source_line(result.get('toolchain') or profile.get('toolchain'))
+    return result, profile
+
+
+SKILL_PASSES = ('greg', 'sched', 'sched2')
+SKILL_EXCERPT_CHARS = 60000  # a whole function's dump: the skill's passes.py reads orders, not a bounded excerpt
+
+
+def preferences(result):
+    """The register each pseudo asked for (greg's `;; N preferences: R` lines: an argument or a return value), by the
+    names the allocation table gives it: what the allocator tries first for it."""
+    text = ((result.get('phases') or {}).get('greg') or {}).get('excerpt', '')
+    values = {v['pseudo']: v for v in (result.get('allocation') or {}).get('values') or []}
+    lines = []
+    for pseudo, hard in re.findall(r'^;; (\d+) preferences: ([\d ]+?)\s*$', text, re.M):
+        got = values.get(int(pseudo), {}).get('hard_register')
+        names = ','.join(values.get(int(pseudo), {}).get('aliases') or []) or 'temp'
+        lines.append(f"pseudo {pseudo} ({names}) prefers hard reg {hard.strip()}"
+                     + (f", got {got}" if got is not None else ''))
+    return lines
+
+
+def schedule_order(result, phase):
+    """A scheduling pass's instruction order, `uid pattern` per insn (the pass's dump lists them in the order it
+    chose): compare `sched` (first scheduler) with `sched2` and with the target's order."""
+    text = ((result.get('phases') or {}).get(phase) or {}).get('excerpt', '')
+    return [f"{uid} {pattern}" for uid, pattern in
+            re.findall(r'^\((?:insn|jump_insn|call_insn) (\d+) .*?\{(\w+)\}', text, re.M | re.S)]
+
+
+def report(net, proj, fn, source, passes=SKILL_PASSES):
+    """What the skill's passes.py prints: the allocation priority table, register preferences, scheduling orders and
+    where the compiler's source is. Diagnostic only, like the tool: nothing is recorded or judged."""
+    result, profile = diagnose(net, proj, fn, source, passes, SKILL_EXCERPT_CHARS)
+    out = [render(result, (), 'candidate')]
+    if prefs := preferences(result):
+        out += ['', 'Register preferences (greg):', *prefs]
+    for phase in ('sched', 'sched2'):
+        if phase in passes:
+            order = schedule_order(result, phase)
+            out += ['', f"Scheduling order, {phase} ({'first' if phase == 'sched' else 'second'} scheduler), "
+                        f"{len(order)} insns:", '  ' + '  '.join(order) if order else '  (not written by this compiler build)']
+    return '\n'.join(out) + source_line(result.get('toolchain') or profile.get('toolchain'))
 
 
 def source_line(compiler):

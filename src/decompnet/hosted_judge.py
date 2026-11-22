@@ -18,6 +18,9 @@ Requests:
   "header" (the project's typedefs and externs the judge prepends), "compiler": {"toolchain", "flags"} (this
   function's own profile)}: everything a local search needs to judge without being told the function's bytes
   (the match-function skill's fast_judge.py).
+- {"op": "passes", "slug", "name", "source", "passes" (optional)} -> {"text"}: the compiler's allocation priority
+  table, register preferences and scheduling orders for that C under the function's profile (compiler_passes.report,
+  the code behind the compiler_passes tool; the skill's passes.py).
 
 Opened as the reader process does (store.ATTACH_ONLY, no saved-progress sync), so it can run beside the app.
 
@@ -94,10 +97,9 @@ def judge(net, request: dict) -> dict:
     return {"score": max(1, int(diff.score)), "detail": (log or "")[-2000:], **shown}
 
 
-def function_info(net, request: dict) -> dict:
-    """A function's target bytes, header and compiler profile, so a local search needs only its name."""
+def lookup(net, request: dict):
+    """(project, function row) for a request's slug, name and optional address, or an {"error": ...} reply."""
     from .network import Network
-    from .project import compiler_for
     slug = str(request.get("slug") or "")
     try:
         proj = Network._project(net, slug)
@@ -113,11 +115,38 @@ def function_info(net, request: dict) -> dict:
         where = ", ".join(hex(row["vram"] or 0) for row in rows)
         return {"error": f"{slug} has {len(rows)} functions named {request.get('name')!r}"
                          + (f" (at {where}): pass the address" if rows else "")}
-    fn = rows[0]
+    return proj, rows[0]
+
+
+def function_info(net, request: dict) -> dict:
+    """A function's target bytes, header and compiler profile, so a local search needs only its name."""
+    from .project import compiler_for
+    found = lookup(net, request)
+    if isinstance(found, dict):
+        return found
+    proj, fn = found
     profile = compiler_for(net.cfg(proj), fn["vram"], fn)
     return {"name": fn["name"], "vram": fn["vram"], "target": bytes(fn["target"] or b"").hex(), "unit": fn["unit"],
             "header": net._context(proj["id"], fn["unit"])["header"],
             "compiler": {"toolchain": profile.get("toolchain"), "flags": list(profile.get("flags") or [])}}
+
+
+def passes_report(net, request: dict) -> dict:
+    """The compiler's own allocation, preference and scheduling output for a candidate (compiler_passes' code)."""
+    from .app import compiler_passes
+    from .network import NetworkError
+    found = lookup(net, request)
+    if isinstance(found, dict):
+        return found
+    proj, fn = found
+    source = request.get("source")
+    if not isinstance(source, str) or not source.strip():
+        return {"error": "no source"}
+    passes = tuple(request.get("passes") or compiler_passes.SKILL_PASSES)
+    try:
+        return {"text": compiler_passes.report(net, proj, fn, source, passes)}
+    except NetworkError as error:
+        return {"error": str(error)}
 
 
 class Packs:
@@ -169,6 +198,8 @@ def serve(net, lines=sys.stdin, out=sys.stdout) -> None:
                 reply = packs.judge(request) if packs else judge(net, request)
             elif request.get("op") == "function" and not packs:
                 reply = function_info(net, request)
+            elif request.get("op") == "passes" and not packs:
+                reply = passes_report(net, request)
             else:
                 reply = {"error": f"unknown op {request.get('op')!r}"}
         except Exception as error:  # this request only: the verifier releases it for another
