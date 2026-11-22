@@ -1515,6 +1515,16 @@ class Twins:
                                     build.headers)
                                 if alternate == 'match' or not why:
                                     outcome, why = alternate, detail
+                        if outcome == 'miss' and identical_only and why.startswith(donor_build.LENGTH_MISS):
+                            for alternate_settings, alternate_body in donor_build.optimization_trials(settings, replacement):
+                                if job.stop.is_set():
+                                    break
+                                alternate, detail = donor_build.verify(
+                                    self.net, proj, b, other, a, trial_names, alternate_settings, agent, job,
+                                    build.headers, replacement=alternate_body)
+                                if alternate == 'match':
+                                    outcome, why = alternate, f'Alternate donor optimization: {detail}'
+                                    break
                     except (NetworkError, OSError, ValueError) as error:
                         outcome, why = 'skip', str(error)
                 if outcome != 'match' and source is not None and not known_miss and not (job and job.stop.is_set()):

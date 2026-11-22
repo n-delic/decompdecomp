@@ -253,6 +253,34 @@ def replacement_profiles(path, replacement, resident):
     return [primary, {**primary, 'flags': flags}]
 
 
+LENGTH_MISS = 'Compiled donor length differs'
+
+
+def optimization_trials(settings, replacement):
+    """Offer bounded IDO alternatives without altering the compiler or ABI settings."""
+    primary = replacement[1] if replacement and replacement[1] else settings
+    if not primary or primary['toolchain'] not in ('ido-5.3', 'ido-7.1', 'ido-7.1-ncc'):
+        return
+
+    def switch(profile, level):
+        if not profile:
+            return None
+        levels = [flag for flag in profile['flags'] if re.fullmatch(r'-O[0-3]', flag)]
+        if len(levels) != 1:
+            return None
+        return {**profile, 'flags': [level if flag == levels[0] else flag for flag in profile['flags']]}
+
+    for level in ('-O1', '-O0', '-O2'):
+        candidate = switch(primary, level)
+        if not candidate or candidate == primary:
+            continue
+        resident = switch(settings, level) or settings
+        alternative = (replacement[0], candidate) if replacement and replacement[1] else replacement
+        if replacement and candidate in replacement_profiles(*replacement, settings):
+            continue
+        yield resident, alternative
+
+
 def verify(net, proj, fn, other, donor, names, settings, agent, job, cache, *, replacement=None, adapt=None, compiled_literals=False):
     """Compile in private and retain this exact header and profile only with a fresh byte verdict."""
 
@@ -425,6 +453,9 @@ def _try(net, proj, private, fn, source, header, agent, job, *, compiled_literal
                             if recover else [])
                 variants = source_symbol_recovery.variants(source, header, {'symbol_bindings': bindings})
         if not variants:
+            if candidate is not None and len(candidate.code) != fn['size']:
+                length = f"{LENGTH_MISS}: {len(candidate.code)} bytes compiled, {fn['size']} bytes expected."
+                return False, ' '.join([length, *problems])
             return False, '; '.join(problems) or 'Donor source did not reproduce the original bytes.'
         family, source, header = variants[0]
         if family == 'overlay-local-functions':

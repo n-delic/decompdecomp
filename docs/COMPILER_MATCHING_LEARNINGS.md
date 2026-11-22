@@ -1554,6 +1554,21 @@ original cartridge. Broader exploratory trials
 with other IDO optimization levels saved another ten exact matches.
 Those levels did not follow from this resident-profile rule.
 
+### Retry IDO optimization after a donor body changes size
+
+An isolated N64 test used imported objects with identical raw function bytes.
+Under the declared IDO 7.1 `-O2 -G 0 -mips2 -32 -non_shared
+-Xcpluscomm -Wab,-r4300_mul -DNON_MATCHING` profile, a representative
+function emitted 132 bytes for a 140-byte target. Changing only optimization
+to `-O1` recovered exact code. A second example emitted 80 bytes for a
+128-byte target and matched with `-O0`. Replacement sources retain their
+original language compiler during these trials.
+
+An automatic length-triggered replay reproduced all ten previously
+exploratory successes. A 110-pair pass then saved eight additional matches
+through the same retry. All eight recompiled and passed the exact destination
+judge after reopening.
+
 ### IDO 7.1 donor translation units with unrelated redeclarations
 
 A controlled IDO 7.1 `-O2 -G 0` compile rejects two incompatible declarations

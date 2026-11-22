@@ -490,8 +490,8 @@ def test_imported_donor_with_different_literal_is_verified_in_the_rom(built, tmp
     assert saved['target'] == target
 
 
-@pytest.mark.parametrize('literal_change', [False, True])
-def test_similar_imported_object_rebuilds_with_the_destination_compiler_profile(built, tmp_path, monkeypatch, literal_change):  # noqa: F811
+@pytest.mark.parametrize('case', ['profile', 'literal', 'optimization'])
+def test_similar_imported_object_rebuilds_with_the_destination_compiler_profile(built, tmp_path, monkeypatch, case):  # noqa: F811
     from decompnet import similarity, toolchains
     from decompnet.app.twins import Job
     from decompnet.compiler import compile_source
@@ -511,6 +511,9 @@ def test_similar_imported_object_rebuilds_with_the_destination_compiler_profile(
     donor = net._function(fn['name'], other['slug'])
     profile = {'toolchain': 'ido-7.1', 'flags': ['-O2', '-G', '0', '-non_shared', '-mips2']}
     donor_profile = profile | {'flags': [*profile['flags'], '-DEXTRA_WRITE=1']}
+    if case == 'optimization':
+        donor_profile = profile
+        profile = profile | {'flags': ['-O0', *profile['flags'][1:]]}
     source = """
 void donor(volatile int *out, int n) {
     out[0] = n;
@@ -527,14 +530,18 @@ void donor(volatile int *out, int n) {
 """
     root = tmp_path / 'imported'
     root.mkdir()
-    base = compile_source(compiler_config(root, {'compiler': donor_profile}), '', source)
+    object_profile = profile if case == 'optimization' else donor_profile
+    base = compile_source(compiler_config(root, {'compiler': object_profile}), '', source)
     dest_source = source.replace('donor', fn['name'])
     expected = compile_source(compiler_config(root, {'compiler': profile}), '', dest_source)
     assert base.ok and expected.ok, (base.log, expected.log)
     left = extract_function(base.obj, 'donor').code
     right = extract_function(expected.obj, fn['name']).code
-    assert len(left) != len(right)
-    assert similarity.score(similarity.mips_mnemonics(left), similarity.mips_mnemonics(right)) >= .84
+    if case == 'optimization':
+        assert left == right
+    else:
+        assert len(left) != len(right)
+        assert similarity.score(similarity.mips_mnemonics(left), similarity.mips_mnemonics(right)) >= .84
 
     with net.project_store(proj['id']).tx() as db:
         db.execute('UPDATE projects SET config=? WHERE id=?',
@@ -558,11 +565,11 @@ void donor(volatile int *out, int n) {
     (root / 'unit.c').write_text(source.replace('n + 8', 'n ^ 9'))
     assert net.twins._fork_to_rom(agent, proj, other, {}, net.twins.prints(proj), job) == 0
     assert net._function(fn['name'], slug)['status'] == 'open'
-    (root / 'unit.c').write_text(source.replace('n + 8', 'n + 9') if literal_change else source)
+    (root / 'unit.c').write_text(source.replace('n + 8', 'n + 9') if case == 'literal' else source)
     assert net.twins._fork_to_rom(agent, proj, other, {}, net.twins.prints(proj), job) == 1
     saved = net._function(fn['name'], slug)
     assert saved['status'] == 'matched' and saved['target'] == right
     assert 'n + 8' in saved['matched_source']
-    assert net.project_store(proj['id']).one(
-        "SELECT 1 FROM cross_game_attempts WHERE function_id=? AND outcome='match' AND reason LIKE 'Similar imported source:%'",
-        fn['id'])
+    attempt = net.project_store(proj['id']).one(
+        "SELECT reason FROM cross_game_attempts WHERE function_id=? AND outcome='match'", fn['id'])
+    assert attempt['reason'].startswith('Similar imported source:') == (case != 'optimization')
