@@ -9,6 +9,12 @@ never replaced by a worse one. Check again, and the check before helpers start a
 function's best once with its own compiler (as a compiler range change does, engine/compilers.py), then record the
 version in the project's config.
 
+Version 3 (a branch to the instruction its counterpart's target pairs with costs nothing, scoring._Alignment) goes the
+other way: a score only falls, since a branch is charged less, never more. A stale best then scores higher than it
+should, so a source that is really a little worse than the best, but beats the stale number, could be saved before the
+rescore reaches the project; Check again, and the check before helpers start after the update, rescore each open best
+once, so users restart the app and run Check again (it takes minutes) to bring saved bests to the new scale at once.
+
 Fork projects aren't touched: their scores are objdiff's match percentage, not these penalties.
 """
 from __future__ import annotations

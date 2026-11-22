@@ -28,7 +28,10 @@ PENALTY_INSERTION = 100
 PENALTY_DELETION = 100
 # Bumped whenever the penalties change, so scores saved under older ones aren't compared with new ones as equals
 # (functions.score_version; network.Network._refresh_stale_best rescores a stale best before it can block one).
-SCORE_VERSION = 2
+# 3: a branch whose target is the instruction its counterpart's target aligns with costs nothing (_aligned_branch).
+SCORE_VERSION = 3
+# Off, the score is version 2's: tests and the measurement of the change read both from the same pair of objects.
+ALIGN_BRANCH_TARGETS = True
 
 _CS = arch.capstone_modes()  # (arch, big-endian) -> capstone's (architecture, mode), from arch/
 
@@ -233,6 +236,72 @@ def _changes_meaning(a: Insn, ta: list[str], b: Insn, tb: list[str], stack=_STAC
             _NUM.match(t) for t in (va - vb) + (vb - va)):
         return False  # a spill slot moved: the frame's layout, not the program's
     return True
+
+
+# a relative branch's last operand: ARM's `#0x20`, MIPS and PowerPC's `0x20`, a bare number, x86's `.L20` (disassemble)
+_TARGET = re.compile(r"(?:^|[\s,])(?P<token>#?(?:\.L(?P<label>[0-9a-fA-F]+)|(?P<number>0x[0-9a-fA-F]+|\d+)))$")
+_SELF_TARGET = re.compile(r"(?P<name>.+?)(?:(?P<sign>[+-])(?P<offset>0x[0-9a-fA-F]+|\d+))?")
+_TARGET_MARK = ".Lbranch"
+
+
+def _branch_target(ins: Insn, own: str = "") -> tuple[int, int] | None:
+    """(the offset a position-relative branch goes to, where its operand starts in `ins.operands`), or None: not a
+    branch, or its target is a symbol (a call, a tail call), which names another function and is compared as it is.
+    A jump the assembler relocated against the function's own symbol (`j f+0x50c`, x86's `<f+0x1c>`) goes to an offset
+    in it as well: `own` is the function's name."""
+    mnemonic = ins.mnemonic.lower()
+    if not _BRANCH.match(mnemonic) or _NOT_BRANCH.match(mnemonic):
+        return None
+    operands = ins.operands.strip()
+    found = _TARGET.search(operands)
+    if found is not None:
+        return (int(found["label"], 16) if found["label"] else int(found["number"], 0)), found.start("token")
+    last = re.split(r"[\s,]+", operands)[-1] if own else ""
+    itself = _SELF_TARGET.fullmatch(last.strip("<>")) if last else None
+    if itself is None or itself["name"] != own:
+        return None
+    offset = int(itself["offset"], 0) if itself["offset"] else 0
+    return (-offset if itself["sign"] == "-" else offset), operands.rindex(last)
+
+
+class _Alignment:
+    """Where each target instruction's counterpart sits in the candidate: the pairs the alignment shows as rows, equal
+    or different (an inserted or deleted instruction has none).
+
+    One instruction added or removed shifts every later branch's offset, so on a large function dozens of rows differed
+    only in a branch's number and the score swung with the function's length instead of with its flow: a candidate
+    that fixed a whole loop scored 2,175 against a saved best of 340 because one instruction elsewhere moved every later
+    branch. A branch whose target is the instruction its counterpart's target pairs with goes the same place, whatever
+    the offsets say. Only the comparison of a branch with its counterpart changes: a match is still byte-identical."""
+
+    def __init__(self, t_ins, c_ins, alignment, names=("", "")):
+        self.names = names
+        self.t_at = self._offsets(t_ins)
+        self.c_at = self._offsets(c_ins)
+        self.pair = {}
+        for op, a0, a1, b0, b1 in alignment:
+            if op in ("equal", "replace"):
+                self.pair.update(zip(range(a0, a1), range(b0, b1)))
+        self.pair[len(t_ins)] = len(c_ins)  # a branch to the end of the function
+
+    @staticmethod
+    def _offsets(insns):
+        at = {ins.offset: index for index, ins in enumerate(insns)}
+        if insns:
+            at[insns[-1].offset + max(1, len(insns[-1].encoding))] = len(insns)
+        return at
+
+    def same_flow(self, a: Insn, b: Insn):
+        """(a, b) with both targets replaced by one mark when they go to counterparts, else None."""
+        ta, tb = _branch_target(a, self.names[0]), _branch_target(b, self.names[1])
+        if ta is None or tb is None:
+            return None
+        ia, ib = self.t_at.get(ta[0]), self.c_at.get(tb[0])
+        if ia is None or ib is None or self.pair.get(ia) != ib:
+            return None
+        return tuple(Insn(ins.offset, ins.mnemonic, f"{ins.operands[:start]}{_TARGET_MARK}",
+                          f"{ins.mnemonic} {ins.operands[:start]}{_TARGET_MARK}".strip(), ins.encoding)
+                     for ins, (_, start) in ((a, ta), (b, tb)))
 
 
 @dataclass
@@ -500,10 +569,12 @@ def _diff(target: FunctionObj, candidate: FunctionObj, *, details=True) -> DiffR
     unmatched_t, unmatched_c = t_keys - c_keys, c_keys - t_keys
     missing: Counter[str] = Counter()
     extra: Counter[str] = Counter()
+    flow = _Alignment(t_ins, c_ins, alignment, (target.name, candidate.name)) if ALIGN_BRANCH_TARGETS else None
     for op, a0, a1, b0, b1 in alignment:
         if op == "equal":
             for a, b in zip(t_ins[a0:a1], c_ins[b0:b1]):
-                pen, mark = _classify(a, b, target.arch)
+                same = flow.same_flow(a, b) if flow is not None and a.text != b.text else None
+                pen, mark = _classify(*same, target.arch) if same else _classify(a, b, target.arch)
                 if pen == PENALTY_MEANING:
                     ka, kb = _meaning_key(a), _meaning_key(b)
                     if unmatched_t[ka] > 0 or unmatched_c[kb] > 0:
