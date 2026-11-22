@@ -55,7 +55,10 @@ def test_debug_twin_only_for_gcc_that_has_no_debug_flag_yet():
     cmd = ['gcc', '-O2', '-c', '{src}', '-o', '{obj}']
     assert source_lines.debug_twin_cmd(cmd, 'gcc-2.7.2') == ['gcc', '-O2', '-c', '-g', '{src}', '-o', '{obj}']
     assert source_lines.debug_twin_cmd([*cmd[:2], '-g', *cmd[2:]], 'gcc-2.7.2') is None
-    assert source_lines.debug_twin_cmd(cmd, 'ido-7.1') is None
+    assert source_lines.debug_twin_cmd(cmd, 'ido-7.1') is None  # IDO's objects carry lines already; its -g* change the code
+    mw = ['wibo', 'mwccps2.exe', '-c', '-O2', '{src}', '-o', '{obj}']
+    assert source_lines.debug_twin_cmd(mw, 'mwcps2-2.3.3') == ['wibo', 'mwccps2.exe', '-c', '-O2', '-sym', 'on', '{src}', '-o', '{obj}']
+    assert source_lines.debug_twin_cmd([*mw[:4], '-sym', 'on', *mw[4:]], 'mwcps2-2.3.3') is None
     assert source_lines.debug_twin_cmd(['gcc', '-c'], 'gcc-2.7.2') is None
 
 
@@ -94,3 +97,27 @@ def test_line_object_compiles_the_twin_with_the_project_flags_plus_g_and_keeps_f
     monkeypatch.setattr(source_lines, 'same_code', lambda a, b, name: False)
     monkeypatch.setattr(network, 'compile_source', fake_compile)
     assert network.Network.line_object(None, {}, 'h', 'c', {'name': 'f'}, scored) is None  # code differs: no map
+
+
+def test_ido_objects_already_carry_the_lines_the_editor_and_permuter_use():
+    """Real IDO (skips without it): plain -O2 has an ECOFF line table, and -g3 would change the code (so no twin)."""
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
+    import pytest
+
+    from decompnet import toolchains
+    if not toolchains.installed('ido-7.1'):
+        pytest.skip('IDO 7.1 is not installed')
+    cc = toolchains.path('ido-7.1') / 'cc'
+    with tempfile.TemporaryDirectory() as work:
+        Path(work, 'func.c').write_text('int g(int);\nint f(int a, int b) {\n    int c = a * 3;\n    if (b > c) {\n        c = g(b) + a;\n    }\n    return c + b * 5;\n}\n')
+        out = {}
+        for flag in ('', '-g3'):
+            args = [str(cc), '-c', '-O2', '-mips2', '-G', '0', '-non_shared', *([flag] if flag else []), 'func.c', '-o', f'f{flag}.o']
+            if subprocess.run(args, cwd=work, capture_output=True).returncode:
+                pytest.skip('IDO does not run here')
+            out[flag] = Path(work, f'f{flag}.o').read_bytes()
+    assert {line for _, _, line in source_lines.locations(out[''], 'f')} >= {3, 4, 5, 7}
+    assert not source_lines.same_code(out[''], out['-g3'], 'f')
