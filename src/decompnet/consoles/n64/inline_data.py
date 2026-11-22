@@ -42,6 +42,38 @@ def spans(image):
         start, end = match.span(1)
         if start % 4 == 0 and b'\xff\xff\xff\xff' in match[1]:
             yield start, end
+    # Two all-one alignment words can also precede a scheduled address load
+    # and stack frame. Their unaligned store decoding is not executable code.
+    from ...arch.mips import is_frame
+
+    for match in re.finditer(rb'\x03\xe0\x00\x08....(\xff{8})', image, re.S):
+        start, end = match.span(1)
+        if start % 4 or end + 12 > len(image):
+            continue
+        lui, load, frame = struct.unpack_from('>3I', image, end)
+        register = (lui >> 16) & 31
+        if (lui >> 26 == 15 and register and load >> 26 == 35
+                and (load >> 21) & 31 == register and (load >> 16) & 31 == register
+                and is_frame(frame)):
+            yield start, end
+    # The linker uses repeated marker records between executable blocks.
+    # A closed return and the exact record layout bound these bytes.
+    marker = rb'\x03\xe0\x00\x08....((?:\xff\xff\xff\xff)?(?:\x12\x34\x56\x78\x00{12}){1,8})'
+    for match in re.finditer(marker, image, re.S):
+        if match.start(1) % 4 == 0:
+            yield match.span(1)
+    # Verified halfword tables, bounded by the loader's resident image.
+    tables = (
+        ('0000000200050007000a000c000f0011', 16384,
+         '2b4b0e420eda178e6dd07b52e107f1ba73fed47a2ba607fa8f9705fdbfc99aed'),
+        ('017c0197000001000000000e001c002a', 524,
+         '07250f6a5d08c4d43e1cf09803c23870b6e99792cf53f033a798054dc076a5bf'),
+    )
+    for prefix, size, digest in tables:
+        for match in re.finditer(re.escape(bytes.fromhex(prefix)), image):
+            start = match.start()
+            if start % 4 == 0 and hashlib.sha256(image[start:start+size]).hexdigest() == digest:
+                yield start, start+size
     for match in re.finditer(re.escape(_SINE[:24]), image):
         start = match.start()
         if start % 4 == 0 and image[start:start+len(_SINE)] == _SINE:
