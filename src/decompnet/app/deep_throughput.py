@@ -34,6 +34,12 @@ def lanes(maximum):
 LIVE_COMPILER_COUNTERS = ('executing', 'waiting_search', 'waiting_background', 'waiting_shared')
 LIVE_WORKER_COUNTERS = (*LIVE_COMPILER_COUNTERS, 'proposal_workers')
 RANK_COUNTERS = ('rank_literals_cpu_ns', 'rank_batches', 'rank_candidates')
+# How many compiler runs each judged candidate costs. A compile group is the queued candidates of one function that
+# a worker takes together (up to batch_compile.MAX); batch_* say what became of them, ahead_* what became of the
+# speculative candidates a lane's lookahead window compiled before they were wanted.
+PIPELINE_COUNTERS = ('compile_groups', 'compile_group_tickets', 'batch_runs', 'batched_candidates', 'batch_alone',
+                     'batch_alone_local', 'batch_alone_missing', 'batch_ineligible', 'batch_refused', 'batch_failed',
+                     'ahead_submitted', 'ahead_used', 'ahead_cancelled', 'ahead_wasted')
 
 
 class Metrics:
@@ -104,6 +110,7 @@ class Metrics:
                 'compile_slots':slots,
                 'rank_literals_cpu_seconds':values.get('rank_literals_cpu_ns', 0) / 1e9,
                 'rank_batches':values.get('rank_batches', 0),
+                **{name:values.get(name, 0) for name in PIPELINE_COUNTERS},
                 'rank_candidates':values.get('rank_candidates', 0),
                 'maximum_throughput':getattr(self,'maximum',False),
                 'candidates_per_second':recent.get('considered',0)/rate_seconds,

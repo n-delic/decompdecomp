@@ -130,6 +130,8 @@ class Pool:
                             break
                         if other.future.set_running_or_notify_cancel():
                             group.append(other)
+                compile_timing.add('compile_groups', 1)
+                compile_timing.add('compile_group_tickets', len(group))
                 if len(group) > 1:
                     self._run_batch(group)
                 else:
@@ -228,6 +230,7 @@ def chunk(search, agent, proj, fn, sources, fork):
                     ticket.batch_source = source
                 tickets[source] = ticket
         with pool.window(list(tickets.values()), check):
+            compile_timing.add('ahead_submitted', len(tickets))
             for ticket in tickets.values():pool.submit(ticket)
             search._ahead = tickets
             try:yield
@@ -253,11 +256,19 @@ def _all_local(group):
 
 
 def discard(search):
+    used = cancelled = wasted = 0
     for ticket in getattr(search, '_ahead', {}).values():
+        if ticket.counted:used += 1  # (the search took its result)
         if not ticket.counted and not ticket.cancel():
             search.tested += 1
             ticket.counted = True
-        else:ticket.cancel()
+            wasted += 1  # compiled or compiling, and no longer wanted
+        else:
+            if not ticket.counted:cancelled += 1  # still queued: never compiled
+            ticket.cancel()
+    compile_timing.add('ahead_used', used)
+    compile_timing.add('ahead_cancelled', cancelled)
+    compile_timing.add('ahead_wasted', wasted)
     search._ahead = {}
 
 

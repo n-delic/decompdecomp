@@ -171,3 +171,18 @@ transactions a trial: costs, the CREATE TABLE and outcomes). Both now queue thei
 queue to the table, and the tables are created once per engine. Next: difflib's `find_longest_match` in
 `paired_local_repairs.edit` and `layout_frontiers.project` (3.7%), and `repair_preflight.invalid_call` in the
 proposal workers (3.8% of theirs).
+
+## Compiler runs per judged candidate
+
+A 29-lane pass made 220-290 compiler runs a second but judged only 55-62 candidates a second, about four runs a
+candidate. The throughput line (and `/api/permuter/pass`) now says where they go: `compile_groups` and
+`compile_group_tickets` (candidates a worker took into one group; up to eight of a function share one run of the
+compiler's three programs), `batch_runs`, `batched_candidates`, `batch_alone` (candidates that compiled again alone
+after their batch), `batch_alone_local` (those that use file-local data: strings, constants, jump tables, whose place
+differs in a file of their own), `batch_ineligible` (a preprocessor line or `__LINE__` in the definition),
+`batch_refused`, `batch_failed`, and for the lookahead window `ahead_submitted`, `ahead_used`, `ahead_wasted`
+(compiled, then dropped because a better parent arrived) and `ahead_cancelled` (dropped while still queued).
+
+A controlled run of `compile_batch` over the standalone-compilable functions of a small C library (KMC GCC 2.7.2, eight
+variants each): of 11 functions, 4 batched completely and 7 (64%) were set aside for file-local data. A batch that
+holds such candidates costs its own run and then one run each, so it can cost more than not batching.
