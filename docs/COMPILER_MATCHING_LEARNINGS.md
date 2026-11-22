@@ -14500,3 +14500,7 @@ the inner assignment as well scored 11,265 with all jump-table
 relocations still resolved. The library-generated source
 reproduced the exact linked score. Synthetic tests cover a missing
 definition and reads of the default before the new assignment sites.
+
+
+
+In one N64 list-append function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a draft incremented an uninitialized index and then reloaded the updated count. The target loaded the list base unconditionally, read the old count, stored its increment, and indexed with the old count. Recovering that target-proven sequence reproduced the linked target exactly (score 340 to 0). The rule requires the complete target shape, matching field offsets and an uninitialized local; it intentionally reconstructs behavior where the draft was undefined. Evidence: one saved example and synthetic generation and routing tests.
