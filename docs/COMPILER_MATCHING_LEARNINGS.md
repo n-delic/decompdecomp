@@ -18138,3 +18138,47 @@ Other things this function taught that are not families yet: a clamp written `x 
 temp-then-copy shape) rather than an if/else; masking a parameter in place and weighting it with a `do { } while (0)` to put it
 between two loop variables in the allocation order (the priorities were read from `-dl -dg`: refs, live length); a `u8`
 local for a division result so the shift is `srl` and the mask lands at the call.
+
+### KMC GCC 2.7.2: a record field read as a struct member, the loop over the global it was stored to, and the header order: 85 -> 0
+
+Compiler and flags: `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`. One private N64 map-table setup function (160
+instructions, a `do` search over 32-byte records, then two walks of the 8-byte entries the match stored to a global) sat at
+85 for a dozen agents: every instruction right, 17 register rows. In the header block the target put the record's size in
+`$v0` and the entry count in `$v1` (the saved best had them swapped), loaded the entry pointer into `$a0` and copied it to
+`$a2` for the first walk (a `move $a2,$a0` after the count test), and kept the walk's flag temporary in `$a0`.
+
+Edit list (the app's judge; `-` = unchanged), from the saved best at 85, the match at 0:
+- record size read as a member, `((Field_u16 *) (((u8 *) (&D_800C02D8)) + offset))->v`, for every access of that symbol
+  instead of `*((u16 *) ...)`: 455 alone (`field_struct_view_printed`, the one-member struct typedef)
+- the first walk reads the global the entries were stored to into a loop-scoped local, tests it first and forms the entry
+  pointer through the one-argument cast helper the source already had for the second walk
+  (`MapEntry *base = D_800BFF04; if (base == NULL) break; entry = inline_fn((i * 8) + (u8 *) base);`): 85 -> 85 alone,
+  50 with the member read (`loop_global_base`)
+- the header's statements in the order entry pointer, record address store, pointer store, count, size, size store
+  (an existing family finds it from the 50 state): 50 -> 0
+Pairs: member read + reorder 420, reorder + loop 400, reorder alone 820. A hand version written as `table[idx].field` (a
+struct array with a 32-byte stride instead of byte offsets) also scored 0; it is the same thing as the member read. No
+scaffolding: no dead code, no phantom locals.
+
+Why (hypotheses, `cc1 -dl -dg -dS` dumps, not confirmed in the compiler source beyond the first): the member form's `MEM`
+is in a struct, so the first scheduler may move its load above a store to a scalar global (already the explanation
+behind `field_struct_view`). The size/count swap is `local-alloc`'s order: both are block-local halfwords and the one with
+the larger `floor_log2(refs) * refs / length` takes `$v0` first; in the block the count's priority was 12/5 against the
+size's 8/4, and the member read and the header order made the count's range one instruction longer (the target's order).
+The walk's pointer copy exists only when the loop reads the global (a load the loop pass hoists, which the second cse turns
+into a copy of the stored register) and the register left for it is `$a2`.
+
+Failed experiments, for the record (all on the saved best at 85, none changed the register rows or made them worse):
+every permutation of the eight header statements (5,040; a few swap the two halfword registers but change the store
+order, 240 at best), declaration order (400 orders), the types of count, size and counter, `volatile`, a pointer copy
+before the loop (490: the copy is coalesced into the load's register, so the walk loses its `move`), the same copy with the
+original reassigned (cse keeps it, but the allocator ties the two again), an explicit `if (count)` guard around the loop (555,
+two compares), a `do { } while` form (810), loop-bound copies and the global as the bound (all 85), a second load of the
+count (regs right, one load too many: 800), the flag sweep (`-fno-strength-reduce`, `-fno-schedule-insns`, `-O1`, `-O3`,
+...: none better) and the other gcc 2.x toolchains.
+
+decomp-repair `loop_global_base` (new) and the widened `field_struct_view_printed` regex (the `u8` byte cast, a symbol's
+`(&sym)` as the base, a variable offset, a bare `((&sym) + offset)`) propose the first two; both are wired through
+`draft_repairs`, so drafts and the Deep Permuter's neutral plateau pass (which keeps the 85 -> 85 step) run them. One
+function's evidence: the chain best -> `loop_global_base` (85) -> `field_struct_view_printed` (50) -> the existing families
+(0) was run from the saved best with the library calls alone.
