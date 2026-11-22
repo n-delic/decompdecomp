@@ -600,6 +600,10 @@ right while the function still matches makes the C say what the console does.
 
 ## Port compiler compatibility and recompiler failures
 
+Recovered USO and UV analysis banks use bank-relative offsets, not fixed runtime addresses. Recompile and the
+compatibility build leave their functions and saved C out until the bank's runtime load address and relocations
+can be associated with them. The interpreter remains available for code the game loads into memory.
+
 The WebAssembly compiler can reject a redundant scalar `extern int g;` when the shared header already declares
 `g` as `volatile int` (including a typedef of it). The generated build may retry without that redundant line only
 when clang reports the same canonical scalar type with additional shared `const`/`volatile` qualifiers. It keeps

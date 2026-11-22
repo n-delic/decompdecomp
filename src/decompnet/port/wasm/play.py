@@ -210,11 +210,30 @@ def library_names(net, slug: str) -> dict[str, str]:
     return out
 
 
+def relative_bank_code(net, slug: str, log=print) -> set[str]:
+    """Do not compile analysis-only functions as if their bank-relative offsets were runtime addresses."""
+    from ...app.saves import _source_file
+
+    with net.progress.view():
+        proj = net._project(slug)
+    recompiler = net.console(proj).recompiler
+    classify = getattr(recompiler, "banked_functions", None)
+    if classify is None:
+        return set()
+    rows = net.project_store(proj["id"]).all(
+        "SELECT name, rom_offset FROM functions WHERE project_id=? AND rom_offset IS NOT NULL", proj["id"])
+    functions = [{"name": r["name"], "rom": r["rom_offset"]} for r in rows]
+    names = {_source_file(f["name"]) for f in classify(net.cfg(proj).get("segments") or [], functions)}
+    if names:
+        log(f"leaving out C for {len(names)} relative overlay-bank functions until their runtime addresses are known")
+    return names
+
+
 def inputs(net, slug: str, log=print) -> dict:
     """What the build takes from the project besides its save: the library the host provides (`leave_out`), library
     code built from ultralib's C (`library_c`), library code's own names (`library_names`), and the recompiled C for
     functions with no C yet (`recomp`)."""
-    return {"leave_out": library(net, slug, log) | unverified(net, slug, log), "library_c": library_c(net, slug),
+    return {"leave_out": library(net, slug, log) | unverified(net, slug, log) | relative_bank_code(net, slug, log), "library_c": library_c(net, slug),
             "library_names": library_names(net, slug), "recomp": recompiled(net, slug, log),
             "function_headers": function_headers(net, slug)}
 

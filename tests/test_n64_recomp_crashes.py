@@ -230,3 +230,38 @@ def test_c_check_only_counts_bodies_in_successful_files(tmp_path, monkeypatch):
     monkeypatch.setattr(recomp.subprocess, "run", compile_file)
     _, _, _, passed = recomp.check(tmp_path, tmp_path)
     assert passed == {"usable"}
+
+
+def test_relative_analysis_banks_are_not_recompiled_as_runtime_code(tmp_path, monkeypatch):
+    from tests.test_n64_recomp import homemade_rom
+
+    image = tmp_path / 'game.z64'
+    image.write_bytes(homemade_rom() + bytes(0x100))
+    segments = [*SEGMENTS, {'name': 'donor_uso_123', 'rom_start': 0x2000, 'rom_end': 0x2100, 'vram': 0}]
+    functions = [*SPLIT, {'name': 'banked', 'vram': 0x20, 'rom': 0x2020, 'size': 0x10}]
+    captured = {}
+
+    def translate(program, folder, rom, entry, refused, renamed, stop, log):
+        captured['symbols'] = (folder / 'syms.toml').read_text()
+        (folder / 'funcs').mkdir(exist_ok=True)
+
+    monkeypatch.setattr(recomp, '_translate', translate)
+    monkeypatch.setattr(recomp, 'check', lambda folder, include, stop: ([], set(), [], {'listed'}))
+    summary = recomp.recompile(Path('tool'), image, segments, functions, tmp_path / 'out', log=lambda *args: None)
+    assert 'donor_uso_123' not in captured['symbols'] and 'banked' not in captured['symbols']
+    assert 'banked' in summary['unusable']
+    assert recomp.banked_functions(segments, functions) == [functions[-1]]
+    assert recomp.analysis_banks([{'name': 'ordinary', 'vram': 0}]) == []
+
+
+def test_previous_recompile_with_analysis_banks_is_rebuilt_on_demand(tmp_path):
+    import json
+
+    out = recomp.folder(tmp_path)
+    out.mkdir(parents=True)
+    (out / 'recomp.json').write_text(json.dumps({'succeeded': 1}))
+    symbols = out / 'syms.toml'
+    symbols.write_text('[[section]]\nname = "donor_uso_123"\nvram = 0\n')
+    assert recomp.load(tmp_path) is None
+    symbols.write_text('[[section]]\nname = "main"\nvram = 0x80000400\n')
+    assert recomp.load(tmp_path) == {'succeeded': 1}
