@@ -16174,3 +16174,8 @@ A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` all
 ### KMC GCC 2.7.2 stack vector output reused across calls
 
 A saved MIPS wrapper built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` called the same callee twice with one stack output. The original draft subtracted each component from itself after the second call. Saving each component before that call changed the linked score from 972 to a byte match with the original frame extent. The rule requires two calls using the same output slot, three preserved float loads, and subtraction against three matching reloads. This is evidence from one saved function.
+
+
+### KMC GCC 2.7.2 byte loop comparison key
+
+A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` scanned records and compared a byte with a staged address value. The generated draft read a word and initialized the loop offset before staging the address. Correcting the load width reduced the linked difference score from 260 to 60; staging the address before the offset produced an exact match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the measured instruction order, 32-bit ABI and resolved table address.
