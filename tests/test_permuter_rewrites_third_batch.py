@@ -140,3 +140,16 @@ void f(void) {
     labels = {}
     out = draft_repairs.variants(source, 'f', 'mips', '', FLAGS, labels, limit=None)
     assert any('g(D_A[var_s2]);' in text and labels.get(text) == 'pointer_walk_index' for text in out)
+
+
+def test_braced_early_return_reaches_guard_inversion():
+    source = '''s32 f(void *p) {
+    if (p == NULL) {
+        return 0;
+    }
+    M2C_FIELD(p, s32 *, 8) = 3;
+    return 1;
+}'''
+    labels = {}
+    texts = draft_repairs.variants(source, 'f', 'mips', '', FLAGS, labels, limit=None, header=HEADER)
+    assert any(labels.get(text) == 'guard_inversion' and 'if (p != NULL)' in text for text in texts)

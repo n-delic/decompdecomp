@@ -13806,3 +13806,5 @@ entry pointer to `$v0` (30-500).
 
 Added to the permuter: `goto_tail_order`, `switch_variable_split`, `prelude_pointer_inline` (decomp-repair 0.5.331); each
 reproduces its step from the saved source (3685 -> 3015, 2245 -> 1285 -> 1245, 1245 -> 1140).
+
+In one N64 function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, inverting a braced null-return guard around a field store reproduced the linked target exactly (score 400 to 0). The existing guard inversion had missed the draft because it treated the guard's closing brace as the function end. Evidence: one saved example plus library and app generation regressions.
