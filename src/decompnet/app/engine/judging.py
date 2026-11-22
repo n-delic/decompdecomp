@@ -617,6 +617,8 @@ class JudgeMixin:
         n, streak, after = progress["compiles"], progress["no_better"], progress["after"]
         if n and streak >= after:
             return None  # compile_and_diff said to move on
+        if progress.get("handoff"):
+            return None  # the hand-off clock ran out on a near-match (network.HANDOFF_MINUTES)
         pushed = self.project_store(fn['project_id']).one("SELECT COUNT(*) AS n FROM events WHERE agent_id=? AND kind='release_pushed' AND "
                                 "detail=? AND created_at >= ?", agent.id, fn["name"], progress["claimed_at"])["n"]
         if n and pushed:

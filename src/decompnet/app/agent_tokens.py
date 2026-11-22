@@ -188,6 +188,9 @@ def next_action(net, agent, fn, *, rows=None, source=None):
     state = net.stall_status(fn['id'],agent.id,project_id=fn['project_id'])
     if state['compiles'] and state['no_better'] >= state['after']:
         return 'Next: move-on budget exhausted. Release with concise findings, then claim another function; no further tuning is recommended.'
+    if state.get('handoff'):
+        return ('Next: hand-off clock ran out on this near-match. add_note a hand-off (edits tried with scores, rows left, '
+                'next idea), release with move_on=true, then claim another function.')
     if rows is None:
         if not state['compiles']:
             return 'Next: compile the current candidate to obtain a measured mismatch.'
