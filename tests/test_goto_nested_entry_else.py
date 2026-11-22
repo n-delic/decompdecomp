@@ -44,3 +44,11 @@ def test_the_family_is_offered_through_draft_repairs_with_the_shape_of_the_other
     assert moved, sorted(set(labels.values()))
     assert 'goto block_3' not in moved[0] and 'else' in moved[0]
     assert all(isinstance(t, str) for t in texts)
+
+
+def test_the_family_is_in_the_local_lane_pool_and_the_deep_pass_children_offer_it():
+    from decompnet.app import local_experiments
+    assert 'goto_nested_entry_else' in local_experiments.FAMILIES
+    labels = {}  # deep_permuter.children asks draft_repairs.variants exactly like this
+    texts = draft_repairs.variants(seeds.M2C_MACROS + SOURCE, 'f', 'mips', '', FLAGS, labels, limit=None, header=HEADER)
+    assert 'goto_nested_entry_else' in {labels.get(t) for t in texts}
