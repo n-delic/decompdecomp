@@ -1,5 +1,14 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: share the update before continue
+
+In a private N64 linked-list draft, branches copied the saved next pointer
+into the current pointer before continuing. The same copy ended the loop.
+Routing both branches to that final copy improved the linked score from
+4,751 to 4,721 with `-G0 -mips3 -mgp32 -mfp32 -O2`. The draft remains
+unmatched. The repair offers the shared copy as a candidate and preserves
+continues belonging to nested loops.
+
 ### KMC GCC 2.7.2: reject random predicates with uninitialized reads
 
 A native conditional-block mutation duplicated accounting statements
