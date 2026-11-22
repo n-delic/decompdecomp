@@ -2193,3 +2193,26 @@ def test_loop_delta_snapshot_routes_to_kmc(monkeypatch):
     assert 'loop_delta_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'loop_delta_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
     assert 'loop_delta_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-7.1', rows, ''))
+
+
+def test_masked_byte_index_can_reuse_copy_in_table_lookups():
+    source = '''s32 f(u8 arg) {
+        s32 index;
+        s32 copy;
+        u8 result;
+        result = 0xFF;
+        if ((arg & 0xFF) != 0xFF) {
+            index = arg & 7;
+            copy = index & 0xFF;
+            result = table[copy];
+            if (flag) result = other[index & 0xFF];
+        }
+        return result & 0xFF;
+    }'''
+    rows = [(' ', 'nop', 'nop')] * 20 + [
+        ('>', '', 'move $a1, $a0'),
+        ('r', 'andi $a0, $a0, 7', 'andi $a0, $a1, 7'),
+        (' ', 'andi $v0, $a1, 255', 'andi $v0, $a0, 255')]
+    candidates = dict(proposals(source, 'f', '', 'mips', KMC, rows, ''))
+    assert 'table[(index & 0xFF)]' in candidates['measured_masked_byte_index_reuse']
+    assert 'measured_masked_byte_index_reuse' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))

@@ -15960,3 +15960,7 @@ A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` sel
 ### KMC GCC 2.7.2 invariant loop delta
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` loaded a delta field before an early guard and reused it while updating a bounded array. Its recovered draft loaded the delta on every iteration. Staging the field before the guard changed the linked difference score from 235 to an exact match; staging it after the guard scored 220. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the measured instruction and source shapes and checks that the array writes cannot overlap the staged field.
+
+### KMC GCC 2.7.2 masked byte table index
+
+A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` selected between three byte tables using a masked byte index. Narrowing the index reduced the linked difference score from 220 to 15, but the draft's extra copy still forced a different register. Reusing the same masked index instead of the unchanged copy produced an exact match. This is one saved example, not a controlled cross-compiler experiment; the proposal checks that both locals remain unchanged and the copy cannot escape.
