@@ -15147,3 +15147,8 @@ update also scored 6,495, but would change the source's write order.
 The proposed repair requires the same base, nonoverlapping fields, the
 measured double symbol and both instruction sequences. Synthetic tests
 cover these gates.
+
+
+### Store selected halfword constants in their branches
+
+A saved N64 DMA wrapper built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` selected one of two halfword constants into a local before a shared field store. The target used a jump with one constant in its delay slot. Replacing each local assignment with its corresponding field store produced that branch layout and reproduced the linked target exactly (score 270 to 0). Evidence: one saved example and synthetic source, instruction and routing tests. The rule requires two simple constant arms, a single use of the local and the measured target sequence.
