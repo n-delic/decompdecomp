@@ -13,7 +13,7 @@ function renderRomModelBrowser(view=romView()) {
   const report=view.report,host=$('romModelItems');
   if(!report?.available)return;
   const all=romModelRows(report),state=view.models||={query:'',sort:'name',direction:1};
-  $('romModelContext').textContent=`— ${all.length.toLocaleString()} models · ${all.reduce((n,r)=>n+r.asset.meshes.length,0).toLocaleString()} meshes`;
+  $('romModelContext').textContent=`— ${all.length.toLocaleString()} models · ${all.reduce((n,r)=>n+(r.asset.meshes?.length || 1),0).toLocaleString()} meshes`;
   const filter=$('romModelFilter');
   filter.value=state.query;
   function draw() {
@@ -34,7 +34,7 @@ function renderRomModelBrowser(view=romView()) {
     };
     streamRomAssets('Model',rows,(batch,start)=>{
       const cells=batch.map((r,i)=>{
-        const name=esc(r.name),meshes=`${r.asset.meshes.length} meshes`;
+        const name=esc(r.name),meshes=`${(r.asset.meshes?.length || 1)} meshes`;
         const link=`<button type="button" class="${icons?'ghost rom-model-card-open':'link-btn'}" data-model-region="${start+i}" ${report.stale?'disabled':''}>${icons?'<span aria-hidden="true">◇</span> ':''}${name}${icons?`<small>${meshes} · ${r.vertices.toLocaleString()} vertices · ${r.triangles.toLocaleString()} triangles</small>`:''}</button>`;
         const refs=[...new Set([...r.direct,...r.traced])].map(n=>`<button type="button" class="link-btn" data-model-function="${esc(n)}">${esc(n)}</button>`).join(' · ');
         return icons?[link,refs]:[
