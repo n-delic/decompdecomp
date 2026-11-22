@@ -1,5 +1,15 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: preserve fixed high bits during random cast generation
+
+A native cast mutation wrapped a packed command operand in
+`unsigned short`, discarding its opcode. The candidate scored 13,538
+against a 13,713 draft under `-G0 -mips3 -mgp32 -mfp32 -O2`, and later
+drafts inherited the bad cast. Restoring the opcode in one descendant
+changed its score from 13,088 to 13,263. A controlled native replay
+produced 31 such cases among 160 candidates before the guard and zero
+among 160 after it, in both traced and untraced runs.
+
 ### KMC GCC 2.7.2: schedule unsigned float branches together
 
 In a private N64 draft, flipping the first unsigned conversion branch
