@@ -380,7 +380,7 @@ def verify(net, proj, fn, other, donor, names, settings, agent, job, cache, *, r
 @donor_declaration_cache()
 def _try(net, proj, private, fn, source, header, agent, job, *, compiled_literals=False):
     """Offer one reduced translation unit and one relocation-based retry when the object supports it."""
-    reduced = rebound = localized = literal_changed = methods_rebound = generated_rebound = False
+    reduced = rebound = localized = literal_changed = methods_rebound = explicit_rebound = False
     globalized_names = None
     data_bound = False
     evidence = exact_match_inputs.capture(net, private, fn, {'header': header}, source)
@@ -423,7 +423,16 @@ def _try(net, proj, private, fn, source, header, agent, job, *, compiled_literal
                 literal_changed = True
                 continue
         variants = []
-        if not rebound:
+        if not explicit_rebound and candidate is not None:
+            console = net.console(proj)
+            if console.export_overlay(net._rom_target(fn)) is not None:
+                from . import overlay_donor_aliases
+
+                rewritten = overlay_donor_aliases.explicit_symbol_bindings(
+                    source, header, candidate, net._target_obj(fn, proj), console.separate_overlay_reference)
+                if rewritten:
+                    variants = [('overlay-explicit-bindings', *rewritten)]
+        if not variants and not rebound:
             if net.console(proj).export_overlay(net._rom_target(fn)) is not None:
                 from . import overlay_donor_aliases
 
@@ -477,15 +486,6 @@ def _try(net, proj, private, fn, source, header, agent, job, *, compiled_literal
                 if result_data:
                     revised_header, globalized_names = result_data
                     variants = [('overlay-globalize-data', source, revised_header)]
-        if not variants and not generated_rebound and candidate is not None:
-            console = net.console(proj)
-            if console.export_overlay(net._rom_target(fn)) is not None:
-                from . import overlay_donor_aliases
-
-                rewritten = overlay_donor_aliases.cpp_generated_bindings(
-                    source, header, candidate, net._target_obj(fn, proj), console.separate_overlay_reference)
-                if rewritten:
-                    variants = [('overlay-cpp-generated', *rewritten)]
         if not variants and not methods_rebound and candidate is not None:
             console = net.console(proj)
             if console.export_overlay(net._rom_target(fn)) is not None:
@@ -502,8 +502,8 @@ def _try(net, proj, private, fn, source, header, agent, job, *, compiled_literal
                 return False, ' '.join([length, *problems])
             return False, '; '.join(problems) or 'Donor source did not reproduce the original bytes.'
         family, source, header = variants[0]
-        if family == 'overlay-cpp-generated':
-            generated_rebound = True
+        if family == 'overlay-explicit-bindings':
+            explicit_rebound = True
         elif family == 'overlay-globalize-data':
             pass
         elif family == 'overlay-defined-data':

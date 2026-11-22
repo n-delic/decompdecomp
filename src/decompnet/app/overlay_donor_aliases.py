@@ -170,39 +170,54 @@ def cpp_methods(source, header, name, candidate, target, separate):
     return source[:span[0]] + body + source[span[1]:], header + '\n' + '\n'.join(declarations) + '\n'
 
 
-def cpp_generated_bindings(source, header, candidate, target, separate):
-    """Declare loader bindings for method and vtable names emitted by C++."""
-    if candidate is None or target.arch != 'mips' or not comparable_overlay_code(candidate, target):
+def explicit_symbol_bindings(source, header, candidate, target, separate):
+    """Declare unambiguous loader bindings without changing donor expressions."""
+    if (candidate is None or target.arch != 'mips'
+            or not comparable_overlay_code(candidate, target, masked=_data_fields(target))):
         return None
-    expected = {(r.offset, r.type): r.symbol for r in target.relocs}
-    grouped = defaultdict(set)
+    expected = {(r.offset, r.type): r for r in target.relocs}
+    grouped = defaultdict(list)
     for reloc in candidate.relocs:
-        if not re.fullmatch(r'(?:__(?:ct|dt|vtbl)__[A-Za-z0-9_]+|[A-Za-z_]\w*__\d+[A-Za-z_]\w*F\w*)',
-                            reloc.symbol):
+        if not re.fullmatch(r'[A-Za-z_]\w*', reloc.symbol):
             continue
         wanted = expected.get((reloc.offset, reloc.type))
         if wanted is None:
             return None
-        grouped[reloc.symbol].add(wanted)
+        grouped[reloc.symbol].append((reloc, wanted))
     if not grouped:
         return None
     clean = csource._blank(source + '\n' + header)
     additions = []
-    for number, (symbol, targets) in enumerate(sorted(grouped.items()), 1):
+    for number, (symbol, sites) in enumerate(sorted(grouped.items()), 1):
+        targets = {wanted.symbol for _, wanted in sites}
         if len(targets) != 1:
-            return None
+            continue
         binding, = targets
+        offset = 0
+        if any(reloc.type in (HIGH, LOW) and reloc.addend != wanted.addend for reloc, wanted in sites):
+            if any(reloc.type not in (HIGH, LOW) for reloc, _ in sites):
+                continue
+            offset = _offset_delta([reloc for reloc, _ in sites], expected)
+            if offset is None or not -(1 << 31) <= offset < (1 << 31):
+                continue
+        if not offset and (symbol == binding or re.fullmatch(re.escape(binding) + r'__ref[1-9][0-9]*', symbol)):
+            continue
         marker = 'decomp_overlay_bind_' + symbol
         if re.search(r'\b' + re.escape(marker) + r'\b', clean):
-            return None
+            continue
         ref = next((ref for i in range(number, number + 512)
                     if (ref := separate(binding, i)) != binding
                     and not re.search(r'\b' + re.escape(ref) + r'\b', clean)), None)
         if not ref:
-            return None
+            continue
         clean += '\n' + ref
-        additions.append(f'extern "C" unsigned char {ref}[];\nvoid *{marker} = {ref};')
-    return source, header + '\n' + '\n'.join(additions) + '\n'
+        address = f'{ref} + ({offset})' if offset else ref
+        additions.append(f'extern unsigned char {ref}[];\nvoid *{marker} = {address};')
+    if not additions:
+        return None
+    linkage = '#ifdef __cplusplus\nextern "C" {\n#endif\n'
+    end_linkage = '\n#ifdef __cplusplus\n}\n#endif\n'
+    return source, header + '\n' + linkage + '\n'.join(additions) + end_linkage
 
 
 def retry(source, header, name, candidate, target, measure, stop, *, separate=None):

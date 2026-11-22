@@ -198,7 +198,7 @@ def _defined_data_fields(elf, raw, target, expected, section):
 
 
 def _explicit_bindings(elf):
-    """Read source-declared aliases for symbols the C++ compiler emits itself.
+    """Read source-declared aliases for unresolved donor symbols.
 
     Each binding is a global pointer initialized by one relocation to an
     undefined loader symbol. No pointer bytes or relocations from the marker
@@ -219,9 +219,10 @@ def _explicit_bindings(elf):
             continue
         data = elf.get_section(shndx)
         if (data['sh_type'] != 'SHT_PROGBITS' or data['sh_flags'] & 3 != 3
-                or start + 4 > data['sh_size'] or data.data()[start:start + 4] != bytes(4)):
+                or start + 4 > data['sh_size']):
             markers[match[1]].append(None)
             continue
+        offset = int.from_bytes(data.data()[start:start + 4], 'big', signed=True)
         refs = [(r, elf.get_section(table['sh_link'])) for table in elf.iter_sections()
                 if isinstance(table, RelocationSection) and table['sh_info'] == shndx
                 for r in table.iter_relocations() if start <= r['r_offset'] < start + 4]
@@ -236,8 +237,42 @@ def _explicit_bindings(elf):
                 or binding['st_shndx'] != 'SHN_UNDEF' or not _BINDING.fullmatch(binding_name)):
             markers[match[1]].append(None)
             continue
-        markers[match[1]].append(binding_name)
+        markers[match[1]].append((binding_name, offset))
     return {name: values[0] for name, values in markers.items() if len(values) == 1 and values[0] is not None}
+
+
+def _explicit_offset_fields(raw, target, expected, explicit, section):
+    """Apply an explicit marker addend only when every HI16/LO16 pair agrees."""
+    groups = defaultdict(list)
+    for item in raw:
+        symbol = item['symtab'].get_symbol(item['symidx'])
+        if symbol.name in explicit and explicit[symbol.name][1]:
+            groups[symbol.name].append((item, symbol))
+    fields = {}
+    for name, uses in groups.items():
+        binding, offset = explicit[name]
+        if {item['type'] for item, _ in uses} != {5, 6}:
+            continue
+        if any(item['rela'] or symbol['st_shndx'] != 'SHN_UNDEF'
+               or item['off'] not in expected or expected[item['off']][0] != item['type']
+               or binding != alias(section, expected[item['off']][1]) for item, symbol in uses):
+            continue
+        highs = [(item['value'], int.from_bytes(target[item['off'] + 2:item['off'] + 4], 'big'))
+                 for item, _ in uses if item['type'] == 5]
+        lows = [(item['value'], int.from_bytes(target[item['off'] + 2:item['off'] + 4], 'big'))
+                for item, _ in uses if item['type'] == 6]
+        if len(set(highs)) != 1:
+            continue
+        old_high, new_high = highs[0]
+        for old_low, new_low in lows:
+            signed_low = old_low - 0x10000 if old_low & 0x8000 else old_low
+            value = (old_high << 16) + signed_low + offset
+            if new_low != value & 0xFFFF or new_high != ((value + 0x8000) >> 16) & 0xFFFF:
+                break
+        else:
+            fields.update((item['off'], int.from_bytes(target[item['off'] + 2:item['off'] + 4], 'big'))
+                          for item, _ in uses)
+    return fields
 
 
 def link(obj, name, target, info):
@@ -258,6 +293,7 @@ def link(obj, name, target, info):
         pool = _pool_fields(elf, raw, code, target, expected, info, entry)
         defined_data = _defined_data_fields(elf, raw, target, expected, section)
         explicit = _explicit_bindings(elf)
+        explicit_offsets = _explicit_offset_fields(raw, target, expected, explicit, section)
     except (ELFError, ValueError, TypeError, IndexError):
         return LinkResult(None, False, ['The compiler object could not be read as overlay text.'])
 
@@ -269,9 +305,10 @@ def link(obj, name, target, info):
     for item in raw:
         at, kind = item['off'], item['type']
         symbol = item['symtab'].get_symbol(item['symidx'])
-        binding = explicit.get(symbol.name, symbol.name)
-        if at in pool or at in defined_data:
-            value = pool[at] if at in pool else defined_data[at]
+        binding, offset = (explicit.get(symbol.name, (symbol.name, 0)) if symbol['st_shndx'] == 'SHN_UNDEF'
+                           else (symbol.name, 0))
+        if at in pool or at in defined_data or at in explicit_offsets:
+            value = (pool[at] if at in pool else defined_data[at] if at in defined_data else explicit_offsets[at])
             candidate.append(Reloc(at, kind, alias(section, expected[at][1]), value))
         else:
             candidate.append(Reloc(at, kind, binding, item['value']))
@@ -280,7 +317,8 @@ def link(obj, name, target, info):
             binding = distinct[1]
         original = expected.get(at)
         valid = False
-        if original and kind == original[0] and not item['rela'] and symbol['st_shndx'] == 'SHN_UNDEF' and at not in seen:
+        if (original and kind == original[0] and not item['rela'] and not offset
+                and symbol['st_shndx'] == 'SHN_UNDEF' and at not in seen):
             index = original[1]
             valid = binding == alias(section, index)
             offset = local_calls.get((at, index)) if kind == 4 else None
@@ -296,6 +334,9 @@ def link(obj, name, target, info):
             valid = True
         if at in defined_data and at not in seen:
             linked[at+2:at+4] = defined_data[at].to_bytes(2, 'big')
+            valid = True
+        if at in explicit_offsets and at not in seen:
+            linked[at+2:at+4] = explicit_offsets[at].to_bytes(2, 'big')
             valid = True
         if not valid:
             wanted = alias(section, original[1]) if original else 'no relocation'
