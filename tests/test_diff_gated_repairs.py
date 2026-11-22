@@ -2576,3 +2576,14 @@ def test_call_slot_setup_receives_abi_flags_and_symbol_resolver(monkeypatch):
                                                 flags=flags, resolve=resolve))
     assert 'call_slot_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, '',
                                                     flags=flags, resolve=resolve))
+
+
+def test_coordinate_staging_routes_to_kmc_mips(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'lhu $a0, 18($a0)', 'lhu $v1, 18($a0)')]
+    monkeypatch.setattr(diff_gated_repairs.measured_coordinate_staging, 'variants',
+                        lambda text, name, header, diff: [('coordinate_staging_fixture', text)])
+    assert 'coordinate_staging_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'coordinate_staging_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+    assert not proposals('void f(void) {}', 'f', '', 'arm', KMC, rows, '')

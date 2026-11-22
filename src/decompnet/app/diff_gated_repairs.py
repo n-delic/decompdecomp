@@ -70,6 +70,7 @@ from decomprepair import (
     measured_conditional_call_stage,
     measured_conditional_flag_owner,
     measured_control_flow,
+    measured_coordinate_staging,
     measured_cursor_loop_tail,
     measured_cursor_publish,
     measured_cursor_schedule,
@@ -544,6 +545,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     result += target_memory_schedule_diff_repairs.proposals(source,name,header,toolchain,rows,target,candidate,asm,
                                                              big_endian=big_endian,flags=flags)
     if toolchain.startswith('gcc-2.7.2-kmc'):
+        result += measured_coordinate_staging.variants(source, name, header, rows)
         result += measured_call_slot_setup.variants(source, name, header, rows, flags, resolve)
         result += measured_field_base_lifetimes.variants(source, name, header, rows)
         result += measured_indexed_setup.variants(source, name, header, rows, flags, resolve)
