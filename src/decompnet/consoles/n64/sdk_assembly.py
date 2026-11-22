@@ -49,6 +49,130 @@ KNOWN = {
         ('osWritebackDCache', 116, 'data cache writeback, `move` form', 'os/writebackdcache.s'),
     '394d3bf1ec1a51ef7eff9113ae1103280d0f09b29035cfd8630a0843d890c4f5':
         ('osWritebackDCacheAll', 40, 'whole data cache writeback', 'os/writebackdcacheall.s'),
+    # Every other self-contained routine in the SDK's own libultra libraries (2.0I to 2.0L, the release, debug and ROM
+    # builds), read from the archives' objects: assembly-only objects, bodies with no relocation, trailing alignment
+    # padding dropped after the return's delay slot. The same routines the older entries above come from, so those
+    # digests were checked against this reading (it finds each of them). A digest shared by two names is left out.
+    'aa2baf4a99416ed0e79b573e97912af1cf2ce317244b986310d5194f43f93dd7':
+        ('__assertBreak', 12, 'libultra 2.0I–2.0L', 'os/assertbreak.s'),
+    'b5ec893cd5c1e37c723f982142b67fc24befcf35b6e48b596abbcca4c4d44560':
+        ('__osDisableInt', 32, 'libultra 2.0I', 'os/interrupt.s'),
+    '8091a95dae39c6b1fc1a33a413913174da32d2a1c61971b45d5170e8b51c54f6':
+        ('__osEnqueueThread', 72, 'libultra 2.0I', 'os/exceptasm.s'),
+    'c830daccbfdb0ffa3dd1861154b3cc9d6e5940ae67f14f1443acb092f5c05d53':
+        ('__osEnqueueThread', 76, 'libultra 2.0I debug library', 'os/exceptasm.s'),
+    '974544a72c7c790c5bf1d0ac8efb349bc7c0a15650913c5f22f6c5ebefff225f':
+        ('__osGetCause', 12, 'libultra 2.0I–2.0L', 'os/getcause.s'),
+    '342c77126d95ebac093fdedad6833d9719721ba7ff39aa95c101e925de397c51':
+        ('__osGetCompare', 12, 'libultra 2.0I–2.0L', 'os/getcompare.s'),
+    '65d36b16835cf1085b63bae825f4a76f7ea31d18275ab853984187fc29778e5b':
+        ('__osGetConfig', 12, 'libultra 2.0I–2.0L', 'os/getconfig.s'),
+    'c06660694acce58d87bf63ec39c82802b9c9336ecb797f82009a8d8db4bca64f':
+        ('__osGetFpcCsr', 12, 'libultra 2.0I–2.0L', 'os/getfpccsr.s'),
+    '2ea7fc1f266eee7e59be3d8ffee2aebda5c74a4e6765e268c725a9a6a9f50ddf':
+        ('__osGetSR', 12, 'libultra 2.0I–2.0L', 'os/getsr.s'),
+    '6b3d8aaa13c1d3e6287e1b21dd5311398940ce04d8ef634e9eb8f818cf34e2e9':
+        ('__osGetTLBASID', 12, 'libultra 2.0I–2.0L', 'os/gettlbasid.s'),
+    'dc5d1591b68d900403769a8ffa25d5d677a741bda2b8cbeeeed9bce3185106aa':
+        ('__osGetTLBHi', 36, 'libultra 2.0I–2.0L', 'os/gettlbhi.s'),
+    '1cbb3b68fef5f134d801d2fbe36593c8cfd60d1fe748a8abad982578904150be':
+        ('__osGetTLBLo0', 36, 'libultra 2.0I–2.0L', 'os/gettlblo0.s'),
+    '9946b1d964027a4410a40a1b68378d73138ea116dfbe583b534b7ecf205fb867':
+        ('__osGetTLBLo1', 36, 'libultra 2.0I–2.0L', 'os/gettlblo1.s'),
+    'aa05adc4fb512b806fcf67ab91b9ad844a4050dfe700066391b5584fe15a2d98':
+        ('__osGetTLBPageMask', 36, 'libultra 2.0I–2.0L', 'os/gettlbpagemask.s'),
+    'a1520beae79c18daf4cdca5579b995fba56260e234684862db06c71fd4f68a6a':
+        ('__osGetWatchLo', 12, 'libultra 2.0K–2.0L', 'os/getwatchlo.s'),
+    'cb7889136714f88c7e6faba8b9c7d70495134cfa2f8f0edb98482d35cf973898':
+        ('__osPopThread', 24, 'libultra 2.0I debug library', 'os/exceptasm.s'),
+    '12b6f5b60134817aeedf2b981de4b804b3c6fa887e20414084efbbacb88b0052':
+        ('__osProbeTLB', 184, 'libultra 2.0I–2.0L', 'os/probetlb.s'),
+    'b6f58a0412d63a52440645623c5a49320459a39befc7ea4359a374051eceb105':
+        ('__osRestoreInt', 28, 'libultra 2.0I–2.0L', 'os/interrupt.s'),
+    '65b1fd11f742080022b6c80ad8a186368a39dfe694d15c89dcaa68d6e5a2cf40':
+        ('__osSetCause', 12, 'libultra 2.0I–2.0L', 'os/setcause.s'),
+    '36d5b735ab25f9bb478700d6bf34d5e54555d915b3f13a889e07eade088947cd':
+        ('__osSetCompare', 12, 'libultra 2.0I–2.0L', 'os/setcompare.s'),
+    '702d110d5a68b7d680cf2963514ed5a1d76b0d8a6f9a8c2a5a5d0ecb24aeee8e':
+        ('__osSetConfig', 12, 'libultra 2.0I–2.0L', 'os/setconfig.s'),
+    '5967f733518c97f6c7f0de39c398d09e4b2740dcbbbbb8296d45b76838fe5278':
+        ('__osSetCount', 12, 'libultra 2.0I–2.0L', 'os/setcount.s'),
+    '1b1c2a5e117a433a988d960120310c5634987537358a5b13b49fddcee5d2dac4':
+        ('__osSetFpcCsr', 16, 'libultra 2.0I–2.0L', 'os/setfpccsr.s'),
+    '8c9798aafb630c54a679991a2a686c3379687a94f8b3c8c14e5eafe1cd8cb961':
+        ('__osSetSR', 16, 'libultra 2.0I–2.0L', 'os/setsr.s'),
+    '57a60924b5ab6bcac4231c2f07f0716ee5d63495724303dbfa626ca0f4112708':
+        ('__osSetWatchLo', 16, 'libultra 2.0K–2.0L', 'os/setwatchlo.s'),
+    'a3fae8e4545aeafe4a37df7262f5a54e14a1f621e7a9b895c38c69cf5ff4774b':
+        ('__rmonIdleRCP', 68, 'libultra 2.0I', 'rmon/rmonrcp.s'),
+    'da19e19ad4a1b3d122186bcfc6cb3d550bfb45a062788a728e2a056b3a6f93ec':
+        ('__rmonIdleRCP', 68, 'libultra 2.0I–2.0L', 'rmon/rmonrcp.s'),
+    '513e8f86e4cae04589afadb28155ab85fa7c6da3440aeca9d4410f4cbcce9a8a':
+        ('__rmonRCPrunning', 36, 'libultra 2.0I', 'rmon/rmonrcp.s'),
+    '6bf05e6a0587db019f5d8bb53875c4b8ed098ee625244888584e6242955c3ef9':
+        ('__rmonRCPrunning', 36, 'libultra 2.0I debug library', 'rmon/rmonrcp.s'),
+    'f729409b36649c2f1398287774df41ce7c68995a09589fdceb44c3e58895cbaa':
+        ('__rmonRCPrunning', 36, 'libultra 2.0J–2.0L', 'rmon/rmonrcp.s'),
+    '4636b72748d8c4f6efbb8b1049117b61557b524c8f8a3725a71595abe75acc51':
+        ('__rmonRunRCP', 36, 'libultra 2.0I–2.0L', 'rmon/rmonrcp.s'),
+    'f45ca32c82a60b1a8aaaf5cdec98db45fff60bf2ec232c30d25bc7d37dcd505c':
+        ('__rmonRunRCP', 40, 'libultra 2.0I debug library', 'rmon/rmonrcp.s'),
+    '866698c4fe169b9170e5adef8cfba9a393b444438a58545551eb550fe3d1d63c':
+        ('bcmp', 284, 'libultra 2.0I', 'libc/bcmp.s'),
+    '6b2f8f1d342753613e8798f006a00a95c050b9e590f76bf77f54d69da42cccf4':
+        ('bcmp', 324, 'libultra 2.0I debug library', 'libc/bcmp.s'),
+    'ddb7b30f2e08070a5eaafe4e056d5fe4194f18200acb5d618385e973e698b391':
+        ('bzero', 156, 'libultra 2.0I', 'libc/bzero.s'),
+    '13111051e91a44b030c85d2ddd49d0e5fa49f9d27cc78bf9e608a862e27c5f1d':
+        ('bzero', 184, 'libultra 2.0I debug library', 'libc/bzero.s'),
+    '88ecad609341cf1891c7945b0f69ee8d2428c176ac91a15a9129be818fbdcb7a':
+        ('guMtxCatF', 220, 'libultra 2.0J', 'mgu/mtxcatf.s'),
+    'd42a0df5095f62e3bbae675752ed7416cdbac2773ed08b5cd75819c6ab80a20f':
+        ('guMtxCatF', 300, 'libultra 2.0I debug library', 'mgu/mtxcatf.s'),
+    '59e6d4522a13e13ead4e9c2f30dbe00221a0546793a4c1a0ca07eabd151c337c':
+        ('guMtxIdent', 76, 'libultra 2.0K–2.0L', 'mgu/mtxident.s'),
+    '951d6c84c7f95f53592fbcf3b2b6bdbc544c349e485d5a7c5d0e59fd9791d976':
+        ('guMtxIdentF', 72, 'libultra 2.0K–2.0L', 'mgu/mtxidentf.s'),
+    'ec5bc225baf6c5b426a7a126d1448d04e80da0a67c84200870933a97bed00b10':
+        ('guMtxXFMF', 160, 'libultra 2.0I', 'mgu/mtxcatf.s'),
+    '5cd5184f47a0e21ddcfcc6317e6269b8f43a8fc0f64e4da50bd82dd9840bd5f2':
+        ('guMtxXFMF', 172, 'libultra 2.0J', 'mgu/mtxcatf.s'),
+    '991d6bb07ed0353148964fae1d63eca6c802ebbc08fad65a69a56de8c310be33':
+        ('guMtxXFMF', 208, 'libultra 2.0I debug library', 'mgu/mtxcatf.s'),
+    '29493d6ce21a2433d617c02cbe9628a7f5e1295d359c51abb28a9b86e2d9c4b1':
+        ('guMtxXFMF', 316, 'libultra 2.0J debug library', 'mgu/mtxcatf.s'),
+    'b4addc6bc43c34e1263952ad1e0811e0229db57fc377cbf3346c2ac65f84c887':
+        ('guNormalize', 84, 'libultra 2.0K–2.0L', 'mgu/normalize.s'),
+    'c66d20177a3d7663d24050bc0284552550dca41cc1cc00d877d32c3e9d69d4a4':
+        ('guScale', 184, 'libultra 2.0K–2.0L', 'mgu/scale.s'),
+    '307575fc51ec8366c126191cacb3f4ea45e3b56df159d1987e64e4cab1126564':
+        ('guTranslate', 216, 'libultra 2.0K–2.0L', 'mgu/translate.s'),
+    '87161b09f136b903fee891575d01cad359ace9547bd84d9135f067277edff1f3':
+        ('guTranslateF', 72, 'libultra 2.0K–2.0L', 'mgu/translatef.s'),
+    '4b21bfd046b98a3d83e9a862a133d42875bb5cf3145bbc42f98d37e99975c671':
+        ('osDelay', 44, 'libultra 2.0I–2.0L', 'os/delay.s'),
+    '30227453c76b867de492b81ef449631a9548fecf8b82c86e7b52fac91625d3e2':
+        ('osDelay', 48, 'libultra 2.0I debug library', 'os/delay.s'),
+    '923a8ad5844532bc55f28624d13567c9795c3f893ebf07353f29b4ea1df8bc84':
+        ('osGetCount', 12, 'libultra 2.0I–2.0L', 'os/getcount.s'),
+    '5ec5ae8075d92ada2deacd3a17fc22b62304c6e3bfe13cbd95eecb234fe98fff':
+        ('osInvalDCache', 176, 'libultra 2.0I debug library', 'os/invaldcache.s'),
+    'c1570ebb6df094ed11eb1f796d57c456c51d3502452578b61343bdf9ed4c5e59':
+        ('osInvalICache', 116, 'libultra 2.0I debug library', 'os/invalicache.s'),
+    '16d5c2d13e74eb08ce688fedc60a028b364541b52c37cbd9b45f8743705047e4':
+        ('osMapTLB', 180, 'libultra 2.0I–2.0L', 'os/maptlb.s'),
+    'faf6c1366ff17c109e9fde902f3c1520ad4afa1d1c95ec9819b045cf211ddd60':
+        ('osMapTLBRdb', 88, 'libultra 2.0I–2.0L', 'os/maptlbrdb.s'),
+    '54ba683355d11eb3d984a5ff9c560dc91de17c463c8355acb7612021c69bbf24':
+        ('osSetTLBASID', 12, 'libultra 2.0I–2.0L', 'os/settlbasid.s'),
+    'c037e600630f331429105fd34ad990c5a2eded4ef0077f698f7c34650bb4d3dd':
+        ('osUnmapTLB', 60, 'libultra 2.0I–2.0L', 'os/unmaptlb.s'),
+    '768bdca0d47853c4ad2219d3a7ce67beb987cae59401d5a92eedfb9c4612f23b':
+        ('osUnmapTLBAll', 68, 'libultra 2.0I–2.0L', 'os/unmaptlball.s'),
+    '998df2b024334c9bd4f11f2da7a3c96bfaffc1fec06bac31766d83cbd8b463d0':
+        ('osWritebackDCache', 116, 'libultra 2.0I debug library', 'os/writebackdcache.s'),
+    'd3ee816e0177eb33107228096347c8cbb1f85472af6f347933eb3ffa5441c410':
+        ('sqrtf', 12, 'libultra 2.0I debug library', 'gu/sqrtf.s'),
 }
 # The rebuild corpus hashes relocation-free functions as SHA-1(body + b"[]").
 # The SDK's libultra builds use MGU assembly; libgultra builds use C and keep
