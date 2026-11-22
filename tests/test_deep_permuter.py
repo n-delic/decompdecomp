@@ -834,7 +834,13 @@ def test_failed_cleanup_resumes_broad_search_without_repeating_inverse(monkeypat
         return 40
     monkeypatch.setattr(Permuter, '_score', judge)
     result = deep_permuter.run(net, 'game', 'f', 1, 10, Log())
-    assert result['matched'] and len(visited)==2 and visited[-1]=='exact'
+    # The local pass also judges the library's own rewrites of the saved best before the cleanup (decomprepair
+    # 0.5.583's `mask_parameter_narrow` offers `u8 a` for this masked parameter), so the visits are that, the
+    # cleanup and the broad search's match. What this test pins: the cleanup's inverse is not judged again and the
+    # broad search still runs once, to the match.
+    assert result['matched'] and visited[-1]=='exact'
+    assert len(visited)==len(set(visited))
+    assert source not in visited
     assert len(generated)==1
 
 
