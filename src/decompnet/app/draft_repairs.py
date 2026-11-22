@@ -79,6 +79,7 @@ from decomprepair import (
     count_lifetime_repairs,
     countdown_guard_repairs,
     counted_call_loop_repairs,
+    counted_loop_shapes,
     counter_append_scope_repairs,
     counter_companion_repairs,
     counter_derived_offset,
@@ -116,6 +117,7 @@ from decomprepair import (
     float_hold_reuse_repairs,
     float_intermediate_repairs,
     float_prototype_repairs,
+    float_pun_depun,
     float_record_copy_repairs,
     float_register_argument_repairs,
     float_zero_local_repairs,
@@ -389,7 +391,7 @@ AGENT_FAMILIES += loop_weight_set_repairs.FAMILIES
 AGENT_FAMILIES += (arm_label_share_repairs.FAMILIES + declaration_scope_sink_repairs.FAMILIES + element_update_repairs.FAMILIES
                    + narrow_test_share_repairs.FAMILIES + phase_storage_split_repairs.FAMILIES
                    + narrow_param_clamp_repairs.FAMILIES + search_loop_field_reload.FAMILIES + accumulation_run_scope.FAMILIES
-                   + flag_word_bitfield_repairs.FAMILIES + argument_spill_tail.FAMILIES)
+                   + flag_word_bitfield_repairs.FAMILIES + argument_spill_tail.FAMILIES + counted_loop_shapes.FAMILIES + float_pun_depun.FAMILIES)
 
 LIMIT = 20
 _IDENT = r'[A-Za-z_]\w*'
@@ -625,6 +627,15 @@ def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels
     # (a masked flag-word update with a byte stored over it as bit-fields, the volatile pointer dropped and the first
     # literal store moved ahead of the coordinate stores, a 34-instruction object placer, 15 -> 0; decomprepair.flag_word_bitfield_repairs)
     early = early + _generated(flag_word_bitfield_repairs.variants,source,name)
+    # (counted loops as `for` loops over one counter: pointer walk to index, stride from the counter, shared counters,
+    # the guarded do/while as a `for` with the unused frame array dropped, the sum in the scaled register, the integer
+    # address sum, the product shifted in its arm, per-operand limit casts, and all of them as one child; a texture
+    # loader's four loops, 99 -> 0; decomprepair.counted_loop_shapes)
+    early = early + _generated(counted_loop_shapes.variants,source,name)
+    # (float locals written through a union pun as plain floats, with the declarations moved ahead of the pun group;
+    # a 178-instruction ray and triangle test, 275 -> 0; decomprepair.float_pun_depun, released in 0.5.593 and wired here
+    # so the library's wiring test passes with the pin)
+    early = early + _generated(float_pun_depun.variants,source,name)
     # (an assignment m2c placed after its local's first read moved up to it; decomprepair.read_before_assign_repairs)
     early = early + _generated(read_before_assign_repairs.variants,source,name)
     # (an empty case m2c invented, its `/* irregular */` break, dropped; decomprepair.irregular_case_repairs)
