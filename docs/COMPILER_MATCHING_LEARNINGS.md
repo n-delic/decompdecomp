@@ -1558,6 +1558,20 @@ rebuilding the affected overlays from those compiled objects reproduced the
 cartridge bytes. Changing a call to a second alias under the same base symbol
 fails the controlled regression.
 
+### Rebase an imported overlay data reference
+
+A controlled IDO 5.3 test uses
+`-O2 -mips2 -G 0 -non_shared -Xcpluscomm -Wab,-r4300_mul` to read one element
+of an external array. The source retry retains the declared array type and
+adds the byte delta measured from corresponding HI16 and LO16 relocations.
+The exact judge accepts forward and backward offsets and an offset that
+crosses the signed low-half boundary. An incorrect byte delta fails.
+
+On an isolated N64 project, a 185-pair retry saved seven functions. A control
+replay confirmed that three required the data rebase and four already passed
+ordinary donor verification. This fixture exercises compiler-emitted
+relocations and keeps the destination loader's byte and symbol checks.
+
 ### Observation: source layout sensitivity (IDO 5.3)
 
 The existing [IDO guide](../src/decompnet/consoles/n64/guides/ido.md) records a private same-source

@@ -111,3 +111,65 @@ def retry(source, header, name, candidate, target, measure, stop):
         else:
             source = source[:start] + alias + source[end:]
     return (rename(source, direct), rename(with_declarations(header), direct)) if edits else None
+
+
+_DATA = re.compile(
+    r'extern\s+([A-Za-z_]\w*(?:\s+[A-Za-z_]\w*)*)\s+(\**\s*)([A-Za-z_]\w*)'
+    r'\s*((?:\[\s*\d*\s*\]\s*)*)\s*;')
+
+
+def offset_retry(source, header, name, candidate, target):
+    """Rebase an explicitly declared object by a consistent compiled HI16/LO16 delta."""
+    from ..arch.mips_source_symbols import HIGH, LOW, signed
+    from .source_symbol_recovery import overlay_bindings
+
+    if target.arch != 'mips':
+        return None
+    fields = [*target.linker_relocs, *(r for r in target.relocs if r.type in (HIGH, LOW))]
+    aliases = overlay_bindings(candidate, target, masked=fields)
+    if not aliases:
+        return None
+    expected = {(r.offset, r.type): r for r in target.relocs}
+    differences = defaultdict(lambda: defaultdict(set))
+    for r in candidate.relocs:
+        wanted = expected[r.offset, r.type]
+        if r.type == LOW:
+            delta = signed(wanted.addend) - signed(r.addend)
+        else:
+            delta = wanted.addend - r.addend
+        differences[r.symbol][r.type].add(delta)
+
+    offsets = {}
+    for symbol, by_kind in differences.items():
+        if not any(delta for kind in (HIGH, LOW) for delta in by_kind.get(kind, ())):
+            continue
+        if set(by_kind) != {HIGH, LOW} or any(len(group) != 1 for group in by_kind.values()):
+            continue
+        delta = (next(iter(by_kind[HIGH])) << 16) + next(iter(by_kind[LOW]))
+        if delta:
+            offsets[symbol] = delta
+    if not offsets:
+        return None
+
+    bound = {}
+    declarations = []
+    clean_header = csource._blank(header)
+    for decl in seeds.declarations(header):
+        match = _DATA.fullmatch(csource._blank(decl.text).strip())
+        if not match or match[3] not in offsets:
+            continue
+        kind, pointers, symbol, dimensions = match.groups()
+        alias = aliases[symbol]
+        if alias != symbol and re.search(r'\b' + re.escape(alias) + r'\b', clean_header):
+            continue
+        if alias != symbol:
+            declarations.append(f'extern unsigned char {alias}[];')
+        cast = kind + ' ' + pointers + (f'(*){dimensions}' if dimensions else '*')
+        bound[symbol] = f'(*({cast})((unsigned char *)&{alias} + ({offsets[symbol]})))'
+    span = csource.find(source, name)
+    if not bound or span is None:
+        return None
+    start, end = span
+    direct = {old: new for old, new in aliases.items() if old not in bound}
+    source = rename(source[:start], direct) + rename(source[start:end], direct | bound) + rename(source[end:], direct)
+    return source, rename(header, direct) + '\n' + '\n'.join(dict.fromkeys(declarations)) + '\n'
