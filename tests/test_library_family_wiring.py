@@ -11,7 +11,7 @@ import re
 
 import decomprepair
 from decompnet.app import deep_permuter, draft_repairs, library_registry
-from decomprepair import registry
+from decomprepair import identical_arm_collapse_repairs, registry
 
 SRC = pathlib.Path(__file__).resolve().parents[1] / 'src' / 'decompnet'
 SOURCE = 'void f(int *p, int a)\n{\n    p[0] = a;\n}\n'
