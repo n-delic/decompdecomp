@@ -444,7 +444,7 @@ def _try(net, proj, private, fn, source, header, agent, job, *, compiled_literal
                         return net._evaluate(fn, proj, built.obj)[0] if built.ok else None
 
                     rewritten = overlay_donor_aliases.retry(
-                        source, header, fn['name'], candidate, expected, measure, job.stop)
+                        source, header, fn['name'], candidate, expected, measure, job.stop, separate=separate)
                     if rewritten:
                         variants = [('overlay-call-sites', *rewritten)]
             else:

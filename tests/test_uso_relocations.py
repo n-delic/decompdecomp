@@ -586,3 +586,45 @@ def test_overlay_named_binding_externalizes_only_empty_direct_call_stubs(tmp_pat
 
     _, context = named_bindings(source, 'int placeholder(void) { return 9; }', baseline.candidate, aliases)
     assert '{ return 9; }' in context
+
+
+def test_overlay_probes_preserve_conflicting_types_for_one_loader_symbol(tmp_path):
+    from threading import Event
+
+    from decompnet import consoles
+    from decompnet.app.donor_relocations import separate_overlay_references
+    from decompnet.app.overlay_donor_aliases import retry
+    from decompnet.elfobj import extract_function
+
+    if not toolchains.installed('ido-7.1'):
+        pytest.skip('needs IDO 7.1')
+    cfg = compiler_config(tmp_path, {'compiler': {
+        'toolchain': 'ido-7.1', 'flags': ['-O2', '-G', '0', '-non_shared', '-mips2'],
+    }})
+    header = 'extern int first[];\nextern unsigned char second;\nextern void placeholder(int);'
+    source = 'void entry(void) { placeholder(first[0]); placeholder(second); }'
+    built = compile_source(cfg, header, source)
+    assert built.ok, built.log
+    body = extract_function(built.obj, 'entry')
+    calls = iter((2, 3))
+    info = {'section': 64, 'relocs': [[r.offset, r.type, next(calls) if r.type == 4 else 1] for r in body.relocs]}
+    target = uso_match.symbolic_target(uso_match.Target('entry', 0, body.code, [], uso=info))
+    original = uso_match.link(built.obj, 'entry', body.code, info).candidate
+
+    def measure(text, context):
+        trial = compile_source(cfg, context, text)
+        assert trial.ok, trial.log
+        return uso_match.link(trial.obj, 'entry', body.code, info).candidate
+
+    text, context = retry(source, header, 'entry', original, target, measure, Event())
+    assert not compile_source(cfg, context, text).ok
+
+    console = consoles.of({'platform': 'n64'})
+    text, context = retry(source, header, 'entry', original, target, measure, Event(),
+                          separate=lambda bindings: separate_overlay_references(console, bindings))
+    rebuilt = compile_source(cfg, context, text)
+    assert rebuilt.ok, rebuilt.log
+    assert uso_match.link(rebuilt.obj, 'entry', body.code, info).exact
+    assert not uso_match.link(rebuilt.obj, 'entry', body.code,
+                              info | {'relocs': [[at, kind, 4 if index == 1 else index]
+                                                for at, kind, index in info['relocs']]}).exact
