@@ -416,6 +416,8 @@ def child(db_path: str, workspace: str) -> None:
     from .permute import Permuter
 
     _worker_logging()
+    from .. import thread_cpu
+    thread_cpu.start_worker('permuter')
     net = RomNetwork(db_path, Path(workspace))
     permuter = net.permuter = Permuter(net)
     output_lock = threading.Lock()

@@ -87,3 +87,44 @@ def test_the_stall_report_lists_processor_time_by_thread(tmp_path):
 def test_off_switch(monkeypatch, tmp_path):
     monkeypatch.setenv("DECOMP_THREAD_CPU", "0")
     assert thread_cpu.start(tmp_path / "thread-cpu.log") is None
+
+
+def test_library_code_is_named_by_its_module(tmp_path):
+    """The proposal workers spend their time in decomprepair; the report says which module, not the caller."""
+    source = tmp_path / "decomprepair" / "example_repairs.py"
+    source.parent.mkdir()
+    source.write_text("import sys\ndef rewrite():\n    return sys._getframe()\n")
+    namespace = {}
+    exec(compile(source.read_text(), str(source), "exec"), namespace)
+    assert thread_cpu._location(namespace["rewrite"]()) == "decomprepair/example_repairs.py:rewrite"
+    assert thread_cpu._library("/x/site-packages/decompassets/rnc.py") == "decompassets/rnc.py"
+    assert thread_cpu._library("/x/site-packages/other/rnc.py") is None
+
+
+def test_every_process_reports_and_the_figures_add_up(tmp_path, monkeypatch):
+    monkeypatch.setenv("DECOMP_HOME", str(tmp_path))
+    stop = threading.Event()
+    busy = threading.Thread(target=_busy, args=(stop,), name="busy-worker", daemon=True)
+    busy.start()
+    sampler = thread_cpu.start_worker("proposal", interval=.05)
+    assert sampler is not None
+    try:
+        time.sleep(.5)
+    finally:
+        stop.set()
+        busy.join(2)
+        sampler.close()
+    folder = tmp_path / ".decomp" / "logs"
+    assert (folder / f"thread-cpu-proposal-{__import__('os').getpid()}.log").exists()
+    report = thread_cpu.merged(folder)
+    assert "proposal (1 processes)" in report and "test_thread_cpu.py:_busy" in report
+
+
+def test_old_helper_reports_are_forgotten(tmp_path):
+    import os
+    old, new = tmp_path / "thread-cpu-proposal-1.log", tmp_path / "thread-cpu-proposal-2.json"
+    old.write_text("x")
+    new.write_text("{}")
+    os.utime(old, (time.time() - 3 * 86400,) * 2)
+    thread_cpu._forget_old(tmp_path)
+    assert not old.exists() and new.exists()
