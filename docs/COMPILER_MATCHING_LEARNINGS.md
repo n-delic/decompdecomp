@@ -14459,3 +14459,4 @@ combined source scored 11,605 with all 3,034 instructions and all jump
 table relocations resolved. The rewrite emits one candidate only when
 all three assembly patterns and their source shapes are present.
 Synthetic tests cover missing witnesses and unsafe lookalikes.
+In one N64 block initializer built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, computing `(base + size) - constant` in one assignment put the subtraction in a different register. Saving the addition to the same local pointer and subtracting the byte displacement in a second assignment reproduced the linked target exactly (score 255 to 0). The repair requires the measured add/subtract register difference, matching displacement and non-escaping typed operands. Evidence: one saved example and synthetic generation and routing tests.

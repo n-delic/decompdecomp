@@ -1467,3 +1467,18 @@ def test_counted_null_table_loop_is_kmc_diff_gated():
     assert 'counted_null_table_for' in families(KMC, rows)
     assert 'counted_null_table_for' not in families('ido-7.1', rows)
     assert 'counted_null_table_for' not in families(KMC, [])
+
+
+def test_split_pointer_displacement_is_kmc_diff_gated():
+    source = '''void f(void *base, s32 length) {
+        void *end;
+        end = (base + length) - 0x14;
+        M2C_FIELD(base, void **, 0) = end;
+    }'''
+    rows = [(' ', 'addu $a1, $a0, $a1', 'addu $a1, $a0, $a1'),
+            ('r', 'addiu $a1, $a1, -0x14', 'addiu $v0, $a1, -0x14')]
+    def families(toolchain, diff):
+        return {label for label, _ in proposals(source, 'f', '', 'mips', toolchain, diff, '')}
+    assert 'split_pointer_displacement' in families(KMC, rows)
+    assert 'split_pointer_displacement' not in families('ido-7.1', rows)
+    assert 'split_pointer_displacement' not in families(KMC, [])
