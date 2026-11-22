@@ -16954,3 +16954,24 @@ stores in the middle of the block.
   one-shot stores alone, or two of them, inside the span (210 - 270; all three in the target's order: 0).
 
 decomp-repair 0.5.576: `constant_store_bracket`, `duplicate_constant_store_drop`.
+
+## The display-list function's stored saved best is not the game's program, so no rewrite that keeps meaning reaches it (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, an N64 game, 318 instructions)
+
+Evidence level: one function; scores from the app's own judge (`fast_judge.py`) on the stored saved best before the
+match (1825, an agent's source), no saved match touched; the address trace below is read from that source.
+
+Tracing the cursor through the 1825 source: the first snapshot `c` takes four commands at `c+0 .. c+0x1C`; the cursor
+is then set to `c+0x28` and back to `c+0x20`, and the next snapshot (`c+0x20`) is stored through twice, so the first
+fill rectangle's `w0` and the second's `w0` go to the same address `c+0x20` and the second rectangle never reaches
+`c+0x28`, where the target (and the matched macro source) writes it. The source scores 1825 because the judge compares
+bytes, not meaning: its stores were placed to make the schedule look right. A family that rewrites raw `cursor + 8n`
+stores as `Gfx` commands has to keep each store's address and value, and here that gives a different program from the
+target's; producing the target would mean guessing which store the agent meant, which no rewrite should do.
+
+Measured children of the 1825 source: `display_cursor_record` 11270, `display_cursor_record_after` 8795,
+`or_chain_order` 1825 / 1955, `volatile_global_plain` 3005 / 3110, `or_chain_order` then `volatile_global_plain` (joint)
+3005-3275. None beats 1825.
+
+Next step for functions like this one: start the chain from m2c's own draft (its stores follow the program), not from
+an agent's saved best, and have the agents' saves keep that draft; on a correct draft `display_cursor_record` with the
+other families gave the 1825 -> 0 chain recorded earlier.
