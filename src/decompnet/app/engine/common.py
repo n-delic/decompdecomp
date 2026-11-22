@@ -16,6 +16,7 @@ TOOLS = {
     "m2c": "machine-made first drafts (MIPS, PowerPC, ARM)",
     "decomp-permuter": "rewrites near misses thousands of ways in the background, so more of them match",
     "objdiff-cli": "judges forks of public decomps, function by function",
+    "mupenre": "runs your N64 game headless to find the code it loads while it runs; built from pinned source on first use",
 } | {tool: use for console in consoles.CONSOLES for tool, use in console.packs} | {
     kid: kits.get(kid).description for console in consoles.CONSOLES for kid in console.kits}
 # ROM mode's compilers, with which games each built, for Setup
