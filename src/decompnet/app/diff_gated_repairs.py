@@ -91,6 +91,7 @@ from decomprepair import (
     measured_ido_callback_offset,
     measured_ido_index_update,
     measured_immediate_repairs,
+    measured_indexed_allocations,
     measured_indexed_clear,
     measured_indexed_mode_tail,
     measured_indexed_record_layout,
@@ -556,6 +557,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_forward_entry_pointer.variants(source, name, header, rows, asm)
         result += measured_frameless_padding.variants(source, name, header, rows)
         result += measured_packed_quad.variants(source, name, header, rows, flags, big_endian)
+        result += measured_indexed_allocations.variants(source, name, header, rows)
         result += measured_record_pointer_update.variants(source, name, header, rows)
         result += measured_record_ramp.variants(source, name, header, rows)
         result += measured_region_search.variants(source, name, header, rows)
