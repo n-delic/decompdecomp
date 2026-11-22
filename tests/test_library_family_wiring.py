@@ -139,3 +139,55 @@ void f(void)
     assert any('switch (state)' in text and 'case 0x19:' in text for text in out)
     assert any('extern volatile u16 gAction;' in text for text in out)
     assert {'range_assignment_switch', 'scalar_reload_volatile'} <= set(draft_repairs.AGENT_FAMILIES)
+
+
+def test_arm_switch_volatile_chain_is_proposed_and_known_to_agents():
+    """The collapse, the grouped range switch and the volatile reload only pay off together (30 -> 0, a gcc 2.7.2 menu function)."""
+    source = """\
+extern s32 *gState;
+extern u16 gAction;
+extern s32 gGuard;
+void f(void)
+{
+  s32 state;
+  s32 var;
+  state = *gState;
+  if (state != 0x1A)
+  {
+    if (0x1B > ((s32) state))
+    {
+      var = 3;
+      if (state != 0x19)
+      {
+        var = 1;
+      }
+    }
+    else
+    {
+      var = 1;
+      if (state == 0x1B)
+      {
+        var = 3;
+      }
+    }
+  }
+  else
+  {
+    var = 2;
+  }
+  if (gGuard)
+  {
+    gAction = var;
+  }
+  else
+  {
+    gAction = var;
+  }
+  g(gAction);
+}
+"""
+    labels = {}
+    out = draft_repairs.variants(source, 'f', 'mips', labels=labels, limit=None)
+    chained = [text for text in out if labels.get(text) == 'arm_switch_volatile_chain']
+    assert chained and all('extern volatile u16 gAction;' in text and 'switch (state)' in text for text in chained)
+    assert 'arm_switch_volatile_chain' in draft_repairs.AGENT_FAMILIES
