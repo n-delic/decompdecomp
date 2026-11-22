@@ -1869,3 +1869,13 @@ def test_nibble_tables_routes_to_kmc(monkeypatch):
                         lambda text, name, header, diff: [('nibble_tables_fixture', text)])
     assert 'nibble_tables_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'nibble_tables_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_ring_global_capture_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_ring_global_capture, 'variants',
+                        lambda text, name, header, diff: [('ring_global_capture_fixture', text)])
+    assert 'ring_global_capture_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'ring_global_capture_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
