@@ -15995,3 +15995,8 @@ staging sequences still differ from the target's register
 materializations. Either stage alone left the final jump table
 unresolved. Separate new stack locals scored 1,789 and moved
 the save area, while the existing frame word preserves it.
+
+
+### KMC GCC 2.7.2 region bounds search
+
+A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` searched a circular list for the first region containing a point. The generated draft used a flattened condition with comma expressions and a shared result. Restoring the ordered bounds checks, staging the second lower bound before reading the point and returning the found region changed the linked difference score from 245 to an exact match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the measured instruction order, field offsets and complete source shape.
