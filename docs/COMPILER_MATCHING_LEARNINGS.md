@@ -15399,3 +15399,17 @@ A saved N64 command builder compiled with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp3
 ### Treat a sent-byte count as a byte pointer offset
 
 A saved N64 send loop built with IDO 7.1 and `-O1 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul` added a sent-byte count to a structure pointer, causing the compiler to multiply the offset by the structure's twelve-byte size. The target added the count directly. Keeping the saved cursor as `char *` and casting the original pointer to it reproduced the linked target exactly (score 365 to 0). Evidence: one saved example and synthetic source, target and routing tests. The candidate requires the observed scaled and unscaled send-loop sequences and is checked by the byte judge.
+
+### Reuse a saved float holder across two calls
+
+A linked N64 function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`
+used a different saved float register for a constant field write and
+two call products. Another sequence in the same target and candidate
+used the same constant, field offset and callees with the expected
+register. Assigning the first sequence's literal to that sequence's
+existing dead float local preserved the store and evaluation order
+and lowered the linked score from 3,445 to 3,425. Exactly the four
+register operands changed. Reusing a different existing float was
+neutral. Evidence includes one private linked function, with three
+intact jump tables and clean uninitialized diagnostics, and synthetic
+instruction, source guard and Deep Permuter routing tests.
