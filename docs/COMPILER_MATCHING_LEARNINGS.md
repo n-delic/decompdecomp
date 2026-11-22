@@ -15315,3 +15315,8 @@ all three jump tables and no uninitialized warnings. Reusing existing
 locals scored 6,575. The measured rule requires both calls, the shared
 global read and the same pair of output offsets. Synthetic tests cover
 the emitted order and missing evidence.
+
+
+### Reconstruct an indexed record from neighboring symbols
+
+A saved N64 function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` treated a `0x184` record stride as an offset in words. Changing the pointer arithmetic to bytes corrected the stride but scored 694 because the compiler retained an extra register. Declaring the base as an array of records with a `0x7C` player, `0xF8` sequence and word fields at `0x174` and `0x17C`, then using those fields, reproduced the linked target exactly (score 360 to 0). Evidence: one saved example and synthetic source, address and routing tests. The candidate requires the measured instruction sequence and the two field symbols at the corresponding addresses, and is checked by the byte judge.
