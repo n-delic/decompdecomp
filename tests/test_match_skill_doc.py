@@ -55,3 +55,9 @@ def test_the_skill_names_the_look_alike_tool_in_orientation():
 def test_the_skill_names_the_symptom_search_of_the_learnings():
     text = (SKILL / "SKILL.md").read_text()
     assert 'learnings.py search "register swap"' in text and "delay slot" in text
+
+
+def test_the_skill_says_when_to_add_a_shared_type_and_that_the_app_checks_it():
+    text = (SKILL / "SKILL.md").read_text()
+    assert "shared_types.py add SLUG TYPE.h" in text and "edit_context" in text and "more than one function" in text
+    assert "stops matching" in text

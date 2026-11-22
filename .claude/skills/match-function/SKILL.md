@@ -83,7 +83,7 @@ in a session (its claim belongs to the connection, so it answers HTTP 400). `jud
 The other scripts, run with that venv's python (`$UV_PROJECT_ENVIRONMENT/bin/python`): `fast_judge.py FILE.c --slug S
 --function F [--diff [--rows N|all]]` (score, and the app's differing rows: 60 by default, then a "... N more rows" line; `--rows all` shows every row; a session's worktree off an older origin/main may lack `--rows`: `git pull --rebase` there and `setup.py sync <holder>`), `passes.py FILE.c --slug S --function F` (allocation
 priorities, register preferences, scheduler orders), `prove_chain.py --slug S --function F --families a,b|all` (greedy
-chain of library families, scored), `families.py [words]` (the library's families, one line each), `similar.py SLUG FUNC` (matched look-alikes and their saved C; step 1), `grid.py FILE.c --slug S --function F` (every combination of marked alternatives and statement orders, scored; step 2), `regions.py` (a large function region by region, step 2),
+chain of library families, scored), `families.py [words]` (the library's families, one line each), `similar.py SLUG FUNC` (matched look-alikes and their saved C; step 1), `grid.py FILE.c --slug S --function F` (every combination of marked alternatives and statement orders, scored; step 2), `shared_types.py list|add SLUG` (the shared header's types; propose or add one, step 2), `regions.py` (a large function region by region, step 2),
 `tools/learnings.py` (evidence entries; `search "<symptom>"` ranks them by symptom, step 3).
 
 ## Connect through the Rust MCP gateway
@@ -243,6 +243,18 @@ wrongly: a 1000 → 680 local improvement was 1090 → 1030 in the app. Confirm 
 Before searching, reproduce the live baseline with the same source, effective compiler, flags and
 project context. Resolve a score discrepancy before ranking variants. Measure children against the
 seed they came from and keep the earlier control so the effect of a questionable edit stays visible.
+
+### Shared types: put a real game structure in the project's header
+
+A type you worked out for a structure that more than one function uses (a Gfx-like command record, the one-member
+record around a global, `Vec3`, a record layout from `guess_struct`) belongs in the shared header, so later claims and
+m2c/`redraft` drafts start with it; a type only this function needs stays in your candidate (a header edit is
+re-checked against every matched function, so don't spend it on a local helper). `shared_types.py list SLUG` shows what the
+header declares; write the definitions to a file and `shared_types.py add SLUG TYPE.h` checks them and prints the proposal
+(it refuses a name the header already declares, identical or different, a name a macro or variable uses, and members of
+an undefined type); `--apply` appends it with the app's `edit_context` (`edit_file` with `--file PATH` for a public-decomp
+project). The app then re-compiles every matched function with the new header and rejects the edit, naming them, if
+any stops matching: adding a type must not break anyone's match, and the app is the judge of that, not this script.
 
 ### Large functions (over ~1000 instructions): one region at a time
 
