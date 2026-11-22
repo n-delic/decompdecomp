@@ -3,6 +3,7 @@ import hashlib
 import json
 
 from ..network import NetworkError
+from . import trial_bookkeeping
 
 
 def validate(count):
@@ -79,7 +80,10 @@ def probe(search, agent, proj, fn, source, profile):
     source = ido_compat.adapted(profile['toolchain'], source)
     scope = agent_tokens.target_scope(search.net, {**dict(fn), 'best_source':source}, '')
     key = 'deep-profile-v1:'+hashlib.sha256(repr((scope, source, profile)).encode()).hexdigest()
-    cached = search.net.project_store(proj['id']).one('SELECT outcome FROM reuse_trials WHERE function_id=? AND signature=?', fn['id'], key)
+    store = search.net.project_store(proj['id'])
+    queued = trial_bookkeeping.lookup(store, ('profile-probe', fn['id'], key))
+    cached = {'outcome': queued} if queued is not None else store.one(
+        'SELECT outcome FROM reuse_trials WHERE function_id=? AND signature=?', fn['id'], key)
     # (a compile failure is as settled as a miss: retrying one recompiled 88 broken rewrites 9,844 times)
     if cached and cached['outcome'] in ('miss', 'compile_failed'):
         search.skipped += 1
@@ -89,10 +93,14 @@ def probe(search, agent, proj, fn, source, profile):
     search.report()
     exact, diff, _ = search.net._judge_with(proj, fn, profile['toolchain'], profile['flags'], source)
     score = (0 if exact else max(1, diff.score)) if diff is not None else None
-    with search.net.project_store(proj['id']).tx() as db:
-        db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(?,?,?,?,?)',
-                   (fn['id'], key, 'exact' if exact else 'miss' if score is not None else 'compile_failed',
-                    'deep compiler profile probe', json.dumps({'score':score, 'profile':profile, **({'source':source} if exact else {})})))
+    outcome = 'exact' if exact else 'miss' if score is not None else 'compile_failed'
+    # A miss is advisory (it only saves compiling the same text again), so a search queues it with its batch, and a
+    # repeat inside the batch finds it there; an exact result is written at once. It was a transaction through the
+    # single writer for every candidate: 15% of a lane's CPU on a sampled 29-lane pass.
+    trial_bookkeeping.submit(store, [('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(?,?,?,?,?)',
+                   (fn['id'], key, outcome, 'deep compiler profile probe',
+                    json.dumps({'score':score, 'profile':profile, **({'source':source} if exact else {})})))],
+                   immediate=bool(exact), memo=(('profile-probe', fn['id'], key), outcome))
     search.log('Profile '+profile['toolchain']+' '+' '.join(profile['flags'])+': '+
                ('exact; rechecking source/profile bundle' if exact else 'score '+str(score) if score is not None else 'does not compile'))
     if exact:

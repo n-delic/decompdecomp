@@ -158,3 +158,16 @@ changes) and the stored policy and input-effect rows are read at most once a sec
 flush of this process (`trial_bookkeeping.stored`); this process's own queued counts are added on top as before.
 The scope lookups are not cached: they are the revision checks that keep a candidate from reusing a result across a
 change of inputs, and a stale one would weaken that.
+
+## A 29-lane pass at 220-290 compiles a second
+
+On the first pass with the batching, caching and library fixes: 81,254 compiles in the first 5 minutes (268 a second),
+228 a second over the next 161 s (a steady-state diff of two thread_cpu snapshots; load average 58 on 18 cores). The
+lanes used 5.7 cores, the proposal workers 0.6. Largest lane entries then: starting the compiler's three programs and
+waiting for them (`_exec_driver`, `spawner._spawn`: 27% together, about 8 ms of CPU a compile); two per-candidate
+write transactions through the writer gate, `deep_profiles.probe` (14.6%) and `repair_sequences.observe` (5.2%, three
+transactions a trial: costs, the CREATE TABLE and outcomes). Both now queue their rows with the batch
+(`repair_sequence_metrics.record`/`record_outcome`, the profile probe's `reuse_trials` miss), the readers add the
+queue to the table, and the tables are created once per engine. Next: difflib's `find_longest_match` in
+`paired_local_repairs.edit` and `layout_frontiers.project` (3.7%), and `repair_preflight.invalid_call` in the
+proposal workers (3.8% of theirs).

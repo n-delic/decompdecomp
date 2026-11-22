@@ -437,3 +437,58 @@ def test_stored_policy_rows_are_read_once_a_second_and_again_after_a_flush(monke
         clock[0] += trial_bookkeeping.STORED_SECONDS + .1
         adaptive_repairs.policy_rows(net, 'p', 'f')
         assert len([r for r in reads if 'repair_policy' in r]) == 3
+
+
+def sequence_rows(net):
+    tables = ('repair_sequence_costs', 'repair_sequence_outcomes')
+    return {t: sorted(tuple(r) for r in net.store.all(f'SELECT * FROM {t}')) for t in tables
+            if net.store.one("SELECT 1 FROM sqlite_master WHERE name=?", t)}
+
+
+def test_sequence_trials_are_queued_and_leave_the_same_rows_as_writing_each_one(monkeypatch):
+    import random
+
+    from decompnet.app import repair_sequence_metrics, repair_sequences
+    def run(net, batched):
+        random.seed(21)
+        steps = []
+        for step in range(150):
+            family = random.choice(['a', 'b', 'c']);prefix = random.choice([(), ('a',), ('a', 'b')])
+            score = random.choice([None, 10, 20, 30]);elapsed = random.choice([None, 5, 12.5])
+            before, after = random.choice([('x', 'x'), ('x', 'y'), (None, 'y'), ('y', None)])
+            steps.append((family, prefix, score, elapsed, before, after, random.random() < .05))
+        def go():
+            for family, prefix, score, elapsed, before, after, exact in steps:
+                repair_sequences.observe(net, 'p', 'f', prefix, family, 20, score, before, after, exact=exact, elapsed_ms=elapsed)
+                if batched and random.random() < .1:  # (reads see the queue)
+                    repair_sequence_metrics.listing(net, 'p', 'f', ())
+                    repair_sequences.productive(net, 'p', 'f', ('a',))
+        if batched:
+            with trial_bookkeeping.scope():
+                calls = counted_transactions(net.store);go()
+                assert len(calls) < len(steps)  # (one transaction per improvement, not three per trial)
+        else:go()
+    queued = FakeNet();run(queued, True)
+    plain = FakeNet();run(plain, False)
+    assert sequence_rows(queued) == sequence_rows(plain)
+    for prefix in ((), ('a',), ('a', 'b')):
+        assert repair_sequences.productive(queued, 'p', 'f', prefix) == repair_sequences.productive(plain, 'p', 'f', prefix)
+        assert repair_sequence_metrics.listing(queued, 'p', 'f', prefix) == repair_sequence_metrics.listing(plain, 'p', 'f', prefix)
+
+
+def test_a_profile_probe_queues_its_miss_and_a_repeat_in_the_batch_is_skipped(monkeypatch):
+    from decompnet.app import deep_profiles
+    from tests.test_deep_permuter import setup
+    net = setup(monkeypatch);fn = net.function();proj = net.project_row('game')
+    judged = []
+    net._judge_with = lambda *args: judged.append(1) or (False, SimpleNamespace(score=30), '')
+    search = deep_permuter.Search(net, 1, 100, Log(), fn)
+    profile = {'toolchain': 'saved-toolchain', 'flags': ['-O2']}
+    calls = counted_transactions(net.store)
+    with trial_bookkeeping.scope():
+        for _ in range(3):deep_profiles.probe(search, AGENT, proj, fn, 'int f(){return 3;}', profile)
+        assert len(judged) == 1 and search.skipped == 2 and not calls  # queued, and seen by the repeats
+    assert len(calls) == 1
+    assert net.store.one("SELECT outcome FROM reuse_trials WHERE reason='deep compiler profile probe'")['outcome'] == 'miss'
+    deep_profiles.probe(search, AGENT, proj, fn, 'int f(){return 3;}', profile)  # (from the table, in a later search)
+    assert len(judged) == 1
