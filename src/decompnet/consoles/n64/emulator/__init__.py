@@ -393,6 +393,35 @@ def differences(a: bytes, b: bytes, start: int = 0x80000000, end: int = 0x804000
     return [(base + s, base + e, n) for s, e, n in out]
 
 
+@dataclass
+class Recording:
+    """One recorded call (`<base>.state`, `<base>.rdram`): the registers at the function's entry and, on demand, the
+    RAM there (4 or 8 MB, big-endian from 0x80000000; read where asked, never held)."""
+    base: Path
+    pc: int
+    gpr: list[int]
+    fpr: list[int]
+
+    def read(self, address: int, width: int = 4) -> int | None:
+        """The `width` bytes (1, 2, 4 or 8) at a virtual address before the call, or None outside RAM."""
+        offset = address & 0x1FFFFFFF
+        try:
+            with open(f"{self.base}.rdram", "rb") as dump:
+                dump.seek(offset)
+                data = dump.read(width)
+        except OSError:
+            return None
+        return int.from_bytes(data, "big") if len(data) == width else None
+
+
+def read_recording(base: Path) -> Recording:
+    """The registers of a recorded call: its state file is the pc, the 32 general registers, hi, lo and a few more
+    words, then the 32 floating-point registers (the layout behaviour.py's `_state` reads)."""
+    words = Path(f"{base}.state").read_text().split()
+    return Recording(Path(base), int(words[0], 16), [int(w, 16) for w in words[1:33]],
+                     [int(w, 16) for w in words[35:67]])
+
+
 def _address(text: str) -> int:
     return int(text, 16)
 
@@ -429,4 +458,5 @@ def main(argv=None) -> int:
     return 0
 
 
-__all__ = ["EmulatorError", "Hit", "Run", "build", "differences", "main", "parse", "run", "word"]
+__all__ = ["EmulatorError", "Hit", "Recording", "Run", "build", "differences", "main", "parse", "read_recording", "run",
+           "word"]

@@ -448,6 +448,11 @@ def _compare_behaviour(net: RomNetwork, slug: str, *args) -> str:
     return answer(net, slug, *args)
 
 
+def _get_call_hints(net: RomNetwork, slug: str, *args) -> str:
+    from .call_hints import answer
+    return answer(net, slug, *args)
+
+
 def _watch_in_emulator(net: RomNetwork, slug: str, *args) -> str:
     from .emulator_watch import watch
     return watch(net, slug, *args)
@@ -763,6 +768,8 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "list_functions": lambda net, agent, slug, status="open", limit=40: net.list_functions(slug, status, limit),
     "port_readiness": lambda net, agent, slug: _port_readiness(net, slug),
     "compare_candidate_behaviour": _candidate_behaviour,
+    "get_call_hints": lambda net, agent, slug, function, calls=4, vis=3600, from_vi=0, input="",
+        expansion_pak=False: _get_call_hints(net, slug, function, calls, vis, from_vi, input, expansion_pak),
     "compare_behaviour": lambda net, agent, slug, function, calls=3, vis=3600, from_vi=0, input="",
         expansion_pak=False: _compare_behaviour(net, slug, function, calls, vis, from_vi, input, expansion_pak),
     "watch_in_emulator": lambda net, agent, slug, target, kind="write", vis=600, from_vi=0, input="", length=4,
@@ -823,7 +830,7 @@ REPAIR_CAPTURE_TOOLS = frozenset({'compile_and_diff', 'compile_patch', 'compile_
                                  'edit_file', 'edit_context', 'redraft'})
 
 
-ROM_ONLY = {"watch_in_emulator","compare_behaviour","compare_candidate_behaviour","get_data_unit","compile_data","claim_data","release_data","claim_port_fix","release_port_fix","check_for_pc","fix_for_pc","claim_asset_region","inspect_asset_region","preview_asset_region","propose_asset_region","defer_asset_region","review_search_seed","get_boundary_evidence", "suggest_boundary", "get_context", "edit_context", "split_function", "redraft", "search_flags",
+ROM_ONLY = {"watch_in_emulator","get_call_hints","compare_behaviour","compare_candidate_behaviour","get_data_unit","compile_data","claim_data","release_data","claim_port_fix","release_port_fix","check_for_pc","fix_for_pc","claim_asset_region","inspect_asset_region","preview_asset_region","propose_asset_region","defer_asset_region","review_search_seed","get_boundary_evidence", "suggest_boundary", "get_context", "edit_context", "split_function", "redraft", "search_flags",
             # GCC pass dumps and the standalone judge worker are ROM-mode (compiler_passes.py, score_permutations.py)
             "compiler_passes", "score_permutations", "prove_chain"}
 FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions", "tidy_done", "tidy_file",
@@ -846,6 +853,8 @@ def _supports(console, name: str, fork: bool) -> bool:
         return console.reports_boundaries if fork else arch.BOUNDARIES in console.features
     if name == "compare_candidate_behaviour":
         return not fork and console.emulator is not None and console.recompiler is not None
+    if name == "get_call_hints":
+        return not fork and console.emulator is not None
     if name == "get_class":
         return console.reads_classes
     if name == "guess_struct":
@@ -1152,7 +1161,7 @@ def _unoffered(net: RomNetwork, slug: str, name: str) -> str:
     where = f"{console.name} projects" if console.name else "this project"
     subject = "its console"
     why = {"join_functions": "can't join functions yet", "report_boundary": "can't report function ends yet",
-           "get_class": "can't read C++ classes yet", "get_callers": "can't list callers yet", "guess_struct": "can't read struct layouts yet",
+           "get_class": "can't read C++ classes yet", "get_callers": "can't list callers yet", "get_call_hints": "has no reversing emulator yet", "guess_struct": "can't read struct layouts yet",
            "compiler_map": "can't read a compiler map yet"}.get(name)
     if name == "join_functions" and not net.fork_slug(slug):
         subject, why = "the ROM engine", "can't join functions yet"  # ROM joins are the engine's (#192), not a console's
@@ -1725,6 +1734,19 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         must reach the function (without input it sits at its title). The first run builds a lot: it answers
         "still running"; call again with the same arguments. Changes nothing in the project."""
         return await run(ctx, "compare_behaviour", function=function, calls=calls, vis=vis, from_vi=from_vi,
+                         input=input, expansion_pak=expansion_pak)
+
+    @tool
+    async def get_call_hints(ctx: Context, function: str, calls: int = 4, vis: int = 3600, from_vi: int = 0,
+                             input: str = "", expansion_pak: bool = False) -> str:
+        """What the console really passed to a function: records its first `calls` calls (1-8) in the console's
+        reversing emulator from your ROM (N64 for now) and says which arguments it takes, integer or float, the
+        values they had (a range that fits u8 or u16, never negative, a pointer into RAM) and what the function reads
+        and writes through its pointer arguments (offset, width, the values found). A lead for parameter types,
+        widths and struct layouts: judge anything you write from it. vis/from_vi/input as in watch_in_emulator.
+        The hints then appear in the function's brief and in its machine draft's candidates. "still running":
+        call again with the same arguments. Changes nothing in the project's sources."""
+        return await run(ctx, "get_call_hints", function=function, calls=calls, vis=vis, from_vi=from_vi,
                          input=input, expansion_pak=expansion_pak)
 
     @tool

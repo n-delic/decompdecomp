@@ -436,6 +436,12 @@ class AutopilotMixin:
                                                                    valid=True, strict=False, timeout=20,
                                                                    resolve=lambda symbol: self.symbols(proj['id']).resolve(symbol)),
                                                                note, callers)
+                from .. import call_hints
+                if call_hints.enabled(self.cfg(proj)):
+                    # recorded real calls of this function, when there are some (app/call_hints.py)
+                    hinted = call_hints.saved(self, proj, fn)
+                    for family, source in (call_hints.draft_candidates(draft, fn['name'], hinted) if hinted else []):
+                        candidates.append((family, f"{note}{seeds.with_m2c_macros(source)}\n"))
                 from ..loop_storage_shapes import variants as loop_shapes
                 for family,source in loop_shapes(draft,fn['name'],ctx['header'],proj['arch'])[:2]:
                     candidates.append((family,f"{note}{seeds.with_m2c_macros(source)}\n"))

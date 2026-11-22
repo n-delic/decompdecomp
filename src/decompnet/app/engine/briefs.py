@@ -586,6 +586,15 @@ class BriefMixin:
                                f"{len(found.by_vtable)} classes found in this game's code: get_class() lists them")
         return "\n\n".join(classes.describe(c, found, syms.label, focus=addr) for c in hits[:3])
 
+    def _call_hints_brief(self, fn, proj) -> list[str]:
+        """What the console passed in recorded calls of this function (app/call_hints.py), when it was recorded."""
+        from .. import call_hints
+        try:
+            return call_hints.brief_lines(self, proj, fn)
+        except Exception:  # a hint is never worth failing the brief
+            logging.getLogger("decompdecomp").exception("reading call hints failed")
+            return []
+
     def _class_brief(self, fn, proj) -> list[str]:
         """What get_function says about a virtual function, constructor or destructor: its class and the fields of
         `this` it uses, so agents write this->field at the right offsets."""
@@ -723,7 +732,8 @@ class BriefMixin:
                 lines.append(f"- {syms.label(a)} (0x{a:08X}; {desc})")
         # the brief's sections after those: one method each, (fn, proj) -> its lines (none when it has nothing to say);
         # _struct_brief (layouts.py): its pointer arguments' likely structs
-        for section in (self._debug_brief, self._class_brief, self._types_brief, self._compiler_brief, self._struct_brief):
+        for section in (self._debug_brief, self._class_brief, self._types_brief, self._compiler_brief, self._struct_brief,
+                        self._call_hints_brief):
             lines += section(fn, proj)
         twin = self._twin_lines(proj, fn) if fn["status"] != "matched" else []
         lines += twin

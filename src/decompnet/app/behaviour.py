@@ -226,6 +226,12 @@ def compare(net, slug: str, function: str, calls: int = 3, vis: int = 3600, from
     if not run.recorded:
         return (f"{function} wasn't called in {'VIs ' + str(from_vi) + ' to ' if from_vi else 'the first '}{run.vis} VIs"
                 " of the game: give input to reach where it runs, more VIs, or a later from_vi.")
+    try:  # the same recordings tell what the arguments were (app/call_hints.py); never a reason to fail the comparison
+        from . import call_hints
+        fn_row = net.project_store(proj["id"]).one("SELECT * FROM functions WHERE project_id=? AND name=?", proj["id"], function)
+        call_hints.derive(net, proj, fn_row, run.recorded)
+    except Exception:  # noqa: BLE001
+        pass
     _, harness, program, port_rom = _sides(net, slug, proj, console, log)
     taken = function in v0_takers(program)
     lines = [f"{function} ({row['status']}), {len(run.recorded)} calls recorded on the console"
