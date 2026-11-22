@@ -2,6 +2,7 @@
 
 import re
 
+from decomprepair import balanced_switch_tail
 from decomprepair import target_memory_schedule_repairs as repairs
 
 from .measured_mips_repairs import BRANCH, MEMORY, NUM, REG, SYMBOL, TRANSFER, _value, labelled_code
@@ -309,4 +310,7 @@ def proposals(source,name,header,toolchain,rows,target,candidate,asm,*,big_endia
             (repairs.null_epilogue,_null_epilogue(rows,asm)),
             (repairs.indexed_load_before_arithmetic,_indexed_load_order(rows) if toolchain.startswith('gcc-2.7.2-kmc') else False),
         ]
-    return repairs.variants(source,name,header,[(method,witness) for method,witness in evidence if witness])
+    result = repairs.variants(source,name,header,[(method,witness) for method,witness in evidence if witness])
+    if toolchain.startswith('gcc-2.7.2-kmc'):
+        result += balanced_switch_tail.variants(source, name, rows, header=header)
+    return result

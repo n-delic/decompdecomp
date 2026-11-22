@@ -14440,3 +14440,22 @@ changing the 50-record buffer. Reordering the other loop's matrix/pointer/consta
 alone stayed at 266. Evidence is a measured improvement and synthetic guard tests. The
 function remains unmatched.
 In one N64 table cleanup built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a draft duplicated a local counter increment in the null and non-null branches of a `do` loop. Moving the increment into a `for` loop update reproduced the linked target exactly (score 370 to 0). The repair requires a positive constant bound, the measured branch difference, and a non-escaping counter that the call and macros cannot observe. Evidence: one saved example and synthetic generation and routing tests.
+
+### Balance a shared switch tail against saved results and a delayed index
+
+In a private N64 function built with GCC 2.7.2 KMC and
+`-G0 -mips3 -mgp32 -mfp32 -O2`, the target shared the last two stores
+and a guarded call between neighboring cases. The draft duplicated that
+tail. The target also kept three floating-point return values in saved
+registers before copying them for later use, and computed a pure lookup
+index on both incoming branch delay slots. The draft kept the index
+across a call instead.
+
+The exact linked baseline was 12,815. Sharing the tail alone scored
+13,490, deferring the index alone scored 13,780, and staging the three
+floating-point results alone scored 13,190. Some partial combinations
+shifted the final jump table away from its linked address. The measured
+combined source scored 11,605 with all 3,034 instructions and all jump
+table relocations resolved. The rewrite emits one candidate only when
+all three assembly patterns and their source shapes are present.
+Synthetic tests cover missing witnesses and unsafe lookalikes.
