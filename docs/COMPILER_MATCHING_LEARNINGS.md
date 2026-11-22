@@ -13380,6 +13380,22 @@ the same center, loads from one base register, and comparisons of the
 results. It generates a candidate only across local statements that preserve
 the inputs. Evidence is one partial live match and synthetic tests.
 
+### KMC GCC 2.7.2: restore a shared case from two mode equalities
+
+A large N64 draft tested whether a loaded halfword was zero or six.
+KMC GCC combined the two comparisons into integers and ORed them.
+The target branches directly on zero and then on the other case
+value. Under `-G0 -mips3 -mgp32 -mfp32 -O2`, shared switch cases
+recovered that chain and improved the linked score from 14,675 to
+14,215. An explicit local goto produced the same score, while the
+inverted condition with a goto scored 14,865. The shorter candidate
+still needs surrounding layout work to place a later relocation.
+
+The `discrete_mode_switch` repair requires the matching target field
+offset, literal and register flow. It also checks the selector is a
+local and the body has no outer break or else arm. Evidence is one
+partial N64 match and synthetic guard tests.
+
 ### KMC GCC 2.7.2: order two inverted float tolerance predicates
 
 A large N64 draft materializes two integer flags from comparisons
