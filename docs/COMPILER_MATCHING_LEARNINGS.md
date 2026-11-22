@@ -13608,3 +13608,5 @@ formals' `u8` and `s32` types reproduced the target, while casts and local copie
 The gated repair generated one candidate from the 30-point draft and the linked-byte judge scored it 0.
 The running app also accepted the exact match. Evidence is one real match and synthetic positive and
 negative generation tests.
+
+One N64 linked-list walk built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` had been drafted as returning `void`, while the target initialized the return register to zero and incremented it on each iteration. Restoring a counter and returning it reproduced the linked target exactly (score 400 to 0). The repair requires both target counter instructions and the simple list-walk shape. Evidence: one saved example and synthetic generation and routing tests.
