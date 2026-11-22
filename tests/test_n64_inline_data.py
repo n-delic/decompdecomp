@@ -136,3 +136,15 @@ def test_verified_tables_end_before_the_following_code(tmp_path, monkeypatch):
     inline_data.apply(config, image, lambda _: None)
     assert code_ranges(config) == [(0, 4, 0x80000000), (20, 24, 0x80000014)]
     assert not list(inline_data.spans(b'code' + data[:-1] + b'?' + b'next'))
+
+
+def test_startup_stack_zero_region_rejects_control_flow_into_it():
+    import struct
+
+    image = bytearray(b'\x44'*0x1400)
+    struct.pack_into('>2I', image, 0x1000, 0x3c1d8000, 0x27bd1000)
+    image[0x1100:0x1180] = bytes(128)
+    ranges = [(0x1000, 0x1010, 0x80000400), (0x1100, 0x1200, 0x80001000)]
+    assert list(inline_data._stack_padding(image, ranges)) == [(0x1100, 0x1180)]
+    struct.pack_into('>I', image, 0x1008, 0x0c000400)
+    assert not list(inline_data._stack_padding(image, ranges))

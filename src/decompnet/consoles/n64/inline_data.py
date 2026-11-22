@@ -36,6 +36,8 @@ _LITERALS = (
     ('03e000080000000001000008', 48, 4, '3ec66f24afd9310290010b72eb820a4c88f2dbd82f2a9578c2267821ee8607c3'),
     ('03e00008000000000b696478', 48, 4, '978c199c82659070959cabe8d2e21f97ee17a723cccfeb5f95fb6757b561b984'),
     ('03e000080140102100000008', 48, 4, '3a1a332bb8fa429785827f8614c1f26f45582675a1f9021fd5ffc0e5ede372da'),
+    # An unentered scheduling NOP sits between a boot call and a CP0 entry.
+    ('0c0258940000202500000000', 48, 4, '4f7df4643dae98253995027c806f62745d748f373ee367a593e746032490efae'),
     # The task's verified boot and text pointers address RSP code in this DMA bank.
     # Keep the microcode's tail out of the VR4300 function inventory.
     ('000000000000000009000419', 5736, 5728, '4a6a97f4bc7f9fd0382c92e810f62763d18bc0674515ea23f03ef2abe90df621'),
@@ -148,10 +150,46 @@ def _startup_padding(image, ranges):
             yield start, start+12
 
 
+def _stack_padding(image, ranges):
+    """Keep a zero-filled startup stack out of the function inventory."""
+    if len(image) < 0x1008:
+        return
+    high, low = struct.unpack_from('>2I', image, 0x1000)
+    if high >> 16 != 0x3c1d or low >> 16 != 0x27bd:
+        return
+    value = low & 0xffff
+    target = (((high & 0xffff) << 16) + (value-0x10000 if value & 0x8000 else value)) & 0xffffffff
+    mapped = [(start + target-base, end) for start, end, base in ranges
+              if base <= target < base+end-start]
+    if len(mapped) != 1:
+        return
+    start, limit = mapped[0]
+    if start % 4 or start+64 > limit or any(image[start:start+64]):
+        return
+    match = re.search(rb'[^\0]', image[start:limit])
+    end = start + (match.start() if match else limit-start)
+    end &= ~3
+    for lo, hi, base in ranges:
+        for offset in range(lo, hi-3, 4):
+            word = int.from_bytes(image[offset:offset+4], 'big')
+            op = word >> 26
+            pc = base+offset-lo
+            if op in (2, 3):
+                dest = ((pc+4)&0xf0000000) | ((word&0x3ffffff)<<2)
+            elif op in (1, 4, 5, 6, 7, 20, 21, 22, 23) or op == 17 and (word >> 21)&31 == 8:
+                delta = word&0xffff
+                dest = pc+4+(delta-0x10000 if delta&0x8000 else delta)*4
+            else:
+                continue
+            if target <= dest < target+end-start:
+                return
+    yield start, end
+
+
 def apply(config, image, log=print):
     """Split mapped text subsegments at verified inline data boundaries."""
     code = split.code_ranges(config)
-    regions = sorted([*spans(image), *_startup_padding(image, code)])
+    regions = sorted([*spans(image), *_startup_padding(image, code), *_stack_padding(image, code)])
     if not regions:
         return
     ranges = {start: end for start, end, _ in code}
