@@ -13469,6 +13469,22 @@ schedule the increment. A public caller corroborated the interface.
 The linked score went from 1,440 to 0, and the dispatcher generated one
 byte-exact candidate.
 
+### KMC GCC 2.7.2: stage an address and reverse an add's inputs
+
+For one N64 function compiled with `gcc-2.7.2-kmc -G0 -mips3 -mgp32
+-mfp32 -O2`, the saved score 5 differed only in a subtraction reading the
+argument copy rather than the saved register. Widening the bounded short
+local fixed that operand but scored 60 because argument setup moved. Staging
+the byte address through a dead return local recovered the target ordering
+and scored 5 with only the add's inputs reversed. Expressing the unsigned
+sum as `base - (0U - offset)` let GCC combine it to an `addu` in the target
+operand order: the exact isolated judge scored the combined child 0. The
+`kmc_staged_address_order` repair proposes the entire combination from the
+saved seed, because the intermediate widening is worse and a best-only
+beam would discard it. Unit tests cover bounded values, aliases, loops,
+conditional overwrites and type-sensitive uses. This is one observed
+function, not a controlled cross-game result.
+
 ### KMC GCC 2.7.2: reuse a dead return local for an earlier load
 
 On one N64 function with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`,
