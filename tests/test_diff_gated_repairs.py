@@ -2470,3 +2470,12 @@ def test_indexed_allocations_route_to_kmc(monkeypatch):
     assert 'indexed_alloc_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'indexed_alloc_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
     assert 'indexed_alloc_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-7.1', rows, ''))
+
+def test_stack_vector_call_reload_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'lwc1 $f20, 0x10($sp)', 'lwc1 $f0, 0x10($sp)')]
+    monkeypatch.setattr(diff_gated_repairs.stack_vector_call_reload, 'variants',
+                        lambda text, name, asm: [('stack_vector_fixture', text)] if asm == 'target evidence' else [])
+    assert 'stack_vector_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, 'target evidence'))
+    assert 'stack_vector_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, 'target evidence'))
