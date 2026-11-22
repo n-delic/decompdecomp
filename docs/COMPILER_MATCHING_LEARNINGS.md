@@ -1,5 +1,17 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: pair a signed loop entry with a halfword counter
+
+A private N64 draft with a masked loop index scored 170 under
+`-G0 -mips3 -mgp32 -mfp32 -O2`. Keep the entry comparison signed
+when a zero guard already fixes its left operand and the bound is a
+signed word. Declare the loop counter as `u16` when its reads use only
+the low byte or halfword. With an identical-call branch collapsed to
+remove an uninitialized test, the signed comparison alone scored 370
+and the counter change alone scored 200. The two changes together
+matched exactly in both the scratch and running judges. The combined
+repair also compiles byte-identically in a separate synthetic control.
+
 ### KMC GCC 2.7.2: stage a bounded masked product
 
 In a private N64 draft, assigning a masked index to its unsigned

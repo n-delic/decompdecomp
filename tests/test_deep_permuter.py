@@ -1425,3 +1425,61 @@ def test_counter_reset_pass_uses_header_when_moving_across_setup(monkeypatch, he
 
     monkeypatch.setattr(search, '_score', score)
     assert search.loop_vector_shape_pass(AGENT, proj, dict(fn, best_source=source), 155, None) == expected
+
+
+def test_loop_vector_shape_pass_pairs_signed_entry_with_halfword_counter(monkeypatch, tmp_path):
+    from decompnet import toolchains
+    from decompnet.compiler import compile_source
+    from decompnet.elfobj import extract_function
+    from decompnet.project import compiler_config
+
+    toolchain = 'gcc-2.7.2-kmc'
+    if not toolchains.installed(toolchain):
+        pytest.skip('needs the local pinned compiler')
+    source = """
+typedef unsigned short u16;
+extern int count;
+extern int next(void);
+extern void tick(void), visit(int);
+void f(void) {
+    int timer;
+    int index;
+    int *bound;
+    if (timer) { tick(); } else { tick(); }
+    timer = next();
+    if (timer == 0) {
+        index = 0;
+        bound = &count;
+        if (((unsigned) timer) < ((unsigned) (*bound))) {
+            do {
+                visit(index & 0xff);
+                index++;
+            } while ((index & 0xffff) < *bound);
+        }
+    }
+}
+"""
+    expected = (source.replace('int index;', 'u16 index;')
+                .replace('((unsigned) timer) < ((unsigned) (*bound))', 'timer < *bound')
+                .replace('if (timer) { tick(); } else { tick(); }', 'tick();'))
+    cfg = compiler_config(tmp_path, {'compiler': {'toolchain': toolchain,
+                                                 'flags': ['-G0', '-mips3', '-mgp32', '-mfp32', '-O2']}})
+    original = compile_source(cfg, '', expected)
+    baseline = compile_source(cfg, '', source)
+    assert original.ok, original.log
+    assert baseline.ok, baseline.log
+    target = extract_function(original.obj, 'f').code
+    assert extract_function(baseline.obj, 'f').code != target
+    net = setup(monkeypatch)
+    fn = dict(net.function(), best_source=source)
+    search = deep_permuter.Search(net, 1, 30, Log(), fn)
+    seen = []
+
+    def score(agent, proj, fn, candidate, best, fork):
+        seen.append(candidate)
+        result = compile_source(cfg, '', candidate)
+        return 0 if result.ok and extract_function(result.obj, 'f').code == target else best
+
+    monkeypatch.setattr(search, '_score', score)
+    assert search.loop_vector_shape_pass(AGENT, net.project_row('game'), fn, 170, None) == 0
+    assert expected in seen
