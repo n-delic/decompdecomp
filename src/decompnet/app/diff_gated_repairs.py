@@ -629,6 +629,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_staged_float_order.variants(source, name, rows, header)
         result += natural_pointer_spill.variants(source, name, rows, header)
         result += native_float_spill.variants(source, name, rows, header, MAX_SOURCE_BYTES)
+        result += native_float_spill.setup_copy_variants(source, name, rows, header, MAX_SOURCE_BYTES)
         result += shared_reset_rebalance.variants(source, name, rows, header)
         result += measured_forwarded_pointer.variants(source, name, header, asm or '')
         result += float_intermediate_repairs.repeated_products(source, name, rows)

@@ -24,6 +24,14 @@ preserves every bit; it changes the compiler's coalescing of the OR operands. Th
 compiler-wide result, and it remains unmatched. Reordering the OR chain alone scored 20 or worse, and moving the low
 shift into the one-shot scope scored 30. Hoisting a different saved scoped intermediate regressed 25 to 255.
 
+An isolated follow-on stages `part = low | K`, applies `high |= part` in a one-shot scope, and gives each shift
+assignment three nested one-shot scopes. The unsigned operations and single store retain their order. The normal
+linked-byte judge scored the generated child 0 from both the original 20 and the identity 10 seeds, twice from the
+original seed; the live exact verdict has not yet been recorded. The compiler's local allocator coalesces the OR
+result with the low-shift quantity; changing loop-weighted references moves that quantity and the high-shift quantity
+ahead of the literal without moving the shared input. Fewer scopes on both shifts scored 30 in this function. This is
+one function's measured result, not a controlled compiler-wide rule.
+
 ### KMC GCC 2.7.2: split a reassigned incoming parameter
 
 In a controlled N64 experiment with `-G0 -mips3 -mgp32 -mfp32 -O2`, a source variant reused an incoming
@@ -16498,3 +16506,20 @@ With `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a saved draft passed the integer bits `
 ### A consumed argument register before a call (GCC 2.7.2 KMC)
 
 With `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, one saved draft scored 270 after passing an extra integer literal to a call. The target used that register for an earlier OR and did not set it up again for the call; dropping the trailing argument and correcting the local prototype matched exactly. This is a saved example verified with the original compiler and linked-byte judge. The target-guided search only offers this drop for literal arguments, whose removal cannot discard evaluation side effects.
+
+### Recover a shared setup copy after the native float spill
+
+In the same private N64 replay under
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, the native
+float writeback matched and the setup code still initialized one
+axis accumulator from a separate literal. Moving its initialization
+after the setup call and copying the existing cleared word's float
+view recovered the target saved-register move. Redefining the
+known-zero word between the call and copy prevented CSE from
+forwarding the earlier stack value. The later combine pass erased
+the shift pair.
+
+The linked score moved from 155 to 150 with the same frame,
+3,034 instructions and three jump tables. Placing the copy before
+the call instead scored 210 because it changed the stack store's
+schedule. This is one private function under this profile.
