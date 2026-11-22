@@ -904,3 +904,12 @@ def test_hoisted_word_read_reaches_kmc_proposals(monkeypatch):
     rows = [('r', 'lw $v0, %lo(value)($v0)', 'lw $v0, ($t0)')]
     assert ('relocated_hoisted_word_read', 'direct word') in route('void f(void) {}', rows, 'asm')
     assert 'relocated_hoisted_word_read' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))
+
+
+def test_relocated_pointer_reloads_reach_kmc_proposals(monkeypatch):
+    from decomprepair import relocated_pointer_reloads
+
+    monkeypatch.setattr(relocated_pointer_reloads, 'variants', lambda *args: [('direct_pointer_reloads', 'fixed')])
+    rows = [('r', 'lw $v0, %lo(value)($v0)', 'lw $v0, ($s0)')]
+    assert ('direct_pointer_reloads', 'fixed') in route('void f(void) {}', rows, 'asm')
+    assert 'direct_pointer_reloads' not in dict(route('void f(void) {}', rows, 'asm', compiler='ido-5.3'))

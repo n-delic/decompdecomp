@@ -110,6 +110,7 @@ from decomprepair import (
     rejected_branch_default,
     relocated_byte_table,
     relocated_global_update,
+    relocated_pointer_reloads,
     search_exit_loop_repairs,
     shared_return_repairs,
     short_leaf_drafts,
@@ -393,6 +394,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
             result.append(('relocated_global_increment', candidate_source))
         if candidate_source := relocated_global_update.rewrite_hoisted_word_read(source, name, rows, asm or '', header, resolve):
             result.append(('relocated_hoisted_word_read', candidate_source))
+        result += relocated_pointer_reloads.variants(source, name, header, rows, asm or '', resolve, flags)
         if candidate_source := stack_fill_drafts.rewrite(source, name, asm or '', header):
             result.append(('descending_stack_fill', candidate_source))
         if candidate_source := stack_fill_drafts.rewrite_ascending(source, name, asm or '', header):
