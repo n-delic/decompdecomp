@@ -1386,3 +1386,11 @@ def test_boolean_loop_flag_routes_to_kmc(monkeypatch):
                         lambda text, name, header, diff: [('boolean_loop_fixture', text)])
     assert 'boolean_loop_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'boolean_loop_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_empty_variadic_leaf_with_all_stores_before_return():
+    source = 'void f(s32 first, M2C_UNK a, M2C_UNK b, M2C_UNK c) { }\n'
+    asm = 'sw $a0, ($sp)\nsw $a1, 4($sp)\nsw $a2, 8($sp)\nsw $a3, 12($sp)\njr $ra\nnop'
+    rows = [('o', 'sw $a0, ($sp)', ''), (' ', 'jr $ra', 'jr $ra')]
+    assert ('varargs_signature', 'void f(s32 first, ...) { }\n') in proposals(
+        source, 'f', '', 'mips', KMC, rows, asm)
