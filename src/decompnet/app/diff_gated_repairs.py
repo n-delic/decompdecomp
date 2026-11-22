@@ -65,6 +65,7 @@ from decomprepair import (
     measured_callback_repairs,
     measured_carried_loop_test,
     measured_case_float_sign,
+    measured_child_slot_update,
     measured_command_record_cursor,
     measured_command_word_schedule,
     measured_conditional_call_stage,
@@ -222,6 +223,7 @@ from decomprepair import (
     scoped_phase_initializer,
     search_exit_loop_repairs,
     shared_projection_lifetime,
+    shared_reset_rebalance,
     shared_return_repairs,
     short_leaf_drafts,
     smoothing_call_before_read,
@@ -545,6 +547,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     result += target_memory_schedule_diff_repairs.proposals(source,name,header,toolchain,rows,target,candidate,asm,
                                                              big_endian=big_endian,flags=flags)
     if toolchain.startswith('gcc-2.7.2-kmc'):
+        result += measured_child_slot_update.variants(source, name, header, rows, flags, resolve)
         result += measured_coordinate_staging.variants(source, name, header, rows)
         result += measured_call_slot_setup.variants(source, name, header, rows, flags, resolve)
         result += measured_field_base_lifetimes.variants(source, name, header, rows)
@@ -610,6 +613,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_float_grid_stores.variants(source, name, rows)
         result += measured_staged_float_order.variants(source, name, rows, header)
         result += natural_pointer_spill.variants(source, name, rows, header)
+        result += shared_reset_rebalance.variants(source, name, rows, header)
         result += measured_forwarded_pointer.variants(source, name, header, asm or '')
         result += float_intermediate_repairs.repeated_products(source, name, rows)
         result += measured_expression_repairs.variants(source,name,header,rows)

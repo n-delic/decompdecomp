@@ -28,6 +28,7 @@ def local_alias(section, index, offset):
 _REFERENCE = re.compile(r'(uso_[0-9A-F]+_sym_[0-9]+(?:_text_[0-9A-F]+)?)__ref[1-9][0-9]*')
 _BINDING = re.compile(r'uso_[0-9A-F]+_sym_[0-9]+(?:_text_[0-9A-F]+)?')
 _DATA_BINDING = re.compile(r'(uso_[0-9A-F]+_sym_[0-9]+)_data_([0-9A-F]+)__ref([1-9][0-9]*)')
+_EXPLICIT_BINDING = re.compile(r'decomp_overlay_bind_([A-Za-z_]\w*)')
 
 
 def separate_reference(binding, number):
@@ -196,6 +197,49 @@ def _defined_data_fields(elf, raw, target, expected, section):
     return verified
 
 
+def _explicit_bindings(elf):
+    """Read source-declared aliases for symbols the C++ compiler emits itself.
+
+    Each binding is a global pointer initialized by one relocation to an
+    undefined loader symbol. No pointer bytes or relocations from the marker
+    are copied into the cartridge; they specify the real text relocation.
+    """
+    symtab = elf.get_section_by_name('.symtab')
+    if symtab is None:
+        return {}
+    markers = defaultdict(list)
+    for symbol in symtab.iter_symbols():
+        match = _EXPLICIT_BINDING.fullmatch(symbol.name)
+        if not match:
+            continue
+        shndx, start = symbol['st_shndx'], symbol['st_value']
+        if (not isinstance(shndx, int) or start % 4 or symbol['st_size'] != 4
+                or symbol['st_info']['bind'] != 'STB_GLOBAL' or symbol['st_info']['type'] != 'STT_OBJECT'):
+            markers[match[1]].append(None)
+            continue
+        data = elf.get_section(shndx)
+        if (data['sh_type'] != 'SHT_PROGBITS' or data['sh_flags'] & 3 != 3
+                or start + 4 > data['sh_size'] or data.data()[start:start + 4] != bytes(4)):
+            markers[match[1]].append(None)
+            continue
+        refs = [(r, elf.get_section(table['sh_link'])) for table in elf.iter_sections()
+                if isinstance(table, RelocationSection) and table['sh_info'] == shndx
+                for r in table.iter_relocations() if start <= r['r_offset'] < start + 4]
+        if len(refs) != 1:
+            markers[match[1]].append(None)
+            continue
+        reloc, symbols = refs[0]
+        binding = symbols.get_symbol(reloc['r_info_sym'])
+        distinct = _REFERENCE.fullmatch(binding.name)
+        binding_name = distinct[1] if distinct else binding.name
+        if (reloc['r_offset'] != start or reloc['r_info_type'] != 2 or reloc.is_RELA()
+                or binding['st_shndx'] != 'SHN_UNDEF' or not _BINDING.fullmatch(binding_name)):
+            markers[match[1]].append(None)
+            continue
+        markers[match[1]].append(binding_name)
+    return {name: values[0] for name, values in markers.items() if len(values) == 1 and values[0] is not None}
+
+
 def link(obj, name, target, info):
     section = info['section']
     expected = {at: (kind, index) for at, kind, index in info['relocs'] or ()}
@@ -213,6 +257,7 @@ def link(obj, name, target, info):
         raw = raw_relocs(elf, shndx, start, size, code)
         pool = _pool_fields(elf, raw, code, target, expected, info, entry)
         defined_data = _defined_data_fields(elf, raw, target, expected, section)
+        explicit = _explicit_bindings(elf)
     except (ELFError, ValueError, TypeError, IndexError):
         return LinkResult(None, False, ['The compiler object could not be read as overlay text.'])
 
@@ -224,7 +269,7 @@ def link(obj, name, target, info):
     for item in raw:
         at, kind = item['off'], item['type']
         symbol = item['symtab'].get_symbol(item['symidx'])
-        binding = symbol.name
+        binding = explicit.get(symbol.name, symbol.name)
         if at in pool or at in defined_data:
             value = pool[at] if at in pool else defined_data[at]
             candidate.append(Reloc(at, kind, alias(section, expected[at][1]), value))

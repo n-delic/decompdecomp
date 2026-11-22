@@ -16061,6 +16061,25 @@ Two saved MIPS examples built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` 
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` checked three signature bytes. The generated draft's combined condition used different registers and a shared result copy. Staging the input bytes and comparison constants in word locals changed the linked difference score from 250 to an exact match while retaining the integer return type. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the complete source, measured instructions and constants, and resolved addresses for all three byte loads.
 
+### Balance a shared reset between phase stores and later calls
+
+In a private N64 function built with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, exchanging the first
+and fourth independent stores after split floating-point captures
+reduced the linked score from 360 to 355. All captures remained
+before the disjoint stores.
+
+Reusing the saved reset word for two later float stores and a
+setup copy let four of six repeated call arguments go back to
+literal zero. The paired stores, the setup copy and those four
+arguments then occupied their target registers. The score
+fell from 355 to 320 while retaining 3,034 instructions and
+all three jump tables. Reverting every call argument after the
+same reset changes scored 400 before the store-order trial
+because it displaced the saved-register allocations. The
+trial checks the paired stores, argument evidence and local
+zero's initialization before asking the exact judge.
+
 ### Split the float load and sum when a stack input crosses a field load
 
 In a private N64 function built with
@@ -16371,3 +16390,11 @@ this combined shape when it can prove the copied key is used only through byte m
 Separate comparisons without narrowing scored 245; narrowing and moving the mask assignments alone scored 55.
 Reversing the original helper comparison or its argument order alone tied at 20. These are single-function
 observations, not controlled regressions; the library and app tests cover generation and routing, respectively.
+
+### KMC GCC 2.7.2 child pointer and indexed slot updates
+
+A saved MIPS function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` updated a child object and two indexed table fields. Reusing the incoming pointer for its child while retaining the original pointer changed the generated draft's linked difference score from 285 to 30. Staging the measured table addresses then produced an exact match. This is one saved example, not a controlled cross-compiler experiment. The candidate requires the full source shape, matching symbol address, 32-bit ABI and the observed child and table instructions.
+
+### IDO generated C++ overlay references
+
+An isolated N64 overlay function built with IDO 7.1 using `-O2 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul -DNON_MATCHING` compiled to the original 588 instruction bytes, but its generated base-constructor call and vtable address used C++ symbols rather than the loader's names. Explicit object-file binding declarations preserved the generated instructions and allowed the overlay linker to verify both loader records. This is one observed function, not a cross-compiler result. A compiler-backed regression checks constructor and vtable bindings, a wrong symbol, a nonzero marker addend, and cartridge reconstruction.
