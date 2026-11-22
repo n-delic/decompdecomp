@@ -16019,3 +16019,7 @@ A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` int
 ### KMC GCC 2.7.2 bounded pointer searches
 
 Two saved MIPS examples built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` searched a bounded pointer table and incremented or decremented a byte in the matching record. Correcting the table entry load reduced each linked difference score from 210 to 10. Restoring the measured halfword index and initialization order produced exact matches for both. These are two related saved examples, not a controlled cross-compiler experiment. The proposal requires the complete generated loop, the measured instructions and a resolved table address; the judge verifies each candidate.
+
+### KMC GCC 2.7.2 staged byte signature
+
+A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` checked three signature bytes. The generated draft's combined condition used different registers and a shared result copy. Staging the input bytes and comparison constants in word locals changed the linked difference score from 250 to an exact match while retaining the integer return type. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the complete source, measured instructions and constants, and resolved addresses for all three byte loads.
