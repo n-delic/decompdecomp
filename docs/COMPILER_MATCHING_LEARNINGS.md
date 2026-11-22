@@ -17462,8 +17462,14 @@ Families: decomp-repair `float_pun_depun` (0.5.593: every pun local whose uses a
 write-only integer array, or a pun-typed load becomes a plain `f32`; then the same with each subset of the later float
 declarations moved before the group). From the saved best, children score 100 and (with `e1z` or the three differences
 moved) 0 in the isolated judge; `tests/test_float_pun_depun_wiring.py` checks the draft repairs and the local lane.
-Not covered: the step from the plain natural source (cached field reads, the volatile read, the staging of the
-differences), which is a separate family still to write.
+The step from the plain source is `field_scalar_stage` (decomp-repair 0.5.595): a local record's fields each assigned once
+become scalars stored to the record (`e_x = ...; e.x = e_x;`, later reads of `e.x` read `e_x`), and a pointer parameter's
+repeated float reads are cached in one block before the first use, the last component read through a `const volatile`
+pointer, that load placed 0 to 3 statements above the block; the staged and the cached declarations in either order.
+From the plain source its children reach 650 (the record staged and the direction cached together, the volatile load two
+statements early), and `allocation_lever` takes that 650 -> 230 -> 0 in two statement moves (the beam's path, checked with
+`draft_repairs.variants` and the isolated judge). Not covered: blocks and loops in the function, caching across a store
+through a pointer or a call, and staging a record whose address is taken.
 
 ## An array's frame slot comes at its declaration, an addressed scalar's at its first `&` (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`)
 
