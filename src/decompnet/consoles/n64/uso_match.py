@@ -11,6 +11,7 @@ from ...candidate_work import elf as candidate_elf
 from ...elfobj import FunctionObj, Reloc, _function_symbols, unmangle
 from ...rom.link import LinkResult
 from ...rom.match import RomTarget, raw_relocs
+from .uso import POOL_LOAD_WIDTHS
 
 
 def alias(section, index):
@@ -97,12 +98,16 @@ def _pool_fields(elf, raw, code, target, expected, pool_loads):
             continue
         relocated = {r['r_offset'] for r in data_relocs}
         blob = data.data()
-        if any(code[item['off']] >> 2 != 0x31 or item['value'] % 4 or item['value'] >= 0x8000
-               or any(item['value'] - 3 <= off < item['value'] + 4 for off in relocated)
-               or len(pool.get((item['off'], index), ())) != 4
-               or pool[item['off'], index] != blob[item['value']:item['value']+4] for item in lows):
-            continue
-        verified.update((item['off'], int.from_bytes(target[item['off']+2:item['off']+4], 'big')) for item in uses)
+        for item in lows:
+            width = POOL_LOAD_WIDTHS.get(code[item['off']] >> 2)
+            offset = item['value']
+            original = pool.get((item['off'], index), b'')
+            if (not width or offset % width or offset >= 0x8000
+                    or any(offset - 3 <= off < offset + width for off in relocated)
+                    or len(original) != width or original != blob[offset:offset + width]):
+                break
+        else:
+            verified.update((item['off'], int.from_bytes(target[item['off']+2:item['off']+4], 'big')) for item in uses)
     return verified
 
 

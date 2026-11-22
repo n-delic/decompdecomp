@@ -1747,6 +1747,18 @@ the same fourteen pairs. All recompiled after reopening and reconstructed
 the original cartridge together. A controlled fixture rejects a changed
 constant and a destination word that itself has a loader relocation.
 
+The same verification covers direct integer word and double-precision loads.
+In an isolated replay, two of seven donor pairs matched with the wider set
+of loads and both failed with only single-precision support enabled. The
+two used IDO 7.1 and IDO 7.1 NCC, respectively, with
+`-G 0 -non_shared -Wab,-r4300_mul -O2 -mips2 -32`; the C profile also passed
+`-Xcpluscomm -DNON_MATCHING`. No source rewrite was needed. Both rebuilt
+the original cartridge byte for byte after a fresh compile. The controlled
+double-precision fixture rejects a changed low word and a relocation in
+that word. Two other functions compiled to the original 64 and 1332 bytes
+with their static declarations intact, but the resulting section-relative
+BSS references could not be identified using their loader records alone.
+
 ### Observation: source layout sensitivity (IDO 5.3)
 
 The existing [IDO guide](../src/decompnet/consoles/n64/guides/ido.md) records a private same-source

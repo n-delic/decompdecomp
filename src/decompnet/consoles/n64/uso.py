@@ -191,8 +191,13 @@ def function_local_calls(region, start, size, relocs):
     return targets
 
 
+# Direct reads from the loader's read-only section. Address formation and partial loads
+# need separate evidence because the instruction alone does not describe the bytes used.
+POOL_LOAD_WIDTHS = {0x23: 4, 0x31: 4, 0x35: 8}  # LW, LWC1, LDC1
+
+
 def function_pool_loads(region, start, size, relocs):
-    """Attach direct single-precision reads of proven loader-owned constant bytes."""
+    """Attach direct reads of proven loader-owned constant bytes."""
     rodata = getattr(region, 'rodata', b'')
     data_relocs = getattr(region, 'rodata_relocations', None)
     if not rodata or data_relocs is None:
@@ -216,9 +221,11 @@ def function_pool_loads(region, start, size, relocs):
             continue
         word = int.from_bytes(region.data[start + at:start + at + 4], 'big')
         offset = word & 0xffff
-        if word >> 26 != 0x31 or offset % 4 or offset >= 0x8000 or offset + 4 > len(rodata) or offset in pointers:
+        width = POOL_LOAD_WIDTHS.get(word >> 26)
+        if (not width or offset % width or offset >= 0x8000 or offset + width > len(rodata)
+                or any(at in pointers for at in range(offset, offset + width, 4))):
             continue
-        lows.append([at, index, rodata[offset:offset + 4].hex()])
+        lows.append([at, index, rodata[offset:offset + width].hex()])
     return lows
 
 
@@ -278,6 +285,9 @@ def metadata_updates(image, banks, rows):
             continue
         new = _binding_metadata(region, start, size, info['relocs'])
         updates = {key: value for key, value in new.items() if key not in info}
+        old_pool, new_pool = info.get('pool_loads', []), new.get('pool_loads', [])
+        if old_pool != new_pool and all(load in new_pool for load in old_pool):
+            updates['pool_loads'] = new_pool
         if updates:
             yield row['id'], json.dumps(meta | {'uso': info | updates})
 
@@ -318,8 +328,11 @@ def rebuild(image, entries):
             local_calls = function_local_calls(region, start, size, info['relocs'])
             if info.get('local_calls') and info['local_calls'] != local_calls:
                 raise ValueError(f'Overlay local call metadata at 0x{offset:X}+0x{start:X} has changed')
-            if info.get('pool_loads') and info['pool_loads'] != function_pool_loads(region, start, size, info['relocs']):
-                raise ValueError(f'Overlay constant pool metadata at 0x{offset:X}+0x{start:X} has changed')
+            saved_pool = info.get('pool_loads')
+            if saved_pool:
+                original_pool = function_pool_loads(region, start, size, info['relocs'])
+                if any(load not in original_pool for load in saved_pool):
+                    raise ValueError(f'Overlay constant pool metadata at 0x{offset:X}+0x{start:X} has changed')
             verified = link(obj, name, region.data[start:end], info)
             if not verified.exact:
                 details = ', '.join(verified.problems) or 'text bytes differ'
