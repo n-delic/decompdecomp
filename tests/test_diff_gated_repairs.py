@@ -2116,3 +2116,25 @@ def test_parameter_clock_load_routes_to_kmc(monkeypatch):
     assert 'parameter_clock_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'parameter_clock_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
     assert 'parameter_clock_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-7.1', rows, ''))
+
+
+def test_reversed_multiply_operands_reorder_all_repeated_products():
+    source = """
+typedef unsigned int u32;
+int f(int x, u32 y) {
+    int left;
+    u32 right;
+    u32 size;
+    left = x;
+    right = y;
+    size = ((u32) (left * right)) >> 1;
+    if (((u32) (left * right)) >> 1) {
+        return size;
+    }
+    return 0;
+}
+"""
+    rows = [('r', 'mult $a2, $a0', 'mult $a0, $a2')]
+    candidates = proposals(source, 'f', '', 'mips', KMC, rows, '')
+    [group] = [text for family, text in candidates if family == 'arithmetic_operand_order']
+    assert group.count('right * left') == 2
