@@ -65,6 +65,7 @@ def compile_batch(cfg: compiler.CompilerConfig, header: str, sources: list[str],
     for index, source in enumerate(sources):
         found = _definition(source, name)
         if found is None or not eligible(found[1], name):
+            compiler.compile_timing.add('batch_ineligible', 1)
             continue
         groups.setdefault(_code(found[0]), []).append((index, found))
     results = [None] * len(sources)
@@ -85,6 +86,7 @@ def compile_batch(cfg: compiler.CompilerConfig, header: str, sources: list[str],
                 parts.append(f'#line {line + 1} "func.c"')
                 parts.append(pattern.sub(_renamed(name, slot), body))
             compiler.compile_timing.add('requests', 1)
+            compiler.compile_timing.add('batch_runs', 1)
             compiler.compile_timing.add('batched_candidates', len(members))
             result = compiler._compile_as(cfg, work, root, '\n'.join(parts), 'c')
             if result.ok and result.obj:

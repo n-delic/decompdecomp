@@ -23,6 +23,7 @@ from pathlib import Path
 
 from ..hostenv import NO_WINDOW
 from ..network import NetworkError
+from . import deep_throughput
 
 log = logging.getLogger('decompdecomp')
 METRIC_SECONDS = .5  # how often a child reports its compile counters (the pass's live rates)
@@ -30,7 +31,7 @@ PROGRESS_SECONDS = .25
 IDLE_SECONDS = 60  # a lane with no turn for this long is closed (Lanes.trim); one starts again on demand  # the most often a turn's progress crosses to the app
 COUNTERS = ('considered', 'generated', 'invocations', 'requests', 'execute', 'queue', 'setup', 'generation',
             'proposal_generation', 'cleanup_generation', 'local_generation', 'link', 'history_write',
-            'history_transactions', 'history_statements')
+            'history_transactions', 'history_statements', *deep_throughput.PIPELINE_COUNTERS)
 
 
 def enabled():

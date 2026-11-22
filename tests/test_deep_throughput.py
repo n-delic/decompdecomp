@@ -290,3 +290,30 @@ def test_layout_counts_when_the_header_reads_line_numbers():
         two = search._recent_source('int f(void)\n{\n  return 1;\n}', 1, header)
         keys[header] = one == two
     assert keys == {'int x;': True, '#define ASSERT(c) check(c, __LINE__)': False}
+
+
+def test_the_compile_pipeline_counters_reach_the_snapshot_and_the_lanes_forward_them():
+    from decompnet.app import deep_lanes
+    assert set(deep_throughput.PIPELINE_COUNTERS) <= set(deep_lanes.COUNTERS)
+    metrics = deep_throughput.Metrics()
+    for name in deep_throughput.PIPELINE_COUNTERS:metrics.add(name, 3)
+    snapshot = metrics.snapshot()
+    assert all(snapshot[name] == 3 for name in deep_throughput.PIPELINE_COUNTERS)
+
+
+def test_discarding_a_lookahead_window_counts_used_cancelled_and_wasted_tickets(monkeypatch):
+    from types import SimpleNamespace
+
+    from decompnet.app import deep_compilation
+    counted = {}
+    monkeypatch.setattr(deep_compilation.compile_timing, 'add', lambda name, value: counted.__setitem__(name, counted.get(name, 0) + value))
+    class Ticket:
+        def __init__(self, counted, cancels):self.counted, self.cancels = counted, cancels
+        def cancel(self):return self.cancels
+    tickets = {'a': Ticket(True, False), 'b': Ticket(True, False), 'c': Ticket(False, True),
+               'd': Ticket(False, False), 'e': Ticket(False, False)}
+    search = SimpleNamespace(tested=0, _ahead=dict(tickets))
+    deep_compilation.discard(search)
+    assert counted == {'ahead_used': 2, 'ahead_cancelled': 1, 'ahead_wasted': 2}
+    assert search.tested == 2 and tickets['d'].counted and tickets['e'].counted  # (running work spends allowance)
+    assert search._ahead == {}  # (a window is discarded once)

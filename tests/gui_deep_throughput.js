@@ -30,3 +30,8 @@ assert.match(line,/16\/16 shared compiler slots busy/);
 assert.doesNotMatch(text({compiler_waiting_search:0,compiler_waiting_background:0,compiler_waiting_shared:0}),/waiting now/);
 assert.match(text({rank_literals_cpu_seconds:.006,rank_batches:4}),/literal extraction 0.006 CPU s across 4 ranked batches \(1.50 ms\/batch\)/);
 assert.doesNotMatch(text({rank_batches:0}),/literal extraction/);
+
+line=text({compile_groups:10,compile_group_tickets:35,batch_alone:6,batch_alone_local:5,batch_ineligible:2,ahead_submitted:40,ahead_used:30,ahead_wasted:6,ahead_cancelled:4});
+assert.match(line,/3\.5 candidates per compile group, 6 compiled alone after a batch \(5 use file-local data\), 2 not batchable/);
+assert.match(line,/lookahead: 30 used, 6 compiled and dropped, 4 cancelled queued/);
+assert.doesNotMatch(text({active_compiles:1}),/per compile group/);
