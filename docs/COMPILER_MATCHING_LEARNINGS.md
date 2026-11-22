@@ -1,5 +1,15 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: retain a two-word command cursor
+
+The target of a private N64 draft used one cursor load for two command
+words and an in-place advance. The draft reloaded the global for the
+second word. Capturing it, restoring the byte publication order, and
+advancing the captured pointer improved the linked score from 355 to 45
+with `-G0 -mips3 -mgp32 -mfp32 -O2`. Reusing a specific existing local
+scored 25 in scratch. The reusable repair uses a scoped local and
+requires the cursor reload and byte order in the linked diff.
+
 ### KMC GCC 2.7.2: keep a float through the comparison and multiplication
 
 A private N64 draft converted one component to an integer before a range
