@@ -97,12 +97,11 @@ def schedule_order(result, phase):
             re.findall(r'^\((?:insn|jump_insn|call_insn) (\d+) .*?\{(\w+)\}', text, re.M | re.S)]
 
 
-SCHED_VERBOSE = '-fsched-verbose-2'
-
-
 def verbose_schedule(result):
-    """The first scheduler's `-fsched-verbose-2` notes (the `;;` lines the pass writes into the sched dump: each ready
-    list with its launch priorities, the insns launched, the set-count rule), apart from the insns themselves."""
+    """The first scheduler's notes (the `;;` lines the pass writes into the sched dump: each ready list with its
+    launch priorities, the insns launched, the set-count rule), apart from the insns themselves. The pinned KMC cc1
+    writes them with plain `-dS` and refuses `-fsched-verbose-2` ("Invalid option", so the whole dump failed and
+    passes.py --sched-verbose answered "did not accept phase capture"): no flag is added."""
     text = ((result.get('phases') or {}).get('sched') or {}).get('excerpt', '')
     return [line for line in text.splitlines() if line.startswith(';;')]
 
@@ -110,12 +109,10 @@ def verbose_schedule(result):
 def report(net, proj, fn, source, passes=SKILL_PASSES, sched_verbose=False):
     """What the skill's passes.py prints: the allocation priority table, register preferences, scheduling orders and
     where the compiler's source is. Diagnostic only, like the tool: nothing is recorded or judged. `sched_verbose`
-    adds -fsched-verbose-2 to the dump compile (agents patched this flag in by hand to read the launch priorities) and
-    prints the first scheduler's notes."""
+    makes sure the first scheduler's dump is taken and prints its notes (the launch priorities)."""
     if sched_verbose and 'sched' not in passes:
         passes = (*passes, 'sched')
-    result, profile = diagnose(net, proj, fn, source, passes, SKILL_EXCERPT_CHARS,
-                               extra_flags=(SCHED_VERBOSE,) if sched_verbose else ())
+    result, profile = diagnose(net, proj, fn, source, passes, SKILL_EXCERPT_CHARS)
     out = [render(result, (), 'candidate', rows=None)]
     if prefs := preferences(result):
         out += ['', 'Register preferences (greg):', *prefs]
@@ -128,7 +125,7 @@ def report(net, proj, fn, source, passes=SKILL_PASSES, sched_verbose=False):
                         f"{len(order)} insns:", '  ' + '  '.join(order) if order else '  (not written by this compiler build)']
     if sched_verbose:
         notes = verbose_schedule(result)
-        out += ['', f'First scheduler, {SCHED_VERBOSE} ({len(notes)} lines):',
+        out += ['', f'First scheduler notes ({len(notes)} lines):',
                 *(notes or ['  (this compiler build wrote no verbose notes into its sched dump)'])]
     return '\n'.join(out) + source_line(result.get('toolchain') or profile.get('toolchain'))
 

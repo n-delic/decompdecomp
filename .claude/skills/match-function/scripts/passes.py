@@ -32,7 +32,7 @@ def main(argv=None):
     ap.add_argument("--function", required=True)
     ap.add_argument("--passes", help="comma separated: any of greg, sched, sched2 (default: all three)")
     ap.add_argument("--sched-verbose", action="store_true",
-                    help="also print the first scheduler's -fsched-verbose-2 notes (launch priorities, the set-count rule)")
+                    help="also print the first scheduler's notes (launch priorities, the set-count rule)")
     ap.add_argument("--home")
     a = ap.parse_args(argv)
     judge = fast_judge.Judge(a.slug, a.function, home=a.home)
