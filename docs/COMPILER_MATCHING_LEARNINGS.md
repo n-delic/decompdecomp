@@ -1528,6 +1528,19 @@ previous profile and verifier matched those same 23 under a read-only control
 replay, so this sample does not measure a new match-rate gain from recipe
 parsing.
 
+### IDO 7.1 donor translation units with unrelated redeclarations
+
+A controlled IDO 7.1 `-O2 -G 0` compile rejects two incompatible declarations
+of an unused external. Keeping the function and its declaration closure
+produces the same code and relocations as compiling with the required declaration
+alone. The ordinary exact judge still decides whether to save.
+
+An isolated N64 replay saved two functions from 130 trials selected for previous
+declaration errors. The previous verifier reproduced the redeclaration for both
+inputs. Both saved matches passed a fresh compile and exact check. Retrying
+individual alternatives for a still-referenced conflicting symbol produced no
+additional matches in that sample.
+
 ### IDO 7.1 overlay calls with encoded offsets
 
 An isolated N64 audit found 70 open overlay functions with nonzero R_MIPS_26

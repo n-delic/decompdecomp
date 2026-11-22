@@ -294,3 +294,25 @@ def test_donor_aliases_preserve_format_and_only_replace_complete_code_identifier
     expected = 'foo(other, foobar, foo_2); /* foo */ char *s = "foo"; // f\n'
     assert rename(source, {'f': 'foo', 'foo': 'other'}) == expected
     assert rename(source, {'missing': 'other', 'foo': 'foo'}) == source
+
+
+def test_compact_drops_unrelated_redeclarations_for_ido(tmp_path):
+    from decompnet import toolchains
+    from decompnet.compiler import compile_source
+    from decompnet.elfobj import extract_function
+    from decompnet.project import compiler_config
+
+    if not toolchains.installed('ido-7.1'):
+        pytest.skip('IDO 7.1 is unavailable')
+    cfg = compiler_config(tmp_path, {'compiler': {'toolchain': 'ido-7.1', 'flags': ['-O2', '-G', '0']}})
+    source = 'int entry(void) { return shared[2]; }'
+    required = 'extern short shared[];'
+    header = 'extern int unused;\nextern short unused[];\n' + required
+    conflict = compile_source(cfg, header, source)
+    assert not conflict.ok and "redeclaration of 'unused'" in conflict.log
+    body, context = ds.compact(header + '\n' + source, 'entry')
+    rebuilt = compile_source(cfg, context, body)
+    assert rebuilt.ok, rebuilt.log
+    reference = compile_source(cfg, required, source)
+    assert reference.ok, reference.log
+    assert extract_function(rebuilt.obj, 'entry') == extract_function(reference.obj, 'entry')

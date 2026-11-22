@@ -241,6 +241,19 @@ def verify(net, proj, fn, other, donor, names, settings, agent, job, cache, *, r
                 return False, 'The donor has no unambiguous literal to transfer.'
         return _try(net, current, trial, fn, source, header, agent, job)
 
+    def retry_declarations(current, trial, candidate, why):
+        if job.stop.is_set() or "redeclaration of '" not in why:
+            return False
+        # A full translation unit can have conflicting declarations unrelated
+        # to this entry. Keep only the entry and its declaration closure.
+        source, header = candidate
+        try:
+            body, context = donor_sources.compact(header + '\n' + source, fn['name'])
+        except NetworkError:
+            return False
+        accepted, _ = replay(current, trial, body, context)
+        return accepted
+
     try:
         store = net.project_store(proj['id'])
         current = store.one('SELECT * FROM projects WHERE id=?', proj['id'])
@@ -280,15 +293,21 @@ def verify(net, proj, fn, other, donor, names, settings, agent, job, cache, *, r
                 whole_reason = whole_reason or reason
                 if accepted:
                     return 'match', 'Verified from a saved donor translation unit.'
+                original = None
+                original_reason = reason
                 if (names and not job.stop.is_set()
                         and re.search(r'redeclar|redefin|conflicting (?:types?|declarations?)', reason, re.I)):
                     # The donor's names can collide when several declarations acquire
                     # the same destination spelling. Let emitted relocations guide the retry.
                     original = donor_unit.candidate(other, donor, {donor['name']: fn['name']}, invocation, cache)
                     if original and original != whole:
-                        accepted, reason = replay(current, private, *original)
+                        accepted, original_reason = replay(current, private, *original)
                         if accepted:
                             return 'match', 'Verified using compiled donor bindings.'
+                if (retry_declarations(current, private, whole, reason)
+                        or (original and original != whole
+                            and retry_declarations(current, private, original, original_reason))):
+                    return 'match', 'Verified after selecting the required declarations.'
         for body, header, _ in donor_sources.imported(net, other, donor, cache):
             if job.stop.is_set():
                 return 'skip', 'Search stopped.'
