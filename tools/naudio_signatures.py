@@ -51,7 +51,7 @@ def label(path: Path, library: str = "n_audio") -> str:
     version = re.search(r"2\.0([A-L])", str(path), re.I)
     if not version or not LIBRARIES[library][0].fullmatch(path.name):
         raise SystemExit(f"{path}: choose a {'libgn_audio.a or libgn_audio_d.a' if library == 'n_audio' else 'libultra.a or libgultra.a (or its _d / _rom build)'} "
-                         "in an SDK folder named for its version (2.0I, 2.0J, 2.0K, 2.0L)")
+                         "in an SDK folder named for its version (2.0H, 2.0I, 2.0J, 2.0K, 2.0L)")
     return f"2.0{version[1].upper()}/{path.name.lower()[:-2]}"
 
 

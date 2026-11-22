@@ -113,7 +113,7 @@ def test_the_libultra_table_is_the_sdks_own_builds_beyond_the_other_tables():
     table = Path(N64.sdk_tables[-1])
     assert table.name == "libultra_signatures.tsv"
     lines = table.read_text(encoding="utf-8").splitlines()
-    assert lines[0].startswith("# libultra 2.0I-2.0L,") and "no code" in lines[0]
+    assert lines[0].startswith("# libultra 2.0H-2.0L,") and "no code" in lines[0]
     rows = [line.split("\t") for line in lines if not line.startswith("#")]
     assert len(rows) > 300
     names = {name for _, _, name, _ in rows}
@@ -122,7 +122,7 @@ def test_the_libultra_table_is_the_sdks_own_builds_beyond_the_other_tables():
               for line in other.read_text(encoding="utf-8").splitlines() if not line.startswith("#")}
     for fingerprint, size, name, builds in rows:
         assert re.fullmatch(r"[0-9a-f]{40}", fingerprint) and int(size) >= 32 and name and fingerprint not in others
-        assert all(re.fullmatch(r"2\.0[I-L]/libg?ultra(_d|_rom)?", b) for b in builds.split(","))
+        assert all(re.fullmatch(r"2\.0[H-L]/libg?ultra(_d|_rom)?", b) for b in builds.split(","))
 
 
 def test_no_fingerprint_is_in_both_tables():

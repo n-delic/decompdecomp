@@ -392,3 +392,11 @@ def test_the_library_c_table_is_complete_functions_with_one_name_each():
     for digest, (name, size, variant) in pack.KNOWN_C.items():
         assert len(digest) == 64 and int(digest, 16) >= 0 and size % 4 == 0 and size >= 32 and size in pack.SIZES
         assert name and '.' not in name and variant.startswith('libultra 2.0')
+
+
+def test_the_2_0h_archives_and_branch_ending_routines_are_in_the_tables():
+    names = {name for name, *_ in pack.KNOWN.values()}
+    assert {'bcopy', '__rmonStepRCP'} <= names
+    assert sum(1 for name, size, *_ in pack.KNOWN.values() if name == 'bcopy' and size in (772, 856)) == 2
+    assert any('2.0H' in variant for _, _, variant, _ in pack.KNOWN.values())
+    assert any('2.0H' in variant for _, _, variant in pack.KNOWN_C.values())
