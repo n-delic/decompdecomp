@@ -24,6 +24,19 @@ def test_early_return_is_shared_and_keeps_expression(arch):
     assert any('if (x < 0) return 0;' in out and 'return (int)root((float)x);' in out for out in outputs)
 
 
+def test_guard_with_call_returns_can_be_inverted():
+    src = '''int f(int x) {
+    if (x == 1) {
+        return send(x);
+    }
+    return receive(x, nested());
+}
+'''
+    outputs = variants(src, 'f', 'mips', limit=None)
+    assert any('if (x != 1)' in out and out.index('return receive(x, nested());') < out.index('return send(x);')
+               for out in outputs)
+
+
 def test_nested_call_argument_boundary_and_opaque_text():
     src = 'int f(int x) { /* other(x, 123) */ return send(inner(x, 2), 0x40); }'
     out = variants(src, 'f', 'mips')
