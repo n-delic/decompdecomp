@@ -48,6 +48,7 @@ from decomprepair import (
     loop_storage_shapes,
     masked_slot_dispatch,
     measured_address_repairs,
+    measured_adjacent_field_stores,
     measured_after_call_reload,
     measured_be16_cursor,
     measured_branch_byte_stores,
@@ -385,6 +386,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
             if isinstance(row,(tuple,list)) and len(row)==3 and all(isinstance(field,str) for field in row)]
     if not any(marker != ' ' for marker,_,_ in rows):
         return result
+    result += measured_adjacent_field_stores.variants(source, name, header, rows)
     result += measured_lifetime_shapes.variants(source, name, header, toolchain, rows)
     result += measured_scalar_updates.variants(source, name, header, toolchain, rows, asm)
     if toolchain == 'gcc-2.7.2-kmc':
