@@ -15833,3 +15833,13 @@ reusing a snapshot local.
 ### KMC GCC 2.7.2 byte normalization fallback
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` normalized a byte in a range and returned a replacement for one exceptional byte. Its machine draft used integer masks and a shared result local. Expressing the masks as byte conversions, retaining the fallback byte in a `u8` local and returning directly changed the diff score from 240 to an exact linked match; changing only the range conversion and byte local scored 135. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the measured instruction sequence and complete source shape.
+
+### Remove an uninitialized test before identical arms
+
+In one private N64 example built with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, an uninitialized
+floating local selected between identical setup blocks. Keeping one
+block removed the undefined read and improved the linked score from
+7,993 to 7,967. This remained an inexact draft. The proposal checks
+for an ordinary uninitialized local with no prior uses and retains
+the first arm's lexical scope and physical lines.
