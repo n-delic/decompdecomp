@@ -1407,7 +1407,7 @@ class Twins:
         theirs = self._fork_prints(other, matched_only=True, job=job)
         matched = 0
         checked = defaultdict(set)
-        from . import donor_build, donor_relocations
+        from . import donor_build, donor_relocations, donor_unit
         from .donor_boundaries import merged_candidates, recover
         manual = getattr(job, 'cross_exhaustive', False)
         build = donor_build.Settings(fp) if manual and hasattr(fp, 'root') else None
@@ -1481,7 +1481,9 @@ class Twins:
                     continue
                 original = self.net.forks._current_source(fp, a)
                 source = apply(original, names) if original and names is not None else None
-                if source is None and not (replacement or (settings and original)):
+                private_source = settings and (original or (
+                    proj['arch'] == 'mips' and donor_unit.has_owned_definition(fp.root, unit, donor_name)))
+                if source is None and not (replacement or private_source):
                     continue
                 # Let the compiled object's relocations drive private verification when
                 # static mapping is ambiguous. Generic source reuse still needs a mapping.

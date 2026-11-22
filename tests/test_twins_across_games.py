@@ -338,9 +338,11 @@ def test_donor_build_retains_profile_and_header_only_after_exact_verdict(built, 
     assert matched['status'] == 'matched'
 
 
-def test_saved_whole_donor_unit_reverifies_and_exports_only_its_entry(built, tmp_path):  # noqa: F811
-    from decompnet.app import donor_build, saves
+@pytest.mark.parametrize('macro_type', [False, True])
+def test_saved_whole_donor_unit_reverifies_and_exports_only_its_entry(built, tmp_path, monkeypatch, macro_type):  # noqa: F811
+    from decompnet.app import donor_build, donor_unit, saves
     from decompnet.app.twins import Job
+    from decompnet.forks.project import ForkProject
     from decompnet.project import compiler_for
 
     net = RomNetwork(tmp_path / 'decomp.db', tmp_path)
@@ -358,16 +360,38 @@ def test_saved_whole_donor_unit_reverifies_and_exports_only_its_entry(built, tmp
              "// The donor's preprocessing must preserve the next definition. \\\n"
              "this is still part of the line comment\n"
              'int other_body(int x) { return x + 31; }\n' + CLAMP)
+    if macro_type:
+        whole = '#define RET(T) T\n' + whole.replace('s32 func_800007D0(', 'RET(s32) func_800007D0(')
+        assert 'RET(s32) func_800007D0(' in whole
     (root / 'unit.c').write_text(whole)
     (root / 'build/unit.c').write_text(whole)
     (root / 'objdiff.json').write_text(json.dumps({'units': [
         {'name': 'unit', 'base_path': 'build/unit.c.o', 'metadata': {'source_path': 'unit.c'}}
     ]}))
     donor = {'name': fn['name'], 'unit': 'unit', 'meta': None}
+    unit = ForkProject(root).unit('unit')
+    assert donor_unit.has_owned_definition(root, unit, fn['name'])
+    assert not donor_unit.has_owned_definition(root, unit, 'missing')
+    if macro_type:
+        assert net.forks._current_source(ForkProject(root), donor) is None
     settings = {'toolchain': own['toolchain'], 'flags': own['flags']}
-    status, reason = donor_build.verify(net, proj, fn, {'root': str(root)}, donor, {}, settings, agent, Job(), {})
-    assert status == 'match', reason
-    assert reason == 'Verified from a saved donor translation unit.'
+    if macro_type:
+        copy_project(net, slug, 'macro-donor')
+        other = dict(net._project('macro-donor')) | {'root': str(root)}
+        imported = net._function(fn['name'], 'macro-donor')
+        with net.project_store(other['id']).tx() as db:
+            db.execute("UPDATE functions SET status='matched',unit='unit' WHERE id=?", (imported['id'],))
+        mono = net.twins.prints(proj)
+        monkeypatch.setattr(net.forks, 'get', lambda _: (other, ForkProject(root), {'platform': 'n64'}))
+        monkeypatch.setattr(donor_build.Settings, 'for_unit', lambda *args: settings)
+        monkeypatch.setattr(net.twins, '_fork_prints', lambda *args, **kwargs: {imported['id']: mono[fn['id']]})
+        job = Job()
+        job.cross_exhaustive = True
+        assert net.twins._fork_to_rom(agent, proj, other, {}, mono, job) == 1
+    else:
+        status, reason = donor_build.verify(net, proj, fn, {'root': str(root)}, donor, {}, settings, agent, Job(), {})
+        assert status == 'match', reason
+        assert reason == 'Verified from a saved donor translation unit.'
     saved = net._function(fn['name'], slug)
     assert 'other_body' in net._context(proj['id'], saved['unit'])['header']
     assert 'other_body' not in saved['matched_source']
