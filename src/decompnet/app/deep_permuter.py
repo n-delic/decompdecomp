@@ -431,6 +431,8 @@ class Search(Permuter):
                  # (decomprepair 0.5.631)
                  (L + 'entry_constant_local.variants', (source, name)),
                  (L + 'store_temp_inline.variants', (source, name)),
+                 # a float sum's first add swapped and a one-shot scope inside the store run between its two adds
+                 (L + 'float_sum_store_fence.variants', (source, name)),
                  (L + 'join_clamp_sum_repairs.variants', (source, name)),
                  (L + 'crossing_scope_unwrap.variants', (source, name)),
                  # a switch case's temporaries split and its flag update folded in one child, and record

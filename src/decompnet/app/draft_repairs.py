@@ -135,6 +135,7 @@ from decomprepair import (
     float_pun_depun,
     float_record_copy_repairs,
     float_register_argument_repairs,
+    float_sum_store_fence,
     float_zero_local_repairs,
     focused_lifetime_repairs,
     formatter_repairs,
@@ -426,6 +427,7 @@ AGENT_FAMILIES = label_entry_initializer_repairs.FAMILIES + loop_counter_value_s
 AGENT_FAMILIES += (guarded_pointer_copy.FAMILY,) + shifted_byte_lifetime.FAMILIES + float_constant_loop_pin.FAMILIES + dead_local_constant_compare.FAMILIES
 AGENT_FAMILIES += loop_weight_set_repairs.FAMILIES
 AGENT_FAMILIES += entry_constant_local.FAMILIES + store_temp_inline.FAMILIES
+AGENT_FAMILIES += float_sum_store_fence.FAMILIES
 AGENT_FAMILIES += (arm_label_share_repairs.FAMILIES + declaration_scope_sink_repairs.FAMILIES + element_update_repairs.FAMILIES
                    + narrow_test_share_repairs.FAMILIES + phase_storage_split_repairs.FAMILIES
                    + narrow_param_clamp_repairs.FAMILIES + search_loop_field_reload.FAMILIES + accumulation_run_scope.FAMILIES
@@ -882,6 +884,9 @@ def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels
                    # the prologue; a temp read only by the next line's store written into it, so the destination address is built
                    # first: a 219-instruction KMC sequencer function 140 -> 30 -> 0 and 220 -> 160; decomprepair 0.5.631)
                    entry_constant_local, store_temp_inline,
+                   # (a float sum's first add with its operands swapped and a one-shot scope inside the store run between its two
+                   # adds, as one child: a 113-instruction KMC bounding-sphere function 25 -> 0; decomprepair 0.5.636)
+                   float_sum_store_fence,
                    outer_cursor_entry_copy_repairs, loaded_pointer_reuse_repairs, entry_base_init_repairs,
                    live_range_retarget_repairs, pointer_local_merge_repairs, identical_arm_collapse_repairs):
         for family, text in _generated(module.variants, source, name):
