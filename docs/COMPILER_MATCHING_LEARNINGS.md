@@ -16775,3 +16775,38 @@ What decided them (GCC 2.7.2):
   value; no source spelling of the copy kept it). Both are 2 to 6 rows.
 
 decomp-repair 0.5.569: `reused_counter_split_scope`, `preheader_run_order`, `loop_weight_scope` (M2C macros, literal strides).
+
+## A command-emission function: cursor and value shared across arms (KMC gcc 2.7.2, N64)
+
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, a 393-instruction display-list function (one loop over records; five places
+that append two words through a global cursor, `gp++` macros in the game). Saved best 810 -> exact, from the saved
+best with the judge-worker at each step (one function; the steps are reproduced by `join_tail_arm_split_repairs`, a beam
+over only its families reaches 0 in seven levels).
+
+| step | edit | score |
+| --- | --- | --- |
+| 0 | saved best (m2c's shared `var_a1`, a `union { s32 *pointer; s32 value; }`, cursor and address variables shared by the arms of every emit) | 810 |
+| 1 | the first emit's arms each get a pointer of their own and the union's `.value` a plain local (`phase_union_unshare` + `arm_private_rename`; alone the union split is 1255) | 730 |
+| 2 | the first switch (`goto emit_first_mode` / `finish_first_mode`): the shared store copied into each arm, names per arm (`join_tail_arm_split`) | 595 (with 3) |
+| 3 | the same for the `D_8010A924 != 0` emit after its if/else, wrappers dropped (`one_shot` `do { } while (0)` left a hoistable address) | 430 |
+| 4 | the matrix emit (`goto block_34`): the `[1] = value` store copied into both arms, then the global pointer read before the first store in the second arm (`rsp = sRenderState;` ahead of `m[0] = ...`) | 185 -> 50 |
+| 5 | `if (sel == 1) goto L;` where `L:` is inside the `sel == 4` arm: that arm's body copied where the goto was (`goto_body_copy`) | 0 |
+
+What decided them (GCC 2.7.2):
+- **Cross-jumping runs after reload, on hard registers.** The game's arms each had their own block-local pointer, so
+  local-alloc gave each the first free register (`$v0` cursor, `$v1` the +8 temporary and the address); the identical
+  tail (`sw $v1,4($v0)`) was merged afterwards, which is why the target has one shared store after a `j`. m2c's shared
+  `var_v0`/`var_v1` are global pseudos, allocated after every local one, so the temporary took `$v0` and the cursor
+  `$a0` (and a shared 0xFC40FE03 constant moved to `$a1`). The shared names must be split before the tail is.
+- **A constant held in a saved register across a loop is ranked by refs and live length (`-dl -dg`, regs "to allocate"
+  in order).** `0xDE000000`, `4` and `1` all had 13 refs; the pseudo created later in expansion order sits later in the
+  preheader and has the shorter life, so it ranks first. `1, DE, 4` gave `$s4=DE, $s3=4`; the target has `$s3=DE`. The
+  fifth use came from writing the `case 1: case 4:` body twice (cross-jump merged the copies again after allocation):
+  `if (sel == 1) { A } else if (sel == 2) { B } else if (sel == 4) { A }` -> exact, the register order flipped, no other
+  change. `||` forms and `switch` forms (a binary tree of compares with `slti`) change the layout: 1180-2085.
+- A `do { } while (0)` wrapper is a loop to loop.c: an address loaded in two of them (`la D_800B1D20` in the copied body)
+  was hoisted out of the whole loop into a saved register (+3 insns, 2121); unwrapped it stayed in the arm.
+- Statement order in a split arm matters and was found by a grid (cursor load, increment, value, constant store): the
+  global pointer's load (`lw rs`) is placed above the constant store only when written above it (185 -> 50).
+
+decomp-repair 0.5.571: `arm_private_rename`, `join_tail_arm_split`, `goto_body_copy`, `phase_union_unshare`.
