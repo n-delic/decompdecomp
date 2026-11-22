@@ -517,3 +517,35 @@ def test_the_search_loop_pointer_fold_and_hoisted_constant_scope_are_proposed_an
     assert any(text.count('do { index += 1; slot += 3; } while (0);') == 1 and 'result = liveCount;' in text
                and text.count('__repair_hoisted_constant') == 2 for text in scoped)
     assert {'lockstep_pointer_fold', 'hoisted_constant_loop_scope'} <= set(draft_repairs.AGENT_FAMILIES)
+
+
+def test_zero_guard_while_is_proposed_and_known_to_agents():
+    """m2c's guard on a register cse knew was zero, before a counted `do`, written as a `while` with the counter zeroed
+    first took a KMC gcc 2.7.2 collision sweep 2522 -> 807; drafts and the beam offer both children."""
+    source = """\
+void use(s32);
+void f(u16 *base, u16 n, s32 flag)
+{
+  s32 i;
+  u16 *p;
+  if (flag == 0)
+  {
+    if (flag < n)
+    {
+      i = 0;
+      p = base + 2;
+      do
+      {
+        use(*p);
+        p += 3;
+        i += 1;
+      }
+      while (((u32) (i & 0xFFFF)) < n);
+    }
+  }
+}
+"""
+    labels = {}
+    draft_repairs.variants(source, 'f', 'mips', labels=labels, limit=None)
+    assert {'zero_guard_while', 'zero_guard_while_unguarded'} <= set(labels.values())
+    assert {'zero_guard_while', 'zero_guard_while_unguarded'} <= set(draft_repairs.AGENT_FAMILIES)

@@ -30,6 +30,11 @@ submitted with `setup.py try`):
 | the triangle base `obj->0x34` read in each call argument, not staged in a temp before the call (its `lw` sits after `lhu (\$s3)`: sched1 places a single-set pseudo late) | 3632 |
 | `u16 *` back for the two halfword loops: m2c_refinement had made them `char *` with `+= 3`, a 3-byte walk where the code steps 6 | 3332 |
 | `(u8) ((word >> 0x11) & 0x3F) & arg7`: the mask then stays on the field (`andi $v0,$v0,0x3f; and $v0,$v0,$t3`), not on the argument | 3322 |
+| one counter for the second set's loop pairs (`arm_variable_share`) and m2c's identical `if (var_s6)` arms collapsed (`identical_arm_collapse`), both from `prove_chain --children 120` | 3112 |
+| the dead tail kept: `s32 hit = 0;` at the top, `goto block_131;` when nothing was hit, `block_131: if (hit) { *(SweepVec *) arg2 = vec28; return 1; } return 0;` | 2522 |
+| the second triangle loop's counter zeroed before its guard and its `do` made a `while` (decomprepair `zero_guard_while`) | 807 |
+| `temp_v1_3` merged into `temp_v0` (`disjoint_local_merge`, `prove_chain --children 800`) | 747 |
+| the tail reads `u1.b.v.y` back (the target reloads it after the store through `arg4`), and the no-actor branch's `return 1` is a `goto` to the main path's | 340 |
 
 The flag: the target keeps the constant 1 in `$a0` and copies it to `$s2` at each way out. A separate `keep` is
 needed, and its width must differ from the flag's: with both `s32` (or both `u16`) global.c gives them one register
@@ -51,6 +56,23 @@ Failed experiments that would otherwise be repeated:
 - `var_s0_2 = 0;` above the guard of the first loops (the target's delay slot has `move $s0,$zero`): 3022 alone, but
   the frame grows by 8 and the else loop's guard `sltu` disappears.
 - `call_arity` dropping `func_800487F0`'s arguments scored 3627 from 4737: not faithful, it only realigned offsets.
+
+The dead tail, read in the 2.7.2 source (reload1.c and global.c): the target tests a register reload materialises as
+`move $t3,$zero`. A pseudo set once to a constant has REG_EQUIV to it; one that lives across calls and gets no hard
+register is never stored, and reload puts the constant in its spill register at each use. So the flag is set at the
+entry and crosses the loops' calls; cse knows its value only near the entry, where the `arg0 == NULL` path jumps
+straight to `return 0`, and the test far away stays (an `arg0 = NULL;` before the `goto` did keep the block but added
+a store and a load).
+
+Still open (rows left at 340): the second loop's guard. In the target it keeps `sltu $v0,$v1,count` (the `& 4` value
+known zero) and its delay slot holds the counter's `move $s0,$zero`. Written as m2c has it, the slot gets the join's
+`li $v0,-1` instead (both loops, two instructions too many); with the zero before the guard (`zero_guard_while`) cse
+puts the counter in the compare, combine folds it, and the dead condition-code result leaves a `use` that takes an
+8-byte stack slot (frame 0x1e8 for 0x1e0). Hypothesis, from reorg.c: `mark_target_live_regs` finds the join's block
+with `find_basic_block`, which scans back to the previous BARRIER (the first loop's closing `j`) and starts from the
+second loop's guard block, so the second loop's `move $s0,$zero` makes `$s0` look live at the join and the fallthrough
+fill is refused. Why the target escapes it is not found. Also open: `sub.s $f2,$f0,$f2` (local-alloc gives the first
+load `$f2`; staging `end.y` in a local fixes the order but moves every `zero` compare to `$f2`, 520).
 
 What is controlled evidence and what is one function:
 
