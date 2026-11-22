@@ -108,6 +108,47 @@ HOST_C = ("u32 w2c_env_osSendMesg(struct w2c_env *e, u32 mq, u32 msg, u32 flag) 
           "u32 w2c_env_0x5F_osSiRawStartDma(struct w2c_env *e, u32 direction, u32 dram) {\n    return 0;\n}\n")
 
 
+def test_runtime_alias_reaches_the_original_when_recompilation_refuses_it(tmp_path):
+    folder = tmp_path / "recomp"
+    _output(folder)
+    symbols = folder / "syms.toml"
+    symbols.write_text(symbols.read_text().replace('name = "func_80003000"', 'name = "queue_pop"'))
+    source = folder / "funcs/funcs_0.c"
+    source.write_text(source.read_text().replace("func_80003000", "queue_pop").replace(
+        "__osSiRawStartDma_recomp(rdram, ctx);", "queue_pop_recomp(rdram, ctx);"))
+    (folder / "funcs/runtime.h").write_text("void queue_pop_recomp(uint8_t* rdram, recomp_context* ctx);\n")
+    (folder / "recomp.json").write_text('{"refused": [{"name": "queue_pop"}]}')
+    out = tmp_path / "build"
+    recomp.prepare(folder, out, "", [], [], _header(), {}, lambda *a: None)
+    bridges = (out / "bridges.c").read_text()
+    assert 'port_recomp_missing(0x80003000u, "queue_pop"' in bridges
+    assert "R_queue_pop_recomp(uint8_t* rdram, recomp_context* ctx) { (void)rdram; R_queue_pop(rdram, ctx); }" in bridges
+
+
+def test_recompiled_automatic_name_uses_host_for_named_address(tmp_path):
+    folder = tmp_path / "recomp"
+    _output(folder)
+    host = tmp_path / "host.c"
+    host.write_text(HOST_C)
+    out = tmp_path / "build"
+    recomp.prepare(folder, out, "", ["osSendMesg 0x80003000 func"], [host], _header(), {}, lambda *a: None)
+    bridges = (out / "bridges.c").read_text()
+    assert "void R_func_80003000(uint8_t* rdram, recomp_context* ctx)" in bridges
+    assert "w2c_env_osSendMesg(NULL, (uint32_t)ctx->r4, (uint32_t)ctx->r5, (uint32_t)ctx->r6)" in bridges
+
+
+def test_recompiled_address_with_ambiguous_host_names_keeps_game_code(tmp_path):
+    folder = tmp_path / "recomp"
+    _output(folder)
+    host = tmp_path / "host.c"
+    host.write_text(HOST_C + "u32 w2c_env_other(struct w2c_env *e, u32 a) { return 0; }\n")
+    out = tmp_path / "build"
+    prepared = recomp.prepare(folder, out, "", ["osSendMesg 0x80003000 func", "other 0x80003000 func"],
+                              [host], _header(), {}, lambda *a: None)
+    assert "RECOMP_FUNC void R_func_80003000(" in (out / "rec_funcs_0.c").read_text()
+    assert prepared["counts"]["recomp"] == 2
+
+
 def test_each_function_runs_as_the_games_c_the_hosts_or_recompiled(tmp_path):
     folder = tmp_path / "recomp"
     _output(folder)

@@ -370,8 +370,16 @@ def prepare(folder: Path, out: Path, game_h: str, fixed: list[str], hosts: list[
         refused = set()
     broken |= {c for name, c in recompiled.values() if c and (name in refused or c in refused)}
     choice, counts = {}, {"decomp": 0, "host": 0, "recomp": 0, "missing": 0}
+    # The split can retain both an automatic name and the SDK name at one address. The recompiler calls the
+    # automatic name, but the host must own the queue and thread routines used by its scheduler.
+    hosted_at = {}
+    for name, address in where.items():
+        if name in hosted:
+            hosted_at.setdefault(address, set()).add(name)
     for vram, (name, c) in sorted(recompiled.items()):
         library = library_names.get(name.removesuffix("_recomp"), name.removesuffix("_recomp"))
+        if library not in hosted and len(hosted_at.get(vram, ())) == 1:
+            library = next(iter(hosted_at[vram]))
         kind = ("decomp" if vram in exported else "host" if library in hosted
                 else "recomp" if c and c not in broken else "missing")
         choice[vram] = (kind, name, c, library)
@@ -464,12 +472,20 @@ def prepare(folder: Path, out: Path, game_h: str, fixed: list[str], hosts: list[
         lines.append(f"void {r}(uint8_t* rdram, recomp_context* ctx) {{ (void)rdram; {body} }}")
     # what N64Recomp declared but left to its runtime, and nothing above covers: the host's if it has it
     covered = {f"R_{c or name}" for _, name, c, _ in choice.values()}
+    # A runtime alias can name a function the recompiler refused. Route it through that function's address so
+    # the interpreter gets the ROM body instead of a zero-address stub.
+    by_name = {}
+    for vram, (_, name, c, _) in choice.items():
+        by_name.setdefault(name.removesuffix("_recomp"), []).append((vram, c or name))
     for n in sorted(seen - names - {c for _, _, c, _ in choice.values() if c}):
         if f"R_{n}" in covered:
             continue
         library = library_names.get(n.removesuffix("_recomp"), n.removesuffix("_recomp"))
         if library in hosted:
             body = call_host(library)
+        elif len(by_name.get(n.removesuffix("_recomp"), ())) == 1:
+            _, target = by_name[n.removesuffix("_recomp")][0]
+            body = f"R_{target}(rdram, ctx);"
         else:
             body = f'port_recomp_missing(0, "{n}", rdram, ctx);'
         lines.append(f"void R_{n}(uint8_t* rdram, recomp_context* ctx) {{ (void)rdram; {body} }}")
