@@ -427,6 +427,10 @@ class Search(Permuter):
                  (L + 'float_constant_loop_pin.variants', (source, name)),
                  # a compare's literal routed through a local the next statement reassigns (decomprepair 0.5.628)
                  (L + 'dead_local_constant_compare.variants', (source, name)),
+                 # a sub-expression held in a temporary (declared with the locals or at the block's head, one use or all) and
+                 # an associative chain grouped another way, only where the regrouping is the same value in C
+                 (L + 'temporary_hoist_repairs.variants', (source, name, header)),
+                 (L + 'reassociation_repairs.variants', (source, name, header)),
                  # a loop's compared byte constant as an entry local, and a one-line temp written into the store reading it
                  # (decomprepair 0.5.631)
                  (L + 'entry_constant_local.variants', (source, name)),

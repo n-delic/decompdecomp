@@ -45,6 +45,13 @@ def setup(monkeypatch, imported=False):
     monkeypatch.setattr(deep_permuter.Search, '_baseline', lambda *args: (40, 0))
     monkeypatch.setattr(draft_repairs, 'variants', lambda *args, **kwargs: ['local'])
     monkeypatch.setattr(permuter_local, 'variants', lambda *args: [])
+    # (these two read any arithmetic, so the tiny synthetic sources would give the lane children of their own:
+    # their wiring test turns one back on)
+    from decompnet.app import generation_calls
+    from decomprepair import reassociation_repairs, temporary_hoist_repairs
+    monkeypatch.setattr(generation_calls, 'IN_SERVER', True)  # (so the patches below reach the lane's calls)
+    monkeypatch.setattr(temporary_hoist_repairs, 'variants', lambda *args, **kwargs: [])
+    monkeypatch.setattr(reassociation_repairs, 'variants', lambda *args, **kwargs: [])
     return net
 
 
