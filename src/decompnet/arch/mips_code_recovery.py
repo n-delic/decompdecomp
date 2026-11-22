@@ -57,6 +57,22 @@ def called_extent(image, start, end, vram, *, big_endian=True, cpu='', asm_check
 
     from .mips import rabbitizer_category
 
+    # A compiler may anchor its frame in $fp and restore $sp from it at the
+    # epilogue. Require an early straight-line setup and a single exact restore;
+    # branches may not enter that sequence or bypass the setup.
+    fp_setup = [at for at in range(start+4, min(start+20, start+size), 4) if word(at) == 0x03a0f021]
+    fp_restore = [at for at in range(start+4, start+size, 4) if word(at) == 0x03c0e821]
+    fp_pair = None
+    if len(fp_setup) == len(fp_restore) == 1:
+        setup, restore = fp_setup[0], fp_restore[0]
+        saved = [word(at) & 0xffff for at in range(start+4, setup, 4) if word(at) >> 16 == 0xafbe]
+        if (len(saved) == 1 and saved[0] < amount and not saved[0] % 4
+                and all(not rabbitizer.Instruction(word(at),0,rabbitizer_category(cpu)).hasDelaySlot()
+                        for at in range(start, setup, 4))
+                and restore < start+size-12 and word(start+size-8) == JR_RA
+                and word(start+size-4) == pop
+                and word(start+size-12) == 0x8fbe0000 | saved[0]):
+            fp_pair = (setup, restore, start+size-12)
     for at in range(start,start+size,4):
         w=word(at)
         if not rabbitizer.Instruction(w,0,rabbitizer_category(cpu)).isValid():
@@ -74,7 +90,9 @@ def called_extent(image, start, end, vram, *, big_endian=True, cpu='', asm_check
         if ins.modifiesRs() and ins.rs.value==29:
             return None
         if ins.modifiesRd() and ins.rd.value==29:
-            return None
+            if not fp_pair or at != fp_pair[1]:return None
+        if fp_pair and ((ins.modifiesRt() and ins.rt.value==30) or (ins.modifiesRd() and ins.rd.value==30)):
+            if at not in (fp_pair[0], fp_pair[2]):return None
         op=w>>26
         if op==2:
             destinations.add((((vram+at-start+4)&0xF0000000)|((w&0x3FFFFFF)<<2))-vram+start)
@@ -90,6 +108,9 @@ def called_extent(image, start, end, vram, *, big_endian=True, cpu='', asm_check
                 protected_returns.update((at,at+4))
             else:return None
             returns+=1
+    if fp_pair and (returns != 1 or destinations & ({*range(entry+4, fp_pair[0]+4, 4)}
+                                                      | {*range(fp_pair[1]+4, start+size, 4)})):
+        return None
     if destinations & {*range(entry,start+4,4)} or (pops|protected_returns) & destinations:
         return None  # no loop can allocate the entry frame again or enter a return delay slot
     return size+lead if returns else None

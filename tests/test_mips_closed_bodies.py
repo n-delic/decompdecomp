@@ -81,7 +81,7 @@ def test_loads_scheduled_ahead_of_the_frame_stay_in_the_body(platform):
     [0x10000001,0],  # a transfer
     [0x00808021],  # writes a saved register ($s0)
     [0x8fa20010],  # reads $sp
-    [LUI_V0]*5,  # more than the compiler schedules
+    [LUI_V0]*6,  # more than the compiler schedules
 ])
 def test_only_scratch_loads_and_arithmetic_may_come_before_the_frame(lead):
     data=image(lead+[FRAME,0xafbf0014,0x8fbf0014,POP,RETURN,0])
@@ -106,3 +106,16 @@ def test_cache_maintenance_can_have_a_closed_frameless_extent():
 
     data = image([0xbd150000, 0x25080010, RETURN, 0])
     assert leaf_extent(data, 0, len(data), BASE) == len(data)
+
+
+@pytest.mark.parametrize('damage', [None, 'no_save', 'wrong_restore', 'clobber_fp', 'enter_setup', 'enter_epilogue'])
+def test_frame_pointer_body_requires_preserved_frame_and_closed_entry(damage):
+    words = [0x27bdffe0, 0xafbf001c, 0xafbe0018, 0x03a0f021,
+             0x24840001, 0x03c0e821, 0x8fbf001c, 0x8fbe0018, 0x03e00008, 0x27bd0020]
+    if damage == 'no_save': words[2] = 0
+    if damage == 'wrong_restore': words[7] = 0x8fbe0014
+    if damage == 'clobber_fp': words[4] = 0x241e0001
+    if damage == 'enter_setup': words[4] = 0x1000fffd
+    if damage == 'enter_epilogue': words[4] = 0x10000001
+    data = image(words)
+    assert called_extent(data, 0, len(data), BASE) == (len(data) if damage is None else None)
