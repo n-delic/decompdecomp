@@ -13279,3 +13279,13 @@ new family.
 ### KMC GCC 2.7.2: scope an initialized comparison
 
 On one N64 function compiled with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, an initialized local zero before a comparison scored 350. Wrapping just that comparison assignment in `do { ... } while (0)` kept the same evaluation and scored 85 in the exact judge; the remaining differences were register allocation. The inherited score-10 source read that local before initialization and is only a search control, not evidence of valid C. Initializing at declaration scored 295, initializing before the load scored 350, and making the local volatile scored 1080. These are observations on one function; decomp-repair 0.5.335 offers the comparison scope and a synthetic regression covers generation, including a surrounding volatile load.
+
+### Recover unsigned byte-table guards (KMC GCC 2.7.2)
+
+With `-G0 -mips3 -mgp32 -mfp32 -O2`, two signed byte loads disagreed
+with the target's unsigned loads. A public wrapper corroborated the
+unsigned table index. Correct the table type, combine the two early
+returns and express the halfword address as a shifted index plus the
+base. On a retail N64 function the linked score went from 968 to 0;
+the old dispatcher produced no candidate and the new rule produced one
+byte-exact candidate.
