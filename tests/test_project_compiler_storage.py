@@ -32,7 +32,7 @@ def test_compiler_config_publishes_scores_only_in_owner_and_rejects_races(scoped
     cfg = copy.deepcopy(net.cfg(proj));cfg['compiler']['flags'] = ['-O2']
     def judge(*args):
         if race:
-            with stores[1].tx() as db:db.execute("UPDATE functions SET best_source='concurrent edit'")
+            with stores[1].tx() as db:db.execute("UPDATE functions SET status='matched', matched_source='concurrent edit'")
         return False, SimpleNamespace(score=10), ''
     net._judge_with = judge
     if race:

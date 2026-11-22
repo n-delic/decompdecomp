@@ -1253,7 +1253,7 @@ class CompilerMixin:
         # An agent can finish while checks run. Never overwrite its work with a verdict from an older snapshot.
         def population(items):
             return [tuple(r[k] for k in ("id", "name", "vram", "rom_offset", "unit", "size", "target", "relocs", "meta",
-                                         "status", "matched_source", "best_source", "best_score")) for r in items]
+                                         "status", "matched_source")) for r in items]
         with self.project_store(proj['id']).tx() as db:
             current = json.loads(db.execute("SELECT config FROM projects WHERE id=?", (proj["id"],)).fetchone()["config"])
             latest = db.execute(f"SELECT {identities} FROM functions WHERE {where} ORDER BY id", parameters).fetchall()
@@ -1261,6 +1261,8 @@ class CompilerMixin:
             latest_ids = [f['id'] for f in latest if compiler_for(before, f["vram"], f) != compiler_for(cfg, f["vram"], f)]
             latest_affected = db.execute("SELECT id,name,vram,rom_offset,unit,size,target,relocs,meta,status,matched_source,best_source,best_score "
                                          "FROM functions WHERE id IN (SELECT value FROM json_each(?)) ORDER BY id", (json.dumps(latest_ids),)).fetchall()
+            # Helpers saving a better attempt while the check runs is normal: it only makes that function's saved
+            # score stale, which is redone below. Matches, targets and the header are what a verdict depends on.
             if any(current.get(k) != before.get(k) for k in keys) or population(latest_affected) != population(affected) or headers != contexts:
                 raise NetworkError("The project's code or settings changed during the compiler check. Try again after pausing its helpers.")
             for key in keys:
@@ -1269,14 +1271,33 @@ class CompilerMixin:
                 else:
                     current.pop(key, None)
             db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(current), proj["id"]))
+            newest = {r["id"]: r["best_source"] for r in db.execute(
+                "SELECT id,best_source FROM functions WHERE id IN (SELECT value FROM json_each(?))", (json.dumps(latest_ids),))}
+            stale = []
             for fn in affected:
                 if fn["status"] == "open":
+                    if newest.get(fn["id"]) != fn["best_source"]:
+                        # A helper saved a newer attempt meanwhile; our score describes the old one.
+                        db.execute("UPDATE functions SET seed=NULL WHERE id=?", (fn["id"],))
+                        stale.append(fn["id"])
+                        continue
                     db.execute("UPDATE functions SET seed=NULL, best_score=? WHERE id=?", (scores[fn["id"]], fn["id"]))
                 elif fn["name"] in broken_names:
                     db.execute("UPDATE functions SET status='open', best_source=matched_source, best_agent_id=matched_agent_id, "
                                "best_score=?, matched_source=NULL, matched_agent_id=NULL, matched_at=NULL WHERE id=?",
                                (scores[fn["id"]], fn["id"]))
                     self._event(db, proj["id"], None, "reopen", f"{fn['name']}: open again (its range was removed)")
+        if stale:
+            fresh = dict(proj) | {"config": json.dumps(cfg)}
+            for fid in stale:
+                fn = self.project_store(proj['id']).one("SELECT * FROM functions WHERE id=?", fid)
+                source = self._source_of(fn) if fn is not None and fn["status"] == "open" else None
+                if not source:
+                    continue
+                own = compiler_for(cfg, fn["vram"], fn)
+                _, diff, _ = self._judge_with(fresh, fn, own["toolchain"], list(own["flags"]), source)
+                with self.project_store(proj['id']).tx() as db:
+                    db.execute("UPDATE functions SET best_score=? WHERE id=?", (diff.score if diff is not None else None, fid))
         report({'phase':'Compiler settings saved', 'done':1, 'total':1, 'affected':len(affected)})
         log("Compiler checks passed; settings and scores saved.")
         return [fn["name"] for fn in affected if fn["status"] != "open" and fn["name"] in broken_names]

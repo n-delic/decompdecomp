@@ -54,16 +54,27 @@ def test_success_rebases_open_scores_and_preserves_range_matches(net, monkeypatc
     assert net._function('f0', 'demo')['status'] == 'matched'
 
 
-def test_concurrent_match_prevents_publishing_old_verdicts(net, monkeypatch):
+def test_a_helper_saving_an_attempt_mid_check_does_not_abort_the_change(net, monkeypatch):
     def regression(*a, **kw):
         with net.store.tx() as db:
             db.execute("UPDATE functions SET best_source='new code' WHERE name='f84'")
         return []
     monkeypatch.setattr(net, 'regression_test', regression)
+    net.set_compiler('demo', 'ido-5.3', ['-O1'])
+    assert net.cfg(net.project_row('demo'))['compiler']['flags'] == ['-O1']
+    assert net._function('f84', 'demo')['best_source'] == 'new code'
+
+
+def test_concurrent_match_prevents_publishing_old_verdicts(net, monkeypatch):
+    def regression(*a, **kw):
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET status='matched', matched_source='x' WHERE name='f84'")
+        return []
+    monkeypatch.setattr(net, 'regression_test', regression)
     with pytest.raises(NetworkError, match='changed during'):
         net.set_compiler('demo', 'ido-5.3', ['-O1'])
     assert net.cfg(net.project_row('demo'))['compiler']['flags'] == ['-O2']
-    assert net._function('f84', 'demo')['best_source'] == 'new code'
+    assert net._function('f84', 'demo')['status'] == 'matched'
 
 
 def test_range_changes_use_the_same_private_validation_and_rebase(net, monkeypatch):
