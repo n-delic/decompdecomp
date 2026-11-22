@@ -1,0 +1,82 @@
+# Moves the decomprepair pin to the library's newest release, so no agent tags the library or bumps the pin by hand
+# (they raced each other for tag numbers). The library's own release workflow tags each batch of merged changes; this runs
+# every 20 minutes (and by hand: `gh workflow run library-pin`), and when a newer tag exists it rewrites the pin
+# (tools/bump_library.py), runs `uv lock`, checks the app still imports and runs the library's tests here, opens a
+# pull request and merges it. A family the app doesn't call yet (tests/test_library_family_wiring.py) doesn't block the
+# pin, since wiring it needs the new tag installed: the run goes red and opens an issue naming the unreached modules.
+# Smoke tests failing does block it: nothing is merged, the run goes red.
+# Needs no secret: the workflow's own token opens and merges the PR (Settings > Actions allows it, and main isn't protected).
+name: library-pin
+on:
+  schedule:
+    - cron: "7,27,47 * * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+concurrency:
+  group: library-pin
+  cancel-in-progress: false
+jobs:
+  pin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - id: bump
+        run: python3 tools/bump_library.py
+      - if: steps.bump.outputs.version != ''
+        uses: astral-sh/setup-uv@v10.3.0
+      - if: steps.bump.outputs.version != ''
+        run: uv lock && uv sync --locked
+      - if: steps.bump.outputs.version != ''
+        name: Smoke tests (a failure stops the pin)
+        run: uv run python -c "import decompnet.app.draft_repairs" && uv run pytest -q -o addopts= tests/test_decomprepair.py
+      - id: wiring
+        if: steps.bump.outputs.version != ''
+        continue-on-error: true
+        name: Every library family is wired
+        run: |
+          set -o pipefail
+          uv run pytest -q -o addopts= tests/test_library_family_wiring.py 2>&1 | tee wiring.log
+      - if: steps.bump.outputs.version != ''
+        name: Open and merge the pin pull request
+        env:
+          VERSION: ${{ steps.bump.outputs.version }}
+          SUMMARY: ${{ steps.bump.outputs.summary }}
+        run: |
+          set -euo pipefail
+          branch="chore/decomprepair-$VERSION"
+          git config user.name "decomprepair pin"
+          git config user.email "actions@users.noreply.github.com"
+          git checkout -q -b "$branch"
+          git add pyproject.toml uv.lock
+          git commit -q -m "Use decomprepair $VERSION: ${SUMMARY:-a new release}" -m "Moved by the library-pin workflow (tools/bump_library.py) after the library's release workflow tagged v$VERSION."
+          git push -q --force origin "$branch"
+          url="$(gh pr list --head "$branch" --state open --json url --jq '.[0].url')"
+          if [ -z "$url" ]; then
+            url="$(gh pr create --base main --head "$branch" --title "Use decomprepair $VERSION: ${SUMMARY:-a new release}" \
+              --body "Moves the pin to the library's newest release. Opened and merged by .github/workflows/library-pin.yml; the smoke tests passed. Wiring: ${{ steps.wiring.outcome }}.")"
+          fi
+          gh pr merge "$url" --merge --delete-branch
+      - if: steps.bump.outputs.version != '' && steps.wiring.outcome == 'failure'
+        name: Fail loudly when a family isn't wired
+        env:
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          title="decomprepair $VERSION has families the app does not call"
+          body="The pin moved to decomprepair $VERSION, but tests/test_library_family_wiring.py fails: a library module has \`variants\` and nothing in the app calls it. Wire it into app/draft_repairs.py and the Deep Permuter's lane (AGENTS.md, \"Agents\"). Tail of the run:
+
+          \`\`\`
+          $(tail -n 25 wiring.log)
+          \`\`\`
+          Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          existing="$(gh issue list --state open --search "has families the app does not call in:title" --json number --jq '.[0].number')"
+          if [ -n "$existing" ]; then gh issue comment "$existing" --body "$body"; else gh issue create --title "$title" --label enhancement --body "$body"; fi
+          echo "::error::decomprepair $VERSION is pinned but not fully wired: see the issue"
+          exit 1
