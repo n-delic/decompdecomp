@@ -74,8 +74,9 @@ def policy_rows(net, key, focus):
     the table gives them (by family): the same rows a flush followed by the read would return, without the
     transaction (the policy is read before every batch of candidates, and a flush each time kept the batch from
     batching: 18% of a lane's writer time)."""
-    rows = {row['family']: dict(row) for row in net.store.all(
-        'SELECT * FROM repair_policy WHERE profile=? AND focus=?', key, focus)}
+    stored = trial_bookkeeping.stored(net.store, ('policy', key, focus), lambda: [dict(row) for row in net.store.all(
+        'SELECT * FROM repair_policy WHERE profile=? AND focus=?', key, focus)])
+    rows = {row['family']: dict(row) for row in stored}
     for (profile, queued_focus, family), args in trial_bookkeeping.pending_counters(net.store, POLICY_COUNT).items():
         if profile == key and queued_focus == focus:
             row = rows.setdefault(family, {'profile': key, 'focus': focus, 'family': family,

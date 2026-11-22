@@ -146,3 +146,15 @@ transaction per read.
 counters this search has queued (`trial_bookkeeping.pending_counters`) to the stored rows, in the table's order, which
 is what a flush followed by the read returned. Before, the policy read before each batch of candidates forced a
 writer transaction each time, so the batch never batched (the 3% and 2% entries above, in the writer gate).
+
+## Per-candidate lookups (a permuter worker, measured)
+
+A fresh maximum-throughput pass beside the project's own permuter worker: the worker used 1.8 cores and the lanes
+0.4, the pass made 18 compiles a second and its history writes cost 48.8 ms a compile (the writer was shared).
+Of the worker's CPU, 45% was queries for facts that change little: `fork_slug` (the project row's revision and its
+parsed settings, asked several times for each candidate: 19%), the repair policy's rows (10.7%) and scope
+lookups (about 10%). `fork_slug` now keeps its answer for 10 s (`FORK_SLUG_SECONDS`; a project's kind never
+changes) and the stored policy and input-effect rows are read at most once a second and again after any
+flush of this process (`trial_bookkeeping.stored`); this process's own queued counts are added on top as before.
+The scope lookups are not cached: they are the revision checks that keep a candidate from reusing a result across a
+change of inputs, and a stale one would weaken that.

@@ -77,8 +77,9 @@ EFFECT_COLUMNS = ('attempted', 'no_edit', 'same_output', 'worse', 'failed', 'imp
 def effect_rows(store, function_id, scope_key):
     """The stored rows of one function and scope plus this search's queued counts, in table order (by family): what a
     flush followed by the read would give, without the transaction."""
-    rows = {row['family']: dict(row) for row in store.all(
-        'SELECT * FROM repair_input_effects WHERE function_id=? AND scope=?', function_id, scope_key)}
+    stored = trial_bookkeeping.stored(store, ('effects', function_id, scope_key), lambda: [dict(row) for row in store.all(
+        'SELECT * FROM repair_input_effects WHERE function_id=? AND scope=?', function_id, scope_key)])
+    rows = {row['family']: dict(row) for row in stored}
     for (queued_function, queued_scope, family), args in trial_bookkeeping.pending_counters(store, EFFECT_COUNT).items():
         if queued_function == function_id and queued_scope == scope_key:
             row = rows.setdefault(family, {'function_id': function_id, 'scope': scope_key, 'family': family,
