@@ -216,7 +216,11 @@ holding a copy of `mupenre/`), as with any other experiment.
 
 ## Compiler matching evidence
 
-When a match reveals a reusable compiler behaviour, update `docs/COMPILER_MATCHING_LEARNINGS.md`.
+When a match reveals a reusable compiler behaviour, record it as its own file: `python tools/learnings.py new
+function|finding|experiment NAME --compiler "..."` writes `docs/learnings/<kind>/<name>.md` (format and kinds:
+`docs/learnings/README.md`; `learnings.py index [words]` searches them, and tests/test_learnings.py checks them).
+Never append to `docs/COMPILER_MATCHING_LEARNINGS.md`: one shared file made every pull request that recorded evidence
+conflict with the others, so it now keeps only the older entries that guides and comments cite by title.
 Record the exact compiler/flags, source change, measured result and evidence level. Include failed
 experiments that would otherwise be repeated. Keep game data private and distinguish controlled
 regression tests from new matches. Add a short version to the appropriate compiler guide when useful.
