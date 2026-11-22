@@ -17814,3 +17814,34 @@ labels are offered as one child (`after_c` + the shared block copy: 1150 -> 0 in
 `volatile` gate of `local_flow` also changed (0.5.604): a `volatile` declaration outside the function or a cast of a global's
 address inside it no longer makes the flow give no advice, so the families built on it (about forty) run on a saved best that
 reads status words that way (that saved best went from no variants to 157, best 2985).
+
+## The lit-actor drawer matched: 3712 -> 0 (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, scoring 2)
+
+Same 842-instruction N64 lit-actor drawer as the entries above; one function, isolated judge (`judge-worker`) per step,
+confirmed by the app (matched, best 0). The edits, from the saved best, with scores:
+
+| step | edit | alone | running |
+|---|---|---|---|
+| 1 | global counter bumped inside its guard: `if (G < 10) { G++; f(..., sp23, sp24, sp25); }` instead of m2c's `v = G + 1;` before the `if`, with the arm's copies and the identity inline helpers (`inline_fn2`) around the call's arguments removed; the matrix pool the same way (`if (used < limit) { used++; ... used << 6 }`) | worse alone (counter 4075, pool 5342) | 3640 together |
+| 2 | the two `D9` commands as two records (`g = cursor; cursor = g + 1; g->w0 = ..; g->w1 = ..;` twice) instead of `cursor = t + 2; cursor = t + 4;` (existing `display_cursor_record`) | 5217 | 1370 |
+| 3 | the `do { } while (0)` wrappers a previous search put around two arms and the pool block removed | | 1005 (also fixed the swapped `$s0`/`$s4`) |
+| 4 | a temp m2c reused for two fields (`t = p[0x7F]; ...; t = p[0x80];`) split into one temp per field (twice) | | 955, 905 |
+| 5 | in the `0x2000` arm, the alpha byte `p[0x82]` read in `w1 = col \| p[0x82]` after `w0` is stored | | 275 |
+| 6 | `phantom_wide` and its `do/while (0)` removed, stray arguments to one-argument callees dropped | | 320 |
+| 7 | the cursor local shared by three `FA` blocks (one per branch) split into one per block | | 170 |
+| 8 | `sPrimTintB` read in place instead of reusing the red component's local | | 70 |
+| 9 | the `& 1` block's word written as one expression (alpha last) | | 10 |
+| 10 | the red product shifted through the same identity helper as green (`inline_fn23(r) << 24`) | | 0 |
+
+Compiler facts (each checked in the dumps; the cause in the source is noted where read):
+- flow.c deletes a store to a global when the next store (scanning backwards) is to the same address with no memory
+  access between (`last_mem_set`, read in flow.c): two `cursor =` in a row lose the first. Writing each command's words
+  between its advances keeps it; cse keeps the cursor's value across the member stores (MEM_IN_STRUCT, hypothesis).
+- `do { } while (0)` doubles a pseudo's reference count; `floor_log2(n) * n` makes short temps gain most, so the
+  `x >> 1` temp outranked the loaded byte in local-alloc and the arms' arithmetic took the wrong registers.
+- global.c pass 0 skips registers another conflicting pseudo prefers and registers not yet used; with the wrappers
+  gone the 0x20 pointer outranked the 0x18 one and took `$s4` as in the target.
+- An identity `inline` helper around a call argument still changes the RTL (inline integration copies), which here
+  broke the cross-jumping of two arms' identical call tails.
+Scaffolding left: the identity helper `inline_fn23` on the red and green products (step 10). Family:
+decomp-repair `guarded_increment_sink` (0.5.607) emits step 1 as one child; steps 3-10 are not yet families.

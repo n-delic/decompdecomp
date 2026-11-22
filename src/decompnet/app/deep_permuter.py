@@ -440,6 +440,8 @@ class Search(Permuter):
                   (L + 'narrow_quotient_local.variants', (source, name)),
                   (L + 'selected_argument_call_split.variants', (source, name)),
                   (L + 'triangle_arm_calls.variants', (source, name)),
+                  (L + 'guarded_increment_sink.variants', (source, name)),  # decomp-repair 0.5.607: a counter's early sum back inside its guard as G++
+                  (L + 'entry_scheduling_scope.variants', (source, name)),  # decomp-repair 0.5.606, released unwired
                   (L + 'argument_weight_scope.variants', (source, name)),  # decomp-repair 0.5.603: a parameter's first call in a one-shot scope with the table pointer local written out
                   (L + 'arm_variable_share.variants', (source, name)),  # decomp-repair 0.5.601: the counters of sibling arms' loops and their derived indices as one variable
                   (L + 'declaration_scope_hoist.variants', (source, name)),  # decomp-repair 0.5.596: block-level spXX locals back in the function's declarations, by offset

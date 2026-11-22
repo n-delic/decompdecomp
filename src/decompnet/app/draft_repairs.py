@@ -106,6 +106,7 @@ from decomprepair import (
     entry_base_init_repairs,
     entry_parameter_copy_repairs,
     entry_pointer_capture,
+    entry_scheduling_scope,
     epsilon_predicate_order,
     equal_value_flow,
     evidence_repairs,
@@ -146,6 +147,7 @@ from decomprepair import (
     guard_temp_sink_repairs,
     guarded_call_repairs,
     guarded_do_for_repairs,
+    guarded_increment_sink,
     guarded_pointer_copy,
     halfword_sign_repairs,
     hardware_operation_repairs,
@@ -404,7 +406,7 @@ AGENT_FAMILIES += (arm_label_share_repairs.FAMILIES + declaration_scope_sink_rep
                    + narrow_param_clamp_repairs.FAMILIES + search_loop_field_reload.FAMILIES + accumulation_run_scope.FAMILIES
                    + flag_word_bitfield_repairs.FAMILIES + argument_spill_tail.FAMILIES)
 AGENT_FAMILIES += (display_value_stage.FAMILIES + shared_copy_local_split.FAMILIES + narrow_quotient_local.FAMILIES
-                   + selected_argument_call_split.FAMILIES + triangle_arm_calls.FAMILIES
+                   + selected_argument_call_split.FAMILIES + triangle_arm_calls.FAMILIES + guarded_increment_sink.FAMILIES + entry_scheduling_scope.FAMILIES
                    + argument_weight_scope.FAMILIES)
 
 LIMIT = 20
@@ -820,7 +822,7 @@ def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels
                    volatile_local_drop_repairs, disjoint_local_merge_repairs, reused_temp_split_repairs,
                    accumulator_chain_repairs, display_cursor_record_repairs, display_value_stage,
                    shared_copy_local_split, narrow_quotient_local, selected_argument_call_split,
-                   triangle_arm_calls, arm_variable_share, argument_weight_scope,
+                   triangle_arm_calls, guarded_increment_sink, entry_scheduling_scope, arm_variable_share, argument_weight_scope,
                    volatile_global_plain_repairs, spill_shape_repairs,
                    clamp_arm_stores, adjacent_array_store_order, global_field_load_stage, preheader_run_order,
                    guard_copy_cse_barrier, constant_store_bracket,
