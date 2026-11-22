@@ -36,7 +36,9 @@ def test_a_random_win_runs_local_repairs_with_its_new_source_and_diff(monkeypatc
     log = Log()
     result = deep_permuter.run(net,'game','f',1,10,log)
     assert result['matched'] and result['tested']==2
-    assert generated == [original,'random win']
+    # The baseline's local repairs and the neutral-step pass (04a42d77) both expand the original; only the
+    # random win's own expansion must come last, with its new source.
+    assert generated == [original,original,'random win']
     assert evidence[-1] == ['random win']
     assert [s for s,_ in tested] == ['random win','exact']
     assert all(fork == ('fork' if imported else None) for _,fork in tested)
