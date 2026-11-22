@@ -14007,3 +14007,11 @@ Before it, `diff_gated_repairs` returned right after two measured families for `
 skipped any function that began with an array.
 
 One empty N64 variadic leaf built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` saved all four argument registers before returning with a `nop` delay slot. Replacing four inferred fixed parameters with one named parameter and `...` reproduced the linked target exactly (score 400 to 0). The existing short-leaf recognizer only accepted the fourth store in the return delay slot; it now accepts both observed placements. Evidence: one saved example plus synthetic library and app routing regressions.
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, an N64 draft copied a stacked word parameter
+to a local before the first call, while the target delayed the saved-register copy. Moving the
+formal-to-local assignment after the first call scored 625 to 540 with the primary profile and
+875 to 790 with the saved `-fno-strength-reduce -g3` profile. Merely rearranging local declarations
+left both scores unchanged. The dispatcher generated the delayed copy from the stack-slot and
+conditional delay-slot evidence. The function remains unmatched. Evidence is one real improvement
+and synthetic gating tests.
