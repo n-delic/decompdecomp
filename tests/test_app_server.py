@@ -4288,3 +4288,27 @@ def test_deep_permuter_tab_accepts_the_older_routes_field_names(app, monkeypatch
     assert response.status_code == 200, response.text
     assert done.wait(2)
     assert calls == [("g", 3, 3000)]
+
+
+def test_code_change_status_and_restart_are_guarded(app, monkeypatch):
+    from decompnet.app import updates
+    client, *_ = app
+    assert client.get('/api/code-change', headers={'User-Agent': 'external'}).status_code == 401
+    status = client.get('/api/code-change').json()
+    assert set(status) >= {'enabled', 'changed', 'what', 'settled', 'auto', 'restarting'}
+    restarts = []
+    monkeypatch.setattr(updates.Updater, 'restart_now', lambda self: restarts.append(1) or True)
+    assert client.post('/api/code-change', json={'action': 'restart'}).status_code == 403
+    assert client.post('/api/code-change', json={'action': 'other'}, headers={'X-Decomp': '1'}).status_code == 400
+    answer = client.post('/api/code-change', json={'action': 'restart'}, headers={'X-Decomp': '1'})
+    assert (answer.status_code, restarts) == ((200, [1]) if status['enabled'] else (400, []))
+
+
+def test_restarting_for_new_code_by_itself_is_a_saved_setting_and_off_by_default(app):
+    client, *_ = app
+    assert client.post('/api/settings', json={}, headers={'X-Decomp': '1'}).json()['auto_restart_on_code_change'] is False
+    on = client.post('/api/settings', json={'auto_restart_on_code_change': True}, headers={'X-Decomp': '1'})
+    assert on.json()['auto_restart_on_code_change'] is True
+    assert client.get('/api/code-change').json()['auto'] is True
+    client.post('/api/settings', json={'auto_restart_on_code_change': False}, headers={'X-Decomp': '1'})
+    assert client.get('/api/code-change').json()['auto'] is False

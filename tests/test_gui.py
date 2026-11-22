@@ -555,6 +555,13 @@ def test_fork_update_source_ui_saves_validated_source_and_handles_errors():
                    capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
 
 
+def test_restart_button_appears_for_new_code_and_waits_for_the_app_to_return():
+    if NODE is None:
+        pytest.skip('needs node')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_code_restart.js'))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
 def test_rewrite_metrics_merge_sort_and_csv_round_trip():
     import csv
     import io

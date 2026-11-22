@@ -455,7 +455,8 @@ async function showSettingsPage() {
   const from = inst.channel === "branch" ? `the ${esc(inst.branch)} branch @ <code>${esc((inst.commit || "?").slice(0, 7))}</code>` : "releases on GitHub";
   $("setAbout").innerHTML = `<p class="small">${esc(versionLine(st))} on ${esc(st.platform)}. Free and open source (AGPL-3.0): <a class="link" href="https://github.com/RetroReversing/decompdecomp" target="_blank" rel="noopener">its source</a>. Everything runs on this computer: no account, nothing sent to us.</p>
     <p class="small muted">A continuation of <a class="link" href="https://github.com/i12bp8/decomp.wtf" target="_blank" rel="noopener">decomp.wtf</a> by Sam Wolfs, who built it up to 0.10.6. Thank you, Sam.</p>
-    ${st.dev ? `<div class="field"><span>Updates</span><p class="muted small">Running from a Git checkout. Use the source launcher below to prepare main updates in the background and enable automatic updates.</p></div>` : `
+    ${st.dev ? `<div class="field"><span>Updates</span><p class="muted small">Running from a Git checkout. Use the source launcher below to prepare main updates in the background and enable automatic updates.</p>
+      <label class="check"><input type="checkbox" id="autoRestartSet" ${st.settings.auto_restart_on_code_change ? "checked" : ""}><span><b>Restart by itself for new code</b> after a <code>git pull</code> or <code>uv sync</code>, once no helper agent or task is working. Without it, a Restart button appears at the bottom of the sidebar. Agents carry on.</span></label></div>` : `
     <div class="field"><span>Updates come from ${esc(inst.repo || "RetroReversing/decompdecomp")} · ${from}</span><div class="row"><span class="muted small grow" id="upText">Checking…</span><button class="ghost small-btn" id="upCheck" type="button">Check now</button></div></div>
     <label class="check"><input type="checkbox" id="checkUpdateSet" ${st.settings.check_updates ? "checked" : ""}><span><b>Look for updates</b> now and then (it only asks ${inst.channel === "branch" ? "GitHub for the branch's newest commit" : "GitHub which version is current"}; nothing about you or your projects is sent).</span></label>
     <label class="check"><input type="checkbox" id="autoUpdateSet" ${st.settings.auto_update ? "checked" : ""}><span><b>Install updates by itself</b> when no helper agent is working (it restarts in a few seconds; agents carry on).</span></label>
@@ -484,6 +485,7 @@ async function showSettingsPage() {
       $("upCheck").before(b);
     }
   };
+  if (st.dev) $("autoRestartSet").onchange = () => save({ auto_restart_on_code_change: $("autoRestartSet").checked }, $("autoRestartSet").checked ? "decompdecomp restarts by itself for new code when nothing is working." : "decompdecomp only offers to restart for new code.");
   if (!st.dev) {  // (a development copy shows no update controls)
     checkUpdate(false, false).then(showUpdate);
     $("upCheck").onclick = async () => { $("upText").textContent = "Checking…"; showUpdate(await checkUpdate(true, false)); };
@@ -745,6 +747,37 @@ async function showUpdating() {
 }
 $("navUpdate").onclick = () => (updateInfo && updateInfo.available ? offerUpdate() : checkUpdate(true, true));
 
+/* A source checkout whose code on disk moved on (git pull, uv sync): a Restart button, one click. The server swaps itself
+   in place (same port; its helpers carry on), so this waits for it to go away and come back, then reloads. */
+let codeRestarting = false;
+async function checkCode() {
+  if (codeRestarting || !(S.st && S.st.dev)) return;
+  let c = null;
+  try { c = await api("/api/code-change"); } catch { return; }
+  const button = $("navCode");
+  button.hidden = !(c.enabled && c.changed);
+  if (button.hidden) return;
+  button.textContent = c.auto ? "Restart now" : "Restart";
+  button.title = `New code on disk: ${(c.what || []).join("; ")}. Restarts decompdecomp in place; helpers and saved work carry on.${c.auto ? " It also restarts by itself once nothing is working." : ""}`;
+}
+$("navCode").onclick = async () => {
+  const button = $("navCode");
+  if (codeRestarting) return;
+  codeRestarting = true;
+  button.disabled = true; button.textContent = "Restarting…";
+  try { await api("/api/code-change", { method: "POST", body: { action: "restart" } }); } catch (err) { codeRestarting = false; button.disabled = false; button.textContent = "Restart"; return toast(esc(err.message), "err"); }
+  let down = false;
+  for (let waited = 0; waited < 240; waited++) {  // the server goes away, then answers again as the new code
+    await sleep(1000);
+    try {
+      const h = await (await fetch("/health", { cache: "no-store" })).json();
+      if (h.ok && (down || waited > 20)) { location.reload(); return; }
+    } catch { down = true; }
+  }
+  codeRestarting = false; button.disabled = false; button.textContent = "Restart";
+  toast("decompdecomp didn't come back after restarting. Start it again (the decomp command).", "err");
+};
+
 $("quitBtn").onclick = () => {
   const body = dialog("Quit decompdecomp?", `<p>Agents that are working stop, and so does everything decompdecomp started. Your work is saved.</p>
     <div class="row"><button class="primary" id="quitGo" type="button">Quit</button><button class="ghost" data-close type="button">Cancel</button></div>`);
@@ -769,6 +802,8 @@ route();
 pollEvents();  // where the notification centre's feed starts: nothing from before is news
 setTimeout(() => checkUpdate(false, true), 4000);
 setInterval(() => checkUpdate(false, true), 10 * 60 * 1000);
+setTimeout(checkCode, 6000);
+setInterval(checkCode, 20 * 1000);
 
 /* Manual clients have project-scoped credentials, independent of managed helper processes. */
 let manualMcpRead = 0, manualMcpProjectsRead = 0;

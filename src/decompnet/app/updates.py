@@ -26,6 +26,7 @@ from pathlib import Path
 from decompnet.hostenv import NO_WINDOW, find_uv
 
 from .. import __version__, toolchains
+from ..network import NetworkError
 from . import edition, source_checkout, window
 
 REPO = "RetroReversing/decompdecomp"
@@ -342,14 +343,28 @@ class Updater:
             except (OSError, RuntimeError, subprocess.SubprocessError) as e:
                 self.job.update(state="error", error=str(e))
                 return
-            self.job["state"] = "restarting"
-            log("restarting decompdecomp")
-            time.sleep(1)  # the page sees "restarting" before the server goes away
-            try:
-                self.before_restart()
-                restart(self.port, self.secret, window.is_open())
-            except OSError as e:  # still the old version: say so (`decomp` starts the new one)
-                self.job.update(state="error", error=f"the update is installed, but restarting failed ({e}): "
-                                                       "quit decompdecomp and start it again")
+            self._relaunch()
 
         threading.Thread(target=run, daemon=True, name="update").start()
+
+    def _relaunch(self, installed: bool = True) -> None:
+        """Become the version on disk (a thread of its own calls this): preserve work, then replace this process."""
+        self.job["state"] = "restarting"
+        self.job["log"].append("restarting decompdecomp")
+        time.sleep(1)  # the page sees "restarting" before the server goes away
+        try:
+            self.before_restart()
+            restart(self.port, self.secret, window.is_open())
+        except (OSError, NetworkError) as e:  # still the old version: say so (`decomp` starts the new one)
+            self.job.update(state="error", error=f"{'the update is installed, but ' if installed else ''}restarting failed ({e}): "
+                                                   "quit decompdecomp and start it again")
+
+    def restart_now(self) -> bool:
+        """Restart into the code on disk without installing anything (a checkout after `git pull`/`uv sync`).
+        False when an update or restart is already under way."""
+        with self._lock:
+            if self.job["state"] in ("installing", "restarting", "switching-directory"):
+                return False
+            self.job = {"state": "restarting", "log": [], "error": None}
+        threading.Thread(target=self._relaunch, args=(False,), daemon=True, name="restart").start()
+        return True
