@@ -166,6 +166,7 @@ from decomprepair import (
     guarded_pointer_copy,
     halfword_sign_repairs,
     hardware_operation_repairs,
+    hoisted_constant_loop_scope,
     identical_arm_collapse_repairs,
     identity_lifetime_repairs,
     if_tree_switch_repairs,
@@ -199,6 +200,7 @@ from decomprepair import (
     local_inline_repairs,
     local_widening_repairs,
     local_width_repairs,
+    lockstep_pointer_fold,
     loop_address_inline_repairs,
     loop_counter_value_split,
     loop_entry_reset_repairs,
@@ -445,6 +447,7 @@ AGENT_FAMILIES += loop_guard_counter_compare.FAMILIES
 AGENT_FAMILIES += phase_donor_repairs.FAMILIES
 AGENT_FAMILIES += caller_save_slot_drop.FAMILIES
 AGENT_FAMILIES += ('m2c_spelling',)
+AGENT_FAMILIES += lockstep_pointer_fold.FAMILIES + hoisted_constant_loop_scope.FAMILIES
 AGENT_FAMILIES += param_loop_carrier.FAMILIES + assignment_guard_sink.FAMILIES + default_arm_goto.FAMILIES + index_shift_spelling.FAMILIES
 AGENT_FAMILIES += (arm_label_share_repairs.FAMILIES + declaration_scope_sink_repairs.FAMILIES + element_update_repairs.FAMILIES
                    + narrow_test_share_repairs.FAMILIES + phase_storage_split_repairs.FAMILIES
@@ -735,6 +738,10 @@ def _spelled(source: str, name: str, arch: str, asm: str = '', flags=(), labels=
     early = early + _generated(loop_counter_value_split.variants,source,name)
     # (a dead parameter reused as the loop's carrier with the body's mid-block reload in a local of its own, as one child; decomprepair.param_loop_carrier)
     early = early + _generated(param_loop_carrier.variants,source,name)
+    # (a second pointer that walks a loop beside the record pointer, written as an offset from it so the compiler makes it a derived address after the hoisted constants; decomprepair.lockstep_pointer_fold)
+    early = early + _generated(lockstep_pointer_fold.variants,source,name)
+    # (a loop ending on a literal in a one-shot scope, the outer counter's bump scoped after its guard's global is read into a dead local, as one child; decomprepair.hoisted_constant_loop_scope)
+    early = early + _generated(hoisted_constant_loop_scope.variants,source,name,header)
     # (an assignment sunk past the guard that follows it; decomprepair.assignment_guard_sink)
     early = early + _generated(assignment_guard_sink.variants,source,name)
     # (a default value written as the else arm a guard's skip jumps into; decomprepair.default_arm_goto)

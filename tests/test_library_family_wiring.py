@@ -441,3 +441,79 @@ M2C_UNK f(void *p) {
     out = draft_repairs.variants(source, 'f', 'mips', labels=labels, limit=None)
     assert 'm2c_spelling' in set(labels.values()) and 'm2c_spelling' in draft_repairs.AGENT_FAMILIES
     assert any('M2C_FIELD(p' not in text.split('#endif')[-1] for text, label in labels.items() if label == 'm2c_spelling' and text in out)
+
+
+_SEARCH = """\
+extern s32 liveCount;
+s32 release(s32 id)
+{
+    char *rec;
+    void *field;
+    u16 **slot;
+    u16 head;
+    u32 index;
+    s32 seen;
+    s32 result;
+    index = 0;
+    if (liveCount != 0)
+    {
+        s32 wanted = (u16) id;
+        slot = (u16 **) table;
+        loop_top:
+        rec = (char *) (*slot);
+        head = *((u16 *) rec);
+        seen = 0;
+        if (head != 0xFFFF)
+        {
+            field = rec + 2;
+            do
+            {
+                if (head == wanted)
+                {
+                    touch(rec, *((s32 *) (((char *) field) + 2)));
+                }
+                if (*((u16 *) (((char *) field) + 0)) != 0)
+                {
+                    seen = 1;
+                }
+                rec += 0x1C;
+                head = *((u16 *) rec);
+                field += 0x1C;
+            }
+            while (head != 0xFFFF);
+        }
+        if (seen)
+        {
+            result = 1;
+            return 1;
+        }
+        index += 1;
+        slot += 3;
+        if (index >= ((u32) liveCount))
+        {
+            goto done;
+        }
+        goto loop_top;
+    }
+    done:
+    result = 0;
+    return result;
+}
+"""
+
+
+def test_the_search_loop_pointer_fold_and_hoisted_constant_scope_are_proposed_and_known_to_agents():
+    """A search loop's second pointer written as an offset from the record pointer (60 -> 20), then the loop that ends on a
+    literal in a one-shot scope with the outer counter's bump scoped after the global is read into a dead local, as one
+    child (20 -> 0); each alone leaves the score or makes it worse (decomprepair `lockstep_pointer_fold`,
+    `hoisted_constant_loop_scope`)."""
+    labels = {}
+    draft_repairs.variants(_SEARCH, 'release', 'mips', labels=labels, limit=None)
+    assert 'lockstep_pointer_fold' in set(labels.values())
+    folded = next(text for text, label in labels.items() if label == 'lockstep_pointer_fold' and 'field +=' not in text)
+    chained = {}
+    draft_repairs.variants(folded, 'release', 'mips', labels=chained, limit=None)
+    scoped = [text for text, label in chained.items() if label == 'hoisted_constant_loop_scope']
+    assert any(text.count('do { index += 1; slot += 3; } while (0);') == 1 and 'result = liveCount;' in text
+               and text.count('__repair_hoisted_constant') == 2 for text in scoped)
+    assert {'lockstep_pointer_fold', 'hoisted_constant_loop_scope'} <= set(draft_repairs.AGENT_FAMILIES)
