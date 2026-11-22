@@ -42,3 +42,26 @@ def test_deep_permuter_reuses_the_witnessed_saved_projection_axis_for_kmc():
     assert 'x += (carry * sine(angle));' in candidate and 'z += (carry * cosine(angle));' in candidate
     for arch, compiler in [('arm', 'gcc-2.7.2-kmc'), ('mips', 'gcc-egcs'), ('mips', 'ido-5.3')]:
         assert all(label != FAMILY for label, _ in proposals(SOURCE, 'adjust', '', arch, compiler, ROWS, ''))
+
+
+def test_deep_permuter_reuses_a_guarded_load_for_the_same_projection_field():
+    source = SOURCE.replace(
+        '    carry = *((f32 *) (((char *) record) + 0x48));\n    weight -= carry;',
+        '    carry = *((f32 *) (((char *) record) + 0x50));\n'
+        '    ok = 1;\n'
+        '    if (!(carry <= 0.025f)) {\n'
+        '        *((f32 *) (((char *) record) + 0x38)) = carry;\n'
+        '    }',
+    ).replace('    f32 carry;', '    int ok;\n    f32 carry;')
+    source = source.replace('(axis * sine(angle))', 'axis * sine(angle)')
+    rows = [
+        (' ', 'lwc1 $f26, 0x50($s1)', 'lwc1 $f26, 0x50($s1)'),
+        (' ', 'c.le.s $f26, $f2', 'c.le.s $f26, $f2'),
+        (' ', 'nop', 'nop'),
+        (' ', 'bc1f .Lstore', 'bc1f .Lstore'),
+        (' ', 'swc1 $f26, 0x38($s1)', 'swc1 $f26, 0x38($s1)'),
+    ] + ROWS[4:]
+    [candidate] = [text for label, text in proposals(source, 'adjust', '', 'mips',
+                                                    'gcc-2.7.2-kmc', rows, '') if label == FAMILY]
+    assert 'x += carry * sine(angle);' in candidate
+    assert 'z += (carry * cosine(angle));' in candidate
