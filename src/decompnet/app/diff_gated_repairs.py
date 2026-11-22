@@ -197,6 +197,7 @@ from decomprepair import (
     targeted_switch_labels,
     trig_axis_reuse,
     uncached_read_repairs,
+    vector_output_capture,
     wide_update_before_flags,
 )
 from decomprepair import (
@@ -379,6 +380,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += field_copy_before_clear.variants(source, name, rows, header=header)
         result += clamp_return_local.variants(source, name, rows, header=header)
         result += float_delta_load_order.variants(source, name, rows, header=header)
+        result += vector_output_capture.ordered_snapshot_variants(source, name, rows)
         result += counted_switch_advance.variants(source, name, rows, header=header)
         result += oscillator_phase_hold.variants(source, name, rows, header=header)
         result += oscillator_phase_hold.product_variants(source, name, rows, header=header)
