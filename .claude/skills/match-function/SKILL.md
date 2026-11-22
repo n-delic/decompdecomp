@@ -162,6 +162,12 @@ It prints how many of the target's instructions agree and where the first differ
 immediates normalised; the callee's address ignored). When a candidate reaches 1.000 it still has to pass the app's
 judge: `compile_and_diff`. A candidate that looks better locally has to beat the best in the app.
 
+An exact `compiler_experiments` trial under another profile is diagnostic, not a recorded match. Preserve its
+trial ID and frozen source/flags. When the app exposes it, `suggest(function=FUNC, trial_id=ID, review_only=true)`
+queues that exact pair without applying it, even if automatic compiler changes are enabled. On older apps, preserve
+the trial for review: ordinary `suggest` can apply it immediately. Respect the user's authorization for project
+settings, and verify `get_function(section="summary")` after an approved application.
+
 **For a search, use the app's own judge standalone.** `decomp judge-worker` returns exactly the app's score (a
 source judged 1090 in the app judged 1090 here) in about 0.1 s, needs no claim, runs beside the app without touching
 its state. Reuse a single `scripts/fast_judge.py` worker (`Judge(...).score(source)`) for these probes.
