@@ -21,3 +21,25 @@ finish:
     assert 'temp_fs3' not in candidate
     assert 'var_fs3 = second();' in candidate
     assert candidate.count('use(var_fs3);') == 2
+
+
+def test_mips_draft_repairs_offer_the_following_float_declaration():
+    source = '''
+void f(int test) {
+    f32 temp_fs3;
+    f32 var_fs3_2;
+    temp_fs3 = first();
+    if (test) goto finish;
+    step();
+finish:
+    use(temp_fs3);
+    var_fs3_2 = second();
+    use(var_fs3_2);
+}
+'''
+    labels = {}
+    choices = draft_repairs.variants(source, 'f', 'mips', '', '-O2', labels, limit=None)
+    [candidate] = [text for text in choices if labels[text] == 'mips_float_local_reuse']
+    assert 'temp_fs3' not in candidate
+    assert 'var_fs3_2 = first();' in candidate
+    assert candidate.count('use(var_fs3_2);') == 2
