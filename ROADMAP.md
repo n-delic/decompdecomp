@@ -820,7 +820,9 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Called framed recovery inside dropped raw text | ✓ | ✓ | ✓ scalar MIPS | — | — | ✓ scalar MIPS | — | — build-owned adapter planned | — reader/build adapter planned | — | — ARM/build adapter planned | — own-build adapter planned |
 | Judge | link · compare | link · compare | link · compare | link · compare | objdiff | link · compare | link · compare | objdiff | objdiff | objdiff | objdiff | objdiff |
 | Machine drafts (m2c, Ghidra for x86) | ✓ | ✓ | ✓ | — | ✓ Ghidra | ✓ | ✓ (m2c `gba-gcc-c`) | ✓ | ✓ Ghidra | ✓ Ghidra | — (no assembly to read) | by architecture |
-| Draft cleanup stage (record views, gbi macros) | ✓ | ✓ m2c path | ✓ m2c path | — | — Ghidra drafts planned | ✓ m2c path | ✓ m2c path | ✓ m2c path | — Ghidra drafts planned | — Ghidra drafts planned | — (no assembly to read) | m2c drafts |
+| Draft cleanup stage (record views, gbi macros, m2c's byte steps, table cursors as indexes) | ✓ | ✓ m2c path | ✓ m2c path | — | — Ghidra drafts planned | ✓ m2c path | ✓ m2c path | ✓ m2c path | — Ghidra drafts planned | — Ghidra drafts planned | — (no assembly to read) | m2c drafts |
+| Drafts from a close matched look-alike (`twin_drafts`) | ✓ | ✓ not run yet | ✓ not run yet | — | — | ✓ not run yet | — | — project-mode alignment planned | — project-mode alignment planned | — | — project-mode alignment planned | — |
+| Draft result type from the exits (`draft_return_type`, off: measured no gain) | ✓ reader | ✓ reader | ✓ reader | — PPC reader planned | — | ✓ reader | — ARM reader planned | — PPC reader planned | — x86 reader planned | — x86 reader planned | — ARM reader planned | — |
 | Compile-tested draft refresh and saved diagnostics | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ m2c | ✓ Ghidra | — | — draft generator planned | ✓ supported draft generators |
 | Initial callback, forwarded-argument and overlapping-frame recovery | ✓ bounded MIPS | ✓ bounded MIPS | ✓ bounded MIPS | — | — | ✓ bounded MIPS | — | — processor reader planned | — processor reader planned | — | — processor reader planned | ✓ MIPS C; other readers planned |
 | Autopilot: free matches from drafts | ✓ | ✓ | ✓ | twins only | — | ✓ | ✓ (demo: 34 matches) | ✓ | ✓ exact drafts of tiny shapes (32-bit); Ghidra's made compilable | ✓ as PC | twins only (no drafts yet) | — |
@@ -1168,6 +1170,14 @@ judge worker for project-mode units, then the same pass. It found nothing on the
 Machine drafts from m2c get cleaned copies judged beside them (`app/draft_cleanup.py`, measured in
 docs/learnings/finding/draft-cleanup-measurement.md). Consoles that draft with Ghidra (`Console.own_drafts`) return
 before that stage; the same record-view rewrite should be measured on their drafts and wired in where it helps.
+
+### Drafts from look-alikes in project mode, and result-type readers beyond MIPS
+
+A ROM function with a matched look-alike (90 % of its instructions) gets that function's C with its own names as a draft
+candidate (`app/twin_drafts.py`, docs/learnings/finding/draft-start-candidates.md). Project mode has twins by object
+fingerprints but not the relocation alignment the names come from (as for the similar-code reuse pass), so it has none
+yet. The result-type reader (`Arch.return_contract`) is MIPS only; x86, PPC and ARM readers would let
+`draft_return_type` run there, though on the N64 game measured it gained nothing and stays off.
 
 ## Recently done
 

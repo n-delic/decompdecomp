@@ -48,3 +48,46 @@ def test_both_modes_use_the_stage():
     root = Path(draft_cleanup.__file__).parent
     assert 'draft_cleanup.cleaned(' in (root / 'engine' / 'autopilot.py').read_text()
     assert 'draft_cleanup.cleaned(' in (root / 'forkengine.py').read_text()
+
+
+WALK_ASM = '''glabel f
+/* 0 80073A00 00002021 */  addu       $a0, $zero, $zero
+/* 4 80073A04 3C03800E */  lui        $v1, %hi(D_A)
+/* 8 80073A08 24631A70 */  addiu      $v1, $v1, %lo(D_A)
+/* C 80073A0C AC600000 */  sw         $zero, 0x0($v1)
+/* 10 80073A10 24840001 */  addiu      $a0, $a0, 0x1
+/* 14 80073A14 2C820004 */  sltiu      $v0, $a0, 0x4
+/* 18 80073A18 1440FFFC */  bnez       $v0, .L80073A0C
+/* 1C 80073A1C 24630004 */  addiu      $v1, $v1, 0x4
+/* 20 80073A20 03E00008 */  jr         $ra
+/* 24 80073A24 00000000 */  nop
+'''
+
+WALK = '''extern s32 D_A;
+
+void f(void) {
+    s32 *var_v1;
+    u32 var_a0;
+
+    var_a0 = 0;
+    var_v1 = &D_A;
+    do {
+        *var_v1 = 0;
+        var_a0 += 1;
+        var_v1 += 4;
+    } while (var_a0 < 4U);
+}
+'''
+
+
+def test_m2c_byte_step_is_fixed_and_the_cursor_offered_as_an_index():
+    # an N64 game: m2c's `+= 4` on an `s32 *` for a 4-byte addiu compiles as a 16-byte step (draft-start-candidates.md)
+    found = dict(draft_cleanup.cleaned(WALK, 'f', 'mips', WALK_ASM))
+    assert 'var_v1 += 1;' in found['draft_cleanup']
+    assert '*(&D_A + var_a0) = 0;' in found['draft_cleanup_index'] and 'var_v1' not in found['draft_cleanup_index']
+
+
+def test_without_the_target_a_byte_step_is_left_alone():
+    found = dict(draft_cleanup.cleaned(WALK, 'f', 'mips'))
+    assert 'draft_cleanup' not in found  # no immediate says the step was bytes
+    assert '(u8 *)&D_A + var_a0 * 16' in found['draft_cleanup_index']  # the index as C reads the step

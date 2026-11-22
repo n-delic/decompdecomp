@@ -420,6 +420,17 @@ class AutopilotMixin:
             def draft_candidates():
                 yield 'raw_m2c', f"{note}{seeds.with_m2c_macros(draft)}\n"
                 candidates = []
+                from .. import draft_return_type, twin_drafts
+                if twin_drafts.enabled(self.cfg(proj)):
+                    # a close matched look-alike's C with this function's names (app/twin_drafts.py)
+                    candidates += twin_drafts.candidates(self, proj, fn, ctx['header'])
+                if draft_return_type.enabled(self.cfg(proj)):
+                    candidates += draft_return_type.candidates(draft, fn['name'], proj['arch'], target_asm, context,
+                                                               lambda ctx_text: seeds.generate_from_asm(
+                                                                   target_asm, fn['name'], toolchain, ctx_text, data_asm,
+                                                                   valid=True, strict=False, timeout=20,
+                                                                   resolve=lambda symbol: self.symbols(proj['id']).resolve(symbol)),
+                                                               note)
                 from ..loop_storage_shapes import variants as loop_shapes
                 for family,source in loop_shapes(draft,fn['name'],ctx['header'],proj['arch'])[:2]:
                     candidates.append((family,f"{note}{seeds.with_m2c_macros(source)}\n"))
