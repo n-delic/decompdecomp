@@ -303,7 +303,8 @@ def line_info(net, proj, fn, source: str) -> dict | None:
     """source_lines.mismatches for this source's own compile (through the -g twin when it has no line table), or None
     when it can't be judged here (a project without the ROM judge, a compile error)."""
     from ..source_lines import mismatches
-    header = (net._context(proj['id'], fn['unit']) or {}).get('header', '')
+    context = net._context(proj['id'], fn['unit'])  # (a database row, not a dict: no .get)
+    header = context['header'] if context else ''
     result = net._compile(proj, header, source, fn)
     if not result.ok:
         return None
