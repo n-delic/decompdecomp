@@ -15524,3 +15524,6 @@ alone lost the final table relocation. Moving the flag assignment
 across the call while retaining the extra argument scored 3,660.
 Deep Permuter reads the matched callee from the caller's project only
 when it observes both linked instruction differences.
+### IDO 7.1 callback byte offset and evaluation order
+
+A saved MIPS example built with IDO 7.1 `-O0 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul -DNON_MATCHING` loaded a callback's signed halfword adjustment as a byte offset. A machine draft added it to an `s32 *`, scaling it by four and reloading the base. Casting the base to `s8 *` improved the diff score from 225 to 125. Moving the callback-object assignment into the argument, together with the byte cast, reproduced the target exactly (score 0) through the normal linked judge. This is one saved example, not a controlled cross-compiler experiment. The source relies on IDO 7.1 evaluating the argument before the function designator; its evaluation order is not portable C, so the proposal is confined to that compiler and the observed instruction and source patterns, and is accepted only after the normal judge verifies it.

@@ -1940,3 +1940,14 @@ def test_signed_offset_helper_routes_to_kmc(monkeypatch):
                         lambda text, name, header, diff: [('signed_offset_helper_fixture', text)])
     assert 'signed_offset_helper_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'signed_offset_helper_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_ido_callback_offset_routes_to_ido_71(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'nop', 'nop')] * 32
+    monkeypatch.setattr(diff_gated_repairs.measured_ido_callback_offset, 'variants',
+                        lambda text, name, header, diff: [('ido_callback_fixture', text)])
+    assert 'ido_callback_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-7.1', rows, ''))
+    assert 'ido_callback_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-5.3', rows, ''))
+    assert 'ido_callback_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
