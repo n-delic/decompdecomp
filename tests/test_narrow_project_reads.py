@@ -37,7 +37,11 @@ def test_range_change_loads_only_affected_bodies_and_keeps_race_guard(compiler_n
             with net.store.tx() as db:db.execute(f"UPDATE functions SET {race}=? WHERE name='f3'",(value,))
         return False,SimpleNamespace(score=5),''
     monkeypatch.setattr(net,'_judge_with',judge)
-    if race:
+    if race == 'best_source':
+        # #2799: a helper saving an attempt during the check no longer aborts the change (only the verdict's own
+        # inputs, target and offset, do); its function is rescored after the settings are saved.
+        net._apply_compiler_config(proj,cfg)
+    elif race:
         with pytest.raises(NetworkError,match='changed during'):net._apply_compiler_config(proj,cfg)
         assert net._project('game')['config']==proj['config']
     else:

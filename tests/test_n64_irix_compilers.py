@@ -136,6 +136,8 @@ def test_installed_comparison_compilers_reach_the_normal_link_judge(tmp_path, ti
                    'float probe(float x){return x*1.25f;}',
                    'int probe(int x){if(x<0)return -x;return x+3;}']:
         result = compile_source(cfg, '', source)
+        if not result.ok and 'Exec format error' in result.log:
+            pytest.skip('this host cannot execute the installed Linux compiler (no runner for its binary format)')
         assert result.ok, result.log
         fn = extract_function(result.obj, 'probe')
         assert fn.big_endian and result.obj[:6] == b'\x7fELF\x01\x02'

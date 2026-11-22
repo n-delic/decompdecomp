@@ -161,7 +161,7 @@ def test_helper_discovery_is_independently_linked_and_unit_rechecked_with_real_i
 
     from elftools.elf.elffile import ELFFile
 
-    from decompnet import toolchains
+    from decompnet import consoles, toolchains
     from decompnet.app.compiler_context import acceptable
     from decompnet.compiler import compile_source
     from decompnet.rom.match import RomTarget, link
@@ -185,6 +185,7 @@ def test_helper_discovery_is_independently_linked_and_unit_rechecked_with_real_i
         def all(self,sql,pid,size,code):return [r for r in rows.values() if r['size']==size and r['target']==code]
     net=SimpleNamespace(is_rom=lambda p:True,fork_slug=lambda s:None,store=Store(),symbols=lambda pid:table,
                         reader=lambda p,r:lambda a,n:None,
+                        console=lambda p:consoles.get('n64'),  # (compiler_context links through the console)
                         _rom_target=lambda r:RomTarget(r['name'],r['vram'],r['target'],[]))
     net.project_store=lambda _:net.store
     proj={'id':1,'slug':'sample','arch':'mips'}
