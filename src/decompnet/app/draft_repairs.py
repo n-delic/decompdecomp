@@ -760,6 +760,7 @@ def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels
                    accumulator_chain_repairs, display_cursor_record_repairs,
                    volatile_global_plain_repairs, spill_shape_repairs,
                    clamp_arm_stores, adjacent_array_store_order, global_field_load_stage, preheader_run_order,
+                   guard_copy_cse_barrier,
                    counter_derived_offset, counter_append_scope_repairs, loop_limit_reassign_repairs,
                    outer_cursor_entry_copy_repairs, loaded_pointer_reuse_repairs, entry_base_init_repairs,
                    live_range_retarget_repairs, pointer_local_merge_repairs, identical_arm_collapse_repairs):
