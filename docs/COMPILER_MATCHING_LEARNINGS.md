@@ -15761,3 +15761,7 @@ ordinary float field in the source.
 ### KMC GCC 2.7.2 conditional byte stores
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` assigned four adjacent bytes in each of two branches. Its machine draft placed a shared final byte store after the branches and ordered the first branch's other stores differently. Duplicating the final constant store into both branches and restoring the measured byte order changed the diff score from 225 to an exact linked match; duplicating the store alone scored 175. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the measured instruction pattern and four distinct, nonvolatile byte locations.
+
+### KMC GCC 2.7.2 guarded lookup owner
+
+A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` passed the enclosing object and a loaded neighbor to a guarded lookup. Its machine draft supplied only the neighbor and stored the returned pointer in a second local. Adding the missing owner alone left a diff score of 210; also representing the neighbor as a pointer and reusing that local for the result produced an exact linked match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the measured call setup and source shape and declines conflicting helper declarations.

@@ -140,6 +140,7 @@ from decomprepair import (
     measured_lifetime_shapes,
     measured_list_head_insert,
     measured_list_selection,
+    measured_lookup_owner,
     measured_loop_search_target,
     measured_masked_halfword_read,
     measured_matrix_products,
@@ -509,6 +510,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += guard_reset_scheduling.variants(source, name, header, rows)
         result += global_pointer_local_repairs.scoped_field_reads(source, name, rows)
         result += measured_global_rebase.variants(source, name, header, rows, resolve=resolve)
+        result += measured_lookup_owner.variants(source, name, header, rows)
         result += measured_branch_byte_stores.variants(source, name, header, rows)
         result += measured_wide_division_stride.variants(source, name, header, rows)
         result += measured_slot_flip_copy.variants(source, name, header, rows, resolve=resolve)
