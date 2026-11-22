@@ -32,6 +32,7 @@ from decomprepair import (
     measured_cursor_schedule,
     measured_expression_repairs,
     measured_float_grid_stores,
+    measured_forwarded_pointer,
     measured_global_rebase,
     measured_halfword_index,
     measured_halfword_stores,
@@ -368,6 +369,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += search_exit_loop_repairs.sentinel_byte_guard_variants(source, name, rows)
         result += loop_counter_roles_repairs.guarded_reuse_variants(source, name, rows)
         result += measured_float_grid_stores.variants(source, name, rows)
+        result += measured_forwarded_pointer.variants(source, name, header, asm or '')
         result += float_intermediate_repairs.repeated_products(source, name, rows)
         result += measured_expression_repairs.variants(source,name,header,rows)
         result += stack_byte_init_repairs.variants(source, name, header, rows)

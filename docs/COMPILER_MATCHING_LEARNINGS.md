@@ -14597,3 +14597,6 @@ arithmetic and recovered both load instructions. The exact linked
 score moved from 9,965 to 9,945. Reusing the difference result local
 for the field instead scored 9,955. Synthetic tests require the
 measured operand and offset swap and both ordinary field reads.
+
+
+In one N64 graphics wrapper built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a draft omitted the object pointer from an inferred call prototype. The target left that entry pointer in `$a0`, passed a masked second parameter in `$a1`, and populated six stack argument slots. Adding the pointer at the front of the call and prototype reproduced the linked target exactly (score 339 to 0). The register state does not prove the callee uses the pointer, so this is a judged hypothesis. Evidence: one saved example and synthetic generation and routing tests.
