@@ -1645,3 +1645,13 @@ def test_route_proven_boolean_outer_guard():
     assert ('boolean_guard_operands', expected) in proposals(source, 'f', '', 'mips', KMC, rows, '')
     assert all(label != 'boolean_guard_operands' for label, _ in
                proposals(source, 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_list_selection_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_list_selection, 'variants',
+                        lambda text, name, header, diff: [('list_selection_fixture', text)])
+    assert 'list_selection_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'list_selection_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))

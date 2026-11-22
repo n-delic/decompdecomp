@@ -14956,3 +14956,8 @@ three table relocations and no warning. Capturing the product in the
 blend result instead scored 7,540. The extended rule checks both words
 of the float literal, the same receiver and field on each arm, and the
 unconditional reload.
+
+
+### Preserve a list-selection result across calls
+
+In a private N64 voice-selection function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the target kept a zero-initialized result in a saved register across calls on the free-list path and reused its list cursor for the fallback walk. The draft returned a literal early and used separate result and cursor locals on the fallback path. Joining the paths, returning the existing result and reusing the cursor reproduced the linked target exactly (score 351 to 0). Joining the paths alone scored 170; joining them and returning the shared result scored 40. The candidate checks local lifetimes, control transfers and saved-register evidence. Evidence: one saved function and synthetic generation and routing tests.

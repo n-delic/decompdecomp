@@ -109,6 +109,7 @@ from decomprepair import (
     measured_kmc_vector_square,
     measured_kmc_wrappers,
     measured_lifetime_shapes,
+    measured_list_selection,
     measured_matrix_products,
     measured_memory_order,
     measured_mmio_polling,
@@ -326,6 +327,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_kmc_call_stores.variants(source, name, header, rows, resolve)
         result += measured_carried_loop_test.variants(source, name, header, rows)
         result += measured_byte_clamp.variants(source, name, header, rows)
+        result += measured_list_selection.variants(source, name, header, rows)
         result += measured_be16_cursor.variants(source, name, header, rows)
         result += measured_forwarded_counter.variants(source, name, header, rows, asm or '')
         result += measured_flag_reload.variants(source, name, header, rows)
