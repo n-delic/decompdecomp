@@ -12984,3 +12984,13 @@ on the wrong side of a pointer reload. Read the next pointer into the
 existing local after the conditional link update and before the neighboring
 store. The linked score went from 60 to 0. The previous dispatcher proposed
 nothing, and the new rewrite generated one byte-exact candidate.
+
+### KMC GCC 2.7.2: stage relocated pool index and cursor
+
+Three isolated drafts indexed a pool using a guessed global structure. Using
+the target's separately relocated index and table globals and staging the
+index restored the target's address calculation. With
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, each linked score improved
+from 235 to 40; register differences remain, so none is a match. Trials
+staging the updated word in a separate local did not remove those differences.
+Synthetic tests cover the target instructions and resolved address guards.

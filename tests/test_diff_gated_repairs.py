@@ -1232,3 +1232,18 @@ def test_split_table_index_routes_to_kmc(monkeypatch):
                         lambda text, name, header, diff: [('split_table_fixture', text)])
     assert 'split_table_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'split_table_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_relocated_pool_cursor_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    resolve = {'global': 32}.get
+
+    def repair(text, name, header, diff, resolver):
+        assert resolver('global') == 32
+        return [('relocated_pool_fixture', text)]
+
+    monkeypatch.setattr(diff_gated_repairs.measured_kmc_relocated_pool, 'variants', repair)
+    assert 'relocated_pool_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, '', resolve=resolve))
+    assert 'relocated_pool_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, '', resolve=resolve))
