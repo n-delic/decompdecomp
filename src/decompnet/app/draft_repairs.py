@@ -315,6 +315,7 @@ from decomprepair import (
     search_loop_repairs,
     selected_argument_call_split,
     sentinel_local_repairs,
+    shared_assignment_inline,
     shared_constant_store_repairs,
     shared_copy_local_split,
     shared_offset_repairs,
@@ -436,7 +437,7 @@ AGENT_FAMILIES = temporary_hoist_repairs.FAMILIES + reassociation_repairs.FAMILI
 AGENT_FAMILIES += (guarded_pointer_copy.FAMILY,) + shifted_byte_lifetime.FAMILIES + float_constant_loop_pin.FAMILIES + dead_local_constant_compare.FAMILIES
 AGENT_FAMILIES += loop_weight_set_repairs.FAMILIES
 AGENT_FAMILIES += entry_constant_local.FAMILIES + store_temp_inline.FAMILIES
-AGENT_FAMILIES += float_sum_store_fence.FAMILIES
+AGENT_FAMILIES += float_sum_store_fence.FAMILIES + shared_assignment_inline.FAMILIES
 AGENT_FAMILIES += loop_guard_counter_compare.FAMILIES
 AGENT_FAMILIES += phase_donor_repairs.FAMILIES
 AGENT_FAMILIES += caller_save_slot_drop.FAMILIES
@@ -910,6 +911,9 @@ def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels
                    # (a float sum's first add with its operands swapped and a one-shot scope inside the store run between its two
                    # adds, as one child: a 113-instruction KMC bounding-sphere function 25 -> 0; decomprepair 0.5.636)
                    float_sum_store_fence,
+                   # (a local m2c assigned one expression in several places, written where it is read: a 490-instruction KMC menu
+                   # function 60 -> 0, two saved registers swapped by an extra reference; decomprepair 0.5.646)
+                   shared_assignment_inline,
                    # (a loop's entry guard as the counter's compare, which gives the frame an unaccessed 8-byte spill slot, with each
                    # disjoint_local_merge of the guarded text as one child: a 401-instruction KMC loader 22 -> 0; decomprepair 0.5.640)
                    loop_guard_counter_compare,

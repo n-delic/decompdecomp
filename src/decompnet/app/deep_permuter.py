@@ -437,6 +437,9 @@ class Search(Permuter):
                  (L + 'store_temp_inline.variants', (source, name)),
                  # a float sum's first add swapped and a one-shot scope inside the store run between its two adds
                  (L + 'float_sum_store_fence.variants', (source, name)),
+                 # a local m2c assigned one expression in several places, written where it is read (an extra reference swapped two
+                 # saved registers)
+                 (L + 'shared_assignment_inline.variants', (source, name)),
                  # a loop's entry guard as the counter's compare (an unaccessed 8-byte spill slot) with each local merge as one child
                  (L + 'loop_guard_counter_compare.variants', (source, name)),
                  # a later phase's clamp variable, record pointer and product through the earlier phase's dead locals, one child

@@ -5,11 +5,12 @@ beam alike. Library modules (register levers, indexed records) had
 `variants` but no caller anywhere in the app: no agent, draft or permuter ever saw them. This test lists the library's
 modules with a `variants` function and fails for any the app never names (directly or through another library
 module that calls it)."""
+import inspect
 import pathlib
 import re
 
 import decomprepair
-from decompnet.app import draft_repairs
+from decompnet.app import deep_permuter, draft_repairs
 
 SRC = pathlib.Path(__file__).resolve().parents[1] / 'src' / 'decompnet'
 
@@ -343,3 +344,50 @@ void f(u32 word) {
     assert {'caller_save_slot_drop', 'caller_save_slot_drop_fold'} <= set(labels.values())
     assert any('slot' not in text and 'copy' not in text for text in out if labels.get(text) == 'caller_save_slot_drop_fold')
     assert {'caller_save_slot_drop', 'caller_save_slot_drop_fold'} <= set(draft_repairs.AGENT_FAMILIES)
+
+
+_SHARED = """\
+void f(void)
+{
+    s32 base;
+    s32 kind;
+    s32 var_a0;
+    base = get(0x162);
+    kind = peek();
+    if (kind >= 0)
+    {
+        if (kind)
+        {
+            var_a0 = base - 0x28;
+        }
+        else
+        {
+            var_a0 = base - 0x28;
+        }
+        if (kind >= 2)
+        {
+            var_a0 = base - 0x28;
+            goto draw;
+        }
+        erase(var_a0, base, 1);
+    }
+    else
+    {
+        draw:
+        paint(var_a0, base, 2);
+    }
+}
+"""
+
+
+def test_shared_assignment_inline_is_proposed_by_the_drafts_and_the_deep_permuter():
+    """A 490-instruction KMC function went 60 -> 0 once m2c's argument local (the same `base - 0x28` assigned at four places,
+    the copies gcc made in delay slots) was written into its two calls: its nine references of `base` fell to seven and the
+    priority order of two saved registers flipped (decomprepair 0.5.646)."""
+    labels = {}
+    draft_repairs.variants(_SHARED, 'f', 'mips', labels=labels, limit=None)
+    assert 'shared_assignment_inline' in set(labels.values())
+    assert 'shared_assignment_inline' in draft_repairs.AGENT_FAMILIES
+    assert any('erase(base - 0x28, base, 1);' in text and 'var_a0' not in text
+               for text, family in labels.items() if family == 'shared_assignment_inline')
+    assert "'shared_assignment_inline.variants'" in inspect.getsource(deep_permuter)
