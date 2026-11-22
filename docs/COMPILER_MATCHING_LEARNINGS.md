@@ -15659,3 +15659,15 @@ neutral, and the selected source passed uninitialized diagnostics.
 ### IDO 7.1 indexed record update
 
 A saved MIPS example built with IDO 7.1 `-O0 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul -DNON_MATCHING` used a record count as both array index and value, then incremented the count through a registered owner pointer. The machine draft cached the count in a registered integer and updated through the original pointer. Replacing the cached index alone changed the diff score from 205 to 327; registering the owner alone scored 472. Applying both changes produced an exact linked match (score 0). This is one saved example, not a controlled cross-compiler experiment; the proposal requires both measured instruction patterns and rejects volatile count fields.
+
+### Stage the row stride and base before indexing the column
+
+A private N64 switch sample built with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` used two reads from a
+fixed-stride table. Staging the byte row index, row stride, byte
+column index, and row base reduced the linked score from 372 to 112
+with exact jump-table data. An earlier linear address form scored
+317. Omitting the row-base local or omitting the stride local scored
+1,347 and 192 respectively. The proposal verifies the byte field
+views and the column helper's single read, then derives the strides
+with `sizeof`. The candidate still has instruction differences.
