@@ -13085,3 +13085,25 @@ match. Hoisting the result copy scored 30, and making it volatile scored 2084.
 The `global_first_element` repair offers the measured change for a single call
 argument read; unit tests cover its shape and reject other uses. This is one
 observed near-match, not a controlled compiler regression.
+
+### Loop-invariant copies and delay slots around global loop bounds (KMC GCC 2.7.2)
+
+One 330-instruction N64 function (three bonus-object loops over a global slot count, switch on a scene byte)
+compiled with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` went 2215 -> 800 by hand in small recorded steps
+(one function, not a controlled regression; a concurrent session then matched it at 0). Rules read from the
+asm and cc1 dumps (`-dl -dg`, `-dd`):
+- A volatile pointer variable (`p = &g; *p`) shares one address pseudo. Writing the access twice as
+  `*(volatile s32 *)&g` (guard and loop bound) makes loop.c hoist a second address and cse2 turn it into
+  `move $a3,$v1`, the target's copy: 2215 -> 1895.
+- A pointer variable declared in the loop's own block (`s32 *tp = &g;`) lets loop.c hoist a plain `*tp` loop
+  bound and cse2 copy the guard's load (`move $a0,$v1`); the same variable at function scope blocks the hoist.
+  Block-scoped `tp` plus `s32 *tq = tp;` before the loop gave the copy and the `4($a3)` store: 1895 -> 1505.
+- An invariant adjacent-word read stays `addiu $a1,$v0,4; lw 0($a1)` only if the index is a variable
+  (`np[one]`, `one = 1`): cse1 folds `np[1]` into `lw 4($a1)`. 1505 -> 830 with a `for` loop form.
+- Declaration order of the zero-initialised counters sets the prologue save order (830 -> 800).
+- Remaining: the target kept the inner skip branches' delay slots as `nop`; `i++` placed after the `if`
+  (not before it) gave that, which the other session's match used. Eager delay-slot fills copy the loop-test
+  insn from the join label unless it is a load (do-while forms with a reloaded bound had `nop`).
+Failed: volatile casts on the adjacent read, nested/continue forms, `register`/`const` on `one` (const: worse).
+Permuter gap: no family chooses between pointer-variable and direct-cast spellings of the same global, or
+moves a `++` across a branch to change a delay slot.
