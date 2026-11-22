@@ -16398,3 +16398,8 @@ A saved MIPS function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3
 ### IDO generated C++ overlay references
 
 An isolated N64 overlay function built with IDO 7.1 using `-O2 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul -DNON_MATCHING` compiled to the original 588 instruction bytes, but its generated base-constructor call and vtable address used C++ symbols rather than the loader's names. Explicit object-file binding declarations preserved the generated instructions and allowed the overlay linker to verify both loader records. This is one observed function, not a cross-compiler result. A compiler-backed regression checks constructor and vtable bindings, a wrong symbol, a nonzero marker addend, and cartridge reconstruction.
+
+In the same KMC function, reversing the second arm's equality operands changed the score from 5 to 0: GCC
+kept the intended register allocation and emitted the target operand order in the shared `bne`. The library
+proposes both orderings only when both compared values are bytes. This is one exact-judge result; the app's
+repair-lane test covers proposal routing, not a separate compiler experiment.
