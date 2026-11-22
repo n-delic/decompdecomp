@@ -58,3 +58,31 @@ def test_chunked_package_image_reaches_the_console_preview():
     preview = console.asset_preview(image, assets[0], {})
     assert preview['media'] == 'image' and preview['details']['width'] == 8
     assert preview['data_url'].startswith('data:image/png;base64,')
+
+
+def test_paged_texture_and_model_reach_console_previews():
+    import struct
+
+    from decompnet.consoles import get
+
+    page = bytearray(8192)
+    mesh = bytearray(124)
+    struct.pack_into('>2I', mesh, 0, 1, 96)
+    for i, point in enumerate(((0, 0, 0), (10, 0, 0), (0, 20, 0))):
+        struct.pack_into('>3hHhhI', mesh, 48+i*16, *point, 0, 0, 0, 0xffffffff)
+    struct.pack_into('>4I', mesh, 96, 3, 48, 3, 112)
+    mesh[112:124] = bytes.fromhex('100300002001000030000102')
+    page[100:108] = b'ARN\0' + struct.pack('<I', len(mesh))
+    page[108:108+len(mesh)] = mesh
+    texture = bytearray(536)
+    struct.pack_into('>2I4BI', texture, 0, 1, 24, 1, 1, 1, 0, 16)
+    texture[24:] = b'\xff\xff' * 256
+    page[500:508] = b'PKG\0' + struct.pack('<I', len(texture))
+    page[508:508+len(texture)] = texture
+    image = b'testBIG\0' + struct.pack('>I2I', len(page), 20 << 4, (20 + len(page)) << 4) + page
+    console = get('n64')
+    assets = console.asset_regions(image)
+    model = next(item for item in assets if item.get('layout') == 'big-resource-model')
+    picture = next(item for item in assets if item.get('layout') == 'big-resource-images')
+    assert console.asset_preview(image, model, {})['triangles'] == 1
+    assert console.asset_preview(image, picture, {})['details']['width'] == 8
