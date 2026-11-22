@@ -74,7 +74,7 @@ def named_bindings(source, header, candidate, aliases):
     return externalize(source), externalize(header)
 
 
-def local_functions(source, header, name, obj, candidate, target):
+def local_functions(source, header, name, obj, candidate, target, *, preserve_context=False):
     """Externalize direct calls to identifiable functions in the donor text section."""
     if target.arch != 'mips' or not target.linker_relocs or not comparable_overlay_code(candidate, target):
         return None
@@ -89,6 +89,27 @@ def local_functions(source, header, name, obj, candidate, target):
             return None
         if aliases.setdefault(original, destination) != destination:
             return None
+
+    if preserve_context:
+        texts = [source, header]
+        for symbol in aliases:
+            definitions = [(index, span) for index, text in enumerate(texts) if (span := csource.find(text, symbol))]
+            if len(definitions) != 1:
+                return None
+            index, (start, end) = definitions[0]
+            definition = texts[index][start:end]
+            definition = re.sub(r'^\s*static\s+', 'extern ', definition, count=1)
+            prototype = _external_prototype(definition, symbol)
+            if not prototype:
+                return None
+            texts[index] = texts[index][:start] + prototype + texts[index][end:]
+            pattern = r'\bstatic\s+[^;{}=]*\b' + re.escape(symbol) + r'\s*\([^;{}]*\)\s*;'
+            for index, text in enumerate(texts):
+                matches = list(re.finditer(pattern, csource._blank(text)))
+                for match in reversed(matches):
+                    text = text[:match.start()] + 'extern' + text[match.start() + len('static'):]
+                texts[index] = text
+        return rename(texts[0], aliases), rename(texts[1], aliases)
 
     try:
         body, context = donor_sources.compact(header + '\n' + source, name)

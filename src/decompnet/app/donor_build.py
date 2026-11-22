@@ -385,10 +385,21 @@ def _try(net, proj, private, fn, source, header, agent, job, *, compiled_literal
     source_name = fn['name']
     globalized_names = None
     data_bound = False
+    local_fallback = None
     evidence = exact_match_inputs.capture(net, private, fn, {'header': header}, source)
     while not job.stop.is_set():
         result = net._compile(private, header, source, fn)
         if not result.ok:
+            if local_fallback:
+                from . import overlay_donor_aliases
+
+                args, state = local_fallback
+                fallback = overlay_donor_aliases.local_functions(*args)
+                local_fallback = None
+                if fallback:
+                    rebound, explicit_rebound, methods_rebound, literal_changed, globalized_names, data_bound = state
+                    source, header = fallback
+                    continue
             lines = result.log.splitlines()
             detail = next((line for line in lines if 'error' in line.lower()), None)
             return False, detail or (result.log or 'Donor source did not build.').strip()[-300:]
@@ -472,10 +483,17 @@ def _try(net, proj, private, fn, source, header, agent, job, *, compiled_literal
                 rebound_data = overlay_donor_aliases.offset_retry(
                     source, header, source_name, candidate, expected, separate=separate)
                 aliases = source_symbol_recovery.relocation_aliases(candidate, expected)
+                preserve = donor_unit.is_unit(header, proj)
+                local = (overlay_donor_aliases.local_functions(
+                    source, header, fn['name'], result.obj, candidate, expected, preserve_context=preserve)
+                         if not rebound_data and source_name == fn['name'] and not localized else None)
                 if rebound_data:
                     variants = [('overlay-data-offsets', *rebound_data)]
-                elif source_name == fn['name'] and not localized and (local := overlay_donor_aliases.local_functions(
-                        source, header, fn['name'], result.obj, candidate, expected)):
+                elif local:
+                    if preserve:
+                        local_fallback = ((source, header, fn['name'], result.obj, candidate, expected),
+                                          (rebound, explicit_rebound, methods_rebound, literal_changed,
+                                           globalized_names, data_bound))
                     variants = [('overlay-local-functions', *local)]
                 elif aliases:
                     aliases = separate(aliases)
@@ -515,6 +533,16 @@ def _try(net, proj, private, fn, source, header, agent, job, *, compiled_literal
                 if rewritten:
                     variants = [('overlay-cpp-methods', *rewritten)]
         if not variants:
+            if local_fallback:
+                from . import overlay_donor_aliases
+
+                args, state = local_fallback
+                fallback = overlay_donor_aliases.local_functions(*args)
+                local_fallback = None
+                if fallback:
+                    rebound, explicit_rebound, methods_rebound, literal_changed, globalized_names, data_bound = state
+                    source, header = fallback
+                    continue
             if candidate is not None and len(candidate.code) != fn['size']:
                 length = f"{LENGTH_MISS}: {len(candidate.code)} bytes compiled, {fn['size']} bytes expected."
                 return False, ' '.join([length, *problems])
@@ -531,6 +559,9 @@ def _try(net, proj, private, fn, source, header, agent, job, *, compiled_literal
             methods_rebound = True
         elif family == 'overlay-local-functions':
             localized = True
+            # C++ can mangle the newly externalized helpers; let their emitted
+            # symbols receive the same explicit binding check as other calls.
+            explicit_rebound = False
         else:
             rebound = True
     return False, 'Search stopped.'

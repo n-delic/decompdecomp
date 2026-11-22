@@ -695,7 +695,8 @@ def test_overlay_probes_a_c_linkage_data_declaration_in_cpp(tmp_path, changed_of
         assert not uso_match.link(wrong.obj, 'example', wanted.code, info).exact
 
 
-def test_donor_local_text_calls_bind_to_an_independently_linked_overlay(tmp_path):
+@pytest.mark.parametrize('preserve', [False, True])
+def test_donor_local_text_calls_bind_to_an_independently_linked_overlay(tmp_path, preserve, monkeypatch):
     from decompnet.app.overlay_donor_aliases import local_functions
     from decompnet.elfobj import extract_function
 
@@ -709,6 +710,8 @@ def test_donor_local_text_calls_bind_to_an_independently_linked_overlay(tmp_path
         static void helper_a(int x) { counter = x; }
         static void helper_b(int x) { counter += x; }
     """
+    if preserve:
+        header = 'int unrelated(a, b)\nint a; int b;\n{ return a + b; }\n' + header
     source = 'void entry(int x) { helper_a(x); helper_b(x + 1); }'
     original = compile_source(cfg, header, source)
     assert original.ok, original.log
@@ -727,8 +730,12 @@ def test_donor_local_text_calls_bind_to_an_independently_linked_overlay(tmp_path
     assert not initial.exact
     assert [(r.type, r.symbol) for r in initial.candidate.relocs] == [(4, '.text'), (4, '.text')]
     assert [r.addend for r in initial.candidate.relocs] != [offset // 4 for offset in offsets]
-    rebound, context = local_functions(source, header, 'entry', original.obj, initial.candidate, expected)
-    assert 'static' not in context and 'counter' not in context
+    rebound, context = local_functions(source, header, 'entry', original.obj, initial.candidate, expected,
+                                       preserve_context=preserve)
+    if preserve:
+        assert 'int unrelated(a, b)\nint a; int b;' in context and 'return a + b;' in context
+    else:
+        assert 'static' not in context and 'counter' not in context
     for reloc in expected.relocs:
         assert reloc.symbol in context and reloc.symbol in rebound
     compiled = compile_source(cfg, context, rebound)
@@ -738,6 +745,44 @@ def test_donor_local_text_calls_bind_to_an_independently_linked_overlay(tmp_path
     wrong = compile_source(cfg, context, rebound.replace(second, first))
     assert wrong.ok, wrong.log
     assert not uso_match.link(wrong.obj, 'entry', bytes(code), info).exact
+    if preserve:
+        from contextlib import nullcontext
+        from inspect import unwrap
+        from threading import Event
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+
+        from decompnet import consoles
+        from decompnet.app import donor_build, donor_unit, exact_match_inputs
+
+        compact_header = donor_unit.DONOR_UNIT_HEADER + '''
+            extern volatile int counter;
+            static void helper_a(int x) { counter = x; }
+            static void helper_b(int x) { counter += x; }
+        '''
+        forced = []
+        def compile_trial(_project, h, s, _fn):
+            if 'uso_' in s and 'counter' in h:
+                forced.append(True)
+                return SimpleNamespace(ok=False, log='forced full-context failure')
+            return compile_source(cfg, h, s)
+
+        record = Mock()
+        placement = uso_match.Target('entry', 0, bytes(code), [], uso=info)
+        net = SimpleNamespace(
+            _compile=compile_trial,
+            _evaluate=lambda _fn, _project, obj: (lambda result: (result.candidate, result.exact, result.problems))(
+                uso_match.link(obj, 'entry', bytes(code), info)),
+            _rom_target=lambda _fn: placement, _target_obj=lambda *_: expected,
+            console=lambda _: consoles.of({'platform': 'n64'}), _record=record,
+            progress=SimpleNamespace(judging=lambda *_args, **_kwargs: nullcontext()))
+        monkeypatch.setattr(exact_match_inputs, 'capture', lambda *_: {})
+        monkeypatch.setattr(donor_build, 'acceptable', lambda *_: True)
+        fn = {'name': 'entry', 'size': len(code), 'id': 1}
+        accepted, _ = unwrap(donor_build._try)(net, {'slug': 'test', 'arch': 'mips'}, {}, fn, source,
+                                              compact_header, SimpleNamespace(id=1), SimpleNamespace(stop=Event()))
+        assert accepted and forced
+        assert 'counter' not in record.call_args.kwargs['exact_inputs']['header']
 
 
 def test_recovers_loader_metadata_for_raw_functions_with_an_existing_runtime_address(tmp_path):
