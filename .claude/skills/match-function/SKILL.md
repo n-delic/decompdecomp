@@ -448,7 +448,9 @@ priorities and preferences, `-dS -dR` scheduling), and run the recent repair fam
 
 `prove_chain.py --slug S --function F [SOURCE.c] --families a,b|all` applies the best-scoring child of those families
 step by step (bounded: one judge, capped children and steps; `--list` shows which families produce children) and prints
-each step's family and score: the cheap answer to "would the library have reached this from here".
+each step's family and score: the cheap answer to "would the library have reached this from here". When edits are each
+worse alone, `--combine 10` merges a stalled step's 10 best children in pairs and triples (off by default: it found
+none on three three-edit functions, whose edits ranked far below the 10 best; narrow `--families` first).
 
 Never start or wait on a Deep Permuter run, a sweep, `scripts/scratch_run.py`, or an equivalent broad search,
 even for one function, and leave the running jobs' settings alone. Test a repair by calling it directly and scoring

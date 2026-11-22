@@ -120,3 +120,27 @@ def test_children_cut_off_by_the_cap_are_reported_and_a_larger_cap_scores_them()
     lines.clear()
     prove_chain.prove("xyz", generate, score, None, steps=1, children=50, log=lines.append)
     assert not any("cut off" in line for line in lines)
+
+
+def test_a_stalled_step_merges_the_best_children_in_pairs_and_triples():
+    # three statements; each fix alone (or two together) is worse than the start; all three together match
+    want = ["a = 1;", "b = 2;", "c = 3;"]
+
+    def joint(text):
+        fixed = sum(line in text for line in want)
+        return 0 if fixed == 3 else 5 if fixed else 1
+
+    def statements(text):
+        lines = text.split(" ; ")
+        return [(f"fix_{i}", " ; ".join(lines[:i] + [want[i]] + lines[i + 1:])) for i in range(3) if lines[i] != want[i]]
+    start = "a = 0; ; b = 0; ; c = 0;"
+    final, best, chain = prove_chain.prove(start, statements, joint, None, combine=10, log=lambda _: None)
+    assert (final, best) == (" ; ".join(want), 0) and chain == [("fix_0+fix_1+fix_2", 0)]
+    _, best, _ = prove_chain.prove(start, statements, joint, None, combine=0, log=lambda _: None)
+    assert best == 1
+
+
+def test_merge_refuses_children_that_touch_the_same_tokens():
+    base = "a = 1; b = 2;"
+    assert prove_chain.merge(base, ["a = 3; b = 2;", "a = 1; b = 4;"]) == "a = 3; b = 4;"
+    assert prove_chain.merge(base, ["a = 3; b = 2;", "a = 5; b = 2;"]) is None
