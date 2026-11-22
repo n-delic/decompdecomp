@@ -1195,22 +1195,36 @@ def shared_slot_calls(functions, image, console, segments):
     fmt='>I' if console.big_endian else '<I'
     def word(at):
         return struct.unpack_from(fmt,image,at)[0] if 0<=at<=len(image)-4 else None
+    # Splat may split a single contiguous loaded bank into several units. Calls
+    # into any of those units describe the same slot and need joint evidence.
+    groups = []
+    for segment in sorted(segments, key=lambda s: s.rom_start):
+        if (groups and groups[-1][-1].rom_end == segment.rom_start
+                and groups[-1][-1].vram-groups[-1][-1].rom_start == segment.vram-segment.rom_start
+                and groups[-1][-1].exclusive_ram_id == segment.exclusive_ram_id):
+            groups[-1].append(segment)
+        else:
+            groups.append([segment])
     calls=defaultdict(list)
     for fn in functions:
         for line in fn.lines:
             if line.word>>26!=3:continue
             dest=((line.vram+4)&0xf0000000)|((line.word&0x3ffffff)<<2)
-            for s in segments:
-                if s.contains(dest,4) and not (s.rom_start<=line.rom<s.rom_end
-                                                 and line.vram-line.rom==s.vram-s.rom_start):
-                    calls[s.name].append((dest,line.rom,fn.segment,dest-s.vram+s.rom_start,s.rom_start))
+            for group_index, group in enumerate(groups):
+                for segment in group:
+                    if (segment.contains(dest,4)
+                            and not (group[0].rom_start<=line.rom<group[-1].rom_end
+                                     and line.vram-line.rom==segment.vram-segment.rom_start)):
+                        calls[group_index].append((dest,line.rom,fn.segment,
+                                                   dest-segment.vram+segment.rom_start,group[0].rom_start))
     out,slots=[],[]
-    for name,found in calls.items():
+    for group_index,found in calls.items():
         targets={c[3]:c[4] for c in found}
         if len(targets)<SHARED_SLOT_CALLS:continue
         fit=sum(1 for at,start in targets.items() if at==start or is_frame(word(at) or 0) or word(at-8)==JR_RA)
         if fit*2<len(targets):
-            out+=[c[:3] for c in found];slots+=[s for s in segments if s.name==name]
+            out += [c[:3] for c in found]
+            slots += groups[group_index]
     return out,slots
 
 

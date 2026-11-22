@@ -9,7 +9,7 @@ from ...arch.mips import JR_RA, is_frame
 MAX_TAIL = 0x10000
 
 
-def complete(rom, segments, taken=(), *, called=()):
+def complete(rom, segments, taken=(), *, called=(), allow_inferred_overlap=False):
     import rabbitizer
 
     result = []
@@ -36,7 +36,8 @@ def complete(rom, segments, taken=(), *, called=()):
         limit = min(len(rom),frame+MAX_TAIL,*[s for s,_,_ in all_segments if s>=end and s!=start])
         # Also stop before a different ROM segment occupying the same RAM mapping.
         for s,e,v in all_segments:
-            if s!=start and v>=vram+end-start:
+            if (s!=start and v>=vram+end-start
+                    and (not allow_inferred_overlap or (s,e,v) in taken)):
                 limit = min(limit,start+v-vram)
         highest = end
         destinations = set()
