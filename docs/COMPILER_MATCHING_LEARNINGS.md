@@ -16486,3 +16486,7 @@ Three saved MIPS list walks built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -
 ### KMC GCC 2.7.2 teardown pointer order
 
 A saved MIPS teardown function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` updated callbacks and cleared a flag through two global pointers. Staging the flag pointer before the callback stores changed the generated draft's linked difference score from 120 to 40. Expressing the remaining work as identical branches around an ordinary pointer test and retaining the callback base produced an exact match. This is one saved example, not a controlled cross-compiler experiment. The candidate checks the complete source shape, target pointer and callback instructions, the resolved global address and the 32-bit ABI.
+
+### Word-aligned wide division load (GCC 2.7.2 KMC)
+
+With `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a saved split-helper draft scored 210; byte-indexing its pointer and reconstructing the 64-bit helper arguments matched exactly. The target reads the dividend with two word loads. A `u64` typedef with `__attribute__((aligned(4)))` preserves that word-alignment requirement and still matches exactly through the app's judge. This is one saved example with its original compiler and linked byte comparison; it does not establish an eight-byte alignment guarantee for other inputs.
