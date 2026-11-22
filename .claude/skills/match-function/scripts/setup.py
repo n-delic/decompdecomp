@@ -17,6 +17,9 @@ read a function's status.
     setup.py try HOLDER CAND.c [FUNC]                   submit a candidate to the app as this session (compile_and_diff over
                                                         the session's own MCP connection, which holds the claim) and print
                                                         the app's verdict; FUNC defaults to the claimed function
+    setup.py env HOLDER                                 print `export UV_PROJECT_ENVIRONMENT=... DECOMP_HOME=... DECOMP_PORT=...`
+                                                        for the session (eval it; the token is never printed)
+    mcp.py HOLDER TOOL [JSON]                           (its own script) call any app MCP tool over this session's connection
     setup.py release HOLDER                             after `release_function`: the renewal stops renewing the released
                                                         function and never claims it again
     setup.py reclaim HOLDER [FUNC] [--random] [--max-size N]
@@ -43,6 +46,7 @@ import json
 import os
 import re
 import secrets
+import shlex
 import shutil
 import signal
 import subprocess
@@ -110,7 +114,10 @@ class Gateway:
             text = "\n".join(part.get("text", "") for part in result.get("content", []))
             if result.get("isError"):
                 raise McpError(f"{tool}: {text[:500]}")
-            if STILL_RUNNING in text.lower() and "repeat" in text.lower():
+            lowered = text.lower()
+            if "accepted" in lowered and "not repeat" in lowered:
+                return text  # the app took the work and will finish it: repeating would only queue it twice
+            if STILL_RUNNING in lowered and "repeat" in lowered:
                 time.sleep(1)
                 continue
             return text
@@ -377,6 +384,16 @@ def session_gateway(slug="", holder=""):
     return gateway, info
 
 
+def env_lines(holder):
+    """The lines a shell evals to work as the session: its private venv, and the app's data home and window port (never
+    the token). Values come from connection.json, shell-quoted."""
+    root = session_dir(holder_name(holder))
+    info = read_session(root)
+    values = {"UV_PROJECT_ENVIRONMENT": info.get("venv") or str(root / "venv"), "DECOMP_HOME": info.get("home") or "",
+              "DECOMP_PORT": str(info.get("port") or "")}
+    return "export " + " ".join(f"{name}={shlex.quote(value)}" for name, value in values.items() if value)
+
+
 def alive(pid):
     """Is `pid` still our renewal? (a recycled pid must never be signalled)"""
     try:
@@ -453,7 +470,7 @@ def start(args):
         stop_session(holder)
         sys.exit(message)
     print(f"holder   {holder}\nfunction {info['function']}\nworktree {root / 'repo'}\nvenv     {root / 'venv'}")
-    print(f"export UV_PROJECT_ENVIRONMENT={root / 'venv'}")
+    print(env_lines(holder))
     print(f"mcp      {url} (connection {info['connection_name']}, scoped to {args.slug}; token in {root / 'connection.json'}, mode 0600)")
     print(f"python   {info['python']}   (fast_judge.py, passes.py and prove_chain.py: {Path(__file__).parent})")
     print(f"renewal  pid {info['renew_pid']} (every {args.interval // 60} min); end with: setup.py stop {holder}")
@@ -472,6 +489,11 @@ def main(argv):
         if len(argv) not in (3, 4):
             sys.exit(__doc__)
         return try_candidate(argv[1], argv[2], argv[3] if len(argv) == 4 else "")
+    if argv[:1] == ["env"]:
+        if len(argv) != 2:
+            sys.exit(__doc__)
+        print(env_lines(argv[1]))
+        return 0
     if argv[:1] == ["release"]:
         if len(argv) != 2:
             sys.exit(__doc__)

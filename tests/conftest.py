@@ -184,3 +184,7 @@ def pytest_runtest_protocol(item, nextitem):
 if os.environ.get("DECOMP_TEST_OFFLOAD") == "1":  # a whole run with the repair families in the proposal subprocess
     from decompnet.app import offload as _offload
     _offload.install()
+
+# The match-function skill has a scripts/mcp.py, and tests put that folder first on sys.path; import the real MCP
+# package now so a later `import mcp` in the app never finds the script instead.
+import mcp  # noqa: E402,F401
