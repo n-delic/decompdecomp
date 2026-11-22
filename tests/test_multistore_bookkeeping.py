@@ -58,11 +58,12 @@ def test_immediate_winner_flushes_its_store_without_losing_other_pending_history
 def test_aggregate_limit_bounds_many_stores_and_preserves_sql_order(monkeypatch):
     monkeypatch.setattr(trial_bookkeeping.time,'monotonic',lambda:0.)
     stores=[Store() for _ in range(4)]
+    limit=trial_bookkeeping.Batch().max_statements  # (the aggregate limit across stores; 64 before it was raised)
     with trial_bookkeeping.scope():
-        for n in range(64):write(stores[n%4],'same',n)
+        for n in range(limit):write(stores[n%4],'same',n)
         assert all(store.transactions==1 for store in stores)
         assert not trial_bookkeeping.current().pending
-    assert [store.conn.execute('SELECT value FROM stats').fetchone()[0] for store in stores]==[60,61,62,63]
+    assert [store.conn.execute('SELECT value FROM stats').fetchone()[0] for store in stores]==[limit-4+i for i in range(4)]
 
 
 def test_real_project_shard_bulk_history_preserves_feedback(tmp_path):

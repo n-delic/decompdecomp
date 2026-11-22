@@ -441,11 +441,12 @@ def test_scoped_byte_read_trial_recognizes_a_saved_address_named_draft(monkeypat
     search = deep_permuter.Search(net, 1, 6, Log())
     monkeypatch.setattr(deep_permuter.permuter_focus, 'classify', lambda *args: 'operand')
     tried = []
-    monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 35)
+    # Worse than the best (75) for every child, so the pass goes through all its proposals: a library family that
+    # wraps the call in `do {...} while (0)` now comes before the byte-read one, and an improvement would stop there.
+    monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 80)
 
-    assert search.operand_order_pass(AGENT, proj, fn, 75, None) == 35
-    assert len(tried) == 1
-    assert tried[0].count('__repair_byte_table[0]') == 2
+    assert search.operand_order_pass(AGENT, proj, fn, 75, None) == 75
+    assert [child for child in tried if child.count('__repair_byte_table[0]') == 2]
 
 
 def test_scoped_cursor_entry_runs_before_broad_rewriting(monkeypatch):

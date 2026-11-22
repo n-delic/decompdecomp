@@ -4,7 +4,8 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
 const controls=new Map();let stopped=0,prepared=0,active=true;
 const context=vm.createContext({console,Map,Set,Math,Number,Array,Object,String,
  esc:s=>String(s).replaceAll('<','&lt;').replaceAll('"','&quot;'),hex8:n=>'0x'+n.toString(16),
- stopRomAssetAudio:()=>stopped++,body:{_romAssetBusy:false,_romPreviewFrame:()=>prepared++,querySelector(selector){return controls.get(selector) || null;}},
+ stopRomAssetAudio:()=>stopped++,romAssetForView:()=>null,  // (rom-assets.js's; rom-textures.js now calls it)
+ body:{_romAssetBusy:false,_romPreviewFrame:()=>prepared++,querySelector(selector){return controls.get(selector) || null;}},
  region:{start:128,annotation:{preview_settings:{sample:1}},detected_asset:{media:'audio',confidence:'validated',table_confidence:'validated',reason:'Structure checked.',
    samples:[0,1].map(n=>({codec:'N64 VADPCM',bank:0,instrument:0,sound:n,rate:22050,samples:22050})),loader_refs:[{function:'audio_loader',instruction:16}]}},active:()=>active});
 for(const key of ['source','format','offset'])controls.set(`[data-asset-${key}]`,{value:'manual',onchange(){}});
