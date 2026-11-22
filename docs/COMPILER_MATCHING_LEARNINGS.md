@@ -16067,3 +16067,7 @@ A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` sea
 ### KMC GCC 2.7.2 strided halfword copy
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` copied a rectangular block of halfwords, advancing the source by four bytes per item and skipping 0x500 bytes after each row. The generated draft used byte pointers and an explicit inner-loop jump. Restoring typed halfword pointers and nested loops changed the linked difference score from 286 to an exact match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the complete generated loop, measured load/store instructions, bounds and strides.
+
+### KMC GCC 2.7.2 word-to-byte packing
+
+A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` split a word into four byte stores. The generated draft declared its value as an unsigned byte, causing the compiler to store zero for the upper bytes. Widening the parameter to an unsigned word changed the linked difference score from 315 to an exact match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the complete source, all measured shifts and store offsets, and no conflicting function declaration.
