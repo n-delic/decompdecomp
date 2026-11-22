@@ -360,6 +360,19 @@ def intrinsic_leaf(asm_text: str, name: str, toolchain_id: str | None) -> str | 
 def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, context_header: str = "",
                       data_asm: str | None = None, timeout: float = 20, valid: bool = False,
                       strict: bool = False, options: tuple[str, ...] = (), *, resolve=None) -> str | None:
+    """The draft of `_generate_from_asm`; a compilable one also declares what m2c used without declaring (a table
+    read, the frame's slots), last, so the repairs above that read a bare `sp` or a `jtbl_` still see it."""
+    source = _generate_from_asm(asm_text, name, toolchain_id, context_header, data_asm, timeout, valid, strict, options,
+                                resolve=resolve)
+    if source and valid:
+        from decomprepair import m2c_undeclared_drafts
+        source = m2c_undeclared_drafts.rewrite(source, name, asm_text, context_header) or source
+    return source
+
+
+def _generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, context_header: str = "",
+                      data_asm: str | None = None, timeout: float = 20, valid: bool = False,
+                      strict: bool = False, options: tuple[str, ...] = (), *, resolve=None) -> str | None:
     """C draft from GNU/splat-style assembly text (plus optional data, for jump tables and strings). `valid`:
     m2c's compilable form (unknown types and expressions as M2C_ macros, see M2C_MACROS), for trying drafts as is.
     `strict`: a context m2c can't read raises DraftError instead of drafting without it.
@@ -485,8 +498,6 @@ def _compilable(source: str | None, name='', asm='', header='', toolchain=None, 
         return source
     from decomprepair import large_switch_drafts
     source = large_switch_drafts.rewrite(source) or source
-    from decomprepair import m2c_undeclared_drafts
-    source = m2c_undeclared_drafts.rewrite(source, name, asm, header) or source
     if asm:
         from decomprepair import draft_call_recovery
 

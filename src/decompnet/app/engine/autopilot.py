@@ -493,12 +493,19 @@ class AutopilotMixin:
                         return
                     yield family, f"{note}{seeds.with_m2c_macros(source)}\n"
 
+            def error_driven_candidates():
+                if report['compiled']:
+                    return
+                from .. import compile_error_repair
+                yield from compile_error_repair.candidates(lambda text: self._compile(proj, ctx['header'], text, fn),
+                                                           f"{note}{seeds.with_m2c_macros(draft)}\n")
+
             from decomprepair.compiler_shape_repairs import machine_draft_copies
             from decomprepair.narrow_store_repairs import machine_drafts as narrow_drafts
 
             from ..carrier_sequence_repairs import machine_drafts as carrier_drafts
             outcomes, seen = [], set()
-            for family, source in chain(carrier_drafts(narrow_drafts(machine_draft_copies(chain(draft_candidates(), local_candidates()), fn['name'], ctx['header']),fn['name'],ctx['header'],proj['arch']),fn['name'],ctx['header'],proj['arch']), recovery_candidates()):
+            for family, source in chain(carrier_drafts(narrow_drafts(machine_draft_copies(chain(draft_candidates(), local_candidates()), fn['name'], ctx['header']),fn['name'],ctx['header'],proj['arch']),fn['name'],ctx['header'],proj['arch']), recovery_candidates(), error_driven_candidates()):
                 if source in seen:
                     continue
                 seen.add(source)
