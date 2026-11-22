@@ -490,3 +490,14 @@ void f(Voice *v, Note *n) {
                'if (__repair_shifted_byte & 1)' in child for child in children)
     assert not any(labels.get(child) == 'shifted_byte_lifetime'
                    for child in variants(source, 'f', 'x86', labels=labels))
+
+
+def test_a_best_saved_before_a_rename_still_gets_children():
+    # the whole-path audit: 13 of 34 stalls had no children at all, their best defining func_<VRAM> after a rename
+    net = setup_repair_net()
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET name='sendSeven', vram=?, best_source=? WHERE id=1",
+                   (0x80001000, 'int func_80001000(int x) { return send(x, 7); }'))
+    perm = ScriptedPermuter(net, {})
+    perm._repair_round(AGENT, net.project_row('game'), State())
+    assert perm.judged and all('int sendSeven(' in source for source in perm.judged)

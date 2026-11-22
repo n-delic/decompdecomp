@@ -81,3 +81,14 @@ void f(int *p, int a, int b)
     final, best, chain = prove_chain.prove(source, prove_chain.generator(judge, "f"), len, {"identical_arm_collapse"},
                                            steps=1, log=lambda _: None)
     assert chain and chain[0][0] == "identical_arm_collapse" and best < len(source)
+
+
+def test_a_source_saved_before_a_rename_is_proposed_under_the_current_name():
+    from types import SimpleNamespace
+
+    source = "void func_80001000(int *p, int a, int b)\n{\n  int x;\n  x = a + b;\n  if (a) { p[0] = x; } else { p[0] = x; }\n}\n"
+    judge = SimpleNamespace(arch="mips", asm="", compiler={"flags": ["-O2"]}, header="",
+                            request={"function": {"vram": 0x80001000}})
+    children = prove_chain.generator(judge, "storePair")(source)
+    assert children and all("void storePair(" in child for _, child in children)
+    assert prove_chain.current_name("void f(void) {}", "f", 0x80001000) == "void f(void) {}"
