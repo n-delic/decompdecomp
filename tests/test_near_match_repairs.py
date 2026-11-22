@@ -80,3 +80,14 @@ def test_forwarding_zero_argument_calls_has_no_empty_argument_or_void_tail():
         assert proposals
         assert all('callee(arg0)' in s and 'callee(int arg0)' in s for s in proposals)
         assert not any(', )' in s or ', void' in s for s in proposals)
+
+
+def test_forwarding_ignores_argument_setup_from_before_switch_dispatch():
+    from decompnet.app import draft_repairs
+
+    source = 'int callee(void *, void *); int f(void *x, void *y) { return callee(y, x); }'
+    asm = ('move $a3, $zero\njr $v0\nnop\nbne $v0, $s1, .Ldone\n'
+           'move $a0, $s3\njal callee\nmove $a1, $s0')
+    labels = {}
+    proposals = draft_repairs.variants(source, 'f', 'mips', asm, ['-O2'], labels)
+    assert all(labels.get(proposal) != 'call_forwarded_arguments' for proposal in proposals)
