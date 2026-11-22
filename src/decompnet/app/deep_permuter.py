@@ -422,6 +422,9 @@ class Search(Permuter):
                  # a byte array's address added to an index in a nested loop's guarded block: the base set twice
                  # (so the loop pass leaves it) after the index (the lui/addiu where the target has it)
                  (L + 'loop_symbol_base_block.variants', (source, name)),
+                 # a float constant loop.c hoists out of a loop (a saved FP register, a bigger frame), kept where it is used by
+                 # one shared local assigned in place at every compare (decomprepair 0.5.624)
+                 (L + 'float_constant_loop_pin.variants', (source, name)),
                  # a switch case's temporaries split and its flag update folded in one child, and record
                  # field stores beside a scalar global's store written raw (MEM_IN_STRUCT_P keeps their order)
                  (L + 'case_split_combinations.variants', (source, name)),

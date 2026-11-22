@@ -122,6 +122,7 @@ from decomprepair import (
     flag_returns_repairs,
     flag_word_bitfield_repairs,
     float_bit_argument_repairs,
+    float_constant_loop_pin,
     float_forwarded_argument,
     float_hold_reuse_repairs,
     float_intermediate_repairs,
@@ -411,7 +412,7 @@ AGENT_FAMILIES = goto_loop_invariants.FAMILIES + entry_scope_split.FAMILIES + me
                   'terminal_early_return','member_store_replay','scalar_global_address','split_mask_stores',
                   'split_integer_phase','paired_integer_lifetimes','initialization_cluster')
 
-AGENT_FAMILIES += (guarded_pointer_copy.FAMILY,) + shifted_byte_lifetime.FAMILIES
+AGENT_FAMILIES += (guarded_pointer_copy.FAMILY,) + shifted_byte_lifetime.FAMILIES + float_constant_loop_pin.FAMILIES
 AGENT_FAMILIES += loop_weight_set_repairs.FAMILIES
 AGENT_FAMILIES += (arm_label_share_repairs.FAMILIES + declaration_scope_sink_repairs.FAMILIES + element_update_repairs.FAMILIES
                    + narrow_test_share_repairs.FAMILIES + phase_storage_split_repairs.FAMILIES
@@ -848,6 +849,9 @@ def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels
                    clamp_arm_stores, adjacent_array_store_order, global_field_load_stage, preheader_run_order,
                    guard_copy_cse_barrier, constant_store_bracket,
                    counter_derived_offset, counter_append_scope_repairs, loop_limit_reassign_repairs,
+                   # (a float constant loop.c hoists out of a loop, kept where it is used by one shared local assigned in place:
+                   # a 1000-instruction N64 collision sweep 8632 -> 7018, its extra saved FP register and frame growth gone; decomprepair 0.5.624)
+                   float_constant_loop_pin,
                    outer_cursor_entry_copy_repairs, loaded_pointer_reuse_repairs, entry_base_init_repairs,
                    live_range_retarget_repairs, pointer_local_merge_repairs, identical_arm_collapse_repairs):
         for family, text in _generated(module.variants, source, name):
