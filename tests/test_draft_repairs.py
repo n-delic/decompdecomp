@@ -392,3 +392,24 @@ def test_short_repair_pass_validates_only_ranked_candidates(monkeypatch):
     assert 'invalid_a' in checked
     assert 'b3' not in checked
     assert 'a3' not in checked
+
+
+def test_draft_repairs_offer_direct_selected_byte_store():
+    from decompnet.app import draft_repairs
+
+    source = """
+extern unsigned char selected;
+extern unsigned char fallback;
+void f(int outer, int inner) {
+    volatile short scratch;
+    if (outer) {
+        if (inner) { scratch = 4; } else { scratch = 4; }
+    } else { scratch = fallback; }
+    selected = scratch;
+}
+"""
+    labels = {}
+    proposals = draft_repairs.variants(source, 'f', 'mips', labels=labels)
+    [direct] = [candidate for candidate in proposals if labels[candidate] == 'branch_store_tail']
+    assert 'volatile short scratch;' not in direct
+    assert direct.count('selected = 4;') == 2
