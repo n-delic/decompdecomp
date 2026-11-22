@@ -17136,6 +17136,44 @@ the draft repairs, the beam (`draft_repairs.variants`), `deep_permuter._local_pr
 three score 520. Not covered: only a final return that is `return 0;` or a variable an earlier guard on a copy of it
 forced to 0, and only guards whose body is a bare zero return followed by `goto`.
 
+## KMC GCC 2.7.2: saved registers in the wrong order, fixed by weighting the second loop's locals together (decomprepair 0.5.585, `loop_weight_set`)
+
+Evidence level: one function (an 84-instruction N64 initialiser with two `goto` loops over the same record, `gcc-2.7.2-kmc
+-G0 -mips3 -mgp32 -mfp32 -O2`, saved best 30, recorded 0 in the app's judge), every step scored with the app's own
+judge-worker in a scratch copy; the allocation tables are `cc1 -dl -dg`. The compiler's reasons are hypotheses from those
+dumps, not confirmed in its source.
+
+The saved best (30) differed only in the first loop: the target keeps the flag's address and the table offset in `$a1`/`$a0`
+(pseudos that never cross a call), the draft kept them in `$s3`/`$s4`, because a union (`__repair_phase_storage`) and the
+offset local `first_offset` each served both loops, so one pseudo crossed the second loop's call.
+
+| step | score | what it changes |
+| --- | --- | --- |
+| saved best | 30 | union and `first_offset` shared by both loops |
+| `phase_storage_split` | 110 | pointer and value become two locals (alone worse) |
+| `reused_temp_split` on `first_offset` | 135 | the second loop's offset is its own pseudo; loop 1 now uses `$a1`/`$a0` as the target, the saved registers are permuted |
+| 1,260 statement orders of the second loop's updates | 135 | no effect: statement order does not reach the priorities |
+| each start/step wrapped at depth 0..3, hill climbing, then 4,096 and 12,000 samples of six to eleven sites | 45, then 0 | one match in the random samples |
+| uniform depth per local: counter 1, value 1, offset 1, induction pointer 3 | 0 | three of 256 combinations |
+| every start/step of the second loop wrapped once (pointer too) | 85 | the pointer's three-deep wrapper is needed |
+| the same with depth 2 | 110 | |
+| each local alone at depth 3 over the rest at 1 | 0 for the induction pointer only | |
+
+The table before (refs / live length, priority = floor_log2(refs) x refs / length): value 8/32 (0.75), counter 11/49 (0.67),
+`temp_s5` 9/55 (0.49), offset 5/31 (0.32); the target wants counter, value, offset, `temp_s5`. After: counter 18/49,
+value 14/32, offset 10/31, `temp_s5` 12/55, pointer 15/30, which gives the target's `$s2..$s5`, `$s1`. Each `do { x += 8; }
+while (0);` is one loop more round that reference at no instruction cost (`loop_weight_scope`'s lever); the saved registers
+need several of them at once. One statement at a time never left the plateau (45 at best), which is why the greedy lane
+could not find it.
+
+`loop_weight_set` offers the set: the union split and the offset split first, then every start and step of the locals that
+run into the second loop (and the first loop's step of the shared counter) at depth 1, with each stepped local three deep
+in turn, and the depth-2 form. From the saved best the first call returns the exact child (0). It is in the draft repairs,
+the beam (`draft_repairs.variants`), `deep_permuter._local_proposals` and `AGENT_FAMILIES`
+(`tests/test_loop_weight_set_wiring.py`). Not covered: a set that wants different depths for locals other than the
+induction pointer, and sources that are `for` loops (natural loops were strength-reduced into three pointers and scored 2863;
+under `-fno-strength-reduce` they gave multiplies).
+
 ## Scoring: a different program costs more than a different schedule (`scoring.PENALTY_MEANING`, score version 2)
 
 Evidence level: measured on one N64 game's history (KMC GCC 2.7.2), every attempt recompiled with the app's judge
