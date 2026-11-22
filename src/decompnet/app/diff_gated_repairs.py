@@ -211,6 +211,7 @@ from decomprepair import (
     packed_matrix_conversion,
     passthrough_argument_repairs,
     phase_projection_holders,
+    private_record_padding,
     projection_argument_before_store,
     projection_gain,
     quadratic_sign_holder,
@@ -580,6 +581,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_saved_pointer_copy.variants(source, name, header, rows)
         result += measured_forward_entry_pointer.variants(source, name, header, rows, asm)
         result += measured_frameless_padding.variants(source, name, header, rows)
+        result += private_record_padding.variants(source, name, rows, header)
         result += measured_packed_quad.variants(source, name, header, rows, flags, big_endian)
         result += measured_indexed_allocations.variants(source, name, header, rows)
         result += measured_byte_loop_key.variants(source, name, header, rows, flags, resolve)
