@@ -544,6 +544,51 @@ def test_decomp_permuter_reads_a_body_with_a_prototype():
                             and "DDctor" not in v and "DDnew_" not in v for v in variants)
 
 
+def test_a_prototypes_parameters_and_the_statements_after_an_extern_are_left_as_they_are():
+    """#304 left a prototype's own words alone but still rewrote a type called inside its parentheses:
+    `Vec2 d(Vec2(x));` (a prototype, as C++ reads it too) became `Vec2 d(DDnew_Vec2(x));` and a typedef'd function
+    pointer `s32 (*cb)(s32, s32)` became `DDnew_s32(*cb)(s32, s32)`, neither of them C. And a constructor on a line that
+    starts with another statement's `extern` was taken for a prototype. A prototype's parentheses are skipped whole,
+    and `extern` counts only at the start of its own statement."""
+    from decompnet.permuter_gen import Restorer
+
+    source = ("void use(s32 n, s32 x)\n{\n"
+              "    Vec2 d(Vec2(x));\n"
+              "    Foo f(s32(x));\n"
+              "    s32 apply(s32 (*cb)(s32, s32), s32 buf[4]);\n"
+              "    void each(Foo (*visit)(Foo *));\n"
+              "    extern s32 count; Vec v(1.0f, n);\n"
+              "    extern\n    s32 later(s32);\n"
+              "}\n")
+    r = Restorer(source, {"s32", "Vec", "Foo", "Vec2"})
+    for line in ("Vec2 d(Vec2(x));", "Foo f(s32(x));", "s32 apply(s32 (*cb)(s32, s32), s32 buf[4]);",
+                 "void each(Foo (*visit)(Foo *));", "s32 later(s32);"):
+        assert line in r.source
+    assert "DDnew_" not in r.source
+    assert "extern s32 count; Vec v = DDctor(1.0f, n);" in r.source
+    assert r.restore(r.source) == source
+
+
+@needs_tool
+def test_decomp_permuter_reads_a_prototype_with_a_function_pointer_parameter():
+    """`s32 apply(s32 (*cb)(s32, s32));` became `DDnew_s32(*cb)(s32, s32)` in its parameter list, and pycparser
+    rejected the whole function; likewise a constructor on a line after another statement's `extern`."""
+    source = ("void use(s32 n)\n{\n"
+              "    s32 apply(s32 (*cb)(s32, s32), s32 v);\n"
+              "    extern s32 count; s32 m(n);\n"
+              "    n += apply(0, m) + count;\n"
+              "    if (n) return;\n"
+              "}\n")
+    job = {"header": permute.permuter_header(HEADER, source), "source": source, "function": "use", "family": "base",
+           "seed": 1, "count": 8}
+    gen = permute.Generator()
+    try:
+        variants = gen.batch(job)
+    finally:
+        gen.close()
+    assert variants and all("s32 apply(s32 (*cb)(s32, s32), s32 v);" in v and "s32 m(n);" in v
+                            and "DDctor" not in v and "DDnew_" not in v for v in variants)
+
 def test_macros_called_with_a_type_and_object_like_ones_are_put_in_the_functions_c():
     """`F(int, 0x20) = v` and `MATCH_VOLATILE bool found` aren't C pycparser reads: 13 of an Xbox game's near
     misses stopped at one. A macro called with values stays a call, for the randomizer to move."""
