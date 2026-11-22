@@ -373,3 +373,22 @@ void paint(void *obj, int selected) {
     labels = {}
     candidates = variants(source, 'paint', 'mips', labels=labels, limit=None)
     assert any(labels.get(candidate) == 'branch_store_tail' for candidate in candidates)
+
+
+def test_short_repair_pass_validates_only_ranked_candidates(monkeypatch):
+    from decompnet.app import draft_repairs
+    from decomprepair import repair_preflight
+
+    checked = []
+
+    def invalid(candidate, name):
+        checked.append(candidate)
+        return candidate.startswith('invalid')
+
+    monkeypatch.setattr(repair_preflight, 'invalid_call', invalid)
+    proposals = ['invalid_a', 'b1', 'a1', 'b2', 'a2', 'b3', 'a3']
+    labels = {candidate: candidate[-2] if not candidate.startswith('invalid') else 'a' for candidate in proposals}
+    assert draft_repairs._finish('source', 'f', proposals, labels, [], 3) == ['b1', 'a1', 'b2']
+    assert 'invalid_a' in checked
+    assert 'b3' not in checked
+    assert 'a3' not in checked
