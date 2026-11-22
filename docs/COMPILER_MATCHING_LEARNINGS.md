@@ -14083,3 +14083,5 @@ discards ties. Run in order from the saved best, the families reproduce the whol
 subset and the declared-neighbour base both mattered: variant 3 of 16). The families that stay open: choosing among
 the record variants needs the judge (all sixteen tie until the last steps), and `-fno-strength-reduce` is still found
 only by the probe's evidence (two or more symbols addressed `lui; addu` with a stepped saved register).
+
+In one N64 rank-comparison loop built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a counter initialized to four and conditionally decremented was drafted as `s32`, with only its low eight bits returned. Using `u8` for that bounded counter reproduced the linked target exactly (score 360 to 0). The repair requires the restricted counter uses, four-iteration loop shape, and observed branch-versus-subtraction difference. Evidence: one saved example plus synthetic generation and routing tests.
