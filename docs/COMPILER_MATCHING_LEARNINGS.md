@@ -15527,3 +15527,17 @@ when it observes both linked instruction differences.
 ### IDO 7.1 callback byte offset and evaluation order
 
 A saved MIPS example built with IDO 7.1 `-O0 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul -DNON_MATCHING` loaded a callback's signed halfword adjustment as a byte offset. A machine draft added it to an `s32 *`, scaling it by four and reloading the base. Casting the base to `s8 *` improved the diff score from 225 to 125. Moving the callback-object assignment into the argument, together with the byte cast, reproduced the target exactly (score 0) through the normal linked judge. This is one saved example, not a controlled cross-compiler experiment. The source relies on IDO 7.1 evaluating the argument before the function designator; its evaluation order is not portable C, so the proposal is confined to that compiler and the observed instruction and source patterns, and is accepted only after the normal judge verifies it.
+
+### Carry an unchanged sample through outgoing call arguments
+
+In the same private linked N64 function using
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, a sampled axis was copied
+before scaling it, then passed unchanged to later calls. The linked
+target used a different saved float register for the copy, its word
+argument transfers and one floating-point call slot. Reusing the saved
+local identified by a scaled sample of the same helper restored five
+register operands, reducing the linked score from 3,055 to 3,030.
+All jump tables and instruction counts remained exact. The compiler
+reported no uninitialized reads. Two alternate carriers were neutral
+and one scored 3,125. The recipe limits the lifetime to a region without
+incoming labels and requires the observed calls to consume the snapshot.
