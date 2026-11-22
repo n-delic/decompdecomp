@@ -1676,3 +1676,13 @@ def test_kmc_routes_measured_guard_load_order(monkeypatch):
                         lambda text, name, diff, header: [('guard_load_order', text)])
     assert 'guard_load_order' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'guard_load_order' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_global_offset_reuse_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_global_offset_reuse, 'variants',
+                        lambda text, name, header, diff, asm: [('global_offset_fixture', text)])
+    assert 'global_offset_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'global_offset_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))

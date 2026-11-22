@@ -15013,3 +15013,8 @@ moved the exact linked score from 7,495 to 7,480 with no warning and
 all three table relocations. An unrelated local scored 7,600.
 The tests require the agreeing older subtraction, the same field
 and flag, and dead local lifetimes verified from control flow.
+
+
+### Fold a cached global field address and restore frame padding
+
+In a private N64 cache-list function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a draft kept a generated global-field address in a separate local, causing the compiler to save an extra register. Expressing its two field accesses directly from the same global address recovered the target's instruction sequence, improving the linked score from 354 to 10. Applying the existing measured unused-frame-padding candidate afterward restored the stack frame and reproduced the target exactly (score 0). The rule checks the equivalent offsets, local uses, macro definition and saved-register pattern. Evidence: one saved function and synthetic generation and routing tests.
