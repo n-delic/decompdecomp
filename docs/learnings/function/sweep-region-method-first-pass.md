@@ -64,15 +64,17 @@ entry and crosses the loops' calls; cse knows its value only near the entry, whe
 straight to `return 0`, and the test far away stays (an `arg0 = NULL;` before the `goto` did keep the block but added
 a store and a load).
 
-Still open (rows left at 340): the second loop's guard. In the target it keeps `sltu $v0,$v1,count` (the `& 4` value
-known zero) and its delay slot holds the counter's `move $s0,$zero`. Written as m2c has it, the slot gets the join's
-`li $v0,-1` instead (both loops, two instructions too many); with the zero before the guard (`zero_guard_while`) cse
-puts the counter in the compare, combine folds it, and the dead condition-code result leaves a `use` that takes an
-8-byte stack slot (frame 0x1e8 for 0x1e0). Hypothesis, from reorg.c: `mark_target_live_regs` finds the join's block
-with `find_basic_block`, which scans back to the previous BARRIER (the first loop's closing `j`) and starts from the
-second loop's guard block, so the second loop's `move $s0,$zero` makes `$s0` look live at the join and the fallthrough
-fill is refused. Why the target escapes it is not found. Also open: `sub.s $f2,$f0,$f2` (local-alloc gives the first
-load `$f2`; staging `end.y` in a local fixes the order but moves every `zero` compare to `$f2`, 520).
+Still open (rows left at 340): the first triangle loop's guard takes the join's `li $v0,-1` into its delay slot where
+the target has the counter's `move $s0,$zero` (one instruction too many, so later offsets move), the second loop's
+guard is folded (no `sltu $v0,$v1,count`) and costs an 8-byte stack slot (frame 0x1e8), and one `sub.s` has its
+inputs' registers swapped. A private seed is closer: give the `& 4` values of all three object tests one `u32`
+variable of their own (`temp_v1_3`, with `temp_v1_8` and `temp_v1_13` merged into it, not into the call result). cse
+prefers the register that lives longest when it picks the one to compare (`make_regs_eqv`), so the long-lived flags
+variable stays in the second guard instead of the freshly zeroed counter: `sltu` back, frame 0x1e0, the second
+loop's delay slot right. It scores 2175 only because of the first loop's extra instruction. The same trick for the
+first loop fails: its guard compares the object-skip flag, which dies at the guard, so with the counter zeroed first
+cse picks the counter and folds the compare. Hypothesis: the target's flag outlives its counter (reused later?).
+Staging `end.y` in a local fixes the `sub.s` order but moves every `zero` compare to `$f2` (520).
 
 What is controlled evidence and what is one function:
 
