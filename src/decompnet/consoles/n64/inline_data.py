@@ -24,6 +24,14 @@ _LITERALS = (
 )
 
 
+_TABLES = (
+    ('0000000200050007000a000c000f0011', 16384,
+     '2b4b0e420eda178e6dd07b52e107f1ba73fed47a2ba607fa8f9705fdbfc99aed'),
+    ('017c0197000001000000000e001c002a', 33436,
+     'ef6891b72aaffd66786a1533b5c3d30fd4f2d7c16e3f0ce7090f0e88df0de5fa'),
+)
+
+
 # A complete Q14 sine cycle is data even when its negative values decode as
 # load-linked and store-conditional instructions.
 _SINE = struct.pack('>4096h', *(round(16384 * math.sin(i * math.tau / 4096)) for i in range(4096)))
@@ -62,14 +70,8 @@ def spans(image):
     for match in re.finditer(marker, image, re.S):
         if match.start(1) % 4 == 0:
             yield match.span(1)
-    # Verified halfword tables, bounded by the loader's resident image.
-    tables = (
-        ('0000000200050007000a000c000f0011', 16384,
-         '2b4b0e420eda178e6dd07b52e107f1ba73fed47a2ba607fa8f9705fdbfc99aed'),
-        ('017c0197000001000000000e001c002a', 524,
-         '07250f6a5d08c4d43e1cf09803c23870b6e99792cf53f033a798054dc076a5bf'),
-    )
-    for prefix, size, digest in tables:
+    # Verified data includes tables and strings before a directly called decoder.
+    for prefix, size, digest in _TABLES:
         for match in re.finditer(re.escape(bytes.fromhex(prefix)), image):
             start = match.start()
             if start % 4 == 0 and hashlib.sha256(image[start:start+size]).hexdigest() == digest:
