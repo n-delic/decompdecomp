@@ -15956,3 +15956,7 @@ A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` sto
 ### KMC GCC 2.7.2 two-list allocation
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` selected a free entry from two lists or scanned a third list, using one cursor and one shared result. Its machine draft passed an extra unlink argument, wrote the output after unlinking and used separate cursor and result paths. Restoring the single-argument call, write order and shared control flow changed the diff score from 225 to an exact linked match; the call correction alone scored 135. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the observed instructions and source shape and declines a conflicting unlink declaration.
+
+### KMC GCC 2.7.2 invariant loop delta
+
+A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` loaded a delta field before an early guard and reused it while updating a bounded array. Its recovered draft loaded the delta on every iteration. Staging the field before the guard changed the linked difference score from 235 to an exact match; staging it after the guard scored 220. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the measured instruction and source shapes and checks that the array writes cannot overlap the staged field.
