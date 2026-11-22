@@ -417,6 +417,10 @@ says the fix and the library families it names; try those families with `prove_c
   into the arm as its first statement in a scope it is a local that heads the arm and fills the branch's delay slot
   (`arm_invariant_sink`, 115 -> 85). Reusing one variable for a sum and its result gives it two deaths (global) and
   breaks the tie. The delay slot takes an arm's first one-word insn, or one from above the branch, never a later one.
+  Correction (same allocator, 15 -> 0): reorg does take a later insn when nothing it skips is a `volatile` load; the
+  complement after the sum keeps the mask live into the sum (no shared register), and a sum variable shared with a
+  disjoint local of another block is global, so the `and` ties to the complement instead (`complement_late_plain_reads`,
+  `disjoint_local_merge_swap`; docs/learnings/function/heap-bump-arm-complement-tie.md).
 - **Flag words and widths:** bit-field structs for flag words; `u8`/`u16` widths keep or drop masks; overwrite a
   parameter after copying it (`arg = arg_in; arg_in = 0;`).
 
