@@ -13395,6 +13395,21 @@ the same center, loads from one base register, and comparisons of the
 results. It generates a candidate only across local statements that preserve
 the inputs. Evidence is one partial live match and synthetic tests.
 
+### KMC GCC 2.7.2: recover the empty lower case in a byte switch
+
+A loaded byte was dispatched to two adjacent active cases. The target
+had an extra signed range branch before its higher case. Adding a
+no-op lower case reproduced that branch and moved the linked score
+from 14,215 to 13,510 under `-G0 -mips3 -mgp32 -mfp32 -O2`. That two
+instruction change also put the last jump-table relocation back at its
+target offset. An empty case at -1 scored the same, while an empty
+higher case scored 14,485.
+
+The `switch_empty_lower_case` repair checks the target's byte load and
+compare chain, then proposes the next lower case on a two-arm switch
+with independent exits. Evidence is one partial N64 match and synthetic
+guard tests.
+
 ### KMC GCC 2.7.2: restore a shared case from two mode equalities
 
 A large N64 draft tested whether a loaded halfword was zero or six.
