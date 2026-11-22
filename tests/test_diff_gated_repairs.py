@@ -2729,3 +2729,15 @@ def test_unsigned_float_bias_receives_verified_rom_reader(monkeypatch):
     settings = dict(read_data=reader, big_endian=True)
     assert 'unsigned_float_fixture' in dict(proposals(*args, KMC, rows, '', **settings))
     assert 'unsigned_float_fixture' not in dict(proposals(*args, EGCS, rows, '', **settings))
+
+
+def test_measured_mixed_call_arity_keeps_header_safety():
+    source = 's32 lock();\nextern void *p;\nvoid f(void) { lock(1); lock(2, p); }\n'
+    target = ['jal lock', 'addiu $a0, $zero, 1', 'lui $a1, %hi(p)', 'lw $a1, %lo(p)($a1)',
+              'lw $v0, ($a1)', 'addiu $a0, $zero, 2', 'jal lock', 'nop']
+    candidate = target[:-2] + ['lui $a1, %hi(p)', 'jal lock', 'lw $a1, %lo(p)($a1)']
+    rows = [('o', a, '') for a in target] + [('o', '', b) for b in candidate]
+    result = dict(proposals(source, 'f', '', 'mips', KMC, rows, '\n'.join(target)))
+    assert 'lock(2)' in result['target_call_arity']
+    result = dict(proposals(source, 'f', '#define p get()', 'mips', KMC, rows, '\n'.join(target)))
+    assert 'target_call_arity' not in result

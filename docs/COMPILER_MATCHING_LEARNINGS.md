@@ -16532,3 +16532,8 @@ With `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, one saved draft returned zero immediate
 ### KMC GCC 2.7.2 named unsigned conversion bias
 
 A saved MIPS draft compiled with `-G0 -mips3 -mgp32 -mfp32 -O2 -fno-strength-reduce` used an anonymous double constant for three unsigned-to-float conversions. The ROM loads the same bias from a named address. Staging that verified 4294967296.0 value before the loop and explicitly correcting negative signed conversions cleared a relocation error and changed the linked score from 140 to 60. The project default without the last flag scored 810. This is one private replay with the original function profile.
+
+
+### Mixed call arity with an unused global pointer (GCC 2.7.2 KMC)
+
+With `-G0 -mips3 -mgp32 -mfp32 -O2`, a saved draft scored 300: the first call to a helper had one argument, while a later call also passed a nonvolatile global pointer. The target did not reload that pointer at the later call. Dropping the extra argument produced an exact linked match with the original compiler. The focused search now also tries this existing mixed-call repair when the removed expression is a plain nonvolatile global pointer and is not shadowed or a macro.
