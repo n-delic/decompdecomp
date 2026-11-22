@@ -14402,3 +14402,4 @@ record array by one scored 260 independently, but the target takes the array bas
 the first register save is at 0x270, leaving room for all 50 12-byte records. The accepted
 repair keeps that capacity. Evidence is one measured improvement and synthetic ABI and
 operand-evidence tests. The function remains unmatched.
+In one N64 function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a word increment through a field of a larger global caused the candidate to materialize an address in a register, while the target loaded and stored the word with separate relocations. Referring to the same resolved word directly reproduced the linked target exactly (score 285 to 0). The repair checks the macro, increment, source address, both encoded target addresses and the direct alias. Evidence: one saved example and synthetic address and routing tests.

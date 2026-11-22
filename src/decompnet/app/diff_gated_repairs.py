@@ -366,6 +366,8 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
                 result.append(('relocated_branch_byte', candidate_source))
         if candidate_source := relocated_global_update.rewrite_countdown(source, name, asm or '', header, resolve):
             result.append(('relocated_countdown', candidate_source))
+        if candidate_source := relocated_global_update.rewrite_increment(source, name, asm or '', header, resolve):
+            result.append(('relocated_global_increment', candidate_source))
         if candidate_source := stack_fill_drafts.rewrite(source, name, asm or '', header):
             result.append(('descending_stack_fill', candidate_source))
         if candidate_source := stack_fill_drafts.rewrite_ascending(source, name, asm or '', header):
