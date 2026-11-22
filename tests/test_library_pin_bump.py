@@ -76,6 +76,7 @@ def test_the_workflow_fails_loudly_when_a_family_is_not_wired_but_not_when_smoke
     assert wiring["continue-on-error"] is True  # the pin still lands: wiring needs the new tag installed
     loud = next(s for s in steps if "Fail loudly" in s.get("name", ""))
     assert "steps.wiring.outcome == 'failure'" in loud["if"] and "exit 1" in loud["run"]
+    assert "GITHUB_STEP_SUMMARY" in loud["run"] and "|| echo" in loud["run"]  # issues are off in this repository
     smoke = next(s for s in steps if "Smoke" in s.get("name", ""))
     assert "continue-on-error" not in smoke  # a smoke failure stops the pin
     order = [s.get("name") or s.get("id") or s.get("run", "")[:20] for s in steps]
