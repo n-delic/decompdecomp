@@ -7,6 +7,7 @@ from decomprepair import (
     aligned_stack_read,
     allocation_repairs,
     balanced_clamp_argument_stage,
+    balanced_clamp_predicates,
     balanced_float_predicate_return,
     balanced_predicate_projection,
     balanced_projection_scale,
@@ -186,6 +187,7 @@ from decomprepair import (
     observed_storage_repairs as storage,
 )
 
+from ..compiler import MAX_SOURCE_BYTES
 from . import (
     allocation_evidence,
     allocation_search,
@@ -335,6 +337,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += local_inline_repairs.measured_record_copy_inline(source, name, rows, header)
         result += clamp_saved_argument_lifetime.variants(source, name, rows, header=header)
         result += balanced_clamp_argument_stage.variants(source, name, rows, header=header)
+        result += balanced_clamp_predicates.variants(source, name, rows, header=header, max_bytes=MAX_SOURCE_BYTES)
         result += trig_axis_reuse.variants(source, name, rows, header=header)
         result += smoothing_call_before_read.variants(source, name, rows, header=header)
         result += projection_argument_before_store.variants(source, name, rows, header=header)
