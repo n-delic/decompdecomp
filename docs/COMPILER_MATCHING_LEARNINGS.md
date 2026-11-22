@@ -12994,3 +12994,11 @@ index restored the target's address calculation. With
 from 235 to 40; register differences remain, so none is a match. Trials
 staging the updated word in a separate local did not remove those differences.
 Synthetic tests cover the target instructions and resolved address guards.
+
+### Stage a disjoint floating-point reset before a pointer reload (KMC GCC 2.7.2)
+
+With `-G0 -mips3 -mgp32 -mfp32 -O2`, a retail N64 routine had one load
+on the wrong side of the instructions materializing 1.0f. Moving the float
+reset ahead of the pointer reload and leaving the disjoint zero stores in
+place took the linked score from 60 to 0. The old dispatcher produced no
+candidate and the new rule generated one byte-exact candidate.
