@@ -157,3 +157,14 @@ def test_verified_data_span_keeps_its_trailing_words_out_of_text(monkeypatch):
     assert list(inline_data.spans(context)) == [(8, 24)]
     changed = context[:20] + b'?' + context[21:]
     assert not list(inline_data.spans(changed))
+
+
+def test_terminal_header_does_not_leave_a_code_fragment(tmp_path, monkeypatch):
+    context = b'precede!' + b'data' * 3 + b'following bytes!'
+    signature = (context[:12].hex(), len(context), 12, hashlib.sha256(context).hexdigest())
+    monkeypatch.setattr(inline_data, '_LITERALS', (signature,))
+    config = tmp_path/'game.yaml'
+    config.write_text(yaml.safe_dump(dict(segments=[dict(type='code', start=0, vram=0x80000000,
+        subsegments=[[0, 'c', 'program']]), [20], [len(context)]])))
+    inline_data.apply(config, context, lambda _: None)
+    assert code_ranges(config) == [(0, 8, 0x80000000)]
