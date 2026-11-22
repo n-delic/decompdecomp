@@ -502,6 +502,7 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
         copied_overlays,
         dma_overlays,
         indexed_overlays,
+        level_overlay_table,
         named_dma,
         overlays,
         raw_slots,
@@ -532,6 +533,12 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
     if taken and (slots := raw_slots.registered(rom, taken)):
         recovered = raw_slots.recover_registered(rom, slots, taken, log)
         if raw_slots.add(config, rom, recovered, slots, log):
+            return original
+    if taken and (slots := level_overlay_table.read(rom, taken)):
+        recovered = raw_slots.recover_registered(rom, slots, taken, log)
+        if helper := level_overlay_table.companion(rom, taken, slots):
+            recovered += raw_slots.recover_registered(rom, [helper], taken, log)
+        if raw_slots.add(config, rom, recovered, slots, log, preserve_gaps=True):
             return original
     packed = unpack_code(rom)
     locations = []
