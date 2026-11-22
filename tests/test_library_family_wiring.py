@@ -216,3 +216,32 @@ void f(void) {
     assert 'loop_counter_value_split' in set(labels.values())
     assert any('i_loop' in text and 'do{do{i=n;' in text and 'if(i!=0){\n      p=0;' in text for text in out)
     assert 'loop_counter_value_split' in draft_repairs.AGENT_FAMILIES
+
+
+def test_label_entry_initializer_is_proposed_and_known_to_agents():
+    """A table-copy function's address was initialised before a label a goto enters past it (a skipped load); set at the
+    label (30 -> 70) with the byte index widened first (70 -> 0) is one child, offered by drafts and the beam."""
+    source = """\
+extern u8 tbl;
+void f(s32 a, void *p, void *q) {
+    u8 v;
+    u8 w;
+    w = *((u8 *) q + 0x63);
+    v = *((u8 *) p + 0x63);
+    if (((a + 0x80) & 0xFF) < 2U) {
+        goto entry;
+    }
+    if ((u8)(a + 0x7C) < 2) {
+        u8 *base = &tbl;
+        s32 dst;
+        entry: dst = v * 0x86;
+        base[dst + (a & 0xFE)] = base[(w & 0xFF) * 0x86 + (a & 0xFE)];
+        return;
+    }
+}
+"""
+    labels = {}
+    out = draft_repairs.variants(source, 'f', 'mips', labels=labels, limit=None)
+    assert 'label_entry_initializer' in set(labels.values())
+    assert any('entry: v_wide = v;\n        base = &tbl;' in text for text in out)
+    assert 'label_entry_initializer' in draft_repairs.AGENT_FAMILIES
