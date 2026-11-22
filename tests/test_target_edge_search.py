@@ -828,3 +828,32 @@ def test_ido_routes_a_measured_global_byte_decrement():
     fixed = dict(route(source, rows, asm, compiler='ido-5.3'))
     assert '__repair_byte_value -= 8;' in fixed['staged_global_byte_decrement']
     assert 'staged_global_byte_decrement' not in dict(route(source, rows, asm, compiler='ido-7.1'))
+
+
+def test_ido_frame_growth_reaches_unused_word_proposals_even_when_the_spill_slots_moved():
+    """An IDO draft with arrays whose frame is a word short: the saved-register rows moved too (no uniform delta)."""
+    source = '''s32 f(Reader *p) {
+    s16 head[8];
+    s16 table[4][13];
+    s32 pos;
+    u32 w;
+    s32 flag;
+    s32 i;
+    pos = p->pos;
+    for (i = 0; i < 4; i++) {
+        table[i][0] = w;
+    }
+    return 0;
+}
+'''
+    target = ('addiu $sp, $sp, -0xf8|sw $s0, 0x28($sp)|sw $v1, 0x58($sp)|lw $v1, 0x58($sp)|lw $s0, 0x28($sp)|'
+              'addiu $sp, $sp, 0xf8')
+    draft = ('addiu $sp, $sp, -0xf0|sw $s0, 0x28($sp)|sw $v1, 0x4c($sp)|lw $v1, 0x4c($sp)|lw $s0, 0x28($sp)|'
+             'addiu $sp, $sp, 0xf0')
+    rows = [(' ' if a == b else 's', a, b) for a, b in zip(target.split('|'), draft.split('|'))]
+    found = [text for family, text in route(source, rows, '', compiler='ido-7.1') if family == 'inferred_frame_reservation']
+    assert found and all('__repair_unused_frame_0' in text for text in found)
+    assert found[0].index('s16 table[4][13];') < found[0].index('__repair_unused_frame_0') < found[0].index('s32 pos;')
+    assert 'inferred_frame_reservation' not in dict(route(source, rows, '', compiler='ido-5.3'))
+    assert not [1 for family, _ in route(source, [(' ', a, a) for _, a, _ in rows], '', compiler='ido-7.1')
+                if family == 'inferred_frame_reservation']
