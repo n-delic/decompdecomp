@@ -1887,6 +1887,8 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 .deep-metric:focus-visible { outline:2px solid var(--hl); outline-offset:-2px; }
 .deep-metric-list { list-style:none; padding:0; margin:18px 0 0; display:grid; gap:10px; }
 .deep-metric-list li { padding:14px; border:1px solid var(--line-soft); border-radius:var(--r); min-width:0; }
+.deep-metric-list li.deep-attention-heading { padding:0; border:0; margin-top:6px; }
+.deep-attention-heading h4 { margin:0; font-size:13px; }
 .deep-metric-list header { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; }
 .deep-metric-list header button { overflow-wrap:anywhere; text-align:left; }
 .deep-metric-list p { margin:8px 0 0; font-size:12px; line-height:1.6; }

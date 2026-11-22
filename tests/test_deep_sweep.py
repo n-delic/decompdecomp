@@ -539,6 +539,7 @@ def test_attention_lists_only_current_unresolved_failures(sweep):
     assert status['errors'] == 2
     assert [issue['function'] for issue in status['attention']] == ['f0', 'f1']
     assert status['attention'][0]['error'] == 'invalid API token'
+    assert status['attention'][0]['kind'] == 'search'
     assert 'internal search worker' in status['attention'][0]['action']
     with net.store.tx() as db:
         db.execute("UPDATE functions SET status='matched' WHERE name='f0'")
