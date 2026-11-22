@@ -186,3 +186,34 @@ def test_deep_permuter_pairs_the_predicate_with_one_zero_projection_carry():
     for compiler in ('gcc-egcs', 'ido-5.3'):
         assert all(label != family for label, _ in proposals(CARRY_SOURCE, 'adjust', '', 'mips',
                                                               compiler, CARRY_ROWS, ''))
+
+
+SUBTRACT_SOURCE = '''
+extern f32 lift;
+void adjust(void *record, int bypass)
+{
+    f32 vertical;
+    union { u32 bits; f32 number; } zero;
+    zero.bits = (u32)record & ~(u32)record;
+    vertical = zero.number;
+    vertical = zero.number - lift;
+    report(vertical);
+}
+'''
+SUBTRACT_ROWS = [
+    (' ', 'lui $at, %hi(lift)', 'lui $at, %hi(lift)'),
+    (' ', 'lwc1 $f0, %lo(lift)($at)', 'lwc1 $f0, %lo(lift)($at)'),
+    ('r', 'mtc1 $s6, $f16', 'mtc1 $fp, $f16'),
+    (' ', 'nop', 'nop'),
+    ('r', 'sub.s $f16, $f16, $f0', 'sub.s $f0, $f16, $f0'),
+    ('r', 'mfc1 $s6, $f16', 'mfc1 $s6, $f0'),
+]
+
+
+def test_deep_permuter_reuses_a_proven_zero_for_global_subtraction():
+    family = 'carried_zero_global_subtract'
+    [candidate] = [text for label, text in proposals(SUBTRACT_SOURCE, 'adjust', '', 'mips',
+                                                    'gcc-2.7.2-kmc', SUBTRACT_ROWS, '') if label == family]
+    assert 'vertical -= lift;' in candidate
+    assert all(label != family for label, _ in proposals(SUBTRACT_SOURCE, 'adjust', '', 'mips',
+                                                          'gcc-egcs', SUBTRACT_ROWS, ''))
