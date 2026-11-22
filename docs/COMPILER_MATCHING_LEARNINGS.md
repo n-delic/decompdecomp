@@ -13552,3 +13552,5 @@ proposes each edit and the combination as one child (`unsigned_successor_compare
 judge, and `deep_permuter.loop_vector_shape_pass` offers it. Evidence level: one function, plus synthetic tests of each
 rewrite and its guards (the counter must be read only through its mask, stepped by one; the successor test unsigned;
 the countdown's temps used nowhere else).
+
+On one N64 function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, a draft treated an indexed pointer table as bytes and then read a word through it. Casting the indexed entry to `u8 **` generated the target pointer load followed by an unsigned byte load, improving the linked score from 270 to 60. Wrapping the masked index assignment in `do { ... } while (0)` changed the return-address save schedule and reproduced the target exactly. Evidence: one saved example, plus synthetic generation and routing tests.
