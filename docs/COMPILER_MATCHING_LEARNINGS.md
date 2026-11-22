@@ -16377,6 +16377,8 @@ An isolated N64 overlay donor built with IDO 7.1 using `-O2 -G 0 -mips2 -32 -non
 
 An isolated N64 overlay function built with IDO 7.1 using `-O2 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul -DNON_MATCHING` compiled to the target's 692-byte instruction sequence with references to an anonymous `.bss` section. Replacing two private scalar definitions with extern declarations changed the output to 700 bytes. Keeping zero-initialized definitions while giving each an explicit loader binding and offset preserved the 692-byte layout and let the overlay linker reproduce the target relocations. This is one observed function, not a cross-compiler result. A compiler-backed regression also verifies cartridge reconstruction and rejection of incorrect bindings, offsets and initialized objects.
 
+A second isolated overlay function used IDO 7.1 C++ with `-G 0 -non_shared -Wab,-r4300_mul -O2 -mips2 -32` and a private zero-initialized struct containing scalar fields. Keeping it as a definition, giving it an explicit loader binding before ordinary symbol renaming, and recompiling preserved all 260 instruction bytes and passed the exact overlay judge. This is one observed function, not a cross-compiler result. A controlled regression covers scalar typedefs and plain aggregates, rejects a type with a constructor and a conditional typedef, and replays the saved source through cartridge reconstruction.
+
 The phase reuse and guard sink must be offered together: the first step alone scores 25 from 15, while the
 combined child scores 10. `merge_integer_lifetimes` now emits the combined candidate using control-flow
 liveness and reaching definitions, only for a signed phase read through a parenthesized byte mask. The focused

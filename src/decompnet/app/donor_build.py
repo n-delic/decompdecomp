@@ -423,7 +423,18 @@ def _try(net, proj, private, fn, source, header, agent, job, *, compiled_literal
                 literal_changed = True
                 continue
         variants = []
-        if not explicit_rebound and candidate is not None:
+        if globalized_names and not data_bound and candidate is not None:
+            console = net.console(proj)
+            if console.export_overlay(net._rom_target(fn)) is not None:
+                from . import overlay_donor_aliases
+
+                rewritten = overlay_donor_aliases.defined_data_bindings(
+                    source, header, candidate, net._target_obj(fn, proj), globalized_names,
+                    lambda aliases, console=console: donor_relocations.separate_overlay_references(console, aliases),
+                    console.overlay_data_reference)
+                if rewritten:
+                    variants = [('overlay-defined-data', *rewritten)]
+        if not variants and not explicit_rebound and candidate is not None:
             console = net.console(proj)
             if console.export_overlay(net._rom_target(fn)) is not None:
                 from . import overlay_donor_aliases
@@ -466,17 +477,6 @@ def _try(net, proj, private, fn, source, header, agent, job, *, compiled_literal
                 bindings = (recover(result.obj, fn['name'], fn['target'], fn['vram'], net.symbols(proj['id']).resolve)
                             if recover else [])
                 variants = source_symbol_recovery.variants(source, header, {'symbol_bindings': bindings})
-        if not variants and globalized_names and not data_bound and candidate is not None:
-            console = net.console(proj)
-            if console.export_overlay(net._rom_target(fn)) is not None:
-                from . import overlay_donor_aliases
-
-                rewritten = overlay_donor_aliases.defined_data_bindings(
-                    source, header, candidate, net._target_obj(fn, proj), globalized_names,
-                    lambda aliases, console=console: donor_relocations.separate_overlay_references(console, aliases),
-                    console.overlay_data_reference)
-                if rewritten:
-                    variants = [('overlay-defined-data', *rewritten)]
         if not variants and globalized_names is None and candidate is not None:
             console = net.console(proj)
             if console.export_overlay(net._rom_target(fn)) is not None:

@@ -187,6 +187,65 @@ def test_overlay_explicit_binding_preserves_c_donor_expressions(tmp_path):
     assert uso_match.link(result.obj, 'example', body.code, info).exact
 
 
+def test_overlay_plain_struct_data_uses_explicit_defined_binding(tmp_path, monkeypatch):
+    from contextlib import nullcontext
+    from inspect import unwrap
+    from threading import Event
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from decompnet import consoles
+    from decompnet.app import donor_build, exact_match_inputs
+    from decompnet.app.overlay_donor_aliases import globalize_zero_data
+    from decompnet.elfobj import extract_function
+
+    if toolchains.installed('ido-5.3') is None:
+        pytest.skip('needs IDO 5.3')
+    cfg = compiler_config(tmp_path, {'compiler': {'toolchain': 'ido-5.3', 'flags': toolchains.get('ido-5.3').flags}})
+    header = ('typedef float Real; typedef struct { int tag; Real x; Real y; } State; '
+              'static State shared;')
+    source = 'float example(void) { return shared.x + shared.y; }'
+    original = compile_source(cfg, header, source)
+    assert original.ok, original.log
+    body = extract_function(original.obj, 'example')
+    assert {r.symbol for r in body.relocs} == {'.bss'}
+    records = b''.join(struct.pack('>III', 0x13 if r.type == 5 else 0x12, r.offset + 4, 1)
+                       for r in body.relocs)
+    cartridge = bytes(64) + _module(bytes(4) + body.code, relocations=records)
+    region, = uso.read(cartridge)
+    info = {'section': region.offset, 'start': 4, 'size': len(body.code),
+            'relocs': uso.function_relocations(region, 4, len(body.code))}
+    placement = uso_match.Target('example', 4, body.code, [], uso=info)
+    target = uso_match.symbolic_target(placement)
+    initial = uso_match.link(original.obj, 'example', body.code, info)
+    unsafe = (header + ' typedef struct { int value; Bad() {} } Bad; static Bad unsafe;\n'
+              '#if UNKNOWN\ntypedef int Maybe; static Maybe hidden;\n#endif\n'
+              'typedef struct { int x; } Aliased;\n#define Aliased Bad\nstatic Aliased shadow;\n')
+    _, names = globalize_zero_data(unsafe, initial.candidate, target)
+    assert names == {'shared'}
+    console = consoles.of({'platform': 'n64'})
+    record = Mock()
+    net = SimpleNamespace(
+        _compile=lambda _project, h, s, _fn: compile_source(cfg, h, s),
+        _evaluate=lambda _fn, _project, obj: (lambda result: (result.candidate, result.exact, result.problems))(
+            uso_match.link(obj, 'example', body.code, info)),
+        _rom_target=lambda _fn: placement, _target_obj=lambda *_: target,
+        console=lambda _: console, _record=record,
+        progress=SimpleNamespace(judging=lambda *_args, **_kwargs: nullcontext()))
+    monkeypatch.setattr(exact_match_inputs, 'capture', lambda *_: {})
+    monkeypatch.setattr(donor_build, 'acceptable', lambda *_: True)
+    fn = {'name': 'example', 'size': len(body.code), 'id': 1}
+    accepted, _ = unwrap(donor_build._try)(net, {'slug': 'test', 'arch': 'mips'}, {}, fn, source, header,
+                                          SimpleNamespace(id=1), SimpleNamespace(stop=Event()))
+    assert accepted
+    saved = record.call_args.kwargs['exact_inputs']
+    assert '_data_0__ref' in saved['header']
+    result = compile_source(cfg, saved['header'], saved['source'])
+    assert result.ok, result.log
+    assert uso_match.link(result.obj, 'example', body.code, info).exact
+    assert uso.rebuild(cartridge, [('example', info, result.obj)]) == cartridge
+
+
 def test_overlay_cpp_method_calls_keep_loader_binding(tmp_path):
     from decompnet.app.overlay_donor_aliases import cpp_methods, explicit_symbol_bindings
     from decompnet.elfobj import extract_function, unmangle
