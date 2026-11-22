@@ -326,7 +326,7 @@ def verify(net, proj, fn, other, donor, names, settings, agent, job, cache, *, r
 @donor_declaration_cache()
 def _try(net, proj, private, fn, source, header, agent, job):
     """Offer one reduced translation unit and one relocation-based retry when the object supports it."""
-    reduced = rebound = False
+    reduced = rebound = localized = False
     evidence = exact_match_inputs.capture(net, private, fn, {'header': header}, source)
     while not job.stop.is_set():
         result = net._compile(private, header, source, fn)
@@ -368,6 +368,9 @@ def _try(net, proj, private, fn, source, header, agent, job):
                 aliases = source_symbol_recovery.relocation_aliases(candidate, expected)
                 if rebound_data:
                     variants = [('overlay-data-offsets', *rebound_data)]
+                elif not localized and (local := overlay_donor_aliases.local_functions(
+                        source, header, fn['name'], result.obj, candidate, expected)):
+                    variants = [('overlay-local-functions', *local)]
                 elif aliases:
                     variants = [('overlay-symbols', source_symbol_recovery.rename(source, aliases),
                                  source_symbol_recovery.rename(header, aliases))]
@@ -387,6 +390,9 @@ def _try(net, proj, private, fn, source, header, agent, job):
                 variants = source_symbol_recovery.variants(source, header, {'symbol_bindings': bindings})
         if not variants:
             return False, '; '.join(problems) or 'Donor source did not reproduce the original bytes.'
-        _, source, header = variants[0]
-        rebound = True
+        family, source, header = variants[0]
+        if family == 'overlay-local-functions':
+            localized = True
+        else:
+            rebound = True
     return False, 'Search stopped.'

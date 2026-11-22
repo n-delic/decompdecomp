@@ -1,5 +1,7 @@
 """Private address hypotheses only when every non-relocation instruction bit agrees."""
 
+from collections import defaultdict
+
 from elftools.common.exceptions import ELFError
 from elftools.elf.elffile import ELFFile
 from elftools.elf.relocation import RelocationSection
@@ -16,6 +18,31 @@ MASKS = {JUMP:0xfc000000, HIGH:0xffff0000, LOW:0xffff0000}
 
 def signed(value):
     return value - 0x10000 if value & 0x8000 else value
+
+
+def local_call_names(obj, name, candidate):
+    """Resolve same-section R_MIPS_26 addends to unambiguous donor ELF functions."""
+    from ..elfobj import _function_symbols
+
+    calls = [r for r in candidate.relocs if r.type == JUMP and r.symbol == '.text']
+    if not calls:
+        return {}
+    elf = candidate_elf(obj, ELFFile)
+    functions = _function_symbols(elf)
+    entry = functions.get(name)
+    if entry is None or elf.get_section(entry[0]).name != '.text':
+        return {}
+    by_offset = defaultdict(list)
+    for symbol, (section, offset, _) in functions.items():
+        if section == entry[0]:
+            by_offset[offset].append(symbol)
+    found = {}
+    for call in calls:
+        symbols = by_offset.get(call.addend * 4, ())
+        if len(symbols) != 1 or symbols[0] == name:
+            return {}
+        found[call.offset] = symbols[0]
+    return found
 
 
 def bindings(obj, name, target, vram, resolve):

@@ -270,3 +270,48 @@ def test_overlay_probes_a_c_linkage_data_declaration_in_cpp(tmp_path, changed_of
         wrong = compile_source(cfg, header, source.replace('+ (28)', '+ (24)'))
         assert wrong.ok, wrong.log
         assert not uso_match.link(wrong.obj, 'example', wanted.code, info).exact
+
+
+def test_donor_local_text_calls_bind_to_an_independently_linked_overlay(tmp_path):
+    from decompnet.app.overlay_donor_aliases import local_functions
+    from decompnet.elfobj import extract_function
+
+    if toolchains.installed('ido-7.1') is None:
+        pytest.skip('needs IDO 7.1')
+    cfg = compiler_config(tmp_path, {'compiler': {
+        'toolchain': 'ido-7.1', 'flags': ['-O2', '-G', '0', '-non_shared', '-mips2'],
+    }})
+    header = """
+        extern volatile int counter;
+        static void helper_a(int x) { counter = x; }
+        static void helper_b(int x) { counter += x; }
+    """
+    source = 'void entry(int x) { helper_a(x); helper_b(x + 1); }'
+    original = compile_source(cfg, header, source)
+    assert original.ok, original.log
+    body = extract_function(original.obj, 'entry')
+    assert [(r.type, r.symbol) for r in body.relocs] == [(4, 'helper_a'), (4, 'helper_b')]
+    offsets = (0x80, 0xA0)
+    code = bytearray(body.code)
+    calls = []
+    for reloc, offset in zip(body.relocs, offsets, strict=True):
+        code[reloc.offset:reloc.offset + 4] = (0x0c000000 | offset >> 2).to_bytes(4, 'big')
+        calls.append([reloc.offset, 1, offset])
+    info = {'section': 32, 'start': 0, 'size': len(code), 'relocs': [[at, 4, index] for at, index, _ in calls],
+            'local_calls': calls}
+    expected = uso_match.symbolic_target(uso_match.Target('entry', 0, bytes(code), [], uso=info))
+    initial = uso_match.link(original.obj, 'entry', bytes(code), info)
+    assert not initial.exact
+    assert [(r.type, r.symbol) for r in initial.candidate.relocs] == [(4, '.text'), (4, '.text')]
+    assert [r.addend for r in initial.candidate.relocs] != [offset // 4 for offset in offsets]
+    rebound, context = local_functions(source, header, 'entry', original.obj, initial.candidate, expected)
+    assert 'static' not in context and 'counter' not in context
+    for reloc in expected.relocs:
+        assert reloc.symbol in context and reloc.symbol in rebound
+    compiled = compile_source(cfg, context, rebound)
+    assert compiled.ok, compiled.log
+    assert uso_match.link(compiled.obj, 'entry', bytes(code), info).exact
+    first, second = (r.symbol for r in expected.relocs)
+    wrong = compile_source(cfg, context, rebound.replace(second, first))
+    assert wrong.ok, wrong.log
+    assert not uso_match.link(wrong.obj, 'entry', bytes(code), info).exact

@@ -4,8 +4,11 @@ import re
 from collections import defaultdict
 
 from .. import seeds
-from ..arch.mips_source_symbols import HIGH, LOW, signed
+from ..arch.mips_source_symbols import HIGH, JUMP, LOW, local_call_names, signed
+from ..compiler import SourceRejected
 from ..forks import csource
+from ..network import NetworkError
+from . import donor_sources
 from .source_symbol_recovery import comparable_overlay_code, rename
 
 MAX_PROBES = 16
@@ -22,6 +25,53 @@ def _cpp_declaration(header, clean, symbol):
                          or _DATA.fullmatch(csource._blank(decl.text).strip()))):
                 return 'extern "C" ' + decl.text.removeprefix('extern ').lstrip(), block.end()
     return None
+
+
+def local_functions(source, header, name, obj, candidate, target):
+    """Externalize direct calls to identifiable functions in the donor text section."""
+    if target.arch != 'mips' or not target.linker_relocs or not comparable_overlay_code(candidate, target):
+        return None
+    expected = {r.offset: r.symbol for r in target.linker_relocs if r.type == JUMP}
+    calls = local_call_names(obj, name, candidate)
+    if not calls or calls.keys() - expected.keys():
+        return None
+    aliases = {}
+    for offset, original in calls.items():
+        destination = expected[offset]
+        if not all(re.fullmatch(r'[A-Za-z_]\w*', symbol) for symbol in (original, destination)):
+            return None
+        if aliases.setdefault(original, destination) != destination:
+            return None
+
+    try:
+        body, context = donor_sources.compact(header + '\n' + source, name)
+    except (NetworkError, SourceRejected):
+        return None
+    prototyped = set()
+    declarations = []
+    for decl in seeds.declarations(context):
+        changed = decl.names & aliases.keys()
+        if not changed:
+            declarations.append(decl.text)
+            continue
+        if len(decl.names) != 1:
+            return None
+        symbol, = changed
+        clean = csource._blank(decl.text)
+        if not re.fullmatch(r'[^;{}=#]*\b' + symbol + r'\s*\([^;{}=#]*\)\s*;', clean, re.S):
+            return None
+        if re.search(r'\b(?:typedef|inline|__inline|__inline__)\b', clean):
+            return None
+        prototyped.add(symbol)
+        storage = re.match(r'\s*(static)\b', clean)
+        if storage:
+            start, end = storage.span(1)
+            declarations.append(decl.text[:start] + 'extern' + decl.text[end:])
+        else:
+            declarations.append(decl.text)
+    if prototyped != aliases.keys():
+        return None
+    return rename(body, aliases), rename('\n'.join(declarations), aliases)
 
 
 def retry(source, header, name, candidate, target, measure, stop):

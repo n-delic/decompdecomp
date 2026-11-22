@@ -1571,6 +1571,21 @@ rebuilding the affected overlays from those compiled objects reproduced the
 cartridge bytes. Changing a call to a second alias under the same base symbol
 fails the controlled regression.
 
+### Rebind donor calls to functions defined in the same translation unit
+
+IDO 7.1 `-O2 -G 0 -non_shared -mips2` compiles direct calls to static
+functions as section-relative R_MIPS_26 relocations. A controlled overlay test
+uses destination call offsets different from the donor's. Resolving the donor
+addends to ELF function entries and recompiling with declarations bound to the
+validated destination aliases reproduces the complete destination code and
+relocations. Binding the second call to the first target fails the exact check.
+
+In a targeted isolated N64 replay, 20 of 25 selected attempts saved exact
+matches, three missed, and two were skipped while another isolated search
+held the function. With section-relative rebinding disabled, the same 20
+pairs all failed the loader-relocation check. All 20 saved functions passed
+a fresh compile and exact verification after reopening.
+
 ### Rebase an imported overlay data reference
 
 A controlled IDO 5.3 test uses
