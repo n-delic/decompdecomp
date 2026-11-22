@@ -397,6 +397,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     result += measured_lifetime_shapes.variants(source, name, header, toolchain, rows)
     result += measured_scalar_updates.variants(source, name, header, toolchain, rows, asm)
     if toolchain == 'gcc-2.7.2-kmc':
+        result += guard_inversion_repairs.measured_null_return_variants(source, name, rows)
         result += target_call_arity_repairs.measured_variants(source, name, asm, rows)
         result += float_bit_argument_repairs.target_variants(source, name, header, arch, flags, rows)
         result += boolean_guard_operands.variants(source, name, rows, header)

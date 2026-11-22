@@ -2699,3 +2699,13 @@ def test_measured_call_arity_route_removes_consumed_literal():
     result = dict(proposals(source, 'f', '', 'mips', KMC, rows, '\n'.join(target)))
     assert 'convert(*p)' in result['target_call_arity']
     assert 'target_call_arity' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, '\n'.join(target)))
+
+
+def test_measured_null_guard_route():
+    source = 'int f(void *p) {\n    if (p == 0) {\n        return 0;\n    }\n    work(p);\n    return 1;\n}\n'
+    target = ['bnez $v0, 0x24', 'nop', 'j f+0x30', 'move $v0, $zero']
+    candidate = ['beql $v0, $zero, 0x28', 'move $v0, $zero']
+    rows = [('o', a, '') for a in target] + [('o', '', b) for b in candidate]
+    result = dict(proposals(source, 'f', '', 'mips', KMC, rows, ''))
+    assert 'if (p != 0)' in result['guard_inversion']
+    assert 'guard_inversion' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))
