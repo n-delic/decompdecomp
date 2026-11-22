@@ -317,3 +317,12 @@ void f(int x) {
     [lifted] = [choice for choice in choices if labels[choice] == 'switch_default_tail']
     assert lifted.index('case 2: break;') < lifted.index('joined:\n')
     assert lifted.index('goto after_switch_tail;') < lifted.index('joined:\n')
+
+
+def test_a_byte_range_test_and_masked_equality_become_the_masked_chain():
+    # A KMC GCC 2.7.2 function at 215 (an lb and a missing andi): the unsigned local and the masked chain, 15.
+    src = ('s32 f(void *p) {\n    s8 t;\n    s32 r;\n\n    t = M2C_FIELD(p, u8 *, 0x82);\n'
+           '    if (((u32) (t - 9) < 2U) || ((t & 0xFF) == 0xB)) {\n        r = 1;\n    } else {\n        r = 0;\n    }\n'
+           '    return r;\n}\n')
+    outputs = variants(src, 'f', 'mips')
+    assert any('u8 t;' in out and '((t & 0xFF) == 9) || ((t & 0xFF) == 0xA) || ((t & 0xFF) == 0xB)' in out for out in outputs)

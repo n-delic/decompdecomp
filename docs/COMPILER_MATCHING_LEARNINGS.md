@@ -1558,6 +1558,20 @@ rebuilding the affected overlays from those compiled objects reproduced the
 cartridge bytes. Changing a call to a second alias under the same base symbol
 fails the controlled regression.
 
+### Rebase an imported overlay data reference
+
+A controlled IDO 5.3 test uses
+`-O2 -mips2 -G 0 -non_shared -Xcpluscomm -Wab,-r4300_mul` to read one element
+of an external array. The source retry retains the declared array type and
+adds the byte delta measured from corresponding HI16 and LO16 relocations.
+The exact judge accepts forward and backward offsets and an offset that
+crosses the signed low-half boundary. An incorrect byte delta fails.
+
+On an isolated N64 project, a 185-pair retry saved seven functions. A control
+replay confirmed that three required the data rebase and four already passed
+ordinary donor verification. This fixture exercises compiler-emitted
+relocations and keeps the destination loader's byte and symbol checks.
+
 ### Observation: source layout sensitivity (IDO 5.3)
 
 The existing [IDO guide](../src/decompnet/consoles/n64/guides/ido.md) records a private same-source
@@ -13238,6 +13252,18 @@ the same center, loads from one base register, and comparisons of the
 results. It generates a candidate only across local statements that preserve
 the inputs. Evidence is one partial live match and synthetic tests.
 
+### KMC GCC 2.7.2: reuse two float lifetimes with guarded labels
+
+In a large N64 function built with `-G0 -mips3 -mgp32 -mfp32 -O2`,
+two saved-floating-register temporaries had disjoint initialized values.
+Gotos in each interval could only reach labels after the assignment in
+that interval. Reusing the nearest earlier float declaration moved the
+linked score from 26,824 to 26,664. Reusing two other eligible declarations
+left the score unchanged, and one alternative scored 27,014. The existing
+`mips_float_local_reuse` candidate family now covers these guarded label
+entries. Evidence is one observed partial match and synthetic control-flow
+tests, including external jumps and case labels.
+
 ### Retain a zero register through CSE (KMC GCC 2.7.2)
 
 On one N64 function with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`,
@@ -13280,6 +13306,23 @@ new family.
 
 On one N64 function compiled with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, an initialized local zero before a comparison scored 350. Wrapping just that comparison assignment in `do { ... } while (0)` kept the same evaluation and scored 85 in the exact judge; the remaining differences were register allocation. The inherited score-10 source read that local before initialization and is only a search control, not evidence of valid C. Initializing at declaration scored 295, initializing before the load scored 350, and making the local volatile scored 1080. These are observations on one function; decomp-repair 0.5.335 offers the comparison scope and a synthetic regression covers generation, including a surrounding volatile load.
 
+### KMC GCC 2.7.2: combine drops a lone `& 0xFF` after a zero-extending load, and a float constant picked by an arm sits in the wrong register
+
+One N64 function (`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, saved best 215) matched exactly (score 0, the app's judge) after two edits from the saved best.
+1. A byte local `s8 t = (u8 field)` tested as `((u32)(t - 9) < 2U) || ((t & 0xFF) == 0xB)` compiled to `lb` and no `andi`; the target has
+   `lbu` and `andi $v1,$v1,0xff` in the first branch's delay slot. A `u8` local (`lbu`) with the range written out as
+   `((t & 0xFF) == 9) || ((t & 0xFF) == 0xA) || ((t & 0xFF) == 0xB)` kept the `andi`: 215 -> 15. cc1's `-dc` dump shows the
+   cause: a single `(and P 255)` is merged into its branch and simplified away because combine knows P is a zero-extended
+   byte, but when the masked value is compared more than once the `and` has two uses and survives (a plain `u8`/`s32`
+   local, `u16`, `(u8)` casts, `(t & 0xFF) - 9 < 2U` and `s8` locals all scored 235 or worse). A snippet with
+   `if (t == 9) goto L; if ((t & 0xFF) == 10) goto L; if ((t & 0xFF) == 11)` keeps one `andi` for the same reason.
+2. Remaining 15 was `$f0`/`$f2` traded places: `var_fv0 = 0.75f / 0.25f` set in each arm and `r = var_fv0 * table[idx]` after the join
+   gave the constant the later register. Writing `r = 0.75f * table[idx]` at the end of each arm (keeping the index
+   assignment, dropping the variable) was exact: 15 -> 0. Failed variants: swapping the multiply's operands (20), a ternary
+   for the constant (860), keeping the variable inside each arm (20).
+decomp-repair 0.5.337 offers both (`masked_range_equality_chain`, `float_arm_constant_tail`); applied in that order from the
+saved best they reproduce the exact source. Evidence level: one function, rewrites controlled by unit tests.
+
 ### Recover unsigned byte-table guards (KMC GCC 2.7.2)
 
 With `-G0 -mips3 -mgp32 -mfp32 -O2`, two signed byte loads disagreed
@@ -13289,3 +13332,7 @@ returns and express the halfword address as a shifted index plus the
 base. On a retail N64 function the linked score went from 968 to 0;
 the old dispatcher produced no candidate and the new rule produced one
 byte-exact candidate.
+On that same function, deriving the defined zero from the already loaded count as `(unsigned short) count ^ ((unsigned int) count & 0xFFFF)` improved the scoped seed from 85 to 75. Both expressions have the same low 16 bits, so their XOR is zero; the generated child retains the existing load and adds no pointer read. Direct self-XOR, self-subtraction and masking by zero all stayed at 85. The exact judge reports 15 remaining register differences; this is one function, not a match. decomp-repair 0.5.339 offers the identity only for the guarded stable-local shape, with synthetic generation and safety tests.
+
+
+Two N64 flag-update functions built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` used `lhu` and `sh` for an indexed flag table that the draft had declared as `char[]`. Casting both reads and writes to `u16 *` recovered exact matches in both cases (score 400 to 0). The target-guided repair proposes this width when the changed load and store both name the same table; the compiler and judge still decide whether it matches. Evidence: two saved examples and a synthetic routing and generation regression, rather than an independently controlled compiler experiment.

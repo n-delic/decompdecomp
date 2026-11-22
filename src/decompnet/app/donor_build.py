@@ -342,19 +342,23 @@ def _try(net, proj, private, fn, source, header, agent, job):
         variants = []
         if not rebound:
             if net.console(proj).export_overlay(net._rom_target(fn)) is not None:
-                aliases = source_symbol_recovery.relocation_aliases(candidate, net._target_obj(fn, proj))
-                if aliases:
+                from . import overlay_donor_aliases
+
+                expected = net._target_obj(fn, proj)
+                rebound_data = overlay_donor_aliases.offset_retry(source, header, fn['name'], candidate, expected)
+                aliases = source_symbol_recovery.relocation_aliases(candidate, expected)
+                if rebound_data:
+                    variants = [('overlay-data-offsets', *rebound_data)]
+                elif aliases:
                     variants = [('overlay-symbols', source_symbol_recovery.rename(source, aliases),
                                  source_symbol_recovery.rename(header, aliases))]
                 else:
-                    from . import overlay_donor_aliases
-
                     def measure(probe, context, private=private, fn=fn, proj=proj):
                         built = net._compile(private, context, probe, fn)
                         return net._evaluate(fn, proj, built.obj)[0] if built.ok else None
 
                     rewritten = overlay_donor_aliases.retry(
-                        source, header, fn['name'], candidate, net._target_obj(fn, proj), measure, job.stop)
+                        source, header, fn['name'], candidate, expected, measure, job.stop)
                     if rewritten:
                         variants = [('overlay-call-sites', *rewritten)]
             else:

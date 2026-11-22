@@ -186,3 +186,37 @@ def test_local_overlay_calls_link_and_rebuild_with_distinct_offsets(tmp_path):
     assert not uso_match.link(wrong.obj, 'example', code, info).exact
     with pytest.raises(ValueError, match='local call metadata'):
         uso.rebuild(cartridge, [('example', info | {'local_calls': calls[:1]}, built.obj)])
+
+
+@pytest.mark.parametrize('start,end', [(2, 9), (9, 2), (8190, 8193)])
+def test_overlay_data_rebase_preserves_compiler_relocations_and_exact_bytes(tmp_path, start, end):
+    from decompnet.app.overlay_donor_aliases import offset_retry
+    from decompnet.elfobj import extract_function
+
+    if not toolchains.installed('ido-5.3'):
+        pytest.skip('needs IDO 5.3')
+    cfg = compiler_config(tmp_path, {'compiler': {'toolchain': 'ido-5.3', 'flags': toolchains.get('ido-5.3').flags}})
+    binding = uso_match.alias(64, 1)
+    header = '/* donor declaration */ extern int donor_data[];'
+    source = f'int example(void) {{ return donor_data[{start}]; }}'
+    original = compile_source(cfg, header, source)
+    expected = compile_source(cfg, f'extern int {binding}[16384];',
+                              f'int example(void) {{ return {binding}[{end}]; }}')
+    assert original.ok, original.log
+    assert expected.ok, expected.log
+    a = extract_function(original.obj, 'example')
+    b = extract_function(expected.obj, 'example')
+    info = {'section': 64, 'relocs': [(r.offset, r.type, 1) for r in b.relocs]}
+    baseline = uso_match.link(original.obj, 'example', b.code, info)
+    assert not baseline.exact and a.code != b.code
+    target = uso_match.symbolic_target(uso_match.Target('example', 0, b.code, [], uso=info))
+    changed, context = offset_retry(source, header, 'example', baseline.candidate, target)
+    rebuilt = compile_source(cfg, context, changed)
+    assert rebuilt.ok, rebuilt.log
+    verified = uso_match.link(rebuilt.obj, 'example', b.code, info)
+    assert verified.exact
+    delta = 4 * (end - start)
+    assert f'+ ({delta})' in changed
+    wrong = compile_source(cfg, context, changed.replace(f'+ ({delta})', f'+ ({delta + 4})'))
+    assert wrong.ok, wrong.log
+    assert not uso_match.link(wrong.obj, 'example', b.code, info).exact
