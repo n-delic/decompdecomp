@@ -15060,3 +15060,23 @@ liveness gates.
 ### Stage a global base in a masked clearing loop
 
 In a private N64 controller-table clearing loop built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the target loaded the table base before the loop and formed a displacement separately, while the draft reloaded the global during the loop. Capturing the base before the loop and staging the displacement inside it reproduced the linked target exactly (score 380 to 0). Capturing only the base scored 125; staging only the displacement scored 1,380. Because computed stores could alias the global, this is a target-led candidate that still requires compilation and exact judging. Evidence: one saved function and synthetic generation and routing tests.
+
+### Preserve the original sign before scaling a signed square
+
+Under GCC 2.7.2 KMC with `-G0 -mips3 -mgp32 -mfp32 -O2`, the target
+copied the original input for a sign check before squaring the saved axis.
+It then multiplied the signed square in place before loading a smoothing
+field. The draft compared the old call return directly and put the scale
+into a scratch register, changing the smoothing register sequence.
+
+In one privately judged N64 function, sharing the later clamped result
+local with the sign check scored 6,660 from 6,885. Staging just the in-place
+scale scored 6,830. Combining the two scored 6,630, with all three jump
+tables still linked and no uninitialized warnings. The generated sign
+copy still uses a scratch register where the target uses a saved register.
+
+The Deep Permuter requires both instruction differences and the same
+field reload after both clamp outcomes. A scoped save and restoration is
+eligible when the restored value is overwritten before the next use.
+Synthetic tests check the evidence and reject any use of the old value
+that would observe the change.
