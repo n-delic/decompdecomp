@@ -146,6 +146,7 @@ from decomprepair import (
     measured_list_head_insert,
     measured_list_selection,
     measured_lookup_owner,
+    measured_loop_delta_snapshot,
     measured_loop_search_target,
     measured_magnitude_conversion,
     measured_masked_halfword_read,
@@ -527,6 +528,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_global_rebase.variants(source, name, header, rows, resolve=resolve)
         result += measured_two_list_allocation.variants(source, name, header, rows)
         result += measured_record_pointer_update.variants(source, name, header, rows)
+        result += measured_loop_delta_snapshot.variants(source, name, header, rows)
         result += measured_magnitude_conversion.variants(source, name, header, rows)
         result += measured_command_word_schedule.variants(source, name, header, rows)
         result += measured_parameter_clock_load.variants(source, name, header, rows)
