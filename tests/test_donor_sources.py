@@ -344,3 +344,23 @@ def test_cpp_replacement_can_try_the_resident_optimization_without_replacing_its
     assert instruction_bytes(alternate) == instruction_bytes(expected)
     assert instruction_bytes(alternate) != instruction_bytes(declared)
     assert replacement_profiles(path, replacement, resident | {'flags': ['-O0', '-O1']}) == [replacement]
+
+
+def test_cpp_replacement_finds_a_unique_out_of_class_method(tmp_path, monkeypatch):
+    from decompnet.app import donor_unit
+    from decompnet.compiler import CompilerConfig
+
+    source = ('class Camera { public: void update(); };\n'
+              'void Camera::update() { int value = 1; }\n')
+    path = tmp_path / 'method.cpp'
+    path.write_text(source)
+    monkeypatch.setattr(donor_unit, 'preprocess_donor_unit', lambda config, text: text)
+    donor = {'name': 'exported_name', 'meta': None}
+    body, header = donor_unit.replacement({'root': str(tmp_path)}, donor, 'target_entry',
+                                          CompilerConfig(['cc', '-O2']), path)
+    assert 'void target_entry();' in header
+    assert 'void Camera::target_entry()' in body
+
+    path.write_text(source + 'void Other::draw() { int value = 2; }\n')
+    assert donor_unit.replacement({'root': str(tmp_path)}, donor, 'target_entry',
+                                  CompilerConfig(['cc', '-O2']), path) is None
