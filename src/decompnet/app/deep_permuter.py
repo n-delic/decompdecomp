@@ -438,6 +438,7 @@ class Search(Permuter):
                   (L + 'shared_copy_local_split.variants', (source, name)),
                   (L + 'display_value_stage.variants', (source, name)),
                   (L + 'narrow_quotient_local.variants', (source, name)),
+                  (L + 'selected_argument_call_split.variants', (source, name)),
                   (L + 'declaration_scope_hoist.variants', (source, name)),  # decomp-repair 0.5.596: block-level spXX locals back in the function's declarations, by offset
                   (L + 'compare_load_stage.variants', (source, name)),  # decomp-repair 0.5.598: the compared load read into a local before the store of the compared result
                   (L + 'allocation_lever_repairs.field_store_swaps', (source, name))]
