@@ -183,9 +183,10 @@ def _ido_register_guard(image,start,at,order):
 
 
 def _guard_slot(word, index, condition):
-    # A stack spill or an unrelated register move can fill a scheduler slot.
+    # Unrelated nontrapping arithmetic can also fill an IDO scheduler slot.
     return (not word or word >> 21 == 0x57d
-            or word & 0xfc1f07ff in (33, 37) and (word >> 11) & 31 not in (index, condition))
+            or word & 0xfc1f07ff in (33, 37) and (word >> 11) & 31 not in (index, condition)
+            or word >> 26 in (9, 10, 11, 12, 13, 14) and (word >> 16) & 31 not in (index, condition))
 
 
 def jump_table(image,start,end,vram,at,order,ranges=(),mappings=(),*,reader=None, allow_saved_base=False):
