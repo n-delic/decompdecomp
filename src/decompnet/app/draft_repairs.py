@@ -353,6 +353,7 @@ from decomprepair import (
     stored_float_zero_repairs,
     stored_pointer_read_repairs,
     stored_return_value_repairs,
+    string_walk_index,
     structure_return_repairs,
     switch_case_order_repairs,
     switch_default_if_repairs,
@@ -445,6 +446,7 @@ AGENT_FAMILIES += entry_constant_local.FAMILIES + store_temp_inline.FAMILIES
 AGENT_FAMILIES += float_sum_store_fence.FAMILIES + shared_assignment_inline.FAMILIES
 AGENT_FAMILIES += call_carrier_pointer_split.FAMILIES
 AGENT_FAMILIES += collapsed_guard_lifetime_merge.FAMILIES
+AGENT_FAMILIES += string_walk_index.FAMILIES
 AGENT_FAMILIES += loop_guard_counter_compare.FAMILIES
 AGENT_FAMILIES += phase_donor_repairs.FAMILIES
 AGENT_FAMILIES += caller_save_slot_drop.FAMILIES
@@ -966,6 +968,9 @@ def _spelled(source: str, name: str, arch: str, asm: str = '', flags=(), labels=
                    # (an identical-arm guard on an unassigned local collapsed and two integer locals merged, as one child: a 74-instruction
                    # KMC audio function 60 -> 0, the collapse alone 110 and the merge alone 690; decomprepair 0.5.652)
                    collapsed_guard_lifetime_merge,
+                   # (a byte string walked by a pointer written as the index loop it came from, which moves the pointer's start after the
+                   # jump table's address: an 82-instruction KMC font routine 360 -> 0; decomprepair 0.5.653)
+                   string_walk_index,
                    # (a loop's entry guard as the counter's compare, which gives the frame an unaccessed 8-byte spill slot, with each
                    # disjoint_local_merge of the guarded text as one child: a 401-instruction KMC loader 22 -> 0; decomprepair 0.5.640)
                    loop_guard_counter_compare,
