@@ -40,3 +40,8 @@ def test_the_skill_hands_off_only_by_the_clock():
 def test_the_skill_has_a_large_function_method():
     text = (SKILL / "SKILL.md").read_text()
     assert "regions.py" in text and "Fix the frame first" in text and "region by region" in text
+
+
+def test_the_skill_names_the_grid_tool_and_its_marker_syntax():
+    text = (SKILL / "SKILL.md").read_text()
+    assert "grid.py" in text and "/*permute{*/" in text and "/*{*/" in text and "--count" in text

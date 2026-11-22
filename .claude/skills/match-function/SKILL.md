@@ -83,7 +83,7 @@ in a session (its claim belongs to the connection, so it answers HTTP 400). `jud
 The other scripts, run with that venv's python (`$UV_PROJECT_ENVIRONMENT/bin/python`): `fast_judge.py FILE.c --slug S
 --function F [--diff [--rows N|all]]` (score, and the app's differing rows: 60 by default, then a "... N more rows" line; `--rows all` shows every row; a session's worktree off an older origin/main may lack `--rows`: `git pull --rebase` there and `setup.py sync <holder>`), `passes.py FILE.c --slug S --function F` (allocation
 priorities, register preferences, scheduler orders), `prove_chain.py --slug S --function F --families a,b|all` (greedy
-chain of library families, scored), `families.py [words]` (the library's families, one line each), `regions.py` (a large function region by region, step 2),
+chain of library families, scored), `families.py [words]` (the library's families, one line each), `grid.py FILE.c --slug S --function F` (every combination of marked alternatives and statement orders, scored; step 2), `regions.py` (a large function region by region, step 2),
 `tools/learnings.py` (evidence entries).
 
 ## Connect through the Rust MCP gateway
@@ -311,6 +311,9 @@ regions that already match and the first one to fix; `--show N` prints one regio
 - **Statement order is worth a grid; declarations aren't.** When the diff is a few loads/stores in the wrong order
   (global address loads, a flag store, a byte read-modify-write), permute those 3-4 statements with `fast_judge.py`
   (a few dozen compiles, seconds): one switch case went 610 -> 420 -> 240 -> 0 that way, where reordering by eye stalled.
+  Don't edit variants by hand: mark them in the source (`/*{*/a/*|*/b/*}*/` for alternatives, `/*permute{*/ ... /*}permute*/`
+  around one statement per line) and run `grid.py FILE.c --slug S --function F` (`--count` first; it refuses over 5000
+  candidates, runs 3 judge workers, prints the top scores, `--diff`/`--out` for the best; `--base` writes the unmarked file).
   A byte global updated as `b = g; b &= ~1; g = b;` (m2c's split form) versus `g &= ~1;` changes the order too;
   decomp-repair `compound_global_update_repairs` offers both (0.5.237).
 - **A commutative op whose constant must come first** (`and $v0,$v0,$v1` with the mask in `$v0`, the target's registers
