@@ -6,6 +6,7 @@ from decomprepair import (
     aligned_allocator_request,
     aligned_stack_read,
     byte_cursor_postincrements,
+    clamp_return_local,
     counted_switch_advance,
     direct_mapped_address,
     field_snapshot_copies,
@@ -269,6 +270,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     result += measured_lifetime_shapes.variants(source, name, header, toolchain, rows)
     result += measured_scalar_updates.variants(source, name, header, toolchain, rows, asm)
     if toolchain == 'gcc-2.7.2-kmc':
+        result += clamp_return_local.variants(source, name, rows, header=header)
         result += float_delta_load_order.variants(source, name, rows, header=header)
         result += counted_switch_advance.variants(source, name, rows, header=header)
         result += oscillator_phase_hold.variants(source, name, rows, header=header)
