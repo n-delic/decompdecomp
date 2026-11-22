@@ -13880,3 +13880,10 @@ draft. Evidence is one measured improvement and synthetic cases for volatile, ov
 separated stores. The function remains unmatched.
 
 In one N64 function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, two calls to the same helper needed one argument, but the draft added an extra global pointer only to the second call. Dropping that argument reproduced the linked target exactly (score 300 to 0). The existing target-call-arity rule had required every call to need a drop; it now also offers a mixed correction when the other calls already have the same measured arity and the removed argument is a plain nonvolatile global pointer. Arity from register setup is a hypothesis that the judge verifies. Evidence: one saved example plus library and app generation tests.
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, a halfword-count lookup had one wrong branch
+destination at score 10. An explicit loop with an unsigned-short zero check and a jump to the
+shared cleanup reproduced the branch and scored 6. The remaining differences were all stack
+offsets. Replacing the existing unused two-word pad with two naturally aligned doubles restored
+the frame and scored 0. The target-guided dispatcher proposed both candidates, and the running
+app confirmed the exact match. Evidence is one real match and guarded generation regressions.
