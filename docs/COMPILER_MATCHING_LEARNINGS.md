@@ -1763,6 +1763,16 @@ let the compiler attribute those references with the ordinary instruction
 and relocation checks. A controlled 24-call fixture verifies the larger
 search and checks that a cancelled search starts no compiler probes.
 
+With IDO 7.1 at
+`-O2 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul -DNON_MATCHING`,
+a 936-byte overlay caller had matching instruction bytes but no usable
+declaration for a direct call that needed per-site loader bindings.
+Trying C89's implicit `int` declaration preserved those bytes in the
+individual compiler probes. The final object passed the exact overlay
+judge with the identified loader bindings. Other candidates still failed
+because changing the declaration or separating a data reference changed
+the emitted instructions.
+
 ### Externalizing IDO overlay constant pools and BSS can change instructions
 
 An isolated N64 replay found compiler-emitted, unnamed section references even
