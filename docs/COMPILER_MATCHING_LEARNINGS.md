@@ -14413,3 +14413,11 @@ the first register save is at 0x270, leaving room for all 50 12-byte records. Th
 repair keeps that capacity. Evidence is one measured improvement and synthetic ABI and
 operand-evidence tests. The function remains unmatched.
 In one N64 function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a word increment through a field of a larger global caused the candidate to materialize an address in a register, while the target loaded and stored the word with separate relocations. Referring to the same resolved word directly reproduced the linked target exactly (score 285 to 0). The repair checks the macro, increment, source address, both encoded target addresses and the direct alias. Evidence: one saved example and synthetic address and routing tests.
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, a rendering loop loaded an invariant
+global float after initializing its stack cursor and byte offset. The target loaded the
+float first. Capture the float as a local at the top of the guarded block and read the
+local in both loop expressions. The target-guided dispatcher improved 266 to 146 without
+changing the 50-record buffer. Reordering the other loop's matrix/pointer/constant setup
+alone stayed at 266. Evidence is a measured improvement and synthetic guard tests. The
+function remains unmatched.
