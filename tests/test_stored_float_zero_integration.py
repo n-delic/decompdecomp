@@ -57,3 +57,33 @@ void update(void *context) {
     assert 'frame.vector.words[1] = 0;' in candidate
     assert 'consume(&frame.vector.value.x);' in candidate
     assert family not in {label for label, _ in proposals(source, 'update', '', 'mips', 'ido-7.1', rows, '')}
+
+
+def test_kmc_route_can_keep_identical_zero_store_tails_separate():
+    source = '''
+void update(void *state, int arm) {
+    if (arm == 2) {
+        *((f32 *) (((char *) state) + 0x14)) = 0.0f;
+        return;
+    }
+    if (arm == 3) goto clear_again;
+    if (arm == 4) goto clear_again;
+    return;
+clear_again:
+    *((f32 *) (((char *) state) + 0x14)) = 0.0f;
+}
+'''
+    tail = [(' ', 'j update+0x2c', 'j update+0x2c'),
+            (' ', 'sw $zero, 0x14($s0)', 'sw $zero, 0x14($s0)')]
+    nop = (' ', 'nop', 'nop')
+    rows = [
+        ('i', 'j update+0x20', 'j update+0x18'), nop,
+        ('i', 'bc1f .L20', 'bc1f .L18'), *([nop] * 3),
+        *tail, *tail, nop, (' ', 'jr $ra', 'jr $ra'), nop,
+    ]
+    family = 'distinct_zero_store_tail'
+    [candidate] = [text for label, text in proposals(source, 'update', '', 'mips',
+                                                    'gcc-2.7.2-kmc', rows, '') if label == family]
+    assert 'repair_zero_padding[0x14]' in candidate
+    assert candidate.count('= 0.0f;') == 1
+    assert family not in {label for label, _ in proposals(source, 'update', '', 'mips', 'ido-7.1', rows, '')}
