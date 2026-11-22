@@ -238,6 +238,16 @@ seed they came from and keep the earlier control so the effect of a questionable
   local) with `u8` stores (an `s8` store of 0xFF is `li -1`), it was exact. The polarity of the `if` (which arm holds the
   `goto`) decides which arm is out of line: read it from the target's delay slots. Library: `join_initializer_sink`,
   `branch_polarity`.
+- **A pointer set at several arm heads sits first in every block; one pointer per arm sits beside its use.** A table
+  address that the target loads with a `lui $s0` at the entry and at each arm head (`lui $a2; lh $a2; li $a0; move $a3;
+  sw $s0; lui $s0` in the first block) is a single-set pseudo in each arm: the first scheduler places a pseudo's only set
+  late. One `base` variable assigned at every arm head is a multi-set pseudo and its `lui` comes first in each block (the
+  one remaining row difference, 1140 in a save-slot state machine). Write the continuation the arms jump to out in each
+  arm, each with a pointer of its own; cross-jumping after allocation merges the identical tails again (1140 -> 0).
+  decomp-repair `goto_run_copy` (0.5.604) copies a label's run per goto and splits the pointer by assignment web.
+- **`local_flow` declined on any `volatile` in the text** until 0.5.604, so a saved best with `*(volatile T *)&global`
+  reads had no variants from the ~40 flow-based families. Only a volatile local still declines; check
+  `local_flow.analyze(source, name)` is not None before concluding the permuter has nothing.
 - **Several changes that are each no better alone** are the normal shape of a late match. Offer the combination as
   one child, and keep non-improving children for a second step (`operand_order_pass`'s combined step).
 - **A copy that lands in the wrong register (`$v1` for `$v0`) beside a `goto blockN` join.** m2c writes `v = s;`
