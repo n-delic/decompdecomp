@@ -312,7 +312,7 @@ register-only difference, also `case_temporary_split` / `case_temporary_merge` (
 never meet merged) and `phantom_wide_local` (an unused `long long` at a block start, which breaks an allocation
 tie by moving one insn). A spilled halfword eight bytes off the target (every other slot right) is a declaration-order
 fact: `declaration_scope_sink` moves a function-level local into the one block that uses it. Also `arm_label_share`,
-`element_update_shape`, `narrow_test_share` and `phase_storage_split` (an effect spawner, 1397 to 0). They automate
+`element_update_shape`, `narrow_test_share` and `phase_storage_split` (an effect spawner, 1397 to 0). A word parameter read only through byte masks is a `u8` parameter (its copy is placed after the body's first statements), a `((u16) x) >> 16` is the constant 0, an id kept from `x >> 16` is a `u16` local, and a clamp whose range test is computed in the block before its sign test keeps the compare out of the hoisted copy's way (`narrow_clamp_chain`, a key/velocity dispatch, 500 to 0). They automate
 subsets of these observations, not the complete historical search. Exact results do not prove
 original variable names, types or source spelling. See `docs/COMPILER_MATCHING_LEARNINGS.md`.
 

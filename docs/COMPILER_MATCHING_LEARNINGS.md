@@ -17038,6 +17038,46 @@ Edit list (score after each, from the saved best; "alone" is the edit applied to
   repairs, the beam (`draft_repairs.variants`) and `deep_permuter._local_proposals`, and in `AGENT_FAMILIES`;
   `tests/test_effect_spawner_families.py` checks all three. Not covered: the declaration moves only into a block that holds
   every reference, and the label share only for sibling arms of one `if`.
+
+### KMC GCC 2.7.2: an N64 key/velocity dispatch, 500 to 0 in four edits (decomprepair 0.5.583)
+
+A 231-instruction N64 sound-engine function (`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`: a packed word whose top bits
+select one of four paths, a level clamp, a key and a velocity remapped through a table, three callees, an inline helper)
+stood at 500. The saved best differed from the target in the prologue's order of register saves and copies (`sw $s5;
+move $s5,$a1` ahead of `sw $s6; srl $s6,$s3,16`), one branch layout in the velocity clamp, and nothing else. Controlled
+result on one function (the exact judge in-process, no permuter run). The compiler explanations are hypotheses from
+`cc1 -dj -dg -dS -dR -dd` dumps and the judge's rows, not confirmed in the compiler source.
+
+Edit list (score after each, from the saved best; "alone" is the edit applied to the saved best by itself):
+
+| step | edit | alone | cumulative | what it changes |
+| --- | --- | --- | --- | --- |
+| 1 | `u32 id = ((unsigned short) packed) >> 16;` as `packed >> 16;` | 555 (worse) | 555 | the cast dropped the half the shift keeps, so the id was the constant 0 and its register held `move $s6,$zero` |
+| 2 | the key parameter `s32` read as `key & 0xff` / `& 0x7f` as `u8 key` (full-byte masks dropped) and the helper's `s32 key` as `u8` | 1040 / 675 | 380 | a narrow parameter's copy is made after the body's first statements, not at the entry: the key's `move $s5,$a1` moves behind the velocity's; with the helper left at `s32` the helper's copy was a third pseudo (`andi $s2,$s5,255`, 745) |
+| 3 | `u32 id = packed >> 16;` as `u16 id` | 380 -> 260 | 260 | with a halfword id its `sw $s6; srl $s6` pair is scheduled before the key's pair, as in the target |
+| 4 | the clamp's range test `adjusted < 0x80` computed into an `s32` flag before the sign test, the chain written `if (a < 0) v = 0; else if (!flag) v = 0x7f; else v = a;` | 240 | 0 | see below |
+
+- Step 4 (hypothesis): with the test inside the chain, jump.c hoists a copy of one arm (`v = a`) above the compare
+  (`x = b; if (test) x = a`) and the backward-scheduling first pass puts that copy before the `slt`; the post-reload cse
+  then reads the copy's register (`move $s4,$v1; slti $v0,$s4,0x80; beql ...`, rows 108-114). The target computed
+  `slti $v0,$v1,0x80` before the sign test's `bgez` (which took it in its delay slot) and closed the clamp with
+  `bnez $v0,L; move $s4,$v1; addiu $s4,$zero,0x7f`. A flag computed in the previous block keeps the compare out of the
+  clamp's block, and reorg then finds the same delay slots.
+- Failed on the way, each leaving the clamp rows unchanged or worse (the register rows are the same in all): 84 spellings
+  of the clamp (ternary, `>=`/`<=`/`!`/reversed comparisons, default-first, `goto` joins, `do { v = 0x7f; } while (0)`
+  around the default, a flag declared elsewhere), `(u16)`/`(s16)`/`& 0xffff` barriers around the copy (these split the
+  copy from the compare, but leave an `andi`: 200), the clamp as an inline helper (980-1265, it also moved the
+  velocity/key registers), and for the prologue the key copied in the body from a renamed parameter (the copy lands
+  right, but the key then outranks the velocity in the allocation (`3*9/139` against `3*10/161`) and the two saved
+  registers swap, 620).
+- Library: decomprepair 0.5.583 `narrow_param_clamp_repairs`: `halfword_shift_cast`, `halfword_local_width`,
+  `mask_parameter_narrow` (with its helper as a second child), `clamp_range_flag`, and `narrow_clamp_chain`, the first
+  rewrite of each applied in turn. From the saved best the chain child scores 0 in the judge-worker (no permuter run);
+  the single children score 555, 1040 and 675, 240. They are in the draft repairs, the beam (`draft_repairs.variants`),
+  `deep_permuter._local_proposals` and `AGENT_FAMILIES`; `tests/test_narrow_param_clamp_wiring.py` checks all three. Not
+  covered: the cast shape only for `>> 16`, the narrowing only for a parameter read through masks of at most a byte (or
+  passed whole to a static helper that masks it), and the flag only for the three-arm clamp whose sign test is `x < 0`.
+
 ## Scoring: a different program costs more than a different schedule (`scoring.PENALTY_MEANING`, score version 2)
 
 Evidence level: measured on one N64 game's history (KMC GCC 2.7.2), every attempt recompiled with the app's judge

@@ -434,6 +434,9 @@ class Search(Permuter):
                   (L + 'narrow_test_share_repairs.variants', (source, name)),
                   (L + 'declaration_scope_sink_repairs.variants', (source, name)),
                   (L + 'allocation_lever_repairs.field_store_swaps', (source, name))]
+        # a 231-instruction key/velocity dispatch (decomp-repair 0.5.583): a halfword cast shifted out, the halfword id
+        # local, a byte-masked parameter narrowed with its helper, a range flag before a clamp, and the chain of them
+        calls.append((L + 'narrow_param_clamp_repairs.variants', (source, name)))
         # Existing saved drafts can still use their original address-based entry name.
         calls.append((L + 'scoped_byte_read_call.variants', (source, name, arch, asm, header)))
         if arch == 'mips' and (vram := dict(fn).get('vram')) is not None:
