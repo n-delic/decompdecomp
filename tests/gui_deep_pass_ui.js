@@ -344,7 +344,7 @@ vm.runInContext(source.slice(source.indexOf("let deepSweepFollowing"), source.in
 // Search controls occur once, in the settings drawer’s movable fieldset.
 const html=fs.readFileSync('src/decompnet/app/static/index.html','utf8');
 const panel=html.slice(html.indexOf('id="deepSweepPanel"'),html.indexOf('id="deepSweepAttention"'));
-for (const id of ['deepSweepMinutes','deepSweepVariants','deepSweepProfiles','deepSweepThreads','deepSweepFunctionThreads','deepSweepRepeat','deepSweepLoop']) {
+for (const id of ['deepSweepMinutes','deepSweepVariants','deepSweepProfiles','deepSweepRankCandidates','deepSweepThreads','deepSweepFunctionThreads','deepSweepRepeat','deepSweepLoop']) {
   assert.equal((panel.match(new RegExp('id="'+id+'"','g')) || []).length,1,`${id} must occur exactly once`);
 }
 assert.match(panel,/<fieldset class="local-search-options"[\s\S]*?id="deepSweepProfiles"[^>]*min="1"[^>]*max="16"[\s\S]*?<\/fieldset>/);

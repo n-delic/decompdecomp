@@ -129,7 +129,7 @@ class Search(Permuter):
         self.started_at = time.monotonic()
         self.seconds = min(minutes*60,getattr(log,'maximum_seconds',minutes*60))
         self.deadline = self.started_at+self.seconds
-        self.limit = max_variants
+        self.limit = self.random_trial_limit = max_variants
         self.log = log
         self.tested = self.skipped = self.visited = self.rejected = 0
         from .search_efficiency import Measurements
@@ -1933,7 +1933,7 @@ def run(net, slug, name, minutes, max_variants, log, *args, **kwargs):
     return result
 
 
-def _full_run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, threads_per_function=1, maximum_throughput=False, compile_slots=0, *, expanded_budget=False):
+def _full_run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, threads_per_function=1, maximum_throughput=False, compile_slots=0, *, expanded_budget=False, rank_candidates=False):
     from .deep_profiles import validate as validate_profiles
     from .deep_sweep import looking
 
@@ -1996,14 +1996,16 @@ def _full_run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, 
                                 'improvements': int(outcome in ('match', 'improved')),
                                 'reason': 'Matched from a same-game twin' if outcome == 'match' else 'Candidate limit reached',
                                 'throughput': pool.metrics.snapshot()}
+        order = {'rank_candidates': True} if rank_candidates else {}
         remaining = max_variants - tried_twin
         if proj is not None and remaining > 1 and twins.has_open_deep_twin(proj, fn):
             remaining -= 1  # Reserve a destination compile if this draft improves.
         if threads_per_function > 1:
             from .deep_parallel import run as parallel
-            result = parallel(net, slug, name, minutes, remaining, log, compiler_profiles, threads_per_function)
+            result = parallel(net, slug, name, minutes, remaining, log, compiler_profiles, threads_per_function, **order)
         else:
-            result = _run(net, slug, name, minutes, remaining, log, compiler_profiles)
+            result = _run(net, slug, name, minutes, remaining, log, compiler_profiles, **order)
+        result['rank_candidates'] = rank_candidates
         result['tested'] += tried_twin
         if proj is not None and not result['matched'] and result['tested'] < max_variants:
             with looking(net):
@@ -2033,7 +2035,7 @@ def _full_run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, 
 @buffered
 @batched
 @claim_stalls.snapshot_rules  # one function's search is one operation: its lane fingerprints the repair code once
-def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, lane=None):
+def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, lane=None, rank_candidates=False):
     """Visit the supported local repairs, then spend the remaining budget on random permutations."""
     proj, fn = validate_function(net, slug, name)
     sweeps = getattr(net, 'deep_sweeps', None) if lane is None else None
@@ -2046,6 +2048,9 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
         raise NetworkError('Multiple compiler profiles require a ROM project; imported builds own their compiler settings.')
     search = Search(net, minutes, max_variants, log, fn)
     search.compile_pool = getattr(log, 'compile_pool', None)
+    if rank_candidates:
+        from .deep_candidate_order import for_function
+        search.candidate_order = for_function(proj, fn, log)
     if lane is not None:
         search.deadline = lane.deadline
         search.random_salt = f"-lane-{lane.index}"
@@ -2282,6 +2287,7 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
             if deep_handoff.save(net, proj, current, search.winner_source, search.winner_diff[0]):
                 log('Saved the measured residual for the next agent claim.')
     result['compiler_profiles'] = compiler_profiles
+    result['rank_candidates'] = rank_candidates
     if sweeps:
         sweeps.completed(slug, fn, minutes, max_variants, result, build_scope)
     return result

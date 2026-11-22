@@ -2647,7 +2647,7 @@ function renderDeepImprovementTable(status, resultHost) {
 }
 function renderDeepOptionsSummary() {
   const minutes = Number($("deepSweepMinutes").value) || 5;
-  $("deepSweepOptionsSummary").textContent = `${minutes} min per function${$("deepSweepMaximum").checked ? " · maximum CPU" : ""}${$("deepSweepLoop").checked ? " · looping" : ""}`;
+  $("deepSweepOptionsSummary").textContent = `${minutes} min per function${$("deepSweepMaximum").checked ? " · maximum CPU" : ""}${$("deepSweepRankCandidates").checked ? " · CPU ranking" : ""}${$("deepSweepLoop").checked ? " · looping" : ""}`;
 }
 function setDeepRunVisibility(running) {
   $("deepSweepSettings").disabled = running;
@@ -2803,6 +2803,7 @@ async function renderDeepSweep() {
       $("deepSweepThreads").value = status.threads || "";
       $("deepSweepFunctionThreads").value = status.threads_per_function || 1;
       $("deepSweepMaximum").checked = !!status.maximum_throughput;
+      $("deepSweepRankCandidates").checked = !!status.rank_candidates;
       $("deepSweepCompileSlots").value = status.compile_slots || "";
       $("deepSweepRepeat").checked = false;
       $("deepSweepLoop").checked = !!status.loop;
@@ -2924,7 +2925,7 @@ async function startDeepSweep() {
   let job = null;
   const runAgain = deepSweepSnapshot?.has_activity && !deepSweepSnapshot.queue_left && !!deepSweepSnapshot.queue_done;
   try {
-    const result = await api("/api/permuter/pass", {method:"POST", body:{slug, action:"start", minutes:Number($("deepSweepMinutes").value), max_variants:Number($("deepSweepVariants").value), compiler_profiles:Number($("deepSweepProfiles").value), repeat:$("deepSweepRepeat").checked || runAgain, loop:$("deepSweepLoop").checked, threads:Number($("deepSweepThreads").value) || 0, threads_per_function:Number($("deepSweepFunctionThreads").value), maximum_throughput:$("deepSweepMaximum").checked, compile_slots:Number($("deepSweepCompileSlots").value) || 0}});
+    const result = await api("/api/permuter/pass", {method:"POST", body:{slug, action:"start", minutes:Number($("deepSweepMinutes").value), max_variants:Number($("deepSweepVariants").value), compiler_profiles:Number($("deepSweepProfiles").value), repeat:$("deepSweepRepeat").checked || runAgain, loop:$("deepSweepLoop").checked, threads:Number($("deepSweepThreads").value) || 0, threads_per_function:Number($("deepSweepFunctionThreads").value), maximum_throughput:$("deepSweepMaximum").checked, rank_candidates:$("deepSweepRankCandidates").checked, compile_slots:Number($("deepSweepCompileSlots").value) || 0}});
     job = result.job;
     if (S.slug === slug) renderDeepQueueState(result);
   } catch (error) {

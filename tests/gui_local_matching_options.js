@@ -41,8 +41,9 @@ vm.runInContext(source.slice(source.indexOf("function openDeepOptions"), source.
 vm.runInContext(source.slice(source.indexOf("function renderDeepOptionsSummary"), source.indexOf("function renderDeepQueueState")), ctx);
 const settings = get("deepSweepSettings"), home = get("deepSweepSettingsHome");
 home.hidden = true; home.append(settings);
-const minutes = get("deepSweepMinutes"), maximum = get("deepSweepMaximum"), loop = get("deepSweepLoop");
-for (const input of [minutes,maximum,loop]) {input.isInput = true; settings.append(input);}
+const minutes = get("deepSweepMinutes"), maximum = get("deepSweepMaximum"),
+  rank = get("deepSweepRankCandidates"), loop = get("deepSweepLoop");
+for (const input of [minutes,maximum,rank,loop]) {input.isInput = true; settings.append(input);}
 minutes.value = "5";
 get("dialog").append(get("dialogBody"));
 get("dialog").hidden = get("drawer").hidden = true;
@@ -52,9 +53,9 @@ const open = () => {trigger.focus(); ctx.openDeepOptions(); assert.equal(setting
 const restored = () => {assert.equal(settings.parentNode, home); assert.equal(get("dialog").hidden,true); assert.equal(minutes.value,"12"); assert.equal(active,trigger);};
 open();
 assert.equal(active,minutes);
-minutes.value = "12"; maximum.checked = loop.checked = true; settings.oninput();
+minutes.value = "12"; maximum.checked = rank.checked = loop.checked = true; settings.oninput();
 assert.equal(settings.dataset.editedSlug,"game");
-assert.equal(get("deepSweepOptionsSummary").textContent,"12 min per function · maximum CPU · looping");
+assert.equal(get("deepSweepOptionsSummary").textContent,"12 min per function · maximum CPU · CPU ranking · looping");
 get("deepSweepOptionsDone").onclick(); restored();
 open(); minutes.valid = false; get("deepSweepOptionsDone").onclick();
 assert.equal(get("dialog").hidden,false,"invalid settings keep the drawer open");

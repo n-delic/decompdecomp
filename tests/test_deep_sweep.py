@@ -603,9 +603,9 @@ def test_status_reuses_scope_checks_until_header_or_pass_changes(sweep, monkeypa
     obj.run('game', 1, 10, Log())
     calls = []
     original = deep_sweep.signature
-    def measured(*args):
+    def measured(*args, **kwargs):
         calls.append(1)
-        return original(*args)
+        return original(*args, **kwargs)
     monkeypatch.setattr(deep_sweep, 'signature', measured)
     obj.status('game')
     first = len(calls)
@@ -1237,3 +1237,23 @@ def test_new_focused_rule_retries_only_the_matching_completed_pass(sweep, monkey
     assert obj.run('game', 1, 10, Log())['functions_tested'] == 1
     assert calls == ['f0']
     assert obj.run('game', 1, 10, Log())['functions_tested'] == 0
+
+
+def test_cpu_ranking_reopens_completed_sweep_and_reaches_search(sweep, monkeypatch):
+    obj, net, _, _ = sweep
+    assert obj.run('game', 1, 10, Log())['functions_tested'] == 2
+    obj.save('game', obj.config('game') | {'rank_candidates': True})
+    assert obj.history('game', net._function('f0', 'game'))['stale']
+    assert obj.control('game')['rank_candidates'] is True
+    calls = []
+
+    def search(net, slug, name, minutes, variants, log, *, rank_candidates):
+        calls.append((name, rank_candidates))
+        return {'tested': 1, 'matched': False, 'rank_candidates': rank_candidates}
+
+    monkeypatch.setattr(deep_permuter, 'run', search)
+    assert obj.run('game', 1, 10, Log())['functions_tested'] == 2
+    assert calls == [('f0', True), ('f1', True)]
+    assert obj.run('game', 1, 10, Log())['functions_tested'] == 0
+    with pytest.raises(NetworkError, match='CPU constant ranking'):
+        obj.start('game', rank_candidates='yes')

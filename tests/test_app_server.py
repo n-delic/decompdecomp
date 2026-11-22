@@ -1935,9 +1935,9 @@ def test_deep_sweep_routes_validate_start_stop_and_status(app, monkeypatch):
     monkeypatch.setattr(net.deep_sweeps, 'reset_metrics', lambda slug: {'reset':slug})
     assert client.post('/api/permuter/pass', json={'slug':'example','action':'reset-metrics'}, headers={'X-Decomp':'1'}).json() == {'reset':'example'}
     response = client.post('/api/permuter/pass', json={'slug':'example','minutes':7,'max_variants':99,'repeat':True}, headers={'X-Decomp':'1'})
-    assert response.json()['job'] == 'sweep' and calls == [('example',7,99,True,0,1,False,1,False,0)]
-    client.post('/api/permuter/pass', json={'slug':'example','threads':2,'threads_per_function':4}, headers={'X-Decomp':'1'})
-    assert calls[-1] == ('example',5,10000,False,2,1,False,4,False,0)
+    assert response.json()['job'] == 'sweep' and calls == [('example',7,99,True,0,1,False,1,False,0,False)]
+    client.post('/api/permuter/pass', json={'slug':'example','threads':2,'threads_per_function':4,'rank_candidates':True}, headers={'X-Decomp':'1'})
+    assert calls[-1] == ('example',5,10000,False,2,1,False,4,False,0,True)
     assert not client.post('/api/permuter/pass', json={'slug':'example','action':'stop'}, headers={'X-Decomp':'1'}).json()['enabled']
     assert client.post('/api/permuter/pass', json={'slug':'example','repeat':'yes'}, headers={'X-Decomp':'1'}).status_code == 400
     assert client.post('/api/permuter/pass', json={'slug':'example','action':'unknown'}, headers={'X-Decomp':'1'}).status_code == 400

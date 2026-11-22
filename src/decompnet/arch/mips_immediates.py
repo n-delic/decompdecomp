@@ -47,3 +47,17 @@ def changes(left, right, relocated, big):
         return {}, {}
     return changes, offset_ops
 
+
+
+def split_immediates(code: bytes, big_endian: bool, relocated: set[int]) -> set[int]:
+    """Read adjacent LUI/ORI constants built in one register, excluding relocations."""
+    order = 'big' if big_endian else 'little'
+    words = [int.from_bytes(code[offset:offset+4], order) for offset in range(0, len(code) - 3, 4)]
+    constants = set()
+    for index, (upper, lower) in enumerate(zip(words, words[1:])):
+        register = (upper >> 16) & 31
+        if (upper >> 21 == 0x0f << 5 and register
+                and lower >> 16 == (0x0d << 10 | register << 5 | register)
+                and index * 4 not in relocated and (index + 1) * 4 not in relocated):
+            constants.add(((upper & 0xffff) << 16) | (lower & 0xffff))
+    return constants

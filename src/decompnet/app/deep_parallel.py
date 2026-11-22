@@ -25,7 +25,7 @@ class Lane:
             self.ready.set()
 
 
-def run(net, slug, name, minutes, variants, log, profiles, count):
+def run(net, slug, name, minutes, variants, log, profiles, count, *, rank_candidates=False):
     from . import deep_permuter, workers
     proj, before = deep_permuter.validate_function(net, slug, name)
     from ..candidate_scope import key
@@ -85,7 +85,8 @@ def run(net, slug, name, minutes, variants, log, profiles, count):
                     check()
             check()
             allowance = variants//count + (index < variants % count)
-            return deep_permuter._run(net, slug, name, minutes, allowance, output, profiles, lane=lane)
+            order = {'rank_candidates': True} if rank_candidates else {}
+            return deep_permuter._run(net, slug, name, minutes, allowance, output, profiles, lane=lane, **order)
         except deep_permuter.SearchLimit as error:
             return dict(updates.get(index, {}), reason=str(error))
         except NetworkError:

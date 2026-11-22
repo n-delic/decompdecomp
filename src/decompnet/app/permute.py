@@ -825,7 +825,7 @@ class Permuter:
                             random_safety.checkpoint(self.net, fn)
                             if st.stop.is_set() or time.monotonic() >= deadline or not self._random_budget_available():
                                 raise GenerationStopped()
-                        batch = self._stream_variants(gen.chunks(job, check_generation), agent, proj, fn, fork)
+                        batch = self._stream_variants(gen.chunks(job, check_generation), agent, proj, fn, fork, parent=base)
                     else:
                         batch = gen.batch(job)
                     if batch is None:  # C it can't read: the simple rewrites can still try
@@ -845,7 +845,7 @@ class Permuter:
                     if misses >= REWRITE_MISSES:
                         break
                     written = list(dict.fromkeys(cand for cand in written if cand))
-                    batch = self._stream_variants((chunk for chunk in [written]), agent, proj, fn, fork) if written else []
+                    batch = self._stream_variants((chunk for chunk in [written]), agent, proj, fn, fork, parent=base) if written else []
                 for cand in batch:
                     if cand is None or time.monotonic() >= deadline or st.stop.is_set() or not self._random_budget_available():
                         break
@@ -917,9 +917,12 @@ class Permuter:
                 st.holding(fn["name"], False)
                 self._let_go(agent, fn)
 
-    def _stream_variants(self, chunks, agent, proj, fn, fork):
+    def _stream_variants(self, chunks, agent, proj, fn, fork, *, parent=None):
+        rank = getattr(self, 'candidate_order', None)
         try:
             for chunk in chunks:
+                if rank is not None:
+                    chunk = rank(parent, chunk)
                 allowance = self._random_trials_remaining()
                 sources = [m2cfix.static_helpers(cand) for cand in chunk[:allowance]]
                 if hasattr(self, '_prime_trials'):

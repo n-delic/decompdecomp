@@ -839,6 +839,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Consumed-constant forward switch repair | ✓ proven C32 GCC ROM profiles | — real-profile validation planned | — invocation/validation planned | — | — | — invocation/validation planned | — | — external invocation proof planned | — external invocation proof planned | — | — external invocation proof planned | — external invocation proof planned |
 | Branch integer-one staging / measured loop combinations | ✓ proven C32 / known frame | — profile validation planned | — profile validation planned | — | — | — profile validation planned | — | — frame/invocation proof planned | — frame/invocation proof planned | — | — frame/invocation proof planned | MIPS known-frame lane; invocation/other frame proof planned |
 | Permuter on near misses | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Experimental CPU constant ranking in Deep Permuter | ✓ MIPS pairs | ✓ MIPS pairs | ✓ MIPS pairs | — | — | ✓ MIPS pairs | — | — | — | — | — | ✓ with MIPS target bytes |
 | Agents read compiler passes and allocation priorities (`compiler_passes`) | ✓ GCC (IDO —: no pass dumps) | — GCC unchecked | — GCC unchecked | — | — | — GCC unchecked | — | — Metrowerks prints none | — MSVC prints none | — | — | — own build |
 | Agents grid statement orders and edit combinations with the exact judge (`score_permutations`) | ✓ ROM | ✓ ROM | ✓ ROM | — | — | ✓ ROM | — | — judge worker is ROM-only | — judge worker is ROM-only | — | — judge worker is ROM-only | — judge worker is ROM-only |
 | Hand-written assembly set aside | ✓ | ✓ | ✓ | ✓ (`sc` stubs) | — | ✓ | ✓ (`_call_via` helpers, `svc`/`swi` stubs) | ✓ | Visual C++'s exception-handling stubs (64-bit: the funclets its exception data names) | Visual C++'s exception-handling stubs | BIOS call stubs, pieces of functions | MIPS, PowerPC, ARM's BIOS stubs and pieces of functions |
@@ -919,6 +920,9 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Verified objdiff references for public Splat projects | — | — | — | — | — | — | — | — | — | — | — | ✓ N64 and PS1 simple code splits; — overlays and nested builds |
 | Find a game in a local library by declared SHA-1 | — | — | — | — | — | — | — | — | — | — | — | ✓ N64, including supported original ROM versions and byte orders; exact-file splat; — dtk, configure and whole-disc PS |
 | Rooms: decompile together | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+
+Ranking currently reads adjacent MIPS `lui`/`ori` pairs. Validate match rates on real near-misses and add
+other processor readers where target constants can reliably guide candidate order.
 
 Git export sync stages additions and updates only files it owns, validates each C candidate and the full rebuilt image, then publishes commit-ready files. It preserves build scripts and existing hand-maintained source, lists skipped candidates, supports cancellation and detects concurrent checkout changes. The N64 adapter was exercised on a private racing-project copy; shared export and imported-mode behavior has synthetic Git/build coverage. Custom layouts, including the GBA exporter, need an adapter before they can use this action.
 

@@ -1322,6 +1322,13 @@ the host. Compiler-setting changes remain on the host. A disconnected or refusin
 host stops the affected search; its claims can expire normally if release cannot
 reach it. No AI tokens are used by these searches.
 
+In the project-wide Deep Permuter's **Settings**, **CPU constant ranking (experimental)**
+tries random edits with newly introduced constants closer to the target's MIPS `lui`/`ori` pairs
+earlier within each generated batch. It is off by default and saved per project when a pass
+starts. Switching it makes completed open-function passes eligible under the new order.
+Verified candidate history remains available. Functions without supported target evidence
+use the usual order, and every match still passes the ordinary judge.
+
 For a longer search of one function, open its drawer and expand **Deep permuter · this function**.
 Choose a time limit and maximum candidate compiles, then select **Run deep permuter**.
 

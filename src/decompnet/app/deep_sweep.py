@@ -37,11 +37,12 @@ def looking(net):
     return progress.view() if progress is not None else nullcontext()
 
 
-def signature(net, proj, fn, minutes, variants, compiler_profiles=None, shared=None, residual=None):
+def signature(net, proj, fn, minutes, variants, compiler_profiles=None, shared=None, residual=None, *, rank_candidates=None):
     sweeps = getattr(net, 'deep_sweeps', None)
-    count = compiler_profiles
-    if count is None:
-        count = sweeps.config(proj['slug']).get('compiler_profiles', 1) if sweeps else 1
+    cfg = sweeps.config(proj['slug']) if sweeps and (compiler_profiles is None or rank_candidates is None) else {}
+    count = compiler_profiles if compiler_profiles is not None else cfg.get('compiler_profiles', 1)
+    if rank_candidates is None:
+        rank_candidates = cfg.get('rank_candidates', False)
     rules = shared.get('deep_rules') if shared is not None else None
     if rules is None:
         rules = claim_stalls.repair_rules()
@@ -50,6 +51,8 @@ def signature(net, proj, fn, minutes, variants, compiler_profiles=None, shared=N
     target = hashlib.sha256(repr(('', candidate_scope.key(net, proj, fn, shared),
                                   targeted_retry.general_rules(rules))).encode()).hexdigest()
     inputs = ('deep-pass-profiles-v1', count, target, fn['best_source'], minutes, variants)
+    if rank_candidates:
+        inputs += ('cpu-constant-order-v1',)
     fork = shared['fork'] if shared is not None and 'fork' in shared else net.fork_slug(proj['slug'])
     if not fork and (stamp := targeted_retry.stamp(proj, fn, residual, rules)):
         inputs += (stamp,)
@@ -200,7 +203,7 @@ class Sweeps:
         with looking(self.net):  # (its settings row: no saved files needed)
             proj = self.net.project_row(slug)
         row = self._store(slug).one('SELECT value FROM settings WHERE key=?', f'deep-sweep:{proj["id"]}')
-        return {'threads': 0, 'threads_per_function': 1, 'compiler_profiles': 1, 'loop': False} | (json.loads(row['value']) if row else {'enabled': False, 'minutes': 5, 'max_variants': 10000})
+        return {'threads': 0, 'threads_per_function': 1, 'compiler_profiles': 1, 'loop': False, 'rank_candidates': False} | (json.loads(row['value']) if row else {'enabled': False, 'minutes': 5, 'max_variants': 10000})
 
     def save(self, slug, cfg):
         with looking(self.net):
@@ -248,8 +251,9 @@ class Sweeps:
                              'new_percent_text': scoring.percent_text(row['new_percent'])} for row in rows]
 
     def attention(self, proj):
+        cfg = self.config(proj['slug'])
         return self._store(proj['id']).read_cache.get(('deep-attention', proj['id']),
-            (self.config(proj['slug']).get('compiler_profiles',1), self._store(proj['id']).read_version('inputs', proj['id']), self._store(proj['id']).read_version('passes', proj['id']), claim_stalls.repair_rules()),
+            (cfg['compiler_profiles'], cfg['rank_candidates'], self._store(proj['id']).read_version('inputs', proj['id']), self._store(proj['id']).read_version('passes', proj['id']), claim_stalls.repair_rules()),
             lambda: self._attention(proj), ttl=QUEUE_CACHE_SECONDS if self.net.fork_slug(proj['slug']) else None)
 
     def _attention(self, proj):
@@ -263,13 +267,14 @@ class Sweeps:
         from .deep_room import unavailable
         issues = []
         shared = candidate_scope.batch_context(self.net, proj)
-        profiles = self.config(proj['slug']).get('compiler_profiles', 1)
+        cfg = self.config(proj['slug'])
+        profiles = cfg['compiler_profiles']
         for fn in rows:
             if unavailable(fn['pass_error']):
                 continue
             if not fn['best_source'] or fn['best_score'] is None:
                 continue
-            if fn['pass_scope'] != signature(self.net, proj, fn, fn['pass_minutes'], fn['pass_variants'], profiles, shared, fn['pass_residual']):
+            if fn['pass_scope'] != signature(self.net, proj, fn, fn['pass_minutes'], fn['pass_variants'], profiles, shared, fn['pass_residual'], rank_candidates=cfg['rank_candidates']):
                 continue
             error = fn['pass_error'] or 'The search stopped without recording an error message.'
             lower = error.lower()
@@ -366,7 +371,7 @@ class Sweeps:
                     continue
                 if (row['best_source'] and row['best_score'] is not None
                         and row['pass_minutes'] == cfg['minutes'] and row['pass_variants'] == cfg['max_variants']
-                        and row['pass_scope'] == signature(self.net, proj, row, cfg['minutes'], cfg['max_variants'], cfg.get('compiler_profiles', 1), shared, row['pass_residual'])):
+                        and row['pass_scope'] == signature(self.net, proj, row, cfg['minutes'], cfg['max_variants'], cfg['compiler_profiles'], shared, row['pass_residual'], rank_candidates=cfg['rank_candidates'])):
                     if row['pass_state'] == 'completed':
                         if row['status'] == 'open':
                             done_open += 1
@@ -377,7 +382,7 @@ class Sweeps:
             return done_open, done_matched, rotated, blocked
         done_open, done_matched, rotated, blocked = self._store(slug).read_cache.get(
             ('deep-queue', proj['id']),
-            (cfg['minutes'], cfg['max_variants'], cfg.get('compiler_profiles',1), self._store(slug).read_version('inputs', proj['id']), self._store(slug).read_version('passes', proj['id']), claim_stalls.repair_rules()),
+            (cfg['minutes'], cfg['max_variants'], cfg['compiler_profiles'], cfg['rank_candidates'], self._store(slug).read_version('inputs', proj['id']), self._store(slug).read_version('passes', proj['id']), claim_stalls.repair_rules()),
             count_queue, ttl=QUEUE_CACHE_SECONDS if self.net.fork_slug(slug) else None)
         job = self.jobs.jobs.get(current.get('job'), {})
         recipes, measurements, wins = self.recipes(proj['id']), self.measurements(proj['id']), self.recipe_wins(proj['id'])
@@ -392,11 +397,13 @@ class Sweeps:
                                    'completed': completed, 'errors': errors, 'attention': attention, 'state': job.get('state', 'idle'), **current,
                                    'progress': job.get('progress', {}), 'error': job.get('error')}
 
-    def start(self, slug, minutes=5, max_variants=10000, repeat=False, threads=0, compiler_profiles=1, loop=False, threads_per_function=1, maximum_throughput=False, compile_slots=0):
+    def start(self, slug, minutes=5, max_variants=10000, repeat=False, threads=0, compiler_profiles=1, loop=False, threads_per_function=1, maximum_throughput=False, compile_slots=0, rank_candidates=False):
         throughput = deep_throughput.options(maximum_throughput, compile_slots)
         from . import deep_profiles
         if not isinstance(loop, bool):
             raise NetworkError('Loop indefinitely must be true or false.')
+        if not isinstance(rank_candidates, bool):
+            raise NetworkError('CPU constant ranking must be true or false.')
         deep_profiles.validate(compiler_profiles)
         from .deep_parallel import validate_threads
         validate_threads(threads_per_function)
@@ -420,7 +427,7 @@ class Sweeps:
                                "(SELECT id FROM functions WHERE project_id=? AND status='open')", (pid,))
                     deep_source_recovery.reset(db, pid)
             self.save(slug, {'runtime_seconds': self.config(slug).get('runtime_seconds', 0),
-                             'enabled': True, 'minutes': minutes, 'max_variants': max_variants, 'threads': threads, 'threads_per_function': threads_per_function, 'compiler_profiles': compiler_profiles, 'metrics_started': True, 'loop': loop, **throughput})
+                             'enabled': True, 'minutes': minutes, 'max_variants': max_variants, 'threads': threads, 'threads_per_function': threads_per_function, 'compiler_profiles': compiler_profiles, 'metrics_started': True, 'loop': loop, 'rank_candidates': rank_candidates, **throughput})
             job = self.jobs.start('deep-permutation-pass', lambda log: self.timed_run(slug, minutes, max_variants, log, threads, loop),
                                   project=slug, cancel_message='Deep pass stopped. Verified improvements and completed passes are saved.')
             self.active[slug] = {'job': job}
@@ -466,7 +473,7 @@ class Sweeps:
         proj = self.net.project_row(slug)
         stable = build_scope == candidate_scope.key(self.net, proj, before)
         self.record(fresh, signature(self.net, proj, fresh, minutes, variants, result.get('compiler_profiles'),
-                                     None, result.get('targeted_retry')),
+                                     None, result.get('targeted_retry'), rank_candidates=result.get('rank_candidates')),
                     'completed' if stable else 'pending', minutes, variants, result)
 
     def reopen_without_randomizer(self, slug) -> int:
@@ -588,7 +595,8 @@ class Sweeps:
                 total = len(identities)
                 scanned = submitted = 0
                 shared = {'contexts': {}}
-                profiles = self.config(slug).get('compiler_profiles', 1)
+                cfg = self.config(slug)
+                profiles = cfg['compiler_profiles']
                 activity = stats['activity']
                 activity.prepare(scanned, total, candidates, waiting)
 
@@ -659,7 +667,7 @@ class Sweeps:
                                 continue
                             # Never-tried/pending candidates need no costly historical-scope comparison.
                             if (fn['pass_state'] == 'error' or (not loop and fn['pass_state'] == 'completed')) and fn['pass_scope'] == signature(
-                                    self.net, proj, fn, minutes, variants, profiles, shared, fn['pass_residual']):
+                                    self.net, proj, fn, minutes, variants, profiles, shared, fn['pass_residual'], rank_candidates=cfg['rank_candidates']):
                                 continue
                         candidates.append(fn['name'])
                         if slug in self.net.links and (fn['claim_expires'] or 0) > time.time():
@@ -736,10 +744,13 @@ class Sweeps:
         function_log.check_cancel = log.check_cancel
         function_log.progress = progress
         try:
-            count = self.config(slug).get('compiler_profiles', 1)
-            per_function = self.config(slug).get('threads_per_function', 1)
+            cfg = self.config(slug)
+            count = cfg.get('compiler_profiles', 1)
+            per_function = cfg.get('threads_per_function', 1)
             options = ({'compiler_profiles': count, 'threads_per_function': per_function} if per_function > 1 else
                        {} if count == 1 else {'compiler_profiles': count})
+            if cfg.get('rank_candidates', False):
+                options['rank_candidates'] = True
             if expanded_budget:
                 options['expanded_budget'] = True
             lanes = getattr(log, 'deep_lanes', None)
