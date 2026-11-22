@@ -291,6 +291,8 @@ class RoomMixin:
                      console.function_status(tail), json.dumps(meta) if meta else None)).lastrowid
                 db.execute("INSERT OR REPLACE INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
                            (pid, f["name"], f["vram"], tail.size, "func"))
+                from ..boundary_repairs import _invalidate_shared_entries
+                _invalidate_shared_entries(db, pid)
             local[owner["id"]] = {**owner, "size": head.size}
             local[tail_id] = {**owner, "id": tail_id, "name": f["name"], "vram": f["vram"], "size": tail.size}
             by_vram.setdefault(f["vram"], []).append(local[tail_id])

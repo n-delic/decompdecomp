@@ -23,6 +23,9 @@ def reason(console, row):
     if console.arch=='mips' and raw==bytes(4):
         return 'Single nop: possible padding, not a complete standalone function.'
     meta=json.loads(row['meta'] or '{}') if 'meta' in row.keys() else {}
+    if meta.get('boundary_override_source') == 'shared_entry' and meta.get('shared_entry'):
+        return ('Independently called adjacent entries share this tail. The short prefix is intentional; '
+                'its original bytes and exact-match requirement are unchanged.')
     proof = meta.get('verified_assembly') or {}
     if (row['status'] == 'asm' and proof.get('verified') is True and proof.get('kind') == 'sdk'
             and proof.get('verification_method') == 'builtin-sdk-digest'
@@ -30,6 +33,13 @@ def reason(console, row):
         # A known assembly entry can end with a call to a non-returning SDK routine.
         return meta.get('boundary_tail_review')
     return console.boundary_reason(raw) or meta.get('boundary_tail_review')
+
+
+def _invalidate_shared_entries(db, project_id):
+    """Boundary edits can change either entry or its callers; do not retain inferred reviews."""
+    db.execute("""UPDATE functions SET meta=json_remove(meta, '$.shared_entry', '$.boundary_override',
+               '$.boundary_override_source') WHERE project_id=? AND
+               json_extract(meta, '$.boundary_override_source')='shared_entry'""", (project_id,))
 
 
 def blocked(net, proj):
@@ -250,7 +260,8 @@ def _commit(net, proj, plan, name, action, revision, image_hash, note):
         if _revision(net,proj,[p['id'] for p in rows])!=revision:raise NetworkError('Project inputs changed while checking matches. Preview again.')
         if _digest(_image(net,proj)[0])!=image_hash:raise NetworkError('The original image changed. Preview again.')
         if any(db.execute('SELECT 1 FROM claims WHERE function_id=?',(p['id'],)).fetchone() for p in rows):raise NetworkError('An affected function was claimed. Release it and preview again.')
-        meta=json.loads(head['meta'] or '{}');meta['boundary_decision']={'action':action,'evidence':note[:4000],'time':time.time()}
+        meta=json.loads(head['meta'] or '{}');meta.pop('shared_entry', None);meta.pop('boundary_override_source', None)
+        meta['boundary_decision']={'action':action,'evidence':note[:4000],'time':time.time()}
         if action in ('padding','data'):
             meta['gone']=True;meta['boundary_classification']=action
             db.execute('UPDATE functions SET meta=? WHERE id=?',(json.dumps(meta),head['id']))
@@ -295,6 +306,7 @@ def _commit(net, proj, plan, name, action, revision, image_hash, note):
                  'config':proj['config'],'contexts':_digest([list(r) for r in net.project_store(proj['id']).all('SELECT unit,version,header FROM context_versions WHERE project_id=? ORDER BY version',proj['id'])]),
                  'attempt_id':db.execute('SELECT COALESCE(MAX(id),0) FROM attempts').fetchone()[0]}
         db.execute('INSERT INTO settings VALUES(?,?)',(key,json.dumps(history)))
+        _invalidate_shared_entries(db, proj['id'])
         net._event(db,proj['id'],None,'boundary',f"{action}: {name}. {note[:600]}")
     _invalidate(net,proj)
     return {'key':key,'function':plan['owner'],'action':action}
@@ -579,6 +591,7 @@ def undo(net,slug,key,log=print):
             db.execute('UPDATE functions SET meta=? WHERE id=?',(json.dumps(meta),fid))
         for symbol in history['symbols']:db.execute('UPDATE symbols SET size=? WHERE project_id=? AND name=?',(symbol['size'],proj['id'],symbol['name']))
         history['undone']=True;db.execute('UPDATE settings SET value=? WHERE key=?',(json.dumps(history),key))
+        _invalidate_shared_entries(db, proj['id'])
         net._event(db,proj['id'],None,'boundary','Undid boundary decision for '+history['function'])
     _invalidate(net,proj)
     return {'undone':True}
