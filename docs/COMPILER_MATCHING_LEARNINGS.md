@@ -24,6 +24,14 @@ preserves every bit; it changes the compiler's coalescing of the OR operands. Th
 compiler-wide result, and it remains unmatched. Reordering the OR chain alone scored 20 or worse, and moving the low
 shift into the one-shot scope scored 30. Hoisting a different saved scoped intermediate regressed 25 to 255.
 
+An isolated follow-on stages `part = low | K`, applies `high |= part` in a one-shot scope, and gives each shift
+assignment three nested one-shot scopes. The unsigned operations and single store retain their order. The normal
+linked-byte judge scored the generated child 0 from both the original 20 and the identity 10 seeds, twice from the
+original seed; the live exact verdict has not yet been recorded. The compiler's local allocator coalesces the OR
+result with the low-shift quantity; changing loop-weighted references moves that quantity and the high-shift quantity
+ahead of the literal without moving the shared input. Fewer scopes on both shifts scored 30 in this function. This is
+one function's measured result, not a controlled compiler-wide rule.
+
 ### KMC GCC 2.7.2: split a reassigned incoming parameter
 
 In a controlled N64 experiment with `-G0 -mips3 -mgp32 -mfp32 -O2`, a source variant reused an incoming
