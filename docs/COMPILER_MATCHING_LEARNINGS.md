@@ -15260,3 +15260,8 @@ The repair requires the global load and all three register differences
 and proves both the old zero operand and the incoming accumulator's
 positive zero across every path. Synthetic tests cover a literal and
 a zero bit field and reject a path that mutates either value.
+
+
+### Keep a byte global's address through a conditional update
+
+A saved N64 byte update built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1` set a default local then conditionally incremented a global byte. Capturing the global's address improved the linked score from 345 to 35; expressing the same default and increment in explicit `if`/`else` arms reproduced the target exactly (score 0). Evidence: one saved example and synthetic source, target and routing tests. The candidate requires the measured unsigned byte load, comparison, increment and store sequence and is checked by the byte judge.
