@@ -13361,6 +13361,21 @@ the same center, loads from one base register, and comparisons of the
 results. It generates a candidate only across local statements that preserve
 the inputs. Evidence is one partial live match and synthetic tests.
 
+### KMC GCC 2.7.2: order two inverted float tolerance predicates
+
+A large N64 draft materializes two integer flags from comparisons
+against opposite float tolerances, then ORs their inverted bits.
+Exchanging the two pure operands changes the registers used to hold
+the flags. With `-G0 -mips3 -mgp32 -mfp32 -O2`, each of four sites
+improved the linked score by 290 points. Applying all four moved the
+score from 15,835 to 14,675 with warnings clean. Reversing two already
+ordered sites instead made the score worse by 290 each.
+
+The `epsilon_predicate_order` repair recognizes the tested named flag
+sequence and requires a matching pair of float comparisons and two
+integer inversions in the target. It preserves the comparisons and
+assignments. Evidence is a single large function and synthetic tests.
+
 ### KMC GCC 2.7.2: order three carried vector updates
 
 On a large N64 function, two horizontal updates and one vertical
