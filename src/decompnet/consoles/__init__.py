@@ -370,6 +370,10 @@ class Console:
         """Return a separate source name for the same loader binding, where supported."""
         return binding
 
+    def overlay_data_reference(self, binding, offset, number):
+        """Name a defined object at an offset within a loader binding, where supported."""
+        return None
+
     def overlay_cartridge_placement(self, fn, cfg):
         """Return loader metadata for a stored row with a verified placement."""
         return None

@@ -16339,6 +16339,10 @@ A saved MIPS setup function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -
 
 An isolated N64 overlay donor built with IDO 7.1 using `-O2 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul -DNON_MATCHING` produced 696 bytes identical to the target, but two calls still referred to a mangled C++ method instead of the loader's symbol. Replacing the two implicit method calls with C-linkage calls that pass `this` explicitly preserved all 696 bytes and satisfied both loader relocations. This is one observed candidate, not a cross-compiler result. A compiler-backed regression also checks that a different loader binding is rejected; every proposed rewrite still needs the exact judge.
 
+### IDO zero-initialized overlay objects
+
+An isolated N64 overlay function built with IDO 7.1 using `-O2 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul -DNON_MATCHING` compiled to the target's 692-byte instruction sequence with references to an anonymous `.bss` section. Replacing two private scalar definitions with extern declarations changed the output to 700 bytes. Keeping zero-initialized definitions while giving each an explicit loader binding and offset preserved the 692-byte layout and let the overlay linker reproduce the target relocations. This is one observed function, not a cross-compiler result. A compiler-backed regression also verifies cartridge reconstruction and rejection of incorrect bindings, offsets and initialized objects.
+
 The phase reuse and guard sink must be offered together: the first step alone scores 25 from 15, while the
 combined child scores 10. `merge_integer_lifetimes` now emits the combined candidate using control-flow
 liveness and reaching definitions, only for a signed phase read through a parenthesized byte mask. The focused

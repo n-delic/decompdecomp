@@ -381,6 +381,8 @@ def verify(net, proj, fn, other, donor, names, settings, agent, job, cache, *, r
 def _try(net, proj, private, fn, source, header, agent, job, *, compiled_literals=False):
     """Offer one reduced translation unit and one relocation-based retry when the object supports it."""
     reduced = rebound = localized = literal_changed = methods_rebound = False
+    globalized_names = None
+    data_bound = False
     evidence = exact_match_inputs.capture(net, private, fn, {'header': header}, source)
     while not job.stop.is_set():
         result = net._compile(private, header, source, fn)
@@ -455,6 +457,26 @@ def _try(net, proj, private, fn, source, header, agent, job, *, compiled_literal
                 bindings = (recover(result.obj, fn['name'], fn['target'], fn['vram'], net.symbols(proj['id']).resolve)
                             if recover else [])
                 variants = source_symbol_recovery.variants(source, header, {'symbol_bindings': bindings})
+        if not variants and globalized_names and not data_bound and candidate is not None:
+            console = net.console(proj)
+            if console.export_overlay(net._rom_target(fn)) is not None:
+                from . import overlay_donor_aliases
+
+                rewritten = overlay_donor_aliases.defined_data_bindings(
+                    source, header, candidate, net._target_obj(fn, proj), globalized_names,
+                    lambda aliases, console=console: donor_relocations.separate_overlay_references(console, aliases),
+                    console.overlay_data_reference)
+                if rewritten:
+                    variants = [('overlay-defined-data', *rewritten)]
+        if not variants and globalized_names is None and candidate is not None:
+            console = net.console(proj)
+            if console.export_overlay(net._rom_target(fn)) is not None:
+                from . import overlay_donor_aliases
+
+                result_data = overlay_donor_aliases.globalize_zero_data(header, candidate, net._target_obj(fn, proj))
+                if result_data:
+                    revised_header, globalized_names = result_data
+                    variants = [('overlay-globalize-data', source, revised_header)]
         if not variants and not methods_rebound and candidate is not None:
             console = net.console(proj)
             if console.export_overlay(net._rom_target(fn)) is not None:
@@ -471,7 +493,12 @@ def _try(net, proj, private, fn, source, header, agent, job, *, compiled_literal
                 return False, ' '.join([length, *problems])
             return False, '; '.join(problems) or 'Donor source did not reproduce the original bytes.'
         family, source, header = variants[0]
-        if family == 'overlay-cpp-methods':
+        if family == 'overlay-globalize-data':
+            pass
+        elif family == 'overlay-defined-data':
+            data_bound = True
+            rebound = True
+        elif family == 'overlay-cpp-methods':
             methods_rebound = True
         elif family == 'overlay-local-functions':
             localized = True
