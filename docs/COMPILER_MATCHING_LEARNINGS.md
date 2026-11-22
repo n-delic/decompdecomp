@@ -14005,3 +14005,5 @@ Added to the permuter (decomp-repair 0.5.359), each reproducing its step from th
 `stack_repairs.declaration_moves` (family `local_declaration_order`, every order of up to four used scalars, 8 -> 0).
 Before it, `diff_gated_repairs` returned right after two measured families for `ido-7.1`, and `stack_repairs`
 skipped any function that began with an array.
+
+One empty N64 variadic leaf built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` saved all four argument registers before returning with a `nop` delay slot. Replacing four inferred fixed parameters with one named parameter and `...` reproduced the linked target exactly (score 400 to 0). The existing short-leaf recognizer only accepted the fourth store in the return delay slot; it now accepts both observed placements. Evidence: one saved example plus synthetic library and app routing regressions.
