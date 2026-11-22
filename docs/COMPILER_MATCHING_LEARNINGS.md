@@ -14125,3 +14125,5 @@ the copy for the second test improved 540 to 345. With the saved `-fno-strength-
 the same change improved 790 to 545. The released target-guided rule reproduced the scratch
 improvement. The function remains unmatched. Evidence is one measured improvement and synthetic
 tests for incomplete register evidence, aliased locals, and jump paths.
+
+In one N64 byte-store routine built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the draft typed the shifted input as `u8`, making its upper-byte stores zero. Widening it to `u32` reproduced the linked target exactly (score 315 to 0); `s32` scored 600. The narrow-widening family now also tries unsigned word parameters when an unsigned narrow parameter is shifted beyond its width. Evidence: one saved example plus synthetic generation and app routing tests.
