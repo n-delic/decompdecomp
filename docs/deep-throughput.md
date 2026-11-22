@@ -186,3 +186,16 @@ differs in a file of their own), `batch_ineligible` (a preprocessor line or `__L
 A controlled run of `compile_batch` over the standalone-compilable functions of a small C library (KMC GCC 2.7.2, eight
 variants each): of 11 functions, 4 batched completely and 7 (64%) were set aside for file-local data. A batch that
 holds such candidates costs its own run and then one run each, so it can cost more than not batching.
+
+## Windows compile as one group
+
+On a 32-lane pass (batman-beyond-return, 188 compiler runs and 196 judged candidates a second, so about one run a
+candidate) 94% of compile groups held a single candidate (1.19 on average) although a batch member costs 1.4 ms against
+9.8 ms alone: a window's candidates were queued one at a time and an idle compile thread took each before its siblings
+were in the queue; 35% of the runs were not from tickets at all. Now `chunk` queues a window with
+`Pool.submit_group`, one item, which a worker takes whole (split at `batch_compile.MAX`); candidates a batch cannot take
+go back to the queue singly, so the lane's other workers compile them alone in parallel as before, and a function
+whose candidates cannot batch is also handed out one by one. New counters: `group_1`, `group_2`, `group_3_4`,
+`group_5_8` and `window_*` (sizes), and the origin of every run: `runs_ticket`, `runs_batch`, and the compiles made in
+the search thread by trial kind (`runs_direct_local`, `_random`, `_draft`, `_untagged` for baselines, preflights,
+diagnostics and rechecks, `_other`). After a pass, the share of `group_1` and `runs_direct_*` says what is left.

@@ -11,6 +11,21 @@ _lock = threading.Lock()
 _totals = {}
 _collector = ContextVar('compile_timing_collector', default=None)
 _active = ContextVar('compile_timing_active', default=frozenset())
+ORIGIN = ContextVar('compile_origin', default=None)  # 'ticket' or 'batch' inside the pool's compile workers
+RUN_ORIGINS = ('runs_ticket', 'runs_batch', 'runs_direct_local', 'runs_direct_random', 'runs_direct_draft',
+               'runs_direct_untagged', 'runs_direct_other')
+
+
+def run_origin():
+    """What asked for this compiler run, as one of RUN_ORIGINS: a queued lookahead ticket, a batch of them, or a compile
+    made in the search thread itself, named by the kind of trial it belongs to (no trial: a baseline, a preflight, a
+    diagnostic or a recheck)."""
+    if (origin := ORIGIN.get()) is not None:
+        return 'runs_' + origin
+    from .repair_feedback import current_trial
+    kind = (current_trial() or {}).get('kind')
+    return {'deep local repair': 'runs_direct_local', 'random rewrite': 'runs_direct_random',
+            'deterministic draft repair': 'runs_direct_draft', None: 'runs_direct_untagged'}.get(kind, 'runs_direct_other')
 
 
 def add(name, value):

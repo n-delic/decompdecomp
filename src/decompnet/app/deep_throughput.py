@@ -39,7 +39,9 @@ RANK_COUNTERS = ('rank_literals_cpu_ns', 'rank_batches', 'rank_candidates')
 # speculative candidates a lane's lookahead window compiled before they were wanted.
 PIPELINE_COUNTERS = ('compile_groups', 'compile_group_tickets', 'batch_runs', 'batched_candidates', 'batch_alone',
                      'batch_alone_local', 'batch_alone_missing', 'batch_ineligible', 'batch_refused', 'batch_failed',
-                     'ahead_submitted', 'ahead_used', 'ahead_cancelled', 'ahead_wasted')
+                     'ahead_submitted', 'ahead_used', 'ahead_cancelled', 'ahead_wasted',
+                     'group_1', 'group_2', 'group_3_4', 'group_5_8', 'window_1', 'window_2', 'window_3_4', 'window_5_8',
+                     *compile_timing.RUN_ORIGINS)
 
 
 class Metrics:

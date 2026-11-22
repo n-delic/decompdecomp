@@ -12,7 +12,12 @@ from .. import compile_sessions, compile_sharing, compile_timing, compile_worker
 from ..candidate_work import preparation as candidate_preparation
 
 
+def _bucket(prefix, size):
+    return f"{prefix}_{size if size <= 2 else '3_4' if size <= 4 else '5_8'}"
+
+
 class Ticket:
+    started = False  # already running (a batch could not take it): another worker may compile it alone
     batch = None  # (group, net, proj, header, fn) when it may compile with others (Pool._run_batch)
 
     def __init__(self, key, snapshot, run, check):
@@ -105,6 +110,23 @@ class Pool:
             try:self.queue.put(ticket, timeout=.05);return
             except queue.Full:pass
 
+    def submit_group(self, tickets):
+        """Queue a window's candidates as one item, so the worker that takes it can compile them in one run. Tickets that
+        cannot share a run (no batch information) are queued singly."""
+        if not tickets or any(getattr(ticket, 'batch', None) is None or ticket.batch[0] != tickets[0].batch[0]
+                              for ticket in tickets):
+            for ticket in tickets:self.submit(ticket)
+            return
+        with self.lock:
+            if not self.workers:
+                for index in range(self.count):
+                    worker = threading.Thread(target=self.work, name=f'deep-compile-{index}', daemon=True)
+                    self.workers.append(worker);worker.start()
+        while True:
+            tickets[0].checkpoint()
+            try:self.queue.put(list(tickets), timeout=.05);return
+            except queue.Full:pass
+
     def work(self):
         from .workers import started_priority
         if not self.maximum:started_priority()
@@ -114,9 +136,26 @@ class Pool:
         with scope(self), compile_sessions.session(), compile_sharing.group(self.group), \
                 (compile_worker.remote(background=not self.maximum) if self.remote else nullcontext()):
             pending = deque()
-            while (ticket := pending.popleft() if pending else self.queue.get()) is not None:
-                if not ticket.future.set_running_or_notify_cancel():continue
-                group = [ticket]
+            while (item := pending.popleft() if pending else self.queue.get()) is not None:
+                # A window's candidates arrive as one item (submit_group): measured with them queued one at a time,
+                # an idle compile thread took each before its siblings were in the queue, and 94% of groups held one
+                # candidate (a run costs 15-20 ms, a batch member 1.4). Candidates queued singly still join as before.
+                if isinstance(item, list) and (self.batching <= 1 or item[0].batch[0] in self.unbatchable):
+                    # (a function whose candidates cannot share a run: let every worker take one, as they always did)
+                    for each in item:
+                        try:self.queue.put_nowait(each)
+                        except queue.Full:pending.append(each)
+                    continue
+                tickets = item if isinstance(item, list) else [item]
+                group, rest = [], []
+                for each in tickets:
+                    if len(group) >= self.batching:rest.append(each)  # (the next run's: not started yet)
+                    elif each.started or each.future.set_running_or_notify_cancel():
+                        each.started = False
+                        group.append(each)
+                if rest:pending.appendleft(rest)
+                if not group:continue
+                ticket = group[0]
                 if (self.batching > 1 and getattr(ticket, 'batch', None) is not None
                         and ticket.batch[0] not in self.unbatchable):
                     # Queued candidates of the same function and header join this compiler run.
@@ -125,11 +164,13 @@ class Pool:
                             other = self.queue.get_nowait()
                         except queue.Empty:
                             break
-                        if other is None or getattr(other, 'batch', None) is None or other.batch[0] != ticket.batch[0]:
+                        if (other is None or isinstance(other, list) or getattr(other, 'batch', None) is None
+                                or other.batch[0] != ticket.batch[0]):
                             pending.append(other)
                             break
                         if other.future.set_running_or_notify_cancel():
                             group.append(other)
+                compile_timing.add(_bucket('group', len(group)), 1)
                 compile_timing.add('compile_groups', 1)
                 compile_timing.add('compile_group_tickets', len(group))
                 if len(group) > 1:
@@ -140,8 +181,12 @@ class Pool:
     def _run_one(self, ticket):
         try:
             ticket.checkpoint()
-            with compiler.cancellable(ticket.checkpoint), compile_timing.collect(ticket.compile_counts, append=True):
-                result = ticket.run()
+            token = compile_timing.ORIGIN.set('ticket')
+            try:
+                with compiler.cancellable(ticket.checkpoint), compile_timing.collect(ticket.compile_counts, append=True):
+                    result = ticket.run()
+            finally:
+                compile_timing.ORIGIN.reset(token)
             ticket.checkpoint()
             ticket.future.set_result(result)
         except BaseException as error:
@@ -153,8 +198,12 @@ class Pool:
         results = None
         try:
             group[0].check()
-            with compiler.cancellable(group[0].check), compile_timing.collect(group[0].compile_counts, append=True):
-                results = net._compile_batch(proj, header, [t.batch_source for t in group], fn)
+            token = compile_timing.ORIGIN.set('batch')
+            try:
+                with compiler.cancellable(group[0].check), compile_timing.collect(group[0].compile_counts, append=True):
+                    results = net._compile_batch(proj, header, [t.batch_source for t in group], fn)
+            finally:
+                compile_timing.ORIGIN.reset(token)
         except BaseException as error:
             for ticket in group:
                 ticket.future.set_exception(error)
@@ -166,15 +215,23 @@ class Pool:
             # It compiled, and none could be used: a function that refers to its file's own data. One by one.
             with self.lock:
                 self.unbatchable.add(group[0].batch[0])
+        mine = None
         for index, ticket in enumerate(group):
             result = results[index] if results else None
             if result is None:
-                self._run_one(ticket)
+                if mine is None:
+                    mine = ticket  # this worker compiles the first alone, after the others are handed on
+                    continue
+                ticket.started = True
+                try:self.queue.put_nowait([ticket])  # (so the lane's other compile threads take their share)
+                except queue.Full:self._run_one(ticket)
                 continue
             if ticket.stopped.is_set():
                 ticket.future.set_exception(CancelledError())
             else:
                 ticket.future.set_result(result)
+        if mine is not None:
+            self._run_one(mine)
 
     def close(self):
         # Search chunk contexts cancel their own pending/running tickets first.
@@ -231,7 +288,8 @@ def chunk(search, agent, proj, fn, sources, fork):
                 tickets[source] = ticket
         with pool.window(list(tickets.values()), check):
             compile_timing.add('ahead_submitted', len(tickets))
-            for ticket in tickets.values():pool.submit(ticket)
+            if tickets:compile_timing.add(_bucket('window', len(tickets)), 1)
+            pool.submit_group(list(tickets.values()))
             search._ahead = tickets
             try:yield
             finally:

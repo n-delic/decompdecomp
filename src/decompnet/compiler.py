@@ -545,6 +545,7 @@ def _compile_as(cfg: CompilerConfig, work: Path, root: str, source: str, ext: st
     try:
         with _slot():
             compile_timing.add("invocations", 1)
+            compile_timing.add(compile_timing.run_origin(), 1)
             with span("compile_execute"), compile_timing.phase("execute"):
                 if steps:
                     proc = direct_gcc.run(steps, root, lambda step: _exec(cfg, work, step, cfg.timeout))
