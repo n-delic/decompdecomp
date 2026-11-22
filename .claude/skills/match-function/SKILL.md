@@ -129,7 +129,10 @@ The gateway deduplicates pending calls by connection, tool and arguments.
 - **The claim is renewed at least every 10 minutes** (`setup.py` does it every 5; by hand, `claim_function(function=FUNC)`
   again). A lapsed claim lets other agents take the function.
 - **An enormous function** (well over ~1000 instructions, or a best in the thousands with no near-miss rows) may be
-  released once and another claimed. If you keep it, work it with the large-function method (step 2).
+  released once and another claimed: `release_function` it (with its claim token, `move_on=true`), then
+  `setup.py release <holder>` (the renewal must stop renewing it, or it claims the function back every 5 minutes), then
+  `setup.py reclaim <holder>` for the next one (the nearest; or `reclaim <holder> FUNC`, `--random`, `--max-size N`).
+  If you keep it, work it with the large-function method (step 2).
 - **A function given**: call `claim_function(function=FUNC, fallback=false)` when the tool exposes
   `fallback`. If someone else holds it, report the conflict and continue in the isolated judge.
   Older app versions may assign a different function when a named claim fails. If that happens,

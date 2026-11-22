@@ -49,6 +49,18 @@ KNOWN = {
         ('osWritebackDCache', 116, 'data cache writeback, `move` form', 'os/writebackdcache.s'),
     '394d3bf1ec1a51ef7eff9113ae1103280d0f09b29035cfd8630a0843d890c4f5':
         ('osWritebackDCacheAll', 40, 'whole data cache writeback', 'os/writebackdcacheall.s'),
+    # Found by a later reading: bcopy and the RCP monitor's stubs (bodies that end in a branch, not a return), and
+    # the 2.0H archives (LIBGULTRA.A, whose upper-case names the first reading skipped).
+    '3ae142d98dccf82c67c4e1c414dd733ec61e39967df75dfb68d686009654d870':
+        ('__rmonStepRCP', 20, 'libultra 2.0H–2.0L', 'rmon/rmonrcp.s'),
+    '91d19e63bcea185d83fbf1167b992e896c4fbc17c7c2f3191efa3ab1d640e848':
+        ('__rmonStepRCP', 24, 'libultra 2.0I debug library', 'rmon/rmonrcp.s'),
+    'f398a13824f7307d1d66f05ca80f49e0ed734886d23c0d2a3bcdd4f11601b6b0':
+        ('bcopy', 772, 'libultra 2.0I', 'libc/bcopy.s'),
+    'd80867d460a740ff5de92cc5d7e394dfdec340ab29b1df8af4dcb5c183c19208':
+        ('bcopy', 856, 'libultra 2.0I debug library', 'libc/bcopy.s'),
+    '7fa4b4a0cf423034cf3a4c9d888781edd4ee755a263607b407beca17d13cf322':
+        ('osUnmapTLBAll', 68, 'libultra 2.0H', 'os/unmaptlball.s'),
     # Every other self-contained routine in the SDK's own libultra libraries (2.0I to 2.0L, the release, debug and ROM
     # builds), read from the archives' objects: assembly-only objects, bodies with no relocation, trailing alignment
     # padding dropped after the return's delay slot. The same routines the older entries above come from, so those
@@ -187,6 +199,12 @@ _MTX_CAT_ASM = {
 # A body with two names is left out (one set of bytes, no identity). These are set aside by the project's library
 # setting (app/sdk_assembly.SETTING), not as assembly, and only complete functions of 32 bytes or more are listed.
 KNOWN_C = {
+    '09cd19f39dfa44d2cc1c62af44818942f04faf68e0010bf786d3d8010298ec1b': ('__osContAddressCrc', 72, 'libultra 2.0H'),
+    'bdb9601c6627893c6f1ed3440ea02c5a144e0014a2795bf5ac0cf1dcb8ccab50': ('__osContDataCrc', 100, 'libultra 2.0H'),
+    '2dc9e8815e9fbebc815aeeaaecfcb3ac60eaa2210b6cdb9272a60d79cb079687': ('__osSumcalc', 56, 'libultra 2.0H'),
+    '3d8343ee78e6492daa82964e83214e272fc41c09d9ff3b267d5f1848b52fdb36': ('guMtxL2F', 168, 'libultra 2.0H'),
+    '4ce45bb23486ed6bbeade52c331006c95d1e12a033802c0abdb2fc0a545d3578': ('osEPiRawReadIo', 76, 'libultra 2.0H'),
+    '84459a61b2a10b249ccf3175e8a303b1a05c1d947f2198cb78cdfff7460b2f73': ('osEPiRawWriteIo', 72, 'libultra 2.0H'),
     '0a4ddf0bd0510f0fda167dde0f5c7901e48a81921741545ffc3264545e37694d': ('MonitorInitBreak', 32, 'libultra 2.0K–2.0L'),
     '517472cee59ad4f2f0a0b304203d93633d43366752bc4b62deeb856d6a908b81': ('__alCSeqNextDelta', 220, 'libultra 2.0I debug library'),
     '5874b1c73b9c4c80cddaae1b3b16a49ff5735b80172fd5c8d336a65cb579b426': ('__alCSeqNextDelta', 360, 'libultra 2.0I'),
