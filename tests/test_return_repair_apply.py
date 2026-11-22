@@ -247,7 +247,9 @@ def test_agent_submission_to_matched_function_skips_judge(tmp_path,monkeypatch):
         tools._dispatch(net,agent,'game','compile_and_diff',{'function':'caller','source':CALLER})
 
 
-def test_batch_skips_matched_member_and_keeps_judging_open_members(tmp_path,monkeypatch):
+def test_batch_judges_matched_and_open_members(tmp_path,monkeypatch):
+    """#2674: a matched function takes a later exact source, so the batch no longer skips it; _record still refuses a
+    source that isn't exact (test_stale_candidate_cannot_replace_a_saved_polished_match)."""
     net,agent=game(tmp_path,monkeypatch)
     judged=[]
     def attempt(agent,function,source,project):
@@ -255,5 +257,5 @@ def test_batch_skips_matched_member_and_keeps_judging_open_members(tmp_path,monk
         return {'text':'Judged', 'matched':False}
     monkeypatch.setattr(net,'attempt',attempt)
     result=net.attempt_many(agent,['caller','f'],CANDIDATE,'game')
-    assert 'caller is already matched' in result
-    assert judged==['f']
+    assert 'already matched' not in result
+    assert judged==['caller','f']

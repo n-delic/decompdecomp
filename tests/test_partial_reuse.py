@@ -15,7 +15,9 @@ pair = pair_fixture
 def prepare(net):
     with net.store.tx() as db:
         db.execute("UPDATE functions SET status='open',matched_source=NULL,best_source='int old(int x) { return x + 59; }',best_score=10 WHERE id=1")
-        db.execute('UPDATE functions SET target=(SELECT target FROM functions WHERE id=1),best_score=100 WHERE id=2')
+        # (a saved score has its C: a score without one is replaced by the next attempt whatever it scores, 3f371a585)
+        db.execute("UPDATE functions SET target=(SELECT target FROM functions WHERE id=1),best_score=100,"
+                   "best_source='int new(int x) { return x + 1; }' WHERE id=2")
 
 
 def judge(net, calls, score):

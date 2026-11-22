@@ -195,7 +195,12 @@ def leaf_extent(image,start,end,vram,*,big_endian=True,cpu='',asm_check=None,tab
     size=info['extent_bytes']
     if not _closed(info,table_ranges) or info['step_limit'] or size<8:return None
     body=image[start:start+size]
-    if (asm_check(body) if asm_check else asm_reason(body,big_endian,cpu=cpu)):return None
+    # This finds where a leaf ends; whether C can make it is decided later. asm_reason has called a body with cache,
+    # ll or sc hand-written assembly since decomp-repair 7c5ad94 (22 Nov), which would drop every cache-maintenance
+    # leaf from boundary recovery, so those bodies skip the check (their verdict is already "assembly") and the
+    # loop below still vets each instruction.
+    atomic=any(int.from_bytes(body[at:at+4],order)>>26 in (0x2f,0x30,0x38) for at in range(0,size,4))
+    if not atomic and (asm_check(body) if asm_check else asm_reason(body,big_endian,cpu=cpu)):return None
     preserved={*range(16,24),29,30,31}
     for at in range(start,start+size,4):
         word=int.from_bytes(image[at:at+4],order)

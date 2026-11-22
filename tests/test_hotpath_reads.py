@@ -61,7 +61,9 @@ def test_donor_full_rows_are_bounded_after_filter_and_cursor_rotation(tmp_path,m
     monkeypatch.setattr(net.store,'all',read)
     rows=named_donors.targets(net,net.project_row('game1'),{4,8,12,15,16,20})
     assert [r['id'] for r in rows]==[12,15,16,20]
-    assert loaded==[4]
+    # Discovery reads only id and name now (named_donors.targets: payloads wait until a function has a donor), so no
+    # full function row, and none of the 8 KiB targets, is loaded for the bounded set either.
+    assert loaded==[]
 
 
 def test_audit_layout_cache_ignores_status_but_expires_on_layout_or_inputs(tmp_path,monkeypatch):

@@ -308,7 +308,7 @@ def test_rom_donor_into_imported_project_uses_real_objdiff_judge(fork, monkeypat
     from decompnet.app.twins import Job, Print
 
     # The synthetic fixture uses a 16-byte leaf; production discovery keeps its 32-byte floor.
-    monkeypatch.setattr("decompnet.app.shared_reuse.ACROSS_MIN_BYTES", 16)
+    monkeypatch.setattr("decompnet.app.twins.ACROSS_MIN_BYTES", 16)
     net, slug, _ = fork
     destination = net.project_row(slug)
     target = net._function('scale', slug)
