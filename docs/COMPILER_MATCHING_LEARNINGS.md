@@ -14604,3 +14604,20 @@ In one N64 graphics wrapper built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -
 In one N64 loop built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a draft addressed a word as an offset from a larger global, causing KMC to keep its address in a register. Naming the same resolved word directly made the compiler reload it as in the target and reproduced the linked target exactly (score 340 to 0). The repair verifies the source address, the candidate relocation and the encoded target load. Evidence: one saved example and synthetic address and routing tests.
 
 In one N64 routine built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a draft kept the address of a pointer field in a saved register across two calls, while the target reloaded that pointer directly each time. Naming the same verified pointer word directly improved the linked score from 285 to 60. Combining that change with the existing field-struct view moved a halfword load to the target position and reproduced the linked target exactly (score 0). The rule checks both encoded reloads and suppresses the combined field-view hypothesis under explicit strict aliasing. Evidence: one saved example and synthetic address and routing tests.
+
+### Reuse the float probe local for the field reload
+
+In a private N64 function built with GCC 2.7.2 KMC and
+`-G0 -mips3 -mgp32 -mfp32 -O2`, a conditional float probe could clear
+a record field. The target reloaded the field into the return register
+immediately after the branch-likely zero store and compared it to a
+lower bound in the other register. The draft assigned the bound to
+the return register and loaded the field into the second register.
+
+Capturing the probe result in the same ordinary float local that
+receives the unconditional field reload recovered the target register
+assignment. The exact linked score went from 9,945 to 9,775 at one
+site and 9,265 at all four sites. Staging the bound alone did not
+improve the score. Synthetic tests require the witnessed call, field
+offset, lower-bound bits and candidate register swap. They reject an
+address-taken local and exercise an inline field accessor.
