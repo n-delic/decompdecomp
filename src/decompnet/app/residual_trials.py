@@ -5,6 +5,7 @@ from decomprepair import (
     allocation_repairs,
     call_lifetime_repairs,
     last_byte_mask_repairs,
+    no_input_call_join,
     residual_source_repairs,
     shared_fp_return_repairs,
     stack_call_output_repairs,
@@ -16,7 +17,8 @@ from .cross_function_repairs import argument_reads
 
 FAMILIES = (residual_source_repairs.ADDRESS, residual_source_repairs.BRANCH, residual_source_repairs.CALL,
             residual_source_repairs.ENTRY, residual_source_repairs.FRAME, 'residual_call_buffer',
-            shared_fp_return_repairs.FAMILY, last_byte_mask_repairs.FAMILY, stack_call_output_repairs.FAMILY)
+            shared_fp_return_repairs.FAMILY, last_byte_mask_repairs.FAMILY, stack_call_output_repairs.FAMILY,
+            no_input_call_join.FAMILY)
 
 
 def prologue_rotation(rows):
@@ -89,11 +91,21 @@ def shared_fp_return_hint(source, name, header, rows, arch):
     return ''
 
 
-def proposals(source, name, header, rows, *, net=None, proj=None, fn=None):
+def proposals(source, name, header, rows, *, net=None, proj=None, fn=None, profile=None):
     rows = region_repairs.clean(rows)
     changed = [(i,a,b) for i,(mark,a,b) in enumerate(rows) if mark != ' ']
     if not changed:
         return []
+    if net is not None and profile and profile.get('toolchain') == 'gcc-2.7.2-kmc' and '-mgp32' in profile.get('flags', ()):
+        names = no_input_call_join.witnesses(rows)
+        if names:
+            from ..candidate_scope import callees
+
+            selected = callees(net, proj, fn, source, max_source_chars=4096, names=names)
+            definitions = {row['name']: row['matched_source'] for row in selected}
+            if len(definitions) == len(selected):
+                if candidates := no_input_call_join.variants(source, name, rows, header, definitions):
+                    return candidates
     if candidates := stack_call_output_repairs.variants(source, name, rows):
         return candidates
     if candidates := last_byte_mask_repairs.variants(source, name, rows, header):
