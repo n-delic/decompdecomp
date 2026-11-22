@@ -16059,3 +16059,7 @@ the requirement that the reused locals are dead on every outgoing path.
 ### KMC GCC 2.7.2 guarded signed-byte read
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` advanced a cursor, compared it with an end address and checked a signed byte when still in range. Its generated draft read a word at the cursor. Switching to a signed byte reduced the linked difference score from 255 to 55; wrapping the end assignment in a single-iteration scope restored the target's saved-register order and produced an exact match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the measured instructions and complete source shape.
+
+### KMC GCC 2.7.2 list key search
+
+A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` searched a null-terminated list for a matching word key. The generated draft used explicit jumps and a shared result variable. Returning directly from a conventional list loop changed the linked difference score from 265 to an exact match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the complete generated source, the measured instructions and field offsets, and the resolved list-head address.
