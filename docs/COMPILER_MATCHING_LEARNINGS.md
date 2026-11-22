@@ -15345,3 +15345,29 @@ A saved N64 function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1` rea
 ### Keep a ring pointer through the guarded update
 
 A saved N64 ring update built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` repeatedly read a global pointer around an indexed store. The target retained the original pointer in a register. Capturing the pointer before its null guard and reusing it reproduced the linked target exactly (score 290 to 0). Evidence: one saved example and synthetic source, target and routing tests. This is a target-led reconstruction: if the indexed store aliases the global, capturing changes the draft's behavior. The candidate requires the measured target load and store sequence and is checked by the byte judge.
+
+### Balance scheduled clamp reads with later predicate inversions
+
+GCC 2.7.2 KMC with `-G0 -mips3 -mgp32 -mfp32 -O2` loaded the input
+before the constant at several signed range clamps. The draft placed
+the load in the constant's delay and omitted a nop. Split the fused
+clamp into two branches to express the target placement. Later in
+the same function, staging the first integer flag inversion before
+the second float comparison removed one extra instruction at each
+of three sites.
+
+Pairing three observed clamp sites with the three later flags scored
+3,445 from 5,330 on a private linked N64 function, with all three
+jump tables and no uninitialized warnings. Pairing individual sites
+scored 4,645, 5,075 or 5,045. Splitting the three clamps alone scored
+5,520. Other three-clamp combinations scored 3,595 to 3,945. The
+Deep Permuter emits at most four evidence-gated combinations and
+checks that the old clamp temporary has no other reads.
+
+A candidate near the compiler's existing 64 KiB source limit can
+keep the paired edit by removing one column of unused indentation.
+The recipe uses the compiler's limit, preserves line numbers and
+avoids preprocessing directives, literal text or line continuations.
+The private baseline's linked diff was identical after the indentation
+change alone. Synthetic tests verify both mismatch witnesses and that
+the emitted text stays within the passed source budget.

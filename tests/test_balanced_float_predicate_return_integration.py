@@ -217,3 +217,63 @@ def test_deep_permuter_reuses_a_proven_zero_for_global_subtraction():
     assert 'vertical -= lift;' in candidate
     assert all(label != family for label, _ in proposals(SUBTRACT_SOURCE, 'adjust', '', 'mips',
                                                           'gcc-egcs', SUBTRACT_ROWS, ''))
+
+
+CLAMP_SOURCE = '''
+void adjust(char *record, float axis)
+{
+    f32 current;
+    f32 bound;
+    int upper;
+    int lower;
+    current = *((f32 *) (((char *) record) + 8));
+    bound = -0.5f;
+    if ((current < (-0.5f)) || ((bound = 0.5f, current > 0.5f))) {
+        *((f32 *) (((char *) record) + 8)) = bound;
+    }
+    upper = 1;
+    if (!(axis <= 0.0002f)) {
+        upper = 0;
+    }
+    lower = 1;
+    if (!(axis >= (-0.0002f))) {
+        lower = 0;
+    }
+    if (((lower ^ 1) | (upper ^ 1)) != 0) {
+        report();
+    }
+}
+'''
+LOAD = 'lwc1 $f0, 8($s1)'
+CLAMP_ROWS = [
+    ('o', LOAD, ''),
+    (' ', 'lui $at, 0xbf00', 'lui $at, 0xbf00'),
+    (' ', 'ori $at, $at, 0', 'ori $at, $at, 0'),
+    (' ', 'mtc1 $at, $f2', 'mtc1 $at, $f2'),
+    ('o', 'nop', LOAD),
+    (' ', 'c.lt.s $f0, $f2', 'c.lt.s $f0, $f2'),
+    (' ', 'nop', 'nop'),
+    (' ', 'nop', 'nop'),
+    (' ', 'bc1tl .Llower', 'bc1tl .Llower'),
+    (' ', 'swc1 $f2, 8($s1)', 'swc1 $f2, 8($s1)'),
+]
+CLAMP_PAIR_ROWS = CLAMP_ROWS + ROWS[:24]
+
+
+def test_deep_permuter_balances_clamp_and_predicate_at_the_compiler_source_limit(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+    from decompnet.compiler import check_source
+
+    def candidates(toolchain):
+        return [text for label, text in proposals(CLAMP_SOURCE, 'adjust', '', 'mips',
+                                                    toolchain, CLAMP_PAIR_ROWS, '') if label == 'balanced_clamp_predicates']
+
+    [candidate] = candidates('gcc-2.7.2-kmc')
+    assert 'else if (current > 0.5f)' in candidate
+    assert 'repair_late_upper | (lower ^ 1)' in candidate
+    cap = len(candidate.encode()) - 5
+    monkeypatch.setattr(diff_gated_repairs, 'MAX_SOURCE_BYTES', cap)
+    [compact] = candidates('gcc-2.7.2-kmc')
+    assert compact.split() == candidate.split()
+    check_source(compact, max_bytes=cap)
+    assert not candidates('ido-5.3')
