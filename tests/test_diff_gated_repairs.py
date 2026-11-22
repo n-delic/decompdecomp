@@ -1889,3 +1889,14 @@ def test_command_record_cursor_routes_to_kmc(monkeypatch):
                         lambda text, name, header, diff: [('command_record_cursor_fixture', text)])
     assert 'command_record_cursor_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'command_record_cursor_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_ido_byte_cursor_routes_to_ido_71(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_ido_byte_cursor, 'variants',
+                        lambda text, name, header, diff: [('ido_byte_cursor_fixture', text)])
+    assert 'ido_byte_cursor_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-7.1', rows, ''))
+    assert 'ido_byte_cursor_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-5.3', rows, ''))
+    assert 'ido_byte_cursor_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))

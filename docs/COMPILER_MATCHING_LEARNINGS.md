@@ -15385,3 +15385,7 @@ the emitted text stays within the passed source budget.
 ### Advance a two-word command cursor after a call
 
 A saved N64 command builder compiled with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` wrote two command words through separate byte-offset pointers. The target retained an eight-byte command cursor and advanced it between commands. Declaring a two-word record, using post-increment for the first command and reading the final word through the global pointer reproduced the linked target exactly (score 360 to 0). Evidence: one saved example and synthetic source, target and routing tests. The candidate requires the measured command constants and cursor instruction sequence and is checked by the byte judge.
+
+### Treat a sent-byte count as a byte pointer offset
+
+A saved N64 send loop built with IDO 7.1 and `-O1 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul` added a sent-byte count to a structure pointer, causing the compiler to multiply the offset by the structure's twelve-byte size. The target added the count directly. Keeping the saved cursor as `char *` and casting the original pointer to it reproduced the linked target exactly (score 365 to 0). Evidence: one saved example and synthetic source, target and routing tests. The candidate requires the observed scaled and unscaled send-loop sequences and is checked by the byte judge.
