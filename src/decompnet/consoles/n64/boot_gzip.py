@@ -193,8 +193,8 @@ def find(rom, boot_ranges):
     pointer = _pointer_find(rom, boot_ranges)
     if pointer:
         return pointer
-    from . import boot_brs, boot_raw_deflate
-    return boot_raw_deflate.find(rom, boot_ranges) or boot_brs.find(rom, boot_ranges)
+    from . import boot_brs, boot_lzss, boot_raw_deflate
+    return boot_raw_deflate.find(rom, boot_ranges) or boot_brs.find(rom, boot_ranges) or boot_lzss.find(rom, boot_ranges)
 
 
 def verify_analysis(rom, expanded, boot_ranges):
@@ -227,7 +227,9 @@ def add(config, workdir, image, rom, boot_ranges, log):
     if not (programs := find(rom, boot_ranges)):
         return None
     from . import boot_brs
+    from .boot_mapping import extend_startup_trap
 
+    extend_startup_trap(config, rom, log)
     cfg = yaml.safe_load(config.read_text(encoding='utf-8'))
     segments = cfg['segments']
     segments.pop()
