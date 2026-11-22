@@ -107,6 +107,7 @@ from decomprepair import (
     duplicate_return_node_repairs,
     element_update_repairs,
     entry_base_init_repairs,
+    entry_constant_local,
     entry_parameter_copy_repairs,
     entry_pointer_capture,
     entry_scheduling_scope,
@@ -170,6 +171,7 @@ from decomprepair import (
     integer_lifetime_repairs,
     integer_sum_repairs,
     irregular_case_repairs,
+    join_clamp_sum_repairs,
     join_copy_sink_repairs,
     join_store_split_repairs,
     join_tail_arm_split_repairs,
@@ -324,6 +326,7 @@ from decomprepair import (
     store_address_repairs,
     store_expression_forms,
     store_result_repairs,
+    store_temp_inline,
     store_value_first_repairs,
     stored_compare_repairs,
     stored_float_zero_repairs,
@@ -414,6 +417,7 @@ AGENT_FAMILIES = goto_loop_invariants.FAMILIES + entry_scope_split.FAMILIES + me
                   'terminal_early_return','member_store_replay','scalar_global_address','split_mask_stores',
                   'split_integer_phase','paired_integer_lifetimes','initialization_cluster')
 
+AGENT_FAMILIES += store_temp_inline.FAMILIES + entry_constant_local.FAMILIES + join_clamp_sum_repairs.FAMILIES
 AGENT_FAMILIES += (guarded_pointer_copy.FAMILY,) + shifted_byte_lifetime.FAMILIES + float_constant_loop_pin.FAMILIES + dead_local_constant_compare.FAMILIES
 AGENT_FAMILIES += loop_weight_set_repairs.FAMILIES
 AGENT_FAMILIES += (arm_label_share_repairs.FAMILIES + declaration_scope_sink_repairs.FAMILIES + element_update_repairs.FAMILIES
@@ -857,6 +861,10 @@ def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels
                    # (a compare's literal routed through a local the next statement reassigns: the literal becomes a
                    # global-allocator pseudo and takes $v1, 10 -> 0 on a KMC predicate; decomprepair 0.5.628)
                    dead_local_constant_compare,
+                   # (a store's single-use temp written into the store, a loop's byte constant as an entry local, and the
+                   # byte-clamp / pointer-copy-before-join / full-width-sum shapes of a KMC menu function; found unwired by
+                   # tests/test_library_family_wiring.py: decomprepair 0.5.630-0.5.631)
+                   store_temp_inline, entry_constant_local, join_clamp_sum_repairs,
                    outer_cursor_entry_copy_repairs, loaded_pointer_reuse_repairs, entry_base_init_repairs,
                    live_range_retarget_repairs, pointer_local_merge_repairs, identical_arm_collapse_repairs):
         for family, text in _generated(module.variants, source, name):

@@ -427,6 +427,9 @@ class Search(Permuter):
                  (L + 'float_constant_loop_pin.variants', (source, name)),
                  # a compare's literal routed through a local the next statement reassigns (decomprepair 0.5.628)
                  (L + 'dead_local_constant_compare.variants', (source, name)),
+                 (L + 'store_temp_inline.variants', (source, name)),
+                 (L + 'entry_constant_local.variants', (source, name)),
+                 (L + 'join_clamp_sum_repairs.variants', (source, name)),
                  # a switch case's temporaries split and its flag update folded in one child, and record
                  # field stores beside a scalar global's store written raw (MEM_IN_STRUCT_P keeps their order)
                  (L + 'case_split_combinations.variants', (source, name)),
