@@ -13600,3 +13600,36 @@ rewrite and its guards (the counter must be read only through its mask, stepped 
 the countdown's temps used nowhere else).
 
 On one N64 function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, a draft treated an indexed pointer table as bytes and then read a word through it. Casting the indexed entry to `u8 **` generated the target pointer load followed by an unsigned byte load, improving the linked score from 270 to 60. Wrapping the masked index assignment in `do { ... } while (0)` changed the return-address save schedule and reproduced the target exactly. Evidence: one saved example, plus synthetic generation and routing tests.
+
+## A float-register-only near miss: values held in multi-block float locals (KMC GCC 2.7.2, 85 -> 0)
+
+An N64 pan/volume stage (`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, four `s16` outputs, each a table interpolation
+`(1-p)*A[i] + p*B[i]` scaled by a constant) stood at 85 with all 17 mismatched rows float register operands: the target
+writes each product into `$f0` and its scaled result and `trunc.w.s` into `$f0`/`$f2`, the candidate used `$f4`/`$f2`.
+Many agents' equivalent rewrites (temporaries, casts, operand swaps, parameter widths, flags) all tied at 85-95.
+
+What decided it (read from `cc1 -dr -dl -dg`): a pseudo that is born and dies in one basic block is a local-alloc
+quantity; one assigned in several blocks (a user float local such as `v`, assigned in three arms) is left to global
+allocation and neither ties to its neighbours nor takes the lowest free register. The target's product chains were all
+local quantities, and its interpolation sums sat in the same few user locals (`q`, `t`) the function reuses, so the
+products that consumed them landed in the constant's register.
+
+| step | edit | score |
+|---|---|---|
+| 0 | saved best | 85 |
+| 1 | the last sum held in the already-declared `q`: `q = (1-p)*A[i]+p*B[i]; *d = (s32)(q*K);` | 65 |
+| 2 | the else-arm's first sum held in `t`: `t = ...; *a = (s32)(r*t*S);` | 60 |
+| 3 | the second one held in `t` and `v` inlined: `t = ...; *b = (s32)(r*t*S);` (no `v` temp) | 585 |
+| 4 | `v = q*t; *c = (s32)(v*K);` becomes `*c = (s32)(q*t*K);` | 0 |
+
+The same combination without step 4 scored 585 and step 4 alone 95: no one-edit-at-a-time search reaches 0. Inlining the
+negated product (`v = r * -K; *b = (s32)v;` in the other arm) was 615 and stays as it is: a negated factor changes how
+the constant is built. Sums held in a local the statement itself mentions, or one read later, are not equivalent and are
+not offered. Failed here: `ta`/`tb` holds without the inlines (95-595), reusing `p` for `q*t`, branch inversion (1840),
+narrowing `x` to `u16` (2760), frame padding (91-101), `-fno-schedule-insns2` (tie).
+
+Permuter: none of the existing families (30 children on the saved source) proposed any of it. decomp-repair 0.5.350
+`float_hold_reuse` offers the holds (any declared float local that is dead at the site, read on the `if`/`else` tree)
+and the inlines as bundles, small ones first; from the saved 85 source one of its children scores 0 through the judge.
+Evidence level: one function plus synthetic tests of each guard (a carrier read later, a write in one arm only, loops,
+double literals, calls in the sum).
