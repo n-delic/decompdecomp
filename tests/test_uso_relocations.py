@@ -371,3 +371,45 @@ def test_split_keeps_a_raw_overlay_function_identity_and_records_its_loader_relo
     assert result.functions == [fn]
     assert (fn.name, fn.vram, fn.rom) == ('entry', 0x80010000, region.offset + 4)
     assert fn.uso['native'] is True and fn.uso['relocs'] == [[8, 4, 1]]
+
+
+def test_distinct_donor_references_preserve_two_relocations_to_one_loader_binding(tmp_path):
+    from decompnet import consoles
+    from decompnet.app.donor_relocations import separate_overlay_references
+    from decompnet.app.source_symbol_recovery import rename
+    from decompnet.elfobj import extract_function
+
+    if toolchains.installed('ido-7.1') is None:
+        pytest.skip('needs IDO 7.1')
+    cfg = compiler_config(tmp_path, {'compiler': {
+        'toolchain': 'ido-7.1', 'flags': ['-O2', '-G', '0', '-non_shared', '-mips2'],
+    }})
+    header = 'extern char first[]; extern char second[]; extern void step(int);'
+    source = '''void entry(void) {
+        int a = (int)first;
+        int b = (int)second;
+        *(int *)(a + 0x214) = 1;
+        step(0);
+        *(char *)(b + 0x378) = 0;
+    }'''
+    donor = compile_source(cfg, header, source)
+    assert donor.ok, donor.log
+    body = extract_function(donor.obj, 'entry')
+    indices = {'first': 1, 'second': 1, 'step': 2}
+    info = {'section': 64, 'start': 0, 'size': len(body.code),
+            'relocs': [[r.offset, r.type, indices[r.symbol]] for r in body.relocs]}
+    aliases = {name: uso_match.alias(64, index) for name, index in indices.items()}
+    collapsed = compile_source(cfg, rename(header, aliases), rename(source, aliases))
+    assert collapsed.ok, collapsed.log
+    assert not uso_match.link(collapsed.obj, 'entry', body.code, info).exact
+
+    distinct = separate_overlay_references(consoles.of({'platform': 'n64'}), aliases)
+    assert distinct['first'] != distinct['second']
+    verified = compile_source(cfg, rename(header, distinct), rename(source, distinct))
+    assert verified.ok, verified.log
+    assert uso_match.link(verified.obj, 'entry', body.code, info).exact
+    wrong = distinct | {'second': uso_match.separate_reference(uso_match.alias(64, 3), 2)}
+    compiled = compile_source(cfg, rename(header, wrong), rename(source, wrong))
+    assert compiled.ok, compiled.log
+    result = uso_match.link(compiled.obj, 'entry', body.code, info)
+    assert result.instructions_exact and not result.exact

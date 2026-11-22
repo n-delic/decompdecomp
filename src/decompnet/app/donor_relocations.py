@@ -1,7 +1,7 @@
 """Find full-size donor candidates when ELF and ROM relocation inference differs."""
 
 import json
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 from ..elfobj import Reloc, mask_relocs
 from .cross_game_progress import report
@@ -95,9 +95,19 @@ def donor_refs(donor, row, label):
     return Print(donor.key, refs, donor.size)
 
 
+def separate_overlay_references(console, aliases):
+    """Preserve distinct declarations when multiple donor names need one loader binding."""
+    counts = Counter(aliases.values())
+    return {old: console.separate_overlay_reference(new, index) if counts[new] > 1 else new
+            for index, (old, new) in enumerate(sorted(aliases.items()), 1)}
+
+
 def overlay_names(net, proj, row, donor, donor_name):
     """Map object references to verified loader symbols before compiling private C."""
-    if not donor.layout or net.console(proj).export_overlay(net._rom_target(row)) is None:
+    if not donor.layout:
+        return None
+    console = net.console(proj)
+    if console.export_overlay(net._rom_target(row)) is None:
         return None
     expected = net._target_obj(row, proj)
     refs = {(r.offset, r.type): r.symbol for r in expected.relocs}
@@ -105,4 +115,5 @@ def overlay_names(net, proj, row, donor, donor_name):
     if len(refs) != len(expected.relocs) or len(refs) != len(sites) or set(refs) != set(sites):
         return None
     target = Print(donor.key, [refs[site] for site in sites], donor.size)
-    return renames(donor, target, donor_name, row['name'])
+    names = renames(donor, target, donor_name, row['name'])
+    return separate_overlay_references(console, names) if names else names

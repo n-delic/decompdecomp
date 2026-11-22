@@ -1,4 +1,5 @@
 """Judge cartridge overlay text before runtime relocation, checking bytes and symbol bindings."""
+import re
 from dataclasses import dataclass
 
 from elftools.common.exceptions import ELFError
@@ -19,6 +20,15 @@ _CALL_MASK = 0x03ffffff
 
 def local_alias(section, index, offset):
     return f'{alias(section, index)}_text_{offset:X}'
+
+
+_REFERENCE = re.compile(r'(uso_[0-9A-F]+_sym_[0-9]+(?:_text_[0-9A-F]+)?)__ref[1-9][0-9]*')
+_BINDING = re.compile(r'uso_[0-9A-F]+_sym_[0-9]+(?:_text_[0-9A-F]+)?')
+
+
+def separate_reference(binding, number):
+    """Give the compiler a distinct name that resolves to the same loader record."""
+    return f'{binding}__ref{number}' if _BINDING.fullmatch(binding) else binding
 
 
 def _local_calls(info):
@@ -77,6 +87,9 @@ def link(obj, name, target, info):
         symbol = item['symtab'].get_symbol(item['symidx'])
         binding = symbol.name
         candidate.append(Reloc(at, kind, binding, item['value']))
+        distinct = _REFERENCE.fullmatch(binding)
+        if distinct:
+            binding = distinct[1]
         original = expected.get(at)
         valid = False
         if original and kind == original[0] and not item['rela'] and symbol['st_shndx'] == 'SHN_UNDEF' and at not in seen:

@@ -11,7 +11,14 @@ from ..candidate_work import trial
 from ..compiler import donor_declaration_cache
 from ..network import NetworkError
 from ..permuter_claims import nonexclusive
-from . import donor_sources, donor_unit, exact_match_inputs, prepared_evidence, source_symbol_recovery
+from . import (
+    donor_relocations,
+    donor_sources,
+    donor_unit,
+    exact_match_inputs,
+    prepared_evidence,
+    source_symbol_recovery,
+)
 from .compiler_context import acceptable, single_source
 
 _ASSIGNMENT = re.compile(r'([A-Za-z_]\w*)\s*(:=|\?=|\+=|=)\s*(.*)')
@@ -372,6 +379,7 @@ def _try(net, proj, private, fn, source, header, agent, job):
                         source, header, fn['name'], result.obj, candidate, expected)):
                     variants = [('overlay-local-functions', *local)]
                 elif aliases:
+                    aliases = donor_relocations.separate_overlay_references(net.console(proj), aliases)
                     variants = [('overlay-symbols', source_symbol_recovery.rename(source, aliases),
                                  source_symbol_recovery.rename(header, aliases))]
                 else:

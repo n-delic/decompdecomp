@@ -238,6 +238,11 @@ class Nintendo64(Console):
         info = getattr(fn, 'uso', None)
         return {'uso': info} if info is not None else {}
 
+    def separate_overlay_reference(self, binding, number):
+        from .uso_match import separate_reference
+
+        return separate_reference(binding, number)
+
     def overlay_cartridge_placement(self, fn, cfg):
         import json
 

@@ -1587,6 +1587,19 @@ and reconstructed the identical cartridge together. Controlled fixtures
 reject a changed body and address, keep the original identity during import,
 and distinguish raw placements from compressed sections.
 
+### Preserve distinct IDO declarations for a shared loader reference
+
+With IDO 7.1 `-O2 -G 0 -non_shared -mips2`, two declared pointers can produce
+separate HI16/LO16 pairs around a call. Giving both pointers the same C name
+can change address hoisting and register allocation. Giving them separate
+source names for the same validated loader symbol preserves the instruction
+bytes and relocation sites. The exact judge still rejects the correct bytes
+with a reference to the wrong symbol index.
+
+A targeted isolated N64 replay of 90 candidates saved 11 exact matches. All
+11 pairs failed when the distinct source names were disabled. All 11 passed
+a fresh compile and reconstructed the same cartridge together.
+
 ### Rebind donor calls to functions defined in the same translation unit
 
 IDO 7.1 `-O2 -G 0 -non_shared -mips2` compiles direct calls to static
