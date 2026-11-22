@@ -468,6 +468,7 @@ class Search(Permuter):
                   (L + 'declaration_scope_sink_repairs.variants', (source, name)),
                   (L + 'display_cursor_record_repairs.variants', (source, name)),
                   (L + 'gbi_macro_commands.variants', (source, name)),
+                  (L + 'goto_loop_invariants.variants', (source, name)),
                   (L + 'shared_copy_local_split.variants', (source, name)),
                   (L + 'display_value_stage.variants', (source, name)),
                   (L + 'narrow_quotient_local.variants', (source, name)),
