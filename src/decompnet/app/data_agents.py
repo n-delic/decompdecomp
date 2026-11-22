@@ -88,8 +88,12 @@ def queue(net, proj) -> list[int]:
     rows = {r["address"]: r for r in data_units._store(net, proj).all(
         "SELECT address, status, attempts, size, span FROM data_units WHERE project_id=?", proj["id"])}
     covered = sorted((a, a + (r["span"] or r["size"] or 0)) for a, r in rows.items() if r["status"] == "matched")
+    # .bss has no bytes in the ROM, but it is data the C must define too: its units are typed from the code's accesses
+    # alone (data_drafts.typed_bss), and an agent takes what the draft can't type
+    bss, high = data_units.bss_start(net, proj), net.console(proj).ram[1]
     places = sorted(a for a in data_units.references(net, proj)
-                    if any(r["vram"] <= a < r["vram"] + r["size"] for r in regions))
+                    if any(r["vram"] <= a < r["vram"] + r["size"] for r in regions)
+                    or (bss is not None and bss <= a < high))
     # a jump table is its function's own (the judge places it with the function's C): not a datum of its own
     symbols = net.symbols(proj["id"])
     tables = {s.address for s in symbols.by_name.values() if s.kind == "jtbl" or s.name.startswith("jtbl_")}

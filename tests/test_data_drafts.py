@@ -9,7 +9,7 @@ import pytest
 from decompnet import toolchains
 from decompnet.app import data_drafts, data_units
 from decompnet.structs import FieldGuess
-from tests.test_data_units import DATA, build
+from tests.test_data_units import BSS, DATA, build
 
 
 def field(offset, size, kind="s", others=None, points_to=None):
@@ -64,6 +64,50 @@ def test_a_struct_with_pointers_and_what_isn_t_drafted(project):
     assert draft(net, DATA + 0x10) == (None, "bytes +0x0..+0x4 aren't read by the code")
     net.code_uses[DATA + 0x10] = [field(0, 4, points_to=7)]  # a "pointer" holding 7: not an address
     assert draft(net, DATA + 0x10)[0] is None
+
+
+def bss_draft(net, address, span):
+    with net.progress.view():
+        return data_drafts.typed_bss(net, net.project_row("game"), address, span)
+
+
+def test_bss_is_typed_from_the_code_alone(project):
+    net = project
+    at = BSS + 0x20
+    assert bss_draft(net, at, 16) == (f"u8 D_{at:08X}[16];", "")  # nothing reads it by a field: a buffer
+    net.code_uses[at] = [field(0, 4)]  # an indexed s32: an array to where the next datum starts
+    assert bss_draft(net, at, 12) == (f"s32 D_{at:08X}[3];", "")
+    assert bss_draft(net, at, 4) == (f"s32 D_{at:08X};", "")
+    net.code_uses[at] = [field(0, 4), field(8, 2, "u"), field(12, 4, points_to=7)]
+    # the bytes nothing reads are padding, so the definition is the whole datum
+    assert bss_draft(net, at, 20) == (f"struct {{ s32 f_000; u8 pad_004[4]; u16 f_008; u8 pad_00A[2]; void *f_00C; "
+                                      f"u8 pad_010[4]; }} D_{at:08X};", "")
+    net.code_uses[at] = [field(0, 4, others={"f32": {2}})]
+    assert bss_draft(net, at, 4) == (None, "the code reads it two ways")
+    net.code_uses[at] = [field(0, 4), field(2, 4)]
+    assert bss_draft(net, at, 8) == (None, "fields overlap at +0x2")
+    net.code_uses[at] = [field(0, 4)]
+    assert bss_draft(net, at, 6)[0] is None  # a size no s32 array makes
+
+
+def test_bss_drafts_match_without_agents(project):
+    if not toolchains.installed("gcc-2.7.2-kmc"):
+        pytest.skip("Pinned KMC compiler is not installed; never download it here.")
+    import json
+
+    from tests.test_data_units import TEXT
+    net = project
+    with net.store.tx() as db:  # the code refers to two words of .bss, the second a whole 8 bytes after the first
+        db.execute("UPDATE functions SET relocs=? WHERE name='boot'", (json.dumps(
+            [[0, 5, DATA], [4, 6, DATA], [8, 5, DATA + 0x10], [12, 6, DATA + 0x10], [16, 4, TEXT],
+             [20, 5, BSS], [24, 5, BSS + 8]]),))
+    net.code_uses[DATA + 0x10] = [field(0, 4)]
+    net.code_uses[BSS] = [field(0, 4)]
+    lines = []
+    counts = data_drafts.run(net, "game", lines.append)
+    with net.progress.view():
+        first = data_units.unit(net, "game", f"D_{BSS:08X}")
+    assert first["status"] == "matched" and "s32 D_80000540[2];" in first["source"], (counts, lines)
 
 
 def test_values_are_written_exactly():
