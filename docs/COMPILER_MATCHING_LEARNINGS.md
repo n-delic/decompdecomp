@@ -14393,3 +14393,12 @@ What the permuter still cannot do, after these families: step 5 raises the score
 search that only accepts improvements will not take it); step 6 needs the function's own record-field accesses to be
 the only users of the second pointer; and step 10 needs the frame gap to be a multiple of 8 with every earlier spill
 agreeing, which the existing frame evidence reads but the number of stores to normalise (three here) has to be right.
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, a rendering draft reversed the two input
+registers of four otherwise aligned address additions. Casting both operands of the repeated
+member-pointer plus byte-offset expression to `u32` preserved the offset as the first input and
+scored 286 to 266. The target-guided dispatcher reproduced the result. Shrinking the local
+record array by one scored 260 independently, but the target takes the array base at 0x18 and
+the first register save is at 0x270, leaving room for all 50 12-byte records. The accepted
+repair keeps that capacity. Evidence is one measured improvement and synthetic ABI and
+operand-evidence tests. The function remains unmatched.
