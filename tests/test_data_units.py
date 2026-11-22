@@ -94,6 +94,41 @@ def test_explicit_split_data_fills_the_queue_when_the_parent_already_ends_at_bss
         assert data_agents.queue(net, proj) == [DATA, DATA + 0x10]
 
 
+def test_the_bytes_between_the_named_data_and_bss_are_data_too(project):
+    """A split that names some data (here 0x20 bytes) says nothing of the data after it up to .bss: the gap is a
+    region of its own, so the units in it reach the drafts and the agents."""
+    net = project
+    with net.progress.view():
+        proj = dict(net.project_row("game"))
+        cfg = json.loads(proj["config"])
+        cfg["segments"][0]["rom_end"] = 0x1120
+        proj["config"] = json.dumps(cfg)
+        (Path(proj["root"]) / "game.yaml").write_text(
+            "segments:\n"
+            "- {type: code, start: 0x1000, vram: 0x80000400, subsegments: [[0x1000, c], [0x1100, data]]}\n"
+            "- [0x1120]\n",
+            encoding="utf-8",
+        )
+        assert data_units.initialised_data(net, proj) == [
+            {"rom_start": 0x1100, "vram": DATA, "size": 0x20}, {"rom_start": 0x1120, "vram": DATA + 0x20, "size": 0x20}]
+        assert data_units.reader(net, proj)(DATA + 0x20, 4) == GAME_DATA[0x20:0x24]
+
+
+def test_bss_the_code_refers_to_is_a_unit_left_to_write(project):
+    net = project
+    with net.progress.view():
+        proj = net.project_row("game")
+        assert BSS + 8 not in data_agents.queue(net, proj)
+    with net.store.tx() as db:  # the game's code also stores to a word 8 bytes into .bss
+        db.execute("UPDATE functions SET relocs=? WHERE name='boot'", (json.dumps(
+            [[0, 5, DATA], [4, 6, DATA], [8, 5, DATA + 0x10], [12, 6, DATA + 0x10], [16, 4, TEXT], [20, 5, BSS + 8]]),))
+    with net.progress.view():
+        proj = net.project_row("game")
+        assert data_units.bss_start(net, proj) == BSS
+        assert data_agents.queue(net, proj)[-1] == BSS + 8
+        assert data_units.unit(net, "game", f"D_{BSS + 8:08X}")["bss"]
+
+
 @pytest.fixture
 def compiles():
     if not toolchains.installed("gcc-2.7.2-kmc"):

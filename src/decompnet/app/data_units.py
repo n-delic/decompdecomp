@@ -119,27 +119,45 @@ def _split_data(root: Path, segments: list[dict], image_size: int, bss: int | No
     return []
 
 
+def _gap_before_bss(segments: list[dict], image_size: int, bss: int | None) -> dict | None:
+    """The ROM-backed bytes between the last segment's end and where .bss starts (the game's data a splitter left as
+    a raw `bin` or never named), or None when there is no clean gap there."""
+    if bss is None or not segments:
+        return None
+    ends = [(s["vram"] + s["rom_end"] - s["rom_start"], s) for s in segments]
+    below = [(end, s) for end, s in ends if end <= bss]
+    if not below:
+        return None
+    end, owner = max(below, key=lambda x: x[0])
+    size = bss - end
+    rom_start = owner["rom_end"]
+    clash = any(s is not owner and s["rom_start"] < rom_start + size and rom_start < s["rom_end"] for s in segments)
+    if size <= 0 or size > 0x400000 or clash or rom_start + size > image_size:
+        return None
+    return {"rom_start": rom_start, "vram": end, "size": size}
+
+
 def initialised_data(net, proj) -> list[dict]:
-    """Locate ROM-backed data from the split, or infer the gap between text and the boot stub's .bss."""
+    """Locate ROM-backed data from the split, plus the gap between the code and the boot stub's .bss.
+
+    A split that names a data subsegment inside one code segment says nothing of the data after the last one: a
+    game whose split had 19 KB of named data and a 52 KB raw segment before .bss had only the 19 KB offered to the
+    drafts and the agents, and 900 of its symbols never came up. The gap is added when it lies after every region
+    the split names."""
     cfg = net.cfg(proj)
     image = net._rom(proj)[0]
     start = net.console(proj).bss_start(bytes(image[:0x2000]))
     segments = [s for s in cfg.get("segments", []) if s.get("rom_end") is not None]
-    if regions := _split_data(Path(proj["root"]), segments, len(image), start):
-        return regions
-    if start is None or not segments:
-        return []
-    ends = [(s["vram"] + s["rom_end"] - s["rom_start"], s) for s in segments]
-    below = [(end, s) for end, s in ends if end <= start]
-    if not below:
-        return []
-    end, owner = max(below, key=lambda x: x[0])
-    size = start - end
-    rom_start = owner["rom_end"]
-    clash = any(s is not owner and s["rom_start"] < rom_start + size and rom_start < s["rom_end"] for s in segments)
-    if size <= 0 or size > 0x400000 or clash or rom_start + size > len(image):
-        return []
-    return [{"rom_start": rom_start, "vram": end, "size": size}]
+    regions = _split_data(Path(proj["root"]), segments, len(image), start)
+    gap = _gap_before_bss(segments, len(image), start)
+    if gap and all(r["vram"] + r["size"] <= gap["vram"] for r in regions):
+        regions = [*regions, gap]
+    return regions
+
+
+def bss_start(net, proj) -> int | None:
+    """Where the game's zero-filled data (.bss) starts, read from its boot code, or None when the console has none."""
+    return net.console(proj).bss_start(bytes(net._rom(proj)[0][:0x2000]))
 
 
 def reader(net, proj):
