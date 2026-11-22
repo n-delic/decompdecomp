@@ -14894,3 +14894,7 @@ Reusing it at both ends scored 7,600, with all three jump-table
 relocations and no warnings. One unrelated holder scored 7,675.
 Tests require both ends of the clamp, the agreeing sample call
 with its two literal arguments and disjoint local lifetimes.
+
+### Forward an incoming argument through a guarded counter update
+
+In a private N64 selection function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the target forwarded its untouched first argument to a call and incremented a halfword counter in the preceding branch delay slot. The draft omitted the incoming argument and computed the increment before its guard. Moving the increment into the guarded arm improved the linked score from 305 to 40; also restoring the measured incoming argument reproduced the target exactly (score 0). The candidate checks the counter's local lifetime and uses the existing control-flow proof that the entry register reaches the call. Evidence: one saved function and synthetic generation and routing tests.

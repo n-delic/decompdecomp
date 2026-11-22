@@ -1604,3 +1604,13 @@ def test_flag_reload_routes_to_kmc(monkeypatch):
                         lambda text, name, header, diff: [('flag_reload_fixture', text)])
     assert 'flag_reload_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'flag_reload_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_forwarded_counter_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_forwarded_counter, 'variants',
+                        lambda text, name, header, diff, asm: [('forwarded_counter_fixture', text)])
+    assert 'forwarded_counter_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'forwarded_counter_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))

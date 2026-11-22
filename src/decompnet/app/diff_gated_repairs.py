@@ -43,6 +43,7 @@ from decomprepair import (
     measured_expression_repairs,
     measured_flag_reload,
     measured_float_grid_stores,
+    measured_forwarded_counter,
     measured_forwarded_pointer,
     measured_global_rebase,
     measured_halfword_index,
@@ -318,6 +319,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_kmc_call_stores.variants(source, name, header, rows, resolve)
         result += measured_carried_loop_test.variants(source, name, header, rows)
         result += measured_byte_clamp.variants(source, name, header, rows)
+        result += measured_forwarded_counter.variants(source, name, header, rows, asm or '')
         result += measured_flag_reload.variants(source, name, header, rows)
         result += measured_reset_loops.variants(source, name, header, rows)
         result += measured_interpolation_calls.variants(source, name, header, rows)
