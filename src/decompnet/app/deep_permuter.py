@@ -429,7 +429,10 @@ class Search(Permuter):
         shapes = register or permuter_focus.register_dominant(rows)
         if shapes:
             calls.insert(0, (L + 'block_register_repairs.variants', (source, name)))
+        calls.append((L + 'reused_temp_split_repairs.variants', (source, name)))
         results = [generation_calls.pairs(result) for result in generation_calls.library(calls)]
+        from decomprepair.reused_temp_split_repairs import RESTORE_FAMILY
+        restored = [(family, child) for family, child in results.pop() if family == RESTORE_FAMILY]
         loop_shapes = results.pop(0) if shapes else []
         if register:
             results[-2] = [(family, child) for family, child in results[-2] if family == 'arithmetic_operand_order']
@@ -439,7 +442,7 @@ class Search(Permuter):
                 proposals = result + proposals  # linked-case zero-bound labels go before the rest
             else:
                 proposals += result
-        proposals = loop_shapes + proposals
+        proposals = restored + loop_shapes + proposals
         return proposals, loop_shapes
 
     def operand_order_pass(self, agent, proj, fn, best, fork):

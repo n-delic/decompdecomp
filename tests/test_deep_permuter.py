@@ -1368,3 +1368,35 @@ def test_neutral_plateau_pass_reaches_a_step_that_pays_off_after_same_score_step
 def test_neutral_frontier_spreads_over_families_first():
     children = [('a', 1), ('a', 2), ('b', 3), ('a', 4), ('c', 5)]
     assert deep_permuter.Search.neutral_frontier(children, 4) == [('a', 1), ('b', 3), ('c', 5), ('a', 2)]
+
+
+def test_switch_temporary_restore_gets_an_early_local_trial(monkeypatch):
+    from decompnet.app import generation_calls
+    from decomprepair.reused_temp_split_repairs import RESTORE_FAMILY, variants
+
+    net = setup(monkeypatch)
+    fn, proj = net.function(), net.project_row('game')
+    source = '''int f(int which) {
+    int value;
+    int value_b1;
+    switch (which) {
+    case 0:
+        value = 0;
+        break;
+    default:
+        value_b1 = 1;
+        break;
+    }
+    return value;
+}'''
+    monkeypatch.setattr(generation_calls, 'library', lambda calls: [
+        variants(*arguments) if name == 'decomprepair.reused_temp_split_repairs.variants'
+        else [('other', 'another draft')]
+        for name, arguments, *_ in calls
+    ])
+    search = deep_permuter.Search(net, 1, 10, Log(), fn)
+    proposals, _ = search._local_proposals(source, proj, fn, [])
+    family, candidate = proposals[0]
+    assert family == RESTORE_FAMILY
+    assert 'value = 1;' in candidate
+    assert 'value_b1' not in candidate

@@ -1161,6 +1161,14 @@ Restoring the shared assignment lowered the linked score from 1,957 to
 the new local. Evidence is one scratch replay and a synthetic switch
 regression. The function remains unmatched.
 
+The recovery rule also handles a saved draft that already contains the
+orphaned split. A same-typed generated local with one assignment and
+no reader is reconnected to the local written by other switch arms and
+read after the switch. In the same scratch replay this single proposal
+lowered the original alternate-profile draft from 2,025 to 1,009 with
+the same header and flags. The normal Deep Permuter replay then reached
+864 with its existing statement interleaving rule.
+
 ## Read verified compiler overrides from nearby matched entries
 
 A private N64 draft scored 525 with `gcc-2.7.2-kmc -G0 -mips3 -mgp32
