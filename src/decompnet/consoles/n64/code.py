@@ -532,6 +532,7 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
 
     found = trim(rom, found, taken, log)
     found = recover_scheduled_mapping_entries(rom, found, taken, log)
+    found = bridge_loaded_prologues(rom, found, loaded.get('segments', ()), taken, log)
     recover(config, rom, found, log)
     extend_startup_trap(config, rom, log)
     extend_startup_data(config, rom, log)
@@ -607,6 +608,38 @@ def recover_scheduled_mapping_entries(image, found, taken, log=print):
             result[index+1] = (entry, stop, address-lead)
             log('Kept a directly called scheduled prologue with its recovered code range.')
             break
+    return result
+
+
+def bridge_loaded_prologues(image, found, loaded, taken=(), log=print):
+    """Keep a two-instruction address load with the adjacent RAM-observed frame."""
+    from ...arch.mips_references import references
+
+    original = sorted(found)
+    result = list(original)
+    loaded_starts = {start for start, _, _ in loaded}
+    for index, (left, right) in enumerate(zip(original, original[1:])):
+        start, end, base = left
+        seam, stop, address = right
+        if (seam not in loaded_starts or seam - end != 4 or end - start < 12
+                or address - seam != base - start or not is_frame(int.from_bytes(image[seam:seam+4], 'big'))):
+            continue
+        entry = end - 4
+        ret, pop, upper, load = struct.unpack_from('>4I', image, entry - 8)
+        reg = (upper >> 16) & 31
+        if (ret != JR_RA or pop >> 16 != 0x27bd or not 0 < (pop & 0xffff) < 0x8000
+                or upper >> 26 != 15 or not reg or load >> 26 != 35
+                or (load >> 21) & 31 != reg or (load >> 16) & 31 != reg):
+            continue
+        interior = {address - 4, address}
+        if any(target in interior for lo, hi, vram in (*taken, *original)
+               for target, _, _ in references(image, lo, hi, vram)):
+            continue
+        if any(target.to_bytes(4, 'big') in image for target in interior):
+            continue
+        result[index] = (start, entry, base)
+        result[index+1] = (entry, stop, address - 8)
+        log('Kept a scheduled address load with its RAM-observed code range.')
     return result
 
 
