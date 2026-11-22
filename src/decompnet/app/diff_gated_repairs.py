@@ -85,6 +85,7 @@ from decomprepair import (
     measured_guarded_byte,
     measured_guarded_flag_value,
     measured_guarded_index,
+    measured_guarded_zero,
     measured_halfword_index,
     measured_halfword_stores,
     measured_halfword_switch,
@@ -563,6 +564,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_packed_quad.variants(source, name, header, rows, flags, big_endian)
         result += measured_indexed_allocations.variants(source, name, header, rows)
         result += measured_byte_loop_key.variants(source, name, header, rows, flags, resolve)
+        result += measured_guarded_zero.variants(source, name, header, rows)
         result += measured_record_pointer_update.variants(source, name, header, rows)
         result += measured_record_ramp.variants(source, name, header, rows)
         result += measured_region_search.variants(source, name, header, rows)

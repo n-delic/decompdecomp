@@ -2492,3 +2492,14 @@ def test_byte_loop_key_routes_to_kmc_with_flags_and_resolver(monkeypatch):
     assert 'byte_loop_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, '', resolve=resolver))
     assert 'byte_loop_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, '', resolve=resolver))
     assert 'byte_loop_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-7.1', rows, '', resolve=resolver))
+
+
+def test_guarded_zero_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'nop', 'nop')]
+    monkeypatch.setattr(diff_gated_repairs.measured_guarded_zero, 'variants',
+                        lambda text, name, header, diff: [('guarded_zero_fixture', text)])
+    assert 'guarded_zero_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'guarded_zero_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+    assert 'guarded_zero_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-7.1', rows, ''))

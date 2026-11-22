@@ -16179,3 +16179,7 @@ A saved MIPS wrapper built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` cal
 ### KMC GCC 2.7.2 byte loop comparison key
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` scanned records and compared a byte with a staged address value. The generated draft read a word and initialized the loop offset before staging the address. Correcting the load width reduced the linked difference score from 260 to 60; staging the address before the offset produced an exact match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the measured instruction order, 32-bit ABI and resolved table address.
+
+### KMC GCC 2.7.2 zero initialization after a guard call
+
+A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` initialized a loop counter after a guard call. The generated draft initialized it before the call. Moving the non-escaped local initialization into the guarded block changed the linked difference score from 390 to an exact match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the measured call and branch sequence and rejects observable uses outside the block.
