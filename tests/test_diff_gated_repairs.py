@@ -2288,3 +2288,14 @@ def test_phase_projection_holders_route_only_for_kmc(monkeypatch):
     for compiler in (KMC, EGCS, 'ido-7.1'):
         labels = dict(proposals(source, 'update', '', 'mips', compiler, rows, ''))
         assert (trial.FAMILY in labels) == (compiler == KMC)
+
+
+def test_guarded_signed_byte_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'nop', 'nop')]
+    monkeypatch.setattr(diff_gated_repairs.measured_guarded_byte, 'variants',
+                        lambda text, name, header, diff: [('guarded_byte_fixture', text)])
+    assert 'guarded_byte_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'guarded_byte_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+    assert 'guarded_byte_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-7.1', rows, ''))
