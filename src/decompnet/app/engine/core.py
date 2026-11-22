@@ -172,18 +172,25 @@ class Core(Network):
         row = self.project_row(slug)
         if slug in self.links:
             return None
-        from .. import assembly_reconsideration
+        from .. import assembly_reconsideration, score_version
+        # saved bests scored under older penalties: rescored first, so none blocks a better source (score_version.py)
+        rescored = score_version.refresh(self, row, log)
+        rescored_said = f"{rescored} saved best score{'' if rescored == 1 else 's'} updated to this version's scoring"
         if only_if_updated and self.cfg(row).get("checked") == __version__:
             # Capability fixes can ship without a package-version change. Only this
             # narrow, self-retiring review runs again; console/range work stays gated.
             reconsidered = assembly_reconsideration.run(self, row, log)
-            return f'{reconsidered} obsolete tooling verdicts reconsidered with supported C' if reconsidered else None
+            said = [rescored_said] if rescored else []
+            if reconsidered:
+                said.append(f'{reconsidered} obsolete tooling verdicts reconsidered with supported C')
+            return "; ".join(said) or None
         if self.is_rom(row):
             self.rangechecks.reopen(slug)
         last = self.project_store(row['id']).one("SELECT COALESCE(MAX(id), 0) AS id FROM events WHERE project_id=?", row["id"])["id"]
         self.console(row).on_start(self, slug, log=log)
         # what the console's work did, it said in the feed ("8 pieces of functions ... joined"): in the answer too
-        done = [r["detail"] for r in self.project_store(row['id']).all("SELECT detail FROM events WHERE project_id=? AND id>? AND "
+        done = [rescored_said] if rescored else []
+        done += [r["detail"] for r in self.project_store(row['id']).all("SELECT detail FROM events WHERE project_id=? AND id>? AND "
                                                      "kind='analysis' ORDER BY id", row["id"], last)]
         reconsidered = assembly_reconsideration.run(self, self.project_row(slug), log)
         if reconsidered:

@@ -18,10 +18,17 @@ from .elfobj import FunctionObj, mask_relocs
 
 PENALTY_STACKDIFF = 1
 PENALTY_REGALLOC = 5
-PENALTY_OPERAND = 10
+PENALTY_OPERAND = 10  # an operand that differs and changes nothing the program means (a register, a branch label)
+# a memory access at another offset or symbol, another constant, a call to another function: a different program, so
+# it costs more than a reorder (60). At 10, a saved best that wrote one field twice and never wrote the next outscored
+# every correct source still one reorder away (COMPILER_MATCHING_LEARNINGS.md, "meaning-breaking saved bests").
+PENALTY_MEANING = 150
 PENALTY_REORDER = 60
 PENALTY_INSERTION = 100
 PENALTY_DELETION = 100
+# Bumped whenever the penalties change, so scores saved under older ones aren't compared with new ones as equals
+# (functions.score_version; network.Network._refresh_stale_best rescores a stale best before it can block one).
+SCORE_VERSION = 2
 
 _CS = arch.capstone_modes()  # (arch, big-endian) -> capstone's (architecture, mode), from arch/
 
@@ -188,7 +195,38 @@ def _classify(a: Insn, b: Insn) -> tuple[int, str]:
             return PENALTY_REGALLOC, "r"
         if all(_NUM.match(x) and _NUM.match(y) for x, y in diffs) and _STACK.search(a.operands):
             return PENALTY_STACKDIFF, "s"
+    if _changes_meaning(a, ta, b, tb):
+        return PENALTY_MEANING, "i"  # (the row keeps the operand mark its readers know)
     return PENALTY_OPERAND, "i"
+
+
+def _values(tokens: list[str]) -> Counter[str]:
+    """The operand words that say what an instruction does rather than where it keeps it: numbers, symbols and
+    relocation names, keywords like x86's `dword`. Registers, punctuation and branch labels (`.L40`) are left out."""
+    return Counter(t.lower() for t in tokens
+                   if (t[0].isalnum() or t[0] in "_<$-") and not _REG.match(t.lower()) and not t.startswith(".L"))
+
+
+def _meaning_key(ins: Insn) -> tuple:
+    """An instruction as what it computes: its opcode and its values (_values), whatever registers hold them."""
+    return ins.mnemonic.lower(), tuple(sorted(_values(_TOKEN.findall(ins.operands)).elements()))
+
+
+def _changes_meaning(a: Insn, ta: list[str], b: Insn, tb: list[str]) -> bool:
+    """Whether two instructions with the same opcode differ in what they compute, not only in where: another offset
+    or symbol in a load or store, another constant, another call. A branch's target moves with the code before it,
+    and a stack slot's offset with the frame's layout, so neither counts."""
+    mnemonic = a.mnemonic.lower()
+    va, vb = _values(ta), _values(tb)
+    if _BRANCH.match(mnemonic) and not _NOT_BRANCH.match(mnemonic):
+        # its target, a number, moves with the code before it; a symbol (a call, a tail call) is another function
+        va, vb = (Counter({t: n for t, n in v.items() if not _NUM.match(t.lstrip("#"))}) for v in (va, vb))
+    if va == vb:
+        return False
+    if _STACK.search(a.operands) and _STACK.search(b.operands) and all(
+            _NUM.match(t) for t in (va - vb) + (vb - va)):
+        return False  # a spill slot moved: the frame's layout, not the program's
+    return True
 
 
 @dataclass
@@ -449,12 +487,24 @@ def _diff(target: FunctionObj, candidate: FunctionObj, *, details=True) -> DiffR
     alignment = instruction_alignment.opcodes([i.mnemonic for i in t_ins], [i.mnemonic for i in c_ins])
     rows: list[tuple[str, str, str]] = []
     score = 0
+    # What each side computes that the other doesn't (registers set aside): a paired row that differs in an offset or
+    # constant costs PENALTY_MEANING only when its instruction is one of these. Two stores in another order pair up
+    # with each other's offsets, and that is a schedule, not another program: it stays an operand difference.
+    t_keys, c_keys = Counter(map(_meaning_key, t_ins)), Counter(map(_meaning_key, c_ins))
+    unmatched_t, unmatched_c = t_keys - c_keys, c_keys - t_keys
     missing: Counter[str] = Counter()
     extra: Counter[str] = Counter()
     for op, a0, a1, b0, b1 in alignment:
         if op == "equal":
             for a, b in zip(t_ins[a0:a1], c_ins[b0:b1]):
                 pen, mark = _classify(a, b)
+                if pen == PENALTY_MEANING:
+                    ka, kb = _meaning_key(a), _meaning_key(b)
+                    if unmatched_t[ka] > 0 or unmatched_c[kb] > 0:
+                        unmatched_t[ka] -= 1
+                        unmatched_c[kb] -= 1
+                    else:
+                        pen = PENALTY_OPERAND
                 score += pen
                 if not details:
                     continue
