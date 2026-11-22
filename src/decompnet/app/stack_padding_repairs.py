@@ -95,6 +95,22 @@ def measured(source, name, arch, rows, *, evidence=None):
     return [('inferred_frame_reservation',source[:last]+note+source[last:])]
 
 
+def frame_word_candidates(source, name, arch, rows):
+    """Unused words of frame at each gap of the declaration block, for a frame the target made bigger than the draft's.
+
+    IDO reserves the word of a local nothing reads, and where it is declared decides which slots and arrays the
+    frame's other objects take. The measured paths above need every changed row to agree on one growth; a draft whose
+    saved-register slots also moved (the spill slots follow the extra word) has no uniform delta, so the frame's own
+    difference is what this reads (decomp-repair 0.5.359).
+    """
+    from decomprepair import frame_padding_repairs
+
+    from .stack_layout import diagnose
+
+    delta = (diagnose(arch, rows) or {}).get('frame_delta') or 0
+    return frame_padding_repairs.positioned_variants(source, name, delta) if delta > 0 else []
+
+
 def layout_candidates(source, name, header, arch, rows, symbols=None, flags=(), *, asm=None):
     """Share the measured KMC layout pass with exact replay."""
     from decomprepair import frame_padding_repairs, measured_layout_repairs, stack_object_size_repairs

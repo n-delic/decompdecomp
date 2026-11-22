@@ -13928,3 +13928,45 @@ prototype slot reduced the linked-byte score from 680 to 625. With the function'
 `-fno-strength-reduce -g3` settings, the same edit scored 880 to 875. Dropping the last scalar
 instead scored 1,818 under those settings. The function remains unmatched. Evidence is one
 measured improvement and a synthetic arity regression.
+
+## A function the project's compiler never built: an IDO 7.1 bit-stream reader in a KMC project (960 instructions, 54982 -> 0)
+
+An N64 game whose project compiler is `gcc-2.7.2-kmc` had one 960-instruction function that eight sessions left at
+about 55,000 (a 0x38 frame against the target's 0xF8, 753 instructions against 960). Every note said "IDO did not
+compile". The target's own idioms named the compiler (`or rd,rs,$zero` moves, `sra` before the mask, temporaries
+starting at `$t6`, `bnel`); `compile_snippet.py ido-7.1` on a first block of the reader gave the target's
+instructions, and the draft only failed to build because it was m2c's GCC-shaped C (`void *` arithmetic).
+
+**Evidence level: one function, judged exact by the app (`try_compiler` then `suggest(function=...)`, function-only
+profile `ido-7.1 -O2 -mips2 -G 0 -non_shared -Xcpluscomm -Wab,-r4300_mul -woff 649,838,712`); the chain below is
+controlled (each step measured on the previous one's output).**
+
+The function reads bit fields from a word buffer through a cursor, the same block 60 times with different widths:
+`if (avail > n) { dst = w & mask; w >>= n; avail -= n; } else { pos += 32; dst = w & ((1 << avail) - 1);
+w = buf[(pos >> 5) & 0x3ff]; if (avail != n) dst |= (w & ((1 << (n - avail)) - 1)) << avail; w >>= n - avail;
+avail += 32 - n; }`, written once as a macro. The `slti $at,$v1,n+1` tests (`avail > n`, not `>=`), the destination
+re-read after the first store (`lh` before the `or`) and `or $t6,$t7,$zero; or $t7,$t6,$t8` (a register destination)
+fix the macro's shape. Four arrays of four halfwords, one of eight and a 4x13 table are rolled loops that IDO
+strength-reduced (`$a0 += 0x1A`, the end pointer in `$ra`). Declare the stack arrays highest offset first.
+
+A macro-form source built from that reading scored 89 (frame 0xF0 against 0xF8). The last 89 points were three steps,
+each of which was a step the permuter had no family for:
+
+| edit | what it changes | score |
+|---|---|---|
+| read the first flag into the loop's counter (`GETBITS(i, 1)`), keep the flag's declaration, now unused | the flag's register came from the counter's web: the target's flag sat in `$t3` and the constant it compares with in `$a0`, the draft had them the other way round | 89 -> 49 |
+| one unused `s32` declared right after the last array | IDO reserves a stack word for a local nothing reads: the frame (0xF0 -> 0xF8) and the saved-register spill slots (`0x4C/0x54` -> `0x50/0x58`) | 49 -> 8 |
+| declare the scalars `avail, w, pos` instead of `pos, w, avail` | the spill slots follow the declaration order: `t0` and `v1` were saved in the other order | 8 -> 0 |
+
+Failed or insufficient: the unused word as the last declaration scored 49 (frame right, slots wrong), as the first
+one 84; two unused words after the last array 8, as the last two 8; `volatile`/`long long` pads 8-44; every
+declaration order without the unused word 40 at best; a flag of any other type changed the code (`u8`/`s16` 1349-1784).
+Changing `void *arg0` to `char *arg0` in the old draft did not make it build under IDO (pointer comparison of unrelated
+stack objects), so a `void *` repair in `ido_compat` would not have found this.
+
+Added to the permuter (decomp-repair 0.5.359), each reproducing its step from the previous one's output:
+`counter_reuse_variants` (family `merge_integer_lifetimes`, 89 -> 49), `frame_padding_repairs.positioned_variants`
+(family `inferred_frame_reservation`, reached for `ido-7.1` from `diff_gated_repairs`, 49 -> 8) and
+`stack_repairs.declaration_moves` (family `local_declaration_order`, every order of up to four used scalars, 8 -> 0).
+Before it, `diff_gated_repairs` returned right after two measured families for `ido-7.1`, and `stack_repairs`
+skipped any function that began with an array.
