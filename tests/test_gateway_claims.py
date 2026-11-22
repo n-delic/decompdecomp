@@ -55,6 +55,22 @@ def test_leaves_focused_helpers_and_forks_to_the_app(tmp_path, monkeypatch):
     assert claim_ahead.prepare(net, agent.id, "game") is None
 
 
+def test_named_claim_can_decline_a_replacement(tmp_path):
+    from decompnet.network import NetworkError
+
+    net, _ = _game(tmp_path, [("a", 4, "open"), ("b", 8, "open")])
+    first, _ = net.local_agent("first")
+    second, _ = net.local_agent("second")
+    net.claim_row(first, "game", "a")
+    with pytest.raises(NetworkError, match="is claimed by first"):
+        tools._invoke(net, second, "game", "claim_function", {"function": "a", "fallback": False})
+    assert holder(net, "b") is None
+    text = tools._invoke(net, second, "game", "claim_function", {"function": "a"})
+    assert "## CLAIMED: game/b" in text
+    assert holder(net, "a") == first.id
+    assert holder(net, "b") == second.id
+
+
 needs_gateway = pytest.mark.skipif(mcp_gateway.built() is None,
                                         reason="the gateway isn't built (cargo build --release in gateway/)")
 
@@ -133,6 +149,17 @@ def test_a_named_function_batch_or_strategy_goes_to_the_app(served, arguments):
     text = call(served.gateway.url, served.token, "claim_function", arguments)
     assert "being recorded" not in text
     assert any(name == "claim_function" for _, name, _ in served.reached)
+
+
+@needs_gateway
+def test_named_claim_with_fallback_disabled_reports_only_the_conflict(served):
+    served.net.claim_row(served.other, "game", "a")
+    text = call(served.gateway.url, served.token, "claim_function", {"function": "a", "fallback": False})
+    assert "is claimed by other" in text
+    assert "## CLAIMED" not in text
+    assert holder(served.net, "a") == served.other.id
+    assert holder(served.net, "b") is None
+    assert holder(served.net, "c") is None
 
 
 @needs_gateway

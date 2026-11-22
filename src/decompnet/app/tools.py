@@ -490,10 +490,9 @@ def _release_with_experiment(net, agent, slug, function, notes="", needs="", not
 
 
 @claim_state.quick
-def _claim(net: RomNetwork, agent: Agent, slug: str, function: str, strategy: str, count: int = 1) -> str:
-    """A claim; one asked for that's matched, set aside (no C makes it) or someone else's is the next free function
-    instead (an agent asking for those has nothing better to do than the next one, and is told why). count > 1: a
-    batch of small ones."""
+def _claim(net: RomNetwork, agent: Agent, slug: str, function: str, strategy: str, count: int = 1,
+           fallback: bool = True) -> str:
+    """Claim the named function or choose available work when fallback is enabled."""
     from . import work_availability
     focused=agent.id in getattr(net,'_agent_focus',{})
     if not focused and not function and (waiting := work_availability.cached(net,agent,slug)):
@@ -509,7 +508,8 @@ def _claim(net: RomNetwork, agent: Agent, slug: str, function: str, strategy: st
     try:
         return packet(agent_tokens.claim_packet(net, agent, slug, net.claim(agent, slug, function or None, strategy)))
     except NetworkError as e:
-        if focused or not function or not re.search(r"already matched|is set aside|is claimed by|outside this agent|Max tries reached", str(e)):
+        if (focused or not fallback or not function
+                or not re.search(r"already matched|is set aside|is claimed by|outside this agent|Max tries reached", str(e))):
             raise
         return packet(str(e) + '\n\n' + agent_tokens.brief(net, net.claim(agent, slug, None, strategy), slug, agent))
 
@@ -701,8 +701,8 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "compile_family": agent_tokens.local_family,
     "family_targets": agent_tokens.family_targets,
     "get_assembly": lambda net, agent, slug, function, start=0, limit=60, focus="": agent_tokens.assembly(net, slug, function, start, limit, focus, agent),
-    "claim_function": lambda net, agent, slug, function="", strategy="", count=1:
-        _claim(net, agent, slug, function, strategy, count),
+    "claim_function": lambda net, agent, slug, function="", strategy="", count=1, fallback=True:
+        _claim(net, agent, slug, function, strategy, count, fallback),
     "get_function": agent_tokens.function_view,
     "compile_and_diff": lambda net, agent, slug, **args: _compile(net, agent, slug, **args),
     "search_repair_examples": repair_search.search,
@@ -1289,7 +1289,8 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         return await run(ctx, "project_info", detail=detail)
 
     @tool
-    async def claim_function(ctx: Context, function: str = "", strategy: str = "", count: int = 1) -> str:
+    async def claim_function(ctx: Context, function: str = "", strategy: str = "", count: int = 1,
+                             fallback: bool = True) -> str:
         """Claim the next function to decompile (or a specific one by name or address).
 
         Returns a lightweight receipt with saved candidate C and claim token. No baseline compile, new draft or
@@ -1302,8 +1303,11 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
                 instructions; ROM projects' default), closest (nearly matched already), hardest, random
             count: up to 6: small functions come as a batch (neighbours in one file) to write together and
                 judge in one compile_and_diff; a big one comes alone
+            fallback: allow another assignment if the named function is unavailable (default true).
+                Set false when the task requires only the named function.
         """
-        return await run(ctx, "claim_function", function=function, strategy=strategy, count=count)
+        options = {} if fallback else {"fallback": False}
+        return await run(ctx, "claim_function", function=function, strategy=strategy, count=count, **options)
 
     @tool
     async def get_function(ctx: Context, function: str, section: str = 'summary', start: int = 0, limit: int = 6000) -> str:

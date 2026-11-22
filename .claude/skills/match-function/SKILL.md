@@ -72,8 +72,11 @@ connection throughout the run so the app keeps attempts and claims under one ide
 - Start with `get_claims` to recover an existing claim on this connection. If it holds the function
   for this run, resume it. If it holds unrelated work, use a separate project connection.
 - **Only a project given**: call `claim_function(strategy="random")` and use the name the app returns.
-- **A function given**: call `claim_function(function=FUNC)`. If someone else holds it, report the
-  conflict before selecting a different function.
+- **A function given**: call `claim_function(function=FUNC, fallback=false)` when the tool exposes
+  `fallback`. If someone else holds it, report the conflict and continue in the isolated judge.
+  Older app versions may assign a different function when a named claim fails. If that happens,
+  release the replacement with its own claim token, `move_on=true`, and a note that the named
+  task did not include it. Wait for the requested function to become available before retrying.
 - If the gateway replies **still running**, repeat the identical tool call with the same arguments and
   connection to collect its result. Keep other experiments local while a claim or compile is pending.
   If it replies **accepted** and says not to repeat, let the app finish and read the notice on the next reply.
