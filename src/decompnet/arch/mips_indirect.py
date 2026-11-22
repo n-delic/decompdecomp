@@ -63,7 +63,71 @@ def _saved_base(image,start,guard,order,register):
     return value
 
 
-def _saved_register_guard(image,start,at,order):
+def _straight_return(image, at, end, order):
+    """Follow a short straight-line epilogue through its return delay slot."""
+    import rabbitizer
+
+    for pc in range(at, min(end - 4, at + 96), 4):
+        word = int.from_bytes(image[pc:pc + 4], order)
+        ins = rabbitizer.Instruction(word)
+        if not ins.isValid() or ins.isTrap() or word == 0x42000018:  # eret
+            return False
+        if word == 0x03e00008:  # jr $ra
+            slot = rabbitizer.Instruction(int.from_bytes(image[pc + 4:pc + 8], order))
+            return slot.isValid() and not slot.hasDelaySlot() and not slot.isTrap()
+        if ins.hasDelaySlot():
+            return False
+    return False
+
+
+def _saved_base_after_early_returns(image, start, end, vram, guard, jump, order, register):
+    """A saved base may follow branches that either rejoin before it or return."""
+    import rabbitizer
+
+    pairs = [pc for pc in range(start, guard - 4, 4)
+             if int.from_bytes(image[pc:pc + 4], order) >> 16 == 0x3c00 | register]
+    if len(pairs) != 1:
+        return None
+    pair = pairs[0]
+    if pair > start and rabbitizer.Instruction(int.from_bytes(image[pair - 4:pair], order)).hasDelaySlot():
+        return None
+    value = _saved_base(image, pair, guard, order, register)
+    if value is None:
+        return None
+    in_delay_slot = False
+    for pc in range(start, end, 4):
+        word = int.from_bytes(image[pc:pc + 4], order)
+        ins = rabbitizer.Instruction(word)
+        if not ins.isValid() or word == 0x42000018 or in_delay_slot and ins.hasDelaySlot():
+            return None
+        if pc >= guard and ((ins.modifiesRt() and (word >> 16) & 31 == register)
+                            or (ins.modifiesRd() and (word >> 11) & 31 == register)):
+            if pc <= jump + 4 or in_delay_slot or not _straight_return(image, pc, end, order):
+                return None
+        in_delay_slot = ins.hasDelaySlot()
+        if not in_delay_slot:
+            continue
+        op = word >> 26
+        if op in (1, 4, 5, 6, 7, 20, 21, 22, 23) or (op == 17 and (word >> 21) & 31 == 8):
+            target = pc + 4 + signed(word) * 4
+        elif op in (2, 3):
+            address = (vram + pc - start + 4) & 0xf0000000 | (word & 0x3ffffff) << 2
+            target = start + address - vram
+            if op == 3 and not start <= target < end:
+                continue  # an ordinary outside call preserves its saved registers
+        elif word == 0x03e00008 or pc == jump:
+            continue
+        else:
+            return None
+        if target == pair + 4:
+            return None
+        if pc < pair and not (start <= target <= pair
+                              or jump + 4 < target < end and _straight_return(image, target, end, order)):
+            return None
+    return value
+
+
+def _saved_register_guard(image,start,end,vram,at,order):
     if at-start<20:
         return None
     guard = at-20
@@ -81,8 +145,11 @@ def _saved_register_guard(image,start,at,order):
             or load!=0x8c000000|scaled<<21|scaled<<16 or jump!=scaled<<21|8 or slot):
         return None
     address = _saved_base(image,start,guard,order,base)
+    early_returns = address is None
+    if early_returns:
+        address = _saved_base_after_early_returns(image, start, end, vram, guard, at, order, base)
     if address is not None:
-        return guard,branch,count,address&0xffffffff
+        return guard, branch, count, address & 0xffffffff, early_returns
 
 
 def _ido_register_guard(image,start,at,order):
@@ -120,6 +187,7 @@ def jump_table(image,start,end,vram,at,order,ranges=(),mappings=(),*,reader=None
     with no interior entry. Import data classification may also follow an early saved-register base."""
     if at+8>end:return None
     uses_ido_guard = False
+    early_returns = False
     for scheduled in (False,True):
         if at-start<(24 if scheduled else 28):continue
         guard,bound,branch,delay,scale,hi,add,load,jump,slot=_guard(image,at,order,scheduled)
@@ -151,12 +219,14 @@ def jump_table(image,start,end,vram,at,order,ranges=(),mappings=(),*,reader=None
         address=(((hi&0xffff)<<16)+signed(load))&0xffffffff
         break
     else:
-        saved = _saved_register_guard(image,start,at,order) if allow_saved_base else None
-        if saved is None:
+        saved = _saved_register_guard(image,start,end,vram,at,order) if allow_saved_base else None
+        if saved is not None:
+            guard, branch, count, address, early_returns = saved
+        else:
             saved = _ido_register_guard(image,start,at,order)
+            if saved is None:return None
             uses_ido_guard = True
-        if saved is None:return None
-        guard,branch,count,address = saved
+            guard, branch, count, address = saved
         branch_pc = guard+4
     default=branch_pc+4+signed(branch)*4
     if not start<=default<end or guard<default<=at+4:return None
@@ -174,6 +244,8 @@ def jump_table(image,start,end,vram,at,order,ranges=(),mappings=(),*,reader=None
             return {**result,'reason':'an incoming edge bypasses the guard'}
     def destinations(data, prefix=0):
         targets=[prefix|int.from_bytes(data[p:p+4],order) for p in range(0,len(data),4)]
+        if early_returns and any(t <= vram + at - start + 4 for t in targets):
+            return None
         if all(t%4==0 and vram<=t<vram+end-start and not vram+guard-start<t<=vram+at-start+4 for t in targets):
             return targets
         return None

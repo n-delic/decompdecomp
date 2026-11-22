@@ -14159,3 +14159,10 @@ is private linked compiler evidence. Synthetic tests cover the measured
 instruction shape, distinct offsets and volatile input rejection.
 
 Two saved N64 variable-byte decoders built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` had drafts that returned an accumulator without initializing it on the single-byte path. Initializing it from the first explicitly byte-sized read and using byte-sized subsequent reads reproduced both linked targets exactly (score 320 to 0). The repair requires the measured byte-mask differences and the full decoder shape. Evidence: two saved examples and synthetic generation and routing tests.
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, an N64 routine hoisted its switch-table base
+into a saved register after the early-return checks. The straight-line recognizer missed the table
+because a branch preceded the base load. Validating the early exits and checking for a clobber
+along the loop exposed all 32 entries to Deep Permuter. The existing draft still scores 80
+with an unresolved relocation. Disabling either scheduler or delayed branches did not link the draft.
+Evidence is one validated retail table and synthetic big- and little-endian control-flow tests.
