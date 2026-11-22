@@ -25,6 +25,57 @@ function compilerPartGroups(parts, mode = "settings", sort = "count") {
 /* Hover help for compiler arguments: each argument is its own element whose title says what it does.
    Unknown arguments get no title rather than a guess. Display only: the flags string is never changed. */
 const COMPILER_FLAG_HELP = [
+  [/^-fno-schedule-insns2?$/, "Turn off instruction scheduling (reordering instructions to hide delays). -fno-schedule-insns is the pass before register allocation, -fno-schedule-insns2 the pass after it."],
+  [/^-fschedule-insns2?$/, "Turn on instruction scheduling (reordering instructions to hide delays). -fschedule-insns runs before register allocation, -fschedule-insns2 after it."],
+  [/^-fno-peephole2?$/, "Turn off peephole optimisation, which replaces short instruction sequences with better ones."],
+  [/^-fpeephole2?$/, "Turn on peephole optimisation, which replaces short instruction sequences with better ones."],
+  [/^-fno-gcse$/, "Turn off global common-subexpression elimination across basic blocks."],
+  [/^-fgcse$/, "Turn on global common-subexpression elimination across basic blocks."],
+  [/^-fno-cse-follow-jumps$|^-fno-cse-skip-blocks$/, "Make common-subexpression elimination stop at jumps and conditional blocks."],
+  [/^-fcse-follow-jumps$|^-fcse-skip-blocks$/, "Let common-subexpression elimination continue past jumps and conditional blocks."],
+  [/^-fno-rerun-cse-after-loop$|^-fno-rerun-loop-opt$/, "Skip the extra optimisation pass after loop optimisation."],
+  [/^-fno-expensive-optimizations$/, "Turn off the slower optimisation passes."],
+  [/^-fexpensive-optimizations$/, "Turn on the slower optimisation passes."],
+  [/^-fno-defer-pop$/, "Pop each function call's arguments right away instead of batching the stack adjustment."],
+  [/^-fdefer-pop$/, "Batch the stack clean-up of several calls' arguments."],
+  [/^-fno-function-cse$/, "Always call functions by their symbol instead of keeping their address in a register."],
+  [/^-fforce-addr$/, "Copy memory addresses into registers before using them."],
+  [/^-fforce-mem$/, "Copy memory operands into registers before using them."],
+  [/^-fno-optimize-sibling-calls$/, "Don't turn a call at the end of a function into a plain jump (tail-call optimisation)."],
+  [/^-foptimize-sibling-calls$/, "Turn calls at the end of a function into plain jumps (tail-call optimisation)."],
+  [/^-fstrength-reduce$/, "Replace expensive loop arithmetic (multiplies) with cheaper repeated additions."],
+  [/^-fno-strength-reduce$/, "Don't replace loop multiplies with cheaper additions."],
+  [/^-fthread-jumps$/, "Redirect jumps whose target is another jump straight to the final destination."],
+  [/^-fcaller-saves$/, "Allow values to stay in registers across calls by saving and restoring them around each call."],
+  [/^-fno-caller-saves$/, "Never keep values in call-clobbered registers across calls."],
+  [/^-fno-keep-static-consts$/, "Drop unused static const variables."],
+  [/^-fno-gnu-linker$/, "Don't assume the GNU linker, so global constructors are emitted differently."],
+  [/^-fverbose-asm$/, "Add explanatory comments to the assembly output; no effect on the code."],
+  [/^-fno-ident$/, "Don't write the compiler version string into the object file."],
+  [/^-fno-merge-constants$/, "Don't merge identical constants into one."],
+  [/^-fshort-enums$/, "Use the smallest integer type that fits each enum."],
+  [/^-fno-short-enums$/, "Make every enum a full int."],
+  [/^-fpack-struct/, "Pack struct members with no padding."],
+  [/^-fvolatile/, "Treat memory accesses through pointers as volatile (not optimised away)."],
+  [/^-fno-unit-at-a-time$/, "Compile functions one at a time in source order instead of whole-file."],
+  [/^-fno-toplevel-reorder$/, "Keep functions and variables in the order written in the source."],
+  [/^-ffunction-sections$/, "Put each function in its own section."],
+  [/^-fdata-sections$/, "Put each variable in its own section."],
+  [/^-mno-check-zero-division$/, "Don't insert a divide-by-zero check after division."],
+  [/^-mcheck-zero-division$/, "Insert a divide-by-zero check after division."],
+  [/^-mno-fix-vr4120$/, "Don't apply VR4120 hardware workarounds."],
+  [/^-mfix4300$/, "Work around the VR4300 multiply/divide hardware bug."],
+  [/^-mno-explicit-relocs$/, "Use assembler macros for address loads instead of explicit %hi/%lo relocations."],
+  [/^-mexplicit-relocs$/, "Write address loads as explicit %hi/%lo relocations."],
+  [/^-mno-embedded-data$|^-membedded-data$/, "Control whether read-only data goes into the small-data area."],
+  [/^-mno-gpopt$/, "Don't use gp-relative addressing for global data."],
+  [/^-mgpopt$/, "Use gp-relative addressing for global data in the small-data area."],
+  [/^-mno-mips16$/, "Don't generate compressed MIPS16 code."],
+  [/^-mabicalls$/, "Generate System V-style position-independent call sequences."],
+  [/^-mno-shared$/, "Generate code for a fixed address, not a shared library."],
+  [/^-mdivide-breaks$/, "Check for division by zero with a break instruction."],
+  [/^-mdivide-traps$/, "Check for division by zero with a trap instruction."],
+  [/^-mtune=/, "Tune scheduling for this CPU without limiting which CPUs can run the code."],
   [/^-O0$/, "No optimisation: every variable lives in memory and code follows the source literally."],
   [/^-O1$/, "Basic optimisation: simple register allocation and dead-code removal."],
   [/^-O2$/, "Standard optimisation: scheduling, common-subexpression elimination and loop work. The usual setting for retail games."],
@@ -117,6 +168,9 @@ const COMPILER_FLAG_HELP = [
 
 function compilerFlagHelp(arg) {
   for (const [pattern, text] of COMPILER_FLAG_HELP) if (pattern.test(arg)) return text;
+  // Generic fallbacks, only after every specific rule had its chance.
+  if (/^-mno-/.test(arg)) return "Turns off a machine-specific code-generation feature.";
+  if (/^-fno-/.test(arg)) return "Turns off a code-generation or optimisation feature.";
   return "";
 }
 

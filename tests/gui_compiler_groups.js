@@ -24,6 +24,7 @@ assert.match(flagHtml, /title="-G0: /); assert.match(flagHtml, /title="-mcpu=VR4
 assert.ok(!flagHtml.includes('title="-fwhatever')); assert.ok(flagHtml.includes('-fwhatever &lt;x&gt;'));
 assert.match(ctx.compilerFlagsHtml('-G 0'), />-G 0<\/span>/);
 assert.equal(ctx.compilerFlagsHtml(''), '');
+assert.match(ctx.compilerFlagsHtml('-fno-schedule-insns'), /title="-fno-schedule-insns: [^"]*scheduling/);
 console.log('compiler groups passed');
 
 // ROM overview responses omit kind; the profile migration action must still appear.
