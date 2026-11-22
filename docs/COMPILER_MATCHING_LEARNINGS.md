@@ -14898,3 +14898,19 @@ with its two literal arguments and disjoint local lifetimes.
 ### Forward an incoming argument through a guarded counter update
 
 In a private N64 selection function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the target forwarded its untouched first argument to a call and incremented a halfword counter in the preceding branch delay slot. The draft omitted the incoming argument and computed the increment before its guard. Moving the increment into the guarded arm improved the linked score from 305 to 40; also restoring the measured incoming argument reproduced the target exactly (score 0). The candidate checks the counter's local lifetime and uses the existing control-flow proof that the entry register reaches the call. Evidence: one saved function and synthetic generation and routing tests.
+
+### Share a projection input with its final saved result
+
+In a private N64 function built with GCC 2.7.2 KMC and
+`-G0 -mips3 -mgp32 -mfp32 -O2`, two branches selected a float seed for
+a shared field write and two projection calls. The target used the same
+saved float register for the seed and the second projection's product.
+The draft used a second saved register until the last multiplication.
+
+Reusing the product local for both seeds recovered the shared store,
+both projection operands and the alternate entry's delay-slot
+register. The exact linked score went from 7,600 to 7,540 with all
+three jump-table relocations and no warnings. Reusing a separate
+phase's float local as well scored 7,595. The repair explicitly allows
+the final read of the seed in the product assignment and verifies
+that the two values never need to coexist.

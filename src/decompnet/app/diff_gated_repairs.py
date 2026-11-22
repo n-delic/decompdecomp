@@ -130,6 +130,7 @@ from decomprepair import (
     relocated_pointer_reloads,
     saved_range_probe,
     search_exit_loop_repairs,
+    shared_projection_lifetime,
     shared_return_repairs,
     short_leaf_drafts,
     smoothing_call_before_read,
@@ -289,6 +290,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     result += measured_lifetime_shapes.variants(source, name, header, toolchain, rows)
     result += measured_scalar_updates.variants(source, name, header, toolchain, rows, asm)
     if toolchain == 'gcc-2.7.2-kmc':
+        result += shared_projection_lifetime.variants(source, name, rows, header=header)
         result += clamp_saved_argument_lifetime.variants(source, name, rows, header=header)
         result += balanced_clamp_argument_stage.variants(source, name, rows, header=header)
         result += trig_axis_reuse.variants(source, name, rows, header=header)
