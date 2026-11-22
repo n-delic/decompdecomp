@@ -15733,3 +15733,6 @@ to 405. Replays of older eligible drafts of that same function
 showed the same ten-point reduction. The proposal checks that the
 fixed pointer and counter are initialized on entry and that the
 cursor and count advance together. This remains an inexact draft.
+### KMC GCC 2.7.2 indexed wide division
+
+A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` indexed records with an eight-byte stride, loaded a 64-bit field and divided it by a constant. Its machine draft scaled an `s32 *` by an additional factor of four and represented the wide helper arguments as four words. Correcting the helper signature and wide load alone reduced the diff score from 210 to 10; correcting the byte stride too produced an exact linked match. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the measured instruction and source patterns and assumes the 64-bit field is suitably aligned.
