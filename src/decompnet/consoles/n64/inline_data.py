@@ -37,6 +37,8 @@ _LITERALS = (
     ('03e000080000000001000008', 48, 4, '3ec66f24afd9310290010b72eb820a4c88f2dbd82f2a9578c2267821ee8607c3'),
     ('03e00008000000000b696478', 48, 4, '978c199c82659070959cabe8d2e21f97ee17a723cccfeb5f95fb6757b561b984'),
     ('03e000080140102100000008', 48, 4, '3a1a332bb8fa429785827f8614c1f26f45582675a1f9021fd5ffc0e5ede372da'),
+    # An asset header begins after a closed return at the code mapping's end.
+    ('03e0000801a0182100020000', 48, 12, 'a5e7c2fa2898c9701d292767002593b44d020343c985fc8139b8923047909cea'),
     # A mapped data header follows a closed return at the end of a code segment.
     ('03e00008000000001653414d', 48, 4, 'dc01e3dede9796df53070b95e40f2a764af6a778072ac8f652f7ed5ce5d7dbd4'),
     # A noncanonical NOP follows a closed return before the next stack frame.
