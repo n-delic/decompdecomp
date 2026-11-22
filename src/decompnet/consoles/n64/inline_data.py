@@ -13,6 +13,9 @@ from ...rom import split
 # The three call-shaped words occur after closed returns and before actual
 # entries; their apparent callees fall inside other routines' frames.
 _LITERALS = (
+    ('0c01f2120000202500000000', 48, 8, '16ca79bd9e4cf76c2d6a541c57d0e7c2dd187a893c8f321262cb827eeccdae95'),
+    ('1000fff8aca2000000000000', 48, 12, '23b42554bf4ff540d649dc1d83e61bb0631fdabbe273e6ef4ada4aa3c4fc8881'),
+    ('000000000000000074680200', 48, 4, '1b53399f9ffbc959f1e35e90a4dfb71df125835bca1dfa096b3b14b31d38a037'),
     ('0000000000000000d4eca580', 48, 4, 'a33aae6697ee9ff639923029de344b346d7cce7333aa3a06e0031a1e34e80e75'),
     ('4197d7840000000030000000', 88, 48, '778cc5a82acec0da1640bdc70de6d2629fbe79293c0cabfc198226cf6f809726'),
     ('03e0000827bd00200c025eb0', 48, 4, '71c5574eea070a79edce099d3b8bc36e9a8d5b98596e590310236ad65cf43de7'),
