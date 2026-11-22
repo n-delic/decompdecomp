@@ -1,7 +1,6 @@
 """normalized_phase_split reaches the drafts, the Deep Permuter's local lane and the agents' family list."""
-import re
 
-from decompnet.app import deep_permuter, draft_repairs
+from decompnet.app import draft_repairs
 
 # The nested-walk shape of a hand-edited best: a declarator list and an object macro reading a local.
 SOURCE = """#define F(p, t, o) (*(t *)((s8 *)(p) + (o)))
@@ -38,6 +37,8 @@ def test_the_drafts_propose_the_normalized_phase_split_and_agents_know_it():
     assert {'normalized_phase_split', 'normalized_phase_chain'} <= set(draft_repairs.AGENT_FAMILIES)
 
 
-def test_the_deep_permuters_local_lane_names_it():
-    text = open(deep_permuter.__file__).read()
-    assert re.search(r"normalized_phase_split\.variants', \(source, name, header\)", text)
+def test_the_deep_permuters_local_lane_runs_it_with_the_header():
+    from decompnet.app import library_registry
+    local = library_registry.local_calls(library_registry.draft_context(SOURCE, 'f', 'typedef int s32;', 'mips', '', ()))
+    call = next(call for call in local if call[1] == ('normalized_phase_split',))
+    assert call[2]['header'] == 'typedef int s32;'

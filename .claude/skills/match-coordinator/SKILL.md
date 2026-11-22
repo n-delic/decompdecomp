@@ -23,7 +23,7 @@ around it.
 
 > Goal (treat like /goal; do not stop until met): match one open, unmatched function in the decompdecomp project
 > "SLUG" (judged 0 by the running app) and land each permuter improvement you discover as merged PRs — the goal
-> isn't met until the steps the permuter couldn't find exist as wired decomp-repair families (docs alone don't
+> isn't met until the steps the permuter couldn't find exist as decomp-repair families that declare `REPAIR` (the app needs no wiring; docs alone don't
 > count). Read the latest match-function skill WITHOUT touching the primary checkout and follow it exactly:
 > `git -C REPO fetch -q origin && git -C REPO show origin/main:.claude/skills/match-function/SKILL.md`, plus
 > AGENTS.md from origin/main. Claim as the skill says. If the function is enormous, release it and claim another
@@ -42,7 +42,7 @@ Verify before you relay anything. A report is not proof.
 
 - `judge.py diff SLUG FUNC` must say `status matched best 0`. If not, the run isn't done.
 - `gh pr view N --json state` for every app/library PR it lists: MERGED.
-- Matched but no wired family → send it back (SendMessage) to build the families from its edit list, prove them
+- Matched but no declared family → send it back (SendMessage) to build the families from its edit list, prove them
   from the saved best with prove_chain/fast_judge, never touching the saved match.
 - Not matched and it stopped: if near 0 and it has worked ≥45 minutes without improving, start a stronger-model
   agent on that function with a brief that includes the full state from the report (remaining rows, edit list,

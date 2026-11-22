@@ -170,6 +170,10 @@ Since 0.3.0 the permuter's rewrites are there: `permuter.py`, `app/permuter_loca
 the library's `permuter_gen.py` by path, its helpers beside it. Don't add code to those alias files: change the
 library. The worker's restart check (`permuter_worker.WATCHED`) and `claim_stalls._repair_rules` read a name from
 the library when it lives there, so a moved module needs no new entry.
+A new repair module needs no app wiring: it declares `REPAIR` at its end (families, variants, needs, order, lanes;
+`decomprepair/registry.py`) and `app/library_registry.py` runs it in the draft pass, the beam and the Deep Permuter's local lane and adds
+its families to `AGENT_FAMILIES`; the library's tests fail for a module with `variants` and no `REPAIR`. The modules from before the
+registry (listed in the library's `tests/registry_legacy.txt`) keep their calls in `draft_repairs` and `deep_permuter`.
 Since 0.4.0 `switch_constant_dispatch`, `initializer_clusters`, `callee_contracts`, `loop_storage_shapes`,
 `repair_tokens` (in `app/`) and `consoles/ps1/gte.py` are aliases too. `app/switch_tables.py`,
 `app/layout_frontiers.py` and `app/expression_recipes.py` import their rewrites from the library and keep only what

@@ -49,7 +49,7 @@ def test_it_runs_in_the_bounded_local_lane(monkeypatch):
     fn = {**net.function(), 'asm': ''}
     child = fn['best_source'] + '\n/* string_walk_index */'
     monkeypatch.setattr(importlib.import_module('decomprepair.string_walk_index'), 'variants',
-                        lambda *args: [('string_walk_index', child)])
+                        lambda *args, **kwargs: [('string_walk_index', child)])
     search = deep_permuter.Search(net, 1, 6, Log())
     tried = []
     monkeypatch.setattr(search, '_score', lambda agent, proj, fn, child, best, fork: tried.append(child) or 20)

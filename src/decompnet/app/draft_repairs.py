@@ -22,7 +22,6 @@ from decomprepair import (
     argument_loop_split,
     argument_spill_tail,
     argument_weight_scope,
-    arm_argument_copy_join,
     arm_increment_temp,
     arm_label_share_repairs,
     arm_pointer_split_repairs,
@@ -43,7 +42,6 @@ from decomprepair import (
     byte_address_inline_repairs,
     byte_increment_repairs,
     call_assignment_repairs,
-    call_carrier_pointer_split,
     call_count_repairs,
     call_index_split_repairs,
     call_index_staging_repairs,
@@ -63,7 +61,6 @@ from decomprepair import (
     clamp_arm_stores,
     clamp_barrier_repairs,
     clamp_default_scope_repairs,
-    collapsed_guard_lifetime_merge,
     comma_flag_condition_repairs,
     comma_temporary_repairs,
     compare_arm_split_repairs,
@@ -115,7 +112,6 @@ from decomprepair import (
     duplicate_return_node_repairs,
     element_update_repairs,
     entry_base_init_repairs,
-    entry_constant_local,
     entry_parameter_copy_repairs,
     entry_pointer_capture,
     entry_scheduling_scope,
@@ -141,7 +137,6 @@ from decomprepair import (
     float_pun_depun,
     float_record_copy_repairs,
     float_register_argument_repairs,
-    float_sum_store_fence,
     float_zero_local_repairs,
     focused_lifetime_repairs,
     formatter_repairs,
@@ -188,7 +183,6 @@ from decomprepair import (
     join_tail_arm_split_repairs,
     known_bit_repairs,
     label_entry_initializer_repairs,
-    ladder_result_narrow,
     later_local_repairs,
     leading_parameter_repairs,
     leaf_frame_repairs,
@@ -210,7 +204,6 @@ from decomprepair import (
     loop_exit_value_block,
     loop_global_base,
     loop_goto_form_repairs,
-    loop_guard_counter_compare,
     loop_guard_storage_repairs,
     loop_head_giv_repairs,
     loop_index_inline_repairs,
@@ -252,7 +245,6 @@ from decomprepair import (
     nested_guard_repairs,
     nested_join_hoist_repairs,
     normalization_repairs,
-    normalized_phase_split,
     observed_repairs,
     offset_base_local_repairs,
     operand_order_repairs,
@@ -271,7 +263,6 @@ from decomprepair import (
     passthrough_argument_repairs,
     pattern_repairs,
     phantom_local_repairs,
-    phase_donor_repairs,
     phase_lifetime_repairs,
     phase_storage_split_repairs,
     phase_union_repairs,
@@ -303,13 +294,13 @@ from decomprepair import (
     register_carrier_repairs,
     register_repairs,
     register_reuse_repairs,
+    registry,
     reloaded_global_repairs,
     result_debris_repairs,
     retry_goto_scope_repairs,
     returned_flag_repairs,
     reused_counter_split_scope,
     reused_temp_split_repairs,
-    row_major_table,
     row_subscript_repairs,
     saved_register_argument_repairs,
     scalar_reload_volatile_repairs,
@@ -324,7 +315,6 @@ from decomprepair import (
     search_loop_repairs,
     selected_argument_call_split,
     sentinel_local_repairs,
-    shared_assignment_inline,
     shared_constant_store_repairs,
     shared_copy_local_split,
     shared_offset_repairs,
@@ -351,13 +341,11 @@ from decomprepair import (
     store_address_repairs,
     store_expression_forms,
     store_result_repairs,
-    store_temp_inline,
     store_value_first_repairs,
     stored_compare_repairs,
     stored_float_zero_repairs,
     stored_pointer_read_repairs,
     stored_return_value_repairs,
-    string_walk_index,
     structure_return_repairs,
     switch_case_order_repairs,
     switch_default_if_repairs,
@@ -396,7 +384,6 @@ from decomprepair import (
     volatile_reload_repairs,
     volatile_slot_demotion_repairs,
     walk_shape_repairs,
-    walked_table_index_repairs,
     widened_field_read_repairs,
     width_promotion_repairs,
     word_block_copy_repairs,
@@ -421,6 +408,7 @@ from . import (
     helper_expansion,
     initial_draft_repairs,
     initializer_clusters,
+    library_registry,
     loop_storage_shapes,
     narrow_load_subtraction,
     parameter_carriers,
@@ -448,19 +436,9 @@ AGENT_FAMILIES = temporary_hoist_repairs.FAMILIES + reassociation_repairs.FAMILI
 
 AGENT_FAMILIES += (guarded_pointer_copy.FAMILY,) + shifted_byte_lifetime.FAMILIES + float_constant_loop_pin.FAMILIES + dead_local_constant_compare.FAMILIES
 AGENT_FAMILIES += loop_weight_set_repairs.FAMILIES
-AGENT_FAMILIES += entry_constant_local.FAMILIES + store_temp_inline.FAMILIES
-AGENT_FAMILIES += float_sum_store_fence.FAMILIES + shared_assignment_inline.FAMILIES
-AGENT_FAMILIES += call_carrier_pointer_split.FAMILIES + normalized_phase_split.FAMILIES
-AGENT_FAMILIES += collapsed_guard_lifetime_merge.FAMILIES
-AGENT_FAMILIES += arm_argument_copy_join.FAMILIES
-AGENT_FAMILIES += string_walk_index.FAMILIES
-AGENT_FAMILIES += ladder_result_narrow.FAMILIES
-AGENT_FAMILIES += row_major_table.FAMILIES
-AGENT_FAMILIES += walked_table_index_repairs.FAMILIES
-AGENT_FAMILIES += loop_guard_counter_compare.FAMILIES
-AGENT_FAMILIES += phase_donor_repairs.FAMILIES
 AGENT_FAMILIES += caller_save_slot_drop.FAMILIES
 AGENT_FAMILIES += ('m2c_spelling',)
+AGENT_FAMILIES += library_registry.families()  # every declared module's families, with no list to extend
 AGENT_FAMILIES += lockstep_pointer_fold.FAMILIES + hoisted_constant_loop_scope.FAMILIES
 AGENT_FAMILIES += param_loop_carrier.FAMILIES + assignment_guard_sink.FAMILIES + default_arm_goto.FAMILIES + index_shift_spelling.FAMILIES
 AGENT_FAMILIES += (arm_label_share_repairs.FAMILIES + declaration_scope_sink_repairs.FAMILIES + element_update_repairs.FAMILIES
@@ -962,51 +940,16 @@ def _spelled(source: str, name: str, arch: str, asm: str = '', flags=(), labels=
                    # (a compare's literal routed through a local the next statement reassigns: the literal becomes a
                    # global-allocator pseudo and takes $v1, 10 -> 0 on a KMC predicate; decomprepair 0.5.628)
                    dead_local_constant_compare,
-                   # (a loop's compared byte constant as a local set among the entry assignments, where loop.c's hoisted li sits in
-                   # the prologue; a temp read only by the next line's store written into it, so the destination address is built
-                   # first: a 219-instruction KMC sequencer function 140 -> 30 -> 0 and 220 -> 160; decomprepair 0.5.631)
-                   entry_constant_local, store_temp_inline,
-                   # (a float sum's first add with its operands swapped and a one-shot scope inside the store run between its two
-                   # adds, as one child: a 113-instruction KMC bounding-sphere function 25 -> 0; decomprepair 0.5.636)
-                   float_sum_store_fence,
-                   # (a local m2c assigned one expression in several places, written where it is read: a 490-instruction KMC menu
-                   # function 60 -> 0, two saved registers swapped by an extra reference; decomprepair 0.5.646)
-                   shared_assignment_inline,
-                   # (stray trailing pointer arguments dropped and a reused pointer local split, as one child: a 140-instruction KMC
-                   # menu function 60 -> 0, each half alone 790 and 60; decomprepair 0.5.650)
-                   call_carrier_pointer_split,
-                   # (the phase splits of a hand-edited source, its declarator lists written one per line and a local-reading
-                   # macro expanded, and the splits chained as one child: a 249-instruction KMC nested walk 110 -> 0; decomprepair 0.5.657)
-                   normalized_phase_split,
-                   # (an identical-arm guard on an unassigned local collapsed and two integer locals merged, as one child: a 74-instruction
-                   # KMC audio function 60 -> 0, the collapse alone 110 and the merge alone 690; decomprepair 0.5.652)
-                   collapsed_guard_lifetime_merge,
-                   # (a byte-cursor table walk, its shared offset local and a void tail written back as the indexed loop, as one child: a
-                   # 108-instruction KMC function 100 -> 0, the indexed read alone 2083, the offset alone 2287 and the tail alone 720;
-                   # decomprepair 0.5.656)
-                   walked_table_index_repairs,
-                   # (a call's first argument copied on two paths of the switch before it, with the masked store value in its own local,
-                   # as one child: a 150-instruction KMC effect spawner 60 -> 0, the local alone 520 and the copy on four paths 115;
-                   # decomprepair 0.5.654)
-                   arm_argument_copy_join,
-                   # (a byte string walked by a pointer written as the index loop it came from, which moves the pointer's start after the
-                   # jump table's address: an 82-instruction KMC font routine 360 -> 0; decomprepair 0.5.653)
-                   string_walk_index,
-                   # (a bit-test ladder's result as the else-if chain, in a u8, in a function returning s32 rather than unsigned long long,
-                   # as one child: an 89-instruction KMC audio-setup function 90 -> 0, alone 180 and 100; decomprepair 0.5.655)
-                   ladder_result_narrow,
-                   # (a row-major table's pointer walks and its parallel byte table's word reads as D[row][column] over s32 D[][K]: a
-                   # 374-instruction KMC function 645 -> 0, one child for every access; decomprepair 0.5.658)
-                   row_major_table,
-                   # (a loop's entry guard as the counter's compare, which gives the frame an unaccessed 8-byte spill slot, with each
-                   # disjoint_local_merge of the guarded text as one child: a 401-instruction KMC loader 22 -> 0; decomprepair 0.5.640)
-                   loop_guard_counter_compare,
-                   # (a second phase's clamp variable, record pointer and product written through the first phase's dead locals, as one
-                   # child: a 181-instruction N64 function 40 -> 0, 8 register rows; decomprepair phase_donor)
-                   phase_donor_repairs,
                    outer_cursor_entry_copy_repairs, loaded_pointer_reuse_repairs, entry_base_init_repairs,
                    live_range_retarget_repairs, pointer_local_merge_repairs, identical_arm_collapse_repairs):
         for family, text in _generated(module.variants, source, name):
+            proposals.append(text)
+            labels[text] = family
+    # The library's self-declared modules (decomprepair.registry): each is called with the context it declares it needs, in
+    # its declared order, so a new module needs no wiring here. The beam's unlimited pass also runs the `beam` lane.
+    context = library_registry.draft_context(source, name, header, arch, asm, flags)
+    for repair in library_registry.runnable('draft', arch, unlimited=limit is None):
+        for family, text in registry.pairs(repair, _generated(repair.function(), **repair.arguments(context))):
             proposals.append(text)
             labels[text] = family
     # (a rejection loop's skip join as an if with its backward retry goto pinned in a one-shot scope, 475 -> 0 on a

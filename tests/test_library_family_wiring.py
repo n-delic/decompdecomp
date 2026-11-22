@@ -1,33 +1,78 @@
 """Every decomprepair repair module reaches a lane, so the Deep Permuter can propose it.
 
-The Deep Permuter's beam runs `draft_repairs.variants` with no limit, so a family wired there reaches drafts and the
-beam alike. Library modules (register levers, indexed records) had
-`variants` but no caller anywhere in the app: no agent, draft or permuter ever saw them. This test lists the library's
-modules with a `variants` function and fails for any the app never names (directly or through another library
-module that calls it)."""
+A library module that has `variants` declares itself (`REPAIR`, decomprepair.registry) and the app runs it from the registry
+with no wiring of its own: `library_registry` feeds the draft pass (which the Deep Permuter's beam asks with no limit) and the
+Deep Permuter's local lane. The modules from before the registry are still wired by hand (the library lists them in
+tests/registry_legacy.txt). This test fails for a module that is neither declared nor named by the app, and for a declaration
+a lane could not run."""
 import inspect
 import pathlib
 import re
 
 import decomprepair
-from decompnet.app import deep_permuter, draft_repairs
+from decompnet.app import deep_permuter, draft_repairs, library_registry
+from decomprepair import registry
 
 SRC = pathlib.Path(__file__).resolve().parents[1] / 'src' / 'decompnet'
+SOURCE = 'void f(int *p, int a)\n{\n    p[0] = a;\n}\n'
 
 
 def test_every_library_variants_module_is_reached():
     library = pathlib.Path(decomprepair.__file__).parent
     modules = {path.stem: path.read_text() for path in library.glob('*.py')}
     app = '\n'.join(path.read_text() for path in SRC.rglob('*.py'))
+    declared = {item.module for item in registry.all()}
     unreached = []
     for name, text in modules.items():
-        if not re.search(r'(?m)^def variants\(', text):
+        if not re.search(r'(?m)^def variants\(', text) or name in declared:
             continue
         word = re.compile(r'\b' + name + r'\b')
         if word.search(app) or any(word.search(other) for key, other in modules.items() if key != name):
             continue
         unreached.append(name)
-    assert unreached == []
+    assert unreached == [], (f'{unreached} define variants() but neither declare REPAIR (decomprepair.registry) nor are wired '
+                             'in the app: add the REPAIR dict at the end of the module, in the library')
+
+
+def test_every_declared_repair_is_runnable_and_known_to_agents():
+    declared = registry.all()
+    assert declared
+    for repair in declared:
+        assert registry.problems(repair) == []
+        assert set(repair.families) <= set(draft_repairs.AGENT_FAMILIES)
+    assert {item.module for item in library_registry.runnable('draft', 'mips', unlimited=True)} \
+        == {item.module for item in declared if item.module not in library_registry.EXPLICIT and ({'draft', 'beam'} & set(item.lanes))}
+
+
+def test_a_declared_module_runs_in_the_draft_pass_with_no_wiring(monkeypatch):
+    """A module that exists only in the registry (here a stand-in) is proposed by `draft_repairs.variants` and by the local lane."""
+    calls = []
+
+    def variants(source, name, header='', asm=''):
+        calls.append((name, header, asm))
+        return [(('probe_family'), source.replace('p[0] = a;', 'p[0] = a + 0;'))]
+
+    variants.__module__ = 'decomprepair.probe_repair'
+    probe = registry.Repair('probe_repair', ('probe_family',), variants, ('source', 'name', 'asm'), 1, ('draft', 'local'), ())
+    monkeypatch.setattr(registry, 'all', lambda: [probe])
+    labels = {}
+    out = draft_repairs.variants(SOURCE, 'f', 'mips', asm='nop', labels=labels, limit=None)
+    assert [item for item in out if labels.get(item) == 'probe_family'] == [SOURCE.replace('p[0] = a;', 'p[0] = a + 0;')]
+    assert calls[0] == ('f', '', 'nop')   # only what it declared: no header was passed
+    local = library_registry.local_calls(library_registry.draft_context(SOURCE, 'f', 'hdr', 'mips', 'nop', ()))
+    assert local == [('decomprepair.registry.run', ('probe_repair',), {'source': SOURCE, 'name': 'f', 'asm': 'nop'})]
+    # the beam lane runs only when the draft pass has no limit
+    beam = registry.Repair('beam_only', ('b',), variants, ('source', 'name'), 1, ('beam',), ())
+    monkeypatch.setattr(registry, 'all', lambda: [beam])
+    assert library_registry.runnable('draft', 'mips') == [] and library_registry.runnable('draft', 'mips', unlimited=True) == [beam]
+
+
+def test_a_declared_module_is_called_once_even_when_the_app_still_names_it(monkeypatch):
+    probe = registry.Repair('probe_repair', ('probe_family',), lambda source, name: [], ('source', 'name'), 1, ('draft', 'local'), ())
+    monkeypatch.setattr(registry, 'all', lambda: [probe])
+    monkeypatch.setattr(library_registry, 'EXPLICIT', frozenset({'probe_repair'}))
+    assert library_registry.runnable('draft', 'mips') == [] and library_registry.local_calls({'arch': 'mips'}) == []
+    assert 'library_registry.local_calls' in inspect.getsource(deep_permuter)
 
 
 def test_the_newly_wired_families_are_proposed_and_known_to_agents():
@@ -390,7 +435,8 @@ def test_shared_assignment_inline_is_proposed_by_the_drafts_and_the_deep_permute
     assert 'shared_assignment_inline' in draft_repairs.AGENT_FAMILIES
     assert any('erase(base - 0x28, base, 1);' in text and 'var_a0' not in text
                for text, family in labels.items() if family == 'shared_assignment_inline')
-    assert "'shared_assignment_inline.variants'" in inspect.getsource(deep_permuter)
+    local = library_registry.local_calls(library_registry.draft_context(_SHARED, 'f', '', 'mips', '', ()))
+    assert ('decomprepair.registry.run', ('shared_assignment_inline',)) in [call[:2] for call in local]
 
 
 def test_caller_save_slot_drop_is_proposed_and_known_to_agents():
