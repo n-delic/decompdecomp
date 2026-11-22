@@ -479,6 +479,7 @@ class Search(Permuter):
                   (L + 'loop_exit_value_block.variants', (source, name)),  # decomp-repair 0.5.608: a search loop's not-found value set on its exit path (goto), not carried round the loop
                   (L + 'argument_loop_split.variants', (source, name)),  # decomp-repair 0.5.608: a loop variable passed as a call argument gets its own local
                   (L + 'entry_scheduling_scope.variants', (source, name)),  # decomp-repair 0.5.606: the opening run wrapped in do { } while (0), narrow stack parameters through locals
+                  (L + 'entry_scope_split.variants', (source, name)),  # decomp-repair 0.5.614: the opening scope ended between a pointer chain's loads, a sum's product staged before a scope with the add and a copy
                   (L + 'declaration_scope_hoist.variants', (source, name)),  # decomp-repair 0.5.596: block-level spXX locals back in the function's declarations, by offset
                   (L + 'compare_load_stage.variants', (source, name)),  # decomp-repair 0.5.598: the compared load read into a local before the store of the compared result
                   (L + 'allocation_lever_repairs.field_store_swaps', (source, name))]

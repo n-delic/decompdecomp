@@ -17951,6 +17951,46 @@ the float registers of the x component: 140 -> 70 in the isolated judge. From th
 Still open at 70: the z component's add (`add.s $f2,$f2,$f0` for `$f0,$f0,$f2`, the F4 and product groups tie in local-alloc
 priority and the qty number breaks it the other way) and the position of `lw $v0,0x58($v0)` against `sw $s7,0x10c`.
 
+### The ray test matched: 70 -> 0 (`entry_scope_split`, 0.5.614)
+
+The two rows left at 70 above, both closed by reading GCC 2.7.2's source (installed with the compiler,
+`toolchains.source_for("gcc-2.7.2-kmc")`) and the `-dS -dR -dl` dumps (`;; ready list at T-n` lines are sched.c's own trace).
+Isolated judge per step, confirmed by the app (matched, best 0):
+
+| step | edit | alone | running |
+| --- | --- | --- | --- |
+| 1 | the opening scope ended between the chain's loads: `link = M2C_FIELD(p, void **, 0x20); copy = p; } while (0); sp = M2C_FIELD(link, void **, 0x58);` (the two global stores after it too) | 10 | 10 |
+| 2 | the z product staged and the add with the parameter copy in a scope of their own: `dz = c[2] * s; do { end.z = b[2] + dz; p = arg; } while (0);` | 60 | 0 |
+
+Compiler rules, confirmed in the 2.7.2 source:
+- `sched.c` `sched_analyze_insn`: the first insn after a loop note depends on every earlier register set and pending
+  memory access, and every later insn on it. The parameter copy (`copy = p`, a spilled pseudo) is a free leaf, so the
+  first scheduler used it to fill the first load's latency and its stack store landed after the second load. With the
+  second load the anchor after the note, the copy precedes it; in the second scheduler the store (scalar, fixed
+  address) and the second load (scalar, varying address) then have a true memory dependence (`true_dependence`: only a
+  struct-marked varying reference is exempt from a scalar fixed one), so the store sits between the loads.
+- `rank_for_schedule`: priority, then the class against the last scheduled insn, then LUID; `adjust_priority` raises
+  only a *birthing* insn (`birthing_insn_p`: a register set exactly once) before reload, so a copy into a loop variable
+  set again later keeps its low priority and fills stalls.
+- `flow.c` adds `loop_depth` to `reg_n_refs` per reference (a function body is depth 1, each `do { } while (0)` one more);
+  `local-alloc.c` `qty_compare_1` orders a block's quantities by `floor_log2(refs) * refs / (death - birth)`, then by
+  quantity number (the one born first). The product's and the addend's quantities tied exactly (the copy scheduled between
+  the add and the store lengthened the addend's), so the product, born first, took `$f0`. One loop level deeper for
+  the add and the store gives the addend's quantity the higher count; the copy kept inside lets the second scheduler
+  still put the `move` between the add and the store.
+
+Failed: the whole z statement in its own scope (340: the loads become anchors and the `move` leaves its place), the
+product staged into a reused temp (`temp_fv0_2`, 835: its other uses change global allocation), the copy first in the
+inner scope (120), struct-typed component loads (no change: the order was decided by the anchor, not aliasing), the
+chain's base as a `volatile` or address-taken local (1225: it moves to the locals' frame area), a separate pointer for
+the later loop so the copy is single-set (5289: a spill).
+
+Family: decomp-repair `entry_scope_split` (0.5.614): the split (with and without the base's copies after the first load),
+the stage (copy after or before the add) and the pair as one child; from the saved best its children score 0, 10, 10, 60.
+`tests/test_entry_scope_split_wiring.py` checks the draft repairs and the local lane. Scaffolding the match keeps: the
+opening `do { } while (0)` and its split, the inner scope around the z add, the `sp_tx` and `sp107` copies, the
+`temp_fv0 = 0.0f` zero stage and the `__compare_load0` local from the earlier steps.
+
 ## KMC GCC 2.7.2 (`-G0 -mips3 -mgp32 -mfp32 -O2`): a search's "not found" value on the exit path, and a call-argument loop's own variable
 
 A 219-instruction N64 function with four table searches (`while (WORD(e) != -1) { found = e; if (HALF(e+4) == key) break;
