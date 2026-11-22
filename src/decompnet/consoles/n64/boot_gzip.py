@@ -195,9 +195,10 @@ def find(rom, boot_ranges):
     pointer = _pointer_find(rom, boot_ranges)
     if pointer:
         return pointer
-    from . import boot_brs, boot_lzss, boot_raw_deflate, boot_refpack
+    from . import boot_brs, boot_lzss, boot_raw_deflate, boot_refpack, boot_two_bit
     return (boot_raw_deflate.find(rom, boot_ranges) or boot_brs.find(rom, boot_ranges)
-            or boot_lzss.find(rom, boot_ranges) or boot_refpack.find(rom, boot_ranges))
+            or boot_lzss.find(rom, boot_ranges) or boot_refpack.find(rom, boot_ranges)
+            or boot_two_bit.find(rom, boot_ranges))
 
 
 def verify_analysis(rom, expanded, boot_ranges):
@@ -229,7 +230,7 @@ def inline_tables(text):
 def add(config, workdir, image, rom, boot_ranges, log):
     if not (programs := find(rom, boot_ranges)):
         return None
-    from . import boot_brs, boot_lzss
+    from . import boot_brs, boot_lzss, boot_two_bit
     from .boot_mapping import extend_startup_trap
 
     extend_startup_trap(config, rom, log)
@@ -239,6 +240,7 @@ def add(config, workdir, image, rom, boot_ranges, log):
     segments = cfg['segments']
     segments.pop()
     expanded = bytearray(rom)
+    two_bit = boot_two_bit.find(rom, boot_ranges)
     repeated = {vram for vram, _, _ in programs if sum(vram == other for other, _, _ in programs) > 1}
     replacing = any(boot_brs.replacement_entry(rom[0x1000:0x1010], text)
                     and vram < base + end - start and base < vram + len(text) + len(data)
@@ -259,7 +261,10 @@ def add(config, workdir, image, rom, boot_ranges, log):
             vram += 8
             text = text[8:]
         sections = boot_lzss.startup_sections(text, vram) if boot_lzss.find(rom, boot_ranges) else None
-        if sections:
+        two_bit_start = boot_two_bit.code_start(text) if two_bit and any(vram == p[0] for p in two_bit) else None
+        if two_bit_start:
+            parts = [[start, 'data', f'{name}_startup_data'], [start + two_bit_start, 'c', name]]
+        elif sections:
             entry_end, code_start = sections
             parts = [[start, 'hasm'], [start + entry_end, 'data', f'{name}_startup_data'],
                      [start + code_start, 'c', name]]
