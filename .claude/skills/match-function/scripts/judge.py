@@ -66,7 +66,14 @@ class App:
         return self.call("/api/function?" + urllib.parse.urlencode({"slug": slug, "name": name}))
 
     def claim(self, slug, name="", strategy="random", max_insns=0):
-        return self.call("/api/claim", {"slug": slug, "name": name, "strategy": strategy, "max_insns": int(max_insns or 0)})
+        """An app started before `nearest` existed refuses it: ask for closest (its near-miss order), then random."""
+        result = {}
+        for wanted in dict.fromkeys([strategy] + (["closest", "random"] if strategy == "nearest" else [])):
+            result = self.call("/api/claim", {"slug": slug, "name": name, "strategy": wanted,
+                                              "max_insns": int(max_insns or 0)})
+            if "strategy must be one of" not in str(result.get("error", "")):
+                break
+        return result
 
     def release(self, slug, name):
         return self.call("/api/release", {"slug": slug, "name": name})

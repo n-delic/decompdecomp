@@ -118,14 +118,40 @@ def claim(gateway, function="", strategy="random", max_insns=0):
     """Claim FUNC by name (never swapped for another), or, when none is named, an open function nobody holds picked by
     `strategy` (nearest: the lowest saved score first; random) of at most `max_insns` instructions: one call."""
     if function:
-        arguments = {"function": function, "fallback": False}
+        text = gateway.call("claim_function", {"function": function, "fallback": False})
     else:
-        arguments = {"strategy": strategy, **({"max_insns": int(max_insns)} if max_insns else {})}
-    text = gateway.call("claim_function", arguments)
+        text = None
+        for wanted, cap in older_orders(strategy, max_insns):
+            arguments = {"strategy": wanted, **({"max_insns": int(cap)} if cap else {})}
+            try:
+                text = gateway.call("claim_function", arguments)
+                break
+            except McpError as error:
+                if not unknown_option(str(error)):
+                    raise
+        if text is None:
+            raise McpError("claim_function refused every claim order this script knows")
     found = CLAIMED.search(text)
     if not found:
         raise McpError(f"claim_function didn't claim anything: {text[:400]}")
     return found[1]
+
+
+def older_orders(strategy, max_insns):
+    """The claim to ask for, then what an app started before `nearest` and `max_insns` existed understands: closest
+    (near-misses relative to size) with the cap, closest alone, random. Refused calls claim nothing, so the one claim
+    that succeeds is still the only one."""
+    orders = [(strategy, max_insns)]
+    if strategy == "nearest":
+        orders += [("closest", max_insns), ("closest", 0)]
+    orders += [("random", 0)]
+    return list(dict.fromkeys((s, c or 0) for s, c in orders))
+
+
+def unknown_option(message):
+    """An older app's refusal of an order or argument it doesn't know (not a refusal of the claim itself)."""
+    return any(word in message for word in ("strategy must be one of", "max_insns", "unexpected keyword",
+                                             "Unexpected keyword", "additional properties", "Invalid arguments"))
 
 
 def holder_name(wanted=None):
