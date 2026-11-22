@@ -63,7 +63,7 @@ def _adapt(body, name, donor, target, big):
     return body[:start] + variants[0] + body[end:] if variants else None
 
 
-def run(twins, agent, proj, other, donors, prints, units, settings, job):
+def run(twins, agent, proj, other, donors, prints, units, settings, job, *, checked=None):
     """Build and judge changed literals with the destination's symbol and byte checks."""
     from .twins import WHY_CHARS, renames
 
@@ -116,6 +116,8 @@ def run(twins, agent, proj, other, donors, prints, units, settings, job):
             job.cross_tried += 1
             if hasattr(job, 'reuse_limit'):
                 job.reuse_attempts += 1
+            if checked is not None:
+                checked[row_full['id']].add(donor['id'])
             try:
                 outcome, why = donor_build.verify(
                     net, proj, row_full, other, donor, names, profile, agent, job, settings.headers,
@@ -135,4 +137,8 @@ def run(twins, agent, proj, other, donors, prints, units, settings, job):
                     job.reuse_matched += 1
                     job.reuse_bytes += row_full['size']
                 break
+    if checked is not None and not job.stop.is_set():
+        from . import imported_similarity
+
+        matched += imported_similarity.run(twins, agent, proj, other, hits, units, settings, job, checked)
     return matched

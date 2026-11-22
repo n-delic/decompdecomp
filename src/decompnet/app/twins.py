@@ -1406,6 +1406,7 @@ class Twins:
         report(job, 'Reading imported target objects', game=other['name'])
         theirs = self._fork_prints(other, matched_only=True, job=job)
         matched = 0
+        checked = defaultdict(set)
         from . import donor_build, donor_relocations
         from .donor_boundaries import merged_candidates, recover
         manual = getattr(job, 'cross_exhaustive', False)
@@ -1493,6 +1494,8 @@ class Twins:
                     job.cross_tried += 1
                 if bounded:
                     job.reuse_attempts += 1
+                if manual:
+                    checked[b_id].add(a['id'])
                 report(job, 'Compiling candidate', game=other['name'], function=b['name'], donor=a['name'])
                 outcome, why = 'skip', ''
                 fallback = None
@@ -1536,7 +1539,7 @@ class Twins:
         if build and proj['arch'] == 'mips' and not job.stop.is_set():
             from . import imported_literals
 
-            matched += imported_literals.run(self, agent, proj, other, donors, theirs, units, build, job)
+            matched += imported_literals.run(self, agent, proj, other, donors, theirs, units, build, job, checked=checked)
         return matched
 
     def _try_pair(self, agent, proj, a, b, *, partial=False) -> str:

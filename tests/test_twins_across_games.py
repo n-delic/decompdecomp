@@ -488,3 +488,80 @@ def test_imported_donor_with_different_literal_is_verified_in_the_rom(built, tmp
     saved = net._function(entry['name'], slug)
     assert saved['status'] == 'matched' and 'x < 42' in saved['matched_source']
     assert saved['target'] == target
+
+
+def test_similar_imported_object_rebuilds_with_the_destination_compiler_profile(built, tmp_path, monkeypatch):  # noqa: F811
+    from decompnet import similarity, toolchains
+    from decompnet.app.twins import Job
+    from decompnet.compiler import compile_source
+    from decompnet.elfobj import extract_function
+    from decompnet.forks.project import ForkProject
+    from decompnet.project import compiler_config
+
+    if not toolchains.installed('ido-7.1'):
+        pytest.skip('needs IDO 7.1')
+    net = RomNetwork(tmp_path / 'decomp.db', tmp_path)
+    slug = net.import_rom(ROM, confirmed=True, log=lambda *_: None)
+    agent, _ = net.local_agent('autopilot')
+    net.split_function(agent, slug, 'func_800007C4', '0x800007D0')
+    copy_project(net, slug, 'imported-library')
+    proj, other = net._project(slug), net._project('imported-library')
+    fn = net._function('func_800007D0', slug)
+    donor = net._function(fn['name'], other['slug'])
+    profile = {'toolchain': 'ido-7.1', 'flags': ['-O2', '-G', '0', '-non_shared', '-mips2']}
+    donor_profile = profile | {'flags': [*profile['flags'], '-DEXTRA_WRITE=1']}
+    source = """
+void donor(volatile int *out, int n) {
+    out[0] = n;
+    out[1] = n + 2;
+    out[2] = n + 4;
+    out[3] = n + 3;
+    out[4] = n - 5;
+    out[5] = n - 6;
+#if EXTRA_WRITE
+    out[6] = n + 7;
+#endif
+    out[7] = n + 8;
+}
+"""
+    root = tmp_path / 'imported'
+    root.mkdir()
+    base = compile_source(compiler_config(root, {'compiler': donor_profile}), '', source)
+    dest_source = source.replace('donor', fn['name'])
+    expected = compile_source(compiler_config(root, {'compiler': profile}), '', dest_source)
+    assert base.ok and expected.ok, (base.log, expected.log)
+    left = extract_function(base.obj, 'donor').code
+    right = extract_function(expected.obj, fn['name']).code
+    assert len(left) != len(right)
+    assert similarity.score(similarity.mips_mnemonics(left), similarity.mips_mnemonics(right)) >= .84
+
+    with net.project_store(proj['id']).tx() as db:
+        db.execute('UPDATE projects SET config=? WHERE id=?',
+                   (json.dumps(net.cfg(proj) | {'compiler': profile}), proj['id']))
+        db.execute("UPDATE functions SET target=?,size=?,n_insns=?,relocs='[]' WHERE id=?",
+                   (right, len(right), len(right) // 4, fn['id']))
+    proj = net.project_store(proj['id']).one('SELECT * FROM projects WHERE id=?', proj['id'])
+    with net.project_store(other['id']).tx() as db:
+        db.execute("UPDATE functions SET name='donor',unit='unit',status='matched' WHERE id=?", (donor['id'],))
+    (root / 'target.o').write_bytes(base.obj)
+    (root / 'objdiff.json').write_text(json.dumps({'units': [{
+        'name': 'unit', 'target_path': 'target.o', 'metadata': {'source_path': 'unit.c'},
+        'scratch': {'compiler': 'ido-7.1', 'c_flags': ' '.join(donor_profile['flags'])},
+    }]}))
+    other = dict(other) | {'root': str(root)}
+    fork = ForkProject(root)
+    monkeypatch.setattr(net.forks, 'get', lambda _: (other, fork, {'platform': 'n64'}))
+    monkeypatch.setattr(net.forks, 'is_asm', lambda *_: False)
+    job = Job()
+    job.cross_exhaustive = True
+    (root / 'unit.c').write_text(source.replace('n + 8', 'n + 9'))
+    assert net.twins._fork_to_rom(agent, proj, other, {}, net.twins.prints(proj), job) == 0
+    assert net._function(fn['name'], slug)['status'] == 'open'
+    (root / 'unit.c').write_text(source)
+    assert net.twins._fork_to_rom(agent, proj, other, {}, net.twins.prints(proj), job) == 1
+    saved = net._function(fn['name'], slug)
+    assert saved['status'] == 'matched' and saved['target'] == right
+    assert 'n + 8' in saved['matched_source']
+    assert net.project_store(proj['id']).one(
+        "SELECT 1 FROM cross_game_attempts WHERE function_id=? AND outcome='match' AND reason LIKE 'Similar imported source:%'",
+        fn['id'])
