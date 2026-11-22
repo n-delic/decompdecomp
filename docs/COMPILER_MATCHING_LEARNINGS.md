@@ -15574,3 +15574,17 @@ scaled sample in the same register and both linked product uses.
 ### KMC GCC 2.7.2 list search target
 
 A saved MIPS example built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` computed an invariant index plus step after a non-null check and before a linked-list search. Its machine draft recomputed the sum inside the search. Staging the sum inside the check immediately before the loop changed the diff score from 245 to an exact linked match; staging it before the check gave a score of 130. This is one saved example, not a controlled cross-compiler experiment. The proposal requires the observed instruction ordering and two unchanged, unescaped local operands.
+
+### KMC GCC 2.7.2 adjacent zero stores through cast field views
+
+In the narrow-zero switch sample built with
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, two stores through
+single-word views of the same base were reversed relative to the
+target. Swapping their source lines improved two scratch drafts from
+1,478 to 1,458 and from 823 to 803. Both candidates preserved every
+jump-table entry and remained inexact. The lower-scoring draft also
+needed a shared switch-arm store and an explicit arithmetic right
+shift. Either of those changes alone broke the linked table check.
+The automated adjacent-store proposal relies on the same base,
+distinct word-aligned offsets and unqualified word views. This is
+one saved example, with two starting drafts.
