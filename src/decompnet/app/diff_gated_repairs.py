@@ -10,6 +10,7 @@ from decomprepair import (
     balanced_signed_selector_increment,
     byte_cursor_postincrements,
     clamp_return_local,
+    clamp_saved_argument_lifetime,
     clamped_field_reload,
     counted_switch_advance,
     direct_mapped_address,
@@ -287,6 +288,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     result += measured_lifetime_shapes.variants(source, name, header, toolchain, rows)
     result += measured_scalar_updates.variants(source, name, header, toolchain, rows, asm)
     if toolchain == 'gcc-2.7.2-kmc':
+        result += clamp_saved_argument_lifetime.variants(source, name, rows, header=header)
         result += balanced_clamp_argument_stage.variants(source, name, rows, header=header)
         result += trig_axis_reuse.variants(source, name, rows, header=header)
         result += smoothing_call_before_read.variants(source, name, rows, header=header)
