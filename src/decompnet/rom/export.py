@@ -669,15 +669,22 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
             blocks.append({"rom": offset, "analysis": cursor, "size": len(payload)})
             cursor += len(payload)
         gzip_boot_ranges = []
+        archive_analysis = False
         if not blocks:
             gzip_boot_ranges = [entry for entry in split.code_ranges(configs[0]) if entry[1] <= len(original)]
             if not boot_gzip.verify_analysis(original, image, gzip_boot_ranges):
-                raise ExportError("expanded analysis image has no verified compressed-block reconstruction")
+                from ..consoles.n64 import indexed_runtime_code
+                archive_analysis = indexed_runtime_code.verify_analysis(original, image)
+                if not archive_analysis:
+                    raise ExportError("expanded analysis image has no verified compressed-block reconstruction")
+                gzip_boot_ranges = []
         cartridge = f"baserom.cartridge{ext}"
         (out / cartridge).write_bytes(original)
         build["cartridge"] = {"image": cartridge, "sha1": hashlib.sha1(original).hexdigest(), "blocks": blocks}
         if gzip_boot_ranges:
             build["cartridge"]["gzip_boot_ranges"] = gzip_boot_ranges
+        if archive_analysis:
+            build["cartridge"]["indexed_archive"] = True
     (out / "build.json").write_text(json.dumps(build, indent=1), encoding="utf-8")
     shutil.copyfile(Path(__file__).with_name("export_build.py"), out / "build.py")
     shutil.copyfile(Path(__file__).with_name("export_entry.py"), out / "export_entry.py")
