@@ -1525,3 +1525,22 @@ s32 f(void *obj, s32 mode, s32 value) {
     assert 'recover_list_append_index' in families(KMC, rows)
     assert 'recover_list_append_index' not in families('ido-7.1', rows)
     assert 'recover_list_append_index' not in families(KMC, [])
+
+
+def test_halfword_index_scale_and_frame_are_kmc_target_gated():
+    source = '''s32 f(u16 *p) {
+        s32 index;
+        index = 0;
+        while (*(((index & 0xff) * 2) + p) != 0xffff) index++;
+        return index;
+    }'''
+    rows = [(' ', 'andi $v0, $a1, 0xff', 'andi $v0, $a1, 0xff'),
+            ('i', 'sll $v0, $v0, 1', 'sll $v0, $v0, 2'),
+            (' ', 'addu $v0, $v0, $a0', 'addu $v0, $v0, $a0'),
+            (' ', 'lhu $v0, ($v0)', 'lhu $v0, ($v0)')]
+    asm = 'addiu $sp, $sp, -8\njr $ra\naddiu $sp, $sp, 8'
+    def families(toolchain, diff):
+        return {label for label, _ in proposals(source, 'f', '', 'mips', toolchain, diff, asm)}
+    assert {'halfword_index_scale','halfword_index_scale_with_frame'} <= families(KMC, rows)
+    assert 'halfword_index_scale' not in families('ido-7.1', rows)
+    assert 'halfword_index_scale' not in families(KMC, [])
