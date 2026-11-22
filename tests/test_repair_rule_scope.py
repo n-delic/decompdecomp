@@ -59,10 +59,14 @@ def test_copied_context_does_not_share_fingerprint_between_threads(monkeypatch):
         calls.append(True)
         return [('rule.py', str(len(calls)))]
     monkeypatch.setattr(claim_stalls, '_repair_rules', rules)
+    monkeypatch.setattr(claim_stalls, '_recent', None)
     with claim_stalls.rule_snapshot():
         assert claim_stalls.repair_rules() == [('rule.py', '1')]
         context = copy_context()
         with ThreadPoolExecutor(1) as pool:
             assert pool.submit(context.run, claim_stalls.repair_rules).result() == [('rule.py', '2')]
         assert claim_stalls.repair_rules() == [('rule.py', '1')]
+    # outside a snapshot a caller reuses the stamp the other thread just made for a few seconds (b1c7611da); this
+    # asserts a fresh one after they pass
+    claim_stalls._recent = None
     assert claim_stalls.repair_rules() == [('rule.py', '3')]

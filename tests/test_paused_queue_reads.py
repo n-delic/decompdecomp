@@ -110,6 +110,9 @@ def test_changed_hardware_or_initializer_helper_reopens_cached_candidate(tmp_pat
     net,(agent,_,_)=setup(tmp_path,1);proj=net._project('game');pause_all(net,agent)
     assert claim_stalls.blocked(net,proj,agent)
     changed=True
+    # a caller outside a search session reuses the implementation stamp for a few seconds (b1c7611da); an edit
+    # shows once they pass, so the test lets them pass.
+    claim_stalls._recent=None
     assert not claim_stalls.blocked(net,proj,agent)
 
 
