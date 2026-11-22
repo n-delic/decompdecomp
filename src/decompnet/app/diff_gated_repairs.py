@@ -44,6 +44,7 @@ from decomprepair import (
     measured_be16_cursor,
     measured_branch_halfword_store,
     measured_byte_clamp,
+    measured_byte_clear_base,
     measured_callback_loop,
     measured_callback_repairs,
     measured_carried_loop_test,
@@ -362,6 +363,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_be16_cursor.variants(source, name, header, rows)
         result += measured_forwarded_counter.variants(source, name, header, rows, asm or '')
         result += measured_flag_reload.variants(source, name, header, rows)
+        result += measured_byte_clear_base.variants(source, name, header, rows)
         result += measured_float_argument_pair.variants(source, name, header, rows)
         result += measured_guarded_index.variants(source, name, header, rows)
         result += measured_reset_loops.variants(source, name, header, rows)

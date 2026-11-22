@@ -15214,3 +15214,7 @@ only the second clear.
 ### Recover a pair of leading float arguments
 
 Two saved N64 functions built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1` passed float bit patterns to a callee whose draft prototype named two integer parameters. The target loaded the same constants into `$f12` and `$f14` before the call. Changing the first two prototype parameters to `f32` and writing the corresponding float literals reproduced both linked targets exactly (each score 355 to 0). Evidence: two saved examples and synthetic source, register and routing tests. The candidate requires a matching target sequence, a unique local prototype and call, and literal bits equal to the observed constants; the byte judge verifies the result.
+
+### Stage the base of a byte-clear loop
+
+A saved N64 byte-clear loop built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1` recalculated its indexed table base in the loop, while the target computed it before the loop. Masking the row index first, then assigning the base and adding the row offset inside a single-iteration `do` block, reproduced the linked target exactly (score 255 to 0). Without the block the same staged assignments scored 45; combining the assignments scored 120. Evidence: one saved example and synthetic source, target and routing tests. The candidate requires the measured loop and instruction shapes and is verified by the byte judge.
