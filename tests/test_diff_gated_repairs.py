@@ -1750,3 +1750,13 @@ def test_event_timestamp_routes_to_kmc(monkeypatch):
                         lambda text, name, header, diff: [('event_timestamp_fixture', text)])
     assert 'event_timestamp_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'event_timestamp_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_route_measured_table_compare_scope(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'lui $a0, %hi(table)', 'lui $a1, %hi(table)')]
+    monkeypatch.setattr(diff_gated_repairs.global_pointer_local_repairs, 'measured_table_compare_pointer',
+                        lambda source, name, diff, header: [('table_compare_pointer_scope', source)])
+    assert 'table_compare_pointer_scope' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'table_compare_pointer_scope' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
