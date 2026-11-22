@@ -15,6 +15,15 @@ target order. A general rewrite must not remove volatile qualification or reorde
 when storage provenance or external observation is uncertain. Other matched functions in this project use the
 alternate profile, but applying it to this function still requires the user's authorization.
 
+### KMC GCC 2.7.2: hide a literal in an OR chain
+
+One N64 function compiled with `-G0 -mips3 -mgp32 -mfp32 -O2` scored 20 with a packed color expressed as
+`((K | high) | low) | shade`. Replacing it with `high | ((~low & K) | low) | shade`, where `low` is a
+32-bit unsigned local and `K` is a 32-bit literal, scored 10 in both the standalone and live judges. The identity
+preserves every bit; it changes the compiler's coalescing of the OR operands. This is one function, not a controlled
+compiler-wide result, and it remains unmatched. Reordering the OR chain alone scored 20 or worse, and moving the low
+shift into the one-shot scope scored 30. Hoisting a different saved scoped intermediate regressed 25 to 255.
+
 ### KMC GCC 2.7.2: split a reassigned incoming parameter
 
 In a controlled N64 experiment with `-G0 -mips3 -mgp32 -mfp32 -O2`, a source variant reused an incoming
