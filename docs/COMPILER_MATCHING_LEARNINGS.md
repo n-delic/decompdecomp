@@ -15080,3 +15080,8 @@ field reload after both clamp outcomes. A scoped save and restoration is
 eligible when the restored value is overwritten before the next use.
 Synthetic tests check the evidence and reject any use of the old value
 that would observe the change.
+
+
+### Recover a full-width variable-byte lookup index
+
+In a private N64 rate-table reader built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a draft truncated a two-byte index to one byte, advanced a separate cursor before its first read and omitted an unchanged first call argument. Widening and staging the index and cursor improved the linked score from 340 to 15; also restoring the argument using the existing entry-register proof reproduced the target exactly (score 0). The candidate requires the measured byte-load and shift sequence and a matching source shape. Evidence: one saved function and synthetic generation and routing tests.

@@ -130,6 +130,7 @@ from decomprepair import (
     measured_storage_shapes,
     measured_temporary_repairs,
     measured_thread_addresses,
+    measured_varbyte_lookup,
     ordered_halfword_updates,
     oscillator_phase_hold,
     packed_matrix_conversion,
@@ -340,6 +341,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_kmc_call_stores.variants(source, name, header, rows, resolve)
         result += measured_carried_loop_test.variants(source, name, header, rows)
         result += measured_byte_clamp.variants(source, name, header, rows)
+        result += measured_varbyte_lookup.variants(source, name, header, rows, asm or '')
         result += measured_indexed_clear.variants(source, name, header, rows)
         result += measured_global_offset_reuse.variants(source, name, header, rows, asm or '')
         result += measured_list_selection.variants(source, name, header, rows)

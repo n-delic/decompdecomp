@@ -1720,3 +1720,13 @@ def test_route_measured_indexed_copy_inlining(monkeypatch):
                         lambda source, name, diff, header: [('indexed_copy_fixture', source)])
     assert 'indexed_copy_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'indexed_copy_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_varbyte_lookup_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_varbyte_lookup, 'variants',
+                        lambda text, name, header, diff, asm: [('varbyte_lookup_fixture', text)])
+    assert 'varbyte_lookup_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'varbyte_lookup_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
