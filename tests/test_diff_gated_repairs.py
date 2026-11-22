@@ -2390,3 +2390,14 @@ def test_forward_entry_pointer_routes_to_kmc_with_asm(monkeypatch):
     assert 'entry_pointer_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, 'asm'))
     assert 'entry_pointer_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, 'asm'))
     assert 'entry_pointer_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-7.1', rows, 'asm'))
+
+
+def test_frameless_padding_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'nop', 'nop')]
+    monkeypatch.setattr(diff_gated_repairs.measured_frameless_padding, 'variants',
+                        lambda text, name, header, diff: [('frameless_padding_fixture', text)])
+    assert 'frameless_padding_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'frameless_padding_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+    assert 'frameless_padding_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-7.1', rows, ''))

@@ -76,6 +76,7 @@ from decomprepair import (
     measured_forward_entry_pointer,
     measured_forwarded_counter,
     measured_forwarded_pointer,
+    measured_frameless_padding,
     measured_global_offset_reuse,
     measured_global_rebase,
     measured_guarded_byte,
@@ -549,6 +550,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_strided_halfword_copy.variants(source, name, header, rows)
         result += measured_saved_pointer_copy.variants(source, name, header, rows)
         result += measured_forward_entry_pointer.variants(source, name, header, rows, asm)
+        result += measured_frameless_padding.variants(source, name, header, rows)
         result += measured_record_pointer_update.variants(source, name, header, rows)
         result += measured_record_ramp.variants(source, name, header, rows)
         result += measured_region_search.variants(source, name, header, rows)
