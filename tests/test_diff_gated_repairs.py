@@ -1930,3 +1930,13 @@ def test_guarded_flag_value_routes_to_kmc(monkeypatch):
                         lambda text, name, header, diff: [('guarded_flag_fixture', text)])
     assert 'guarded_flag_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'guarded_flag_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_signed_offset_helper_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_signed_offset_helper, 'variants',
+                        lambda text, name, header, diff: [('signed_offset_helper_fixture', text)])
+    assert 'signed_offset_helper_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'signed_offset_helper_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))

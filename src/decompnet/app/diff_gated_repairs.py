@@ -147,6 +147,7 @@ from decomprepair import (
     measured_reset_loops,
     measured_ring_global_capture,
     measured_scalar_updates,
+    measured_signed_offset_helper,
     measured_square_loads,
     measured_stack_records,
     measured_storage_shapes,
@@ -383,6 +384,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_indexed_clear.variants(source, name, header, rows)
         result += measured_global_offset_reuse.variants(source, name, header, rows, asm or '')
         result += measured_list_selection.variants(source, name, header, rows)
+        result += measured_signed_offset_helper.variants(source, name, header, rows)
         result += measured_indirect_command_records.variants(source, name, header, rows)
         result += measured_event_frame_capture.variants(source, name, header, rows)
         result += measured_command_record_cursor.variants(source, name, header, rows)
