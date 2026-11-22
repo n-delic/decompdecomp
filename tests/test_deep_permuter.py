@@ -1206,6 +1206,32 @@ def test_loop_vector_shape_pass_reaches_the_guard_initializer_scope_that_matched
     assert search.loop_vector_shape_pass(AGENT, proj, dict(fn, best_source=source, name='f'), 10, None) == 0
 
 
+def test_loop_vector_shape_pass_reaches_the_chain_load_scope_that_matched_a_menu_function(monkeypatch):
+    """Identical arms written once plus the chain load behind the branch operand's load: 210 -> 0 in one child."""
+    net = setup(monkeypatch)
+    source = ('extern void *gState;\nextern int sink(int);\nvoid f(void) {\n  void *entry;\n  int value;\n  void *next;\n'
+              '  entry = *((void **) (((char *) gState) + 0x18));\n  if (entry)\n  {\n'
+              '    value = *(*((int **) (((char *) entry) + 0x10)));\n    next = entry + 0x28;\n  }\n  else\n  {\n'
+              '    value = *(*((int **) (((char *) entry) + 0x10)));\n    next = entry + 0x28;\n  }\n'
+              '  if (((*((unsigned char *) (((char *) gState) + 0x2D))) != 0) && (sink(1) == 0))\n  {\n    sink(value);\n  }\n'
+              '  sink(next);\n}\n')
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_score=210,best_source=? WHERE name='f'", (source,))
+    fn, proj = net.function(), net.project_row('game')
+    search = deep_permuter.Search(net, 1, 30, Log(), fn)
+    seen = []
+
+    def score(agent, proj, fn, candidate, best, fork):
+        seen.append(candidate)
+        search.tested += 1
+        # the arms alone are worse, the scope on the arms alone is no better; collapsed and scoped is exact
+        return 0 if 'do { value = *chain_ptr; } while (0);' in candidate and 'else' not in candidate else 220
+
+    monkeypatch.setattr(search, '_score', score)
+    assert search.loop_vector_shape_pass(AGENT, proj, dict(fn, best_source=source, name='f'), 210, None) == 0
+    assert any('guard_load' in c for c in seen)
+
+
 def test_a_stub_baseline_is_named_before_the_tuning_passes(monkeypatch):
     net = setup(monkeypatch)
     fn = net.function()

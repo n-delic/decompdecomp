@@ -526,7 +526,11 @@ class Search(Permuter):
                     # a guard body's constant initializer hoisted before the guard in its own one-shot scope, with
                     # the copies that preceded the guard sunk into the body (decomp-repair 0.5.284): 10 -> 0 as one
                     # child, 60 and 120 as its halves
-                    ('decomprepair.branch_slot_scope.variants', (parent, fn['name'], proj['arch']))])
+                    ('decomprepair.branch_slot_scope.variants', (parent, fn['name'], proj['arch'])),
+                    # a pointer-chain load pinned behind the branch operand's load in a one-shot scope, with m2c's
+                    # identical if/else arms written once (decomp-repair 0.5.340): 210 -> 0 as one child, 220 for
+                    # the arms alone and 235 for the others alone, so the beam has to keep the weaker ones
+                    ('decomprepair.chain_load_scope.variants', (parent, fn['name'], proj['arch']))])
                     for pair in generation_calls.pairs(result)]
                 for family, child in proposals:
                     if child in seen or budget <= 0:
