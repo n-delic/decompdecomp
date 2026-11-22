@@ -13429,3 +13429,5 @@ buffer and recursive fallback. Compile the resulting C switch with its
 cases in ascending order. The linked judge went from 11,760 to 0, and
 the new dispatcher rule generated one byte-exact candidate. Existing
 comparison-tree rules produced no candidate for the draft with jumps.
+
+A saved N64 function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1` used a halfword flag table and a word table, while its draft inferred both as byte arrays. Casting the two independently indexed reads to `u16 *` and `u32 *` reproduced the linked target exactly (score 400 to 0); a signed halfword cast left a 200-point difference. The target-guided repair offers each evidenced correction and their combination, while leaving stores alone. Evidence: one saved example and synthetic generation and routing regressions.

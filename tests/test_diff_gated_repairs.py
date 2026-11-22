@@ -1309,3 +1309,14 @@ def test_indexed_byte_table_routes_to_kmc(monkeypatch):
                         lambda text, name, header, diff: [('indexed_byte_fixture', text)])
     assert 'indexed_byte_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'indexed_byte_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
+
+
+
+def test_inferred_table_widths_route_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_kmc_inferred_table_widths, 'variants',
+                        lambda text, name, header, diff: [('inferred_table_widths_fixture', text)])
+    assert 'inferred_table_widths_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'inferred_table_widths_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
