@@ -476,6 +476,7 @@ class Search(Permuter):
                   (L + 'triangle_arm_calls.variants', (source, name)),
                   (L + 'guarded_increment_sink.variants', (source, name)),  # decomp-repair 0.5.607: a counter's early sum back inside its guard as G++
                   (L + 'argument_weight_scope.variants', (source, name)),  # decomp-repair 0.5.603: a parameter's first call in a one-shot scope with the table pointer local written out
+                  (L + 'staged_sum_scope.variants', (source, name)),  # decomp-repair 0.5.626: a guarded copy block, and a quotient with its staged sum and test, in one-shot scopes
                   (L + 'arm_variable_share.variants', (source, name)),  # decomp-repair 0.5.601: the counters of sibling arms' loops and their derived indices as one variable
                   (L + 'member_alias_pair.variants', (source, name)),  # decomp-repair 0.5.613: a raw offset store as a structure member beside a global read as a one-member record (the scheduler's alias classes)
                   (L + 'ternary_clamp_split.variants', (source, name)),  # decomp-repair 0.5.612: a ?: clamp as a copy and a guarded default, the later reads on the copy

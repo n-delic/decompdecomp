@@ -315,6 +315,7 @@ from decomprepair import (
     stack_run_array_repairs,
     stack_unpack_loop_repairs,
     staged_narrow_store_repairs,
+    staged_sum_scope,
     statement_group_orders,
     storage_scope_repairs,
     store_address_repairs,
@@ -418,7 +419,7 @@ AGENT_FAMILIES += (arm_label_share_repairs.FAMILIES + declaration_scope_sink_rep
                    + flag_word_bitfield_repairs.FAMILIES + argument_spill_tail.FAMILIES)
 AGENT_FAMILIES += (display_value_stage.FAMILIES + shared_copy_local_split.FAMILIES + narrow_quotient_local.FAMILIES
                    + selected_argument_call_split.FAMILIES + triangle_arm_calls.FAMILIES + guarded_increment_sink.FAMILIES
-                   + argument_weight_scope.FAMILIES)
+                   + argument_weight_scope.FAMILIES + staged_sum_scope.FAMILIES)
 
 LIMIT = 20
 _IDENT = r'[A-Za-z_]\w*'
@@ -841,7 +842,7 @@ def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels
                    accumulator_chain_repairs, display_cursor_record_repairs, gbi_macro_commands, goto_loop_invariants, display_value_stage,
                    shared_copy_local_split, narrow_quotient_local, selected_argument_call_split,
                    triangle_arm_calls, guarded_increment_sink, arm_variable_share, entry_scheduling_scope, entry_scope_split,
-                   argument_weight_scope,
+                   argument_weight_scope, staged_sum_scope,
                    loop_exit_value_block, argument_loop_split, ternary_clamp_split, member_alias_pair,
                    volatile_global_plain_repairs, spill_shape_repairs,
                    clamp_arm_stores, adjacent_array_store_order, global_field_load_stage, preheader_run_order,
