@@ -8,6 +8,7 @@ from decomprepair import (
     allocation_repairs,
     balanced_clamp_argument_stage,
     balanced_float_predicate_return,
+    balanced_projection_scale,
     balanced_signed_selector_increment,
     boolean_guard_operands,
     byte_cursor_postincrements,
@@ -299,6 +300,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     result += measured_scalar_updates.variants(source, name, header, toolchain, rows, asm)
     if toolchain == 'gcc-2.7.2-kmc':
         result += boolean_guard_operands.variants(source, name, rows, header)
+        result += balanced_projection_scale.variants(source, name, rows, header=header)
         result += conditional_field_subtract.variants(source, name, rows, header=header)
         result += sampled_phase_axis_stage.variants(source, name, rows, header=header)
         result += shared_projection_lifetime.variants(source, name, rows, header=header)

@@ -15028,3 +15028,21 @@ and flag, and dead local lifetimes verified from control flow.
 ### Fold a cached global field address and restore frame padding
 
 In a private N64 cache-list function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a draft kept a generated global-field address in a separate local, causing the compiler to save an extra register. Expressing its two field accesses directly from the same global address recovered the target's instruction sequence, improving the linked score from 354 to 10. Applying the existing measured unused-frame-padding candidate afterward restored the stack frame and reproduced the target exactly (score 0). The rule checks the equivalent offsets, local uses, macro definition and saved-register pattern. Evidence: one saved function and synthetic generation and routing tests.
+
+### Balance a saved projection scale with an earlier predicate
+
+GCC 2.7.2 KMC with `-G0 -mips3 -mgp32 -mfp32 -O2` used the saved projection
+register to scale the next input just after the last angle product and before
+loading a smoothed field. The draft wrote the scaled input to a scratch
+register and delayed the angle product past the load. Staging the scale in the
+dead saved local reproduced both the destination and local instruction order.
+
+In one linked N64 function, staging only the scale scored 8,205 against a
+baseline of 7,480. Computing the first integer flag inversion before the
+second comparison alone scored 7,830. The paired edit scored 6,885, preserving
+three jump-table relocations and compiling without uninitialized warnings.
+The first flag calculation filled a delay slot in the target. The Deep
+Permuter proposes this pair when both disassembly differences are present and
+the saved projection local is dead and its address has not escaped. This is
+a measured result for one function. Synthetic tests check the evidence and
+liveness gates.
