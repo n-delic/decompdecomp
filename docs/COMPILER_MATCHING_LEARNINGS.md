@@ -13445,4 +13445,26 @@ cases in ascending order. The linked judge went from 11,760 to 0, and
 the new dispatcher rule generated one byte-exact candidate. Existing
 comparison-tree rules produced no candidate for the draft with jumps.
 
+## A stray trailing argument sets the first scheduler's order of a later call (KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`, an N64 game, one 161-instruction menu function)
+
+The saved best scored 60: two reordered rows in the argument setup of a three-argument call. The target loads the
+halfword, does the first shift of the multiply, then loads the byte (`lhu $a0; sll $a2,$v0,1; lbu $a1`); the draft
+loaded both before the shift. Forty-odd statement orders, temporaries, casts, prototypes, `do {} while (0)` fences and
+expression spellings of the three arguments all stayed at 60 (about 1,500 compiles through the judge).
+
+`cc1 -dS -dR` showed why: sched1 gives the setter of an argument register a boosted priority (`7f000001` in the dump)
+and keeps its feeding chain together at the end of the block, and which setters get it depends on which argument
+registers the *rest of the function* sets for calls. The draft passed a leftover `$a1` (a pointer the function worked
+through) to three one-argument callees; with `$a1` also an argument elsewhere, only the `$a2` chain was pinned, and the
+loads kept the draft's order. Dropping the `$a1` argument at all three callees (`f(3, p)` to `f(3)`, the nested pair
+`g(h(x, p))` to `g(h(x))`) gave 0 in the app; dropping any one callee's alone stayed at 60. Controlled: the same
+effect reproduced in a 10-line synthetic function (a two-argument call anywhere before gave the draft order, a
+one-argument call the target's), and the tail of the function mattered too (cutting it hid the effect). One function.
+
+Permuter: `target_call_arity` already dropped trailing arguments the target never set, but (1) it counted a register
+used as a load/store base as an argument, (2) it offered each callee alone, so every child scored 60, and (3) it
+could not pair a callee the assembly names differently when the C nests the calls (the target calls the inner one
+first). decomp-repair 0.5.345 adds the `through` reading, a merged child over all callees and evaluation-order pairing;
+from the saved best it now emits the exact source. Failed here: typed prototypes, reordered temporaries, wrapping each
+argument in a loop fence, other expression forms of the byte and halfword arguments.
 A saved N64 function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1` used a halfword flag table and a word table, while its draft inferred both as byte arrays. Casting the two independently indexed reads to `u16 *` and `u32 *` reproduced the linked target exactly (score 400 to 0); a signed halfword cast left a 200-point difference. The target-guided repair offers each evidenced correction and their combination, while leaving stores alone. Evidence: one saved example and synthetic generation and routing regressions.
