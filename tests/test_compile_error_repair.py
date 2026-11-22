@@ -42,3 +42,14 @@ def test_the_rounds_are_bounded():
     compile_source, calls = compiler({'x': 'invalid operands to binary +'})
     assert list(compile_error_repair.candidates(compile_source, source, rounds=3)) == []
     assert len(calls) <= 3
+
+
+def test_a_draft_over_the_compilers_size_limit_is_compacted():
+    big = 'void f(void) {\n    x = 1;   /* a comment */\n}\n'
+
+    def compile_source(text):
+        if '    ' in text or '/*' in text:
+            return SimpleNamespace(ok=False, log='rejected: source too large (max 65536 bytes)')
+        return SimpleNamespace(ok=True, log='')
+
+    assert list(compile_error_repair.candidates(compile_source, big)) == [('compile_error_repair', 'void f(void) {\nx = 1;\n}\n')]
