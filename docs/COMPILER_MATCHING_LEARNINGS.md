@@ -1755,6 +1755,14 @@ for a defined helper that needs distinct loader references. The controlled
 fixtures cover a short parameter in a K&R definition as well as the
 earlier ANSI prototype and implicit-int empty stub.
 
+A resident-source replay with IDO 7.1,
+`-O2 -G 0 -mips2 -32 -non_shared -Xcpluscomm -Wab,-r4300_mul -DNON_MATCHING`,
+found aligned callers rejected before any binding probe ran. Two needed
+31 and 35 source-occurrence probes. Increasing the bounded probe count
+let the compiler attribute those references with the ordinary instruction
+and relocation checks. A controlled 24-call fixture verifies the larger
+search and checks that a cancelled search starts no compiler probes.
+
 ### Externalizing IDO overlay constant pools and BSS can change instructions
 
 An isolated N64 replay found compiler-emitted, unnamed section references even
