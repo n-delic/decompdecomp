@@ -423,6 +423,17 @@ class Search(Permuter):
             zero_bound = len(calls)
             calls += [(L + 'targeted_switch_labels.zero_bound_variants', (source, name, current_asm)),
                       (L + 'symbol_width_repairs.guarded_indexed_variants', (source, name, current_asm))]
+        # the families a 374-instruction effect spawner's match needed (decomp-repair 0.5.581): a label's
+        # statement repeated in an arm, an element updated in place with its reader helper expanded, a split
+        # local union with a shared signed narrow test, a declaration moved into its block, and the
+        # field-store swap of the register levers, alone (decomp-repair 0.5.582: the other levers swap operands of every
+        # function and would use up the lane's trials)
+        calls += [(L + 'arm_label_share_repairs.variants', (source, name)),
+                  (L + 'element_update_repairs.variants', (source, name)),
+                  (L + 'phase_storage_split_repairs.variants', (source, name)),
+                  (L + 'narrow_test_share_repairs.variants', (source, name)),
+                  (L + 'declaration_scope_sink_repairs.variants', (source, name)),
+                  (L + 'allocation_lever_repairs.field_store_swaps', (source, name))]
         # Existing saved drafts can still use their original address-based entry name.
         calls.append((L + 'scoped_byte_read_call.variants', (source, name, arch, asm, header)))
         if arch == 'mips' and (vram := dict(fn).get('vram')) is not None:

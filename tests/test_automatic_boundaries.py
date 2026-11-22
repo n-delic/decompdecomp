@@ -932,3 +932,50 @@ def test_continuation_join_is_kept_without_other_repairs():
     result = repair(functions, [], image, consoles.get('n64'), segments, log=logs.append)
     assert [(fn.rom, fn.size) for fn in result] == [(0, 36)]
     assert any('Joined 1 unentered framed continuations' in line for line in logs)
+
+
+@pytest.mark.parametrize('case', ['valid', 'named', 'nonzero_padding', 'not_called', 'bad_constant'])
+def test_leading_constant_before_called_frame_is_left_in_image(case):
+    call = 0x0c000000 | (((BASE+32 if case != 'not_called' else BASE+64)>>2)&0x3ffffff)
+    words = [0,0,0x4197d784,0,0x30000000,0,0,0,*BODY,call,0,0x03e00008,0]
+    if case == 'nonzero_padding': words[6] = 1
+    if case == 'bad_constant': words[2] = 0x7ff00000
+    image, functions, _ = fixture(words, cuts=(16,20,32,64,80))
+    functions.pop(1)
+    symbols = [f'entry = 0x{BASE+16:08X};'] if case == 'named' else []
+    result = repair(functions, [], image, consoles.get('n64'), [Segment('code',16,len(image),BASE+16)], symbols=symbols)
+    assert (16 in {fn.rom for fn in result}) == (case != 'valid')
+    assert image[16:20] == bytes.fromhex('30000000')
+
+
+@pytest.mark.parametrize('case', ['valid', 'named', 'nonsmooth', 'mapped_table'])
+def test_terminal_branch_shaped_word_before_smooth_halfword_table(case):
+    values = [-2705,-2987,-3105,-3195,-3270,-3337,-3398,-3453,-3505,-3553,-3599,-3643,
+              -3685,-3725,-3763,-3800,-3836,-3871,-3905,-3938,-3970,-4001,-4032,-4061,
+              -4090,-4120,-4148,-4176,-4204,-4231,-4257,-4283]
+    if case == 'nonsmooth': values[7] = 100
+    pairs = [((a&0xffff)<<16)|(b&0xffff) for a,b in zip(values[::2],values[1::2])]
+    words = [0,0,0,*BODY,0x563f2462,*pairs]
+    image, functions, _ = fixture(words, cuts=(12,44,52))
+    segments = [Segment('code',12,48,BASE+12)]
+    if case == 'mapped_table': segments.append(Segment('other',48,len(image),BASE+0x1000))
+    symbols = [f'entry = 0x{BASE+44:08X};'] if case == 'named' else []
+    result = repair(functions, [], image, consoles.get('n64'), segments, symbols=symbols)
+    assert (44 in {fn.rom for fn in result}) == (case != 'valid')
+    assert image[44:48] == bytes.fromhex('563f2462')
+
+
+@pytest.mark.parametrize('indirect', [False, True])
+def test_leading_string_references_are_kept_as_data_unless_called_indirectly(indirect):
+    call = 0x0c000000 | (((BASE+32)>>2)&0x3ffffff)
+    words = [0,0,0x4197d784,0,0x30000000,0,0,0,*BODY,0x3c128000,0x26521010,
+             0x0240f809 if indirect else call,0,0x03e00008,0]
+    image, functions, _ = fixture(words, cuts=(16,20,32,64,88))
+    functions.pop(1)
+    caller = functions[-1]
+    caller.lines[0] = replace(caller.lines[0], operands=f'$s2, %hi({functions[0].name})')
+    caller.lines[1] = replace(caller.lines[1], operands=f'$s2, $s2, %lo({functions[0].name})')
+    data = []
+    result = repair(functions, data, image, consoles.get('n64'), [Segment('code',16,len(image),BASE+16)])
+    assert (16 in {fn.rom for fn in result}) == indirect
+    assert [(d.rom,d.size) for d in data] == ([] if indirect else [(16,4)])

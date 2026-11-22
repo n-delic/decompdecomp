@@ -17,6 +17,7 @@ from decomprepair import (
     allocation_lever_repairs,
     allocation_repairs,
     allocator_shape_repairs,
+    arm_label_share_repairs,
     arm_pointer_split_repairs,
     assignment_tree_switch_repairs,
     assignment_use_repairs,
@@ -82,6 +83,7 @@ from decomprepair import (
     debug_boundary_repairs,
     debug_initializer_repairs,
     decision_address_repairs,
+    declaration_scope_sink_repairs,
     decoded_byte_repairs,
     default_else_repairs,
     deferred_store_repairs,
@@ -90,6 +92,7 @@ from decomprepair import (
     disjoint_local_merge_repairs,
     display_cursor_record_repairs,
     duplicate_return_node_repairs,
+    element_update_repairs,
     entry_base_init_repairs,
     entry_parameter_copy_repairs,
     entry_pointer_capture,
@@ -194,6 +197,7 @@ from decomprepair import (
     narrow_expression_repairs,
     narrow_shift_repairs,
     narrow_store_repairs,
+    narrow_test_share_repairs,
     narrow_widening_repairs,
     narrowed_call_argument_repairs,
     near_match_repairs,
@@ -219,6 +223,7 @@ from decomprepair import (
     pattern_repairs,
     phantom_local_repairs,
     phase_lifetime_repairs,
+    phase_storage_split_repairs,
     phase_union_repairs,
     pointer_capture_repairs,
     pointer_cast_repairs,
@@ -370,6 +375,8 @@ AGENT_FAMILIES = constant_store_bracket.FAMILIES + statement_group_orders.FAMILI
                   'split_integer_phase','paired_integer_lifetimes','initialization_cluster')
 
 AGENT_FAMILIES += (guarded_pointer_copy.FAMILY,) + shifted_byte_lifetime.FAMILIES
+AGENT_FAMILIES += (arm_label_share_repairs.FAMILIES + declaration_scope_sink_repairs.FAMILIES + element_update_repairs.FAMILIES
+                   + narrow_test_share_repairs.FAMILIES + phase_storage_split_repairs.FAMILIES)
 
 LIMIT = 20
 _IDENT = r'[A-Za-z_]\w*'
@@ -793,6 +800,15 @@ def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels
     for family, text in _generated(allocation_lever_repairs.variants, source, name):
         proposals.append(text)
         labels[text] = family
+    # What a 374-instruction N64 effect spawner needed after its saved best (1397; decomprepair 0.5.581), each a family
+    # the permuter lacked: an arm that repeats a label's statement jumps to the label, an element updated in place with
+    # the reader helper expanded (one child), a signed narrow test shared in a local (with the union split as one child),
+    # a declaration moved into the one block that uses it; the swap of two field stores is in allocation_lever above.
+    for module in (arm_label_share_repairs, element_update_repairs, phase_storage_split_repairs,
+                   narrow_test_share_repairs, declaration_scope_sink_repairs):
+        for family, text in _generated(module.variants, source, name):
+            proposals.append(text)
+            labels[text] = family
     for family, text in _generated(indexed_record_repairs.variants, source, name, header, arch, asm):
         proposals.append(text)
         labels[text] = family

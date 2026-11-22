@@ -21,6 +21,7 @@ def main():
     cache_owner = SimpleNamespace()
     background = False
     for line in sys.stdin.buffer:
+        thread_cpu.count('requests')
         if line.startswith(b'P'):
             # a call from decompnet.app.offload: pickled in, pickled out (both ends run this code)
             from decompnet.app import offload

@@ -310,7 +310,9 @@ Use `allocation_initialization_order`, `pointer_argument_alias`, `spill_declarat
 `byte_fill_constant` and the bounded `allocation_schedule_bridge` when offered. In a large switch with a
 register-only difference, also `case_temporary_split` / `case_temporary_merge` (one local per case, or locals that
 never meet merged) and `phantom_wide_local` (an unused `long long` at a block start, which breaks an allocation
-tie by moving one insn). They automate
+tie by moving one insn). A spilled halfword eight bytes off the target (every other slot right) is a declaration-order
+fact: `declaration_scope_sink` moves a function-level local into the one block that uses it. Also `arm_label_share`,
+`element_update_shape`, `narrow_test_share` and `phase_storage_split` (an effect spawner, 1397 to 0). They automate
 subsets of these observations, not the complete historical search. Exact results do not prove
 original variable names, types or source spelling. See `docs/COMPILER_MATCHING_LEARNINGS.md`.
 

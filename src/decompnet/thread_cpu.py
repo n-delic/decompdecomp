@@ -135,23 +135,24 @@ def _own(filename: str) -> str | None:
     return _library(filename)
 
 
-# Frames that only forward a call: the database wrapper holds every query's CPU, so the report names who asked.
-_FORWARDERS = ("payload_storage.py",)
-
+# Frames that only forward a call: the database wrapper (and the store's own plumbing under it) holds every query's CPU,
+# and the writer gate its commit's, so the report names who asked. {file: how the line starts}
+_FORWARDERS = {"payload_storage.py": "sql", "writer_gate.py": "gate"}
+_PLUMBING = ("payload_storage.py", "store.py", "writer_gate.py")  # skipped when looking for who asked
 
 def _location(frame) -> str:
     """Where a thread is: the innermost frame in decompnet's own code or a library's (`app/twins.py:_build_rom_prints`).
 
     Work inside a stdlib or C call beneath it is added (`... (in decoder.py:decode)`), and a database call is named by
-    the code that asked: `sql: store.py:one < app/progress.py:_read_once`."""
+    the code that asked: `sql: app/progress.py:_read_once < app/engine/autopilot.py:tick`."""
     innermost, below = None, None
     while frame is not None:
         filename = frame.f_code.co_filename
         if innermost is None:
             innermost = frame
         if (name := _own(filename)) is not None:
-            if os.path.basename(filename) in _FORWARDERS:
-                return "sql: " + _callers(frame.f_back)
+            if (kind := _FORWARDERS.get(os.path.basename(filename))) is not None:
+                return f"{kind}: " + _callers(frame.f_back)
             place = f"{name}:{frame.f_code.co_name}"
             return place if below is None else f"{place} (in {below})"
         if below is None:
@@ -163,14 +164,25 @@ def _location(frame) -> str:
 
 
 def _callers(frame, depth: int = 3) -> str:
-    """The next `depth` own-code frames outward, innermost first: `store.py:one < app/progress.py:_read_once`."""
+    """The next `depth` own-code frames outward that aren't the store's plumbing, innermost first:
+    `app/progress.py:_read_once < app/engine/autopilot.py:tick`."""
     found = []
     while frame is not None and len(found) < depth:
         name = _own(frame.f_code.co_filename)
-        if name is not None and os.path.basename(frame.f_code.co_filename) not in _FORWARDERS:
+        if name is not None and os.path.basename(frame.f_code.co_filename) not in _PLUMBING:
             found.append(f"{name}:{frame.f_code.co_name}")
         frame = frame.f_back
     return " < ".join(found) or "?"
+
+
+_counts: Counter = Counter()
+_counts_lock = threading.Lock()
+
+
+def count(name: str, amount: int = 1) -> None:
+    """Note a unit of work done in this process (a proposal served), so the report can say CPU per unit."""
+    with _counts_lock:
+        _counts[name] += amount
 
 
 class Sampler:
@@ -256,6 +268,8 @@ class Sampler:
             places = [[name, place, round(seconds, 3)] for (name, place), seconds in self.by_place.most_common(400)]
         data = {"role": self.role, "pid": os.getpid(), "wall": round(time.monotonic() - self.started, 1),
                 "cpu": round(time.process_time() - self.cpu_started, 1), "places": places}
+        with _counts_lock:
+            data["counts"] = dict(_counts)
         path = self.path.with_suffix(".json")
         temp = path.with_suffix(".tmp")
         temp.write_text(json.dumps(data), encoding="utf-8")
@@ -326,25 +340,37 @@ def _forget_old(folder: Path, days: float = 1.0) -> None:
             pass
 
 
-def merged(folder) -> str:
-    """Every process's figures since its start, added up by role, thread and code."""
+def merged(folder, minutes: float | None = None) -> str:
+    """Every process's figures since its start, added up by role, thread and code. `minutes`: only the reports written
+    in the last so many minutes (a process that ended earlier is left out)."""
     roles, places, libraries = Counter(), Counter(), Counter()
-    count = Counter()
+    count, units, wall = Counter(), Counter(), Counter()
     for path in sorted(Path(folder).glob("thread-cpu*.json")):
         try:
+            if minutes is not None and time.time() - path.stat().st_mtime > minutes * 60:
+                continue
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
         count[data["role"]] += 1
+        wall[data["role"]] += data.get("wall", 0)
+        for name, number in (data.get("counts") or {}).items():
+            units[(data["role"], name)] += number
         for name, place, seconds in data["places"]:
             roles[data["role"]] += seconds
             places[(data["role"], place)] += seconds
             if "/" in place.split(":")[0] and place.split("/")[0] in _LIBRARIES:
                 libraries[place] += seconds
     total = sum(roles.values()) or 1.0
-    lines = [f"CPU seconds charged to code, from {sum(count.values())} reports (a report is one process's run; the top 400 places each)\n"]
+    scope = f", written in the last {minutes:g} minutes" if minutes is not None else ""
+    lines = [f"CPU seconds charged to code, from {sum(count.values())} reports{scope} (a report is one process's run; the top 400 places each)\n"]
     lines.append("\nBy process kind\n")
-    lines.extend(f"  {seconds:9.1f} s  {seconds / total:5.1%}  {role} ({count[role]} processes)\n" for role, seconds in roles.most_common())
+    lines.extend(f"  {seconds:9.1f} s  {seconds / total:5.1%}  {role} ({count[role]} processes, {wall[role]:.0f} s alive)\n"
+                 for role, seconds in roles.most_common())
+    if units:
+        lines.append("\nWork done, and the processor it took\n")
+        for (role, name), number in sorted(units.items()):
+            lines.append(f"  {number:9d}  {role} {name}: {roles[role] / max(number, 1) * 1000:.1f} ms of processor each\n")
     lines.append("\nBy process kind and code\n")
     lines.extend(f"  {seconds:9.1f} s  {role:<10} {place}\n" for (role, place), seconds in places.most_common(40))
     if libraries:
@@ -354,5 +380,11 @@ def merged(folder) -> str:
 
 
 if __name__ == "__main__":
+    import argparse
+
     from .app import edition
-    print(merged(Path(sys.argv[1]) if len(sys.argv) > 1 else edition.home_dir() / ".decomp" / "logs"))
+    parser = argparse.ArgumentParser(description="Add up the CPU reports of every decompdecomp process.")
+    parser.add_argument("folder", nargs="?", help="the logs folder (default: this edition's home)")
+    parser.add_argument("--minutes", type=float, help="only reports written in the last so many minutes")
+    arguments = parser.parse_args()
+    print(merged(Path(arguments.folder) if arguments.folder else edition.home_dir() / ".decomp" / "logs", arguments.minutes))
