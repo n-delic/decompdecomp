@@ -129,11 +129,51 @@ def find_segments(rom: bytes, taken: list[tuple[int, int, int]], ends: tuple[int
     from .loader_mapping import refine, verified
 
     found=complete(rom,sorted(found),taken)
+    found=reconcile_between(rom,found,taken,log)
     found=reconcile_adjacent(rom,found,taken,log)
     from .code_references import complete as referenced_gaps
 
     found=refine(rom,found+referenced_gaps(rom,sorted(taken+found),declared),taken,log)
     return close_gaps(rom, loaded_code(rom,found,verified(rom,taken),taken,log), taken)
+
+
+def reconcile_between(rom, found, taken=(), log=print):
+    """Correct a middle range when both neighbours and independent calls agree."""
+    ordered = sorted(found)
+    result = list(ordered)
+    callers = sorted((*taken, *ordered))
+    for i in range(1, len(ordered)-1):
+        lo, hi, old = ordered[i]
+        left, right = ordered[i-1], ordered[i+1]
+        mapping = left[2] - left[0]
+        if (right[2] - right[0] != mapping or mapping == old-lo
+                or not 0 <= lo-left[1] <= 16 or not 0 <= right[0]-hi <= 16
+                or abs(mapping-(old-lo)) > 16):
+            continue
+        base = lo+mapping
+        if (not 0x80000400 <= base < base+hi-lo <= 0x80800000
+                or any(a < hi and lo < b or v < base+hi-lo and base < v+b-a
+                       for a,b,v in callers if (a,b,v) != ordered[i])):
+            continue
+        words = struct.unpack_from(f'>{(hi-lo)//4}I', rom, lo)
+        entries = {lo+4*j for j,w in enumerate(words)
+                   if is_frame(w) or j >= 2 and words[j-2] == JR_RA}
+        support = [set(), set()]
+        old_support = [set(), set()]
+        for start, end, entry in callers:
+            targets = jal_targets(struct.unpack_from(f'>{(end-start)//4}I',rom,start),entry)
+            inside = start == lo and end == hi
+            for target in targets:
+                if target-mapping in entries:
+                    support[inside].add(target)
+                if target-(old-lo) in entries:
+                    old_support[inside].add(target)
+        if (all(len(hits) >= 3 for hits in support)
+                and all(len(good) > len(bad) for good,bad in zip(support,old_support))
+                and sum(map(len,support)) >= 2*max(1,sum(map(len,old_support)))):
+            result[i] = lo, hi, base
+            log('Recovered a middle code mapping from neighbouring ranges and independent calls.')
+    return result
 
 
 def reconcile_adjacent(rom, found, taken=(), log=print):

@@ -13265,6 +13265,21 @@ the same center, loads from one base register, and comparisons of the
 results. It generates a candidate only across local statements that preserve
 the inputs. Evidence is one partial live match and synthetic tests.
 
+### KMC GCC 2.7.2: reorder switch arms with local labels
+
+A two-arm state switch in a large N64 function stored state in a shared
+tail inside one arm. Every incoming goto to its ordinary label came
+from that same arm. With `-G0 -mips3 -mgp32 -mfp32 -O2`, putting the arms
+in target order improved the linked score from 22,652 to 21,427. Adding
+a default break at different positions or reshaping the inner guarded
+counter left the score unchanged within each case order. The candidate
+was warning-clean.
+
+The `switch_case_local_label_order` repair checks every named label's
+entrances and a direct arm exit, then tries the smaller direct reorders
+first. Evidence is one partial N64 match and synthetic tests for local
+labels, external entries and conditional exits.
+
 ### KMC GCC 2.7.2: capture a vector result before another store
 
 On a large N64 function, the target loaded all three floats from an
@@ -13452,3 +13467,4 @@ could not pair a callee the assembly names differently when the C nests the call
 first). decomp-repair 0.5.345 adds the `through` reading, a merged child over all callees and evaluation-order pairing;
 from the saved best it now emits the exact source. Failed here: typed prototypes, reordered temporaries, wrapping each
 argument in a loop fence, other expression forms of the byte and halfword arguments.
+A saved N64 function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1` used a halfword flag table and a word table, while its draft inferred both as byte arrays. Casting the two independently indexed reads to `u16 *` and `u32 *` reproduced the linked target exactly (score 400 to 0); a signed halfword cast left a 200-point difference. The target-guided repair offers each evidenced correction and their combination, while leaving stores alone. Evidence: one saved example and synthetic generation and routing regressions.
