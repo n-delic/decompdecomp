@@ -255,7 +255,8 @@ def recovery_drafts(draft, name, asm, processor, toolchain, context, data, repor
             yield 'initial_callback_context', typed
             for family, source in variants(typed, name, asm, processor, alternative):
                 yield 'callback_'+family, source
-    if any('duplicate case' in item.get('reason','').lower() or 'first entry for that value' in item.get('reason','').lower()
+    if any(any(text in item.get('reason', '').lower() for text in ('duplicate case', 'first entry for that value',
+                                                                    'label not within a switch'))
            for item in report.get('failures', [])):
         try:
             linear = generate(asm, name, toolchain, alternative or context, data,
