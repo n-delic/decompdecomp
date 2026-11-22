@@ -35,3 +35,14 @@ def test_the_three_families_are_wired_into_the_repairs():
     assert any('arg1 = arg1_in;' in v and 's32 arg1_in)' in v for v in out)  # entry_parameter_copy
     assert any('tv1 = (s16)' in v and '.h[4] = tv1;' in v for v in out)  # store_value_first
     assert any('->v)' in v and 'typedef struct { f32 v; } Field_f32;' in v for v in out)  # field_struct_view_printed
+
+
+def test_the_entry_copy_clobber_child_reaches_the_repairs():
+    """decomprepair 0.5.573's `entry_parameter_clobber`: the copy followed by `arg3_in = 0;`, so the local keeps its own
+    move after the first call's argument setup (an N64 effect spawner, KMC GCC 2.7.2, 60 to 0 from its saved best;
+    judge-worker, no permuter run)."""
+    from decomprepair import entry_parameter_copy_repairs
+    assert entry_parameter_copy_repairs.CLOBBER in draft_repairs.AGENT_FAMILIES
+    source = 'void *f(s32 arg0, void *arg1) {\n    void *o;\n    o = make(0x50);\n    use(o, arg1);\n    use2(o, arg1);\n    return o;\n}\n'
+    out = draft_repairs.variants(source, 'f', 'mips', '', FLAGS, limit=2000)
+    assert any('arg1 = arg1_in;\n  arg1_in = 0;' in v and v.index('arg1_in = 0;') < v.index('make(0x50)') for v in out)
