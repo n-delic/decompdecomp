@@ -369,6 +369,80 @@ def test_overlay_cpp_generated_symbols_use_explicit_object_bindings(tmp_path, mo
     assert uso_match.link(replayed.obj, 'example', target_code, info).exact
 
 
+def test_overlay_constructor_entry_is_verified_and_rebuilt(tmp_path, monkeypatch):
+    import json
+    from contextlib import nullcontext
+    from inspect import unwrap
+    from threading import Event
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from decompnet import consoles
+    from decompnet.app import donor_build, donor_unit, exact_match_inputs
+    from decompnet.elfobj import extract_function
+
+    if toolchains.installed('ido-7.1-ncc') is None:
+        pytest.skip('needs IDO 7.1 C++')
+    flags = ['-O2', '-G', '0', '-non_shared', '-mips2', '-32']
+    cfg = compiler_config(tmp_path, {'compiler': {'toolchain': 'ido-7.1-ncc', 'flags': flags}})
+    prefix = 'struct Obj { int n; Obj(int); };\n'
+    body = 'Obj::Obj(int value) { n=value; }\n'
+    path = tmp_path / 'donor.cpp'
+    path.write_text(prefix + body)
+    invocation = SimpleNamespace(cmd=[], source_extension='.cpp')
+    monkeypatch.setattr(donor_unit, '_preprocess', lambda *_args, **_kwargs: (prefix + body, None))
+    source, header = donor_unit.replacement({'root': str(tmp_path)}, {'name': 'donor_ctor', 'meta': '{}'},
+                                            'example', invocation, path, {})
+    assert 'Obj::Obj' in source and 'struct Obj' in header
+    original = compile_source(cfg, header, source)
+    assert original.ok, original.log
+    raw = extract_function(original.obj, '__ct__3ObjFi')
+    assert raw and all(r.type == 4 for r in raw.relocs)
+    records = b''.join(struct.pack('>III', 0x11, r.offset + 4, 1) for r in raw.relocs)
+    cartridge = bytes(64) + _module(bytes(4) + raw.code, relocations=records)
+    region, = uso.read(cartridge)
+    info = {'section': region.offset, 'start': 4, 'size': len(raw.code),
+            'relocs': uso.function_relocations(region, 4, len(raw.code))}
+    placement = uso_match.Target('example', 4, raw.code, [], uso=info)
+    target = uso_match.symbolic_target(placement)
+    assert uso_match.link(original.obj, 'example', raw.code, info).candidate is None
+    console = consoles.of({'platform': 'n64'})
+    record = Mock()
+    net = SimpleNamespace(
+        _compile=lambda _project, h, s, _fn: compile_source(cfg, h, s),
+        _evaluate=lambda trial_fn, _project, obj: (lambda result: (result.candidate, result.exact, result.problems))(
+            uso_match.link(obj, trial_fn['name'], raw.code, info)),
+        _rom_target=lambda _fn: placement, _target_obj=lambda *_: target,
+        console=lambda _: console, _record=record,
+        progress=SimpleNamespace(judging=lambda *_args, **_kwargs: nullcontext()))
+    monkeypatch.setattr(exact_match_inputs, 'capture', lambda *_: {})
+    fn = {'name': 'example', 'size': len(raw.code), 'id': 1, 'meta': json.dumps({'uso': info})}
+    accepted, _ = unwrap(donor_build._try)(net, {'slug': 'test', 'arch': 'mips'}, {}, fn, source, header,
+                                          SimpleNamespace(id=1), SimpleNamespace(stop=Event()))
+    assert accepted
+    saved = record.call_args.kwargs['exact_inputs']
+    assert 'Obj::Obj' in saved['source'] and 'decomp_overlay_entry' in saved['header']
+    compiled = compile_source(cfg, saved['header'], saved['source'])
+    assert compiled.ok, compiled.log
+    assert uso_match.link(compiled.obj, 'example', raw.code, info).exact
+    assert uso.rebuild(cartridge, [('example', info, compiled.obj)]) == cartridge
+    assert uso_match.link(compiled.obj, 'renamed_example', raw.code, info).exact
+    named = compile_source(cfg, saved['header'].replace('decomp_overlay_entry', 'decomp_overlay_entry_original'),
+                           saved['source'])
+    assert named.ok, named.log
+    assert uso_match.link(named.obj, 'renamed_example', raw.code, info).exact
+    for bad_header in (saved['header'].replace('decomp_overlay_entry', 'unrelated_entry'),
+                       saved['header'].replace('decomp_overlay_entry = ',
+                                               'decomp_overlay_entry = 1 + '),
+                       saved['header'].replace('__ct__3ObjFi', '__ct__3ObjFv')):
+        bad = compile_source(cfg, bad_header, saved['source'])
+        assert bad.ok, bad.log
+        assert not uso_match.link(bad.obj, 'example', raw.code, info).exact
+    changed = compile_source(cfg, saved['header'], saved['source'].replace('n=value;', 'n=value+1;'))
+    assert changed.ok, changed.log
+    assert not uso_match.link(changed.obj, 'example', raw.code, info).exact
+
+
 def test_yay0_rebuild_uses_literals_and_verifies_back_references():
     original = b'abcdefgh' * 8
     compressed = crunch64.yay0.compress(original)
