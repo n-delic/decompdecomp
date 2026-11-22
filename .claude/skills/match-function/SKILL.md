@@ -483,6 +483,25 @@ the existing families on the saved best first (`prove_chain.py --list`): what th
 - **m2c reuses one variable name for unrelated values** (a counter later holding a call's result). That ties their
   registers together; split the name before reading any register diff.
 
+## 5c. Handing off (only by the clock, never early)
+
+Persistence is the default: a near-match nobody finishes is worth more than three abandoned ones. A hand-off is allowed
+only when `clock.py <holder>` (or `clock.py --slug S --function F --agent NAME --since T`) prints **"hand-off allowed"**:
+at least 45 minutes on the function **and** 45 minutes since your last improvement, read from the app's attempt history,
+not judged by you. Submit every new best to the app (`compile_and_diff`) as soon as `fast_judge` finds it, or the clock
+can't see it. Before that verdict, or while the score still improves, keep going (step 1 again: read the diff). Even
+with the verdict, hand off only when you are near 0 and stuck on the last rows, or can state the stall precisely
+(a compiler behaviour with no known source shape); a run that is still learning keeps working.
+
+To hand off:
+1. `add_note(function=F, text=...)` with what the next agent needs: the remaining differing rows (`fast_judge --diff`),
+   the edit list from the saved best, each idea tried with its score, any scaffolding in the best, and the compiler
+   findings (dumps read, pass orders, allocation priorities).
+2. Merge any library or app work it produced (step 5), with tests, as on a match.
+3. `release_function(function=F, notes=<one line>, claim_token=...)`, then `setup.py stop <holder>`.
+4. Report **"handed off"**, with the clock's line, the best score and the note's summary, so a stronger agent resumes
+   from the history.
+
 ## 6. Finishing (the goal is met)
 
 Confirm these results before reporting success.
