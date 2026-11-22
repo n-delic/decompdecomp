@@ -13737,6 +13737,27 @@ The `global_first_element` repair offers the measured change for a single call
 argument read; unit tests cover its shape and reject other uses. This is one
 observed near-match, not a controlled compiler regression.
 
+### A scalar flag read as `g[0]` stays behind earlier stores (KMC GCC 2.7.2)
+
+One 185-instruction N64 menu function, `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`: two sprite blocks each store
+a bit-field word and two halfwords through `pair->first` / `pair->second`, then test a one-byte global flag. The
+target loads the flag after the stores; ours hoisted `lui/lbu` above them, which also took a register
+(`$a0` for the flag, the sprite pointer moved to `$a1`). The saved best (340 under the old scale, 1460 re-judged)
+carried a `register` local, a `do { } while (0)` fence, a `volatile u16` field and a `*(volatile u8 *)&flag` read.
+Removing all of that gave 910, and declaring the flag `extern u8 flag[];` with the tests written `flag[0]`
+gave 0 with no scaffolding. `volatile` on the field plus a volatile flag declaration reached 630, never 0.
+
+Rule (hypothesis read from `sched.c`, with the measured change as the evidence): `true_dependence` treats a store
+through a struct pointer (`MEM_IN_STRUCT_P`, varying address, not QImode) as not conflicting with a read of a
+plain global (not in a struct, fixed address), so sched1 may move the flag load above it. An array element is
+`MEM_IN_STRUCT_P`, the exclusion no longer applies and the load keeps its place. One function, not a controlled
+regression. Failed: volatile on the flag declaration alone (identical to plain), volatile on the bit-field
+(1600), the word-update spelling of the bit-field (4135).
+
+decomp-repair 0.5.609 widens `global_first_element` from a single call argument to every read of the scalar at
+once (conditions, operands, arguments, and `*(volatile T *)&g` reads), refusing written, addressed, incremented or
+other-function uses; from the 910 source it emits the exact child among its five.
+
 ### Loop-invariant copies and delay slots around global loop bounds (KMC GCC 2.7.2)
 
 One 330-instruction N64 function (three bonus-object loops over a global slot count, switch on a scene byte)
