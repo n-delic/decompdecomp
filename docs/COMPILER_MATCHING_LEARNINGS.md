@@ -16408,7 +16408,13 @@ On one saved MIPS function, `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` allocat
 ### KMC GCC 2.7.2 adjacent record stores
 
 A saved MIPS event setup built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` stored a halfword and word to disjoint fields of one record. Swapping their adjacent source statements changed a partially repaired draft's linked difference score from 60 to an exact match. This is one saved example, not a controlled cross-compiler experiment. The candidate requires the target and candidate instruction streams to contain the same adjacent stores in opposite order and checks that the fields do not overlap and the source inputs are ordinary, non-escaped locals or parameters.
+
 In the same KMC function, reversing the second arm's equality operands changed the score from 5 to 0: GCC
 kept the intended register allocation and emitted the target operand order in the shared `bne`. The library
 proposes both orderings only when both compared values are bytes. This is one exact-judge result; the app's
 repair-lane test covers proposal routing, not a separate compiler experiment.
+
+
+### KMC GCC 2.7.2 single-use loop comparison key
+
+A saved MIPS record search built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3` compared each record against an incoming scalar key. Copying the key to a local before the loop changed the partially repaired draft's linked difference score from 55 to an exact match by changing register allocation. This is one saved example, not a controlled cross-compiler experiment. The candidate requires a single source use in a backward loop comparison, the target's unchanged argument-register branch and mismatched register allocation, and rejects unknown macros and address escapes.

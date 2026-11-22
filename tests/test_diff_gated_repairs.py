@@ -2625,3 +2625,19 @@ def test_adjacent_field_stores_route_for_supported_mips_compilers(monkeypatch):
     for compiler in (KMC, EGCS, 'ido-5.3', 'ido-7.1'):
         assert 'adjacent_field_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', compiler, rows, ''))
     assert not proposals('void f(void) {}', 'f', '', 'arm', KMC, rows, '')
+
+
+def test_loop_key_copy_receives_abi_flags(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $t0, $zero', 'move $a0, $zero')]
+    flags = ('-mgp32',)
+
+    def candidate(text, name, header, diff, compiler_flags):
+        assert compiler_flags is flags
+        return [('loop_key_fixture', text)]
+
+    monkeypatch.setattr(diff_gated_repairs.measured_loop_key_copy, 'variants', candidate)
+    assert 'loop_key_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, '', flags=flags))
+    assert 'loop_key_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, '', flags=flags))
+    assert not proposals('void f(void) {}', 'f', '', 'arm', KMC, rows, '', flags=flags)
