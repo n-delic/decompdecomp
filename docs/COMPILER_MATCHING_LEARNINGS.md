@@ -14085,3 +14085,11 @@ the record variants needs the judge (all sixteen tie until the last steps), and 
 only by the probe's evidence (two or more symbols addressed `lui; addu` with a stepped saved register).
 
 In one N64 rank-comparison loop built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a counter initialized to four and conditionally decremented was drafted as `s32`, with only its low eight bits returned. Using `u8` for that bounded counter reproduced the linked target exactly (score 360 to 0). The repair requires the restricted counter uses, four-iteration loop shape, and observed branch-versus-subtraction difference. Evidence: one saved example plus synthetic generation and routing tests.
+
+With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, an N64 draft tested two bits of one local flag
+word, while the target copied it in a call-result branch delay slot and tested the two registers
+separately. Copying the local at the start of the guarded block inside a one-shot scope and using
+the copy for the second test improved 540 to 345. With the saved `-fno-strength-reduce -g3` profile
+the same change improved 790 to 545. The released target-guided rule reproduced the scratch
+improvement. The function remains unmatched. Evidence is one measured improvement and synthetic
+tests for incomplete register evidence, aliased locals, and jump paths.
