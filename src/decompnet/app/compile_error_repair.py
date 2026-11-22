@@ -23,6 +23,14 @@ def candidates(compile_source, source, *, rounds=ROUNDS, check_cancel=None):
             if tried:
                 yield FAMILY, source
             return
+        if 'source too large' in str(result.log).lower():
+            # the compiler takes at most 64 KB: a big function's draft spends a fifth on comments and indentation
+            smaller = compile_error_repairs.compact(source)
+            if smaller is None:
+                return
+            source = smaller
+            tried[('size', '')] = 1
+            continue
         changed = False
         for line, message in sorted(compile_error_repairs.diagnostics(result.log), reverse=True):
             key = (line, message)
