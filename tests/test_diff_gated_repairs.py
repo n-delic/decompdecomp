@@ -2258,3 +2258,15 @@ def test_record_ramp_routes_to_kmc(monkeypatch):
     assert 'record_ramp_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
     assert 'record_ramp_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))
     assert 'record_ramp_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-7.1', rows, ''))
+
+
+def test_byte_signature_routes_to_kmc_with_symbol_resolver(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'nop', 'nop')]
+    resolver = lambda symbol: 123  # noqa: E731
+    monkeypatch.setattr(diff_gated_repairs.measured_byte_signature, 'variants',
+                        lambda text, name, header, diff, resolve: [('byte_signature_fixture', text)] if resolve is resolver else [])
+    assert 'byte_signature_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, '', resolve=resolver))
+    assert 'byte_signature_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, '', resolve=resolver))
+    assert 'byte_signature_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', 'ido-7.1', rows, '', resolve=resolver))

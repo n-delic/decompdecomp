@@ -54,6 +54,7 @@ from decomprepair import (
     measured_byte_fallback_return,
     measured_byte_global_branch,
     measured_byte_search_loop,
+    measured_byte_signature,
     measured_callback_loop,
     measured_callback_repairs,
     measured_carried_loop_test,
@@ -539,6 +540,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_command_word_schedule.variants(source, name, header, rows)
         result += measured_parameter_clock_load.variants(source, name, header, rows)
         result += measured_byte_search_loop.variants(source, name, header, rows)
+        result += measured_byte_signature.variants(source, name, header, rows, resolve=resolve)
         result += measured_indexed_mode_tail.variants(source, name, header, rows)
         result += measured_byte_fallback_return.variants(source, name, header, rows)
         result += measured_conditional_call_stage.variants(source, name, header, rows, resolve=resolve)
