@@ -15046,3 +15046,7 @@ Permuter proposes this pair when both disassembly differences are present and
 the saved projection local is dead and its address has not escaped. This is
 a measured result for one function. Synthetic tests check the evidence and
 liveness gates.
+
+### Stage a global base in a masked clearing loop
+
+In a private N64 controller-table clearing loop built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, the target loaded the table base before the loop and formed a displacement separately, while the draft reloaded the global during the loop. Capturing the base before the loop and staging the displacement inside it reproduced the linked target exactly (score 380 to 0). Capturing only the base scored 125; staging only the displacement scored 1,380. Because computed stores could alias the global, this is a target-led candidate that still requires compilation and exact judging. Evidence: one saved function and synthetic generation and routing tests.

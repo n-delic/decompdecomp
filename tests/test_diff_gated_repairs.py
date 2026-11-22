@@ -1700,3 +1700,13 @@ def test_kmc_routes_repeated_null_flag_sink():
     expected = source.replace('flag = left != NULL, ', '').replace('flag && right', 'left != NULL && right')
     assert ('boolean_guard_operands', expected) in proposals(source, 'f', '', 'mips', KMC, rows, '')
     assert all(label != 'boolean_guard_operands' for label, _ in proposals(source, 'f', '', 'mips', EGCS, rows, ''))
+
+
+def test_indexed_clear_routes_to_kmc(monkeypatch):
+    from decompnet.app import diff_gated_repairs
+
+    rows = [('r', 'move $v0, $a0', 'move $v0, $a1')]
+    monkeypatch.setattr(diff_gated_repairs.measured_indexed_clear, 'variants',
+                        lambda text, name, header, diff: [('indexed_clear_fixture', text)])
+    assert 'indexed_clear_fixture' in dict(proposals('void f(void) {}', 'f', '', 'mips', KMC, rows, ''))
+    assert 'indexed_clear_fixture' not in dict(proposals('void f(void) {}', 'f', '', 'mips', EGCS, rows, ''))

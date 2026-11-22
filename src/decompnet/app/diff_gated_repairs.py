@@ -57,6 +57,7 @@ from decomprepair import (
     measured_halfword_stores,
     measured_halfword_switch,
     measured_immediate_repairs,
+    measured_indexed_clear,
     measured_indirect_self_call,
     measured_interpolation_calls,
     measured_kmc_addresses,
@@ -337,6 +338,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_kmc_call_stores.variants(source, name, header, rows, resolve)
         result += measured_carried_loop_test.variants(source, name, header, rows)
         result += measured_byte_clamp.variants(source, name, header, rows)
+        result += measured_indexed_clear.variants(source, name, header, rows)
         result += measured_global_offset_reuse.variants(source, name, header, rows, asm or '')
         result += measured_list_selection.variants(source, name, header, rows)
         result += measured_be16_cursor.variants(source, name, header, rows)
