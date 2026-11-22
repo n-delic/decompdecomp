@@ -29,6 +29,30 @@ def jump_table_extent(name, reader, instruction_addresses, endian):
     return (address, 4 * cases) if cases >= 2 else None
 
 
+def beside_code_reader(rom, fn, reader):  # (`rom`: the bytes, or a function that returns them, read only when needed)
+    """`reader`, then the ROM at the function's own offset between ROM and memory address for what no segment or
+    loaded image covers: a game whose splat config lists only code has its jump tables and constants in the data
+    that follows (Army Men: 100 functions without a draft, their tables sitting after the last code segment). Only
+    for m2c's draft, never for the judge: a jump table is still checked against the function's own instruction
+    addresses (`jump_table_extent`), so a wrong guess for an overlay finds no table rather than a false one."""
+    try:
+        vram, offset = fn['vram'], fn['rom_offset']
+    except (KeyError, IndexError):  # (a row without them)
+        return reader
+    if not isinstance(vram, int) or not isinstance(offset, int):
+        return reader
+    delta = offset - vram
+
+    def read(address, size):
+        found = reader(address, size)
+        if found is None and address + delta >= 0:
+            data = rom() if callable(rom) else rom
+            if address + delta + size <= len(data):
+                return data[address + delta:address + delta + size]
+        return found
+    return read
+
+
 def read(net, proj, fn):
     """Supply known-size tables/constants and terminated strings; never invent missing bytes or case targets."""
     syms = net.symbols(proj['id'])
@@ -42,13 +66,19 @@ def read(net, proj, fn):
     # function with 18 tables) got 4 of them after its constants and no draft at all.
     names.sort(key=lambda name: not name.startswith('jtbl_'))
     count = tables = 0
+    beside = []
+
+    def table_reader():  # (only tables, which are checked against the function's own addresses)
+        if not beside:
+            beside.append(beside_code_reader(lambda: net._rom(proj)[0], fn, reader))
+        return beside[0]
     endian = '>' if net.cfg(proj).get('big_endian', True) else '<'
     for name in names:
         symbol = syms.by_name.get(name)
         if (not symbol or not symbol.size) and name.startswith('jtbl_'):
             if reader is None:
                 reader = net.reader(proj, fn)
-            if extent := jump_table_extent(name, reader, instruction_addresses, endian):
+            if extent := jump_table_extent(name, table_reader(), instruction_addresses, endian):
                 symbol = SimpleNamespace(address=extent[0], size=extent[1], kind='jtbl')
         if not symbol:
             continue
@@ -64,7 +94,7 @@ def read(net, proj, fn):
             break
         if reader is None:
             reader = net.reader(proj, fn)
-        data = reader(symbol.address, size)
+        data = (table_reader() if table else reader)(symbol.address, size)
         if data is None or len(data) != size:
             continue
         if table:
