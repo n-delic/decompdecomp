@@ -18116,3 +18116,25 @@ register is not an argument), per-function `-mcpu`.
 
 decomp-repair 0.5.617 `volatile_read_inline` proposes it (volatile local assigned once, used once as a call argument, only
 non-overlapping stores of the same object between); wired through `draft_repairs`, so the Deep Permuter's beam runs it too.
+
+### KMC GCC 2.7.2: a literal compared with `==`/`!=` in several places wants a local of its own
+
+Compiler and flags: `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`. One private N64 voice-allocation function (a loop over
+12-byte records, four compares against `-1`, nine callee-saved registers all needed) sat near 3300 with the right structure
+and a wrong allocation: cse shared one `-1` pseudo between the compare before a call and the compare after it, so that
+pseudo (3 references, 38 insns long) won a saved register from the loop's lowest-priority variable, which spilled
+(frame 8 bytes larger, a `sw`/`lw` pair in the loop). The target has `addiu $t1,$zero,-1` right before each `bne`.
+
+Edit list (isolated judge, scores on the same function): literal `-1` compares 3312; one function-scope local set once to -1
+used by the compares 2965 (the pseudo now carries a REG_EQUIV note, loses the allocation and is rematerialised before each use,
+no slot, no saved register); two locals, one for the compare that ends an `||` chain and one for the rest, 2773 (with one
+local jump threading folded the second compare into a dead `bne $v0,$v0`; with two it stays a real compare as in the target);
+the same family run from the saved form of the function: 3312 -> 2315. Controlled for this one function; the REG_EQUIV
+explanation is read from local-alloc.c/reload1.c `alter_reg`, so a hypothesis for other shapes.
+
+decomp-repair 0.5.618 `sentinel_local_repairs` (`sentinel_constant_local`, `sentinel_constant_split`) proposes it for any nonzero
+literal compared with `==`/`!=` at least twice; wired through `draft_repairs`, so the Deep Permuter's beam runs it too.
+Other things this function taught that are not families yet: a clamp written `x = c ? a : b;` on the variable itself (the
+temp-then-copy shape) rather than an if/else; masking a parameter in place and weighting it with a `do { } while (0)` to put it
+between two loop variables in the allocation order (the priorities were read from `-dl -dg`: refs, live length); a `u8`
+local for a division result so the shift is `srl` and the mask lands at the call.
