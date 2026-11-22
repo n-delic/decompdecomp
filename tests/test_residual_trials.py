@@ -83,6 +83,9 @@ def test_single_mask_followup_is_routed_from_linked_rows():
     proposals = residual_trials.proposals(BYTE_GUARD, 'f0', '', BYTE_MASK_ROWS)
     assert proposals and all(family in residual_trials.FAMILIES for family, _ in proposals)
     assert all(family == 'last_byte_mask' for family, _ in proposals)
+    assert any('repair_byte_offset = (i * 16);' in candidate
+               and 'volatile unsigned char *' in candidate and '& 0xffU' in candidate
+               for _, candidate in proposals)
     second = [*BYTE_MASK_ROWS, ('i', 'nop', 'move $a0, $a1')]
     assert not residual_trials.proposals(BYTE_GUARD, 'f0', '', second)
 
