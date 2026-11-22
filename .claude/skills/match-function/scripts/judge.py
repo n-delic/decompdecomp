@@ -9,7 +9,9 @@ Standard library only: it reads the app's own connection file and calls the same
     judge.py release SLUG FUNC           give the claim back
     judge.py best SLUG FUNC OUT.c        the function's saved best C, to a file
     judge.py diff SLUG FUNC              the diff of the saved best (rows), and the app's verdict
-    judge.py try SLUG FUNC CAND.c        judge a candidate; release the claim afterwards
+    judge.py try SLUG FUNC CAND.c        judge a candidate as the window's "you" (or --holder); release the claim afterwards.
+                                         NOT for a setup.py session: its claim is held by the session's MCP connection and
+                                         this is refused (HTTP 400); use `setup.py try HOLDER CAND.c` there
     judge.py seed SLUG FUNC              judge the app's own untouched draft, so a search has scored C to start from
     judge.py permute SLUG FUNC MIN VAR   start the Deep Permuter (stock settings), print the job id
     judge.py job ID                      state, progress and the log's improvements for a job
@@ -145,6 +147,9 @@ def main(argv):
         slug, name, path = args
         result = app.try_source(slug, name, Path(path).read_text())
         print(result.get("text") or result)
+        if result.get("HTTP") == 400:
+            print("If this function was claimed by a setup.py session, submit with `setup.py try HOLDER CAND.c` instead: "
+                  "that claim belongs to the session's MCP connection, not to this holder.")
         print("score", result.get("score"), "matched", result.get("matched"), "exact", result.get("exact"))
     elif command == "seed" and len(args) == 2:
         # The Deep Permuter refuses a function with no scored C ("Choose an unmatched function with saved, scored

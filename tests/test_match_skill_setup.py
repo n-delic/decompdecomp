@@ -263,3 +263,46 @@ def test_the_venv_is_synced_inside_the_worktree_into_the_private_environment_onl
     with pytest.raises(SystemExit):
         setup.main(["sync", "no-such-holder"])
     assert setup.main(["stop", "claude-t2"]) == 0
+
+
+def test_try_submits_a_candidate_as_the_session_through_compile_and_diff(world, capsys, monkeypatch, tmp_path):
+    setup, app, home, primary = world
+    seen = []
+    original = setup.Gateway.call
+
+    def call(self, tool, arguments):
+        if tool == "compile_and_diff":
+            seen.append((self.token, tool, arguments))
+            return "score 12\n1 register\n"
+        return original(self, tool, arguments)
+
+    monkeypatch.setattr(setup.Gateway, "call", call)
+    assert start(setup, home, primary, "--holder", "claude-t9") == 0
+    capsys.readouterr()
+    cand = tmp_path / "cand.c"
+    cand.write_text("int f(void) { return 1; }")
+    assert setup.main(["try", "claude-t9", str(cand)]) == 0
+    assert seen == [("bearer-s3cret", "compile_and_diff", {"function": "func_8001", "source": cand.read_text()})]
+    out = capsys.readouterr().out
+    assert "score 12" in out and "bearer-s3cret" not in out
+    assert setup.main(["try", "claude-t9", str(cand), "func_9"]) == 0 and seen[-1][2]["function"] == "func_9"
+    with pytest.raises(SystemExit, match="no session"):
+        setup.main(["try", "nobody", str(cand)])
+    setup.main(["stop", "claude-t9"])
+
+
+def test_try_reports_a_refusal_from_the_app(world, tmp_path, monkeypatch):
+    setup, app, home, primary = world
+    assert start(setup, home, primary, "--holder", "claude-t8") == 0
+
+    def refuse(self, tool, arguments):
+        if tool == "compile_and_diff":
+            raise setup.McpError("compile_and_diff: you do not hold func_8001")
+        return "## CLAIMED: demo/func_8001\n"
+
+    cand = tmp_path / "c.c"
+    cand.write_text("x")
+    monkeypatch.setattr(setup.Gateway, "call", refuse)
+    with pytest.raises(SystemExit, match="not submitted: .*do not hold"):
+        setup.main(["try", "claude-t8", str(cand)])
+    setup.main(["stop", "claude-t8"])
