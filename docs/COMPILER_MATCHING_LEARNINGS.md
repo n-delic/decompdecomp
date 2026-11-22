@@ -1,5 +1,19 @@
 # Compiler matching learning log
 
+### KMC GCC 2.7.2: recover both versions of a stack output component
+
+Two calls in a large N64 function write the same stack vector.
+The draft subtracted its second Y component twice. The target
+loads the component after each call and subtracts each from the
+same saved accumulator. Restoring the two subtractions where the
+values are still available improved the linked score from 32,007
+to 31,267 under `-G0 -mips3 -mgp32 -mfp32 -O2`. Carrying the prior
+zero-valued accumulator into the first subtraction scored 31,258.
+Moving the X update earlier by itself scored 31,384, the Z update
+scored 31,818, and moving both scored 33,389. These are measurements
+on one function. Controlled tests require matching stack offsets
+and matching saved accumulator transfers in both target windows.
+
 ### KMC GCC 2.7.2: reuse saved floating-point accumulator storage
 
 A large N64 draft assigned two block-local float temporaries and
@@ -12970,3 +12984,13 @@ on the wrong side of a pointer reload. Read the next pointer into the
 existing local after the conditional link update and before the neighboring
 store. The linked score went from 60 to 0. The previous dispatcher proposed
 nothing, and the new rewrite generated one byte-exact candidate.
+
+### KMC GCC 2.7.2: stage relocated pool index and cursor
+
+Three isolated drafts indexed a pool using a guessed global structure. Using
+the target's separately relocated index and table globals and staging the
+index restored the target's address calculation. With
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, each linked score improved
+from 235 to 40; register differences remain, so none is a match. Trials
+staging the updated word in a separate local did not remove those differences.
+Synthetic tests cover the target instructions and resolved address guards.

@@ -56,6 +56,7 @@ from decomprepair import (
     measured_kmc_pointer_table_guard,
     measured_kmc_record_reads,
     measured_kmc_relocated_fields,
+    measured_kmc_relocated_pool,
     measured_kmc_repeated_reads,
     measured_kmc_scalar_shapes,
     measured_kmc_split_table_index,
@@ -264,6 +265,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_halfword_stores.variants(source, name, rows, resolve)
         result += measured_kmc_repeated_reads.variants(source, name, header, rows, resolve)
         result += measured_kmc_record_reads.variants(source, name, header, rows, resolve)
+        result += measured_kmc_relocated_pool.variants(source, name, header, rows, resolve)
         result += measured_kmc_relocated_fields.variants(source, name, header, rows, resolve)
         result += measured_kmc_split_table_index.variants(source, name, header, rows)
         result += measured_kmc_stack_and_call.variants(source, name, header, rows, resolve)
