@@ -25,6 +25,8 @@ _settings: dict[str, dict] = {}
 _settings_lock = threading.Lock()
 
 
+FORK_SLUG_SECONDS = 10.0  # how long fork_slug keeps its answer (a project's kind never changes)
+
 class Core(Network):
     def sdk_functions(self, proj) -> dict:
         from ..sdk_identity import identify
@@ -208,11 +210,23 @@ class Core(Network):
         """The slug when `project` is a fork of a public decomp, else None. (A project's kind never changes, so this
         reads the row without syncing its saved files: twins and the other release's code ask it on every try, and
         each sync of a finished 2,000-function game took seconds.)"""
+        # Asked several times for every candidate of a search (scopes, policy profiles, twins) and each ask read the
+        # project row's revision and parsed its settings: 19% of a permuter worker's CPU in a sampled run. A kind
+        # never changes, so an answer is kept for FORK_SLUG_SECONDS; removing a project forgets them all.
+        cache = self.__dict__.setdefault('_fork_slugs', {})
+        kept = cache.get(project)
+        now = time.monotonic()
+        if kept is not None and now - kept[0] < FORK_SLUG_SECONDS:
+            return kept[1]
         try:
             proj = Network._project(self, project)
         except NetworkError:
             return None
-        return proj["slug"] if self.cfg(proj).get("kind") == "fork" else None
+        answer = proj["slug"] if self.cfg(proj).get("kind") == "fork" else None
+        if len(cache) > 256:
+            cache.clear()
+        cache[project] = (now, answer)
+        return answer
 
     def _rom_only(self, project: str | None, what: str) -> None:
         if self.fork_slug(project):
@@ -445,6 +459,7 @@ class Core(Network):
     def remove_project(self, slug):
         # Archive before deleting any records or files. An archive failure keeps the project intact.
         self.match_library.archive_project(self.project_row(slug))
+        self.__dict__.pop('_fork_slugs', None)
         return super().remove_project(slug)
 
 

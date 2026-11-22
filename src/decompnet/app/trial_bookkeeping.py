@@ -10,6 +10,10 @@ from itertools import groupby
 from .. import compile_timing
 
 _current = ContextVar('trial_bookkeeping', default=None)
+_FLUSHES = [0]  # transactions this process has committed through a Batch: rows read before one are stale after it
+_STORED = {}
+_STORED_LOCK = threading.Lock()
+STORED_SECONDS = 1.0
 
 
 class Batch:
@@ -54,6 +58,7 @@ class Batch:
                         else:
                             for arguments in args:db.execute(sql,arguments)
                 compile_timing.add('history_transactions',1)
+                _FLUSHES[0] += 1
                 compile_timing.add('history_statements',len(statements))
             self.buffers.remove(buffer)  # Never replay a committed store if another flush fails.
         if not self.buffers:self.started = time.monotonic()
@@ -76,6 +81,25 @@ def lookup(store, key):
     return buffer['values'].get(key) if buffer is not None else None
 
 
+def stored(store, key, load):
+    """`load()`'s rows for `key`, read at most once a STORED_SECONDS and again after any flush of this process: the
+    policy tables are read before every batch of candidates, and each read was a query (a quarter of a core of a
+    sampled permuter worker) for rows that change by a few counts a second. Another process's writes show up within
+    a second; this process's own are added by pending_counters until they are flushed, and a flush drops the copy."""
+    now = time.monotonic()
+    slot = (id(store), key)
+    with _STORED_LOCK:
+        kept = _STORED.get(slot)
+        if kept is not None and kept[0] == _FLUSHES[0] and now - kept[1] < STORED_SECONDS and kept[3] is store:
+            return kept[2]
+    rows = load()
+    with _STORED_LOCK:
+        if len(_STORED) >= 256:
+            _STORED.clear()
+        _STORED[slot] = (_FLUSHES[0], now, rows, store)
+    return rows
+
+
 def pending_counters(store, sql):
     """The counter rows `count` has queued for `store` under this exact SQL and not yet written: {key arguments: the
     queued arguments}. A reader that needs the totals can add these to the stored rows instead of flushing the batch,
@@ -92,6 +116,7 @@ def submit(store, statements, *, immediate=False, memo=None):
     if value is None:
         with store.tx() as db:
             for sql, args in statements:db.execute(sql, args)
+        _FLUSHES[0] += 1
         return
     size = sum(len(sql.encode()) + sum(len(arg.encode()) if isinstance(arg, str) else
                len(arg) if isinstance(arg, bytes) else 8 for arg in args) for sql, args in statements)
