@@ -103,6 +103,21 @@ def graphics_spans(image):
                     and b'\x03\xe0\x00\x08' in image[at:at+256]):
                 yield start, at
                 break
+        else:
+            # Some variants end their RSP overlay with a jump within IMEM,
+            # its DMEM load delay slot and alignment, followed by a CPU frame.
+            # The frame saves the return address and closes within its body.
+            for at in range(end+0x100, min(end+0x400, len(image)-40), 4):
+                jump, delay, pad0, pad1, frame = struct.unpack_from('>5I', image, at-16)
+                if (jump >> 26 != 2 or not 0x400 <= jump & 0x3ffffff < 0x800
+                        or delay != 0x8c1800cc or pad0 or pad1 or not is_frame(frame)):
+                    continue
+                following = struct.unpack_from('>8I', image, at+4)
+                if (not any(word & 0xffff0000 == 0xafbf0000 for word in following)
+                        or b'\x03\xe0\x00\x08' not in image[at:at+0x400]):
+                    continue
+                yield start, at
+                break
 
 
 def trim(image, found, known, log=print):

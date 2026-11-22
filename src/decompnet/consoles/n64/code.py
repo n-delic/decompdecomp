@@ -487,7 +487,7 @@ def unpack_code(rom: bytes) -> list[tuple[int, bytes]]:
 
 # ---------------------------------------------------------------------------------------------- into splat's config
 
-def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
+def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_replacing_boot=False) -> str:
     """An N64 game's code outside the main segment (n64code.py), added to splat's config as code segments of their
     own. Compressed code (Rare's, Yaz0, RNC method 1) is unpacked first and appended to a working copy of the ROM, which splat then
     reads instead (and an export rebuilds). Code the search can't place is then found by running the game, when the
@@ -497,6 +497,7 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
     import yaml
 
     from . import (
+        boot_brs,
         boot_gzip,
         copied_overlays,
         dma_overlays,
@@ -517,7 +518,16 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
     taken = split.code_ranges(config)
     if taken and (result := resident_deflate.add(config,workdir,image,rom,taken,log)):
         return result
-    if taken and (result := boot_gzip.add(config, workdir, image, rom, taken, log)):
+    if taken and not skip_replacing_boot and boot_brs.find(rom, taken):
+        # The replacement program reuses the boot addresses. Recover the boot
+        # code first, before the expanded image introduces overlapping banks.
+        base = add_segments(config, workdir, image, log, skip_replacing_boot=True)
+        if base == original:
+            taken = split.code_ranges(config)
+            if result := boot_gzip.add(config, workdir, image, rom, taken, log):
+                return result
+        return base
+    if taken and not skip_replacing_boot and (result := boot_gzip.add(config, workdir, image, rom, taken, log)):
         return result
     if taken and (slots := raw_slots.registered(rom, taken)):
         recovered = raw_slots.recover_registered(rom, slots, taken, log)

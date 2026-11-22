@@ -95,3 +95,21 @@ def test_vector_graphics_overlays_stop_before_cpu_routine():
     assert list(graphics_spans(image)) == [(0x100, 0x14a0), (0x14a0, 0x2640)]
     image[0x2640:0x2644] = bytes(4)
     assert list(graphics_spans(image)) == [(0x100, 0x14a0)]
+
+
+def test_vector_overlay_before_called_cpu_frame():
+    from decompnet.consoles.n64.rsp_prefix import graphics_spans
+
+    image = bytearray(0x1600)
+    start = 0x100
+    image[start:start + 12] = bytes.fromhex('4a00002cc81f201bc81e201c')
+    for i in range(64):
+        struct.pack_into('>I', image, start + 0x100 + i * 4, 0x4a000037)
+    for i in range(3):
+        struct.pack_into('>I', image, start + 0x300 + i * 4, 0x0c000400 + i)
+    image[0x1100:0x1110] = bytes.fromhex('080007f6201f108c200c4000400b5800')
+    image[0x1290:0x12a8] = bytes.fromhex('080004848c1800cc000000000000000027bdffc0afbf003c')
+    image[0x12c0:0x12c8] = bytes.fromhex('03e0000827bd0040')
+    assert list(graphics_spans(image)) == [(start, 0x12a0)]
+    image[0x12a4:0x12a8] = bytes(4)
+    assert not list(graphics_spans(image))

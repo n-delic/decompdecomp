@@ -193,8 +193,8 @@ def find(rom, boot_ranges):
     pointer = _pointer_find(rom, boot_ranges)
     if pointer:
         return pointer
-    from . import boot_raw_deflate
-    return boot_raw_deflate.find(rom, boot_ranges)
+    from . import boot_brs, boot_raw_deflate
+    return boot_raw_deflate.find(rom, boot_ranges) or boot_brs.find(rom, boot_ranges)
 
 
 def verify_analysis(rom, expanded, boot_ranges):
@@ -226,22 +226,39 @@ def inline_tables(text):
 def add(config, workdir, image, rom, boot_ranges, log):
     if not (programs := find(rom, boot_ranges)):
         return None
+    from . import boot_brs
+
     cfg = yaml.safe_load(config.read_text(encoding='utf-8'))
     segments = cfg['segments']
     segments.pop()
     expanded = bytearray(rom)
     repeated = {vram for vram, _, _ in programs if sum(vram == other for other, _, _ in programs) > 1}
+    replacing = any(boot_brs.replacement_entry(rom[0x1000:0x1010], text)
+                    and vram < base + end - start and base < vram + len(text) + len(data)
+                    for vram, text, data in programs for start, end, base in boot_ranges)
+    if replacing:
+        for segment in segments:
+            if isinstance(segment, dict) and segment.get('type') == 'code':
+                segment.update(exclusive_ram_id='replaced_boot')
     for index, (vram, text, data) in enumerate(programs):
         start = len(expanded)
         name = f'program_{vram:08X}_{index}' if vram in repeated else f'program_{vram:08X}'
+        if replacing and boot_brs.replacement_entry(rom[0x1000:0x1010], text):
+            # The loader keeps the boot entry's first two words and replaces
+            # the rest; these image bytes are not executed at this address.
+            segments.append(dict(type='bin', start=start))
+            expanded.extend(text[:8])
+            start += 8
+            vram += 8
+            text = text[8:]
         parts = [[start, 'c', name]]
         for before, after in inline_tables(text):
             parts.extend([[start + before, 'rodata', f'{name}_table_{before:X}'],
                           [start + after, 'c', f'{name}_text_{after:X}']])
         parts.append([start + len(text), 'data', name])
         segment = dict(name=name, type='code', start=start, vram=vram, subsegments=parts)
-        if repeated:
-            segment.update(exclusive_ram_id=f'gzip_slot_{vram:08X}', symbol_name_format=f'$VRAM_{name}',
+        if repeated or replacing:
+            segment.update(exclusive_ram_id='replaced_boot' if replacing else f'gzip_slot_{vram:08X}', symbol_name_format=f'$VRAM_{name}',
                            symbol_name_format_no_rom=f'$VRAM_{name}')
         segments.append(segment)
         expanded.extend(text)

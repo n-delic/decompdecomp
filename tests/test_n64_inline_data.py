@@ -106,3 +106,20 @@ def test_unaligned_store_filler_after_return_is_data():
 
     image = struct.pack('>2I', 0x03e00008, 0)+bytes.fromhex('ffffffff 00000000')*5+bytes.fromhex('27bdffe0')
     assert (8, 48) in list(inline_data.spans(image))
+
+
+def test_linker_markers_after_return_are_data():
+    from decompnet.consoles.n64.inline_data import spans
+
+    marker = bytes.fromhex('12345678') + bytes(12)
+    image = bytes.fromhex('03e0000800000000ffffffff') + marker * 3 + bytes.fromhex('27bdffe0')
+    assert (8, 60) in list(spans(image))
+    assert (8, 60) not in list(spans(bytes(8) + image[8:]))
+
+
+def test_all_one_padding_before_scheduled_frame():
+    from decompnet.consoles.n64.inline_data import spans
+
+    image = bytes.fromhex('03e00008ace20000ffffffffffffffff3c02800e8c422f2827bdffc8')
+    assert (8, 16) in list(spans(image))
+    assert (8, 16) not in list(spans(image[:-4] + bytes(4)))

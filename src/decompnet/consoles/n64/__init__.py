@@ -11,7 +11,7 @@
 - indexed_overlays.py: shared RAM slots and DMA bounds recovered from loader arrays and cache calls.
 - inferred_overlays.py: overlapping code-bank mappings supported by independently called local entries.
 - inline_data.py: verified constants and alignment bytes embedded among code.
-- boot_gzip.py, boot_raw_deflate.py: compressed programs placed at addresses supplied by the boot loader.
+- boot_gzip.py, boot_raw_deflate.py, boot_brs.py: compressed programs placed at addresses supplied by the boot loader.
 - boot_mapping.py: returning TLB boot stubs separated from code with a strongly supported later load mapping.
 - sdk_assembly.py: exact self-contained libultra body fingerprints, classified before C claims.
 - port.py: its port kit, libultraship and Torch: what they replace and which graphics microcode they render.
