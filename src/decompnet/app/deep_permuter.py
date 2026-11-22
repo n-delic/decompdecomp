@@ -442,6 +442,8 @@ class Search(Permuter):
                  (L + 'shared_assignment_inline.variants', (source, name)),
                  # stray trailing pointer arguments dropped and a reused pointer local split, as one child (each half alone worse)
                  (L + 'call_carrier_pointer_split.variants', (source, name)),
+                 # a hand-edited source's pointer phases (declarator lists, a local-reading macro) split, and chained as one child
+                 (L + 'normalized_phase_split.variants', (source, name, header)),
                  # an identical-arm guard on an unassigned local collapsed and two integer locals merged, as one child (each half alone worse)
                  (L + 'collapsed_guard_lifetime_merge.variants', (source, name)),
                  # a byte-cursor table walk, its shared offset local and a void tail as the indexed loop, one child (each piece alone worse)

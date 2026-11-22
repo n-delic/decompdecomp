@@ -252,6 +252,7 @@ from decomprepair import (
     nested_guard_repairs,
     nested_join_hoist_repairs,
     normalization_repairs,
+    normalized_phase_split,
     observed_repairs,
     offset_base_local_repairs,
     operand_order_repairs,
@@ -448,7 +449,7 @@ AGENT_FAMILIES += (guarded_pointer_copy.FAMILY,) + shifted_byte_lifetime.FAMILIE
 AGENT_FAMILIES += loop_weight_set_repairs.FAMILIES
 AGENT_FAMILIES += entry_constant_local.FAMILIES + store_temp_inline.FAMILIES
 AGENT_FAMILIES += float_sum_store_fence.FAMILIES + shared_assignment_inline.FAMILIES
-AGENT_FAMILIES += call_carrier_pointer_split.FAMILIES
+AGENT_FAMILIES += call_carrier_pointer_split.FAMILIES + normalized_phase_split.FAMILIES
 AGENT_FAMILIES += collapsed_guard_lifetime_merge.FAMILIES
 AGENT_FAMILIES += arm_argument_copy_join.FAMILIES
 AGENT_FAMILIES += string_walk_index.FAMILIES
@@ -972,6 +973,9 @@ def _spelled(source: str, name: str, arch: str, asm: str = '', flags=(), labels=
                    # (stray trailing pointer arguments dropped and a reused pointer local split, as one child: a 140-instruction KMC
                    # menu function 60 -> 0, each half alone 790 and 60; decomprepair 0.5.650)
                    call_carrier_pointer_split,
+                   # (the phase splits of a hand-edited source, its declarator lists written one per line and a local-reading
+                   # macro expanded, and the splits chained as one child: a 249-instruction KMC nested walk 110 -> 0; decomprepair 0.5.657)
+                   normalized_phase_split,
                    # (an identical-arm guard on an unassigned local collapsed and two integer locals merged, as one child: a 74-instruction
                    # KMC audio function 60 -> 0, the collapse alone 110 and the merge alone 690; decomprepair 0.5.652)
                    collapsed_guard_lifetime_merge,
