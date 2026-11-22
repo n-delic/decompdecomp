@@ -14743,3 +14743,22 @@ In one N64 function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`,
 ### Byte-indexed inferred global and early clamp return
 
 In a private N64 function built with `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`, an inferred word-sized global made a byte-table index scale by four, while a local holding the return value changed the branch and result registers. Treating the global displacement and halfword index as bytes improved the linked score from 350 to 210. Also expressing the zero-result guard as an early return reproduced the linked target exactly (score 0). The candidate requires the observed missing index shift and preserves the guarded work. Evidence: one saved function and synthetic generation and routing tests.
+
+### Pair an early predicate stage with a later saved float return
+
+In a private N64 function built with GCC 2.7.2 KMC and
+`-G0 -mips3 -mgp32 -mfp32 -O2`, the target placed the first integer
+inversion in the second float branch's delay slot. The draft instead
+kept that inversion after both comparisons. Much later the target
+captured a float call's return in the same saved float register that
+held the earlier comparison input. The draft used the return
+register directly.
+
+Staging the integer inversion before the second comparison shortened
+the function by one instruction and scored 9,100, losing one of three
+jump-table relocations. Reusing the earlier float local for the
+later call result alone added an instruction and scored 9,940.
+Combining both restored all three table relocations and the original
+instruction count, improving the exact linked score from 9,110 to
+8,355 with no warning. Synthetic tests require both assembly witnesses
+and check through control flow that the reused float is dead.
