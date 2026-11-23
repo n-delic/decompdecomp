@@ -1191,6 +1191,16 @@ the MIPS instruction look-alikes and, for the shape of a mismatched region, the 
 PS4 have no look-alike reader for it. Project mode would need its objects' disassembly stored per function for the
 shape search; the brief does not run the shape search yet (it has no candidate's rows when it is written).
 
+### Float constants written as literals beyond MIPS ROM projects
+
+m2c reads a float constant from the compiler's literal pool through a global (`extern f32 D_8000930C;`); the library's
+`float_literal_global` writes the literal (`500.0f`) from the word the app reads in the ROM
+(`app/float_literal_words.py`, docs/learnings/finding/float-literal-through-global.md). It reaches every MIPS ROM
+console with a float unit (N64, PS2, PSP: a `lwc1` through `$at` or `$gp`); the PS1 has no float unit, so it has
+nothing to find. Planned: PowerPC's `lfs` from the small data (`@sda21`) and x86's `fld` from a constant need their
+processors' load readers (GameCube/Wii, Windows PC, Xbox), and project mode needs the word from the unit's original
+object rather than a ROM; doubles need both words proved before the literal is written.
+
 ## Recently done
 
 - **The Deep Permuter detects which compiler built a near-match.** An N64 game built with KMC GCC 2.7.2 had eight

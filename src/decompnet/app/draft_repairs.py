@@ -565,7 +565,7 @@ def _in_worker(source, name, arch, asm, flags, labels, kwargs):
     return choices
 
 
-def variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels=None, *, limit=LIMIT, header='', tables=(), callees='', entry_scope=None) -> list[str]:
+def variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels=None, *, limit=LIMIT, header='', tables=(), callees='', entry_scope=None, words=None) -> list[str]:
     import asyncio
 
     from ..network import NetworkError
@@ -580,13 +580,15 @@ def variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels=
         raise NetworkError("Run repair proposal generation outside the server event loop.")
     if threading.current_thread() is not threading.main_thread():
         kwargs = dict(limit=limit, header=header, tables=tables, callees=callees, entry_scope=entry_scope)
+        if words:  # (only when there are some: a worker started by an older copy of this module has no `words`)
+            kwargs['words'] = dict(words)
         return _in_worker(source, name, arch, asm, flags, labels, kwargs)
     return _variants(source, name, arch, asm, flags, labels, limit=limit, header=header, tables=tables,
-                     callees=callees, entry_scope=entry_scope)
+                     callees=callees, entry_scope=entry_scope, words=words)
 
 
 @compile_timing.timed('proposal_generation')
-def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels=None, *, limit=LIMIT, header='', tables=(), callees='', entry_scope=None) -> list[str]:
+def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels=None, *, limit=LIMIT, header='', tables=(), callees='', entry_scope=None, words=None) -> list[str]:
     """The families' proposals for `source`, and for an m2c draft also their proposals for its plain spelling.
 
     Most families read `*(T *)((s8 *)p + K)` and `s32`, not m2c's `M2C_FIELD(p, T *, K)` and `M2C_UNK`: on 90 raw
@@ -596,7 +598,7 @@ def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels
     the written-out ones pushed better raw children out as often as they added one (90 drafts: 2 better, 3 worse), so
     they add to an unlimited search (the Deep Permuter's beam, prove_chain) and fill a limit the raw ones leave."""
     labels = {} if labels is None else labels
-    kwargs = dict(header=header, tables=tables, callees=callees, entry_scope=entry_scope)
+    kwargs = dict(header=header, tables=tables, callees=callees, entry_scope=entry_scope, words=words)
     raw = _spelled(source, name, arch, asm, flags, labels, limit=limit, **kwargs)
     try:
         written = m2c_spelling.plain(source)
@@ -614,7 +616,7 @@ def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels
     return merged if limit is None else merged[:limit]
 
 
-def _spelled(source: str, name: str, arch: str, asm: str = '', flags=(), labels=None, *, limit=LIMIT, header='', tables=(), callees='', entry_scope=None) -> list[str]:
+def _spelled(source: str, name: str, arch: str, asm: str = '', flags=(), labels=None, *, limit=LIMIT, header='', tables=(), callees='', entry_scope=None, words=None) -> list[str]:
     span = find(source, name)
     if span is None:
         return []
@@ -662,12 +664,12 @@ def _spelled(source: str, name: str, arch: str, asm: str = '', flags=(), labels=
         def generate(masked):
             inner_labels = {}
             safe_header = macro_repairs.prepare(header)[0] or ''
-            choices = variants(masked,name,arch,asm,flags,inner_labels,limit=None,header=safe_header,tables=tables,callees=callees,entry_scope=None)
+            choices = variants(masked,name,arch,asm,flags,inner_labels,limit=None,header=safe_header,tables=tables,callees=callees,entry_scope=None,words=words)
             return [(inner_labels[text],text) for text in choices]
         # A repair that reads the function's own `#` lines (a hand-written `#define` naming a stack slot) is run on the text as
         # written, before the masking path, which blanks them and takes minutes on a long function: a draft with a
         # `volatile struct` frame and `#define sp14 stack.filter` never reached the registry, so no chain left its 2760.
-        context = library_registry.draft_context(source, name, header, arch, asm, flags)
+        context = library_registry.draft_context(source, name, header, arch, asm, flags, words)
         directive = [pair for repair in library_registry.runnable('draft', arch, unlimited=limit is None, directives=True)
                      for pair in registry.pairs(repair, _generated(repair.function(), **repair.arguments(context)))]
         choices = early + directive + _generated(macro_repairs.variants, source,name,generate,header)
@@ -953,7 +955,7 @@ def _spelled(source: str, name: str, arch: str, asm: str = '', flags=(), labels=
             labels[text] = family
     # The library's self-declared modules (decomprepair.registry): each is called with the context it declares it needs, in
     # its declared order, so a new module needs no wiring here. The beam's unlimited pass also runs the `beam` lane.
-    context = library_registry.draft_context(source, name, header, arch, asm, flags)
+    context = library_registry.draft_context(source, name, header, arch, asm, flags, words)
     for repair in library_registry.runnable('draft', arch, unlimited=limit is None):
         for family, text in registry.pairs(repair, _generated(repair.function(), **repair.arguments(context))):
             proposals.append(text)

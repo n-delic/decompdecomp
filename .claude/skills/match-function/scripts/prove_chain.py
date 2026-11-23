@@ -278,7 +278,8 @@ def generator(judge, name):
         texts = draft_repairs.variants(source, name, judge.arch, judge.asm, judge.compiler["flags"], labels,
                                        limit=None, header=judge.header, tables=getattr(judge, "tables", ()),
                                        callees=getattr(judge, "callees", ""),
-                                       entry_scope=getattr(judge, "entry_scope", None))
+                                       entry_scope=getattr(judge, "entry_scope", None),
+                                       words=getattr(judge, "words", None))
         found = [(labels.get(text, "unlabelled"), text) for text in texts]
         # The families that read the judge's differing rows (diff_gated_repairs: the Deep Permuter calls them with
         # the candidate's diff) are not in draft_repairs.variants; without them a chain never sees what the permuter's

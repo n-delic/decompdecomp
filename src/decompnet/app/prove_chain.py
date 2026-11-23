@@ -81,8 +81,9 @@ def _rename(source, name, vram):
 
 
 def generator(net, proj, fn, flags):
-    from . import draft_repairs, switch_tables
+    from . import draft_repairs, float_literal_words, switch_tables
     ctx = net._context(proj['id'], fn['unit'])
+    words = float_literal_words.read(net, proj, fn)
     header = ctx['header'] if ctx else ''
     tables = switch_tables.read(net, proj, fn)
     scope = draft_repairs.promoted_entry_repairs.scope(net, proj, fn)
@@ -93,7 +94,7 @@ def generator(net, proj, fn, flags):
         texts = draft_repairs.variants(source, fn['name'], proj['arch'], fn['asm'] or '', flags, labels, limit=None,
                                        header=header, tables=tables,
                                        callees=draft_repairs.capture_followup_repairs.callee_evidence(net, proj, fn, source),
-                                       entry_scope=scope)
+                                       entry_scope=scope, words=words)
         return [(labels.get(text, 'unlabelled'), text) for text in texts]
     return generate
 

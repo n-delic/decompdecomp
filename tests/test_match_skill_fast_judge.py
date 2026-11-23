@@ -32,7 +32,8 @@ def test_the_worker_describes_a_function_so_a_search_needs_only_its_name(tmp_pat
     # a function inside a compiler range is judged with that range's profile, as the app does
     assert hosted_judge.function_info(net, {"slug": "game", "name": "f16"})["compiler"] == {"toolchain": "ido-7.1", "flags": ["-O1"]}
     # the context the app's draft path gives draft_repairs.variants travels with it (prove_chain.py passes it on)
-    assert {"tables", "callees", "entry_scope"} <= set(info) and isinstance(info["tables"], list)
+    assert {"tables", "callees", "entry_scope", "words"} <= set(info) and isinstance(info["tables"], list)
+    assert info["words"] == {}  # (no float constant loaded through $at: float_literal_words)
     assert isinstance(info["big_endian"], bool)
     assert "no project" in hosted_judge.function_info(net, {"slug": "nope", "name": "f3"})["error"]
     assert "0 functions" in hosted_judge.function_info(net, {"slug": "game", "name": "missing"})["error"]
