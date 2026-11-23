@@ -154,8 +154,16 @@ def _toml_name(name: str) -> str:
 def symbols(segments: list[dict], functions: list[dict]) -> str:
     """N64Recomp's symbols file: every section and the functions in it (by ROM offset)."""
     out = []
-    for s in segments:
-        inside = sorted((f for f in functions if s["rom_start"] <= f["rom"] < s["rom_end"]), key=lambda f: f["rom"])
+    # A function is listed in one section. Sections can overlap in the ROM (a relocatable overlay slot's raw bytes
+    # span a code section the split also lists): listing it in both made N64Recomp write its C twice, and the host
+    # build stopped on `redefinition of R_func_...`. The narrowest section containing it owns it.
+    owner = {}
+    for f in functions:
+        holders = [i for i, s in enumerate(segments) if s["rom_start"] <= f["rom"] < s["rom_end"]]
+        if holders:
+            owner[id(f)] = min(holders, key=lambda i: (segments[i]["rom_end"] - segments[i]["rom_start"], i))
+    for index, s in enumerate(segments):
+        inside = sorted((f for f in functions if owner.get(id(f)) == index), key=lambda f: f["rom"])
         out.append(f"[[section]]\nname = {_toml_name(s['name'])}\nrom = 0x{s['rom_start']:X}\nvram = 0x{s['vram']:X}\n"
                    f"size = 0x{s['rom_end'] - s['rom_start']:X}\n\nfunctions = [\n"
                    + "".join(f"    {{ name = {_toml_name(f['name'])}, vram = 0x{f['vram']:X}, size = 0x{f['size']:X} }},\n"
@@ -522,6 +530,10 @@ def load(root: Path) -> dict | None:
         sections = tomllib.loads((f.parent / "syms.toml").read_text(encoding="utf-8")).get("section", [])
     except (OSError, ValueError):
         return summary
+    # Results made while overlapping sections each listed a function (see symbols) define it twice: rebuild them.
+    names = [fn.get("name") for sec in sections for fn in sec.get("functions", [])]
+    if len(names) != len(set(names)):
+        return None
     # Results made before local labels were kept out (is_c_name) declare `void .L8010E8C8(...)`: rebuild those too.
     if any(not is_c_name(name) for sec in sections for name in (fn.get("name", "") for fn in sec.get("functions", []))):
         return None

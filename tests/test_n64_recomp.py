@@ -368,3 +368,31 @@ def test_a_saved_recompile_with_a_local_label_is_rebuilt(tmp_path):
     assert recomp.load(tmp_path) == {"files": 1}
     (folder / "syms.toml").write_text(syms.replace('"func_80000400"', '".L80000400"'))
     assert recomp.load(tmp_path) is None
+
+
+def test_a_function_in_overlapping_sections_is_listed_once():
+    """A relocatable slot's raw section spanned a code section the split also lists: both listed the function, N64Recomp
+    wrote its C twice and the host build stopped on `redefinition of R_func_...`. The narrowest section owns it."""
+    import tomllib
+
+    segments = [{"name": "raw_slot", "rom_start": 0x1000, "rom_end": 0x3000, "vram": 0x80300000},
+                {"name": "code_80301100", "rom_start": 0x2100, "rom_end": 0x2108, "vram": 0x80301100}]
+    split = [{"name": "func_80301100", "rom": 0x2100, "vram": 0x80301100, "size": 8},
+             {"name": "func_80300000", "rom": 0x1000, "vram": 0x80300000, "size": 8}]
+    sections = tomllib.loads(recomp.symbols(segments, split))["section"]
+    where = {fn["name"]: sec["name"] for sec in sections for fn in sec["functions"]}
+    assert where == {"func_80301100": "code_80301100", "func_80300000": "raw_slot"}
+    assert sum(len(sec["functions"]) for sec in sections) == 2
+
+
+def test_a_saved_recompile_listing_a_function_twice_is_rebuilt(tmp_path):
+    """Results made while overlapping sections each listed a function define it twice: load() gives them up."""
+    folder = recomp.folder(tmp_path)
+    folder.mkdir(parents=True)
+    (folder / "recomp.json").write_text('{"files": 1}')
+    one = ('[[section]]\nname = "%s"\nrom = 0x1000\nvram = 0x80000400\nsize = 0x100\n\nfunctions = [\n'
+           '    { name = "func_80000400", vram = 0x80000400, size = 0x10 },\n]\n')
+    (folder / "syms.toml").write_text(one % "a")
+    assert recomp.load(tmp_path) == {"files": 1}
+    (folder / "syms.toml").write_text(one % "a" + "\n" + one % "b")
+    assert recomp.load(tmp_path) is None
