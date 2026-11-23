@@ -416,7 +416,7 @@ static void wbe32(uint32_t a, uint32_t v) { M[a] = v >> 24; M[a + 1] = v >> 16; 
 static int port_ai_register(uint32_t a, int w, uint32_t v, uint32_t *r) { (void)a; (void)w; (void)v; (void)r; return 0; }
 static int si_register(uint32_t a, int w, uint32_t v, uint32_t *r) { (void)a; (void)w; (void)v; (void)r; return 0; }
 static int pi_register(uint32_t a, int w, uint32_t v, uint32_t *r) { (void)a; (void)w; (void)v; (void)r; return 0; }
-""" + _function(HOST.read_text(), "rom32") + "\n" + _function(HOST.read_text(), "port_io_load") + "\n" + _function(HOST.read_text(), "port_io_store") + """
+""" + _function(HOST.read_text(), "rom32") + "\n" + _function(HOST.read_text(), "open_bus") + "\n" + _function(HOST.read_text(), "port_io_load") + "\n" + _function(HOST.read_text(), "port_io_store") + """
 int main(void) {
     rom[0x578] = 0x34; rom[0x579] = 0x21; rom[0x57A] = 0x89; rom[0x57B] = 0x65;
     uint64_t w = port_io_load(0xB0000578u), h = port_io_load(0xB000057Au), b = port_io_load(0xB0000579u);
@@ -990,6 +990,30 @@ def test_the_host_can_log_its_threads_messages_and_who_runs():
     assert text.count("if (msg_log()) fprintf") == 2  # a send (put) and a receive start
     assert 'fprintf(stderr, "  running: %d\\n"' in text
 
+
+def test_the_64dd_registers_read_as_open_bus_on_a_console_with_none(tmp_path):
+    """A game's libleo reads the 64DD status register at 0x05000508 and returns "no 64DD" at once when the word is
+    nonzero (a console with no 64DD leaves the bus floating: the low 16 bits of the address in both halves). The
+    host answered 0, so a racing game built its disk manager and waited for its reply for ever, never drawing past
+    its boot logo. The two helpers are compiled from host.c and checked, and both read paths use them."""
+    text = HOST.read_text()
+    helpers = re.search(r"static int dd_range\(uint32_t bus\).*?\n(static uint32_t open_bus\(uint32_t bus\).*?\n)", text, re.S)
+    assert helpers, "dd_range and open_bus are in host.c"
+    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if not cc:
+        pytest.skip("no C compiler")
+    source = ("#include <stdint.h>\n#include <stdio.h>\n" + helpers.group(0) +
+              "int main(void) {\n"
+              "  printf(\"%d %d %d %d\\n\", dd_range(0x05000508u), dd_range(0xA5000508u), dd_range(0x04FFFFFCu), dd_range(0x08000000u));\n"
+              "  printf(\"%08X %08X\\n\", open_bus(0x05000508u), open_bus(0x06001234u));\n"
+              "  return 0;\n}\n")
+    (tmp_path / "t.c").write_text(source)
+    subprocess.run([cc, "-o", str(tmp_path / "t"), str(tmp_path / "t.c")], check=True, capture_output=True, text=True)
+    done = subprocess.run([str(tmp_path / "t")], check=True, capture_output=True, text=True)
+    assert done.stdout.split("\n")[:2] == ["1 1 0 0", "05080508 12341234"]
+    # both ways the game reaches it: osEPiReadIo and a direct read of the uncached alias
+    assert "if (dd_range(dev)) { wbe32(data, open_bus(dev & ~3u)); return 0; }" in text
+    assert "if (addr >= 0xA5000000u && addr < 0xA8000000u) { wbe32(IO_SCRATCH, open_bus((uint32_t)addr & ~3u))" in text
 
 def test_virtual_time_advances_a_retrace_at_a_time_and_reads_move_it_a_microsecond(tmp_path):
     """PORT_VTIME: the clock the game reads (osGetTime, the count register, the audio interface) is the retrace count's,

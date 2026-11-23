@@ -531,8 +531,16 @@ static int pi_register(uint32_t addr, int write, uint32_t value, uint32_t *read)
     default: return 0;
     }
 }
+/* The 64DD's registers and IPL (physical 0x05000000-0x07FFFFFF) on a console with no 64DD: nothing answers, and the
+   cartridge bus floats, giving back the low 16 bits of the address in both halves of the word. A game's libleo
+   (the 64DD support some cartridges carry) reads the status register at 0x05000508 and, finding a nonzero word,
+   returns at once with "no 64DD"; answered with 0 it built its disk manager and waited for it for ever (a racing
+   game's main thread spun on the manager's reply). */
+static int dd_range(uint32_t bus) { bus &= 0x1FFFFFFFu; return bus >= 0x05000000u && bus < 0x08000000u; }
+static uint32_t open_bus(uint32_t bus) { return (bus & 0xFFFFu) * 0x10001u; }
 uint64_t port_io_load(uint64_t addr) {
     if (addr < 0xA0800000u) return addr - 0x20000000u; /* RAM, uncached: the same RAM */
+    if (addr >= 0xA5000000u && addr < 0xA8000000u) { wbe32(IO_SCRATCH, open_bus((uint32_t)addr & ~3u)); return IO_SCRATCH + (addr & 3); }
     if (addr == SP_STATUS) { wbe32(IO_SCRATCH, 1); return IO_SCRATCH; } /* halted: a task finishes at once */
     if (addr >= DPC_BASE + 0x0Cu && addr < DPC_BASE + 0x20u) {
         /* The RDP's command registers: the host draws a task when it starts, so the RDP is always idle. A game that
@@ -746,6 +754,7 @@ u32 w2c_env_osEPiStartDma(struct w2c_env *e, u32 handle, u32 mb, u32 dir) {
 u32 w2c_env_osEPiReadIo(struct w2c_env *e, u32 handle, u32 dev, u32 data) {
     (void)e;
     if (flash_handle(handle)) { wbe32(data, port_flash_read(flash_offset(dev))); return 0; }
+    if (dd_range(dev)) { wbe32(data, open_bus(dev & ~3u)); return 0; }
     uint32_t at = dev & 0x0FFFFFFCu;
     wbe32(data, at + 4 <= rom_size ? (uint32_t)rom[at] << 24 | rom[at + 1] << 16 | rom[at + 2] << 8 | rom[at + 3] : 0);
     return 0;
