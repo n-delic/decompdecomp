@@ -25,6 +25,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Status | recommended | beta | beta | beta | beta | beta | beta | beta | beta | beta | beta | the project's own |
 | Start from your own copy | ✓ | ✓ | ✓ | ✓ decrypted EBOOT.ELF | ✓ decrypted ELF | ✓ unencrypted or decrypted program and modules (ISO, CSO, CHD) | ✓ ROM | ✓ | ✓ | ✓ default.xbe, .xiso or Redump .iso | ✓ | fork by address |
 | Judge | link · compare | link · compare | link · compare | link · compare | objdiff | link · compare | link · compare | objdiff | objdiff | objdiff | objdiff | objdiff |
+| Compact patches and reversible recipe previews | — | — | — | — | ✓ demo | — | — | — test written; needs its tools | — test written; needs its tools | — test written; needs its tools | — test written; needs its tools | shared project engine |
 | Machine drafts (m2c, Ghidra for x86) | ✓ | ✓ | ✓ | — | ✓ Ghidra | ✓ | ✓ (m2c `gba-gcc-c`) | ✓ | ✓ Ghidra | ✓ Ghidra | — (no assembly to read) | by architecture |
 | Autopilot: free matches from drafts | ✓ | ✓ | ✓ | twins only | — | ✓ | ✓ (demo: 34 matches) | ✓ | ✓ exact drafts of tiny shapes (32-bit); Ghidra's made compilable | ✓ as PC | twins only (no drafts yet) | — |
 | Drafts follow the header, made in the background; `redraft` | ✓ | ✓ | ✓ | — | — | ✓ | ✓ (m2c and `redraft`) | — | ✓ Ghidra's | ✓ Ghidra's | — | — |
@@ -937,3 +938,19 @@ The answer goes here: build it, build part of it, or not, and why.
   `limits.CompilerMemoryWatchdog`).
 - **Windows memory caps** for compilers and project builds: the Job Object each one already runs in (`limits.attach_job`,
   which stops the whole tree at the time limit) can also cap its memory, as Linux's scopes and macOS's watchdog do.
+
+### Compact patches and recipe previews
+
+`function_brief`, `compile_patch` and `try_recipes` use the shared project engine
+([tool guide](docs/COMPILE_PATCHES.md)). Synthetic PS4 checks exercise patches,
+reversible exact previews, ordinary-judge publication and matched neighbors: that is
+the one column run so far. GC/Wii, PC, Xbox and DS are offered the same tools through
+the same engine, and `tests/test_compile_tools_integration.py` runs them on
+`demo-gc`, `demo-pc`, `demo-xbox` and `demo-ds`, but it skips without those consoles'
+pinned compilers (MWCC, Visual C++, the XDK, CodeWarrior for DS) and has not run yet.
+Run it once on a machine that has them and tick the columns that pass (Wii goes with
+GameCube: it shares its project engine). Public decomps use their existing
+source-tree build. ROM-mode
+transactions need an adapter for saved candidates and the original linked-byte
+judge, so these tools are not offered there yet. Architecture-specific presets,
+absent definitions and durable background recipe jobs are follow-up work.
