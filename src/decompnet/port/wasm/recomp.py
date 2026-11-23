@@ -36,7 +36,10 @@ from pathlib import Path
 
 from .adapt import REGS  # MIPS's $a0-$a3 and $v0 as words of memory the game's C passes and reads
 
-STACKS = 0x14000000  # each host thread's MIPS stack for recompiled code: 256 KB, above the shadow stacks
+# Each host thread's MIPS stack for recompiled code: 256 KB each, in KSEG0 just above the console's 8 MB of RAM, as a
+# stack is on the console. Below 0x80000000 a game that tells a RAM pointer from a ROM offset by its sign (a loader
+# that reads through `if ((s32)p >= 0) osPiStartDma(...)`) took a local's address for a ROM offset and recursed.
+STACKS = 0x80800000
 STACK_SIZE = 0x40000
 STORE = re.compile(r"^(\s*)MEM_(W|H|B|HU|BU)\(([^()]*)\) = (.+);\s*$", re.M)
 CALL = re.compile(r"\b([A-Za-z_]\w*)(?=\(rdram, ctx\))")

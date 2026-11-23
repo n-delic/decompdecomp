@@ -48,7 +48,7 @@ void port_web_yield(void);
    interp.c says, port_mips_regs; this default is the same) */
 __attribute__((weak)) const uint32_t port_mips_regs = 0x00090000u;
 #define REGS port_mips_regs
-#define MIPS_STACKS 0x14800000u /* each host thread's: 256 KB, above recompiled C's (recomp.py's STACKS) */
+#define MIPS_STACKS 0x81100000u /* each host thread's: 256 KB, above recompiled C's (recomp.py's STACKS), in KSEG0 like them */
 #define MIPS_STACK 0x40000u
 #define MIPS_THREADS 32
 #define RETURN 0xFFFFFFF0u /* the sentinel return address: back to the C that started the run */

@@ -5,7 +5,7 @@
  * The WebAssembly build's memory is 4 GB, so every console address is in it (0x80000400 up). A 64-bit PC reserves
  * all of it; a 32-bit one can't. But the game only ever touches a few places in it: the module's own low memory (its
  * first stack and a few globals, at 1 MB), the threads' shadow stacks (host.c, from 0x10000000), the MIPS stacks
- * recompiled C and the interpreter run on (0x14000000 up), the console's RAM (0x80000000 up, 8 MB with the
+ * recompiled C and the interpreter run on (0x80800000 up, above the console's RAM), the console's RAM (0x80000000 up, 8 MB with the
  * Expansion Pak's) and its registers (0xA4000000 up). So the memory's base is address 0 and those are mapped at their own addresses: an address in the game is the same address here, every access
  * is one load as on the PC, and the host's `M + address` needs no translation. Anything else the game touches is a
  * fault, which the kernel reports where it happened, where the 64-bit build would have read zeros.
@@ -26,9 +26,9 @@
 static const struct { uint32_t start, size; const char *what; } regions[] = {
     {0x00001000u, 0x00400000u - 0x1000u, "the module's low memory"},
     {0x10000000u, 0x02000000u, "the threads' shadow stacks"},
-    {0x14000000u, 0x00800000u, "recompiled C's MIPS stacks (port/wasm/recomp.py: STACKS)"},
-    {0x14800000u, 0x00840000u, "the interpreter's MIPS stacks (mips.c)"},
     {0x80000000u, 0x00800000u, "the console's RAM"},
+    {0x80800000u, 0x00880000u, "recompiled C's MIPS stacks (port/wasm/recomp.py: STACKS)"},
+    {0x81100000u, 0x00840000u, "the interpreter's MIPS stacks (mips.c)"},
     /* the RCP's and the interfaces' registers the host doesn't answer itself (port_io_load returns their address):
        plain memory there, as in the 4 GB build */
     {0xA4000000u, 0x00A00000u, "the console's registers, and the rest of its I/O (host.c: IO_FAR)"},

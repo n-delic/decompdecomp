@@ -155,7 +155,7 @@ call the game's C from o32's words, so both directions needed only generated C (
   fills what a call leaves out from the caller's arguments, as MIPS leaves them: a racing game's matched alInit calls
   `alSynNew()` with none, its $a0 and $a1 still alInit's;
 - calls through pointers and threads' entries: port_func falls back to a bridge with integer arguments;
-- a MIPS stack per host thread for recompiled code (0x14000000 up), handed down across nested calls both ways;
+- a MIPS stack per host thread for recompiled code (0x80800000 up, in KSEG0 above the RAM: a game that tells RAM pointers from ROM offsets by sign needs a stack that looks like one), handed down across nested calls both ways;
 - `PORT_RECOMP_TRACE=1` logs every call from recompiled C into the game's.
 - `PORT_RECOMP_CALLS=ADDR,ADDR...` logs each entry to those recompiled functions with `$a0`-`$a3`, `$ra` and `$sp`;
   `PORT_RECOMP_CHANGED=ADDR` checks that RAM word at every recompiled function's entry and says when it changed,

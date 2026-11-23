@@ -25,6 +25,9 @@ static uint8_t *mem;
 uint8_t *port_memory(void) { return mem; }
 uint64_t port_io_load(uint64_t a) { return a; }
 uint32_t port_stack_bus(uint32_t a) { return a >= 0x14000000u && a < 0x15000000u ? a : 0; }
+unsigned port_tlb_n;
+uint32_t port_tlb_canon(uint32_t a) { return a; }  /* (host.c's TLB windows: none here) */
+uint32_t port_tlb_alias(uint32_t a) { return a; }
 uint64_t port_io_store(uint64_t a, uint64_t v) { (void)v; return a; }
 void port_safe_point(void) {}
 /* a thread whose code jumps to itself is parked for good (host.c): here, say so with the word at DATA, and end */

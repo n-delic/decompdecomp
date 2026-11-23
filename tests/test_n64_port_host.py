@@ -657,9 +657,9 @@ int main(void) {
     assert(memcmp(memory, "\x20\x30\x20\x30", 4) == 0);
     assert(memcmp(memory + 76, "\xB0\x00\x00\x01", 4) == 0);
     int invalid = traces;
-    w2c_env_osPiStartDma(NULL, 0, 0, 1, 0, 0x1400FFF0u, 8, 0);
+    w2c_env_osPiStartDma(NULL, 0, 0, 1, 0, 0x8080FFF0u, 8, 0);
     assert(traces == invalid);
-    w2c_env_osPiStartDma(NULL, 0, 0, 1, 0, 0x14FFFFFCu, 8, 0);
+    w2c_env_osPiStartDma(NULL, 0, 0, 1, 0, 0x81FFFFFCu, 8, 0);
     assert(traces == invalid + 1);
     return 0;
 }
@@ -691,18 +691,19 @@ static void post_event(int event) { assert(event == EV_PI); interrupts++; }
 #define BOOT_STACK_BUS 0x15000000u
 """ + _function(host, "stack_end") + "\n" + _function(host, "port_stack_bus") + "\n" + _function(host, "pi_register") + """
 int main(void) {
-    M = calloc(0x80800000u, 1);
+    M = calloc(0x82000000u, 1);
     assert(M);
     uint32_t read;
     assert(pi_register(0xA4600004u, 1, 0x10000002u, NULL));
     assert(pi_register(0xA4600000u, 1, 0x400u, NULL));
     assert(pi_register(0xA460000Cu, 1, 3, NULL));
     assert(!memcmp(M + 0x80000400u, rom + 2, 4));
-    assert(pi_register(0xA4600000u, 1, 0x1403FE90u, NULL));
+    /* a KSEG0 stack's physical address (osVirtualToPhysical of 0x8083FE90) is where the game's raw PI code points the DMA */
+    assert(pi_register(0xA4600000u, 1, 0x0083FE90u, NULL));
     assert(pi_register(0xA460000Cu, 1, 3, NULL));
-    assert(!memcmp(M + 0x1403FE90u, rom + 2, 4));
+    assert(!memcmp(M + 0x8083FE90u, rom + 2, 4));
     assert(pi_register(0xA460000Cu, 1, 4, NULL));
-    assert(M[0x1403FE94u] == 0);
+    assert(M[0x8083FE94u] == 0);
     assert(pi_register(0xA4600010u, 0, 0, &read) && read == 0);
     cart_io_busy = 1;
     assert(pi_register(0xA4600010u, 0, 0, &read) && read == 2);
@@ -818,3 +819,22 @@ def test_the_vi_shows_the_buffer_at_its_24_bit_origin():
     assert "fb & 0x00FFFFFFu" in text
     render = (HOST.parent / "render.c").read_text()
     assert "if (addr >= 0x800000) return;" in render
+
+
+def test_recompiled_and_interpreted_stacks_are_in_kseg0_above_the_ram():
+    """A game's loader told a RAM pointer from a ROM offset by its sign (`if ((s32)p >= 0)` means a cartridge address):
+    recompiled C's stack at 0x14000000 made a local's address a ROM offset, so it DMA'd from it and recursed (a racing
+    game's `osPiStartDma: 13A3AE48+4 is past the ROM's end`, no frames). Stacks sit where a console's do, just above
+    the 8 MB of RAM, with the host's DMA ranges and the 32-bit chip's mapping following them."""
+    from decompnet.port.wasm import recomp
+
+    top = recomp.STACKS + 33 * recomp.STACK_SIZE  # port_recomp_thread: up to thread 31's, (31 + 2) stacks
+    assert 0x80800000 <= recomp.STACKS and top <= 0x81100000
+    interp = (KIT / "mips.c").read_text()
+    at = int(re.search(r"#define MIPS_STACKS (0x[0-9A-Fa-f]+)u", interp).group(1), 16)
+    mips_stack = int(re.search(r"#define MIPS_STACK (0x[0-9A-Fa-f]+)u", interp).group(1), 16)
+    assert 0x80800000 <= at and at + 33 * mips_stack <= 0x82000000 and at >= top
+    host = HOST.read_text()
+    assert "addr >= 0x80800000u && addr < 0x82000000u" in host  # stack_end: DMAs into them are allowed
+    mem32 = (KIT / "miyoo" / "mem32.c").read_text()
+    assert f"{{0x{recomp.STACKS:08X}u," in mem32 and f"{{0x{at:08X}u," in mem32

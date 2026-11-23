@@ -459,7 +459,8 @@ static int cart_io_busy;
 static uint32_t stack_end(uint32_t addr) {
     if (addr >= 0x1000u && addr < BOOT_STACK_SIZE) return BOOT_STACK_SIZE;
     if (addr >= SHADOW_STACKS && addr < SHADOW_STACKS + 32 * SHADOW_SIZE) return SHADOW_STACKS + 32 * SHADOW_SIZE;
-    if (addr >= 0x14000000u && addr < BOOT_STACK_BUS) return BOOT_STACK_BUS;
+    /* the MIPS stacks recompiled C and the interpreter run on (recomp.py: STACKS, mips.c: MIPS_STACKS): KSEG0 above RAM */
+    if (addr >= 0x80800000u && addr < 0x82000000u) return 0x82000000u;
     return 0;
 }
 uint32_t port_stack_bus(uint32_t addr) {
@@ -476,10 +477,13 @@ static int pi_register(uint32_t addr, int write, uint32_t value, uint32_t *read)
     case 0xA460000Cu: {
         if (!write) { *read = 0; return 1; }
         uint32_t size = (value & 0x00FFFFFFu) + 1;
-        uint32_t dest = dram >= BOOT_STACK_BUS ? dram - BOOT_STACK_BUS : dram;
-        uint32_t end = dram >= 0x00800000u ? stack_end(dest) : 0x80800000u;
-        if (dram < 0x00800000u) dest = 0x80000000u | (dram & 0x007FFFFEu);
-        if (dram >= BOOT_STACK_BUS && dest >= BOOT_STACK_SIZE) end = 0;
+        /* a stack's physical address (osVirtualToPhysical of its KSEG0 one) is 0x00800000 up: back to where it is */
+        uint32_t bus = dram >= 0x00800000u && dram < 0x02000000u ? dram | 0x80000000u : dram;
+        int boot = bus >= BOOT_STACK_BUS && bus < 0x80000000u;
+        uint32_t dest = boot ? bus - BOOT_STACK_BUS : bus;
+        uint32_t end = bus >= 0x00800000u ? stack_end(dest) : 0x80800000u;
+        if (bus < 0x00800000u) dest = 0x80000000u | (bus & 0x007FFFFEu);
+        if (boot && dest >= BOOT_STACK_SIZE) end = 0;
         uint32_t offset = cart & 0x0FFFFFFEu;
         if (cart >= 0x10000000u && cart < 0x1FC00000u && dest < end
                 && size <= end - dest && (uint64_t)offset + size <= rom_size)
@@ -624,7 +628,7 @@ u32 w2c_env_osPiStartDma(struct w2c_env *e, u32 mb, u32 pri, u32 dir, u32 dev, u
     dmas++;
     if (getenv("PORT_DMA")) fprintf(stderr, "osPiStartDma(mb %08X, pri %u, dir %u, dev %08X, dram %08X, size %X, mq %08X)\n", mb, pri, dir, dev, dram, size, mq);
     u32 end = stack_end(dram);
-    if (dram < 0x80000000u && (!end || size > end - dram)) {
+    if ((dram < 0x80000000u || (dram >= 0x80800000u && dram < 0xA0000000u)) && (!end || size > end - dram)) {
         fprintf(stderr, "osPiStartDma to %08X, outside the console's RAM\n", dram); port_trace();
     }
     /* The PI uses a cartridge bus address. Some callers pass the full address returned by osRomBase,

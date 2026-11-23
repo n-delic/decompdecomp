@@ -146,7 +146,7 @@ def test_the_miyoo_build_compiles_the_recompiled_c_only_when_it_has_it(tmp_path,
 
 
 def test_mem32_maps_every_stack_recompiled_c_runs_on():
-    """recomp.py's MIPS stacks sit at 0x14000000, one per host thread: on a 32-bit chip only what mem32.c maps
+    """recomp.py's MIPS stacks sit at 0x80800000 (KSEG0, above the RAM), one per host thread: on a 32-bit chip only what mem32.c maps
     exists, so recompiled code's first call faulted where they weren't mapped."""
     import re
 
