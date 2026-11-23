@@ -19,7 +19,7 @@ loop-2 value (`temp = ...; if (temp | c)`), so its live range overlaps the start
 the target's loop (35 -> 15), but the shared variable then took `$a2` in loop 2 as well (the target has `$v1` there). decomp-repair's `disjoint_local_merge` now offers that pair (its 12-pair cap had hidden it).
 Raising the copy's priority above the flag's needs 16 weighted references (each `do { } while (0)` adds one: not
 faithful). So the missing step is a source in which the flag conflicts with a pseudo preferring `$a1` without being one
-variable with it. Open: no family produces it yet.
+variable with it. Found: the last loop's truncation and bound give it that conflict (finding/preferred-register-carried-from-a-later-loop, decomp-repair `loop_preheader_role_reuse`, 15 -> 0).
 
 How to check the next time: `passes.py` prints each pseudo's priority, register, and the hard registers it conflicts
 with; a pseudo that "prefers" a register in the listing is the one to look for; two pseudos in adjacent registers
