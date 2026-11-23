@@ -416,6 +416,11 @@ The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`)
   gamepad layout; closing the window quits. With no ROM named, the window asks for one (`port_live_rom`). Where SDL3
   can't open it falls back to `PORT_LIVE`'s browser view, or stops (exit 5) rather than run unseen. Windows has no SDL3
   here yet;
+- the VI's blanking (`osViBlack`; `port_vi_black` in render.c): libultra starts the VI blanked and a game un-blanks it
+  once its first frame is drawn and blanks it around a change of mode, so the leftovers of a buffer it hasn't drawn
+  into yet never reach the screen. The port ignored it and showed them for a few frames at each change of screen (a
+  flat green frame at the start, noise and sheared text between a 320 x 240 screen and a 640 x 480 one);
+  `PORT_SWAP_LOG=file` (or `-`) lists each frame the VI was handed with the graphics task it came after;
 - the RSP and RDP in software (`render.c`): each graphics task's display list is drawn into the game's own frame
   buffer, by the microcode the task loads (Fast3D, F3DEX, F3DEX2 and S2DEX by the signature in its data; Rare's
   F3DDKR, which has none, by its data's CRC), and `PORT_FRAMES=folder` saves the frames shown as PNG.

@@ -25,13 +25,14 @@ void port_render_task(uint32_t task);
 void port_frame_shown(uint32_t fb, unsigned long n);
 void port_vi_mode(uint32_t mode);
 void port_vi_features(uint32_t f);
+void port_vi_black(int on);
 static uint8_t ram[0x400000];
 uint8_t *port_memory(void) { return ram - 0x80000000u; }
 static uint8_t shown[640 * 480 * 3]; static int shown_w, shown_h;
 int port_live_active(void) { return 1; }
 void port_live_frame(const uint8_t *rgb, int w, int h) { memcpy(shown, rgb, (size_t)w * h * 3); shown_w = w; shown_h = h; }
 /* argv: memory in, memory out, the frame as the VI shows it out, then steps: tasks (hex RAM addresses), "show:ADDR"
-   (the VI shows a frame), "mode:ADDR" (osViSetMode), "features:HEX" (osViSetSpecialFeatures) */
+   (the VI shows a frame), "mode:ADDR" (osViSetMode), "features:HEX" (osViSetSpecialFeatures), "black:0|1" (osViBlack) */
 int main(int argc, char **argv) {
     FILE *f = fopen(argv[1], "rb");
     if (!f || fread(ram, 1, sizeof ram, f) != sizeof ram) return 3;
@@ -39,6 +40,7 @@ int main(int argc, char **argv) {
     for (int i = 4; i < argc; i++) {
         if (!strncmp(argv[i], "show:", 5)) port_frame_shown((uint32_t)strtoul(argv[i] + 5, NULL, 16), 1);
         else if (!strncmp(argv[i], "mode:", 5)) port_vi_mode((uint32_t)strtoul(argv[i] + 5, NULL, 16));
+        else if (!strncmp(argv[i], "black:", 6)) port_vi_black(atoi(argv[i] + 6));
         else if (!strncmp(argv[i], "features:", 9)) port_vi_features((uint32_t)strtoul(argv[i] + 9, NULL, 16));
         else port_render_task((uint32_t)strtoul(argv[i], NULL, 16));
     }
