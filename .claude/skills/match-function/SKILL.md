@@ -534,6 +534,21 @@ says the fix and the library families it names; try those families with `prove_c
   `x >= 3` together), `switch_range_trim` (the aliases of `default:` outside the target's `addiu`/`sltiu` range) and
   `volatile_cast_unpin` (a volatile load cannot fill a delay slot, and the `nop` moves every later table entry).
 
+- **A cursor walk that kept an extra saved register (`$fp`), a byte copy that must survive in one arm, a global read that
+  must stay a temporary** (KMC 2.7.2, a 384-instruction sound-entity starter, 2696 -> 0, nine library families;
+  docs/learnings/function/sound-entity-starter-narrow-copy-and-counter-forms.md). loop.c reduces a pointer stepped beside a
+  counter into a giv of its own when two or more address uses exist, so the cursor and the parameter it started from take two
+  registers; write the walk as `(arg + i * 8)` with the counter stepped last and the parameter keeps its register
+  (`walk_counter_for`). One counter variable per width gives the allocator one pseudo with every loop's references
+  (`loop_counter_unify`). A byte read into a wide local and read in both arms of an `if` shares one address sum through the
+  branch's delay slot; a narrow (`u8`) copy that the first arm reads is another machine mode, so cse keeps it and combine
+  makes it a `move` (`arm_byte_copy_split`). `t = G; G = f(t); v = t;` keeps the copy after the store where `v = G;` folds it
+  (`global_read_store_copy`). A saved register's value read once more after a call-free loop wants a copy before the loop
+  (`post_loop_copy`); a call argument m2c rotated one iteration ahead is `f(i & 0xFF)` (`loop_argument_inline`); a store
+  address staged in a local with the value's `|` chain left-associated (`store_address_stage`) and a literal local above the
+  loop's initialisations (`loop_literal_local`) each pay off only with their partner edit. `reach.py`-style check: the app's
+  proposal code offers every child of the state before an edit, and the edit is a gap when none of them moves the score.
+
 ## 3a. The fast tools (use them before writing variants by hand)
 
 - **A claim starts with two sources.** `setup.py` prints the saved best and its plain form (`plain_best.py`:
