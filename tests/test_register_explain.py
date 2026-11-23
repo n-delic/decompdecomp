@@ -139,3 +139,114 @@ def test_prove_chains_dead_end_signal_asks_the_worker_once_per_source():
     signal = prove_chain.dead_end_signal(Judge())
     assert signal("parent", "child")[0] == 1 and signal("parent", "other") == (0, "")
     assert signal("parent", "broken") == (0, "") and asked.count("parent") == 1
+
+# GCC 2.7.2 (KMC) -O2's lreg RTL for `for (i = 0; i < n; i++) s += helper(p[i], gp_cursor + 16);` (line 5): pseudo
+# 80 is the loaded cursor, its sum goes into $a1 for the call (the stray-argument shape, a display-list builder's last
+# rows: docs/learnings/finding/stray-global-call-argument-reorders-cursor-sums.md)
+RTL = """(note 10 9 4 "" NOTE_INSN_FUNCTION_BEG)
+
+(insn 4 10 6 (set (reg/v:SI 72)
+        (reg:SI 4 a0)) 159 {movsi_internal2} (nil)
+    (expr_list:REG_DEAD (reg:SI 4 a0)
+        (nil)))
+
+(note 68 6 69 "" NOTE_INSN_LOOP_BEG)
+
+(note 69 43 30 "" NOTE_INSN_LOOP_VTOP)
+
+(insn 30 69 34 (set (reg:SI 80)
+        (mem:SI (symbol_ref:SI ("gp_cursor")))) 159 {movsi_internal2} (nil)
+    (expr_list:REG_EQUIV (mem:SI (symbol_ref:SI ("gp_cursor")))
+        (nil)))
+
+(insn 34 30 72 (set (reg:SI 4 a0)
+        (mem/s:SI (reg:SI 85))) 159 {movsi_internal2} (nil)
+    (nil))
+
+(insn 72 34 46 (set (reg:SI 85)
+        (plus:SI (reg:SI 85)
+            (const_int 4))) 3 {addsi3_internal} (insn_list:REG_DEP_ANTI 34 (nil))
+    (nil))
+
+(insn 46 72 36 (set (reg/v:SI 74)
+        (plus:SI (reg/v:SI 74)
+            (const_int 1))) 3 {addsi3_internal} (nil)
+    (nil))
+
+(insn 36 46 38 (set (reg:SI 5 a1)
+        (plus:SI (reg:SI 80)
+            (const_int 16))) 3 {addsi3_internal} (insn_list 30 (nil))
+    (expr_list:REG_DEAD (reg:SI 80)
+        (nil)))
+
+(call_insn 38 36 42 (parallel[ 
+            (set (reg:SI 2 v0)
+                (call (mem:SI (symbol_ref:SI ("helper")))
+                    (const_int 16)))
+            (clobber (reg:SI 31 ra))
+        ] ) 319 {call_value_internal1} (insn_list:REG_DEP_ANTI 30 (insn_list 34 (insn_list 36 (nil))))
+    (expr_list:REG_DEAD (reg:SI 4 a0)
+        (expr_list:REG_DEAD (reg:SI 5 a1)
+            (expr_list:REG_UNUSED (reg:SI 31 ra)
+                (nil))))
+    (expr_list (use (reg:SI 5 a1))
+        (expr_list (use (reg:SI 4 a0))
+            (nil))))
+
+(insn 42 38 19 (set (reg/v:SI 75)
+        (plus:SI (reg/v:SI 75)
+            (reg:SI 2 v0))) 3 {addsi3_internal} (insn_list 38 (nil))
+    (expr_list:REG_DEAD (reg:SI 2 v0)
+        (nil)))
+
+(insn 19 42 20 (set (reg/s:SI 76)
+        (lt:SI (reg/v:SI 74)
+            (reg/v:SI 73))) 258 {slt_si} (insn_list:REG_DEP_ANTI 38 (insn_list 46 (nil)))
+    (nil))
+
+(jump_insn 20 19 52 (set (pc)
+        (if_then_else (ne:SI (reg/s:SI 76)
+                (const_int 0))
+            (label_ref 23)
+            (pc))) 221 {branch_zero} (insn_list:REG_DEP_ANTI 42 (insn_list:REG_DEP_ANTI 72 (insn_list 19 (nil))))
+    (expr_list:REG_DEAD (reg/s:SI 76)
+        (nil)))
+
+(note 52 20 53 "" NOTE_INSN_LOOP_END)
+
+(code_label 53 52 56 3 "")
+
+(insn 56 53 57 (set (reg/i:SI 2 v0)
+        (reg/v:SI 75)) 159 {movsi_internal2} (nil)
+    (expr_list:REG_DEAD (reg/v:SI 75)
+        (nil)))
+
+"""
+CALL_SOURCE = "extern int gp_cursor;\nint helper(int a, int b);\nint g(int *p, int n) {\n    int i, s = 0;\n" \
+              "    for (i = 0; i < n; i++) s += helper(p[i], gp_cursor + 16);\n    return s;\n}\n"
+
+
+def test_the_cause_names_the_call_argument_copy_and_its_c_line():
+    insns = rx.rtl_insns(RTL)
+    call = next(i for i in insns if i["kind"] == "call_insn")
+    assert call["callee"] == "helper" and call["uses"] == {4, 5} and call["loop"] == 1
+    assert next(i for i in insns if i["uid"] == 4)["copy"]
+    cursor = {"pseudo": 80, "hard": 5}
+    text = rx.causes(insns, cursor, 5, {80: cursor}, (), CALL_SOURCE)[0]
+    assert text.startswith("call-argument copy: insn 36 puts a value computed from pseudo 80 into $a1 for the call to "
+                           "helper (insn 38), argument 2, C line 5")
+    first = rx.causes(insns, {"pseudo": 72, "hard": 4}, 4)[0]
+    assert first.startswith("incoming-argument copy: insn 4 takes parameter 1 ($a0)")
+    result = rx.causes(insns, {"pseudo": 75, "hard": 18}, 2, {}, (), CALL_SOURCE)
+    assert any(c.startswith("call-result copy: insn 42") and "call to helper" in c for c in result)
+    assert any(c.startswith("return-value copy: insn 56") for c in result)
+    live = rx.causes(insns, {"pseudo": 74, "hard": 17}, 5, {}, (), CALL_SOURCE)
+    assert any(c.startswith("conflict: insn 36 sets $a1 as argument 2 of the call to helper") for c in live)
+
+
+def test_the_report_carries_the_causes_under_each_pseudo():
+    greg = (";; 2 regs to allocate: 80 74\n;; 80 conflicts: 80 74 4 29\n;; 80 preferences: 5\n;; 74 conflicts: 74 80 4 5 29\n\n"
+            ";; Register dispositions:\n74 in 17  80 in 5\n\n;; Hard regs used:  4 5 17 29\n")
+    lreg = "Register 74 used 4 times across 12 insns.\nRegister 80 used 2 times across 3 insns.\n" + RTL
+    text = "\n".join(rx.explain(lreg, greg, [("r", "addiu $a2, $v0, 16", "addiu $a1, $v0, 16")], (), CALL_SOURCE))
+    assert "$a1 where the target has $a2" in text and "    cause: call-argument copy: insn 36" in text

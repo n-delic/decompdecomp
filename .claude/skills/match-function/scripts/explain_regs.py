@@ -11,7 +11,12 @@ registers the rows swap prints
   - the rule that most likely decided it: the target's register live across the value (it can never get it), a
     conflicting pseudo allocated first, a lower-priority conflicting pseudo that prefers it (find_reg skips
     regs_someone_prefers in its first pass), the value's own copy preference, or local-alloc's block order;
-  - what usually moves it.
+  - what usually moves it;
+  - `cause:` lines: the instruction behind each conflict and copy preference and its C line, and what kind of copy it
+    is (call-argument copy: "a value computed from pseudo 80 into $a1 for the call to helper (insn 38), argument 2,
+    C line 5"; return-value, call-result, incoming-argument and loop copies; an argument register set for a call
+    while the value is live). A call-argument cause on the swapped register usually means the fix is that call (a
+    stray or missing argument: signatures.py), not the spelling of the code around it.
 
     explain_regs.py CAND.c --slug SLUG --function FUNC [--dumps]
 
