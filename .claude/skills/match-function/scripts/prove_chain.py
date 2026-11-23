@@ -28,9 +28,7 @@ It scores with the app's judge, so a chain that reaches 0 is a candidate for com
 Run it with the python of a setup.py session (it imports decompnet): `$UV_PROJECT_ENVIRONMENT/bin/python prove_chain.py`.
 """
 import argparse
-import difflib
 import itertools
-import re
 import sys
 from pathlib import Path
 
@@ -39,39 +37,20 @@ import claimlost  # noqa: E402
 import fast_judge  # noqa: E402
 
 from decompnet.app import row_coverage  # noqa: E402
+from decomprepair import compose  # noqa: E402
 
 DEFAULT_STEPS = 8
 DEFAULT_CHILDREN = 80
 DEFAULT_COMBINE = 0  # off: on three three-edit learnings neither the score nor the row ranking found one (docs/learnings/finding/draft-start-candidates.md, docs/learnings/experiment/row-coverage-combinations.md)
 DEFAULT_COMBINE_LIMIT = 200
-TOKEN = re.compile(r"[A-Za-z_]\w*|0[xX][0-9a-fA-F]+|\d+|\s+|.", re.S)
-
-
-def _edits(base, child):
-    """The child as token edits of `base`: [(start, end, replacement tokens)] over base's tokens."""
-    left, right = TOKEN.findall(base), TOKEN.findall(child)
-    ops = difflib.SequenceMatcher(None, left, right, autojunk=False).get_opcodes()
-    return left, [(a, b, right[c:d]) for tag, a, b, c, d in ops if tag != "equal"]
+DEFAULT_LOOKAHEAD = 3  # stalled step: children of the 3 most promising non-improving children are judged too
+DEFAULT_LOOKAHEAD_CHILDREN = 40
 
 
 def merge(base, children):
-    """One source with every child's edits of `base`, or None when two of them touch the same tokens (or insert at
-    the same place): then they are not independent edits and their merge would be a guess."""
-    tokens, edits = None, []
-    for child in children:
-        tokens, own = _edits(base, child)
-        if not own:
-            return None
-        edits += own
-    edits.sort(key=lambda e: (e[0], e[1]))
-    for (a1, b1, _), (a2, b2, _) in zip(edits, edits[1:]):
-        if a2 < b1 or (a1 == a2 and (a1 == b1 or a2 == b2)):
-            return None
-    out, at = [], 0
-    for a, b, replacement in edits:
-        out += tokens[at:a] + replacement
-        at = b
-    return "".join(out + tokens[at:])
+    """One source with every child's edits of `base`, or None when two of them touch the same tokens (decomprepair
+    compose.merge: the library's searches and this one share it)."""
+    return compose.merge(base, children)
 
 
 def row_combinations(base, scored, cover, parent_bad, k=DEFAULT_COMBINE, limit=DEFAULT_COMBINE_LIMIT):
@@ -118,18 +97,32 @@ def combinations(base, scored, k=DEFAULT_COMBINE, limit=DEFAULT_COMBINE_LIMIT):
     return out
 
 
+def _bad_count(rows):
+    """The number of the judge's differing rows (Judge.rows), or None without rows."""
+    return len(row_coverage.bad(rows)) if rows else None
+
+
 def prove(source, generate, score, families, steps=DEFAULT_STEPS, children=DEFAULT_CHILDREN, log=print,
-          combine=DEFAULT_COMBINE, combine_limit=DEFAULT_COMBINE_LIMIT, rows=None):
+          combine=DEFAULT_COMBINE, combine_limit=DEFAULT_COMBINE_LIMIT, rows=None, lookahead=DEFAULT_LOOKAHEAD,
+          lookahead_children=DEFAULT_LOOKAHEAD_CHILDREN, rank_signal=None):
     """The greedy chain. `generate(source) -> [(family, child)]`, `score(source) -> int | None` (None: didn't
-    compile, never an improvement). A stalled step tries `combine` best children merged in pairs and triples.
-    `rows(source) -> (score, rows)` (Judge.rows) adds the row-level ranking of those combinations: children are
-    judged with their rows, and the combinations of those that fix rows of the difference go first.
+    compile, never an improvement). A stalled step (no single child improves) searches combined steps when
+    `combine` > 0:
+      - the `combine` children that did not improve, ranked by how few of the judge's rows still differ
+        (`rows(source) -> (score, rows)`, Judge.rows; by score without rows), merged in pairs and triples of
+        different families (decomprepair compose.compositions), with the older row-coverage and score merges;
+      - then, with `lookahead` > 0, the children of the best `lookahead` of them (two steps whose first is no
+        better alone), at most `lookahead_children` each.
+    A combined step is taken when it beats the score, or ties it with fewer differing rows (a plateau move, never
+    to a source seen before). `rank_signal(parent, child) -> (penalty, note)` (explain_regs.dead_end: a child that
+    turns a block-local value global) demotes a child in that ranking; it never stops an improving child.
     Returns (final source, final score, [(family, score)])."""
     current, best = source, score(source)
     if best is None:
         raise SystemExit("the starting source doesn't compile with the judge: fix that first (is its name the function's?)")
-    chain = []
-    log(f"start  score {best}")
+    best_bad = _bad_count(rows(current)[1]) if rows and combine else None
+    chain, visited = [], {current}
+    log(f"start  score {best}" + (f", {best_bad} differing rows" if best_bad is not None else ""))
     for step in range(1, steps + 1):
         if best == 0:
             break
@@ -142,38 +135,107 @@ def prove(source, generate, score, families, steps=DEFAULT_STEPS, children=DEFAU
         if cut > 0:
             log(f"step {step}  note: {cut} of {len(options)} children cut off by --children {children}; "
                 f"raise it (or name --families) if the right child may be among them")
-        scored, cover = [], {}
-        parent_bad = row_coverage.bad(rows(current)[1]) if rows and combine else None
+        scored, cover, bad = [], {}, {}
+        parent_rows = rows(current)[1] if rows and combine else None
+        parent_bad = row_coverage.bad(parent_rows) if parent_rows else None
         for family, child in options[:children]:
-            if parent_bad:
+            if rows and combine:
                 result, child_rows = rows(child)
                 if result is not None and child_rows:
-                    cover[child] = row_coverage.coverage(parent_bad, child_rows)
+                    bad[child] = _bad_count(child_rows)
+                    if parent_bad:
+                        cover[child] = row_coverage.coverage(parent_bad, child_rows)
             else:
                 result = score(child)
             if result is not None:
                 scored.append((result, family, child))
-        if (not scored or min(row[0] for row in scored) >= best) and combine and len(scored) > 1:
-            merged = row_combinations(current, scored, cover, parent_bad, combine, combine_limit) if cover else []
-            have = {child for _, child in merged}
-            merged += [pair for pair in combinations(current, scored, combine, combine_limit) if pair[1] not in have]
-            merged = merged[:combine_limit]
-            tried = []
-            for family, child in merged:
-                result = score(child)
-                if result is not None:
-                    tried.append((result, family, child))
-            log(f"step {step}  no single child improves; {len(tried)} of {len(merged)} merges of the best {combine} scored")
-            scored += tried
+        taken = None
+        if (not scored or min(row[0] for row in scored) >= best) and combine and scored:
+            taken = _combined_step(step, current, best, best_bad, scored, cover, bad, parent_bad, generate, families,
+                                   score, rows, combine, combine_limit, lookahead, lookahead_children, rank_signal,
+                                   visited, log)
+        if taken:
+            result, family, child, child_bad = taken
+            current, best, best_bad = child, result, child_bad
+            visited.add(child)
+            chain.append((family, result))
+            log(f"step {step}  {family}  {result}  (combined step)")
+            continue
         if not scored or min(row[0] for row in scored) >= best:
             log(f"step {step}  no child of {len(options)} improves on {best} (scored {len(scored)}): stopped")
             break
         result, family, child = min(scored, key=lambda row: row[0])
-        current, best = child, result
+        current, best, best_bad = child, result, bad.get(child, best_bad)
+        visited.add(child)
         chain.append((family, result))
         log(f"step {step}  {family}  {result}  ({len(scored)} of {len(options)} children scored)")
     log("matched: score 0" if best == 0 else f"final score {best}")
     return current, best, chain
+
+
+def _judge(source, score, rows):
+    """(score, differing rows or None)."""
+    if rows:
+        result, found = rows(source)
+        return result, _bad_count(found)
+    return score(source), None
+
+
+def _better(result, count, best, best_bad):
+    return result is not None and (result < best or (result == best and count is not None and best_bad is not None
+                                                      and count < best_bad))
+
+
+def _combined_step(step, current, best, best_bad, scored, cover, bad, parent_bad, generate, families, score, rows,
+                   combine, combine_limit, lookahead, lookahead_children, rank_signal, visited, log):
+    """A stalled step's search over combined steps (prove's docstring): (score, families, source, rows) or None."""
+    notes = {}
+    items = []
+    for result, family, child in scored:
+        penalty = 0
+        if rank_signal:
+            penalty, note = rank_signal(current, child)
+            if note:
+                notes[family] = note
+        count = bad.get(child)
+        items.append(((count if count is not None else 10**6) + penalty * 10**3, result, family, child))
+    ranked = compose.rank(items, combine)
+    for family, note in list(notes.items())[:3]:
+        log(f"step {step}  note: {family} demoted ({note})")
+    merged = [(f, c) for f, c in compose.compositions(current, ranked, limit=combine_limit)]
+    have = {c for _, c in merged}
+    if cover:
+        merged += [m for m in row_combinations(current, scored, cover, parent_bad, combine, combine_limit) if m[1] not in have]
+        have = {c for _, c in merged}
+    merged += [m for m in combinations(current, scored, combine, combine_limit) if m[1] not in have]
+    merged = merged[:combine_limit]
+    found = []
+    for family, child in merged:
+        if child in visited:
+            continue
+        result, count = _judge(child, score, rows)
+        if _better(result, count, best, best_bad):
+            found.append((result, count if count is not None else 0, family, child))
+    log(f"step {step}  no single child improves; {len(merged)} merges of the best {len(ranked)} judged"
+        + (f", {len(found)} better" if found else ""))
+    if not found and lookahead:
+        for _, _, family, child in ranked[:lookahead]:
+            judged = 0
+            for second, grandchild in generate(child):
+                if judged >= lookahead_children:
+                    break
+                if (families is not None and second not in families) or grandchild in visited or grandchild == current:
+                    continue
+                judged += 1
+                result, count = _judge(grandchild, score, rows)
+                if _better(result, count, best, best_bad):
+                    found.append((result, count if count is not None else 0, f"{family}>{second}", grandchild))
+        log(f"step {step}  lookahead: children of the best {min(lookahead, len(ranked))} non-improving judged"
+            + (f", {len(found)} better" if found else ", none better"))
+    if not found:
+        return None
+    result, count, family, child = min(found, key=lambda row: (row[0], row[1]))
+    return result, family, child, (count if rows else None)
 
 
 def current_name(source, name, vram):
@@ -203,11 +265,11 @@ def generator(judge, name):
         # the candidate's diff) are not in draft_repairs.variants; without them a chain never sees what the permuter's
         # diff-gated lane would offer (boolean_guard_operands' sink, measured_* repairs).
         from decompnet.app import diff_gated_repairs
-        _, rows = judge.rows(source)
+        _, rows = judge.rows(source) if hasattr(judge, "rows") else (None, [])
         seen = {text for _, text in found}
         try:
             gated = diff_gated_repairs.proposals(
-                source, name, judge.header, judge.arch, judge.compiler["toolchain"], rows, judge.asm,
+                source, name, judge.header, judge.arch, judge.compiler.get("toolchain", ""), rows, judge.asm,
                 flags=tuple(judge.compiler["flags"]),
                 big_endian=bool(getattr(judge, "big_endian", True)))
         except Exception as error:  # a family's bug must not end a chain
@@ -230,6 +292,9 @@ def main(argv=None):
                     help="on a stalled step, merge the best K children in pairs and triples (0: off)")
     ap.add_argument("--combine-limit", type=int, default=DEFAULT_COMBINE_LIMIT)
     ap.add_argument("--no-rows", action="store_true", help="rank combinations by total score alone (the older search)")
+    ap.add_argument("--lookahead", type=int, default=DEFAULT_LOOKAHEAD,
+                    help="on a stalled step, also judge the children of the best N non-improving children (0: off)")
+    ap.add_argument("--lookahead-children", type=int, default=DEFAULT_LOOKAHEAD_CHILDREN)
     ap.add_argument("--out")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--home")
@@ -255,7 +320,8 @@ def main(argv=None):
         families = None if a.families == "all" else {f.strip() for f in a.families.split(",") if f.strip()}
         final, _, _ = prove(source, generate, judge.score, families, a.steps, a.children,
                             combine=a.combine, combine_limit=a.combine_limit,
-                            rows=None if a.no_rows else judge.rows)
+                            rows=None if a.no_rows else judge.rows, lookahead=a.lookahead,
+                            lookahead_children=a.lookahead_children)
         if a.out:
             Path(a.out).write_text(final)
             print(f"final source -> {a.out}")

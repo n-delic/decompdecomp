@@ -506,6 +506,11 @@ says the fix and the library families it names; try those families with `prove_c
   (callers, callees, the functions beside it in its file, ones reading the same globals, look-alikes) with the start
   of their matching C. Their temporaries, loop shapes and prototypes are the cheapest evidence there is; helpers get
   the same section in their brief.
+- **Edits that are each worse alone: `prove_chain.py ... --combine 8`.** A stalled step then ranks the non-improving
+  children by differing rows, merges pairs and triples of different families (decomprepair `compose`), and judges the
+  children of the best three (`--lookahead`). It only combines what the library offers: when it finds nothing, check
+  whether each half of your combination is a child at all (`--list`); a missing half is a family to write, not a
+  search to widen (docs/learnings/experiment/combined-step-compose-lookahead.md).
 - **Register rows: `explain_regs.py CAND.c --slug S --function F`.** For each register pair the rows swap it names the
   pseudo in the candidate's register and the one in the target's (refs, live, priority, block-local or global, deaths,
   copy preferences, C lines) and the rule that decided it (a hard conflict, a pseudo allocated first, a lower-priority

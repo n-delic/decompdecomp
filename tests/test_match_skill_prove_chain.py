@@ -176,3 +176,53 @@ def test_combine_with_rows_finds_edits_that_each_score_worse_alone():
     _, without, _ = prove_chain.prove(ROW_BASE, toy_generate, toy_rows_score, None, steps=1, children=40,
                                       log=lambda _: None, combine=5, combine_limit=60)
     assert without > 0
+
+
+# A two-step whose first step is worse alone and whose second exists only after it (a family that fires on the first
+# child's shape): no merge of one step's children finds it; the lookahead over the best non-improving child does.
+def test_lookahead_takes_a_second_step_that_only_exists_after_a_worse_first():
+    def generate(text):
+        if text == "s0":
+            return [("first", "s1"), ("noise", "n1")]
+        if text == "s1":
+            return [("second", "s2")]
+        return []
+    scores = {"s0": 10, "s1": 15, "n1": 30, "s2": 0}
+    final, best, chain = prove_chain.prove("s0", generate, scores.get, None, steps=2, combine=4, log=lambda _: None)
+    assert (final, best) == ("s2", 0) and chain == [("first>second", 0)]
+    _, best, _ = prove_chain.prove("s0", generate, scores.get, None, steps=2, combine=4, lookahead=0, log=lambda _: None)
+    assert best == 10
+
+
+def test_a_combined_step_that_ties_the_score_with_fewer_differing_rows_is_taken():
+    want = ["a = 1;", "b = 2;"]
+
+    def bad_rows(text):
+        return [("|", "x", "y")] * (3 - sum(w in text for w in want))
+
+    def generate(text):
+        lines = text.split(" ; ")
+        return [(f"fix_{i}", " ; ".join(lines[:i] + [want[i]] + lines[i + 1:])) for i in range(2) if lines[i] != want[i]]
+    start = "a = 0; ; b = 0;"
+    rows = lambda t: (10, bad_rows(t))  # noqa: E731  (the total never moves, the rows do)
+    final, best, chain = prove_chain.prove(start, generate, lambda t: 10, None, steps=1, combine=4, rows=rows,
+                                           lookahead=0, log=lambda _: None)
+    assert final == "a = 1; ; b = 2;" and best == 10 and chain == [("fix_0+fix_1", 10)]
+
+
+def test_a_rank_signal_demotes_a_child_from_the_combinations_but_never_blocks_an_improvement():
+    calls = []
+
+    def signal(parent, child):
+        calls.append(child)
+        return (1, "makes a block-local value global") if "dead" in child else (0, "")
+    generate = lambda t: [("dead_end", t + " dead"), ("good", t + " good")] if t == "s" else []  # noqa: E731
+    scores = {"s": 10, "s dead": 5, "s good": 12}
+    final, best, _ = prove_chain.prove("s", generate, scores.get, None, steps=1, combine=4, rank_signal=signal,
+                                       log=lambda _: None)
+    assert (final, best) == ("s dead", 5) and not calls  # an improving child is taken; the signal is not even asked
+    lines = []
+    scores["s dead"] = 11
+    prove_chain.prove("s", generate, scores.get, None, steps=1, combine=1, rank_signal=signal, lookahead=0,
+                      log=lines.append)
+    assert any("dead_end demoted" in line for line in lines)

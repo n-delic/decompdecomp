@@ -9,7 +9,7 @@ half an hour finding that out. setup.py runs this right after a claim, so the se
     plain_best.py --slug SLUG --function FUNC [--out-dir DIR] [SOURCE.c]
 
 It writes DIR/best.c and DIR/plain.c (when stripping changed anything) and prints one line each with the score. The
-plain form usually scores worse (the fences are often what the score rests on: worse in 23 of 30 twine pre-match bests,
+plain form usually scores worse (the fences are often what the score rests on: worse in 23 of 30 pre-match bests of an N64 game,
 closer to the final match in 11): it is a second place to start a chain from, not a replacement. Read-only, no claim
 needed. Run it with a session's python (it imports decompnet and decomprepair).
 """
