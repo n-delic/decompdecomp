@@ -545,7 +545,13 @@ __thread uint32_t port_recomp_sp;
 uint32_t port_recomp_stack_enter(uint32_t sp) { uint32_t saved = port_recomp_sp; port_recomp_sp = sp; return saved; }
 void port_recomp_stack_leave(uint32_t saved) { port_recomp_sp = saved; }
 void port_recomp_thread(int number) { port_recomp_sp = 0x%(stacks)Xu + (uint32_t)(number + 2) * 0x%(size)Xu - 0x100u; }
+void port_safe_point(void);
 static void port_recomp_frame(recomp_context *c, int words) {
+    /* Every call from the game's C into recompiled code starts here, so it is a safe point too: a game thread that
+       loops calling one recompiled function (a frame-wait helper with no call through a pointer inside) otherwise
+       never lets the higher-priority thread the retrace woke run, and nothing is drawn (a shooter's main thread
+       spun in one with its scheduler thread ready and never switched to). */
+    port_safe_point();
     memset(c, 0, sizeof *c);
     if (!port_recomp_sp) port_recomp_thread(-1);
     c->r29 = (gpr)(int32_t)((port_recomp_sp - 16u - 4u * (uint32_t)words) & ~7u);

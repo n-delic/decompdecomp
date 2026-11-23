@@ -2597,6 +2597,7 @@ void port_frame_shown(uint32_t fb, unsigned long n) {
     if (w > MAXW) w = MAXW;
     if (h > MAXH) h = MAXH;
     if (h < 1) h = 1;
+    if (addr >= 0x800000) return; /* no frame in RDRAM to show (the subtraction below would wrap to a giant height) */
     if ((size_t)addr + (size_t)w * h * bytes > 0x800000) h = (int)((0x800000 - addr) / ((uint32_t)w * bytes));
     if (gpu && gpu_present(addr, w, h, vi.gamma)) return; /* the GPU's frame, shown by the page */
     uint8_t *rgb = malloc((size_t)w * h * 3);

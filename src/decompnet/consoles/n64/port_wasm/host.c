@@ -556,9 +556,13 @@ void w2c_env_osViSetSpecialFeatures(struct w2c_env *e, u32 f) {
 }
 void port_frame_shown(uint32_t fb, unsigned long n); /* render.c: saves it when asked */
 void port_vi_swap(uint32_t fb) { /* (games/: a game's own name) */
-    frame_buffer = fb; swaps++; port_frame_shown(fb, swaps);
+    /* The VI's origin register holds 24 bits: a game that hands over 0x847B4F80 (a flag bit above the address, as
+       one shooter's buffers carry) shows the buffer at 0x7B4F80, as the console does. What the game reads back
+       (osViGetCurrentFramebuffer) stays as it gave it. */
+    uint32_t shown = 0x80000000u | (fb & 0x00FFFFFFu);
+    frame_buffer = fb; swaps++; port_frame_shown(shown, swaps);
 #ifndef PORT_WEB
-    if (getenv("PORT_RT64")) port_rt64_screen(M + 0x80000000u, fb);
+    if (getenv("PORT_RT64")) port_rt64_screen(M + 0x80000000u, shown);
 #endif
 }
 void w2c_env_osViSwapBuffer(struct w2c_env *e, u32 fb) { (void)e; port_vi_swap(fb); }

@@ -239,6 +239,15 @@ def test_the_port_header_has_the_loops_safe_point():
     assert "static inline void port_recomp_poll(void)" in text and "port_safe_point();" in text
 
 
+def test_a_call_from_the_games_c_into_recompiled_code_is_a_safe_point():
+    """A game thread that loops calling one recompiled function (no call through a pointer inside it) never let the
+    higher-priority thread the retrace woke run, and nothing was drawn: entering recompiled code from the game's C
+    (port_recomp_frame) is a safe point."""
+    text = recomp.BRIDGE_RUNTIME
+    body = text[text.index("static void port_recomp_frame("):]
+    assert "port_safe_point();" in body[:body.index("memset(c, 0")]
+
+
 def test_a_function_named_as_the_c_programs_entry_is_renamed():
     """A racing game names its first C function `main`: as C that's a program's entry, and N64Recomp's output for it
     didn't compile until the port renamed every recompiled function R_<name>."""

@@ -808,3 +808,13 @@ def test_the_host_defines_the_libm_functions_the_port_says_it_provides():
         assert port._sdk_group(name) == "replaced", name
         assert re.search(rf"\bw2c_env_{name}\(struct w2c_env", text), name
         assert name in sigs, name
+
+
+def test_the_vi_shows_the_buffer_at_its_24_bit_origin():
+    """A shooter hands osViSwapBuffer 0x847B4F80 (a flag bit above the address): the VI's origin holds 24 bits, so the
+    buffer shown is at 0x7B4F80. The renderer took 0x047B4F80, past RDRAM, its height wrapped to millions of rows and
+    every frame allocated gigabytes (RT64 got one frame in twelve seconds)."""
+    text = HOST.read_text()
+    assert "fb & 0x00FFFFFFu" in text
+    render = (HOST.parent / "render.c").read_text()
+    assert "if (addr >= 0x800000) return;" in render
