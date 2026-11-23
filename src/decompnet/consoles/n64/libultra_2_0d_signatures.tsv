@@ -33,6 +33,7 @@ f531835a27e90e248b13da24a0ab04f775db2222	40	alSndpDelete	2.0D games (3 declare i
 8a01dd422177655b6162b9f30c88b67cae726936	352	osAiSetFrequency	2.0D games (8 declare it)
 6aef26129e0f8c5a72cacc618b7e1670edfef809	148	osAiSetNextBuffer	2.0D games (4 declare it)
 766e1783bfe4811c108f065a510cf48e3e62de6c	376	osCartRomInit	2.0D games (3 declare it)
+7edc8fda02d040e9bb73cfdefe1d22956de38b13	248	osDestroyThread	2.0D games (4 share it)
 cfcb5bb5b52d05a7113d012e8e3f69b151f167ed	152	osDpSetNextBuffer	2.0D games (14 declare it)
 1d8374a3292ec1a2cb0ff3e475c5341e7c131c46	168	osDpSetNextBuffer	2.0D games (3 declare it)
 d5e9f29bd60702d4daf59d0d060b7dc0ff11b607	460	osEPiRawStartDma	2.0D games (10 declare it)

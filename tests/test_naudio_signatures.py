@@ -142,4 +142,6 @@ def test_the_2_0d_table_names_library_code_no_archive_has_and_overlaps_no_other_
     for fingerprint, size, name, builds in rows:
         assert re.fullmatch(r"[0-9a-f]{40}", fingerprint) and int(size) >= 32 and name and fingerprint not in others
         assert builds.startswith("2.0D games")
-    assert {"__osViInit", "osSpTaskLoad", "__osSpSetPc"} <= {r[2] for r in rows}
+    # osDestroyThread's 2.0D build walks __osActiveQueue: unnamed, a game's own copy ran against the host's threads
+    # (which keep no such list) and spun in that loop for ever, and the game's init thread never finished
+    assert {"__osViInit", "osSpTaskLoad", "__osSpSetPc", "osDestroyThread"} <= {r[2] for r in rows}
