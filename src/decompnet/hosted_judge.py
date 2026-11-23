@@ -26,6 +26,9 @@ Requests:
   notes too)} -> {"text"}: the compiler's allocation priority
   table, register preferences and scheduling orders for that C under the function's profile (compiler_passes.report,
   the code behind the compiler_passes tool; the skill's passes.py).
+- {"op": "allocation", "slug", "name", "source", "rows" (optional: the judge's raw rows)} -> {"lreg", "greg"
+  (the function's part of each dump), "allocation" (gcc_allocation's values: pseudo, hard register, C lines),
+  "text" (with rows: register_explain.explain, the skill's explain_regs.py)}.
 - {"op": "preprocess", "slug", "name", "source"} -> {"text", "cc1", "log"}: the candidate preprocessed as the app's
   compile does it (the function's profile, the project's header; compiler.preprocess_candidate), and the cc1 command
   line to run dumps on the result (the skill's preprocess.py). The bundled bare `cpp` aborts, so never run it by hand.
@@ -169,6 +172,41 @@ def passes_report(net, request: dict) -> dict:
         return {"error": str(error)}
 
 
+def _pseudo_lines(result, _profile) -> dict:
+    return {v["pseudo"]: v.get("source_lines") or [] for v in (result.get("allocation") or {}).get("values") or []}
+
+
+def allocation_report(net, request: dict) -> dict:
+    """The allocation dumps of a candidate, and with the judge's rows the explanation of each register they swap."""
+    from .app import compiler_passes, register_explain
+    from .network import NetworkError
+    found = lookup(net, request)
+    if isinstance(found, dict):
+        return found
+    proj, fn = found
+    source = request.get("source")
+    if not isinstance(source, str) or not source.strip():
+        return {"error": "no source"}
+    try:
+        result, _ = compiler_passes.diagnose(net, proj, fn, source, ("lreg", "greg"), compiler_passes.SKILL_EXCERPT_CHARS)
+        # The C lines come from a second compile with -g (its line notes). -g changes KMC GCC's code (a 20 became
+        # 180), but not the pseudo numbers expansion hands out, so its lines are used only when it allocated the same
+        # pseudos; otherwise the report has no lines.
+        lines = _pseudo_lines(*compiler_passes.diagnose(net, proj, fn, source, (), 0, extra_flags=("-g",)))
+    except NetworkError as error:
+        return {"error": str(error)}
+    phases = result.get("phases") or {}
+    lreg, greg = (phases.get(p, {}).get("excerpt", "") for p in ("lreg", "greg"))
+    values = (result.get("allocation") or {}).get("values") or []
+    if lines and set(lines) == {v["pseudo"] for v in values}:
+        values = [dict(v, source_lines=lines[v["pseudo"]]) for v in values]
+    reply = {"lreg": lreg, "greg": greg, "allocation": values, "toolchain": result.get("toolchain")}
+    if request.get("rows") is not None:
+        rows = [tuple(row) for row in request["rows"]]
+        reply["text"] = "\n".join(register_explain.explain(lreg, greg, rows, values, source))
+    return reply
+
+
 def preprocess_report(net, request: dict) -> dict:
     """A candidate preprocessed exactly as the app's compile does it, and the cc1 command to dump its passes."""
     from . import compiler, toolchains
@@ -240,6 +278,8 @@ def serve(net, lines=sys.stdin, out=sys.stdout) -> None:
                 reply = function_info(net, request)
             elif request.get("op") == "passes" and not packs:
                 reply = passes_report(net, request)
+            elif request.get("op") == "allocation" and not packs:
+                reply = allocation_report(net, request)
             elif request.get("op") == "preprocess" and not packs:
                 reply = preprocess_report(net, request)
             else:

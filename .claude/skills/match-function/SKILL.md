@@ -497,6 +497,14 @@ says the fix and the library families it names; try those families with `prove_c
   `counter_offset_local`, `guarded_cursor_do_loop`, `load_add_in_place`, `sequential_cursor_split`, `scope_unwrap_rewrap`,
   `adjacent_init_swap`; `prove_chain` reaches 0 from the saved best with them.
 
+## 3a. The fast tools (use them before writing variants by hand)
+
+- **Register rows: `explain_regs.py CAND.c --slug S --function F`.** For each register pair the rows swap it names the
+  pseudo in the candidate's register and the one in the target's (refs, live, priority, block-local or global, deaths,
+  copy preferences, C lines) and the rule that decided it (a hard conflict, a pseudo allocated first, a lower-priority
+  pseudo's preference skipped by find_reg, its own copy preference, local-alloc's block order). Read it before
+  reordering declarations.
+
 ## 3b. Out of hand-written shapes? Trace the compiler instead of guessing
 
 Three or four structurally different sources landing on the same score (or the same missing/extra instruction) means
