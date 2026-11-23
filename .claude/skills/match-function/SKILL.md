@@ -592,6 +592,11 @@ next to it (`signatures.py`: a stray argument decided a cursor block twelve spel
 it (`explain_regs.py` `cause:` lines), the matched neighbours' C for the same idiom, and the statements just before
 and after it.
 
+**Routine: read the dumps at 20 minutes.** After about 20 minutes on a function whose remaining rows are register or
+order rows, run `dumps.py BEST.c --slug S --function F` once before any more spelling search: it prints
+explain_regs.py's register pairs with their `cause:` lines, greg's conflicts and preferences, and both schedulers'
+orders for the same source. Act on the cause it names (a call argument, a copy, a value live across a call) first.
+
 1. **Dump the compiler's own intermediate code.** The pinned GCC `cc1` is a native binary you can run directly
    (`<toolchains>/gcc-2.7.2-kmc/cc1`; the folder is `~/Library/Application Support/decompnet/toolchains` on macOS,
    `~/.local/share/decompnet/toolchains` on Linux). Run it in a scratch folder on a candidate with the project's flags

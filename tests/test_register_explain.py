@@ -250,3 +250,27 @@ def test_the_report_carries_the_causes_under_each_pseudo():
     lreg = "Register 74 used 4 times across 12 insns.\nRegister 80 used 2 times across 3 insns.\n" + RTL
     text = "\n".join(rx.explain(lreg, greg, [("r", "addiu $a2, $v0, 16", "addiu $a1, $v0, 16")], (), CALL_SOURCE))
     assert "$a1 where the target has $a2" in text and "    cause: call-argument copy: insn 36" in text
+
+
+def test_dumps_prints_the_register_causes_greg_lines_and_both_schedules(capsys):
+    sys.path.insert(0, str(SCRIPTS))
+    spec = importlib.util.spec_from_file_location("dumps", SCRIPTS / "dumps.py")
+    dumps = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(dumps)
+    asked = []
+
+    class Judge:
+        slug, name = "s", "f"
+
+        def rows(self, source):
+            return 20, ROWS
+
+        def ask(self, request):
+            asked.append(request)
+            if request["op"] == "allocation":
+                return {"text": "    cause: call-argument copy", "greg": GREG}
+            return {"text": "sched order"}
+    text = dumps.report(Judge(), "int f;")
+    assert text.startswith("score 20") and "cause: call-argument copy" in text
+    assert ";; 74 conflicts: 74 111 90 2 29" in text and "sched order" in text
+    assert asked[-1]["op"] == "passes" and asked[-1]["passes"] == ["sched", "sched2"]
