@@ -45,7 +45,9 @@ def lead(search, agent, proj, fn, source, own_score, *, check=None):
     ranked = compiler_fingerprints.ranked(search.net, proj, cfg, fn, own, limit=PROFILES_MEASURED)
     if proj['arch'] == 'mips':
         rows = repair_ranking.instruction_rows(repair_ranking.evidence(search.net, fn['id'], getattr(agent, 'id', None)))
-        if flags := profile_hypotheses.kmc_cse_address_probe(own, rows):
+        for flags in (profile_hypotheses.kmc_cse_address_probe(own, rows), profile_hypotheses.kmc_expensive_probe(own, rows)):
+            if not flags:
+                continue
             profile = dict(own, flags=flags)
             # Keep the same total profile allowance. This lead has source-diff evidence.
             ranked = [(floor, profile), *((agree, p) for agree, p in ranked

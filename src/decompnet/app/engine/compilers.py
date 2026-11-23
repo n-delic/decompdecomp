@@ -34,12 +34,15 @@ FLAG_LEVELS = {"gcc": ("-O1", "-O2", "-O3", "-Os"), "ee": ("-O1", "-O2", "-O3", 
 # (an entry with a space is one variant of several flags. A library function in an N64 game was built with GCC's
 # scheduling off: -fno-schedule-insns2 took its strcmp from 97.2% to 99.1%, and both passes off matched it once the
 # C read its loads in the game's order)
+# (-fno-expensive-optimizations: a KMC GCC 2.7.2 record scan kept `andi $v1,$a3,0xffff` for a `(u16)` test of a
+# halfword-loaded key only with the flag on; at -O2 combine.c folds the cast. Matched at 0 where the default flags
+# stayed at 100 with every spelling.)
 FLAG_EXTRAS = {"gcc": ("-fno-strength-reduce", "-fno-schedule-insns", "-fno-schedule-insns2",
-                       "-fno-schedule-insns -fno-schedule-insns2"),
+                       "-fno-expensive-optimizations", "-fno-schedule-insns -fno-schedule-insns2"),
                "ee": ("-fno-strength-reduce", "-fno-schedule-insns", "-fno-common"),
                "ido": (), "mwcps2": (), "snc": ("-Xsched=0",)}  # SNC's instruction scheduling off
 SMALL_DATA_SIZES = (0, 8)
-MAX_FLAG_VARIANTS = 12
+MAX_FLAG_VARIANTS = 13
 FLAGS_SHOWN = 6
 
 

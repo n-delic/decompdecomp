@@ -18,6 +18,9 @@ pseudos). Before using them on this compiler:
 
 - Check the function's own profile: `lui $at; addu $at,$at,$sN` table access with stepped saved registers is
   `-fno-strength-reduce`, and its source indexes by byte offset; profile and source change together.
+- A target `andi rd,rs,0xffff` (or `0xff`) before a compare that the candidate lacks, whatever the cast, is
+  `-fno-expensive-optimizations` (the app's `search_flags` tries it): at `-O2` combine.c folds the `(u16)` of a
+  halfword-loaded local (one record scan, 100 -> 0; docs/learnings/function/record-scan-one-pointer-expensive-optimizations.md).
 - Remove earlier agents' `volatile`, padding arrays and frame unions first, then compare.
 - `compiler_passes(passes=["greg"])` gives the allocation table and preferences; `["sched", "sched2"]` the
   schedulers' orders; `compiler_source("gcc-2.7.2-kmc", "birthing_insn_p")` the rule's own code.

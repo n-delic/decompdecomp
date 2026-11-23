@@ -58,6 +58,22 @@ def kmc_cse_address_probe(own, rows):
     return None
 
 
+def kmc_expensive_probe(own, rows):
+    """Try `-fno-expensive-optimizations` when the target keeps a zero-extension (`andi rd,rs,0xffff` or `0xff`) the
+    candidate lacks: combine.c drops a `(u16)` or `& 0xff` of a halfword/byte-loaded local at -O2, and kept it with the
+    flag off in a KMC GCC 2.7.2 record scan (100 -> 0 with the natural source)."""
+    flags = list(own['flags'])
+    option = '-fno-expensive-optimizations'
+    if (own['toolchain'] != 'gcc-2.7.2-kmc' or '-O2' not in flags
+            or option in flags or '-fexpensive-optimizations' in flags):
+        return None
+    zero_extend = re.compile(r'^andi\s+\$\w+,\s*\$\w+,\s*0x(?:ff|ffff)$')
+    for marker, target, candidate in rows:
+        if marker == '<' and zero_extend.match(target.strip()) and not candidate.strip():
+            return [*flags, option]
+    return None
+
+
 def kmc_priorities(own, assembly, rows):
     from .allocation_evidence import diagnose
 
@@ -69,6 +85,8 @@ def kmc_priorities(own, assembly, rows):
     variants = []
     if cse := kmc_cse_address_probe(own, rows):
         variants.append(cse)
+    if expensive := kmc_expensive_probe(own, rows):
+        variants.append(expensive)
     if diagnosis['delay_slot'] and any(right.strip() == 'nop' for right in changed):
         variants.append([flag for flag in flags if not re.fullmatch(r'-g[0-3]?', flag)])
     scheduling = kmc_variants(own['toolchain'], flags, single_pass=prologue)

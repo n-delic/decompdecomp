@@ -301,3 +301,29 @@ def test_kmc_cse_probe_recognizes_repeated_relocated_store_addresses():
     assert kmc_cse_address_probe(profile, shared + reloads[:2]) is None
     for unrelated in ('sw $v0, %lo(other)($at)', 'sw $v0, %lo(cursor)($v1)'):
         assert kmc_cse_address_probe(profile, shared + [('<', high, ''), ('<', unrelated, '')] * 2) is None
+
+
+def test_kmc_expensive_probe_recognizes_a_missing_zero_extension():
+    from decompnet.app.profile_hypotheses import kmc_expensive_probe
+
+    own = {'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-G0', '-O2']}
+    shared = [(' ', 'lhu $a3, 0($a1)', 'lhu $a3, 0($a1)'), (' ', 'ori $v0, $zero, 0xffff', 'ori $v0, $zero, 0xffff')]
+    missing = [('<', 'andi $v1, $a3, 0xffff', ''), ('r', 'beq $v1, $v0, 0xc8', 'beq $a3, $v0, 0xc4')]
+    flags = ['-G0', '-O2', '-fno-expensive-optimizations']
+    assert kmc_expensive_probe(own, shared + missing) == flags
+    assert kmc_expensive_probe(dict(own, flags=flags), shared + missing) is None
+    assert kmc_expensive_probe(dict(own, flags=['-O2', '-fexpensive-optimizations']), shared + missing) is None
+    assert kmc_expensive_probe(dict(own, toolchain='ido-7.1'), shared + missing) is None
+    assert kmc_expensive_probe(dict(own, flags=['-O1']), shared + missing) is None
+    assert kmc_expensive_probe(own, shared) is None
+    # a different andi (a mask that is not a zero extension), or one the candidate has too, is not the symptom
+    assert kmc_expensive_probe(own, shared + [('<', 'andi $v1, $a3, 0xfff', '')]) is None
+    assert kmc_expensive_probe(own, shared + [('o', 'andi $v1, $a3, 0xffff', 'andi $v1, $a3, 0xffff')]) is None
+
+
+def test_flag_search_tries_expensive_optimizations_off_for_kmc_gcc():
+    from decompnet.app.engine.compilers import CompilerMixin
+
+    base = ['-G0', '-mips3', '-mgp32', '-mfp32', '-O2']
+    variants = CompilerMixin.flag_variants(object.__new__(CompilerMixin), 'gcc-2.7.2-kmc', base)
+    assert [*base, '-fno-expensive-optimizations'] in variants
