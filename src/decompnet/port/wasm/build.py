@@ -1033,6 +1033,7 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
     # installed, or no unit to know the library's build from) would send the calls to a stub that logged "not
     # implemented, skipped": a bowling game's two copies of alSynNew, code with no C, stayed unreachable and its audio
     # never started. The calls keep the function's own name and run its recompiled or interpreted code instead.
+    paired_names = library_names  # (the pairing of ultralib's data with the game's still wants every library name)
     library_names = reachable_library_names(library_names, library, set(functions) | hosted)
     _write(out / "fixed.txt", "\n".join(fixed) + "\n")
     _write(out / "functions.txt", "\n".join(sorted(functions)) + "\n")
@@ -1094,7 +1095,7 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
     if library and runtime_image:
         # the state ultralib's C shares (alGlobals) is the game's variable at the game's address
         try:
-            shared, own = library_data.pair(out, set(library), manifest.get("layout") or [], library_names or {},
+            shared, own = library_data.pair(out, set(library), manifest.get("layout") or [], paired_names or {},
                                        Path(runtime_image).read_bytes(),
                                        next((int(r.split()[1], 16) for r in fixed if r.split()[0] == "entrypoint"),
                                             0x80000400),

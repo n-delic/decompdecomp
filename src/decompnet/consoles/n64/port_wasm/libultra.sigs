@@ -42,6 +42,7 @@ osDisableInt	i32
 osRestoreInt	void	i32
 osSpTaskStartGo	void	ptr
 osSpTaskYielded	i32	ptr
+osSpTaskYield	void	
 osContInit	i32	ptr, ptr, ptr
 osContStartReadData	i32	ptr
 osContGetReadData	void	ptr

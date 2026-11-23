@@ -860,6 +860,8 @@ void w2c_env_osSpTaskStartGo(struct w2c_env *e, u32 task) {
     if (type == 1) rcp_raise(EV_DP);
 }
 u32 w2c_env_osSpTaskYielded(struct w2c_env *e, u32 task) { (void)e; (void)task; return 0; }
+/* a scheduler asks the RSP to yield its task: the host runs a task to its end at once, so there is nothing to ask */
+void w2c_env_osSpTaskYield(struct w2c_env *e) { (void)e; }
 /* osSpTaskStart is osSpTaskLoad then osSpTaskStartGo: the task runs whole at StartGo, so loading it is nothing */
 void w2c_env_osSpTaskLoad(struct w2c_env *e, u32 task) { (void)e; (void)task; }
 
@@ -1049,7 +1051,13 @@ u32 w2c_env_0x5F_osSiRawStartDma(struct w2c_env *e, u32 direction, u32 dram) {
     (void)e;
     if (direction == 1) { for (int i = 0; i < 64; i++) pif[i] = M[dram + i]; pif_run(); }
     else for (int i = 0; i < 64; i++) M[dram + i] = pif[i];
-    post_event(EV_SI);
+    /* The transfer ends after it has started, as on the console, where the controller read takes a moment: the SI event
+       arrives from the host's tick like the RSP's, not inside the call. A racing game's controller thread (priority 90)
+       sent itself the SI message in the same instant and received it at once, so it never blocked: it kept the CPU from
+       every lower-priority thread, one of which posted the queue it polled, and nothing else ran. (osContStartReadData
+       posts at once: a bowling game's startup, with its controller thread blocking there, called a filter method
+       before its audio setup had run.) */
+    rcp_raise(EV_SI);
     return 0;
 }
 /* The serial interface's registers, for a game whose own SI code runs (recompiled or interpreted: library detection

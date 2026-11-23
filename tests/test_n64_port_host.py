@@ -1176,13 +1176,27 @@ def test_a_first_function_that_loops_in_the_games_own_code_after_starting_thread
     assert "port_boot_spin();" in mips[mips.index("still running, at"):]
 
 
+def test_a_serial_interface_transfer_ends_from_the_hosts_tick_not_inside_the_call():
+    """A racing game's controller thread (priority 90) sent itself the SI message in the same instant and received it at
+    once, so it never blocked and starved every lower-priority thread (one posted the queue it polled): the SI event
+    is held and raised from the tick like the RSP's, for a raw SI DMA."""
+    text = HOST.read_text()
+    assert "post_event(EV_SI)" not in _function(text, "w2c_env_0x5F_osSiRawStartDma")
+    assert "rcp_raise(EV_SI)" in _function(text, "w2c_env_0x5F_osSiRawStartDma")
+    # a controller read through the host's own osContStartReadData posts at once (a startup that blocks there ran out
+    # of order), and with no SI event registered the game waits on the queue it gave the call
+    assert "post_event(EV_SI)" in _function(text, "si_done") and "put(mq, 0, 0, 0)" in _function(text, "si_done")
+
+
+
+
 def test_the_host_answers_the_controller_pak_and_accessory_api_of_a_console_with_none():
     """osContSetCh, osPfsInit and the other pak calls were reported "not implemented, skipped" (their C left out as
     the host's while the host defined none): every one is defined, with the shape libultra.sigs gives its callers."""
     text, sigs = HOST.read_text(), HOST.with_name("libultra.sigs").read_text().splitlines()
     names = ["osContSetCh", "osContReset", "osPfsInit", "osPfsReFormat", "osPfsChecker", "osPfsFileState",
              "osPfsFindFile", "osPfsAllocateFile", "osPfsDeleteFile", "osPfsReadWriteFile", "osPfsGetLabel",
-             "osPfsSetLabel", "osGbpakInit", "osGbpakReadWrite", "osVoiceInit", "osVoiceControlGain"]
+             "osPfsSetLabel", "osGbpakInit", "osGbpakReadWrite", "osVoiceInit", "osVoiceControlGain", "osSpTaskYield"]
     for name in names:
         assert re.search(rf"\bw2c_env_{name}\(struct w2c_env \*e", text), name
         assert any(row.split("\t")[0] == name for row in sigs), name
