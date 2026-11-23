@@ -109,3 +109,32 @@ def test_osCreateMesgQueue_is_told_by_its_six_stores_and_no_loads_or_calls():
     assert sdk_shapes.identify(_code(*stores, JR_RA, NOP, pad=2))["name"] == "osCreateMesgQueue"
     assert sdk_shapes.identify(_code(*stores[:5], JR_RA, NOP, pad=3)) is None  # one store short
     assert sdk_shapes.identify(_code(*stores, _i(0x23, 4, 8, 4), JR_RA, NOP, pad=1)) is None  # a load
+
+
+def _event_message(**override):
+    """osSetEventMesg as an unoptimised build has it: the arguments spilled to the stack, the interrupt disable
+    first, the entry's two words stored, the restore last (26 words, 104 bytes)."""
+    sll = 14 << 16 | 15 << 11 | 3 << 6  # sll $t7, $t6, 3
+    addu = 15 << 21 | 24 << 16 | 25 << 11 | 0x21  # addu $t9, $t7, $t8
+    spec = {
+        "head": [_i(9, 29, 29, -0x28), _i(0x2B, 29, 31, 0x1C), _i(0x2B, 29, 4, 0x28), _i(0x2B, 29, 5, 0x2C),
+                 _i(0x2B, 29, 6, 0x30), JAL, _i(0x2B, 29, 16, 0x18)],
+        "index": [_i(0x23, 29, 14, 0x28), _i(0x0F, 0, 24, 0x803E), _i(0x23, 29, 8, 0x2C), _i(9, 24, 24, 0x63A0), sll,
+                  addu],
+        "entry": [_i(0x2B, 29, 25, 0x20), _i(0x2B, 25, 8, 0), _i(0x23, 29, 10, 0x20), _i(0x23, 29, 9, 0x30)],
+        "tail": [_i(0, 2, 16, 0x25), _i(0, 16, 4, 0x25), JAL, _i(0x2B, 10, 9, 4), _i(0x23, 29, 31, 0x1C),
+                 _i(0x23, 29, 16, 0x18), _i(9, 29, 29, 0x28), JR_RA, NOP],
+        "pad": 0,
+    }
+    spec.update(override)
+    return _build(spec)
+
+
+def test_osSetEventMesg_is_told_by_the_two_words_it_stores_in_the_event_table():
+    code = _event_message()
+    assert len(code) == 104 and sdk_shapes.identify(code)["name"] == "osSetEventMesg"
+    # stores into another structure's fields, a halfword store or a size no build has are other routines
+    assert sdk_shapes.identify(_event_message(tail=[_i(0x2B, 10, 9, 8), JAL, JAL, JR_RA, NOP])) is None
+    assert sdk_shapes.identify(_event_message(pad=3)) is None  # 116 bytes
+    assert sdk_shapes.identify(_event_message(entry=[_i(0x2B, 29, 25, 0x20), _i(0x2B, 25, 8, 0),
+                                                     _i(0x29, 25, 8, 2), _i(0x2B, 10, 9, 4)])) is None

@@ -24,6 +24,7 @@ most of `osSetThreadPri`'s offsets showed that a halfword store anywhere but +0x
 CORPUS = "N64 library routines by structure"
 _MIN, _MAX = 100, 700
 _MIN_ANY = 32  # (the smallest routine here, osYieldThread: 60 to 80 bytes)
+_EVENT_SIZES = frozenset({88, 92, 96, 100, 104, 108, 168, 172, 176, 180, 184})  # osSetEventMesg, as builds have it
 
 
 def _words(code: bytes, big_endian: bool) -> list[int]:
@@ -161,6 +162,26 @@ def queue_jam(words: list[int], size: int) -> bool:
             and f["valid_up"])
 
 
+def event_message(words: list[int], size: int) -> bool:
+    """`osSetEventMesg(event, mq, msg)`: indexes the event table by eight bytes an event (`sll r, r, 3`, added to the
+    table's address), stores the queue at +0 and the message at +4 of its entry between the interrupt disable and
+    restore calls, and, in later builds, sends the pre-NMI event's message when shut down (reading two globals and
+    setting a third). It reads no structure through a register: its loads are the stack's spills and those globals,
+    and the only stores through another register are the entry's two words (and the global)."""
+    calls = sum(1 for w in words if w >> 26 == 3)
+    index = any(w >> 26 == 0 and w & 0x3F == 0 and w >> 6 & 31 == 3 and w >> 11 & 31 != 0 for w in words)  # sll r,r,3
+    table = any(w >> 26 == 0 and w & 0x3F == 0x21 for w in words)  # addu: the table's base and the event's offset
+    entry = [w for w in words if w >> 26 == 0x2B and w >> 21 & 31 != 29]  # sw through something but the stack
+    offsets = {w & 0xFFFF for w in entry}
+    queue, message = 0 in offsets, 4 in offsets
+    structure = [w for w in entry if 8 <= w & 0xFFFF <= 0xFF]  # a field of some other structure
+    loads = sum(1 for w in words if w >> 26 == 0x23 and w >> 21 & 31 != 29)  # lw through something but the stack
+    narrow = any(w >> 26 in (0x28, 0x29) for w in words)  # sb, sh
+    back = any(w >> 26 in (4, 5, 6, 7, 0x14, 0x15) and w & 0x8000 for w in words)  # a branch backwards: a loop
+    return (size in _EVENT_SIZES and 2 <= calls <= 3 and index and table and queue and message and not structure
+            and loads <= 4 and not narrow and not back)
+
+
 def queue_creation(words: list[int], size: int) -> bool:
     """`osCreateMesgQueue(mq, msgs, count)`: six stores into the queue and no load or call: both lists empty
     (the thread-list sentinel), the count and first zeroed, the size and the ring's address set."""
@@ -189,7 +210,8 @@ def identify(code: bytes, big_endian: bool = True) -> dict | None:
             (queue_receive, "osRecvMesg", "takes the first message off a ring buffer, waiting while it is empty"),
             (queue_send, "osSendMesg", "puts a message after the last of a ring buffer, waiting while it is full"),
             (queue_jam, "osJamMesg", "puts a message in front of the first of a ring buffer, waiting while it is full"),
-            (queue_creation, "osCreateMesgQueue", "sets up an empty message queue: lists, count, ring")):
+            (queue_creation, "osCreateMesgQueue", "sets up an empty message queue: lists, count, ring"),
+            (event_message, "osSetEventMesg", "stores a queue and a message in the event's two words of the table")):
         if check(words, len(code)):
             return {"name": name, "corpus": CORPUS, "evidence": evidence}
     return None
