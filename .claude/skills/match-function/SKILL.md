@@ -488,6 +488,15 @@ says the fix and the library families it names; try those families with `prove_c
   far worse). decomp-repair `loop_giv_local_arm_inline`
   (docs/learnings/finding/giv-locals-set-at-loop-top-vs-in-the-arms.md); `cc1 -dL` prints the giv list in emission order.
 
+- **Volatile step cursors, `if (n > 0) do { } while`, and the loop's frame hole** (KMC 2.7.2, 922 -> 0 on a 529-instruction
+  function, docs/learnings/function/volatile-cursors-to-guarded-loops.md). Stepped `volatile` locals are the loop pass's own
+  givs (`i * 3`, `i * 6`), spilled: write them off the counter, and the spill area's slots then fall where the target has
+  them (the 8-byte hole is the dropped mult-2 giv; a `for`'s copied entry test leaves stale pseudos that take slots too).
+  The counter must out-rank the argument copy (`floor_log2 (refs) * refs / live`, refs weighted by loop depth): a `for`
+  with the plain bound did it, a `do { } while (0)` around its start raised the givs as well. Library: `volatile_step_for_loop`,
+  `counter_offset_local`, `guarded_cursor_do_loop`, `load_add_in_place`, `sequential_cursor_split`, `scope_unwrap_rewrap`,
+  `adjacent_init_swap`; `prove_chain` reaches 0 from the saved best with them.
+
 ## 3b. Out of hand-written shapes? Trace the compiler instead of guessing
 
 Three or four structurally different sources landing on the same score (or the same missing/extra instruction) means
