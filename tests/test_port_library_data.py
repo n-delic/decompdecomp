@@ -124,3 +124,102 @@ def test_an_address_two_names_would_share_is_not_given(tmp_path):
 def test_a_short_cartridge_gives_no_addresses(tmp_path):
     layout, rom = project(tmp_path, {"alInit": UNIT_DEFINES, "alAudioFrame": UNIT_USES})
     assert library_data.pair(tmp_path, {"alInit.c", "alAudioFrame.c"}, layout, {}, rom[:0x1008], IMAGE, set())[0] == {}
+
+
+def hi_lo(address):
+    """The `lui` immediate and the signed low half an `addiu` adds to build `address`."""
+    low = address & 0xFFFF
+    return ((address >> 16) + (1 if low >= 0x8000 else 0)) & 0xFFFF, low
+
+
+def build_address(register, address):
+    hi, lo = hi_lo(address)
+    return [lui(register, hi), addiu(register, register, lo)]
+
+
+def constructor_project(tmp_path, constructors):
+    """Each constructor `name: [function addresses it takes]` as a unit (a call to alFilterNew and the handlers'
+    addresses as arguments) and as the game's own code; the handlers' own units are listed without a game function."""
+    (tmp_path / "ll").mkdir(exist_ok=True)
+    layout, rom, units = [], bytearray(0x1000), set()
+    at = IMAGE
+    handlers = {}
+    for name, taken in constructors.items():
+        ir = ["declare void @alFilterNew(ptr, ptr, ptr, i32)"]
+        words = []
+        for i, (handler, address) in enumerate(taken):
+            ir.append(f"declare ptr @{handler}(ptr)")
+            words += build_address(5 + i, address)
+            handlers[handler] = address
+        args = ", ".join(f"ptr @{h}" for h, _ in taken)
+        ir.append(f"define void @{name}(ptr %f) {{\n  call void @alFilterNew(ptr %f, {args}, i32 4)\n  ret void\n}}")
+        (tmp_path / "ll" / f"{name}.ll").write_text("\n".join(ir) + "\n")
+        words += [JR_RA, NOP]
+        layout.append({"name": name, "vram": at, "size": 4 * len(words)})
+        rom += code(*words)
+        units.add(name + ".c")
+        at += 4 * len(words)
+    return layout, bytes(rom), units, handlers, at
+
+
+def test_an_unnamed_handler_the_constructor_takes_is_found_from_the_constructors_code(tmp_path):
+    """alEnvmixerPull has no name in the game (large, not recognised), but alEnvmixerNew hands its address to
+    alFilterNew, so its code builds exactly one function address no named function accounts for: the C taking the
+    pull routine's address then gets it, not a wasm table index (`called 00000002, where no function is`)."""
+    layout, rom, units, handlers, _ = constructor_project(
+        tmp_path, {"alMixNew": [("alMixPull", 0x80002000), ("alMixParam", 0x80002100)]})
+    layout += [{"name": "alMixParam", "vram": 0x80002100, "size": 0x40},  # named: known
+               {"name": "func_80002000", "vram": 0x80002000, "size": 0x100}]  # not named
+    (tmp_path / "ll" / "alMixPull.ll").write_text("define ptr @alMixPull(ptr %a) {\n}\n")
+    (tmp_path / "ll" / "alMixParam.ll").write_text("define i32 @alMixParam(ptr %a) {\n}\n")
+    units |= {"alMixPull.c", "alMixParam.c"}
+    shared, own = library_data.pair(tmp_path, units, layout, {}, rom, IMAGE, set())
+    assert own["alMixPull"] == 0x80002000 and shared == {}
+
+
+def test_two_unnamed_functions_a_constructor_takes_are_not_guessed_apart(tmp_path):
+    layout, rom, units, handlers, _ = constructor_project(
+        tmp_path, {"alMixNew": [("alMixPull", 0x80002000), ("alMixOther", 0x80002100)]})
+    layout += [{"name": "func_80002000", "vram": 0x80002000, "size": 0x100},
+               {"name": "func_80002100", "vram": 0x80002100, "size": 0x100}]
+    for name in ("alMixPull", "alMixOther"):
+        (tmp_path / "ll" / f"{name}.ll").write_text(f"define ptr @{name}(ptr %a) {{\n}}\n")
+        units.add(name + ".c")
+    own = library_data.pair(tmp_path, units, layout, {}, rom, IMAGE, set())[1]
+    assert "alMixPull" not in own and "alMixOther" not in own
+
+
+def test_a_function_several_constructors_take_is_the_address_they_all_build(tmp_path):
+    """alFilterNew's own address is built by each constructor as well; what every constructor shares is it, and
+    what is left of each constructor's addresses is that constructor's own handler."""
+    layout, rom, units, handlers, _ = constructor_project(tmp_path, {
+        "alANew": [("alAPull", 0x80002000), ("alShared", 0x80003000)],
+        "alBNew": [("alBPull", 0x80002100), ("alShared", 0x80003000)]})
+    layout += [{"name": "func_80002000", "vram": 0x80002000, "size": 0x100},
+               {"name": "func_80002100", "vram": 0x80002100, "size": 0x100},
+               {"name": "func_80003000", "vram": 0x80003000, "size": 0x100}]
+    for name in ("alAPull", "alBPull"):
+        (tmp_path / "ll" / f"{name}.ll").write_text(f"define ptr @{name}(ptr %a) {{\n}}\n")
+        units.add(name + ".c")
+    own = library_data.pair(tmp_path, units, layout, {}, rom, IMAGE, set())[1]
+    assert own["alAPull"] == 0x80002000 and own["alBPull"] == 0x80002100
+
+
+def test_code_is_read_from_the_analysis_image_when_the_game_unpacks_it_at_run_time(tmp_path):
+    """The cartridge holds a compressed game's code compressed: a function's bytes are read from the project's
+    analysis image at its own ROM offset, as the layout of the boot copy doesn't hold for it."""
+    layout, rom, units, handlers, _ = constructor_project(
+        tmp_path, {"alMixNew": [("alMixPull", 0x80002000), ("alMixParam", 0x80002100)]})
+    layout += [{"name": "alMixParam", "vram": 0x80002100, "size": 0x40},
+               {"name": "func_80002000", "vram": 0x80002000, "size": 0x100}]
+    (tmp_path / "ll" / "alMixPull.ll").write_text("define ptr @alMixPull(ptr %a) {\n}\n")
+    (tmp_path / "ll" / "alMixParam.ll").write_text("define i32 @alMixParam(ptr %a) {\n}\n")
+    units |= {"alMixPull.c", "alMixParam.c"}
+    constructor = rom[0x1000:0x1000 + layout[0]["size"]]
+    analysis = tmp_path / "analysis.z64"
+    analysis.write_bytes(b"\0" * 0x300 + constructor)  # the unpacked copy, at an offset of its own
+    garbage = b"\xff" * len(rom)  # the cartridge's bytes at the boot copy's offset are not code
+    options = {"image": str(analysis), "offsets": {"alMixNew": 0x300}}
+    assert "alMixPull" not in library_data.pair(tmp_path, units, layout, {}, garbage, IMAGE, set())[1]
+    own = library_data.pair(tmp_path, units, layout, {}, garbage, IMAGE, set(), code_offsets=options)[1]
+    assert own["alMixPull"] == 0x80002000

@@ -954,7 +954,7 @@ def place_all(out: Path, lls: list[Path], functions: set, zig, env: dict, log, s
 
 def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out=(), universal: bool = False,
           library_c=None, library_names=None, recomp=None, function_headers=None, ensure_host_import=False,
-          runtime_image=None) -> Path:
+          runtime_image=None, code_offsets=None) -> Path:
     """Build the game in the save repository `repo` for the PC; returns the program (port/wasm/build/game). Only
     what changed since the last build is made again (the keys, above). `steps` are the progress bar's, when a
     caller adds its own after these (play.py); `leave_out`, library files the host provides (gather). A second
@@ -971,11 +971,13 @@ def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out
     with build_turn(repo / "port" / "wasm" / "build", log, resource="native port build"), recomp_turn:
         return _build(repo, console=console, log=log, steps=steps, leave_out=leave_out, universal=universal,
                       library_c=library_c or {}, library_names=library_names or {}, recomp=recomp,
-                      function_headers=function_headers, ensure_host_import=ensure_host_import, runtime_image=runtime_image)
+                      function_headers=function_headers, ensure_host_import=ensure_host_import, runtime_image=runtime_image,
+                      code_offsets=code_offsets)
 
 
 def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool = False, library_c=None,
-           library_names=None, recomp=None, function_headers=None, ensure_host_import=False, runtime_image=None) -> Path:
+           library_names=None, recomp=None, function_headers=None, ensure_host_import=False, runtime_image=None,
+           code_offsets=None) -> Path:
     kit = consoles.get(console).port_kit
     if kit is None or kit.wasm is None:
         raise NetworkError(f"{consoles.get(console).name} has no WebAssembly build yet (its port kit has no host)")
@@ -1080,7 +1082,10 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
                                        Path(runtime_image).read_bytes(),
                                        next((int(r.split()[1], 16) for r in fixed if r.split()[0] == "entrypoint"),
                                             0x80000400),
-                                       {r.split()[0] for r in fixed})
+                                       {r.split()[0] for r in fixed},
+                                       {int(r.split()[1], 16) for r in fixed
+                                        if len(r.split()) > 2 and r.split()[2] == "func"},
+                                       code_offsets)
         except (OSError, ImportError, ValueError) as error:
             shared, own = {}, {}
             log(f"the game's addresses for ultralib's shared variables weren't read: {error}")
