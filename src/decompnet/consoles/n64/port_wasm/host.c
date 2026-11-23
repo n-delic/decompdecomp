@@ -298,6 +298,7 @@ void w2c_env_osDestroyThread(struct w2c_env *e, u32 t) {
     (void)e;
     pthread_mutex_lock(&lock);
     PortThread *p = t ? find(t) : self;
+    LOG("osDestroyThread(%08X)%s", t, p ? "" : ": no such thread");
     if (p) {
         p->state = DONE;
         if (p == self) { schedule(); pthread_mutex_unlock(&lock); pthread_exit(NULL); }
@@ -1173,6 +1174,7 @@ static void boot_step(uint32_t *r, uint32_t w) {
 /* Whether a call in the entry routine reaches a loop that stores $a2 through $a0 a word at a time: the helper some
    entry routines fill a stack with a pattern and clear their BSS with (`jal fill` with $a0 = start, $a1 = end,
    $a2 = the word), which is not the game's first function. */
+static int boot_is_sw_zero(uint32_t w) { return (w >> 26) == 0x2B && ((w >> 16) & 31) == 0; }
 static int boot_is_fill(uint32_t at) {
     if (at < boot.entry || at - boot.entry >= 0x100000u) return 0;
     size_t off = 0x1000 + (at - boot.entry);
@@ -1185,8 +1187,8 @@ static int boot_is_fill(uint32_t at) {
     return stores && loops;
 }
 static int read_boot(void) {
-    uint32_t r[32] = {0}, pre[32] = {0};
-    int base = -1;
+    uint32_t r[32] = {0}, pre[32] = {0}, sltu_end = 0;
+    int base = -1, sltu_rd = -1;
     memset(boot_stk, 0, sizeof boot_stk);
     port_tlb_n = 0;
     boot.entry = boot_entry();
@@ -1216,12 +1218,23 @@ static int read_boot(void) {
             i++;
             continue;
         }
-        if (op == 0x2B && rt == 0 && base < 0) {                                         /* sw $zero: the BSS */
+        if (op == 0x05 && base < 0 && rt == 0 && imm < 0 && boot_is_sw_zero(rom32(0x1000 + 4 * (size_t)i + 4)) && sltu_rd == (int)rs) {
+            /* the store is the branch's delay slot (`sltu $at, $t0, $t1; bnez $at, loop; sw $zero, -4($t0)`): the
+               loop clears from the store's address up to the register it compares with */
+            uint32_t slot = rom32(0x1000 + 4 * (size_t)i + 4);
+            boot.bss = r[(slot >> 21) & 31] + (uint32_t)(int16_t)(slot & 0xFFFF); base = (int)((slot >> 21) & 31);
+            memcpy(pre, r, sizeof r);
+            if (r[sltu_end] > boot.bss) boot.bss_size = r[sltu_end] - boot.bss;
+            i++;                                                                         /* (the slot is read) */
+        } else if (op == 0x2B && rt == 0 && base < 0) {                                  /* sw $zero: the BSS */
             boot.bss = r[rs] + (uint32_t)imm; base = (int)rs; memcpy(pre, r, sizeof r);
         } else if (op == 0x05 && base >= 0 && !boot.bss_size) {                         /* bne: the loop, back */
             if (rt == 0 && (int)rs != base) boot.bss_size = pre[rs];                     /* a count down */
             else if (rt) boot.bss_size = (rs == (uint32_t)base ? pre[rt] : pre[rs]) - boot.bss; /* up to an end */
-        } else boot_step(r, w);
+        } else {
+            if (op == 0 && (w & 0x3F) == 0x2B) { sltu_rd = (int)((w >> 11) & 31); sltu_end = (w >> 16) & 31; } /* sltu */
+            boot_step(r, w);
+        }
     }
     /* a game that maps its code through the TLB at the address it has in RAM starts at that virtual address (a
        `jalr` to 0x00292E00): the same code runs at its KSEG0 address */

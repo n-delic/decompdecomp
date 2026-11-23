@@ -202,6 +202,14 @@ def _sltu(rd, rs, rt): return rs << 21 | rt << 16 | rd << 11 | 0x2B
 def _move_zero(rd): return rd << 11 | 0x21
 BREAK = 0x0D
 A0, A1, A2 = 4, 5, 6
+
+# and the form a compiler gives a `while (p < end) *p++ = 0`: the store is the branch's delay slot, and the loop is
+# skipped when the range is empty (a racing game's sibling, a tank game: its BSS was never zeroed, and the game ran on
+# the ROM's bytes in it)
+AT = 1
+DELAY_SLOT_CLEAR = [_lui(T0, 0x8007), _addiu(T0, T0, 0x1940), _lui(T1, 0x8011), _addiu(T1, T1, -0x20),
+                    4 << 26 | T0 << 21 | T1 << 16 | 5, 0, _addiu(T0, T0, 4), _sltu(AT, T0, T1), _bne(AT, 0, -3),
+                    _sw0(-4, T0), 0x0C000000 | (0x80001234 >> 2) & 0x3FFFFFF, 0, BREAK, 0]
 # an entry routine that fills a stack with a pattern and clears its BSS with one word-fill helper (`jal fill`, $a0 =
 # start, $a1 = end, $a2 = the word, here set in the delay slot), then calls the game's first function and breaks
 FILL_HELPER = [_addiu(A1, A1, -4, op=8), _sltu(T0, A0, A1), 4 << 26 | T0 << 16 | 3 & 0xFFFF, 0x2B << 26 | A0 << 21 | A2 << 16,
@@ -236,6 +244,8 @@ static uint32_t be32(uint32_t a) { uint8_t *p = at(a); return (uint32_t)p[0] << 
     (COUNT_DOWN, 0x80200400, b"E", "80000400 80026E00 8004AAA0 93840 1", 0xACC8580A),  # CIC-6106: 0x200000
     # the first call is a fill helper, not the game: its zero fill is the BSS, and the call before a `break` starts the game
     (FILL_ENTRY, 0x80000400, b"E", "80000400 80001234 800B3210 CE00 1", None),
+    # the clear's store sits in the branch's delay slot, up to the register the loop compares with
+    (DELAY_SLOT_CLEAR, 0x80000400, b"E", "80000400 80001234 80071940 9E6A0 1", None),
     # a start address below KSEG0 (a `jalr` to a TLB-mapped 0x00292E00) is the same code at its KSEG0 address
     (TLB_ENTRY, 0x80000400, b"E", "80000400 80292E00 00000000 0 1", None),
 ])
