@@ -154,9 +154,10 @@ class Gateway:
             result = self.patient("tools/call", {"name": tool, "arguments": arguments},
                                   wait=max(0, deadline - time.time()))
             text = "\n".join(part.get("text", "") for part in result.get("content", []))
-            if result.get("isError"):
-                raise McpError(f"{tool}: {text[:500]}")
             lowered = text.lower()
+            # The gateway marks its "still running ... repeat the same call" answer as an error result: repeat it, don't raise.
+            if result.get("isError") and not (STILL_RUNNING in lowered and "repeat" in lowered):
+                raise McpError(f"{tool}: {text[:500]}")
             if "accepted" in lowered and "not repeat" in lowered:
                 return text  # the app took the work and will finish it: repeating would only queue it twice
             if STILL_RUNNING in lowered and "repeat" in lowered:

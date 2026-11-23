@@ -30,6 +30,7 @@ class FakeApp:
 
     def __init__(self, home):
         self.claims, self.revokes, self.status, self.creates, self.busy = [], [], "open", [], 0
+        self.busy_is_error = False
         self.drops = 0  # the next N tools/call requests get HTTP 503 (an overloaded app)
         self.owner = ""  # when set, claim_function refuses: someone else holds the function
         self.calls, self.answers = [], ["ok"]  # the other tools' calls, and what they answer (the last repeats)
@@ -92,6 +93,9 @@ class FakeApp:
                 if outer.busy:
                     outer.busy -= 1
                     text = "claim_function is still running; repeat exactly the same call"
+                    if outer.busy_is_error:  # the real gateway answers "still running" as an error result
+                        return self.reply({"jsonrpc": "2.0", "id": body["id"], "result": {
+                            "isError": True, "content": [{"type": "text", "text": text}]}})
                 else:
                     text = f"## CLAIMED: demo/{args.get('function') or 'func_8001'}\nclaim_token: abc123\n"
                 self.reply({"jsonrpc": "2.0", "id": body["id"], "result": {"content": [{"type": "text", "text": text}]}})
@@ -197,6 +201,17 @@ def test_a_still_running_answer_repeats_the_identical_call(world, monkeypatch):
         assert app.claims[:3] == [{"strategy": "nearest", "max_insns": 800}] * 3
     finally:
         setup.main(["stop", "claude-t6"])
+
+
+def test_a_still_running_answer_marked_as_an_error_result_is_repeated_too(world, monkeypatch):
+    setup, app, home, primary = world
+    monkeypatch.setattr(setup.time, "sleep", lambda _: None)
+    app.busy, app.busy_is_error = 2, True
+    assert start(setup, home, primary, "--holder", "claude-t6e") == 0
+    try:
+        assert app.claims[:3] == [{"strategy": "nearest", "max_insns": 800}] * 3
+    finally:
+        setup.main(["stop", "claude-t6e"])
 
 
 def test_the_renewal_ends_by_itself_once_the_function_matches(world):
