@@ -22,6 +22,7 @@ def _create_thread(**drop):
         "id": _i(0x2B, 4, 5, 0x14),     # sw $a1, 0x14($a0)
         "flags": _i(0x29, 4, 0, 0x12),  # sh $zero, 0x12($a0)
         "state": _i(0x29, 4, 8, 0x10),  # sh $t0, 0x10($a0)
+        "pc": _i(0x2B, 4, 6, 0x11C),    # sw $a2, 0x11C($a0): the entry point into the saved context
     }
     return _code(JAL, *[w for k, w in words.items() if k not in drop], JAL, pad=40)
 
@@ -36,13 +37,31 @@ def test_a_build_no_table_has_is_told_osCreateThread_by_the_thread_fields_it_set
 
 
 def test_a_function_missing_any_of_the_thread_stores_or_the_calls_is_not_named():
-    for missing in ("id", "flags", "state"):
+    for missing in ("id", "flags", "state", "pc"):
         assert sdk_shapes.identify(_create_thread(**{missing: 1})) is None
     assert sdk_shapes.identify(_code(JAL, *[_i(0x2B, 4, 5, 0x14), _i(0x29, 4, 0, 0x12), _i(0x29, 4, 8, 0x10)], pad=40)) is None
     # a struct that only has a halfword of zero at +0x10 (cleared, not a state) isn't a thread's
     clear = _code(JAL, _i(0x2B, 4, 5, 0x14), _i(0x29, 4, 0, 0x12), _i(0x29, 4, 0, 0x10), JAL, pad=40)
     assert sdk_shapes.identify(clear) is None
     assert sdk_shapes.identify(_create_thread()[:60]) is None  # too short to be one
+
+
+def test_an_unoptimised_build_stores_the_id_through_a_register_it_was_spilled_to():
+    """A game's own libultra, built without optimisation, had `lw $t6, 0x2C($sp); sw $t6, 0x14($t7)`: the id is not
+    stored from $a1. The stack's own store of the argument is no thread's id; and a routine with the id and halfword
+    stores but no saved pc (the debugger's thread status reader, 472 bytes in several games) is not osCreateThread."""
+    spilled = _code(JAL, _i(0x2B, 15, 14, 0x14), _i(0x29, 9, 0, 0x12), _i(0x29, 9, 24, 0x10), _i(0x2B, 11, 10, 0x11C),
+                    JAL, pad=40)
+    assert sdk_shapes.identify(spilled)["name"] == "osCreateThread"
+    on_the_stack = _code(JAL, _i(0x2B, 29, 14, 0x14), _i(0x29, 9, 0, 0x12), _i(0x29, 9, 24, 0x10),
+                         _i(0x2B, 11, 10, 0x11C), JAL, pad=40)
+    assert sdk_shapes.identify(on_the_stack) is None
+    # a program's first function that sets a thread up inline, among many calls, is not the library's routine
+    inline = _code(*([JAL] * 6), _i(0x2B, 15, 14, 0x14), _i(0x29, 9, 0, 0x12), _i(0x29, 9, 24, 0x10),
+                   _i(0x2B, 11, 10, 0x11C), pad=60)
+    assert sdk_shapes.identify(inline) is None
+    no_pc = _code(JAL, _i(0x2B, 15, 14, 0x14), _i(0x29, 9, 0, 0x12), _i(0x29, 9, 24, 0x10), JAL, pad=40)
+    assert sdk_shapes.identify(no_pc) is None
 
 
 def _yield_thread(*, branch=False, extra_store=False, state=2):

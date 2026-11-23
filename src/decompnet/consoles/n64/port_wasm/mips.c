@@ -67,6 +67,12 @@ typedef struct { const uint32_t *words, *masks; uint32_t count; PortMipsCall cal
 __attribute__((weak)) const PortMipsPattern port_mips_patterns[1] = {{0, 0, 0, 0}};
 __attribute__((weak)) const unsigned port_mips_pattern_count = 0;
 
+/* The host's own libultra routines by name (interp.c's, from the names the host defines): the run-time structural
+   test below names a routine in code the build never saw, and a call to it is this host function. */
+typedef struct { const char *name; PortMipsCall call; } PortMipsShape;
+__attribute__((weak)) const PortMipsShape port_mips_shapes[1] = {{0, 0}};
+__attribute__((weak)) const unsigned port_mips_shape_count = 0;
+
 /* PORT_ENTRIES=path: every address the game starts running here (a function's entry: a call, a pointer, a thread),
    each once, appended as it's first seen, so a game that's stopped keeps what it found. The importer reads the
    project's file as evidence of where functions start (consoles/n64/code.py, runtime_entries): a racing game's
@@ -146,16 +152,244 @@ static PortMipsCall with_pattern(uint32_t vram) {
     return match;
 }
 
-static PortMipsCall with_c(uint32_t vram) {
+/* ---------------------------------------------------------------- libultra routines told by structure, at run time
+
+   A game that decompresses or loads its real code at run time carries its own libultra there, in code the build never
+   saw, so no fingerprint could name it: its own osCreateThread, osRecvMesg and the rest ran against kernel structures
+   the host doesn't keep, and the game's threads never ran (a loader whose libultra sat in the decompressed program).
+   This is consoles/n64/sdk_shapes.py's test over the words in RAM when the interpreter is about to run a function it
+   has no C for: the routine is told by the OSThread and OSMesgQueue fields it reads and writes and by its calls, and
+   when it is one the host defines, the call is that host function. The size a test wants is where the function
+   ends: its `jr $ra` that no branch of it jumps past. A verdict is kept by address with a hash of the function's
+   first words, so another overlay loaded at the same address is looked at again. */
+#define OPC(w) ((w) >> 26)
+#define IMM(w) ((w) & 0xFFFFu)
+#define RS(w) (((w) >> 21) & 31u)
+#define RT(w) (((w) >> 16) & 31u)
+#define SHAPE_MAX_WORDS 175 /* 700 bytes */
+
+typedef struct {
+    unsigned calls, divides, state_stores, other_halfword_stores, tlnext, valid_stores, first_stores, count_loads,
+             first_loads, msg_loads;
+    int reads_state, stores_priority, reads_priority, reads_queue, runnable, waiting, stopped, no_block, valid_down,
+        valid_up, wide_load;
+    unsigned stored; /* a bit for each queue field stored: 0, 4, 8, 0xC, 0x10, 0x14 (at offset / 4) */
+} ShapeFeatures;
+
+static void shape_features(const uint32_t *w, unsigned n, ShapeFeatures *f) {
+    memset(f, 0, sizeof *f);
+    for (unsigned i = 0; i < n; i++) {
+        uint32_t op = OPC(w[i]), imm = IMM(w[i]);
+        if (op == 3) f->calls++;
+        if (op == 0 && ((w[i] & 63) == 0x1A || (w[i] & 63) == 0x1B)) f->divides++;
+        if (op == 9 && RS(w[i]) == 0) {
+            if (imm == 2) f->runnable = 1;
+            if (imm == 8) f->waiting = 1;
+            if (imm == 1) f->stopped = 1;
+            if (imm == 0xFFFF) f->no_block = 1;
+        }
+        if (op == 9 && RS(w[i]) != 0) { if (imm == 0xFFFF) f->valid_down = 1; if (imm == 1) f->valid_up = 1; }
+        if ((op == 0x21 || op == 0x25) && imm == 0x10) f->reads_state = 1;
+        if (op == 0x21 || op == 0x23 || op == 0x25) f->wide_load = 1;
+        if (op == 0x29) { if (imm == 0x10) f->state_stores++; else f->other_halfword_stores++; }
+        if (op == 0x2B) {
+            if (imm == 4) f->stores_priority = 1;
+            if (imm == 8) f->valid_stores++;
+            if (imm == 0xC) { f->first_stores++; f->tlnext++; }
+            if (imm == 0 || imm == 4 || imm == 8 || imm == 0xC || imm == 0x10 || imm == 0x14) f->stored |= 1u << (imm >> 2);
+        }
+        if (op == 0x23) {
+            if (imm == 4) f->reads_priority = 1;
+            if (imm == 8) f->reads_queue = 1;
+            if (imm == 0xC) { f->tlnext++; f->first_loads++; }
+            if (imm == 0x10) f->count_loads++;
+            if (imm == 0x14) f->msg_loads++;
+        }
+    }
+}
+
+static int shape_event_message(const uint32_t *w, unsigned n, unsigned size) {
+    static const unsigned sizes[] = {88, 92, 96, 100, 104, 108, 168, 172, 176, 180, 184};
+    int ok = 0, index = 0, table = 0, narrow = 0, back = 0, queue = 0, message = 0, structure = 0;
+    unsigned calls = 0, loads = 0;
+    for (unsigned i = 0; i < sizeof sizes / sizeof *sizes; i++) if (sizes[i] == size) ok = 1;
+    if (!ok) return 0;
+    for (unsigned i = 0; i < n; i++) {
+        uint32_t op = OPC(w[i]), imm = IMM(w[i]);
+        if (op == 3) calls++;
+        if (op == 0 && (w[i] & 63) == 0 && ((w[i] >> 6) & 31) == 3 && ((w[i] >> 11) & 31) != 0) index = 1;
+        if (op == 0 && (w[i] & 63) == 0x21) table = 1;
+        if (op == 0x2B && RS(w[i]) != 29) {
+            if (imm == 0) queue = 1;
+            if (imm == 4) message = 1;
+            if (imm >= 8 && imm <= 0xFF) structure = 1;
+        }
+        if (op == 0x23 && RS(w[i]) != 29) loads++;
+        if (op == 0x28 || op == 0x29) narrow = 1;
+        if ((op == 4 || op == 5 || op == 6 || op == 7 || op == 0x14 || op == 0x15) && (w[i] & 0x8000)) back = 1;
+    }
+    return calls >= 2 && calls <= 3 && index && table && queue && message && !structure && loads <= 4 && !narrow && !back;
+}
+
+/* Whether one of the function's calls goes to a routine that reads the CPU's Status register (`mfc0 $r, $12`): the
+   interrupt disable the libultra routines that touch the kernel's lists begin with. A program's first function can
+   set a thread up inline and have the same stores and as few calls; its callees are not that leaf. */
+static int shape_calls_interrupt_leaf(const uint32_t *w, unsigned n, uint32_t vram, int every) {
+    int found = 0;
+    for (unsigned i = 0; i < n; i++) {
+        if (OPC(w[i]) != 3) continue;
+        uint32_t target = ((vram + 4u * i) & 0xF0000000u) | ((w[i] & 0x3FFFFFFu) << 2);
+        int leaf = 0, status = 0;
+        for (unsigned k = 0; k < 16 && !leaf; k++) {
+            uint32_t x = fetch(target + 4u * k);
+            if (((x & 0xFFE00000u) == 0x40000000u || (x & 0xFFE00000u) == 0x40800000u) && ((x >> 11) & 31) == 12)
+                status = 1; /* mfc0 or mtc0 of Status */
+            if (x == 0x03E00008u) leaf = 1; /* the leaf ends within sixteen words */
+        }
+        if (leaf && status) found = 1;
+        else if (every) return 0;
+    }
+    return found;
+}
+
+/* sdk_shapes.py's identify(), the same tests over the function's words: the library's name, or 0 */
+static const char *shape_identify_words(const uint32_t *w, unsigned n) {
+    unsigned size = n * 4;
+    if (size < 32 || size > 700) return 0;
+    ShapeFeatures f;
+    shape_features(w, n, &f);
+    if (size >= 100) { /* osCreateThread: the id into +0x14, flags cleared at +0x12, a state halfword at +0x10 */
+        int ids = 0, flags = 0, state = 0, pc = 0;
+        for (unsigned i = 0; i < n; i++) {
+            if (OPC(w[i]) == 0x2B && IMM(w[i]) == 0x14 && RS(w[i]) != 29) ids = 1; /* (from $a1, or a spilled copy of it) */
+            if (OPC(w[i]) == 0x2B && IMM(w[i]) == 0x11C) pc = 1; /* the entry point into the saved context */
+            if (OPC(w[i]) == 0x29 && RT(w[i]) == 0 && IMM(w[i]) == 0x12) flags = 1;
+            if (OPC(w[i]) == 0x29 && IMM(w[i]) == 0x10 && RT(w[i]) != 0) state = 1;
+        }
+        if (ids && pc && flags && state && f.calls >= 2 && f.calls <= 3) return "osCreateThread";
+    }
+    if (n >= 8 && n <= 32 && f.calls == 3) { /* osYieldThread: three calls, no branch, one halfword store */
+        int branch = 0, other = 0, runnable_reg[32] = {0};
+        unsigned states = 0, state_reg = 0;
+        for (unsigned i = 0; i < n; i++) {
+            uint32_t op = OPC(w[i]);
+            if (op == 1 || (op >= 4 && op <= 7) || (op >= 0x14 && op <= 0x17)) branch = 1;
+            if (op == 9 && RS(w[i]) == 0 && IMM(w[i]) == 2) runnable_reg[RT(w[i])] = 1;
+            if (op == 0x28 || op == 0x29 || op == 0x2A || op == 0x2B || op == 0x2E || op == 0x31 || op == 0x39 || op == 0x3D) {
+                if (op == 0x29 && IMM(w[i]) == 0x10) { states++; state_reg = RT(w[i]); }
+                else if (!(op == 0x2B && RS(w[i]) == 29)) other = 1;
+            }
+        }
+        if (!branch && states == 1 && !other && runnable_reg[state_reg]) return "osYieldThread";
+    }
+    if (size >= 200 && size <= 450 && f.reads_state && f.state_stores >= 3 && !f.other_halfword_stores
+        && !f.stores_priority && f.reads_priority && f.reads_queue && f.runnable && f.waiting && f.calls >= 6)
+        return "osStartThread";
+    if (size >= 150 && size <= 320 && f.reads_state && f.state_stores == 1 && !f.other_halfword_stores
+        && f.stores_priority && f.reads_priority && f.reads_queue && f.runnable && f.calls >= 4)
+        return "osSetThreadPri";
+    if (size >= 150 && size <= 320 && f.reads_state && f.state_stores == 0 && !f.other_halfword_stores && f.tlnext >= 4
+        && f.stopped && !f.runnable && !f.waiting && f.calls >= 3 && f.calls <= 5)
+        return "osDestroyThread";
+    if (size >= 250 && size <= 360 && f.calls == 6 && f.divides == 1 && f.state_stores == 1 && f.waiting && f.no_block
+        && f.valid_stores == 1 && f.msg_loads >= 1) { /* a blocking ring buffer */
+        if (f.first_stores == 1 && f.valid_down && f.count_loads <= 2 && f.first_loads == 2) return "osRecvMesg";
+        if (f.first_stores == 0 && !f.valid_down && f.valid_up) return "osSendMesg";
+        if (f.first_stores == 1 && f.valid_down && f.count_loads >= 3 && f.valid_up) return "osJamMesg";
+    }
+    if (size >= 32 && size <= 48 && f.calls == 0 && f.stored == 0x3Fu && !f.wide_load) return "osCreateMesgQueue";
+    if (shape_event_message(w, n, size)) return "osSetEventMesg";
+    return 0;
+}
+
+static const char *shape_identify(const uint32_t *w, unsigned n, uint32_t vram) {
+    const char *name = shape_identify_words(w, n);
+    /* every one of them but osCreateMesgQueue (six stores, no call) disables interrupts first */
+    if (!name || !strcmp(name, "osCreateMesgQueue")) return name;
+    /* osCreateThread calls only the interrupt disable and restore; the others call more (the thread lists' routines) */
+    return shape_calls_interrupt_leaf(w, n, vram, !strcmp(name, "osCreateThread")) ? name : 0;
+}
+
+/* Where the function at `vram` ends, in words: its `jr $ra` and the delay slot after it that no branch of the
+   function jumps past; 0 when there is none within 700 bytes (not a function the tests know). */
+static unsigned shape_extent(uint32_t vram, uint32_t *w) {
+    uint32_t farthest = 0;
+    for (unsigned i = 0; i < SHAPE_MAX_WORDS; i++) {
+        uint32_t pc = vram + 4u * i;
+        w[i] = fetch(pc);
+        uint32_t op = OPC(w[i]);
+        /* an indirect jump or call (`jalr`, `jr` through anything but $ra): none of the routines the tests know has one,
+           and code that does is a stub or a bigger function that runs on into the routine after it (a program's
+           entry: `jalr $a0` and then osCreateThread, six words later, judged as one function) */
+        if (op == 0 && ((w[i] & 0xFC1F07FFu) == 9u || ((w[i] & 0xFC1FFFFFu) == 8u && RS(w[i]) != 31))) return 0;
+        if (op == 1 || (op >= 4 && op <= 7) || (op >= 0x14 && op <= 0x17)) {
+            int32_t off = (int16_t)(uint16_t)IMM(w[i]);
+            uint32_t to = pc + 4u + (uint32_t)(off * 4);
+            if (off > 0 && to > farthest) farthest = to;
+        }
+        if (w[i] == 0x03E00008u && pc + 8u >= farthest && i + 1 < SHAPE_MAX_WORDS) {
+            w[i + 1] = fetch(pc + 4u);
+            return i + 2;
+        }
+    }
+    return 0;
+}
+
+#define SHAPE_CACHE 512
+static struct { uint32_t vram, hash; int known; PortMipsCall call; } shaped[SHAPE_CACHE];
+static PortMipsCall with_shape(uint32_t vram) {
+    if (!port_mips_shape_count || (vram & 3u) || vram < 0x80000400u || vram >= 0x80800000u) return 0;
+    uint32_t h = 2166136261u;
+    for (unsigned i = 0; i < 8; i++) h = (h ^ fetch(vram + 4u * i)) * 16777619u;
+    if (!h) return 0;
+    unsigned slot = (vram >> 2) & (SHAPE_CACHE - 1);
+    if (shaped[slot].known && shaped[slot].vram == vram && shaped[slot].hash == h) return shaped[slot].call;
+    PortMipsCall call = 0;
+    uint32_t w[SHAPE_MAX_WORDS + 2];
+    unsigned n = shape_extent(vram, w);
+    const char *name = n ? shape_identify(w, n, vram) : 0;
+    if (name) {
+        for (unsigned i = 0; i < port_mips_shape_count; i++)
+            if (!strcmp(port_mips_shapes[i].name, name)) { call = port_mips_shapes[i].call; break; }
+        if (call) {
+            static uint32_t said[64];
+            static unsigned count;
+            unsigned k = 0;
+            while (k < count && said[k] != vram) k++;
+            if (k == count && count < 64) {
+                said[count++] = vram;
+                fprintf(stderr, "interpreter: the code at %08X is libultra's %s (told by its structure): the host's runs instead\n",
+                        vram, name);
+            }
+        }
+    }
+    shaped[slot].vram = vram; shaped[slot].hash = h; shaped[slot].known = 1; shaped[slot].call = call;
+    return call;
+}
+/* for the tests: the library's name for the function at `vram` in memory, or 0 */
+const char *port_mips_shape_name(uint32_t vram) {
+    uint32_t w[SHAPE_MAX_WORDS + 2];
+    if (!M) M = port_memory();
+    unsigned n = shape_extent(vram, w);
+    return n ? shape_identify(w, n, vram) : 0;
+}
+
+/* `shapes`: also ask the structural test. Only a call's target is told by structure: the address a function returns
+   to is no call, and a stub that returns into the start of a routine (a program's `jalr $a0`, whose return address is
+   the routine after it) ran that routine again and again, each time returning to the same address. */
+static PortMipsCall with_c(uint32_t vram, int shapes) {
     uint32_t slot = (vram >> 2) & (CACHE - 1);
-    if (found[slot].vram == vram && (found[slot].call || !port_mips_pattern_count)) return found[slot].call;
+    if (found[slot].vram == vram && (found[slot].call || (!port_mips_pattern_count && !port_mips_shape_count)))
+        return found[slot].call;
     unsigned lo = 0, hi = port_mips_call_count;
     while (lo < hi) { unsigned mid = (lo + hi) / 2; if (port_mips_calls[mid].vram < vram) lo = mid + 1; else hi = mid; }
     PortMipsCall c = lo < port_mips_call_count && port_mips_calls[lo].vram == vram ? port_mips_calls[lo].call : 0;
     found[slot].vram = vram;
     found[slot].call = c;
     /* An overlay can be replaced at the same address: neither a match nor a miss is durable. */
-    return c ? c : with_pattern(vram);
+    if (c) return c;
+    PortMipsCall p = with_pattern(vram);
+    return p ? p : shapes ? with_shape(vram) : 0;
 }
 
 /* ---------------------------------------------------------------- each host thread's MIPS stack */
@@ -486,6 +720,7 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
     memcpy(c.f, fregs, sizeof c.f);
     c.status = 0x2000FF01u;
     PortMipsCall relocated = with_pattern(entry);
+    if (!relocated) relocated = with_shape(entry);
     if (relocated) { call_c(&c, relocated); goto done; }
     uint32_t pc = entry;
     unsigned long steps = 0;
@@ -597,7 +832,10 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
         if (kind == 1) {
             if (pc == RETURN) break;
             /* a call (or tail call) to a function with C: that C, then on at $ra, as its return would */
-            for (PortMipsCall fn; (fn = with_c(pc)) != 0;) {
+            /* (only a call's own target is told by structure: not where a routine returns to, by `jr $ra` or after the
+               call, which is where a stub's `jalr` has its callee come back into the routine that follows it) */
+            int first = !(jop >> 26 == 0 && (jop & 0xFC1FFFFFu) == 8u && ((jop >> 21) & 31) == 31);
+            for (PortMipsCall fn; (fn = with_c(pc, first)) != 0; first = 0) {
                 if (tracing > 1) fprintf(stderr, "interpreter: %08X calls C at %08X (%08X, %08X, %08X, %08X)\n", entry, pc,
                                          (uint32_t)c.r[4], (uint32_t)c.r[5], (uint32_t)c.r[6], (uint32_t)c.r[7]);
                 call_c(&c, fn);

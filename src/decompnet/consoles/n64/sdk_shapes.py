@@ -19,6 +19,11 @@ given, an `osRecvMesg` that parked a thread in the game's own `__osEnqueueAndYie
 `OSThread` and `OSMesgQueue` fields it reads and writes and its calls. Over every ROM project here, each hit was the
 routine itself (named already, or the same routine under a prefixed name); an audio engine's routine that shared
 most of `osSetThreadPri`'s offsets showed that a halfword store anywhere but +0x10 rules a thread routine out.
+
+The port host runs the same tests at run time (port_wasm/mips.c's shape_identify, a C port: change them together,
+tests/test_n64_port_shapes.py runs both over the same words), for the games that decompress or load their real code
+and so carry their own libultra in code the build never saw: when the interpreter is about to run a function it has
+no C for, the routine is told by these tests and, when the host defines it, the host's runs instead.
 """
 
 CORPUS = "N64 library routines by structure"
@@ -39,11 +44,18 @@ def _is(word: int, op: int, rt: int | None, imm: int) -> bool:
 def thread_creation(words: list[int]) -> bool:
     """`osCreateThread(thread, id, entry, arg, sp, pri)`: id into thread+0x14, flags cleared at +0x12, state (a
     halfword) set at +0x10, interrupts disabled and restored around linking the thread into the active queue."""
-    ids = any(_is(w, 0x2B, 5, 0x14) for w in words)  # sw $a1, 0x14(thread)
+    # sw <the id>, 0x14(thread): from $a1 in an optimised build, through a register the argument was spilled to and
+    # reloaded in an unoptimised one (a game's own build of libultra had `lw $t6, 0x2C($sp); sw $t6, 0x14($t7)`)
+    ids = any(_is(w, 0x2B, None, 0x14) and (w >> 21 & 31) != 29 for w in words)
+    # and the entry point into the saved context's pc (+0x11C): what a routine that only reads a thread's fields
+    # (the debugger's thread status) and has the stores of an id and the two halfwords does not do
+    ids = ids and any(_is(w, 0x2B, None, 0x11C) for w in words)
     flags = any(_is(w, 0x29, 0, 0x12) for w in words)  # sh $zero, 0x12(thread)
     state = any(_is(w, 0x29, None, 0x10) and w >> 16 & 31 != 0 for w in words)  # sh <non-zero>, 0x10(thread)
     calls = sum(1 for w in words if w >> 26 == 3)  # jal: the interrupt disable and restore routines
-    return ids and flags and state and calls >= 2
+    # exactly two calls in every one of the hundred copies here (the interrupt disable and restore): a larger function
+    # that sets a thread up inline (a program's first function) has more, and is not the library's routine
+    return ids and flags and state and 2 <= calls <= 3
 
 
 def thread_yield(words: list[int]) -> bool:
