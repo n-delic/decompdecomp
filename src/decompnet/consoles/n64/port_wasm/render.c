@@ -2470,6 +2470,7 @@ void port_vi_mode(uint32_t mode) {
    honoured, every frame the game handed over before it had drawn into the buffer showed the memory's leftovers
    (green, or the last screen's pixels in the new mode's layout) for a few frames at each change of screen. */
 void port_vi_black(int on) { vi.black = on != 0; }
+int port_vi_blanked(void) { return vi.black; }
 void port_vi_yscale(float s) { if (s > 0) vi.yscale = s; }
 void port_vi_features(uint32_t f) {
     if (f & 0x01) vi.gamma = 1;

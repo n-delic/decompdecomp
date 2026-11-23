@@ -95,8 +95,25 @@ EXPORT void CALL MoveScreen(int x, int y) { (void)x; (void)y; }
 EXPORT void CALL RomClosed(void) {}
 EXPORT int CALL RomOpen(void) { return 1; }
 EXPORT void CALL ShowCFB(void) {}
-EXPORT void CALL UpdateScreen(void) {}
-EXPORT void CALL ViStatusChanged(void) {}
+/* EMU_VI_LOG=file: a line each time the VI's status, origin or horizontal video changes, "task N status S origin O
+   width W hvideo H": N the graphics tasks handed over so far. libultra's osViBlack blanks the picture by writing 0 to
+   the horizontal video register (an active area no wide), leaving the status alone, so the file says when the console
+   showed nothing, to compare with the port's PORT_SWAP_LOG (tools/n64_vi_compare.py). */
+static void vi_log(void) {
+    static FILE *log; static int tried; static unsigned last_status = ~0u, last_origin = ~0u, last_hvideo = ~0u;
+    if (!ready || !gfx.VI_STATUS_REG || !gfx.VI_ORIGIN_REG) return;
+    if (!tried) { const char *path = getenv("EMU_VI_LOG"); tried = 1; if (path) log = fopen(path, "w"); }
+    if (!log) return;
+    unsigned status = *gfx.VI_STATUS_REG, origin = *gfx.VI_ORIGIN_REG & 0xFFFFFF;
+    unsigned hvideo = gfx.VI_H_START_REG ? *gfx.VI_H_START_REG : 0;
+    if (status == last_status && origin == last_origin && hvideo == last_hvideo) return;
+    last_status = status; last_origin = origin; last_hvideo = hvideo;
+    fprintf(log, "task %u status %08X origin %06X width %u hvideo %08X\n", frames, status, origin,
+            gfx.VI_WIDTH_REG ? *gfx.VI_WIDTH_REG : 0, hvideo);
+    fflush(log);
+}
+EXPORT void CALL UpdateScreen(void) { vi_log(); }
+EXPORT void CALL ViStatusChanged(void) { vi_log(); }
 EXPORT void CALL ViWidthChanged(void) {}
 EXPORT void CALL ReadScreen2(void *dest, int *width, int *height, int front) { (void)dest; (void)front; if (width) *width = 0; if (height) *height = 0; }
 EXPORT void CALL SetRenderingCallback(void (*callback)(int)) { (void)callback; }
