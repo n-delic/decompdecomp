@@ -1201,6 +1201,15 @@ nothing to find. Planned: PowerPC's `lfs` from the small data (`@sda21`) and x86
 processors' load readers (GameCube/Wii, Windows PC, Xbox), and project mode needs the word from the unit's original
 object rather than a ROM; doubles need both words proved before the literal is written.
 
+### Call arguments and return values from the target's registers beyond MIPS
+
+Library families that read which register the target's code fills to fix a call or a return m2c got wrong:
+`missing_call_argument_local` (an argument the target computes into `$a0`-`$a3` and the draft left off, taken from the
+local that already holds it, the callee's declaration from its matched C: the app passes `callees`,
+docs/learnings/finding/missing-call-argument-local.md). They reach every MIPS console, ROM and project mode alike
+(N64, PS1, PS2, PSP). Planned: PowerPC (`r3`-`r10` and `r3` for the result, GameCube/Wii) and x86 (the pushes before a
+`call` and `eax`, Windows PC, Xbox) need their processors' call-setup readers, and ARM (DS, GBA) `r0`-`r3`.
+
 ## Recently done
 
 - **The Deep Permuter detects which compiler built a near-match.** An N64 game built with KMC GCC 2.7.2 had eight
