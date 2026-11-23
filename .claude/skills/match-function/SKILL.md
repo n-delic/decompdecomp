@@ -497,6 +497,17 @@ says the fix and the library families it names; try those families with `prove_c
   `counter_offset_local`, `guarded_cursor_do_loop`, `load_add_in_place`, `sequential_cursor_split`, `scope_unwrap_rewrap`,
   `adjacent_init_swap`; `prove_chain` reaches 0 from the saved best with them.
 
+- **Typed one-member field reads that sit too early, two neighbours the scheduler swaps, and a block of exactly three
+  local quantities** (KMC 2.7.2, a 603-instruction state machine, 1695 -> 0; docs/learnings/function/state-machine-volatile-pin-and-plain-field-reads.md,
+  docs/learnings/finding/local-alloc-three-quantity-block-sort.md). `((Rec *) p)->value` reads hoist above a store to a scalar
+  global (sched.c `true_dependence` treats the member load as a different object): write all of them as plain casts
+  (`record_member_plain`, 1370 -> 415). Two accesses through one base are free to swap unless both are `volatile`: mark exactly the
+  two (`volatile_access_pin`, 120 -> 60 -> 0). A block with exactly three local quantities is sorted by a buggy exchange in
+  local-alloc.c, so the spelling that makes one of them global (the mask written into the shared result local,
+  `rmw_result_local`) flips the allocation. One scratch local reused by two goto ladders gets a name per ladder
+  (`region_local_split`, 1675 -> 1370); `a = b = c = 0.0f` instead of a zero local in a `do { } while (0)` fence
+  (`float_literal_chain`); m2c's mask-and-shift word updates as `p->field |= K` on a bit-field typedef (`field_rmw_bitfield`).
+
 ## 3a. The fast tools (use them before writing variants by hand)
 
 - **A claim starts with two sources.** `setup.py` prints the saved best and its plain form (`plain_best.py`:
