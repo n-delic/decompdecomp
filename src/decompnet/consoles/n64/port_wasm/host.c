@@ -1412,8 +1412,97 @@ static void tlb_map(uint32_t pm, uint32_t va, uint32_t even, uint32_t odd) {
 /* The interpreter's `tlbwi`/`tlbwr`: the registers the game's own code wrote (a game that sets its TLB up in its
    first C function, with mtc0 and a tlbwi, as the entry routine's osMapTLB-style call does for others). An EntryLo
    word's page frame is bits 6 and up, valid in bit 1. */
-void port_tlb_write(uint32_t pm, uint32_t entry_hi, uint32_t lo0, uint32_t lo1) {
+/* The 32 entries of the console's TLB as the game's own code wrote them (tlbwi at the Index register, tlbwr at the
+   next free slot): tlbp and tlbr read them back, and an entry whose half has the valid bit clear is remembered, so a
+   fetch from that page raises the TLB Invalid exception (the general vector) rather than the refill one. A game that
+   pages its program in as it runs (a shooter whose general handler loads the page from the cartridge and writes
+   the entry again, valid) needs both. */
+#define TLB_ENTRIES 32
+static struct { uint32_t pm, hi, lo0, lo1; int used; } tlb_ent[TLB_ENTRIES];
+/* a page [lo, lo + size) leaves the windows (the entry that mapped it was overwritten): a window it was part of is
+   cut into what remains on either side */
+static void tlb_unmap_page(uint32_t lo, uint32_t size) {
+    for (unsigned j = 0; j < port_tlb_n; j++) {
+        uint32_t wl = tlb_win[j].lo, ws = tlb_win[j].size, wp = tlb_win[j].phys;
+        if (lo < wl || lo + size > wl + ws) continue;
+        uint32_t before = lo - wl, after = wl + ws - (lo + size);
+        if (before) {
+            tlb_win[j].size = before;
+            if (after && port_tlb_n < TLB_WINDOWS) {
+                tlb_win[port_tlb_n].lo = lo + size; tlb_win[port_tlb_n].size = after;
+                tlb_win[port_tlb_n].phys = wp + before + size;
+                port_tlb_n++;
+            }
+        } else if (after) {
+            tlb_win[j].lo = lo + size; tlb_win[j].size = after; tlb_win[j].phys = wp + size;
+        } else {
+            tlb_win[j] = tlb_win[--port_tlb_n];
+        }
+        return;
+    }
+}
+static void tlb_entry_pages(uint32_t pm, uint32_t hi, uint32_t *va, uint32_t *size) {
+    *size = ((pm >> 13) + 1) << 12;
+    *va = hi & ~0x1FFFu & ~(2 * *size - 1);
+}
+static void tlb_set_entry(unsigned index, uint32_t pm, uint32_t entry_hi, uint32_t lo0, uint32_t lo1, int unmap_old) {
+    index &= TLB_ENTRIES - 1;
+    if (getenv("PORT_TLB_TRACE"))
+        fprintf(stderr, "tlb[%u] = mask %08X hi %08X lo0 %08X lo1 %08X\n", index, pm, entry_hi, lo0, lo1);
+    if (unmap_old && tlb_ent[index].used && !(tlb_ent[index].pm & ~0x01FFE000u)) {
+        uint32_t va, size;
+        tlb_entry_pages(tlb_ent[index].pm, tlb_ent[index].hi, &va, &size);
+        for (int half = 0; half < 2; half++)
+            if ((half ? tlb_ent[index].lo1 : tlb_ent[index].lo0) & 2) tlb_unmap_page(va + (uint32_t)half * size, size);
+    }
+    tlb_ent[index].pm = pm; tlb_ent[index].hi = entry_hi; tlb_ent[index].lo0 = lo0; tlb_ent[index].lo1 = lo1;
+    tlb_ent[index].used = 1;
     tlb_map(pm, entry_hi & ~0x1FFFu, (lo0 & 2) ? (lo0 >> 6) << 12 : 0xFFFFFFFFu, (lo1 & 2) ? (lo1 >> 6) << 12 : 0xFFFFFFFFu);
+}
+/* tlbwi: the slot the Index register names; what that slot mapped before is gone */
+void port_tlb_set(unsigned index, uint32_t pm, uint32_t entry_hi, uint32_t lo0, uint32_t lo1) {
+    tlb_set_entry(index, pm, entry_hi, lo0, lo1, 1);
+}
+/* tlbwr: the console picks a slot at random above the wired ones; a free one here, the oldest once all 32 are
+   taken. A page a refill handler brought in stays reachable through its window after its slot is reused: the port
+   reads code through windows that only ever grew, and a program of a megabyte brought in page by page is more pages
+   than the console holds at once (the console would fault on the evicted ones and refill them; here they stay). */
+void port_tlb_write(uint32_t pm, uint32_t entry_hi, uint32_t lo0, uint32_t lo1) {
+    static unsigned next;
+    unsigned index = 0;
+    while (index < TLB_ENTRIES && tlb_ent[index].used) index++;
+    if (index == TLB_ENTRIES) index = next++ % TLB_ENTRIES;
+    tlb_set_entry(index, pm, entry_hi, lo0, lo1, 0);
+}
+/* tlbp: the slot whose virtual page pair holds EntryHi's address, or 0x80000000 */
+uint32_t port_tlb_probe(uint32_t entry_hi) {
+    for (unsigned i = 0; i < TLB_ENTRIES; i++) {
+        if (!tlb_ent[i].used || (tlb_ent[i].pm & ~0x01FFE000u)) continue;
+        uint32_t va, size;
+        tlb_entry_pages(tlb_ent[i].pm, tlb_ent[i].hi, &va, &size);
+        if ((entry_hi & ~0x1FFFu & ~(2 * size - 1)) == va) return i;
+    }
+    return 0x80000000u;
+}
+/* tlbr */
+int port_tlb_read(unsigned index, uint32_t *pm, uint32_t *entry_hi, uint32_t *lo0, uint32_t *lo1) {
+    index &= TLB_ENTRIES - 1;
+    if (!tlb_ent[index].used) return 0;
+    *pm = tlb_ent[index].pm; *entry_hi = tlb_ent[index].hi; *lo0 = tlb_ent[index].lo0; *lo1 = tlb_ent[index].lo1;
+    return 1;
+}
+/* an address whose page an entry covers with the valid bit clear: a fetch or access there is a TLB Invalid exception */
+int port_tlb_invalid(uint32_t a) {
+    int invalid = 0;
+    for (unsigned i = 0; i < TLB_ENTRIES; i++) {
+        if (!tlb_ent[i].used || (tlb_ent[i].pm & ~0x01FFE000u)) continue;
+        uint32_t va, size;
+        tlb_entry_pages(tlb_ent[i].pm, tlb_ent[i].hi, &va, &size);
+        if (a < va || a - va >= 2 * size) continue;
+        if ((a - va >= size ? tlb_ent[i].lo1 : tlb_ent[i].lo0) & 2) return 0; /* another entry maps it, valid */
+        invalid = 1;
+    }
+    return invalid;
 }
 /* an address inside a window: the spelling the port keeps it at. A window in the low 8 MB of virtual addresses is
    what the split spells `0x80000000 | virtual` (the bytes at their physical alias); a window higher up (a game that
@@ -1497,6 +1586,7 @@ static int read_boot(void) {
     int base = -1, sltu_rd = -1;
     memset(boot_stk, 0, sizeof boot_stk);
     port_tlb_n = 0;
+    memset(tlb_ent, 0, sizeof tlb_ent);
     port_tlb_hi = 0;
     boot.entry = boot_entry();
     /* a call is the game's first function when only a `break` follows it; one with more code after it is a helper

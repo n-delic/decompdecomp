@@ -108,6 +108,10 @@ uint32_t port_tlb_canon(uint32_t a);
 uint32_t port_tlb_alias(uint32_t a);
 uint32_t port_tlb_jump(uint32_t slot, uint32_t imm); /* the target of a j/jal: top bits from the window's virtual base */
 void port_tlb_write(uint32_t pm, uint32_t entry_hi, uint32_t lo0, uint32_t lo1);
+void port_tlb_set(unsigned index, uint32_t pm, uint32_t entry_hi, uint32_t lo0, uint32_t lo1);
+uint32_t port_tlb_probe(uint32_t entry_hi);
+int port_tlb_read(unsigned index, uint32_t *pm, uint32_t *entry_hi, uint32_t *lo0, uint32_t *lo1);
+int port_tlb_invalid(uint32_t a); /* a page an entry covers with its valid bit clear: TLB Invalid, not a refill */
 HOT uint32_t mapped(uint32_t a) { return __builtin_expect(a < 0x80000000u && port_tlb_n, 0) ? port_tlb_canon(a) : a; }
 HOT uint8_t *at_load(uint32_t a) { a = mapped(a); return M + (a >= 0xA0000000u ? (uint32_t)port_io_load(a) : a); }
 HOT uint8_t *at_store(uint32_t a, uint64_t v) { a = mapped(a); return M + (a >= 0xA0000000u ? (uint32_t)port_io_store(a, v) : a); }
@@ -621,8 +625,16 @@ static int step(Cpu *c, uint32_t pc, uint32_t op, uint32_t *target) {
         else if ((rs == 4 || rs == 5) && reg) *reg = (uint32_t)r[rt];
         /* The raw PI routine probes the TLB if its buffer lives on a compatibility stack.
            Expose a pair of 4 KB pages on the compatibility host’s PI bus. */
-        else if (op == 0x42000002u || op == 0x42000006u) port_tlb_write(c->page_mask, c->entry_hi, c->entry_lo[0], c->entry_lo[1]); /* tlbwi, tlbwr */
-        else if (op == 0x42000008u) c->tlb_index = port_stack_bus(c->entry_hi & ~0x1FFFu) ? 0 : 0x80000000u;
+        else if (op == 0x42000002u) port_tlb_set(c->tlb_index & 31u, c->page_mask, c->entry_hi, c->entry_lo[0], c->entry_lo[1]); /* tlbwi */
+        else if (op == 0x42000006u) port_tlb_write(c->page_mask, c->entry_hi, c->entry_lo[0], c->entry_lo[1]);                   /* tlbwr */
+        else if (op == 0x42000008u) { /* tlbp: an entry the game wrote answers first; the compatibility stack's pages after */
+            uint32_t found = port_tlb_probe(c->entry_hi);
+            c->tlb_index = found != 0x80000000u ? found : port_stack_bus(c->entry_hi & ~0x1FFFu) ? 0 : 0x80000000u;
+        }
+        else if (op == 0x42000001u && !(c->tlb_index & 0x80000000u) && port_tlb_read(c->tlb_index & 31u, &c->page_mask, &c->entry_hi,
+                                                                                    &c->entry_lo[0], &c->entry_lo[1])) {
+            /* tlbr of a slot the game wrote: its words back in the registers */
+        }
         else if (op == 0x42000001u && c->tlb_index == 0) {
             uint32_t bus = port_stack_bus(c->entry_hi & ~0x1FFFu);
             c->page_mask = 0;
@@ -740,29 +752,36 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
     uint32_t pc = entry;
     unsigned long steps = 0;
     int zeros = 0;
-    unsigned refills = 0;
+    unsigned fault_n = 0;
+    uint32_t fault_pc = 1;
     for (;;) {
-        /* A fetch from a virtual address no TLB entry covers is a TLB refill exception on the console: the game's own
-           handler (installed at the vector 0x80000000) reads Context, loads the page pair's EntryLo words from the
-           game's table, writes them with tlbwr and returns with eret to retry the fetch. A game that maps its main
-           program this way (a shooter linking it at 0x7F000000, 4 KB pages brought in as the code first runs) had
-           no window for it: "no instructions at 8F000CD0". Context holds the faulting page's number in bits 4 to
-           22, EntryHi its address. After a few refills of one address that don't map it, the game's table has no
-           page for it, and the fetch goes on as before. */
-        if (__builtin_expect(pc < 0x80000000u && port_tlb_n && !(c.status & 2u), 0) && mapped(pc) == pc && fetch(0x80000000u)) {
-            if (refills++ < 8) {
-                if (tracing) fprintf(stderr, "interpreter: TLB refill for a fetch at %08X (from %08X)\n", pc, entry);
-                c.epc = pc;
-                c.badvaddr = pc;
-                c.entry_hi = pc & ~0x1FFFu;
-                c.context = (c.context & ~0x7FFFF0u) | (((pc >> 13) & 0x7FFFFu) << 4);
-                c.cause = 2u << 2; /* TLBL */
-                c.status |= 2u;
-                pc = 0x80000000u;
-                continue;
+        /* A fetch from a virtual address no valid TLB entry covers is an exception on the console, and the game's own
+           handler answers it. No entry for the page at all is a TLB refill (the vector 0x80000000): the handler reads
+           Context, loads the page pair's EntryLo words from the game's table, writes them with tlbwr and returns with
+           eret to retry the fetch (a shooter links its program at 0x7F000000 and brings 4 KB pages in as the code first
+           runs: "no instructions at 8F000CD0"). An entry that covers the page with its valid bit clear is TLB Invalid
+           (the general vector 0x80000180): the game's general handler pages the code in from the cartridge, writes the
+           entry again, valid, and returns with eret. Context holds the faulting page's number in bits 4 to 22,
+           EntryHi its address, Cause the code (2, TLBL), EPC the fetch itself. A page that stays faulting after 16
+           refills (4 invalid exceptions: a libultra handler that hands the thread to a pager thread through kernel
+           state the host does not keep never retries) has no handler that maps it, and the fetch goes on as before. */
+        if (__builtin_expect(pc < 0x80000000u && port_tlb_n && !(c.status & 2u), 0) && mapped(pc) == pc) {
+            uint32_t vector = port_tlb_invalid(pc) ? 0x80000180u : 0x80000000u;
+            if (fetch(vector)) {
+                if (pc != fault_pc) { fault_pc = pc; fault_n = 0; }
+                if (fault_n++ < (vector == 0x80000180u ? 4u : 16u)) {
+                    if (tracing) fprintf(stderr, "interpreter: TLB %s for a fetch at %08X (from %08X)\n",
+                                         vector == 0x80000180u ? "invalid" : "refill", pc, entry);
+                    c.epc = pc;
+                    c.badvaddr = pc;
+                    c.entry_hi = pc & ~0x1FFFu;
+                    c.context = (c.context & ~0x7FFFF0u) | (((pc >> 13) & 0x7FFFFu) << 4);
+                    c.cause = 2u << 2; /* TLBL */
+                    c.status |= 2u;
+                    pc = vector;
+                    continue;
+                }
             }
-        } else if (pc >= 0x80000000u) {
-            refills = 0;
         }
         uint32_t op = fetch(pc), target = 0;
         if (op == 0 && ++zeros > 64) { /* a run of nothing: no code there (no ROM loaded where it was looked for) */

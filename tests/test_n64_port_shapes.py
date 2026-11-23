@@ -41,6 +41,10 @@ uint32_t port_tlb_canon(uint32_t a) { return a; }
 uint32_t port_tlb_alias(uint32_t a) { return a; }
 uint32_t port_tlb_jump(uint32_t slot, uint32_t imm) { return (slot & 0xF0000000u) | imm; }
 void port_tlb_write(uint32_t pm, uint32_t hi, uint32_t lo0, uint32_t lo1) { (void)pm; (void)hi; (void)lo0; (void)lo1; }
+void port_tlb_set(unsigned i, uint32_t pm, uint32_t hi, uint32_t lo0, uint32_t lo1) { (void)i; (void)pm; (void)hi; (void)lo0; (void)lo1; }
+uint32_t port_tlb_probe(uint32_t hi) { (void)hi; return 0x80000000u; }
+int port_tlb_read(unsigned i, uint32_t *pm, uint32_t *hi, uint32_t *lo0, uint32_t *lo1) { (void)i; (void)pm; (void)hi; (void)lo0; (void)lo1; return 0; }
+int port_tlb_invalid(uint32_t a) { (void)a; return 0; }
 uint64_t port_io_store(uint64_t a, uint64_t v) { (void)v; return a; }
 void port_safe_point(void) {}
 void port_boot_spin(void) {}

@@ -418,6 +418,42 @@ int main(void) {
     assert done.stdout.splitlines() == ["7F000000 50000 00300000", "7F200000 1000 00500000", "803000F8 8034F000"]
 
 
+def test_the_tlb_keeps_the_entries_the_game_wrote_and_tells_an_invalid_page_from_a_missing_one(tmp_path):
+    """tlbp and tlbr read back the entries the game's own code wrote; a page an entry covers with its valid bit clear is
+    a TLB Invalid exception (the general vector) and a page no entry covers is a refill; a tlbwi over a slot takes the
+    pages it mapped before out of the windows; a tlbwr takes a free slot."""
+    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if not cc:
+        pytest.skip("no C compiler")
+    text = HOST.read_text()
+    code = text[text.index("static struct { uint32_t entry, target, bss, bss_size; int tv; } boot;"):
+                text.index("/* the console's RAM as the boot leaves it")]
+    source = tmp_path / "t.c"
+    source.write_text(_BOOT_HARNESS + code + """
+int main(void) {
+    uint32_t pm, hi, lo0, lo1;
+    /* slot 3: the page at 0x7F000000 invalid, its pair 0x7F001000 valid onto physical 0x300000 */
+    port_tlb_set(3, 0, 0x7F000000u, 0x1u, (0x300000u >> 12 << 6) | 2);
+    printf("%X %X\\n", port_tlb_probe(0x7F000800u), port_tlb_probe(0x7F100000u));
+    printf("%d %d %d\\n", port_tlb_invalid(0x7F000010u), port_tlb_invalid(0x7F001010u), port_tlb_invalid(0x7E000000u));
+    printf("%08X %08X\\n", port_tlb_canon(0x7F001010u), port_tlb_canon(0x7F000010u));
+    /* the same slot again, elsewhere: what it mapped before is gone */
+    port_tlb_set(3, 0, 0x7E000000u, (0x400000u >> 12 << 6) | 2, 1);
+    printf("%08X %08X %d\\n", port_tlb_canon(0x7F001010u), port_tlb_canon(0x7E000010u), port_tlb_invalid(0x7E001010u));
+    printf("%d ", port_tlb_read(3, &pm, &hi, &lo0, &lo1));
+    printf("%08X %08X %08X\\n", hi, lo0, lo1);
+    /* tlbwr: a free slot (0), and a page that continues another extends its window */
+    port_tlb_write(0, 0x7D000000u, (0x500000u >> 12 << 6) | 2, (0x501000u >> 12 << 6) | 2);
+    printf("%X %08X\\n", port_tlb_probe(0x7D000000u), port_tlb_canon(0x7D001010u));
+    return 0;
+}
+""")
+    subprocess.run([cc, "-o", str(tmp_path / "t"), str(source)], check=True, capture_output=True)
+    done = subprocess.run([str(tmp_path / "t")], capture_output=True, text=True, check=True)
+    assert done.stdout.splitlines() == ["3 80000000", "1 0 0", "80300010 7F000010", "7F001010 80400010 1",
+                                        "1 7E000000 00010002 00000001", "0 80501010"]
+
+
 def test_a_jal_in_code_linked_at_a_windows_virtual_base_takes_the_windows_top_bits(tmp_path):
     """A game links its program at 0x70000400 (one 4 MB page onto physical 0, set by its own tlbwi) and the port
     keeps that code at its KSEG0 spelling, so a `jal` took its top four bits from 0x8...: `jal 0x7F000CD0` went to
@@ -1009,6 +1045,10 @@ uint32_t port_tlb_canon(uint32_t a) { return a; }
 uint32_t port_tlb_alias(uint32_t a) { (void)a; return 0; }
 uint32_t port_tlb_jump(uint32_t slot, uint32_t imm) { return (slot & 0xF0000000u) | imm; }
 void port_tlb_write(uint32_t pm, uint32_t hi, uint32_t lo0, uint32_t lo1) { (void)pm; (void)hi; (void)lo0; (void)lo1; }
+void port_tlb_set(unsigned i, uint32_t pm, uint32_t hi, uint32_t lo0, uint32_t lo1) { (void)i; (void)pm; (void)hi; (void)lo0; (void)lo1; }
+uint32_t port_tlb_probe(uint32_t hi) { (void)hi; return 0x80000000u; }
+int port_tlb_read(unsigned i, uint32_t *pm, uint32_t *hi, uint32_t *lo0, uint32_t *lo1) { (void)i; (void)pm; (void)hi; (void)lo0; (void)lo1; return 0; }
+int port_tlb_invalid(uint32_t a) { (void)a; return 0; }
 uint32_t w2c_env_0x5F_builtin_mips_read_count(struct w2c_env *e) { (void)e; return 0; }
 static void put(uint32_t at, const uint32_t *w, int n) {
     for (int i = 0; i < n; i++) { uint32_t b = __builtin_bswap32(w[i]); memcpy(mem + at + 4 * i, &b, 4); }

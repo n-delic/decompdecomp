@@ -30,6 +30,10 @@ uint32_t port_tlb_canon(uint32_t a) { return a; }  /* (host.c's TLB windows: non
 uint32_t port_tlb_alias(uint32_t a) { return a; }
 uint32_t port_tlb_jump(uint32_t slot, uint32_t imm) { return (slot & 0xF0000000u) | imm; }
 void port_tlb_write(uint32_t pm, uint32_t hi, uint32_t lo0, uint32_t lo1) { (void)pm; (void)hi; (void)lo0; (void)lo1; }
+void port_tlb_set(unsigned i, uint32_t pm, uint32_t hi, uint32_t lo0, uint32_t lo1) { (void)i; (void)pm; (void)hi; (void)lo0; (void)lo1; }
+uint32_t port_tlb_probe(uint32_t hi) { (void)hi; return 0x80000000u; }
+int port_tlb_read(unsigned i, uint32_t *pm, uint32_t *hi, uint32_t *lo0, uint32_t *lo1) { (void)i; (void)pm; (void)hi; (void)lo0; (void)lo1; return 0; }
+int port_tlb_invalid(uint32_t a) { (void)a; return 0; }
 uint64_t port_io_store(uint64_t a, uint64_t v) { (void)v; return a; }
 void port_safe_point(void) {}
 void port_boot_spin(void) {}
@@ -577,6 +581,48 @@ int main(int argc, char **argv) {
     assert has(0x00200500) == "1"  # as the game's own pointer has it, below KSEG0
     assert has(0x80200600) == "0"  # nothing at the alias either
     assert has(0x80100000) == "0"  # outside any window
+
+
+def test_a_fetch_from_an_invalid_page_takes_the_general_vector_with_the_tlbl_cause(tmp_path):
+    """A page an entry covers with its valid bit clear is TLB Invalid: the console enters the general exception vector
+    (0x80000180, not the refill vector 0x80000000), with Cause TLBL (code 2), BadVAddr and EPC the fetch. The game's
+    handler there pages the code in (here: `tlbwi` of a valid entry) and returns with eret to retry the fetch."""
+    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if not cc:
+        pytest.skip("no C compiler")
+    target = CODE + 0x300
+    source = HARNESS % {"c": C_FUNCTION, "code": CODE, "data": DATA}
+    source = source.replace("unsigned port_tlb_n;", "unsigned port_tlb_n = 1; static int tlb_mapped;")
+    source = source.replace("uint32_t port_tlb_canon(uint32_t a) { return a; }",
+                            "uint32_t port_tlb_canon(uint32_t a) { return tlb_mapped && a >= 0x400000u && a < 0x401000u ? "
+                            "a - 0x400000u + 0x%08X : a; }" % target)
+    source = source.replace("void port_tlb_set(unsigned i, uint32_t pm, uint32_t hi, uint32_t lo0, uint32_t lo1) { (void)i; (void)pm; "
+                            "(void)hi; (void)lo0; (void)lo1; }",
+                            "void port_tlb_set(unsigned i, uint32_t pm, uint32_t hi, uint32_t lo0, uint32_t lo1) { (void)i; (void)pm; "
+                            "(void)hi; (void)lo0; (void)lo1; tlb_mapped = 1; }")
+    source = source.replace("int port_tlb_invalid(uint32_t a) { (void)a; return 0; }",
+                            "int port_tlb_invalid(uint32_t a) { return !tlb_mapped && a >= 0x400000u && a < 0x401000u; }")
+    harness = tmp_path / "harness.c"
+    harness.write_text(source)
+    program = tmp_path / "interp"
+    done = subprocess.run([cc, "-o", str(program), str(harness), str(MIPS), "-lm"], capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr
+    handler = CODE + 0x200
+    jump = 0x08000000 | (handler & 0x0FFFFFFF) >> 2
+    # a jump at the general vector 0x80000180 to the handler, and the refill vector 0x80000000 left empty (a refill
+    # would run zeros: it must not be entered)
+    prog = [*_data_base(), lui("t0", 0x8000), lui("t1", jump >> 16), ori("t1", "t1", jump & 0xFFFF), sw("t1", 0x180, "t0"),
+            lui("t2", 0x40), r_type(8, rs="t2"), NOP]  # jr 0x00400000: its page is invalid
+    prog += [NOP] * (0x200 // 4 - len(prog))
+    prog += [mfc0("t3", 13), sw("t3", 0, "t9"), mfc0("t4", 8), sw("t4", 4, "t9"), 0x42000002, NOP, ERET, NOP]
+    prog += [NOP] * (0x300 // 4 - len(prog))
+    prog += [addiu("v0", "zero", 66), JR_RA, NOP]  # the page's code, once the handler mapped it
+    code = tmp_path / "code.bin"
+    code.write_bytes(b"".join(struct.pack(">I", w & 0xFFFFFFFF) for w in prog))
+    out = subprocess.run([str(program), str(code)], capture_output=True, text=True, timeout=30, check=True).stdout.split()
+    assert int(out[0], 16) == 66  # the general handler ran, mapped the page, and eret retried the fetch
+    assert int(out[6], 16) == 2 << 2  # Cause: TLBL
+    assert int(out[7], 16) == 0x400000  # BadVAddr
 
 
 def test_a_fetch_from_an_unmapped_page_takes_the_games_tlb_refill_handler(tmp_path):
