@@ -553,7 +553,7 @@ void w2c_env_osViSetYScale(struct w2c_env *e, f32 s) {
     if (getenv("PORT_RT64")) port_rt64_yscale(s);
 #endif
 }
-void w2c_env_osViBlack(struct w2c_env *e, u32 on) { (void)e; port_vi_black(on != 0); }
+void w2c_env_osViBlack(struct w2c_env *e, u32 on) { (void)e; LOG("osViBlack(%u)", on); port_vi_black(on != 0); }
 void w2c_env_osViSetSpecialFeatures(struct w2c_env *e, u32 f) {
     (void)e; port_vi_features(f);
 #ifndef PORT_WEB
@@ -563,12 +563,13 @@ void w2c_env_osViSetSpecialFeatures(struct w2c_env *e, u32 f) {
 void port_frame_shown(uint32_t fb, unsigned long n); /* render.c: saves it when asked */
 static unsigned long gfx_tasks, audio_tasks;
 /* PORT_SWAP_LOG=file (or - for stderr, among the host's other lines): a line for each buffer the game hands the VI, "frame NUMBER task GRAPHICS-TASKS-SO-FAR retrace
-   VI-COUNT buffer ADDRESS": which graphics task (the unit of PORT_FRAME_DUMPS and tools/n64_frame_compare.py --frames) a
+   VI-COUNT buffer ADDRESS black 0|1" (black: the VI blanked, osViBlack): which graphics task (the unit of PORT_FRAME_DUMPS and tools/n64_frame_compare.py --frames) a
    frame shown (PORT_FRAMES, frame_NNNNN.png) came after, to look at the console's task there. */
+int port_vi_blanked(void); /* render.c */
 static void port_swap_log(unsigned long n, uint32_t fb) {
     static FILE *log; static int tried;
     if (!tried) { const char *path = getenv("PORT_SWAP_LOG"); tried = 1; if (path) log = strcmp(path, "-") ? fopen(path, "w") : stderr; }
-    if (log) { fprintf(log, "frame %lu task %lu retrace %lu buffer %08X\n", n, gfx_tasks, vi_count, fb); fflush(log); }
+    if (log) { fprintf(log, "frame %lu task %lu retrace %lu buffer %08X black %d\n", n, gfx_tasks, vi_count, fb, port_vi_blanked()); fflush(log); }
 }
 void port_vi_swap(uint32_t fb) { /* (games/: a game's own name) */
     /* The VI's origin register holds 24 bits: a game that hands over 0x847B4F80 (a flag bit above the address, as

@@ -541,6 +541,12 @@ uv run python tools/n64_frame_compare.py baserom.z64 --port port/wasm/build/game
 ```
 
 Both frames come from the same renderer, so a difference is the game running differently, not the drawing.
+`tools/n64_vi_compare.py ROM --port BUILD --input @script` checks the VI's blanking against the console's: the
+emulator's video plugin logs the VI's registers (`EMU_VI_LOG`; osViBlack blanks by writing 0 to the horizontal video
+register, the status stays), the port's `PORT_SWAP_LOG` says when it blanked, and the two lists of blanks must agree in
+number and length. On a racing game they did: six blanks of 25, 25, 21, 25, 25 and 21 graphics tasks on both sides
+(where each began differed for three of them: a menu advanced hundreds of tasks apart between runs). On the console the
+screen is black at those moments; before the port honoured osViBlack it showed the buffer's leftovers instead.
 `tools/n64_frame_scan.py FOLDER` needs no emulator: it looks through the frames a port saved (`PORT_FRAMES=FOLDER
 PORT_FRAME_EVERY=1`, `PORT_SWAP_LOG=file` to name each frame's graphics task) for static, flat-colour frames and runs of
 black, the ways a buffer shown before the game drew it looks. Moving scenes can't be compared pixel for pixel by task
