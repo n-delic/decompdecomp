@@ -2270,10 +2270,10 @@ def _full_run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, 
     # One explicit deep search per function, including credential issuance. Agents may keep working.
     fn = net._function(name, slug)
     if fn['status'] == 'open' and fn['target']:
-        from .sdk_assembly import set_aside_known
+        from .sdk_assembly import discover_known
         log.check_cancel()
         with looking(net):
-            found = set_aside_known(net, net.project_row(slug), function_id=fn['id'], check_cancel=log.check_cancel)
+            found = discover_known(net, net.project_row(slug), function_id=fn['id'], check_cancel=log.check_cancel)
         if found:
             reason = 'Identified and set aside as SDK library code'
             log(reason)
@@ -2385,7 +2385,10 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
         search.compiler_profiles = deep_profiles.selected(net, proj, compiler_profiles, fn)
         for profile in search.compiler_profiles:
             log('Selected profile: '+profile['toolchain']+' '+' '.join(profile['flags']))
-        log('Compiler profiles per candidate: '+str(len(search.compiler_profiles))+". The function's own settings first, then the project default; other profiles ranked by matched-function usage. Each profile test uses compile allowance.")
+        from .profile_detection import detected
+        lead = ('The compiler profile detection found for this C first, then the function\'s own settings'
+                if detected(net, proj, fn) else "The function's own settings first")
+        log('Compiler profiles per candidate: '+str(len(search.compiler_profiles))+f". {lead}, then the project default; other profiles ranked by matched-function usage. Each profile test uses compile allowance.")
     if sweeps:
         search.record_improvement = lambda score: sweeps.improvement(fn, score)
     search.report()

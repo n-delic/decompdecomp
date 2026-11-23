@@ -241,6 +241,45 @@ def test_matching_c_scores_zero_and_wrong_c_does_not(demo):
     assert right["matched"] and right["score"] == 0, right["text"]
 
 
+def test_compiler_detection_scores_a_near_match_under_the_consoles_other_profiles(demo):
+    """profile_detection: a near-match's saved C judged under every other installed profile of its console, through
+    the same engine the deep permuter uses; nothing about the function's compiler changes."""
+    from decompnet.app import deep_permuter, deep_profile_sweep, profile_detection
+
+    console, net, slug, _, symbols = demo
+    if console.mode != consoles.ROM:
+        pytest.skip(f"{console.name}: project mode builds each file with its own compiler (ROADMAP.md)")
+    name, source = _function(net, slug, symbols, "checksum_save")
+    agent, _ = net.local_agent("detection-agent")
+    net.claim(agent, slug, name)
+    near = net.attempt(agent, name, source.replace("(sum << 5) + sum", "(sum << 4) + sum"), slug)
+    net.release(agent, name, "", slug)
+    proj, fn = net.project_row(slug), net._function(name, slug)
+    if near["matched"] or not profile_detection.near_match(fn):
+        pytest.skip(f"the edited C scores {near['score']} on {console.name}: not a near-match")
+    chosen, *_ = profile_detection.candidates(net, proj, fn, deep_profile_sweep.profiles(net, proj, fn))
+    if not chosen:
+        pytest.skip(f"{console.name} has one compiler installed here")
+    before = net.cfg(proj)["compiler"]
+
+    class Log(list):
+        def __call__(self, line):
+            self.append(line)
+
+        def check_cancel(self):
+            pass
+
+        def progress(self, value):
+            pass
+    log = Log()
+    search = deep_permuter.Search(net, 1, len(chosen) + 8, log, fn)
+    assert deep_profile_sweep.run(search, agent, proj, fn, fn["best_source"]) is False
+    assert search.tested >= 1 and any("near-match" in line for line in log), log
+    assert any(line.startswith("Profile ") for line in log), log
+    fresh = net._function(name, slug)
+    assert fresh["status"] == "open" and net.cfg(net.project_row(slug))["compiler"] == before
+
+
 def test_the_game_rebuilds_byte_for_byte(demo):
     console, net, slug, _, _ = demo
     if consoles.EXPORT in console.features:

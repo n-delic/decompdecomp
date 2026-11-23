@@ -41,6 +41,13 @@ def selected(net, proj, count, fn=None):
         for guess in fingerprinted(net, proj, cfg, fn, first):
             if key(guess) not in {key(p) for p in result}:
                 result.append(guess)
+    # (the profile compiler detection found for this saved C goes first: every candidate is probed under it before
+    # anything else, the function's own settings still scored right after it)
+    if fn is not None and proj:
+        from .profile_detection import detected
+        if (found := detected(net, proj, fn)) is not None:
+            result = [found['profile']] + [p for p in result if key(p) != key(found['profile'])]
+            count += 1  # (it never takes the place of a profile the user asked for)
     if count <= len(result):return result
     others = sorted(net.compiler_profile_usage(proj), key=lambda p:(-p['matched'], key(p)))
     seen = {key(p) for p in result}
@@ -70,8 +77,10 @@ def tail_dispatch(net, proj, fn):
     return None
 
 
-def probe(search, agent, proj, fn, source, profile):
-    """Cache misses separately by profile; only a reverified exact bundle can change settings."""
+def probe(search, agent, proj, fn, source, profile, *, scored=False):
+    """Cache misses separately by profile; only a reverified exact bundle can change settings. 0 for an exact pair,
+    else None, or with `scored` a miss's score (a cached one's too, when its record kept it): what compiler
+    detection compares (profile_detection)."""
     from . import agent_tokens, ido_compat
     search.check()
     search.visited += 1
@@ -83,10 +92,15 @@ def probe(search, agent, proj, fn, source, profile):
     store = search.net.project_store(proj['id'])
     queued = trial_bookkeeping.lookup(store, ('profile-probe', fn['id'], key))
     cached = {'outcome': queued} if queued is not None else store.one(
-        'SELECT outcome FROM reuse_trials WHERE function_id=? AND signature=?', fn['id'], key)
+        'SELECT outcome,feedback FROM reuse_trials WHERE function_id=? AND signature=?', fn['id'], key)
     # (a compile failure is as settled as a miss: retrying one recompiled 88 broken rewrites 9,844 times)
     if cached and cached['outcome'] in ('miss', 'compile_failed'):
         search.skipped += 1
+        if scored and cached['outcome'] == 'miss' and 'feedback' in cached.keys():
+            try:
+                return json.loads(cached['feedback'] or '{}').get('score')
+            except (TypeError, ValueError):
+                return None
         return None
     header=search.net._context(proj['id'],fn['unit'])['header']
     search.tested += 1
@@ -160,4 +174,4 @@ def probe(search, agent, proj, fn, source, profile):
         search.log(f'Exact match with {settings}, not applied: {said}')
         raise SearchLimit(f'Exact match found with {settings}; it waits for your approval as a compiler '
                           'suggestion on the project page')
-    return None
+    return score if scored else None

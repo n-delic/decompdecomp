@@ -598,10 +598,10 @@ class Sweeps:
                 log(f'Repeating {reopened} deep searches that finished before decomp-permuter was installed.')
         else:
             log(permute.MISSING + ' Install it from Compilers & tools: searches made without it are repeated afterwards.')
-        from .sdk_assembly import set_aside_known
+        from .sdk_assembly import discover_known
         log.check_cancel()
         with looking(self.net):
-            sdk_set_aside = set_aside_known(self.net, self.net.project_row(slug), check_cancel=log.check_cancel)
+            sdk_set_aside = discover_known(self.net, self.net.project_row(slug), check_cancel=log.check_cancel)
         if sdk_set_aside:
             log(f'Identified {sdk_set_aside} SDK library functions before preparing C candidates.')
         twin_trials = twin_matches = recovered_matches = recovery_trials = 0
