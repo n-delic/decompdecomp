@@ -870,3 +870,29 @@ def test_loader_with_adjacent_stack_objects_uses_original_code():
     host = Path(__file__).resolve().parents[1] / 'src/decompnet/consoles/n64/port_wasm'
     manifest = {'game': {'sha1': '79cd1166c365e5809dec9b62e6d40d6032d5db3a'}}
     assert original_code(host, manifest, ['loader 0x800018A8 func']) == {'loader.c'}
+
+
+def test_a_void_function_that_branches_after_a_call_still_leaves_that_calls_result():
+    """A heap allocator's wrapper was declared void: `t = alloc(...); if (t) align(t, ...); return;`. gcc leaves
+    alloc's result (or align's) in $v0 and its callers took the block from it, but only a call right before `ret
+    void` was forwarded, so the port gave 0 to every caller: a game's three buffers were null and its first graphics
+    task had no display list."""
+    from decompnet.port.wasm.adapt import V0, adapt
+    from decompnet.port.wasm.beir import Types
+    ir = ("declare i32 @alloc(i32)\ndeclare i32 @align(i32, i32)\n"
+          "define void @wrapper(i32 %n) {\n"
+          "  %1 = call i32 @alloc(i32 noundef %n) #2\n"
+          "  %2 = icmp ne i32 %1, 0\n  br i1 %2, label %3, label %5\n"
+          "3:\n  %4 = call i32 @align(i32 noundef %1, i32 noundef %n) #2\n  br label %5\n"
+          "5:\n  ret void\n}\n"
+          "define void @plain() {\n  ret void\n}\n"
+          "define void @caller() {\n  %y = call i32 @wrapper(i32 noundef 1)\n  ret void\n}\n")
+    out = adapt(ir, [], Types(ir), {})
+    wrapper = out.split("define void @wrapper")[1].split("\n}")[0]
+    lines = wrapper.splitlines()
+    for call in ("%1 = call i32 @alloc", "%4 = call i32 @align"):
+        at = next(i for i, line in enumerate(lines) if call in line)
+        assert f"ptr {V0}" in lines[at + 1] or f"ptr {V0}" in lines[at + 2], call
+    assert f"store i32 0, ptr {V0}" not in wrapper
+    plain = out.split("define void @plain")[1].split("\n}")[0]
+    assert f"store i32 0, ptr {V0}" in plain, "no call: 0 as before"

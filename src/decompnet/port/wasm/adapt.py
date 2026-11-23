@@ -146,6 +146,44 @@ def void_result(body, cret):
     return convert(body, 950, "%v0", "i32", cret)
 
 
+ZERO_V0 = f"  store i32 0, ptr {V0}, align 4"
+
+
+def forward_results(lines):
+    """In a function the C declares void, every call that returns a value leaves it in the $v0 word, as the call's
+    result stays in $v0 on MIPS until something else writes it. Only a call right before `ret void` did, so a void
+    function that took the result of its first call and then branched (`t = alloc(); if (t) align(t); return;`,
+    which gcc leaves with `alloc`'s result or `align`'s in $v0) gave 0 to every caller that used the value: a
+    game's heap allocator returned a null pointer to all of its callers and the game never drew. A void function
+    with no such call still leaves 0, as before."""
+    starts = [i for i, line in enumerate(lines) if line.startswith("define ")]
+    if not starts:
+        return lines
+    out = lines[:starts[0]]
+    for begin, end in zip(starts, starts[1:] + [len(lines)]):
+        out.extend(_forward_function(lines[begin:end]))
+    return out
+
+
+def _forward_function(lines):
+    if not lines or not re.match(r"define [^@]*\bvoid @", lines[0]):
+        return lines
+    calls = [i for i, line in enumerate(lines) if RESULT.match(line) and "@llvm." not in line]
+    if not calls:
+        return lines
+    out = []
+    for i, line in enumerate(lines):
+        if line == ZERO_V0:
+            continue  # the function's value comes from its calls
+        out.append(line)
+        if i in calls:
+            pre = []
+            w = convert(pre, 30_000_000 + i, RESULT.match(line).group(1), RESULT.match(line).group(2), "i32")
+            out.extend(pre)
+            out.append(f"  store i32 {w}, ptr {V0}, align 4")
+    return out
+
+
 REPORT = None
 CALLER = [""]
 
@@ -443,4 +481,4 @@ def adapt(text, report=None, types=None, byval=None):
         newcall = re.sub(r"(\bcall [^@(]*?)\s*\([^@]*\)\s*@" + re.escape(tname), r"\1 @" + tname, newcall)
         out_lines.extend(loads)
         out_lines.append(newcall)
-    return "\n".join(out_lines + [t[1] for t in thunks.values()])
+    return "\n".join(forward_results(out_lines) + [t[1] for t in thunks.values()])
