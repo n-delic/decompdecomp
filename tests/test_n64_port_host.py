@@ -236,7 +236,7 @@ _BOOT_HARNESS = """#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 static uint8_t *rom; static size_t rom_size;
-static uint8_t ram[0x300000], sp[0x2000];
+static uint8_t ram[0x800000], sp[0x2000];
 static uint8_t *at(uint32_t a) { return a >= 0xA4000000u ? sp + (a - 0xA4000000u) : ram + (a - 0x80000000u); }
 static void wbe32(uint32_t a, uint32_t v) { uint8_t *p = at(a); p[0] = v >> 24; p[1] = v >> 16; p[2] = v >> 8; p[3] = v; }
 static uint32_t be32(uint32_t a) { uint8_t *p = at(a); return (uint32_t)p[0] << 24 | p[1] << 16 | p[2] << 8 | p[3]; }
@@ -300,7 +300,7 @@ TLB_ODD_ONLY = TLB_MAP_ENTRY[:5] + [_addiu(A3, 0, -1), _lui(T1, 0), *TLB_MAP_ENT
 
 
 @pytest.mark.parametrize("words,want", [
-    (TLB_MAP_ENTRY, "00200000 100000 00000000\n00300000 100000 00100000"),
+    (TLB_MAP_ENTRY, "00200000 200000 00000000"),  # (the pair's two pages continue each other: one window)
     (TLB_ODD_ONLY, "00300000 100000 00000000"),
 ])
 def test_the_entry_routines_tlb_setup_gives_the_windows_the_game_runs_through(tmp_path, words, want):
@@ -362,8 +362,92 @@ int main(void) {
     subprocess.run([cc, "-o", str(tmp_path / "t"), str(source)], check=True, capture_output=True)
     done = subprocess.run([str(tmp_path / "t")], capture_output=True, text=True, check=True)
     assert done.stdout.strip().splitlines() == [
-        "10000000 400000 00000000", "10400000 400000 00400000", "80001050 80400010 20000000 80001050",
-        "1 800010F8 80400010 00100000 20000000", "2"]
+        "10000000 800000 00000000", "80001050 80400010 20000000 80001050",
+        "1 800010F8 80400010 00100000 20000000", "1"]
+
+
+def test_a_low_window_shows_its_physical_words_at_the_spelling_where_that_holds_nothing(tmp_path):
+    """A jump table a game reads at virtual 0x00102330 (a window of 1 MB at 0x100000 onto physical 0) was copied to the
+    boot image at 0x2330 and never written at the port's spelling, 0x80102330: the read gave 0 and the function
+    jumped to address 0x100. The words come across once, where the spelling is empty; words already there stay."""
+    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if not cc:
+        pytest.skip("no C compiler")
+    text = HOST.read_text()
+    code = text[text.index("static struct { uint32_t entry, target, bss, bss_size; int tv; } boot;"):
+                text.index("/* the console's RAM as the boot leaves it")]
+    source = tmp_path / "t.c"
+    source.write_text(_BOOT_HARNESS + code + """
+int main(void) {
+    wbe32(0x80002330u, 0x80103060u);  /* the jump table's entry, in the boot image at the physical address */
+    wbe32(0x80102334u, 0x11111111u);  /* a word the port already has at the spelling: it stays */
+    wbe32(0x80002334u, 0x22222222u);
+    port_tlb_write(0x1FE000, 0x00000000, 0u, (0u >> 12 << 6) | 2); /* the odd page of the pair at 0: virtual 0x100000 -> 0 */
+    printf("%08X %08X %08X\\n", be32(0x80102330u), be32(0x80102334u), be32(0x80002330u));
+    return 0;
+}
+""")
+    subprocess.run([cc, "-o", str(tmp_path / "t"), str(source)], check=True, capture_output=True)
+    done = subprocess.run([str(tmp_path / "t")], capture_output=True, text=True, check=True)
+    assert done.stdout.split() == ["80103060", "11111111", "80103060"]
+
+
+def test_pages_a_refill_handler_brings_in_one_by_one_make_one_window(tmp_path):
+    """A refill handler writes a 4 KB page pair per exception: a program of a megabyte is 128 of them, which filled
+    the window table. A pair that continues a window (the next virtual pages onto the next physical ones) extends it."""
+    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if not cc:
+        pytest.skip("no C compiler")
+    text = HOST.read_text()
+    code = text[text.index("static struct { uint32_t entry, target, bss, bss_size; int tv; } boot;"):
+                text.index("/* the console's RAM as the boot leaves it")]
+    source = tmp_path / "t.c"
+    source.write_text(_BOOT_HARNESS + code + """
+int main(void) {
+    for (unsigned n = 0; n < 40; n++) /* 40 pairs: virtual 0x7F000000 up onto physical 0x300000 up */
+        port_tlb_write(0, 0x7F000000u + n * 0x2000u, ((0x300000u + n * 0x2000u) >> 12 << 6) | 2,
+                       ((0x301000u + n * 0x2000u) >> 12 << 6) | 2);
+    port_tlb_write(0, 0x7F200000u, (0x500000u >> 12 << 6) | 2, 1); /* a page that continues nothing: a window of its own */
+    for (unsigned i = 0; i < port_tlb_n; i++) printf("%08X %X %08X\\n", tlb_win[i].lo, tlb_win[i].size, tlb_win[i].phys);
+    printf("%08X %08X\\n", port_tlb_canon(0x7F0000F8), port_tlb_canon(0x7F04F000));
+    return 0;
+}
+""")
+    subprocess.run([cc, "-o", str(tmp_path / "t"), str(source)], check=True, capture_output=True)
+    done = subprocess.run([str(tmp_path / "t")], capture_output=True, text=True, check=True)
+    assert done.stdout.splitlines() == ["7F000000 50000 00300000", "7F200000 1000 00500000", "803000F8 8034F000"]
+
+
+def test_a_jal_in_code_linked_at_a_windows_virtual_base_takes_the_windows_top_bits(tmp_path):
+    """A game links its program at 0x70000400 (one 4 MB page onto physical 0, set by its own tlbwi) and the port
+    keeps that code at its KSEG0 spelling, so a `jal` took its top four bits from 0x8...: `jal 0x7F000CD0` went to
+    0x8F000CD0 ("no instructions"). The window's top bits are used when the target is itself in a mapped window;
+    a jump whose window-spelled target is not mapped, and code outside any window, keep the plain computation."""
+    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if not cc:
+        pytest.skip("no C compiler")
+    text = HOST.read_text()
+    code = text[text.index("static struct { uint32_t entry, target, bss, bss_size; int tv; } boot;"):
+                text.index("/* the console's RAM as the boot leaves it")]
+    source = tmp_path / "t.c"
+    source.write_text(_BOOT_HARNESS + code + """
+int main(void) {
+    uint32_t imm = 0x0F000CD0u;
+    printf("%08X\\n", port_tlb_jump(0x80006020u, imm));              /* no window yet: the plain top bits */
+    port_tlb_write(0x7FE000, 0x70000000, 0x1F, 1);                  /* 4 MB at 0x70000000 onto physical 0 */
+    printf("%08X\\n", port_tlb_jump(0x80006020u, imm));              /* 0x7F000CD0 is not mapped yet, but 0x8F000CD0 is no */
+                                                                    /* RAM: the window's bits (a refill brings the page in) */
+    port_tlb_write(0x7FE000, 0x7F000000, 0x1F | (0x400 << 6), 1);   /* the game segment, onto physical 0x400000 */
+    printf("%08X\\n", port_tlb_jump(0x80006020u, imm));              /* both mapped: the window's top bits */
+    printf("%08X\\n", port_tlb_jump(0x80900020u, imm));              /* code outside every window: plain */
+    printf("%08X\\n", port_tlb_jump(0x70006020u, imm));              /* already a virtual spelling: its own bits */
+    printf("%08X\\n", port_tlb_jump(0x80006020u, 0x00500000u));      /* a target inside RAM the windows do not cover: plain */
+    return 0;
+}
+""")
+    subprocess.run([cc, "-o", str(tmp_path / "t"), str(source)], check=True, capture_output=True)
+    done = subprocess.run([str(tmp_path / "t")], capture_output=True, text=True, check=True)
+    assert done.stdout.split() == ["8F000CD0", "7F000CD0", "7F000CD0", "8F000CD0", "7F000CD0", "80500000"]
 
 
 def test_the_games_c_reads_a_high_tlb_window_as_ram_and_no_stack_sits_in_one():
@@ -923,6 +1007,7 @@ int port_thread_number(void) { return 0; }
 unsigned port_tlb_n;
 uint32_t port_tlb_canon(uint32_t a) { return a; }
 uint32_t port_tlb_alias(uint32_t a) { (void)a; return 0; }
+uint32_t port_tlb_jump(uint32_t slot, uint32_t imm) { return (slot & 0xF0000000u) | imm; }
 void port_tlb_write(uint32_t pm, uint32_t hi, uint32_t lo0, uint32_t lo1) { (void)pm; (void)hi; (void)lo0; (void)lo1; }
 uint32_t w2c_env_0x5F_builtin_mips_read_count(struct w2c_env *e) { (void)e; return 0; }
 static void put(uint32_t at, const uint32_t *w, int n) {

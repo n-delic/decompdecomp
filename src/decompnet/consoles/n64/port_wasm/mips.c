@@ -100,6 +100,7 @@ static uint8_t *M;
 extern unsigned port_tlb_n;
 uint32_t port_tlb_canon(uint32_t a);
 uint32_t port_tlb_alias(uint32_t a);
+uint32_t port_tlb_jump(uint32_t slot, uint32_t imm); /* the target of a j/jal: top bits from the window's virtual base */
 void port_tlb_write(uint32_t pm, uint32_t entry_hi, uint32_t lo0, uint32_t lo1);
 HOT uint32_t mapped(uint32_t a) { return __builtin_expect(a < 0x80000000u && port_tlb_n, 0) ? port_tlb_canon(a) : a; }
 HOT uint8_t *at_load(uint32_t a) { a = mapped(a); return M + (a >= 0xA0000000u ? (uint32_t)port_io_load(a) : a); }
@@ -214,7 +215,7 @@ uint32_t port_mips_slot(const uint64_t *r, int n) {
 
 /* ---------------------------------------------------------------- the interpreter */
 
-typedef struct { uint64_t r[32], hi, lo; uint32_t f[32], fcr31, status, entry_hi, tlb_index, entry_lo[2], page_mask, cause, epc; } Cpu;
+typedef struct { uint64_t r[32], hi, lo; uint32_t f[32], fcr31, status, entry_hi, tlb_index, entry_lo[2], page_mask, cause, epc, context, badvaddr; } Cpu;
 static int tracing = -1;
 
 HOT int64_t sx32(uint32_t v) { return (int64_t)(int32_t)v; }
@@ -349,8 +350,8 @@ static int step(Cpu *c, uint32_t pc, uint32_t op, uint32_t *target) {
         default: if (rt < 8 || rt > 14) unknown(pc, op); /* (8 to 14: traps, never taken here) */
         }
         break; }
-    case 2: *target = ((pc + 4) & 0xF0000000u) | (op & 0x03FFFFFFu) << 2; return 1;
-    case 3: *target = ((pc + 4) & 0xF0000000u) | (op & 0x03FFFFFFu) << 2; r[31] = sx32(pc + 8); return 1;
+    case 2: *target = port_tlb_jump(pc + 4, (op & 0x03FFFFFFu) << 2); return 1;
+    case 3: *target = port_tlb_jump(pc + 4, (op & 0x03FFFFFFu) << 2); r[31] = sx32(pc + 8); return 1;
     case 4: BRANCH(r[rs] == r[rt]);
     case 5: BRANCH(r[rs] != r[rt]);
     case 6: BRANCH((int64_t)r[rs] <= 0);
@@ -364,7 +365,8 @@ static int step(Cpu *c, uint32_t pc, uint32_t op, uint32_t *target) {
     case 15: r[rt] = sx32(uimm << 16); break;
     case 16: { /* COP0 */
         uint32_t *reg = rd == 12 ? &c->status : rd == 13 ? &c->cause : rd == 14 ? &c->epc : rd == 10 ? &c->entry_hi : rd == 0 ? &c->tlb_index :
-                        rd == 5 ? &c->page_mask : rd == 2 || rd == 3 ? &c->entry_lo[rd - 2] : NULL;
+                        rd == 5 ? &c->page_mask : rd == 4 ? &c->context : rd == 8 ? &c->badvaddr :
+                        rd == 2 || rd == 3 ? &c->entry_lo[rd - 2] : NULL;
         if (rs == 0 || rs == 1)
             r[rt] = rd == 9 ? sx32(w2c_env_0x5F_builtin_mips_read_count(0)) : reg ? sx32(*reg) : 0;
         else if ((rs == 4 || rs == 5) && reg) *reg = (uint32_t)r[rt];
@@ -488,7 +490,30 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
     uint32_t pc = entry;
     unsigned long steps = 0;
     int zeros = 0;
+    unsigned refills = 0;
     for (;;) {
+        /* A fetch from a virtual address no TLB entry covers is a TLB refill exception on the console: the game's own
+           handler (installed at the vector 0x80000000) reads Context, loads the page pair's EntryLo words from the
+           game's table, writes them with tlbwr and returns with eret to retry the fetch. A game that maps its main
+           program this way (a shooter linking it at 0x7F000000, 4 KB pages brought in as the code first runs) had
+           no window for it: "no instructions at 8F000CD0". Context holds the faulting page's number in bits 4 to
+           22, EntryHi its address. After a few refills of one address that don't map it, the game's table has no
+           page for it, and the fetch goes on as before. */
+        if (__builtin_expect(pc < 0x80000000u && port_tlb_n && !(c.status & 2u), 0) && mapped(pc) == pc && fetch(0x80000000u)) {
+            if (refills++ < 8) {
+                if (tracing) fprintf(stderr, "interpreter: TLB refill for a fetch at %08X (from %08X)\n", pc, entry);
+                c.epc = pc;
+                c.badvaddr = pc;
+                c.entry_hi = pc & ~0x1FFFu;
+                c.context = (c.context & ~0x7FFFF0u) | (((pc >> 13) & 0x7FFFFu) << 4);
+                c.cause = 2u << 2; /* TLBL */
+                c.status |= 2u;
+                pc = 0x80000000u;
+                continue;
+            }
+        } else if (pc >= 0x80000000u) {
+            refills = 0;
+        }
         uint32_t op = fetch(pc), target = 0;
         if (op == 0 && ++zeros > 64) { /* a run of nothing: no code there (no ROM loaded where it was looked for) */
             fprintf(stderr, "interpreter: no instructions at %08X (from %08X): the function returns at once\n", pc, entry);

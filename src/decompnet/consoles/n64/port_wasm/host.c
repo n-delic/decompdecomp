@@ -1354,10 +1354,24 @@ static void boot_leftovers(void) {
    address `0x80000000 | its virtual address`), while the bytes sit at their physical address in RAM (a decompressed
    program, the boot chip's image). The port has no TLB: a low address inside a window is read at its KSEG0 spelling,
    and the interpreter fetches code from the physical alias where nothing was ever written at the spelling. */
-#define TLB_WINDOWS 16
+#define TLB_WINDOWS 512 /* 4 KB pages a refill handler brings in, merged with the neighbour they continue */
 static struct { uint32_t lo, size, phys; } tlb_win[TLB_WINDOWS];
 unsigned port_tlb_n;
 unsigned port_tlb_hi; /* windows at 0x00800000 up: the game's compiled C reads them as aliases of RAM (port_tlb_wasm) */
+/* A low window shows the same RAM at two names: the console reads a table at virtual 0x00102330 from physical 0x2330
+   (a jump table of a function the project has no C for: the bytes were copied to the boot image at the physical
+   address, and nothing wrote them where the port spells the virtual address, 0x80102330). The words of the
+   physical alias come to the spelling where it holds nothing yet, once, as the window is made: a jump table read as
+   zeros sent a function of such a game to address 0x100. Later writes go to whichever name the code uses. */
+static void tlb_mirror(uint32_t lo, uint32_t size, uint32_t phys) {
+    if (lo >= 0x00800000u || size > 0x01000000u) return;
+    uint32_t spelled = 0x80000000u | lo, alias = 0x80000000u | phys;
+    if (spelled == alias) return;
+    for (uint32_t off = 0; off + 4 <= size && spelled + off + 4 <= 0x80800000u && alias + off + 4 <= 0x80800000u; off += 4) {
+        uint32_t w = be32(alias + off);
+        if (w && !be32(spelled + off)) wbe32(spelled + off, w);
+    }
+}
 /* pm: the page mask register (PM_1M is 0x1FE000), va the pair's virtual address, even/odd the physical addresses of
    its two pages (-1: not mapped) */
 static void tlb_map(uint32_t pm, uint32_t va, uint32_t even, uint32_t odd) {
@@ -1367,8 +1381,20 @@ static void tlb_map(uint32_t pm, uint32_t va, uint32_t even, uint32_t odd) {
     for (int half = 0; half < 2; half++) {
         uint32_t phys = half ? odd : even, lo = va + (uint32_t)half * size;
         if (phys == 0xFFFFFFFFu || lo >= 0x80000000u || phys >= 0x00800000u) continue;
+        tlb_mirror(lo, size, phys);
         unsigned i = 0;
         while (i < port_tlb_n && tlb_win[i].lo != lo) i++;
+        if (i == port_tlb_n) {
+            /* a page that continues a window (the next virtual page onto the next physical one) extends it: a program
+               brought in page by page is one window, not hundreds */
+            for (unsigned j = 0; j < port_tlb_n; j++)
+                if (tlb_win[j].lo + tlb_win[j].size == lo && tlb_win[j].phys + tlb_win[j].size == phys && tlb_win[j].size < 0x01000000u) {
+                    tlb_win[j].size += size;
+                    phys = 0xFFFFFFFFu;
+                    break;
+                }
+            if (phys == 0xFFFFFFFFu) continue;
+        }
         if (i == port_tlb_n && port_tlb_n == TLB_WINDOWS) return;
         tlb_win[i].lo = lo; tlb_win[i].size = size; tlb_win[i].phys = phys;
         if (i == port_tlb_n) port_tlb_n++;
@@ -1398,6 +1424,30 @@ uint32_t port_tlb_wasm(uint32_t a) {
         if (tlb_win[i].lo >= 0x00800000u && a >= tlb_win[i].lo && a - tlb_win[i].lo < tlb_win[i].size)
             return 0x80000000u | (tlb_win[i].phys + (a - tlb_win[i].lo));
     return a;
+}
+/* The address a `j`/`jal` at the (delay slot) address `slot` goes to, given its 26-bit field `imm` (already shifted).
+   The console takes the jump's top four bits from the virtual address the code runs at. Code a game links at a
+   window's virtual base (a program at 0x70000400 mapped onto physical 0) is kept by the port at its KSEG0
+   spelling, so the top bits came out 8 and a `jal 0x7F000CD0` went to 0x8F000CD0: "no instructions". When the
+   code sits in a high window, the window's top bits are tried, and used when that target is itself mapped or the
+   plain one lies outside the console's RAM. */
+int port_tlb_covers(uint32_t v) {
+    for (unsigned i = 0; i < port_tlb_n; i++)
+        if (v >= tlb_win[i].lo && v - tlb_win[i].lo < tlb_win[i].size) return 1;
+    return 0;
+}
+uint32_t port_tlb_jump(uint32_t slot, uint32_t imm) {
+    uint32_t plain = (slot & 0xF0000000u) | imm;
+    if (!port_tlb_n || slot < 0x80000000u) return plain;
+    uint32_t phys = slot & 0x1FFFFFFFu;
+    for (unsigned i = 0; i < port_tlb_n; i++) {
+        if (tlb_win[i].lo < 0x00800000u || phys < tlb_win[i].phys || phys - tlb_win[i].phys >= tlb_win[i].size) continue;
+        uint32_t v = (tlb_win[i].lo & 0xF0000000u) | imm;
+        /* mapped now, or a plain target no RAM could hold (a page the game's refill handler brings in when it is first
+           run: the interpreter's fetch takes that exception) */
+        if (v != plain && (port_tlb_covers(v) || plain >= 0x80800000u)) return v;
+    }
+    return plain;
 }
 /* where the bytes of code at a spelling live in RAM, 0 when no window covers it */
 uint32_t port_tlb_alias(uint32_t a) {
@@ -1507,6 +1557,7 @@ static int boot_memory(void) {
         memset(M + boot.bss, 0, boot.bss_size);
     else LOG("the entry routine's BSS wasn't read: memory after the image keeps the ROM's bytes");
     boot_leftovers();
+    for (unsigned i = 0; i < port_tlb_n; i++) tlb_mirror(tlb_win[i].lo, tlb_win[i].size, tlb_win[i].phys); /* (the image is in) */
     wbe32(SP_STATUS, 1);              /* the RSP is halted until a task starts it */
     wbe32(0x80000300, (uint32_t)boot.tv); /* osTvType */
     wbe32(0x80000308, 0xB0000000);    /* osRomBase */
