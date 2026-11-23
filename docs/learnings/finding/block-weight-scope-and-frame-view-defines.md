@@ -54,7 +54,7 @@ at a time):
   held a load (`temp = *(u16 *)((char *)arg1 + 0)`) written as the load again in a call's arguments, after the frame
   stores and a call that came between: 2386 -> 1971 (the record address `table + id * 0x4C` recomputed from `lhu` as the
   target does, instead of the register that held it; `stale_load_reread`, #1470). `frame_write_alias_split` then found
-  1971 -> 1911 on the new base. The whole run, 3786 -> 1551 in the app, took four hand edits and the families above; the
+  1971 -> 1911 on the new base. The whole run to 1551 in the app, took four hand edits and the families above; the
   function is not matched (50 register rows left, the arms' local-alloc order of `$v0`/`$v1`/`$a0`).
 
 - After the families above typed the pointer stores as record members, `adjacent_cast_store_swap` no longer saw its
@@ -63,6 +63,13 @@ at a time):
   the spelling of a statement hides it from every family that reads the old spelling: after adding one, run the
   neighbouring ones on its output. Two stores of different bases swapped, `*arg0 = rec; ((R *) rec)->f = v;`: 1691 -> 1551
   (`independent_statement_swap`, #1477; 44 children, the edit is the fifth).
+
+- A loop's pointer chain named in its guard, body and test (`*(*(arg1 + 0x24) + 4)`) kept in one local read before the
+  guard and again at the bottom of each pass (`lw $a0,0x24($s3); lhu $v0,4($a0); loop: lw $a0,0($a0) ... lw $a0,0x24($s3);
+  lhu $v0,4($a0)`): the draft cached it in one of two twin loops and not the other; caching the twin 1551 -> 1271 (the
+  instruction count then equals the target's; `loop_chain_cache`, #1489). With `loop_counter_init_hoist` and one more
+  `run_weight_scope` wrap, from the families' own chain, 1271 -> 1176. The run, 3786 -> 1176 in the app, is hand edits and the
+  families above; one chain step costs 20 to 25 minutes under load (the draft path's generation, 1,000 children).
 
 Failed experiments that would otherwise be repeated: permuting the three statements of an arm (`var_a1`, `var_a0`,
 `var_v0`) gave the same code in all 36 orders (the scheduler's tie-break is not the source order there); writing the
