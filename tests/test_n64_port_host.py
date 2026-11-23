@@ -392,6 +392,33 @@ int main(void) {
     assert done.stdout.split() == ["80103060", "11111111", "80103060"]
 
 
+def test_a_page_mapped_at_virtual_zero_is_read_at_its_physical_address(tmp_path):
+    """A game keeps its own call dispatcher at virtual address 0 (a 4 KB page onto physical 0x42000; its `jr $zero` thunks
+    jump there). Spelled `0x80000000 | virtual` that is where libultra's osInitialize writes the exception vectors, so
+    the dispatcher was overwritten by the vector stubs and every call went to the error routine. A page at 0 is kept at
+    the physical address its bytes are at; the vectors are left alone."""
+    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if not cc:
+        pytest.skip("no C compiler")
+    text = HOST.read_text()
+    code = text[text.index("static struct { uint32_t entry, target, bss, bss_size; int tv; } boot;"):
+                text.index("/* the console's RAM as the boot leaves it")]
+    source = tmp_path / "t.c"
+    source.write_text(_BOOT_HARNESS + code + """
+int main(void) {
+    wbe32(0x80042000u, 0x01004825u);  /* the dispatcher's first word, at the physical address */
+    wbe32(0x80000000u, 0x3C1A8000u);  /* the vector stub osInitialize wrote at the exception vector */
+    port_tlb_write(0, 0x00000000, (0x42000u >> 12 << 6) | 2, 1); /* virtual 0 -> physical 0x42000, 4 KB, the odd page invalid */
+    printf("%08X %08X %08X\\n", port_tlb_canon(0x0), port_tlb_canon(0xFFC), port_tlb_canon(0x1000));
+    printf("%08X %08X\\n", be32(0x80000000u), be32(0x80042000u));
+    return 0;
+}
+""")
+    subprocess.run([cc, "-o", str(tmp_path / "t"), str(source)], check=True, capture_output=True)
+    done = subprocess.run([str(tmp_path / "t")], capture_output=True, text=True, check=True)
+    assert done.stdout.splitlines() == ["80042000 80042FFC 00001000", "3C1A8000 01004825"]
+
+
 def test_pages_a_refill_handler_brings_in_one_by_one_make_one_window(tmp_path):
     """A refill handler writes a 4 KB page pair per exception: a program of a megabyte is 128 of them, which filled
     the window table. A pair that continues a window (the next virtual pages onto the next physical ones) extends it."""

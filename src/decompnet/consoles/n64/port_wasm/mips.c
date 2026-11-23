@@ -256,6 +256,124 @@ static int shape_calls_interrupt_leaf(const uint32_t *w, unsigned n, uint32_t vr
     return found;
 }
 
+/* The routines that touch the console's hardware, or the kernel's state for it (sdk_shapes.py's `_hardware_features`
+   and the tests after it; change them together): told by the constants and field offsets the hardware fixes. `through`
+   asks for an access through a register that is not $sp. */
+static int hw_any(const uint32_t *w, unsigned n, unsigned op, unsigned imm, int through) {
+    for (unsigned i = 0; i < n; i++)
+        if (OPC(w[i]) == op && IMM(w[i]) == imm && (!through || RS(w[i]) != 29)) return 1;
+    return 0;
+}
+static int hw_op(const uint32_t *w, unsigned n, unsigned op) {
+    for (unsigned i = 0; i < n; i++) if (OPC(w[i]) == op) return 1;
+    return 0;
+}
+static int hw_op_through(const uint32_t *w, unsigned n, unsigned op) {
+    for (unsigned i = 0; i < n; i++) if (OPC(w[i]) == op && RS(w[i]) != 29) return 1;
+    return 0;
+}
+static int hw_const(const uint32_t *w, unsigned n, unsigned imm) { /* addiu r, $zero, imm */
+    for (unsigned i = 0; i < n; i++) if (OPC(w[i]) == 9 && RS(w[i]) == 0 && IMM(w[i]) == imm) return 1;
+    return 0;
+}
+static int hw_sw_zero(const uint32_t *w, unsigned n, unsigned imm) { /* sw $zero, imm(r) */
+    for (unsigned i = 0; i < n; i++)
+        if (OPC(w[i]) == 0x2B && RT(w[i]) == 0 && RS(w[i]) != 29 && IMM(w[i]) == imm) return 1;
+    return 0;
+}
+static int hw_back(const uint32_t *w, unsigned n) { /* a branch backwards: a loop */
+    for (unsigned i = 0; i < n; i++) {
+        unsigned op = OPC(w[i]);
+        if ((op == 4 || op == 5 || op == 6 || op == 7 || op == 0x14 || op == 0x15) && (w[i] & 0x8000)) return 1;
+    }
+    return 0;
+}
+static unsigned hw_lui(const uint32_t *w, unsigned n, unsigned imm) {
+    unsigned count = 0;
+    for (unsigned i = 0; i < n; i++) if (OPC(w[i]) == 0x0F && IMM(w[i]) == imm) count++;
+    return count;
+}
+static uint32_t hw_cache_ops(const uint32_t *w, unsigned n) { /* a bit for each cache operation code used */
+    uint32_t ops = 0;
+    for (unsigned i = 0; i < n; i++) if (OPC(w[i]) == 0x2F) ops |= 1u << RT(w[i]);
+    return ops;
+}
+/* whether the function's stores through a register that is not $sp stay within the OSTimer's eight words, and no
+   halfword or byte is stored through one */
+static int hw_timer_stores_only(const uint32_t *w, unsigned n) {
+    for (unsigned i = 0; i < n; i++) {
+        unsigned op = OPC(w[i]);
+        if (RS(w[i]) == 29) continue;
+        if (op == 0x28 || op == 0x29) return 0;
+        if (op == 0x2B && (IMM(w[i]) > 0x1C || (IMM(w[i]) & 3))) return 0;
+    }
+    return 1;
+}
+static int hw_stores_anything(const uint32_t *w, unsigned n) { /* sw, sh or sb through a register that is not $sp */
+    for (unsigned i = 0; i < n; i++) {
+        unsigned op = OPC(w[i]);
+        if ((op == 0x2B || op == 0x29 || op == 0x28) && RS(w[i]) != 29) return 1;
+    }
+    return 0;
+}
+
+static const char *shape_hardware(const uint32_t *w, unsigned n, unsigned size, unsigned calls) {
+    int back = hw_back(w, n);
+    if (calls == 2) { /* the video manager's state, between an interrupt disable and restore */
+        int ori = hw_op(w, n, 0x0D);
+        if (size >= 56 && size <= 100 && hw_any(w, n, 0x2B, 4, 1) && hw_any(w, n, 0x29, 0, 1) && hw_any(w, n, 0x25, 0, 1)
+            && hw_any(w, n, 0x0D, 0x10, 0))
+            return "osViSwapBuffer";
+        if (size >= 80 && size <= 130 && hw_any(w, n, 0x29, 0, 1) && hw_any(w, n, 0x25, 0, 1) && hw_any(w, n, 0x0D, 0x20, 0)
+            && (hw_any(w, n, 0x0C, 0xFFDF, 0) || hw_const(w, n, 0xFFDF)))
+            return "osViBlack";
+        if (size >= 72 && size <= 120 && hw_any(w, n, 0x2B, 0x10, 1) && hw_any(w, n, 0x2B, 0x14, 1)
+            && hw_any(w, n, 0x29, 2, 1) && !ori)
+            return "osViSetEvent";
+        if (size >= 64 && size <= 112 && hw_any(w, n, 0x2B, 8, 1) && hw_any(w, n, 0x2B, 0xC, 1) && hw_any(w, n, 0x23, 4, 1)
+            && hw_any(w, n, 0x29, 0, 1) && hw_const(w, n, 1) && !ori && !hw_any(w, n, 0x2B, 0x10, 1))
+            return "osViSetMode";
+    }
+    if (size >= 120 && size <= 320 && calls >= 2 && hw_const(w, n, 0xB) && hw_const(w, n, 0xC) && hw_any(w, n, 0x29, 0, 1)
+        && hw_any(w, n, 0x28, 2, 1) && hw_sw_zero(w, n, 0x14) && hw_any(w, n, 0x2B, 4, 1) && hw_any(w, n, 0x2B, 8, 1)
+        && hw_any(w, n, 0x2B, 0xC, 1) && hw_any(w, n, 0x2B, 0x10, 1))
+        return "osPiStartDma";
+    if (size >= 100 && size <= 260 && calls >= 2 && hw_const(w, n, 0xF) && hw_const(w, n, 0x10) && hw_any(w, n, 0x29, 0, 1)
+        && hw_any(w, n, 0x24, 2, 1) && hw_any(w, n, 0x2B, 0x14, 1) && !hw_sw_zero(w, n, 0x14))
+        return "osEPiStartDma";
+    if (size >= 36 && size <= 80 && calls >= 2 && calls <= 3 && back) {
+        for (unsigned i = 0; i < n; i++) /* addiu $a0, $zero, 0x125 */
+            if (OPC(w[i]) == 9 && RS(w[i]) == 0 && RT(w[i]) == 4 && IMM(w[i]) == 0x125) return "osSpTaskStartGo";
+    }
+    if (size >= 110 && size <= 200 && hw_lui(w, n, 0xA450) && hw_any(w, n, 0x0C, 0x1FFF, 0) && hw_op_through(w, n, 0x28)
+        && hw_any(w, n, 0x0D, 4, 0))
+        return "osAiSetNextBuffer";
+    if (size == 16 && OPC(w[0]) == 0x0F && IMM(w[0]) == 0xA450 && OPC(w[1]) == 0x0D && IMM(w[1]) == 4 && w[2] == 0x03E00008u
+        && OPC(w[3]) == 0x23 && IMM(w[3]) == 0)
+        return "osAiGetLength";
+    if (size >= 200 && size <= 420 && hw_lui(w, n, 0xA450) >= 2 && hw_any(w, n, 0x0D, 0x10, 0) && hw_any(w, n, 0x0D, 0x14, 0))
+        return "osAiSetFrequency";
+    if (size == 12 && (w[0] & 0xFFE0FFFFu) == 0x40004800u && w[1] == 0x03E00008u) return "osGetCount";
+    if (size == 132 && calls == 3 && !back && !hw_stores_anything(w, n)) { /* (132 bytes in every build seen) */
+        for (unsigned i = 0; i < n; i++) /* sltu: the carry between the halves */
+            if (OPC(w[i]) == 0 && (w[i] & 63) == 0x2B) return "osGetTime";
+    }
+    if (calls == 0 && size >= 32 && size <= 200) { /* a loop of cache operations: told by which */
+        uint32_t ops = hw_cache_ops(w, n);
+        if ((ops & (1u << 0x10)) && !(ops & ~((1u << 0x10) | 1u))) return "osInvalICache";
+        if ((ops & (1u << 0x11)) && !(ops & ~((1u << 0x11) | (1u << 0x15) | (1u << 1)))) return "osInvalDCache";
+        if ((ops & (1u << 0x19)) && !(ops & ~((1u << 0x19) | (1u << 1)))) return "osWritebackDCache";
+        if (ops == (1u << 1) && size <= 48) return "osWritebackDCacheAll";
+    }
+    if (size >= 130 && size <= 330 && calls >= 2 && hw_sw_zero(w, n, 0) && hw_sw_zero(w, n, 4) && hw_timer_stores_only(w, n)) {
+        static const unsigned fields[] = {8, 0xC, 0x10, 0x14, 0x18, 0x1C};
+        int all = 1;
+        for (unsigned k = 0; k < 6; k++) if (!hw_any(w, n, 0x2B, fields[k], 1)) all = 0;
+        if (all) return "osSetTimer";
+    }
+    return 0;
+}
+
 /* sdk_shapes.py's thread_getter: osGetThreadId (the offset read is 0x14) and osGetThreadPri (0x04): a branch on $a0, the
    running thread loaded into $a0 from a global, one load into $v0 from $a0 in the return's delay slot, no store, no
    call. Returns the offset, or 0. */
@@ -278,10 +396,14 @@ static unsigned shape_thread_getter(const uint32_t *w, unsigned n) {
 /* sdk_shapes.py's identify(), the same tests over the function's words: the library's name, or 0 */
 static const char *shape_identify_words(const uint32_t *w, unsigned n) {
     unsigned size = n * 4;
-    if (size < 20 || size > 700) return 0;
+    if (size < 12 || size > 700) return 0;
     unsigned got = shape_thread_getter(w, n);
     if (got) return got == 0x14 ? "osGetThreadId" : "osGetThreadPri";
-    if (size < 32) return 0;
+    if (size < 32) { /* (the 12-byte osGetCount and the 16-byte osAiGetLength: the hardware tests below) */
+        ShapeFeatures none;
+        shape_features(w, n, &none);
+        return shape_hardware(w, n, size, none.calls);
+    }
     ShapeFeatures f;
     shape_features(w, n, &f);
     if (size >= 100) { /* osCreateThread: the id into +0x14, flags cleared at +0x12, a state halfword at +0x10 */
@@ -325,13 +447,40 @@ static const char *shape_identify_words(const uint32_t *w, unsigned n) {
     }
     if (size >= 32 && size <= 48 && f.calls == 0 && f.stored == 0x3Fu && !f.wide_load) return "osCreateMesgQueue";
     if (shape_event_message(w, n, size)) return "osSetEventMesg";
+    return shape_hardware(w, n, size, f.calls);
+}
+
+/* Whether one of the function's calls goes to a leaf that reads a coprocessor 0 register (`mfc0 $r, $reg`) and returns:
+   the Count register (9) osGetTime reads between its interrupt disable and restore. */
+static int shape_calls_cp0_leaf(const uint32_t *w, unsigned n, uint32_t vram, unsigned reg) {
+    for (unsigned i = 0; i < n; i++) {
+        if (OPC(w[i]) != 3) continue;
+        uint32_t target = ((vram + 4u * i) & 0xF0000000u) | ((w[i] & 0x3FFFFFFu) << 2);
+        int leaf = 0, read = 0;
+        for (unsigned k = 0; k < 16 && !leaf; k++) {
+            uint32_t x = fetch(target + 4u * k);
+            if ((x & 0xFFE00000u) == 0x40000000u && ((x >> 11) & 31) == reg) read = 1; /* mfc0 */
+            if (x == 0x03E00008u) leaf = 1;
+        }
+        if (leaf && read) return 1;
+    }
     return 0;
 }
 
 static const char *shape_identify(const uint32_t *w, unsigned n, uint32_t vram) {
     const char *name = shape_identify_words(w, n);
+    if (!name) return 0;
+    /* the routines of the hardware: their constants are what tells them (osGetTime and the video manager's four are
+       told by what they do to the kernel's state, so they must also call the interrupt disable and restore) */
+    static const char *const bare[] = {"osPiStartDma", "osEPiStartDma", "osSpTaskStartGo", "osAiSetNextBuffer",
+                                       "osAiGetLength", "osAiSetFrequency", "osGetCount", "osInvalICache",
+                                       "osInvalDCache", "osWritebackDCache", "osWritebackDCacheAll", "osSetTimer"};
+    for (unsigned i = 0; i < sizeof bare / sizeof *bare; i++) if (!strcmp(name, bare[i])) return name;
+    if (!strcmp(name, "osGetTime"))
+        return shape_calls_cp0_leaf(w, n, vram, 9) && shape_calls_interrupt_leaf(w, n, vram, 0) ? name : 0;
+    if (!strncmp(name, "osVi", 4)) return shape_calls_interrupt_leaf(w, n, vram, 1) ? name : 0;
     /* every one of them but osCreateMesgQueue (six stores, no call) disables interrupts first */
-    if (!name || !strcmp(name, "osCreateMesgQueue") || !strcmp(name, "osGetThreadId") || !strcmp(name, "osGetThreadPri"))
+    if (!strcmp(name, "osCreateMesgQueue") || !strcmp(name, "osGetThreadId") || !strcmp(name, "osGetThreadPri"))
         return name; /* (the getters and the queue's creation call nothing) */
     /* osCreateThread calls only the interrupt disable and restore; the others call more (the thread lists' routines) */
     return shape_calls_interrupt_leaf(w, n, vram, !strcmp(name, "osCreateThread")) ? name : 0;

@@ -25,6 +25,9 @@ JR_RA, NOP = 0x03E00008, 0
 _spec = importlib.util.spec_from_file_location("shape_builders", ROOT / "tests/test_n64_sdk_thread_shapes.py")
 shapes = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(shapes)
+_hw_spec = importlib.util.spec_from_file_location("hardware_builders", ROOT / "tests/test_n64_sdk_hardware_shapes.py")
+hardware = importlib.util.module_from_spec(_hw_spec)
+_hw_spec.loader.exec_module(hardware)
 
 HARNESS = r"""
 #include <stdint.h>
@@ -58,12 +61,15 @@ int main(int argc, char **argv) {
     mem = mmap(NULL, 1ull << 32, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
     if (mem == MAP_FAILED || argc < 3) return 3;
     FILE *in = fopen(argv[1], "rb");
-    size_t n = fread(mem + 0x%(base)08Xu, 1, 0x10000, in);
+    size_t n = fread(mem + 0x%(base)08Xu, 1, 0x1E000, in); /* (below the leaves the words below call: 0x80020000) */
     fclose(in);
     (void)n;
     /* what the synthetic `jal` words call (0x80020000): an interrupt disable, `mfc0 $t0, Status; jr $ra; nop` */
     static const uint32_t leaf[3] = {0x40086000u, 0x03E00008u, 0};
     for (int k = 0; k < 3; k++) { uint32_t b = __builtin_bswap32(leaf[k]); memcpy(mem + 0x80020000u + 4 * k, &b, 4); }
+    /* and 0x80020100: osGetTime's read of the Count register, `mfc0 $v0, Count; jr $ra; nop` */
+    static const uint32_t count[3] = {0x40024800u, 0x03E00008u, 0};
+    for (int k = 0; k < 3; k++) { uint32_t b = __builtin_bswap32(count[k]); memcpy(mem + 0x80020100u + 4 * k, &b, 4); }
     for (int i = 0; i < atoi(argv[2]); i++) {
         const char *name = port_mips_shape_name(0x%(base)08Xu + (uint32_t)i * %(stride)du);
         printf("%%s\n", name ? name : "-");
@@ -119,6 +125,7 @@ def _functions():
     yield_ = [i(9, 29, 29, -8), shapes.JAL, i(9, 0, 14, 2), shapes.JAL, i(0x29, 15, 14, 0x10), shapes.JAL, NOP]
     out.append(("yield", code(*yield_, pad=2)))
     out.append(("yield-not-runnable", code(*yield_[:2], i(9, 0, 14, 3), *yield_[3:], pad=2)))
+    out += hardware.functions()  # the routines of the hardware, and their near misses
     # osGetThreadId / osGetThreadPri: bnez $a0; nop; lui $a0, hi; lw $a0, lo($a0); jr $ra; lw $v0, off($a0)
     bnez_a0 = i(5, 4, 0, 3)
     running = [bnez_a0, NOP, i(0x0F, 0, 4, 0x800C), i(0x23, 4, 4, 0x1CB0), JR_RA]
@@ -147,7 +154,7 @@ def classified(tmp_path_factory):
         pytest.skip("no C compiler")
     tmp = tmp_path_factory.mktemp("shapes")
     cases = [(label, _with_return(code)) for label, code in _functions()]
-    image = bytearray(0x10000)
+    image = bytearray(0x1E000)  # (a function every 0x400 bytes: room for 120)
     for k, (_, code) in enumerate(cases):
         image[k * STRIDE:k * STRIDE + len(code)] = code
     (tmp / "image.bin").write_bytes(bytes(image))
@@ -163,7 +170,8 @@ def classified(tmp_path_factory):
 
 
 HOST_ONLY_REJECTS = {"create-callees-not-interrupts", "create-one-callee-not-an-interrupt",
-                     "create-behind-an-indirect-jump"}  # (the bytes alone are the routine's; what it calls is not)
+                     "create-behind-an-indirect-jump",
+                     "time-interrupts-only"}  # (the bytes alone are the routine's; what it calls is not)
 
 
 def test_the_host_names_what_the_python_tests_name(classified):
@@ -178,7 +186,7 @@ def test_the_host_names_each_routine_it_can_replace(classified):
     named = {name for _, _, name in classified}
     assert {"osCreateThread", "osYieldThread", "osStartThread", "osSetThreadPri", "osDestroyThread", "osRecvMesg",
             "osSendMesg", "osJamMesg", "osCreateMesgQueue", "osSetEventMesg", "osGetThreadId",
-            "osGetThreadPri"} <= named
+            "osGetThreadPri"} | set(hardware.EXPECTED.values()) <= named
 
 
 def test_a_near_miss_is_no_routine(classified):

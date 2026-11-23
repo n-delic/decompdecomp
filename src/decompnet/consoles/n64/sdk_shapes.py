@@ -20,6 +20,16 @@ given, an `osRecvMesg` that parked a thread in the game's own `__osEnqueueAndYie
 routine itself (named already, or the same routine under a prefixed name); an audio engine's routine that shared
 most of `osSetThreadPri`'s offsets showed that a halfword store anywhere but +0x10 rules a thread routine out.
 
+The same goes for the routines that touch the console's hardware, or the kernel's state for it. They are told by the
+constants and field offsets the hardware fixes: the video manager's state (`osViSetMode`, `osViSwapBuffer`,
+`osViBlack`, `osViSetEvent`: stores at +0, +2, +4, +8, +0x10, +0x14 of the `__osViNext` structure, an `ori` of 0x10
+or 0x20 into its flags, always between an interrupt disable and restore), the DMA request's type halfword
+(`osPiStartDma` stores 11 or 12 into the message header, `osEPiStartDma` 15 or 16), the RSP's clear mask
+(`osSpTaskStartGo` sets 0x125 in `SP_STATUS`), the audio interface's registers (`0xA450xxxx`), the cache operations'
+codes (`cache 0x10` for the instruction cache, 0x11 and 0x15 invalidate the data cache, 0x19 and 1 write it back),
+the Count register (`mfc0 $9`) and the timer's fields (`OSTimer` +0x10, +0x14, +0x18, +0x1C). Run over every
+function of every ROM project here, each hit was the routine itself (or a prefixed copy of it).
+
 The port host runs the same tests at run time (port_wasm/mips.c's shape_identify, a C port: change them together,
 tests/test_n64_port_shapes.py runs both over the same words), for the games that decompress or load their real code
 and so carry their own libultra in code the build never saw: when the interpreter is about to run a function it has
@@ -28,7 +38,7 @@ no C for, the routine is told by these tests and, when the host defines it, the 
 
 CORPUS = "N64 library routines by structure"
 _MIN, _MAX = 100, 700
-_MIN_ANY = 20  # (the smallest routine here: osGetThreadId, 24 bytes; osYieldThread is 60 to 80)
+_MIN_ANY = 12  # (the smallest routine here: osGetCount, 12 bytes; osGetThreadId is 24; each test asks for its own size)
 _EVENT_SIZES = frozenset({88, 92, 96, 100, 104, 108, 168, 172, 176, 180, 184})  # osSetEventMesg, as builds have it
 
 
@@ -223,6 +233,161 @@ def queue_creation(words: list[int], size: int) -> bool:
             and not any(w >> 26 in (0x23, 0x21, 0x25) for w in words))
 
 
+def _hardware_features(words: list[int]) -> dict:
+    """What a routine does through registers that are not the stack: the stores' and loads' offsets by width, the
+    constants it builds (`addiu r, $zero, k`, `ori`, `andi`, `lui`) and the cache operations it uses."""
+    def through(op):  # the offsets of one kind of access through a register that is not $sp
+        return {w & 0xFFFF for w in words if w >> 26 == op and w >> 21 & 31 != 29}
+    return {
+        "calls": sum(1 for w in words if w >> 26 == 3),
+        "sw": through(0x2B), "sh": through(0x29), "sb": through(0x28), "lw": through(0x23), "lhu": through(0x25),
+        "lbu": through(0x24),
+        "sw_zero": {w & 0xFFFF for w in words if w >> 26 == 0x2B and w >> 16 & 31 == 0 and w >> 21 & 31 != 29},
+        "const": {w & 0xFFFF for w in words if w >> 26 == 9 and w >> 21 & 31 == 0},
+        "ori": {w & 0xFFFF for w in words if w >> 26 == 0x0D},
+        "andi": {w & 0xFFFF for w in words if w >> 26 == 0x0C},
+        "lui": [w & 0xFFFF for w in words if w >> 26 == 0x0F],
+        "cache": {w >> 16 & 31 for w in words if w >> 26 == 0x2F},
+        "back": any(w >> 26 in (4, 5, 6, 7, 0x14, 0x15) and w & 0x8000 for w in words),
+    }
+
+
+def _vi_routine(words: list[int], size: int, low: int, high: int) -> dict | None:
+    """The video manager's routines change `__osViNext` between an interrupt disable and restore: two calls."""
+    f = _hardware_features(words)
+    return f if low <= size <= high and f["calls"] == 2 else None
+
+
+def vi_swap_buffer(words: list[int], size: int) -> bool:
+    """`osViSwapBuffer(buf)`: the buffer into +4 of the next video state, and its flags (+0, a halfword) or-ed with
+    0x10 (swap pending)."""
+    f = _vi_routine(words, size, 56, 100)
+    return bool(f) and 4 in f["sw"] and 0 in f["sh"] and 0 in f["lhu"] and 0x10 in f["ori"]
+
+
+def vi_black(words: list[int], size: int) -> bool:
+    """`osViBlack(on)`: sets or clears 0x20 in the next video state's flags (an `ori`, and an `andi` of ~0x20, or the
+    constant -0x21 and an `and`)."""
+    f = _vi_routine(words, size, 80, 130)
+    return (bool(f) and 0 in f["sh"] and 0 in f["lhu"] and 0x20 in f["ori"]
+            and (0xFFDF in f["andi"] or 0xFFDF in f["const"]))
+
+
+def vi_set_event(words: list[int], size: int) -> bool:
+    """`osViSetEvent(mq, msg, retraceCount)`: the queue into +0x10, the message into +0x14 and the count (a halfword)
+    into +2 of the next video state."""
+    f = _vi_routine(words, size, 72, 120)
+    return bool(f) and {0x10, 0x14} <= f["sw"] and 2 in f["sh"] and not f["ori"]
+
+
+def vi_set_mode(words: list[int], size: int) -> bool:
+    """`osViSetMode(mode)`: the mode into +8 of the next video state, the mode's first field (+4 of it) into +0xC, and
+    the flags (a halfword, +0) set to 1 (the mode changed)."""
+    f = _vi_routine(words, size, 64, 112)
+    return (bool(f) and {8, 0xC} <= f["sw"] and 4 in f["lw"] and 0 in f["sh"] and 1 in f["const"]
+            and not f["ori"] and 0x10 not in f["sw"])
+
+
+def pi_start_dma(words: list[int], size: int) -> bool:
+    """`osPiStartDma(mb, pri, dir, dev, dram, size, mq)`: the message header's type (a halfword at +0) is 11 for a
+    read and 12 for a write, its priority a byte at +2, its words at +4 to +0x10 filled and +0x14 zeroed."""
+    f = _hardware_features(words)
+    return (120 <= size <= 320 and f["calls"] >= 2 and {0xB, 0xC} <= f["const"] and 0 in f["sh"] and 2 in f["sb"]
+            and 0x14 in f["sw_zero"] and {4, 8, 0xC, 0x10} <= f["sw"])
+
+
+def epi_start_dma(words: list[int], size: int) -> bool:
+    """`osEPiStartDma(handle, mb, dir)`: the same for a device handle: the type is 15 or 16, the handle goes into +0x14
+    of the message and the request's priority byte (+2) is read to choose the queue."""
+    f = _hardware_features(words)
+    return (100 <= size <= 260 and f["calls"] >= 2 and {0xF, 0x10} <= f["const"] and 0 in f["sh"] and 2 in f["lbu"]
+            and 0x14 in f["sw"] and 0x14 not in f["sw_zero"])
+
+
+def sp_task_start_go(words: list[int], size: int) -> bool:
+    """`osSpTaskStartGo(task)`: waits for the RSP's device to be free (a call and a loop back on its result), then
+    sets `SP_STATUS` with 0x125 (clear halt, broke, step, set interrupt on break)."""
+    f = _hardware_features(words)
+    return (36 <= size <= 80 and 2 <= f["calls"] <= 3 and f["back"]
+            and any(w >> 26 == 9 and w >> 21 & 31 == 0 and w >> 16 & 31 == 4 and w & 0xFFFF == 0x125 for w in words))
+
+
+def ai_set_next_buffer(words: list[int], size: int) -> bool:
+    """`osAiSetNextBuffer(buf, size)`: checks the buffer's end is 0x2000-aligned (`andi 0x1FFF`) and writes the audio
+    interface's address and length registers (`0xA4500000`, `+4`)."""
+    f = _hardware_features(words)
+    return 110 <= size <= 200 and 0xA450 in f["lui"] and 0x1FFF in f["andi"] and bool(f["sb"]) and 4 in f["ori"]
+
+
+def ai_get_length(words: list[int], size: int) -> bool:
+    """`osAiGetLength()`: `lui $v0, 0xA450; ori $v0, $v0, 4; jr $ra; lw $v0, ($v0)`: the length register, read."""
+    return (size == 16 and words[0] >> 26 == 0x0F and words[0] & 0xFFFF == 0xA450 and words[1] >> 26 == 0x0D
+            and words[1] & 0xFFFF == 4 and words[2] == 0x03E00008 and words[3] >> 26 == 0x23 and words[3] & 0xFFFF == 0)
+
+
+def ai_set_frequency(words: list[int], size: int) -> bool:
+    """`osAiSetFrequency(f)`: works out the DAC's rate and the bit rate and writes them to `0xA4500010` and
+    `0xA4500014`."""
+    f = _hardware_features(words)
+    return 200 <= size <= 420 and f["lui"].count(0xA450) >= 2 and {0x10, 0x14} <= f["ori"]
+
+
+def get_count(words: list[int], size: int) -> bool:
+    """`osGetCount()`: `mfc0 $v0, Count; jr $ra; nop`."""
+    return size == 12 and words[0] & 0xFFE0FFFF == 0x40004800 and words[1] == 0x03E00008
+
+
+def get_time(words: list[int], size: int) -> bool:
+    """`osGetTime()`: between an interrupt disable and restore, the Count register's value (a third call) added to the
+    kernel's 64-bit base with the carry (`sltu`) between the halves; it stores nothing but to the stack."""
+    f = _hardware_features(words)
+    # 132 bytes in every build here (74 of 74 named copies); a game function of another size that reads the time with
+    # the same shape (a call timer, 120 to 148 bytes: Blast Corps' 136) is no libultra routine and must stay the game's
+    return (size == 132 and f["calls"] == 3 and any(w >> 26 == 0 and w & 0x3F == 0x2B for w in words)
+            and not f["back"] and not f["sw"] and not f["sh"] and not f["sb"])
+
+
+def _cache_ops(words: list[int], size: int) -> set[int]:
+    """The cache operations of a routine that is only a loop of them (no call), else none."""
+    f = _hardware_features(words)
+    return f["cache"] if f["calls"] == 0 and 32 <= size <= 200 else set()
+
+
+def cache_invalidate_instructions(words: list[int], size: int) -> bool:
+    """`osInvalICache(addr, size)`: `cache 0x10` (hit invalidate, instruction) over the lines, or every line by index."""
+    ops = _cache_ops(words, size)
+    return 0x10 in ops and ops <= {0x10, 0}
+
+
+def cache_invalidate_data(words: list[int], size: int) -> bool:
+    """`osInvalDCache(addr, size)`: `cache 0x11` (hit invalidate, data) in the middle, 0x15 (write back and invalidate)
+    for a partial line at each end, or every line by index."""
+    ops = _cache_ops(words, size)
+    return 0x11 in ops and ops <= {0x11, 0x15, 1}
+
+
+def cache_writeback_data(words: list[int], size: int) -> bool:
+    """`osWritebackDCache(addr, size)`: `cache 0x19` (hit write back, data) over the lines, or every line by index."""
+    ops = _cache_ops(words, size)
+    return 0x19 in ops and ops <= {0x19, 1}
+
+
+def cache_writeback_all(words: list[int], size: int) -> bool:
+    """`osWritebackDCacheAll()`: `cache 1` (index write back and invalidate, data) over the whole cache, nothing else."""
+    return _cache_ops(words, size) == {1} and size <= 48
+
+
+def set_timer(words: list[int], size: int) -> bool:
+    """`osSetTimer(timer, value, interval, mq, msg)`: clears the timer's links (+0, +4), stores its interval (+8, +0xC),
+    value (+0x10, +0x14), queue (+0x18) and message (+0x1C), then inserts it in the kernel's list (calls)."""
+    f = _hardware_features(words)
+    fields = {0, 4, 8, 0xC, 0x10, 0x14, 0x18, 0x1C}
+    # it stores the timer's eight words and nothing else through a pointer: a function that sets a timer up inline
+    # among other work (a game's menu state, 276 bytes) stores more, and is no libultra routine
+    return (130 <= size <= 330 and f["calls"] >= 2 and {0, 4} <= f["sw_zero"] and fields - {0, 4} <= f["sw"]
+            and f["sw"] <= fields and not f["sh"] and not f["sb"])
+
+
 def identify(code: bytes, big_endian: bool = True) -> dict | None:
     """{"name", "corpus", "evidence"} for a function whose structure is a libultra routine's, else None."""
     if len(code) % 4 or not _MIN_ANY <= len(code) <= _MAX:
@@ -247,7 +412,24 @@ def identify(code: bytes, big_endian: bool = True) -> dict | None:
             (queue_send, "osSendMesg", "puts a message after the last of a ring buffer, waiting while it is full"),
             (queue_jam, "osJamMesg", "puts a message in front of the first of a ring buffer, waiting while it is full"),
             (queue_creation, "osCreateMesgQueue", "sets up an empty message queue: lists, count, ring"),
-            (event_message, "osSetEventMesg", "stores a queue and a message in the event's two words of the table")):
+            (event_message, "osSetEventMesg", "stores a queue and a message in the event's two words of the table"),
+            (vi_swap_buffer, "osViSwapBuffer", "stores the buffer in the next video state and sets its swap flag"),
+            (vi_black, "osViBlack", "sets or clears the black flag of the next video state"),
+            (vi_set_event, "osViSetEvent", "stores the retrace queue, message and count in the next video state"),
+            (vi_set_mode, "osViSetMode", "stores the mode in the next video state and flags it changed"),
+            (pi_start_dma, "osPiStartDma", "fills a DMA message (type 11 or 12) and queues it on the PI manager"),
+            (epi_start_dma, "osEPiStartDma", "fills a DMA message (type 15 or 16) for a device handle and queues it"),
+            (sp_task_start_go, "osSpTaskStartGo", "waits for the RSP, then sets its status (0x125) to run a task"),
+            (ai_set_next_buffer, "osAiSetNextBuffer", "writes the audio interface's address and length registers"),
+            (ai_get_length, "osAiGetLength", "reads the audio interface's length register"),
+            (ai_set_frequency, "osAiSetFrequency", "writes the audio interface's DAC and bit rate registers"),
+            (get_count, "osGetCount", "reads the Count register"),
+            (get_time, "osGetTime", "adds the Count register to the kernel's 64-bit time base"),
+            (cache_invalidate_instructions, "osInvalICache", "invalidates instruction cache lines (cache 0x10)"),
+            (cache_invalidate_data, "osInvalDCache", "invalidates data cache lines (cache 0x11, 0x15)"),
+            (cache_writeback_data, "osWritebackDCache", "writes back data cache lines (cache 0x19)"),
+            (cache_writeback_all, "osWritebackDCacheAll", "writes back the whole data cache (cache 1)"),
+            (set_timer, "osSetTimer", "fills an OSTimer's fields (interval, value, queue, message) and inserts it")):
         if check(words, len(code)):
             return {"name": name, "corpus": CORPUS, "evidence": evidence}
     return None

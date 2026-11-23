@@ -1372,7 +1372,7 @@ unsigned port_tlb_hi; /* windows at 0x00800000 up: the game's compiled C reads t
    physical alias come to the spelling where it holds nothing yet, once, as the window is made: a jump table read as
    zeros sent a function of such a game to address 0x100. Later writes go to whichever name the code uses. */
 static void tlb_mirror(uint32_t lo, uint32_t size, uint32_t phys) {
-    if (lo >= 0x00800000u || size > 0x01000000u) return;
+    if (lo >= 0x00800000u || size > 0x01000000u || lo < 0x00001000u) return; /* (a page at 0 is read at its alias: port_tlb_canon) */
     uint32_t spelled = 0x80000000u | lo, alias = 0x80000000u | phys;
     if (spelled == alias) return;
     for (uint32_t off = 0; off + 4 <= size && spelled + off + 4 <= 0x80800000u && alias + off + 4 <= 0x80800000u; off += 4) {
@@ -1509,8 +1509,14 @@ int port_tlb_invalid(uint32_t a) {
    maps its code at 0x10000000) can only be named by the physical address it maps, in KSEG0, as the split does. */
 uint32_t port_tlb_canon(uint32_t a) {
     for (unsigned i = 0; a < 0x80000000u && i < port_tlb_n; i++)
-        if (a >= tlb_win[i].lo && a - tlb_win[i].lo < tlb_win[i].size)
+        if (a >= tlb_win[i].lo && a - tlb_win[i].lo < tlb_win[i].size) {
+            /* a page at virtual 0 spelled `0x80000000 | virtual` is where libultra's osInitialize writes the exception
+               vectors (0x80000000, 0x80000080, 0x80000100, 0x80000180): a game that keeps its own call dispatcher
+               there (`jr $zero` thunks, a table-driven overlay linker) had it overwritten by the vector stubs.
+               Such a page is kept at the physical address its bytes are at. */
+            if (tlb_win[i].lo < 0x00001000u) return 0x80000000u | (tlb_win[i].phys + (a - tlb_win[i].lo));
             return tlb_win[i].lo < 0x00800000u ? a | 0x80000000u : 0x80000000u | (tlb_win[i].phys + (a - tlb_win[i].lo));
+        }
     return a;
 }
 /* The game's compiled C (WebAssembly) reaches a window through an address like 0x100010F8: the loads and stores the

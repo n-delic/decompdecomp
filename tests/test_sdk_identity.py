@@ -94,7 +94,8 @@ def test_the_port_names_a_build_no_table_has_by_the_structure_it_writes(tmp_path
     from decompnet.consoles.n64 import sdk_shapes
     code = b''.join(struct.pack('>I', w) for w in (
         3 << 26 | 0x8000, 0x2B << 26 | 4 << 21 | 5 << 16 | 0x14, 0x29 << 26 | 4 << 21 | 0x12,
-        0x29 << 26 | 4 << 21 | 8 << 16 | 0x10, 3 << 26 | 0x8000, *[0] * 40))
+        0x29 << 26 | 4 << 21 | 8 << 16 | 0x10, 0x2B << 26 | 4 << 21 | 6 << 16 | 0x11C,  # (the entry point: pc)
+        3 << 26 | 0x8000, *[0] * 40))
     other = b''.join(struct.pack('>I', w) for w in [0] * 60)
     net = RomNetwork(tmp_path / 'app.db', tmp_path)
     with net.store.tx() as db:
