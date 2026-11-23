@@ -115,7 +115,7 @@ def functions(net, proj) -> list[dict]:
         f"SELECT * FROM functions WHERE project_id=? AND {IN_BUILD} AND status='matched' AND matched_source IS NOT NULL "
         "ORDER BY vram, id", proj["id"])
     from .identities import confirmed
-    sdk = identify(net, proj, net.sdk_functions(proj), include_asm=True) | confirmed(net, proj)
+    sdk = identify(net, proj, net.sdk_functions(proj), include_asm=True, builtin=True) | confirmed(net, proj)
     units = net._unit_contexts(proj["id"])
     out = []
     for r in rows:

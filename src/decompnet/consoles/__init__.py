@@ -507,6 +507,13 @@ class Console:
         """Exact SDK library identities bound to their linked analysis image."""
         return None
 
+    sdk_shape_sizes: tuple[int, int] = (0, 0)  # (smallest, largest) function size sdk_shape_identity may name
+
+    def sdk_shape_identity(self, code: bytes, big_endian: bool = True) -> dict | None:
+        """A library routine told by the structures it writes, for a build no fingerprint table has (the port asks:
+        `identify(builtin=True)`; display names stay exact-match). {"name", "corpus", "evidence"} or None."""
+        return None
+
     def scan_sdk(self, net, proj, job=None) -> None:
         """Optional binary SDK evidence, refreshed by the shared background naming task.
 

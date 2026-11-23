@@ -137,7 +137,7 @@ def _readiness(net, slug: str) -> dict:
     from .identities import confirmed
     # Imported SDK discovery fingerprints target objects and writes its cache. A report reads recorded proof;
     # it must not launch discovery, rebuild missing references or create operational state in the source tree.
-    sdk = (identify(net, proj, net.sdk_functions(proj), include_asm=True) if rom_mode
+    sdk = (identify(net, proj, net.sdk_functions(proj), include_asm=True, builtin=True) if rom_mode
            else Network.sdk_functions(net, proj)) | confirmed(net, proj)
 
     code = {"total": len(rows), "c": 0, "replaced": [], "native": [], "glue": [], "library_other": [], "game_asm": [],

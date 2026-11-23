@@ -147,7 +147,7 @@ def library(net, slug: str, log=print) -> set[str]:
     kit = net.console(proj).port_kit
     if kit is None:
         return set()
-    sdk = identify(net, proj, net.sdk_functions(proj), include_asm=True) | confirmed(net, proj)
+    sdk = identify(net, proj, net.sdk_functions(proj), include_asm=True, builtin=True) | confirmed(net, proj)
     # Every function, not only the matched: a save also carries C that isn't proven yet (a twin from another game,
     # a draft), and a racing game's twin of osEPiStartDma, still open, was compiled over the host's: it posted to
     # libultra's PI manager, which the host doesn't run, and the boot thread waited for its first DMA for ever.
@@ -233,8 +233,8 @@ def library_names(net, slug: str) -> dict[str, str]:
 
     with net.progress.view():
         proj = net._project(slug)
-    sdk = identify(net, proj, net.sdk_functions(proj), include_asm=True) | confirmed(net, proj)
-    shared = ambiguous(net, proj)  # (several library routines with one body: see below)
+    sdk = identify(net, proj, net.sdk_functions(proj), include_asm=True, builtin=True) | confirmed(net, proj)
+    shared = ambiguous(net, proj, builtin=True)  # (several library routines with one body: see below)
     kit = net.console(proj).port_kit
     out = {}
     for r in net.project_store(proj["id"]).all("SELECT id, name, status, meta FROM functions WHERE project_id=?",

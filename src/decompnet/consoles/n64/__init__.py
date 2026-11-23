@@ -33,7 +33,7 @@ from pathlib import Path
 
 from ...rom import Picked, RomError
 from .. import EXPORT, RECOMMENDED, ROM, Compiler, Console
-from . import emulator, recomp, sdk_assembly, sdk_linked
+from . import emulator, recomp, sdk_assembly, sdk_linked, sdk_shapes
 from .port import KIT as PORT_KIT
 
 # Store only a digest of the entire body, including the return delay slot.
@@ -230,6 +230,11 @@ class Nintendo64(Console):
 
     def sdk_assembly_identity(self, code, big_endian=True):
         return sdk_assembly.identify(code, big_endian)
+
+    sdk_shape_sizes = (sdk_shapes._MIN_ANY, sdk_shapes._MAX)
+
+    def sdk_shape_identity(self, code, big_endian=True):
+        return sdk_shapes.identify(code, big_endian)
 
     sdk_linked_sizes = sdk_linked.SIZES
 

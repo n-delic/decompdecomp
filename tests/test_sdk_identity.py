@@ -65,6 +65,54 @@ def test_exact_sdk_identity_reaches_imported_and_rom_targets(tmp_path, monkeypat
     assert identify(net, net.project_row('demo'), {}) == {}
 
 
+def test_the_port_names_a_shipped_table_routine_whatever_libraries_the_project_selected(tmp_path, monkeypatch):
+    """A project's saved library selection predates the 2.0D table: its exact osDestroyThread kept the game's own copy,
+    which walks kernel lists the host doesn't keep. Display naming respects the selection; the port (`builtin`) doesn't."""
+    net = RomNetwork(tmp_path / 'app.db', tmp_path)
+    with net.store.tx() as db:
+        db.execute('INSERT INTO projects(slug,name,arch,big_endian,root,config) VALUES(?,?,?,?,?,?)',
+                   ('demo', 'Demo', 'mips', 1, str(tmp_path), json.dumps({'sdk_libraries': ['Other SDK']})))
+        db.execute('INSERT INTO sdk_signatures(corpus,arch,big_endian,name,fingerprint,size) VALUES(?,?,?,?,?,?)',
+                   ('built in / table', 'mips', 1, 'osDestroyThread', 'exact', 248))
+        db.execute('INSERT INTO settings(key,value) VALUES(?,?)',
+                   ('sdk-builtin:test', json.dumps({'corpus': 'built in / table', 'digest': 'x'})))
+    monkeypatch.setattr(net.twins, 'prints', lambda proj: {7: SimpleNamespace(key='exact', size=248, asm=False)})
+    proj = net.project_row('demo')
+    assert identify(net, proj, {}) == {}
+    assert identify(net, proj, {}, builtin=True)[7]['names'] == ['osDestroyThread']
+    # a corpus that isn't shipped stays out of the selection
+    with net.store.tx() as db:
+        db.execute("UPDATE sdk_signatures SET corpus='Indexed folder'")
+    assert identify(net, proj, {}, builtin=True) == {}
+
+
+def test_the_port_names_a_build_no_table_has_by_the_structure_it_writes(tmp_path, monkeypatch):
+    """A game's own osCreateThread in a size no fingerprint table lists: the port is told it by the OSThread fields it
+    sets (consoles/n64/sdk_shapes.py), the display names stay exact-match only."""
+    import struct
+
+    from decompnet.consoles.n64 import sdk_shapes
+    code = b''.join(struct.pack('>I', w) for w in (
+        3 << 26 | 0x8000, 0x2B << 26 | 4 << 21 | 5 << 16 | 0x14, 0x29 << 26 | 4 << 21 | 0x12,
+        0x29 << 26 | 4 << 21 | 8 << 16 | 0x10, 3 << 26 | 0x8000, *[0] * 40))
+    other = b''.join(struct.pack('>I', w) for w in [0] * 60)
+    net = RomNetwork(tmp_path / 'app.db', tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute('INSERT INTO projects(slug,name,arch,big_endian,root,config) VALUES(?,?,?,?,?,?)',
+                         ('demo', 'Demo', 'mips', 1, str(tmp_path), json.dumps({'kind': 'rom', 'platform': 'n64'}))).lastrowid
+        ids = [db.execute('INSERT INTO functions(project_id,name,size,n_insns,target) VALUES(?,?,?,?,?)',
+                          (pid, name, len(blob), len(blob) // 4, blob)).lastrowid for name, blob in
+               (('func_80001000', code), ('func_80002000', other))]
+        db.execute('INSERT INTO sdk_signatures(corpus,arch,big_endian,name,fingerprint,size) VALUES(?,?,?,?,?,?)',
+                   ('Example SDK', 'mips', 1, 'osAnything', 'unrelated', 64))
+    monkeypatch.setattr(net.twins, 'prints', lambda proj: {})
+    proj = net.project_row('demo')
+    assert identify(net, proj, {}) == {}
+    named = identify(net, proj, {}, builtin=True)
+    assert list(named) == [ids[0]] and named[ids[0]]['names'] == ['osCreateThread']
+    assert named[ids[0]]['corpora'] == [sdk_shapes.CORPUS]
+
+
 def test_sdk_badge_explains_identity_without_changing_match_status():
     import shutil
     import subprocess
