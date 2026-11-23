@@ -244,5 +244,17 @@ def pair(out: Path, units: set[str], layout: list[dict], names: dict[str, str], 
         if len(sets) == 1 and len(sets[0]) != 1:
             continue  # one function and several data addresses: which is which isn't known
         found[name] = address
+    # A function a unit defines for itself (a `static` handler such as a player's voice handler, defined inside the
+    # constructor's file) is not a unit of its own, so it never got an address above; the constructor's machine code
+    # still names it. Without the game's address the C stores a wasm table index (`1`) as the handler, and the game's
+    # own audio frame, which now walks the player list (#3157 made alGlobals the game's), jumped to address 1.
+    defined: set[str] = set()
+    for unit in sorted(units):
+        path = out / "ll" / (unit[:-2] + ".ll")
+        if path.is_file():
+            defined |= set(re.findall(r"^define [^@\n]*@([\w.$]+)\(", path.read_text(encoding="utf-8", errors="replace"), re.M))
+    for n, address in sorted(learned.items()):
+        if n in defined and n not in pinned and n not in functions_at and address not in functions_at.values():
+            functions_at[n] = address
     taken = Counter(found.values())
     return ({name: address for name, address in found.items() if taken[address] == 1}, functions_at)

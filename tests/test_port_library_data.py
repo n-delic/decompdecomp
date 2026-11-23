@@ -238,3 +238,20 @@ def test_code_is_read_from_the_analysis_image_when_the_game_unpacks_it_at_run_ti
     assert "alMixPull" not in library_data.pair(tmp_path, units, layout, {}, garbage, IMAGE, set())[1]
     own = library_data.pair(tmp_path, units, layout, {}, garbage, IMAGE, set(), code_offsets=options)[1]
     assert own["alMixPull"] == 0x80002000
+
+
+def test_a_static_handler_a_constructor_defines_for_itself_gets_the_games_address(tmp_path):
+    """alCSPNew defines `static __CSPVoiceHandler` in its own file and stores its address in the player node; the
+    game's copy of alCSPNew builds that address. It isn't a unit of its own, so it stayed without an address and the
+    C stored a wasm table index (`1`): the game's audio frame, walking the player list, called address 1 (Blast Corps,
+    once alGlobals became the game's and the player was really registered)."""
+    layout, rom, units, handlers, _ = constructor_project(tmp_path, {"alSeqNew": [("__SeqHandler", 0x80002000)]})
+    (tmp_path / "ll" / "alSeqNew.ll").write_text(
+        "define void @alSeqNew(ptr %p) {\n  store ptr @__SeqHandler, ptr %p, align 4\n  ret void\n}\n"
+        "define internal i32 @__SeqHandler(ptr %n) {\n  ret i32 0\n}\n")
+    layout.append({"name": "func_80002000", "vram": 0x80002000, "size": 0x100})  # the game's own, unnamed
+    own = library_data.pair(tmp_path, units, layout, {}, rom, IMAGE, set())[1]
+    assert own["__SeqHandler"] == 0x80002000
+    # a name something else already pins is left alone
+    own = library_data.pair(tmp_path, units, layout, {}, rom, IMAGE, {"__SeqHandler"})[1]
+    assert "__SeqHandler" not in own
