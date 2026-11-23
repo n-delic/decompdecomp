@@ -34,8 +34,17 @@ every declared decomp-repair family for a child that makes it:
 | 7 | `tab` and `phase` declared before the other locals: spilled pseudos take their slots in pseudo-number order (0xc, 0x14, 0x1c) | 6927 -> 6885 | declaration order (a search target, not a family) |
 | 8 | `*bz++ = 0` for the byte-table clear, `tab[ix]` (not `*w; w += t5`) for the code fill | 6860 -> 5725 | `array_index_cursor`, `cursor_counter_index` (#1451) |
 | 9 | a mask local `(1 << tb) - 1` and a bit local `1 << c` named once in the block that opens their loops | 5320 -> 4665 | `invariant_shift_local` (#1450) |
-| 10 | `(tab + ((ent >> 7) + t5))[ix]`: the two integers add before the scale, so `t5 * 2` is not a hoisted, spilled term of its own | 3775 -> 2627 | `pointer_sum_regroup` (#1450) |
-| 11 | one pointer local per loop (`q1`..`q4`) instead of one shared `q`; the decode loop's entry, symbol and length in one variable, the distance entry in another; the stored count and the decode's code length in different variables | 4665 -> 2237 | `local_web_split`, `disjoint_local_merge` (existing) |
+| 9b | one pointer local per loop (`q1`..`q4`) instead of one shared `q` | 4665 -> 4235 | `local_web_split` (existing) |
+| 10 | `(tab + ((ent >> 7) + t5))[ix]`: the two integers add before the scale, so `t5 * 2` is not a hoisted, spilled term of its own | 4235 -> 3097 | `pointer_sum_regroup` (#1450) |
+| 11 | the bit reader's `bit` local written in place (`... * 2 + (mm & 1)`), the decode loop's entry, symbol and length in one variable (`y`) and the distance entry in another (`z`), the input pointer a local of its own (`in`) | 3097 -> 2897 -> 2857 -> 2837 | `single_use_inline`, `disjoint_local_merge` (existing) |
+| 12 | variable splits and merges per loop (fuzz-checked, see below) | 2837 -> 2252 | `local_web_split`, `disjoint_local_merge` (existing) |
+
+Steps 2-10 and 11 were checked for the same behaviour by building the clean transcription and each stage on the host and running them
+on generated valid bit streams (stored blocks, coded blocks with literal, match and end symbols, and code lengths past the table
+width so the second-level lookups run). An earlier version of this entry claimed 2237 and 2072 from variable split/merge
+hill-climbs that were judged by the score alone: they were wrong (one merged a lookup index and its entry, so the second-level
+lookup read an overwritten value) and a stream of random bits never reaches that code (a coded block's lengths are almost never
+valid). The app's saved best of 2072 was flagged with `report_candidate_issue`; revision 8dee941243ab (2252) is the valid one.
 
 The register rows are the rest: the target gives the bit count `$t4`, the word `$t2`, the loop counter `$a3`, `c` `$t1` in five
 loops, and spills the table pointer, the pass number, the code-length word, the mask and the incoming argument (`$s7` is the reload
@@ -44,8 +53,10 @@ pseudos are allocated before it; the source spellings that reorder them are vari
 
 Failed experiments that would otherwise be repeated:
 
-- Declaration-order and variable split/merge hill-climbs (three workers, 2000+ compiles each) plateau at about 2200 from the
-  clean form: single moves do not change the rank of the hot pseudos, and ties drift into unreadable renames.
+- Declaration-order and variable split/merge hill-climbs (three workers, 2000+ compiles each) plateau at about 2250 from the
+  clean form once each accepted source must also behave like the clean transcription: single moves do not change the rank of the
+  hot pseudos, and ties drift into unreadable renames. A climb that is not checked this way finds lower scores that are wrong
+  programs (2072, a merged lookup index).
 - The saved best's pointer cursors (`hoist_D_80112EE0 = &D_80112EE0`, `*var_a0_5`) were kept as the first reading of the target's
   `lui`/`addiu` set-ups; they were the rewrite's biggest obstacle (11271 with them, 6927 as indexes).
 - Making the 8-byte frame hole: the target has six 8-byte spill slots (argument, table pointer, pass number, code-length word, one
