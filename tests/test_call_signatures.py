@@ -94,3 +94,18 @@ def test_setup_prints_signatures_after_a_claim():
     spec.loader.exec_module(setup)
     assert "signatures.py" in [script for script, _ in setup.ORIENT_SCRIPTS]
     assert (SCRIPTS / "signatures.py").exists()
+
+
+def test_a_callee_called_by_its_old_address_name_is_read_by_address(tmp_path):
+    # An effect spawner's saved best called `func_80015F0C(0)` after the project had renamed the callee to
+    # `allocTextNodeObject(void)`: the source still linked, the lookup by name found no matched C and the stray `0` (its
+    # `move $a0, $zero` in the jal's delay slot) went unreported; dropping it was 810 -> 610.
+    net = project(tmp_path)
+    store = net.project_store(1)
+    vram = store.one("SELECT vram FROM functions WHERE name='f2'")["vram"]
+    with store.tx() as db:
+        db.execute("UPDATE functions SET best_source=? WHERE name='f1'",
+                   (f"void func_{vram:08X}(s32);\nvoid f1(void) {{\n    func_{vram:08X}(0);\n}}\n",))
+        db.execute("UPDATE functions SET status='matched', matched_source='void f2(void) {\n}\n' WHERE name='f2'")
+    reply = hosted_judge.signatures_report(net, {"slug": "game", "name": "f1"})
+    assert ("extra-argument", f"func_{vram:08X}") in kinds(reply["findings"]) and "drop `0`" in reply["text"]

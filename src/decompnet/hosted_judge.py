@@ -266,6 +266,18 @@ def signatures_for(net, proj, fn, source, call_signatures=None):
         callers = {r["name"]: r["matched_source"] for r in store.all(
             "SELECT name, matched_source FROM functions WHERE project_id=? AND status='matched' AND matched_source IS "
             "NOT NULL AND vram IN (SELECT value FROM json_each(?))", proj["id"], json.dumps(near))}
+    # A saved source can call a callee by the address name it had before the project renamed it (`func_80015F0C(0)` for
+    # `allocTextNodeObject(void)`): it still links, but the name lookup above misses its matched C, and a stray argument
+    # m2c gave it went unreported (200 points of an effect spawner's diff). Read those by address, under the source's name.
+    stale = {int(m[1], 16): m[0] for m in (_re.fullmatch(r"func_([0-9A-Fa-f]{8})", n) for n in names) if m}
+    stale = {vram: name for vram, name in stale.items() if name not in callees}
+    if stale:
+        for r in store.all(
+                "SELECT name, vram, matched_source FROM functions WHERE project_id=? AND status='matched' AND "
+                "matched_source IS NOT NULL AND vram IN (SELECT value FROM json_each(?))", proj["id"],
+                json.dumps(sorted(stale))):
+            if r["vram"] in stale and r["name"] != stale[r["vram"]]:
+                callees[stale[r["vram"]]] = _re.sub(rf"\b{_re.escape(r['name'])}\b", stale[r["vram"]], r["matched_source"])
     asm = fn["asm"] or ""
     addresses = sorted({int(h, 16) for h in _re.findall(r"\bjal\s+func_([0-9A-Fa-f]{8})\b", asm)})
     aliases = {f"func_{r['vram']:08X}": r["name"] for r in store.all(
