@@ -489,9 +489,24 @@ static void call_c(Cpu *c, PortMipsCall fn) {
     c->r[0] = 0;
 }
 
+/* PORT_INTERP_TRACE=3: the last jumps this thread took ({from, to, $ra}), printed when the interpreter meets
+   something it can't run: a wild jump's first wrong step is in the lines before it. */
+#define JUMP_HISTORY 40
+static __thread struct { uint32_t from, to, ra, sp; } jumps[JUMP_HISTORY];
+static __thread unsigned jump_n;
+static void jump_history(const char *why, uint32_t pc) {
+    static int said;
+    if (tracing < 3 || said++ >= 4) return;
+    fprintf(stderr, "interpreter: %s at %08X; the last jumps (from -> to, $ra, $sp):\n", why, pc);
+    for (unsigned i = 0; i < JUMP_HISTORY && i < jump_n; i++) {
+        unsigned k = (jump_n - 1 - i) % JUMP_HISTORY;
+        fprintf(stderr, "  %08X -> %08X  ra %08X  sp %08X\n", jumps[k].from, jumps[k].to, jumps[k].ra, jumps[k].sp);
+    }
+}
 static void unknown(uint32_t pc, uint32_t op) {
     static int said;
     if (said++ < 20) fprintf(stderr, "interpreter: instruction %08X at %08X isn't one it runs: skipped\n", op, pc);
+    jump_history("an unknown instruction", pc);
 }
 
 /* One instruction at pc; a branch or jump says where it goes (*target, its delay slot still to run), or that a
@@ -752,6 +767,7 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
         uint32_t op = fetch(pc), target = 0;
         if (op == 0 && ++zeros > 64) { /* a run of nothing: no code there (no ROM loaded where it was looked for) */
             fprintf(stderr, "interpreter: no instructions at %08X (from %08X): the function returns at once\n", pc, entry);
+            jump_history("no instructions", pc);
             break;
         }
         if (op) zeros = 0;
@@ -822,6 +838,10 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
             continue; /* (only if it comes back: the same jump again) */
         }
         target = mapped(target); /* a jump to a mapped virtual address runs the code at its spelling */
+        if (tracing >= 3) {
+            unsigned k = jump_n++ % JUMP_HISTORY;
+            jumps[k].from = pc; jumps[k].to = target; jumps[k].ra = (uint32_t)c.r[31]; jumps[k].sp = (uint32_t)c.r[29];
+        }
         if (kind == 4 || jop >> 26 == 3) port_note_entry(target); /* a call: jal, jalr */
         pc = target;
         if (kind == 4) { /* a call through a pointer is a safe point, as host.c's port_func is for the game's C: only

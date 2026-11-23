@@ -617,3 +617,12 @@ def test_a_fetch_from_an_unmapped_page_takes_the_games_tlb_refill_handler(tmp_pa
     assert int(out[0], 16) == 55  # the handler mapped the page and the retried fetch ran the code
     assert int(out[6], 16) == 0x400000 >> 13 << 4  # Context: the faulting page number in bits 4 and up
     assert int(out[7], 16) == 0x400000  # BadVAddr
+
+
+def test_trace_level_3_keeps_the_last_jumps_for_a_wild_one():
+    """A thread that ends up running data (a jump to a ROM table, a call through a stale pointer) shows where it went
+    wrong only in the jumps before it: PORT_INTERP_TRACE=3 prints each thread's last 40 when the interpreter meets an
+    instruction it can't run or no code at all."""
+    text = MIPS.read_text()
+    assert "PORT_INTERP_TRACE=3" in text and "jump_history(\"an unknown instruction\", pc)" in text
+    assert "jump_history(\"no instructions\", pc)" in text

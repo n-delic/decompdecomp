@@ -376,6 +376,15 @@ def test_a_games_float_mode_is_fr1_only_when_its_code_uses_odd_registers():
     assert "%(fr_default)d" in recomp.BRIDGE_RUNTIME
 
 
+def test_a_status_write_keeps_an_odd_register_game_in_fr1():
+    """A game whose recompiled C computes on odd registers has its threads' Status written without the FR bit (a
+    thread's saved Status, as libultra makes it): the write switched the layout to FR=0 and the first `mul.s $f1` hit
+    N64Recomp's CHECK_FR assertion (a shooter, in recompiled func_8029A7D8). The write keeps the game's default."""
+    text = recomp.BRIDGE_RUNTIME
+    write = text[text.index("void cop0_status_write("):text.index("gpr cop0_status_read(")]
+    assert "| %(fr_default)du" in write
+
+
 def test_recompiled_floats_follow_the_games_status_fr_bit(tmp_path):
     """A tank game's recompiled vector code uses odd single-precision registers (`mul.s $f1`), which N64Recomp's
     CHECK_FR allows only in FR=1: every frame started in FR=0 and stopped on the first one. A frame now starts from
@@ -387,7 +396,7 @@ def test_recompiled_floats_follow_the_games_status_fr_bit(tmp_path):
     start = text.index("uint32_t port_cop0_status(void);")
     end = text.index("/* C called by the interpreter can call back")
     assert "port_recomp_fr(c, ((c->status_reg >> 26) & 1u) | %(fr_default)du);" in text[text.index("static void port_recomp_frame("):]
-    assert "port_recomp_fr(ctx, ((uint32_t)value >> 26) & 1u);" in recomp.__loader__.get_source(recomp.__name__)
+    assert "port_recomp_fr(ctx, (((uint32_t)value >> 26) & 1u) | %(fr_default)du);" in recomp.__loader__.get_source(recomp.__name__)
     (tmp_path / "t.c").write_text(r"""#include <stdint.h>
 #include <stdio.h>
 typedef union { double d; struct { uint32_t u32l; uint32_t u32h; }; uint64_t u64; } fpr;

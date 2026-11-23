@@ -782,7 +782,9 @@ int32_t *section_addresses = no_sections;
 void cop0_status_write(recomp_context *ctx, gpr value) {
     ctx->status_reg = (uint32_t)value;
     port_cop0_status_set((uint32_t)value); /* the host's Status, which the next recompiled call starts from */
-    port_recomp_fr(ctx, ((uint32_t)value >> 26) & 1u);
+    /* (a game whose recompiled C computes on odd registers stays in FR=1 even when its thread's saved Status has the bit
+       clear, as libultra's threads do: N64Recomp's CHECK_FR stops the game on its first `mul.s $f1` otherwise) */
+    port_recomp_fr(ctx, (((uint32_t)value >> 26) & 1u) | %(fr_default)du);
 }
 gpr cop0_status_read(recomp_context *ctx) { return (gpr)(int32_t)ctx->status_reg; }
 void switch_error(const char *func, uint32_t vram, uint32_t jtbl) {
