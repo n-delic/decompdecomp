@@ -592,6 +592,16 @@ says the fix and the library families it names; try those families with `prove_c
   (`statement_slide` past a call). A hill-climb that swaps adjacent statements must check that they commute: one
   accepted a read before its set (60 points "better"). Run the library's children over **all** of them (`prove_chain`
   stops at `--children 80` of ~2700): a chain of the best child, scored in full, found 5 more steps (-1900).
+  Continued 2930 -> 80 (docs/learnings/function/effect-spawner-loop-index-forms-2930-to-80.md): m2c's cursors back to the
+  index loop (`markers[i]`, `base + 0x438 + i * 16`, the call's arguments inline); a loop's computed table index named
+  in a local so the symbol is not hoisted (`loop_table_index_local`, 1875 -> 810); a stray argument on a callee the
+  project renamed (signatures.py reads old address names now); a double kept in `$s4/$s5` as a literal (GAS `li.d`:
+  `lui $at; lw; lw`, `double_literal_global`); a flags update as a local in steps (`rmw_user_local_steps` on m2c's
+  cast form, 470 -> 185); parallel `D_ADDR` field tables as one record array (`record_field_array`); `<< k` for scaled
+  record offsets (`index_shift_spelling`); a no-op copy-back dropped (`copy_back_drop`); a shared temporary holding
+  the word with the mask at its use (`temp_operand_stage`). Left: two float pairs whose
+  copies the target keeps in the switch arms though never read, and local-alloc's `optimize_reg_copy_1` comparing a
+  clamp on its copy.
 
 ## 3a. The fast tools (use them before writing variants by hand)
 
