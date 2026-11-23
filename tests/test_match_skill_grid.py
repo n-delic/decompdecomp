@@ -156,3 +156,34 @@ def test_candidates_compiling_to_identical_code_get_the_invariant_spelling_hint(
     assert grid.main([str(path), "--slug", "s", "--function", "f", "--jobs", "1"], make_judge=Same) == 0
     assert "36 distinct candidates" in capsys.readouterr().err
 
+
+
+class RowStub(Stub):
+    """The same stub with rows: a row differs for each misplaced fragment, whatever its score says."""
+
+    def rows(self, source):
+        score = self.score(source)
+        if score is None:
+            return None, []
+        # the score weighs the missing `b + a` heavily; the row count sees only the statement order
+        order = [source.index(w) for w in ("gC", "gA", "gB")]
+        return score, [("o", "gx", "gy")] * (0 if order == sorted(order) else 1)
+
+
+def test_by_rows_ranks_the_fewest_differing_rows_first_and_the_score_breaks_ties():
+    template = grid.Template(SOURCE)
+    results, error = grid.search(template, RowStub, jobs=1, by_rows=True)
+    assert error is None
+    best_score, best = results[0]
+    assert grid.search.bad[best] == 0
+    rows = [grid.search.bad[d] for _, d in results]
+    assert rows == sorted(rows)
+    zero_row = [(s, d) for s, d in results if grid.search.bad[d] == 0]
+    assert [s for s, _ in zero_row] == sorted(s for s, _ in zero_row)
+    # ranked by score alone, a candidate with a misplaced statement and a better score could come first
+    by_score, _ = grid.search(template, RowStub, jobs=1)
+    assert by_score[0][0] == 0
+
+
+def test_differing_counts_rows_with_a_marker():
+    assert grid.differing([("", "a", "a"), ("o", "b", "c"), (" ", "d", "d"), ("r", "e", "f"), ("...", "", "")]) == 2

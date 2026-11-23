@@ -18,8 +18,10 @@ that hold the alternatives' text, so the marked file itself is not C: `--base` w
 choice and the lines as written, which is the file before the grid.
 
     grid.py FILE.c --slug S --function F [--max 5000] [--jobs 3] [--top 10] [--diff [--rows N|all]] [--out BEST.c]
-            [--count] [--base] [--stop-on-match] [--home DIR]
+            [--by-rows] [--count] [--base] [--stop-on-match] [--home DIR]
 
+`--by-rows` ranks by the app's differing rows instead of the score (the score breaks ties): near the end an order or a
+register move is one row, which a score weighs by its kind (a spawner's 635 -> 180 was 18 -> 6 rows, its last 120 -> 0 two rows).
 `--count` only counts the candidates; above `--max` (default 5000) it refuses and says which choice made it so many.
 `--jobs` workers (default 3, one `decomp judge-worker` each, fast_judge.Judge) keep the machine usable beside the app.
 It prints the top `--top` candidates with their score (None: did not compile) and which alternative or order each uses,
@@ -158,13 +160,21 @@ def candidates(template):
         yield " ".join(words) or "as written", template.render(picks, orders)
 
 
-def search(template, make_judge, jobs=DEFAULT_JOBS, stop_on_match=False, progress=None):
+def differing(rows):
+    """How many of the judge's rows differ (a row's marker is blank when the two sides agree)."""
+    return sum(1 for row in rows if row and row[0] not in ("", " ", "..."))
+
+
+def search(template, make_judge, jobs=DEFAULT_JOBS, stop_on_match=False, progress=None, by_rows=False):
     """Score every candidate with `jobs` workers; returns (results, error) where results is a list of
     (score, description) sorted best first (a score of None, which did not compile, last) and error is the first
-    failure a worker hit, if any. `make_judge()` makes one judge per worker (an object with .score(source), .close())."""
+    failure a worker hit, if any. `make_judge()` makes one judge per worker (an object with .score(source), .close()).
+    With `by_rows` the best is the candidate with the fewest differing rows (the score breaks ties), which near the end
+    ranks the order and register moves a score weighs unevenly (an object with .rows(source): `search.bad` maps each
+    description to its row count)."""
     work = list(candidates(template))
     local, judges, lock = threading.local(), [], threading.Lock()
-    state = {"done": 0, "error": None, "found": False, "codes": []}
+    state = {"done": 0, "error": None, "found": False, "codes": [], "bad": {}}
     results = []
 
     def one(item):
@@ -175,9 +185,12 @@ def search(template, make_judge, jobs=DEFAULT_JOBS, stop_on_match=False, progres
             local.judge = make_judge()
             with lock:
                 judges.append(local.judge)
-        code = None
+        code, bad = None, None
         try:
-            if hasattr(local.judge, "judge"):
+            if by_rows and hasattr(local.judge, "rows"):
+                score, rows = local.judge.rows(source)
+                bad = differing(rows) if score is not None else None
+            elif hasattr(local.judge, "judge"):
                 reply = local.judge.judge(source)
                 score, code = reply.get("score"), reply.get("code")
             else:
@@ -188,6 +201,8 @@ def search(template, make_judge, jobs=DEFAULT_JOBS, stop_on_match=False, progres
                 state["error"] = state["error"] or str(error)
         with lock:
             results.append((score, description))
+            if bad is not None:
+                state["bad"][description] = bad
             if code:
                 state["codes"].append((description, code))
             state["done"] += 1
@@ -201,7 +216,11 @@ def search(template, make_judge, jobs=DEFAULT_JOBS, stop_on_match=False, progres
     finally:
         for judge in judges:
             judge.close()
-    results.sort(key=lambda r: (r[0] is None, r[0] if r[0] is not None else 0, r[1]))
+    if by_rows:
+        results.sort(key=lambda r: (r[0] is None, state["bad"].get(r[1], 0), r[0] if r[0] is not None else 0, r[1]))
+    else:
+        results.sort(key=lambda r: (r[0] is None, r[0] if r[0] is not None else 0, r[1]))
+    search.bad = state["bad"]
     search.codes = state["codes"]  # (description, code digest) of each compiled candidate: invariant.py's hint
     return results, state["error"]
 
@@ -228,6 +247,8 @@ def main(argv=None, make_judge=None):
     ap.add_argument("--count", action="store_true", help="only count the candidates")
     ap.add_argument("--base", action="store_true", help="print the file with the first alternative and the lines as written")
     ap.add_argument("--stop-on-match", action="store_true", help="stop scoring once a candidate scores 0")
+    ap.add_argument("--by-rows", action="store_true", help="rank by the number of differing rows (the score breaks ties): "
+                    "near the end a score weighs order and register rows unevenly")
     ap.add_argument("--home")
     a = ap.parse_args(argv)
     claimlost.warn()  # a lost claim is said first, before minutes of scoring
@@ -255,11 +276,13 @@ def main(argv=None, make_judge=None):
                 return fast_judge.Judge(a.slug, a.function, home=a.home)
         every = max(1, total // 10)
         results, error = search(template, make_judge, a.jobs, a.stop_on_match,
-                                lambda done, count: done % every == 0 and print(f"  {done}/{count}", file=sys.stderr))
+                                lambda done, count: done % every == 0 and print(f"  {done}/{count}", file=sys.stderr),
+                                by_rows=a.by_rows)
         if error:
             print(f"a judge call failed ({error}); candidates it hit show as None", file=sys.stderr)
         for score, description in results[:max(1, a.top)]:
-            print(f"{score!s:>8}  {description}")
+            rows = f"{search.bad[description]:>4} rows  " if a.by_rows and description in search.bad else ""
+            print(f"{score!s:>8}  {rows}{description}")
         import invariant
         best_code = next((code for d, code in search.codes if results and d == results[0][1]), None)
         for line in invariant.hint([(d, c) for d, c in search.codes if c == best_code] if best_code else []):

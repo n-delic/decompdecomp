@@ -103,7 +103,7 @@ DECOMP_PORT=...` (the token is never printed); `eval "$(setup.py env <holder>)"`
 The other scripts, run with that venv's python (`$UV_PROJECT_ENVIRONMENT/bin/python`): `fast_judge.py FILE.c --slug S
 --function F [--diff [--rows N|all]]` (score, and the app's differing rows: 60 by default, then a "... N more rows" line; `--rows all` shows every row; a session's worktree off an older origin/main may lack `--rows`: `git pull --rebase` there and `setup.py sync <holder>`), `passes.py FILE.c --slug S --function F` (allocation
 priorities, register preferences, scheduler orders), `prove_chain.py --slug S --function F --families a,b|all` (greedy
-chain of library families, scored), `families.py [words]` (the library's families, one line each), `similar.py SLUG FUNC` (matched look-alikes and their saved C; step 1), `callers.py SLUG FUNC` (every call site with the instructions around it, and whether the callers read a result: the return type; step 1), `grid.py FILE.c --slug S --function F` (every combination of marked alternatives and statement orders, scored; step 2), `shared_types.py list|add SLUG` (the shared header's types; propose or add one, step 2), `regions.py` (a large function region by region, step 2),
+chain of library families, scored), `families.py [words]` (the library's families, one line each), `similar.py SLUG FUNC` (matched look-alikes and their saved C; step 1), `callers.py SLUG FUNC` (every call site with the instructions around it, and whether the callers read a result: the return type; step 1), `grid.py FILE.c --slug S --function F` (every combination of marked alternatives and statement orders, scored; `--by-rows` ranks by the differing rows; step 2), `shared_types.py list|add SLUG` (the shared header's types; propose or add one, step 2), `regions.py` (a large function region by region, step 2),
 `tools/learnings.py` (evidence entries; `search "<symptom>"` ranks them by symptom, step 3).
 
 ## Connect through the Rust MCP gateway
@@ -548,6 +548,18 @@ says the fix and the library families it names; try those families with `prove_c
   address staged in a local with the value's `|` chain left-associated (`store_address_stage`) and a literal local above the
   loop's initialisations (`loop_literal_local`) each pay off only with their partner edit. `reach.py`-style check: the app's
   proposal code offers every child of the state before an edit, and the edit is a gap when none of them moves the score.
+
+- **A 795-instruction object spawner, 3693 -> 0 (KMC 2.7.2; docs/learnings/function/object-spawner-arm-and-join-rewrites.md).** A clean
+  rewrite from the target's assembly, then one named edit at a time (each now a library family): constants an arm sets after its calls
+  assigned at the arm's head so they cross the calls and take saved registers (`arm_constants_to_head`); a call after the
+  `if`/`else` written in each arm so jump2 cross-jumps the two `jal`s (`call_into_each_arm`); a pointer local assigned twice split
+  per lookup (`local_pointer_web_split`); `local + 1` named once (`shared_sum_local`); an `s16` parameter's masks as `(u16) id`,
+  which stops cse sharing the extension and lets combine fold the index shifts (`narrow_param_mask_cast`); a call's result written
+  through its field (`result_field_reread`); a word update as `w = F; w &= M; w |= K; F = w;` with a temporary per site
+  (`rmw_compound_temp`); and a table slot staged `ex = (s16) id; tab = T; p = &tab[ex];` so the `la` sits between the index's
+  halves (`table_base_stage`). Sched/regalloc rows near the end were closed by `grid.py --by-rows` and a random hill-climb over
+  statement order and spelling alternatives (ranked by differing rows: 635 -> 180 -> 120 -> 60 -> 0), not by the score. A parameter
+  copied in a different order at entry means the original parameter was narrow (`s16`): its conversion insn is emitted last.
 
 ## 3a. The fast tools (use them before writing variants by hand)
 
