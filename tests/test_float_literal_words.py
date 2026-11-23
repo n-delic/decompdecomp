@@ -119,3 +119,54 @@ def test_the_local_lane_carries_the_words():
     assert '500.0f' in registry.run(*args, **kwargs)[0][1]
     assert library_registry.draft_context(SOURCE, 'f', '', 'mips', ASM, ())['words'] == {}
 
+
+
+DOUBLE_ASM = '''glabel f
+/* 0 80077E80 3C018010 */  lui        $at, %hi(D_800D2EF0)
+/* 4 80077E84 D42A2EF0 */  ldc1       $ft3, %lo(D_800D2EF0)($at)
+/* 8 80077E88 3C018001 */  lui        $at, %hi(D_8000930C)
+/* C 80077E8C C420930C */  lwc1       $fv0, %lo(D_8000930C)($at)
+'''
+
+
+class DoubleNet(Net):
+    def symbols(self, project_id):
+        return SymbolTable([Symbol('D_800D2EF0', 0x800D2EF0, 8, 'data'), Symbol('D_8000930C', 0x8000930C, 4, 'data')])
+
+
+def _double_net(value=0x3FE0000000000000, **kw):
+    memory = {0x800D2EF0: struct.pack('>Q', value), 0x8000930C: struct.pack('>I', 0x43FA0000)}
+    return DoubleNet(memory, {0x800D2EF0: {VRAM}, 0x8000930C: {VRAM}}, **kw)
+
+
+def test_a_double_loaded_through_at_gives_its_eight_bytes_and_a_float_its_four():
+    pytest.importorskip('decomprepair.double_literal_global')
+    words = float_literal_words.read(_double_net(), PROJ, dict(FN, asm=DOUBLE_ASM))
+    assert words == {'D_800D2EF0': 0x3FE0000000000000, 'D_8000930C': 0x43FA0000}
+    assert float_literal_words.loads(DOUBLE_ASM) == {'D_800D2EF0': 8, 'D_8000930C': 4}
+
+
+def test_a_double_that_is_zero_a_denormal_or_loaded_at_both_widths_is_not_a_constant():
+    pytest.importorskip('decomprepair.double_literal_global')
+    for value in (0, 0x80123456, 0x7FF0000000000000):
+        assert 'D_800D2EF0' not in float_literal_words.read(_double_net(value), PROJ, dict(FN, asm=DOUBLE_ASM)), hex(value)
+    both = DOUBLE_ASM + '/* 10 80077E90 D42A2EF0 */  lwc1       $fv1, %lo(D_800D2EF0)($at)\n'
+    assert float_literal_words.loads(both) == {'D_8000930C': 4}
+
+
+def test_the_draft_pass_proposes_the_double_literal():
+    pytest.importorskip('decomprepair.double_literal_global')
+    source = '''extern f64 D_800D2EF0;
+
+void f(f32 *out, s32 arg1) {
+    f32 temp_fv0;
+
+    temp_fv0 = (f32) ((f64) (f32) arg1 + D_800D2EF0);
+    out[0] = temp_fv0;
+}
+'''
+    words = float_literal_words.read(_double_net(), PROJ, dict(FN, asm=DOUBLE_ASM))
+    labels = {}
+    out = draft_repairs.variants(source, 'f', 'mips', DOUBLE_ASM, labels=labels, limit=None, words=words)
+    children = [text for text in out if labels.get(text) == 'double_literal_global']
+    assert children and all('(f32) arg1 + 0.5)' in text for text in children)
