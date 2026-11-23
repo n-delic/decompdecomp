@@ -97,3 +97,20 @@ def test_the_retrace_rate_follows_the_headers_region(tmp_path):
     assert tool.retraces_per_second(tmp_path / "pal.z64") == 50
     assert tool.retraces_per_second(tmp_path / "ntsc.z64") == 60
     assert tool.retraces_per_second(tmp_path / "ntsc.n64") == 60
+
+
+def test_dump_task_sidecar_is_placed_with_game_pointers(tmp_path):
+    """A game keeps its OSTask wherever it likes, so each dump's own task (`NAME.task`, the emulator's from DMEM with
+    physical pointers) is placed in the dump for drawing, its pointers made the game's, instead of scanning RAM."""
+    tool = _tool()
+    dump = tmp_path / "console_frames_1.bin"
+    dump.write_bytes(bytes(0x400000))
+    words = [1, 6, 0x1D10, 0xD0, 0x3F90, 0x1000, 0x9B190, 0x800, 0, 0, 0xC83D0, 0xD03D0, 0x1CFD68, 0x40, 0xC60E0, 0xC00]
+    (tmp_path / "console_frames_1.bin.task").write_bytes(struct.pack(">16I", *words))
+    placed, at = tool.with_task(dump, tmp_path)
+    mem = placed.read_bytes()
+    assert len(mem) == tool.RAM and at == tool.TASK_AT
+    got = struct.unpack_from(">16I", mem, at & 0x7FFFFF)
+    assert got[0] == 1 and got[2] == 0x80001D10 and got[6] == 0x8009B190 and got[12] == 0x801CFD68
+    assert got[8] == 0 and got[7] == 0x800  # sizes and empty pointers stay as they are
+    assert tool.with_task(tmp_path / "console_vi_9.bin", tmp_path) is None  # no sidecar: scan RAM as before

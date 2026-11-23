@@ -39,6 +39,23 @@ static void frame_dumps(void) {
                     fwrite(b, 1, 4, f);
                 }
                 fclose(f);
+                /* the task the RSP was given (the OSTask libultra leaves in DMEM at 0xFC0, 64 bytes, pointers
+                   physical), beside the dump as NAME.task: a game keeps its own copy of the task wherever it likes, so
+                   scanning RAM for it (tools/n64_frame_compare.py) can miss it or find something else */
+                if (strlen(name) + 6 < sizeof name) {
+                    strcat(name, ".task");
+                    FILE *t = fopen(name, "wb");
+                    if (t) {
+                        const uint32_t *dmem = (const uint32_t *)(gfx.DMEM + 0xFC0);
+                        for (int i = 0; i < 16; i++) {
+                            uint32_t w = dmem[i];
+                            unsigned char b[4] = {w >> 24, w >> 16, w >> 8, w};
+                            fwrite(b, 1, 4, t);
+                        }
+                        fclose(t);
+                    }
+                    name[strlen(name) - 5] = 0;
+                }
                 fprintf(stderr, "framedump %u %s\n", frames, name);
             } else fprintf(stderr, "error can't write RDRAM to %s\n", name);
         }

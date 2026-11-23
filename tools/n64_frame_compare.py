@@ -131,11 +131,38 @@ def draw(program: Path, dump: Path, task: int, work: Path) -> dict[int, tuple[in
     return drawn
 
 
+TASK_AT = 0x807FFFC0  # where a dump's own task is put for drawing: the last 64 bytes of the 8 MB
+
+
+def with_task(dump: Path, work: Path) -> tuple[Path, int] | None:
+    """The dump with the task its `.task` file holds placed at TASK_AT, and that address; None when the dump has no
+    such file. Both the emulator's video plugin and the port's host write the task the RSP was given beside each
+    frame dump: a game keeps its own copy wherever it likes, so scanning RAM for one (graphics_tasks) can find
+    nothing, or something that only looks like a task. The emulator's holds physical pointers; the renderer reads
+    pointers as the game's, so they get the 0x80000000 a game's own task has."""
+    sidecar = dump.with_name(dump.name + ".task")
+    if not sidecar.is_file() or sidecar.stat().st_size != 64:
+        return None
+    words = list(struct.unpack(">16I", sidecar.read_bytes()))
+    for i in (2, 4, 6, 8, 10, 12):  # boot, microcode, its data, the DRAM stack, the output buffer, the list
+        if words[i] and words[i] < 0x80000000:
+            words[i] |= 0x80000000
+    mem = bytearray(dump.read_bytes().ljust(RAM, b"\0"))
+    mem[TASK_AT & 0x7FFFFF:(TASK_AT & 0x7FFFFF) + 64] = struct.pack(">16I", *words)
+    placed = work / (dump.name + ".withtask")
+    placed.write_bytes(mem)
+    return placed, TASK_AT
+
+
 def frames(program: Path, dump: Path, work: Path) -> dict[tuple[int, int], tuple[int, int, list]]:
     """Every graphics task in a dump drawn: {(task, image): (width, lines, pixels)}; tasks that fail are reported."""
     out = {}
-    mem = dump.read_bytes()
-    for task in graphics_tasks(mem):
+    own = with_task(dump, work)
+    if own:  # the task the console or the port was running, not a guess from RAM
+        dump, tasks = own[0], [own[1]]
+    else:
+        tasks = graphics_tasks(dump.read_bytes())
+    for task in tasks:
         drawn = draw(program, dump, task, work)
         if drawn is None:
             print(f"  {dump.name}: the task at {task:08X} didn't draw (a list still being built?)")
@@ -228,7 +255,7 @@ def main(argv=None) -> int:
                                              "console's frames")
     when = p.add_mutually_exclusive_group(required=True)
     when.add_argument("--frames", help="the game's frames to compare (its graphics tasks, counted from 1), "
-                                       "comma-separated: the input script is timed in frames too")
+                                       "comma-separated, each n or first-last: the input script is timed in frames too")
     when.add_argument("--vis", help="retraces to compare at, comma-separated: the input script is timed in retraces")
     p.add_argument("--port-vis", help="with --vis, the port's retraces to compare with each, when the two runs drift "
                                       "apart (the port loads in no time and never drops a frame): the same count")
@@ -239,7 +266,11 @@ def main(argv=None) -> int:
                                              "folder)")
     args = p.parse_args(argv)
     clock = "frames" if args.frames else "vi"
-    points = [int(v) for v in (args.frames or args.vis).split(",") if v.strip()]
+    points = []
+    for v in (args.frames or args.vis).split(","):  # "n" or "first-last" (a run of frames: only some of a game's
+        if v.strip():                               # graphics tasks draw the picture, the rest draw into it)
+            first, _, last = v.strip().partition("-")
+            points += range(int(first), int(last or first) + 1)
     port_points = [int(v) for v in args.port_vis.split(",") if v.strip()] if args.port_vis and args.vis else points
     if len(port_points) != len(points):
         raise SystemExit("--port-vis needs one retrace for each of --vis")
@@ -267,6 +298,11 @@ def main(argv=None) -> int:
             if args.port and pn not in port:
                 print(f"{label}: the port wrote no RAM (did it run that far?)")
             theirs = frames(program, console[n], work)
+            only_a, only_b = [k for k in theirs if k not in ours], [k for k in ours if k not in theirs]
+            if len(only_a) == len(only_b) == 1 and only_a[0][0] == only_b[0][0]:
+                # one picture each at different addresses (the console and the port rotate their frame buffers
+                # differently): the same picture, kept under the console's address
+                ours[only_a[0]] = ours.pop(only_b[0])
             for key in sorted(set(theirs) | set(ours)):
                 task, image = key
                 a, b = theirs.get(key), ours.get(key)

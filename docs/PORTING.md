@@ -536,6 +536,11 @@ uv run python tools/n64_frame_compare.py baserom.z64 --port port/wasm/build/game
 ```
 
 Both frames come from the same renderer, so a difference is the game running differently, not the drawing.
+Each frame dump has a `NAME.task` beside it, the 64-byte task the RSP was given (the emulator's from DMEM, the port's from
+its RAM): a game keeps its own copy of the task wherever it likes, so scanning RAM for one finds nothing in some games,
+and something that only looks like a task in others. The tool draws that task, and pairs the two sides' pictures when each
+drew one at a different frame-buffer address. `--frames` takes runs (`4000-4011`), as only some of a game's tasks (about
+one in five in a racing game) draw the picture. A menu and a first 3D scene of a racing game matched to the pixel.
 `--frames` compares the game's own frames instead of retraces: the nth graphics task it hands over, the RAM written
 as it is handed over (the emulator's video plugin, `EMU_FRAME_DUMP`; the port's `PORT_FRAME_DUMPS`) and the input
 timed the same way (`EMU_INPUT_CLOCK` / `PORT_INPUT_CLOCK=frames`). Neither clock makes the runs one: the console
