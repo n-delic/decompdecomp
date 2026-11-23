@@ -691,3 +691,17 @@ def test_a_32_bit_block_loaded_past_tmems_low_half_wraps_inside_its_halves(rende
     g(0xDF000000)
     out, _ = run(renderer, mem, tmp_path, g.end())
     assert out.pixel(1, 1) == (0, 31, 0)
+
+
+def test_a_blanked_vi_shows_black_whatever_the_buffer_holds(renderer, tmp_path):
+    """osViBlack: libultra's VI starts blanked and a game blanks it around a change of mode, so the leftovers of a
+    buffer it hasn't drawn into yet never reach the screen; un-blanked, the buffer shows as it is."""
+    mem = Memory()
+    g = Gfx(mem)
+    g.frame().fill(0xF801)                                     # red
+    g(0xDF000000)
+    mode = vi_mode(mem, W, H)
+    _, (_, _, shown) = run(renderer, mem, tmp_path, g.end(), f"mode:{mode:x}", "black:1", f"show:{FB:x}")
+    assert set(shown) == {0}
+    _, (_, _, shown) = run(renderer, mem, tmp_path, g.end(), f"mode:{mode:x}", "black:1", "black:0", f"show:{FB:x}")
+    assert shown[0] > 200 and shown[1] < 20

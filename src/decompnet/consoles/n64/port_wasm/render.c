@@ -2447,7 +2447,7 @@ static void save_png(const char *path, const uint8_t *rgb, int w, int h) { /* un
    osViSetSpecialFeatures change it: the frame's width in memory, its pixel size, how many lines it shows, and the
    filters the VI runs as it shows them. Without a mode the frame's size is guessed from its width (320 x 240, or
    640 x 480). A game that draws at 400 x 300 was shown as 400 x 480, its frame read past its end. */
-static struct { int known, width, bpp, lines; float yscale; int gamma, gamma_dither, divot, dedither; } vi;
+static struct { int known, width, bpp, lines; float yscale; int gamma, gamma_dither, divot, dedither, black; } vi;
 void port_vi_mode(uint32_t mode) {
     R = port_memory();
     uint32_t a = 0x80000000u | (mode & 0x1FFFFFFF);
@@ -2465,6 +2465,11 @@ void port_vi_mode(uint32_t mode) {
     vi.divot = (ctrl & 0x10) != 0; vi.dedither = (ctrl & 0x10000) != 0;
     (void)xscale;
 }
+/* osViBlack: libultra starts the VI blanked (osCreateViManager) and a game un-blanks it once its first frame is drawn,
+   and blanks it again around a change of mode; while it's blanked the screen is black whatever the buffer holds. Not
+   honoured, every frame the game handed over before it had drawn into the buffer showed the memory's leftovers
+   (green, or the last screen's pixels in the new mode's layout) for a few frames at each change of screen. */
+void port_vi_black(int on) { vi.black = on != 0; }
 void port_vi_yscale(float s) { if (s > 0) vi.yscale = s; }
 void port_vi_features(uint32_t f) {
     if (f & 0x01) vi.gamma = 1;
@@ -2599,7 +2604,7 @@ void port_frame_shown(uint32_t fb, unsigned long n) {
     if (h < 1) h = 1;
     if (addr >= 0x800000) return; /* no frame in RDRAM to show (the subtraction below would wrap to a giant height) */
     if ((size_t)addr + (size_t)w * h * bytes > 0x800000) h = (int)((0x800000 - addr) / ((uint32_t)w * bytes));
-    if (gpu && gpu_present(addr, w, h, vi.gamma)) return; /* the GPU's frame, shown by the page */
+    if (!vi.black && gpu && gpu_present(addr, w, h, vi.gamma)) return; /* the GPU's frame, shown by the page */
     uint8_t *rgb = malloc((size_t)w * h * 3);
     uint32_t base = 0x80000000u | addr;
     static uint8_t of5[32], of8[256]; /* each channel's value as unpack5551 and unpack8888 give it, times 255 */
@@ -2616,10 +2621,13 @@ void port_frame_shown(uint32_t fb, unsigned long n) {
             rgb[i * 3] = of5[(c >> 11) & 31]; rgb[i * 3 + 1] = of5[(c >> 6) & 31]; rgb[i * 3 + 2] = of5[(c >> 1) & 31];
         }
     }
-    if (vi.dedither && bytes == 2) vi_dedither(rgb, w, h, base);
-    vi_filter(rgb, w, h, base, bytes);
-    if (vi.divot) vi_divot(rgb, w, h, base, bytes);
-    if (vi.gamma) vi_gamma(rgb, w, h);
+    if (vi.black) memset(rgb, 0, (size_t)w * h * 3);
+    else {
+        if (vi.dedither && bytes == 2) vi_dedither(rgb, w, h, base);
+        vi_filter(rgb, w, h, base, bytes);
+        if (vi.divot) vi_divot(rgb, w, h, base, bytes);
+        if (vi.gamma) vi_gamma(rgb, w, h);
+    }
     port_live_frame(rgb, w, h);
     if (save) {
         char path[1024];

@@ -521,7 +521,8 @@ static struct { uint32_t queue, msg, every; } vi;
 static uint32_t frame_buffer;
 static unsigned long vi_count, swaps;
 
-void w2c_env_osCreateViManager(struct w2c_env *e, u32 pri) { (void)e; (void)pri; }
+void port_vi_black(int on); /* render.c */
+void w2c_env_osCreateViManager(struct w2c_env *e, u32 pri) { (void)e; (void)pri; port_vi_black(1); /* osViInit: blanked */ }
 void w2c_env_osViSetEvent(struct w2c_env *e, u32 mq, u32 msg, u32 every) {
     (void)e;
     LOG("osViSetEvent(%08X, every %u)", mq, every);
@@ -547,7 +548,7 @@ void w2c_env_osViSetYScale(struct w2c_env *e, f32 s) {
     if (getenv("PORT_RT64")) port_rt64_yscale(s);
 #endif
 }
-void w2c_env_osViBlack(struct w2c_env *e, u32 on) { (void)e; (void)on; }
+void w2c_env_osViBlack(struct w2c_env *e, u32 on) { (void)e; port_vi_black(on != 0); }
 void w2c_env_osViSetSpecialFeatures(struct w2c_env *e, u32 f) {
     (void)e; port_vi_features(f);
 #ifndef PORT_WEB
@@ -555,12 +556,22 @@ void w2c_env_osViSetSpecialFeatures(struct w2c_env *e, u32 f) {
 #endif
 }
 void port_frame_shown(uint32_t fb, unsigned long n); /* render.c: saves it when asked */
+static unsigned long gfx_tasks, audio_tasks;
+/* PORT_SWAP_LOG=file (or - for stderr, among the host's other lines): a line for each buffer the game hands the VI, "frame NUMBER task GRAPHICS-TASKS-SO-FAR retrace
+   VI-COUNT buffer ADDRESS": which graphics task (the unit of PORT_FRAME_DUMPS and tools/n64_frame_compare.py --frames) a
+   frame shown (PORT_FRAMES, frame_NNNNN.png) came after, to look at the console's task there. */
+static void port_swap_log(unsigned long n, uint32_t fb) {
+    static FILE *log; static int tried;
+    if (!tried) { const char *path = getenv("PORT_SWAP_LOG"); tried = 1; if (path) log = strcmp(path, "-") ? fopen(path, "w") : stderr; }
+    if (log) { fprintf(log, "frame %lu task %lu retrace %lu buffer %08X\n", n, gfx_tasks, vi_count, fb); fflush(log); }
+}
 void port_vi_swap(uint32_t fb) { /* (games/: a game's own name) */
     /* The VI's origin register holds 24 bits: a game that hands over 0x847B4F80 (a flag bit above the address, as
        one shooter's buffers carry) shows the buffer at 0x7B4F80, as the console does. What the game reads back
        (osViGetCurrentFramebuffer) stays as it gave it. */
     uint32_t shown = 0x80000000u | (fb & 0x00FFFFFFu);
     frame_buffer = fb; swaps++; port_frame_shown(shown, swaps);
+    port_swap_log(swaps, fb);
 #ifndef PORT_WEB
     if (getenv("PORT_RT64")) port_rt64_screen(M + 0x80000000u, shown);
 #endif
@@ -678,7 +689,6 @@ u32 w2c_env_osVirtualToPhysical(struct w2c_env *e, u32 a) { (void)e; return a & 
 
 /* ---------------------------------------------------------------- RSP tasks: graphics (render.c) and audio (audio.c) */
 
-static unsigned long gfx_tasks, audio_tasks;
 void port_audio_task(uint32_t task); /* audio.c */
 void w2c_env_osSpTaskStartGo(struct w2c_env *e, u32 task) {
     (void)e;
