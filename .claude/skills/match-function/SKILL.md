@@ -558,6 +558,12 @@ says the fix and the library families it names; try those families with `prove_c
   (callers, callees, the functions beside it in its file, ones reading the same globals, look-alikes) with the start
   of their matching C. Their temporaries, loop shapes and prototypes are the cheapest evidence there is; helpers get
   the same section in their brief.
+- **Call signatures: `signatures.py --slug S --function F [CAND.c]`** (`setup.py` prints it for the saved best). Each
+  call is checked against the callee's matched C, the header's prototype and (MIPS) the target's call site: an
+  argument the callee never takes, a missing one, a narrow return type the header gets wrong, a result the target
+  reads that the C ignores (or the reverse), and the function's own parameters against its matched callers. Make
+  those edits first: a stray m2c argument moved a display-list builder's cursor sums (55 -> 0 by dropping it) after
+  twelve spellings of the code around it compiled identically.
 - **Edits that are each worse alone: `prove_chain.py ... --combine 8`.** A stalled step then ranks the non-improving
   children by differing rows, merges pairs and triples of different families (decomprepair `compose`), and judges the
   children of the best three (`--lookahead`). It only combines what the library offers: when it finds nothing, check
