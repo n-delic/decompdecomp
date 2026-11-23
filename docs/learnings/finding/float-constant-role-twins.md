@@ -33,12 +33,20 @@ Together with it:
   other (a base register for both instead of two folded symbol+offset addresses);
 - separate `case 3:` and `case 4:` bodies (the target compares for each, with its own null checks);
 - `x = 0; if (osTvType) { y = 0; x = y; } else { y = 0; }`: with both zeroes before the test cse deletes the empty
-  conditional and its load; assigned in the arms, reorg moves the common `y = 0` into the branch's delay slot.
+  conditional and its load; assigned in the arms, reorg moves the common `y = 0` into the branch's delay slot
+  (5540 -> 4500 alone; library `constant_copy_arm_assign` writes it and reproduced the 4500 from the 5540 source).
 
 Library: `float_role_twins` writes the first fix (children: every eligible local at once, reads outside calls to the lowest
 or the highest position; then each local alone) and `float_twin_toggle` renames one read to a sibling twin, one child per
 read. From the plain one-local source: 17825 -> 16436 (role twins) -> 5155 (greedy chain of toggles, exact judge); the
 hand-made assignment reached 4500, so a single-read toggle chain is close but not equal (pairs are the next step).
+
+Not found by any family yet (left for the next run): the first table entry read as its own scalar symbol in one block
+(`D_80109688` instead of `sTrackMarkerTable[0]`, which stops cse making a base register for it there, 5980 -> 5540: the
+symbol name is the app's to know, not the library's); the unsigned-to-double conversions of the second and later
+argument lists are recomputed in the target but reused by cse here (a plain `(float:DF y)` is one expression; the
+target's `y` calls 1 and 2 are recomputed although the constants beside them are reused); and `x = 0` sits early in the
+target's first block where ours sinks it into the branch's delay slot.
 
 Failed: literals instead of locals (23286), `register` on either local, swapping the declaration order of the four
 (14466), the same twins in every read in the same order as the first guess (16436).
