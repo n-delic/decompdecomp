@@ -42,7 +42,19 @@ def naming_prints(net, proj):
     return prints
 
 
-def _identify(net, proj, *, include_asm=False):
+def ambiguous(net, proj, *, include_asm=True):
+    """{function id: its candidate library names} for functions whose full-size fingerprint several library routines
+    share (identical bodies: osViGetCurrentFramebuffer and osViGetNextFramebuffer are the same 64 bytes). Naming
+    refuses them (`identify`); the port may use one when its host answers every candidate the same way."""
+    from .sdk_builtin import ensure
+    ensure(net)
+    version = (net.project_store(proj['id']).read_version('fingerprints', proj['id']), net.store.read_version('sdk_names'),
+               repr(net.cfg(proj).get('sdk_libraries')), include_asm)
+    return net.project_store(proj['id']).read_cache.get(('sdk-ambiguous', proj['id'], include_asm), version,
+                                                       lambda: _identify(net, proj, include_asm=include_asm, collect={}) or {})
+
+
+def _identify(net, proj, *, include_asm=False, collect=None):
     recorded = {}
     from .shared_reuse import machine
     processor, big = machine(net, proj)
@@ -68,7 +80,7 @@ def _identify(net, proj, *, include_asm=False):
                                 'evidence':proof['evidence'],'verified_assembly':True,
                                 **({'sdk_file':proof['source_file'],'sdk_stamp':proof.get('source_stamp')} if proof.get('source_file') else {})}
     if not by_key:
-        return binary  # No local corpus: avoid reading target objects merely to discover there is no evidence.
+        return {} if collect is not None else binary  # No local corpus: avoid reading target objects merely to discover there is no evidence.
     selection = net.cfg(proj).get('sdk_libraries')
     selected = set(selection) if selection is not None else None
     out, ambiguous = dict(recorded), set()
@@ -79,6 +91,9 @@ def _identify(net, proj, *, include_asm=False):
         names = {r["name"] for r in hints}
         if len(names) > 1:
             ambiguous.add(fid)
+            if collect is not None and (include_asm or not target.asm) and target.size >= 32:
+                collect[fid] = {"names": sorted(names), "corpora": sorted({r["corpus"] for r in hints}),
+                                "fingerprint": target.key}
         if (include_asm or not target.asm) and target.size >= 32 and len(names) == 1:
             out[fid] = {"names": sorted(names), "corpora": sorted({r["corpus"] for r in hints}),
                         "fingerprint": target.key, "evidence": "exact relocation-normalized SDK signature"}
@@ -94,7 +109,7 @@ def _identify(net, proj, *, include_asm=False):
             out[fid] = hint | {'corpora': sorted(set(out[fid]['corpora']) | set(hint['corpora']))}
         else:
             out[fid] = hint
-    return out
+    return collect if collect is not None else out
 
 
 def display_name(hint, fallback):

@@ -228,19 +228,20 @@ def library_names(net, slug: str) -> dict[str, str]:
     calls go to the library's name, which the host answers by name in any game (a racing game's bzero kept its
     automatic name, `func_8003DDC0`, and the host stubbed it to nothing). One name each; names already the
     library's, and the user's confirmed identities, as they are."""
-    from ...app.sdk_identity import identify
+    from ...app.sdk_identity import ambiguous, identify
     from ..identities import confirmed
 
     with net.progress.view():
         proj = net._project(slug)
     sdk = identify(net, proj, net.sdk_functions(proj), include_asm=True) | confirmed(net, proj)
+    shared = ambiguous(net, proj)  # (several library routines with one body: see below)
     kit = net.console(proj).port_kit
     out = {}
     for r in net.project_store(proj["id"]).all("SELECT id, name, status, meta FROM functions WHERE project_id=?",
                                                proj["id"]):
         # detection's identity, else the name it showed (`sdk_display`): an exact-bytes proof of hand-written assembly
         # goes stale with the project's compiler setting (its fingerprint holds it), not with the bytes
-        names = (sdk.get(r["id"]) or {}).get("names") or []
+        names = (sdk.get(r["id"]) or {}).get("names") or (shared.get(r["id"]) or {}).get("names") or []
         # A matched function keeps its automatic name too when polishing hasn't renamed it. When the host provides it
         # (`library` leaves its C out), recompiled code must call the host's: a battle game's osRecvMesg
         # (func_8004DE70, matched) ran as a recompiled copy against kernel routines the host doesn't have, and every
@@ -250,6 +251,13 @@ def library_names(net, slug: str) -> dict[str, str]:
         if not names and '"sdk_display"' in (r["meta"] or ""):
             shown = (json.loads(r["meta"]).get("sdk_display") or {}).get("name") or ""
             names = [shown] if shown and " / " not in shown else []
+        # Routines whose bodies are identical share one fingerprint, so detection names them all (osViGetCurrent-
+        # and osViGetNextFramebuffer are the same 64 bytes in libultra 2.0I-2.0L). When the host answers some of
+        # them, any of those is the right call: a fighting game's main thread waited in its own copy of
+        # osViGetCurrentFramebuffer for the buffer it had handed the VI, which only the host's VI ever shows.
+        if len(names) > 1:
+            hosted = sorted(n for n in names if host_provides(kit, [n]))
+            names = hosted[:1] or names
         if len(names) == 1 and names[0] != r["name"] and re.fullmatch(r"[A-Za-z_]\w*", names[0]):
             out[r["name"]] = names[0]
     return out

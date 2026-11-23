@@ -1063,3 +1063,29 @@ def test_a_call_through_a_pointer_passes_the_argument_registers_it_was_not_given
     assert "ptrtoint ptr %b" in body("own")  # the second is the caller's own pointer parameter
     assert body("full").count("%port_ia") == 0 and "call i32 %1(i32 %a, i32 %a, i32 %a, i32 %a)" in body("full")
     assert "call i32 %1(float %f)" in body("floats")  # a float argument is left as it is
+
+
+def test_routines_sharing_one_body_are_called_by_the_name_the_host_answers(monkeypatch):
+    """osViGetCurrentFramebuffer and osViGetNextFramebuffer are the same 64 bytes in libultra 2.0I-2.0L, so detection
+    refuses to name either (`ambiguous`). A fighting game's main thread then ran its own copy against the VI state
+    only the host keeps, and spun for the buffer it had handed over: 0 graphics tasks. When the host answers a
+    candidate, a call goes to it."""
+    import contextlib
+    from types import SimpleNamespace
+
+    from decompnet.app import sdk_identity
+    from decompnet.port import identities
+    from decompnet.port.wasm import play
+
+    rows = [{"id": 1, "name": "func_8003B550", "status": "open", "meta": "{}"},
+            {"id": 2, "name": "func_80000100", "status": "open", "meta": "{}"}]
+    store = SimpleNamespace(all=lambda *a, **k: rows)
+    net = SimpleNamespace(progress=SimpleNamespace(view=contextlib.nullcontext), _project=lambda slug: {"id": 7},
+                          sdk_functions=lambda proj: {}, project_store=lambda pid: store,
+                          console=lambda proj: SimpleNamespace(port_kit=get("n64").port_kit))
+    monkeypatch.setattr(sdk_identity, "identify", lambda *a, **k: {})
+    monkeypatch.setattr(identities, "confirmed", lambda *a, **k: {})
+    monkeypatch.setattr(sdk_identity, "ambiguous", lambda *a, **k: {
+        1: {"names": ["osViGetCurrentFramebuffer", "osViGetNextFramebuffer"]},
+        2: {"names": ["osMadeUpA", "osMadeUpB"]}})  # (no name the host answers: left alone)
+    assert play.library_names(net, "game") == {"func_8003B550": "osViGetCurrentFramebuffer"}
