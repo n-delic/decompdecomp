@@ -456,6 +456,14 @@ says the fix and the library families it names; try those families with `prove_c
   for the `return 0` test (`bnel` with a private pointer, `bne` shared: `shared_return_split`). Make the index term the
   pointer operand (`(u8 *)(i * K) + (int)bank`) to tie the sum to it, put a `do { } while (0);` around the row product to
   outrank the index chain, and read a masked parameter through a `u8` copy (`tile_arm_chains`).
+- **A byte copied into a scratch that cse then merges back (`temp = kind;` both `s32`), a counter incremented inside its own
+  test, a loop bound that becomes `move $t0,$a2`, a narrow comparand's extension that comes out after the bound's load**
+  (KMC 2.7.2, 655 -> 0 on a 154-instruction save-slot handler, docs/learnings/function/narrow-copy-web-save-slot-rank.md).
+  A copy kept in a local of the byte's own type is another machine mode, so cse leaves it (`narrow_copy_web`); `if
+  (temp++ != i) {..}` becomes `if (temp != i) {..} temp++;` so there is no copy of the old value
+  (`postincrement_after_test`); a bound the target loads as `lw $t0,-0xc($t0)` off the register that holds another global's
+  address is `limit = ((s32 *) &H)[-3];` as the do body's first statement (`sibling_symbol_offset_read`, evidence from the asm);
+  and `idx = index;` before it puts loop.c's movables in the target's order (`loop_body_key_copy`).
 - **Flag words and widths:** bit-field structs for flag words; `u8`/`u16` widths keep or drop masks; overwrite a
   parameter after copying it (`arg = arg_in; arg_in = 0;`).
 - **A second pointer written beside the first (`q = p + 2`, `q[-1]`, `q[0]`, `q += 3` beside `p += 3`, or `q[i * 3 - 1]` for the
