@@ -699,6 +699,13 @@ u32 w2c_env_osCartRomInit(struct w2c_env *e) {
     return CART_HANDLE;
 }
 int port_sram_dma(uint32_t dram, uint32_t offset, uint32_t size, uint32_t write);
+/* FlashRAM (flash.c): a PI handle of type 8, libultra's DEVICE_TYPE_FLASH */
+int port_flash_dma(uint32_t dram, uint32_t offset, uint32_t size, uint32_t write);
+void port_flash_command(uint32_t command);
+uint32_t port_flash_read(uint32_t offset);
+#define PI_TYPE_FLASH 8
+static int flash_handle(u32 handle) { return handle && M[handle + 4] == PI_TYPE_FLASH; }
+static uint32_t flash_offset(u32 dev) { uint32_t bus = dev & 0x1FFFFFFFu; return bus >= 0x08000000u ? bus - 0x08000000u : bus; }
 u32 w2c_env_osEPiStartDma(struct w2c_env *e, u32 handle, u32 mb, u32 dir) {
     u32 dev = be32(mb + 12), dram = be32(mb + 8), size = be32(mb + 16), mq = be32(mb + 4);
     /* A type-3 PI handle is SRAM; FlashRAM shares its bus window but uses a different command protocol. */
@@ -711,15 +718,27 @@ u32 w2c_env_osEPiStartDma(struct w2c_env *e, u32 handle, u32 mb, u32 dir) {
         if (mq) put(mq, mb, 0, 0);
         return 0;
     }
+    if (flash_handle(handle)) {
+        u32 end = stack_end(dram);
+        if (dram >= 0x80000000u && dram < 0x80800000u) end = 0x80800000u;
+        if (!end || size > end - dram || port_flash_dma(dram, flash_offset(dev), size, dir)) return (u32)-1;
+        if (mq) put(mq, mb, 0, 0);
+        return 0;
+    }
     return w2c_env_osPiStartDma(e, mb, 0, dir, dev, dram, size, mq);
 }
 u32 w2c_env_osEPiReadIo(struct w2c_env *e, u32 handle, u32 dev, u32 data) {
-    (void)e; (void)handle;
+    (void)e;
+    if (flash_handle(handle)) { wbe32(data, port_flash_read(flash_offset(dev))); return 0; }
     uint32_t at = dev & 0x0FFFFFFCu;
     wbe32(data, at + 4 <= rom_size ? (uint32_t)rom[at] << 24 | rom[at + 1] << 16 | rom[at + 2] << 8 | rom[at + 3] : 0);
     return 0;
 }
-u32 w2c_env_osEPiWriteIo(struct w2c_env *e, u32 handle, u32 dev, u32 data) { (void)e; (void)handle; (void)dev; (void)data; return 0; }
+u32 w2c_env_osEPiWriteIo(struct w2c_env *e, u32 handle, u32 dev, u32 data) {
+    (void)e;
+    if (flash_handle(handle) && flash_offset(dev) == 0x10000u) port_flash_command(data); /* the command register */
+    return 0;
+}
 /* A local of the bootstrap wasm stack (the first 64 KiB, below console RAM's low memory) has no KSEG address: its
    physical address is its bus address (BOOT_STACK_BUS), which the raw PI transfer reads back to the stack. Masked
    as KSEG, it read as console RAM at the same offset and a DMA overwrote the game's own low memory (a snowboarding

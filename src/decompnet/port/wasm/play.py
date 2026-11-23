@@ -354,7 +354,7 @@ def play(net, slug: str, log=print, *, adapter: Path | None = None) -> dict:
     # what the game runs that no function starts, kept beside the project for its next import (runtime_entries)
     from ...consoles.n64.code import RUNTIME_ENTRIES
     env = {**os.environ, "PORT_LIVE": str(port), "PORT_SAVE": str(out / "game.eep"), "PORT_SRAM": str(out / "game.sra"),
-           "PORT_ENTRIES": str(rom.parent / RUNTIME_ENTRIES)}
+           "PORT_FLASH": str(out / "game.fla"), "PORT_ENTRIES": str(rom.parent / RUNTIME_ENTRIES)}
     env.pop("PORT_RT64", None)
     if adapter:
         from ... import toolchains
