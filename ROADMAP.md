@@ -822,7 +822,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Machine drafts (m2c, Ghidra for x86) | ✓ | ✓ | ✓ | — | ✓ Ghidra | ✓ | ✓ (m2c `gba-gcc-c`) | ✓ | ✓ Ghidra | ✓ Ghidra | — (no assembly to read) | by architecture |
 | Draft cleanup stage (record views, gbi macros, m2c's byte steps, table cursors as indexes) | ✓ | ✓ m2c path | ✓ m2c path | — | — Ghidra drafts planned | ✓ m2c path | ✓ m2c path | ✓ m2c path | — Ghidra drafts planned | — Ghidra drafts planned | — (no assembly to read) | m2c drafts |
 | Drafts from a close matched look-alike (`twin_drafts`) | ✓ | ✓ not run yet | ✓ not run yet | — | — | ✓ not run yet | — | — project-mode alignment planned | — project-mode alignment planned | — | — project-mode alignment planned | — |
-| Matched neighbours in the brief and the skill's orient (callers, callees, file neighbours, shared globals, look-alikes, with their C) | ✓ | ✓ not run yet | ✓ not run yet | — | — | ✓ not run yet | — | — no cross-references in project mode | — no cross-references in project mode | — | — no cross-references in project mode | — |
+| Matched neighbours in the brief and the skill's orient (callers, callees, file neighbours, shared globals, look-alikes, with their C; in the skill, also matched functions sharing the mismatched region's instruction shape, with their C there) | ✓ | ✓ not run yet | ✓ not run yet | — | — | ✓ not run yet | — | — no cross-references in project mode | — no cross-references in project mode | — | — no cross-references in project mode | — |
 | Draft result type from the exits and callers (`draft_return_type`, on: the callers decide where the exits cannot; 5 better / 7 worse of 20 fires, 2 exact) | ✓ reader | ✓ reader | ✓ reader | — PPC reader planned | — | ✓ reader | — ARM reader planned | — PPC reader planned | — x86 reader planned | — x86 reader planned | — ARM reader planned | — |
 | Callers and the result type they show (`get_callers`, the brief's line, `callers.py`) | ✓ stored callees | ✓ not run yet | ✓ not run yet | — | — | ✓ not run yet | — ARM reader planned | — project callees not stored | — project callees not stored | — | — project callees not stored | — |
 | Row-coverage ranking of combinations (`prove_chain.py --combine`, `pair_row_coverage`, off: measured no gain) | ✓ ROM | ✓ not run yet | ✓ not run yet | — | — | ✓ not run yet | — | — judge rows exist; project judge worker planned | — | — | — | — |
@@ -1186,8 +1186,10 @@ yet. The result-type reader (`Arch.return_contract`) is MIPS only; x86, PPC and 
 `draft_return_type` run there, and the callers' verdict (`app/call_evidence.py`, MIPS only: `Arch.call_sites`) would do the same. On the N64 game
 measured the exits alone gained nothing; the callers decide where they cannot, and it is on
 (docs/learnings/finding/return-type-from-callers.md). Project mode stores no callees, so it has no `get_callers` yet,
-and no matched-neighbours section in the brief either (`app/matched_neighbours.py` reads the ROM cross-references and
-the MIPS instruction look-alikes); GBA, PS3 and PS4 have no look-alike reader for it.
+and no matched-neighbours section in the brief either (`app/matched_neighbours.py` reads the ROM cross-references,
+the MIPS instruction look-alikes and, for the shape of a mismatched region, the functions' assembly text); GBA, PS3 and
+PS4 have no look-alike reader for it. Project mode would need its objects' disassembly stored per function for the
+shape search; the brief does not run the shape search yet (it has no candidate's rows when it is written).
 
 ## Recently done
 

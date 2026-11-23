@@ -557,7 +557,9 @@ says the fix and the library families it names; try those families with `prove_c
 - **Matched neighbours.** `setup.py` also prints `neighbours.py --slug S --function F`: the closest matched functions
   (callers, callees, the functions beside it in its file, ones reading the same globals, look-alikes) with the start
   of their matching C. Their temporaries, loop shapes and prototypes are the cheapest evidence there is; helpers get
-  the same section in their brief.
+  the same section in their brief. Given the saved best (setup.py passes it) or `--source CAND.c`, it also lists
+  matched functions whose assembly holds the *mismatched region's* instruction shape (the same clamp, cursor write
+  or helper idiom), with their C around that place: someone already found the C for that idiom.
 - **Call signatures: `signatures.py --slug S --function F [CAND.c]`** (`setup.py` prints it for the saved best). Each
   call is checked against the callee's matched C, the header's prototype and (MIPS) the target's call site: an
   argument the callee never takes, a missing one, a narrow return type the header gets wrong, a result the target
