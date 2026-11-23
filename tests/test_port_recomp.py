@@ -417,3 +417,80 @@ def test_a_function_found_by_calls_with_a_branch_past_its_end_is_left_to_the_int
     text = (out / "rec_funcs_0.c").read_text()
     assert "RECOMP_FUNC void R_static_4_80171B34" not in text and "L_80171BB4" not in text
     assert 'port_recomp_missing(0x80171B34u, "static_4_80171B34"' in (out / "bridges.c").read_text()
+
+
+def _two_overlays(tmp_path):
+    """Two overlays the game loads into one slot (one address, two places in the ROM), and a function of its own."""
+    image = tmp_path / "rom.z64"
+    words = [0x27BDFFE0, 0xAFBF001C, 0x00000000, 0x03E00008, 0x24020001, 0x24020002, 0x00000000, 0x00000000]
+    other = [0x3C048008, 0x8C83A590, 0x8C82A590, 0x00641821, 0x0043102B, 0x03E00008, 0x00000000, 0x00000000]
+    blob = bytearray(0x1000)
+    for at, ws in ((0x100, words), (0x200, other), (0x300, words[:4] + [0x24020009, 0, 0, 0])):
+        for i, w in enumerate(ws):
+            blob[at + 4 * i:at + 4 * i + 4] = w.to_bytes(4, "big")
+    image.write_bytes(bytes(blob))
+    folder = tmp_path / "recomp"
+    (folder / "funcs").mkdir(parents=True)
+    (folder / "recomp.json").write_text("{}")
+    (folder / "syms.toml").write_text(
+        '[[section]]\nname = "slot_a"\nrom = 0x100\nvram = 0x80126480\nsize = 0x20\n\nfunctions = [\n'
+        '    { name = "func_80126480_a", vram = 0x80126480, size = 0x20 },\n]\n\n'
+        '[[section]]\nname = "slot_b"\nrom = 0x200\nvram = 0x80126480\nsize = 0x20\n\nfunctions = [\n'
+        '    { name = "func_80126480_b", vram = 0x80126480, size = 0x20 },\n]\n\n'
+        '[[section]]\nname = "code"\nrom = 0x300\nvram = 0x80001000\nsize = 0x20\n\nfunctions = [\n'
+        '    { name = "func_80001000", vram = 0x80001000, size = 0x20 },\n]\n')
+    (folder / "funcs/funcs.h").write_text('#include "recomp.h"\n' + "".join(
+        f"void {n}(uint8_t* rdram, recomp_context* ctx);\n" for n in ("func_80126480_a", "func_80126480_b", "func_80001000")))
+    body = "    // 0x80126480: jr $ra\n    return;\n;}\n"
+    (folder / "funcs/funcs_0.c").write_text(
+        '#include "recomp.h"\n#include "funcs.h"\n\n' + "".join(
+            f"RECOMP_FUNC void {n}(uint8_t* rdram, recomp_context* ctx) {{\n{body}"
+            for n in ("func_80126480_a", "func_80126480_b", "func_80001000")))
+    return folder, image, words, other
+
+
+def test_functions_sharing_an_address_between_overlays_are_guarded_by_their_code(tmp_path):
+    """A tank game's main thread spun in one overlay's delay routine while another overlay was loaded in the slot:
+    the recompiler wrote both overlays' functions at one address and the call by address ran the first listed. Only
+    functions whose addresses another part of the ROM shares get the check (a function of its own doesn't)."""
+    folder, image, words, other = _two_overlays(tmp_path)
+    guards = recomp.overlay_guards(folder, image, {"func_80126480_a", "func_80126480_b", "func_80001000"})
+    assert set(guards) == {"func_80126480_a", "func_80126480_b"}
+    assert guards["func_80126480_a"] == (0x80126480, 8, recomp.code_hash(words))
+    assert guards["func_80126480_b"] == (0x80126480, 8, recomp.code_hash(other))
+    assert recomp.overlay_guards(folder, None, {"func_80126480_a"}) == {}  # no ROM to read: no guards
+
+
+def test_a_guarded_function_runs_what_ram_holds_or_the_interpreter(tmp_path):
+    folder, image, words, other = _two_overlays(tmp_path)
+    header = tmp_path / "recomp.h"
+    header.write_text(_header().read_text())
+    host = tmp_path / "host.c"
+    host.write_text("")
+    out = tmp_path / "build"
+    recomp.prepare(folder, out, "", [], [host], header, {}, lambda *a: None, image=image)
+    rec = (out / "rec_funcs_0.c").read_text()
+    code = f"port_recomp_guard(0x80126480u, 8u, 0x{recomp.code_hash(words):08X}u)"
+    assert code in rec and "port_recomp_other(0x80126480u, R_func_80126480_a, rdram, ctx)" in rec
+    assert rec.count("port_recomp_guard(") == 2  # (the function of its own has none)
+    bridges = (out / "bridges.c").read_text()
+    assert f"{{0x80126480u, 8u, 0x{recomp.code_hash(other):08X}u, R_func_80126480_b}}" in bridges
+    assert "if (port_recomp_shared((uint32_t)vram) && port_mips_has_code((uint32_t)vram))" in bridges
+    assert "int port_recomp_guard(" in (out / "funcs.h").read_text()
+
+
+def test_the_ram_hash_in_c_is_the_roms_hash_in_python(tmp_path):
+    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if cc is None:
+        pytest.skip("no C compiler")
+    start = recomp.LOOKUPS.index("static uint32_t port_recomp_ram_hash")
+    function = recomp.LOOKUPS[start:recomp.LOOKUPS.index("\n}\n", start) + 3]
+    words = [0x27BDFFE0, 0xAFBF001C, 0x03E00008, 0x24020001]
+    (tmp_path / "hash.c").write_text(
+        "#include <stdint.h>\n#include <stdio.h>\n"
+        f"static const uint32_t ram[] = {{{', '.join(hex(w) for w in words)}}};\n"
+        "uint32_t port_mips_lw(uint32_t a) { return ram[(a - 0x80001000u) / 4]; }\n" + function +
+        'int main(void) { printf("%08X\\n", port_recomp_ram_hash(0x80001000u, 4)); return 0; }\n')
+    subprocess.run([cc, "-o", str(tmp_path / "hash"), str(tmp_path / "hash.c")], check=True)
+    done = subprocess.run([str(tmp_path / "hash")], capture_output=True, text=True, check=True)
+    assert int(done.stdout, 16) == recomp.code_hash(words)

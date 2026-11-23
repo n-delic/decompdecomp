@@ -31,7 +31,9 @@ MIPS stacks mapped by miyoo/mem32.c); the browser build takes the game's C alone
 from __future__ import annotations
 
 import json
+import mmap
 import re
+import tomllib
 from pathlib import Path
 
 from .adapt import REGS  # MIPS's $a0-$a3 and $v0 as words of memory the game's C passes and reads
@@ -258,6 +260,66 @@ def _returned(ret: str) -> str:
             "f32": "return c.f0.fl;", "f64": "return c.f0.d;"}[ret]
 
 
+# ---------------------------------------------------------------- code several overlays load at one address
+
+GUARD_WORDS = 16  # how much of a function's start tells which overlay's code is in RAM
+
+
+def code_hash(words) -> int:
+    """FNV-1a over 32-bit words: the same as `port_recomp_ram_hash` in the bridges, which hashes what is in RAM."""
+    h = 2166136261
+    for w in words:
+        h = ((h ^ w) * 16777619) & 0xFFFFFFFF
+    return h
+
+
+def overlay_guards(folder: Path, image: Path | None, defined: set[str]) -> dict[str, tuple[int, int, int]]:
+    """{C function: (its address, words hashed, their hash)} for the functions whose addresses are shared by code from
+    different places in the ROM: overlays the game loads into one slot, one at a time. The split lists each overlay's
+    functions at the slot's addresses, and the recompiler writes every one of them, but only the overlay in RAM at
+    the moment is the game's code there: a call by address ran the one the table listed first (a tank game's main
+    thread spun in the delay routine of one overlay while another was loaded), however the game had filled the slot.
+    The hash is of the function's first words as the ROM holds them; a call checks it against RAM (port_recomp_guard)
+    and runs the candidate whose code is there, else the interpreter from RAM."""
+    if image is None or not Path(image).is_file():
+        return {}
+    try:
+        sections = tomllib.loads((Path(folder) / "syms.toml").read_text(encoding="utf-8")).get("section", [])
+    except (OSError, ValueError):
+        return {}
+    entries = []  # (vram, end, rom offset, name)
+    for sec in sections:
+        if "rom" not in sec or "vram" not in sec:
+            continue
+        for f in sec.get("functions", []):
+            size = f.get("size", 0)
+            if size < 4 or size & 3 or f["vram"] & 3:
+                continue
+            entries.append((f["vram"], f["vram"] + size, sec["rom"] + f["vram"] - sec["vram"], f["name"]))
+    entries.sort()
+    shared: set[int] = set()
+    for i, (vram, end, rom, _) in enumerate(entries):
+        for j in range(i + 1, len(entries)):
+            other = entries[j]
+            if other[0] >= end:
+                break
+            if rom + (other[0] - vram) != other[2]:  # the same addresses, other bytes of the ROM: another overlay
+                shared.update((i, j))
+    if not shared:
+        return {}
+    out = {}
+    with open(image, "rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as rom_bytes:
+        for i in sorted(shared):
+            vram, end, rom, name = entries[i]
+            c = next((n for n in (name, f"{name}_recomp") if n in defined), None)
+            words = min((end - vram) // 4, GUARD_WORDS)
+            if c is None or rom < 0 or rom + words * 4 > len(rom_bytes):
+                continue
+            out[c] = (vram, words, code_hash(int.from_bytes(rom_bytes[rom + 4 * k:rom + 4 * k + 4], "big")
+                                             for k in range(words)))
+    return out
+
+
 # ---------------------------------------------------------------- the choice and the bridges
 
 def table(folder: Path, entry: int | None = None) -> dict[int, tuple[str, str | None]]:
@@ -349,7 +411,7 @@ def _import_addresses(where: dict[str, int], renames: dict[str, str]) -> dict[st
 
 
 def prepare(folder: Path, out: Path, game_h: str, fixed: list[str], hosts: list[Path], recomp_h: Path,
-            library_names=None, log=print, *, renames=None) -> dict:
+            library_names=None, log=print, *, renames=None, image: Path | None = None) -> dict:
     """Write the port's recompiled C into `out` (recomp.h, funcs.h, rec_*.c and bridges.c, each only when it
     changed); returns {"units": [paths], "include": out, "counts": {...}, "pointers_lose_floats": bool}."""
     out = Path(out)
@@ -369,6 +431,8 @@ def prepare(folder: Path, out: Path, game_h: str, fixed: list[str], hosts: list[
     recompiled = table(folder)
     sources = {f: f.read_text(encoding="utf-8", errors="replace") for f in sorted((Path(folder) / "funcs").glob("funcs_*.c"))}
     broken = unfinished(sources.values())
+    defined_in_sources = {n for text in sources.values() for n in DEFINED.findall(text)}
+    guards = overlay_guards(folder, image, defined_in_sources)
     # what N64Recomp refused it writes as an empty function (its `stubs`): that is no translation, and running one
     # returned at once (a racing game's main thread, whose code calls into an overlay the split doesn't describe)
     try:
@@ -419,11 +483,23 @@ def prepare(folder: Path, out: Path, game_h: str, fixed: list[str], hosts: list[
         text = CALL.sub(lambda m: f"R_{m.group(1)}", text)
         text = FALLS.sub(falls_into_next, text)
         # each function's start tells port_recomp_entered, when PORT_RECOMP_CALLS asks (one test of a flag otherwise)
-        return ENTRY.sub(lambda m: m.group(0) if m.group(1) not in at else (
-            f"static void R_{m.group(1)}_body(uint8_t* rdram, recomp_context* ctx);\n"
-            f"RECOMP_FUNC void R_{m.group(1)}(uint8_t* rdram, recomp_context* ctx) {{ if (port_recomp_watch) "
-            f"port_recomp_entered(0x{at[m.group(1)]:08X}u, ctx); R_{m.group(1)}_body(rdram, ctx); }}\n"
-            f"static void R_{m.group(1)}_body(uint8_t* rdram, recomp_context* ctx) {{"), text)
+        def entry(m: re.Match) -> str:
+            n = m.group(1)
+            vram = at.get(n, guards[n][0] if n in guards else None)
+            if vram is None:
+                return m.group(0)
+            # code several overlays load at this address: if RAM holds another one's, that one runs (or the
+            # interpreter, from RAM), not the copy the recompiler happened to write under this name
+            check = ""
+            if n in guards:
+                v, words, h = guards[n]
+                check = (f"if (port_recomp_guard(0x{v:08X}u, {words}u, 0x{h:08X}u)) "
+                         f"{{ port_recomp_other(0x{v:08X}u, R_{n}, rdram, ctx); return; }} ")
+            return (f"static void R_{n}_body(uint8_t* rdram, recomp_context* ctx);\n"
+                    f"RECOMP_FUNC void R_{n}(uint8_t* rdram, recomp_context* ctx) {{ if (port_recomp_watch) "
+                    f"port_recomp_entered(0x{vram:08X}u, ctx); {check}R_{n}_body(rdram, ctx); }}\n"
+                    f"static void R_{n}_body(uint8_t* rdram, recomp_context* ctx) {{")
+        return ENTRY.sub(entry, text)
 
     from ..csource import only
     keep = {c for kind, _, c, _ in choice.values() if kind == "recomp" and c}
@@ -438,9 +514,14 @@ def prepare(folder: Path, out: Path, game_h: str, fixed: list[str], hosts: list[
     # (`__osSiRawStartDma_recomp`), and each gets an R_ definition below
     seen = set(DECLARED.findall(declared_h)) | {n for text in sources.values() for n in CALL.findall(text)}
     _write(out / "funcs.h", rename(declared_h) + "".join(
-        f"void R_{n}(uint8_t* rdram, recomp_context* ctx);\n" for n in sorted(seen - set(DECLARED.findall(declared_h)))))
+        f"void R_{n}(uint8_t* rdram, recomp_context* ctx);\n" for n in sorted(seen - set(DECLARED.findall(declared_h))))
+        + ("int port_recomp_guard(uint32_t vram, unsigned words, uint32_t hash);\n"
+           "void port_recomp_other(uint32_t vram, recomp_func_t *self, uint8_t *rdram, recomp_context *ctx);\n"
+           if guards else ""))
+    final_defined: set[str] = set()
     for f, text in sources.items():
         text = only(text, drop & set(DEFINED.findall(text)))
+        final_defined.update(DEFINED.findall(text))
         target = out / f"rec_{f.stem}.c"
         _write(target, stores(rename(loops(link_branches(text)))))
         units.append(target)
@@ -534,7 +615,13 @@ def prepare(folder: Path, out: Path, game_h: str, fixed: list[str], hosts: list[
     lines.append("static const struct { uint32_t vram; void *func; } port_recomp_pointers[] = {")
     lines += [f"    {{0x{v:08X}u, (void *)G_{c}}}," for v, c in pointers] or ["    {0, 0},"]
     lines.append("};")
-    lines.append(LOOKUPS % {"tables": len(choice), "pointers": len(pointers)})
+    # code several overlays load at one address: each candidate by address, with the hash of its first words
+    guarded = sorted((v, n, w, h) for n, (v, w, h) in guards.items() if n in final_defined)
+    lines.append("typedef struct { uint32_t vram; unsigned words; uint32_t hash; recomp_func_t *func; } PortGuard;")
+    lines.append("static const PortGuard port_recomp_guards[] = {")
+    lines += [f"    {{0x{v:08X}u, {w}u, 0x{h:08X}u, R_{n}}}," for v, n, w, h in guarded] or ["    {0, 0, 0, 0},"]
+    lines.append("};")
+    lines.append(LOOKUPS % {"tables": len(choice), "pointers": len(pointers), "guards": len(guarded)})
     bridges = out / "bridges.c"
     _write(bridges, "\n".join(lines) + "\n")
     units.append(bridges)
@@ -713,8 +800,42 @@ void port_recomp_entered(uint32_t vram, void *context) {
 }
 void port_safe_point(void); /* the host's (host.c): a thread the retrace woke that outranks this one takes over */
 void port_trace(void);
+/* Code several overlays load at one address: the candidates listed by address (port_recomp_guards), each with the
+   hash of its function's first words. What RAM holds decides which runs; none matching, the interpreter, from RAM. */
+uint32_t port_mips_lw(uint32_t a);
+static uint32_t port_recomp_ram_hash(uint32_t vram, unsigned words) {
+    uint32_t h = 2166136261u;
+    for (unsigned i = 0; i < words; i++) h = (h ^ port_mips_lw(vram + 4 * i)) * 16777619u;
+    return h;
+}
+int port_recomp_guard(uint32_t vram, unsigned words, uint32_t hash) {
+    return port_mips_has_code(vram) && port_recomp_ram_hash(vram, words) != hash;
+}
+static int port_recomp_shared(uint32_t vram) {
+    for (unsigned i = 0; i < %(guards)du; i++) if (port_recomp_guards[i].vram == vram) return 1;
+    return 0;
+}
+static recomp_func_t *port_recomp_match(uint32_t vram, recomp_func_t *self) {
+    for (unsigned i = 0; i < %(guards)du; i++) {
+        const PortGuard *g = &port_recomp_guards[i];
+        if (g->vram == vram && g->func != self && port_recomp_ram_hash(vram, g->words) == g->hash) return g->func;
+    }
+    return 0;
+}
+void port_recomp_other(uint32_t vram, recomp_func_t *self, uint8_t *rdram, recomp_context *ctx) {
+    recomp_func_t *f = port_recomp_match(vram, self);
+    if (f) { f(rdram, ctx); return; }
+    port_recomp_unlisted = vram;
+    port_recomp_interpret(rdram, ctx);
+}
 recomp_func_t *get_function(int32_t vram) {
     port_safe_point();
+    if (port_recomp_shared((uint32_t)vram) && port_mips_has_code((uint32_t)vram)) {
+        recomp_func_t *f = port_recomp_match((uint32_t)vram, 0);
+        if (f) return f;
+        port_recomp_unlisted = (uint32_t)vram;
+        return port_recomp_interpret;
+    }
     unsigned lo = 0, hi = %(tables)d;
     while (lo < hi) { unsigned mid = (lo + hi) / 2; if (port_recomp_table[mid].vram < (uint32_t)vram) lo = mid + 1; else hi = mid; }
     if (lo < %(tables)du && port_recomp_table[lo].vram == (uint32_t)vram) return port_recomp_table[lo].func;

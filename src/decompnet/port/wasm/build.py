@@ -1140,7 +1140,7 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
         try:
             prepared = recomp_c.prepare(Path(recomp["folder"]), out / "recomp", (out / "c" / "game.h").read_text(
                 encoding="utf-8"), fixed, [*sorted(host.glob("*.c")), *own], Path(recomp["header"]), library_names, log,
-                renames=renamed)
+                renames=renamed, image=Path(runtime_image) if runtime_image else None)
         except (OSError, ValueError) as error:
             raise NetworkError(f"the recompiled C couldn't be prepared for the port: {error}") from error
         recompiled = prepared["units"]
