@@ -547,6 +547,14 @@ register, the status stays), the port's `PORT_SWAP_LOG` says when it blanked, an
 number and length. On a racing game they did: six blanks of 25, 25, 21, 25, 25 and 21 graphics tasks on both sides
 (where each began differed for three of them: a menu advanced hundreds of tasks apart between runs). On the console the
 screen is black at those moments; before the port honoured osViBlack it showed the buffer's leftovers instead.
+`tools/n64_task_diff.py CONSOLE_DUMP PORT_DUMP` says where two pictures of one task differ: the task's display list
+is traced on each side and compared with its pointers masked, so what's left is values the game computed. A racing
+game paused on its starting grid (the pad released, one START: the scene stands still on both sides, whatever the timing)
+ran 168 commands on each side and only one differed, the horizon's fill rectangle by one pixel. The emulator's `--break`
+on the function that wrote it (`drawPanelFill`) showed the console's own horizon settling from 146 to 140 over about 200
+retraces at the race start, then holding while paused: the port was paused nine retraces later in that settling, so
+the difference was when START landed, not a drawing or logic fault. A moving scene can't be matched by task or retrace
+number, but a scene held still by a pause or a menu can, and a difference there is found to the command.
 `tools/n64_frame_scan.py FOLDER` needs no emulator: it looks through the frames a port saved (`PORT_FRAMES=FOLDER
 PORT_FRAME_EVERY=1`, `PORT_SWAP_LOG=file` to name each frame's graphics task) for static, flat-colour frames and runs of
 black, the ways a buffer shown before the game drew it looks. Moving scenes can't be compared pixel for pixel by task
