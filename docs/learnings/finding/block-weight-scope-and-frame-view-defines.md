@@ -54,8 +54,15 @@ at a time):
   held a load (`temp = *(u16 *)((char *)arg1 + 0)`) written as the load again in a call's arguments, after the frame
   stores and a call that came between: 2386 -> 1971 (the record address `table + id * 0x4C` recomputed from `lhu` as the
   target does, instead of the register that held it; `stale_load_reread`, #1470). `frame_write_alias_split` then found
-  1971 -> 1911 on the new base. The whole run, 3786 -> 1911 in the app, took four hand edits and the families above; the
+  1971 -> 1911 on the new base. The whole run, 3786 -> 1551 in the app, took four hand edits and the families above; the
   function is not matched (50 register rows left, the arms' local-alloc order of `$v0`/`$v1`/`$a0`).
+
+- After the families above typed the pointer stores as record members, `adjacent_cast_store_swap` no longer saw its
+  pairs (it reads `*(T *)(...)` casts only): the swap of two halfword stores of one record, `sh 0x40` and `sh 0x42`,
+  was the whole of 1911 -> 1691 (the family reads the member form since decomp-repair #1476). A family that rewrites
+  the spelling of a statement hides it from every family that reads the old spelling: after adding one, run the
+  neighbouring ones on its output. Two stores of different bases swapped, `*arg0 = rec; ((R *) rec)->f = v;`: 1691 -> 1551
+  (`independent_statement_swap`, #1477; 44 children, the edit is the fifth).
 
 Failed experiments that would otherwise be repeated: permuting the three statements of an arm (`var_a1`, `var_a0`,
 `var_v0`) gave the same code in all 36 orders (the scheduler's tie-break is not the source order there); writing the
