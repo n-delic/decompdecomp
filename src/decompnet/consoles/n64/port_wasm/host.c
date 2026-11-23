@@ -997,10 +997,12 @@ u32 w2c_env_osAiSetNextBuffer(struct w2c_env *e, u32 buf, u32 size) {
 u32 w2c_env_osPiReadIo(struct w2c_env *e, u32 dev, u32 data) { return w2c_env_osEPiReadIo(e, 0, dev, data); }
 u32 w2c_env_osPiWriteIo(struct w2c_env *e, u32 dev, u32 value) { return w2c_env_osEPiWriteIo(e, 0, dev, value); }
 void w2c_env_osViSetXScale(struct w2c_env *e, f32 x) { (void)e; (void)x; } /* (the frame is shown whole) */
+static void tlb_map(uint32_t pm, uint32_t va, uint32_t even, uint32_t odd); /* below, with the boot */
 void w2c_env_osMapTLB(struct w2c_env *e, u32 index, u32 pm, u32 va, u32 even, u32 odd, u32 asid) {
-    (void)e; (void)pm; (void)asid;
+    (void)e; (void)asid;
     static int said;
-    if (!said++) fprintf(stderr, "osMapTLB(%u, %08X -> %08X/%08X): the port has no TLB, so mapped addresses aren't translated\n", index, va, even, odd);
+    if (!said++) fprintf(stderr, "osMapTLB(%u, %08X -> %08X/%08X): the port has no TLB, so a mapped window keeps its KSEG0 spelling\n", index, va, even, odd);
+    tlb_map(pm, va, even, odd);
 }
 u32 w2c_env_memcpy(struct w2c_env *e, u32 d, u32 s, u32 n) { (void)e; memmove(M + d, M + s, n); return d; }
 u32 w2c_env_memset(struct w2c_env *e, u32 d, u32 c, u32 n) { (void)e; memset(M + d, (int)c, n); return d; }
@@ -1102,10 +1104,49 @@ static void boot_leftovers(void) {
     for (uint32_t a = 0xA4000000u; a < 0xA4002000u; a += 4) wbe32(a, chip->sp_fill); /* DMEM, then IMEM */
     if (chip->id) { wbe32(0xA4001000u, chip->id); wbe32(0x80000310u, chip->id); } /* osCicId */
 }
+/* The TLB windows a game maps its code through (its entry routine's setup, or osMapTLB later): a 1 MB page pair at
+   the virtual address 0x00200000 puts the game's code at what the project spells 0x80200000 (the split names every
+   address `0x80000000 | its virtual address`), while the bytes sit at their physical address in RAM (a decompressed
+   program, the boot chip's image). The port has no TLB: a low address inside a window is read at its KSEG0 spelling,
+   and the interpreter fetches code from the physical alias where nothing was ever written at the spelling. */
+#define TLB_WINDOWS 16
+static struct { uint32_t lo, size, phys; } tlb_win[TLB_WINDOWS];
+unsigned port_tlb_n;
+/* pm: the page mask register (PM_1M is 0x1FE000), va the pair's virtual address, even/odd the physical addresses of
+   its two pages (-1: not mapped) */
+static void tlb_map(uint32_t pm, uint32_t va, uint32_t even, uint32_t odd) {
+    uint32_t size = ((pm >> 13) + 1) << 12;
+    if ((pm & ~0x01FFE000u) || size > 0x1000000u) return;
+    va &= ~(2 * size - 1);
+    for (int half = 0; half < 2; half++) {
+        uint32_t phys = half ? odd : even, lo = va + (uint32_t)half * size;
+        if (phys == 0xFFFFFFFFu || lo >= 0x00800000u) continue;
+        unsigned i = 0;
+        while (i < port_tlb_n && tlb_win[i].lo != lo) i++;
+        if (i == port_tlb_n && port_tlb_n == TLB_WINDOWS) return;
+        tlb_win[i].lo = lo; tlb_win[i].size = size; tlb_win[i].phys = phys;
+        if (i == port_tlb_n) port_tlb_n++;
+    }
+}
+/* an address inside a window: the KSEG0 spelling the port keeps it at */
+uint32_t port_tlb_canon(uint32_t a) {
+    for (unsigned i = 0; a < 0x00800000u && i < port_tlb_n; i++)
+        if (a >= tlb_win[i].lo && a - tlb_win[i].lo < tlb_win[i].size) return a | 0x80000000u;
+    return a;
+}
+/* where the bytes of code at a spelling live in RAM, 0 when no window covers it */
+uint32_t port_tlb_alias(uint32_t a) {
+    uint32_t v = a & 0x7FFFFFFFu;
+    for (unsigned i = 0; (a & 0x80000000u) && i < port_tlb_n; i++)
+        if (v >= tlb_win[i].lo && v - tlb_win[i].lo < tlb_win[i].size) return 0x80000000u | (tlb_win[i].phys + (v - tlb_win[i].lo));
+    return 0;
+}
+static uint32_t boot_stk[16]; /* the words the entry routine stored at 0($sp)...: osMapTLB's fifth and sixth arguments */
 /* The effect of one instruction of the entry routine on the registers it builds addresses in (not a branch). */
 static void boot_step(uint32_t *r, uint32_t w) {
     uint32_t op = w >> 26, rs = (w >> 21) & 31, rt = (w >> 16) & 31, rd = (w >> 11) & 31, fn = w & 0x3F;
     int32_t imm = (int16_t)(w & 0xFFFF);
+    if (op == 0x2B && rs == 29 && imm >= 0 && imm < 64 && !(imm & 3)) boot_stk[imm / 4] = r[rt]; /* sw to the stack */
     if (op == 0x0F) r[rt] = (w & 0xFFFF) << 16;                                          /* lui */
     else if (op == 0x08 || op == 0x09) r[rt] = r[rs] + (uint32_t)imm;                    /* addi, addiu */
     else if (op == 0x0D) r[rt] = r[rs] | (w & 0xFFFF);                                   /* ori */
@@ -1130,6 +1171,8 @@ static int boot_is_fill(uint32_t at) {
 static int read_boot(void) {
     uint32_t r[32] = {0}, pre[32] = {0};
     int base = -1;
+    memset(boot_stk, 0, sizeof boot_stk);
+    port_tlb_n = 0;
     boot.entry = boot_entry();
     /* a call is the game's first function when only a `break` follows it; one with more code after it is a helper
        (a fill, a TLB setup) the routine returns from */
@@ -1151,6 +1194,8 @@ static int read_boot(void) {
             if (ends) { boot.target = to; break; }
             if (op == 0x03 && boot_is_fill(to) && !r[6] && r[5] > r[4] && !boot.bss_size) { /* the zero fill: the BSS */
                 boot.bss = r[4]; boot.bss_size = r[5] - r[4];
+            } else if (op == 0x03 && r[4] < 32 && r[5] && !(r[5] & ~0x01FFE000u)) { /* the TLB setup: osMapTLB(index, mask, va, even, odd) */
+                tlb_map(r[5], r[6], r[7], boot_stk[4]);
             }
             i++;
             continue;
@@ -1189,6 +1234,7 @@ static int boot_memory(void) {
     wbe32(0x80000308, 0xB0000000);    /* osRomBase */
     wbe32(0x8000030C, 0);             /* osResetType: cold */
     wbe32(0x80000318, 0x400000);      /* osMemSize */
+    for (unsigned i = 0; i < port_tlb_n; i++) LOG("TLB: virtual %08X + %X is physical %08X", tlb_win[i].lo, tlb_win[i].size, tlb_win[i].phys);
     LOG("boot: image at %08X, BSS %08X + %X, first C function %08X, %s", boot.entry, boot.bss, boot.bss_size,
         boot.target, boot.tv == 0 ? "PAL" : boot.tv == 2 ? "MPAL" : "NTSC");
     return 1;

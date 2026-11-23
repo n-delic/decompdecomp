@@ -265,6 +265,55 @@ int main(int argc, char **argv) {
     assert done.stdout.split() == want.split()
 
 
+def _sw(rt, off, base): return 0x2B << 26 | base << 21 | rt << 16 | off & 0xFFFF
+A3, T0_ = 7, 8
+# an entry routine that maps its code through the TLB the way libultra's osMapTLB takes it (index in $a0, page mask in
+# $a1, the virtual address in $a2, the even page's physical address in $a3, the odd page's and the ASID on the stack),
+# then jumps to the virtual address: 1 MB pages at 0x200000 (even: physical 0, odd: physical 0x100000)
+TLB_MAP_ENTRY = [_lui(SP, 0x803F), _addiu(A0, 0, 0x1F), _lui(A1, 0x1F), _addiu(A1, A1, 0xE000, op=0x0D),
+                 _lui(A2, 0x20), _addiu(A3, 0, 0), _lui(T1, 0x10), _sw(T1, 0x10, SP), _addiu(T0_, 0, 7),
+                 _jal(0x80000440), _sw(T0_, 0x14, SP), _lui(A0, 0x29), _addiu(A0, A0, 0x2E00), _jalr(A0), 0, BREAK,
+                 _jr(31), 0]
+# the same with the even page unmapped (-1), its physical address left out: only the odd page is a window
+TLB_ODD_ONLY = TLB_MAP_ENTRY[:5] + [_addiu(A3, 0, -1), _lui(T1, 0), *TLB_MAP_ENTRY[7:]]
+
+
+@pytest.mark.parametrize("words,want", [
+    (TLB_MAP_ENTRY, "00200000 100000 00000000\n00300000 100000 00100000"),
+    (TLB_ODD_ONLY, "00300000 100000 00000000"),
+])
+def test_the_entry_routines_tlb_setup_gives_the_windows_the_game_runs_through(tmp_path, words, want):
+    """Some games map their code at a virtual address (a 1 MB page pair) and the split names it `0x80000000 | va`:
+    the interpreter read zeros at the virtual address and stopped. The host reads the pages from the entry routine's
+    own call, gives an address in one its KSEG0 spelling, and finds the code's bytes at the physical alias."""
+    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if not cc:
+        pytest.skip("no C compiler")
+    text = HOST.read_text()
+    code = text[text.index("static struct { uint32_t entry, target, bss, bss_size; int tv; } boot;"):
+                text.index("/* the console's RAM as the boot leaves it")]
+    (tmp_path / "rom.bin").write_bytes(_entry_rom(words, 0x80000400, b"E"))
+    source = tmp_path / "t.c"
+    source.write_text(_BOOT_HARNESS + code + """
+int main(int argc, char **argv) {
+    FILE *f = fopen(argv[1], "rb"); rom = malloc(1 << 16); rom_size = fread(rom, 1, 1 << 16, f);
+    int ok = read_boot();
+    for (unsigned i = 0; i < port_tlb_n; i++) printf("%08X %X %08X\\n", tlb_win[i].lo, tlb_win[i].size, tlb_win[i].phys);
+    /* a mapped address is read at its KSEG0 spelling, the code's bytes live at the physical alias, others stay */
+    printf("%08X %08X %08X %08X\\n", port_tlb_canon(0x00292E00), port_tlb_canon(0x80292E00), port_tlb_canon(0x00500000),
+           port_tlb_alias(0x80292E00));
+    return !ok;
+}
+""")
+    subprocess.run([cc, "-o", str(tmp_path / "t"), str(source)], check=True, capture_output=True)
+    done = subprocess.run([str(tmp_path / "t"), str(tmp_path / "rom.bin")], capture_output=True, text=True, check=True)
+    *windows, probes = done.stdout.strip().splitlines()
+    assert "\n".join(windows) == want
+    canon_even = "80292E00" if "00200000" in want else "00292E00"
+    alias = "80092E00" if "00200000" in want else "00000000"
+    assert probes.split() == [canon_even, "80292E00", "00500000", alias]
+
+
 @pytest.mark.parametrize("crc,want", [
     # CIC-6103: its code from 0x4C0 copied to RAM 0, both RSP memories filled with -1, then 6103 in IMEM and osCicId
     (0x0B050EE0, "AC290000 240B17D7 FFFFFFFF FFFFFFFF 000017D7 000017D7"),

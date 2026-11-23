@@ -92,9 +92,25 @@ void port_note_entry(uint32_t address) {
 /* (always inlined: the native host is built with -fno-inline, and each instruction goes through these) */
 #define HOT static inline __attribute__((always_inline))
 static uint8_t *M;
-HOT uint8_t *at_load(uint32_t a) { return M + (a >= 0xA0000000u ? (uint32_t)port_io_load(a) : a); }
-HOT uint8_t *at_store(uint32_t a, uint64_t v) { return M + (a >= 0xA0000000u ? (uint32_t)port_io_store(a, v) : a); }
+/* The windows a game maps through the TLB (host.c): an address inside one is read and written at its KSEG0 spelling,
+   as the split names it. */
+extern unsigned port_tlb_n;
+uint32_t port_tlb_canon(uint32_t a);
+uint32_t port_tlb_alias(uint32_t a);
+HOT uint32_t mapped(uint32_t a) { return __builtin_expect(a < 0x00800000u && port_tlb_n, 0) ? port_tlb_canon(a) : a; }
+HOT uint8_t *at_load(uint32_t a) { a = mapped(a); return M + (a >= 0xA0000000u ? (uint32_t)port_io_load(a) : a); }
+HOT uint8_t *at_store(uint32_t a, uint64_t v) { a = mapped(a); return M + (a >= 0xA0000000u ? (uint32_t)port_io_store(a, v) : a); }
 HOT uint32_t lw(uint32_t a) { uint32_t v; memcpy(&v, at_load(a), 4); return __builtin_bswap32(v); }
+/* An instruction: where a window's code was never written at its spelling (zero words), the bytes at its physical
+   address (the boot chip's image, a decompressed program). A block of four zero words, so a nop alone is no hole. */
+HOT uint32_t fetch(uint32_t a) {
+    uint32_t w = lw(a);
+    if (__builtin_expect(w == 0 && port_tlb_n && mapped(a) >= 0x80000000u, 0)) {
+        uint32_t b = port_tlb_alias(mapped(a)), blk = mapped(a) & ~15u;
+        if (b && !lw(blk) && !lw(blk + 4) && !lw(blk + 8) && !lw(blk + 12)) return lw(b);
+    }
+    return w;
+}
 HOT uint64_t ld(uint32_t a) { return (uint64_t)lw(a) << 32 | lw(a + 4); }
 HOT uint16_t lh(uint32_t a) { uint16_t v; memcpy(&v, at_load(a), 2); return __builtin_bswap16(v); }
 HOT uint8_t lb(uint32_t a) { return *at_load(a); }
@@ -117,7 +133,7 @@ static PortMipsCall with_pattern(uint32_t vram) {
         const PortMipsPattern *p = &port_mips_patterns[i];
         if (p->count > (0x80800000u - vram) / 4u) continue;
         unsigned n = 0;
-        for (; n < p->count; n++) if ((lw(vram + n * 4u) & p->masks[n]) != p->words[n]) break;
+        for (; n < p->count; n++) if ((fetch(vram + n * 4u) & p->masks[n]) != p->words[n]) break;
         if (n != p->count) continue;
         if (match && match != p->call) return 0; /* overlapping SDK identities are not a verdict */
         match = p->call;
@@ -454,6 +470,7 @@ static int step(Cpu *c, uint32_t pc, uint32_t op, uint32_t *target) {
 void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
     if (!M) M = port_memory();
     if (tracing < 0) tracing = getenv("PORT_INTERP_TRACE") ? atoi(getenv("PORT_INTERP_TRACE")) : 0;
+    entry = mapped(entry);
     port_note_entry(entry);
     if (tracing) fprintf(stderr, "interpreter: %08X (%08X, %08X, %08X, %08X)\n", entry, (uint32_t)regs[4],
                          (uint32_t)regs[5], (uint32_t)regs[6], (uint32_t)regs[7]);
@@ -467,7 +484,7 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
     unsigned long steps = 0;
     int zeros = 0;
     for (;;) {
-        uint32_t op = lw(pc), target = 0;
+        uint32_t op = fetch(pc), target = 0;
         if (op == 0 && ++zeros > 64) { /* a run of nothing: no code there (no ROM loaded where it was looked for) */
             fprintf(stderr, "interpreter: no instructions at %08X (from %08X): the function returns at once\n", pc, entry);
             break;
@@ -479,7 +496,7 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
         if (kind == 3) { pc += 8; continue; }    /* a likely branch not taken: its delay slot skipped */
         if (!kind) { pc += 4; goto counted; }
         /* the delay slot, then the jump */
-        uint32_t slot = lw(pc + 4);
+        uint32_t slot = fetch(pc + 4);
         { uint32_t ignored; if (step(&c, pc + 4, slot, &ignored)) unknown(pc + 4, slot); c.r[0] = 0; }
         /* A jump to itself with nothing in its delay slot (an idle thread's `for (;;);`, `j .`) can't get anywhere:
            on the console only an interrupt switches away from it. Spinning here took 41% of a racing game's
@@ -489,6 +506,7 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
             port_idle_forever();
             continue; /* (only if it comes back: the same jump again) */
         }
+        target = mapped(target); /* a jump to a mapped virtual address runs the code at its spelling */
         if (kind == 4 || op >> 26 == 3) port_note_entry(target); /* a call: jal, jalr */
         pc = target;
         if (kind == 4) { /* a call through a pointer is a safe point, as host.c's port_func is for the game's C: only
@@ -509,8 +527,7 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
         }
     counted:
         if (!(++steps & 0xFFFF)) { /* a thread spinning here gives the others their turn */
-            if (tracing > 1) fprintf(stderr, "interpreter: %08X still running, at %08X after %lu instructions\n", entry, pc, steps);
-            port_safe_point();
+            if (tracing > 1) fprintf(stderr, "interpreter: %08X still running, at %08X after %lu instructions\n", entry, pc, steps);            port_safe_point();
 #ifdef PORT_WEB
             port_web_yield();
 #endif
