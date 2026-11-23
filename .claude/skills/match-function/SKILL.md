@@ -758,13 +758,21 @@ can't see it. Before that verdict, or while the score still improves, keep going
 with the verdict, hand off only when you are near 0 and stuck on the last rows, or can state the stall precisely
 (a compiler behaviour with no known source shape); a run that is still learning keeps working.
 
+A near-match under about 60 that stalls is exactly what to hand off when the clock allows: the coordinator gives it
+to a stronger model, which needs your evidence, not your conclusions. Don't keep it for hours past the clock.
+
 To hand off:
-1. `add_note(function=F, text=...)` with what the next agent needs: the remaining differing rows (`fast_judge --diff`),
-   the edit list from the saved best, each idea tried with its score, any scaffolding in the best, and the compiler
-   findings (dumps read, pass orders, allocation priorities).
+1. Write the note and release in one command (it makes `add_note` and `release_function` with every argument they
+   need, claim token included, then `setup.py release`):
+   ```bash
+   handoff.py <holder> --source BEST.c --tried "dropped the index cast: 45" --tried "cursor temp: 40" ... \
+       --findings "sched2 keeps the load first; greg: pseudo 80 prefers $a1"
+   ```
+   The note carries the best score, the remaining differing rows, the register pairs and `cause:` lines from
+   explain_regs.py, every `--tried` approach with its score (one per approach: all of them, failed ones included),
+   your findings and the source's path. `--dry-run` prints it without calling anything; check it reads complete.
 2. Merge any library or app work it produced (step 5), with tests, as on a match.
-3. `release_function(function=F, notes=<one line>, claim_token=...)` (the app accepts it once the clock allows and your
-   `add_note` is written, whatever the compile count says), then `setup.py stop <holder>`.
+3. `setup.py stop <holder>`.
 4. Report **"handed off"**, with the clock's line, the best score and the note's summary, so a stronger agent resumes
    from the history.
 
