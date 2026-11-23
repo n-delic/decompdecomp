@@ -464,6 +464,11 @@ says the fix and the library families it names; try those families with `prove_c
   (`postincrement_after_test`); a bound the target loads as `lw $t0,-0xc($t0)` off the register that holds another global's
   address is `limit = ((s32 *) &H)[-3];` as the do body's first statement (`sibling_symbol_offset_read`, evidence from the asm);
   and `idx = index;` before it puts loop.c's movables in the target's order (`loop_body_key_copy`).
+- **m2c's join copy (`joined: check: near = force;`) that cse folds away, kept by an arm that copies for itself** (KMC 2.7.2, 640 -> 0
+  on a 148-instruction object handler): a copy whose destination is first referenced at the join is deleted (`make_regs_eqv`); copy it
+  in the arm that jumps to `check` (`near = force; goto check;`, `check:` after the join's copy) and put each arm's `force = 1;`
+  after its early-`return` guard. Each alone is worse (700, 1150); decomp-repair `join_copy_arm_anchor_sink` offers the combination
+  (docs/learnings/finding/join-copy-arm-anchor-and-flag-store-order.md).
 - **Flag words and widths:** bit-field structs for flag words; `u8`/`u16` widths keep or drop masks; overwrite a
   parameter after copying it (`arg = arg_in; arg_in = 0;`).
 - **A second pointer written beside the first (`q = p + 2`, `q[-1]`, `q[0]`, `q += 3` beside `p += 3`, or `q[i * 3 - 1]` for the
