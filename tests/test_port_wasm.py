@@ -943,3 +943,24 @@ def test_a_call_by_a_name_the_project_changed_goes_to_the_function_there_now(tmp
     fixed = ["mat3FromEuler 0x80001000 func"]
     assert renames([ll], fixed, None, recompiler_names(tmp_path)) == {"mat3_from_euler": "mat3FromEuler"}
     assert renames([ll], fixed) == {}
+
+
+def test_a_call_goes_to_the_projects_own_name_when_a_port_copy_shares_its_address(tmp_path):
+    """A port-only copy kept under the automatic name beside the matched function the project names now defined two
+    functions at one address, so a call by a data-style name was left a stub; the project's name wins."""
+    from decompnet.port.wasm.build import renames
+
+    ll = tmp_path / "a.ll"
+    ll.write_text("define void @drawSprite() {\n  ret void\n}\ndefine void @func_8000A840() {\n  ret void\n}\n"
+                  "define void @caller() {\n  call void @D_8000A840()\n  ret void\n}\ndeclare void @D_8000A840()\n")
+    assert renames([ll], ["drawSprite 0x8000A840 func"]) == {"D_8000A840": "drawSprite"}
+
+
+def test_next_arg_builtin_becomes_the_va_list_pointer():
+    """gcc's __builtin_next_arg linked to a stub returning 0 (clang has none); it is the address va_start gives."""
+    from decompnet.port.wasm.build import ido_c
+
+    text = "int f(int a, int b, ...) { return ((int *)(((int)__builtin_next_arg(b) + 3) & ~3))[0]; }\n"
+    out = ido_c(text)
+    assert out.startswith("#define __builtin_next_arg(last)") and "__builtin_va_start" in out and out.endswith(text)
+    assert ido_c("int g(void) { return 1; }\n") == "int g(void) { return 1; }\n"

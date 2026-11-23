@@ -317,10 +317,20 @@ def standalone_loops(text):
         previous = token
 
 
+# gcc's `__builtin_next_arg(last)` (the address of a function's first variadic argument) is no clang builtin: the call
+# linked to a logging stub that returned 0, so a variadic allocator read its extra argument from address 0. The same
+# address is what va_start leaves in the va_list (a pointer in WebAssembly's calling convention), whose buffer the
+# callers fill with the words o32 passed (adapt.py's varargs).
+NEXT_ARG = ("#define __builtin_next_arg(last) ({ __builtin_va_list __next; __builtin_va_start(__next, last); "
+            "(void *)__next; })\n")
+
+
 def ido_c(text: str) -> str:
     """The game's C as clang reads what IDO took: m2c's untyped declarations unprototyped, a hex constant followed
     by a sign spaced apart, and an endless empty loop as the thread parking for good (EMPTY_FOREVER)."""
     text = HEX_EXPONENT_SIGN.sub(r"\1 \2 ", UNTYPED_DECLARATION.sub(r"\1()\2", text))
+    if "__builtin_next_arg" in text:
+        text = NEXT_ARG + text
     if not EMPTY_FOREVER.search(text):
         return text
     starts = set(standalone_loops(text))
@@ -756,8 +766,13 @@ def renames(lls: list[Path], fixed: list[str], library_names=None, history: dict
             address = int(auto.group(1), 16)
         if address is None:
             address = (history or {}).get(n)
-        if address is not None and len(at.get(address, ())) == 1:
-            out[n] = next(iter(at[address]))
+        here = at.get(address, set()) if address is not None else set()
+        if len(here) > 1:
+            # a port-only copy under the automatic name beside the matched function the project names now (a racing
+            # game's sprite drawer, defined twice): the call goes to the project's own
+            here = here & named.get(address, set()) or here
+        if address is not None and len(here) == 1:
+            out[n] = next(iter(here))
         elif n not in out and (library := (library_names or {}).get(n)) and library != n:
             out[n] = library
         elif address is not None and address not in at and len(named.get(address, ())) == 1 and n not in named[address]:
