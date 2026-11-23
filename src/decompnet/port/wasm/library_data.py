@@ -138,6 +138,28 @@ def pair(out: Path, units: set[str], layout: list[dict], names: dict[str, str], 
         path = out / "ll" / (unit[:-2] + ".ll")
         if path.is_file():
             owned |= ll_names(path.read_text(encoding="utf-8", errors="replace"), functions)[0]
+    # A variable library code uses that no file defines (the synthesizer's alGlobals when the game's own alInit has
+    # no C: the game's matched C and ultralib's units all declare it `external`) still lives at one address in the
+    # game, which its unmatched code uses. Left undefined, the compiled C and the game's own machine code kept two
+    # copies: the audio frame found no players and made a null command list, which the game's audio thread reports.
+    stems = {n for n in by_library if (out / "ll" / (n + ".ll")).is_file()}
+    users: dict[str, list[str]] = {}
+    for stem in sorted(stems):
+        for name in ll_names((out / "ll" / (stem + ".ll")).read_text(encoding="utf-8", errors="replace"), functions)[1]:
+            if name not in pinned and not re.fullmatch(r"(?:D|B|g)_[0-9A-Fa-f]+", name):
+                users.setdefault(name, []).append(stem)
+    if users:
+        # a file defines a variable when it spells `@name = global ...`; `= external global` only declares it
+        defining = re.compile(rb"^@(" + b"|".join(re.escape(n.encode()) for n in users) + rb") = (?!external )", re.M)
+        for path in (out / "ll").glob("*.ll"):
+            for m in defining.finditer(path.read_bytes()):
+                users.pop(m.group(1).decode(), None)
+            if not users:
+                break
+        for name, stems_using in users.items():  # defined nowhere: the game's address is the one its code uses
+            shared[name] = stems_using
+            wanted.add(name)
+            owned.add(name)
     cache: dict[str, set[int] | None] = {}
 
     def addresses(library: str) -> set[int] | None:
