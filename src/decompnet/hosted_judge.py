@@ -22,7 +22,7 @@ Requests:
   "arch", "asm" (the target's assembly text), "header" (the project's typedefs and externs the judge prepends),
   "compiler": {"toolchain", "flags"} (this function's own profile), "tables" ([[low, [targets...]], ...]: its jump
   tables, as switch_tables.read), "callees" (its callees' matched C, capture_followup_repairs.callee_evidence) and
-  "entry_scope" (promoted_entry_repairs.scope): the context the app's draft path hands draft_repairs.variants}: everything a local search needs to judge without being told the function's bytes
+  "entry_scope" (promoted_entry_repairs.scope), "words" ({symbol: word} of its float constants, float_literal_words.read): the context the app's draft path hands draft_repairs.variants}: everything a local search needs to judge without being told the function's bytes
   (the match-function skill's fast_judge.py).
 - {"op": "passes", "slug", "name", "source", "passes" (optional), "sched_verbose" (optional: the first scheduler's
   notes too)} -> {"text"}: the compiler's allocation priority
@@ -153,7 +153,7 @@ def function_info(net, request: dict) -> dict:
     if isinstance(found, dict):
         return found
     proj, fn = found
-    from .app import draft_repairs, switch_tables
+    from .app import draft_repairs, float_literal_words, switch_tables
     profile = compiler_for(net.cfg(proj), fn["vram"], fn)
     # What draft_repairs.variants needs beyond the source: families like switch_gap_goto read the jump tables, so a
     # script that calls variants without them never sees those families fire.
@@ -163,6 +163,7 @@ def function_info(net, request: dict) -> dict:
             "tables": [[low, list(targets)] for low, targets in switch_tables.read(net, proj, fn)],
             "callees": draft_repairs.capture_followup_repairs.callee_evidence(net, proj, fn, fn["best_source"] or ""),
             "entry_scope": draft_repairs.promoted_entry_repairs.scope(net, proj, fn),
+            "words": float_literal_words.read(net, proj, fn),
             "compiler": {"toolchain": profile.get("toolchain"), "flags": list(profile.get("flags") or [])}}
 
 

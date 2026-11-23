@@ -64,6 +64,7 @@ class Judge:
         self.header, self.arch, self.asm = "", "mips", ""
         self.big_endian = True
         self.tables, self.callees, self.entry_scope = [], "", None
+        self.words = {}
         if vram is None or target_hex is None or toolchain is None:
             info = self.ask({"op": "function", "slug": slug, "name": name, **({"vram": vram} if vram is not None else {})})
             vram, target_hex = info["vram"], info["target"]
@@ -73,6 +74,7 @@ class Judge:
             self.big_endian = bool(info.get("big_endian", True))
             self.tables = [(low, list(targets)) for low, targets in info.get("tables") or []]
             self.callees, self.entry_scope = info.get("callees") or "", info.get("entry_scope") or None
+            self.words = {str(k): int(v) for k, v in (info.get("words") or {}).items()}  # float constants' words
         self.compiler = {"toolchain": toolchain, "flags": list(flags if flags is not None else
                                                               ("-G0", "-mips3", "-mgp32", "-mfp32", "-O2"))
                                                           + list(extra_flags or [])}

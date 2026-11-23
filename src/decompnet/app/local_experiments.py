@@ -43,6 +43,7 @@ from . import (
     agent_tokens,
     draft_repairs,
     expression_recipes,
+    float_literal_words,
     pointer_index_scope,
     prototype_reuse,
     repair_ranking,
@@ -372,7 +373,7 @@ def _available(net, agent, slug, fn, source, revision, requested):
     if set(pools).intersection(draft_repairs.AGENT_FAMILIES) - directly_generated:
         header=unit_header()
         labels={}
-        for candidate in draft_repairs.variants(source,fn['name'],proj['arch'],fn['asm'] or '',flags,labels,limit=None,header=header,tables=switch_tables.read(net,proj,fn),callees=draft_repairs.capture_followup_repairs.callee_evidence(net,proj,fn,source),entry_scope=draft_repairs.promoted_entry_repairs.scope(net,proj,fn)):
+        for candidate in draft_repairs.variants(source,fn['name'],proj['arch'],fn['asm'] or '',flags,labels,limit=None,header=header,tables=switch_tables.read(net,proj,fn),callees=draft_repairs.capture_followup_repairs.callee_evidence(net,proj,fn,source),entry_scope=draft_repairs.promoted_entry_repairs.scope(net,proj,fn),words=float_literal_words.read(net,proj,fn)):
             family=labels[candidate]
             if family in pools and family in draft_repairs.AGENT_FAMILIES:
                 pools[family].append(candidate)

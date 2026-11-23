@@ -32,6 +32,7 @@ from . import (
     deep_resume,
     deep_throughput,
     draft_repairs,
+    float_literal_words,
     library_registry,
     permuter_focus,
     permuter_local,
@@ -564,7 +565,8 @@ class Search(Permuter):
         flags = ()
         if any('flags' in item.needs for item in library_registry.runnable('local', arch)):
             flags = [] if self.net.fork_slug(proj['slug']) else compiler_for(self.net.cfg(proj), fn['vram'], fn).get('flags', [])
-        calls += library_registry.local_calls(library_registry.draft_context(source, name, header, arch, asm, flags))
+        calls += library_registry.local_calls(library_registry.draft_context(source, name, header, arch, asm, flags,
+                                                                             float_literal_words.read(self.net, proj, fn)))
         register = permuter_focus.classify(rows, arch) == 'register'
         if register:
             calls.append((L + 'identical_float_guard.variants', (source, name, header, arch)))
@@ -830,7 +832,8 @@ class Search(Permuter):
             labels = {}
             try:
                 found = draft_repairs.variants(parent, fn['name'], proj['arch'], dict(fn).get('asm') or '', flags,
-                                               labels, limit=None, header=header)
+                                               labels, limit=None, header=header,
+                                               words=None if fork else float_literal_words.read(self.net, proj, fn))
             except Exception:  # noqa: BLE001 - a family that fails on an edited source must not end the search
                 return []
             return [(labels.get(child, 'local_repair'), child) for child in found]
@@ -1526,7 +1529,8 @@ class Search(Permuter):
             args = (source,fn['name'],proj['arch'],fn['asm'] or '',flags)
             options = dict(limit=None,header=header,tables=switch_tables.read(self.net,proj,fn),
                 callees=draft_repairs.capture_followup_repairs.callee_evidence(self.net,proj,fn,source),
-                entry_scope=draft_repairs.promoted_entry_repairs.scope(self.net,proj,fn))
+                entry_scope=draft_repairs.promoted_entry_repairs.scope(self.net,proj,fn),
+                words=float_literal_words.read(self.net,proj,fn))
             # A fresh winner may no longer need an earlier lifetime wrapper. Generate this
             # small inverse pass before the broad proposal pool, sharing all ordinary budgets.
             from . import generation_calls
@@ -1853,7 +1857,8 @@ class Search(Permuter):
                                 and residual_followups.kind(parent_rows,measured_rows,proj['arch'])):
                             followup_labels = {}
                             followup = draft_repairs.variants(candidate,fn['name'],proj['arch'],fn['asm'] or '',flags,
-                                followup_labels,limit=None,header=header,entry_scope=draft_repairs.promoted_entry_repairs.scope(self.net,proj,fn))
+                                followup_labels,limit=None,header=header,entry_scope=draft_repairs.promoted_entry_repairs.scope(self.net,proj,fn),
+                                words=float_literal_words.read(self.net,proj,fn))
                             selected = residual_followups.select([(followup_labels[c],c) for c in followup
                                 if c not in self.local_seen and c not in queue],parent_rows,measured_rows,proj['arch'])
                             if selected:
