@@ -99,6 +99,7 @@ EXPORT void CALL ShowCFB(void) {}
    width W hvideo H": N the graphics tasks handed over so far. libultra's osViBlack blanks the picture by writing 0 to
    the horizontal video register (an active area no wide), leaving the status alone, so the file says when the console
    showed nothing, to compare with the port's PORT_SWAP_LOG (tools/n64_vi_compare.py). */
+static unsigned vis; /* video refreshes so far: one a retrace */
 static void vi_log(void) {
     static FILE *log; static int tried; static unsigned last_status = ~0u, last_origin = ~0u, last_hvideo = ~0u;
     if (!ready || !gfx.VI_STATUS_REG || !gfx.VI_ORIGIN_REG) return;
@@ -108,11 +109,11 @@ static void vi_log(void) {
     unsigned hvideo = gfx.VI_H_START_REG ? *gfx.VI_H_START_REG : 0;
     if (status == last_status && origin == last_origin && hvideo == last_hvideo) return;
     last_status = status; last_origin = origin; last_hvideo = hvideo;
-    fprintf(log, "task %u status %08X origin %06X width %u hvideo %08X\n", frames, status, origin,
-            gfx.VI_WIDTH_REG ? *gfx.VI_WIDTH_REG : 0, hvideo);
+    fprintf(log, "task %u status %08X origin %06X width %u hvideo %08X vi %u\n", frames, status, origin,
+            gfx.VI_WIDTH_REG ? *gfx.VI_WIDTH_REG : 0, hvideo, vis);
     fflush(log);
 }
-EXPORT void CALL UpdateScreen(void) { vi_log(); }
+EXPORT void CALL UpdateScreen(void) { vis++; vi_log(); }
 EXPORT void CALL ViStatusChanged(void) { vi_log(); }
 EXPORT void CALL ViWidthChanged(void) {}
 EXPORT void CALL ReadScreen2(void *dest, int *width, int *height, int front) { (void)dest; (void)front; if (width) *width = 0; if (height) *height = 0; }

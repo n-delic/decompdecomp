@@ -798,8 +798,35 @@ uint32_t port_cop0_status(void) { return cop0_status; } /* recompiled code's fra
 void port_cop0_status_set(uint32_t v) { cop0_status = v; }
 u32 w2c_env_0x5F_builtin_mips_write_status_return_spacing(struct w2c_env *e, u32 v) { (void)e; cop0_status = v; return 0; }
 u32 w2c_env_0x5F_builtin_mips_write_compare(struct w2c_env *e, u32 v) { (void)e; cop0_compare = v; return 0; }
+#ifndef PORT_WEB
+/* PORT_VTIME=1: virtual time. The retrace no longer follows the wall clock: it fires when every game thread is waiting
+   (the CPU of a console with no speed limit has nothing left to do before the next retrace) and the clock the game reads
+   (osGetTime, the count register, the audio interface's drain) advances one retrace's worth each time. A run is then the
+   same whatever the machine's load, and as fast as the machine can go, so two runs of one input script (timed in
+   retraces) see the game at the same point at the same retrace, and a game's own timing (race clocks, animations)
+   can be compared with the console's retrace for retrace. Reads of the clock within a retrace advance it a microsecond
+   each, so a loop waiting for the time to pass still ends. */
+static int vtime;
+static uint64_t vclock_us;
+static unsigned vsub;
+static unsigned long vtime_forced; /* retraces fired with a thread still running, after the wait's limit */
+static int retrace_us(void);
+double port_clock_seconds(void) {
+    if (vtime) {
+        unsigned room = (unsigned)retrace_us() - 1;
+        if (vsub < room) vsub++;
+        return (double)(vclock_us + vsub) / 1e6;
+    }
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (double)t.tv_sec + t.tv_nsec / 1e9;
+}
+#endif
 u32 w2c_env_0x5F_builtin_mips_read_count(struct w2c_env *e) { /* Count runs at half the CPU's 93.75 MHz */
     (void)e;
+#ifndef PORT_WEB
+    if (vtime) return (uint32_t)(port_clock_seconds() * 46875000.0);
+#endif
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);
     return (uint32_t)((uint64_t)t.tv_sec * 46875000u + (uint64_t)t.tv_nsec * 46875u / 1000000u);
@@ -1024,6 +1051,9 @@ static struct timespec start;
 static int64_t time_offset; /* osSetTime's */
 u64 w2c_env_osGetTime(struct w2c_env *e) {
     (void)e;
+#ifndef PORT_WEB
+    if (vtime) return (u64)((int64_t)(port_clock_seconds() * 46875000.0) + time_offset);
+#endif
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
     double s = (now.tv_sec - start.tv_sec) + (now.tv_nsec - start.tv_nsec) / 1e9;
@@ -1425,6 +1455,42 @@ static uint64_t monotonic_us(void) {
 }
 /* The audio interface can drain several buffers between VI interrupts. Give the game a chance to refill them. */
 static void wait_retrace(void) {
+    if (vtime) { /* PORT_VTIME: when every game thread is waiting (or after 3 s of wall time, for one that spins) */
+        uint64_t limit = monotonic_us() + 3000000;
+        int idle = 0;
+        while (idle < 3 && monotonic_us() < limit) {
+            pthread_mutex_lock(&lock);
+            /* no thread running, or only the idle thread: a console spins in its lowest-priority thread until an
+               interrupt switches away, so a lone ready thread no other thread ranks below is the CPU with nothing to do */
+            int none = booted && running == NULL;
+            if (booted && running) {
+                unsigned ready = 0;
+                int lowest = 1;
+                for (PortThread *p = threads; p; p = p->next) {
+                    ready += p->state == READY;
+                    if (p != running && p->pri < running->pri) lowest = 0;
+                }
+                none = ready == 1 && lowest;
+            }
+            pthread_mutex_unlock(&lock);
+            idle = none ? idle + 1 : 0;
+            usleep(none ? 100 : 50);
+        }
+        if (idle < 3) {
+            vtime_forced++;
+            if (vtime_forced <= 3 || vtime_forced % 100 == 0) {
+                pthread_mutex_lock(&lock);
+                int n = running ? running->number : -1, pri = running ? running->pri : 0;
+                unsigned ready = 0;
+                for (PortThread *p = threads; p; p = p->next) ready += p->state == READY;
+                pthread_mutex_unlock(&lock);
+                LOG("virtual time: retrace %lu fired with thread %d (priority %d) running, %u ready", vi_count, n, pri, ready);
+            }
+        }
+        vclock_us += (unsigned)retrace_us();
+        vsub = 0;
+        return;
+    }
     uint64_t deadline = monotonic_us() + (unsigned)retrace_us();
     uint64_t time;
     while ((time = monotonic_us()) < deadline) {
@@ -1572,6 +1638,7 @@ int main(int argc, char **argv) {
     port_live_start();
     if (getenv("PORT_VERBOSE")) verbose = atoi(getenv("PORT_VERBOSE"));
     clock_gettime(CLOCK_MONOTONIC, &start);
+    vtime = getenv("PORT_VTIME") && atoi(getenv("PORT_VTIME")) != 0;
     wasm_rt_init();
     wasm2c_game_instantiate(&game, &env);
     M = game.w2c_memory.data;
@@ -1616,6 +1683,7 @@ int main(int argc, char **argv) {
     }
     fprintf(stderr, "after %.1f s: %lu retraces, %lu DMAs, %lu graphics and %lu audio tasks, %lu buffer swaps, "
             "frame buffer %08X\n", seconds, vi_count, dmas, gfx_tasks, audio_tasks, swaps, frame_buffer);
+    if (vtime && vtime_forced) fprintf(stderr, "virtual time: %lu retraces fired with a thread still running (a game that spins instead of waiting)\n", vtime_forced);
     return 0;
 }
 
