@@ -572,7 +572,7 @@ static void port_timers(void);
    the same as the game hands over its nth graphics task (its nth frame, its display list finished), as the
    emulator's video plugin writes its own (EMU_FRAME_DUMP): the console's frame and the port's at the same point in
    the game, however long each took to get there. */
-static void ram_dumps(const char *var, unsigned long now) {
+static void ram_dumps(const char *var, unsigned long now, uint32_t task) {
     for (const char *p = getenv(var); p && *p;) {
         char *end;
         unsigned long at = strtoul(p, &end, 10);
@@ -583,8 +583,14 @@ static void ram_dumps(const char *var, unsigned long now) {
             char name[1024];
             memcpy(name, path, n); name[n] = 0;
             FILE *f = fopen(name, "wb");
-            if (f) { fwrite(M + 0x80000000u, 1, 0x800000, f); fclose(f); }
-            else fprintf(stderr, "%s: can't write %s\n", var, name);
+            if (f) {
+                fwrite(M + 0x80000000u, 1, 0x800000, f); fclose(f);
+                if (task && n + 6 < sizeof name) { /* the task beside it, as the emulator writes NAME.task */
+                    strcat(name, ".task");
+                    FILE *t = fopen(name, "wb");
+                    if (t) { fwrite(M + task, 1, 64, t); fclose(t); }
+                }
+            } else fprintf(stderr, "%s: can't write %s\n", var, name);
         }
         p = next ? next + 1 : path + n;
     }
@@ -599,7 +605,7 @@ static void retrace(void) {
 #ifndef PORT_WEB
     if (getenv("PORT_RT64")) port_rt64_retrace(vi_count & 1);
 #endif
-    ram_dumps("PORT_RAM_DUMPS", vi_count);
+    ram_dumps("PORT_RAM_DUMPS", vi_count, 0);
     port_timers();
     port_audio_interrupts();
     if (vi.queue && vi_count % vi.every == 0) put(vi.queue, vi.msg, 0, 0);
@@ -674,7 +680,7 @@ void w2c_env_osSpTaskStartGo(struct w2c_env *e, u32 task) {
     (void)e;
     uint32_t type = be32(task);
     if (type == 1) gfx_tasks++; else audio_tasks++;
-    if (type == 1) ram_dumps("PORT_FRAME_DUMPS", gfx_tasks);
+    if (type == 1) ram_dumps("PORT_FRAME_DUMPS", gfx_tasks, task);
     if (type == 1) {
 #ifndef PORT_WEB
         if (getenv("PORT_RT64"))

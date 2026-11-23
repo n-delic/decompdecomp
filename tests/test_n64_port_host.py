@@ -579,7 +579,7 @@ static uint8_t ram[0x800000], *M;
 """ + _function(HOST.read_text(), "ram_dumps") + """
 int main(void) {
     M = ram - 0x80000000u;
-    for (unsigned long n = 1; n <= 5; n++) { ram[0] = (uint8_t)n; ram_dumps("PORT_RAM_DUMPS", n); }
+    for (unsigned long n = 1; n <= 5; n++) { ram[0] = (uint8_t)n; ram_dumps("PORT_RAM_DUMPS", n, 0); }
     return 0;
 }
 """)
