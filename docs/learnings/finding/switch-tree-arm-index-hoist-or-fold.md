@@ -1,5 +1,5 @@
 ---
-title: Panel builder: switch trees, per-arm index offsets and the or-fold (13726 -> 820 recorded)
+title: Panel builder: switch trees, per-arm index offsets and the or-fold (13726 -> 420 recorded)
 kind: finding
 compiler: KMC GCC 2.7.2 -O2 -G0 -mips3 -mgp32 -mfp32
 evidence: observation
@@ -14,7 +14,7 @@ and float-derived coordinates, then a second part creating label objects and an 
 saved best (13726 recorded, 15981 re-judged, 310 differing rows) had the target's shape only in outline: the calls
 passed four arguments where the target stores six, the frame was 0x88 where the target's is 0x98. A clean typed
 rewrite from the assembly (25457) was edited one named step at a time, each step judged with the app's own judge
-(`fast_judge`), and the app recorded 820 at the end (34 differing rows of 534 instructions: only register choices, a scheduling order and the slot copy of a switch index are left).
+(`fast_judge`), and the app recorded 420 at the end (23 differing rows of 534 instructions: register choices of the arms' float temporaries, the slot copy of the inner switch's index, two loads' order and the order of one address and one store are left).
 
 The source change, and the measured result before and after (scores, the judge used):
 
@@ -45,8 +45,10 @@ Each row is one edit on the previous source (alone, in that order); the library 
 | `x + 0xFFC7U` (keeps the 32-bit constant a signed halfword sum would narrow) | 1840 -> 1625 | `narrow_sum_unsigned_constant` |
 | a hill-climb again on the wrapper depths | 1625 -> 970 | (scaffolding search) |
 | `case 1:` before the second switch's `default:` (the tree becomes `beq 2; slti 3; slti 5`) | 970 -> 820 | `default_neighbour_case` |
+| the flag-word updates of two sites through one shared temporary | 820 -> 660 | `rmw_compound_temp` (a shared-temporary child added; it had one temporary per site) |
+| the wrapper climb again (one to three statements, 0-3 deep) | 660 -> 420 | (scaffolding search) |
 
-`statement_tree_switch`, `arm_index_offsets`, `or_guard_continue`, `loop_bound_pointer`, `call_conversion_stage`, `call_weight_ladder`, `narrow_sum_unsigned_constant` and `default_neighbour_case` (decomp-repair) each reproduce their row
+`statement_tree_switch`, `arm_index_offsets`, `or_guard_continue`, `loop_bound_pointer`, `call_conversion_stage`, `call_weight_ladder`, `narrow_sum_unsigned_constant`, `default_neighbour_case` and `rmw_compound_temp` (decomp-repair) each reproduce their row
 from the source before the edit with the exact judge: the library's child equals the hand edit.
 
 What the compiler did (read from `cc1 -dL -dr -dl -dg` of the candidate; the reasons are hypotheses where not quoted from
@@ -72,6 +74,7 @@ Failed experiments that would otherwise be repeated:
 - typed table elements and record members (`D_801001A2[i].f0`, `q->flags`) are read and written ahead of or behind neighbouring stores differently from the raw casts the target needs: a member or element reference carries the in-structure flag and the scheduler moves it across a store through a raw pointer, a raw one stays in order (8971 -> 7596 for the byte read and the label fields); other tables and the object/info fields changed nothing.
 - the second-dimension base for the inner loop as a pointer local, set before or inside the guard (7836-7841 against 7596).
 - `i = 0` as a first statement, before the call, in the declaration or in the call's argument list: identical code (the compiler places the move itself; the target has it in the call's delay slot).
+- statement-pair wrappers, adjacent independent statements swapped, wrapper depths to 5, and every module the registry declares (60 children each, judged) on the 660 and 420 sources: no further gain (the wrapper climb is a local optimum at 420).
 - other compiler flags (`-fno-strength-reduce`, `-O1`, `-O3`, no gcse, no inline: same or worse; no schedule pass: 8496 and 11433): the function's profile stays.
 - `volatile` on the two spilled halfword locals (15795 and 20560): the sign extension no longer folds.
 - the global count through a pointer local assigned before the loop (`s32 *pc = &count;`, volatile or not, 9946-10536): cse folds it back, worse than the plain global; only the volatile pointer assigned inside the loop's test keeps the address in a register (the target's `lui $a1; addiu $a1; lw ($a1)`).
