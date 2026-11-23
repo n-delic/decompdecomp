@@ -966,6 +966,36 @@ def test_next_arg_builtin_becomes_the_va_list_pointer():
     assert ido_c("int g(void) { return 1; }\n") == "int g(void) { return 1; }\n"
 
 
+def test_a_library_name_the_host_does_not_answer_is_not_provided():
+    """Library detection names a function with no C by its library name (`alSynAllocFX`), and the build took every
+    such name as provided by the host. The synthesizer's functions are the game's own code in the port ("native"), so
+    ultralib's C for them was never built, the link stubbed them and the audio thread built a task from nothing: no
+    graphics task for the whole run."""
+    from decompnet.port.wasm.build import answered_names
+
+    groups = {"osSetTimer": "replaced", "osSpTaskLoad": "glue", "alSynAllocFX": "native", "alSavePull": "native"}
+    names = {"func_8011A000": "alSynAllocFX", "func_8011B000": "osSetTimer", "func_8011C000": "alSavePull",
+             "func_8011D000": "osSpTaskLoad", "func_8011E000": "strlen"}
+    assert answered_names(names, {"strlen"}, groups.get) == {"osSetTimer", "osSpTaskLoad", "strlen"}
+    assert answered_names(None, set(), groups.get) == set()
+
+
+def test_each_loop_of_wasm2cs_c_gets_a_safe_point(tmp_path):
+    """A game's idle thread lowers its priority and spins on a flag in a loop that calls nothing; the scheduler the
+    retrace woke outranks it and never ran, so nothing was drawn. wasm2c's `goto var_L<n>` is a loop's next round (a
+    block's exit is var_B): the host switches threads at the poll before it."""
+    from decompnet.port.wasm.build import loop_safe_points
+
+    c = tmp_path / "game_0.c"
+    c.write_text("  var_L0:\\n    if (x) {goto var_B1;}\\n    goto var_L0;\\n  var_B1:;\\n".replace("\\n", "\n"))
+    other = tmp_path / "game.h"
+    other.write_text("goto var_L9;\n")
+    loop_safe_points(tmp_path)
+    text = c.read_text()
+    assert "{ port_loop_poll(); goto var_L0; }" in text and "goto var_B1;" in text and "port_loop_poll(); goto var_B" not in text
+    assert text.startswith("void port_safe_point(void);") and other.read_text() == "goto var_L9;\n"
+
+
 def test_stopping_a_game_kills_one_that_ignores_the_request(tmp_path):
     """A game stuck in its own loop kept running for an hour after Stop (terminate alone): the process is killed once
     the grace time passes."""

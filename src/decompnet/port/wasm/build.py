@@ -152,6 +152,32 @@ def _unstamp(made: Path) -> None:
     made.with_name(made.name + ".key").unlink(missing_ok=True)
 
 
+def answered_names(library_names, hosted, sdk_group) -> set[str]:
+    """The library names (the values of `library_names`) the host or the port's glue really answers: the host defines
+    it, or the console says the port replaces it or supplies it ("replaced", "glue"). The others, as the synthesizer's
+    own functions are, stay unprovided so ultralib's C for them is built (`_library`)."""
+    return {n for n in (library_names or {}).values()
+            if n in hosted or (sdk_group is not None and sdk_group(n) in ("replaced", "glue"))}
+
+
+LOOP_BACK = re.compile(r"\bgoto (var_L\d+);")
+LOOP_POLL = ("void port_safe_point(void);\n"
+             "static inline void port_loop_poll(void) { static __thread unsigned n; if (!(++n & 0x3FF)) port_safe_point(); }\n")
+
+
+def loop_safe_points(folder: Path) -> None:
+    """A safe point (port_loop_poll) before each loop's next round in wasm2c's C (`goto var_L<n>`: wasm2c names a
+    loop's label var_L and a block's var_B, so every goto to a var_L is a backward branch). The host switches threads
+    only at safe points, and a game's idle thread spins on a flag in a loop that calls nothing: it lowers its own
+    priority and waits, the scheduler thread the retrace woke outranks it but never got the CPU, and a game with no
+    graphics task drew nothing. Every 1024th round a thread the retrace woke that outranks this one takes over."""
+    for path in sorted(Path(folder).glob("game_*.c")):
+        text = path.read_text(encoding="utf-8")
+        patched = LOOP_BACK.sub(lambda m: f"{{ port_loop_poll(); goto {m.group(1)}; }}", text)
+        if patched != text:
+            path.write_text(LOOP_POLL + patched, encoding="utf-8")
+
+
 def _sync(new: Path, old: Path) -> None:
     """Make folder `old` hold what `new` does, rewriting only the files that differ: an unchanged file keeps its key
     and isn't compiled again."""
@@ -979,7 +1005,11 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
     hosted = {recomp_c._demangle(c) for path in sorted(host.glob("*.c")) for c in
               re.findall(r"\bw2c_env_(\w+)\(struct w2c_env \*", path.read_text(encoding="utf-8", errors="replace"))}
     taken_names = {name.removesuffix(".c").casefold() for name in sources}
-    provided_by = set(functions) | hosted | set((library_names or {}).values())
+    # A library name given to code with no C (library_names) is provided only where the host or the port's glue
+    # answers it by name. The synthesizer's own functions (alSynAllocFX, alSavePull, ...) are "native": nothing
+    # answered them, so ultralib's C for them was never built and the link stubbed them ("not implemented,
+    # skipped"); a game's audio thread then built a task from nothing and its graphics never started.
+    provided_by = set(functions) | hosted | answered_names(library_names, hosted, kit.sdk_group)
     library = _library(
         out, library_c or {}, sources, log,
         lambda name: name.casefold() in taken_names or name in provided_by
@@ -1101,6 +1131,7 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
     done = _run([py, HERE / "bemem.py", fresh / "game-impl.h"], log)
     if done.returncode:
         raise NetworkError(f"making memory big-endian failed: {done.stderr.strip()[-400:]}")
+    loop_safe_points(fresh)
     _sync(fresh, out / "c")  # only the parts that changed are compiled again
     _write(out / "funcs.c", function_table((out / "c" / "game.h").read_text(encoding="utf-8"), fixed))
     recompiled = []
