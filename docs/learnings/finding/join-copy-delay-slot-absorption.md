@@ -2,14 +2,14 @@
 title: a join copy followed by a dispatch: cse folds it away, then reorg absorbs it into the branch's delay slot
 kind: finding
 compiler: gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2
-evidence: observation
+evidence: verified
 date: 2026-11-23
 ---
 
 **Function and compiler.** A 92-instruction N64 script-op handler (`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`): two
 copies of one "read an operand" block (a flag word selects a call, otherwise a 16-entry register file or a global
-table), then `switch (op)` over two cases. Saved best 345, never reached 0 in this session; the reading below is of the
-rows that were left, with the compiler's own dumps (`cc1 -dr -dj -dc -ds -dt -dl -dg -dS -dR -dJ -dd`).
+table), then `switch (op)` over two cases. Saved best 345; the reading below is of the
+rows that were left (then matched, below), with the compiler's own dumps (`cc1 -dr -dj -dc -ds -dt -dl -dg -dS -dR -dJ -dd`).
 
 **What the target does.** Each operand block ends in a copy into the operand's own register (`lh $v0,..; move $a0,$v0`,
 `jal; move $a0,$v0`), the three paths meet at the dispatch (`andi $a2,$s4,0xff; beqz $a2,case0`), and the copy sits in
@@ -57,12 +57,23 @@ the delay slot of each path's `j` (the arm that falls through has it before the 
 | that, then `local_weight_ladder` twice (`prove_chain.py --families all`) | 460 | every row right except rule 3 |
 | `s16 a, s16 b` with the helper returning `s32` | 1085 | the first operand's copy is kept (HImode destination, no cse fold) |
 
-**Not a match, and what would be.** Nothing here reaches 0: the target needs the copy in front of a surviving label (rule
-4) without a volatile access, which no source tried here produced (per-arm copies, shared tails with `goto`, a `disp:`
-label with `&&disp`, helper returns of every width, `s16` operands, volatile reads). The next agent should look for a
-construct that leaves a jump to the dispatch label after cross-jumping, or an insn between the copy and the branch that
-sets `$v0` (the `li $v0,1` of the second compare placed before the first `beqz` would do: copy conflicts, `li` fills the
-slot, exactly the target).
+**The match (0, recorded by the app), and what it relies on.** The surviving rule was 3: something in the dispatch
+block that conflicts with the copy keeps reorg's from-above scan from taking it. The second compare's `li $v0,1` is that
+something when it comes before the first branch (it writes the copy's source and is itself eligible, so it fills the
+slot the target has it in): a local set to the case constant before the `switch` (`hoisted = 1;`) that the case's
+statement adds back as `(hoisted - 1)`; cse reuses the register for the compare, so the `li` is emitted in the join
+block. From the saved best (345) the edits were: (1) both reads outlined as `static __inline__ s32 NAME(Rec *p, u8 sel,
+u8 idx)` with a local `value` returned (890 alone; the scaffolding locals `code`, `value`, the one-shot loop gone), (2)
+`b = 0;` before the first read (rule 1), (3) the hoisted constant and its zero term (rule 3), (4) `do { } while (0)`
+wrappers once on the last read, twice on the first case's assignments and three times on the final guarded store
+(`local_weight_ladder` finds the same set from the helper form, 1300 -> 590 -> 460 before (3)). Removing any one of the
+four leaves 15 to 540. The match relies on scaffolding no developer wrote: `b = 0;`, the hoisted constant with its
+zero term, the wrappers, the identical-arm guard and `volatile u32 frame[2]` the saved best already had. Library
+families (decomp-repair PR 1293, `operand_read_helper.py`): `operand_read_helper`, `operand_read_helper_early`,
+`dispatch_constant_hoist` and `operand_read_dispatch_bundle`, which offers the combination as one child over a
+wrapper grid; `prove_chain.py --families operand_read_dispatch_bundle` from the saved best reaches 0 in one step.
+Other tries that did not give the blocker without a volatile access: per-arm copies, shared tails with `goto` and a
+`disp:` label (rule 4), `&&label`, helper returns of every width, `s16` operands, volatile reads.
 
-**Evidence level.** One function; rules 1 to 4 read from the compiler's source and reproduced with its dumps. The score
-table is controlled on this function only.
+**Evidence level.** One function, verified (the app's judge: byte-identical); rules 1 to 4 read from the compiler's source
+and reproduced with its dumps. The score table is controlled on this function only.
