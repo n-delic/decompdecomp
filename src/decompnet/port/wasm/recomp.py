@@ -561,7 +561,8 @@ def prepare(folder: Path, out: Path, game_h: str, fixed: list[str], hosts: list[
              "static u64 port_rb64(f64 v) { u64 b; memcpy(&b, &v, 8); return b; }",
              "static f32 port_rf32(u32 b) { f32 v; memcpy(&v, &b, 4); return v; }",
              "static f64 port_rf64(u64 b) { f64 v; memcpy(&v, &b, 8); return v; }",
-             BRIDGE_RUNTIME % {"stacks": STACKS, "size": STACK_SIZE, "regs": REGS}]
+             BRIDGE_RUNTIME % {"stacks": STACKS, "size": STACK_SIZE, "regs": REGS,
+                               "fr_default": int(uses_odd_float_registers(sources.values()))}]
     used = set()  # the host's functions the bridges call, declared before them
 
     def call_host(library: str) -> str:
@@ -661,6 +662,16 @@ def _write(path: Path, text: str) -> None:
         path.write_text(text, encoding="utf-8")
 
 
+ODD_FR = re.compile(r"CHECK_FR\(ctx, \d*[13579]\)")
+
+
+def uses_odd_float_registers(texts) -> bool:
+    """Whether the recompiled C does arithmetic on an odd floating-point register of its own (N64Recomp checks those
+    with CHECK_FR, which only holds in FR=1): such a game runs with Status.FR set, a game that doesn't runs with it
+    clear, where an odd register is the upper half of the even one before (the double-zero idiom of FR=0 code)."""
+    return any(ODD_FR.search(text) for text in texts)
+
+
 BRIDGE_RUNTIME = r'''
 /* the MIPS stack recompiled code runs on: one per host thread, handed down as it calls into the game's C and back */
 __thread uint32_t port_recomp_sp;
@@ -691,14 +702,16 @@ static void port_recomp_frame(recomp_context *c, int words) {
     if (!port_recomp_sp) port_recomp_thread(-1);
     c->r29 = (gpr)(int32_t)((port_recomp_sp - 16u - 4u * (uint32_t)words) & ~7u);
     c->r31 = 0;
-    /* The floating-point registers follow the game's Status.FR, as the console's CPU does: an N64 game runs with FR=1
-       (the boot leaves it set), where each odd register is its own and N64Recomp's code checks that
-       (CHECK_FR, `mips3_float_mode`). A frame that always started in FR=0 stopped such a game on its first odd
-       single-precision register (a tank game's vector code: `mul.s $f1`). */
+    /* The floating-point registers follow the game's Status.FR, as the console's CPU does: libultra's threads start
+       with FR=0 (their saved Status has no FR bit), where an odd register is the upper half of the even one before it
+       (a double's zero is `mtc1 $zero,$f5; mtc1 $zero,$f4`: with every register its own, that left the upper half
+       stale and a fabs-like function called itself for ever). A game that does arithmetic on an odd register of its
+       own (N64Recomp's CHECK_FR(ctx, odd): a tank game's vector code, `mul.s $f1`) runs with FR=1, which it
+       sets for its threads: the build says which by whether the recompiled code uses odd registers. */
     c->status_reg = port_cop0_status();
     c->f_odd = &c->f0.u32h;
     c->mips3_float_mode = 0;
-    port_recomp_fr(c, (c->status_reg >> 26) & 1u);
+    port_recomp_fr(c, ((c->status_reg >> 26) & 1u) | %(fr_default)du);
 }
 /* the game's C passes the arguments its callee doesn't declare (an unprototyped `alSynNew()` called with two) as
    MIPS's $a0-$a3, four words of memory at REGS (adapt.py), and takes a void function's value from the $v0 word

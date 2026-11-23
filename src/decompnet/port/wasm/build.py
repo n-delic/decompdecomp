@@ -161,6 +161,15 @@ def answered_names(library_names, hosted, sdk_group) -> set[str]:
             if n in hosted or (sdk_group is not None and sdk_group(n) in ("replaced", "glue"))}
 
 
+def reachable_library_names(library_names, library, provided) -> dict[str, str]:
+    """`library_names` less the entries whose library name nothing defines: the host defines it or the game's C has
+    it (`provided`), or ultralib's C was built for it (`library`: its file names). The port's "glue" group is every os*
+    name, though the host defines only some. A call renamed to a name nothing defines reached a stub ("not
+    implemented, skipped"); kept under the function's own name it runs the function's recompiled or interpreted
+    code."""
+    return {name: lib for name, lib in (library_names or {}).items() if lib in provided or f"{lib}.c" in library}
+
+
 LOOP_BACK = re.compile(r"\bgoto (var_L\d+);")
 LOOP_POLL = ("void port_safe_point(void);\n"
              "static inline void port_loop_poll(void) { static __thread unsigned n; if (!(++n & 0x3FF)) port_safe_point(); }\n")
@@ -495,6 +504,8 @@ def _library(out: Path, units: dict, sources: dict, log, provided=None) -> dict[
     (ultralib.with_callees), so the link has them in place of stubs."""
     folder = out / "ultralib"
     if units and provided is not None and (ultralib_folder := ultralib.root()) is not None:
+        units = ultralib.game_callees(units, ultralib_folder, provided, (
+            path.read_text(encoding="utf-8", errors="replace") for path in sources.values() if Path(path).is_file()))
         units = ultralib.with_callees(units, ultralib_folder, provided)
     taken = {name.casefold() for name in sources}
     library = {name: list(flags) for name, (_, flags) in units.items() if name.casefold() not in taken}
@@ -1018,6 +1029,11 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
         lambda name: name.casefold() in taken_names or name in provided_by
         or (kit.sdk_group is not None and kit.sdk_group(name) in ("replaced", "glue")))
     callees = set(library) - set(library_c or {})  # built for the link, not because the project set them aside
+    # A library name nothing defines (the host and the glue don't answer it, ultralib's C wasn't built for it: not
+    # installed, or no unit to know the library's build from) would send the calls to a stub that logged "not
+    # implemented, skipped": a bowling game's two copies of alSynNew, code with no C, stayed unreachable and its audio
+    # never started. The calls keep the function's own name and run its recompiled or interpreted code instead.
+    library_names = reachable_library_names(library_names, library, set(functions) | hosted)
     _write(out / "fixed.txt", "\n".join(fixed) + "\n")
     _write(out / "functions.txt", "\n".join(sorted(functions)) + "\n")
 

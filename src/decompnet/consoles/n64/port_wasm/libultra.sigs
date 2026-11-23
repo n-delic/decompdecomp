@@ -56,6 +56,37 @@ osMotorInit	i32	ptr, ptr, i32
 __osMotorAccess	i32	ptr, i32
 osPfsIsPlug	i32	ptr, ptr
 osPfsInitPak	i32	ptr, ptr, i32
+osContSetCh	i32	i32
+osContReset	i32	ptr, ptr
+osPfsInit	i32	ptr, ptr, i32
+osPfsReFormat	i32	ptr, ptr, i32
+osPfsChecker	i32	ptr
+osPfsRepairId	i32	ptr
+osPfsFileState	i32	ptr, i32, ptr
+osPfsFindFile	i32	ptr, i32, i32, ptr, ptr, ptr
+osPfsAllocateFile	i32	ptr, i32, i32, ptr, ptr, i32, ptr
+osPfsDeleteFile	i32	ptr, i32, i32, ptr, ptr
+osPfsReadWriteFile	i32	ptr, i32, i32, i32, i32, ptr
+osPfsGetLabel	i32	ptr, ptr, ptr
+osPfsSetLabel	i32	ptr, ptr
+osPfsNumFiles	i32	ptr, ptr, ptr
+osPfsFreeBlocks	i32	ptr, ptr
+__osPfsGetStatus	i32	ptr, i32
+__osSetWatchLo	void	i32
+osGbpakInit	i32	ptr, ptr, i32
+osGbpakPower	i32	ptr, i32
+osGbpakCheckConnector	i32	ptr, ptr
+osGbpakGetStatus	i32	ptr, ptr
+osGbpakReadId	i32	ptr, ptr, ptr
+osGbpakReadWrite	i32	ptr, i32, i32, ptr, i32
+osVoiceInit	i32	ptr, ptr, i32
+osVoiceStartReadData	i32	ptr
+osVoiceStopReadData	i32	ptr
+osVoiceGetReadData	i32	ptr, ptr
+osVoiceSetWord	i32	ptr, ptr
+osVoiceClearDictionary	i32	ptr, i32
+osVoiceMaskDictionary	i32	ptr, ptr, i32
+osVoiceControlGain	i32	ptr, i32, i32
 osAiSetFrequency	i32	i32
 memcpy	ptr	ptr, ptr, i32
 str_len	i32	ptr

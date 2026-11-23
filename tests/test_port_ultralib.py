@@ -175,3 +175,17 @@ def test_ultralib_is_a_pinned_proprietary_pack_at_the_tables_commit():
     tool = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(tool)
     assert tool.COMMIT in pack.parts[0]["url"] and pack.parts[0]["sha256"]  # the C of the build the table hashes
+
+
+def test_ultralib_functions_the_games_own_c_calls_are_built_too(tree):
+    """A game's own alInit called alSynNew, which no unit calls and the project had not set aside: nothing defined it,
+    the link stubbed it ("not implemented, skipped") and the audio never started. A name the game's C uses that
+    ultralib defines and nothing provides is built with the flags most units use; with no unit there is no known
+    build and nothing is added."""
+    text = ultralib.extract(ultralib.index(str(tree))["guToy"], "guToy")
+    units = {"guToy.c": (text, ["-DBUILD_VERSION=VERSION_J"])}
+    game = ["void game_init(void) { guToyF(0, 0); }", "int unrelated(void) { return guNotInUltralib(1); }"]
+    out = ultralib.game_callees(units, tree, lambda name: False, game)
+    assert set(out) == {"guToy.c", "guToyF.c"} and out["guToyF.c"][1] == ["-DBUILD_VERSION=VERSION_J"]
+    assert ultralib.game_callees(units, tree, lambda name: name == "guToyF", game) == units  # provided elsewhere
+    assert ultralib.game_callees({}, tree, lambda name: False, game) == {}  # no unit: no known build

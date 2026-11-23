@@ -364,6 +364,18 @@ def test_link_branches_also_set_ra_for_jal_and_jalr():
     assert fixed.count("ctx->r31 = (gpr)") == 2  # not `jalr $ra`, not a plain `j`
 
 
+def test_a_games_float_mode_is_fr1_only_when_its_code_uses_odd_registers():
+    """libultra's threads start with FR=0, where `mtc1 $zero,$f5; mtc1 $zero,$f4` makes a double zero: a fabs-like
+    function of a platformer called itself for ever when every frame started in FR=1. A game whose recompiled C does
+    arithmetic on an odd register (N64Recomp's CHECK_FR(ctx, odd): a tank game's `mul.s $f1`) runs with FR=1."""
+    even = "    CHECK_FR(ctx, 2);\n    CHECK_FR(ctx, 12);\n    ctx->f2.d = CVT_D_S(ctx->f12.fl);\n"
+    odd = "    CHECK_FR(ctx, 1);\n    CHECK_FR(ctx, 10);\n    CHECK_FR(ctx, 13);\n"
+    assert not recomp.uses_odd_float_registers([even, "int x;"])
+    assert recomp.uses_odd_float_registers([even, odd]) and recomp.uses_odd_float_registers([odd.replace("1)", "31)")])
+    assert not recomp.uses_odd_float_registers([])
+    assert "%(fr_default)d" in recomp.BRIDGE_RUNTIME
+
+
 def test_recompiled_floats_follow_the_games_status_fr_bit(tmp_path):
     """A tank game's recompiled vector code uses odd single-precision registers (`mul.s $f1`), which N64Recomp's
     CHECK_FR allows only in FR=1: every frame started in FR=0 and stopped on the first one. A frame now starts from
@@ -374,7 +386,7 @@ def test_recompiled_floats_follow_the_games_status_fr_bit(tmp_path):
     text = recomp.BRIDGE_RUNTIME
     start = text.index("uint32_t port_cop0_status(void);")
     end = text.index("/* C called by the interpreter can call back")
-    assert "port_recomp_fr(c, (c->status_reg >> 26) & 1u);" in text[text.index("static void port_recomp_frame("):]
+    assert "port_recomp_fr(c, ((c->status_reg >> 26) & 1u) | %(fr_default)du);" in text[text.index("static void port_recomp_frame("):]
     assert "port_recomp_fr(ctx, ((uint32_t)value >> 26) & 1u);" in recomp.__loader__.get_source(recomp.__name__)
     (tmp_path / "t.c").write_text(r"""#include <stdint.h>
 #include <stdio.h>

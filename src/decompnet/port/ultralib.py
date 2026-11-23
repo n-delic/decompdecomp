@@ -18,6 +18,7 @@ headers and the defines of the build the game's copy matched (`flags`): its vers
 from __future__ import annotations
 
 import re
+from collections import Counter
 from functools import lru_cache
 from pathlib import Path
 
@@ -120,6 +121,26 @@ def source(name: str, hint: dict, fingerprint: str | None = None) -> tuple[Path,
 
 
 CALLEE = re.compile(r"\b([A-Za-z_]\w*)\b")  # (called or its address taken: a handler is passed as a pointer)
+
+
+def game_callees(units: dict[str, tuple[str, list[str]]], folder: Path, skip, texts) -> dict[str, tuple[str, list[str]]]:
+    """`units` plus the ultralib functions the GAME's own C names (calls or takes the address of) that nothing
+    provides (`skip`), built with the flags most of `units` use (the same build of the library). A game's own `alInit`
+    called `alSynNew`, which no unit calls and the project had not set aside: nothing defined it, the link stubbed it
+    ("not implemented, skipped") and the audio never started. With no unit there is no known build: nothing is added."""
+    if not units:
+        return units
+    flags = Counter(tuple(flag) for _, flag in units.values()).most_common(1)[0][0]
+    known = index(str(folder))
+    names = set()
+    for text in texts:
+        names.update(CALLEE.findall(text))
+    out = dict(units)
+    for callee in sorted(names & known.keys()):
+        file = f"{callee}.c"
+        if file not in out and not skip(callee):
+            out[file] = (extract(known[callee], callee), list(flags))
+    return out
 
 
 def with_callees(units: dict[str, tuple[str, list[str]]], folder: Path, skip) -> dict[str, tuple[str, list[str]]]:

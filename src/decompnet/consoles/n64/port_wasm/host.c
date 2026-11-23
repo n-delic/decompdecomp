@@ -867,7 +867,7 @@ void w2c_env_osSpTaskLoad(struct w2c_env *e, u32 task) { (void)e; (void)task; }
 
 /* The MIPS builtins the matched C reaches the R4300's coprocessor 0 and FPU with (the compiler's, for code that
    reads Status or Count): answered here, as the console's CPU would. */
-static uint32_t cop0_status = 0x3400FF01u, cop0_compare, fcsr = 0x01000800u;
+static uint32_t cop0_status = 0x3000FF01u, cop0_compare, fcsr = 0x01000800u;
 u32 w2c_env_0x5F_builtin_mips_read_status(struct w2c_env *e) { (void)e; return cop0_status; }
 uint32_t port_cop0_status(void) { return cop0_status; } /* recompiled code's frames start from it (recomp.py) */
 void port_cop0_status_set(uint32_t v) { cop0_status = v; }
@@ -1112,6 +1112,49 @@ u32 w2c_env_osPfsInitPak(struct w2c_env *e, u32 mq, u32 pfs, u32 ch) { (void)e; 
 /* no Controller Pak (osPfsInitPak said so): PFS_ERR_NOPACK, as a console with none answers */
 u32 w2c_env_osPfsNumFiles(struct w2c_env *e, u32 pfs, u32 max, u32 used) { (void)e; (void)pfs; (void)max; (void)used; return 1; }
 u32 w2c_env_osPfsFreeBlocks(struct w2c_env *e, u32 pfs, u32 left) { (void)e; (void)pfs; (void)left; return 1; }
+/* The rest of libultra's controller, Controller Pak, Game Boy Pak and Voice Recognition API, answered as a console with
+   no pak in any controller answers (PFS_ERR_NOPACK = 1; the accessories' own checks: PFS_ERR_DEVICE = 11). A game whose
+   own C for these was left out as the host's ran a stub that returned 0 ("success") with nothing filled in
+   (osContSetCh, osPfsInit and others were reported "not implemented, skipped"). */
+u32 w2c_env_osContSetCh(struct w2c_env *e, u32 max) { (void)e; (void)max; return 0; } /* how many controllers to scan */
+u32 w2c_env_osContReset(struct w2c_env *e, u32 mq, u32 status) { (void)e; (void)mq; (void)status; return 0; }
+u32 w2c_env_osPfsInit(struct w2c_env *e, u32 mq, u32 pfs, u32 ch) { (void)e; (void)mq; (void)pfs; (void)ch; return 1; }
+u32 w2c_env_osPfsReFormat(struct w2c_env *e, u32 pfs, u32 mq, u32 ch) { (void)e; (void)pfs; (void)mq; (void)ch; return 1; }
+u32 w2c_env_osPfsChecker(struct w2c_env *e, u32 pfs) { (void)e; (void)pfs; return 1; }
+u32 w2c_env_osPfsRepairId(struct w2c_env *e, u32 pfs) { (void)e; (void)pfs; return 1; }
+u32 w2c_env_osPfsFileState(struct w2c_env *e, u32 pfs, u32 file, u32 state) { (void)e; (void)pfs; (void)file; (void)state; return 1; }
+u32 w2c_env_osPfsFindFile(struct w2c_env *e, u32 pfs, u32 company, u32 game, u32 name, u32 ext, u32 file) {
+    (void)e; (void)pfs; (void)company; (void)game; (void)name; (void)ext; (void)file; return 1;
+}
+u32 w2c_env_osPfsAllocateFile(struct w2c_env *e, u32 pfs, u32 company, u32 game, u32 name, u32 ext, u32 size, u32 file) {
+    (void)e; (void)pfs; (void)company; (void)game; (void)name; (void)ext; (void)size; (void)file; return 1;
+}
+u32 w2c_env_osPfsDeleteFile(struct w2c_env *e, u32 pfs, u32 company, u32 game, u32 name, u32 ext) {
+    (void)e; (void)pfs; (void)company; (void)game; (void)name; (void)ext; return 1;
+}
+u32 w2c_env_osPfsReadWriteFile(struct w2c_env *e, u32 pfs, u32 file, u32 flag, u32 offset, u32 size, u32 data) {
+    (void)e; (void)pfs; (void)file; (void)flag; (void)offset; (void)size; (void)data; return 1;
+}
+u32 w2c_env_osPfsGetLabel(struct w2c_env *e, u32 pfs, u32 label, u32 len) { (void)e; (void)pfs; (void)label; (void)len; return 1; }
+u32 w2c_env_osPfsSetLabel(struct w2c_env *e, u32 pfs, u32 label) { (void)e; (void)pfs; (void)label; return 1; }
+u32 w2c_env_0x5F_osPfsGetStatus(struct w2c_env *e, u32 mq, u32 ch) { (void)e; (void)mq; (void)ch; return 1; }
+void w2c_env_0x5F_osSetWatchLo(struct w2c_env *e, u32 value) { (void)e; (void)value; } /* a debugger's watchpoint: none here */
+u32 w2c_env_osGbpakInit(struct w2c_env *e, u32 mq, u32 pfs, u32 ch) { (void)e; (void)mq; (void)pfs; (void)ch; return 11; }
+u32 w2c_env_osGbpakPower(struct w2c_env *e, u32 pfs, u32 on) { (void)e; (void)pfs; (void)on; return 11; }
+u32 w2c_env_osGbpakCheckConnector(struct w2c_env *e, u32 pfs, u32 status) { (void)e; (void)pfs; (void)status; return 11; }
+u32 w2c_env_osGbpakGetStatus(struct w2c_env *e, u32 pfs, u32 status) { (void)e; (void)pfs; (void)status; return 11; }
+u32 w2c_env_osGbpakReadId(struct w2c_env *e, u32 pfs, u32 id, u32 status) { (void)e; (void)pfs; (void)id; (void)status; return 11; }
+u32 w2c_env_osGbpakReadWrite(struct w2c_env *e, u32 pfs, u32 flag, u32 address, u32 buffer, u32 size) {
+    (void)e; (void)pfs; (void)flag; (void)address; (void)buffer; (void)size; return 11;
+}
+u32 w2c_env_osVoiceInit(struct w2c_env *e, u32 mq, u32 handle, u32 ch) { (void)e; (void)mq; (void)handle; (void)ch; return 11; }
+u32 w2c_env_osVoiceStartReadData(struct w2c_env *e, u32 handle) { (void)e; (void)handle; return 11; }
+u32 w2c_env_osVoiceStopReadData(struct w2c_env *e, u32 handle) { (void)e; (void)handle; return 11; }
+u32 w2c_env_osVoiceGetReadData(struct w2c_env *e, u32 handle, u32 data) { (void)e; (void)handle; (void)data; return 11; }
+u32 w2c_env_osVoiceSetWord(struct w2c_env *e, u32 handle, u32 word) { (void)e; (void)handle; (void)word; return 11; }
+u32 w2c_env_osVoiceClearDictionary(struct w2c_env *e, u32 handle, u32 words) { (void)e; (void)handle; (void)words; return 11; }
+u32 w2c_env_osVoiceMaskDictionary(struct w2c_env *e, u32 handle, u32 mask, u32 size) { (void)e; (void)handle; (void)mask; (void)size; return 11; }
+u32 w2c_env_osVoiceControlGain(struct w2c_env *e, u32 handle, u32 analog, u32 digital) { (void)e; (void)handle; (void)analog; (void)digital; return 11; }
 
 /* ---------------------------------------------------------------- the rest of libultra and libc */
 

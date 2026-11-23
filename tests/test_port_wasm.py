@@ -642,6 +642,20 @@ def test_library_code_with_no_c_is_called_by_its_library_name(tmp_path):
     assert out == {"func_8003DDC0": "bzero", "func_80001000": "mine"}
 
 
+def test_a_library_name_nothing_defines_is_not_given_to_a_function_with_no_c():
+    """A bowling game's two copies of alSynNew (code with no C) were renamed to that library name, which nothing
+    defined (no ultralib unit to know the build from): every call reached a stub ("not implemented, skipped") and
+    the audio never started. Kept under their own names the calls run the functions' recompiled code."""
+    from decompnet.port.wasm.build import reachable_library_names, renames
+
+    names = {"func_8005E8A8": "alSynNew", "func_8006428": "alSynNew", "func_8003DDC0": "bzero",
+             "func_80010000": "alFxNew", "func_80020000": "osContSetCh"}
+    kept = reachable_library_names(names, {"alFxNew.c"}, {"bzero", "mine"})
+    assert kept == {"func_8003DDC0": "bzero", "func_80010000": "alFxNew"}  # the host's; built from ultralib's C
+    assert reachable_library_names(None, set(), set()) == {}
+    assert callable(renames)
+
+
 def test_stubs_read_every_host_file(tmp_path):
     """The host's functions are in host.c and in a game's own file (games/<sha1>.c): a stub for one defined in the
     second collided with it at link."""

@@ -1088,6 +1088,26 @@ def test_a_first_function_that_loops_in_the_games_own_code_after_starting_thread
     assert "port_boot_spin();" in mips[mips.index("still running, at"):]
 
 
+def test_the_host_answers_the_controller_pak_and_accessory_api_of_a_console_with_none():
+    """osContSetCh, osPfsInit and the other pak calls were reported "not implemented, skipped" (their C left out as
+    the host's while the host defined none): every one is defined, with the shape libultra.sigs gives its callers."""
+    text, sigs = HOST.read_text(), HOST.with_name("libultra.sigs").read_text().splitlines()
+    names = ["osContSetCh", "osContReset", "osPfsInit", "osPfsReFormat", "osPfsChecker", "osPfsFileState",
+             "osPfsFindFile", "osPfsAllocateFile", "osPfsDeleteFile", "osPfsReadWriteFile", "osPfsGetLabel",
+             "osPfsSetLabel", "osGbpakInit", "osGbpakReadWrite", "osVoiceInit", "osVoiceControlGain"]
+    for name in names:
+        assert re.search(rf"\bw2c_env_{name}\(struct w2c_env \*e", text), name
+        assert any(row.split("\t")[0] == name for row in sigs), name
+    assert re.search(r"\bw2c_env_0x5F_osPfsGetStatus\(", text) and re.search(r"\bw2c_env_0x5F_osSetWatchLo\(", text)
+    # a pak function with no pak says PFS_ERR_NOPACK (1), the accessories PFS_ERR_DEVICE (11)
+    assert "return 1;" in _function(text, "w2c_env_osPfsInit") and "return 11;" in _function(text, "w2c_env_osGbpakInit")
+    for row in sigs:  # the sigs' parameter count is the C's
+        name, _, params = row.split("\t")
+        if name in ("osPfsFindFile", "osPfsAllocateFile", "osPfsReadWriteFile"):
+            count = len([p for p in params.split(",") if p.strip()])
+            assert len(re.search(rf"w2c_env_{name}\(struct w2c_env \*e, ([^)]*)\)", text)[1].split(",")) == count, name
+
+
 def test_a_tasks_sp_and_dp_interrupts_arrive_after_the_call_that_started_it():
     """A fighting game's scheduler has a thread for the SP interrupt (priority 126) and one for DP (125). The host posted
     both inside osSpTaskStartGo, so the SP thread ran before the caller had recorded the task as the RSP's and the DP
