@@ -9,7 +9,8 @@ needs no claim, and opens the project attach-only so it runs beside the app with
 Only the project and the function are needed: the worker's `function` op supplies the target bytes, the function's
 own compiler profile and the project's header (typedefs and externs, which the judge prepends to every candidate:
 a source needs none of its own). `--diff` prints the rows that differ, the app's own normalisation (the same text
-`compile_and_diff` shows), after the score: the first 60, then a "... (N more rows not shown ...)" line; `--diff --rows all` (or N) changes that. `--header` prints the header, for compiling a candidate outside the judge.
+`compile_and_diff` shows), after the score: the first 60, then a "... (N more rows not shown ...)" line; `--diff --rows all` (or N) changes that. `--header` prints the header, for compiling a candidate outside the judge. With several files, three or more that compile
+to identical instructions get a hint (invariant.py): their difference is not what decides the rows.
 
     # as a library in a search loop (one worker process per search process; run several in parallel):
     from fast_judge import Judge
@@ -131,12 +132,20 @@ def main(argv=None):
         if a.header:
             print(judge.header)
             return
+        codes = []
         for path in a.source:
             with open(path) as f:
-                reply = judge.judge(f.read(), diff=a.diff, rows=limit)
+                text = f.read()
+            reply = judge.judge(text, diff=a.diff, rows=limit)
             print(reply.get("score") if len(a.source) == 1 else f"{path}: {reply.get('score')}")
             if a.diff:
                 print(reply.get("diff") or reply.get("detail") or "")
+            if reply.get("score") and text not in {t for t, _ in codes}:
+                codes.append((text, reply.get("code")))
+        import invariant
+        labels = {text: path for path in reversed(a.source) for text in [open(path).read()]}
+        for line in invariant.hint([(labels[t], c) for t, c in codes]):
+            print(line, file=sys.stderr)
     finally:
         judge.close()
 

@@ -23,7 +23,8 @@ choice and the lines as written, which is the file before the grid.
 `--count` only counts the candidates; above `--max` (default 5000) it refuses and says which choice made it so many.
 `--jobs` workers (default 3, one `decomp judge-worker` each, fast_judge.Judge) keep the machine usable beside the app.
 It prints the top `--top` candidates with their score (None: did not compile) and which alternative or order each uses,
-`--diff` the app's differing rows for the best, `--out` writes the best source. Run it with a setup.py session's python
+`--diff` the app's differing rows for the best, `--out` writes the best source. When three or more candidates compile
+to the best's exact instructions it says so (invariant.py): the rows are decided outside the marked code. Run it with a setup.py session's python
 (fast_judge's rules: DECOMP_HOME, $UV_PROJECT_ENVIRONMENT). Never starts the Deep Permuter, needs no claim.
 """
 import argparse
@@ -163,7 +164,7 @@ def search(template, make_judge, jobs=DEFAULT_JOBS, stop_on_match=False, progres
     failure a worker hit, if any. `make_judge()` makes one judge per worker (an object with .score(source), .close())."""
     work = list(candidates(template))
     local, judges, lock = threading.local(), [], threading.Lock()
-    state = {"done": 0, "error": None, "found": False}
+    state = {"done": 0, "error": None, "found": False, "codes": []}
     results = []
 
     def one(item):
@@ -174,14 +175,21 @@ def search(template, make_judge, jobs=DEFAULT_JOBS, stop_on_match=False, progres
             local.judge = make_judge()
             with lock:
                 judges.append(local.judge)
+        code = None
         try:
-            score = local.judge.score(source)
+            if hasattr(local.judge, "judge"):
+                reply = local.judge.judge(source)
+                score, code = reply.get("score"), reply.get("code")
+            else:
+                score = local.judge.score(source)
         except (SystemExit, Exception) as error:  # a worker that died or an app error: keep the others going
             score = None
             with lock:
                 state["error"] = state["error"] or str(error)
         with lock:
             results.append((score, description))
+            if code:
+                state["codes"].append((description, code))
             state["done"] += 1
             state["found"] = state["found"] or score == 0
             if progress:
@@ -194,6 +202,7 @@ def search(template, make_judge, jobs=DEFAULT_JOBS, stop_on_match=False, progres
         for judge in judges:
             judge.close()
     results.sort(key=lambda r: (r[0] is None, r[0] if r[0] is not None else 0, r[1]))
+    search.codes = state["codes"]  # (description, code digest) of each compiled candidate: invariant.py's hint
     return results, state["error"]
 
 
@@ -251,6 +260,10 @@ def main(argv=None, make_judge=None):
             print(f"a judge call failed ({error}); candidates it hit show as None", file=sys.stderr)
         for score, description in results[:max(1, a.top)]:
             print(f"{score!s:>8}  {description}")
+        import invariant
+        best_code = next((code for d, code in search.codes if results and d == results[0][1]), None)
+        for line in invariant.hint([(d, c) for d, c in search.codes if c == best_code] if best_code else []):
+            print(line, file=sys.stderr)
         best = results[0] if results else None
         if best and best[0] is not None and (a.diff or a.out):
             source = source_for(template, best[1])
