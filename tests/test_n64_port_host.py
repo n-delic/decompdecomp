@@ -955,3 +955,20 @@ def test_a_boot_stack_local_has_its_bus_address_as_its_physical_address():
     assert "return a & 0x1FFFFFFF;" in body  # every other address, as before
     raw = re.search(r"case 0xA460000Cu:.*?post_event\(EV_PI\)", host, re.S).group(0)
     assert "bus >= BOOT_STACK_BUS" in raw  # the PI path that reads that address back to the stack
+
+
+def test_the_host_ends_on_its_time_limit_and_lets_an_idle_boot_hand_over():
+    """A first function that never returns but ends in an idle loop (osSetThreadPri(NULL, 0) over and over, or an empty
+    for(;;) that becomes port_idle_forever) left the host spinning in the boot with no game thread ever running, and
+    the retrace loop that checks the time limit needs the scheduler's lock: the host ran for an hour past its seconds.
+    Many idle calls from the boot code now end the boot as a return would, and a watchdog thread ends the process at
+    its time limit (plus a grace) even when no game code reaches a safe point."""
+    text = HOST.read_text()
+    assert "static void boot_idle(unsigned *calls" in text and "longjmp(boot_jmp, 1)" in text
+    assert "if (!setjmp(boot_jmp)) boot_call();" in text
+    # both idle shapes reach it: the osSetThreadPri loop and the rewritten empty loop
+    assert 'boot_idle(&boot_calls, "osSetThreadPri(NULL)")' in text
+    assert 'boot_idle(&idle_calls, "an empty loop")' in text
+    # the watchdog is started before the boot runs, only when there is a limit
+    assert text.index("pthread_create(&guard, NULL, watchdog, NULL)") < text.index("if (!setjmp(boot_jmp))")
+    assert "watchdog_seconds = seconds;" in text and "_exit(0);" in text

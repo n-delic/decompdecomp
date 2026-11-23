@@ -16,6 +16,7 @@
  */
 #include <math.h>
 #include <pthread.h>
+#include <setjmp.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -194,8 +195,30 @@ static void port_preempt(void) {
    instead of spinning, as the console's idle thread does until an interrupt switches away. Stopped, not waiting:
    no message wakes it, only osStartThread, which would send it back to the same jump. The boot code has no thread
    to give up and returns. */
+#ifndef PORT_WEB
+/* A game whose first function never returns but ends in an idle loop (`for (;;) osSetThreadPri(NULL, 0)`, or an
+   empty `for (;;)` that becomes port_idle_forever): that is the console's idle thread, the boot thread giving the
+   threads it started the CPU, and the boot code is it. The host has no thread for the boot code to switch away
+   from, so the loop spun for ever and no game thread ever ran. Many such calls in a row from the boot code end
+   the boot as a return would. */
+static jmp_buf boot_jmp;
+static int boot_active;
+static void boot_idle(unsigned *calls, const char *what) {
+    if (boot_active && ++*calls >= 1000) {
+        LOG("the boot code became the idle thread (%s in a loop): its threads run", what);
+        boot_active = 0;
+        longjmp(boot_jmp, 1);
+    }
+}
+#endif
 void port_idle_forever(void) {
-    if (!self) return;
+    if (!self) {
+#ifndef PORT_WEB
+        static unsigned idle_calls;
+        if (!booted) boot_idle(&idle_calls, "an empty loop");
+#endif
+        return;
+    }
     pthread_mutex_lock(&lock);
     LOG("thread %d idles for good (its code jumps to itself): parked", self->number);
     self->state = STOPPED;
@@ -308,6 +331,12 @@ void w2c_env_osDestroyThread(struct w2c_env *e, u32 t) {
 }
 void w2c_env_osSetThreadPri(struct w2c_env *e, u32 t, u32 pri) {
     (void)e;
+#ifndef PORT_WEB
+    if (!self && !booted && !t) {
+        static unsigned boot_calls;
+        boot_idle(&boot_calls, "osSetThreadPri(NULL)");
+    }
+#endif
     pthread_mutex_lock(&lock);
     PortThread *p = t ? find(t) : self;
     if (p) {
@@ -1492,6 +1521,19 @@ static int port_call(uint32_t vram) {
     return 0;
 }
 
+/* The time limit (the second argument), kept even when game code never reaches a safe point: the retrace loop below
+   needs the scheduler's lock, so a first function or thread that loops without one (a loader, an idle loop) kept the
+   host running, and a core busy, for an hour after its time was up. */
+static double watchdog_seconds;
+static void *watchdog(void *arg) {
+    (void)arg;
+    usleep((useconds_t)((watchdog_seconds + 5) * 1000000));
+    fprintf(stderr, "after %.1f s: %lu retraces, %lu DMAs, %lu graphics and %lu audio tasks, %lu buffer swaps, "
+            "frame buffer %08X (the time limit ended a game stuck in a loop)\n", watchdog_seconds, vi_count, dmas,
+            gfx_tasks, audio_tasks, swaps, frame_buffer);
+    _exit(0);
+    return NULL;
+}
 int main(int argc, char **argv) {
     if (SIGUSR1) signal(SIGUSR1, sample_handler);
     if (argc < 2) port_live_app(argv[0]); /* an exported app, opened from the Finder: its settings beside it */
@@ -1514,7 +1556,14 @@ int main(int argc, char **argv) {
     if (getenv("PORT_CALL")) return port_call((uint32_t)strtoul(getenv("PORT_CALL"), NULL, 16));
     wasm_rt_trap_t trap = wasm_rt_impl_try();
     if (trap) { fprintf(stderr, "boot stopped: %s\n", wasm_rt_strerror(trap)); return 3; }
-    boot_call();
+    if (seconds > 0) {
+        pthread_t guard;
+        watchdog_seconds = seconds;
+        if (pthread_create(&guard, NULL, watchdog, NULL) == 0) pthread_detach(guard);
+    }
+    boot_active = 1;
+    if (!setjmp(boot_jmp)) boot_call();
+    boot_active = 0;
     LOG("the game's first function returned; its threads run");
     pthread_mutex_lock(&lock);
     booted = 1;
