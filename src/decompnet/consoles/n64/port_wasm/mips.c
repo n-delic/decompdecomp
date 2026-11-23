@@ -496,8 +496,26 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
         if (kind == 3) { pc += 8; continue; }    /* a likely branch not taken: its delay slot skipped */
         if (!kind) { pc += 4; goto counted; }
         /* the delay slot, then the jump */
-        uint32_t slot = fetch(pc + 4);
-        { uint32_t ignored; if (step(&c, pc + 4, slot, &ignored)) unknown(pc + 4, slot); c.r[0] = 0; }
+        uint32_t slot = fetch(pc + 4), jop = op;
+        {
+            uint32_t second = 0;
+            int skind = step(&c, pc + 4, slot, &second);
+            c.r[0] = 0;
+            if (skind == 1 || skind == 2 || skind == 4) {
+                /* A taken branch or jump in the delay slot of a taken one (two `bnez` in a row, a loop's trick): the
+                   console runs the first one's target once, as the second's delay slot, and then goes where the second
+                   goes. Skipping it as "not an instruction" left the loop's cache operation unrun and the copy
+                   routine started over for ever. */
+                uint32_t once = fetch(target), after = 0;
+                if (step(&c, target, once, &after)) unknown(target, once);
+                c.r[0] = 0;
+                target = second;
+                kind = skind;
+                jop = slot;
+            } else if (skind == 3) {
+                /* (a likely branch not taken in a slot: nothing to run) */
+            }
+        }
         /* A jump to itself with nothing in its delay slot (an idle thread's `for (;;);`, `j .`) can't get anywhere:
            on the console only an interrupt switches away from it. Spinning here took 41% of a racing game's
            interpreted instructions, and in the browser the page's time between retraces, so the host parks the
@@ -507,7 +525,7 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
             continue; /* (only if it comes back: the same jump again) */
         }
         target = mapped(target); /* a jump to a mapped virtual address runs the code at its spelling */
-        if (kind == 4 || op >> 26 == 3) port_note_entry(target); /* a call: jal, jalr */
+        if (kind == 4 || jop >> 26 == 3) port_note_entry(target); /* a call: jal, jalr */
         pc = target;
         if (kind == 4) { /* a call through a pointer is a safe point, as host.c's port_func is for the game's C: only
                             those (a direct call never is), or a thread the C starts runs before its creator is done */
