@@ -1,5 +1,5 @@
 ---
-title: Panel builder: switch trees, per-arm index offsets and the or-fold (13726 -> 7596 recorded)
+title: Panel builder: switch trees, per-arm index offsets and the or-fold (13726 -> 820 recorded)
 kind: finding
 compiler: KMC GCC 2.7.2 -O2 -G0 -mips3 -mgp32 -mfp32
 evidence: observation
@@ -14,7 +14,7 @@ and float-derived coordinates, then a second part creating label objects and an 
 saved best (13726 recorded, 15981 re-judged, 310 differing rows) had the target's shape only in outline: the calls
 passed four arguments where the target stores six, the frame was 0x88 where the target's is 0x98. A clean typed
 rewrite from the assembly (25457) was edited one named step at a time, each step judged with the app's own judge
-(`fast_judge`), and the app recorded 7596 at the end (191 differing rows, 526 of the target's 534 instructions).
+(`fast_judge`), and the app recorded 820 at the end (34 differing rows of 534 instructions: only register choices, a scheduling order and the slot copy of a switch index are left).
 
 The source change, and the measured result before and after (scores, the judge used):
 
@@ -36,8 +36,17 @@ Each row is one edit on the previous source (alone, in that order); the library 
 | the converted coordinates in `s32` locals (not `u16`) | 9151 -> 8971 | `call_conversion_stage` |
 | the byte read from the 24-byte table as `D_801001A0[i * 0x18 + 2]` (raw), so the scheduler keeps it after the stores before it | 8971 -> 8201 | (hand: raw index, m2c's own spelling) |
 | the label records' fields as raw casts at their offsets (no member flag) | 8201 -> 7596 | (hand: m2c's own spelling) |
+| the last arm's call in `do { } while (0)` three deep (alone: the two hoisted addresses of that arm take the saved registers the halfword locals had) | 7596 -> 4702 | `call_weight_ladder` (it did not read a call after a `case` label) |
+| plus the first call's assignment wrapped once (two wrappers) | 4702 -> 3825 | `call_weight_ladder` |
+| `weight_ladder_trim` and `local_weight_ladder` on that | 3825 -> 3540 | `weight_ladder_trim`, `local_weight_ladder` |
+| a random hill-climb over one to three statements' wrapper depth (0-3) with the exact judge, 54 statements | 3540 -> 2850 | (scaffolding search: the ladders do it by named variable) |
+| the second compare tree's row/`s` pointer local (`s`) split in two, one per table row | 2850 -> 2225 | `local_web_split` (already there) |
+| the two halfword locals `s16` (a spilled halfword is reloaded `lhu` and re-extended: the explicit `(s16)` cast was the compiler's own) | 2225 -> 1840 | (type: signedness repair of the app) |
+| `x + 0xFFC7U` (keeps the 32-bit constant a signed halfword sum would narrow) | 1840 -> 1625 | `narrow_sum_unsigned_constant` |
+| a hill-climb again on the wrapper depths | 1625 -> 970 | (scaffolding search) |
+| `case 1:` before the second switch's `default:` (the tree becomes `beq 2; slti 3; slti 5`) | 970 -> 820 | `default_neighbour_case` |
 
-`statement_tree_switch`, `arm_index_offsets`, `or_guard_continue`, `loop_bound_pointer` and `call_conversion_stage` (decomp-repair) each reproduce their row
+`statement_tree_switch`, `arm_index_offsets`, `or_guard_continue`, `loop_bound_pointer`, `call_conversion_stage`, `call_weight_ladder`, `narrow_sum_unsigned_constant` and `default_neighbour_case` (decomp-repair) each reproduce their row
 from the source before the edit with the exact judge: the library's child equals the hand edit.
 
 What the compiler did (read from `cc1 -dL -dr -dl -dg` of the candidate; the reasons are hypotheses where not quoted from
@@ -73,7 +82,7 @@ Failed experiments that would otherwise be repeated:
 What is controlled evidence and what is one function:
 
 The three families' rows are controlled (the library child reproduces the hand edit, measured with the judge). Everything
-else is one function. Unsolved here: the target keeps both halfword locals in stack slots and gives their registers to
-two hoisted addresses (the loop variable ends in `$fp`); the candidate keeps one of them in `$fp`. The two locals'
-allocation priorities (14 refs / 238 live, 0.176) are above the hoisted addresses' (about 0.09) in every spelling tried;
+else is one function. The candidate relies on `do { } while (0)` scaffolding (about 20 wrappers, which polishing removes once matched). The halfword
+locals' allocation priorities (14 refs / 238 live, 0.176) were above the hoisted addresses' (about 0.09) in every spelling tried;
+the wrappers' extra loop-depth references raise the addresses' above them (hypothesis, read from the `-dl -dg` table);
 `i = 0` sits in the call's delay slot in the target and after the loop's first test here; and 34.0 is hoisted into an extra callee-saved FP register in the candidate (frame 0xA0, target 0x98).
