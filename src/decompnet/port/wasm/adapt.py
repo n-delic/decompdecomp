@@ -308,6 +308,37 @@ def byval_size(types, arg_text):
     return types.layout(m.group(1))[0] if (m and types) else 0
 
 
+def _is_word(t):
+    return t == "ptr" or re.fullmatch(r"i(8|16|32)", t) is not None
+
+
+def pad_indirect(line, im, close, current, out_lines):
+    """A call through a pointer that passes fewer than four word arguments passes the rest from $a0-$a3 as they
+    stand, as the MIPS call did: the caller's own arguments there, else the register words. The game's C runs a
+    function by a C call through the pointer, and whatever the callee declares past what the call passes was
+    garbage from the host's registers: a game's heap wrappers (`void f(void) { vtable->init(); }`, matched as
+    drafts, where a0 and a1 pass straight through) started the allocator from nothing and every block it gave
+    out was a wild pointer."""
+    raw = split_top(line[im.end():close])
+    types = [parse_arg(a)[0] for a in raw]
+    if (len(raw) >= 4 or "..." in im.group(1) or "sret" in line or "byval" in line
+            or not all(_is_word(t) for t in types)):
+        return line
+    extra = []
+    for i in range(len(raw), 4):
+        if i < len(current) and _is_word(current[i][0]):
+            INDIRECT[0] += 1
+            pre = []
+            w = convert(pre, 10_000_000 + INDIRECT[0] * 1000 + 500 + i, current[i][1], current[i][0], "i32")
+            out_lines.extend(pre)
+        else:
+            INDIRECT[0] += 1
+            w = f"%port_ia{INDIRECT[0]}_{i}"
+            out_lines.append(f"  {w} = load i32, ptr {reg(i)}, align 4")
+        extra.append(f"i32 {w}")
+    return line[:close] + (", " if raw else "") + ", ".join(extra) + line[close:]
+
+
 def adapt(text, report=None, types=None, byval=None):
     global REPORT
     REPORT = report
@@ -379,6 +410,7 @@ def adapt(text, report=None, types=None, byval=None):
                     w = convert(pre, 10_000_000 + INDIRECT[0] * 1000, v, t, "i32", "zeroext" in a)
                     out_lines.extend(pre)
                     out_lines.append(f"  store i32 {w}, ptr {reg(i)}, align 4")
+            line = pad_indirect(line, im, close_i, current, out_lines)
         cm = re.search(r"\bcall ([^@]*?)@([\w.$]+)\(", line)
         if not cm or cm.group(2) not in sigs or stripped.startswith(("define", "declare")):
             out_lines.append(line)

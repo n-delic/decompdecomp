@@ -1028,3 +1028,34 @@ def test_a_matched_function_the_host_provides_is_called_by_its_library_name():
     assert not play.host_provides(kit, [])
     assert not play.host_provides(None, ["osRecvMesg"])
     assert not play.host_provides(SimpleNamespace(sdk_group=lambda name: None), ["osRecvMesg"])
+
+
+def test_a_call_through_a_pointer_passes_the_argument_registers_it_was_not_given():
+    """A game's heap wrappers are drafts shaped `void f(void) { vtable->init(); }`: on MIPS $a0-$a3 pass straight
+    through to the target. The call through the pointer named no arguments, so the host called a target that
+    declares two with whatever its machine registers held, and the allocator started from garbage (bogus blocks, bogus
+    DMA destinations). The call passes four words: the caller's own arguments, then the register words."""
+    from decompnet.port.wasm.adapt import REGS, adapt
+    from decompnet.port.wasm.beir import Types
+    ir = ("define void @wrapper() {\n  %1 = load ptr, ptr @table, align 4\n"
+          "  %2 = call i32 %1()\n  ret void\n}\n"
+          "define void @own(i32 %a, ptr %b) {\n  %1 = load ptr, ptr @table, align 4\n"
+          "  %2 = call i32 %1(i32 noundef %a)\n  ret void\n}\n"
+          "define void @full(i32 %a) {\n  %1 = load ptr, ptr @table, align 4\n"
+          "  %2 = call i32 %1(i32 %a, i32 %a, i32 %a, i32 %a)\n  ret void\n}\n"
+          "define void @floats(float %f) {\n  %1 = load ptr, ptr @table, align 4\n"
+          "  %2 = call i32 %1(float %f)\n  ret void\n}\n")
+    out = adapt(ir, [], Types(ir), {})
+
+    def body(name):
+        return out.split(f"define void @{name}")[1].split("\n}")[0]
+    call = next(line for line in body("wrapper").splitlines() if "call i32 %1(" in line)
+    assert call.count("i32 %port_ia") == 4  # all four from the register words
+    for i in range(4):
+        assert f"inttoptr (i32 {REGS + 4 * i} to ptr)" in body("wrapper")
+    own = next(line for line in body("own").splitlines() if "call i32 %1(" in line)
+    arguments = own.split("%1(")[1].rstrip(")")
+    assert arguments.startswith("i32 noundef %a, i32 ") and arguments.count(", ") == 3  # its own, then three more
+    assert "ptrtoint ptr %b" in body("own")  # the second is the caller's own pointer parameter
+    assert body("full").count("%port_ia") == 0 and "call i32 %1(i32 %a, i32 %a, i32 %a, i32 %a)" in body("full")
+    assert "call i32 %1(float %f)" in body("floats")  # a float argument is left as it is
