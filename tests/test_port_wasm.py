@@ -602,6 +602,35 @@ def test_the_host_keeps_libultras_osSetIntMask_arity(tmp_path):
     assert "osSetIntMask\ti32\ti32" in sigs.read_text().splitlines()
 
 
+def test_a_games_declaration_of_a_host_function_in_another_shape_gives_way_to_the_hosts(tmp_path):
+    """A game's header declared `s32 osSpTaskLoad(OSTask *)`; the host defines it as void, wasm2c imported the game's
+    shape and host.c stopped on conflicting types. The host's own definition decides, and a declaration WebAssembly
+    sees the same way keeps the game's spelling (a pointer stays one)."""
+    import subprocess
+    import sys
+
+    from decompnet.port.wasm.build import HERE
+
+    kit = tmp_path / "kit"
+    kit.mkdir()
+    (kit / "libultra.sigs").write_text("")
+    (kit / "host.c").write_text(
+        "void w2c_env_osSpTaskLoad(struct w2c_env *e, u32 task) { (void)e; (void)task; }\n"
+        "u32 w2c_env_osAiGetLength(struct w2c_env *e, u32 queue) { (void)e; return queue; }\n"
+        "void w2c_env_osViGetCurrentFramebuffer(struct w2c_env *e) { (void)e; }\n")
+    source = tmp_path / "caller.ll"
+    source.write_text("declare i32 @osSpTaskLoad(ptr)\ndeclare i32 @osAiGetLength(ptr)\ndeclare i32 @osViGetCurrentFramebuffer(...)\n")
+    aliases = tmp_path / "renames.txt"
+    aliases.write_text("")
+    sigs = tmp_path / "sigs.txt"
+    subprocess.run([sys.executable, HERE / "sigs.py", sigs, kit / "libultra.sigs", aliases, source],
+                   check=True, capture_output=True, text=True)
+    rows = sigs.read_text().splitlines()
+    assert "osSpTaskLoad\tvoid\ti32" in rows
+    assert "osAiGetLength\ti32\tptr" in rows
+    assert "osViGetCurrentFramebuffer\tvoid\t" in rows  # declared with no prototype at all
+
+
 def test_library_code_with_no_c_is_called_by_its_library_name(tmp_path):
     """A racing game's bzero kept its automatic name (`func_8003DDC0`): the host stubbed it to nothing. Library
     detection's name goes to the host, which answers bzero by name in any game; a name another file defines wins."""
