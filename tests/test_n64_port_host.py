@@ -912,3 +912,17 @@ def test_recompiled_and_interpreted_stacks_are_in_kseg0_above_the_ram():
     assert "addr >= 0x80800000u && addr < 0x82000000u" in host  # stack_end: DMAs into them are allowed
     mem32 = (KIT / "miyoo" / "mem32.c").read_text()
     assert f"{{0x{recomp.STACKS:08X}u," in mem32 and f"{{0x{at:08X}u," in mem32
+
+
+def test_a_boot_stack_local_has_its_bus_address_as_its_physical_address():
+    """A game's file reader keeps its DMA buffer in a local of the bootstrap wasm stack (the first 64 KiB). Masked as a
+    KSEG address, osVirtualToPhysical gave the offset, which the raw PI transfer reads as console RAM, so the DMA
+    overwrote the game's own low memory and the reader looped on headers for ever (found once the host answered the
+    routine by name for a matched copy, #3083). The physical address is the stack's bus address, as the raw PI path
+    expects (BOOT_STACK_BUS)."""
+    host = HOST.read_text()
+    body = re.search(r"u32 w2c_env_osVirtualToPhysical\(struct w2c_env \*e, u32 a\) \{(.*?)\n\}", host, re.S).group(1)
+    assert "a >= 0x1000u && a < BOOT_STACK_SIZE" in body and "return BOOT_STACK_BUS + a;" in body
+    assert "return a & 0x1FFFFFFF;" in body  # every other address, as before
+    raw = re.search(r"case 0xA460000Cu:.*?post_event\(EV_PI\)", host, re.S).group(0)
+    assert "bus >= BOOT_STACK_BUS" in raw  # the PI path that reads that address back to the stack

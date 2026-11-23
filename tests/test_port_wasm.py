@@ -1025,6 +1025,10 @@ def test_a_matched_function_the_host_provides_is_called_by_its_library_name():
     assert play.host_provides(kit, ["osRecvMesg"])
     assert play.host_provides(kit, ["osCreateThread"])
     assert not play.host_provides(kit, ["alSynAllocFX"])
+    # the port's "glue" group is every os* name, but the host defines only some: a matched osPiRawStartDma sent to a
+    # name the host lacks ran as a stub and a snowboarding game's file reader looped for ever
+    assert not play.host_provides(kit, ["osPiRawStartDma"]) and not play.host_provides(kit, ["osPiRawReadIo"])
+    assert play.host_provides(kit, ["osVirtualToPhysical"]) and play.host_provides(kit, ["__osSiRawStartDma"])
     assert not play.host_provides(kit, [])
     assert not play.host_provides(None, ["osRecvMesg"])
     assert not play.host_provides(SimpleNamespace(sdk_group=lambda name: None), ["osRecvMesg"])

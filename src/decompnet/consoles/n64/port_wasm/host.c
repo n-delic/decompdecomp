@@ -690,7 +690,15 @@ u32 w2c_env_osEPiReadIo(struct w2c_env *e, u32 handle, u32 dev, u32 data) {
     return 0;
 }
 u32 w2c_env_osEPiWriteIo(struct w2c_env *e, u32 handle, u32 dev, u32 data) { (void)e; (void)handle; (void)dev; (void)data; return 0; }
-u32 w2c_env_osVirtualToPhysical(struct w2c_env *e, u32 a) { (void)e; return a & 0x1FFFFFFF; }
+/* A local of the bootstrap wasm stack (the first 64 KiB, below console RAM's low memory) has no KSEG address: its
+   physical address is its bus address (BOOT_STACK_BUS), which the raw PI transfer reads back to the stack. Masked
+   as KSEG, it read as console RAM at the same offset and a DMA overwrote the game's own low memory (a snowboarding
+   game's file reader, whose buffer is such a local, read headers for ever once the host answered this by name). */
+u32 w2c_env_osVirtualToPhysical(struct w2c_env *e, u32 a) {
+    (void)e;
+    if (a >= 0x1000u && a < BOOT_STACK_SIZE) return BOOT_STACK_BUS + a;
+    return a & 0x1FFFFFFF;
+}
 
 /* ---------------------------------------------------------------- RSP tasks: graphics (render.c) and audio (audio.c) */
 

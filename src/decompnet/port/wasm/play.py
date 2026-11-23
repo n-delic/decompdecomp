@@ -197,10 +197,29 @@ def default_save(net, slug: str) -> Path | None:
         return None
 
 
+def host_defined(kit) -> set[str]:
+    """The library routines the host's own C defines (`w2c_env_<name>`, leading underscores dropped): the names a call
+    can be sent to and be answered."""
+    from .recomp import _demangle
+
+    out = set()
+    folder = Path(kit.wasm) if kit and getattr(kit, "wasm", None) else None
+    for path in sorted(folder.glob("*.c")) if folder and folder.is_dir() else ():
+        for m in re.finditer(r"\bw2c_env_(\w+)\(", path.read_text(encoding="utf-8", errors="replace")):
+            out.add(_demangle(m.group(1)).lstrip("_"))
+    return out
+
+
 def host_provides(kit, names) -> bool:
-    """Whether the port's host (or its glue) answers a function known by these library names, as `library` decides
-    which matched functions' C the build leaves out."""
-    return bool(kit and any(kit.sdk_group(name) in ("replaced", "glue") for name in names or ()))
+    """Whether the port's host answers a function known by these library names: the port says it replaces or
+    supplies it (what `library` decides leaves a matched function's C out) AND the host defines the routine. The
+    port's "glue" group is every other os* name, though the host defines only some: a game's matched
+    osPiRawStartDma / osPiRawReadIo, sent to a name the host lacks, ran as a stub, and the game's file reader
+    looped on headers for ever."""
+    if not kit:
+        return False
+    names = [n for n in names or () if kit.sdk_group(n) in ("replaced", "glue")]
+    return bool(names) and bool({n.lstrip("_") for n in names} & (host_defined(kit)))
 
 
 def library_names(net, slug: str) -> dict[str, str]:
