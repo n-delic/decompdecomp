@@ -683,8 +683,7 @@ void w2c_env_osSpTaskStartGo(struct w2c_env *e, u32 task) {
         port_render_task(task);
     }
     if (type == 2) port_audio_task(task);
-    if (gfx_tasks + audio_tasks <= 4) LOG("RSP task type %u: data %08X, %X bytes", type, be32(task + 48), be32(task + 52));
-    if (type == 1 && gfx_tasks == 2 && getenv("PORT_TASK")) {
+    if (gfx_tasks + audio_tasks <= 4) LOG("RSP task type %u: data %08X, %X bytes", type, be32(task + 48), be32(task + 52));    if (type == 1 && gfx_tasks == 2 && getenv("PORT_TASK")) {
         uint32_t ud = be32(task + 24) & 0x1FFFFFFF, uds = be32(task + 28), dl = be32(task + 48) & 0x1FFFFFFF;
         fprintf(stderr, "gfx task: ucode %08X (%X), ucode data %08X (%X), data %08X\n",
                 be32(task + 16), be32(task + 20), be32(task + 24), uds, be32(task + 48));
@@ -1024,6 +1023,12 @@ u32 w2c_env_0x5Fbcmp(struct w2c_env *e, u32 a, u32 b, u32 n) { return w2c_env_bc
    declarations must agree with the game's) */
 void w2c_env_0x5F_osSetHWIntrRoutine(struct w2c_env *e, u32 irq, u32 handler) { (void)e; (void)irq; (void)handler; }
 f32 w2c_env_sqrtf(struct w2c_env *e, f32 x) { (void)e; return sqrtf(x); }
+/* libm, which port.py's _LIBC says the host provides: without these an import of sinf/cosf was built as an empty
+   stub ("sinf: not implemented, skipped"), so a game's rotation matrices came out as NaN (as did its models' and
+   cameras'), and a display list built from them could be wrong or never finish. */
+f32 w2c_env_sinf(struct w2c_env *e, f32 x) { (void)e; return sinf(x); }
+f32 w2c_env_cosf(struct w2c_env *e, f32 x) { (void)e; return cosf(x); }
+f32 w2c_env_ldexpf(struct w2c_env *e, f32 x, u32 n) { (void)e; return ldexpf(x, (int)n); }
 u32 w2c_env_osGetCount(struct w2c_env *e) { return w2c_env_0x5F_builtin_mips_read_count(e); }
 void w2c_env_osMapTLBRdb(struct w2c_env *e) { (void)e; }
 void w2c_env_osUnmapTLBAll(struct w2c_env *e) { (void)e; }

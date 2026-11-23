@@ -745,3 +745,17 @@ int main(void) {
     assert built.returncode == 0, built.stderr
     result = subprocess.run([str(binary)], capture_output=True, text=True, check=True, timeout=30)
     assert result.stdout.strip() == '1 1 1'
+
+
+def test_the_host_defines_the_libm_functions_the_port_says_it_provides():
+    """port.py classes sinf and cosf as the host's C library, but the host defined only sqrtf: an import of either was
+    built as an empty stub ("sinf: not implemented, skipped"), and a game's rotation matrices came out as NaN. Each
+    libm name the host is said to provide has a definition and the prototype the link uses."""
+    from decompnet.consoles.n64 import port
+
+    text = HOST.read_text()
+    sigs = {line.split("\t")[0] for line in (HOST.parent / "libultra.sigs").read_text().splitlines()}
+    for name in ("sqrtf", "sinf", "cosf", "ldexpf"):
+        assert port._sdk_group(name) == "replaced", name
+        assert re.search(rf"\bw2c_env_{name}\(struct w2c_env", text), name
+        assert name in sigs, name
