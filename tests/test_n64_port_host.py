@@ -979,3 +979,12 @@ def test_the_host_ends_on_its_time_limit_and_lets_an_idle_boot_hand_over():
     # the watchdog is started before the boot runs, only when there is a limit
     assert text.index("pthread_create(&guard, NULL, watchdog, NULL)") < text.index("if (!setjmp(boot_jmp))")
     assert "watchdog_seconds = seconds;" in text and "_exit(0);" in text
+
+
+def test_the_host_can_log_its_threads_messages_and_who_runs():
+    """When none of a game's threads gets to draw, what they say to each other and which one has the CPU is the
+    first thing to look at: PORT_MSGLOG prints each send and receive, and PORT_THREADS names the running thread."""
+    text = HOST.read_text()
+    assert 'static int msg_log(void)' in text and 'getenv("PORT_MSGLOG")' in text
+    assert text.count("if (msg_log()) fprintf") == 2  # a send (put) and a receive start
+    assert 'fprintf(stderr, "  running: %d\\n"' in text

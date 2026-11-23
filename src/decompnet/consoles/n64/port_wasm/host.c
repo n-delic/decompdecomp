@@ -404,8 +404,13 @@ static int block_on(uint32_t mq, uint32_t flag, int (*ready)(uint32_t)) {
     }
     return 0;
 }
+/* PORT_MSGLOG=1: a line for every message sent ("MSG t<thread> send <queue> msg <word> flag <block> valid <n>/<size>", t-1 the
+   host itself: a retrace, a completed task) and every receive started, to see what a game's threads say to each other
+   when none of them draws (a handshake that spins, a queue nobody posts to) */
+static int msg_log(void) { static int on = -1; if (on < 0) on = getenv("PORT_MSGLOG") != NULL; return on; }
 static int32_t put(uint32_t mq, uint32_t msg, uint32_t flag, int jam) {
     pthread_mutex_lock(&lock);
+    if (msg_log()) fprintf(stderr, "MSG t%d send %08X msg %08X flag %u valid %d/%d\n", self ? self->number : -1, mq, msg, flag, (int)be32(mq + Q_VALID), (int)be32(mq + Q_COUNT));
     if (block_on(mq, flag, has_room) < 0) { pthread_mutex_unlock(&lock); return -1; }
     uint32_t count = be32(mq + Q_COUNT), first = be32(mq + Q_FIRST), valid = be32(mq + Q_VALID), buf = be32(mq + Q_MSG);
     if (jam) {
@@ -434,6 +439,7 @@ u32 w2c_env_osJamMesg(struct w2c_env *e, u32 mq, u32 msg, u32 flag) { (void)e; r
 u32 w2c_env_osRecvMesg(struct w2c_env *e, u32 mq, u32 msg, u32 flag) {
     (void)e;
     pthread_mutex_lock(&lock);
+    if (msg_log()) fprintf(stderr, "MSG t%d recv %08X flag %u valid %d\n", self ? self->number : -1, mq, flag, (int)be32(mq + Q_VALID));
     if (block_on(mq, flag, has_mesg) < 0) { pthread_mutex_unlock(&lock); return (u32)-1; }
     uint32_t count = be32(mq + Q_COUNT), first = be32(mq + Q_FIRST), buf = be32(mq + Q_MSG);
     if (msg) wbe32(msg, be32(buf + 4 * first));
@@ -1473,6 +1479,7 @@ static void sample(void) {
     if (getenv("PORT_THREADS")) {
         static const char *names[] = { "created", "ready", "waiting", "stopped", "done" };
         pthread_mutex_lock(&lock);
+        fprintf(stderr, "  running: %d\n", running ? running->number : -1);
         for (PortThread *p = threads; p; p = p->next)
             fprintf(stderr, "  thread %d id %d pri %d %s%s%08X entry %08X\n", p->number, p->id, p->pri, names[p->state],
                     p->state == WAITING ? " on " : " ", p->state == WAITING ? p->waiting_on : 0, p->entry);
