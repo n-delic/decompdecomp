@@ -33,6 +33,8 @@ confirmed by `compile_and_diff`):
 | 10 | the histogram counters merged into `a` and `i` as the target's registers show | 760 -> 685 | by hand (role table) |
 | 11 | `i = 0;` first in the code-length pass's set-up | 685 -> 625 | `statement_slide` (existing; prove_chain) |
 | 12 | the count copy, the sort counter and the decode symbol given their own roles (one variable each across loops) | 625 -> 590 | by hand (role table) |
+| 13 | the length pass's guard through the histogram (`if (H[c] != 0)`, no pointer) | 590 -> 585 | `cursor_counter_index` (prove_chain) |
+| 14 | fuzz-checked climb: the clear loop's and length pass's counter as `k`, a scatter index as `a` | 585 -> 515 | `disjoint_local_merge`-like region merges |
 
 The frame (step 1): the target's sixth 8-byte spill slot (0x24, never read or written) is the dead compare pseudo a
 `for`-style guard leaves: GCC 2.7.2 tests `j < i` before the loop, combine folds it to `i != 0` and deletes the insn,
@@ -73,7 +75,8 @@ Failed experiments that would otherwise be repeated:
 - Hill climbs over merges, splits and declaration order alone plateau within ~100 points of their start; the climb
   accepted merges the fuzz rejected (the input pointer merged into a table cursor, `tb` into a counter).
 
-Still different at 590 (88 rows): the decode loop's peek window in `$a0` where the target has `$v1` (the target's
+Still different at 515 (83 rows; the app's saved best, revision recorded by `compile_and_diff`; `prove_chain --families all
+--combine 10` finds no improving child or pair): the decode loop's peek window in `$a0` where the target has `$v1` (the target's
 local-alloc puts the second-level index temporaries in `$v0`/`$a0` and the window in `$v1`), the code-sort loop's
 counter/pointer pair (`$a0`/`$a1` swapped), the last pass's three loop pointers one register off (`$t5`-`$t9`, `$s0`),
 and the constant addresses the target loads into `$v0`/`$v1` inside the guarded blocks where ours rematerialises a
