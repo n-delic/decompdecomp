@@ -16,6 +16,8 @@ swap = r'''
 io = """
 uint64_t port_io_load(uint64_t addr);
 uint64_t port_io_store(uint64_t addr, uint64_t value);
+extern unsigned port_tlb_hi;
+u32 port_tlb_wasm(u32 addr);
 """
 s = s.replace("#define DEFINE_LOAD(", io + "\n#define DEFINE_LOAD(", 1)
 load = '''    wasm_rt_memcpy(&result, MEM_ADDR_MEMOP(mem, addr, sizeof(t1)),            \\
@@ -25,8 +27,9 @@ store = '''    t1 wrapped = (t1)value;                                          
 '''
 assert load in s and store in s and "PORT_BE" not in s
 s = s.replace("#define DEFINE_LOAD(", swap + "\n#define DEFINE_LOAD(", 1)
-s = s.replace(load, "    if (UNLIKELY(addr >= 0xA0000000u)) addr = port_io_load(addr);              \\\n" + load + "    PORT_BE(result);                                                          \\\n", 1)
-s = s.replace(store, store + "    if (UNLIKELY(addr >= 0xA0000000u)) addr = port_io_store(addr, (uint64_t)wrapped); \\\n"
+TLB = "    if (UNLIKELY(port_tlb_hi && addr < 0x80000000u)) addr = port_tlb_wasm((u32)addr);  \\\n"
+s = s.replace(load, TLB + "    if (UNLIKELY(addr >= 0xA0000000u)) addr = port_io_load(addr);              \\\n" + load + "    PORT_BE(result);                                                          \\\n", 1)
+s = s.replace(store, store + TLB + "    if (UNLIKELY(addr >= 0xA0000000u)) addr = port_io_store(addr, (uint64_t)wrapped); \\\n"
               "    PORT_BE(wrapped);                                                  \\\n", 1)  # the host sees the value
 # A function pointer is the function's console address: an indirect call finds the function there (port_func, the
 # host's table of the game's functions by address) and doesn't check its type, which the game's C calls through

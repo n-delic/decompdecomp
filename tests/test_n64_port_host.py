@@ -352,6 +352,8 @@ int main(void) {
     for (unsigned i = 0; i < port_tlb_n; i++) printf("%08X %X %08X\\n", tlb_win[i].lo, tlb_win[i].size, tlb_win[i].phys);
     printf("%08X %08X %08X %08X\\n", port_tlb_canon(0x10001050), port_tlb_canon(0x10400010), port_tlb_canon(0x20000000),
            port_tlb_canon(0x80001050));
+    printf("%u %08X %08X %08X %08X\\n", port_tlb_hi, port_tlb_wasm(0x100010F8), port_tlb_wasm(0x10400010), port_tlb_wasm(0x00100000),
+           port_tlb_wasm(0x20000000));
     port_tlb_write(0x7FE000, 0x30000000, 0x1D, 0x1D); /* not valid (bit 1 clear): no window */
     printf("%u\\n", port_tlb_n);
     return 0;
@@ -360,7 +362,19 @@ int main(void) {
     subprocess.run([cc, "-o", str(tmp_path / "t"), str(source)], check=True, capture_output=True)
     done = subprocess.run([str(tmp_path / "t")], capture_output=True, text=True, check=True)
     assert done.stdout.strip().splitlines() == [
-        "10000000 400000 00000000", "10400000 400000 00400000", "80001050 80400010 20000000 80001050", "2"]
+        "10000000 400000 00000000", "10400000 400000 00400000", "80001050 80400010 20000000 80001050",
+        "1 800010F8 80400010 00100000 20000000", "2"]
+
+
+def test_the_games_c_reads_a_high_tlb_window_as_ram_and_no_stack_sits_in_one():
+    """A game's compiled C is handed pointers into its windows (0x100010F8): wasm2c's loads and stores ask the host
+    once a window high in the virtual space exists. The threads' shadow stacks were at 0x10000000, where a game maps
+    such a window; they live in KSEG0 above the MIPS stacks now."""
+    host = HOST.read_text()
+    stacks = int(re.search(r"#define SHADOW_STACKS (0x[0-9A-Fa-f]+)u", host)[1], 16)
+    assert 0x82000000 <= stacks and stacks + 32 * 0x100000 <= 0xA0000000  # KSEG0, above the 8 MB and the MIPS stacks
+    bemem = (Path(__file__).resolve().parents[1] / "src/decompnet/port/wasm/bemem.py").read_text()
+    assert "port_tlb_hi && addr < 0x80000000u" in bemem and bemem.count("port_tlb_wasm((u32)addr)") == 1
 
 
 @pytest.mark.parametrize("crc,want", [

@@ -70,6 +70,8 @@ __attribute__((weak)) void port_recomp_thread(int number) { (void)number; }
 void *port_mips_pointer_as(uint32_t address, const char *type); /* mips.c: run from the ROM by the interpreter */
 /* The function at `address`, called as `type` says (CALL_INDIRECT's C type, as text: bemem.py), which a function
    with no C, interpreted, needs to take its float arguments where the call puts them. */
+uint32_t port_tlb_canon(uint32_t a); /* below, with the TLB windows */
+extern unsigned port_tlb_n;
 void *port_func_as(uint32_t address, const char *type) {
     /* LLVM calls some functions through the table when the call's types differ from the function's only as
        pointer and integer: an index, never a console address (those are 0x80000000 and up) */
@@ -79,6 +81,8 @@ void *port_func_as(uint32_t address, const char *type) {
 #endif
     wasm_rt_funcref_table_t *table = &game.w2c_0x5F_indirect_function_table;
     if (address < table->size && table->data[address].func) return (void *)table->data[address].func;
+    /* a function in a TLB window (a thread entry, a callback: 0x100010F8) is named by the physical address it maps */
+    if (port_tlb_n && address < 0x80000000u) address = port_tlb_canon(address);
     unsigned lo = 0, hi = port_func_count;
     while (lo < hi) {
         unsigned mid = (lo + hi) / 2;
@@ -101,7 +105,9 @@ enum { CREATED, READY, WAITING, STOPPED, DONE };
 enum { Q_MTQUEUE = 0, Q_FULLQUEUE = 4, Q_VALID = 8, Q_FIRST = 12, Q_COUNT = 16, Q_MSG = 20 };
 #define OS_MESG_BLOCK 1
 #define OS_NUM_EVENTS 15
-#define SHADOW_STACKS 0x10000000u /* each thread's wasm shadow stack: 1 MB, below the game's data */
+#define SHADOW_STACKS 0x82000000u /* each thread's wasm shadow stack: 1 MB each, in KSEG0 above the MIPS stacks (recomp.py: STACKS,
+                                     mips.c: MIPS_STACKS). Not below 0x20000000: a game maps its code through TLB windows there
+                                     (a 3-D platformer's two 4 MB pages at 0x10000000), which the game's C reads as RAM aliases. */
 #define SHADOW_SIZE 0x100000u
 
 typedef struct PortThread {
@@ -515,7 +521,7 @@ static int pi_register(uint32_t addr, int write, uint32_t value, uint32_t *read)
         if (!write) { *read = 0; return 1; }
         uint32_t size = (value & 0x00FFFFFFu) + 1;
         /* a stack's physical address (osVirtualToPhysical of its KSEG0 one) is 0x00800000 up: back to where it is */
-        uint32_t bus = dram >= 0x00800000u && dram < 0x02000000u ? dram | 0x80000000u : dram;
+        uint32_t bus = dram >= 0x00800000u && dram < 0x04000000u ? dram | 0x80000000u : dram;
         int boot = bus >= BOOT_STACK_BUS && bus < 0x80000000u;
         uint32_t dest = boot ? bus - BOOT_STACK_BUS : bus;
         uint32_t end = bus >= 0x00800000u ? stack_end(dest) : 0x80800000u;
@@ -1251,6 +1257,7 @@ static void boot_leftovers(void) {
 #define TLB_WINDOWS 16
 static struct { uint32_t lo, size, phys; } tlb_win[TLB_WINDOWS];
 unsigned port_tlb_n;
+unsigned port_tlb_hi; /* windows at 0x00800000 up: the game's compiled C reads them as aliases of RAM (port_tlb_wasm) */
 /* pm: the page mask register (PM_1M is 0x1FE000), va the pair's virtual address, even/odd the physical addresses of
    its two pages (-1: not mapped) */
 static void tlb_map(uint32_t pm, uint32_t va, uint32_t even, uint32_t odd) {
@@ -1265,6 +1272,7 @@ static void tlb_map(uint32_t pm, uint32_t va, uint32_t even, uint32_t odd) {
         if (i == port_tlb_n && port_tlb_n == TLB_WINDOWS) return;
         tlb_win[i].lo = lo; tlb_win[i].size = size; tlb_win[i].phys = phys;
         if (i == port_tlb_n) port_tlb_n++;
+        if (lo >= 0x00800000u) port_tlb_hi = 1;
     }
 }
 /* The interpreter's `tlbwi`/`tlbwr`: the registers the game's own code wrote (a game that sets its TLB up in its
@@ -1280,6 +1288,15 @@ uint32_t port_tlb_canon(uint32_t a) {
     for (unsigned i = 0; a < 0x80000000u && i < port_tlb_n; i++)
         if (a >= tlb_win[i].lo && a - tlb_win[i].lo < tlb_win[i].size)
             return tlb_win[i].lo < 0x00800000u ? a | 0x80000000u : 0x80000000u | (tlb_win[i].phys + (a - tlb_win[i].lo));
+    return a;
+}
+/* The game's compiled C (WebAssembly) reaches a window through an address like 0x100010F8: the loads and stores the
+   build writes (port/wasm/bemem.py) ask here once a window high in the virtual space exists, and read the same RAM at
+   its KSEG0 spelling. Windows in the low 8 MB are left alone: the module's own low memory lives there. */
+uint32_t port_tlb_wasm(uint32_t a) {
+    for (unsigned i = 0; i < port_tlb_n; i++)
+        if (tlb_win[i].lo >= 0x00800000u && a >= tlb_win[i].lo && a - tlb_win[i].lo < tlb_win[i].size)
+            return 0x80000000u | (tlb_win[i].phys + (a - tlb_win[i].lo));
     return a;
 }
 /* where the bytes of code at a spelling live in RAM, 0 when no window covers it */
@@ -1322,6 +1339,7 @@ static int read_boot(void) {
     int base = -1, sltu_rd = -1;
     memset(boot_stk, 0, sizeof boot_stk);
     port_tlb_n = 0;
+    port_tlb_hi = 0;
     boot.entry = boot_entry();
     /* a call is the game's first function when only a `break` follows it; one with more code after it is a helper
        (a fill, a TLB setup) the routine returns from */
