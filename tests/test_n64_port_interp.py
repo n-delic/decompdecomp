@@ -28,6 +28,7 @@ uint32_t port_stack_bus(uint32_t a) { return a >= 0x14000000u && a < 0x15000000u
 unsigned port_tlb_n;
 uint32_t port_tlb_canon(uint32_t a) { return a; }  /* (host.c's TLB windows: none here) */
 uint32_t port_tlb_alias(uint32_t a) { return a; }
+void port_tlb_write(uint32_t pm, uint32_t hi, uint32_t lo0, uint32_t lo1) { (void)pm; (void)hi; (void)lo0; (void)lo1; }
 uint64_t port_io_store(uint64_t a, uint64_t v) { (void)v; return a; }
 void port_safe_point(void) {}
 /* a thread whose code jumps to itself is parked for good (host.c): here, say so with the word at DATA, and end */

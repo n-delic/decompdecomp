@@ -97,7 +97,8 @@ static uint8_t *M;
 extern unsigned port_tlb_n;
 uint32_t port_tlb_canon(uint32_t a);
 uint32_t port_tlb_alias(uint32_t a);
-HOT uint32_t mapped(uint32_t a) { return __builtin_expect(a < 0x00800000u && port_tlb_n, 0) ? port_tlb_canon(a) : a; }
+void port_tlb_write(uint32_t pm, uint32_t entry_hi, uint32_t lo0, uint32_t lo1);
+HOT uint32_t mapped(uint32_t a) { return __builtin_expect(a < 0x80000000u && port_tlb_n, 0) ? port_tlb_canon(a) : a; }
 HOT uint8_t *at_load(uint32_t a) { a = mapped(a); return M + (a >= 0xA0000000u ? (uint32_t)port_io_load(a) : a); }
 HOT uint8_t *at_store(uint32_t a, uint64_t v) { a = mapped(a); return M + (a >= 0xA0000000u ? (uint32_t)port_io_store(a, v) : a); }
 HOT uint32_t lw(uint32_t a) { uint32_t v; memcpy(&v, at_load(a), 4); return __builtin_bswap32(v); }
@@ -366,6 +367,7 @@ static int step(Cpu *c, uint32_t pc, uint32_t op, uint32_t *target) {
         else if ((rs == 4 || rs == 5) && reg) *reg = (uint32_t)r[rt];
         /* The raw PI routine probes the TLB if its buffer lives on a compatibility stack.
            Expose a pair of 4 KB pages on the compatibility host’s PI bus. */
+        else if (op == 0x42000002u || op == 0x42000006u) port_tlb_write(c->page_mask, c->entry_hi, c->entry_lo[0], c->entry_lo[1]); /* tlbwi, tlbwr */
         else if (op == 0x42000008u) c->tlb_index = port_stack_bus(c->entry_hi & ~0x1FFFu) ? 0 : 0x80000000u;
         else if (op == 0x42000001u && c->tlb_index == 0) {
             uint32_t bus = port_stack_bus(c->entry_hi & ~0x1FFFu);

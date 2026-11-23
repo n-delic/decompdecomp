@@ -1156,7 +1156,7 @@ static void tlb_map(uint32_t pm, uint32_t va, uint32_t even, uint32_t odd) {
     va &= ~(2 * size - 1);
     for (int half = 0; half < 2; half++) {
         uint32_t phys = half ? odd : even, lo = va + (uint32_t)half * size;
-        if (phys == 0xFFFFFFFFu || lo >= 0x00800000u) continue;
+        if (phys == 0xFFFFFFFFu || lo >= 0x80000000u || phys >= 0x00800000u) continue;
         unsigned i = 0;
         while (i < port_tlb_n && tlb_win[i].lo != lo) i++;
         if (i == port_tlb_n && port_tlb_n == TLB_WINDOWS) return;
@@ -1164,10 +1164,19 @@ static void tlb_map(uint32_t pm, uint32_t va, uint32_t even, uint32_t odd) {
         if (i == port_tlb_n) port_tlb_n++;
     }
 }
-/* an address inside a window: the KSEG0 spelling the port keeps it at */
+/* The interpreter's `tlbwi`/`tlbwr`: the registers the game's own code wrote (a game that sets its TLB up in its
+   first C function, with mtc0 and a tlbwi, as the entry routine's osMapTLB-style call does for others). An EntryLo
+   word's page frame is bits 6 and up, valid in bit 1. */
+void port_tlb_write(uint32_t pm, uint32_t entry_hi, uint32_t lo0, uint32_t lo1) {
+    tlb_map(pm, entry_hi & ~0x1FFFu, (lo0 & 2) ? (lo0 >> 6) << 12 : 0xFFFFFFFFu, (lo1 & 2) ? (lo1 >> 6) << 12 : 0xFFFFFFFFu);
+}
+/* an address inside a window: the spelling the port keeps it at. A window in the low 8 MB of virtual addresses is
+   what the split spells `0x80000000 | virtual` (the bytes at their physical alias); a window higher up (a game that
+   maps its code at 0x10000000) can only be named by the physical address it maps, in KSEG0, as the split does. */
 uint32_t port_tlb_canon(uint32_t a) {
-    for (unsigned i = 0; a < 0x00800000u && i < port_tlb_n; i++)
-        if (a >= tlb_win[i].lo && a - tlb_win[i].lo < tlb_win[i].size) return a | 0x80000000u;
+    for (unsigned i = 0; a < 0x80000000u && i < port_tlb_n; i++)
+        if (a >= tlb_win[i].lo && a - tlb_win[i].lo < tlb_win[i].size)
+            return tlb_win[i].lo < 0x00800000u ? a | 0x80000000u : 0x80000000u | (tlb_win[i].phys + (a - tlb_win[i].lo));
     return a;
 }
 /* where the bytes of code at a spelling live in RAM, 0 when no window covers it */

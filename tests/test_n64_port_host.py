@@ -335,6 +335,34 @@ int main(int argc, char **argv) {
     assert probes.split() == [canon_even, "80292E00", "00500000", alias]
 
 
+def test_a_tlb_window_a_game_writes_with_tlbwi_is_named_by_its_physical_address(tmp_path):
+    """A game's first C function can set the TLB up itself (mtc0 to PageMask, EntryHi, EntryLo0/1, then tlbwi) and
+    jump into a window high in the virtual space (0x10000000, two 4 MB pages onto physical 0 and 0x400000). The split
+    names that code by its physical address in KSEG0: an address in the window is read there, a low one stays."""
+    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if not cc:
+        pytest.skip("no C compiler")
+    text = HOST.read_text()
+    code = text[text.index("static struct { uint32_t entry, target, bss, bss_size; int tv; } boot;"):
+                text.index("/* the console's RAM as the boot leaves it")]
+    source = tmp_path / "t.c"
+    source.write_text(_BOOT_HARNESS + code + """
+int main(void) {
+    port_tlb_write(0x7FE000, 0x10000000, 0x1F, 0x1001F); /* the EntryLo words: valid, page frames 0 and 0x400 */
+    for (unsigned i = 0; i < port_tlb_n; i++) printf("%08X %X %08X\\n", tlb_win[i].lo, tlb_win[i].size, tlb_win[i].phys);
+    printf("%08X %08X %08X %08X\\n", port_tlb_canon(0x10001050), port_tlb_canon(0x10400010), port_tlb_canon(0x20000000),
+           port_tlb_canon(0x80001050));
+    port_tlb_write(0x7FE000, 0x30000000, 0x1D, 0x1D); /* not valid (bit 1 clear): no window */
+    printf("%u\\n", port_tlb_n);
+    return 0;
+}
+""")
+    subprocess.run([cc, "-o", str(tmp_path / "t"), str(source)], check=True, capture_output=True)
+    done = subprocess.run([str(tmp_path / "t")], capture_output=True, text=True, check=True)
+    assert done.stdout.strip().splitlines() == [
+        "10000000 400000 00000000", "10400000 400000 00400000", "80001050 80400010 20000000 80001050", "2"]
+
+
 @pytest.mark.parametrize("crc,want", [
     # CIC-6103: its code from 0x4C0 copied to RAM 0, both RSP memories filled with -1, then 6103 in IMEM and osCicId
     (0x0B050EE0, "AC290000 240B17D7 FFFFFFFF FFFFFFFF 000017D7 000017D7"),
@@ -869,6 +897,7 @@ int port_thread_number(void) { return 0; }
 unsigned port_tlb_n;
 uint32_t port_tlb_canon(uint32_t a) { return a; }
 uint32_t port_tlb_alias(uint32_t a) { (void)a; return 0; }
+void port_tlb_write(uint32_t pm, uint32_t hi, uint32_t lo0, uint32_t lo1) { (void)pm; (void)hi; (void)lo0; (void)lo1; }
 uint32_t w2c_env_0x5F_builtin_mips_read_count(struct w2c_env *e) { (void)e; return 0; }
 static void put(uint32_t at, const uint32_t *w, int n) {
     for (int i = 0; i < n; i++) { uint32_t b = __builtin_bswap32(w[i]); memcpy(mem + at + 4 * i, &b, 4); }
