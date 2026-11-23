@@ -458,6 +458,14 @@ says the fix and the library families it names; try those families with `prove_c
   outrank the index chain, and read a masked parameter through a `u8` copy (`tile_arm_chains`).
 - **Flag words and widths:** bit-field structs for flag words; `u8`/`u16` widths keep or drop masks; overwrite a
   parameter after copying it (`arg = arg_in; arg_in = 0;`).
+- **A second pointer written beside the first (`q = p + 2`, `q[-1]`, `q[0]`, `q += 3` beside `p += 3`, or `q[i * 3 - 1]` for the
+  loop counter) is the loop pass's own work, not the game's.** loop.c reduces every `p[k]` (constant `k`) to a pointer of
+  its own and combines the offsets, and puts that pointer's increment just before the biv's; a user cursor orders its own
+  steps differently and costs a register order. Write plain `p[1]`, `p[2]` with one `p += 3` where the cursor's step was.
+  An opcode byte tested in a loop and switched on wants one `u8 op` local (`lbu $a0; andi $v1, $a0, 0xff` before the
+  compare). A switch arm with a dead reload followed by an overwrite is unfaithful: give each loaded value a block-scoped
+  `u8` local. decomp-repair `cursor_lockstep_fold`, `dispatch_byte_local`, `arm_reload_restore`
+  (docs/learnings/function/interpreter-derived-cursors-and-opcode-local.md: 550 -> 0, seven chained steps).
 
 ## 3b. Out of hand-written shapes? Trace the compiler instead of guessing
 
