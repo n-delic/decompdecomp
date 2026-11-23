@@ -511,6 +511,9 @@ says the fix and the library families it names; try those families with `prove_c
   children of the best three (`--lookahead`). It only combines what the library offers: when it finds nothing, check
   whether each half of your combination is a child at all (`--list`); a missing half is a family to write, not a
   search to widen (docs/learnings/experiment/combined-step-compose-lookahead.md).
+  With `--combine` it also demotes children that leave one more value to global.c than their parent (a block-local
+  value given a second death: the dead-end shape of the retired `volatile_rmw_counter_share`); `--no-dead-end` skips
+  that check (one diagnostic compile per ranked child).
 - **Register rows: `explain_regs.py CAND.c --slug S --function F`.** For each register pair the rows swap it names the
   pseudo in the candidate's register and the one in the target's (refs, live, priority, block-local or global, deaths,
   copy preferences, C lines) and the rule that decided it (a hard conflict, a pseudo allocated first, a lower-priority

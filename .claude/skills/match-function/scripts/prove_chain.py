@@ -114,7 +114,7 @@ def prove(source, generate, score, families, steps=DEFAULT_STEPS, children=DEFAU
       - then, with `lookahead` > 0, the children of the best `lookahead` of them (two steps whose first is no
         better alone), at most `lookahead_children` each.
     A combined step is taken when it beats the score, or ties it with fewer differing rows (a plateau move, never
-    to a source seen before). `rank_signal(parent, child) -> (penalty, note)` (explain_regs.dead_end: a child that
+    to a source seen before). `rank_signal(parent, child) -> (penalty, note)` (register_explain.dead_end: a child that
     turns a block-local value global) demotes a child in that ranking; it never stops an improving child.
     Returns (final source, final score, [(family, score)])."""
     current, best = source, score(source)
@@ -190,15 +190,14 @@ def _combined_step(step, current, best, best_bad, scored, cover, bad, parent_bad
                    combine, combine_limit, lookahead, lookahead_children, rank_signal, visited, log):
     """A stalled step's search over combined steps (prove's docstring): (score, families, source, rows) or None."""
     notes = {}
-    items = []
-    for result, family, child in scored:
-        penalty = 0
-        if rank_signal:
+    items = sorted(((bad.get(child, 10**6), result, family, child) for result, family, child in scored),
+                   key=lambda item: (item[0], item[1]))
+    if rank_signal:  # asked only of the few children that could be ranked in: it costs a compile each
+        for index, (count, result, family, child) in enumerate(items[:max(combine, 1) * 3]):
             penalty, note = rank_signal(current, child)
-            if note:
+            if penalty:
                 notes[family] = note
-        count = bad.get(child)
-        items.append(((count if count is not None else 10**6) + penalty * 10**3, result, family, child))
+                items[index] = (count + penalty * 10**3, result, family, child)
     ranked = compose.rank(items, combine)
     for family, note in list(notes.items())[:3]:
         log(f"step {step}  note: {family} demoted ({note})")
@@ -236,6 +235,26 @@ def _combined_step(step, current, best, best_bad, scored, cover, bad, parent_bad
         return None
     result, count, family, child = min(found, key=lambda row: (row[0], row[1]))
     return result, family, child, (count if rows else None)
+
+
+def dead_end_signal(judge):
+    """prove's `rank_signal`: register_explain.dead_end over the lreg dumps of parent and child (the judge worker's
+    allocation op, one diagnostic compile per source, cached). A compiler with no dumps gives no signal."""
+    from decompnet.app import register_explain
+    cache = {}
+
+    def lreg(source):
+        if source not in cache:
+            try:
+                cache[source] = judge.ask({"op": "allocation", "slug": judge.slug, "name": judge.name,
+                                           "source": source}).get("lreg") or ""
+            except SystemExit:  # the worker's error (no GCC dumps): no signal
+                cache[source] = ""
+        return cache[source]
+
+    def signal(parent, child):
+        return register_explain.dead_end(lreg(parent), lreg(child))
+    return signal
 
 
 def current_name(source, name, vram):
@@ -295,6 +314,8 @@ def main(argv=None):
     ap.add_argument("--lookahead", type=int, default=DEFAULT_LOOKAHEAD,
                     help="on a stalled step, also judge the children of the best N non-improving children (0: off)")
     ap.add_argument("--lookahead-children", type=int, default=DEFAULT_LOOKAHEAD_CHILDREN)
+    ap.add_argument("--no-dead-end", action="store_true",
+                    help="don't demote children that turn a block-local value global (one extra compile per ranked child)")
     ap.add_argument("--out")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--home")
@@ -321,7 +342,8 @@ def main(argv=None):
         final, _, _ = prove(source, generate, judge.score, families, a.steps, a.children,
                             combine=a.combine, combine_limit=a.combine_limit,
                             rows=None if a.no_rows else judge.rows, lookahead=a.lookahead,
-                            lookahead_children=a.lookahead_children)
+                            lookahead_children=a.lookahead_children,
+                            rank_signal=None if a.no_dead_end or not a.combine else dead_end_signal(judge))
         if a.out:
             Path(a.out).write_text(final)
             print(f"final source -> {a.out}")

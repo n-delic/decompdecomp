@@ -1,6 +1,7 @@
 """register_explain (the skill's explain_regs.py): each register the judge's rows swap, read from GCC's own dumps."""
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -104,3 +105,37 @@ def test_the_script_prints_the_score_and_the_workers_text(capsys):
             assert request["op"] == "allocation" and request["rows"][0] == list(ROWS[0])
             return {"text": "explained"}
     assert module.explain(Judge(), "int f;")[:2] == (20, "explained")
+
+
+def test_a_child_that_leaves_one_more_value_to_global_alloc_is_a_dead_end_signal():
+    # local-alloc takes only a pseudo of one block that dies once (local-alloc.c); a shared local that dies twice in
+    # the same block goes to global.c: the counter-in-the-masked-local shape (volatile_rmw_counter_share, retired)
+    parent = "Register 80 used 3 times across 4 insns in block 1.\nRegister 81 used 2 times across 2 insns in block 1.\n"
+    child = "Register 80 used 5 times across 6 insns in block 1; dies in 2 places.\n"
+    assert rx.global_values(parent) == 0 and rx.global_values(child) == 1
+    penalty, note = rx.dead_end(parent, child)
+    assert penalty == 1 and "left to global.c" in note
+    assert rx.dead_end(child, parent) == (0, "") and rx.dead_end("", child) == (0, "")
+    assert "local-alloc" in rx._describe({"pseudo": 80, "hard": 2, "priority": 1.0, "block": 1, "deaths": 2})
+    assert "block-local" not in rx._describe({"pseudo": 80, "hard": 2, "priority": 1.0, "block": 1, "deaths": 2})
+
+
+def test_prove_chains_dead_end_signal_asks_the_worker_once_per_source():
+    spec = importlib.util.spec_from_file_location("prove_chain", SCRIPTS / "prove_chain.py")
+    sys.path.insert(0, str(SCRIPTS))
+    prove_chain = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(prove_chain)
+    asked = []
+
+    class Judge:
+        slug, name = "s", "f"
+
+        def ask(self, request):
+            asked.append(request["source"])
+            if request["source"] == "broken":
+                raise SystemExit("no dumps")
+            return {"lreg": "Register 80 used 2 times across 3 insns; dies in 2 places.\n" if request["source"] == "child"
+                    else "Register 80 used 2 times across 3 insns in block 0.\n"}
+    signal = prove_chain.dead_end_signal(Judge())
+    assert signal("parent", "child")[0] == 1 and signal("parent", "other") == (0, "")
+    assert signal("parent", "broken") == (0, "") and asked.count("parent") == 1

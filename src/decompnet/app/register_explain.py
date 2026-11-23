@@ -122,7 +122,8 @@ def _values(lreg, greg):
 
 def _describe(v, source_lines=None):
     where = 'global (global.c)' if v.get('rank') is not None else (
-        f"block-local, block {v['block']} (local-alloc)" if v.get('block') is not None else 'local-alloc')
+        f"block-local, block {v['block']} (local-alloc)" if v.get('block') is not None and v.get('deaths', 1) == 1
+        else 'local-alloc')
     extra = []
     if v.get('deaths', 1) > 1:
         extra.append(f"dies in {v['deaths']} places")
@@ -203,3 +204,25 @@ def explain(lreg, greg, rows, allocation=(), source='', max_swaps=MAX_SWAPS):
         for v in theirs:
             out.append('  in ' + hard_label(w) + ': ' + _describe(v, _lines(v, allocation, source)))
     return out or ['The swapped registers are not ones this explainer can name.']
+
+
+def global_values(lreg):
+    """How many pseudos local-alloc leaves to global.c: it takes only a pseudo used in one basic block that dies
+    exactly once (local-alloc.c, `reg_basic_block[i] >= 0 && reg_n_deaths[i] == 1`); every other goes to global.c."""
+    return sum(1 for v in lreg_values(lreg).values() if v['block'] is None or v['deaths'] != 1)
+
+
+def dead_end(parent_lreg, child_lreg):
+    """(penalty, note) for prove_chain's ranking of children that did not improve: how many more pseudos the child
+    leaves to global.c than its parent. The shape of a dead end: a value the target keeps block-local (one set, one
+    death: local-alloc gives it the register just freed) written into another local, so it dies twice and global.c
+    places it elsewhere (volatile_rmw_counter_share's shared local: 25 at best where the fenced read matched,
+    counter-read-fence-before-may-alias-store.md). Pseudo numbers differ between compiles, so only counts are compared.
+    A ranking signal: an improving child is always taken."""
+    if not parent_lreg or not child_lreg:
+        return 0, ''
+    grown = global_values(child_lreg) - global_values(parent_lreg)
+    if grown <= 0:
+        return 0, ''
+    return grown, (f"{grown} more value{'s' if grown != 1 else ''} left to global.c (several deaths or blocks): "
+                   "a block-local value made global")

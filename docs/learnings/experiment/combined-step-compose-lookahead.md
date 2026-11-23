@@ -33,7 +33,7 @@ improving child at a time, or offer the whole combination as one child (the 150-
 of one register-named local are one `result_register_named_local` child). For the three that do not, the halves are
 not offered: comparing every child of the before-state with the before-state plus each subset of the matched regions
 (whitespace ignored), the pointer walk's children reproduce only its neutral identical-arm collapse; its declaration
-swap with the narrowed type and its dropped `(u32)` casts come from no family. The menu routine's two regions are one
+swap with the narrowed type and its dropped `(u32)` casts come from no family, and the 145-instruction function's children reproduce neither of its two regions. The menu routine's two regions are one
 statement block moved under a later guard: a deletion and an insertion, which no merge of independent edits makes.
 (The greedy and old-merge columns ran with decomprepair 0.5.734, the new search with the library's main of the same
 day; the four matches are the same in both.)
