@@ -14,7 +14,13 @@ reading for each pair of registers the rows swap (the candidate's register where
   never get it); a conflicting pseudo allocated first took it (higher priority); a lower-priority conflicting pseudo
   prefers it, so find_reg's first pass skipped it (`regs_someone_prefers`); the value's own copy preference won;
   local-alloc's block order;
-- what usually moves it.
+- what usually moves it;
+- the instructions behind each conflict and copy preference (`cause:`), read from the lreg dump's RTL: a call-argument
+  copy (`a value computed from pseudo 80 into $a1 for the call to helper, argument 2, C line 5`), a return-value copy,
+  a call-result copy, an incoming-argument copy, a copy between pseudos inside a loop, or a hard register set for a
+  call while the value is live. A display-list builder's last rows were a cursor sum copied into `$a1` for a call
+  that never took it (docs/learnings/finding/stray-global-call-argument-reorders-cursor-sums.md): the cause line
+  names the call, so the fix is the call, not another spelling of the sums.
 
 Pure: it reads the dumps (`.lreg`, `.greg`) and the rows the caller passes. A lead, never a verdict: the judge
 decides. GCC-family compilers only (their dumps)."""
@@ -28,6 +34,15 @@ REGISTER = re.compile(r'\$(\w+)')
 LREG = re.compile(r'^Register (\d+) used (\d+) times across (\d+) insns([^\n]*)', re.M)
 MAX_SWAPS = 6
 MAX_PSEUDOS = 3
+MAX_CAUSES = 3
+RTL_HEAD = re.compile(r'^\((insn|call_insn|jump_insn|code_label|note|barrier)\s+(\d+)', re.M)
+RTL_REG = re.compile(r'\(reg(?:/\w+)*:\w+ (\d+)(?: \w+)?\)')
+RTL_SET = re.compile(r'^\(\w+ \d+ \d+ \d+ (?:\(parallel\[\s*)?\(set \(reg(?:/\w+)*:\w+ (\d+)(?: \w+)?\)')
+RTL_CODE = re.compile(r'\)\s+-?\d+ \{|\)\s+-1 \(')
+RTL_CALLEE = re.compile(r'symbol_ref:\w+ \("([^"]+)"\)')
+RTL_USE = re.compile(r'\(use \(reg(?:/\w+)*:\w+ (\d+)')
+ARGUMENT_REGS = (4, 5, 6, 7)
+RTL_COPY = re.compile(r'\(set \(reg[^()]*\)\s*\(reg(?:/\w+)*:\w+ \d+(?: \w+)?\)\)')
 
 
 def hard_number(name):
@@ -189,6 +204,7 @@ def explain(lreg, greg, rows, allocation=(), source='', max_swaps=MAX_SWAPS):
     if not values:
         return ['The compiler wrote no allocation dumps for this candidate (a GCC-family compiler is needed).']
     out = []
+    insns = rtl_insns(lreg)
     for have, want, count in pairs[:max_swaps]:
         h, w = hard_number(have), hard_number(want)
         if h is None or w is None:
@@ -201,9 +217,103 @@ def explain(lreg, greg, rows, allocation=(), source='', max_swaps=MAX_SWAPS):
         for v in mine:
             out.append('  in ' + hard_label(h) + ': ' + _describe(v, _lines(v, allocation, source)))
             out.append('    why not ' + hard_label(w) + ': ' + why(v, w, values))
+            out += ['    cause: ' + c for c in (causes(insns, v, h, values, allocation, source)
+                                               + causes(insns, v, w, values, allocation, source))[:MAX_CAUSES]]
         for v in theirs:
             out.append('  in ' + hard_label(w) + ': ' + _describe(v, _lines(v, allocation, source)))
+            out += ['    cause: ' + c for c in causes(insns, v, w, values, allocation, source)[:MAX_CAUSES]]
     return out or ['The swapped registers are not ones this explainer can name.']
+
+
+def rtl_insns(lreg):
+    """[{uid, kind, dest, sources {reg}, callee, uses {reg}, loop}] for each insn of an lreg dump's RTL, in order
+    (dest: the register its first set writes; sources: the registers of that set's value; uses: a call's argument
+    registers; loop: the loop nesting depth from the NOTE_INSN_LOOP_BEG/END notes)."""
+    out, depth = [], 0
+    heads = list(RTL_HEAD.finditer(lreg or ''))
+    for i, head in enumerate(heads):
+        text = lreg[head.start():heads[i + 1].start() if i + 1 < len(heads) else len(lreg)]
+        if head[1] == 'note':
+            depth += 'NOTE_INSN_LOOP_BEG' in text
+            depth -= 'NOTE_INSN_LOOP_END' in text and depth > 0
+            continue
+        if head[1] not in ('insn', 'call_insn'):
+            continue
+        body = RTL_CODE.split(text, 1)[0]
+        dest = RTL_SET.match(text)
+        regs = [int(n) for n in RTL_REG.findall(body)]
+        if dest and regs:
+            regs = regs[1:]  # the first register is the destination
+        callee = RTL_CALLEE.search(body) if head[1] == 'call_insn' else None
+        out.append({'uid': int(head[2]), 'kind': head[1], 'dest': int(dest[1]) if dest else None,
+                    'sources': set(regs), 'callee': callee[1] if callee else None,
+                    'uses': {int(n) for n in RTL_USE.findall(text)} if head[1] == 'call_insn' else set(),
+                    'loop': depth, 'copy': bool(RTL_COPY.search(text))})
+    return out
+
+
+def _call_lines(source, callee):
+    if not source or not callee:
+        return ''
+    lines, depth = [], 0
+    for n, text in enumerate(source.splitlines()):
+        if depth > 0 and re.search(r'\b' + re.escape(callee) + r'\s*\(', text):  # inside a body: a call, not a prototype
+            lines.append(n + 1)
+        depth += text.count('{') - text.count('}')
+    return f", C line{'s' if len(lines) > 1 else ''} {', '.join(map(str, lines[:3]))}" if lines else ''
+
+
+def _value_lines(value, allocation, source):
+    lines = _lines(value, allocation, source)
+    return f", C {lines[0]}" if lines else ''
+
+
+def causes(insns, value, hard, values=None, allocation=(), source=''):
+    """The instructions that tie pseudo `value` to (or keep it from) hard register `hard`, as sentences: which copy
+    made the preference, or what sets the register while the value is live, and what kind of copy it is."""
+    pseudo, values = value['pseudo'], values or {}
+    out = []
+    refs = [i for i, insn in enumerate(insns) if insn['dest'] == pseudo or pseudo in insn['sources']]
+    first, last = (refs[0], refs[-1]) if refs else (None, None)
+    for i, insn in enumerate(insns):
+        if len(out) >= MAX_CAUSES:
+            break
+        how = 'a copy of' if insn['copy'] else 'a value computed from'
+        if insn['dest'] == hard and pseudo in insn['sources']:
+            call = next((c for c in insns[i + 1:] if c['kind'] == 'call_insn'), None)
+            if hard in ARGUMENT_REGS and call and hard in call['uses']:
+                out.append(f"call-argument copy: insn {insn['uid']} puts {how} pseudo {pseudo} into "
+                           f"{hard_label(hard)} for the call to {call['callee'] or 'a pointer'} (insn {call['uid']}), "
+                           f"argument {hard - 3}{_call_lines(source, call['callee'])}. If that call should not take "
+                           f"this argument (check signatures.py), drop it; otherwise pass it from another value.")
+            elif hard == 2:
+                out.append(f"return-value copy: insn {insn['uid']} puts {how} pseudo {pseudo} into $v0 (the "
+                           f"function's result){_value_lines(value, allocation, source)}.")
+            else:
+                out.append(f"copy into {hard_label(hard)}: insn {insn['uid']} ({how} pseudo {pseudo})"
+                           f"{_value_lines(value, allocation, source)}.")
+        elif insn['dest'] == pseudo and hard in insn['sources']:
+            before = next((c for c in reversed(insns[:i]) if c['kind'] == 'call_insn'), None)
+            if hard == 2 and before:
+                out.append(f"call-result copy: insn {insn['uid']} takes {how} the result ($v0) of the call to "
+                           f"{before['callee'] or 'a pointer'} (insn {before['uid']}){_call_lines(source, before['callee'])}.")
+            elif hard in ARGUMENT_REGS and not before:
+                out.append(f"incoming-argument copy: insn {insn['uid']} takes parameter {hard - 3} "
+                           f"({hard_label(hard)}){_value_lines(value, allocation, source)}.")
+            else:
+                out.append(f"copy from {hard_label(hard)}: insn {insn['uid']}{_value_lines(value, allocation, source)}.")
+        elif insn['dest'] == pseudo and insn['copy'] and insn['loop']:
+            other = next(iter(insn['sources']))
+            if values.get(other, {}).get('hard') == hard:
+                out.append(f"loop copy: insn {insn['uid']} copies pseudo {other} (in {hard_label(hard)}) into it inside "
+                           f"a loop (a tie: the two share or swap registers){_value_lines(value, allocation, source)}.")
+        elif (first is not None and first < i < last and insn['dest'] == hard and hard in ARGUMENT_REGS):
+            call = next((c for c in insns[i + 1:] if c['kind'] == 'call_insn'), None)
+            if call and hard in call['uses']:
+                out.append(f"conflict: insn {insn['uid']} sets {hard_label(hard)} as argument {hard - 3} of the call "
+                           f"to {call['callee'] or 'a pointer'} (insn {call['uid']}){_call_lines(source, call['callee'])} "
+                           f"while pseudo {pseudo} is live: move that argument's computation or the value's last use.")
+    return out
 
 
 def global_values(lreg):

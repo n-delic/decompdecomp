@@ -575,8 +575,10 @@ says the fix and the library families it names; try those families with `prove_c
 - **Register rows: `explain_regs.py CAND.c --slug S --function F`.** For each register pair the rows swap it names the
   pseudo in the candidate's register and the one in the target's (refs, live, priority, block-local or global, deaths,
   copy preferences, C lines) and the rule that decided it (a hard conflict, a pseudo allocated first, a lower-priority
-  pseudo's preference skipped by find_reg, its own copy preference, local-alloc's block order). Read it before
-  reordering declarations.
+  pseudo's preference skipped by find_reg, its own copy preference, local-alloc's block order), then `cause:` lines
+  naming the instruction that made each conflict or preference, its kind and C line ("call-argument copy: ... into
+  $a1 for the call to helper, argument 2, C line 5"). Read it before reordering declarations; a call-argument cause
+  sends you to that call (its arguments, signatures.py), not to the code around it.
 
 ## 3b. Out of hand-written shapes? Trace the compiler instead of guessing
 
