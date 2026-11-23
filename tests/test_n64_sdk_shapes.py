@@ -88,3 +88,18 @@ def test_the_n64_console_offers_the_shapes_to_library_detection():
     assert n64.sdk_shape_sizes == (sdk_shapes._MIN_ANY, sdk_shapes._MAX)
     assert n64.sdk_shape_identity(_create_thread())["name"] == "osCreateThread"
     assert consoles.get("ps1").sdk_shape_identity(_create_thread()) is None
+
+
+def test_the_thread_getters_are_named_by_the_field_they_read():
+    """A game's own `osGetThreadId` loads the running thread from the kernel's pointer, which only the real kernel
+    keeps: it answered 0 to every caller, so a mutex comparing its owner with `osGetThreadId(0)` found itself the owner
+    and never locked (a fighting game's main loop spun in its recursion path). The host answers for the thread."""
+    def words(*hexes):
+        return b"".join(bytes.fromhex(h) for h in hexes)
+
+    head = ("14800003", "00000000", "3c04800c", "8c841cb0", "03e00008")
+    assert sdk_shapes.identify(words(*head, "8c820014"))["name"] == "osGetThreadId"
+    assert sdk_shapes.identify(words(*head, "8c820004"))["name"] == "osGetThreadPri"
+    assert sdk_shapes.identify(words(*head, "8c820018")) is None  # some other field
+    assert sdk_shapes.identify(words("00000000", "00000000", *head[2:], "8c820014")) is None  # no zero-argument branch
+    assert sdk_shapes.identify(words(*head[:4], "ac850020", "03e00008", "8c820014")) is None  # it stores

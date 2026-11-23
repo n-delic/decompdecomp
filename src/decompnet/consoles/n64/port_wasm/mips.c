@@ -256,10 +256,32 @@ static int shape_calls_interrupt_leaf(const uint32_t *w, unsigned n, uint32_t vr
     return found;
 }
 
+/* sdk_shapes.py's thread_getter: osGetThreadId (the offset read is 0x14) and osGetThreadPri (0x04): a branch on $a0, the
+   running thread loaded into $a0 from a global, one load into $v0 from $a0 in the return's delay slot, no store, no
+   call. Returns the offset, or 0. */
+static unsigned shape_thread_getter(const uint32_t *w, unsigned n) {
+    int skip = 0, lui = 0, load = 0, ret = -1;
+    if (n < 5 || n > 8) return 0;
+    for (unsigned i = 0; i < n; i++) {
+        uint32_t op = OPC(w[i]);
+        if (op == 3 || (op >= 0x28 && op <= 0x2B)) return 0;
+        if ((op == 4 || op == 5) && (RS(w[i]) == 4 || RT(w[i]) == 4)) skip = 1;
+        if (op == 0x0F) lui = 1;
+        if (op == 0x23 && RT(w[i]) == 4) load = 1;
+        if (w[i] == 0x03E00008u) { if (ret >= 0) return 0; ret = (int)i; }
+    }
+    uint32_t last = w[n - 1];
+    if (OPC(last) != 0x23 || RS(last) != 4 || RT(last) != 2 || ret != (int)n - 2) return 0;
+    return skip && lui && load && (IMM(last) == 0x14 || IMM(last) == 4) ? IMM(last) : 0;
+}
+
 /* sdk_shapes.py's identify(), the same tests over the function's words: the library's name, or 0 */
 static const char *shape_identify_words(const uint32_t *w, unsigned n) {
     unsigned size = n * 4;
-    if (size < 32 || size > 700) return 0;
+    if (size < 20 || size > 700) return 0;
+    unsigned got = shape_thread_getter(w, n);
+    if (got) return got == 0x14 ? "osGetThreadId" : "osGetThreadPri";
+    if (size < 32) return 0;
     ShapeFeatures f;
     shape_features(w, n, &f);
     if (size >= 100) { /* osCreateThread: the id into +0x14, flags cleared at +0x12, a state halfword at +0x10 */
@@ -309,7 +331,8 @@ static const char *shape_identify_words(const uint32_t *w, unsigned n) {
 static const char *shape_identify(const uint32_t *w, unsigned n, uint32_t vram) {
     const char *name = shape_identify_words(w, n);
     /* every one of them but osCreateMesgQueue (six stores, no call) disables interrupts first */
-    if (!name || !strcmp(name, "osCreateMesgQueue")) return name;
+    if (!name || !strcmp(name, "osCreateMesgQueue") || !strcmp(name, "osGetThreadId") || !strcmp(name, "osGetThreadPri"))
+        return name; /* (the getters and the queue's creation call nothing) */
     /* osCreateThread calls only the interrupt disable and restore; the others call more (the thread lists' routines) */
     return shape_calls_interrupt_leaf(w, n, vram, !strcmp(name, "osCreateThread")) ? name : 0;
 }

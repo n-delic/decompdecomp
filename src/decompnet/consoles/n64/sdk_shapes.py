@@ -12,7 +12,7 @@ interrupt disable and restore routines. Run over every function of every ROM pro
 functions of 100 to 700 bytes, and each was an `osCreateThread` (named already, or the unnamed build of one game).
 Only the port asks (`identify(builtin=True)`): the display names stay exact-match only.
 
-The same goes for the rest of the thread routines (`osStartThread`, `osSetThreadPri`, `osDestroyThread`) and the
+The same goes for the rest of the thread routines (`osGetThreadId` and `osGetThreadPri`, `osStartThread`, `osSetThreadPri`, `osDestroyThread`) and the
 message queue's (`osRecvMesg`, `osSendMesg`, `osJamMesg`, `osCreateMesgQueue`): a game that runs its own copy of one
 keeps its threads in queues the host knows nothing of (an `osStartThread` that never started the thread it was
 given, an `osRecvMesg` that parked a thread in the game's own `__osEnqueueAndYield`). Each is told by the
@@ -28,7 +28,7 @@ no C for, the routine is told by these tests and, when the host defines it, the 
 
 CORPUS = "N64 library routines by structure"
 _MIN, _MAX = 100, 700
-_MIN_ANY = 32  # (the smallest routine here, osYieldThread: 60 to 80 bytes)
+_MIN_ANY = 20  # (the smallest routine here: osGetThreadId, 24 bytes; osYieldThread is 60 to 80)
 _EVENT_SIZES = frozenset({88, 92, 96, 100, 104, 108, 168, 172, 176, 180, 184})  # osSetEventMesg, as builds have it
 
 
@@ -71,6 +71,27 @@ def thread_yield(words: list[int]) -> bool:
     others = [w for w in stores if w not in states and not (w >> 26 == 0x2B and w >> 21 & 31 == 29)]  # sw ..($sp)
     runnable = {w >> 16 & 31 for w in words if w >> 26 == 9 and w >> 21 & 31 == 0 and w & 0xFFFF == 2}  # addiu r,$zero,2
     return len(states) == 1 and not others and (states[0] >> 16 & 31) in runnable
+
+
+def thread_getter(words: list[int]) -> int | None:
+    """`osGetThreadId(thread)` / `osGetThreadPri(thread)`: with no thread given (a zero argument) the running thread
+    (the kernel's `__osRunningThread`, loaded from an address into `$a0`), then one load of the id (+0x14) or the
+    priority (+0x04) from `$a0` into `$v0` in the return's delay slot: five to eight words, no store and no call.
+    Returns the offset read, or None. A game's own copy reads a pointer only the real kernel keeps, so it answered
+    thread 0 for every caller: a mutex that compared its owner with `osGetThreadId(0)` found itself the owner
+    and never locked (a fighting game's main loop spun in its recursion path)."""
+    if not 5 <= len(words) <= 8 or any(w >> 26 == 3 or w >> 26 in (0x28, 0x29, 0x2A, 0x2B) for w in words):
+        return None
+    if words[-1] >> 26 != 0x23 or words[-1] >> 21 & 31 != 4 or words[-1] >> 16 & 31 != 2:  # lw $v0, off($a0) last
+        return None
+    returns = [i for i, w in enumerate(words) if w == 0x03E00008]  # jr $ra
+    if returns != [len(words) - 2]:  # (the load is the return's delay slot)
+        return None
+    offset = words[-1] & 0xFFFF
+    skip = any(w >> 26 in (4, 5) and (w >> 21 & 31 == 4 or w >> 16 & 31 == 4) for w in words)  # beq/bne on $a0
+    running = any(w >> 26 == 0x0F for w in words) and any(
+        w >> 26 == 0x23 and w >> 16 & 31 == 4 for w in words)  # lui r, hi; lw $a0, lo(r) (r may be $a0 itself)
+    return offset if skip and running and offset in (0x14, 0x04) else None
 
 
 def _thread_features(words: list[int]) -> dict:
@@ -210,6 +231,9 @@ def identify(code: bytes, big_endian: bool = True) -> dict | None:
     if len(code) >= _MIN and thread_creation(words):
         return {"name": "osCreateThread", "corpus": CORPUS,
                 "evidence": "initialises an OSThread (id, flags, state) between interrupt disable and restore"}
+    if (got := thread_getter(words)) is not None:
+        return {"name": "osGetThreadId" if got == 0x14 else "osGetThreadPri", "corpus": CORPUS,
+                "evidence": "returns the id or priority of the thread given, or of the running one when none is"}
     if thread_yield(words):
         return {"name": "osYieldThread", "corpus": CORPUS,
                 "evidence": "marks the running thread runnable and yields between interrupt disable and restore"}
