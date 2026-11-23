@@ -570,6 +570,18 @@ the console and the port have apart: counted in retraces, a racing game's video-
 console and about 10 in the port, though they are the same 25, 25 and 21 graphics tasks on both: the console spends two
 to seven retraces on a frame where the port, with no CPU time to spend, spends one, so a scene is the same by game frame
 and not by retrace. `EMU_VI_LOG` lines now carry the retrace (`vi V`) as well as the task.
+What `PORT_VTIME` did and didn't settle for a racing game, with the same retrace-timed input on both sides: the port's
+video-mode blanks fell at the console's graphics tasks within one frame (485, 521, 632 against 485, 521, 637; the race
+start at 2,727 and 2,773 exactly), where the wall-clock port had been hundreds of tasks apart, so the two run the same
+screens in the same order. The retraces between those events still differ (task 2,773 to 3,194 took 216 retraces on the
+console and 169 in the port), because the console adapts its frame rate to how long its frames take (2.57 retraces a
+frame there, the port 2). Charging each graphics task a fixed virtual time (tried, 3 to 6 ms) doesn't reproduce that: below
+about 3.8 ms nothing changes, above 4 ms the game drops to one retrace a frame, so a cost per task was not kept.
+Pausing the port at as many retraces after the race start as the console had brought a paused race grid from 29 percent
+of pixels differing exactly to 3.3 percent with no match within 3 pixels, 167 of its 168 display-list commands equal
+(the one that differs is the horizon's fill rectangle, whose value follows the car's pitch as it settles and moves from
+133 to 138 to 117 as the pause moves by 30 retraces); an exact match there needs the car's physics to reach the same
+state at the same retrace, which the port's pacing doesn't yet give.
 `tools/n64_frame_scan.py FOLDER` needs no emulator: it looks through the frames a port saved (`PORT_FRAMES=FOLDER
 PORT_FRAME_EVERY=1`, `PORT_SWAP_LOG=file` to name each frame's graphics task) for static, flat-colour frames and runs of
 black, the ways a buffer shown before the game drew it looks. Moving scenes can't be compared pixel for pixel by task
