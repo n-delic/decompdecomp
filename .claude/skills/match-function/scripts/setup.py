@@ -72,7 +72,9 @@ ORIENT_SCRIPTS = (
     # the saved best and its scaffolding-stripped form, judged (plain_best.py): both places a chain can start from
     ("plain_best.py", lambda info, out: ["--slug", info["slug"], "--function", info["function"], "--out-dir", str(out)]),
     # the closest matched functions with the start of their C (neighbours.py): callers, callees, the file's neighbours
-    ("neighbours.py", lambda info, out: ["--slug", info["slug"], "--function", info["function"]]),
+    # (with the saved best plain_best.py wrote: also those sharing the mismatched region's instruction shape)
+    ("neighbours.py", lambda info, out: ["--slug", info["slug"], "--function", info["function"],
+                                         "--source", str(Path(out) / "best.c")]),
     # every call of the saved best against its callee's matched C, the header and the target's call sites
     # (signatures.py): a stray or missing argument is fixed at the call, not by respelling the code around it
     ("signatures.py", lambda info, out: ["--slug", info["slug"], "--function", info["function"]]),

@@ -31,8 +31,9 @@ Requests:
 - {"op": "allocation", "slug", "name", "source", "rows" (optional: the judge's raw rows)} -> {"lreg", "greg"
   (the function's part of each dump), "allocation" (gcc_allocation's values: pseudo, hard register, C lines),
   "text" (with rows: register_explain.explain, the skill's explain_regs.py)}.
-- {"op": "neighbours", "slug", "name", "limit" (optional)} -> {"text", "items"}: the closest matched functions (callers,
-  callees, the functions beside it, shared globals, look-alikes) with the start of their matching C
+- {"op": "neighbours", "slug", "name", "limit" (optional), "rows" (optional: the judge's raw rows for a candidate)}
+  -> {"text", "items"}: the closest matched functions (callers, callees, the functions beside it, shared globals,
+  look-alikes and, with rows, those sharing the mismatched region's instruction shape) with their matching C
   (matched_neighbours; the skill's neighbours.py).
 - {"op": "signatures", "slug", "name", "source" (optional: the saved best)} -> {"text", "findings"}: every call in
   that C checked against the callee's matched C, the shared header and the target's call sites, and the function's own
@@ -225,7 +226,8 @@ def neighbours_report(net, request: dict) -> dict:
     if isinstance(found, dict):
         return found
     proj, fn = found
-    items = matched_neighbours.gather(net, proj, fn, max(1, min(int(request.get("limit") or 6), 12)))
+    rows = [tuple(row) for row in request.get("rows") or ()] or None
+    items = matched_neighbours.gather(net, proj, fn, max(1, min(int(request.get("limit") or 6), 12)), rows=rows)
     text = "\n".join(matched_neighbours.render(items)).strip() or "No matched neighbours yet."
     return {"text": text, "items": [{k: v for k, v in item.items() if k != "source"} for item in items]}
 
