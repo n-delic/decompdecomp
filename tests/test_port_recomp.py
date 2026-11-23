@@ -348,6 +348,21 @@ def test_link_branches_set_ra_before_the_condition_and_delay_slot():
     assert "ctx->r31 = (gpr)(int32_t)0x80012390u;\n    if (SIGNED(0) >= 0)" in fixed
 
 
+def test_link_branches_also_set_ra_for_jal_and_jalr():
+    """A routine that copies its own $ra and ends in `jr $a1` jumped to 0 in the native build: N64Recomp's C call
+    for `jal`/`jalr` never wrote $ra. `jalr $ra` (target and link in one register) and `jalr` are left to the call."""
+    from decompnet.port.wasm.recomp import link_branches
+
+    generated = ("    // 0x800CA2C0: jal         0x800137F4\n    // 0x800CA2C4: nop\n    R_func_800137F4(rdram, ctx);\n"
+                 "    // 0x800CA300: jalr        $t9\n    // 0x800CA304: nop\n    LOOKUP_FUNC(ctx->r25)(rdram, ctx);\n"
+                 "    // 0x800CA400: jalr        $ra\n    LOOKUP_FUNC(ctx->r31)(rdram, ctx);\n"
+                 "    // 0x800CA500: j           0x80001000\n")
+    fixed = link_branches(generated)
+    assert "// 0x800CA2C0: jal         0x800137F4\n    ctx->r31 = (gpr)(int32_t)0x800CA2C8u;" in fixed
+    assert "// 0x800CA300: jalr        $t9\n    ctx->r31 = (gpr)(int32_t)0x800CA308u;" in fixed
+    assert fixed.count("ctx->r31 = (gpr)") == 2  # not `jalr $ra`, not a plain `j`
+
+
 def test_recompiled_floats_follow_the_games_status_fr_bit(tmp_path):
     """A tank game's recompiled vector code uses odd single-precision registers (`mul.s $f1`), which N64Recomp's
     CHECK_FR allows only in FR=1: every frame started in FR=0 and stopped on the first one. A frame now starts from

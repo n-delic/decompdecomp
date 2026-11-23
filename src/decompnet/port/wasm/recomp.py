@@ -114,7 +114,8 @@ def loops(text: str) -> str:
                     if where.get(m.group(1), len(text)) < m.start() else m.group(0), text)
 
 
-_LINK_BRANCH = re.compile(r"^([ \t]*)// 0x([0-9A-F]{8}): (?:bal|b(?:gez|ltz)all?)\b[^\n]*", re.M)
+_LINK_BRANCH = re.compile(r"^([ \t]*)// 0x([0-9A-F]{8}): (?:bal|b(?:gez|ltz)all?|jal|jalr\s+\$(?!ra\b)\w+)(?![\w,])[^\n]*",
+                          re.M)
 
 
 def link_branches(text: str) -> str:
@@ -122,6 +123,9 @@ def link_branches(text: str) -> str:
 
     N64Recomp models the branch as a C call and omits the architectural link. The R4300 writes $ra even
     when the condition is false, which code uses to locate a local jump target before the next call.
+    The same goes for `jal` and `jalr`: a hand-written routine that copies its own $ra (`or $a1, $ra, $zero`)
+    and ends in `jr $a1` (a math routine of a platformer, which then jumped to address 0) needs the real return
+    address, and the C call alone left whatever $ra held before.
     """
     return _LINK_BRANCH.sub(
         lambda branch: f"{branch[0]}\n{branch[1]}ctx->r31 = (gpr)(int32_t)0x{int(branch[2], 16) + 8:08X}u;",
