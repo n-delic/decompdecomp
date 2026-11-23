@@ -18,9 +18,9 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from decompnet.hostenv import NO_WINDOW, stop_process_tree
+from decompnet.hostenv import NO_WINDOW
 
-from . import linuxvm, wsl
+from . import limits, linuxvm, wsl
 
 MAX_SOURCE_BYTES = 64 * 1024
 # Per-compile resource caps (address space, CPU seconds, output file size) and a global
@@ -146,26 +146,53 @@ def _exec(cfg: CompilerConfig, work: Path, argv: list[str], timeout: float, cwd:
     # in the work folder, never in the app's own: KMC GCC's assembler (binutils 2.6) can't read its input when the
     # current directory is / ("Bad file descriptor"), as it can be for a program its launcher starts
     check = _CANCEL_CHECK.get()
-    if check is None:
-        return subprocess.run(_wrap(cfg, work, argv), cwd=cwd or work, capture_output=True, text=True,
-                              encoding="utf-8", errors="replace", timeout=timeout, creationflags=NO_WINDOW)
+    timeout = min(timeout, limits.compiler_time_limit())
     proc = subprocess.Popen(_wrap(cfg, work, argv), cwd=cwd or work, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
+                            text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW,
+                            start_new_session=os.name != "nt")
+    limits.attach_job(proc)  # (Windows: so what the compiler starts is stopped with it)
     started = time.monotonic()
     try:
-        while True:
-            check()
-            try:
-                stdout, stderr = proc.communicate(timeout=0.1)
+        with limits.CompilerMemoryWatchdog(proc) as watchdog:
+            while True:
+                if check:
+                    check()
+                try:
+                    stdout, stderr = proc.communicate(timeout=0.1)
+                except subprocess.TimeoutExpired:
+                    if time.monotonic() - started >= timeout:
+                        raise subprocess.TimeoutExpired(proc.args, timeout) from None
+                    continue
+                if watchdog.exceeded:
+                    return subprocess.CompletedProcess(proc.args, 1, stdout, stderr + "\n" + watchdog.message())
                 return subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
-            except subprocess.TimeoutExpired:
-                if time.monotonic() - started > timeout:
-                    proc.kill()
-                    stdout, stderr = proc.communicate()
-                    raise subprocess.TimeoutExpired(proc.args, timeout, output=stdout, stderr=stderr)
     except BaseException:
-        stop_process_tree(proc)
+        limits.stop_group(proc)
+        _drain(proc)
         raise
+    finally:
+        limits.release_job(proc)
+
+
+DRAIN_SECONDS = 2  # after a compiler is stopped, how long what's left of its output may take
+
+
+def _drain(proc: subprocess.Popen) -> None:
+    """Read what's left of a stopped compiler's output, for a while. Not to the end: a process that left the
+    compiler's session (setsid) isn't stopped with it, and one that kept its output open made communicate() wait for
+    as long as it ran, holding a compiler slot (a 0.5-second limit took 4 seconds, or for ever)."""
+    try:
+        proc.communicate(timeout=DRAIN_SECONDS)
+    except subprocess.TimeoutExpired:
+        for pipe in (proc.stdout, proc.stderr):
+            try:
+                pipe.close()
+            except OSError:
+                pass
+        try:
+            proc.wait(timeout=DRAIN_SECONDS)
+        except subprocess.TimeoutExpired:
+            pass
 
 
 def run_in(cfg: CompilerConfig, work: Path, argv: list[str], timeout: float = 300, *,

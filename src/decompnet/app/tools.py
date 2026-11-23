@@ -413,16 +413,22 @@ def tool_names(fork: bool, console=None, ltcg: bool = False, scratch: bool = Tru
     return [n for n in names if console is None or _supports(console, n, fork)]
 
 
-def project_tools(net: RomNetwork, slug: str | None) -> list[str]:
-    """tool_names for a project (None: no project yet), from the console its settings name."""
+def project_tools(net: RomNetwork, slug: str | None, agent=None, include_disabled: bool = False) -> list[str]:
+    """tool_names for a project (None: no project yet), from the console its settings name, less the optional tools
+    Agents & models turned off for every helper or for `agent` (include_disabled: all of them, for that page)."""
     if not slug:
-        return tool_names(False)
-    fork = bool(net.fork_slug(slug))
-    cfg = net.cfg(net._project(slug))
-    console = consoles.of(cfg)
-    manifest = (net.forks.get(slug)[1].manifest or {}) if fork and cfg.get("origin") == "scratch" else {}
-    return tool_names(fork, console if console.id or console.arch else None, bool(manifest.get("ltcg")),
-                      scratch=cfg.get("origin") == "scratch")
+        names = tool_names(False)
+    else:
+        fork = bool(net.fork_slug(slug))
+        cfg = net.cfg(net._project(slug))
+        console = consoles.of(cfg)
+        manifest = (net.forks.get(slug)[1].manifest or {}) if fork and cfg.get("origin") == "scratch" else {}
+        names = tool_names(fork, console if console.id or console.arch else None, bool(manifest.get("ltcg")),
+                           scratch=cfg.get("origin") == "scratch")
+    if include_disabled:
+        return names
+    from .tool_policy import visible
+    return visible(net, slug, names, agent)
 
 
 def _named(net: RomNetwork, agent: Agent, slug: str, args: dict) -> dict:
@@ -452,8 +458,10 @@ def _unoffered(net: RomNetwork, slug: str, name: str) -> str:
 
 def _invoke(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> str:
     """Every helper sees pulled changes before acting; only tools that write work need a second synchronization."""
-    if name not in project_tools(net, slug):
+    if name not in project_tools(net, slug, include_disabled=True):
         raise NetworkError(_unoffered(net, slug, name))
+    from .tool_policy import record
+    record(net, agent, slug, name)  # (a tool turned off in Agents & models is refused here, with its own message)
     net.progress.sync(slug, force=True)
     result = HANDLERS[name](net, agent, slug, **_named(net, agent, slug, args))
     if name not in READ_ONLY:
@@ -478,9 +486,14 @@ def call(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> str
 ALWAYS_LOAD = agents.TOOL_META
 
 
+HEAVY_TOOLS = frozenset({"compile_and_diff", "search_code", "search_flags", "try_compiler",
+                         "edit_file", "split_file", "join_functions"})
+
+
 def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]]) -> MCPServer:
     """MCP server for CLI agents. `agent_of` maps a request to (agent, project slug)."""
     mcp = MCPServer(name="decomp", title="decompdecomp", instructions=INSTRUCTIONS, version=__version__)
+    heavy_limiter = anyio.CapacityLimiter(16)
 
     async def run(ctx: Context, name: str, **args) -> str:
         try:
@@ -488,7 +501,8 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         except NetworkError as e:
             raise ToolError(str(e)) from None
         try:
-            return await anyio.to_thread.run_sync(lambda: _invoke(net, agent, slug, name, args))
+            limiter = heavy_limiter if name in HEAVY_TOOLS else None
+            return await anyio.to_thread.run_sync(lambda: _invoke(net, agent, slug, name, args), limiter=limiter)
         except NetworkError as e:
             raise ToolError(str(e)) from None
 
@@ -559,7 +573,9 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
     async def release_function(ctx: Context, function: str, notes: str, needs: str = "", not_c: bool = False) -> str:
         """Give up a function you're stuck on, once compile_and_diff says to move on. Notes are required: what you
         tried, what is left. Your best attempt is kept for the next agent. Released before that (fewer compiles than
-        the move-on rule), it answers once with what to try instead; call it again to release anyway.
+        the move-on rule), it answers once with what to try instead; call it again once you've compiled it, to
+        release anyway. A plain release with no compile since you claimed it is not taken, however often you ask:
+        compile first, or end your session.
 
         Args:
             function: the function you hold

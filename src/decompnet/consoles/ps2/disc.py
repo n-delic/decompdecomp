@@ -52,11 +52,18 @@ class _Disc:
         return self._get(lba * self.size + self.skip, 2048)
 
     def read(self, lba: int, length: int) -> bytes:
+        """`length` bytes from sector `lba` on, or fewer when the disc image ends first. A file entry can point past
+        the end of the disc image: a PS1 disc image had a file entry for its audio track, and the pregap before that
+        track (150 sectors) was not in the disc image. The read of raw sectors then never ended, and the import of
+        the game never completed."""
         if self.size == 2048:
             return self._get(lba * 2048, length)
         out = bytearray()
         while len(out) < length:
-            out += self.sector(lba)
+            data = self.sector(lba)
+            if not data:
+                break
+            out += data
             lba += 1
         return bytes(out[:length])
 

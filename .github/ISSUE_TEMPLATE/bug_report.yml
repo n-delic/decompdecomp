@@ -19,6 +19,7 @@ body:
         - PS1
         - PS2
         - PSP
+        - GBA
         - GameCube
         - Wii
         - Windows PC

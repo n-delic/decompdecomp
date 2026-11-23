@@ -1,7 +1,7 @@
 """The local decompdecomp server: the GUI, its API, and the MCP endpoint agents connect to.
 
 It listens on 127.0.0.1 only. The GUI answers only the app's own window, whose user agent carries the per-launch
-secret (window.py); helper agents need their own bearer token. Host headers are checked on every request, so web
+secret (window.py); managed and manual agents need their own project-scoped bearer token. Host headers are checked on every request, so web
 pages can't reach it through DNS rebinding.
 
 build() sets up what the routes share (the engine, helper agents, jobs, settings, the request checks) and hands it to
@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import secrets
 import threading
+import time
 from pathlib import Path
 
 import anyio
@@ -28,6 +29,8 @@ from . import agents, collab, routes, saves, tools, updates, window
 from .engine import RomNetwork
 from .routes import forks, life, pages, projects, rooms, setup, state
 from .support import Jobs, Settings, session_options
+
+START_PAUSE_SECONDS = 0.02  # between projects in the console work at start (consoles_start)
 
 
 def build(net: RomNetwork, home: Path, port: int, secret: str):
@@ -74,13 +77,18 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
     manager.budget = lambda: float(settings.data.get("budget_usd") or 0)
     allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
 
+    from . import manual_mcp
+
+    def project_for(agent_id):
+        return manager.project_of(agent_id) or manual_mcp.project_for(net, settings, agent_id)
+
     def agent_of(ctx: Context):
         headers = ctx.headers or {}
         auth = headers.get("authorization") or headers.get("Authorization") or ""
         agent = net.authenticate(auth.removeprefix("Bearer ").strip() or None)
-        slug = manager.project_of(agent.id)  # only helpers the app starts have tokens, each for one project
+        slug = project_for(agent.id)
         if not slug:
-            raise NetworkError("this agent isn't one of this app's helpers: start helpers from the app")
+            raise NetworkError("This MCP connection is no longer assigned to a project. Create a connection in Agents & models.")
         return agent, slug
 
     threading.Thread(target=collab.local_addresses, daemon=True).start()  # `tailscale status` can take seconds
@@ -88,10 +96,20 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
     net.restore_links()
 
     def consoles_start() -> None:  # what each console does for its projects at start (Console.on_start)
-        for row in net.store.all("SELECT id, slug, root, config FROM projects"):
+
+        # the most recently used first, with a breath between projects: with hundreds of games, the ones the user
+        # opens first are ready first, and this never stands in the way of their work
+        for n, row in enumerate(net.store.all(
+                "SELECT p.id, p.slug, p.root, p.config FROM projects p ORDER BY (SELECT MAX(created_at) FROM events e "
+                "WHERE e.project_id=p.id) DESC, p.id DESC")):
+            if n:
+                time.sleep(START_PAUSE_SECONDS)
             try:
                 if net.project_missing(row):
                     continue  # its folder is gone: only its records are left, and those are removed, not set up
+                # #260: after a restart no check is being weighed, so one saved as "checking" waits instead of spinning
+                net.rangechecks.normalise(row["slug"])
+                net.filecompilers.normalise(row["slug"])
                 if net.is_rom(row):
                     net.rangechecks.reopen(row["slug"])
                 net.console(row).on_start(net, row["slug"], log=jobs.logger.info)
@@ -124,6 +142,24 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
 
     mcp = tools.build_mcp(net, agent_of)
 
+    async def personalized_instructions(ctx, call_next):
+        result = await call_next(ctx)
+        if ctx.method not in {'initialize', 'server/discover'}:
+            return result
+        auth = (getattr(ctx.request, 'headers', None) or {}).get('authorization', '')
+        try:
+            agent = net.authenticate(auth.removeprefix('Bearer ').strip() or None)
+            slug = project_for(agent.id)
+            if slug:
+                instructions = manager.instructions_for(agent, slug)
+                return ({**result, 'instructions': instructions} if isinstance(result, dict)
+                        else result.model_copy(update={'instructions': instructions}))
+        except NetworkError:
+            pass
+        return result
+
+    mcp._lowlevel_server.middleware.append(personalized_instructions)
+
     # Each helper sees only the work tools for its project's kind (fewer tool definitions in every request, nothing
     # it shouldn't call).
     from mcp_types import ListToolsResult, PaginatedRequestParams
@@ -135,8 +171,10 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
             agent = net.authenticate(auth.removeprefix("Bearer ").strip() or None)
         except NetworkError:
             return ListToolsResult(tools=[])
-        slug = manager.project_of(agent.id)
-        keep = set(tools.project_tools(net, slug))
+        slug = project_for(agent.id)
+        if not slug:
+            return ListToolsResult(tools=[])
+        keep = set(tools.project_tools(net, slug, agent))
         return ListToolsResult(tools=[t for t in everything if t.name in keep])
 
     mcp._lowlevel_server.add_request_handler("tools/list", PaginatedRequestParams, scoped_tools)
@@ -158,8 +196,10 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
         except ValueError:
             return {}
 
+    gui_limiter = anyio.CapacityLimiter(50)
+
     async def call(fn, *args):
-        return await anyio.to_thread.run_sync(fn, *args)
+        return await anyio.to_thread.run_sync(fn, *args, limiter=gui_limiter)
 
     def fail(e: Exception, code: int = 400) -> JSONResponse:
         return JSONResponse({"error": str(e)}, status_code=code)

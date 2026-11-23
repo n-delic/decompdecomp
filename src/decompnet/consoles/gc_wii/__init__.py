@@ -47,6 +47,7 @@ class GameCube(Console):
     guides = ("ppc", "mwcc", "cpp")
     compiler_guide = "mwcc"  # CodeWarrior's register and stack rules decide most of what's left
     compiler_family = "mwcc"
+    thunk_names = True  # MWCC names a class's this-adjust thunks @N@<mangled override> (#300); Wii inherits it
     m2c = "ppc-mwcc"
     ram = (0x80000000, 0x81800000)
     demo = "demo-gc"

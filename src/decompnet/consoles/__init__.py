@@ -471,6 +471,8 @@ class Console:
     # an attempt that writes an unnamed function as a C++ constructor or destructor (CFoo::CFoo) gives it that real
     # name (rename_symbol), which its build pairs with the original's symbol, calls to it included
     names_structors = False
+    # its symbols may name a CodeWarrior this-adjust thunk, @N@<mangled member>, which no source spells (rename_symbol)
+    thunk_names = False
 
     def real_names(self, fp, version: str) -> dict[str, str]:
         """The report's name of a function (the original's symbol, renames_in_report False) -> the real name
@@ -573,6 +575,20 @@ class Console:
         """Why a function's code can't come from a compiler (hand-written assembly), or None."""
         reason = arch.get(self.arch).asm_reason
         return reason(code, self.big_endian, cpu=self.cpu_variant) if reason else None
+
+    def is_padding(self, code: bytes, fn=None) -> bool:
+        """Whether `code` is all this processor's alignment padding (its nop/filler), so a function trimmed
+        down to it is nothing to match. The reader is chosen by the function's mode (GBA: ARM vs Thumb), so
+        pass `fn`; without it the console's default mode is used. A processor with no padding reader says no."""
+        pad = arch.get(self.target_arch(fn) if fn is not None else self.arch).is_padding
+        return bool(pad and pad(code, self.big_endian))
+
+    def ends_in_delay_branch(self, code: bytes, fn=None) -> bool:
+        """Whether `code`'s last instruction has a delay slot, so the word after it belongs to the function
+        (a delay-slot nop is not alignment padding). The reader is chosen by the function's mode; pass `fn`.
+        A processor with no delay slots says no."""
+        hook = arch.get(self.target_arch(fn) if fn is not None else self.arch).ends_in_delay_branch
+        return bool(hook and hook(code, self.big_endian))
 
     def up_front_guide(self, compiler: str) -> str:
         """The guide every helper gets before its first claim: on matching `compiler`'s code ("" for none)."""

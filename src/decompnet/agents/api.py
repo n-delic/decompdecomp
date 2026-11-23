@@ -104,8 +104,8 @@ class Api(Agent):
         headers = {"Content-Type": "application/json"}
         if s.options.get("api_key"):
             headers["Authorization"] = f"Bearer {s.options['api_key']}"
-        schema = api_tool_schemas(fork=bool(net.fork_slug(s.slug)), names=tools.project_tools(net, s.slug))
-        messages = [{"role": "system", "content": tools.INSTRUCTIONS},
+        schema = api_tool_schemas(fork=bool(net.fork_slug(s.slug)), names=tools.project_tools(net, s.slug, agent))
+        messages = [{"role": "system", "content": manager.app_instructions(s)},
                     {"role": "user", "content": manager.prompt(s)}]
         count = int(s.options.get("per_session", PER_SESSION))
         used_tool, start, done = False, len(messages), 0
@@ -418,7 +418,9 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
         "last_diff": ("Every differing row of your last compile_and_diff of a function (its result cuts long diffs). "
                       "Costs no compile.", s(function=st("function", True), context=it("equal rows around each difference"))),
         "release_function": ("Give up a function with notes for the next agent, once compile_and_diff says to move "
-                             "on (before that it answers once with what to try; call again to release anyway).",
+                             "on (before that it answers once with what to try; call it again once you've compiled "
+                             "it, to release anyway). A plain release with no compile since you claimed it is not "
+                             "taken, however often you ask: compile first, or end your session.",
                              s(function=st("function", True), notes=st("what you tried, what is left", True),
                                not_c=bo("true when you're sure no C makes its code (hand-written assembly); say why in notes"),
                                needs=st("optional: another function this one needs done first (a callee or inlined "

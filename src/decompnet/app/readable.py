@@ -204,6 +204,7 @@ class Readability:
         now = time.time()
         with self.net.store.tx() as db:
             self.net._expire_claims(db)
+            self.net._drop_dead_claims(db, agent.id, ("open", "matched"))  # #283: set aside while it held it
             held = db.execute("SELECT f.* FROM claims c JOIN functions f ON f.id=c.function_id WHERE c.agent_id=?",
                               (agent.id,)).fetchone()
             fn = held if held is not None and held["status"] == "matched" else None

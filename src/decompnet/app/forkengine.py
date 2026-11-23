@@ -21,6 +21,7 @@ import struct
 import subprocess
 import threading
 import time
+from bisect import bisect_left
 from collections import defaultdict
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
@@ -347,6 +348,8 @@ _ASM_KEYS = ("asm_twin", "asm_code")  # meta saying a function is hand-written a
 _KEPT_KEYS = (*_ASM_KEYS, "not_c", "reopened")
 _ASM_DEF = re.compile(r"\s*(?:(?:static|inline|extern)\s+)*asm\b")
 _MSVC_C = re.compile(r"[_@]([A-Za-z_]\w*?)(?:@\d+)?")  # how MSVC decorates a C function's name (PC, Xbox)
+_OLD_SYMBOL = re.compile(r"@?[A-Za-z_]\w*(?:@\d+)?")  # rename_symbol's old name (a PC report's @f@8 too)
+_THUNK_NAME = re.compile(r"@\d+@[A-Za-z_]\w*")  # a CodeWarrior this-adjust thunk's name: @48@f__4CFooFv (#300)
 # a source file that includes another source file: Mario Party 6's REL runtime.c files are one line,
 # #include "src/Runtime.PPCEABI.H/runtime.c" (its asm helpers, which every module links a copy of)
 _SOURCE_INCLUDE = re.compile(r'^\s*#\s*include\s*"([^"]+\.(?:c|cc|cp|cpp))"', re.M)
@@ -721,6 +724,29 @@ class ForkEngine:
     @staticmethod
     def _meta(fn) -> dict:
         return json.loads(fn["meta"]) if fn["meta"] else {}
+
+    @staticmethod
+    def _going_symbols(rows, symbols: dict[str, tuple[str, int, int]], lo: int, hi: int) -> set[str]:
+        """The rows' symbols whose code is in [lo, hi): the functions a split moves. A file-local function's row
+        symbol carries its address (`stateBusy_8023FC14`) where symbols.txt has the bare name (`stateBusy`,
+        scope:local) at the same address: looked up verbatim it stayed in the kept file and its code moved without it
+        (#300)."""
+        out = set()
+        for row in rows:
+            symbol = ForkEngine._meta(row).get("symbol")
+            if not symbol:
+                continue
+            known = symbols.get(symbol)
+            if known is not None:
+                address = known[1]
+            else:
+                bare = re.sub(r"_[0-9A-Fa-f]{8}$", "", symbol)
+                address = None
+                if bare != symbol and bare in symbols and f"{symbols[bare][1]:08X}" == symbol[-8:].upper():
+                    address = symbols[bare][1]
+            if address is not None and lo <= address < hi:
+                out.add(symbol)
+        return out
 
     # ------------------------------------------------------------------ creating a fork
 
@@ -1152,7 +1178,7 @@ class ForkEngine:
                         db.execute("UPDATE functions SET status='nosource', meta=json_set(COALESCE(meta, '{}'), "
                                    "'$.gone', 1) WHERE id=?", (fid,))  # (network.IN_BUILD)
                     else:
-                        for table in ("claims", "notes"):
+                        for table in ("claims", "notes", "compiler_tests"):
                             db.execute(f"DELETE FROM {table} WHERE function_id=?", (fid,))
                         db.execute("DELETE FROM functions WHERE id=?", (fid,))
             m = objdiff.game_measures(rep, set(aside))  # % of the game's own code: set-aside code doesn't count
@@ -1572,7 +1598,7 @@ class ForkEngine:
         rows = self.net.store.all("SELECT id, name, meta FROM functions WHERE project_id=? AND unit=?", proj["id"], unit.name)
         with self._tree(proj).exclusive():  # no other build runs meanwhile
             text = old_path.read_text(errors="replace", encoding="utf-8") if old_path.exists() else ""
-            going = {s for r in rows if (s := self._meta(r).get("symbol")) in syms and addr <= syms[s][1] < hi}
+            going = self._going_symbols(rows, syms, addr, hi)
             new_text, rest, moved = self._divide(text, rows, going)
             scores_before = self._baseline(proj, fp, unit, text)[0] or {}
             saved = {conf: conf.read_text(encoding="utf-8"), mod.splits: mod.splits.read_text(encoding="utf-8"), old_path: text}
@@ -1645,6 +1671,21 @@ class ForkEngine:
             if (span := self._find(text, self._names(self._meta(r), r))[1]):
                 spans[span] = (self._meta(r).get("symbol") or r["name"]) in going
         moving = sorted(s for s, g in spans.items() if g)
+        # #300: when the moving definitions are the file's tail in source order (normal for address-ordered auto
+        # files), the new file is the old one's non-function text before the cut, in order (it replays the pragma
+        # state at the cut exactly), followed by the tail verbatim. Hoisting every non-function line above all moved
+        # code (the path below) put `#pragma cplusplus on`, push/pop envelopes and scheduling modes hundreds of lines
+        # from their functions, and the split was refused.
+        order = sorted(spans)
+        first = next((i for i, span in enumerate(order) if spans[span]), None)
+        if first is not None and all(spans[span] for span in order[first:]):
+            cut = order[first][0]
+            head = text[:cut]
+            for a, b in sorted(order[:first], reverse=True):
+                head = head[:a].rstrip("\n") + "\n\n" + head[b:].lstrip("\n")
+            head = head.strip()
+            return ((head + "\n\n" if head else "") + text[cut:].lstrip("\n"),
+                    text[:cut].rstrip("\n") + "\n", len(order) - first)
         declarations = without(spans).strip()
         code = "\n\n".join(text[a:b].strip("\n") for a, b in moving)
         return (declarations + "\n\n" if declarations else "") + code + "\n", without(moving), len(moving)
@@ -1744,14 +1785,22 @@ class ForkEngine:
         put back. Polishing in project mode had local names only: functions and globals stayed func_0205d0f4 and
         data_0222f194. The function's row keeps its history under the new name. Where the report keeps the original's
         symbol (Console.renames_in_report: a PC game's _func_0041B470@8), the row keeps that name too, and the new one
-        is the function's real name (Console.real_names), how its source spells it."""
+        is the function's real name (Console.real_names), how its source spells it. A project whose compiler names a
+        this-adjust thunk (`@48@<mangled override>`) has no C body for it: only the game's symbols take its name
+        (#300)."""
         # (`old` as the report gives a PC function: _func_0041B470@8, @func_0041B470@8)
-        if not re.fullmatch(r"[A-Za-z_]\w*", new) or not re.fullmatch(r"@?[A-Za-z_]\w*(?:@\d+)?", old) or old == new:
-            raise NetworkError("rename_symbol takes two different C names: old and new")
+        # #300: MWCC emits a class's this-adjust thunks as local/weak symbols named @N@<mangled override>; no C
+        # compiles to a bare tail `b`, so the only way to match the game's thunk is to give its symbol that name.
+        thunk = bool(_THUNK_NAME.fullmatch(new))
+        if not (re.fullmatch(r"[A-Za-z_]\w*", new) or thunk) or not _OLD_SYMBOL.fullmatch(old) or old == new:
+            raise NetworkError("rename_symbol takes two different C names (or, for a CodeWarrior this-adjust thunk, "
+                               "@N@<mangled member name>): old and new")
         proj, fp, cfg = self.get(slug)
         if slug in self.net.links:
             raise NetworkError("in a room, the host's project is the one to rename in: say it in a note")
         console = consoles.get(cfg.get("platform"))
+        if thunk and not console.thunk_names:
+            raise NetworkError("this project's compiler has no @N@ thunk names: give the function a C name")
         version = (fp.manifest or {}).get("version") or cfg.get("version")
         word, taken = re.compile(console.rename_pattern(old)), re.compile(rf"\b{re.escape(new)}\b")
         checks = consoles.REBUILD_CHECK in console.features
@@ -1761,7 +1810,7 @@ class ForkEngine:
             files = sorted(p for d in ("src", "include") if (fp.root / d).is_dir() for p in (fp.root / d).rglob("*")
                            if p.is_file() and p.suffix in self.SOURCE_SUFFIXES)
             texts = {p: p.read_text(errors="replace", encoding="utf-8") for p in files}
-            if any(taken.search(t) for t in texts.values()):
+            if not thunk and any(taken.search(t) for t in texts.values()):
                 raise NetworkError(f"{new} is used in the project already: pick another name")
             matched = {self._meta(r).get("symbol") or r["name"] for r in self.net.store.all(
                 "SELECT name, meta FROM functions WHERE project_id=? AND status='matched'", proj["id"])}
@@ -1769,10 +1818,11 @@ class ForkEngine:
             saved: dict[Path, str] = {}
             try:
                 saved.update(console.rename_symbol(fp, version, old, new))
-                for p, t in texts.items():
-                    if word.search(t):
-                        saved[p] = t
-                        p.write_text(word.sub(new, t), encoding="utf-8")
+                if not thunk:  # (no source spells a thunk's name: only the game's symbols change)
+                    for p, t in texts.items():
+                        if word.search(t):
+                            saved[p] = t
+                            p.write_text(word.sub(new, t), encoding="utf-8")
                 for cmd in fp.setup_commands(version):
                     ok, out = fp.run(cmd, log=lambda *_: None)
                     if not ok:
@@ -3920,11 +3970,22 @@ class ForkEngine:
 
     def search(self, slug: str, pattern: str, glob: str = "") -> str:
         _, fp, _ = self.get(slug)
+        root = fp.root.resolve()
+        # Python owns the pattern: grep -E reads e.g. \\d differently, and capturing its output kept every match
+        # in memory before the 80-line cut. Prune build trees before walking and read only as far as that cut.
+        excluded = {".git", "build", STATE}
+
+        def sources():
+            for folder, dirs, names in os.walk(root):
+                dirs[:] = sorted(d for d in dirs if d not in excluded)
+                for name in sorted(names):
+                    if Path(name).suffix.lower() in (".c", ".cc", ".cpp", ".h", ".hpp", ".inc"):
+                        yield Path(folder) / name
+
         try:
             rx = re.compile(pattern)
         except re.error:  # e.g. "func(": search for the text itself
             rx = re.compile(re.escape(pattern))
-        root = fp.root.resolve()
         if glob:
             glob = _path_glob(glob)
             try:
@@ -3932,20 +3993,21 @@ class ForkEngine:
             except ValueError as e:
                 raise NetworkError(f"glob {glob!r}: {e} (e.g. src/**/*.cpp, include/*.h)") from None
         else:
-            files = sorted(p for ext in ("c", "cc", "cpp", "h", "hpp", "inc") for p in fp.root.rglob(f"*.{ext}"))
+            files = sources()
         hits = []
         for p in files:
             rp = p.resolve()
             if root not in rp.parents or not rp.is_file():
                 continue
             rel = rp.relative_to(root)
-            if {".git", "build", STATE} & set(rel.parts):
+            if excluded & set(rel.parts):
                 continue
-            for i, line in enumerate(rp.read_text(errors="replace", encoding="utf-8").splitlines(), 1):
-                if rx.search(line):
-                    hits.append(f"{rel.as_posix()}:{i}: {line.strip()[:160]}")
-                    if len(hits) >= 80:
-                        return "\n".join(hits + ["... (more matches; narrow the pattern)"])
+            with rp.open(errors="replace", encoding="utf-8") as source:
+                for i, line in enumerate(source, 1):
+                    if rx.search(line):
+                        hits.append(f"{rel.as_posix()}:{i}: {line.strip()[:160]}")
+                        if len(hits) >= 80:
+                            return "\n".join(hits + ["... (more matches; narrow the pattern)"])
         return "\n".join(hits) or "no matches"
 
     def edit_file(self, agent: Agent, slug: str, path: str, old: str, new: str, message: str = "") -> str:
@@ -4206,10 +4268,11 @@ class ForkEngine:
                 "compilers": [c.id for c in consoles.get(cfg.get("platform")).project_compilers(fp)],
                 "compiler_ranges": parts}
 
-    def compiler_answer(self, slug: str) -> dict:
+    def compiler_answer(self, slug: str, *, include_functions: bool = True) -> dict:
         """The Settings panel's answer (engine.compiler_answer's form): the project's compiler and the files built
         with another, each kept because its matched functions match with it."""
-        _, fp, cfg = self.get(slug)
+        self.net.filecompilers.normalise(slug)  # (#260: a saved "checking" with no run behind it never spins the panel)
+        proj, fp, cfg = self.get(slug)
         found = self._file_parts(fp, cfg)
         if found is None:
             raise NetworkError("this project's own build sets its compilers")
@@ -4218,19 +4281,31 @@ class ForkEngine:
         elsewhere = [r for r in files.build(slug).runs if r.differs()]
         survey, state = cfg.get("file_survey") or {}, files.surveys.get(slug) or {}
         checks = cfg.get("file_checks") or []
+        fields = "name,vram,status" if include_functions else "vram"
+        functions = self.net.store.all(
+            f"SELECT {fields} FROM functions WHERE project_id=? AND vram IS NOT NULL ORDER BY vram", proj["id"])
+        addresses = [fn["vram"] for fn in functions]
+        def part_functions(part):
+            first, last = bisect_left(addresses, part["start"]), bisect_left(addresses, part["end"])
+            return [dict(fn) for fn in functions[first:last]] if include_functions else last - first
         has_map = files.applies(slug)  # (`mips` is what older pages called this fact)
         return {"compiler": consoles.compiler_name(own), "flags": "", "compiler_map": has_map,
                 "mips": has_map, "unit": "source file",
                 "elsewhere": [{"start": r.start, "end": r.end, "compiler": consoles.compiler_name(r.label[0]),
                                "functions": r.functions, "confirmed": r.confirmed} for r in elsewhere[:12]],
                 "elsewhere_count": len(elsewhere),
-                "checking": state.get("state") == "running" or any(c["status"] == "checking" for c in checks),
+                "checking": (state.get("state") == "running" or files.working(slug)
+                             or any(c["status"] == "checking" for c in checks)),
                 "survey": {"state": state.get("state"), "tried": len(survey.get("tried", {})),
                            "confirmed": len(survey.get("confirmed", {})), "running_tried": state.get("tried", 0),
                            "t": survey.get("t")},
                 "checks": [{"id": c["id"], "audit": False, "status": c["status"], "said": c.get("said") or "",
                             "ranges": c["spans"], "compiler": consoles.compiler_name(c["toolchain"])} for c in checks],
                 "parts": [{"start": p["start"], "end": p["end"], "compiler": p["name"], "flags": "", "file": p["file"],
+                           "toolchain": p["toolchain"], "family": toolchains.compiler_family(p["toolchain"]) or p["toolchain"],
+                           **({"function_list": part_functions(p)} if include_functions else {}),
+                           "functions": (len(part_functions(p)) if include_functions else part_functions(p))
+                           if p["end"] > p["start"] else None,
                            "check": "confirmed", "said": f"{p['file']}: its matched functions match with it"}
                           for p in parts]}
 
