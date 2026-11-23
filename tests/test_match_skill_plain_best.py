@@ -1,4 +1,5 @@
-"""plain_best.py and setup.py's orientation: a claim starts with the saved best and its scaffolding-stripped form."""
+"""plain_best.py and setup.py's orientation: a claim starts with the saved best, its scaffolding-stripped form and its
+clean rewrites."""
 import importlib.util
 import subprocess
 import sys
@@ -21,6 +22,7 @@ FENCED = "int g;\nvoid f(int x) {\n    do { if (x) { g = 1; } else { g = 1; } } 
 def test_the_best_and_its_plain_form_are_scored_and_written(tmp_path, monkeypatch):
     plain_best = load("plain_best")
     monkeypatch.setattr(plain_best, "plain_form", lambda source, name, header="": "void f(int x) { g = 1; }")
+    monkeypatch.setattr(plain_best, "clean_forms", lambda source, name, header="": [])
     lines = []
     found = plain_best.report(FENCED, "f", lambda text: 40 if "while" in text else 90, out_dir=tmp_path,
                               write=lines.append)
@@ -31,6 +33,31 @@ def test_the_best_and_its_plain_form_are_scored_and_written(tmp_path, monkeypatc
     lines.clear()
     assert plain_best.report(FENCED, "f", lambda text: 40, write=lines.append) == {"best": 40}
     assert "no scaffolding" in lines[1]
+
+
+def test_the_clean_rewrites_are_scored_and_written_after_the_plain_form(tmp_path, monkeypatch):
+    plain_best = load("plain_best")
+    monkeypatch.setattr(plain_best, "plain_form", lambda source, name, header="": None)
+    monkeypatch.setattr(plain_best, "clean_forms", lambda source, name, header="": [
+        ("clean_rewrite_structure", "void f(int x) { if (x) g = 1; }"), ("clean_rewrite", "void f(int x) { g = 1; }")])
+    lines = []
+    found = plain_best.report(FENCED, "f", lambda text: 40 if "while" in text else (None if "if" in text else 70),
+                              out_dir=tmp_path, write=lines.append)
+    assert found == {"best": 40, "clean_rewrite_structure": None, "clean_rewrite": 70}
+    assert (tmp_path / "clean_rewrite.c").read_text() == "void f(int x) { g = 1; }"
+    assert "did not compile" in lines[2] and lines[3].startswith("clean_rewrite ") and "score 70" in lines[3]
+
+
+def test_the_library_clean_rewrite_structures_an_m2c_loop():
+    plain_best = load("plain_best")
+    try:
+        from decomprepair import clean_rewrite  # noqa: F401
+    except ImportError:
+        assert plain_best.clean_forms(FENCED, "f") == []  # an older pin: no clean rewrite, no error
+        return
+    source = "int g;\nvoid f(int x) {\nloop_1:\n    g += 1;\n    if (g < x) goto loop_1;\n}\n"
+    levels = dict(plain_best.clean_forms(source, "f"))
+    assert "goto" not in levels["clean_rewrite_structure"] and "while (g < x)" in levels["clean_rewrite_structure"]
 
 
 def test_the_library_plain_form_strips_fences_and_identical_arms():

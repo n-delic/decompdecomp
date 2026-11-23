@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The saved best and the same C with its scaffolding stripped, side by side with their isolated scores.
+"""The saved best, the same C with its scaffolding stripped, and its clean rewrites, side by side with their scores.
 
 A saved best that a search built is full of scaffolding (do { } while (0) fences, `if (x) { S } else { S }` guards, union
 views of one register, identity inline functions, phantom locals); prove_chain cannot step from it, and agents spent
@@ -7,6 +7,10 @@ half an hour finding that out. setup.py runs this right after a claim, so the se
 `scaffold_strip.plain` (every fence without its own break opened, then `strip`), judged by the isolated judge.
 
     plain_best.py --slug SLUG --function FUNC [--out-dir DIR] [SOURCE.c]
+
+It also writes the levels of decomprepair `clean_rewrite` (m2c's gotos structured as loops, `if`s and `break`s, inline
+helpers, `__repair_` views and literals written out, m2c's derefs spelled short): DIR/clean_rewrite_structure.c,
+clean_rewrite_scaffold.c and clean_rewrite.c, each a faithful program, the start an agent's rewrite usually is.
 
 It writes DIR/best.c and DIR/plain.c (when stripping changed anything) and prints one line each with the score. The
 plain form usually scores worse (the fences are often what the score rests on: worse in 23 of 30 pre-match bests of an N64 game,
@@ -35,8 +39,22 @@ def plain_form(source, name, header=""):
         return None
 
 
+def clean_forms(source, name, header=""):
+    """[(family, source)]: decomprepair `clean_rewrite`'s levels, or [] when the pin has none or nothing changed."""
+    try:
+        from decomprepair import clean_rewrite
+    except ImportError:
+        return []
+    try:
+        return clean_rewrite.levels(source, name, header)
+    except Exception as error:  # a rewrite's bug must not end a claim's summary
+        print(f"note: clean_rewrite failed ({error})", file=sys.stderr)
+        return []
+
+
 def report(source, name, score, header="", out_dir=None, write=print):
-    """Score the best and its plain form; write them to `out_dir`; return {'best': score, 'plain': score or None}."""
+    """Score the best, its plain form and its clean rewrites; write them to `out_dir`; return {'best': score,
+    'plain': score or None, family: score, ...}."""
     found = {"best": score(source)}
     plain = plain_form(source, name, header)
     if out_dir:
@@ -45,14 +63,25 @@ def report(source, name, score, header="", out_dir=None, write=print):
     write(f"saved best   score {found['best']}" + (f"   -> {Path(out_dir) / 'best.c'}" if out_dir else ""))
     if plain is None:
         write("plain form   (no scaffolding to strip)")
-        return found
+    else:
+        _plain(found, plain, score, out_dir, write)
+    for family, text in clean_forms(source, name, header):
+        found[family] = score(text)
+        path = Path(out_dir) / f"{family}.c" if out_dir else None
+        if path:
+            path.write_text(text)
+        shown = "did not compile" if found[family] is None else f"score {found[family]}"
+        write(f"{family:<24} {shown}" + (f"   -> {path}" if path else ""))
+    return found
+
+
+def _plain(found, plain, score, out_dir, write):
     found["plain"] = score(plain)
     if out_dir:
         (Path(out_dir) / "plain.c").write_text(plain)
     shown = "did not compile" if found["plain"] is None else f"score {found['plain']}"
     write(f"plain form   {shown}" + (f"   -> {Path(out_dir) / 'plain.c'}" if out_dir else "")
           + "   (fences opened, scaffolding stripped: prove_chain can step from here when it can't from the best)")
-    return found
 
 
 def main(argv=None):

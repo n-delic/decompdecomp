@@ -563,9 +563,14 @@ says the fix and the library families it names; try those families with `prove_c
 
 ## 3a. The fast tools (use them before writing variants by hand)
 
-- **A claim starts with two sources.** `setup.py` prints the saved best and its plain form (`plain_best.py`:
-  decomprepair `scaffold_strip.plain`, fences opened and scaffolding stripped) with their isolated scores, in
-  `/tmp/dd-HOLDER/start/best.c` and `plain.c`. When prove_chain stalls on the best, chain from `plain.c`.
+- **A claim starts with several sources.** `setup.py` prints the saved best, its plain form (`plain_best.py`:
+  decomprepair `scaffold_strip.plain`, fences opened and scaffolding stripped) and the levels of decomprepair
+  `clean_rewrite` (`clean_rewrite_structure.c`: m2c's gotos as loops, `if`s, `break`s and returns;
+  `clean_rewrite_scaffold.c`: also inline helpers, `__repair_` literals and m2c's deref spelling written out;
+  `clean_rewrite.c`: also field views, fences and `scaffold_strip`) with their isolated scores, in
+  `/tmp/dd-HOLDER/start/`. When prove_chain stalls on the best, chain from the others. A clean level rarely scores
+  below the best (the search tuned the best's spelling) but it is the readable start for a rewrite by hand
+  (docs/learnings/experiment/clean-rewrite-start.md).
 - **Matched neighbours.** `setup.py` also prints `neighbours.py --slug S --function F`: the closest matched functions
   (callers, callees, the functions beside it in its file, ones reading the same globals, look-alikes) with the start
   of their matching C. Their temporaries, loop shapes and prototypes are the cheapest evidence there is; helpers get
