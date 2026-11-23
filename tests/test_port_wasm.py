@@ -556,6 +556,32 @@ def test_renamed_strlen_uses_the_host_signature(tmp_path):
     assert "strlen\ti32\tptr" in sigs.read_text().splitlines()
 
 
+def test_an_unprototyped_function_called_in_different_shapes_gets_one_signature(tmp_path):
+    """A donor's `int gl_func_00000000();` (a placeholder for address 0) was called as (ptr) -> i64, (i64) -> void and
+    () -> i32: wasm imports those as different functions and the link stopped (`function signature mismatch`). One
+    signature is written for it; a function called one way keeps being called as each call site has it."""
+    import subprocess
+    import sys
+
+    from decompnet.port.wasm.build import HERE
+
+    source = tmp_path / "caller.ll"
+    source.write_text(
+        "declare i32 @gl_func_00000000(...)\ndeclare i32 @only_one_shape(...)\n"
+        "define void @a() {\n  %1 = call i64 @gl_func_00000000(ptr noundef %0)\n"
+        "  %2 = call i32 @only_one_shape(i32 noundef 1)\n  ret void\n}\n"
+        "define void @b() {\n  call void @gl_func_00000000(i64 noundef %0)\n  %3 = call i32 @gl_func_00000000()\n"
+        "  %4 = call i32 @only_one_shape(i32 noundef 2)\n  ret void\n}\n")
+    aliases = tmp_path / "renames.txt"
+    aliases.write_text("")
+    sigs = tmp_path / "sigs.txt"
+    known = get("n64").port_kit.wasm / "libultra.sigs"
+    subprocess.run([sys.executable, HERE / "sigs.py", sigs, known, aliases, source],
+                   check=True, capture_output=True, text=True)
+    rows = {row.split("\t")[0] for row in sigs.read_text().splitlines()}
+    assert "gl_func_00000000" in rows and "only_one_shape" not in rows
+
+
 def test_the_host_keeps_libultras_osSetIntMask_arity(tmp_path):
     """A game's header declared `osSetIntMask` with two parameters (the longest declaration wins among a game's own),
     so wasm2c's import took two and conflicted with the host's one: the host build failed for that game. libultra's

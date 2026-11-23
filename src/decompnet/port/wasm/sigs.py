@@ -39,6 +39,18 @@ def split(text):
 
 
 TYPES = None
+CALL = re.compile(r"\bcall\s+(?:[\w.]+\s+)*?([\w.*<>\[\]{}]+)\s+(?:\([^)]*\)\s+)?@([\w.$]+)\(")
+
+
+def call_shape(line):
+    """(callee, (return type, each argument's type)) of a call line, or None."""
+    m = CALL.search(line)
+    if not m:
+        return None
+    args = params_of(line, m.end() - 1)
+    if args is None:
+        return None
+    return m.group(2), (m.group(1), tuple(a.split()[0] for a in split(args) if a.split()))
 
 
 def signature(line):
@@ -63,7 +75,7 @@ def signature(line):
 
 
 def main():
-    defs, decls, loose = {}, {}, {}
+    defs, decls, loose, shapes = {}, {}, {}, {}
     global TYPES
     sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.abspath(__file__)))
     from beir import Types
@@ -71,6 +83,8 @@ def main():
     for f in sys.argv[4:]:
         TYPES = Types(open(f).read())
         for line in open(f):
+            if (c := call_shape(line)):
+                shapes.setdefault(renames.get(c[0], c[0]), set()).add(c[1])
             if line.startswith(("define", "declare")) and (s := signature(line)):
                 kind, name, ret, ps = s
                 # The linker sees the renamed symbol. Pool its callers' declarations before selecting an ABI.
@@ -89,7 +103,9 @@ def main():
     with open(sys.argv[1], "w") as out:
         # only where unprototyped declarations disagree on what it returns: one declared only `u32 f();` keeps being
         # called as each call site has it (a builtin the host answers takes the argument the C passes)
-        loose = {n: rets for n, rets in loose.items() if len(rets) > 1}
+        # (or where its callers call it with different shapes, which wasm imports as different functions and the link
+        # refuses: a donor's `int f();` placeholder for address 0 called as (ptr) -> i64, (i64) -> void and () -> i32)
+        loose = {n: rets for n, rets in loose.items() if len(rets) > 1 or len(shapes.get(n, ())) > 1}
         for name in sorted(set(defs) | set(decls) | set(known) | set(loose)):
             if name in defs:
                 ret, ps = defs[name]
