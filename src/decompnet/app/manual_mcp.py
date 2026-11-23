@@ -3,7 +3,7 @@ import secrets
 import uuid
 from contextlib import ExitStack
 
-from ..network import NetworkError
+from ..network import Network, NetworkError
 
 
 def connections(settings):
@@ -14,7 +14,10 @@ def project_for(net, settings, agent_id):
     for item in connections(settings):
         if item['id'] == agent_id:
             try:
-                net.project_row(item['slug'])
+                # Existence only. project_row() first syncs saved progress, which queues behind the project lock
+                # that a saved-file check or a compile holds: every tool call of every connection then parked here
+                # for minutes before it began (before_dispatch_ms in slow-tool-calls.log), filling the work lane.
+                Network._project(net, item['slug'])
             except NetworkError:
                 return None
             return item['slug']

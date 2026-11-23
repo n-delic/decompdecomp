@@ -150,25 +150,92 @@ class Gateway:
         CALL_WAIT_SECONDS) before AppSlow; a dropped connection or 5xx is repeated the same way. A tool error raises."""
         began = time.time()
         deadline = began + (CALL_WAIT_SECONDS if wait is None else wait)
+        repeats = 0
         while True:
             result = self.patient("tools/call", {"name": tool, "arguments": arguments},
                                   wait=max(0, deadline - time.time()))
             text = "\n".join(part.get("text", "") for part in result.get("content", []))
             lowered = text.lower()
-            # The gateway marks its "still running ... repeat the same call" answer as an error result: repeat it, don't raise.
-            if result.get("isError") and not (STILL_RUNNING in lowered and "repeat" in lowered):
-                raise McpError(f"{tool}: {text[:500]}")
-            if "accepted" in lowered and "not repeat" in lowered:
+            if "accepted" in lowered and ("not repeat" in lowered or "n't repeat" in lowered):
                 return text  # the app took the work and will finish it: repeating would only queue it twice
-            if STILL_RUNNING in lowered and "repeat" in lowered:
+            # The gateway sends its "still running" and "restarting" notices as tool errors (isError), so they are
+            # recognised before any error is raised: a claim waiting 45 s for a busy app once tore the session down.
+            if is_still_running(lowered) or is_restarting(lowered):
                 if time.time() >= deadline:
                     raise AppSlow(f"{tool} was still running after {int(time.time() - began)} s; the app is overloaded. "
                                   f"It keeps working: repeat the identical call to collect the result")
-                print(f"{tool}: still running in the app ({int(time.time() - began)} s so far); waiting for it",
+                repeats += 1
+                print(f"{tool}: {'still running in the app' if is_still_running(lowered) else 'the app is restarting'} "
+                      f"({int(time.time() - began)} s so far, repeat {repeats}); waiting for it",
                       file=sys.stderr, flush=True)
-                time.sleep(1)
+                time.sleep(1 if is_still_running(lowered) else TRANSIENT_PAUSE)
                 continue
+            if result.get("isError"):
+                raise McpError(f"{tool}: {text[:500]}")
+            if repeats:
+                print(f"{tool}: answered after {int(time.time() - began)} s ({repeats} repeats of the identical call)",
+                      file=sys.stderr, flush=True)
             return text
+
+
+def is_still_running(lowered):
+    """The gateway's "<tool> is still running (N s so far) ... repeat exactly the same call" (lower-cased text), which
+    arrives flagged as an error although nothing failed; also an older app's shorter wording."""
+    return STILL_RUNNING in lowered and "repeat" in lowered
+
+
+def is_restarting(lowered):
+    """The gateway's answer while the app restarts or is unreachable: nothing was changed, so asking again is safe."""
+    return "isn't running or is restarting" in lowered and "nothing was changed" in lowered
+
+
+CLAIM_HINTS = (
+    ("report_repair", "this connection owes a repair report before it may claim more: call report_repair for the case "
+                      "the message names (mcp.py HOLDER report_repair '{\"function\":..,\"case_id\":..,\"category\":\"other\"}'), then "
+                      "ask again"),
+    ("you already hold", "the connection already holds a function: finish it, or release_function it (then `setup.py "
+                         "release HOLDER`), before claiming another"),
+    ("is claimed by", "another agent (or the user) holds it: wait, or ask for another function"),
+    ("is set aside", "that function is set aside (assembly or a kernel stub): ask for another"),
+    ("already been checked by this model", "this model already tried that function: ask for another"),
+    ("already matched", "that function is already matched: ask for another"),
+    ("no longer assigned to a project", "the connection was revoked: start a new session"),
+)
+
+
+def claim_hint(message):
+    """One sentence on what to do about a refused claim (the app's own text said why), or ""."""
+    lowered = message.lower()
+    return next((hint for key, hint in CLAIM_HINTS if key.lower() in lowered), "")
+
+
+class Phases:
+    """Wall-clock time of each step of a command, to stderr as it ends and in one line at the end, so a slow session
+    shows whether the worktree, `uv sync`, the connection, the handshake or the claim itself took the time."""
+
+    def __init__(self):
+        self.times, self.began = [], time.time()
+
+    def __call__(self, name):
+        return _Phase(self, name)
+
+    def summary(self):
+        return "phases: " + ", ".join(f"{name} {seconds:.1f}s" for name, seconds in self.times) + \
+            f" (total {time.time() - self.began:.1f}s)"
+
+
+class _Phase:
+    def __init__(self, phases, name):
+        self.phases, self.name = phases, name
+
+    def __enter__(self):
+        self.began = time.time()
+        print(f"[setup] {self.name} ...", file=sys.stderr, flush=True)
+
+    def __exit__(self, kind, error, trace):
+        seconds = time.time() - self.began
+        self.phases.times.append((self.name, seconds))
+        print(f"[setup] {self.name}: {seconds:.1f}s{' (failed)' if error else ''}", file=sys.stderr, flush=True)
 
 
 NEAREST_MAX_INSNS = 800  # the default pick's size cap: near-misses a hand session can finish, not 3,000-line giants
@@ -409,7 +476,8 @@ def reclaim_session(holder, function="", strategy="nearest", max_insns=NEAREST_M
         gateway.start()
         claimed = claim(gateway, function, strategy, max_insns)
     except McpError as error:
-        sys.exit(f"nothing reclaimed: {error}")
+        hint = claim_hint(str(error))
+        sys.exit(f"nothing reclaimed: {error}" + (f"\nWhat to do: {hint}" if hint else ""))
     if claimed in info.get("released", []):  # the app handed back the function this session let go
         sys.exit(f"{claimed} was released by this session and was claimed again; release it with its claim token and "
                  f"ask for another function")
@@ -675,30 +743,40 @@ def start(args):
         info = {"holder": holder, "slug": args.slug, "function": "", "home": home,
                 "port": app.c["port"], "gateway_url": url, "primary": str(repo), "repo": str(root / "repo"),
                 "venv": str(root / "venv"), "python": str(root / "venv" / "bin" / "python")}
+    phase = Phases()
     try:
         if not resuming:
-            make_worktree(repo, root)
+            with phase("worktree (git fetch + add)"):
+                make_worktree(repo, root)
             if not args.no_sync:
-                make_venv(root, root / "sync.log")
-            connection = create_connection(app, args.slug)
+                with phase("venv (uv sync)"):
+                    make_venv(root, root / "sync.log")
+            with phase("connection (window API)"):
+                connection = create_connection(app, args.slug)
             info.update(connection_id=connection["id"], connection_name=connection["name"], token=connection["token"])
         info.update(claim_pending=True, claim_request=asked)
         write_connection(root, info)  # at once: a failure below must still be able to revoke it
         # Claimed last so the claim's ten minutes are not spent on the build; exactly one claim call is made.
         gateway = Gateway(url, info["token"])
-        gateway.start()
+        with phase("MCP handshake (gateway initialize)"):
+            gateway.start()
         strategy = "random" if asked["random"] else "nearest"
-        info["function"] = claim(gateway, asked["function"], strategy, asked["max_size"])
+        with phase("claim_function (gateway to app)"):
+            info["function"] = claim(gateway, asked["function"], strategy, asked["max_size"])
         info.pop("claim_pending", None)
         info["started"] = time.time()  # the hand-off clock's start (clock.py HOLDER)
         write_connection(root, info)
         info["renew_pid"] = start_renewal(root, args.interval)
+        print(f"[setup] {phase.summary()}", file=sys.stderr, flush=True)
     except AppSlow as error:
         # The app is overloaded, not refusing: what was built stays, and the same command again collects the claim.
+        print(f"[setup] {phase.summary()}", file=sys.stderr, flush=True)
         sys.exit(f"{error}\nThe session {holder} is kept (worktree, venv, connection); run the same command again to "
                  f"collect the claim: setup.py {args.slug} {asked['function']} --holder {holder}".replace("  ", " "))
     except BaseException as error:
-        message = f"setup failed ({error}); removing {root}"
+        print(f"[setup] {phase.summary()}", file=sys.stderr, flush=True)
+        hint = claim_hint(str(error)) if isinstance(error, McpError) else ""
+        message = f"setup failed ({error}); removing {root}" + (f"\nWhat to do: {hint}" if hint else "")
         write_connection(root, info)
         stop_session(holder)
         sys.exit(message)

@@ -148,3 +148,26 @@ def test_revocation_drains_an_inflight_attempt_before_releasing_its_claim(tmp_pa
     assert revoked.is_set() and not net.store.one('SELECT 1 FROM claims WHERE function_id=1')
     assert net.store.one('SELECT source FROM attempts')['source']=='finished before release'
     with pytest.raises(NetworkError,match='revoked'):net.claim_row(agent,'one','f')
+
+
+def test_resolving_a_connections_project_never_waits_for_the_project_sync(tmp_path):
+    """Every tool call asks which project its connection is for. That is an existence check: it once synced saved
+    progress first, queued behind the project lock a saved-file check holds, and parked every call (and the work lane)
+    for minutes before it began."""
+    net = RomNetwork(tmp_path / 'test.db', tmp_path)
+    settings = Settings(tmp_path / 'settings.json')
+    with net.store.tx() as db:
+        db.execute('INSERT INTO projects(slug,name,arch,root,config) VALUES(?,?,?,?,?)',
+                   ('one', 'one', 'mips', str(tmp_path), '{}'))
+    connection = manual_mcp.create(net, settings, 'one')
+    synced = []
+
+    class Progress:
+        viewing = False
+
+        def sync(self, *args, **kwargs):
+            synced.append(args)
+            raise AssertionError('the project lookup must not sync saved progress')
+    net.progress = Progress()
+    assert manual_mcp.project_for(net, settings, connection['id']) == 'one'
+    assert synced == []

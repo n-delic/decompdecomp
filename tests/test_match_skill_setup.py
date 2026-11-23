@@ -25,6 +25,10 @@ def load(name):
     return module
 
 
+SLOW = ("{0} is still running (30 s so far): decompdecomp is still working on it. Nothing was lost and it will not run "
+        "twice: repeat exactly the same {0} call (same arguments) to wait for its result.")
+
+
 class FakeApp:
     """The app's window API (function status, connection create/revoke) and its MCP gateway, on two local ports."""
 
@@ -630,7 +634,6 @@ def test_an_unchanged_claim_reply_counts_as_still_held_not_as_a_failed_renewal()
         setup.claim(Gateway("You still hold the unchanged claim: demo/func_8001. x"), "", "nearest")
 
 
-SLOW = "{} is still running (30 s so far): decompdecomp is still working on it. repeat exactly the same call"
 
 
 def test_a_claim_that_stays_still_running_for_long_is_waited_for_not_given_up_after_60_repeats(world, monkeypatch, capsys):
@@ -749,3 +752,40 @@ def test_a_real_session_stop_leaves_no_renewal_behind(world):
     assert setup.alive(pid)
     assert setup.main(["stop", "claude-w7"]) == 0
     assert not setup.alive(pid)
+
+
+def test_a_still_running_notice_flagged_as_an_error_is_repeated_not_fatal_and_phases_are_timed(world, monkeypatch, capsys):
+    """The gateway sends "still running" with isError set: a claim the app took over 45 s to start used to raise there
+    and tear the whole session down. The phases of the start are timed on stderr so a slow one is visible."""
+    setup, app, home, primary = world
+    monkeypatch.setattr(setup.time, "sleep", lambda _: None)
+    app.busy, app.busy_is_error = 3, True
+    assert start(setup, home, primary, "--holder", "claude-e1") == 0
+    try:
+        assert len(app.claims) == 4 and app.revokes == []
+        err = capsys.readouterr().err
+        assert "claim_function: answered after" in err and "3 repeats" in err
+        for name in ("worktree", "connection", "MCP handshake", "claim_function (gateway to app)"):
+            assert f"[setup] {name}" in err
+        assert "phases: worktree" in err and "claim_function (gateway to app)" in err.split("phases:")[1]
+    finally:
+        setup.main(["stop", "claude-e1"])
+
+
+def test_a_restarting_app_is_waited_for_and_a_refused_claim_says_what_to_do():
+    setup = load("setup")
+    gateway_text = ("decompdecomp isn't running or is restarting (connection refused). Nothing was changed. "
+                    "Wait a minute, then call claim_function again.")
+    assert setup.is_restarting(gateway_text.lower()) and not setup.is_still_running(gateway_text.lower())
+    assert "report_repair" in setup.claim_hint("Before claiming more work, call report_repair with function, case_id=3")
+    assert "release_function" in setup.claim_hint("you already hold func_1; match it or release_function it first")
+    assert "ask for another" in setup.claim_hint("func_2 is set aside (assembly): claim another")
+    assert setup.claim_hint("something unforeseen") == ""
+
+
+def test_a_refused_claim_at_start_prints_the_hint_and_leaves_nothing_behind(world, monkeypatch):
+    setup, app, home, primary = world
+    app.owner = "agent-x"
+    with pytest.raises(SystemExit, match="What to do: another agent"):
+        start(setup, home, primary, "--holder", "claude-e2", "func_9")
+    assert not setup.session_dir("claude-e2").exists()
