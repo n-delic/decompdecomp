@@ -14,8 +14,8 @@ score under the profile without `-fno-cse-skip-blocks` is 325 (nine differing ro
 Steps in order, with the score they reached (isolated, the function's own profile until step 4):
 
 1. The final packet's `(s16) dsdx, (s16) dtdy` arguments written plain, the cast kept inside the macro's ADJ and multiply
-   (4837 -> 3302): the value stays one register from the entry to the loop, as the target's `$s5`/`$s6`. No family: the
-   macros are in the source.
+   (4837 -> 3302): the value stays one register from the entry to the loop, as the target's `$s5`/`$s6`. Each of the four
+   casts alone is worse (5348-5553), all together 3302. decomp-repair `macro_cast_argument_move_all` (PR 1496).
 2. `dsdx = 0x400;` before the `if (hires) dtdy = 0x200; else dtdy = 0x400;` set in both arms (3302 -> 3052): jump.c's
    "x = b; if (...) x = a" conversion plus sched1 left the `li` first in its block, where reorg stole it into the previous
    branch's delay slot. decomp-repair `arm_constant_pair_statement` (PR 1469).
@@ -31,6 +31,12 @@ Steps in order, with the score they reached (isolated, the function's own profil
 7. `s = w << 5;` before `if (flags & 0x80) { dsdx = ~dsdx; } else s = 0;` written in the then arm (365 -> 325, eight rows
    of the block and 13 -> 5 register rows overall): decomp-repair `arm_value_sink` (PR 1490). `arm_invariant_sink` needs the
    variable set once and an expression with no memory.
+
+8. `ty = r->y + (u16)(r->TH * j);` (600 -> 595 under the function's profile, 325 -> 280 without `-fno-cse-skip-blocks`): the
+   product narrowed by the cast makes the second multiply read the counter unextended, at the price of one `andi` after
+   the `mflo`; with `tx = (u16)(r->tw * i + r->x + X);` as well both multiplies are unextended and the rows are
+   the two `andi`s, the order of the two position adds and the arm copy (275, eight rows). Not submitted to the app: the
+   same rows, a different place.
 
 Open (nine rows): the loop counters. The target's first tests (`move s7,$zero; slt`, `beqz` on the rows word) need `u16`
 counters, and its multiplies read them unextended (`mult $v1,$s2`); with `u16` counters each multiply is preceded by an
