@@ -16,7 +16,14 @@ habits are read from the target, each also read from what every installed profil
 - a load whose result the very next instruction waits for while the instruction before it could have filled the
   gap: a build with scheduling off (`-fno-schedule-insns -fno-schedule-insns2`, as libraries were often built)
   keeps the C's order, where a scheduled build never leaves that. A leaf with no frame shows no other habit, so this alone told a library strcmp built that way from its game's
-  scheduled code (its saved C was 130 off under the game's settings and exact, as plain C, with scheduling off).
+  scheduled code (its saved C was 130 off under the game's settings and exact, as plain C, with scheduling off);
+- three that tell one GCC of a game from another (an N64 game built with KMC GCC 2.7.2 had eight near-matches stuck
+  at score 10 that were SN GCC 2.8.1 code; under it their saved C was exact or one edit away):
+  - a zero argument copied from a register just zeroed (`move $a1,$zero; move $a2,$a1`) or each set from `$zero`;
+  - a float literal loaded from memory (`lui $at; lwc1`) or built in a register (`lui $at; mtc1 $at`);
+  - a global's word loaded through its own address register (`lui $v1; lw $v1,%lo($v1)`) or into another one
+    (`lui $v0; lw $v1,%lo($v0)`).
+  Each is read from a probe function of its own, so the habits above keep the probes they always had.
 
 A habit the target doesn't show (no call, no division) counts neither way. Ranking only orders the profiles the
 deep pass measures (profile_climb); only the judge's linked verdict decides a match, and only the existing
@@ -46,7 +53,15 @@ float p_float(float x, float y) { return x * y + x; }
 extern void h(float);
 void p_late(float *a, float *b) { float x = a[0] - b[0], y = a[1] - b[1]; h(x * x + y * y); }
 int p_cmp(const unsigned char *a, const unsigned char *b) { int c, d; do { c = *a++; d = *b++; } while (c == d && c); return c - d; }
+extern int q_word; extern int q_table[4];
+int s_global(void) { return q_table[1] + q_word; }
+extern void k(int, int, int, int);
+void s_zero(int a) { k(a, 0, 0, 0); }
+float s_literal(float x) { return x * 1.5f + 0.25f; }
 """
+# the probe function each of the three GCC-telling habits is read from (the other habits never read these)
+SIGNAL_PROBES = {'s_global': 'address register kept for the load', 's_zero': 'zero copied between registers',
+                 's_literal': 'float literals loaded from memory'}
 
 _seen: dict[tuple[str, tuple[str, ...], bool], dict | None] = {}
 _lock = threading.Lock()
@@ -115,6 +130,84 @@ def traits(code: bytes, big_endian: bool = True) -> dict:
         out['unscheduled loads'] = True
     elif loads >= 3:
         out['unscheduled loads'] = False
+    out.update(gcc_signals(words))
+    return out
+
+
+def _zeroes(w: int) -> int:
+    """The register an instruction sets to zero from `$zero` (`move rd,$zero`, `li rd,0`), else 0."""
+    op, rs, rt, rd = w >> 26, (w >> 21) & 31, (w >> 16) & 31, (w >> 11) & 31
+    if op == 0 and w & 63 in (0x21, 0x25, 0x2D) and rs == 0 and rt == 0:
+        return rd
+    if op in (9, 0xD) and rs == 0 and w & 0xFFFF == 0:
+        return rt
+    return 0
+
+
+def gcc_signals(words: list[int]) -> dict:
+    """The three habits that tell one GCC of a game from another (the module's docstring); one absent when the code
+    shows it neither way, or both ways."""
+    out: dict = {}
+    # a zero copied from a register just zeroed, or several registers each set from $zero
+    copies = direct = 0
+    zeroed: dict[int, int] = {}  # register -> where it was zeroed
+    for k, w in enumerate(words):
+        op, rs, rt, rd = w >> 26, (w >> 21) & 31, (w >> 16) & 31, (w >> 11) & 31
+        source = rs or rt
+        if op == 0 and w & 63 in (0x21, 0x25, 0x2D) and rd and (rs == 0) != (rt == 0) \
+                and k - zeroed.get(source, -99) <= 4:
+            copies += 1
+        if reg := _zeroes(w):
+            direct += any(k - at <= 4 for r, at in zeroed.items() if r != reg)
+        for r in _writes(w):
+            zeroed.pop(r, None)
+        if reg := _zeroes(w):
+            zeroed[reg] = k
+    if copies:
+        out['zero copied between registers'] = True
+    elif direct:
+        out['zero copied between registers'] = False
+    # a float literal loaded from memory through $at, or built in $at and moved over
+    memory = register = 0
+    for w, nxt in zip(words, words[1:]):
+        if w >> 26 == 0xF and (w >> 16) & 31 == 1:  # lui $at
+            if nxt >> 26 == 0x31 and (nxt >> 21) & 31 == 1:  # lwc1 $fN, lo($at)
+                memory += 1
+            elif nxt >> 26 == 0x11 and (nxt >> 21) & 31 == 4 and (nxt >> 16) & 31 == 1:  # mtc1 $at, $fN
+                register += 1
+    if memory and not register:
+        out['float literals loaded from memory'] = True
+    elif register and not memory:
+        out['float literals loaded from memory'] = False
+    # a global's word loaded through its own address register, or into another one that the address then dies in
+    same = other = 0
+    for k, w in enumerate(words):
+        if w >> 26 != 0xF or (base := (w >> 16) & 31) in (0, 1):  # lui, not $at (the assembler's own)
+            continue
+        for j in range(k + 1, min(k + 5, len(words))):
+            u = words[j]
+            if u >> 26 in LOADS and (u >> 21) & 31 == base:
+                if (u >> 16) & 31 == base:
+                    same += 1
+                elif not any(base in _reads(v) for v in _until_written(words[j + 1:j + 9], base)):
+                    other += 1
+                break
+            if base in _writes(u) or base in _reads(u) or _slot(u):
+                break
+    if other and not same:
+        out['address register kept for the load'] = False
+    elif same >= 2 and not other:
+        out['address register kept for the load'] = True
+    return out
+
+
+def _until_written(words: list[int], reg: int) -> list[int]:
+    """The instructions up to and including the first that writes `reg` (or that ends the straight line)."""
+    out = []
+    for w in words:
+        out.append(w)
+        if reg in _writes(w) or _slot(w):
+            break
     return out
 
 
@@ -183,7 +276,7 @@ def _functions(obj: bytes) -> dict[str, bytes]:
         return {}
     index = elf.get_section_index('.text')
     starts = sorted({(s['st_value'], s.name) for s in symtab.iter_symbols()
-                     if s['st_shndx'] == index and s.name.startswith('p_')})
+                     if s['st_shndx'] == index and s.name.startswith(('p_', 's_'))})
     data = text.data()
     out = {}
     for i, (start, name) in enumerate(starts):
@@ -207,10 +300,12 @@ def profile_traits(toolchain: str, flags, big_endian: bool = True) -> dict | Non
             result = compile_source(cfg, '', PROBE)
             if result.ok:
                 found = {}
-                functions = _functions(result.obj)
+                every = _functions(result.obj)
+                functions = {name: code for name, code in every.items() if name not in SIGNAL_PROBES}
+                signals = set(SIGNAL_PROBES.values())
                 for name, code in functions.items():
                     for habit, value in traits(code, big_endian).items():
-                        if habit not in ('frame first', 'unscheduled loads'):
+                        if habit not in ('frame first', 'unscheduled loads') and habit not in signals:
                             found.setdefault(habit, set()).add(value)
                 found = {habit: values.pop() for habit, values in found.items() if len(values) == 1}
                 # (one unscheduled load anywhere shows the scheduler was off: the other probes may simply have none)
@@ -225,6 +320,10 @@ def profile_traits(toolchain: str, flags, big_endian: bool = True) -> dict | Non
                 late = traits(functions['p_late'], big_endian) if 'p_late' in functions else {}
                 if 'frame first' in late:
                     found['frame first'] = late['frame first']
+                for name, habit in SIGNAL_PROBES.items():
+                    shown = gcc_signals(_words(every[name], big_endian)) if name in every else {}
+                    if habit in shown:
+                        found[habit] = shown[habit]
     except Exception:  # noqa: BLE001 - a profile that can't be read is simply not ranked
         found = None
     with _lock:

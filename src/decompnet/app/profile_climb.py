@@ -213,7 +213,13 @@ def explore(search, agent, proj, fn, baseline, clean_profile=None):
             found = profile, clean_profile['score']
         else:
             source = fn['best_source']
-            found = lead(search, agent, proj, fn, source, baseline, check=check)
+            from .profile_detection import detected, settings
+            # (the profile compiler detection found for this C, already measured on it: climbed under first)
+            if (finding := detected(getattr(search, 'net', None), proj, fn)) is not None:
+                search.log(f"Climbing under the detected compiler profile {settings(finding['profile'])}.")
+                found = finding['profile'], finding['score']
+            else:
+                found = lead(search, agent, proj, fn, source, baseline, check=check)
         if found is not None:
             if found[1] == 0:
                 search.check()

@@ -159,11 +159,6 @@ class Console:
     # more such tables, each its own corpus: what no public source rebuilds, from the SDK's own archives as hashes
     # and names only, like decomp-toolkit's GameCube corpus (the N64's n_audio: tools/naudio_signatures.py)
     sdk_tables: tuple[str, ...] = ()
-    # SDK families known by name alone, as regular expressions over a function's full name: library code whose builds
-    # vary too much for every one to be in a table (the N64's remote-debug monitor, __rmon*, shorter in a retail
-    # build). A function the game's own symbols name so, next to one library detection found from the same family,
-    # is set aside as SDK with that evidence said (sdk_assembly.name_leads); never a verified digest
-    sdk_name_families: tuple[str, ...] = ()
     # PROJECT mode: choices the import asks about besides the compiler and scope, as (id, question, ((value, text), ...))
     # with the first value the default; create_project takes each as a keyword (Xbox: ltcg)
     import_options: tuple[tuple[str, str, tuple[tuple[str, str], ...]], ...] = ()

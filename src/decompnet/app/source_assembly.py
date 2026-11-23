@@ -30,7 +30,7 @@ def verified(proj, fn):
         from .sdk_assembly import known_proof
         current=known_proof(consoles.of(json.loads(proj['config'])),proj,fn)
         if not current or current['target_sha256']!=proof.get('target_sha256') or current['names']!=proof.get('names'):return False
-    elif proof.get('verification_method') in ('sdk-signature','user-confirmed','sdk-name'):
+    elif proof.get('verification_method') in ('sdk-signature','user-confirmed'):
         pass  # library detection's evidence: the target fingerprint below still has to be the one it saw
     elif proof.get('kind')=='sdk':
         try:

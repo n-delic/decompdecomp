@@ -62,9 +62,6 @@ class FakeNet:
     def fork_slug(self, slug):
         return None
 
-    def sdk_functions(self, proj):  # no library detection: the Deep Permuter's SDK step finds nothing
-        return {}
-
     def project_row(self, slug):
         return self.store.one("SELECT * FROM projects WHERE slug=?", slug)
 

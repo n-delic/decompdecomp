@@ -129,7 +129,7 @@ def test_the_set_aside_pass_asks_the_sdk_identity_before_asm_reason(monkeypatch)
     from decompnet.app import boundary_review, sdk_assembly, twins
     order = []
     monkeypatch.setattr(boundary_review, 'refresh', lambda *args: order.append('refresh'))
-    monkeypatch.setattr(sdk_assembly, 'set_aside_known', lambda net, proj: order.append('sdk') or 0)
+    monkeypatch.setattr(sdk_assembly, 'discover_known', lambda net, proj: order.append('sdk') or 0)
 
     @contextmanager
     def tx():

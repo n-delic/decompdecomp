@@ -836,7 +836,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Resumable source/profile queue and explicit assembly reconsideration | ✓ ROM | ✓ ROM | ✓ ROM | — | — | ✓ ROM | — | — owned-build adapter planned | — owned-build adapter planned | — | — owned-build adapter planned | — owned-build adapter planned |
 | Supplied assembly code/data verification | ✓ ROM driver | ✓ ROM driver | ✓ ROM driver | — | — | ✓ ROM driver | — | — own build adapter planned | — own build adapter planned | — | — own build adapter planned | — own build adapter planned |
 | Indexed SDK object assembly proof | ✓ MIPS ROM | ✓ MIPS ROM | ✓ MIPS ROM | — | — | ✓ MIPS ROM | — | — owned-build adapter planned | — owned-build adapter planned | — | — owned-build adapter planned | — owned-build adapter planned |
-| Library C that library detection finds set aside (opt-in, Libraries for this game; linked when your SDK has it; also at Deep Permuter start and in the set-aside pass) | ✓ MIPS ROM, built-in ultralib table; port glue and replaced only; the remote-debug monitor (`__rmon*`) also by family name beside detected code | ✓ MIPS ROM (no family names yet) | ✓ MIPS ROM (no family names yet) | — | — | ✓ MIPS ROM (no family names yet) | — | — owned-build adapter planned | — owned-build adapter planned | — | — owned-build adapter planned | — owned-build adapter planned |
+| Library C that library detection finds set aside (opt-in, Libraries for this game; linked when your SDK has it) | ✓ MIPS ROM, built-in ultralib table; port glue and replaced only | ✓ MIPS ROM | ✓ MIPS ROM | — | — | ✓ MIPS ROM | — | — owned-build adapter planned | — owned-build adapter planned | — | — owned-build adapter planned | — owned-build adapter planned |
 | Built-in exact SDK assembly detection before claims | ✓ bcmp/bzero | — pack planned | — pack planned | — | — | — pack planned | — | — pack planned | — pack planned | — | — pack planned | — owned-build adapter planned |
 | Exact C / verified source assembly / verified SDK assembly / other assembly / open counts | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ counts | ✓ counts | — | ✓ counts | ✓ counts |
 | Local mapped source preparation | ✓ | ✓ | ✓ | — | — | ✓ | — | body only¹ | body only¹ | — | body only¹ | body only¹ |
@@ -875,6 +875,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Your own compiler (Setup: another build of one it has) | ✓ | ✓ | ✓ | ✓ your SDK | — | ✓ | ✓ | — | ✓ your Visual C++, for 32-bit games (64-bit ones build with the pack's 2017) | ✓ your XDK | — | the project's own build |
 | Compiler ranges and suggestions | ✓ | ✓ | ✓ | ✓ (ps3dev GCC, your SDK's) | — | ✓ | — | from scratch: per source file (`try_compiler`, Settings); else the project's build | per source file (`try_compiler`, Settings) | per source file (`try_compiler`, Settings): Visual C++ 7.0 / 7.1, your XDK's own | from scratch: per source file (`try_compiler`, Settings); else the project's build | the project's build |
 | Verified cleanup of rare compiler profiles | ✓ ROM mode | ✓ ROM mode | ✓ ROM mode | — | — | ✓ ROM mode | — | — | — | — | — | — |
+| Deep Permuter detects a near-match's compiler (`profile_detection`: its saved C under every installed profile, matched neighbours, the compiler map, code habits; told and tried first) | ✓ demo; copies of three real games | ✓ shared ROM path, unchecked | ✓ shared ROM path, unchecked | ✓ judge and neighbours, unchecked (code habits: MIPS only) | — | ✓ shared ROM path, unchecked | — | — per-file compilers: planned | — per-file compilers: planned | — per-file compilers: planned | — per-file compilers: planned | — the project's build |
 | Flag search (`search_flags`) | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — (the project's flags only) | per source file (/Oy- on 32-bit, /O1, /Ob1) | per source file | — (the project's flags only) | the project's build |
 | Compiler map and the judge's survey | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ from scratch: per source file (its own compilers, nearest first); else the project's build | ✓ per source file, Rich header | the XDK build's compiler (no Rich header: one per game) | ✓ from scratch: per source file (its own compilers, nearest first); else the project's build | — |
 | Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ from scratch: per source file; else the project's build | ✓ over source files | ✓ | ✓ from scratch: per source file; else the project's build | — |
@@ -1051,19 +1052,6 @@ functions are set aside this way (`guLookAt`, `guPerspective`, `guMtxXFML`, libu
 units compile with the build's flags; `guTranslate` follows once an agent's claim on it ends. Left: the native
 libultraship build (Compile for PC) reading the same units, and a check that runs the port with them.
 
-libultra's remote-debug monitor (`__rmon*`, `rmon*`, and `kdebugserver`) is now set aside like the rest of the
-library. A retail N64 game had all 45 of its `__rmon` functions named by library detection, and they stayed open:
-the port kit called names it didn't know the game's own, so the library setting kept their C work, and the Deep
-Permuter asked only the digest tables, which have the debug archive's longer build. An agent matched
-`__rmonSendHeader` by hand. The kit now files the monitor as glue (a port stubs a debugger, as it does `osInitRdb`),
-the Deep Permuter and the set-aside pass run library detection too (`sdk_assembly.set_aside_known`, only for
-functions already bearing their library name), and a console can name SDK families
-(`Console.sdk_name_families`): a function the game's own symbols name so, next to one detection found from the same
-family, is set aside with that evidence (`verification_method` `sdk-name`), never as a digest. Left: family names for
-the other consoles' SDKs (PS1 PsyQ, PS2 and PSP), which need their own families and checks on real games; the
-monitor's static helper `send` (kdebugserver.c) only by signature, as its name is too common; project-mode builds,
-which need the owned-build adapter above.
-
 The WebAssembly port's N64 host boots any game, not only the racing game it was written on: it read that game's
 first C function by name (`boot_start`), its image end (0xA7FE0) and PAL, and held its own functions (its bzero at
 0x80091920, its 64-bit helpers, its names) for every game. The boot is now read from the ROM (the header's entry
@@ -1202,6 +1190,21 @@ and no matched-neighbours section in the brief either (`app/matched_neighbours.p
 the MIPS instruction look-alikes); GBA, PS3 and PS4 have no look-alike reader for it.
 
 ## Recently done
+
+- **The Deep Permuter detects which compiler built a near-match.** An N64 game built with KMC GCC 2.7.2 had eight
+  near-matches stuck at score 10 that were SN GCC 2.8.1 code. Under SN their saved C was exact, or one edit away. The
+  first sweep tried one compiler per family, and SN and KMC are both GCC. It also listened only for an exact match.
+  Now, for a saved best within 300 of a match, the sweep scores that C under every installed profile of the console
+  with the judge (cached per source and profile, counted against the compile allowance). It tries first the profiles
+  that the function's matched neighbours, the compiler map, its moves and its code habits point to. The code habits
+  now include three that tell one GCC from another: zeros copied between registers, float literals loaded from
+  memory, and globals loaded through their own address register (docs/learnings/finding/kmc-272-versus-sn-281-code-habits.md).
+  It then tries the best toolchain's `-mips2` and flag variants. An exact pair goes through the usual recheck and
+  suggestion. A clearly better profile (half the score or less), or a better one that three or more matched
+  neighbours were judged with, is recorded for that C. It goes into the function's notes, the run log, and a
+  words-only suggestion. The permuter probes every candidate under that profile first and climbs under it. Nothing
+  changes a function's compiler by itself (`app/profile_detection.py`). ROM projects only (see "Compiler detection
+  for project mode").
 
 - **Scores follow the flow, not the instruction count (score version 3).** On a large function one instruction added
   or removed shifted every later branch (and jump to the function's own symbol), and each one cost 10 or, for a
@@ -2297,6 +2300,16 @@ reuse the saved map. See [ROM Explorer](docs/ROM_EXPLORER.md) for support and li
   the time against 62% for the rest, because agents guessed the layouts.
 
 ## Next
+
+### Compiler detection for project mode
+
+The Deep Permuter's compiler detection (`app/profile_detection.py`) scores a near-match's saved C under every
+installed profile of a ROM project's console. Project mode does not get it yet. There, each source file has its own
+compiler (`Console.file_compiler`, `set_file_compiler`), and a fork's build owns its flags, so the sweep can't judge a
+function alone under another compiler. Next: score the unit under the compilers the console offers per file (the
+`try_compiler` path, `app/filecompilers.py`), and use the files around it as the neighbours. Offer a file compiler
+change as the same review-only suggestion. Every project-mode console: GameCube, Wii, Windows PC, Xbox, DS. PS4 and
+GBA ROM projects have no compiler choice to detect yet.
 
 ### Deep passes that climb under a closer compiler profile
 

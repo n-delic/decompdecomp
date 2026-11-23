@@ -15,8 +15,7 @@ from ..rom.symbols import Symbol
 from .source_assembly import fingerprint, verified
 
 PREFIX='sdk-object-reference:'
-# set aside on detection, no archive linked (signature_proof); 'sdk-name': by the console's family names alone
-SIGNATURE_METHODS=('sdk-signature','user-confirmed','sdk-name')
+SIGNATURE_METHODS=('sdk-signature','user-confirmed')  # set aside on detection, no archive linked (signature_proof)
 
 
 def index(db, path, corpus):
@@ -189,15 +188,13 @@ def save(net,proj,fn,proof):
         if db.execute('SELECT 1 FROM claims WHERE function_id=?',(fn['id'],)).fetchone():return False
         meta=json.loads(fresh['meta'] or '{}');meta['verified_assembly']=proof
         meta['sdk_display']={'name':proof['name'],'names':proof.get('names',[proof['name']]),'corpora':[proof['corpus']]}
-        meta['asm_code']=(('Library code known by its SDK family name' if proof.get('verification_method')=='sdk-name'
-                           else 'Library code found by library detection' if proof.get('verification_method') in (*SIGNATURE_METHODS, 'builtin-sdk-digest')
+        meta['asm_code']=(('Library code found by library detection' if proof.get('verification_method') in (*SIGNATURE_METHODS, 'builtin-sdk-digest')
                            else 'Library C your SDK archive reproduces byte for byte')+'; set aside from C matching by '
                           'this project\'s library setting.' if proof.get('from_c') else 'Verified SDK assembly; excluded from C matching.')
         db.execute("UPDATE functions SET status='asm',meta=? WHERE id=?",(json.dumps(meta),fn['id']))
         # SDK code is its own event, never "assembly-verified": that is the game's own hand-written assembly, still
         # the user's to look at, where this is library code a port replaces
-        how=('named so by the game\'s own symbols, beside library code' if proof.get('verification_method')=='sdk-name'
-             else 'found by library detection' if proof.get('verification_method') in (*SIGNATURE_METHODS,'builtin-sdk-digest')
+        how=('found by library detection' if proof.get('verification_method') in (*SIGNATURE_METHODS,'builtin-sdk-digest')
              else 'linked against your SDK')
         net._event(db,proj['id'],None,'sdk-verified',f"{fn['name']}: {proof['name']} ({how})")
     return True
@@ -290,70 +287,27 @@ def signature_proof(proj,fn,name,hint):
     identity, `Network.sdk_functions`), or the user confirmed it. Weaker than linking, and said so: it's never a
     match, and a changed target undoes it (`source_assembly.verified`)."""
     confirmed=hint.get('corpora')==['confirmed by the user']
-    by_name=bool(hint.get('name_family'))
-    if not confirmed and not by_name and not hint.get('fingerprint') and hint.get('evidence')!='recorded SDK signature':return None
+    if not confirmed and not hint.get('fingerprint') and hint.get('evidence')!='recorded SDK signature':return None
     return {'verified':True,'kind':'sdk','from_c':True,'alias_schema':1,'name':name,'names':[name],
             'corpus':(hint.get('corpora') or ['library detection'])[0],'corpora':list(hint.get('corpora') or []),
-            'verification_method':'user-confirmed' if confirmed else 'sdk-name' if by_name else 'sdk-signature',
-            'signature':hint.get('fingerprint'),**({'name_evidence':hint['name_family']} if by_name else {}),
+            'verification_method':'user-confirmed' if confirmed else 'sdk-signature','signature':hint.get('fingerprint'),
             'fingerprint':fingerprint(proj,fn),'target_sha256':hashlib.sha256(bytes(fn['target'] or b'')).hexdigest(),
             'evidence':(hint.get('evidence') or 'confirmed by the user')+'; set aside from C matching by this '
                        'project\'s library setting. Bytes not linked against an SDK archive; not matching C.',
             'at':time.time()}
 
 
-def name_leads(net,proj,hints):
-    """{function id: hint} for open functions known only by an SDK family name (`Console.sdk_name_families`): a
-    library build no table has (a retail N64 game's __rmon functions, shorter than the debug archive's) is still
-    the SDK's. The name must be the game's own (its symbols at import: no recorded rename, which an agent may have
-    chosen), and the function next to it in the image must be one library detection found (`hints`) or one already
-    set aside as SDK, of the same family: libraries link their objects together. Never chained from one name-only
-    function to the next, never a digest: the proof says it is a name (`signature_proof`, `sdk-name`)."""
-    import re
-    families=[re.compile(p) for p in net.console(proj).sdk_name_families]
-    if not families:return {}
-    from ..network import IN_BUILD
-    rows=net.project_store(proj['id']).all(f"SELECT id,name,vram,status,meta FROM functions WHERE project_id=? AND {IN_BUILD} "
-                                           "AND vram IS NOT NULL ORDER BY vram",proj['id'])
-    def family(row):
-        return next((f for f in families if f.fullmatch(row['name'])),None)
-    def library(row):
-        if row['id'] in hints:return True
-        proof=json.loads(row['meta'] or '{}').get('verified_assembly')
-        return row['status']=='asm' and isinstance(proof,dict) and proof.get('kind')=='sdk' and proof.get('verification_method')!='sdk-name'
-    out={}
-    for at,row in enumerate(rows):
-        if row['status']!='open' or row['id'] in hints or (found:=family(row)) is None:continue
-        meta=json.loads(row['meta'] or '{}')
-        if meta.get('naming') or meta.get('reopened'):continue  # renamed in the project: not the game's own symbols
-        beside=[rows[i] for i in (at-1,at+1) if 0<=i<len(rows)]
-        anchor=next((b for b in beside if family(b) is found and library(b)),None)
-        if anchor is None:continue
-        out[row['id']]={'names':[row['name']],'corpora':['SDK family name'],
-                        'name_family':{'pattern':found.pattern,'neighbour':anchor['name'],'neighbour_vram':anchor['vram']},
-                        'evidence':f"named {row['name']} by the game's own symbols, an SDK family name "
-                                   f"({found.pattern}), beside {anchor['name']} at 0x{anchor['vram']:08X}, which library "
-                                   'detection found; no signature or digest of this build is known'}
-    return out
-
-
-def discover_c(net,proj,stop=None,progress=None,*,function_id=None,check_cancel=None,named_only=False):
-    """Set aside the open functions library detection finds (`detected`, and `name_leads`), when the project chose
-    that (`SETTING`). Where the user's own SDK archive has the function, its object is linked at the function's
-    address and every code and data byte compared, as for SDK assembly; otherwise the detection is the evidence
-    (`signature_proof`). Background runs take 3 seconds a turn and resume; a user-started run (`stop`, an Event)
-    and the Deep Permuter's (`check_cancel`, or one `function_id`) do them all, report `progress` and stop when
-    asked. `named_only`: only functions that already bear the library's name, for the callers that run before SDK
-    naming has (the port goes by names: one set aside under its func_ name was never renamed, sdk_names)."""
+def discover_c(net,proj,stop=None,progress=None):
+    """Set aside the open functions library detection finds (`detected`), when the project chose that (`SETTING`).
+    Where the user's own SDK archive has the function, its object is linked at the function's address and every
+    code and data byte compared, as for SDK assembly; otherwise the detection is the evidence (`signature_proof`).
+    Background runs take 3 seconds a turn and resume; a user-started run (`stop`, an Event) does them all, reports
+    `progress` and stops when asked."""
     if not enabled(net,proj) or proj['arch']!='mips' or not net.is_rom(proj) or net.fork_slug(proj['slug']):return 0
     store=net.project_store(proj['id']);cursor_key='sdk-c-cursor:'+str(proj['id'])
-    whole=stop is not None or check_cancel is not None or function_id is not None
     saved=store.one('SELECT value FROM settings WHERE key=?',cursor_key)
-    cursor=0 if whole or not saved else int(saved['value'])
+    cursor=0 if stop is not None or not saved else int(saved['value'])
     hints=detected(net,proj)
-    hints=hints|name_leads(net,proj,hints)
-    if function_id is not None:
-        hints={k:v for k,v in hints.items() if k==function_id}
     if not hints:return 0
     rows=store.all("SELECT * FROM functions WHERE project_id=? AND status='open' AND id>? AND id IN (SELECT value FROM json_each(?)) ORDER BY id",
                    proj['id'],cursor,json.dumps(sorted(hints)))
@@ -361,19 +315,18 @@ def discover_c(net,proj,stop=None,progress=None,*,function_id=None,check_cancel=
     for done,fn in enumerate(rows):
         from .maintenance import checkpoint
         checkpoint()
-        if check_cancel is not None:check_cancel()
-        if stop is not None and stop.is_set() or not whole and time.monotonic()-started>3:
+        if stop is not None and stop.is_set() or stop is None and time.monotonic()-started>3:
             finished=False;break
         if progress:progress({'done':done,'total':len(rows),'set_aside':count,'function':fn['name']})
         examined=fn['id'];hint=hints[fn['id']]
         lead=_lead(net,proj,fn,hint)
-        if not lead or named_only and fn['name']!=lead[0] or store.one('SELECT 1 FROM claims WHERE function_id=?',fn['id']):continue
+        if not lead or store.one('SELECT 1 FROM claims WHERE function_id=?',fn['id']):continue
         proof=(verify(net,proj,fn,{'names':[lead[0]],'corpora':lead[1]},publish=False,from_c=True)
                or signature_proof(proj,fn,lead[0],hint))
         if proof and lead[2]:
             proof['port_source']=lead[2]  # the port builds ultralib's C for it (port/ultralib.units)
         if proof:count+=int(save(net,proj,fn,proof))
-    if not whole:
+    if stop is None:
         with store.tx() as db:
             db.execute('INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)',(cursor_key,str(0 if finished else examined)))
     return count
@@ -515,14 +468,3 @@ def discover_known(net, proj, *, function_id=None, check_cancel=None):
         if proof:
             count += int(save(net, proj, fn, proof))
     return count
-
-
-def set_aside_known(net, proj, *, function_id=None, check_cancel=None):
-    """Everything known as SDK, set aside before C work starts: the console's digests (`discover_known`) and the
-    library C detection finds, by signature or by family name (`discover_c`). The Deep Permuter and the set-aside
-    pass call it: with the digests alone, a retail N64 game's __rmon functions, found by signature, stayed open, and
-    agents and deep passes spent their budgets on a debugger a port stubs. Only functions already bearing their
-    library name, as this can run before SDK naming has."""
-    found = discover_known(net, proj, function_id=function_id, check_cancel=check_cancel)
-    return found + discover_c(net, net.project_row(proj['slug']), function_id=function_id,
-                              check_cancel=check_cancel, named_only=True)
