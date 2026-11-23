@@ -467,6 +467,31 @@ def test_poll_loop_without_strength_reduction_is_probed_with_its_spellings(monke
     assert all(flags == ['-O2', '-fno-strength-reduce'] for flags, _ in state['calls'][1:3])
 
 
+def test_goto_table_loop_with_the_table_idiom_is_probed_as_a_real_loop_with_the_unreduced_profile(monkeypatch):
+    """The real do/while, counter-compare guard and pointer-local store only pay off with the profile: judged joined."""
+    from decompnet.app import repair_ranking
+
+    net, proj, fn, state = setup()
+    proj['arch'] = 'mips'
+    net.cfg(proj)['compiler'] = {'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-O2']}
+    source = ('extern u8 gTable[];\nextern u8 gCount;\ns32 f(s32 a)\n{\n  u32 i;\n  s32 prev;\n  i = 0;\n  if (gCount != 0)\n  {\n'
+              '    loop:\n    {\n      *(s32 *)(gTable + ((prev & 0xFF) * 0x1A0)) = a;\n      prev = i;\n      i += 1;\n    }\n'
+              '    if (i < (u8) gCount) goto loop;\n  }\n  return prev;\n}\n')
+    fn.update(asm='/* 1 */  lui        $at, %hi(gTable)\n/* 2 */  addu       $at, $at, $v1\n', best_source=source, name='f', n_insns=20)
+    monkeypatch.setattr(repair_ranking, 'evidence', lambda *a: [])
+
+    def judge(proj, fn, toolchain, flags, source):
+        state['calls'].append((flags, source))
+        exact = ('-fno-strength-reduce' in flags and 'goto' not in source and 'store_ptr' in source
+                 and 'if (i < gCount)' in source)
+        return exact, SimpleNamespace(score=0 if exact else 400, rows=[]), ''
+
+    net._judge_with = judge
+    result = preflight.run(net, proj, fn, max_profiles=3)
+    assert result['best']['exact'] and '-fno-strength-reduce' in result['best']['flags']
+    assert state['calls'][0] == (['-O2'], source)
+
+
 def test_stepped_induction_loop_is_probed_as_counter_multiples_without_the_flag(monkeypatch):
     """A profile carrying -fno-strength-reduce and m2c's stepped pointers: the rewrite and the profile are judged together."""
     from decompnet.app import repair_ranking

@@ -72,7 +72,7 @@ def _run(net, proj, fn, log, check, max_profiles):
         if source := candidate(dict(fn).get('asm', ''), fn['name']):
             ranked = prioritized(proj, fn, own)
             probes.insert(1, (ranked[0] if ranked else list(own['flags']), source))
-    from decomprepair import guarded_loop_repairs, halfword_store_scheduling, strided_table_loop
+    from decomprepair import guarded_loop_repairs, halfword_store_scheduling, real_loop_unreduced, strided_table_loop
     context = net._context(proj['id'],fn['unit']) if hasattr(net,'_context') else None
     from .profile_hypotheses import float_sqrt_source
     sqrt_source = float_sqrt_source(own, dict(fn).get('asm') or '', fn['best_source'], fn['name'],
@@ -87,6 +87,10 @@ def _run(net, proj, fn, log, check, max_profiles):
     rename = getattr(net, 'rename_tokens', None)  # the source names symbols as the project renamed them
     named = dict(fn) | {'asm': rename(proj, dict(fn).get('asm') or '') if rename else dict(fn).get('asm') or ''}
     paired = [*paired, *strided_table_loop.probes(proj, named, own, context['header'] if context else '')]
+    # A table loop written with m2c's backward goto whose target holds the `lui $at; addu $at` table idiom: the real
+    # do/while, the counter-compare guard and a pointer-local store, joined with the profile without strength
+    # reduction (the real loop alone scored 4924 under the old profile, the profile alone nothing: one function 325 -> 255).
+    paired = [*paired, *real_loop_unreduced.probes(proj, named, own, context['header'] if context else '')]
     # Preserve this tiny joint frontier independently of isolated source scores.
     probes[1:1] = [(list(flags),source) for flags,source in paired]
     if (own['toolchain'] == 'gcc-2.7.2-kmc' and '-fno-strength-reduce' in own['flags']):
