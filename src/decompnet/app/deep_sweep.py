@@ -41,6 +41,20 @@ def looking(net):
 SIZE_CLASSES = (20, 60, 200)  # instructions: a function this small is a quick pass, and the small ones are where deep passes match
 
 
+DEFAULT_VARIANTS = 2500  # candidates per function a pass starts with (a function that is going to match usually does within a few thousand)
+# Which functions a pass searches first (the setting `function_order`): name -> what the form says.
+FUNCTION_ORDERS = {
+    'smart': 'Near misses first, then small functions',
+    'closest': 'Closest to matching (lowest score for its size)',
+    'lowest_score': 'Lowest score first',
+    'highest_score': 'Highest score first',
+    'smallest': 'Smallest first',
+    'largest': 'Largest first',
+    'address': 'In address order',
+    'random': 'In random order',
+}
+
+
 def size_class(instructions):
     """0..3 for up to 20, 21-60, 61-200 and over 200 instructions; a function of unknown size counts as middling."""
     if not instructions:
@@ -68,6 +82,31 @@ def order_key(row, details):
     score, size = info.get('best_score'), info.get('n_insns') or 0
     closeness = int(math.log2(1 + 8 * score / max(8, size))) if score else 0
     return (0, 0) if closeness == 0 else (1 + size_class(info.get('n_insns')), closeness)
+
+
+def order_functions(rows, details, how):
+    """`rows` (already shuffled, so ties stay random) in the order `how` names (FUNCTION_ORDERS); a function whose score,
+    size or address is not known yet goes last in every order but the random one."""
+    if how == 'smart':
+        return closeness_order(rows, details)
+    if how == 'random':
+        return list(rows)
+
+    def info(row):
+        return details.get(row['id']) or {}
+
+    def size(row):
+        return info(row).get('n_insns') or (row.get('size') or 0) // 4 or None
+    keys = {
+        'lowest_score': lambda row: (info(row).get('best_score') is None, info(row).get('best_score') or 0),
+        'highest_score': lambda row: (info(row).get('best_score') is None, -(info(row).get('best_score') or 0)),
+        'closest': lambda row: (info(row).get('best_score') is None or not size(row),
+                                (info(row).get('best_score') or 0) / max(8, size(row) or 8)),
+        'smallest': lambda row: (size(row) is None, size(row) or 0),
+        'largest': lambda row: (size(row) is None, -(size(row) or 0)),
+        'address': lambda row: (info(row).get('vram') is None, info(row).get('vram') or 0),
+    }
+    return sorted(rows, key=keys[how])
 
 
 def order_counts(rows, details):
@@ -244,7 +283,7 @@ class Sweeps:
         with looking(self.net):  # (its settings row: no saved files needed)
             proj = self.net.project_row(slug)
         row = self._store(slug).one('SELECT value FROM settings WHERE key=?', f'deep-sweep:{proj["id"]}')
-        return {'threads': 0, 'threads_per_function': 1, 'compiler_profiles': 1, 'loop': False, 'rank_candidates': False} | (json.loads(row['value']) if row else {'enabled': False, 'minutes': 5, 'max_variants': 10000})
+        return {'threads': 0, 'threads_per_function': 1, 'compiler_profiles': 1, 'loop': False, 'rank_candidates': False, 'function_order': 'smart'} | (json.loads(row['value']) if row else {'enabled': False, 'minutes': 5, 'max_variants': DEFAULT_VARIANTS})
 
     def save(self, slug, cfg):
         with looking(self.net):
@@ -373,7 +412,7 @@ class Sweeps:
         with self.jobs._lock:
             job = self.jobs.jobs.get(current.get('job'), {})
             live = {key:job[key] for key in ('state', 'progress', 'error') if key in job}
-        return cfg | {'control_only':True, 'threads_default':workers.default_workers(),
+        return cfg | {'control_only':True, 'threads_default':workers.default_workers(), 'threads_default_maximum':deep_throughput.lanes(True),
                       'runtime_seconds':runtime, 'has_activity':bool(job or cfg.get('metrics_started')), 'state':'idle', **current, **live}
 
     def status(self, slug):
@@ -430,7 +469,7 @@ class Sweeps:
         reset = self._store(slug).one('SELECT value FROM settings WHERE key=?', f'deep-metrics-reset:{proj["id"]}')
         has_activity = bool(job or improvements or recipes or measurements or wins
                             or cfg.get('metrics_started', bool((completed or errors) and not reset)))
-        return cfg | {'runtime_seconds': runtime, 'has_activity': has_activity, 'threads_default': workers.default_workers(),
+        return cfg | {'runtime_seconds': runtime, 'has_activity': has_activity, 'threads_default': workers.default_workers(), 'threads_default_maximum': deep_throughput.lanes(True),
                       'total': counts['total'], 'ready': ready, 'queue_done': done_open + done_matched,
                       'queue_left': max(0, ready - done_open - blocked), 'queue_rotated': rotated, 'queue_blocked': blocked, 'awaiting_source': max(0, counts['total'] - ready),
                                    'improved': len(improvements), 'improvements': improvements, 'recipes': recipes, 'recipe_wins': wins,
@@ -438,13 +477,15 @@ class Sweeps:
                                    'completed': completed, 'errors': errors, 'attention': attention, 'state': job.get('state', 'idle'), **current,
                                    'progress': job.get('progress', {}), 'error': job.get('error')}
 
-    def start(self, slug, minutes=5, max_variants=10000, repeat=False, threads=0, compiler_profiles=1, loop=False, threads_per_function=1, maximum_throughput=False, compile_slots=0, rank_candidates=False):
+    def start(self, slug, minutes=5, max_variants=DEFAULT_VARIANTS, repeat=False, threads=0, compiler_profiles=1, loop=False, threads_per_function=1, maximum_throughput=False, compile_slots=0, rank_candidates=False, function_order='smart'):
         throughput = deep_throughput.options(maximum_throughput, compile_slots)
         from . import deep_profiles
         if not isinstance(loop, bool):
             raise NetworkError('Loop indefinitely must be true or false.')
         if not isinstance(rank_candidates, bool):
             raise NetworkError('CPU constant ranking must be true or false.')
+        if function_order not in FUNCTION_ORDERS:
+            raise NetworkError('Choose which functions to search first: ' + ', '.join(FUNCTION_ORDERS) + '.')
         deep_profiles.validate(compiler_profiles)
         from .deep_parallel import validate_threads
         validate_threads(threads_per_function)
@@ -468,7 +509,7 @@ class Sweeps:
                                "(SELECT id FROM functions WHERE project_id=? AND status='open')", (pid,))
                     deep_source_recovery.reset(db, pid)
             self.save(slug, {'runtime_seconds': self.config(slug).get('runtime_seconds', 0),
-                             'enabled': True, 'minutes': minutes, 'max_variants': max_variants, 'threads': threads, 'threads_per_function': threads_per_function, 'compiler_profiles': compiler_profiles, 'metrics_started': True, 'loop': loop, 'rank_candidates': rank_candidates, **throughput})
+                             'enabled': True, 'minutes': minutes, 'max_variants': max_variants, 'threads': threads, 'threads_per_function': threads_per_function, 'compiler_profiles': compiler_profiles, 'metrics_started': True, 'loop': loop, 'rank_candidates': rank_candidates, 'function_order': function_order, **throughput})
             job = self.jobs.start('deep-permutation-pass', lambda log: self.timed_run(slug, minutes, max_variants, log, threads, loop),
                                   project=slug, cancel_message='Deep pass stopped. Verified improvements and completed passes are saved.')
             self.active[slug] = {'job': job}
@@ -633,12 +674,16 @@ class Sweeps:
                 if not order:
                     random.shuffle(identities)
                     details = {r['id']: dict(r) for r in self._store(slug).all(
-                        f"SELECT id,best_score,n_insns FROM functions WHERE project_id=? AND status='open' AND {IN_BUILD}", proj['id'])}
-                    identities = closeness_order(identities, details)
-                    if cycle == 1:
+                        f"SELECT id,best_score,n_insns,vram FROM functions WHERE project_id=? AND status='open' AND {IN_BUILD}", proj['id'])}
+                    how = self.config(slug).get('function_order', 'smart')
+                    how = how if how in FUNCTION_ORDERS else 'smart'
+                    identities = order_functions(identities, details, how)
+                    if cycle == 1 and how == 'smart':
                         near, *sizes = order_counts(identities, details)
                         log(f'Searching near misses first ({near}), then smaller functions: {sizes[0]} of up to {SIZE_CLASSES[0]} '
                             f'instructions, {sizes[1]} of up to {SIZE_CLASSES[1]}, {sizes[2]} of up to {SIZE_CLASSES[2]}, {sizes[3]} larger.')
+                    elif cycle == 1:
+                        log(f'Searching functions {FUNCTION_ORDERS[how][0].lower() + FUNCTION_ORDERS[how][1:]}.')
                     # Restore missing baselines before the bounded search queue fills.
                     identities.sort(key=lambda row: row['id'] not in unscored)
                     order.extend(r["id"] for r in identities)

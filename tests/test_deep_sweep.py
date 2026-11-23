@@ -1283,3 +1283,57 @@ def test_cpu_ranking_reopens_completed_sweep_and_reaches_search(sweep, monkeypat
     assert obj.run('game', 1, 10, Log())['functions_tested'] == 0
     with pytest.raises(NetworkError, match='CPU constant ranking'):
         obj.start('game', rank_candidates='yes')
+
+
+def rows_and_details():
+    rows = [{'id': i, 'name': f'f{i}', 'size': size} for i, size in enumerate([400, 40, 4000, 80, 16, 800], start=1)]
+    details = {1: {'best_score': 300, 'n_insns': 100, 'vram': 0x6000}, 2: {'best_score': 5, 'n_insns': 10, 'vram': 0x1000},
+               3: {'best_score': 2000, 'n_insns': 1000, 'vram': 0x3000}, 4: {'best_score': None, 'n_insns': 20, 'vram': 0x2000},
+               5: {'best_score': 0, 'n_insns': 4, 'vram': None}, 6: {'best_score': 40, 'n_insns': None, 'vram': 0x4000}}
+    return rows, details
+
+
+@pytest.mark.parametrize('how, expected', [
+    ('lowest_score', [5, 2, 6, 1, 3, 4]),        # (no score yet: last)
+    ('highest_score', [3, 1, 6, 2, 5, 4]),
+    ('smallest', [5, 2, 4, 1, 6, 3]),            # (a function with no instruction count falls back on its bytes / 4)
+    ('largest', [3, 6, 1, 4, 2, 5]),
+    ('address', [2, 4, 3, 6, 1, 5]),             # (no address: last)
+    ('closest', [5, 6, 2, 3, 1, 4]),             # (score per instruction; no score: last)
+    ('random', [1, 2, 3, 4, 5, 6]),              # (the shuffled order, as given)
+])
+def test_a_pass_takes_the_open_functions_in_the_order_chosen(how, expected):
+    rows, details = rows_and_details()
+    assert [row['id'] for row in deep_sweep.order_functions(rows, details, how)] == expected
+    assert set(deep_sweep.FUNCTION_ORDERS) >= {'smart', how}
+
+
+def test_the_smart_order_is_the_one_a_pass_always_used():
+    rows, details = rows_and_details()
+    assert deep_sweep.order_functions(rows, details, 'smart') == deep_sweep.closeness_order(rows, details)
+
+
+def test_a_pass_starts_at_2500_candidates_and_remembers_which_functions_to_search_first(sweep, monkeypatch):
+    obj, net, calls, path = sweep
+    assert deep_sweep.DEFAULT_VARIANTS == 2500 and obj.config('game')['max_variants'] == 2500
+    assert obj.config('game')['function_order'] == 'smart'
+    with pytest.raises(NetworkError, match='which functions to search first'):
+        obj.start('game', function_order='newest')
+    assert not obj.active
+    obj.start('game', function_order='largest')
+    assert obj.config('game')['function_order'] == 'largest'
+    status = obj.status('game')
+    assert status['function_order'] == 'largest' and status['threads_default_maximum'] >= status['threads_default'] - 2
+
+
+def test_functions_are_searched_in_the_order_the_project_chose(sweep, monkeypatch):
+    obj, net, calls, path = sweep
+    with net.store.tx() as db:
+        for name, size, score in (('f0', 64, 90), ('f1', 8, 10)):
+            db.execute('UPDATE functions SET size=?,best_score=?,n_insns=? WHERE name=?', (size, score, size // 4, name))
+    obj.start('game', function_order='largest')
+    for _ in range(300):
+        if calls == ['f0', 'f1']:break
+        import time
+        time.sleep(.02)
+    assert calls[:2] == ['f0', 'f1']

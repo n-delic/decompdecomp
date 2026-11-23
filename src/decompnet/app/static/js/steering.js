@@ -2649,7 +2649,15 @@ function renderDeepImprovementTable(status, resultHost) {
     button.onclick = () => { closeDialog(); openFn(rows[Number(button.dataset.deepResult)].function); };
   });
 }
+// What "Functions at a time" means when it is left empty depends on the mode: the app's cores less two in balanced mode, and
+// in maximum throughput one and a half per core (each is a process of its own that mostly waits for its compiles).
+let deepSweepThreadDefaults = {};
+function renderDeepThreadPlaceholder() {
+  const count = $("deepSweepMaximum").checked ? deepSweepThreadDefaults.maximum || deepSweepThreadDefaults.balanced : deepSweepThreadDefaults.balanced;
+  $("deepSweepThreads").placeholder = count ? `auto (${count})` : "auto";
+}
 function renderDeepOptionsSummary() {
+  if (typeof renderDeepThreadPlaceholder === "function") renderDeepThreadPlaceholder();
   const minutes = Number($("deepSweepMinutes").value) || 5;
   $("deepSweepOptionsSummary").textContent = `${minutes} min per function${$("deepSweepMaximum").checked ? " · maximum CPU" : ""}${$("deepSweepRankCandidates").checked ? " · CPU ranking" : ""}${$("deepSweepLoop").checked ? " · looping" : ""}`;
 }
@@ -2808,13 +2816,15 @@ async function renderDeepSweep() {
       $("deepSweepFunctionThreads").value = status.threads_per_function || 1;
       $("deepSweepMaximum").checked = !!status.maximum_throughput;
       $("deepSweepRankCandidates").checked = !!status.rank_candidates;
+      $("deepSweepOrder").value = status.function_order || "smart";
       $("deepSweepCompileSlots").value = status.compile_slots || "";
       $("deepSweepRepeat").checked = false;
       $("deepSweepLoop").checked = !!status.loop;
     }
     renderDeepQueueState(status);
     renderDeepActivity(status.state === "running" ? status.progress || {} : {...(status.progress || {}), workers:[]});
-    $("deepSweepThreads").placeholder = status.threads_default ? `auto (${status.threads_default})` : "auto";
+    deepSweepThreadDefaults = {balanced:status.threads_default, maximum:status.threads_default_maximum};
+    renderDeepThreadPlaceholder();
     if (status.state === "running" && deepSweepFollowing?.job !== status.job) followDeepSweep(slug, status.job);
     clearTimeout(timeout);
     const totalsTimeout = setTimeout(() => controller.abort(), 15000);
@@ -2929,7 +2939,7 @@ async function startDeepSweep() {
   let job = null;
   const runAgain = deepSweepSnapshot?.has_activity && !deepSweepSnapshot.queue_left && !!deepSweepSnapshot.queue_done;
   try {
-    const result = await api("/api/permuter/pass", {method:"POST", body:{slug, action:"start", minutes:Number($("deepSweepMinutes").value), max_variants:Number($("deepSweepVariants").value), compiler_profiles:Number($("deepSweepProfiles").value), repeat:$("deepSweepRepeat").checked || runAgain, loop:$("deepSweepLoop").checked, threads:Number($("deepSweepThreads").value) || 0, threads_per_function:Number($("deepSweepFunctionThreads").value), maximum_throughput:$("deepSweepMaximum").checked, rank_candidates:$("deepSweepRankCandidates").checked, compile_slots:Number($("deepSweepCompileSlots").value) || 0}});
+    const result = await api("/api/permuter/pass", {method:"POST", body:{slug, action:"start", minutes:Number($("deepSweepMinutes").value), max_variants:Number($("deepSweepVariants").value), compiler_profiles:Number($("deepSweepProfiles").value), repeat:$("deepSweepRepeat").checked || runAgain, loop:$("deepSweepLoop").checked, threads:Number($("deepSweepThreads").value) || 0, threads_per_function:Number($("deepSweepFunctionThreads").value), maximum_throughput:$("deepSweepMaximum").checked, rank_candidates:$("deepSweepRankCandidates").checked, compile_slots:Number($("deepSweepCompileSlots").value) || 0, function_order:$("deepSweepOrder").value}});
     job = result.job;
     if (S.slug === slug) renderDeepQueueState(result);
   } catch (error) {
