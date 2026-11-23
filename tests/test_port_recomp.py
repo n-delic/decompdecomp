@@ -477,6 +477,12 @@ def test_a_guarded_function_runs_what_ram_holds_or_the_interpreter(tmp_path):
     assert f"{{0x80126480u, 8u, 0x{recomp.code_hash(other):08X}u, R_func_80126480_b}}" in bridges
     assert "if (port_recomp_shared((uint32_t)vram) && port_mips_has_code((uint32_t)vram))" in bridges
     assert "int port_recomp_guard(" in (out / "funcs.h").read_text()
+    # RECOMP_FUNC is weak: a stub bridges.c defines for a name a recompiled file defines overrides its real body. A
+    # puzzle game's overlays at one address (all but the first listed) then ran as empty functions and the main loop
+    # reloaded the overlays for ever.
+    for name in ("func_80126480_a", "func_80126480_b"):
+        assert f"RECOMP_FUNC void R_{name}(" in "".join(p.read_text() for p in out.glob("rec_funcs_*.c"))
+        assert f"void R_{name}(uint8_t* rdram, recomp_context* ctx) {{ (void)rdram;" not in bridges
 
 
 def test_the_ram_hash_in_c_is_the_roms_hash_in_python(tmp_path):

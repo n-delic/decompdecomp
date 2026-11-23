@@ -587,7 +587,9 @@ def prepare(folder: Path, out: Path, game_h: str, fixed: list[str], hosts: list[
     by_name = {}
     for vram, (_, name, c, _) in choice.items():
         by_name.setdefault(name.removesuffix("_recomp"), []).append((vram, c or name))
-    for n in sorted(seen - names - {c for _, _, c, _ in choice.values() if c}):
+    # (not what a recompiled file defines: RECOMP_FUNC is weak, so a stub here overrode the real body of every
+    # overlay's function at an address several share, and the game's entry for that overlay did nothing)
+    for n in sorted(seen - names - final_defined - {c for _, _, c, _ in choice.values() if c}):
         if f"R_{n}" in covered:
             continue
         library = library_names.get(n.removesuffix("_recomp"), n.removesuffix("_recomp"))
