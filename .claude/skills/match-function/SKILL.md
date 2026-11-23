@@ -534,6 +534,15 @@ says the fix and the library families it names; try those families with `prove_c
   `x >= 3` together), `switch_range_trim` (the aliases of `default:` outside the target's `addiu`/`sltiu` range) and
   `volatile_cast_unpin` (a volatile load cannot fill a delay slot, and the `nop` moves every later table entry).
 
+- **A display-list builder whose draft has two pointer chains (`var_t0 = var_t1 - 4`, `temp_t0 = var_t0 + 8`, `M2C_FIELD(temp_t0, s32 *, -4)` /
+  `(prev, s32 *, 8)`) and a cursor advanced by `+ 0x38` / `+ 0x18` per arm** (KMC 2.7.2, a 369-instruction N64 sprite-tile
+  builder, 10891 after 340 attempts -> 0): that is the loop pass's own reduction of one cursor written as the SDK macros on
+  `Gfx *_g = gfx++`; write the macros (`gDPSetTile`, `gSPTextureRectangle`, ... on `gfx++`, the format field as the argument
+  itself, the rectangle whole in each arm with its operands `a * 4`, `b * 4`, `s * 4`, `t * 4` as locals before the hi-res
+  branch) and gcc gives back the second register, the -4/0 stores and the chunked increments. A hand-written
+  `g->w0 = ..; g->w1 = ..; g++` without the `_g` copy gives one register and a worse score. decomp-repair
+  `gbi_loop_cursor` writes the macros and `hoisted_invariant_inline` the invariants back (docs/learnings/function/display-list-local-cursor-macros.md);
+  the clamp order, signed `x1`/`y1`, in-place operands and the `for` header after them are still by hand.
 - **A cursor walk that kept an extra saved register (`$fp`), a byte copy that must survive in one arm, a global read that
   must stay a temporary** (KMC 2.7.2, a 384-instruction sound-entity starter, 2696 -> 0, nine library families;
   docs/learnings/function/sound-entity-starter-narrow-copy-and-counter-forms.md). loop.c reduces a pointer stepped beside a
