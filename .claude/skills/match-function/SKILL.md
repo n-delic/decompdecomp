@@ -570,6 +570,15 @@ says the fix and the library families it names; try those families with `prove_c
   statement order and spelling alternatives (ranked by differing rows: 635 -> 180 -> 120 -> 60 -> 0), not by the score. A parameter
   copied in a different order at entry means the original parameter was narrow (`s16`): its conversion insn is emitted last.
 
+- **Two loads in the wrong order in one block, every statement order the same: the one that is set once is boosted.**
+  `sched.c` schedules backwards and launches an insn whose destination pseudo is set exactly once
+  (`birthing_insn_p`, the `7f000001` priority in the `;;` lines of the `-dS` dump) as soon as it is ready. A masked update
+  written `p->w = (u32)((p->w & M) | O)` loads into such a pseudo and goes ahead of a float load into a register that has
+  several sets; written as a local updated by separate statements (`w = p->w; w &= M; w |= O; p->w = w;`, the local declared
+  one place above the last) the load is not boosted and the target's order comes (60 -> 0, decomp-repair
+  `rmw_user_local_steps`; docs/learnings/function/player-update-routine-chain.md). A 25-line program with the same few
+  statements reproduces the order in a second: do that before spelling variants on the real function.
+
 ## 3a. The fast tools (use them before writing variants by hand)
 
 - **A claim starts with several sources.** `setup.py` prints the saved best, its plain form (`plain_best.py`:
