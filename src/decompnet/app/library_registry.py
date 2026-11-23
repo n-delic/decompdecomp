@@ -12,11 +12,14 @@ from decomprepair import registry
 EXPLICIT = frozenset()   # declared modules that stay wired by hand because the order of their call matters
 
 
-def runnable(lane, arch=None, unlimited=False):
-    """The declared repairs for `lane` ('draft' or 'local'), in registry order. A draft pass with no limit is the beam's."""
+def runnable(lane, arch=None, unlimited=False, directives=False):
+    """The declared repairs for `lane` ('draft' or 'local'), in registry order. A draft pass with no limit is the beam's.
+    `directives`: only the repairs that read the function's own `#` lines (the registry's `directives` flag, a library newer
+    than the one that added it has it), which the draft pass runs on a function it otherwise masks."""
     lanes = (lane, 'beam') if lane == 'draft' and unlimited else (lane,)
     return [repair for repair in registry.all()
-            if repair.module not in EXPLICIT and any(repair.runs_in(item, arch) for item in lanes)]
+            if repair.module not in EXPLICIT and any(repair.runs_in(item, arch) for item in lanes)
+            and (not directives or getattr(repair, 'directives', False))]
 
 
 def families():

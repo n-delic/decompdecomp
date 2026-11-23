@@ -664,7 +664,13 @@ def _spelled(source: str, name: str, arch: str, asm: str = '', flags=(), labels=
             safe_header = macro_repairs.prepare(header)[0] or ''
             choices = variants(masked,name,arch,asm,flags,inner_labels,limit=None,header=safe_header,tables=tables,callees=callees,entry_scope=None)
             return [(inner_labels[text],text) for text in choices]
-        choices = early + _generated(macro_repairs.variants, source,name,generate,header)
+        # A repair that reads the function's own `#` lines (a hand-written `#define` naming a stack slot) is run on the text as
+        # written, before the masking path, which blanks them and takes minutes on a long function: a draft with a
+        # `volatile struct` frame and `#define sp14 stack.filter` never reached the registry, so no chain left its 2760.
+        context = library_registry.draft_context(source, name, header, arch, asm, flags)
+        directive = [pair for repair in library_registry.runnable('draft', arch, unlimited=limit is None, directives=True)
+                     for pair in registry.pairs(repair, _generated(repair.function(), **repair.arguments(context)))]
+        choices = early + directive + _generated(macro_repairs.variants, source,name,generate,header)
         if labels is not None:labels.update({text:family for family,text in choices})
         return [text for _,text in choices][:limit] if limit is not None else [text for _,text in choices]
     body = clean[opening + 1:end].rstrip()
