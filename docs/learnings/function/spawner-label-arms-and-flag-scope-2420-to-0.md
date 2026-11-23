@@ -26,7 +26,12 @@ Eight edits, each one a library family now (decomp-repair, `prove_chain` from th
 | 4 | every `goto set_kind_flags`/`block_75`/`block_76`/`setup_path_kind` arm carries its own copy of the run, with `v`, `mask`, `kind`, `flag` block-local, literals folded, `t = v & M; X = t \| K` as `v &= M; v \|= K; X = v`; the arm's earlier statements between the `\|=` and the store; word updates written `X = (X & M) \| K` get the same form | 865 / 140 | 1855 -> 140 | `switch_label_arms`, `switch_label_arms_mixed` |
 | 5 | `do { arg15_flag = arg15 << 0x18; } while (0); if (arg15_flag != 0)` | 25 better on the draft | 140 -> 0 | `parameter_test_scope` (offered with the arms as `switch_label_arms_scoped`) |
 
-`prove_chain` order from the saved best: steps 1, 2, 3, then the one child that has steps 4 and 5 together (1855 -> 0).
+`prove_chain` from the saved best (the families of decomp-repair #1365, #1367, #1370; 12-60 children scored per step):
+step 1 is the one child that has steps 4 and 5 together (`switch_label_arms_scoped`, 2420 -> 1165), step 2 is
+`narrow_return_compare` (-> 415), and then steps 2 and 3 of the table (`switch_range_trim`, `volatile_cast_unpin`) are each
+worse alone at that point (460 and 555) and 0 together: `switch_range_trim_unpin` offers them as one child (the chain
+stalled at 415 until it existed). Every other order has a step that is worse alone, which is why the families offer the
+combinations as single children.
 The family modules declare themselves in the decomp-repair registry; the app needs no wiring.
 
 Why each was invisible:
