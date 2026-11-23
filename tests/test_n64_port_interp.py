@@ -509,3 +509,24 @@ const unsigned port_mips_pattern_count = 1;
     result = subprocess.run([str(binary), str(data), '3', '5'], capture_output=True, text=True, timeout=30, check=True)
     fields = result.stdout.split()
     assert int(fields[0], 16) == 35 and fields[14] == '1'
+
+
+def mfc0(rt, rd): return 0x40000000 | REG.get(rt, rt) << 16 | rd << 11
+def mtc0(rt, rd): return 0x40800000 | REG.get(rt, rt) << 16 | rd << 11
+SYSCALL, ERET = 12, 0x42000018
+
+
+def test_a_syscall_is_an_exception_the_games_own_handler_answers(run):
+    """An overlay game's thunks are `syscall N` words and its exception handler (the jump libultra's osInitialize
+    copies to 0x80000180) sends EPC on to a dispatcher; the interpreter skipped the syscall, so every call into an
+    overlay did nothing. The syscall takes the exception (EPC is its address, Cause says syscall), the handler runs
+    from RAM, and eret goes where EPC says: here, past the syscall and its slot."""
+    handler = CODE + 0x200
+    jump = 0x08000000 | (handler & 0x0FFFFFFF) >> 2
+    prog = [*_data_base(), lui("t0", 0x8000), ori("t0", "t0", 0x0180), lui("t1", jump >> 16), ori("t1", "t1", jump & 0xFFFF),
+            sw("t1", 0, "t0"), SYSCALL, NOP, addiu("v0", "zero", 77), JR_RA, NOP]
+    prog += [NOP] * (0x200 // 4 - len(prog))
+    prog += [mfc0("t2", 13), sw("t2", 0, "t9"), mfc0("t3", 14), addiu("t3", "t3", 8), mtc0("t3", 14), ERET, NOP]
+    out = run(prog)
+    assert out["v0"] == 77  # the handler's eret resumed past the syscall
+    assert out["data"][0] == 8 << 2  # Cause.ExcCode: syscall

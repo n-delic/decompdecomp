@@ -540,3 +540,14 @@ def test_a_call_at_a_tlb_mapped_address_finds_the_code_at_its_window():
     head = body[:body.index("unsigned lo = 0")]
     assert "port_tlb_canon((uint32_t)vram)" in head and "port_tlb_n" in head
     assert "uint32_t port_tlb_canon(uint32_t a);" in text[:text.index("recomp_func_t *get_function(")]
+
+
+def test_a_function_that_raises_a_syscall_is_left_to_the_interpreter():
+    """An overlay game's thunks are `syscall N` words answered by its own exception handler: recompiled C has no
+    exception to take (the host printed 'reached a syscall' and did nothing, so every call into an overlay did
+    nothing), the interpreter runs such a function from RAM."""
+    thunk = ("RECOMP_FUNC void func_80088310(uint8_t* rdram, recomp_context* ctx) {\n"
+             "    // 0x80088310: syscall     5\n    recomp_syscall_handler(rdram, ctx, 0x80088310);\n    return;\n;}\n")
+    plain = ("RECOMP_FUNC void func_80088320(uint8_t* rdram, recomp_context* ctx) {\n"
+             "    ctx->r2 = 1;\n    return;\n;}\n")
+    assert recomp.unfinished([thunk + plain]) == {"func_80088310"}

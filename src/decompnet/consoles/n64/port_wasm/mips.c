@@ -211,7 +211,7 @@ uint32_t port_mips_slot(const uint64_t *r, int n) {
 
 /* ---------------------------------------------------------------- the interpreter */
 
-typedef struct { uint64_t r[32], hi, lo; uint32_t f[32], fcr31, status, entry_hi, tlb_index, entry_lo[2], page_mask; } Cpu;
+typedef struct { uint64_t r[32], hi, lo; uint32_t f[32], fcr31, status, entry_hi, tlb_index, entry_lo[2], page_mask, cause, epc; } Cpu;
 static int tracing = -1;
 
 HOT int64_t sx32(uint32_t v) { return (int64_t)(int32_t)v; }
@@ -360,7 +360,7 @@ static int step(Cpu *c, uint32_t pc, uint32_t op, uint32_t *target) {
     case 14: r[rt] = r[rs] ^ uimm; break;
     case 15: r[rt] = sx32(uimm << 16); break;
     case 16: { /* COP0 */
-        uint32_t *reg = rd == 12 ? &c->status : rd == 10 ? &c->entry_hi : rd == 0 ? &c->tlb_index :
+        uint32_t *reg = rd == 12 ? &c->status : rd == 13 ? &c->cause : rd == 14 ? &c->epc : rd == 10 ? &c->entry_hi : rd == 0 ? &c->tlb_index :
                         rd == 5 ? &c->page_mask : rd == 2 || rd == 3 ? &c->entry_lo[rd - 2] : NULL;
         if (rs == 0 || rs == 1)
             r[rt] = rd == 9 ? sx32(w2c_env_0x5F_builtin_mips_read_count(0)) : reg ? sx32(*reg) : 0;
@@ -492,6 +492,25 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
             break;
         }
         if (op) zeros = 0;
+        if ((op >> 26) == 0 && (op & 63) == 12 && fetch(0x80000180u)) {
+            /* syscall: an exception, taken as the console takes it. The game installed its own handler at the general
+               exception vector (libultra's osInitialize copies a jump to __osException there), and a game's handler
+               can use SYSCALL on purpose: an overlay game's thunks are `syscall N` words, and its handler sends EPC to
+               a dispatcher that reads N from the thunk, loads the overlay and calls it. Skipping the syscall left
+               every call into an overlay doing nothing. EPC is the syscall's own address, Cause says
+               "syscall", and Status.EXL is set until the handler's eret. */
+            c.epc = pc;
+            c.cause = 8u << 2;
+            c.status |= 2u;
+            pc = 0x80000180u;
+            continue;
+        }
+        if (op == 0x42000018u && (c.status & 2u)) {
+            /* eret out of such an exception: back to where EPC says (the handler may have moved it), EXL cleared */
+            c.status &= ~2u;
+            pc = c.epc;
+            continue;
+        }
         if (op == 0x42000018u) {
             /* eret: libultra's thread dispatch ends with it, and nothing returns from it: it resumes another thread.
                The interpreter has no exception model (the host runs the game's threads), so running on into the

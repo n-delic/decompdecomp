@@ -397,13 +397,17 @@ def _addresses(fixed: list[str]) -> dict[str, int]:
 
 def unfinished(texts) -> set[str]:
     """The recompiled functions whose C can't compile as N64Recomp wrote it: a branch to a label the function doesn't
-    have (a racing game's func_800424C0 branched past its end in the split, to L_80042650). Each runs only as the
-    game's C, or is a stub that says so."""
+    have (a racing game's func_800424C0 branched past its end in the split, to L_80042650), and those that raise a
+    SYSCALL. Each runs only as the game's C, or is a stub that says so (the interpreter runs it from RAM)."""
     from ..csource import items
     out = set()
     for text in texts:
         for chunk, name, _ in items(text):
             if name and set(re.findall(r"goto (L_[0-9A-Fa-f]+);", chunk)) - set(re.findall(r"^\s*(L_[0-9A-Fa-f]+):", chunk, re.M)):
+                out.add(name)
+            # a SYSCALL is an exception the game's own handler answers (an overlay game's thunks are `syscall N`
+            # words): recompiled C has no exception to take, so the interpreter runs such a function from RAM
+            elif name and "recomp_syscall_handler(" in chunk:
                 out.add(name)
     return out
 
