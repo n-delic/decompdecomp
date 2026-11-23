@@ -231,6 +231,7 @@ def test_live_metrics_count_only_verified_strict_improvements_and_keep_starting_
     efficiency=metrics.pop('efficiency')
     assert efficiency['first_exact_check']==5 and efficiency['model_tokens']==0
     assert metrics.pop('elapsed') >= 0
+    assert metrics.pop('phases')['local repairs']['improvements'] == 4  # judged against the caller's best, like recipe_wins
     # the run chart: the measured baseline, then each verified strict improvement (not the equal or the second baseline)
     assert metrics.pop('history') == [{'tested':0,'score':50},{'tested':2,'score':30},{'tested':5,'score':20},
                                       {'tested':7,'score':0}]
@@ -1756,3 +1757,27 @@ def test_extensions_are_reported_in_the_progress_metrics(monkeypatch):
     search.check()
     assert search.metrics()['extensions'] == 1
     assert _budget_search(monkeypatch, extendable=False).metrics()['extension_max'] == 0
+
+
+def test_phase_tally_attributes_tests_and_wins_to_the_phase_that_ran_them(monkeypatch):
+    from decompnet.repair_feedback import trial
+
+    net = setup(monkeypatch)
+    fn, proj = net.function(), net.project_row('game')
+    search = deep_permuter.Search(net, 1, 30, Log(), fn)
+    answers = iter([(40, 'scored'), (30, 'scored'), (50, 'scored'), (0, 'scored')])
+    def judge(self, *args):
+        result, self._trial_outcome = next(answers)
+        return result
+    monkeypatch.setattr(Permuter, '_score', judge)
+    with trial({'family': 'typed_temporary'}):
+        search.phase = 'local repairs'
+        for i in range(3):
+            search._score(AGENT, proj, fn, f'local {i}', 40, None)
+    with trial({'family': 'x', 'kind': 'random rewrite'}):
+        search._score(AGENT, proj, fn, 'random 0', 30, None)
+    summary = search.phase_summary()
+    assert summary['local repairs']['tested'] == 3 and summary['local repairs']['improvements'] == 1
+    assert summary['local repairs']['score_gain'] == 10
+    assert summary['random rewrites'] == {'tested': 1, 'improvements': 1, 'matches': 1, 'score_gain': 30, 'seconds': summary['random rewrites']['seconds']}
+    assert search.metrics()['phases'] == summary
