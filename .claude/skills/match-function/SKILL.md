@@ -446,6 +446,16 @@ says the fix and the library families it names; try those families with `prove_c
   complement after the sum keeps the mask live into the sum (no shared register), and a sum variable shared with a
   disjoint local of another block is global, so the `and` ties to the complement instead (`complement_late_plain_reads`,
   `disjoint_local_merge_swap`; docs/learnings/function/heap-bump-arm-complement-tie.md).
+- **Identical arms the target keeps apart, and a shared pointer that swaps registers** (a tile lookup, KMC 2.7.2, 6175 -> 0;
+  docs/learnings/finding/tile-lookup-arm-chains-and-crossjump.md). The final `jump_optimize` cross-jumps two jumps to one
+  label whose preceding insns match (commutative ops in either operand order, same hard registers) all the way back to the
+  conditional jump, *unless the label was made during that pass* (`jump_chain` partners are searched only for labels older
+  than the pass): give each arm its own copy of the shared tail and the first tail merge makes the new label, so the arms'
+  chains are never compared (`label_run_copy`). A pointer set in several arms (`goto L; L: return *p << 7;`) is a global
+  pseudo, coloured after every arm's local quantities, which swaps `$v0`/`$v1` and also changes reorg's delay-slot choice
+  for the `return 0` test (`bnel` with a private pointer, `bne` shared: `shared_return_split`). Make the index term the
+  pointer operand (`(u8 *)(i * K) + (int)bank`) to tie the sum to it, put a `do { } while (0);` around the row product to
+  outrank the index chain, and read a masked parameter through a `u8` copy (`tile_arm_chains`).
 - **Flag words and widths:** bit-field structs for flag words; `u8`/`u16` widths keep or drop masks; overwrite a
   parameter after copying it (`arg = arg_in; arg_in = 0;`).
 
