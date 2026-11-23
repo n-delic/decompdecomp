@@ -27,11 +27,13 @@ def families():
     return tuple(family for repair in registry.all() for family in repair.families)
 
 
-def draft_context(source, name, header, arch, asm, flags, words=None):
+def draft_context(source, name, header, arch, asm, flags, words=None, callees=''):
     """What the declared repairs may ask for. `words`: {symbol: the 32-bit word at its address} for the function's float
-    constants (float_literal_words.read), the game data the library can't read itself."""
+    constants (float_literal_words.read), the game data the library can't read itself. `callees`: the matched C of the
+    function's callees (capture_followup_repairs.callee_evidence), a callee's own parameters for a family that changes a
+    call (missing_call_argument_local); a library older than the registry's `callees` key never asks for it."""
     return dict(source=source, name=name, header=header or '', arch=arch, asm=asm or '', flags=tuple(flags or ()),
-                words=dict(words or {}))
+                words=dict(words or {}), callees=callees or '')
 
 
 def local_calls(context):

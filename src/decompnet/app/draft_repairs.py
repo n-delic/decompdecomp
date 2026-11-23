@@ -669,7 +669,7 @@ def _spelled(source: str, name: str, arch: str, asm: str = '', flags=(), labels=
         # A repair that reads the function's own `#` lines (a hand-written `#define` naming a stack slot) is run on the text as
         # written, before the masking path, which blanks them and takes minutes on a long function: a draft with a
         # `volatile struct` frame and `#define sp14 stack.filter` never reached the registry, so no chain left its 2760.
-        context = library_registry.draft_context(source, name, header, arch, asm, flags, words)
+        context = library_registry.draft_context(source, name, header, arch, asm, flags, words, callees)
         directive = [pair for repair in library_registry.runnable('draft', arch, unlimited=limit is None, directives=True)
                      for pair in registry.pairs(repair, _generated(repair.function(), **repair.arguments(context)))]
         choices = early + directive + _generated(macro_repairs.variants, source,name,generate,header)
@@ -955,7 +955,7 @@ def _spelled(source: str, name: str, arch: str, asm: str = '', flags=(), labels=
             labels[text] = family
     # The library's self-declared modules (decomprepair.registry): each is called with the context it declares it needs, in
     # its declared order, so a new module needs no wiring here. The beam's unlimited pass also runs the `beam` lane.
-    context = library_registry.draft_context(source, name, header, arch, asm, flags, words)
+    context = library_registry.draft_context(source, name, header, arch, asm, flags, words, callees)
     for repair in library_registry.runnable('draft', arch, unlimited=limit is None):
         for family, text in registry.pairs(repair, _generated(repair.function(), **repair.arguments(context))):
             proposals.append(text)

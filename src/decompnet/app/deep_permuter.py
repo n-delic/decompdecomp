@@ -565,8 +565,13 @@ class Search(Permuter):
         flags = ()
         if any('flags' in item.needs for item in library_registry.runnable('local', arch)):
             flags = [] if self.net.fork_slug(proj['slug']) else compiler_for(self.net.cfg(proj), fn['vram'], fn).get('flags', [])
+        # (the callees' matched C only when a declared repair asks for it: a missing call argument's prototype)
+        callees = ''
+        if any('callees' in item.needs for item in library_registry.runnable('local', arch)):
+            callees = draft_repairs.capture_followup_repairs.callee_evidence(self.net, proj, fn, source)
         calls += library_registry.local_calls(library_registry.draft_context(source, name, header, arch, asm, flags,
-                                                                             float_literal_words.read(self.net, proj, fn)))
+                                                                             float_literal_words.read(self.net, proj, fn),
+                                                                             callees))
         register = permuter_focus.classify(rows, arch) == 'register'
         if register:
             calls.append((L + 'identical_float_guard.variants', (source, name, header, arch)))
