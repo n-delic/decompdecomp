@@ -138,3 +138,21 @@ def test_main_says_what_a_bad_marker_is(tmp_path, capsys):
     path = tmp_path / "c.c"
     path.write_text("/*{*/a/*|*/b")
     assert grid.main([str(path), "--count"]) == 2 and "grid:" in capsys.readouterr().err
+
+
+def test_candidates_compiling_to_identical_code_get_the_invariant_spelling_hint(capsys, tmp_path):
+    invariant = load("invariant")
+    assert invariant.groups([("a", "x"), ("b", "x"), ("c", "x"), ("d", "y"), ("e", None)]) == [["a", "b", "c"]]
+    assert invariant.hint([("a", "x"), ("b", "x")]) == []  # two can be one cosmetic edit
+    line = invariant.hint([(str(i), "x") for i in range(6)])[0]
+    assert line.startswith("hint: 6 distinct candidates (0, 1, 2, 3 and 2 more) compiled to identical instructions")
+    assert "signatures.py" in line and "explain_regs.py" in line
+
+    class Same(Stub):
+        def judge(self, source, diff=False, rows=None):
+            return {"score": 7, "code": "same"}
+    path = tmp_path / "g.c"
+    path.write_text(SOURCE)
+    assert grid.main([str(path), "--slug", "s", "--function", "f", "--jobs", "1"], make_judge=Same) == 0
+    assert "36 distinct candidates" in capsys.readouterr().err
+

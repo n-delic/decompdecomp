@@ -15,7 +15,9 @@ Requests:
   bytes differ from the hosted ones (another build of the game). With "diff": true the reply also carries "diff", the
   app's own side-by-side rows for the candidate, the first "rows" of them (default 60; the last line counts the rest)
   (DiffResult.render: the same normalisation compile_and_diff shows). With "raw_rows": true it carries "rows", every
-  (marker, target, candidate) row of that diff, unrendered (the skill's region view, regions.py).
+  (marker, target, candidate) row of that diff, unrendered (the skill's region view, regions.py). Every compiled reply
+  carries "code", a digest of the candidate's instructions: two sources with one digest compiled the same (the skill's
+  invariant-spelling hint, invariant.py).
 - {"op": "function", "slug", "name", "vram" (optional, for overlays)} -> {"name", "vram", "target" (hex), "unit",
   "arch", "asm" (the target's assembly text), "header" (the project's typedefs and externs the judge prepends),
   "compiler": {"toolchain", "flags"} (this function's own profile), "tables" ([[low, [targets...]], ...]: its jump
@@ -109,6 +111,9 @@ def judge(net, request: dict) -> dict:
         shown = {"diff": diff.render(max_rows=rows if isinstance(rows, int) and rows > 0 else 60, more_hint=False)}
     if request.get("raw_rows") and diff is not None:
         shown["rows"] = [list(row) for row in diff.rows]
+    if getattr(diff, "rows", None) is not None:  # what the candidate compiled to, so the skill sees spellings that make identical code
+        import hashlib
+        shown["code"] = hashlib.sha1("\n".join(str(row[2]) for row in diff.rows).encode()).hexdigest()[:16]
     if matched:
         return {"score": 0, "detail": "byte-identical", **shown}
     if diff is None:

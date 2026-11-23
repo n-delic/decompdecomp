@@ -101,6 +101,9 @@ def test_the_worker_shows_sixty_rows_by_default_and_all_of_them_on_request(tmp_p
     short = hosted_judge.judge(net, request)["diff"]
     assert len(short.splitlines()) < 70 and "more rows not shown" in short and "last_diff" not in short
     assert len(hosted_judge.judge(net, request | {"rows": 10})["diff"].splitlines()) < 20
+    diff.rows = rows  # every compiled reply carries a digest of the candidate's code (invariant.py's hint)
+    code = hosted_judge.judge(net, request)["code"]
+    assert len(code) == 16 and code == hosted_judge.judge(net, request | {"diff": False})["code"]
     full = hosted_judge.judge(net, request | {"rows": 10**9})["diff"]
     assert "more rows not shown" not in full and len(full.splitlines()) > 200
 

@@ -575,7 +575,14 @@ says the fix and the library families it names; try those families with `prove_c
 ## 3b. Out of hand-written shapes? Trace the compiler instead of guessing
 
 Three or four structurally different sources landing on the same score (or the same missing/extra instruction) means
-the shape is decided by a compiler pass, not by how you spell the C. Stop writing variants and find the pass:
+the shape is decided by a compiler pass, not by how you spell the C. Stop writing variants and find the pass.
+
+**Invariant spellings mean the cause is elsewhere.** When distinct spellings of one block compile to *identical
+instructions* (grid.py and fast_judge.py with several files print a `hint:` line when three do), the compiler
+normalises that block: no fourth spelling moves it. Look at what feeds or consumes it instead: the call arguments
+next to it (`signatures.py`: a stray argument decided a cursor block twelve spellings could not), values live across
+it (`explain_regs.py` `cause:` lines), the matched neighbours' C for the same idiom, and the statements just before
+and after it.
 
 1. **Dump the compiler's own intermediate code.** The pinned GCC `cc1` is a native binary you can run directly
    (`<toolchains>/gcc-2.7.2-kmc/cc1`; the folder is `~/Library/Application Support/decompnet/toolchains` on macOS,
