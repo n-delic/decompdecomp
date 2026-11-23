@@ -40,6 +40,7 @@ from pathlib import Path
 from ... import consoles, limits, toolchains
 from ...network import NetworkError
 from .. import ultralib
+from . import library_data
 
 HERE = Path(__file__).parent
 # The game's C as wasm32 IR, unoptimised: LLVM's load combining would assume little-endian memory, which beir.py and
@@ -1072,6 +1073,26 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
             for made in (stale, stale.with_name(stale.name + ".key")):
                 made.unlink(missing_ok=True)
 
+    if library and runtime_image:
+        # the state ultralib's C shares (alGlobals) is the game's variable at the game's address
+        try:
+            shared, own = library_data.pair(out, set(library), manifest.get("layout") or [], library_names or {},
+                                       Path(runtime_image).read_bytes(),
+                                       next((int(r.split()[1], 16) for r in fixed if r.split()[0] == "entrypoint"),
+                                            0x80000400),
+                                       {r.split()[0] for r in fixed})
+        except (OSError, ImportError, ValueError) as error:
+            shared, own = {}, {}
+            log(f"the game's addresses for ultralib's shared variables weren't read: {error}")
+        if shared or own:
+            fixed = (fixed + [f"{name} 0x{address:08X} data" for name, address in sorted(shared.items())]
+                     + [f"{name} 0x{address:08X} func" for name, address in sorted(own.items())])
+            _write(out / "fixed.txt", "\n".join(fixed) + "\n")
+            if shared:
+                log("ultralib's " + ", ".join(sorted(shared)) + " are the game's own variables at "
+                    + ", ".join(f"{a:08X}" for a in sorted(shared.values())))
+            if own:
+                log(f"ultralib's functions are at the game's addresses ({len(own)})")
     progress.start(STEPS[2])
     log("one signature per function")
     lls = sorted((out / "ll").glob("*.ll"))
