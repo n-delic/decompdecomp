@@ -556,6 +556,26 @@ def test_renamed_strlen_uses_the_host_signature(tmp_path):
     assert "strlen\ti32\tptr" in sigs.read_text().splitlines()
 
 
+def test_the_host_keeps_libultras_osSetIntMask_arity(tmp_path):
+    """A game's header declared `osSetIntMask` with two parameters (the longest declaration wins among a game's own),
+    so wasm2c's import took two and conflicted with the host's one: the host build failed for that game. libultra's
+    prototype wins."""
+    import subprocess
+    import sys
+
+    from decompnet.port.wasm.build import HERE
+
+    source = tmp_path / "caller.ll"
+    source.write_text("declare i32 @osSetIntMask(i32, ptr)\n")
+    aliases = tmp_path / "renames.txt"
+    aliases.write_text("")
+    sigs = tmp_path / "sigs.txt"
+    known = get("n64").port_kit.wasm / "libultra.sigs"
+    subprocess.run([sys.executable, HERE / "sigs.py", sigs, known, aliases, source],
+                   check=True, capture_output=True, text=True)
+    assert "osSetIntMask\ti32\ti32" in sigs.read_text().splitlines()
+
+
 def test_library_code_with_no_c_is_called_by_its_library_name(tmp_path):
     """A racing game's bzero kept its automatic name (`func_8003DDC0`): the host stubbed it to nothing. Library
     detection's name goes to the host, which answers bzero by name in any game; a name another file defines wins."""

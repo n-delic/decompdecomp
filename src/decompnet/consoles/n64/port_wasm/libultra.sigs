@@ -85,3 +85,4 @@ osCartRomInit	ptr
 osEPiStartDma	i32	ptr, ptr, i32
 osEPiReadIo	i32	ptr, i32, ptr
 osEPiWriteIo	i32	ptr, i32, i32
+osSetIntMask	i32	i32

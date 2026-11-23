@@ -94,6 +94,12 @@ def main():
         run(cmake, "-S", source, "-B", build, *common, *options, env=env)
         run(cmake, "--build", build, "--parallel", "4", *targets, env=build_env)
         if source == sdl:
+            # SDL's install makes libSDL2.dylib with `execute_process(COMMAND <cmake> -E create_symlink ...)`, which
+            # splits at the space in macOS's "Application Support" (where the toolchains live) and leaves no link;
+            # the install then stops on the missing file. Make the link first.
+            link = build / "libSDL2.dylib"
+            if not link.exists() and not link.is_symlink():
+                link.symlink_to("libSDL2-2.0.dylib")
             run(cmake, "--install", build, env=env)
 
     src = rt64 / "src"
