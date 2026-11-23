@@ -355,7 +355,7 @@ async function followJob(id, logEl, onUpdate, active = () => true) {
       const err = new Error(job.error || (job.state === "cancelled" ? "Cancelled." : "The job failed. Try again."));
       err.job = job; throw err;
     }
-    await sleep(JOB_POLL_MS);
+    await sleep(document.hidden ? JOB_POLL_MS * 10 : JOB_POLL_MS);  // (a minimised window polls a tenth as often)
   }
 }
 

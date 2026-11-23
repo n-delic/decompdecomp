@@ -2879,6 +2879,10 @@ async function followDeepSweep(slug, job) {
     await followJob(job, log, (_, state) => {
       const progress = state.progress || {};
       if (S.slug !== slug || deepSweepFollowing !== following) return;
+      // Nobody sees the panel in a minimised window or on another tab: the search runs on in the app, and
+      // finishing (or coming back) redraws it, so drawing the activity and fetching the 10 MB of results now would
+      // only spend the web view's CPU.
+      if (document.hidden || (S.tab && S.tab !== "matching")) return;
       renderDeepActivity((state.state || deepSweepSnapshot?.state) !== "running" ? {...progress, workers:[]} : progress);
       if (!refreshing && $("deepSweepPanel").dataset.statusLoading !== slug && Date.now() - lastResults >= 5000) {
         refreshing = true; lastResults = Date.now();
