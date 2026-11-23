@@ -999,10 +999,11 @@ def register(app: App) -> None:
             raise ValueError('Choose start, stop, reset-metrics or export-metrics for the deep pass.')
         if not isinstance(data.get('repeat', False), bool):
             raise ValueError('Repeat must be true or false.')
-        return sweeps.start(slug, data.get('minutes', 5), data.get('max_variants', 10000), data.get('repeat', False),
+        from ..deep_sweep import DEFAULT_VARIANTS
+        return sweeps.start(slug, data.get('minutes', 5), data.get('max_variants', DEFAULT_VARIANTS), data.get('repeat', False),
                             data.get('threads', 0), data.get('compiler_profiles', 1), data.get('loop', False),
                             data.get('threads_per_function', 1), data.get('maximum_throughput', False), data.get('compile_slots', 0),
-                            data.get('rank_candidates', False))
+                            data.get('rank_candidates', False), data.get('function_order', 'smart'))
 
     def p_function_notes(slug, request, data):
         from ..function_history import notes_page

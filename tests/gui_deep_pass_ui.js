@@ -344,7 +344,7 @@ vm.runInContext(source.slice(source.indexOf("let deepSweepFollowing"), source.in
 // Search controls occur once, in the settings drawer’s movable fieldset.
 const html=fs.readFileSync('src/decompnet/app/static/index.html','utf8');
 const panel=html.slice(html.indexOf('id="deepSweepPanel"'),html.indexOf('id="deepSweepAttention"'));
-for (const id of ['deepSweepMinutes','deepSweepVariants','deepSweepProfiles','deepSweepRankCandidates','deepSweepThreads','deepSweepFunctionThreads','deepSweepRepeat','deepSweepLoop']) {
+for (const id of ['deepSweepMinutes','deepSweepVariants','deepSweepProfiles','deepSweepRankCandidates','deepSweepThreads','deepSweepFunctionThreads','deepSweepRepeat','deepSweepLoop','deepSweepOrder']) {
   assert.equal((panel.match(new RegExp('id="'+id+'"','g')) || []).length,1,`${id} must occur exactly once`);
 }
 assert.match(panel,/<fieldset class="local-search-options"[\s\S]*?id="deepSweepProfiles"[^>]*min="1"[^>]*max="16"[\s\S]*?<\/fieldset>/);
@@ -358,3 +358,12 @@ assert.doesNotMatch(panel, /deepSweepStatusRetry|Retry status/);
 assert.match(panel, /id="deepSweepCounts"[\s\S]*?id="deepSweepMetricEligible"/);
 assert.doesNotMatch(panel, /deepSweepPreparation|deepSweepRunChecked|deepSweepWaitingGroup/);
 assert.ok(html.indexOf('id="deepActivitySection"') < html.indexOf('id="deepSweepThroughput"'));
+
+// The defaults a new project's form starts with: 2,500 candidates a function, and the order a pass takes functions in.
+assert.match(panel,/id="deepSweepVariants"[^>]*value="2500"/);
+const orders=[...panel.match(/<select id="deepSweepOrder">([\s\S]*?)<\/select>/)[1].matchAll(/value="([a-z_]+)"/g)].map(m=>m[1]);
+assert.deepEqual(orders,['smart','closest','lowest_score','highest_score','smallest','largest','address','random']);
+// "Functions at a time" left empty means a different number in each mode.
+const steering=fs.readFileSync('src/decompnet/app/static/js/steering.js','utf8');
+assert.match(steering,/deepSweepThreadDefaults\.maximum/);
+assert.match(steering,/function_order:\$\("deepSweepOrder"\)\.value/);
