@@ -196,6 +196,24 @@ UP_TO_END = [_lui(T0, 0x800B), _addiu(T0, T0, 0x1000), _lui(T1, 0x800C), _sw0(0,
              _bne(T0, T1, -3), 0, 0x0C000000 | (0x80001234 >> 2) & 0x3FFFFFF, 0]
 
 
+def _jal(addr): return 3 << 26 | (addr >> 2) & 0x3FFFFFF
+def _jalr(rs): return rs << 21 | 31 << 11 | 9
+def _sltu(rd, rs, rt): return rs << 21 | rt << 16 | rd << 11 | 0x2B
+def _move_zero(rd): return rd << 11 | 0x21
+BREAK = 0x0D
+A0, A1, A2 = 4, 5, 6
+# an entry routine that fills a stack with a pattern and clears its BSS with one word-fill helper (`jal fill`, $a0 =
+# start, $a1 = end, $a2 = the word, here set in the delay slot), then calls the game's first function and breaks
+FILL_HELPER = [_addiu(A1, A1, -4, op=8), _sltu(T0, A0, A1), 4 << 26 | T0 << 16 | 3 & 0xFFFF, 0x2B << 26 | A0 << 21 | A2 << 16,
+               _sltu(T0, A0, A1), _bne(0, T0, -3), _addiu(A0, A0, 4, op=8), _jr(31), 0]
+FILL_ENTRY = [_lui(A0, 0x800A), _addiu(A0, A0, 0x1000), _lui(A1, 0x800B), _addiu(A1, A1, 0), _lui(A2, 0x5555),
+              _addiu(A2, A2, 0x5555, op=0x0D), _jal(0x80000448), 0, _lui(A0, 0x800B), _addiu(A0, A0, 0x3210),
+              _lui(A1, 0x800C), _addiu(A1, A1, 0x10), _jal(0x80000448), _move_zero(A2), _jal(0x80001234), 0, BREAK, 0,
+              *FILL_HELPER]
+# a game that sets up the TLB through a helper and starts at the virtual address its code is mapped at
+TLB_ENTRY = [_lui(SP, 0x803F), _jal(0x80000420), 0, _lui(A0, 0x29), _addiu(A0, A0, 0x2E00), _jalr(A0), 0, BREAK,
+             _jr(31), 0]
+
 # what the boot code needs around it: the ROM, and the console's RAM and RSP memories as two small arrays
 _BOOT_HARNESS = """#include <stdint.h>
 #include <stdio.h>
@@ -216,6 +234,10 @@ static uint32_t be32(uint32_t a) { uint8_t *p = at(a); return (uint32_t)p[0] << 
     # made for CIC-6103, whose header names an entry 0x100000 above where the game runs (a racing game's 0x80100400)
     (COUNT_DOWN, 0x80100400, b"P", "80000400 80026E00 8004AAA0 93840 0", 0x0B050EE0),
     (COUNT_DOWN, 0x80200400, b"E", "80000400 80026E00 8004AAA0 93840 1", 0xACC8580A),  # CIC-6106: 0x200000
+    # the first call is a fill helper, not the game: its zero fill is the BSS, and the call before a `break` starts the game
+    (FILL_ENTRY, 0x80000400, b"E", "80000400 80001234 800B3210 CE00 1", None),
+    # a start address below KSEG0 (a `jalr` to a TLB-mapped 0x00292E00) is the same code at its KSEG0 address
+    (TLB_ENTRY, 0x80000400, b"E", "80000400 80292E00 00000000 0 1", None),
 ])
 def test_any_games_boot_is_read_from_its_entry_routine(tmp_path, words, entry, region, want, crc):
     """The host named one racing game's first C function (boot_start) and where its image ended (0xA7FE0); another

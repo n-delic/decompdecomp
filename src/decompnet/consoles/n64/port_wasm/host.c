@@ -1097,26 +1097,69 @@ static void boot_leftovers(void) {
     for (uint32_t a = 0xA4000000u; a < 0xA4002000u; a += 4) wbe32(a, chip->sp_fill); /* DMEM, then IMEM */
     if (chip->id) { wbe32(0xA4001000u, chip->id); wbe32(0x80000310u, chip->id); } /* osCicId */
 }
+/* The effect of one instruction of the entry routine on the registers it builds addresses in (not a branch). */
+static void boot_step(uint32_t *r, uint32_t w) {
+    uint32_t op = w >> 26, rs = (w >> 21) & 31, rt = (w >> 16) & 31, rd = (w >> 11) & 31, fn = w & 0x3F;
+    int32_t imm = (int16_t)(w & 0xFFFF);
+    if (op == 0x0F) r[rt] = (w & 0xFFFF) << 16;                                          /* lui */
+    else if (op == 0x08 || op == 0x09) r[rt] = r[rs] + (uint32_t)imm;                    /* addi, addiu */
+    else if (op == 0x0D) r[rt] = r[rs] | (w & 0xFFFF);                                   /* ori */
+    else if (op == 0 && (fn == 0x20 || fn == 0x21)) r[rd] = r[rs] + r[rt];               /* add, addu (move) */
+    else if (op == 0 && fn == 0x25) r[rd] = r[rs] | r[rt];                               /* or */
+    r[0] = 0;
+}
+/* Whether a call in the entry routine reaches a loop that stores $a2 through $a0 a word at a time: the helper some
+   entry routines fill a stack with a pattern and clear their BSS with (`jal fill` with $a0 = start, $a1 = end,
+   $a2 = the word), which is not the game's first function. */
+static int boot_is_fill(uint32_t at) {
+    if (at < boot.entry || at - boot.entry >= 0x100000u) return 0;
+    size_t off = 0x1000 + (at - boot.entry);
+    int stores = 0, loops = 0;
+    for (int k = 0; k < 10 && off + 4 * (size_t)k + 4 <= rom_size; k++) {
+        uint32_t w = rom32(off + 4 * (size_t)k), op = w >> 26;
+        if (op == 0x2B && ((w >> 21) & 31) == 4 && ((w >> 16) & 31) == 6 && !(w & 0xFFFF)) stores = 1; /* sw $a2, 0($a0) */
+        if ((op == 0x04 || op == 0x05) && (int16_t)(w & 0xFFFF) < 0) loops = 1;                      /* a branch back */
+    }
+    return stores && loops;
+}
 static int read_boot(void) {
     uint32_t r[32] = {0}, pre[32] = {0};
     int base = -1;
     boot.entry = boot_entry();
+    /* a call is the game's first function when only a `break` follows it; one with more code after it is a helper
+       (a fill, a TLB setup) the routine returns from */
+    int last_jump = -1;
+    for (int i = 0; i < 64; i++) {
+        uint32_t w = rom32(0x1000 + 4 * (size_t)i), op = w >> 26;
+        if (op == 2 && ((boot.entry & 0xF0000000u) | (w & 0x03FFFFFFu) << 2) == boot.entry + 4 * (uint32_t)i) continue; /* `j .` */
+        if (op == 2 || op == 3 || (op == 0 && ((w & 0x3F) == 8 || (w & 0x3F) == 9) && ((w >> 21) & 31) != 31)) last_jump = i;
+    }
     for (int i = 0; i < 64; i++) {
         uint32_t w = rom32(0x1000 + 4 * (size_t)i), op = w >> 26, rs = (w >> 21) & 31, rt = (w >> 16) & 31;
         int32_t imm = (int16_t)(w & 0xFFFF);
-        if (op == 0x0F) r[rt] = (w & 0xFFFF) << 16;                                     /* lui */
-        else if (op == 0x08 || op == 0x09) r[rt] = r[rs] + (uint32_t)imm;               /* addi, addiu */
-        else if (op == 0x0D) r[rt] = r[rs] | (w & 0xFFFF);                              /* ori */
-        else if (op == 0x2B && rt == 0 && base < 0) {                                    /* sw $zero: the BSS */
+        int call = op == 0x03 || (op == 0 && (w & 0x3F) == 9), jump = op == 0x02 || (op == 0 && (w & 0x3F) == 8 && rs != 31);
+        if (call || jump) {
+            uint32_t to = op == 0 ? r[rs] : (boot.entry & 0xF0000000u) | (w & 0x03FFFFFFu) << 2;
+            uint32_t after = rom32(0x1000 + 4 * (size_t)i + 8);
+            int ends = jump || (after & 0xFC00003Fu) == 0x0D || i >= last_jump;           /* break, or no jump follows */
+            boot_step(r, rom32(0x1000 + 4 * (size_t)i + 4));                              /* the delay slot runs first */
+            if (ends) { boot.target = to; break; }
+            if (op == 0x03 && boot_is_fill(to) && !r[6] && r[5] > r[4] && !boot.bss_size) { /* the zero fill: the BSS */
+                boot.bss = r[4]; boot.bss_size = r[5] - r[4];
+            }
+            i++;
+            continue;
+        }
+        if (op == 0x2B && rt == 0 && base < 0) {                                         /* sw $zero: the BSS */
             boot.bss = r[rs] + (uint32_t)imm; base = (int)rs; memcpy(pre, r, sizeof r);
         } else if (op == 0x05 && base >= 0 && !boot.bss_size) {                         /* bne: the loop, back */
             if (rt == 0 && (int)rs != base) boot.bss_size = pre[rs];                     /* a count down */
             else if (rt) boot.bss_size = (rs == (uint32_t)base ? pre[rt] : pre[rs]) - boot.bss; /* up to an end */
-        } else if (op == 0x02 || op == 0x03) {                                           /* j, jal */
-            boot.target = (boot.entry & 0xF0000000u) | (w & 0x03FFFFFFu) << 2; break;
-        } else if (op == 0 && (w & 0x3F) == 8 && rs != 31) { boot.target = r[rs]; break; } /* jr */
-        if (op == 0x0F || op == 0x08 || op == 0x09 || op == 0x0D) r[0] = 0;
+        } else boot_step(r, w);
     }
+    /* a game that maps its code through the TLB at the address it has in RAM starts at that virtual address (a
+       `jalr` to 0x00292E00): the same code runs at its KSEG0 address */
+    if (boot.target && boot.target < 0x00800000u) boot.target |= 0x80000000u;
     /* the header's region: Europe and Australia are PAL, Brazil MPAL, the rest NTSC (osTvType 0, 2, 1) */
     char region = rom_size > 0x3E ? (char)rom[0x3E] : 'E';
     boot.tv = strchr("DFHIPSUWXY", region) ? 0 : region == 'B' ? 2 : 1;
