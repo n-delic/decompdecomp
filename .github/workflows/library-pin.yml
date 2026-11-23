@@ -6,7 +6,11 @@
 # pin, since wiring it needs the new tag installed: the run goes red, its summary names the unreached modules, and an
 # issue is opened too when the repository has issues turned on (this one does not, so the red run is the alarm).
 # Smoke tests failing does block it: nothing is merged, the run goes red.
-# Needs no secret: the workflow's own token opens and merges the PR (Settings > Actions allows it, and main isn't protected).
+# The library's release workflow also starts this run right after each release (its last step, which needs the secret
+# DECOMPDECOMP_DISPATCH_TOKEN there), because GitHub delays and often skips scheduled runs; the cron stays as the
+# fallback. Back-to-back runs are safe: they queue in one concurrency group, a run finding the pin already current does
+# nothing, and a pin branch/PR that exists is reused rather than duplicated.
+# Needs no secret here: the workflow's own token opens and merges the PR (Settings > Actions allows it, and main isn't protected).
 name: library-pin
 on:
   schedule:
