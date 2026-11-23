@@ -177,3 +177,34 @@ def test_rom_builtin_names_use_guarded_rename_instead_of_blanket_skip(sdk_case,m
     assert name_functions(net,'demo')==0
     assert calls==[('func_80001000','memcpy')]
     assert net._function('func_80001000','demo')
+
+
+def _mips(*words):
+    import struct
+    return b"".join(struct.pack(">I", w) for w in words)
+
+
+def test_address_pairs_the_split_left_unrecorded_still_fingerprint_like_the_recorded_copy():
+    """The same libultra routine as a game's boot copy, in a segment it loads at run time, came without its `%hi/%lo`
+    relocations: it fingerprinted differently, was never named, and the host ran the game's copy (a ROM-interpreted
+    osCreateThread dragged in the raw dispatcher). `alt_key` masks the pairs the code itself shows, so the table's
+    fingerprint still finds it; the primary key stays what it was."""
+    from decompnet.app.twins import rom_print, unrecorded_pairs
+
+    # lui a0 / addiu a0 ; lui t0 / jal ; lw t0 in the jal's delay slot ; jr ra
+    recorded_copy = _mips(0x3C048007, 0x24847FB0, 0x3C088001, 0x0C000100, 0x8D080020, 0x03E00008, 0)
+    loaded_copy = _mips(0x3C04800B, 0x24841430, 0x3C088001, 0x0C000100, 0x8D080020, 0x03E00008, 0)
+    layout = [[0, 5, 0x80077FB0], [4, 6, 0x80077FB0], [8, 5, 0x80010020], [12, 4, 0x80000400], [16, 6, 0x80010020]]
+    ours = rom_print({"target": recorded_copy, "relocs": json.dumps(layout)}, "mips", True, hex)
+    theirs = rom_print({"target": loaded_copy, "relocs": json.dumps([[12, 4, 0x80000400]])}, "mips", True, hex)
+    assert theirs.key != ours.key  # the old behaviour: two keys for one routine
+    assert theirs.alt_key == ours.key and ours.alt_key == ""
+    assert unrecorded_pairs(loaded_copy, {12}, True) == [(0, 5), (4, 6), (8, 5), (16, 6)]
+
+
+def test_constants_and_non_ram_pairs_are_not_taken_for_addresses():
+    from decompnet.app.twins import unrecorded_pairs
+
+    # lui t0, 0x8000 / ori: a constant; lui a0, 0x0100 / addiu: below RAM; a register rewritten before its use
+    code = _mips(0x3C088000, 0x35080001, 0x3C040100, 0x24840800, 0x3C058001, 0x00A02821, 0x24A50010, 0x03E00008, 0)
+    assert unrecorded_pairs(code, set(), True) == []

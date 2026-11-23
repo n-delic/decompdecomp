@@ -85,6 +85,7 @@ class Print:
     prefix: str = ""  # first eight masked bytes, for finding a function inside a merged ROM entry
     layout: list[tuple[int, int]] | None = None  # ELF relocation offsets and types
     raw_digest: str = ""  # rank identical instruction bytes before masked matches
+    alt_key: str = ""  # the key with the address pairs the split didn't record as relocations masked too (MIPS), or ""
 
 
 def _mask(code: bytearray, relocs: list[tuple[int, int]], arch: str, order: str) -> None:
@@ -189,13 +190,61 @@ def object_prints(data: bytes) -> dict[str, Print]:
     return out
 
 
+# MIPS: an instruction that uses a register `lui` just loaded, with the offset that completes the address
+_LO_USERS = {0x09, 0x20, 0x21, 0x23, 0x24, 0x25, 0x28, 0x29, 0x2B, 0x31, 0x35, 0x39, 0x3D, 0x37, 0x3F}
+_RAM_END = 0x80800000  # (the console's 8 MB of RAM in KSEG0: an address a `lui` pair can name)
+
+
+def unrecorded_pairs(raw: bytes, known: set[int], big_endian: bool) -> list[tuple[int, int]]:
+    """MIPS code's address pairs the split left out of the relocations: [(offset, type)], types 5 (the `lui`'s HI16)
+    and 6 (the instruction that adds the low half). A segment the game loads at run time can come without them
+    (the same libultra routine as the game's boot copy, one with its `%hi/%lo` pairs recorded and one without), and
+    the two then fingerprint differently though every instruction but those addresses is the same. A pair counts
+    when it forms an address in the console's RAM and nothing rewrote the register between its halves."""
+    order = "big" if big_endian else "little"
+    words = [int.from_bytes(raw[i:i + 4], order) for i in range(0, len(raw) - 3, 4)]
+    found = []
+    for i, word in enumerate(words):
+        if word >> 26 != 0x0F or not 0x8000 <= word & 0xFFFF < _RAM_END >> 16 or i * 4 in known:
+            continue
+        reg = word >> 16 & 31
+        for j in range(i + 1, min(i + 7, len(words))):
+            use = words[j]
+            op = use >> 26
+            if op in _LO_USERS and use >> 21 & 31 == reg and j * 4 not in known:
+                low = use & 0xFFFF
+                address = (word & 0xFFFF) << 16 | low if low < 0x8000 else ((word & 0xFFFF) << 16) - (0x10000 - low)
+                if 0x80000000 <= address < _RAM_END:
+                    found += [(i * 4, 5), (j * 4, 6)]
+                break
+            if op in (0x04, 0x05, 0x06, 0x07, 0x01, 0x02, 0x03) or (op == 0 and use & 0x3F in (8, 9)):
+                # a branch or jump: only its delay slot, which runs with it, can still complete the pair
+                slot = words[j + 1] if j + 1 < len(words) else 0
+                low = slot & 0xFFFF
+                if slot >> 26 in _LO_USERS and slot >> 21 & 31 == reg and (j + 1) * 4 not in known:
+                    address = (word & 0xFFFF) << 16 | low if low < 0x8000 else ((word & 0xFFFF) << 16) - (0x10000 - low)
+                    if 0x80000000 <= address < _RAM_END:
+                        found += [(i * 4, 5), ((j + 1) * 4, 6)]
+                break
+            written = use >> 11 & 31 if op == 0 else use >> 16 & 31
+            if written == reg and op not in (0x2B, 0x29, 0x28):
+                break
+    return found
+
+
 def rom_print(fn, arch: str, big_endian: bool, label) -> Print:
     """Fingerprint of a ROM project's function, from its target bytes and the addresses its relocations fill in."""
     relocs = sorted((int(r[0]), int(r[1]), int(r[2])) for r in json.loads(fn["relocs"] or "[]") if len(r) >= 3)
     raw = fn["target"] or b""
     code = mask_relocs(raw, [Reloc(o, t, "", 0) for o, t, _ in relocs], arch, big_endian)
+    alt = ""
+    if arch.startswith("mips") and raw:
+        extra = unrecorded_pairs(raw, {o for o, _, _ in relocs}, big_endian)
+        if extra:
+            layout = sorted([(o, t) for o, t, _ in relocs] + extra)
+            alt = _key(mask_relocs(raw, [Reloc(o, t, "", 0) for o, t in layout], arch, big_endian), layout)
     return Print(_key(code, [(o, t) for o, t, _ in relocs]), [label(a) for _, _, a in relocs], len(fn["target"] or b""),
-                 [a for _, _, a in relocs], raw_digest=_raw_digest(raw))
+                 [a for _, _, a in relocs], raw_digest=_raw_digest(raw), alt_key=alt)
 
 
 def rom_renames(syms, source: str, a: Print, b: Print, a_name: str, b_name: str, syms_b=None) -> dict[str, str] | None:
@@ -377,7 +426,7 @@ class Twins:
         revision = self.net.project_store(proj['id']).read_version('fingerprints', proj['id'])
         def build():
             return {str(fid): asdict(p) for fid, p in self._build_rom_prints(proj).items()}
-        values = persistent(self.net.project_store(proj['id']), ('rom-fingerprints', proj['id']), (3, revision, self._print_generations[proj['id']]), build)
+        values = persistent(self.net.project_store(proj['id']), ('rom-fingerprints', proj['id']), (5, revision, self._print_generations[proj['id']]), build)
         return {int(fid): Print(**value) for fid, value in values.items()}
 
     def _build_rom_prints(self, proj) -> dict[int, Print]:

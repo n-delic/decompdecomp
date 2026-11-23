@@ -88,6 +88,9 @@ def _identify(net, proj, *, include_asm=False, collect=None):
         checkpoint()
         hints = [r for r in by_key.get(target.key, []) if r["size"] == target.size
                  and (selected is None or r["corpus"] in selected)]
+        if not hints and getattr(target, "alt_key", ""):  # (address pairs the split didn't record: twins.unrecorded_pairs)
+            hints = [r for r in by_key.get(getattr(target, "alt_key", ""), []) if r["size"] == target.size
+                     and (selected is None or r["corpus"] in selected)]
         names = {r["name"] for r in hints}
         if len(names) > 1:
             ambiguous.add(fid)
