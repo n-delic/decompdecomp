@@ -853,8 +853,13 @@ void port_recomp_other(uint32_t vram, recomp_func_t *self, uint8_t *rdram, recom
     port_recomp_unlisted = vram;
     port_recomp_interpret(rdram, ctx);
 }
+/* The host's TLB windows (host.c): a call through a pointer at a TLB-mapped virtual address (a table of overlay code
+   the game maps at 0x0F000000 with osMapTLB) is the code at the spelling the split gives it. */
+extern unsigned port_tlb_n;
+uint32_t port_tlb_canon(uint32_t a);
 recomp_func_t *get_function(int32_t vram) {
     port_safe_point();
+    if (__builtin_expect((uint32_t)vram < 0x80000000u && port_tlb_n, 0)) vram = (int32_t)port_tlb_canon((uint32_t)vram);
     if (port_recomp_shared((uint32_t)vram) && port_mips_has_code((uint32_t)vram)) {
         recomp_func_t *f = port_recomp_match((uint32_t)vram, 0);
         if (f) return f;

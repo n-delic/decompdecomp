@@ -523,3 +523,14 @@ def test_every_function_of_a_slot_the_game_fills_at_run_time_is_guarded(tmp_path
     guards = recomp.overlay_guards(folder, image, names)
     assert set(guards) == names - {"func_80001000"}  # (the game's own code at a fixed address has none)
     assert guards["func_80300000"][0] == 0x80300000 and guards["func_80300020"][0] == 0x80300020
+
+
+def test_a_call_at_a_tlb_mapped_address_finds_the_code_at_its_window():
+    """A game maps overlay code at 0x0F000000 with osMapTLB and calls through a table of such addresses: `recompiled
+    code called 0F000000, where no function is`. get_function names the address through the host's TLB windows first,
+    as the interpreter does for its reads."""
+    text = recomp.LOOKUPS
+    body = text[text.index("recomp_func_t *get_function(int32_t vram) {"):]
+    head = body[:body.index("unsigned lo = 0")]
+    assert "port_tlb_canon((uint32_t)vram)" in head and "port_tlb_n" in head
+    assert "uint32_t port_tlb_canon(uint32_t a);" in text[:text.index("recomp_func_t *get_function(")]
