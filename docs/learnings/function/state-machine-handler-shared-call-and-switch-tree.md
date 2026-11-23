@@ -11,7 +11,7 @@ What the function (or case) looked like and the exact compiler and flags:
 A 970-instruction N64 state-machine handler (a `switch` on a state halfword whose arms pick the next state with one
 shared call, a second `switch` tree on the next state, a probability roll, two float-compare sound triggers), KMC GCC
 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`. The saved best was m2c's output with a few search edits (6745, about 105
-register rows, 177 differing rows). Not matched: 750 recorded (6745 -> 750, 12 differing rows left in three groups).
+register rows, 177 differing rows). Not matched: 230 recorded (6745 -> 230, 6 differing rows left in one group).
 
 The source change, and the measured result before and after (scores, the judge used; the app's own judge, standalone):
 
@@ -29,6 +29,7 @@ Each row is one edit, its score alone on the previous state, and the decomp-repa
 | a reused `temp_v1_9` split into a byte local; a halfword local; the read of a field left until after the call that precedes it | 3120 -> 2520 | `wide_local_to_halfword`, `reload_temp_inline`, `split_integer_lifetime` (existing; they reached 1905 -> 1170 from the edited source) |
 | the compare tree written as `switch (state) { case 0: case 2: case 4: case 8: ... }` instead of m2c's `if` tree with `goto` into an `else` and an identity helper around `x == 4` | 1170 -> 770 | `label_block_switch` (#1497) |
 | `inline_fn*` identity helpers on a record address dropped | 770 -> 750 | none (the helper is scaffolding; `scaffold_strip` covers some) |
+| the sound-trigger call's address argument (`p + 0x24`) staged in a local before the one-statement `if` that sets its last argument: the branch-likely over `move $a2,$zero` becomes the target's `bc1t` with the argument in its slot | 750 -> 230 (490 per arm) | `call_arg_stage_before_guard` (#1503) |
 
 Two of the app's judge scores moved by constants during the run because other agents renamed a global and a callee
 (`gTrackMarkerTable`, a distance helper): a private candidate keeps the old names, the judge prints `?name` for them in
@@ -54,11 +55,11 @@ before it, with the app's standalone judge, and each new family reproduces its r
 `prove_chain` found from the saved best with the existing families alone stopped at 5030 (`call_into_each_arm` three
 times): the register, store-order, compare and fence steps were not offered.
 
-Not closed (750, three groups, stated as the compiler behaviour with no known source shape):
+Not closed (230, one group, stated as the compiler behaviour with no known source shape):
 
-- Two sound triggers `c.lt.s; nop; nop; bc1t L; addiu $a0,$s1,0x24; move $a2,$zero; L: jal`: the target fills the
-  branch's slot with the call's first argument from after the join; ours uses a branch-likely (`bc1fl L; move $a2,$zero`)
-  with the argument after it. Else-arm, conditional-expression and one-call-per-value spellings do not change it.
 - A byte flag whose pseudo (4 references, 11 live, priority 0.73) is allocated before the object pointer (76
-  references, priority 0.58) and takes `$s2`; the target gives the pointer `$s2` and the flag `$s3` (`and $v0,$s3,$v0;
-  move $s3,$v0`). Merging the flag into the word flag fixes the register order but loses the copies (6 rows).
+  references, priority 0.58) and takes `$s2`; the target gives the pointer `$s2` and both flags `$s3` (`and $v0,$s3,$v0;
+  move $s3,$v0`, `sltu $v0,$zero,$v0; move $s3,$v0`). With the flag merged into the word flag the order is right and the
+  two copies are gone (6 rows, 230); with two pseudos the copies are right and the registers swapped in 94 rows (670).
+  Fences around single statements (46) or blocks (150), a hard-register binding (not accepted by the judge) and every
+  narrow type for the second flag leave 670; the chain over every family (1,700 children a step) reached 550 only by reusing the word flag as scratch for an unrelated product (`product_operand_reuse`), which leaves the same 98 register rows and is scaffolding.
