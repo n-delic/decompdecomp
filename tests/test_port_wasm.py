@@ -925,3 +925,21 @@ def test_a_void_function_that_branches_after_a_call_still_leaves_that_calls_resu
     assert f"store i32 0, ptr {V0}" not in wrapper
     plain = out.split("define void @plain")[1].split("\n}")[0]
     assert f"store i32 0, ptr {V0}" in plain, "no call: 0 as before"
+
+def test_a_call_by_a_name_the_project_changed_goes_to_the_function_there_now(tmp_path):
+    """C that still calls a function by a name polishing renamed (a port-only source, a recompiled body) was linked to
+    a logging stub: the recompiler's symbol table keeps the older name with its address, so the call goes to the
+    function defined at that address now. A name that matches no address stays unresolved."""
+    from decompnet.port.wasm.build import recompiler_names, renames
+
+    (tmp_path / "syms.toml").write_text('[[section]]\nname = "main"\nrom = 0x1000\nvram = 0x80001000\nsize = 0x40\n\n'
+                                        'functions = [\n    { name = "mat3_from_euler", vram = 0x80001000, size = 0x40 },\n]\n')
+    assert recompiler_names(tmp_path) == {"mat3_from_euler": 0x80001000}
+    assert recompiler_names(tmp_path / "missing") == {}
+    ll = tmp_path / "a.ll"
+    ll.write_text("define void @mat3FromEuler() {\n  ret void\n}\ndefine void @caller() {\n"
+                  "  call void @mat3_from_euler()\n  call void @unknown_name()\n  ret void\n}\n"
+                  "declare void @mat3_from_euler()\ndeclare void @unknown_name()\n")
+    fixed = ["mat3FromEuler 0x80001000 func"]
+    assert renames([ll], fixed, None, recompiler_names(tmp_path)) == {"mat3_from_euler": "mat3FromEuler"}
+    assert renames([ll], fixed) == {}

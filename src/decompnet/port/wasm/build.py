@@ -702,12 +702,32 @@ class Progress:
             self.report(value)
 
 
-def renames(lls: list[Path], fixed: list[str], library_names=None) -> dict[str, str]:
+def recompiler_names(folder: Path | None) -> dict[str, int]:
+    """{function name: address} from the recompiler's symbol table (syms.toml). It was written when the recompiler
+    last ran, so it keeps the names the functions had then: C that still calls a function by a name polishing has
+    since renamed (a port-only source, a recompiled body) names it there, with its address."""
+    import tomllib
+    try:
+        table = tomllib.loads(Path(folder, "syms.toml").read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError):
+        return {}
+    found = {}
+    for section in table.get("section", ()):
+        for row in section.get("functions", ()):
+            if isinstance(row, dict) and isinstance(row.get("name"), str) and isinstance(row.get("vram"), int):
+                found[row["name"]] = row["vram"]
+    return found
+
+
+def renames(lls: list[Path], fixed: list[str], library_names=None, history: dict[str, int] | None = None) -> dict[str, str]:
     """{name a call uses: the defined function at its address}: C still calling a function by an older name (its
     automatic one, before polishing renamed it) links in the decomp through the symbol table; here it must name the
     function wasm-ld has. Only a name that resolves to exactly one defined function is renamed. `library_names`:
     {a function's name: its library name} for library code no file has C for (play.library_names): a call to it is
-    to the library's name, which the host answers (a racing game's bzero was `func_8003DDC0`, stubbed to nothing)."""
+    to the library's name, which the host answers (a racing game's bzero was `func_8003DDC0`, stubbed to nothing).
+    `history`: {an older name: its address} (recompiler_names): a call by a name the project has since changed, which
+    no automatic name or current name says, goes to the function now at that address, so a renamed function's
+    callers aren't left calling a stub."""
     defined, declared = set(), set()
     for ll in lls:
         for m in re.finditer(r"^(define|declare) [^@\n]*@([\w.$]+)\(", ll.read_text(encoding="utf-8"), re.M):
@@ -734,6 +754,8 @@ def renames(lls: list[Path], fixed: list[str], library_names=None) -> dict[str, 
         # function for data: a racing game's HUD called D_8000A840 for the sprite drawer there)
         if address is None and (auto := re.fullmatch(r"(?:func|D)_([0-9A-Fa-f]{8})", n)):
             address = int(auto.group(1), 16)
+        if address is None:
+            address = (history or {}).get(n)
         if address is not None and len(at.get(address, ())) == 1:
             out[n] = next(iter(at[address]))
         elif n not in out and (library := (library_names or {}).get(n)) and library != n:
@@ -1008,7 +1030,7 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
     progress.start(STEPS[2])
     log("one signature per function")
     lls = sorted((out / "ll").glob("*.ll"))
-    renamed = renames(lls, fixed, library_names)
+    renamed = renames(lls, fixed, library_names, recompiler_names(recomp["folder"]) if recomp else None)
     _write(out / "renames.txt", "".join(f"{a} {b}\n" for a, b in sorted(renamed.items())))
     done = _run([py, HERE / "sigs.py", out / "sigs.txt", host / "libultra.sigs", out / "renames.txt", *lls], log)
     if done.returncode:
