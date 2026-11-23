@@ -1,5 +1,5 @@
 ---
-title: Panel builder: switch trees, per-arm index offsets and the or-fold (13726 -> 9321 recorded)
+title: Panel builder: switch trees, per-arm index offsets and the or-fold (13726 -> 7596 recorded)
 kind: finding
 compiler: KMC GCC 2.7.2 -O2 -G0 -mips3 -mgp32 -mfp32
 evidence: observation
@@ -14,7 +14,7 @@ and float-derived coordinates, then a second part creating label objects and an 
 saved best (13726 recorded, 15981 re-judged, 310 differing rows) had the target's shape only in outline: the calls
 passed four arguments where the target stores six, the frame was 0x88 where the target's is 0x98. A clean typed
 rewrite from the assembly (25457) was edited one named step at a time, each step judged with the app's own judge
-(`fast_judge`), and the app recorded 9321 at the end (201 differing rows, 526 of the target's 534 instructions).
+(`fast_judge`), and the app recorded 7596 at the end (191 differing rows, 526 of the target's 534 instructions).
 
 The source change, and the measured result before and after (scores, the judge used):
 
@@ -33,8 +33,11 @@ Each row is one edit on the previous source (alone, in that order); the library 
 | table row 24 bytes wide, not 23; the converted coordinates staged in locals before the address local | 12296 -> 11136 | (hand) |
 | the info record's field at 0x12 (the flag read), `if (i == k) continue; if (kind == 5) continue;` | 11136 -> 10386 -> 9321 | `or_guard_continue` |
 | the slot count read through `volatile s32 *p` assigned in the loop's test (`i < *(p = &count)`) and in the body's `switch (*p)` | 9321 -> 9151 | `loop_bound_pointer` |
+| the converted coordinates in `s32` locals (not `u16`) | 9151 -> 8971 | `call_conversion_stage` |
+| the byte read from the 24-byte table as `D_801001A0[i * 0x18 + 2]` (raw), so the scheduler keeps it after the stores before it | 8971 -> 8201 | (hand: raw index, m2c's own spelling) |
+| the label records' fields as raw casts at their offsets (no member flag) | 8201 -> 7596 | (hand: m2c's own spelling) |
 
-`statement_tree_switch`, `arm_index_offsets`, `or_guard_continue` and `loop_bound_pointer` (decomp-repair) each reproduce their row
+`statement_tree_switch`, `arm_index_offsets`, `or_guard_continue`, `loop_bound_pointer` and `call_conversion_stage` (decomp-repair) each reproduce their row
 from the source before the edit with the exact judge: the library's child equals the hand edit.
 
 What the compiler did (read from `cc1 -dL -dr -dl -dg` of the candidate; the reasons are hypotheses where not quoted from
@@ -57,6 +60,10 @@ the source of loop.c):
 
 Failed experiments that would otherwise be repeated:
 
+- typed table elements and record members (`D_801001A2[i].f0`, `q->flags`) are read and written ahead of or behind neighbouring stores differently from the raw casts the target needs: a member or element reference carries the in-structure flag and the scheduler moves it across a store through a raw pointer, a raw one stays in order (8971 -> 7596 for the byte read and the label fields); other tables and the object/info fields changed nothing.
+- the second-dimension base for the inner loop as a pointer local, set before or inside the guard (7836-7841 against 7596).
+- `i = 0` as a first statement, before the call, in the declaration or in the call's argument list: identical code (the compiler places the move itself; the target has it in the call's delay slot).
+- other compiler flags (`-fno-strength-reduce`, `-O1`, `-O3`, no gcse, no inline: same or worse; no schedule pass: 8496 and 11433): the function's profile stays.
 - `volatile` on the two spilled halfword locals (15795 and 20560): the sign extension no longer folds.
 - the global count through a pointer local assigned before the loop (`s32 *pc = &count;`, volatile or not, 9946-10536): cse folds it back, worse than the plain global; only the volatile pointer assigned inside the loop's test keeps the address in a register (the target's `lui $a1; addiu $a1; lw ($a1)`).
 - `u16`/`s16`/`u32`/`s32` for the two halfword locals, `s32` for the loop counters, `u32` kind: all worse.
