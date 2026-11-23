@@ -763,6 +763,10 @@ class BriefMixin:
                 # nearly the same code: its matching C is the best starting point there is (saves a tool call)
                 lines += [f"Matching C of {r['name']} ({sim * 100:.0f}% similar): start from this",
                           "```c", src["matched_source"].strip(), "```"]
+        if fn["status"] != "matched":
+            from .. import matched_neighbours
+            full = [alike[0][0]["name"]] if alike and alike[0][1] >= 0.8 else []
+            lines += matched_neighbours.brief(self, proj, fn, shown=full)
         lines += ["", "Names: use the names shown here (or rename_symbol to give an address a real name). "
                       "Your code is linked at this function's address and must reproduce the ROM bytes exactly."]
         return lines

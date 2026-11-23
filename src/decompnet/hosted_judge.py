@@ -29,6 +29,9 @@ Requests:
 - {"op": "allocation", "slug", "name", "source", "rows" (optional: the judge's raw rows)} -> {"lreg", "greg"
   (the function's part of each dump), "allocation" (gcc_allocation's values: pseudo, hard register, C lines),
   "text" (with rows: register_explain.explain, the skill's explain_regs.py)}.
+- {"op": "neighbours", "slug", "name", "limit" (optional)} -> {"text", "items"}: the closest matched functions (callers,
+  callees, the functions beside it, shared globals, look-alikes) with the start of their matching C
+  (matched_neighbours; the skill's neighbours.py).
 - {"op": "preprocess", "slug", "name", "source"} -> {"text", "cc1", "log"}: the candidate preprocessed as the app's
   compile does it (the function's profile, the project's header; compiler.preprocess_candidate), and the cc1 command
   line to run dumps on the result (the skill's preprocess.py). The bundled bare `cpp` aborts, so never run it by hand.
@@ -207,6 +210,18 @@ def allocation_report(net, request: dict) -> dict:
     return reply
 
 
+def neighbours_report(net, request: dict) -> dict:
+    """The closest matched neighbours of a function, with snippets (matched_neighbours)."""
+    from .app import matched_neighbours
+    found = lookup(net, request)
+    if isinstance(found, dict):
+        return found
+    proj, fn = found
+    items = matched_neighbours.gather(net, proj, fn, max(1, min(int(request.get("limit") or 6), 12)))
+    text = "\n".join(matched_neighbours.render(items)).strip() or "No matched neighbours yet."
+    return {"text": text, "items": [{k: v for k, v in item.items() if k != "source"} for item in items]}
+
+
 def preprocess_report(net, request: dict) -> dict:
     """A candidate preprocessed exactly as the app's compile does it, and the cc1 command to dump its passes."""
     from . import compiler, toolchains
@@ -280,6 +295,8 @@ def serve(net, lines=sys.stdin, out=sys.stdout) -> None:
                 reply = passes_report(net, request)
             elif request.get("op") == "allocation" and not packs:
                 reply = allocation_report(net, request)
+            elif request.get("op") == "neighbours" and not packs:
+                reply = neighbours_report(net, request)
             elif request.get("op") == "preprocess" and not packs:
                 reply = preprocess_report(net, request)
             else:

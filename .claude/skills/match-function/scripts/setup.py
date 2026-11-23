@@ -69,6 +69,8 @@ ORIENT_SECONDS = 180  # each orientation script after a claim; a slow app must n
 ORIENT_SCRIPTS = (
     # the saved best and its scaffolding-stripped form, judged (plain_best.py): both places a chain can start from
     ("plain_best.py", lambda info, out: ["--slug", info["slug"], "--function", info["function"], "--out-dir", str(out)]),
+    # the closest matched functions with the start of their C (neighbours.py): callers, callees, the file's neighbours
+    ("neighbours.py", lambda info, out: ["--slug", info["slug"], "--function", info["function"]]),
 )
 RENEW_SECONDS = 300  # a claim lapses after about ten minutes; renewing at half that leaves room for one miss
 HOLDER_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
