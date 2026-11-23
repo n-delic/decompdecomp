@@ -32,5 +32,5 @@ counter of the first loop then loses `$s2` to the cursors: one `u32` shared by t
 counter with the `(u32)` test (`slti` instead of `sltiu` in the switch's range check: declare it `u32`).
 
 What is controlled evidence and what is one function: one function, each step measured with the exact judge from the
-saved best (`prove_chain` with the three families reaches 0 in three steps). The jump-table `?local` operand rows that
+saved best (`prove_chain` from the saved best with `walk_counter_for`, `narrow_widening`, `walk_counter_merge` and `default_into_else` reaches 0 in four steps: 1825 -> 760 -> 340 -> 60 -> 0; the merged-counter child of the first step scores 805 and a greedy chain only reaches it through `walk_counter_merge`). The jump-table `?local` operand rows that
 the notes called unresolved were a symptom of the byte-offset switch, not of a relocation.
