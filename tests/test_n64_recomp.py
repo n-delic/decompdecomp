@@ -354,3 +354,17 @@ def test_a_local_label_is_not_a_function_for_the_recompiler():
 
     assert recomp.is_c_name("func_80001000") and recomp.is_c_name("_osSetIntMask")
     assert not recomp.is_c_name(".L8010E8C8") and not recomp.is_c_name("$L1") and not recomp.is_c_name("a.b")
+
+
+def test_a_saved_recompile_with_a_local_label_is_rebuilt(tmp_path):
+    """Results made before local labels were kept out declared `void .L8010E8C8(...)`; load() gives them up so the
+    next Play recompiles instead of failing the host build again."""
+    folder = recomp.folder(tmp_path)
+    folder.mkdir(parents=True)
+    (folder / "recomp.json").write_text('{"files": 1}')
+    syms = ('[[section]]\nname = "a"\nrom = 0x1000\nvram = 0x80000400\nsize = 0x100\n\nfunctions = [\n'
+            '    { name = "func_80000400", vram = 0x80000400, size = 0x10 },\n]\n')
+    (folder / "syms.toml").write_text(syms)
+    assert recomp.load(tmp_path) == {"files": 1}
+    (folder / "syms.toml").write_text(syms.replace('"func_80000400"', '".L80000400"'))
+    assert recomp.load(tmp_path) is None

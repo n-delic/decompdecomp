@@ -522,6 +522,9 @@ def load(root: Path) -> dict | None:
         sections = tomllib.loads((f.parent / "syms.toml").read_text(encoding="utf-8")).get("section", [])
     except (OSError, ValueError):
         return summary
+    # Results made before local labels were kept out (is_c_name) declare `void .L8010E8C8(...)`: rebuild those too.
+    if any(not is_c_name(name) for sec in sections for name in (fn.get("name", "") for fn in sec.get("functions", []))):
+        return None
     return None if analysis_banks(sections) else summary
 
 
