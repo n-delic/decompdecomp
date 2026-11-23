@@ -423,7 +423,10 @@ def prepare(folder: Path, out: Path, game_h: str, fixed: list[str], hosts: list[
 
     from ..csource import only
     keep = {c for kind, _, c, _ in choice.values() if kind == "recomp" and c}
-    drop = names - keep
+    # N64Recomp also writes functions it found by the calls into them (`static_4_80171B34`): no symbol of the split,
+    # so not in `names`, and left in when their C can't compile (a branch past their end) -- the host build then
+    # stopped on the missing label. Whatever is broken goes, named or not.
+    drop = (names - keep) | broken
     units = []
     _write(out / "recomp.h", header(Path(recomp_h).read_text(encoding="utf-8")))
     declared_h = (Path(folder) / "funcs" / "funcs.h").read_text(encoding="utf-8", errors="replace")
@@ -490,7 +493,9 @@ def prepare(folder: Path, out: Path, game_h: str, fixed: list[str], hosts: list[
             _, target = by_name[n.removesuffix("_recomp")][0]
             body = f"R_{target}(rdram, ctx);"
         else:
-            body = f'port_recomp_missing(0, "{n}", rdram, ctx);'
+            found = re.fullmatch(r"static_\d+_([0-9A-Fa-f]{8})", n)  # (its address is in its name: the interpreter runs it)
+            body = f'port_recomp_missing(0x{found.group(1)}u, "{n}", rdram, ctx);' if found else \
+                f'port_recomp_missing(0, "{n}", rdram, ctx);'
         lines.append(f"void R_{n}(uint8_t* rdram, recomp_context* ctx) {{ (void)rdram; {body} }}")
     lines[first:first] = [f"{hosted[n][1]} {hosted[n][0]}(struct w2c_env *" + "".join(f", {t}" for t in hosted[n][2]) + ");"
                           for n in sorted(used)]

@@ -381,3 +381,24 @@ int main(void) {
     assert done.returncode == 0, done.stderr
     out = subprocess.run([str(tmp_path / "t")], capture_output=True, text=True).stdout.split()
     assert out == ["1", "11111111", "11111111", "0", "22222222"]
+
+
+def test_a_function_found_by_calls_with_a_branch_past_its_end_is_left_to_the_interpreter(tmp_path):
+    """N64Recomp writes functions it finds by the calls into them (`static_4_80171B34`) with no symbol of the split;
+    one that branches to a label outside itself stopped a port's host build (`undeclared label`) because only named
+    functions were dropped. It goes, and its callers reach it by the address in its name."""
+    folder = tmp_path / "recomp"
+    _output(folder)
+    source = folder / "funcs/funcs_0.c"
+    source.write_text(source.read_text() + (
+        "RECOMP_FUNC void static_4_80171B34(uint8_t* rdram, recomp_context* ctx) {\n"
+        "    if (ctx->r2 == 0) {\n        goto L_80171BB4;\n    }\n    return;\n;}\n"))
+    header = folder / "funcs/funcs.h"
+    header.write_text(header.read_text() + "void static_4_80171B34(uint8_t* rdram, recomp_context* ctx);\n")
+    source.write_text(source.read_text().replace("    return;\n;}\nRECOMP_FUNC void osSendMesg",
+                                                 "    static_4_80171B34(rdram, ctx);\n    return;\n;}\nRECOMP_FUNC void osSendMesg", 1))
+    out = tmp_path / "build"
+    recomp.prepare(folder, out, "", [], [], _header(), {}, lambda *a: None)
+    text = (out / "rec_funcs_0.c").read_text()
+    assert "RECOMP_FUNC void R_static_4_80171B34" not in text and "L_80171BB4" not in text
+    assert 'port_recomp_missing(0x80171B34u, "static_4_80171B34"' in (out / "bridges.c").read_text()
