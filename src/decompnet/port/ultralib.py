@@ -56,7 +56,30 @@ def extract(path: Path, name: str) -> str:
     for chunk, defines, static in _items(path.read_text(encoding="utf-8", errors="replace")):
         if defines is None or static or defines == name:
             kept.append(chunk)
-    return "".join(kept)
+    # ultralib declares some helpers `static` in a prototype and defines them without it (`_bnkfPatchBank`): the
+    # definition is then internal to the file, and the unit made for the function exported nothing, so its callers
+    # stayed unresolved. The unit is that function's own file now: its prototype is not static.
+    text = re.sub(rf"^([ \t]*)static\s+([^;{{}}]*\b{re.escape(name)}\s*\([^;{{}}]*\)\s*;)", r"\1\2", "".join(kept),
+                  flags=re.M)
+    return _unstatic_headers(text, path, name)
+
+
+def _unstatic_headers(text: str, path: Path, name: str) -> str:
+    """The same for a prototype in one of the library's own headers beside the file (`#include "sndp.h"` declares
+    `static ALMicroTime _sndpVoiceHandler(...)`): that header's text goes in place of the include, with `static`
+    dropped from this one prototype, so the function the unit defines is exported (stubbed, it returned 0 and the
+    synthesizer's loop over its callbacks never ended). The compiler finds the header's own includes beside the
+    file (`flags`: -I the file's folder)."""
+    prototype = re.compile(rf"^([ \t]*)static\s+([^;{{}}]*\b{re.escape(name)}\s*\([^;{{}}]*\)\s*;)", re.M)
+
+    def inline(m: re.Match) -> str:
+        try:
+            header = (path.parent / m.group(1)).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return m.group(0)
+        patched, changed = prototype.subn(r"\1\2", header)
+        return patched if changed else m.group(0)
+    return re.sub(r'^[ \t]*#[ \t]*include[ \t]+"([^"]+)"', inline, text, flags=re.M)
 
 
 def flags(folder: Path, path: Path, build: str) -> list[str]:
@@ -94,6 +117,29 @@ def source(name: str, hint: dict, fingerprint: str | None = None) -> tuple[Path,
         return None
     # the game's build: GCC's libgultra first (the decompdecomp's own N64 games), its ROM build before the debug one
     return path, sorted(builds, key=lambda b: ("gultra" not in b, "_d" in b))[0]
+
+
+CALLEE = re.compile(r"\b([A-Za-z_]\w*)\b")  # (called or its address taken: a handler is passed as a pointer)
+
+
+def with_callees(units: dict[str, tuple[str, list[str]]], folder: Path, skip) -> dict[str, tuple[str, list[str]]]:
+    """`units` plus the ultralib functions they call that nothing else provides (`skip(name)` says what does: the
+    game's own C, the host, its recompiled or interpreted functions). A unit is one function, so a synthesizer
+    function set aside as ultralib's own called `alFilterNew` and its neighbours, which library detection hadn't
+    set aside: nothing defined them, the link stubbed them ("not implemented, skipped") and the audio thread never
+    finished a frame, so it kept the CPU from the game's main thread for ever. Each callee is built with the flags of
+    the unit that calls it (the same build of the library); what it calls is added in turn."""
+    out = dict(units)
+    known = index(str(folder))
+    pending = list(out.items())
+    while pending:
+        _, (text, flag) = pending.pop()
+        for callee in sorted(set(CALLEE.findall(text))):
+            file = f"{callee}.c"
+            if callee in known and file not in out and not skip(callee):
+                out[file] = (extract(known[callee], callee), flag)
+                pending.append((file, out[file]))
+    return out
 
 
 def units(net, slug: str) -> dict[str, tuple[str, list[str]]]:

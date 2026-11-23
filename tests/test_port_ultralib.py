@@ -114,6 +114,46 @@ def test_the_build_writes_units_beside_the_game_never_in_the_save(tmp_path):
     assert sorted(p.name for p in (out / "ultralib").iterdir()) == ["guToy.c"]
 
 
+def test_ultralib_functions_a_unit_calls_are_built_with_it(tree):
+    """A synthesizer function set aside as ultralib's own called alFilterNew and its neighbours, which nothing
+    defined: the link stubbed them ("not implemented, skipped") and the audio thread never finished a frame, so it
+    kept the CPU from the game's main thread. A callee nothing else provides is built with its caller's flags."""
+    text = ultralib.extract(ultralib.index(str(tree))["guToy"], "guToy")
+    units = {"guToy.c": (text, ["-DBUILD_VERSION=VERSION_J"])}
+    out = ultralib.with_callees(units, tree, lambda name: False)
+    assert set(out) == {"guToy.c", "guToyF.c"} and out["guToyF.c"][1] == ["-DBUILD_VERSION=VERSION_J"]
+    assert "void guToyF(float" in out["guToyF.c"][0] and "void guToy(" not in out["guToyF.c"][0]
+    # what the game, the host or the recompiler provides is left to them
+    assert set(ultralib.with_callees(units, tree, lambda name: name == "guToyF")) == {"guToy.c"}
+
+
+def test_a_helper_declared_static_in_the_files_own_prototype_or_header_is_exported(tmp_path):
+    """`_bnkfPatchBank` and `_sndpVoiceHandler` are declared static (in the file, or in a header beside it) and
+    defined without it: the unit built for the function must export it, else its callers stay unresolved."""
+    folder = tmp_path / "ultralib" / "src" / "audio"
+    folder.mkdir(parents=True)
+    (folder / "priv.h").write_text("static int _handler(void *node);\nstatic int _other(void);\n")
+    path = folder / "player.c"
+    path.write_text('#include "priv.h"\n#include <ultra64.h>\nstatic void _patch(int x);\n\n'
+                    "int _handler(void *node)\n{\n    return 1;\n}\n\nvoid _patch(int x)\n{\n}\n")
+    handler = ultralib.extract(path, "_handler")
+    assert "\nint _handler(void *node);" in "\n" + handler and "static int _other(void);" in handler  # (only its own)
+    assert '#include "priv.h"' not in handler and "#include <ultra64.h>" in handler
+    assert "static void _patch" not in ultralib.extract(path, "_patch")  # the file's own prototype
+    assert "static void _patch" in handler  # (another function's prototype stays)
+
+
+def test_the_build_adds_callees_nothing_else_provides(tree, tmp_path):
+    text = ultralib.extract(ultralib.index(str(tree))["guToy"], "guToy")
+    units = {"guToy.c": (text, ["-DX"])}
+    out = tmp_path / "port" / "wasm" / "build"
+    library = build._library(out, units, {}, lambda *a: None, lambda name: False)
+    assert sorted(library) == ["guToy.c", "guToyF.c"] and library["guToyF.c"] == ["-DX"]
+    # the game's own C for the callee wins, as it does for a unit
+    library = build._library(out, units, {"guToyF.c": Path("progress/src/guToyF.c")}, lambda *a: None, lambda name: True)
+    assert sorted(library) == ["guToy.c"]
+
+
 def test_the_link_report_names_ultralib_apart_from_the_games_assembly(monkeypatch):
     class Kit:
         @staticmethod

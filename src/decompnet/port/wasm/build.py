@@ -39,6 +39,7 @@ from pathlib import Path
 
 from ... import consoles, limits, toolchains
 from ...network import NetworkError
+from .. import ultralib
 
 HERE = Path(__file__).parent
 # The game's C as wasm32 IR, unoptimised: LLVM's load combining would assume little-endian memory, which beir.py and
@@ -449,10 +450,15 @@ def gather(repo: Path, out: Path, leave_out=(), function_headers=None, *, ensure
     return chosen
 
 
-def _library(out: Path, units: dict, sources: dict, log) -> dict[str, list[str]]:
-    """Write the library units (`library_c`) to out/ultralib; {file name: flags}. The game's own C for a function
-    wins: a unit whose function the save has C for is left out (it was matched after it was set aside)."""
+def _library(out: Path, units: dict, sources: dict, log, provided=None) -> dict[str, list[str]]:
+    """Write the library units (`library_c`) to out/ultralib; {file name: flags}. The
+    game's own C for a function wins: a unit whose function the save has C for is left out (it was matched after it
+    was set aside). `provided(name)`: something else defines that function (the game's functions, the host, the
+    port's recompiled and interpreted code); ultralib's other functions the units call are built too
+    (ultralib.with_callees), so the link has them in place of stubs."""
     folder = out / "ultralib"
+    if units and provided is not None and (ultralib_folder := ultralib.root()) is not None:
+        units = ultralib.with_callees(units, ultralib_folder, provided)
     taken = {name.casefold() for name in sources}
     library = {name: list(flags) for name, (_, flags) in units.items() if name.casefold() not in taken}
     if library:
@@ -932,7 +938,16 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
             "stack layout or registers")
     leave_out = set(leave_out) | original
     sources = gather(repo, out, leave_out, function_headers, ensure_host_import=ensure_host_import, manifest=manifest)
-    library = _library(out, library_c or {}, sources, log)
+    from . import recomp as recomp_c
+    hosted = {recomp_c._demangle(c) for path in sorted(host.glob("*.c")) for c in
+              re.findall(r"\bw2c_env_(\w+)\(struct w2c_env \*", path.read_text(encoding="utf-8", errors="replace"))}
+    taken_names = {name.removesuffix(".c").casefold() for name in sources}
+    provided_by = set(functions) | hosted | set((library_names or {}).values())
+    library = _library(
+        out, library_c or {}, sources, log,
+        lambda name: name.casefold() in taken_names or name in provided_by
+        or (kit.sdk_group is not None and kit.sdk_group(name) in ("replaced", "glue")))
+    callees = set(library) - set(library_c or {})  # built for the link, not because the project set them aside
     _write(out / "fixed.txt", "\n".join(fixed) + "\n")
     _write(out / "functions.txt", "\n".join(sorted(functions)) + "\n")
 
@@ -948,6 +963,10 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
             _unstamp(ll)
             done = _run([zig, "cc", *IR_FLAGS, *library[name], "-S", "-emit-llvm", src, "-o", ll], log, env=env)
             if done.returncode:
+                if name in callees:  # a callee added for the link, not one the game needs by itself: stubbed as before
+                    library.pop(name, None)
+                    log(f"{name} (ultralib callee) left to a stub: " + (done.stderr.strip().splitlines() or ["failed"])[0])
+                    return None
                 return f"{name} (ultralib): " + (done.stderr.strip().splitlines() or ["failed"])[0]
             _stamp(ll, key)
             return None
