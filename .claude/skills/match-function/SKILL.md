@@ -508,6 +508,21 @@ says the fix and the library families it names; try those families with `prove_c
   (`region_local_split`, 1675 -> 1370); `a = b = c = 0.0f` instead of a zero local in a `do { } while (0)` fence
   (`float_literal_chain`); m2c's mask-and-shift word updates as `p->field |= K` on a bit-field typedef (`field_rmw_bitfield`).
 
+- **A frame 8 bytes larger than the target's with every spill at the target's offset: look for a table read twice as bytes.**
+  Two straight-line reads of one symbol through byte arithmetic (`FIELD(table, s32, e * 24)`, `*(T *)(table + e * 12)`,
+  `table[i * 24]`) leave a stale address-sum pseudo that reload gives an unread slot; the byte table counted in a loop also
+  has its `la` hoisted into a register the target doesn't spend. Typed rows (`Row table[]`, `table[e].f0`; a loop's table
+  `u8 table[][24]`, `table[i][0]`) fix both (2028 -> 1015 on a 445-instruction picker). decomp-repair `record_slot_rows`
+  (docs/learnings/finding/byte-arithmetic-table-reads-leave-a-frame-hole.md). Check `.frame ... vars=` in cc1's output before
+  chasing the frame by hand.
+- **Hoisted invariants (a literal compared twice, three symbol pointers) take registers in pseudo-creation order, ranked by
+  references over live length.** A literal held in a counter the function has finished with (`n = 3;` before the pointers,
+  which are assigned afterwards) takes the counter's high-priority register and is emitted first; the same literal as a new
+  local ranks last. A product written back into one of its operands (`d = call() * d`) has the destination's register first
+  in the `mul.s`; write it to another float that is free there. decomp-repair `loop_constant_holder`,
+  `float_product_retarget` (685 -> 0 together); `guard_load_split` (the load before a float guard's last test plus the loop
+  bound assigned after the guard, 1015 -> 705 only together) and `switch_join_condition` (705 -> 685).
+
 ## 3a. The fast tools (use them before writing variants by hand)
 
 - **A claim starts with two sources.** `setup.py` prints the saved best and its plain form (`plain_best.py`:
