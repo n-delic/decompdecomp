@@ -71,6 +71,9 @@ ORIENT_SCRIPTS = (
     ("plain_best.py", lambda info, out: ["--slug", info["slug"], "--function", info["function"], "--out-dir", str(out)]),
     # the closest matched functions with the start of their C (neighbours.py): callers, callees, the file's neighbours
     ("neighbours.py", lambda info, out: ["--slug", info["slug"], "--function", info["function"]]),
+    # every call of the saved best against its callee's matched C, the header and the target's call sites
+    # (signatures.py): a stray or missing argument is fixed at the call, not by respelling the code around it
+    ("signatures.py", lambda info, out: ["--slug", info["slug"], "--function", info["function"]]),
 )
 RENEW_SECONDS = 300  # a claim lapses after about ten minutes; renewing at half that leaves room for one miss
 HOLDER_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")

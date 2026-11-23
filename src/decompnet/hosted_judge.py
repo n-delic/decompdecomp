@@ -32,6 +32,9 @@ Requests:
 - {"op": "neighbours", "slug", "name", "limit" (optional)} -> {"text", "items"}: the closest matched functions (callers,
   callees, the functions beside it, shared globals, look-alikes) with the start of their matching C
   (matched_neighbours; the skill's neighbours.py).
+- {"op": "signatures", "slug", "name", "source" (optional: the saved best)} -> {"text", "findings"}: every call in
+  that C checked against the callee's matched C, the shared header and the target's call sites, and the function's own
+  parameters against its matched callers (call_signatures; the skill's signatures.py, printed after a claim).
 - {"op": "preprocess", "slug", "name", "source"} -> {"text", "cc1", "log"}: the candidate preprocessed as the app's
   compile does it (the function's profile, the project's header; compiler.preprocess_candidate), and the cc1 command
   line to run dumps on the result (the skill's preprocess.py). The bundled bare `cpp` aborts, so never run it by hand.
@@ -222,6 +225,50 @@ def neighbours_report(net, request: dict) -> dict:
     return {"text": text, "items": [{k: v for k, v in item.items() if k != "source"} for item in items]}
 
 
+def signatures_report(net, request: dict) -> dict:
+    """A source's calls checked against what the project knows of each callee (call_signatures)."""
+    from .app import call_signatures
+    found = lookup(net, request)
+    if isinstance(found, dict):
+        return found
+    proj, fn = found
+    source = request.get("source") or fn["best_source"] or ""
+    if not source.strip():
+        return {"error": f"{fn['name']} has no saved best yet: pass a source"}
+    return signatures_for(net, proj, fn, source, call_signatures)
+
+
+def signatures_for(net, proj, fn, source, call_signatures=None):
+    """{"text", "findings"} for one function's source: its callees' and callers' matched C read from the project."""
+    import re as _re
+    if call_signatures is None:
+        from .app import call_signatures
+    store = net.project_store(proj["id"])
+    own = call_signatures.body(source, fn["name"]) or source
+    names = sorted({c["callee"] for c in call_signatures.calls(own)} - {fn["name"]})
+    callees = {r["name"]: r["matched_source"] for r in store.all(
+        "SELECT name, matched_source FROM functions WHERE project_id=? AND status='matched' AND matched_source IS NOT "
+        "NULL AND name IN (SELECT value FROM json_each(?))", proj["id"], json.dumps(names))}
+    callers = {}
+    if fn["vram"] is not None:
+        try:
+            near = sorted(net.xrefs(proj)["called_by"].get(fn["vram"], ()))
+        except Exception:  # noqa: BLE001  (a project with no cross-references still gets the callee checks)
+            near = []
+        callers = {r["name"]: r["matched_source"] for r in store.all(
+            "SELECT name, matched_source FROM functions WHERE project_id=? AND status='matched' AND matched_source IS "
+            "NOT NULL AND vram IN (SELECT value FROM json_each(?))", proj["id"], json.dumps(near))}
+    asm = fn["asm"] or ""
+    addresses = sorted({int(h, 16) for h in _re.findall(r"\bjal\s+func_([0-9A-Fa-f]{8})\b", asm)})
+    aliases = {f"func_{r['vram']:08X}": r["name"] for r in store.all(
+        "SELECT name, vram FROM functions WHERE project_id=? AND vram IN (SELECT value FROM json_each(?))",
+        proj["id"], json.dumps(addresses))}
+    header = net._context(proj["id"], fn["unit"])["header"]
+    findings = call_signatures.check(fn["name"], source, header, callees, callers, asm, aliases,
+                                     mips=proj["arch"] == "mips")
+    return {"text": "\n".join(call_signatures.render(findings)), "findings": findings}
+
+
 def preprocess_report(net, request: dict) -> dict:
     """A candidate preprocessed exactly as the app's compile does it, and the cc1 command to dump its passes."""
     from . import compiler, toolchains
@@ -297,6 +344,8 @@ def serve(net, lines=sys.stdin, out=sys.stdout) -> None:
                 reply = allocation_report(net, request)
             elif request.get("op") == "neighbours" and not packs:
                 reply = neighbours_report(net, request)
+            elif request.get("op") == "signatures" and not packs:
+                reply = signatures_report(net, request)
             elif request.get("op") == "preprocess" and not packs:
                 reply = preprocess_report(net, request)
             else:
