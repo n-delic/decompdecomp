@@ -217,6 +217,14 @@ static void boot_idle(unsigned *calls, const char *what) {
         longjmp(boot_jmp, 1);
     }
 }
+/* The interpreter's periodic safe point (every 65536 instructions) in the boot code, once it has started threads: a
+   first function that never returns and whose idle loop is neither of the two above (a loop around a call to the
+   game's own code) is the idle thread too. A thousand such safe points are 65 million instructions in one first
+   function after its threads exist, more than any loader's work. */
+void port_boot_spin(void) {
+    static unsigned spins;
+    if (!self && !booted && thread_count > 0) boot_idle(&spins, "a loop of its own code");
+}
 #endif
 void port_idle_forever(void) {
     if (!self) {

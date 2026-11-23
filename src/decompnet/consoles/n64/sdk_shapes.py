@@ -11,6 +11,14 @@ A routine is told by the stores that are the same in every build because the str
 interrupt disable and restore routines. Run over every function of every ROM project here, the test found 50
 functions of 100 to 700 bytes, and each was an `osCreateThread` (named already, or the unnamed build of one game).
 Only the port asks (`identify(builtin=True)`): the display names stay exact-match only.
+
+The same goes for the rest of the thread routines (`osStartThread`, `osSetThreadPri`, `osDestroyThread`) and the
+message queue's (`osRecvMesg`, `osSendMesg`, `osJamMesg`, `osCreateMesgQueue`): a game that runs its own copy of one
+keeps its threads in queues the host knows nothing of (an `osStartThread` that never started the thread it was
+given, an `osRecvMesg` that parked a thread in the game's own `__osEnqueueAndYield`). Each is told by the
+`OSThread` and `OSMesgQueue` fields it reads and writes and its calls. Over every ROM project here, each hit was the
+routine itself (named already, or the same routine under a prefixed name); an audio engine's routine that shared
+most of `osSetThreadPri`'s offsets showed that a halfword store anywhere but +0x10 rules a thread routine out.
 """
 
 CORPUS = "N64 library routines by structure"
@@ -52,6 +60,115 @@ def thread_yield(words: list[int]) -> bool:
     return len(states) == 1 and not others and (states[0] >> 16 & 31) in runnable
 
 
+def _thread_features(words: list[int]) -> dict:
+    """What a routine does to an OSThread (next 0x00, priority 0x04, queue 0x08, tlnext 0x0C, state 0x10 as a
+    halfword) and how many calls it makes."""
+    constants = {w & 0xFFFF for w in words if w >> 26 == 9 and w >> 21 & 31 == 0}  # addiu r, $zero, k
+    return {
+        "calls": sum(1 for w in words if w >> 26 == 3),
+        "reads_state": any(w >> 26 in (0x21, 0x25) and w & 0xFFFF == 0x10 for w in words),  # lh/lhu 0x10
+        "state_stores": sum(1 for w in words if w >> 26 == 0x29 and w & 0xFFFF == 0x10),  # sh ..., 0x10
+        "other_halfword_stores": sum(1 for w in words if w >> 26 == 0x29 and w & 0xFFFF != 0x10),
+        "stores_priority": any(w >> 26 == 0x2B and w & 0xFFFF == 4 for w in words),
+        "reads_priority": any(w >> 26 == 0x23 and w & 0xFFFF == 4 for w in words),
+        "reads_queue": any(w >> 26 == 0x23 and w & 0xFFFF == 8 for w in words),
+        "tlnext": sum(1 for w in words if w >> 26 in (0x23, 0x2B) and w & 0xFFFF == 0xC),
+        "runnable": 2 in constants, "waiting": 8 in constants, "stopped": 1 in constants,
+    }
+
+
+def thread_start(words: list[int], size: int) -> bool:
+    """`osStartThread(thread)`: looks at the state (a halfword at +0x10), makes the thread runnable (2) or waiting
+    (8) and queues it, then reads the running thread's priority to decide whether to yield: seven to nine calls
+    (interrupts, enqueue, pop, dispatch, yield, restore) and three or four state stores, none to another halfword."""
+    f = _thread_features(words)
+    return (200 <= size <= 450 and f["reads_state"] and f["state_stores"] >= 3 and not f["other_halfword_stores"]
+            and not f["stores_priority"] and f["reads_priority"] and f["reads_queue"] and f["runnable"]
+            and f["waiting"] and f["calls"] >= 6)
+
+
+def thread_priority(words: list[int], size: int) -> bool:
+    """`osSetThreadPri(thread, pri)`: stores the priority (+0x04), re-queues a thread that is waiting on a queue
+    (+0x08, by its state), and marks the running thread runnable (one state store) before yielding."""
+    f = _thread_features(words)
+    return (150 <= size <= 320 and f["reads_state"] and f["state_stores"] == 1 and not f["other_halfword_stores"]
+            and f["stores_priority"] and f["reads_priority"] and f["reads_queue"] and f["runnable"]
+            and f["calls"] >= 4)
+
+
+def thread_destroy(words: list[int], size: int) -> bool:
+    """`osDestroyThread(thread)`: takes the thread off its queue unless it is stopped, then off the list of every
+    thread (the `tlnext` links at +0x0C, walked until a priority of -1), and dispatches another if it was running:
+    three to five calls and no store to the thread's halfwords."""
+    f = _thread_features(words)
+    return (150 <= size <= 320 and f["reads_state"] and f["state_stores"] == 0 and not f["other_halfword_stores"]
+            and f["tlnext"] >= 4 and f["stopped"] and not f["runnable"] and not f["waiting"]
+            and 3 <= f["calls"] <= 5)
+
+
+def _queue_features(words: list[int]) -> dict:
+    """What a routine does to an OSMesgQueue (mtqueue 0x00, fullqueue 0x04, validCount 0x08, first 0x0C,
+    msgCount 0x10, msg 0x14) and to an OSThread's state halfword (+0x10)."""
+    def loads(offset):
+        return sum(1 for w in words if w >> 26 == 0x23 and w & 0xFFFF == offset)
+
+    def stores(offset):
+        return sum(1 for w in words if w >> 26 == 0x2B and w & 0xFFFF == offset)
+
+    def adds(imm):  # addiu r, s, imm with s a real register (not the constant form)
+        return any(w >> 26 == 9 and w >> 21 & 31 != 0 and w & 0xFFFF == imm for w in words)
+
+    constant = {w & 0xFFFF for w in words if w >> 26 == 9 and w >> 21 & 31 == 0}  # addiu r, $zero, k
+    return {
+        "calls": sum(1 for w in words if w >> 26 == 3),
+        "divides": sum(1 for w in words if w >> 26 == 0 and w & 0x3F in (0x1A, 0x1B)),  # div, divu: the ring's modulo
+        "state_stores": sum(1 for w in words if w >> 26 == 0x29 and w & 0xFFFF == 0x10),
+        "waiting": 8 in constant, "no_block": 0xFFFF in constant,  # state 8; the -1 a non-blocking call returns
+        "valid_stores": stores(8), "first_stores": stores(0xC), "valid_down": adds(0xFFFF), "valid_up": adds(1),
+        "first_loads": loads(0xC), "count_loads": loads(0x10), "msg_loads": loads(0x14),
+        "stored": {o for o in (0, 4, 8, 0xC, 0x10, 0x14) if stores(o)},
+    }
+
+
+def _queue_routine(words: list[int], size: int) -> bool:
+    """Common to osRecvMesg, osSendMesg and osJamMesg: the blocking ring buffer, six calls (interrupts, yield, pop,
+    enqueue, restore and the thread's state), one modulo, a -1 for the non-blocking case, the state set to waiting."""
+    f = _queue_features(words)
+    return (250 <= size <= 360 and f["calls"] == 6 and f["divides"] == 1 and f["state_stores"] == 1
+            and f["waiting"] and f["no_block"] and f["valid_stores"] == 1 and f["msg_loads"] >= 1)
+
+
+def queue_receive(words: list[int], size: int) -> bool:
+    """`osRecvMesg(mq, &msg, flag)`: reads the first message (+0x14 ring), moves `first` on (+0x0C stored) and takes
+    one off the count; it reads the ring's size once or twice."""
+    f = _queue_features(words)
+    return (_queue_routine(words, size) and f["first_stores"] == 1 and f["valid_down"] and f["count_loads"] <= 2
+            and f["first_loads"] == 2)
+
+
+def queue_send(words: list[int], size: int) -> bool:
+    """`osSendMesg(mq, msg, flag)`: writes after the last message (`first + validCount`, modulo the size) and adds one
+    to the count; `first` is only read."""
+    f = _queue_features(words)
+    return _queue_routine(words, size) and f["first_stores"] == 0 and not f["valid_down"] and f["valid_up"]
+
+
+def queue_jam(words: list[int], size: int) -> bool:
+    """`osJamMesg(mq, msg, flag)`: writes in front of the first message (`first + size - 1`, modulo the size), so
+    it reads the ring's size three or four times, stores `first` and adds one to the count."""
+    f = _queue_features(words)
+    return (_queue_routine(words, size) and f["first_stores"] == 1 and f["valid_down"] and f["count_loads"] >= 3
+            and f["valid_up"])
+
+
+def queue_creation(words: list[int], size: int) -> bool:
+    """`osCreateMesgQueue(mq, msgs, count)`: six stores into the queue and no load or call: both lists empty
+    (the thread-list sentinel), the count and first zeroed, the size and the ring's address set."""
+    f = _queue_features(words)
+    return (32 <= size <= 48 and f["calls"] == 0 and f["stored"] == {0, 4, 8, 0xC, 0x10, 0x14}
+            and not any(w >> 26 in (0x23, 0x21, 0x25) for w in words))
+
+
 def identify(code: bytes, big_endian: bool = True) -> dict | None:
     """{"name", "corpus", "evidence"} for a function whose structure is a libultra routine's, else None."""
     if len(code) % 4 or not _MIN_ANY <= len(code) <= _MAX:
@@ -63,4 +180,16 @@ def identify(code: bytes, big_endian: bool = True) -> dict | None:
     if thread_yield(words):
         return {"name": "osYieldThread", "corpus": CORPUS,
                 "evidence": "marks the running thread runnable and yields between interrupt disable and restore"}
+    for check, name, evidence in (
+            (thread_start, "osStartThread",
+             "makes a thread runnable or waiting and queues it, then yields if it outranks the running one"),
+            (thread_priority, "osSetThreadPri",
+             "stores a thread's priority, re-queues it and yields if the running thread no longer outranks the queue"),
+            (thread_destroy, "osDestroyThread", "unlinks a thread from its queue and from the list of every thread"),
+            (queue_receive, "osRecvMesg", "takes the first message off a ring buffer, waiting while it is empty"),
+            (queue_send, "osSendMesg", "puts a message after the last of a ring buffer, waiting while it is full"),
+            (queue_jam, "osJamMesg", "puts a message in front of the first of a ring buffer, waiting while it is full"),
+            (queue_creation, "osCreateMesgQueue", "sets up an empty message queue: lists, count, ring")):
+        if check(words, len(code)):
+            return {"name": name, "corpus": CORPUS, "evidence": evidence}
     return None

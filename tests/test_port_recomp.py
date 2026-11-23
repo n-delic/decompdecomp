@@ -269,6 +269,7 @@ static uint64_t told[4]; static int n;
 uint64_t port_io_store(uint64_t addr, uint64_t value) { (void)addr; told[n++] = value; return 48; }
 uint64_t port_io_load(uint64_t addr) { (void)addr; return 48; }
 void port_safe_point(void) {}
+void port_boot_spin(void) {}
 int main(void) {
     static uint8_t ram[64];
     port_sw(ram, 0xA4500004u, 0xFC0);

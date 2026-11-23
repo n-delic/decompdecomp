@@ -31,6 +31,7 @@ uint32_t port_tlb_alias(uint32_t a) { return a; }
 void port_tlb_write(uint32_t pm, uint32_t hi, uint32_t lo0, uint32_t lo1) { (void)pm; (void)hi; (void)lo0; (void)lo1; }
 uint64_t port_io_store(uint64_t a, uint64_t v) { (void)v; return a; }
 void port_safe_point(void) {}
+void port_boot_spin(void) {}
 /* a thread whose code jumps to itself is parked for good (host.c): here, say so with the word at DATA, and end */
 void port_idle_forever(void) {
     uint32_t w; memcpy(&w, mem + 0x%(data)08Xu, 4);
@@ -530,3 +531,48 @@ def test_a_syscall_is_an_exception_the_games_own_handler_answers(run):
     out = run(prog)
     assert out["v0"] == 77  # the handler's eret resumed past the syscall
     assert out["data"][0] == 8 << 2  # Cause.ExcCode: syscall
+
+
+def test_a_function_in_a_tlb_window_has_code_where_the_interpreter_fetches_it(tmp_path):
+    """A game linked at 0x200000 and loaded at 0 spells its functions 0x80200000 | offset, where RAM holds nothing:
+    its bytes are at the physical alias, which the interpreter's fetch reads. `port_mips_has_code` asked RAM at the
+    spelling alone, said no code and skipped every such function the recompiler couldn't translate, so none of an
+    Armorines-like game's threads ever did their work."""
+    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if not cc:
+        pytest.skip("no C compiler")
+    source = HARNESS % {"c": C_FUNCTION, "code": CODE, "data": DATA}
+    source = source.replace("unsigned port_tlb_n;", "unsigned port_tlb_n = 1;")
+    source = source.replace("uint32_t port_tlb_canon(uint32_t a) { return a; }",
+                            "uint32_t port_tlb_canon(uint32_t a) { return a >= 0x200000u && a < 0x300000u ? a | 0x80000000u : a; }")
+    source = source.replace("uint32_t port_tlb_alias(uint32_t a) { return a; }",
+                            "uint32_t port_tlb_alias(uint32_t a) { return a >= 0x80200000u && a < 0x80300000u ? "
+                            "0x80000000u + (a - 0x80200000u) : 0; }")
+    source = source.replace("int main(int argc, char **argv) {", """int port_mips_has_code(uint32_t address);
+int main(int argc, char **argv) {
+    if (argc > 2 && !strncmp(argv[2], "has:", 4)) {
+        mem = mmap(NULL, 1ull << 32, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
+        uint32_t w = __builtin_bswap32(0x24020001u); /* addiu $v0, $zero, 1: at physical 0x500 only */
+        memcpy(mem + 0x80000500u, &w, 4);
+        printf("%d\\n", port_mips_has_code((uint32_t)strtoul(argv[2] + 4, NULL, 16)));
+        return 0;
+    }""", 1)
+    harness = tmp_path / "harness.c"
+    harness.write_text(source)
+    program = tmp_path / "interp"
+    done = subprocess.run([cc, "-O1", "-o", str(program), str(harness), str(MIPS), "-lm"],
+                          capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr
+    code = tmp_path / "unused.bin"
+    code.write_bytes(b"")
+
+    def has(address):
+        out = subprocess.run([str(program), str(code), f"has:{address:08X}"], capture_output=True, text=True,
+                             timeout=30, check=True)
+        return out.stdout.strip()
+
+    assert has(0x80000500) == "1"  # code at its own address
+    assert has(0x80200500) == "1"  # the window's spelling: the bytes are at 0x80000500
+    assert has(0x00200500) == "1"  # as the game's own pointer has it, below KSEG0
+    assert has(0x80200600) == "0"  # nothing at the alias either
+    assert has(0x80100000) == "0"  # outside any window

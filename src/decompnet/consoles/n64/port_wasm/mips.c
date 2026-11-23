@@ -35,6 +35,9 @@ uint64_t port_io_load(uint64_t addr);
 uint64_t port_io_store(uint64_t addr, uint64_t value);
 uint32_t port_stack_bus(uint32_t addr);
 void port_safe_point(void);
+#ifndef PORT_WEB
+void port_boot_spin(void); /* host.c: a boot function that never returns, once its threads exist, is the idle thread */
+#endif
 /* host.c's: park the running thread for good (its code jumps to itself); a build without threads spins on */
 __attribute__((weak)) void port_idle_forever(void) {}
 int port_thread_number(void);
@@ -579,7 +582,11 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
         }
     counted:
         if (!(++steps & 0xFFFF)) { /* a thread spinning here gives the others their turn */
-            if (tracing > 1) fprintf(stderr, "interpreter: %08X still running, at %08X after %lu instructions\n", entry, pc, steps);            port_safe_point();
+            if (tracing > 1) fprintf(stderr, "interpreter: %08X still running, at %08X after %lu instructions\n", entry, pc, steps);
+#ifndef PORT_WEB
+            port_boot_spin();
+#endif
+            port_safe_point();
 #ifdef PORT_WEB
             port_web_yield();
 #endif
@@ -671,11 +678,16 @@ void port_mips_copy_in(uint64_t *r, int slot, uint32_t from, int words) {
     }
 }
 
-/* Whether `address` has the game's code to interpret: in the console's RAM, an instruction there. */
+/* Whether `address` has the game's code to interpret: in the console's RAM, an instruction there. The way the
+   interpreter fetches it: a function in a TLB window (a game linked at 0x200000 and loaded at 0) is spelled
+   0x80000000 | virtual, where RAM holds nothing, and its bytes are at the physical alias: asking RAM at the spelling
+   alone said "no code" and skipped every such function the recompiler couldn't translate, so a game whose code all
+   runs through a window never started its threads' work. */
 int port_mips_has_code(uint32_t address) {
     if (!M) M = port_memory();
+    address = mapped(address);
     if (address < 0x80000400u || address >= 0x80800000u || (address & 3)) return 0;
-    return lw(address) != 0 || lw(address + 4) != 0;
+    return fetch(address) != 0 || fetch(address + 4) != 0;
 }
 
 #ifndef PORT_WEB

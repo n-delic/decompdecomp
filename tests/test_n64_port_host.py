@@ -915,6 +915,7 @@ uint64_t port_io_load(uint64_t a) { return a; }
 uint64_t port_io_store(uint64_t a, uint64_t v) { (void)v; return a; }
 uint32_t port_stack_bus(uint32_t a) { (void)a; return 0; }
 void port_safe_point(void) {}
+void port_boot_spin(void) {}
 int port_thread_number(void) { return 0; }
 unsigned port_tlb_n;
 uint32_t port_tlb_canon(uint32_t a) { return a; }
@@ -1071,3 +1072,17 @@ def test_the_rdp_command_status_reads_idle_so_a_game_polling_it_gets_on():
     assert "addr == DPC_BASE + 0x0Cu ? 0x80u : 0u" in load  # status: CBUF_READY alone; clock and busy counters 0
     store = text[text.index("uint64_t port_io_store("):text.index("/* ---------------------------------------------------------------- VI */")]
     assert "addr == DPC_BASE + 0x0Cu" in store  # the status write is a command, nothing to keep
+
+
+def test_a_first_function_that_loops_in_the_games_own_code_after_starting_threads_is_the_idle_thread():
+    """A boot function that starts the game's threads and then loops around a call to its own code (not the two idle
+    shapes boot_idle knew) never returned, so the host never gave its threads the CPU: a game's retraces did not
+    even tick. The interpreter's periodic safe point reports it, and a thousand of them (65 million instructions)
+    with threads started end the boot as a return would."""
+    host = HOST.read_text()
+    assert "void port_boot_spin(void)" in host
+    body = host[host.index("void port_boot_spin(void)"):]
+    body = body[:body.index("}\n")]
+    assert "!self && !booted && thread_count > 0" in body and "boot_idle(" in body
+    mips = (HOST.parent / "mips.c").read_text()
+    assert "port_boot_spin();" in mips[mips.index("still running, at"):]
