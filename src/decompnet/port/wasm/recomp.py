@@ -262,6 +262,7 @@ def _returned(ret: str) -> str:
 
 # ---------------------------------------------------------------- code several overlays load at one address
 
+RUNTIME_SLOT = ("raw_slot",)  # section names of overlay slots the game fills at run time (the split's raw slots)
 GUARD_WORDS = 16  # how much of a function's start tells which overlay's code is in RAM
 
 
@@ -288,9 +289,13 @@ def overlay_guards(folder: Path, image: Path | None, defined: set[str]) -> dict[
     except (OSError, ValueError):
         return {}
     entries = []  # (vram, end, rom offset, name)
+    slots = []  # sections the game loads at run time: (vram, end, rom, rom end, raw slot by name)
     for sec in sections:
         if "rom" not in sec or "vram" not in sec:
             continue
+        size = sec.get("size", 0)
+        slots.append((sec["vram"], sec["vram"] + size, sec["rom"], sec["rom"] + size,
+                      str(sec.get("name", "")).startswith(RUNTIME_SLOT)))
         for f in sec.get("functions", []):
             size = f.get("size", 0)
             if size < 4 or size & 3 or f["vram"] & 3:
@@ -305,6 +310,20 @@ def overlay_guards(folder: Path, image: Path | None, defined: set[str]) -> dict[
                 break
             if rom + (other[0] - vram) != other[2]:  # the same addresses, other bytes of the ROM: another overlay
                 shared.update((i, j))
+    # Overlays the split spells as sections of one slot: every function of such a section is only the game's code
+    # while its overlay is the one loaded, whether or not another overlay's function starts at the same address
+    # (a puzzle game's main thread spun in the one function of the first slot that no other overlay's listed
+    # function overlapped, with another overlay loaded there).
+    loaded = [(a, b) for a, b, ra, rb, raw in slots if raw and b > a]
+    for k, (a, b, ra, rb, raw) in enumerate(slots):
+        if b <= a:
+            continue
+        if raw or any(a < b2 and a2 < b and (ra, rb) != (ra2, rb2)
+                      for m, (a2, b2, ra2, rb2, _) in enumerate(slots) if m != k):
+            loaded.append((a, b))
+    if loaded:
+        shared.update(i for i, (vram, end, _, _) in enumerate(entries)
+                      if any(a <= vram < b for a, b in loaded))
     if not shared:
         return {}
     out = {}
@@ -811,14 +830,20 @@ static uint32_t port_recomp_ram_hash(uint32_t vram, unsigned words) {
 int port_recomp_guard(uint32_t vram, unsigned words, uint32_t hash) {
     return port_mips_has_code(vram) && port_recomp_ram_hash(vram, words) != hash;
 }
+/* port_recomp_guards is sorted by address: the first candidate at `vram`, or the table's end */
+static unsigned port_recomp_first(uint32_t vram) {
+    unsigned lo = 0, hi = %(guards)du;
+    while (lo < hi) { unsigned mid = (lo + hi) / 2; if (port_recomp_guards[mid].vram < vram) lo = mid + 1; else hi = mid; }
+    return lo;
+}
 static int port_recomp_shared(uint32_t vram) {
-    for (unsigned i = 0; i < %(guards)du; i++) if (port_recomp_guards[i].vram == vram) return 1;
-    return 0;
+    unsigned i = port_recomp_first(vram);
+    return i < %(guards)du && port_recomp_guards[i].vram == vram;
 }
 static recomp_func_t *port_recomp_match(uint32_t vram, recomp_func_t *self) {
-    for (unsigned i = 0; i < %(guards)du; i++) {
+    for (unsigned i = port_recomp_first(vram); i < %(guards)du && port_recomp_guards[i].vram == vram; i++) {
         const PortGuard *g = &port_recomp_guards[i];
-        if (g->vram == vram && g->func != self && port_recomp_ram_hash(vram, g->words) == g->hash) return g->func;
+        if (g->func != self && port_recomp_ram_hash(vram, g->words) == g->hash) return g->func;
     }
     return 0;
 }

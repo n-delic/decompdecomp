@@ -494,3 +494,32 @@ def test_the_ram_hash_in_c_is_the_roms_hash_in_python(tmp_path):
     subprocess.run([cc, "-o", str(tmp_path / "hash"), str(tmp_path / "hash.c")], check=True)
     done = subprocess.run([str(tmp_path / "hash")], capture_output=True, text=True, check=True)
     assert int(done.stdout, 16) == recomp.code_hash(words)
+
+
+def test_every_function_of_a_slot_the_game_fills_at_run_time_is_guarded(tmp_path):
+    """A puzzle game's main thread spun in the first function of a raw slot that no other overlay's listed function
+    overlapped, while the game had loaded another overlay there: the guard covers every function of a section named
+    as a raw slot, and of sections whose addresses overlap another's, not only functions that overlap in the table."""
+    image = tmp_path / "rom.z64"
+    blob = bytearray(0x1000)
+    for at, w in ((0x100, 0x27BDFFE0), (0x120, 0x03E00008), (0x200, 0x3C048008)):
+        blob[at:at + 4] = w.to_bytes(4, "big")
+    image.write_bytes(bytes(blob))
+    folder = tmp_path / "recomp"
+    folder.mkdir()
+    (folder / "syms.toml").write_text(
+        '[[section]]\nname = "main"\nrom = 0x400\nvram = 0x80001000\nsize = 0x20\n\nfunctions = [\n'
+        '    { name = "func_80001000", vram = 0x80001000, size = 0x20 },\n]\n\n'
+        # a raw slot alone, with two functions, none overlapping another section's
+        '[[section]]\nname = "raw_slot_00"\nrom = 0x100\nvram = 0x80300000\nsize = 0x40\n\nfunctions = [\n'
+        '    { name = "func_80300000", vram = 0x80300000, size = 0x20 },\n'
+        '    { name = "func_80300020", vram = 0x80300020, size = 0x20 },\n]\n\n'
+        # two sections of one address range with other bytes (function boundaries differ)
+        '[[section]]\nname = "ovl_a"\nrom = 0x200\nvram = 0x80400000\nsize = 0x40\n\nfunctions = [\n'
+        '    { name = "func_80400000", vram = 0x80400000, size = 0x20 },\n]\n\n'
+        '[[section]]\nname = "ovl_b"\nrom = 0x240\nvram = 0x80400000\nsize = 0x40\n\nfunctions = [\n'
+        '    { name = "func_80400020", vram = 0x80400020, size = 0x20 },\n]\n')
+    names = {"func_80001000", "func_80300000", "func_80300020", "func_80400000", "func_80400020"}
+    guards = recomp.overlay_guards(folder, image, names)
+    assert set(guards) == names - {"func_80001000"}  # (the game's own code at a fixed address has none)
+    assert guards["func_80300000"][0] == 0x80300000 and guards["func_80300020"][0] == 0x80300020
