@@ -348,11 +348,13 @@ static int bug_offset; /* the AI's DMA bug libultra works around: a buffer after
 static FILE *wav;
 static uint32_t wav_bytes;
 
-static double now(void) {
+/* the host's clock (PORT_VTIME makes it virtual: host.c); the wall clock where the host has none (the browser build's) */
+__attribute__((weak)) double port_clock_seconds(void) {
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);
     return (double)t.tv_sec + t.tv_nsec / 1e9;
 }
+static double now(void) { return port_clock_seconds(); }
 void port_ai_frequency(uint32_t f) {
     pthread_mutex_lock(&ai_lock);
     if (f >= 4000 && f <= 96000) hz = f;
