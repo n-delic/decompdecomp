@@ -35,7 +35,7 @@ Hypotheses read off the compiler's behaviour, not confirmed in its source: the h
 quantity that local-alloc puts in `$s0` before global.c allocates (`cc1 -dl` shows 1-byte block-local pseudos there);
 a typed member read is not ordered after a store to a scalar global by sched.c's dependence test.
 
-Not solved (the rows left at 2980 are mostly this): the target writes each byte value as two instructions, `andi $v1, $v0, 0x3f` then `andi $s4, $v1, 0xff`, which
+Solved later (`audio-builder-halfword-byte-locals.md`: a `u16` local set as `(u8) (x & M)`; matched). Was not solved (the rows left at 2980 are mostly this): the target writes each byte value as two instructions, `andi $v1, $v0, 0x3f` then `andi $s4, $v1, 0xff`, which
 no spelling tried here keeps (`(x & 0x3F) & 0xFF`, `(u8) (x & 0x3F)`, a `u8`/`u32`/`s32` local, `register`, an inline
 helper returning `u8`, a bit-field read, `% 64`, a shift pair): combine folds the `and` into the zero extension each time. In a
 microtest the pair survives when the `and` result has a second use, and no second use shows in the target; combine.c
