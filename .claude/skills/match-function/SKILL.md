@@ -630,6 +630,13 @@ says the fix and the library families it names; try those families with `prove_c
   naming the instruction that made each conflict or preference, its kind and C line ("call-argument copy: ... into
   $a1 for the call to helper, argument 2, C line 5"). Read it before reordering declarations; a call-argument cause
   sends you to that call (its arguments, signatures.py), not to the code around it.
+- **Many register rows in a large leaf: `alloc_roles.py CAND.c --slug S --function F --whatif 8`.** It reads, for every
+  pseudo, the register the target has where ours has the pseudo's (its role), replays global.c's colouring from the greg
+  dump (it reproduced 84 of 85 allocnos on a 681-instruction decoder) and names the priority changes that would put the
+  misplaced ones in their target registers. An inner loop's temporary shown in a long-lived variable's target register
+  was that variable in the original: write it as that variable (decomp-repair `block_temp_role_merge`; 1240 -> 585 on
+  the decoder, docs/learnings/function/bit-stream-decoder-frame-slot-and-allocation-simulator.md). Apply role edits
+  together and grid their subsets: one at a time they usually score worse.
 
 ## 3b. Out of hand-written shapes? Trace the compiler instead of guessing
 
