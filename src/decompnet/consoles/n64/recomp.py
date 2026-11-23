@@ -433,6 +433,13 @@ def needs_recompile(summary: dict, cfg: dict, root: Path) -> bool:
     return bool(image and image.is_file() and module_ranges(image.read_bytes()))
 
 
+def is_c_name(name: str) -> bool:
+    """Whether N64Recomp's C can name this function. A split can list an assembler's local label (`.L8010E8C8`, a
+    branch target inside another function) as a function of its own; its `void R_.L8010E8C8(...)` stopped a port's
+    recompiled C from compiling. Such a symbol is left to the interpreter, as an unusable one is."""
+    return re.fullmatch(r"[A-Za-z_]\w*", name) is not None
+
+
 def recompile(program: Path, rom_path: Path, segments: list[dict], functions: list[dict], out: Path, log=print,
               stop=lambda: False) -> dict:
     """Run N64Recomp over the split into `out` and check what it writes; returns (and writes to out/recomp.json) its
@@ -444,7 +451,7 @@ def recompile(program: Path, rom_path: Path, segments: list[dict], functions: li
                                                   for start, end in ranges)}
     segments = runtime_segments(segments, ranges)
     usable = [f for f in functions if f["name"] not in banked and f["size"] > 0 and not f["vram"] & 3
-              and not f["size"] & 3 and not f["rom"] & 3]
+              and not f["size"] & 3 and not f["rom"] & 3 and is_c_name(f["name"])]
     if banked:
         log(f"leaving {len(banked)} relocatable overlay functions for runtime loading and interpretation")
     # a function between the split's segments (code the split left as data, matched C the project has for it

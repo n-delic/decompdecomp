@@ -345,3 +345,12 @@ def test_review_can_add_a_function_outside_the_declared_code_ranges(project):
     assert recompile_review.add(net, "game", 1.0, [start], _review_log())["added"] == [
         {"name": "func_80000440", "vram": start}]
     assert net.project_store(proj["id"]).one("SELECT 1 FROM functions WHERE vram=?", start)
+
+
+def test_a_local_label_is_not_a_function_for_the_recompiler():
+    """A split listed `.L8010E8C8` (a branch target inside a function) as a function: its `void R_.L8010E8C8(...)`
+    declaration stopped the port's recompiled C from compiling. Only names C can spell are recompiled."""
+    from decompnet.consoles.n64 import recomp
+
+    assert recomp.is_c_name("func_80001000") and recomp.is_c_name("_osSetIntMask")
+    assert not recomp.is_c_name(".L8010E8C8") and not recomp.is_c_name("$L1") and not recomp.is_c_name("a.b")
