@@ -24,6 +24,8 @@ read a function's status.
     setup.py env HOLDER                                 print `export UV_PROJECT_ENVIRONMENT=... DECOMP_HOME=... DECOMP_PORT=...`
                                                         for the session (eval it; the token is never printed)
     mcp.py HOLDER TOOL [JSON]                           (its own script) call any app MCP tool over this session's connection
+    handoff.py HOLDER --tried "idea: score" ...         (its own script) the hand-off note via add_note, then release_function
+                                                        with the claim token and `setup.py release`
     setup.py release HOLDER                             after `release_function`: the renewal stops renewing the released
                                                         function and never claims it again
     setup.py reclaim HOLDER [FUNC] [--random] [--max-size N]
