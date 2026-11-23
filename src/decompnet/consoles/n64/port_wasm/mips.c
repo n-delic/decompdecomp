@@ -492,6 +492,19 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
             break;
         }
         if (op) zeros = 0;
+        if (op == 0x42000018u) {
+            /* eret: libultra's thread dispatch ends with it, and nothing returns from it: it resumes another thread.
+               The interpreter has no exception model (the host runs the game's threads), so running on into the
+               next function (the thread cleanup, which called osDestroyThread and came back for ever) kept a core
+               busy at 100%. The routine is the game's own copy of osCreateThread/osStartThread/osSetThreadPri and the
+               like that library detection did not name for this SDK build: say so, and park the thread. */
+            static int said_eret;
+            if (said_eret++ < 3)
+                fprintf(stderr, "interpreter: an eret at %08X (from %08X): the game's own thread dispatch, its libultra routine "
+                        "isn't recognised, so the host doesn't run its threads: the thread stops\n", pc, entry);
+            port_idle_forever();
+            continue; /* (only if it comes back: the same eret again) */
+        }
         c.r[0] = 0;
         int kind = step(&c, pc, op, &target);
         c.r[0] = 0;

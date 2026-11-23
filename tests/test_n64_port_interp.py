@@ -260,6 +260,14 @@ def test_a_jump_to_itself_parks_the_thread_instead_of_spinning(run, loop):
     assert run.raw(prog) == "idle 0000002A"
 
 
+def test_an_eret_parks_the_thread_instead_of_running_into_the_next_function(run):
+    """libultra's thread dispatch ends with `eret`, which resumes another thread and never falls through. The game's own
+    copy of osCreateThread/osStartThread (library detection did not name it for its SDK build) ran into the next
+    routine, the thread cleanup, which called osDestroyThread and came back for ever at 100% CPU: the thread parks."""
+    prog = [*_data_base(), addiu("t0", "zero", 42), sw("t0", 0, "t9"), 0x42000018, NOP]
+    assert run.raw(prog) == "idle 0000002A"
+
+
 def test_the_addresses_the_game_starts_running_are_written_down_once(run, tmp_path):
     """PORT_ENTRIES: each function entry the interpreter sees (where a run starts, each call's target), once, for the
     importer's evidence of where functions start (consoles/n64/code.py, runtime_entries)."""
