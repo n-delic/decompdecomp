@@ -716,6 +716,8 @@ void w2c_env_osSpTaskLoad(struct w2c_env *e, u32 task) { (void)e; (void)task; }
    reads Status or Count): answered here, as the console's CPU would. */
 static uint32_t cop0_status = 0x3400FF01u, cop0_compare, fcsr = 0x01000800u;
 u32 w2c_env_0x5F_builtin_mips_read_status(struct w2c_env *e) { (void)e; return cop0_status; }
+uint32_t port_cop0_status(void) { return cop0_status; } /* recompiled code's frames start from it (recomp.py) */
+void port_cop0_status_set(uint32_t v) { cop0_status = v; }
 u32 w2c_env_0x5F_builtin_mips_write_status_return_spacing(struct w2c_env *e, u32 v) { (void)e; cop0_status = v; return 0; }
 u32 w2c_env_0x5F_builtin_mips_write_compare(struct w2c_env *e, u32 v) { (void)e; cop0_compare = v; return 0; }
 u32 w2c_env_0x5F_builtin_mips_read_count(struct w2c_env *e) { /* Count runs at half the CPU's 93.75 MHz */

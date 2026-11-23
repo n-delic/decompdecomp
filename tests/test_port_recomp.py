@@ -346,3 +346,38 @@ def test_link_branches_set_ra_before_the_condition_and_delay_slot():
     fixed = link_branches(generated)
     assert "ctx->r31 = (gpr)(int32_t)0x80012388u;\n    if (SIGNED(0) < 0)" in fixed
     assert "ctx->r31 = (gpr)(int32_t)0x80012390u;\n    if (SIGNED(0) >= 0)" in fixed
+
+
+def test_recompiled_floats_follow_the_games_status_fr_bit(tmp_path):
+    """A tank game's recompiled vector code uses odd single-precision registers (`mul.s $f1`), which N64Recomp's
+    CHECK_FR allows only in FR=1: every frame started in FR=0 and stopped on the first one. A frame now starts from
+    the host's Status, a Status write switches the layout, and switching keeps each odd register's value."""
+    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if cc is None:
+        pytest.skip("no C compiler")
+    text = recomp.BRIDGE_RUNTIME
+    start = text.index("uint32_t port_cop0_status(void);")
+    end = text.index("/* C called by the interpreter can call back")
+    assert "port_recomp_fr(c, (c->status_reg >> 26) & 1u);" in text[text.index("static void port_recomp_frame("):]
+    assert "port_recomp_fr(ctx, ((uint32_t)value >> 26) & 1u);" in recomp.__loader__.get_source(recomp.__name__)
+    (tmp_path / "t.c").write_text(r"""#include <stdint.h>
+#include <stdio.h>
+typedef union { double d; struct { uint32_t u32l; uint32_t u32h; }; uint64_t u64; } fpr;
+typedef struct { fpr f0, f1, f2, f3; uint32_t *f_odd; uint8_t mips3_float_mode; } recomp_context;
+""" + text[start:end].replace("i < 32", "i < 4") + r"""
+uint32_t port_cop0_status(void) { return 0; } void port_cop0_status_set(uint32_t v) { (void)v; }
+int main(void) {
+    recomp_context c = {0}; c.f_odd = &c.f0.u32h;
+    c.f_odd[0] = 0x11111111u; c.f0.u32l = 7;            /* FR=0: $f1 is the upper half of $f0 */
+    port_recomp_fr(&c, 1);
+    printf("%d %X %X ", c.mips3_float_mode, c.f1.u32l, c.f_odd[0]);  /* FR=1: $f1 has its own register */
+    c.f_odd[0] = 0x22222222u; c.f0.u32h = 0x99u;
+    port_recomp_fr(&c, 0);
+    printf("%d %X\n", c.mips3_float_mode, c.f_odd[0]);
+    return 0;
+}
+""")
+    done = subprocess.run([cc, "-w", str(tmp_path / "t.c"), "-o", str(tmp_path / "t")], capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
+    out = subprocess.run([str(tmp_path / "t")], capture_output=True, text=True).stdout.split()
+    assert out == ["1", "11111111", "11111111", "0", "22222222"]

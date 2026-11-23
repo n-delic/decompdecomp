@@ -540,6 +540,17 @@ def _write(path: Path, text: str) -> None:
 BRIDGE_RUNTIME = r'''
 /* the MIPS stack recompiled code runs on: one per host thread, handed down as it calls into the game's C and back */
 __thread uint32_t port_recomp_sp;
+uint32_t port_cop0_status(void);
+void port_cop0_status_set(uint32_t value);
+/* FR=0 keeps an odd register in the upper half of the even one before it; FR=1 gives each its own 64 bits (N64Recomp
+   reaches the odd ones through f_odd). Switching moves the odd registers' values, as the hardware's registers do. */
+static void port_recomp_fr(recomp_context *c, unsigned fr) {
+    fpr *f = &c->f0;
+    if ((fr != 0) == (c->mips3_float_mode != 0)) return;
+    if (fr) { for (int i = 1; i < 32; i += 2) f[i].u32l = f[i - 1].u32h; c->f_odd = &c->f1.u32l; }
+    else { for (int i = 1; i < 32; i += 2) f[i - 1].u32h = f[i].u32l; c->f_odd = &c->f0.u32h; }
+    c->mips3_float_mode = fr != 0;
+}
 /* C called by the interpreter can call back into recompiled code. Its next frame must be below the
    interpreter's live frames, rather than the older stack pointer saved by the recompiled caller. */
 uint32_t port_recomp_stack_enter(uint32_t sp) { uint32_t saved = port_recomp_sp; port_recomp_sp = sp; return saved; }
@@ -556,9 +567,14 @@ static void port_recomp_frame(recomp_context *c, int words) {
     if (!port_recomp_sp) port_recomp_thread(-1);
     c->r29 = (gpr)(int32_t)((port_recomp_sp - 16u - 4u * (uint32_t)words) & ~7u);
     c->r31 = 0;
+    /* The floating-point registers follow the game's Status.FR, as the console's CPU does: an N64 game runs with FR=1
+       (the boot leaves it set), where each odd register is its own and N64Recomp's code checks that
+       (CHECK_FR, `mips3_float_mode`). A frame that always started in FR=0 stopped such a game on its first odd
+       single-precision register (a tank game's vector code: `mul.s $f1`). */
+    c->status_reg = port_cop0_status();
     c->f_odd = &c->f0.u32h;
     c->mips3_float_mode = 0;
-    c->status_reg = 0x2000FF01u;
+    port_recomp_fr(c, (c->status_reg >> 26) & 1u);
 }
 /* the game's C passes the arguments its callee doesn't declare (an unprototyped `alSynNew()` called with two) as
    MIPS's $a0-$a3, four words of memory at REGS (adapt.py), and takes a void function's value from the $v0 word
@@ -626,7 +642,11 @@ static void port_recomp_missing(uint32_t vram, const char *name, uint8_t *rdram,
 /* what N64Recomp's output needs from a runtime (recomp.h) */
 static int32_t no_sections[64];
 int32_t *section_addresses = no_sections;
-void cop0_status_write(recomp_context *ctx, gpr value) { ctx->status_reg = (uint32_t)value; }
+void cop0_status_write(recomp_context *ctx, gpr value) {
+    ctx->status_reg = (uint32_t)value;
+    port_cop0_status_set((uint32_t)value); /* the host's Status, which the next recompiled call starts from */
+    port_recomp_fr(ctx, ((uint32_t)value >> 26) & 1u);
+}
 gpr cop0_status_read(recomp_context *ctx) { return (gpr)(int32_t)ctx->status_reg; }
 void switch_error(const char *func, uint32_t vram, uint32_t jtbl) {
     fprintf(stderr, "recompiled %%s: a switch out of its table at %%08X (table %%08X)\n", func, vram, jtbl); exit(5);
