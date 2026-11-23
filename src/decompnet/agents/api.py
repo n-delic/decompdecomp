@@ -52,7 +52,8 @@ TOO_LONG_READ = 2000  # characters of that answer read for why
 API_RETRIES, API_RETRY_WAIT = 3, 10  # a dropped request or a gateway's 5xx, asked again after 10, 20, 40 seconds
 # a function is done with when the helper compiled it to a match or released it: its work then folds into a line
 FINISHING = ("compile_and_diff", "compile_patch", "release_function")
-APPLIED = "through the normal judge:"  # what try_recipes says when it applied its winner (compile_tools.try_recipes)
+# the line try_recipes starts its applied winner's verdict with (compile_tools.try_recipes; recipe names are one line)
+APPLIED = re.compile(r"^Applying .+ through the normal judge:$", re.M)
 FOLDED = 2  # messages a fold leaves: one call and its result
 
 
@@ -60,7 +61,7 @@ def _finishes(name: str, args: dict, result: str) -> bool:
     """Whether a call finished with its function: try_recipes only when it applied a winner through the judge (a
     preview, or apply=true with no better recipe, keeps nothing, so the helper is still working on it)."""
     if name == "try_recipes":
-        return isinstance(args, dict) and args.get("apply") is True and APPLIED in (result or "")
+        return isinstance(args, dict) and args.get("apply") is True and APPLIED.search(result or "") is not None
     return name in FINISHING
 
 

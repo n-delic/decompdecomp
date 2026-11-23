@@ -38,7 +38,7 @@ Long kept-attempt diffs remain available through `last_diff`.
 }
 ```
 
-Recipe names must be unique. This first version accepts explicit edits; it does
+Recipe names must be unique single lines. This first version accepts explicit edits; it does
 not choose architecture-specific flags or presets. The baseline and trials build
 and compare with the project's ordinary tools. Every previously matched neighbor,
 and an already matching function itself, must remain matched. An exact candidate
@@ -57,7 +57,13 @@ memory/time limits apply to each build; a trial also rebuilds the original unit.
 
 Revisions compare content, including the entire unit, local headers, tools/config
 and harness inputs, build configuration and the target object. Only platform, version, compiler and compiler-range settings enter the revision;
-background surveys and UI bookkeeping do not. Python caches and ignored
+background surveys and UI bookkeeping do not. The project's `.decomp.wtf.json`
+enters without what the app writes into it on its own (`rebuild`, which Check
+again stamps with its time, and a PC game's `analysis` and `tools`). Where each
+source file has its own compiler (GameCube/Wii's `configure.py`, PC and DS's
+`file_compilers.json`), this file's compiler enters the revision, so a
+`try_compiler` switch makes it stale; `configure.py` as a whole does not, because
+the app rewrites it whenever another file links. Python caches and ignored
 build/original directories are excluded. Symlinked headers/tools are skipped: their
 external contents are outside this revision, but fresh builds and ordinary judging
 still run. The scan is capped at 4,096

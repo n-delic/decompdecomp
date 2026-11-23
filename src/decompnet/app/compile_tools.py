@@ -78,7 +78,7 @@ def snapshot(engine, slug, function):
     source = text[span[0]:span[1]]
     if len(source.encode()) > MAX_SOURCE:
         raise NetworkError('This definition is too large for a compact patch request.')
-    inputs = {unit.source, 'objdiff.json', 'build.ninja', 'Makefile', 'CMakeLists.txt', 'configure.py', '.decomp.wtf.json'}
+    inputs = {unit.source, 'objdiff.json', 'build.ninja', 'Makefile', 'CMakeLists.txt', '.decomp.wtf.json'}
     visited = 0
     for directory, dirs, files in os.walk(fp.root):
         dirs[:] = sorted(d for d in dirs if d not in EXCLUDED)
@@ -90,15 +90,16 @@ def snapshot(engine, slug, function):
             if (rel.suffix.lower() in {'.h', '.hpp', '.hh', '.hxx', '.inc'}
                     or rel.parts[0] in {'tools', 'config', 'harness'}):
                 inputs.add(rel.as_posix())
-    # The files the console reads each source file's compiler from (GC/Wii: configure.py's Object(...) versions, PC
-    # and DS: config/file_compilers.json): a try_compiler switch there changes what the unit compiles to
-    # (after the walk, whose size cap a huge config/ meets first)
-    console, root = consoles.get(cfg.get('platform') or (fp.manifest or {}).get('platform')), fp.root.resolve()
-    for glob in console.compiler_config:  # (a glob's ** may go through a linked folder: only what's inside counts)
-        inputs.update(p.relative_to(fp.root).as_posix() for p in sorted(fp.root.glob(glob))
-                      if p.is_file() and not p.is_symlink() and root in p.resolve().parents)
     # Only compiler selectors belong here: surveys, range-check evidence and UI bookkeeping change on their own.
     settings = {k: cfg[k] for k in ('platform', 'version', 'compiler', 'compiler_ranges') if k in cfg}
+    # This file's own compiler where each file has one (GC/Wii: its Object(...) in configure.py; PC, DS: their
+    # file_compilers.json): a try_compiler switch changes what the unit compiles to. Not configure.py whole: the app
+    # rewrites it whenever another file links (NonMatching -> Matching), which would make every brief stale
+    console = consoles.get(cfg.get('platform') or (fp.manifest or {}).get('platform'))
+    try:
+        settings['file_compiler'] = console.file_compiler(fp, unit.source)
+    except Exception:  # noqa: BLE001  an unreadable build config: the fresh builds and the judge still see it
+        settings['file_compiler'] = None
     digest = hashlib.sha256(json.dumps([fn['id'], fn['unit'], settings], sort_keys=True).encode())
     total = 0
     for name, path in [(name, fp.root / name) for name in sorted(inputs)] + [('target', unit.target)]:
@@ -293,8 +294,8 @@ def try_recipes(net, agent, slug, function, revision, recipes, apply=False):
             if not isinstance(recipe, dict) or set(recipe) != {'name', 'edits'}:
                 raise NetworkError('Each recipe must contain name and edits.')
             name = recipe['name']
-            if not isinstance(name, str) or not name.strip() or len(name) > 80 or name in names:
-                raise NetworkError('Recipe names must be unique nonempty strings of at most 80 characters.')
+            if not isinstance(name, str) or not name.strip() or len(name) > 80 or name in names or '\n' in name or '\r' in name:
+                raise NetworkError('Recipe names must be unique nonempty single lines of at most 80 characters.')
             names.add(name)
             candidate = definition(engine, fn, patch(source, recipe['edits']))
             if candidate in seen:
