@@ -163,3 +163,32 @@ def test_prove_chain_offers_the_diff_gated_children_the_permuter_would(monkeypat
     out = prove.generator(judge, "f")("void f(void){}")
     assert [family for family, _ in out] == ["unlabelled", "gated"]
     assert seen["args"][5] == [("r", "a", "b")] and seen["kw"]["big_endian"] is False
+
+
+STUB_FLAGS = textwrap.dedent("""\
+    #!{python}
+    import json, sys
+    for line in sys.stdin:
+        r = json.loads(line)
+        if r["op"] == "function":
+            out = {{"name": r["name"], "vram": 4096, "target": "03e00008", "header": "",
+                   "compiler": {{"toolchain": "t", "flags": ["-O2"]}}}}
+        else:
+            out = {{"score": 30, "detail": "", "diff": "flags=%s" % " ".join(r["compiler"]["flags"])}}
+        print(json.dumps(out), flush=True)
+""")
+
+
+def test_fast_judge_flags_adds_to_the_functions_own_without_replacing_them(tmp_path, monkeypatch, capsys):
+    path = tmp_path / "decomp"
+    path.write_text(STUB_FLAGS.format(python=sys.executable))
+    path.chmod(path.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("DECOMP_BIN", str(path))
+    fast = load("fast_judge")
+    source = tmp_path / "c.c"
+    source.write_text("int f1(void){return 1;}")
+    base = [str(source), "--slug", "game", "--function", "f1", "--diff"]
+    fast.main(base)
+    assert "flags=-O2\n" in capsys.readouterr().out
+    fast.main(base + ["--flags", "-fno-strength-reduce -fno-schedule-insns"])
+    assert "flags=-O2 -fno-strength-reduce -fno-schedule-insns" in capsys.readouterr().out

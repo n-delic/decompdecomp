@@ -53,7 +53,8 @@ def find_decomp(explicit=None):
 
 
 class Judge:
-    def __init__(self, slug, name, vram=None, target_hex=None, toolchain=None, flags=None, decomp=None, home=None):
+    def __init__(self, slug, name, vram=None, target_hex=None, toolchain=None, flags=None, decomp=None, home=None,
+                 extra_flags=None):
         self.slug, self.name = slug, name
         self.cmd = [find_decomp(decomp), "judge-worker"]
         self.env = dict(os.environ, DECOMP_HOME=home or os.environ.get("DECOMP_HOME") or os.path.expanduser(DEFAULT_HOME),
@@ -72,7 +73,8 @@ class Judge:
             self.tables = [(low, list(targets)) for low, targets in info.get("tables") or []]
             self.callees, self.entry_scope = info.get("callees") or "", info.get("entry_scope") or None
         self.compiler = {"toolchain": toolchain, "flags": list(flags if flags is not None else
-                                                              ("-G0", "-mips3", "-mgp32", "-mfp32", "-O2"))}
+                                                              ("-G0", "-mips3", "-mgp32", "-mfp32", "-O2"))
+                                                          + list(extra_flags or [])}
         self.request = {"op": "judge", "slug": slug, "function": {"name": name, "vram": vram, "target": target_hex},
                         "compiler": self.compiler}
 
@@ -116,12 +118,15 @@ def main(argv=None):
     ap.add_argument("--rows", default=str(DIFF_ROWS), metavar="N|all",
                     help=f"with --diff: print the first N rows (default {DIFF_ROWS}) or `all`; the rest is counted")
     ap.add_argument("--header", action="store_true", help="print the project header the judge prepends, and exit")
+    ap.add_argument("--flags", default="", metavar="'-fno-strength-reduce ...'",
+                    help="extra compiler flags added to the function's own, to probe another profile without changing "
+                         "it (a diagnostic: the app records nothing; the function's profile is changed with `suggest`)")
     ap.add_argument("--vram", type=int, help="the address, when the name is shared by overlays")
     ap.add_argument("--home")
     a = ap.parse_args(argv)
     claimlost.warn()  # a lost claim is said first, before minutes of scoring
     limit = rows_wanted(a.rows)
-    judge = Judge(a.slug, a.function, vram=a.vram, home=a.home)
+    judge = Judge(a.slug, a.function, vram=a.vram, home=a.home, extra_flags=a.flags.split())
     try:
         if a.header:
             print(judge.header)

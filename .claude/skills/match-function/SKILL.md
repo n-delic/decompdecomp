@@ -353,6 +353,13 @@ says the fix and the library families it names; try those families with `prove_c
   each arm alone is worse (its tail stops cross-jumping with the others'), so all 24 webs go at once (365 -> 0).
   decomp-repair `local_web_split` offers it as one child; a chain of one-arm children never finds it
   (docs/learnings/function/display-list-arm-locals.md).
+- **A copy `move rX,rA; addu rX,rX,rIdx` in a loop that every spelling of the store folds into one `addu`** (about 400
+  tried: casts, helpers, pointer locals): cse leaves `q = base` but combine folds it into its add only inside one basic
+  block (flow.c's LOG_LINK) and cross-jumping runs after allocation, so write the add in both arms of an identical-arm
+  `if (g) { q += i; } else { q += i; }` on a long-lived local the loop does not assign: the copy stays and jump2 merges the
+  arms. A guard on a pointer the loop increments lifts its priority and swaps registers (30); a long-lived one gave 0
+  (230 -> 0 on a 300-instruction text-entry handler). decomp-repair `store_copy_arm_split`; `fast_judge.py --flags` probes
+  a profile (`-fno-strength-reduce`) without changing the function's.
 - **A saved best full of search scaffolding (union around a pointer and an integer, `if (x) { S } else { S }`, identity
   inline, copies of one cast, word locals every use truncates) is a dead end for a greedy chain**: each removal is neutral or
   worse alone (145 -> 240 on a 129-instruction list insertion, then 240 -> 0 with a loop key copy). decomp-repair
