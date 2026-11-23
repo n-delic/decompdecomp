@@ -51,8 +51,17 @@ TOO_LONG_STATUSES = (400, 413, 422, 500)  # what servers answer a request too lo
 TOO_LONG_READ = 2000  # characters of that answer read for why
 API_RETRIES, API_RETRY_WAIT = 3, 10  # a dropped request or a gateway's 5xx, asked again after 10, 20, 40 seconds
 # a function is done with when the helper compiled it to a match or released it: its work then folds into a line
-FINISHING = ("compile_and_diff", "compile_patch", "try_recipes", "release_function")
+FINISHING = ("compile_and_diff", "compile_patch", "release_function")
+APPLIED = "through the normal judge:"  # what try_recipes says when it applied its winner (compile_tools.try_recipes)
 FOLDED = 2  # messages a fold leaves: one call and its result
+
+
+def _finishes(name: str, args: dict, result: str) -> bool:
+    """Whether a call finished with its function: try_recipes only when it applied a winner through the judge (a
+    preview, or apply=true with no better recipe, keeps nothing, so the helper is still working on it)."""
+    if name == "try_recipes":
+        return isinstance(args, dict) and args.get("apply") is True and APPLIED in (result or "")
+    return name in FINISHING
 
 
 class Api(Agent):
@@ -168,7 +177,7 @@ class Api(Agent):
                     s.push("tool", f"{name}({args_brief(args)})")
                     result = tools.call(net, agent, s.slug, name, args)
                     messages.append({"role": "tool", "tool_call_id": c["id"], "content": result})
-                    finishing |= name in FINISHING
+                    finishing |= _finishes(name, args, result)
                 # Done with what it held (in a room the host holds the claim: nothing here says when): what led up
                 # to this turn folds into a line, and this turn stays whole (a fork's match shows the file's data to
                 # fix next) until the next fold
@@ -246,16 +255,18 @@ def _done_line(net, slug: str, span: list[dict], done: int, count: int) -> str:
     from ..network import NetworkError  # (here: network imports this package)
 
     names, compiles = [], 0
+    results = {m.get("tool_call_id"): m.get("content") or "" for m in span if m.get("role") == "tool"}
     for m in span:
         for c in m.get("tool_calls") or []:
             fn = c["function"]
-            if fn["name"] not in FINISHING:
-                continue
-            compiles += fn["name"] in ("compile_and_diff", "compile_patch")
             try:
-                said = json.loads(fn.get("arguments") or "{}").get("function") or ""
+                args = json.loads(fn.get("arguments") or "{}")
             except ValueError:
-                said = ""
+                args = {}
+            if not _finishes(fn["name"], args, results.get(c.get("id"), "")):
+                continue
+            compiles += fn["name"] != "release_function"
+            said = (args.get("function") if isinstance(args, dict) else "") or ""
             names += [n.strip() for n in str(said).split(",") if n.strip() and n.strip() not in names]
     matched = []
     for name in names:

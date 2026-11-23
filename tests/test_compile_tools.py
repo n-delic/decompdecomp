@@ -401,14 +401,16 @@ def test_linked_trials_still_take_the_writer_lock(rig, monkeypatch):
 
 
 def test_apply_releases_the_batch_before_rechecking_the_winner(rig, monkeypatch):
-    apply_patch = compile_tools.compile_patch
+    apply_patch, checked = compile_tools.compile_patch, []
     def check(*args):
         tree = rig.engine._tree(rig.proj)
         assert tree._writer is None and tree._readers == 0
+        checked.append(args)
         return apply_patch(*args)
     monkeypatch.setattr(compile_tools, 'compile_patch', check)
     result = compile_tools.try_recipes(rig.net, rig.agent, 'test', 'work', revision(rig), recipes(), apply=True)
-    assert 'Applying two' in result
+    # the winner must go through compile_patch (its revision recheck), not straight to engine.attempt in the lock
+    assert len(checked) == 1 and 'Applying two' in result
 
 
 
@@ -431,3 +433,63 @@ def test_a_winner_changed_after_the_batch_is_not_applied(rig, monkeypatch):
     with pytest.raises(NetworkError, match='Stale revision'):
         compile_tools.try_recipes(rig.net, rig.agent, 'test', 'work', revision(rig), recipes(), apply=True)
     assert not rig.state.placements
+
+
+def test_the_apps_own_manifest_bookkeeping_does_not_invalidate_the_brief(rig):
+    """Check again rewrites .decomp.wtf.json with rebuild.t; a PC game's analysis level and Ghidra version too."""
+    manifest = rig.root / '.decomp.wtf.json'
+    manifest.write_text(json.dumps({'platform': 'pc', 'version': 'msvc6', 'rebuild': {'ok': True, 't': 1.0}}))
+    before = revision(rig)
+    manifest.write_text(json.dumps({'platform': 'pc', 'version': 'msvc6', 'rebuild': {'ok': True, 't': 2.0},
+                                    'analysis': 3, 'tools': '11.4'}, indent=2))
+    assert revision(rig) == before
+    manifest.write_text(json.dumps({'platform': 'pc', 'version': 'msvc7', 'rebuild': {'ok': True, 't': 2.0}}))
+    assert revision(rig) != before
+
+
+def test_a_manifest_that_does_not_parse_is_still_part_of_the_revision(rig):
+    manifest = rig.root / '.decomp.wtf.json'
+    manifest.write_text('{not json')
+    before = revision(rig)
+    manifest.write_text('{still not json')
+    assert revision(rig) != before
+
+
+def test_a_per_file_compiler_switch_in_configure_py_invalidates_the_brief(rig):
+    """GC/Wii keep each source file's CodeWarrior version in the root configure.py (set_file_compiler)."""
+    proj, fp, _ = rig.engine.get('test')
+    rig.engine.get = lambda slug: (proj, fp, {'platform': 'gc'})
+    configure = rig.root / 'configure.py'
+    configure.write_text('Object(Matching, "unit.c", mw_version="GC/1.3.2")\n')
+    before = revision(rig)
+    configure.write_text('Object(Matching, "unit.c", mw_version="GC/2.6")\n')
+    assert revision(rig) != before
+
+
+def _span(name, args, result):
+    return [{'role': 'assistant', 'tool_calls': [{'id': 'c1', 'function': {'name': name, 'arguments': json.dumps(args)}}]},
+            {'role': 'tool', 'tool_call_id': 'c1', 'content': result}]
+
+
+class _NoFunctions:
+    def _function(self, name, slug):
+        raise NetworkError('none here')
+
+
+def test_only_an_applied_recipe_finishes_the_api_helpers_claim():
+    """A preview keeps nothing: counting it as done would fold the helper's work and end its session early."""
+    from decompnet.agents import api
+
+    preview = 'Baseline: 80%\ntwo: 100%\nBest: two. Preview only; repeat with apply=true to judge and keep it.'
+    applied = 'Baseline: 80%\nApplying two through the normal judge:\nordinary keeping judge'
+    args = {'function': 'work', 'revision': 'r', 'recipes': recipes()}
+    assert not api._finishes('try_recipes', args, preview)
+    assert not api._finishes('try_recipes', args | {'apply': True}, 'No strictly better candidate; source unchanged.')
+    assert not api._finishes('try_recipes', args | {'apply': True}, 'error: Stale revision: get function_brief again')
+    assert api._finishes('try_recipes', args | {'apply': True}, applied)
+    assert api._finishes('compile_patch', args, 'anything') and api._finishes('compile_and_diff', args, '')
+    assert not api._finishes('function_brief', args, '')
+    line = api._done_line(_NoFunctions(), 'test', _span('try_recipes', args, preview), 1, 2)
+    assert '0 compiles' in line
+    line = api._done_line(_NoFunctions(), 'test', _span('try_recipes', args | {'apply': True}, applied), 1, 2)
+    assert '1 compile;' in line and 'work' in line

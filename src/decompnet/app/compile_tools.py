@@ -12,6 +12,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
+from .. import consoles
 from ..forks import csource
 from ..forks.objdiff import ObjdiffError
 from ..forks.project import STATE, ForkError
@@ -22,6 +23,9 @@ MAX_SOURCE = 64 * 1024
 MAX_INPUTS = 32 * 1024 * 1024
 MAX_FILES = 4096
 MAX_TRIALS = 8
+# What the app writes into .decomp.wtf.json on its own (Check again's verdict and time, a PC game's analysis level and
+# Ghidra version): none of it selects a compiler or flag, and a revision must not go stale when it changes
+MANIFEST_BOOKKEEPING = frozenset({'rebuild', 'analysis', 'tools'})
 EXCLUDED = {'.git', '.venv', 'build', 'orig', 'extract', 'node_modules', '__pycache__', '.pytest_cache', '.ruff_cache', STATE}
 
 
@@ -74,7 +78,7 @@ def snapshot(engine, slug, function):
     source = text[span[0]:span[1]]
     if len(source.encode()) > MAX_SOURCE:
         raise NetworkError('This definition is too large for a compact patch request.')
-    inputs = {unit.source, 'objdiff.json', 'build.ninja', 'Makefile', 'CMakeLists.txt', '.decomp.wtf.json'}
+    inputs = {unit.source, 'objdiff.json', 'build.ninja', 'Makefile', 'CMakeLists.txt', 'configure.py', '.decomp.wtf.json'}
     visited = 0
     for directory, dirs, files in os.walk(fp.root):
         dirs[:] = sorted(d for d in dirs if d not in EXCLUDED)
@@ -86,6 +90,13 @@ def snapshot(engine, slug, function):
             if (rel.suffix.lower() in {'.h', '.hpp', '.hh', '.hxx', '.inc'}
                     or rel.parts[0] in {'tools', 'config', 'harness'}):
                 inputs.add(rel.as_posix())
+    # The files the console reads each source file's compiler from (GC/Wii: configure.py's Object(...) versions, PC
+    # and DS: config/file_compilers.json): a try_compiler switch there changes what the unit compiles to
+    # (after the walk, whose size cap a huge config/ meets first)
+    console, root = consoles.get(cfg.get('platform') or (fp.manifest or {}).get('platform')), fp.root.resolve()
+    for glob in console.compiler_config:  # (a glob's ** may go through a linked folder: only what's inside counts)
+        inputs.update(p.relative_to(fp.root).as_posix() for p in sorted(fp.root.glob(glob))
+                      if p.is_file() and not p.is_symlink() and root in p.resolve().parents)
     # Only compiler selectors belong here: surveys, range-check evidence and UI bookkeeping change on their own.
     settings = {k: cfg[k] for k in ('platform', 'version', 'compiler', 'compiler_ranges') if k in cfg}
     digest = hashlib.sha256(json.dumps([fn['id'], fn['unit'], settings], sort_keys=True).encode())
@@ -101,8 +112,23 @@ def snapshot(engine, slug, function):
             continue
         data = _read(path, MAX_INPUTS - total)
         total += len(data)
+        if name == '.decomp.wtf.json':
+            data = _manifest_inputs(data)
         digest.update(name.encode() + b'\0' + data + b'\0')
     return fn, source, digest.hexdigest()
+
+
+def _manifest_inputs(data: bytes) -> bytes:
+    """The manifest without what the app rewrites on its own. It is left out key by key rather than hashed by an
+    allow-list (as the project settings are) because each console's build reads its own keys from it: an unknown key
+    going stale is the safe side. A manifest that doesn't parse is hashed as it is."""
+    try:
+        manifest = json.loads(data)
+    except ValueError:
+        return data
+    if not isinstance(manifest, dict):
+        return data
+    return json.dumps({k: v for k, v in manifest.items() if k not in MANIFEST_BOOKKEEPING}, sort_keys=True).encode()
 
 
 def definition(engine, fn, source):
