@@ -475,6 +475,14 @@ says the fix and the library families it names; try those families with `prove_c
   `u8` local. decomp-repair `cursor_lockstep_fold`, `dispatch_byte_local`, `arm_reload_restore`
   (docs/learnings/function/interpreter-derived-cursors-and-opcode-local.md: 550 -> 0, seven chained steps).
 
+- **A table walk whose per-iteration pointers (flag, name, code, raw record) are locals set at the top of the loop body: the
+  preheader and increment order is the reverse of the order loop.c meets the givs.** A match at 195 with only those rows and
+  three registers left was 0 once the pointer locals were written into each arm as the expression (`gTable[i].name`) and a
+  one-use local was set right before each constant-offset store (`p[16] = 0`: `express_from` needs a literal additive part, so
+  only a replaceable local is addressed `0x10($s1)`). The record typedef matters (`(char *) sym + K + i * 24` spellings were
+  far worse). decomp-repair `loop_giv_local_arm_inline`
+  (docs/learnings/finding/giv-locals-set-at-loop-top-vs-in-the-arms.md); `cc1 -dL` prints the giv list in emission order.
+
 ## 3b. Out of hand-written shapes? Trace the compiler instead of guessing
 
 Three or four structurally different sources landing on the same score (or the same missing/extra instruction) means
