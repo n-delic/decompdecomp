@@ -170,3 +170,22 @@ void f(f32 *out, s32 arg1) {
     out = draft_repairs.variants(source, 'f', 'mips', DOUBLE_ASM, labels=labels, limit=None, words=words)
     children = [text for text in out if labels.get(text) == 'double_literal_global']
     assert children and all('(f32) arg1 + 0.5)' in text for text in children)
+
+
+def test_a_double_gas_loads_into_a_register_pair_is_eight_bytes():
+    # A 1133-instruction effect spawner (KMC GCC 2.7.2) keeps a sine loop's phase offset in $s4/$s5 across the loop's
+    # calls: GAS's `li.d` loads it with one `lui $at` and two `lw`. A global read into a pair uses its own destination
+    # registers, and a jump table or indexed read has an `addu $at` between the `lui` and the `lw`.
+    pair = '''glabel f
+/* 0 80071DEC 3C01800D */  lui        $at, %hi(D_800D47F8)
+/* 4 80071DF0 8C3447F8 */  lw         $s4, %lo(D_800D47F8)($at)
+/* 8 80071DF4 8C3547FC */  lw         $s5, %lo(D_800D47FC)($at)
+/* C 80071DF8 3C01800D */  lui        $at, %hi(D_800D4800)
+/* 10 80071DFC D43E4800 */  ldc1       $fs5, %lo(D_800D4800)($at)
+/* 14 80071E00 3C01800D */  lui        $at, %hi(jtbl_800D47E0)
+/* 18 80071E04 00220821 */  addu       $at, $at, $v0
+/* 1C 80071E08 8C2247E0 */  lw         $v0, %lo(jtbl_800D47E0)($at)
+/* 20 80071E0C 3C02800D */  lui        $v0, %hi(D_800D4818)
+/* 24 80071E10 8C424818 */  lw         $v0, %lo(D_800D4818)($v0)
+'''
+    assert float_literal_words.loads(pair) == {'D_800D47F8': 8, 'D_800D4800': 8}
