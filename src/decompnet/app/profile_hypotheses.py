@@ -58,6 +58,37 @@ def kmc_cse_address_probe(own, rows):
     return None
 
 
+def kmc_cse_skip_probe(own, rows):
+    """Try dropping `-fno-cse-skip-blocks` when the candidate reloads a field the target loads once.
+
+    cse's "skip blocks" lets a value computed before a short conditional block (a `MIN`/`MAX` clamp written as `?:`, a
+    `x ? x : 1`) be reused after it. With the option off every such block ends cse's extended basic block, so a macro that
+    reads `p->w` before and after a clamp reads it twice (a 653-instruction N64 sprite drawer: the SDK's `gDPLoadBlock`
+    arguments, 750 -> 430 with the option on, every other row unchanged). The mirror of kmc_cse_address_probe: that one
+    adds the option when the target reloads addresses, this one removes it when the candidate reads memory again that an
+    earlier row of its own already loaded and the target has no such row."""
+    flags = list(own['flags'])
+    option = '-fno-cse-skip-blocks'
+    if own['toolchain'] != 'gcc-2.7.2-kmc' or option not in flags:
+        return None
+    load = re.compile(r'^(l(?:b|bu|h|hu|w))\s+\$\w+,\s*(-?(?:0x)?[0-9A-Fa-f]+)\(\$\w+\)$')
+    earlier = set()
+    again = set()
+    for marker, _, right in rows:
+        found = load.fullmatch(right.strip())
+        if not found:
+            continue
+        key = found.groups()
+        if marker == '>':
+            if key in earlier:
+                again.add(key)
+        else:
+            earlier.add(key)
+    if not again:
+        return None
+    return [flag for flag in flags if flag != option]
+
+
 def kmc_expensive_probe(own, rows):
     """Try `-fno-expensive-optimizations` when the target keeps a zero-extension (`andi rd,rs,0xffff` or `0xff`) the
     candidate lacks: combine.c drops a `(u16)` or `& 0xff` of a halfword/byte-loaded local at -O2, and kept it with the
@@ -85,6 +116,8 @@ def kmc_priorities(own, assembly, rows):
     variants = []
     if cse := kmc_cse_address_probe(own, rows):
         variants.append(cse)
+    if skip := kmc_cse_skip_probe(own, rows):
+        variants.append(skip)
     if expensive := kmc_expensive_probe(own, rows):
         variants.append(expensive)
     if diagnosis['delay_slot'] and any(right.strip() == 'nop' for right in changed):

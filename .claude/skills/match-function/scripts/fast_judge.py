@@ -77,7 +77,8 @@ class Judge:
             self.words = {str(k): int(v) for k, v in (info.get("words") or {}).items()}  # float constants' words
         self.compiler = {"toolchain": toolchain, "flags": list(flags if flags is not None else
                                                               ("-G0", "-mips3", "-mgp32", "-mfp32", "-O2"))
-                                                          + list(extra_flags or [])}
+                                                          + list(extra_flags if extra_flags is not None
+                                                                 else os.environ.get("DD_EXTRA_FLAGS", "").split())}
         self.request = {"op": "judge", "slug": slug, "function": {"name": name, "vram": vram, "target": target_hex},
                         "compiler": self.compiler}
 

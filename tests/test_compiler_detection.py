@@ -327,3 +327,31 @@ def test_flag_search_tries_expensive_optimizations_off_for_kmc_gcc():
     base = ['-G0', '-mips3', '-mgp32', '-mfp32', '-O2']
     variants = CompilerMixin.flag_variants(object.__new__(CompilerMixin), 'gcc-2.7.2-kmc', base)
     assert [*base, '-fno-expensive-optimizations'] in variants
+
+
+def test_kmc_cse_skip_probe_drops_the_option_when_the_candidate_reloads_a_field():
+    from decompnet.app.profile_hypotheses import kmc_cse_skip_probe
+
+    flags = ['-O2', '-fno-cse-skip-blocks']
+    own = {'toolchain': 'gcc-2.7.2-kmc', 'flags': flags}
+    first = 'lhu $a0, 0x24($t4)'
+    again = ['lhu $v0, 0x24($t5)', 'lhu $a0, 0x24($t5)']
+    rows = [(' ', first, first.replace('$t4', '$t5')), ('r', 'srl $a0, $a1, 3', 'srl $a0, $a0, 3'),
+            ('>', '', again[0]), ('>', '', again[1])]
+    assert kmc_cse_skip_probe(own, rows) == ['-O2']
+    # a different field, a store, or a load the first read never made is not a reload
+    assert kmc_cse_skip_probe(own, rows[:2] + [('>', '', 'lhu $v0, 0x26($t5)')]) is None
+    assert kmc_cse_skip_probe(own, rows[:2] + [('>', '', 'sh $v0, 0x24($t5)')]) is None
+    assert kmc_cse_skip_probe(own, [('>', '', again[0]), ('>', '', again[1])]) is None
+    # only the option this probe removes, only for KMC
+    assert kmc_cse_skip_probe(dict(own, flags=['-O2']), rows) is None
+    assert kmc_cse_skip_probe(dict(own, toolchain='ido-7.1'), rows) is None
+
+
+def test_kmc_priorities_offers_the_cse_skip_variant():
+    from decompnet.app.profile_hypotheses import kmc_priorities
+
+    own = {'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-O2', '-fno-cse-skip-blocks']}
+    load = 'lhu $a0, 0x24($t4)'
+    rows = [(' ', load, load), ('>', '', load), ('>', '', load)]
+    assert ('-O2',) in kmc_priorities(own, '', rows)
