@@ -1,5 +1,5 @@
 ---
-title: effect spawner loop index forms 2930 to 80
+title: effect spawner loop index forms 2930 to 70
 kind: function
 compiler: gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2
 evidence: observation
@@ -10,7 +10,7 @@ What the function (or case) looked like and the exact compiler and flags:
 
 The same 1133-instruction effect spawner as effect-spawner-switch-slot-counter-goto-loop.md (four marker slots, a text
 panel, a state-byte switch with a 64-step sine table and a pixel loop), KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2`.
-Handed over at 2930 (81 rows); this session took it to 80 (16 register rows, no order or operand rows).
+Handed over at 2930 (81 rows); this session took it to 70 (14 register rows, no order or operand rows).
 
 The source change, and the measured result before and after (scores, the judge used; fast_judge, then the app):
 
@@ -50,6 +50,9 @@ The source change, and the measured result before and after (scores, the judge u
   decomp-repair `temp_operand_stage` (#1537).
 - Which of each dimension's two float variables every read names, searched as a 2^9 grid again at 85: 85 -> 80 (the
   `y` arms and the late `y` reads right, the entry and the `x` arms still swapped).
+- The entry's `height = 120.0f;` moved above the three statements before its copy `var_fs1 = height;`: adjacent, cse
+  swapped the constant into the copy's long-lived destination (finding: cse-swaps-a-constant-into-its-adjacent-copy.md),
+  80 -> 70. decomp-repair `statement_slide` now moves float constants (#1539).
 - Scaffolding taken out at 95 without a score change: a `volatile` pointer read in the fade-out case (written instead as
   the state byte's store first and the pointer read after it, as the target reloads it), a `volatile` float read, two
   `do { } while (0)` around a call and two in the five-iteration loop, the pixel loop's goto (a `while (1)` with
