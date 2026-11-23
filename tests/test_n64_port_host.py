@@ -1086,3 +1086,24 @@ def test_a_first_function_that_loops_in_the_games_own_code_after_starting_thread
     assert "!self && !booted && thread_count > 0" in body and "boot_idle(" in body
     mips = (HOST.parent / "mips.c").read_text()
     assert "port_boot_spin();" in mips[mips.index("still running, at"):]
+
+
+def test_a_tasks_sp_and_dp_interrupts_arrive_after_the_call_that_started_it():
+    """A fighting game's scheduler has a thread for the SP interrupt (priority 126) and one for DP (125). The host posted
+    both inside osSpTaskStartGo, so the SP thread ran before the caller had recorded the task as the RSP's and the DP
+    thread found no RDP task: 'NULL RDP Task!' on screen, the DP thread parked, two graphics tasks in all. On the
+    console the RSP takes far longer than the call, so the interrupts come after it returns: held back, SP then DP in
+    order, and raised from the host's tick, when every thread waits in virtual time, and at the retrace at the latest."""
+    text = HOST.read_text()
+    start = text.index("void w2c_env_osSpTaskStartGo(")
+    body = text[start:text.index("u32 w2c_env_osSpTaskYielded")]
+    assert "post_event(EV_SP)" not in body and "post_event(EV_DP)" not in body
+    assert body.index("rcp_raise(EV_SP)") < body.index("rcp_raise(EV_DP)")  # in that order
+    # the held events are delivered from the tick, when the CPU is idle in virtual time, and by the retrace
+    assert "        dp_deliver(0);\n        port_audio_interrupts();" in text
+    assert "if (none) dp_deliver(1);" in text
+    retrace = text[text.index("static void retrace(void) {"):]
+    assert retrace[:retrace.index("vi_count++")].count("dp_deliver(1)") == 1
+    # the web build, which has no tick, raises them at once as before
+    web = text[text.index("static void rcp_raise(int event) {"):text.index("static void dp_deliver(int force) {")]
+    assert "#ifdef PORT_WEB\n    post_event(event);" in web

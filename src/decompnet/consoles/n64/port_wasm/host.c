@@ -687,7 +687,9 @@ unsigned port_ai_completions(void); /* audio.c */
 static void port_audio_interrupts(void) {
     for (unsigned n = port_ai_completions(); n; n--) post_event(EV_AI);
 }
+static void dp_deliver(int force); /* the RSP's and RDP's held-back interrupts (osSpTaskStartGo) */
 static void retrace(void) {
+    dp_deliver(1); /* a task's SP and DP interrupts are raised before the next retrace at the latest */
     vi_count++;
     cart_io_busy = 0;
 #ifndef PORT_WEB
@@ -791,6 +793,46 @@ u32 w2c_env_osVirtualToPhysical(struct w2c_env *e, u32 a) {
 /* ---------------------------------------------------------------- RSP tasks: graphics (render.c) and audio (audio.c) */
 
 void port_audio_task(uint32_t task); /* audio.c */
+/* The RSP and RDP interrupts of a task (SP: the ucode ran out; DP: the RDP's full sync) arrive after osSpTaskStartGo
+   has returned, as on the console, where the RSP takes far longer than the call that started it and the scheduler
+   finishes its own bookkeeping first. A game's scheduler whose SP handler is a thread of higher priority than the
+   caller found, in the same instant, a task the caller had not finished recording, and its DP handler then found no
+   RDP task and stopped the game ("NULL RDP Task!" in a fighting game). The events are held (SP, then DP, in order) and
+   raised from the host's tick, when every game thread is waiting in virtual time, and at the retrace at the latest.
+   The web build, which has no tick, raises them at once as before. */
+#ifndef PORT_WEB
+static uint64_t monotonic_us(void);
+static pthread_mutex_t rcp_lock = PTHREAD_MUTEX_INITIALIZER;
+static unsigned char rcp_events[64];
+static unsigned rcp_count;
+static uint64_t rcp_due_us;
+#define RCP_DELAY_US 400
+#endif
+static void rcp_raise(int event) {
+#ifdef PORT_WEB
+    post_event(event);
+#else
+    pthread_mutex_lock(&rcp_lock);
+    if (rcp_count < sizeof rcp_events) rcp_events[rcp_count++] = (unsigned char)event;
+    rcp_due_us = monotonic_us() + RCP_DELAY_US;
+    pthread_mutex_unlock(&rcp_lock);
+#endif
+}
+static void dp_deliver(int force) {
+#ifndef PORT_WEB
+    unsigned char out[sizeof rcp_events];
+    unsigned n;
+    pthread_mutex_lock(&rcp_lock);
+    if (!rcp_count || (!force && monotonic_us() < rcp_due_us)) { pthread_mutex_unlock(&rcp_lock); return; }
+    n = rcp_count;
+    memcpy(out, rcp_events, n);
+    rcp_count = 0;
+    pthread_mutex_unlock(&rcp_lock);
+    for (unsigned i = 0; i < n; i++) post_event(out[i]);
+#else
+    (void)force;
+#endif
+}
 void w2c_env_osSpTaskStartGo(struct w2c_env *e, u32 task) {
     (void)e;
     uint32_t type = be32(task);
@@ -804,7 +846,7 @@ void w2c_env_osSpTaskStartGo(struct w2c_env *e, u32 task) {
         port_render_task(task);
     }
     if (type == 2) port_audio_task(task);
-    if (gfx_tasks + audio_tasks <= 4) LOG("RSP task type %u: data %08X, %X bytes", type, be32(task + 48), be32(task + 52));    if (type == 1 && gfx_tasks == 2 && getenv("PORT_TASK")) {
+    if (gfx_tasks + audio_tasks <= 4) LOG("RSP task type %u flags %X: data %08X, %X bytes", type, be32(task + 4), be32(task + 48), be32(task + 52));    if (type == 1 && gfx_tasks == 2 && getenv("PORT_TASK")) {
         uint32_t ud = be32(task + 24) & 0x1FFFFFFF, uds = be32(task + 28), dl = be32(task + 48) & 0x1FFFFFFF;
         fprintf(stderr, "gfx task: ucode %08X (%X), ucode data %08X (%X), data %08X\n",
                 be32(task + 16), be32(task + 20), be32(task + 24), uds, be32(task + 48));
@@ -814,8 +856,8 @@ void w2c_env_osSpTaskStartGo(struct w2c_env *e, u32 task) {
         for (int i = 0; i < 24; i++) fprintf(stderr, "%08X%c", be32(0x80000000u + dl + 4 * i), i % 2 ? '\n' : ' ');
     }
     wbe32(SP_STATUS, 1); /* done: halted again */
-    post_event(EV_SP);
-    if (type == 1) post_event(EV_DP);
+    rcp_raise(EV_SP);
+    if (type == 1) rcp_raise(EV_DP);
 }
 u32 w2c_env_osSpTaskYielded(struct w2c_env *e, u32 task) { (void)e; (void)task; return 0; }
 /* osSpTaskStart is osSpTaskLoad then osSpTaskStartGo: the task runs whole at StartGo, so loading it is nothing */
@@ -1519,6 +1561,7 @@ static void wait_retrace(void) {
             }
             pthread_mutex_unlock(&lock);
             idle = none ? idle + 1 : 0;
+            if (none) dp_deliver(1); /* the RCP finishes while the CPU has nothing to do */
             usleep(none ? 100 : 50);
         }
         if (idle < 3) {
@@ -1541,6 +1584,7 @@ static void wait_retrace(void) {
     while ((time = monotonic_us()) < deadline) {
         uint64_t left = deadline - time;
         usleep((useconds_t)(left < 1000 ? left : 1000));
+        dp_deliver(0);
         port_audio_interrupts();
     }
 }
