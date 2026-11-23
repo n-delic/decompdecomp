@@ -73,18 +73,54 @@ def data_addresses(code: bytes, vram: int, outside: tuple[list[int], list[int]])
     return found
 
 
+def function_addresses(code: bytes, vram: int, starts: set[int]) -> set[int]:
+    """The addresses of functions (`starts`: the save's function starts) a function's machine code builds with a `lui`
+    and the `addiu` or `ori` that finishes it: the functions it takes the address of (a filter's handler, passed to
+    its constructor)."""
+    from capstone import CS_ARCH_MIPS, CS_MODE_BIG_ENDIAN, CS_MODE_MIPS32, Cs
+    found, high = set(), {}
+    for insn in Cs(CS_ARCH_MIPS, CS_MODE_MIPS32 + CS_MODE_BIG_ENDIAN).disasm(code, vram):
+        if insn.mnemonic == "lui" and (m := LUI.match(f"lui {insn.op_str}")):
+            high[m.group(1)] = (int(m.group(2), 0) & 0xFFFF) << 16
+        elif (m := ALU.match(f"{insn.mnemonic} {insn.op_str}")) and m.group(3) in high:
+            low = int(m.group(4), 0)
+            address = (high[m.group(3)] | (low & 0xFFFF)) if m.group(1) == "ori" else high[m.group(3)] + signed16(low)
+            if address in starts:
+                found.add(address)
+            if m.group(2) != m.group(3):
+                high.pop(m.group(2), None)
+    return found
+
+
+IR_FUNCTION = re.compile(r"^(?:declare|define) [^@\n]*@([\w.$]+)\(", re.M)
+IR_TAKEN = re.compile(r"@([\w.$]+)(?![\w.$(])")  # `ptr @name` as a value (not `call @name(`): an address taken
+
+
 def pair(out: Path, units: set[str], layout: list[dict], names: dict[str, str], rom: bytes, image: int,
-         pinned: set[str]) -> tuple[dict[str, int], dict[str, int]]:
+         pinned: set[str], entries: set[int] = frozenset(), code_offsets: dict | None = None) -> tuple[dict[str, int], dict[str, int]]:
     """{variable: the game's address} for the variables ultralib's units (`units`: their file names, whose IR is in
     out/ll) define that the game's own library functions share. `layout`: the save's functions (name, vram, size);
     `names`: {the game's function name: its library name}; `rom`/`image`: the cartridge and the address its first
-    code is copied to at boot (ROM offset 0x1000); `pinned`: names that already have an address."""
+    code is copied to at boot (ROM offset 0x1000); `pinned`: names that already have an address; `entries`: every
+    function start the build knows; `code_offsets`: where each function's code is in the project's analysis image
+    (play.code_offsets), used instead of the boot copy's layout when the game unpacks its code at run time."""
     functions = {f["name"] for f in layout}
     by_name = {f["name"]: f for f in layout}
     by_library = dict(by_name)  # a unit's library name: the game's function (named so, or by library detection)
     for game, library in names.items():
         if game in by_name:
             by_library.setdefault(library, by_name[game])
+    analysed = Path(code_offsets["image"]).read_bytes() if code_offsets and code_offsets.get("image") else None
+
+    def code_of(f: dict) -> bytes | None:
+        """A function's machine code: from the analysis image at its own ROM offset when the project has one, else
+        from the cartridge's boot copy (ROM offset 0x1000 for `image`)."""
+        if not f or not f["size"]:
+            return None
+        if analysed is not None and (at := (code_offsets["offsets"] or {}).get(f["name"])) is not None:
+            return analysed[at:at + f["size"]] if at + f["size"] <= len(analysed) else None
+        offset = 0x1000 + f["vram"] - image
+        return rom[offset:offset + f["size"]] if 0 < offset and offset + f["size"] <= len(rom) else None
     ranges = sorted((f["vram"], f["vram"] + f["size"]) for f in layout)
     outside = ([a for a, _ in ranges], [b for _, b in ranges])
     shared: dict[str, list[str]] = {}
@@ -107,9 +143,8 @@ def pair(out: Path, units: set[str], layout: list[dict], names: dict[str, str], 
     def addresses(library: str) -> set[int] | None:
         if library not in cache:
             f = by_library.get(library)
-            offset = 0x1000 + f["vram"] - image if f else -1
-            cache[library] = (data_addresses(rom[offset:offset + f["size"]], f["vram"], outside)
-                              if f and f["size"] and 0 < offset and offset + f["size"] <= len(rom) else None)
+            code = code_of(f) if f else None
+            cache[library] = data_addresses(code, f["vram"], outside) if code else None
         return cache[library]
 
     found: dict[str, int] = {}
@@ -121,6 +156,58 @@ def pair(out: Path, units: set[str], layout: list[dict], names: dict[str, str], 
         if (f and name not in pinned and path.is_file()
                 and re.search(rf"^define [^@\n]*@{re.escape(name)}\(", path.read_text(encoding="utf-8", errors="replace"), re.M)):
             functions_at[name] = f["vram"]
+    # An ultralib function the game's own code has no name for (a mixer's pull routine, large and not recognised by
+    # library detection) still has an address: the game's copy of the function that takes its address (the filter's
+    # constructor, which passes its handler to alFilterNew) builds it. When one ultralib function the constructor
+    # references has no address, and the constructor's machine code builds exactly one function address no other
+    # reference accounts for, that is it. Without it the C takes a wasm table index (`2`) and the recompiled code
+    # that calls the handler jumps to address 2.
+    starts = {f["vram"] for f in layout} | set(entries)  # entries: every function start the build knows (fixed.txt)
+    unit_names = {u[:-2] for u in units}
+    learned: dict[str, int] = {}  # a function the constructors name but nothing else does (alFilterNew itself)
+
+    def address_of(name: str) -> int | None:
+        if name in functions_at:
+            return functions_at[name]
+        if name in learned:
+            return learned[name]
+        return by_library[name]["vram"] if name in by_library else None
+    changed = True
+    while changed:
+        changed = False
+        guesses: list[tuple[list[str], set[int]]] = []  # (the unknown functions a constructor references, the addresses left)
+        for name in sorted(unit_names):
+            f = by_library.get(name)
+            path = out / "ll" / (name + ".ll")
+            if not (f and f["size"] and path.is_file()):
+                continue
+            code = code_of(f)
+            if not code:
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+            functions_here = set(IR_FUNCTION.findall(text))
+            body = "\n".join(line for line in text.splitlines() if not line.startswith(("declare", "define")))
+            # the functions whose address this one takes (a call's address is not built by `lui`/`addiu`)
+            referenced = {n for n in IR_TAKEN.findall(body) if n in functions_here and n != name}
+            unknown = sorted(n for n in referenced if address_of(n) is None)
+            if not unknown:
+                continue
+            built = function_addresses(code, f["vram"], starts) - {f["vram"]}
+            leftover = built - {a for n in referenced if (a := address_of(n)) is not None}
+            if len(leftover) == len(unknown):  # every function the code builds is one the unit references
+                guesses.append((unknown, leftover))
+        # a function several constructors name (alFilterNew) is the one address all their leftovers share; one only
+        # a constructor names (its own handler) is what is left of that constructor's addresses
+        candidates: dict[str, set[int]] = {}
+        for unknown, leftover in guesses:
+            for n in unknown:
+                candidates[n] = candidates[n] & leftover if n in candidates else set(leftover)
+        sure = {n: next(iter(c)) for n, c in candidates.items() if len(c) == 1}
+        taken = Counter(sure.values())
+        for n, address in sorted(sure.items()):
+            if taken[address] == 1 and address not in functions_at.values() and address not in learned.values():
+                (functions_at if n in unit_names and n not in pinned else learned)[n] = address
+                changed = True
     for name in sorted(wanted & owned):
         sets = [a for u in shared[name] if (a := addresses(u))]
         if not sets:

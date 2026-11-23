@@ -27,6 +27,7 @@
 
 #include "game.h"
 #include "rt64/adapter.h"
+#define DPC_BASE 0xA4100000u /* the RDP's command registers: start, end, current, status, clock, busy counters */
 #define SP_STATUS 0xA4040010u /* the RSP's status register: libultra waits for its halt bit */
 #include "wasm-rt-exceptions.h"
 #include "wasm-rt-impl.h"
@@ -533,6 +534,14 @@ static int pi_register(uint32_t addr, int write, uint32_t value, uint32_t *read)
 uint64_t port_io_load(uint64_t addr) {
     if (addr < 0xA0800000u) return addr - 0x20000000u; /* RAM, uncached: the same RAM */
     if (addr == SP_STATUS) { wbe32(IO_SCRATCH, 1); return IO_SCRATCH; } /* halted: a task finishes at once */
+    if (addr >= DPC_BASE + 0x0Cu && addr < DPC_BASE + 0x20u) {
+        /* The RDP's command registers: the host draws a task when it starts, so the RDP is always idle. A game that
+           writes the status (clear XBUS DMEM DMA) and polls bit 0 until it drops (libultra's osDpSetStatus users)
+           spun for ever on a plain memory word that kept the bit it had set. Status: only CBUF_READY; the clock
+           and busy counters read 0. */
+        wbe32(IO_SCRATCH, addr == DPC_BASE + 0x0Cu ? 0x80u : 0u);
+        return IO_SCRATCH;
+    }
     uint32_t v;
     if (port_ai_register((uint32_t)addr, 0, 0, &v) || si_register((uint32_t)addr, 0, 0, &v) || pi_register((uint32_t)addr, 0, 0, &v)) { wbe32(IO_SCRATCH, v); return IO_SCRATCH; }
     if (addr >= 0xB0000000u && addr < 0xBFC00000u) { /* the cartridge, read directly (a racing game checks its own word) */
@@ -549,6 +558,7 @@ uint64_t port_io_store(uint64_t addr, uint64_t value) {
         return IO_SCRATCH + 4;
     }
     if (addr == SP_STATUS) return IO_SCRATCH + 4; /* a command (clear halt, set a signal): nothing to keep */
+    if (addr == DPC_BASE + 0x0Cu) return IO_SCRATCH + 4; /* a command to the RDP's status: nothing to keep (see port_io_load) */
     if (port_ai_register((uint32_t)addr, 1, (uint32_t)value, NULL) || si_register((uint32_t)addr, 1, (uint32_t)value, NULL)
             || pi_register((uint32_t)addr, 1, (uint32_t)value, NULL))
         return IO_SCRATCH + 4;

@@ -289,13 +289,33 @@ def relative_bank_code(net, slug: str, log=print) -> set[str]:
     return names
 
 
+def code_offsets(net, slug: str) -> dict | None:
+    """Where each function's machine code is in the image the project analysed ({"image": path, "offsets": {function:
+    ROM offset}}). The cartridge itself holds a compressed game's code compressed (a game that unpacks its code into
+    RAM at boot): the project's analysis image, with the code unpacked, is where a function's bytes can be read for
+    what the build works out from them (port/wasm/library_data.py)."""
+    with net.progress.view():
+        proj = net._project(slug)
+    cfg = net.cfg(proj)
+    rom = cfg.get("rom") or {}
+    name = rom.get("donor_analysis_base") or rom.get("file")
+    image = Path(proj["root"]) / name if name else None
+    if image and not image.is_file() and rom.get("file"):
+        image = Path(proj["root"]) / rom["file"]
+    if not image or not image.is_file():
+        return None
+    rows = net.project_store(proj["id"]).all(
+        "SELECT name, rom_offset FROM functions WHERE project_id=? AND rom_offset IS NOT NULL", proj["id"])
+    return {"image": str(image), "offsets": {r["name"]: r["rom_offset"] for r in rows}}
+
+
 def inputs(net, slug: str, log=print) -> dict:
     """What the build takes from the project besides its save: the library the host provides (`leave_out`), library
     code built from ultralib's C (`library_c`), library code's own names (`library_names`), and the recompiled C for
     functions with no C yet (`recomp`)."""
     return {"leave_out": library(net, slug, log) | unverified(net, slug, log) | relative_bank_code(net, slug, log), "library_c": library_c(net, slug),
             "library_names": library_names(net, slug), "recomp": recompiled(net, slug, log),
-            "function_headers": function_headers(net, slug)}
+            "function_headers": function_headers(net, slug), "code_offsets": code_offsets(net, slug)}
 
 
 def function_headers(net, slug: str) -> dict[str, str]:

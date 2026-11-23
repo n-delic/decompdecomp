@@ -407,6 +407,7 @@ def test_the_cartridge_reads_as_the_rom(tmp_path):
 #include <stdio.h>
 #include <string.h>
 #define SP_STATUS 0xA4040010u
+#define DPC_BASE 0xA4100000u
 #define IO_SCRATCH 0x000A0000u
 #define IO_FAR(a) (a)
 static uint8_t M[0xA0010], rom[0x1000]; static size_t rom_size = sizeof rom;
@@ -1018,3 +1019,17 @@ int main(void) {
     subprocess.run([cc, "-o", str(tmp_path / "t"), str(source)], check=True, capture_output=True)
     out = subprocess.run([str(tmp_path / "t")], check=True, capture_output=True, text=True).stdout.split()
     assert out == ["1.000001", "1.000002", "1.019999", "1.020001"]
+
+
+def test_the_rdp_command_status_reads_idle_so_a_game_polling_it_gets_on():
+    """A game's own osDp routine writes 1 to DPC_STATUS (0xA410000C, clear XBUS DMEM DMA) and polls bit 0 until it
+    drops; the register was plain memory that kept the bit, so the thread spun for ever (a higher-priority thread
+    starved the rest: audio tasks stopped after a few seconds). The host draws a task when it starts, so the RDP
+    always reads idle: only CBUF_READY, counters 0, and writes to the status are dropped."""
+    text = HOST.read_text()
+    assert "#define DPC_BASE 0xA4100000u" in text
+    load = text[text.index("uint64_t port_io_load("):text.index("uint64_t port_io_store(")]
+    assert "addr >= DPC_BASE + 0x0Cu && addr < DPC_BASE + 0x20u" in load
+    assert "addr == DPC_BASE + 0x0Cu ? 0x80u : 0u" in load  # status: CBUF_READY alone; clock and busy counters 0
+    store = text[text.index("uint64_t port_io_store("):text.index("/* ---------------------------------------------------------------- VI */")]
+    assert "addr == DPC_BASE + 0x0Cu" in store  # the status write is a command, nothing to keep
