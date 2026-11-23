@@ -499,6 +499,9 @@ says the fix and the library families it names; try those families with `prove_c
 
 ## 3a. The fast tools (use them before writing variants by hand)
 
+- **A claim starts with two sources.** `setup.py` prints the saved best and its plain form (`plain_best.py`:
+  decomprepair `scaffold_strip.plain`, fences opened and scaffolding stripped) with their isolated scores, in
+  `/tmp/dd-HOLDER/start/best.c` and `plain.c`. When prove_chain stalls on the best, chain from `plain.c`.
 - **Register rows: `explain_regs.py CAND.c --slug S --function F`.** For each register pair the rows swap it names the
   pseudo in the candidate's register and the one in the target's (refs, live, priority, block-local or global, deaths,
   copy preferences, C lines) and the rule that decided it (a hard conflict, a pseudo allocated first, a lower-priority
