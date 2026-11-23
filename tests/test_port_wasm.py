@@ -964,3 +964,19 @@ def test_next_arg_builtin_becomes_the_va_list_pointer():
     out = ido_c(text)
     assert out.startswith("#define __builtin_next_arg(last)") and "__builtin_va_start" in out and out.endswith(text)
     assert ido_c("int g(void) { return 1; }\n") == "int g(void) { return 1; }\n"
+
+
+def test_stopping_a_game_kills_one_that_ignores_the_request(tmp_path):
+    """A game stuck in its own loop kept running for an hour after Stop (terminate alone): the process is killed once
+    the grace time passes."""
+    import subprocess
+    import sys
+
+    from decompnet.port.wasm import play
+
+    proc = subprocess.Popen([sys.executable, "-c",
+                             "import signal,time,sys; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                             "print('ready', flush=True); time.sleep(60)"], stdout=subprocess.PIPE, text=True)
+    assert proc.stdout.readline().strip() == "ready"  # the handler is installed
+    play.end(proc, grace=0.5)
+    assert proc.poll() is not None

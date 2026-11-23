@@ -81,6 +81,18 @@ def native_adapter(net, slug: str, runtime_id: str) -> Path:
     raise NetworkError("Choose N64 compatibility and the decompdecomp runtime to play or export today.")
 
 
+def end(proc: subprocess.Popen, grace: float = 3.0) -> None:
+    """Ends a game's process: asked to stop, then killed if it doesn't within `grace` seconds. A game stuck in a
+    loop of its own code (a boot that never leaves its loader) ignored the request and kept a core busy for an
+    hour after Stop."""
+    proc.terminate()
+    try:
+        proc.wait(timeout=grace)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=grace)
+
+
 def stop(slug: str) -> bool:
     with _lock:
         entry = _running.pop(slug, None)
@@ -89,7 +101,7 @@ def stop(slug: str) -> bool:
     if win is not None and win.poll() is None:
         win.terminate()
     if entry and entry[0].poll() is None:
-        entry[0].terminate()
+        end(entry[0])
         return True
     return False
 
@@ -339,7 +351,7 @@ def play(net, slug: str, log=print, *, adapter: Path | None = None) -> dict:
                 raise NetworkError(f"{explanation}: see {log_path}")
     except BaseException:
         if proc.poll() is None:
-            proc.terminate()
+            end(proc)
         raise
     with _lock:
         _running[slug] = (proc, url)
