@@ -236,7 +236,7 @@ _BOOT_HARNESS = """#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 static uint8_t *rom; static size_t rom_size;
-static uint8_t ram[0x400], sp[0x2000];
+static uint8_t ram[0x300000], sp[0x2000];
 static uint8_t *at(uint32_t a) { return a >= 0xA4000000u ? sp + (a - 0xA4000000u) : ram + (a - 0x80000000u); }
 static void wbe32(uint32_t a, uint32_t v) { uint8_t *p = at(a); p[0] = v >> 24; p[1] = v >> 16; p[2] = v >> 8; p[3] = v; }
 static uint32_t be32(uint32_t a) { uint8_t *p = at(a); return (uint32_t)p[0] << 24 | p[1] << 16 | p[2] << 8 | p[3]; }
@@ -379,9 +379,12 @@ def test_the_games_c_reads_a_high_tlb_window_as_ram_and_no_stack_sits_in_one():
 
 @pytest.mark.parametrize("crc,want", [
     # CIC-6103: its code from 0x4C0 copied to RAM 0, both RSP memories filled with -1, then 6103 in IMEM and osCicId
-    (0x0B050EE0, "AC290000 240B17D7 FFFFFFFF FFFFFFFF 000017D7 000017D7"),
-    (0x90BB6CB5, "AC290000 240B17D7 00000000 00000000 00000000 00000000"),  # CIC-6102: zeroes them, leaves no ID
-    (0x12345678, "00000000 00000000 00000000 00000000 00000000 00000000"),  # a boot chip it doesn't know: nothing
+    (0x0B050EE0, "AC290000 240B17D7 FFFFFFFF FFFFFFFF 000017D7 000017D7 00000000"),
+    (0x90BB6CB5, "AC290000 240B17D7 00000000 00000000 00000000 00000000 00000000"),  # CIC-6102: zeroes them, leaves no ID
+    (0x12345678, "00000000 00000000 00000000 00000000 00000000 00000000 00000000"),  # a boot chip it doesn't know: nothing
+    # CIC-6105: its boot code keeps a constant at ROM 0x750 (copied to RAM 0x200) and leaves it at 0x2FE1C0 too: a
+    # platformer's first function hangs for ever when the word isn't there
+    (0x98BC2C86, "AD170014 00000000 A4002000 A4002000 000017D9 000017D9 AD170014"),
 ])
 def test_the_boot_leaves_what_the_boot_chips_code_leaves(tmp_path, crc, want):
     """A racing game made for the 6103 checks what the boot chip's code leaves: RAM 0x200 and 0x284 (copies of the boot
@@ -394,14 +397,14 @@ def test_the_boot_leaves_what_the_boot_chips_code_leaves(tmp_path, crc, want):
     code = text[text.index("static struct { uint32_t entry, target, bss, bss_size; int tv; } boot;"):
                 text.index("/* the console's RAM as the boot leaves it")]
     (tmp_path / "rom.bin").write_bytes(_entry_rom(COUNT_DOWN, 0x80000400, b"P", crc,
-                                                  boot_words={0x6C0: 0xAC290000, 0x744: 0x240B17D7}))
+                                                  boot_words={0x6C0: 0xAC290000, 0x744: 0x240B17D7, 0x750: 0xAD170014}))
     source = tmp_path / "t.c"
     source.write_text(_BOOT_HARNESS + code + """
 int main(int argc, char **argv) {
     FILE *f = fopen(argv[1], "rb"); rom = malloc(1 << 16); rom_size = fread(rom, 1, 1 << 16, f);
     boot_leftovers();
-    printf("%08X %08X %08X %08X %08X %08X\\n", be32(0x80000200), be32(0x80000284), be32(0xA4000000), be32(0xA4001FFC),
-           be32(0xA4001000), be32(0x80000310));
+    printf("%08X %08X %08X %08X %08X %08X %08X\\n", be32(0x80000200), be32(0x80000284), be32(0xA4000000), be32(0xA4001FFC),
+           be32(0xA4001000), be32(0x80000310), be32(0x802FE1C0));
     return 0;
 }
 """)

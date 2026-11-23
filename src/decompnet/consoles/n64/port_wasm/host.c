@@ -1317,12 +1317,14 @@ static uint32_t boot_crc(void) {
    6106's copy is scrambled as it goes, so it has none here yet. */
 static const struct boot_chip {
     uint32_t crc, entry_less, copy_from, copy_to, copy_at, sp_fill, id;
+    uint32_t mark_at, mark_from; /* a word the boot code stores in RAM (its address, and where in the ROM's boot code it
+                                    is kept), 0 for none */
 } boot_chips[] = {
-    {0x90BB6CB5u, 0, 0x4C0, 0x774, 0, 0, 0},                  /* CIC-6102 (7101) */
-    {0x009E9EA3u, 0, 0x4C0, 0x750, 0, 0, 0},                  /* CIC-7102 */
-    {0x0B050EE0u, 0x100000u, 0x4C0, 0x768, 0, 0xFFFFFFFFu, 6103}, /* CIC-6103 (7103) */
-    {0x98BC2C86u, 0, 0x554, 0x888, 4, 0xA4002000u, 6105},       /* CIC-6105 (7105) */
-    {0xACC8580Au, 0x200000u, 0, 0, 0, 0, 0},                  /* CIC-6106 (7106) */
+    {0x90BB6CB5u, 0, 0x4C0, 0x774, 0, 0, 0, 0, 0},                  /* CIC-6102 (7101) */
+    {0x009E9EA3u, 0, 0x4C0, 0x750, 0, 0, 0, 0, 0},                  /* CIC-7102 */
+    {0x0B050EE0u, 0x100000u, 0x4C0, 0x768, 0, 0xFFFFFFFFu, 6103, 0, 0}, /* CIC-6103 (7103) */
+    {0x98BC2C86u, 0, 0x554, 0x888, 4, 0xA4002000u, 6105, 0x002FE1C0u, 0x750},       /* CIC-6105 (7105) */
+    {0xACC8580Au, 0x200000u, 0, 0, 0, 0, 0, 0, 0},                  /* CIC-6106 (7106) */
 };
 static const struct boot_chip *boot_chip(void) {
     uint32_t crc = boot_crc();
@@ -1341,6 +1343,11 @@ static void boot_leftovers(void) {
     for (uint32_t o = chip->copy_from; o < chip->copy_to; o += 4) wbe32(0x80000000u + chip->copy_at + o - chip->copy_from, rom32(o));
     for (uint32_t a = 0xA4000000u; a < 0xA4002000u; a += 4) wbe32(a, chip->sp_fill); /* DMEM, then IMEM */
     if (chip->id) { wbe32(0xA4001000u, chip->id); wbe32(0x80000310u, chip->id); } /* osCicId */
+    /* The 6105's boot code leaves its own constant (0xAD170014, a word of its data at ROM 0x750) at physical
+       0x2FE1C0 in RAM. A game made for it reads the word back and hangs for ever when it isn't there (an
+       anti-piracy check at the very start of a platformer's first function: it waited on an uncached read that
+       never changed, 0 DMAs, a black window). */
+    if (chip->mark_at) wbe32(0x80000000u | chip->mark_at, rom32(chip->mark_from));
 }
 /* The TLB windows a game maps its code through (its entry routine's setup, or osMapTLB later): a 1 MB page pair at
    the virtual address 0x00200000 puts the game's code at what the project spells 0x80200000 (the split names every
