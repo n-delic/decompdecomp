@@ -57,6 +57,12 @@ scored 9232 and the steps below took it to 0. Each score is the app's judge on t
     `addiu $v0,$zero,-1` block instead of skipping it (reorg's redundant-insn skip of that branch was the whole
     difference: one branch operand).
 
+Chain evidence: `prove_chain.py` on the 5240 source (step 1) with only the six new families and `masked_local_narrow`
+goes 5240 -> 4515 (`guarded_sentinel_while`) -> 3960 (`early_return_guard_block`) -> 2635 (`shared_return_tail`) -> 2215
+(`loop_top_cursor_copy`) -> 1820 (`masked_compare_unsigned`) -> 1715 (`early_return_guard_block`, the inner guard) ->
+1695 (`dead_scratch_reuse`) and stops there: the typed records (step 3), the statement placements of step 8 and the
+last fences are what the library still has to find. The library chain from the saved best (4210) reached 4075 alone.
+
 Failed experiments that would otherwise be repeated:
 
 - A separate local for the third loop's product (`off3`) gave 515: the product is computed into a block-local temporary
