@@ -161,6 +161,13 @@ The gateway deduplicates pending calls by connection, tool and arguments.
 - If the gateway replies **still running**, repeat the identical tool call with the same arguments and
   connection to collect its result. Keep other experiments local while a claim or compile is pending.
   If it replies **accepted** and says not to repeat, let the app finish and read the notice on the next reply.
+- `setup.py` and `mcp.py` do that waiting for you (up to 30 minutes per call, `DD_CALL_WAIT_SECONDS`; progress goes to
+  stderr; a dropped connection or 503 from an overloaded app is repeated too). A slow claim at start never tears the
+  session down: if the app is still busy when the wait ends, `setup.py` keeps the worktree, venv and connection and
+  tells you to run the same command again (same `--holder`), which collects the claim instead of claiming twice. Do
+  not re-run setup without `--holder`, and do not `stop` a session just because a claim was slow. `setup.py try`
+  keeps a submission that is still in flight (`try-pending.json`) and, on the next `try` with a different source,
+  collects the earlier verdict first: a second source is never sent while one is running.
 - If the client loses the response without a gateway receipt, recover with `get_claims` for a claim
   or the recorded verdict and history for a submission before retrying. Keep the canonical name and
   current claim token, and wait for the claim to be confirmed before submitting.

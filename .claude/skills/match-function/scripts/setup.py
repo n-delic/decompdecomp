@@ -30,7 +30,7 @@ read a function's status.
                                                         claim another function (FUNC, or the nearest/random one, as at
                                                         start) and renew that one from now on; a released function is
                                                         refused
-    setup.py stop HOLDER                                stop the renewal, revoke the connection (that frees its
+    setup.py stop HOLDER                                stop the renewal (SIGTERM, then SIGKILL, checked gone), revoke the connection (that frees its
                                                         claim, even with no compile yet), remove /tmp/dd-HOLDER/
 
 What it makes in /tmp/dd-HOLDER/:
@@ -70,10 +70,13 @@ HOLDER_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567
 HOLDER_MAX = 40
 TMP = Path(os.environ.get("DD_SESSIONS_DIR", "/tmp"))
 STILL_RUNNING = "still running"  # the gateway's answer while the app works: repeat the identical call
-STILL_RUNNING_RETRIES = 60
+CALL_WAIT_SECONDS = int(os.environ.get("DD_CALL_WAIT_SECONDS", "1800"))  # how long one call may wait for the app (30 min)
+TRANSIENT_PAUSE = 5  # between repeats of a call the app or gateway dropped (overloaded, restarting)
+STOP_GRACE_SECONDS = 5  # `stop`: SIGTERM, this long, then SIGKILL
 CLAIMED = re.compile(r"^## CLAIMED: [^/\s]+/(\S+)", re.M)
 UNCHANGED = re.compile(r"You still hold the unchanged claim: [^/\s]+/(\S+?)\.?(?:\s|$)")
 CLAIMED_BY = re.compile(r"is claimed by (.+?)(?: for another|$)", re.M)
+RENEW_CALL_SECONDS = 120  # one renewal attempt waits this long for the app; the loop tries again
 RENEW_RETRIES = 4  # a failed renewal is tried again at once this many times, RETRY_SECONDS apart
 RETRY_SECONDS = 10
 CLAIM_LAPSE_SECONDS = 600  # without a renewal this long the claim has lapsed whatever the app says now
@@ -81,7 +84,12 @@ SUPPORTED_MCP_VERSION = "2025-06-18"
 
 
 class McpError(Exception):
-    pass
+    transient = False  # a dropped connection, timeout or 5xx: repeating the identical call is safe and may succeed
+
+
+class AppSlow(McpError):
+    """The app kept answering "still running" (or not at all) until the wait ran out. The work continues server-side:
+    repeating the identical call collects it, so nothing built for the session is torn down because of this."""
 
 
 class Gateway:
@@ -101,9 +109,13 @@ class Gateway:
             with urllib.request.urlopen(request, timeout=timeout) as reply:
                 raw, kind = reply.read().decode(), reply.headers.get("Content-Type", "")
         except urllib.error.HTTPError as error:
-            raise McpError(f"{method}: HTTP {error.code} {error.read().decode()[:300]}") from None
+            problem = McpError(f"{method}: HTTP {error.code} {error.read().decode()[:300]}")
+            problem.transient = error.code in (408, 425, 429) or error.code >= 500
+            raise problem from None
         except OSError as error:
-            raise McpError(f"{method}: the gateway isn't answering ({error})") from None
+            problem = McpError(f"{method}: the gateway isn't answering ({error})")
+            problem.transient = True
+            raise problem from None
         if notification or not raw.strip():
             return {}
         if "event-stream" in kind:
@@ -113,15 +125,34 @@ class Gateway:
             raise McpError(f"{method}: {message['error'].get('message') or message['error']}")
         return message.get("result") or {}
 
-    def start(self):
-        self.rpc("initialize", {"protocolVersion": SUPPORTED_MCP_VERSION, "capabilities": {},
-                                "clientInfo": {"name": "match-function-setup", "version": "1"}})
-        self.rpc("notifications/initialized", notification=True)
+    def patient(self, method, params=None, notification=False, wait=None):
+        """`rpc`, repeated while the app or gateway drops it (overloaded, restarting) until `wait` seconds are up."""
+        deadline = time.time() + (CALL_WAIT_SECONDS if wait is None else wait)
+        while True:
+            try:
+                return self.rpc(method, params, notification)
+            except McpError as error:
+                if not error.transient:
+                    raise
+                if time.time() >= deadline:
+                    raise AppSlow(f"{error} (still failing after waiting; the app looks overloaded)") from None
+                print(f"{method}: {error}; trying again", file=sys.stderr, flush=True)
+                time.sleep(TRANSIENT_PAUSE)
 
-    def call(self, tool, arguments):
-        """The tool's text. A "still running" answer means repeat the same call (it never runs twice); a tool error raises."""
-        for _ in range(STILL_RUNNING_RETRIES):
-            result = self.rpc("tools/call", {"name": tool, "arguments": arguments})
+    def start(self):
+        self.patient("initialize", {"protocolVersion": SUPPORTED_MCP_VERSION, "capabilities": {},
+                                    "clientInfo": {"name": "match-function-setup", "version": "1"}})
+        self.patient("notifications/initialized", notification=True)
+
+    def call(self, tool, arguments, wait=None):
+        """The tool's text. A "still running" answer means repeat the same call (the gateway never runs it twice and
+        keeps its result 15 minutes), so it is repeated, printing progress to stderr, for up to `wait` seconds (default
+        CALL_WAIT_SECONDS) before AppSlow; a dropped connection or 5xx is repeated the same way. A tool error raises."""
+        began = time.time()
+        deadline = began + (CALL_WAIT_SECONDS if wait is None else wait)
+        while True:
+            result = self.patient("tools/call", {"name": tool, "arguments": arguments},
+                                  wait=max(0, deadline - time.time()))
             text = "\n".join(part.get("text", "") for part in result.get("content", []))
             if result.get("isError"):
                 raise McpError(f"{tool}: {text[:500]}")
@@ -129,26 +160,31 @@ class Gateway:
             if "accepted" in lowered and "not repeat" in lowered:
                 return text  # the app took the work and will finish it: repeating would only queue it twice
             if STILL_RUNNING in lowered and "repeat" in lowered:
+                if time.time() >= deadline:
+                    raise AppSlow(f"{tool} was still running after {int(time.time() - began)} s; the app is overloaded. "
+                                  f"It keeps working: repeat the identical call to collect the result")
+                print(f"{tool}: still running in the app ({int(time.time() - began)} s so far); waiting for it",
+                      file=sys.stderr, flush=True)
                 time.sleep(1)
                 continue
             return text
-        raise McpError(f"{tool} was still running after {STILL_RUNNING_RETRIES} repeats; check the app")
 
 
 NEAREST_MAX_INSNS = 800  # the default pick's size cap: near-misses a hand session can finish, not 3,000-line giants
 
 
-def claim(gateway, function="", strategy="random", max_insns=0):
+def claim(gateway, function="", strategy="random", max_insns=0, wait=None):
     """Claim FUNC by name (never swapped for another), or, when none is named, an open function nobody holds picked by
     `strategy` (nearest: the lowest saved score first; random) of at most `max_insns` instructions: one call."""
+    waiting = {} if wait is None else {"wait": wait}
     if function:
-        text = gateway.call("claim_function", {"function": function, "fallback": False})
+        text = gateway.call("claim_function", {"function": function, "fallback": False}, **waiting)
     else:
         text = None
         for wanted, cap in older_orders(strategy, max_insns):
             arguments = {"strategy": wanted, **({"max_insns": int(cap)} if cap else {})}
             try:
-                text = gateway.call("claim_function", arguments)
+                text = gateway.call("claim_function", arguments, **waiting)
                 break
             except McpError as error:
                 if not unknown_option(str(error)):
@@ -319,7 +355,7 @@ def renew_once(root, current, app, gateway, last_good, stop=(), pause=None):
                 claimlost.write(root, function, "matched", matched=True)
                 print(f"{function} matched; the claim needs no renewing", flush=True)
                 return "matched"
-            claim(gateway, function)
+            claim(gateway, function, wait=RENEW_CALL_SECONDS)
             claimlost.clear(root)
             print(time.strftime("%H:%M:%S"), "renewed", function, flush=True)
             return "renewed"
@@ -410,12 +446,39 @@ def try_candidate(holder, path, function=""):
     except OSError as error:
         sys.exit(f"can't read {path}: {error}")
     gateway = Gateway(info["gateway_url"], info["token"])
+    pending_file = root / "try-pending.json"
     try:
         gateway.start()
-        print(gateway.call("compile_and_diff", {"function": name, "source": source}))
+        # One submission in flight at a time: a slow app keeps compiling a source after its `try` gave up waiting, and a
+        # second, different source would run behind it (a late stale submit once un-matched a function). The earlier one
+        # is repeated (the same call, so the gateway hands back its result) and finished before this one goes out.
+        earlier = read_pending(pending_file)
+        if earlier and (earlier["function"], earlier["source"]) != (name, source):
+            print(f"an earlier submission for {earlier['function']} was still in flight; collecting its verdict first "
+                  f"(a second source is never sent while one is running)", flush=True)
+            print(gateway.call("compile_and_diff", {"function": earlier["function"], "source": earlier["source"]}))
+            pending_file.unlink(missing_ok=True)
+            print("--- the earlier submission's verdict is above; now your new candidate ---", flush=True)
+        pending_file.write_text(json.dumps({"function": name, "source": source}))
+        text = gateway.call("compile_and_diff", {"function": name, "source": source})
+        pending_file.unlink(missing_ok=True)  # answered: nothing is in flight any more
+        print(text)
+    except AppSlow as error:
+        sys.exit(f"{error}\nThe submission is still in flight and is kept: `setup.py try {holder} {path}` again collects its "
+                 f"verdict (a different candidate is held back until then).")
     except McpError as error:
+        pending_file.unlink(missing_ok=True)  # the app answered (a refusal): nothing in flight
         sys.exit(f"not submitted: {error}")
     return 0
+
+
+def read_pending(path):
+    """The submission a `try` left in flight ({function, source}), or None."""
+    try:
+        data = json.loads(path.read_text())
+        return data if isinstance(data.get("function"), str) and isinstance(data.get("source"), str) else None
+    except (OSError, ValueError, AttributeError):
+        return None
 
 
 def check_claim(holder):
@@ -490,12 +553,56 @@ def env_lines(holder):
 
 
 def alive(pid):
-    """Is `pid` still our renewal? (a recycled pid must never be signalled)"""
+    """Is `pid` still our renewal? (a recycled pid must never be signalled). A zombie (exited, not yet reaped) is gone."""
     try:
-        command = subprocess.run(["ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True).stdout
+        os.waitpid(pid, os.WNOHANG)  # reaps it when it is our own child (tests, or a `setup.py` that never exited)
+    except (ChildProcessError, OSError):
+        pass
+    try:
+        out = subprocess.run(["ps", "-p", str(pid), "-o", "stat=,command="], capture_output=True, text=True).stdout.strip()
     except OSError:
         return False
-    return "_renew" in command
+    return "_renew" in out and not out.startswith("Z")
+
+
+def renewers(root, pid=0):
+    """Pids of this session's renewal: the one in renew.pid and any other `_renew <root>` process (an orphan whose pid
+    file is gone). Only processes whose command line says `_renew` and names this folder are ever returned."""
+    found = {pid} if pid and alive(pid) else set()
+    try:
+        listing = subprocess.run(["ps", "-axo", "pid=,stat=,command="], capture_output=True, text=True).stdout
+    except OSError:
+        return found
+    for line in listing.splitlines():
+        fields = line.split(None, 2)
+        if len(fields) == 3 and not fields[1].startswith("Z") and f"_renew {root} " in fields[2] + " ":
+            found.add(int(fields[0]))
+    return found
+
+
+def terminate_renewers(root, pid=0):
+    """SIGTERM the renewal (its process group too: it was started as a session of its own), wait STOP_GRACE_SECONDS,
+    SIGKILL what is left, and check. Returns the pids that survived (none: it is gone)."""
+    def send(pids, sig):
+        for target in pids:
+            for call in (lambda: os.killpg(target, sig), lambda: os.kill(target, sig)):
+                try:
+                    call()
+                    break
+                except OSError:
+                    continue
+    pids = renewers(root, pid)
+    send(pids, signal.SIGTERM)
+    deadline = time.time() + STOP_GRACE_SECONDS
+    while time.time() < deadline and renewers(root, pid):
+        time.sleep(0.1)
+    left = renewers(root, pid)
+    if left:
+        send(left, signal.SIGKILL)  # a renewal inside a long call never sees SIGTERM's flag: end it for good
+        deadline = time.time() + STOP_GRACE_SECONDS
+        while time.time() < deadline and renewers(root, pid):
+            time.sleep(0.1)
+    return renewers(root, pid)
 
 
 def stop_session(holder, remote_ok=True):
@@ -505,14 +612,17 @@ def stop_session(holder, remote_ok=True):
         sys.exit(f"no session folder {root}")
     info = json.loads((root / "connection.json").read_text()) if (root / "connection.json").exists() else {}
     pid_file = root / "renew.pid"
+    pid = 0
     if pid_file.exists():
-        pid = int(pid_file.read_text() or 0)
-        pid_file.unlink(missing_ok=True)  # the loop leaves on its own once this is gone, even if the signal is missed
-        if pid and alive(pid):
-            try:
-                os.kill(pid, signal.SIGTERM)
-            except OSError:
-                pass
+        try:
+            pid = int(pid_file.read_text() or 0)
+        except ValueError:
+            pid = 0
+    survivors = terminate_renewers(root, pid)  # before the pid file goes: the loop also leaves once it is gone
+    pid_file.unlink(missing_ok=True)
+    if survivors:
+        print(f"WARNING: the renewal (pid {', '.join(map(str, sorted(survivors)))}) is still alive after SIGKILL; "
+              f"kill it by hand", flush=True)
     revoked = None
     if remote_ok and info.get("connection_id") is not None:
         try:
@@ -526,39 +636,66 @@ def stop_session(holder, remote_ok=True):
     shutil.rmtree(root, ignore_errors=True)
     print(f"stopped {holder}: connection revoke {revoked}; removed {root}" if revoked is not None
           else f"stopped {holder}; removed {root}", flush=True)
-    return 0
+    return 1 if survivors else 0
+
+
+def resumable(root, args):
+    """The info of a session whose claim was still pending when the app was too slow (kept on purpose: its worktree, venv
+    and connection are built), or None. Such a session is finished by running the same command again."""
+    try:
+        info = json.loads((root / "connection.json").read_text())
+    except (OSError, ValueError):
+        return None
+    if not info.get("claim_pending") or info.get("slug") != args.slug or not (root / "repo").is_dir():
+        return None
+    return info
 
 
 def start(args):
     holder = holder_name(args.holder)
     root = session_dir(holder)
-    if root.exists():
+    info = resumable(root, args) if root.exists() else None
+    if root.exists() and info is None:
         sys.exit(f"{root} exists: pick another --holder, or `setup.py stop {holder}` first")
-    home = str(Path(args.home).expanduser()) if args.home else next(
-        (str(Path(h).expanduser()) for h in judge.HOMES if (Path(h).expanduser() / ".decomp" / "server.json").exists()), "")
+    home = (info or {}).get("home") or (str(Path(args.home).expanduser()) if args.home else next(
+        (str(Path(h).expanduser()) for h in judge.HOMES if (Path(h).expanduser() / ".decomp" / "server.json").exists()), ""))
     app = judge.App(home or None)  # fails early, before anything is built, when no app is running
     url = gateway_url(home)
     repo = Path(args.repo) if args.repo else checkout_of(__file__)
-    root.mkdir(parents=True)
-    root.chmod(0o700)
-    info = {"holder": holder, "slug": args.slug, "function": args.function or "", "home": home,
-            "port": app.c["port"], "gateway_url": url, "primary": str(repo), "repo": str(root / "repo"),
-            "venv": str(root / "venv"), "python": str(root / "venv" / "bin" / "python")}
+    resuming = info is not None
+    if resuming:
+        print(f"{holder}: a claim was still pending when the app was slow; reusing the session's worktree, venv and "
+              f"connection and collecting it (the identical request, so it is never claimed twice)", flush=True)
+        asked = info["claim_request"]
+    else:
+        root.mkdir(parents=True)
+        root.chmod(0o700)
+        asked = {"function": args.function or "", "random": bool(args.random), "max_size": args.max_size}
+        info = {"holder": holder, "slug": args.slug, "function": "", "home": home,
+                "port": app.c["port"], "gateway_url": url, "primary": str(repo), "repo": str(root / "repo"),
+                "venv": str(root / "venv"), "python": str(root / "venv" / "bin" / "python")}
     try:
-        make_worktree(repo, root)
-        if not args.no_sync:
-            make_venv(root, root / "sync.log")
-        connection = create_connection(app, args.slug)
-        info.update(connection_id=connection["id"], connection_name=connection["name"], token=connection["token"])
+        if not resuming:
+            make_worktree(repo, root)
+            if not args.no_sync:
+                make_venv(root, root / "sync.log")
+            connection = create_connection(app, args.slug)
+            info.update(connection_id=connection["id"], connection_name=connection["name"], token=connection["token"])
+        info.update(claim_pending=True, claim_request=asked)
         write_connection(root, info)  # at once: a failure below must still be able to revoke it
         # Claimed last so the claim's ten minutes are not spent on the build; exactly one claim call is made.
-        gateway = Gateway(url, connection["token"])
+        gateway = Gateway(url, info["token"])
         gateway.start()
-        strategy = "random" if args.random else "nearest"
-        info["function"] = claim(gateway, args.function or "", strategy, args.max_size)
+        strategy = "random" if asked["random"] else "nearest"
+        info["function"] = claim(gateway, asked["function"], strategy, asked["max_size"])
+        info.pop("claim_pending", None)
         info["started"] = time.time()  # the hand-off clock's start (clock.py HOLDER)
         write_connection(root, info)
         info["renew_pid"] = start_renewal(root, args.interval)
+    except AppSlow as error:
+        # The app is overloaded, not refusing: what was built stays, and the same command again collects the claim.
+        sys.exit(f"{error}\nThe session {holder} is kept (worktree, venv, connection); run the same command again to "
+                 f"collect the claim: setup.py {args.slug} {asked['function']} --holder {holder}".replace("  ", " "))
     except BaseException as error:
         message = f"setup failed ({error}); removing {root}"
         write_connection(root, info)
