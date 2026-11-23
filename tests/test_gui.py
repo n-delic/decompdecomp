@@ -490,6 +490,10 @@ renderDeepSweepResults({measurements:[{family:'typed_temporary',phase:'local rep
 assert.match(boxes.deepSweepRecipes.innerHTML,/typed temporary/);
 assert.match(boxes.deepSweepRecipes.innerHTML,/Rewrite performance/);
 assert.match(boxes.deepSweepRecipes.innerHTML,/1.5s/);
+// a run with thousands of compound rewrites draws a bounded table
+renderDeepSweepResults({has_activity:true,recipes:Array.from({length:5000},(_,i)=>({family:'a+b'+i,tested:1,improvements:i,score_gain:i}))});
+assert.equal((boxes.deepSweepRecipes.innerHTML.match(/<tr>/g)||[]).length,201);
+assert.match(boxes.deepSweepRecipes.innerHTML,/Showing the first 200 of 5,000/);
 """
     subprocess.run([NODE, '-e', script], check=True, capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
 
