@@ -522,6 +522,17 @@ says the fix and the library families it names; try those families with `prove_c
   in the `mul.s`; write it to another float that is free there. decomp-repair `loop_constant_holder`,
   `float_product_retarget` (685 -> 0 together); `guard_load_split` (the load before a float guard's last test plus the loop
   bound assigned after the guard, 1015 -> 705 only together) and `switch_join_condition` (705 -> 685).
+- **A switch whose arms `goto` labels inside it (m2c's `goto set_kind_flags`), a parameter that loses a saved register by one
+  priority step, and four small edits that are each worse alone** (KMC 2.7.2, a 713-instruction object spawner, 2420 -> 0;
+  docs/learnings/function/spawner-label-arms-and-flag-scope-2420-to-0.md). The shared `var_v1`/`kind_mask` locals of the
+  merged tail are function-wide pseudos that global.c ranks first; each arm needs its own copy of the run with block-local
+  scratch values, literals folded and the word update as `v = X; v &= M; v |= K; <the arm's earlier statements> X = v;`
+  (`switch_label_arms`, `_mixed`). A parameter read once for a flag test (`if ((a15 << 0x18) != 0)`) is 0.071 against a
+  parameter the arms read five times (0.083): compute the flag in `do { f = a15 << 0x18; } while (0);` and test `f`
+  outside it (`parameter_test_scope`; the scope around the whole `if`/`else` turns the arms through jump.c's "if (foo)
+  bar; else break;" rule). Also `narrow_return_compare` (a `volatile short` callee widened and `3 < (x + 1)` as
+  `x >= 3` together), `switch_range_trim` (the aliases of `default:` outside the target's `addiu`/`sltiu` range) and
+  `volatile_cast_unpin` (a volatile load cannot fill a delay slot, and the `nop` moves every later table entry).
 
 ## 3a. The fast tools (use them before writing variants by hand)
 
