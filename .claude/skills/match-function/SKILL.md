@@ -579,6 +579,20 @@ says the fix and the library families it names; try those families with `prove_c
   `rmw_user_local_steps`; docs/learnings/function/player-update-routine-chain.md). A 25-line program with the same few
   statements reproduces the order in a second: do that before spelling variants on the real function.
 
+- **A 1133-instruction effect spawner, 7905 -> 2930 in nine steps (KMC 2.7.2; docs/learnings/function/effect-spawner-switch-slot-counter-goto-loop.md).**
+  m2c's `if (n != 2) { if (n >= 3) { if (n < 5) B } } else if (flag) A1 else A2` is a `switch (n)` (the dispatch is
+  `beq`, `slti`, `slti` with the single-value arm first: `embedded_if_tree_switch`); a record member read twice in a loop
+  block is a pointer local at the head of that block, inside the `if` (`member_slot_pointer_local`: above the `if` it
+  becomes the loop's induction variable); a constant word store where the target has `sb` is `u8` (`narrow_store_width`);
+  a literal stored after a `(u32) f` conversion is a local set before the float arithmetic, stored first
+  (`constant_store_early_local`); a later loop counted with the first loop's counter, read after it, shares one pseudo
+  (`loop_counter_reassign`); a call result tested and used throughout the arm is copied at the arm's head
+  (`call_result_arm_local`); a `do { } while` whose literals the target does not hoist is a goto loop (`loop_goto_form`,
+  4035 -> 3555); and a local update (`x += K;`) goes below a statement with a call that does not name it
+  (`statement_slide` past a call). A hill-climb that swaps adjacent statements must check that they commute: one
+  accepted a read before its set (60 points "better"). Run the library's children over **all** of them (`prove_chain`
+  stops at `--children 80` of ~2700): a chain of the best child, scored in full, found 5 more steps (-1900).
+
 ## 3a. The fast tools (use them before writing variants by hand)
 
 - **A claim starts with several sources.** `setup.py` prints the saved best, its plain form (`plain_best.py`:
