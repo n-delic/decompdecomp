@@ -836,7 +836,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Resumable source/profile queue and explicit assembly reconsideration | ✓ ROM | ✓ ROM | ✓ ROM | — | — | ✓ ROM | — | — owned-build adapter planned | — owned-build adapter planned | — | — owned-build adapter planned | — owned-build adapter planned |
 | Supplied assembly code/data verification | ✓ ROM driver | ✓ ROM driver | ✓ ROM driver | — | — | ✓ ROM driver | — | — own build adapter planned | — own build adapter planned | — | — own build adapter planned | — own build adapter planned |
 | Indexed SDK object assembly proof | ✓ MIPS ROM | ✓ MIPS ROM | ✓ MIPS ROM | — | — | ✓ MIPS ROM | — | — owned-build adapter planned | — owned-build adapter planned | — | — owned-build adapter planned | — owned-build adapter planned |
-| Library C that library detection finds set aside (opt-in, Libraries for this game; linked when your SDK has it) | ✓ MIPS ROM, built-in ultralib table; port glue and replaced only | ✓ MIPS ROM | ✓ MIPS ROM | — | — | ✓ MIPS ROM | — | — owned-build adapter planned | — owned-build adapter planned | — | — owned-build adapter planned | — owned-build adapter planned |
+| Library C that library detection finds set aside (opt-in, Libraries for this game; linked when your SDK has it; also at Deep Permuter start and in the set-aside pass) | ✓ MIPS ROM, built-in ultralib table; port glue and replaced only; the remote-debug monitor (`__rmon*`) also by family name beside detected code | ✓ MIPS ROM (no family names yet) | ✓ MIPS ROM (no family names yet) | — | — | ✓ MIPS ROM (no family names yet) | — | — owned-build adapter planned | — owned-build adapter planned | — | — owned-build adapter planned | — owned-build adapter planned |
 | Built-in exact SDK assembly detection before claims | ✓ bcmp/bzero | — pack planned | — pack planned | — | — | — pack planned | — | — pack planned | — pack planned | — | — pack planned | — owned-build adapter planned |
 | Exact C / verified source assembly / verified SDK assembly / other assembly / open counts | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ counts | ✓ counts | — | ✓ counts | ✓ counts |
 | Local mapped source preparation | ✓ | ✓ | ✓ | — | — | ✓ | — | body only¹ | body only¹ | — | body only¹ | body only¹ |
@@ -1050,6 +1050,19 @@ the WebAssembly build compiles ultralib's C for it (port/ultralib.py, docs/PORTI
 functions are set aside this way (`guLookAt`, `guPerspective`, `guMtxXFML`, libultra audio), and all 15 of ultralib's
 units compile with the build's flags; `guTranslate` follows once an agent's claim on it ends. Left: the native
 libultraship build (Compile for PC) reading the same units, and a check that runs the port with them.
+
+libultra's remote-debug monitor (`__rmon*`, `rmon*`, and `kdebugserver`) is now set aside like the rest of the
+library. A retail N64 game had all 45 of its `__rmon` functions named by library detection, and they stayed open:
+the port kit called names it didn't know the game's own, so the library setting kept their C work, and the Deep
+Permuter asked only the digest tables, which have the debug archive's longer build. An agent matched
+`__rmonSendHeader` by hand. The kit now files the monitor as glue (a port stubs a debugger, as it does `osInitRdb`),
+the Deep Permuter and the set-aside pass run library detection too (`sdk_assembly.set_aside_known`, only for
+functions already bearing their library name), and a console can name SDK families
+(`Console.sdk_name_families`): a function the game's own symbols name so, next to one detection found from the same
+family, is set aside with that evidence (`verification_method` `sdk-name`), never as a digest. Left: family names for
+the other consoles' SDKs (PS1 PsyQ, PS2 and PSP), which need their own families and checks on real games; the
+monitor's static helper `send` (kdebugserver.c) only by signature, as its name is too common; project-mode builds,
+which need the owned-build adapter above.
 
 The WebAssembly port's N64 host boots any game, not only the racing game it was written on: it read that game's
 first C function by name (`boot_start`), its image end (0xA7FE0) and PAL, and held its own functions (its bzero at

@@ -228,6 +228,9 @@ class Nintendo64(Console):
                   # libultra code the SDK folder lacks, as games that declare 2.0D link it (2.0D-2.0G have no archive)
                   str(Path(__file__).with_name("libultra_2_0d_signatures.tsv")))
 
+    # libultra's remote-debug monitor (rmon/*.c): a retail build's copy is shorter than the debug archive's
+    sdk_name_families = (r"_*rmon[A-Z]\w*",)
+
     def sdk_assembly_identity(self, code, big_endian=True):
         return sdk_assembly.identify(code, big_endian)
 

@@ -71,9 +71,19 @@ def _sdk_group(name: str) -> str | None:
     if (re.match(r"gu[A-Z]", bare) or name in _MATH or re.match(r"(n_)?al[A-Z]|Mus[A-Z]", bare)
             or name in _SYNTH_INTERNAL):
         return "native"
+    # libultra's remote debugger (rmon/*.c: rmonMain, __rmonSendHeader...) and the host debug server (kdebugserver.c)
+    # talk to a development host over the debug port, like osInitRdb and __osRdbSend above: a port stubs them. Left
+    # as "the game's own", library detection named a retail game's 45 __rmon functions and still gave them to the
+    # agents, who matched __rmonSendHeader by hand from another game's copy
+    if REMOTE_DEBUG.match(bare) or name == "kdebugserver":
+        return "glue"
     if re.match(r"os[A-Z]", bare):
         return "glue"
     return None
+
+
+# libultra's remote-debug monitor, by its names with leading underscores stripped (rmon/*.c in every 2.0x release)
+REMOTE_DEBUG = re.compile(r"rmon[A-Z]\w*$")
 
 
 # What libultraship's libultra layer defines (src/libultraship/libultra/*.cpp at Kenix3/libultraship a3f1e102, the
