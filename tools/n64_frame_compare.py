@@ -243,6 +243,25 @@ def side_by_side(path: Path, pictures: list[tuple[int, int, list] | None]) -> No
     png(path, rows, width * len(pictures), lines)
 
 
+def unmatched(a: list, b: list, width: int, lines: int, radius: int) -> float:
+    """The percentage of a's pixels with no equal pixel of b within `radius` pixels: what's left of a difference once a
+    small shift is allowed. A scene drawn the same but a pixel or two apart (a camera, a scroll, an animation caught a
+    frame earlier, as moving scenes are when the console and the port run apart) scores near 0, where a difference in what
+    is drawn stays high."""
+    bad = 0
+    for y in range(lines):
+        for x in range(width):
+            p = a[y * width + x]
+            found = False
+            for yy in range(max(0, y - radius), min(lines, y + radius + 1)):
+                row = yy * width
+                if p in b[row + max(0, x - radius):row + min(width, x + radius + 1)]:
+                    found = True
+                    break
+            bad += not found
+    return 100.0 * bad / max(width * lines, 1)
+
+
 def difference(a: list, b: list) -> list:
     return [tuple(min(255, abs(x - y) * 4) for x, y in zip(p, q)) for p, q in zip(a, b)]
 
@@ -261,6 +280,9 @@ def main(argv=None) -> int:
                                       "apart (the port loads in no time and never drops a frame): the same count")
     p.add_argument("--input", default="", help="vi:BUTTON+BUTTON+SX=n+SY=n,... or @file")
     p.add_argument("--port-input", help="the port's own script (default: --input's)")
+    p.add_argument("--tolerance", type=int, default=0, metavar="PIXELS",
+                   help="also report the share of pixels with no equal pixel within PIXELS of the other side's picture "
+                        "(a moving scene the two runs reach at slightly different moments)")
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--work", type=Path, help="where the renderer is built and the dumps kept (default: a temporary "
                                              "folder)")
@@ -311,8 +333,10 @@ def main(argv=None) -> int:
                 if a and b and a[:2] == b[:2]:
                     c = compare(b[2], a[2])
                     side_by_side(name, [a, b, (a[0], a[1], difference(a[2], b[2]))])
+                    near = (f", {unmatched(a[2], b[2], a[0], a[1], args.tolerance):.2f}% with no match within "
+                            f"{args.tolerance} px") if args.tolerance else ""
                     print(f"{label} task {task:08X} image {image:06X} {a[0]}x{a[1]}: {c['differ_pct']:.2f}% of "
-                          f"pixels differ, {c['beyond_pct']:.2f}% by more than one step")
+                          f"pixels differ, {c['beyond_pct']:.2f}% by more than one step{near}")
                 else:
                     side_by_side(name, [a, b])
                     where = "the console's" if a and not b else "the port's" if b and not a else "both (sizes differ)"

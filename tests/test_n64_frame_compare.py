@@ -114,3 +114,16 @@ def test_dump_task_sidecar_is_placed_with_game_pointers(tmp_path):
     assert got[0] == 1 and got[2] == 0x80001D10 and got[6] == 0x8009B190 and got[12] == 0x801CFD68
     assert got[8] == 0 and got[7] == 0x800  # sizes and empty pointers stay as they are
     assert tool.with_task(tmp_path / "console_vi_9.bin", tmp_path) is None  # no sidecar: scan RAM as before
+
+
+def test_a_shifted_picture_matches_within_a_tolerance_and_a_different_one_does_not():
+    """unmatched(): the share of pixels with no equal pixel within `radius` of the other picture."""
+    tool = _tool()
+    w, h = 16, 8
+    a = [((x * 7 + y * 3) % 5, x % 3, y % 4) for y in range(h) for x in range(w)]
+    shifted = [a[y * w + min(x + 1, w - 1)] for y in range(h) for x in range(w)]  # the same picture a pixel to the left
+    other = [((x * 11 + y) % 9 + 20, 0, 0) for y in range(h) for x in range(w)]
+    assert tool.unmatched(a, a, w, h, 0) == 0.0
+    assert tool.unmatched(a, shifted, w, h, 0) > 20.0
+    assert tool.unmatched(a, shifted, w, h, 1) == 100.0 / w  # all but the column the shift pushed out of the picture
+    assert tool.unmatched(a, other, w, h, 2) == 100.0

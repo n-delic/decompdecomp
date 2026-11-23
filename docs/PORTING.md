@@ -547,6 +547,12 @@ register, the status stays), the port's `PORT_SWAP_LOG` says when it blanked, an
 number and length. On a racing game they did: six blanks of 25, 25, 21, 25, 25 and 21 graphics tasks on both sides
 (where each began differed for three of them: a menu advanced hundreds of tasks apart between runs). On the console the
 screen is black at those moments; before the port honoured osViBlack it showed the buffer's leftovers instead.
+`--tolerance PIXELS` on `tools/n64_frame_compare.py` also reports the share of pixels with no equal pixel within that many
+pixels of the other side's picture, which separates a scene drawn the same but a little apart from one drawn
+differently. On a racing game: the paused starting grid and the first frames of the race, 29 to 30 percent of pixels
+differing exactly, had 0.06 to 0.19 percent with no match within 1 to 3 pixels (the same picture, a pixel or so apart);
+a later moving scene stayed at 31 percent within 3 pixels and 11 percent within 16: the camera and the cars were
+somewhere else on the track, game state that had drifted, not a drawing difference.
 `tools/n64_task_diff.py CONSOLE_DUMP PORT_DUMP` says where two pictures of one task differ: the task's display list
 is traced on each side and compared with its pointers masked, so what's left is values the game computed. A racing
 game paused on its starting grid (the pad released, one START: the scene stands still on both sides, whatever the timing)
