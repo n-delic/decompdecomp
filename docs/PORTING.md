@@ -541,6 +541,11 @@ uv run python tools/n64_frame_compare.py baserom.z64 --port port/wasm/build/game
 ```
 
 Both frames come from the same renderer, so a difference is the game running differently, not the drawing.
+`tools/n64_frame_scan.py FOLDER` needs no emulator: it looks through the frames a port saved (`PORT_FRAMES=FOLDER
+PORT_FRAME_EVERY=1`, `PORT_SWAP_LOG=file` to name each frame's graphics task) for static, flat-colour frames and runs of
+black, the ways a buffer shown before the game drew it looks. Moving scenes can't be compared pixel for pixel by task
+number: the runs drift (the console drops frames, the port doesn't), so a race differs by a few pixels of scroll even
+at the same task; menus, the title and scripted still scenes match to the pixel.
 Each frame dump has a `NAME.task` beside it, the 64-byte task the RSP was given (the emulator's from DMEM, the port's from
 its RAM): a game keeps its own copy of the task wherever it likes, so scanning RAM for one finds nothing in some games,
 and something that only looks like a task in others. The tool draws that task, and pairs the two sides' pictures when each
