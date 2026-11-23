@@ -218,6 +218,14 @@ FILL_ENTRY = [_lui(A0, 0x800A), _addiu(A0, A0, 0x1000), _lui(A1, 0x800B), _addiu
               _addiu(A2, A2, 0x5555, op=0x0D), _jal(0x80000448), 0, _lui(A0, 0x800B), _addiu(A0, A0, 0x3210),
               _lui(A1, 0x800C), _addiu(A1, A1, 0x10), _jal(0x80000448), _move_zero(A2), _jal(0x80001234), 0, BREAK, 0,
               *FILL_HELPER]
+# the SDK's entry routine as a compiler lays it out: the BSS zeroed by `sltu at, t0, t1; bnez at, loop` with the store
+# in the branch's delay slot, then a second loop for a section with nothing in it (start = end)
+def _zero_loop(start, end):
+    return [_lui(T0, start >> 16), _addiu(T0, T0, start & 0xFFFF), _lui(T1, end >> 16), _addiu(T1, T1, end & 0xFFFF),
+            4 << 26 | T0 << 21 | T1 << 16 | 5, 0, _addiu(T0, T0, 4), _sltu(1, T0, T1), 5 << 26 | 1 << 21 | (-3 & 0xFFFF),
+            _sw0(-4, T0)]
+DELAY_SLOT_ENTRY = [_lui(SP, 0x803F), _addiu(SP, SP, 0xFFF0, op=0x0D), *_zero_loop(0x80073F40, 0x80180330),
+                    *_zero_loop(0x80073F40, 0x80073F40), _jal(0x80014510), 0, BREAK, 0]
 # a game that sets up the TLB through a helper and starts at the virtual address its code is mapped at
 TLB_ENTRY = [_lui(SP, 0x803F), _jal(0x80000420), 0, _lui(A0, 0x29), _addiu(A0, A0, 0x2E00), _jalr(A0), 0, BREAK,
              _jr(31), 0]
@@ -246,6 +254,9 @@ static uint32_t be32(uint32_t a) { uint8_t *p = at(a); return (uint32_t)p[0] << 
     (FILL_ENTRY, 0x80000400, b"E", "80000400 80001234 800B3210 CE00 1", None),
     # the clear's store sits in the branch's delay slot, up to the register the loop compares with
     (DELAY_SLOT_CLEAR, 0x80000400, b"E", "80000400 80001234 80071940 9E6A0 1", None),
+    # the zeroing loop's store sits in the branch's delay slot (a racing game's fishing sibling: the BSS was left as the
+    # ROM's bytes and the game's pointers came out wild); the empty second loop must not stand for it
+    (DELAY_SLOT_ENTRY, 0x80000400, b"E", "80000400 80014510 80073F40 10C3F0 1", None),
     # a start address below KSEG0 (a `jalr` to a TLB-mapped 0x00292E00) is the same code at its KSEG0 address
     (TLB_ENTRY, 0x80000400, b"E", "80000400 80292E00 00000000 0 1", None),
 ])
