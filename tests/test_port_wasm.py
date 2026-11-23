@@ -1010,3 +1010,21 @@ def test_stopping_a_game_kills_one_that_ignores_the_request(tmp_path):
     assert proc.stdout.readline().strip() == "ready"  # the handler is installed
     play.end(proc, grace=0.5)
     assert proc.poll() is not None
+
+
+def test_a_matched_function_the_host_provides_is_called_by_its_library_name():
+    """A battle game's matched osRecvMesg kept the automatic name func_8004DE70: the build left its C out, but the
+    recompiled code still ran a recompiled copy of the game's own body against kernel routines the host doesn't have
+    (every worker thread ended at once). The names the host answers are the ones to route to it; the game's own
+    library C (the synthesizer) stays the game's."""
+    from types import SimpleNamespace
+
+    from decompnet.port.wasm import play
+
+    kit = get("n64").port_kit
+    assert play.host_provides(kit, ["osRecvMesg"])
+    assert play.host_provides(kit, ["osCreateThread"])
+    assert not play.host_provides(kit, ["alSynAllocFX"])
+    assert not play.host_provides(kit, [])
+    assert not play.host_provides(None, ["osRecvMesg"])
+    assert not play.host_provides(SimpleNamespace(sdk_group=lambda name: None), ["osRecvMesg"])

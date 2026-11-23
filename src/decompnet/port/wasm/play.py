@@ -197,8 +197,15 @@ def default_save(net, slug: str) -> Path | None:
         return None
 
 
+def host_provides(kit, names) -> bool:
+    """Whether the port's host (or its glue) answers a function known by these library names, as `library` decides
+    which matched functions' C the build leaves out."""
+    return bool(kit and any(kit.sdk_group(name) in ("replaced", "glue") for name in names or ()))
+
+
 def library_names(net, slug: str) -> dict[str, str]:
-    """{a function's name: its library name} for library code with no matched C, found by library detection: its
+    """{a function's name: its library name} for library code that doesn't run as the game's own C (no matched C,
+    or the host provides it), found by library detection: its
     calls go to the library's name, which the host answers by name in any game (a racing game's bzero kept its
     automatic name, `func_8003DDC0`, and the host stubbed it to nothing). One name each; names already the
     library's, and the user's confirmed identities, as they are."""
@@ -208,12 +215,19 @@ def library_names(net, slug: str) -> dict[str, str]:
     with net.progress.view():
         proj = net._project(slug)
     sdk = identify(net, proj, net.sdk_functions(proj), include_asm=True) | confirmed(net, proj)
+    kit = net.console(proj).port_kit
     out = {}
-    for r in net.project_store(proj["id"]).all("SELECT id, name, meta FROM functions WHERE project_id=? AND "
-                                               "status!='matched'", proj["id"]):
+    for r in net.project_store(proj["id"]).all("SELECT id, name, status, meta FROM functions WHERE project_id=?",
+                                               proj["id"]):
         # detection's identity, else the name it showed (`sdk_display`): an exact-bytes proof of hand-written assembly
         # goes stale with the project's compiler setting (its fingerprint holds it), not with the bytes
         names = (sdk.get(r["id"]) or {}).get("names") or []
+        # A matched function keeps its automatic name too when polishing hasn't renamed it. When the host provides it
+        # (`library` leaves its C out), recompiled code must call the host's: a battle game's osRecvMesg
+        # (func_8004DE70, matched) ran as a recompiled copy against kernel routines the host doesn't have, and every
+        # worker thread ended at once.
+        if r["status"] == "matched" and not host_provides(kit, names):
+            continue
         if not names and '"sdk_display"' in (r["meta"] or ""):
             shown = (json.loads(r["meta"]).get("sdk_display") or {}).get("name") or ""
             names = [shown] if shown and " / " not in shown else []
