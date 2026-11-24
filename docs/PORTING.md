@@ -922,3 +922,9 @@ the port's tasks 604, 609, 614, 619 and the console's 603, 608, 613, 618, and th
 not move the game's logic against the graphics tasks; the lead of about a logic frame is somewhere else: how many logic updates the game has run when
 it hands over its nth task (the console's first retraces, its loading, the scheduler's frame skips), which the trace of the retrace at each task start should replay
 but evidently does not for the logic thread's own timing. The next experiments: log the port's and the emulator's retrace count at each logic update (a break on the function that updates the line points) and compare them task by task.
+
+**Holding retraces at the console's count did not move the logic either (tested).** `PORT_VTIME_HOLD` (host.c, on with `PORT_VTIME_TRACE`: no retrace past the one a task started at until
+the game has started that task) left the race window exactly as it was (614-616 and 619-621 at 12-17%) and the line points still change at the port's tasks 604, 609, 614, 619 and the
+console's 603, 608, 613, 618. The console updates them every 3 retraces (watch on the line points: retraces 482, 485, 488...) and starts tasks 603-607 at retrace 542, so the port's
+logic is not simply running on more retraces. Still untested: the retrace count at each logic update in the port (a log in the host when the game writes the line points), and
+whether the game's logic is paced by something else the console has, such as its audio interface or a timer the port's virtual time does not replay.
