@@ -1810,6 +1810,15 @@ def test_the_games_window_raises_itself_when_it_opens():
     assert text.count("sdl.RaiseWindow(window)") >= 2
 
 
+def test_a_game_that_stops_on_a_call_to_nothing_still_writes_the_memory_dump_it_was_asked_for():
+    """PORT_DUMPBIN is how a port's memory is set beside the reference emulator's. It was written only when the run
+    ended in its time limit, so a game that died (port_trace) left no dump to look at."""
+    text = HOST.read_text(encoding="utf-8")
+    assert 'getenv("PORT_DUMPBIN")' in _function(text, "dump_memory_if_asked")
+    assert "dump_memory_if_asked();" in _function(text, "main")
+    unix_trace = text[text.index("void port_trace(void) {\n    dump_memory_if_asked();"):]
+    assert unix_trace.startswith("void port_trace(void) {\n    dump_memory_if_asked();")
+
 def test_a_game_that_reads_the_cartridge_through_the_pi_registers_is_counted():
     """A game's own PI manager starts its transfers by writing the PI registers: the summary said '0 DMAs' of one that
     read its file table that way, which looked like a game that never loaded anything. They are counted and logged
