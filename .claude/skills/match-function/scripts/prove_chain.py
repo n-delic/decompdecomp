@@ -290,6 +290,7 @@ def generator(judge, name):
         try:
             gated = diff_gated_repairs.proposals(
                 source, name, judge.header, judge.arch, judge.compiler.get("toolchain", ""), rows, judge.asm,
+                jump_tables=getattr(judge, "jump_tables", ()),  # score 1 with no rows: the table's data (linked_switch_labels)
                 flags=tuple(judge.compiler["flags"]),
                 big_endian=bool(getattr(judge, "big_endian", True)))
         except Exception as error:  # a family's bug must not end a chain

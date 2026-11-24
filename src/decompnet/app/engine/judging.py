@@ -691,7 +691,9 @@ class JudgeMixin:
     @trial
     def _judge_with(self, proj, fn, toolchain: str, flags: list[str], source: str):
         """(matched, diff or None, log) for C built with this compiler and flags, judged like an attempt, recording
-        nothing."""
+        nothing. The candidate's advisory checks stay in `_last_judge_checks` for the caller that wants them (`jump_tables`:
+        the cases whose compiled table entry differs, when every instruction is exact and only the table's data is not)."""
+        self._last_judge_checks = {}
         from ...compiler import compile_source
         from ...project import compiler_config
         from .. import compiler_flags
@@ -709,7 +711,10 @@ class JudgeMixin:
         if cand is None:
             return False, None, "the function isn't in what it compiled to"
         d = scoring.diff(self._target_obj(fn, proj), cand)
-        return (verdict if verdict is not None else d.bytes_match), d, "\n".join(problems)
+        matched = verdict if verdict is not None else d.bytes_match
+        if not matched and proj['arch'] == 'mips':
+            self._last_judge_checks = dict(self._candidate_checks(fn, proj, result.obj))
+        return matched, d, "\n".join(problems)
 
     def _source_of(self, fn) -> str | None:
         """A function's best C, else its latest attempt."""

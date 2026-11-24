@@ -65,6 +65,7 @@ class Judge:
         self.big_endian = True
         self.tables, self.callees, self.entry_scope = [], "", None
         self.words = {}
+        self.jump_tables = []  # set by rows(): the linked jump-table differences of the last candidate (switch_tables.differences)
         if vram is None or target_hex is None or toolchain is None:
             info = self.ask({"op": "function", "slug": slug, "name": name, **({"vram": vram} if vram is not None else {})})
             vram, target_hex = info["vram"], info["target"]
@@ -106,6 +107,7 @@ class Judge:
         """(score, rows): the exact score and every row of the judge's diff, (marker, target, candidate) each; the
         rows say which of the target's instructions differ (prove_chain.py's row-coverage combinations)."""
         reply = self.ask(dict(self.request, source=source, raw_rows=True))
+        self.jump_tables = reply.get("jump_tables") or []  # the cases whose table entry differs (instructions exact)
         return reply.get("score"), [tuple(row) for row in reply.get("rows") or []]
 
     def close(self):
