@@ -608,6 +608,13 @@ the console and the port have apart: counted in retraces, a racing game's video-
 console and about 10 in the port, though they are the same 25, 25 and 21 graphics tasks on both: the console spends two
 to seven retraces on a frame where the port, with no CPU time to spend, spends one, so a scene is the same by game frame
 and not by retrace. `EMU_VI_LOG` lines now carry the retrace (`vi V`) as well as the task.
+`PORT_VTIME_TRACE=file` replays the console's own pacing: the emulator's `EMU_TASK_LOG=file` writes the retrace the console was at when
+it started each graphics task, and the port, as each of those tasks starts, moves its virtual clock to that retrace and fires the
+retraces it is short of when the game next goes idle (they queue for it as they did while the console was busy). On a racing
+game the port's retrace count matched the console's within two or three retraces from the race start on (task 3,190: 2,095 against
+2,098, where the constant cost per task tried before was 1,298 and 86), which no model of the game's adaptive frame rate was
+needed for. The paused race grid still read 139 against the console's 140 in the horizon's fill rectangle (shift-tolerant
+mismatch 0.06 to 0.14 percent within 1 to 3 pixels), so the horizon's step isn't a function of the retrace count alone.
 What `PORT_VTIME` did and didn't settle for a racing game, with the same retrace-timed input on both sides: the port's
 video-mode blanks fell at the console's graphics tasks within one frame (485, 521, 632 against 485, 521, 637; the race
 start at 2,727 and 2,773 exactly), where the wall-clock port had been hundreds of tasks apart, so the two run the same

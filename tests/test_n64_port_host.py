@@ -1602,3 +1602,29 @@ int main(void) {
     subprocess.run([cc, "-o", str(tmp_path / "t"), str(source)], check=True, capture_output=True)
     out = subprocess.run([str(tmp_path / "t")], check=True, capture_output=True, text=True).stdout.splitlines()
     assert out == ["1 0 1", "alphaalpine 66 0", "alalp"]
+
+
+def test_the_consoles_retrace_per_task_is_read_by_task_number(tmp_path):
+    """PORT_VTIME_TRACE: the emulator's EMU_TASK_LOG lines ("TASK VI") kept by task number, so the port's virtual time can
+    reach each graphics task at the retrace the console did."""
+    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if not cc:
+        pytest.skip("no C compiler")
+    trace = tmp_path / "trace.txt"
+    trace.write_text("1 0\n2 0\n3 1\n4 2\n5000 2299\n")
+    source = tmp_path / "t.c"
+    source.write_text("""#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+static unsigned *vtrace;
+static unsigned vtrace_n;
+""" + _function(HOST.read_text(), "vtrace_load") + """
+int main(int argc, char **argv) {
+    vtrace_load(argv[1]);
+    printf("%u %u %u %u %u %u\\n", vtrace[3], vtrace[4], vtrace[5000], vtrace[4999], vtrace_n > 5000, vtrace[0]);
+    return 0;
+}
+""")
+    subprocess.run([cc, "-o", str(tmp_path / "t"), str(source)], check=True, capture_output=True)
+    out = subprocess.run([str(tmp_path / "t"), str(trace)], check=True, capture_output=True, text=True).stdout.split()
+    assert out == ["1", "2", "2299", "0", "1", "0"]
