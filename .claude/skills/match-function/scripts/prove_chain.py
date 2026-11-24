@@ -19,7 +19,10 @@ combined as before after those. At most --combine-limit merges are judged, only 
 by score alone (the older search; docs/learnings/finding/row-coverage-combinations.md has the comparison).
 
     prove_chain.py --slug SLUG --function FUNC [SOURCE.c] [--families a,b,c | all] [--steps 8] [--children 80]
-                   [--combine 10] [--out BEST.c] [--list]
+                   [--combine 10] [--out BEST.c] [--list] [--flags '...' | --fp-flip]
+
+`--flags` / `--fp-flip` judge and propose under another profile (the function's flags with the other `-mfp32`/`-mfp64`):
+the families' children are built and scored under it, as the Deep Permuter's profile climb does.
 
 SOURCE.c defaults to the app's saved best (read through the app, no claim). `--list` prints which families produce
 children for the source and how many, then exits (a family that produces none cannot be in the chain). Each step prints
@@ -321,6 +324,12 @@ def main(argv=None):
     ap.add_argument("--out")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--home")
+    ap.add_argument("--flags", metavar="'-G0 -mips3 ... -mfp32'",
+                    help="judge and propose under these compiler flags instead of the function's own (the toolchain "
+                         "stays): the way to ask whether the families reach a match under another profile")
+    ap.add_argument("--fp-flip", action="store_true",
+                    help="the function's own flags with the other floating-point model: -mfp64 <-> -mfp32 "
+                         "(fp_fingerprints.flipped, the profile the Deep Permuter's climb tries)")
     a = ap.parse_args(argv)
     claimlost.warn()  # a lost claim is said first, before minutes of scoring
     if a.source:
@@ -332,6 +341,10 @@ def main(argv=None):
             sys.exit("the app has no saved C for that function: give SOURCE.c")
     judge = fast_judge.Judge(a.slug, a.function, home=a.home)
     try:
+        if a.flags or a.fp_flip:
+            from decompnet.app import fp_fingerprints
+            judge.compiler["flags"] = a.flags.split() if a.flags else fp_fingerprints.flipped(judge.compiler["flags"])
+            print(f"profile: {judge.compiler['toolchain']} {' '.join(judge.compiler['flags'])}")
         generate = generator(judge, a.function)
         if a.list:
             counts = {}
