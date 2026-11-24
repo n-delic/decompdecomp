@@ -111,7 +111,8 @@ def _mapped(net, proj, fn, own) -> dict | None:
 
 def evidence(net, proj, cfg, fn, own) -> tuple[list[dict], dict, Counter, int]:
     """(profiles the evidence points to, best first; key -> what points to each; neighbour votes; neighbours read)."""
-    from . import compiler_fingerprints, move_fingerprints
+    from .. import consoles
+    from . import compiler_fingerprints, fp_fingerprints, move_fingerprints
     reasons: dict[tuple, list[str]] = {}
     ordered: list[dict] = []
 
@@ -132,6 +133,15 @@ def evidence(net, proj, cfg, fn, own) -> tuple[list[dict], dict, Counter, int]:
     row = _row(fn)
     if row.get('target') and 'arch' in proj.keys() and proj['arch'] == 'mips':  # (habits are read from MIPS code)
         try:
+            # (each compiler with the other floating-point register model, the function's own and every installed one at
+            # its default flags: SN GCC's own default is -mfp64, and its code the game's was -mfp32: fp_fingerprints)
+            big_endian = bool(proj['big_endian']) if 'big_endian' in proj.keys() else True
+            others = ({'toolchain': c.id, 'flags': list(consoles.default_flags(cfg, c.id))}
+                      for c in consoles.of(cfg).compilers if c.automatic and c.id != own['toolchain'])
+            # (another compiler only when its default names a floating-point model: the flag is one it knows)
+            for base in [own, *(b for b in others if any(f in fp_fingerprints.FP_FLAGS for f in b['flags']))]:
+                if flags := fp_fingerprints.probe(base, bytes(row['target']), (), big_endian):
+                    add({'toolchain': base['toolchain'], 'flags': flags}, fp_fingerprints.why(base['flags'], bytes(row['target']), ()))
             for profile in move_fingerprints.profiles(net, proj, cfg, fn, own):
                 add(profile, 'its register moves are written the way that compiler writes them')
             floor = compiler_fingerprints.own_agreement(proj, fn, own)

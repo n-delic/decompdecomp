@@ -60,6 +60,13 @@ def _run(net, proj, fn, log, check, max_profiles):
                                     if {'-fschedule-insns', '-fschedule-insns2'} <= set(flags)), None)
             if paired_schedule and paired_schedule not in focused:
                 focused.append(paired_schedule)
+    if dict(proj).get('arch') == 'mips':
+        # The same compiler with the other floating-point register model, when the target's FP registers or the
+        # diff's rows (only FP register rows) point to it (fp_fingerprints); its exact result is review-only below.
+        from . import fp_fingerprints
+        if fp := fp_fingerprints.probe(own, bytes(dict(fn).get('target') or b''), instruction_rows(evidence(net, fn['id'], None)),
+                                       bool(dict(proj).get('big_endian', 1))):
+            focused.insert(0, fp)
     for flags in focused+captured(net,proj,own)+debug+prioritized(proj, fn, own)+neighbours(net, proj, fn, own):
         if flags not in choices:choices.append(flags)
     # Other candidates retain the existing optimization-first exploration order.
@@ -154,6 +161,12 @@ def _run(net, proj, fn, log, check, max_profiles):
                             inferred.insert(0, sqrt)
                             item['sqrt_probe'] = sqrt
                         item['inferred'] = inferred
+                    if index == 0 and not exact and own['toolchain'] != 'gcc-2.7.2-kmc' and dict(proj).get('arch') == 'mips':
+                        from . import fp_fingerprints
+                        if fp := fp_fingerprints.probe(own, bytes(dict(fn).get('target') or b''),
+                                                       instruction_rows(getattr(diff, 'rows', [])),
+                                                       bool(dict(proj).get('big_endian', 1))):
+                            item['inferred'] = [fp]
                     if index == 0 and item['link'] and dict(proj).get('arch') == 'mips':
                         from decomprepair.aligned_relocation_names import replacement
                         item['relocation_source'] = replacement(source, getattr(diff, 'rows', ()),
@@ -233,7 +246,9 @@ def _run(net, proj, fn, log, check, max_profiles):
         # Another worker may have improved the C during probing. Never apply an old-source hypothesis.
         if (current['status'] == 'open' and current['best_source'] == fn['best_source']
                 and net._comparison_digest(fresh,current,current['best_source'],candidates)==input_digest):
-            review_only = '-ffast-math' in best['flags'] and '-ffast-math' not in own['flags']
+            from .fp_fingerprints import is_fp_variant
+            review_only = (('-ffast-math' in best['flags'] and '-ffast-math' not in own['flags'])
+                           or is_fp_variant(own['flags'], best['flags']))
             result['review_only'] = review_only and best['exact']
             if (best['exact'] and not review_only and net.auto_adjusts(fresh)
                     and best.get('source', fn['best_source']) == fn['best_source']):

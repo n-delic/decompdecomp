@@ -45,8 +45,12 @@ def lead(search, agent, proj, fn, source, own_score, *, check=None):
     ranked = compiler_fingerprints.ranked(search.net, proj, cfg, fn, own, limit=PROFILES_MEASURED)
     if proj['arch'] == 'mips':
         rows = repair_ranking.instruction_rows(repair_ranking.evidence(search.net, fn['id'], getattr(agent, 'id', None)))
+        from . import fp_fingerprints
+        big_endian = bool(proj['big_endian']) if 'big_endian' in proj.keys() else True
         for flags in (profile_hypotheses.kmc_cse_address_probe(own, rows), profile_hypotheses.kmc_cse_skip_probe(own, rows),
-                      profile_hypotheses.kmc_expensive_probe(own, rows)):
+                      profile_hypotheses.kmc_expensive_probe(own, rows),
+                      fp_fingerprints.probe(own, bytes(fn['target']) if 'target' in fn.keys() and fn['target'] else b'',
+                                            rows, big_endian)):
             if not flags:
                 continue
             profile = dict(own, flags=flags)
