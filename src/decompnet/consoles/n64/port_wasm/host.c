@@ -1749,6 +1749,28 @@ uint32_t port_tlb_virtual(uint32_t a) {
     }
     return found ? (nibble << 28) | v : a;
 }
+/* The virtual address the code in a physical frame has, for code the interpreter reached by the frame's KSEG0 name (a
+   `jal 0x802FA000` the project spelled from the physical address: the name a high window's code has, whatever page
+   of it the game brought there). The next page of that code is the next VIRTUAL page, which the game's TLB maps to
+   any frame (a paging game puts consecutive pages in frames far apart): running on into the next frame ran another
+   function's bytes, and a loop around the call spun for ever. Only a high window's frame is told (lo at 8 MB or
+   more: the split names those by the physical address). A frame the game maps twice, as a page of its code and
+   inside a large window that mirrors all of RAM (virtual 0x10000000 onto physical 0), is told by the page: the large
+   window is contiguous, so the code it runs sees no difference, and the page is the one the pager set up. Two
+   pages of the same size mapping it are ambiguous. */
+uint32_t port_tlb_virtual_of(uint32_t a) {
+    if (!port_tlb_n || a < 0x80000000u || a >= 0x80800000u) return 0;
+    uint32_t p = a & 0x1FFFFFFFu, v = 0, best = 0xFFFFFFFFu;
+    for (unsigned i = 0; i < port_tlb_n; i++) {
+        if (tlb_win[i].lo < 0x00800000u || tlb_win[i].lo >= 0x80000000u) continue;
+        if (p >= tlb_win[i].phys && p - tlb_win[i].phys < tlb_win[i].size) {
+            uint32_t c = tlb_win[i].lo + (p - tlb_win[i].phys);
+            if (tlb_win[i].size < best) { best = tlb_win[i].size; v = c; }
+            else if (tlb_win[i].size == best && v != c) v = 0; /* two equal windows: which one is unknown */
+        }
+    }
+    return v;
+}
 uint32_t port_tlb_call(uint32_t a) {
     if (!port_tlb_n || a < 0x80000000u || a >= 0x80800000u) return a;
     uint32_t v = a & 0x7FFFFFFFu;

@@ -109,6 +109,7 @@ uint32_t port_tlb_canon(uint32_t a);
 uint32_t port_tlb_alias(uint32_t a);
 uint32_t port_tlb_jump(uint32_t slot, uint32_t imm); /* the target of a j/jal: top bits from the window's virtual base */
 uint32_t port_tlb_virtual(uint32_t a); /* a KSEG0 spelling beyond the RAM of a high window's virtual address: that address */
+uint32_t port_tlb_virtual_of(uint32_t a); /* the virtual address of the code in a high window's physical frame (0: none or two) */
 uint32_t port_tlb_call(uint32_t a); /* a call spelled against KSEG0 that a window kept at its physical address maps */
 uint32_t port_tlb_spelled(uint32_t a); /* the project's name (0x80000000 | virtual) for code such a window holds */
 void port_tlb_write(uint32_t pm, uint32_t entry_hi, uint32_t lo0, uint32_t lo1);
@@ -1015,6 +1016,7 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
        which is what the rest of the port finds functions by): the next instruction of a page is the next virtual
        page's, not the next frame in RAM (a game that pages its code in puts consecutive pages in any frames). */
     uint32_t vpc = entry_virtual;
+    if (!vpc && port_tlb_n) vpc = port_tlb_virtual_of(entry); /* (code entered by its frame's name: its virtual address) */
     unsigned long steps = 0;
     int zeros = 0;
     unsigned fault_n = 0;
@@ -1158,6 +1160,10 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
             vpc = nv;
             target = mapped(nv ? nv : target);
             if (nv && target == nv) vpc = 0; /* not mapped: the fetch faults, as before */
+            /* a jump or call to code in a high window's frame by the frame's name (the project spells those calls by
+               the physical address): the code's virtual address is that window's, so its next page is the next
+               virtual page and not the next frame */
+            if (!vpc && port_tlb_n) vpc = port_tlb_virtual_of(target);
         }
         if (tracing >= 3) {
             unsigned k = jump_n++ % JUMP_HISTORY;

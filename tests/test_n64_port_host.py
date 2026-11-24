@@ -453,6 +453,38 @@ int main(void) {
     assert done.stdout.split() == ["85016170", "15016170", "802CE170", "B5016170", "85016170"]
 
 
+def test_code_reached_by_its_frames_name_gets_the_virtual_page_that_maps_it(tmp_path):
+    """A paging game maps consecutive virtual code pages onto frames far apart (virtual 0x15082000 on physical 0x2FA000,
+    the next page 0x15083000 on 0x300000). The project names that code by the frame (`func_802FA...`), so the
+    interpreter entered it with no virtual pc and ran on into the next FRAME at the page's end: another function's
+    bytes, and a loop around the call spun for ever. The frame's virtual address is told by the page that maps it; a
+    frame the game also maps inside a large window of all of RAM (virtual 0x10000000 onto physical 0) is told by the
+    page, a frame no high window maps is not told, and two pages of one size mapping it are ambiguous."""
+    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if not cc:
+        pytest.skip("no C compiler")
+    text = HOST.read_text()
+    code = text[text.index("static struct { uint32_t entry, target, bss, bss_size; int tv; } boot;"):
+                text.index("/* the console's RAM as the boot leaves it")]
+    source = tmp_path / "t.c"
+    source.write_text(_BOOT_HARNESS + code + """
+int main(void) {
+    printf("%08X ", port_tlb_virtual_of(0x802FAD80u));                  /* no window yet */
+    /* a big window: two 4 MB pages, virtual 0x10000000 -> physical 0 and 0x400000 */
+    port_tlb_write(0x007FE000u, 0x10000000, (0u << 6) | 2, (0x400000u >> 12 << 6) | 2);
+    port_tlb_write(0, 0x15082000, (0x2FA000u >> 12 << 6) | 2, 1u);       /* a code page onto frame 0x2FA000 */
+    printf("%08X %08X ", port_tlb_virtual_of(0x802FAD80u), port_tlb_virtual_of(0x80300010u));
+    port_tlb_write(0, 0x25082000, (0x2FA000u >> 12 << 6) | 2, 1u);       /* a second page of the same size: ambiguous */
+    printf("%08X %08X\\n", port_tlb_virtual_of(0x802FAD80u), port_tlb_virtual_of(0x90000000u));
+    return 0;
+}
+""")
+    subprocess.run([cc, "-o", str(tmp_path / "t"), str(source)], check=True, capture_output=True)
+    done = subprocess.run([str(tmp_path / "t")], capture_output=True, text=True, check=True)
+    # (a frame only the big window maps is told by it: the window is contiguous, so the code sees no difference)
+    assert done.stdout.split() == ["00000000", "15082D80", "10300010", "00000000", "00000000"]
+
+
 def test_a_page_mapped_at_virtual_zero_is_read_at_its_physical_address(tmp_path):
     """A game keeps its own call dispatcher at virtual address 0 (a 4 KB page onto physical 0x42000; its `jr $zero` thunks
     jump there). Spelled `0x80000000 | virtual` that is where libultra's osInitialize writes the exception vectors, so
@@ -1254,6 +1286,7 @@ uint32_t port_tlb_jump(uint32_t slot, uint32_t imm) { return (slot & 0xF0000000u
 uint32_t port_tlb_call(uint32_t a) { return a; }
 uint32_t port_tlb_spelled(uint32_t a) { return a; }
 uint32_t port_tlb_virtual(uint32_t a) { return a; }
+uint32_t port_tlb_virtual_of(uint32_t a) { (void)a; return 0; }
 void port_tlb_write(uint32_t pm, uint32_t hi, uint32_t lo0, uint32_t lo1) { (void)pm; (void)hi; (void)lo0; (void)lo1; }
 void port_tlb_set(unsigned i, uint32_t pm, uint32_t hi, uint32_t lo0, uint32_t lo1) { (void)i; (void)pm; (void)hi; (void)lo0; (void)lo1; }
 uint32_t port_tlb_probe(uint32_t hi) { (void)hi; return 0x80000000u; }
