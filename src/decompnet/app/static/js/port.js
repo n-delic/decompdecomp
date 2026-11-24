@@ -234,7 +234,9 @@ function portSteps(report) {
       detail: report.addresses.literals ? `${report.addresses.literals} in ${report.addresses.functions} functions` : "none left" },
     { title: "Compiles for a PC", pct: pc ? pct(pc.ok + pc.warned, pc.total) : 0,
       detail: pc ? `${(pc.ok + pc.warned).toLocaleString()} of ${pc.total.toLocaleString()} functions compile, ${pc.failed} don't`
-        : "not tried yet", failures: pc?.failures, buttons: ["portCompile", ...(needsRenamedCalls(link) ? ["portRenameCalls"] : [])], logs: ["portCompileLog", "portRenameLog"] },
+        : "not tried yet", drawer: pc?.failures?.length ? {label: `${pc.failures.length.toLocaleString()} don't`,
+          title: "Show the functions that don't compile, with their first error", open: () => openPortFailures(pc.failures)} : null,
+        buttons: ["portCompile", ...(needsRenamedCalls(link) ? ["portRenameCalls"] : [])], logs: ["portCompileLog", "portRenameLog"] },
     { title: "Links for a PC", pct: link ? (link.undefined || link.duplicates.length ? null : 100) : 0,
       detail: link ? `${link.undefined.toLocaleString()} symbols needed and defined nowhere`
         + (link.duplicates.length ? `, ${link.duplicates.length} defined twice` : "") : "after Compile for PC" },
@@ -242,6 +244,8 @@ function portSteps(report) {
       detail: calls ? (calls.calls ? `${calls.calls.toLocaleString()} calls in ${calls.functions.toLocaleString()} `
         + "functions match but disagree with the function they call: a port can behave differently there"
         : "every call agrees with the function it calls") : "after Play builds the game",
+      drawer: calls?.callees?.length ? {label: `${calls.calls.toLocaleString()} calls`,
+        title: "Show the functions their callers disagree with, and why Make calls agree kept their C", open: () => openPortCallees(calls.callees)} : null,
       buttons: calls && calls.calls ? ["portFixCalls"] : [], logs: ["portFixCallsLog"] },
     { title: "Behaves like the original", pct: compared ? pct(behaviour.same, compared) : null,
       detail: !report.behaviour_available ? "needs a reversing emulator and a static recompiler for this console"
@@ -280,39 +284,64 @@ function portSteps(report) {
   return [recompileStep(report), ...steps];
 }
 
-// The functions a PC compile refuses, in the shared side drawer: each a link to its page, with its error kinds and the
-// first error clang gave. Columns sort by their headings (the choice stays while the drawer is open).
-function openPortFailures(failures) {
-  let key = "name", dir = 1;
-  const body = dialog(`${failures.length.toLocaleString()} functions that don't compile for a PC`,
-    `<p class="small muted">Compile for PC refuses these. Open a function to see its C and fix it; the first error is shown here.</p>
-     <table class="compiler-table port-failure-table"><thead><tr></tr></thead><tbody></tbody></table>`, "port-failures");
-  const cols = [["name", "Function"], ["kind", "Kind"], ["message", "First error"]];
-  const value = (f, k) => k === "kind" ? f.kinds.join(", ") : f[k] || "";
+// A list of functions in the shared side drawer, one row each with a link to the function, its details and a sortable
+// table (AGENTS.md: a count that needs action opens this). `cols` are {label, get(row), num?}; the first is the link.
+function openPortTable(title, intro, rows, cols) {
+  let key = 0, dir = 1;
+  const body = dialog(title, `<p class="small muted"></p><table class="compiler-table port-failure-table"><thead><tr></tr></thead><tbody></tbody></table>`, "port-table");
+  body.querySelector("p").textContent = intro;
   const draw = () => {
-    const rows = [...failures].sort((x, y) => {
-      const a = value(x, key), b = value(y, key);
-      return (a === "" ? 1 : b === "" ? -1 : a.localeCompare(b, undefined, {numeric: true}) * dir);
+    const col = cols[key], value = (r) => col.get(r);
+    const sorted = [...rows].sort((x, y) => {
+      const a = value(x), b = value(y);
+      if (a === "" || a == null) return 1;
+      if (b === "" || b == null) return -1;
+      return (col.num ? a - b : String(a).localeCompare(String(b), undefined, {numeric: true})) * dir;
     });
-    body.querySelector("tr").replaceChildren(...cols.map(([k, label]) => {
+    body.querySelector("tr").replaceChildren(...cols.map((c, i) => {
       const th = document.createElement("th"); th.scope = "col";
-      th.setAttribute("aria-sort", k === key ? (dir > 0 ? "ascending" : "descending") : "none");
+      th.setAttribute("aria-sort", i === key ? (dir > 0 ? "ascending" : "descending") : "none");
       const sort = document.createElement("button"); sort.type = "button"; sort.className = "ghost small-btn";
-      sort.textContent = label + (k === key ? (dir > 0 ? " ▲" : " ▼") : "");
-      sort.onclick = () => { dir = k === key ? -dir : 1; key = k; draw(); };
+      sort.textContent = c.label + (i === key ? (dir > 0 ? " ▲" : " ▼") : "");
+      sort.onclick = () => { dir = i === key ? -dir : (c.num ? -1 : 1); key = i; draw(); };
       th.append(sort); return th;
     }));
-    body.querySelector("tbody").replaceChildren(...rows.map((f) => {
+    body.querySelector("tbody").replaceChildren(...sorted.map((r) => {
       const tr = document.createElement("tr");
-      const name = document.createElement("td"), kind = document.createElement("td"), why = document.createElement("td");
-      const link = document.createElement("button"); link.type = "button"; link.className = "ghost small-btn mono";
-      link.textContent = f.name; link.onclick = () => { closeDialog(); openFn(f.name); };
-      name.append(link); kind.textContent = f.kinds.join(", ") || "error";
-      why.className = "small"; why.textContent = f.message ? `${f.file || "line"}${f.file ? ":" : " "}${f.line}: ${f.message}` : "";
-      tr.append(name, kind, why); return tr;
+      cols.forEach((c, i) => {
+        const td = document.createElement("td");
+        if (i === 0) {
+          const link = document.createElement("button"); link.type = "button"; link.className = "ghost small-btn mono";
+          link.textContent = c.get(r); link.onclick = () => { closeDialog(); openFn(c.get(r)); };
+          td.append(link);
+        } else { td.className = "small"; td.textContent = c.get(r) ?? ""; }
+        tr.append(td);
+      });
+      return tr;
     }));
   };
   draw();
+}
+
+// The functions a PC compile refuses: their error kinds and the first error clang gave.
+function openPortFailures(failures) {
+  openPortTable(`${failures.length.toLocaleString()} functions that don't compile for a PC`,
+    "Compile for PC refuses these. Open a function to see its C and fix it; the first error is shown here.", failures, [
+      {label: "Function", get: (f) => f.name},
+      {label: "Kind", get: (f) => f.kinds.join(", ") || "error"},
+      {label: "First error", get: (f) => f.message ? `${f.file || "line"}${f.file ? ":" : " "}${f.line}: ${f.message}` : ""}]);
+}
+
+// The functions whose definitions their callers disagree with, and why Make calls agree left each one's C alone.
+function openPortCallees(callees) {
+  openPortTable(`${callees.length.toLocaleString()} functions their callers disagree with`,
+    "Each function's definition differs from how its callers call it. Make calls agree rewrites them where the console "
+    + "build still matches; the reason shown is why it kept a function's C. Open one to change its C by hand.", callees, [
+      {label: "Function", get: (c) => c.name},
+      {label: "Calls", get: (c) => c.calls, num: true},
+      {label: "Callers", get: (c) => c.callers, num: true},
+      {label: "Disagreement", get: (c) => c.kinds.join(", ")},
+      {label: "Why its C was kept", get: (c) => c.refused || "not tried yet since the last build"}]);
 }
 
 function renderPortSteps(report, steps = portSteps(report)) {
@@ -346,12 +375,13 @@ function renderPortSteps(report, steps = portSteps(report)) {
     share.textContent = step.status || (step.unavailable ? "not checked" : step.pct == null ? (step.play ? "" : "to do") : step.pct + "%");
     head.append(title, share);
     const detail = document.createElement("p"); detail.className = "small muted"; detail.textContent = step.detail;
-    if (step.failures?.length) {  // the count opens the list
+    if (step.drawer && step.detail.includes(step.drawer.label)) {  // the count opens the list in the side drawer
       const open = document.createElement("button"); open.type = "button"; open.className = "link-btn";
-      open.textContent = `${step.failures.length.toLocaleString()} don't`;
-      open.title = "Show the functions that don't compile, with their first error";
-      open.onclick = () => openPortFailures(step.failures);
-      detail.replaceChildren(step.detail.replace(/\d[\d,]* don't$/, ""), open);
+      open.textContent = step.drawer.label;
+      open.title = step.drawer.title;
+      open.onclick = step.drawer.open;
+      const [before, ...after] = step.detail.split(step.drawer.label);
+      detail.replaceChildren(before, open, after.join(step.drawer.label));
     }
     body.append(head);
     if (step.pct != null || step.emptyMeter) {

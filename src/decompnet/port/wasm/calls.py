@@ -79,8 +79,11 @@ def describe(record: dict) -> str:
     return text
 
 
-def summary(found: dict, limit: int = 8) -> dict:
-    """{"functions", "calls", "kinds": [{"kind", "about", "why", "calls", "functions", "examples"}]} worst first."""
+def summary(found: dict, limit: int = 8, refused: dict | None = None) -> dict:
+    """{"functions", "calls", "kinds": [{"kind", "about", "why", "calls", "functions", "examples"}], "callees":
+    [{"name", "calls", "callers", "kinds", "refused"}]} worst first. `callees` are the functions whose definitions
+    disagree with how they're called (what Make calls agree rewrites), most-called first; `refused` is why the last
+    Make calls agree kept one's C (call_fixes.fix), "" when it hasn't tried."""
     by_kind: dict[str, list[dict]] = {}
     for records in found.values():
         for r in records:
@@ -92,7 +95,15 @@ def summary(found: dict, limit: int = 8) -> dict:
             kinds.append({"kind": kind, "about": about, "why": why, "calls": len(records),
                           "functions": len({r["caller"] for r in records}),
                           "examples": [describe(r) for r in records[:limit]]})
-    return {"functions": len(found), "calls": sum(len(v) for v in found.values()), "kinds": kinds}
+    callees: dict[str, list[dict]] = {}
+    for records in found.values():
+        for r in records:
+            callees.setdefault(r["callee"], []).append(r)
+    listed = [{"name": name, "calls": len(rs), "callers": len({r["caller"] for r in rs}),
+               "kinds": sorted({r["kind"] for r in rs}), "refused": (refused or {}).get(name, "")}
+              for name, rs in callees.items()]
+    listed.sort(key=lambda c: (-c["calls"], c["name"]))
+    return {"functions": len(found), "calls": sum(len(v) for v in found.values()), "kinds": kinds, "callees": listed}
 
 
 def load(build: Path) -> dict | None:
@@ -101,6 +112,17 @@ def load(build: Path) -> dict | None:
     if not f.is_file():
         return None
     try:
-        return summary(json.loads(f.read_text(encoding="utf-8")))
+        return summary(json.loads(f.read_text(encoding="utf-8")), refused=load_refused(build))
     except ValueError:
         return None
+
+
+REFUSED = "calls_refused.json"
+
+
+def load_refused(build: Path) -> dict:
+    """{function: why} Make calls agree kept its C, as the last run left it (call_fixes.fix); {} before one."""
+    try:
+        return json.loads((Path(build) / REFUSED).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}

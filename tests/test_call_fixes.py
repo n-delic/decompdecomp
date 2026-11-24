@@ -68,6 +68,12 @@ def test_each_rewrite_is_judged_and_only_matches_are_kept(project, monkeypatch, 
         "s32 helper(char *arg0) {\n    return draw_hud(arg0);\n}"
     assert net._function("draw_hud", "game")["matched_source"] == "void draw_hud(void) {\n}"  # refused: stays
     assert [r["function"] for r in result["refused"]] == ["draw_hud"]
+    # the next report lists each function still disagreeing with why its C was kept, for the Porting tab's drawer
+    from decompnet.port.wasm import calls
+    listed = {c["name"]: c for c in calls.load(build)["callees"]}
+    assert listed["draw_hud"]["refused"] == "the console build compiles but no longer matches"
+    assert listed["draw_hud"]["calls"] == 1 and listed["draw_hud"]["callers"] == 1
+    assert listed["helper"]["refused"] == "" and listed["helper"]["kinds"] == ["void-result"]
 
 
 def test_callers_types_are_read_as_the_callees_file_names_them():

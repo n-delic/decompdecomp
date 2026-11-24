@@ -426,7 +426,7 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    t.c.closeDialog=()=>{};t.c.openFn=()=>{};
    t.c.projectReport={...report,mode:'rom',pc:{ok:5,warned:1,failed:2,total:8,kinds:[],checked_at:1,failures}};
    const step=t.run('portSteps(projectReport)').find(x=>x.title==='Compiles for a PC');
-   assert.equal(step.failures.length,2,'the step carries every failed function for its drawer');
+   assert.equal(step.drawer.label,"2 don't",'the step carries its count for the drawer');
    t.run('renderPortSteps(projectReport)');
    const detail=t.c.$('portSteps').children.find(r=>r.children[1].children.some(c=>c.children&&c.children[1]&&c.children[1].textContent==="2 don't")).children[1].children.find(c=>c.children&&c.children[1]&&c.children[1].textContent==="2 don't");
    assert.match(detail.children[0],/6 of 8 functions compile, $/,'the count is a button that follows the text');
@@ -440,5 +440,15 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    assert.equal(rename({...report,mode:'rom',pc}),false,'before the link check');
    assert.equal(rename({...report,mode:'rom',pc,link:{...link,groups:[{...link.groups[0],kind:'renamed'}]}}),true);
    assert.equal(rename({...report,mode:'rom',pc,link:{...link,groups:[{...link.groups[0],kind:'static'}]}}),true);}
+  {const t=setup();t.c.S.tab='porting';
+   t.c.dialog=(title,html)=>{t.c.drawer={title,html};return {...element(),querySelector(){return element();}};};
+   t.c.closeDialog=()=>{};t.c.openFn=()=>{};
+   const callees=[{name:'f',calls:3,callers:2,kinds:['void-result'],refused:'the console build compiles but no longer matches'}];
+   t.c.projectReport={...report,mode:'rom',calls:{functions:2,calls:1311,kinds:[],callees}};
+   const step=t.run('portSteps(projectReport)').find(x=>x.title==='Calls agree with what they call');
+   assert.equal(step.drawer.label,'1,311 calls');
+   assert.ok(step.detail.includes(step.drawer.label),'the count is part of the sentence, so it can be the button');
+   step.drawer.open();
+   assert.match(t.c.drawer.title,/1 functions their callers disagree with/);}
   console.log('Port readiness panel: closed, read, stale reply, failure, asset map, extraction, link, suspicious calls, check behaviour, recompile, renamed calls, play, runtimes, the build bar, Stop, reattaching and export passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});

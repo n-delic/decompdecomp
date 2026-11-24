@@ -277,10 +277,11 @@ def fix(net, slug: str, log=print) -> dict:
             contexts[unit] = context["header"] if context is not None else ""
         return contexts[unit]
 
-    plans = {c: p for c, p in plan(found).items() if c in rows}
+    every = plan(found)
+    plans = {c: p for c, p in every.items() if c in rows}
     log(f"{sum(sum(p['kinds'].values()) for p in plans.values())} disagreeing calls to {len(plans)} functions with "
         "matched C: rewriting each one's definition the way its callers call it, judged by the game's own compiler")
-    refused: dict[str, str] = {}
+    refused: dict[str, str] = {c: "it has no matched C to rewrite" for c in every if c not in rows}
     kept: dict[int, str] = {}
     # the callers' prototype whole first, then only what has to change, then the trailing call's own result type
     for whole, own_result in ((True, False), (False, False), (False, True)):
@@ -320,6 +321,9 @@ def fix(net, slug: str, log=print) -> dict:
         f"{len(refused)} kept their C" + (": " + "; ".join(f"{n} ({w})" for n, w in sorted(refused.items())[:8])
                                           if refused else "")
         + ". Build again (Play in browser or an export) to see the calls left.")
+    from .wasm import calls as wasm_calls
+    # what the next report lists beside each disagreeing function, so the ones left can be fixed another way
+    (path.parent / wasm_calls.REFUSED).write_text(json.dumps(dict(sorted(refused.items())), indent=1), encoding="utf-8")
     return {"callees": len(plans), "kept": done, "calls": calls,
             "refused": [{"function": n, "why": w} for n, w in sorted(refused.items())]}
 
