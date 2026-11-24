@@ -76,6 +76,8 @@ void *port_mips_pointer_as(uint32_t address, const char *type); /* mips.c: run f
 /* The function at `address`, called as `type` says (CALL_INDIRECT's C type, as text: bemem.py), which a function
    with no C, interpreted, needs to take its float arguments where the call puts them. */
 uint32_t port_tlb_canon(uint32_t a); /* below, with the TLB windows */
+uint32_t port_tlb_call(uint32_t a);
+uint32_t port_tlb_spelled(uint32_t a);
 extern unsigned port_tlb_n;
 void *port_func_as(uint32_t address, const char *type) {
     /* LLVM calls some functions through the table when the call's types differ from the function's only as
@@ -88,12 +90,17 @@ void *port_func_as(uint32_t address, const char *type) {
     if (address < table->size && table->data[address].func) return (void *)table->data[address].func;
     /* a function in a TLB window (a thread entry, a callback: 0x100010F8) is named by the physical address it maps */
     if (port_tlb_n && (address < 0x80000000u || address >= 0xC0000000u)) address = port_tlb_canon(address);
-    unsigned lo = 0, hi = port_func_count;
-    while (lo < hi) {
-        unsigned mid = (lo + hi) / 2;
-        if (port_funcs[mid].address < address) lo = mid + 1; else hi = mid;
+    address = port_tlb_call(address);
+    /* a function the game has C for, known by the project's name for its window address */
+    uint32_t names[2] = {address, port_tlb_spelled(address)};
+    for (int k = 0; k < 2 && (k == 0 || names[1] != names[0]); k++) {
+        unsigned lo = 0, hi = port_func_count;
+        while (lo < hi) {
+            unsigned mid = (lo + hi) / 2;
+            if (port_funcs[mid].address < names[k]) lo = mid + 1; else hi = mid;
+        }
+        if (lo < port_func_count && port_funcs[lo].address == names[k]) return port_funcs[lo].func;
     }
-    if (lo < port_func_count && port_funcs[lo].address == address) return port_funcs[lo].func;
     void *recompiled = port_recomp_pointer(address); /* a function with no C yet, run as recompiled C */
     if (recompiled) return recompiled;
     void *interpreted = port_mips_pointer_as(address, type); /* or its own instructions, interpreted */
@@ -710,12 +717,20 @@ static void retrace(void) {
 
 void w2c_env_osCreatePiManager(struct w2c_env *e, u32 pri, u32 q, u32 buf, u32 n) { (void)e; (void)pri; (void)q; (void)buf; (void)n; }
 static unsigned long dmas;
-u32 w2c_env_osPiStartDma(struct w2c_env *e, u32 mb, u32 pri, u32 dir, u32 dev, u32 dram, u32 size, u32 mq) {
+/* A DMA's RAM address given as a virtual address a TLB window maps (a game that brings its program into a window:
+   libultra's osVirtualToPhysical asks the TLB): the bytes go where the window keeps that address. Left as it was, the
+   transfer wrote the wasm module's own low memory at the virtual address, and the code never reached the window. */
+static u32 dma_ram(u32 dram) {
+    if (port_tlb_n && (dram < 0x80000000u || dram >= 0xC0000000u)) return port_tlb_canon(dram);
+    return dram;
+}
+void port_tlb_physical_use(uint32_t a, uint32_t size); /* below, with the windows */
+u32 w2c_env_osPiStartDma(struct w2c_env *e, u32 mb, u32 pri, u32 dir, u32 dev, u32 dram_given, u32 size, u32 mq) {
     (void)e; (void)pri;
+    u32 dram = dma_ram(dram_given);
+    if (dram_given >= 0x80000000u && port_tlb_n) port_tlb_physical_use(dram_given, size); /* (a transfer of the game's own data) */
     dmas++;
     if (getenv("PORT_DMA")) fprintf(stderr, "osPiStartDma(mb %08X, pri %u, dir %u, dev %08X, dram %08X, size %X, mq %08X)\n", mb, pri, dir, dev, dram, size, mq);
-    u32 virt = dram; /* (the game's own spelling, kept in the OSIoMesg) */
-    dram = gv(dram);
     u32 end = stack_end(dram);
     if ((dram < 0x80000000u || (dram >= 0x80800000u && dram < 0xA0000000u)) && (!end || size > end - dram)) {
         fprintf(stderr, "osPiStartDma to %08X, outside the console's RAM\n", dram); port_trace();
@@ -727,7 +742,7 @@ u32 w2c_env_osPiStartDma(struct w2c_env *e, u32 mb, u32 pri, u32 dir, u32 dev, u
     else if (offset + (uint64_t)size > rom_size) LOG("osPiStartDma: %08X+%X is past the ROM's end", dev, size);
     else memcpy(M + dram, rom + offset, size);
     if (dmas <= 20 || dmas % 500 == 0) LOG("DMA %lu: ROM %06X -> %08X, %X bytes", dmas, offset, dram, size);
-    if (mb) { wbe32(mb + 8, virt); wbe32(mb + 12, dev); wbe32(mb + 16, size); }
+    if (mb) { wbe32(mb + 8, dram_given); wbe32(mb + 12, dev); wbe32(mb + 16, size); }
     if (mq) put(mq, mb, 0, 0);
     return 0;
 }
@@ -794,6 +809,7 @@ u32 w2c_env_osEPiWriteIo(struct w2c_env *e, u32 handle, u32 dev, u32 data) {
 u32 w2c_env_osVirtualToPhysical(struct w2c_env *e, u32 a) {
     (void)e;
     if (a >= 0x1000u && a < BOOT_STACK_SIZE) return BOOT_STACK_BUS + a;
+    if (a < 0x80000000u && port_tlb_n) return dma_ram(a) & 0x1FFFFFFF; /* a TLB-mapped address: where its window keeps it */
     return a & 0x1FFFFFFF;
 }
 
@@ -1373,7 +1389,18 @@ static void boot_leftovers(void) {
    program, the boot chip's image). The port has no TLB: a low address inside a window is read at its KSEG0 spelling,
    and the interpreter fetches code from the physical alias where nothing was ever written at the spelling. */
 #define TLB_WINDOWS 512 /* 4 KB pages a refill handler brings in, merged with the neighbour they continue */
-static struct { uint32_t lo, size, phys; } tlb_win[TLB_WINDOWS];
+/* real: the window is kept at the physical address it maps. A window whose spelling (0x80000000 | virtual) would sit
+   on memory already in use (the game's boot loader and its compressed program at 0x80200000 and up, under a window at
+   virtual 0x00200000 that maps physical 0x600000) can't be read at the spelling: the code the game brings in lands at
+   the physical address, and a copy at the spelling collided with the loader's own bytes. */
+static struct { uint32_t lo, size, phys; uint8_t real; } tlb_win[TLB_WINDOWS];
+/* whether the console's memory at a window's spelling holds anything yet: a window may be spelled when it holds nothing */
+static int tlb_spelling_in_use(uint32_t lo, uint32_t size) {
+    if (lo >= 0x00800000u || size > 0x01000000u || lo + size > 0x00800000u) return 0; /* (higher windows are named by their physical address anyway) */
+    for (uint32_t off = 0; off < size; off += 4)
+        if (be32(0x80000000u | (lo + off))) return 1;
+    return 0;
+}
 unsigned port_tlb_n;
 unsigned port_tlb_hi; /* windows at 0x00800000 up: the game's compiled C reads them as aliases of RAM (port_tlb_wasm) */
 /* A low window shows the same RAM at two names: the console reads a table at virtual 0x00102330 from physical 0x2330
@@ -1401,14 +1428,19 @@ static void tlb_map(uint32_t pm, uint32_t va, uint32_t even, uint32_t odd) {
         /* (KSEG0 and KSEG1, 0x80000000 to 0xBFFFFFFF, are not mapped by the TLB; KSEG2 and KSEG3, 0xC0000000 up, are: a
            game that maps its 8 MB of RAM at 0xE0000000, where its loader decompresses to, needs them) */
         if (phys == 0xFFFFFFFFu || (lo >= 0x80000000u && lo < 0xC0000000u) || phys >= 0x00800000u) continue;
-        tlb_mirror(lo, size, phys);
         unsigned i = 0;
         while (i < port_tlb_n && tlb_win[i].lo != lo) i++;
+        /* a window made now is spelled (0x80000000 | virtual) only where the spelling holds nothing: a page of the boot
+           image or the loader's data there is the loader's own, not the program's. A spelled window is kept at the
+           physical address it maps once the game puts data of its own at its spelling (port_tlb_physical_use). */
+        uint8_t real = i < port_tlb_n ? tlb_win[i].real : (uint8_t)(lo != phys && tlb_spelling_in_use(lo, size));
+        if (getenv("PORT_TLB_TRACE")) fprintf(stderr, "window %08X + %X -> physical %08X%s\n", lo, size, phys, real ? " (kept there)" : "");
+        if (!real) tlb_mirror(lo, size, phys);
         if (i == port_tlb_n) {
             /* a page that continues a window (the next virtual page onto the next physical one) extends it: a program
                brought in page by page is one window, not hundreds */
             for (unsigned j = 0; j < port_tlb_n; j++)
-                if (tlb_win[j].lo + tlb_win[j].size == lo && tlb_win[j].phys + tlb_win[j].size == phys && tlb_win[j].size < 0x01000000u) {
+                if (tlb_win[j].lo + tlb_win[j].size == lo && tlb_win[j].phys + tlb_win[j].size == phys && tlb_win[j].size < 0x01000000u && tlb_win[j].real == real) {
                     tlb_win[j].size += size;
                     phys = 0xFFFFFFFFu;
                     break;
@@ -1416,7 +1448,7 @@ static void tlb_map(uint32_t pm, uint32_t va, uint32_t even, uint32_t odd) {
             if (phys == 0xFFFFFFFFu) continue;
         }
         if (i == port_tlb_n && port_tlb_n == TLB_WINDOWS) return;
-        tlb_win[i].lo = lo; tlb_win[i].size = size; tlb_win[i].phys = phys;
+        tlb_win[i].lo = lo; tlb_win[i].size = size; tlb_win[i].phys = phys; tlb_win[i].real = real;
         if (i == port_tlb_n) port_tlb_n++;
         if (lo >= 0x00800000u) port_tlb_hi = 1;
     }
@@ -1443,6 +1475,7 @@ static void tlb_unmap_page(uint32_t lo, uint32_t size) {
             if (after && port_tlb_n < TLB_WINDOWS) {
                 tlb_win[port_tlb_n].lo = lo + size; tlb_win[port_tlb_n].size = after;
                 tlb_win[port_tlb_n].phys = wp + before + size;
+                tlb_win[port_tlb_n].real = tlb_win[j].real;
                 port_tlb_n++;
             }
         } else if (after) {
@@ -1526,9 +1559,48 @@ uint32_t port_tlb_canon(uint32_t a) {
                vectors (0x80000000, 0x80000080, 0x80000100, 0x80000180): a game that keeps its own call dispatcher
                there (`jr $zero` thunks, a table-driven overlay linker) had it overwritten by the vector stubs.
                Such a page is kept at the physical address its bytes are at. */
-            if (tlb_win[i].lo < 0x00001000u) return 0x80000000u | (tlb_win[i].phys + (a - tlb_win[i].lo));
+            if (tlb_win[i].lo < 0x00001000u || tlb_win[i].real) return 0x80000000u | (tlb_win[i].phys + (a - tlb_win[i].lo));
             return tlb_win[i].lo < 0x00800000u ? a | 0x80000000u : 0x80000000u | (tlb_win[i].phys + (a - tlb_win[i].lo));
         }
+    return a;
+}
+/* A call the project's analysis spelled against KSEG0 (`jal 0x00347080` resolved with the top bits 8: func_80347080)
+   that lies in the virtual range of a window kept at its physical address. The game's second stage meant the code
+   its window maps; the spelling is where the boot loader's own bytes are, and entering there ran the loader's
+   decompressor on garbage. Once such a window exists the loader is long done: a call there goes to the window's
+   physical address. */
+/* the name the project gives code a window kept at its physical address holds: `0x80000000 | virtual` (the split
+   spells func_80100418 where the console runs it at virtual 0x00100418, and it is at physical 0x418); a function
+   with C or a library identity is known by that name */
+/* The game puts its own data at a physical address a window spells its virtual range at (a transfer into KSEG0
+   0x80120680 under a window at virtual 0x00100000 that maps physical 0): the spelling is memory in use, and a table
+   the code reads through the window (a jump table at virtual 0x00122B60, physical 0x22B60) read the strings
+   transferred there instead. From now on the window is kept at the physical address it maps. */
+void port_tlb_physical_use(uint32_t a, uint32_t size) {
+    if (a >= 0x80800000u) return;
+    for (unsigned i = 0; i < port_tlb_n; i++) {
+        if (tlb_win[i].real || tlb_win[i].lo >= 0x00800000u || tlb_win[i].lo == tlb_win[i].phys) continue;
+        uint32_t s = 0x80000000u | tlb_win[i].lo;
+        if (a < s + tlb_win[i].size && a + size > s) {
+            tlb_win[i].real = 1;
+            if (getenv("PORT_TLB_TRACE")) fprintf(stderr, "window %08X + %X: the game's own data is at its spelling (%08X): kept at physical %08X from now on\n", tlb_win[i].lo, tlb_win[i].size, a, tlb_win[i].phys);
+        }
+    }
+}
+uint32_t port_tlb_spelled(uint32_t a) {
+    if (!port_tlb_n || a < 0x80000000u || a >= 0x80800000u) return a;
+    uint32_t p = a & 0x1FFFFFFFu;
+    for (unsigned i = 0; i < port_tlb_n; i++)
+        if (tlb_win[i].real && tlb_win[i].lo < 0x00800000u && p >= tlb_win[i].phys && p - tlb_win[i].phys < tlb_win[i].size)
+            return 0x80000000u | (tlb_win[i].lo + (p - tlb_win[i].phys));
+    return a;
+}
+uint32_t port_tlb_call(uint32_t a) {
+    if (!port_tlb_n || a < 0x80000000u || a >= 0x80800000u) return a;
+    uint32_t v = a & 0x7FFFFFFFu;
+    for (unsigned i = 0; i < port_tlb_n; i++)
+        if (tlb_win[i].real && v >= tlb_win[i].lo && v - tlb_win[i].lo < tlb_win[i].size)
+            return 0x80000000u | (tlb_win[i].phys + (v - tlb_win[i].lo));
     return a;
 }
 /* The game's compiled C (WebAssembly) reaches a window through an address like 0x100010F8: the loads and stores the
@@ -1554,6 +1626,23 @@ int port_tlb_covers(uint32_t v) {
 uint32_t port_tlb_jump(uint32_t slot, uint32_t imm) {
     uint32_t plain = (slot & 0xF0000000u) | imm;
     if (!port_tlb_n || slot < 0x80000000u) return plain;
+    /* Code in a low window (a program the port keeps at its spelling 0x80000000 | virtual) runs at a virtual address
+       whose top four bits are 0, so its `jal 0x00340000` goes to the window's virtual 0x340000, not to the
+       KSEG0 0x80340000 the spelled slot gives (where a boot loader's own function lived: a game's second stage called
+       the loader's decompressor instead of the library it had brought in). A target a window maps is named as the
+       window keeps it. */
+    for (unsigned i = 0; i < port_tlb_n && slot < 0x80800000u; i++) {
+        if (tlb_win[i].lo >= 0x00800000u) continue;
+        uint32_t v = slot & 0x7FFFFFFFu, p = slot & 0x1FFFFFFFu;
+        /* (code of a window kept at its physical address that began running at the spelling, before the window was
+           switched, is still at the spelling) */
+        int inside = (v >= tlb_win[i].lo && v - tlb_win[i].lo < tlb_win[i].size) ||
+                     (tlb_win[i].real && p >= tlb_win[i].phys && p - tlb_win[i].phys < tlb_win[i].size);
+        if (!inside) continue;
+        uint32_t target = (tlb_win[i].lo & 0xF0000000u) | imm;
+        if (port_tlb_covers(target)) return port_tlb_canon(target);
+        break;
+    }
     uint32_t phys = slot & 0x1FFFFFFFu;
     for (unsigned i = 0; i < port_tlb_n; i++) {
         if (tlb_win[i].lo < 0x00800000u || phys < tlb_win[i].phys || phys - tlb_win[i].phys >= tlb_win[i].size) continue;
@@ -1568,7 +1657,7 @@ uint32_t port_tlb_jump(uint32_t slot, uint32_t imm) {
 uint32_t port_tlb_alias(uint32_t a) {
     uint32_t v = a & 0x7FFFFFFFu;
     for (unsigned i = 0; (a & 0x80000000u) && i < port_tlb_n; i++)
-        if (v >= tlb_win[i].lo && v - tlb_win[i].lo < tlb_win[i].size) return 0x80000000u | (tlb_win[i].phys + (v - tlb_win[i].lo));
+        if (!tlb_win[i].real && v >= tlb_win[i].lo && v - tlb_win[i].lo < tlb_win[i].size) return 0x80000000u | (tlb_win[i].phys + (v - tlb_win[i].lo));
     return 0;
 }
 static uint32_t boot_stk[16]; /* the words the entry routine stored at 0($sp)...: osMapTLB's fifth and sixth arguments */
@@ -1688,7 +1777,7 @@ static int boot_memory(void) {
         memset(M + boot.bss, 0, boot.bss_size);
     else LOG("the entry routine's BSS wasn't read: memory after the image keeps the ROM's bytes");
     boot_leftovers();
-    for (unsigned i = 0; i < port_tlb_n; i++) tlb_mirror(tlb_win[i].lo, tlb_win[i].size, tlb_win[i].phys); /* (the image is in) */
+    for (unsigned i = 0; i < port_tlb_n; i++) if (!tlb_win[i].real) tlb_mirror(tlb_win[i].lo, tlb_win[i].size, tlb_win[i].phys); /* (the image is in) */
     wbe32(SP_STATUS, 1);              /* the RSP is halted until a task starts it */
     wbe32(0x80000300, (uint32_t)boot.tv); /* osTvType */
     wbe32(0x80000308, 0xB0000000);    /* osRomBase */

@@ -380,16 +380,49 @@ def test_a_low_window_shows_its_physical_words_at_the_spelling_where_that_holds_
     source.write_text(_BOOT_HARNESS + code + """
 int main(void) {
     wbe32(0x80002330u, 0x80103060u);  /* the jump table's entry, in the boot image at the physical address */
-    wbe32(0x80102334u, 0x11111111u);  /* a word the port already has at the spelling: it stays */
-    wbe32(0x80002334u, 0x22222222u);
     port_tlb_write(0x1FE000, 0x00000000, 0u, (0u >> 12 << 6) | 2); /* the odd page of the pair at 0: virtual 0x100000 -> 0 */
-    printf("%08X %08X %08X\\n", be32(0x80102330u), be32(0x80102334u), be32(0x80002330u));
+    printf("%08X %08X\\n", be32(0x80102330u), be32(0x80002330u));
     return 0;
 }
 """)
     subprocess.run([cc, "-o", str(tmp_path / "t"), str(source)], check=True, capture_output=True)
     done = subprocess.run([str(tmp_path / "t")], capture_output=True, text=True, check=True)
-    assert done.stdout.split() == ["80103060", "11111111", "80103060"]
+    assert done.stdout.split() == ["80103060", "80103060"]
+
+
+def test_a_window_whose_spelling_holds_the_games_data_is_kept_at_its_physical_address(tmp_path):
+    """A game's second stage under a window at virtual 0x200000 (physical 0x600000) was read at 0x80200000, where its
+    boot loader's image and compressed program are: the library it brought in never ran, and a call spelled
+    `jal 0x00347080` went to the loader's bytes. A window whose spelling holds anything is read at the physical
+    address it maps; a window over empty spelling stays spelled, and switches once a transfer puts data at the
+    spelling (a table read through the window gave the strings written there); the project's name for code in such
+    a window (0x80000000 | virtual) is told back by port_tlb_spelled, and a call spelled at the virtual address goes
+    to the window by port_tlb_call."""
+    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if not cc:
+        pytest.skip("no C compiler")
+    text = HOST.read_text()
+    code = text[text.index("static struct { uint32_t entry, target, bss, bss_size; int tv; } boot;"):
+                text.index("/* the console's RAM as the boot leaves it")]
+    source = tmp_path / "t.c"
+    source.write_text(_BOOT_HARNESS + code + """
+int main(void) {
+    wbe32(0x80300000u, 0x12345678u);  /* the loader's own bytes where a window's spelling would be */
+    port_tlb_write(0x1FE000, 0x00200000, (0x600000u >> 12 << 6) | 2, (0x700000u >> 12 << 6) | 2); /* 0x200000 -> 0x600000 */
+    /* a window over empty spelling: spelled, until a transfer puts data at the spelling */
+    port_tlb_write(0x1FE000, 0x00400000, (0x100000u >> 12 << 6) | 2, 1u);
+    printf("%08X %08X\\n", port_tlb_canon(0x00347080u), port_tlb_canon(0x00400010u));
+    port_tlb_physical_use(0x80400000u, 0x1000u);
+    printf("%08X\\n", port_tlb_canon(0x00400010u));
+    printf("%08X %08X %08X\\n", port_tlb_call(0x80347080u), port_tlb_spelled(0x80747080u), port_tlb_call(0x80500000u));
+    return 0;
+}
+""")
+    subprocess.run([cc, "-o", str(tmp_path / "t"), str(source)], check=True, capture_output=True)
+    done = subprocess.run([str(tmp_path / "t")], capture_output=True, text=True, check=True)
+    # physical 0x747080; the empty-spelling window spelled; then kept at its physical address (0x100010);
+    # the call and the name told back through the window
+    assert done.stdout.split() == ["80747080", "80400010", "80100010", "80747080", "80347080", "80500000"]
 
 
 def test_a_page_mapped_at_virtual_zero_is_read_at_its_physical_address(tmp_path):
@@ -511,7 +544,7 @@ int main(void) {
         "E0000000 800000 00000000", "8010D628 80400010 A0001000 80001050", "80170240"]
     # the host's own reads and writes of the game's structures, and a DMA's destination, go the same way
     assert "static inline uint32_t gv(uint32_t a)" in text and "memcpy(&v, M + gv(a), 4)" in text
-    assert "dram = gv(dram);" in text
+    assert "static u32 dma_ram(u32 dram)" in text and "dram >= 0xC0000000u" in text and "dma_ram(dram_given)" in text
 
 
 def test_a_jal_in_code_linked_at_a_windows_virtual_base_takes_the_windows_top_bits(tmp_path):
@@ -896,9 +929,12 @@ static int put(u32 mq, u32 msg, int flag, int jam) {
     assert(mq == 32 && msg == 64);
     return 0;
 }
+static unsigned port_tlb_n;
 uint32_t port_tlb_canon(uint32_t a) { return a; }
 static inline uint32_t gv(uint32_t a) { return a >= 0xC0000000u ? port_tlb_canon(a) : a; }
+void port_tlb_physical_use(uint32_t a, uint32_t size) { (void)a; (void)size; }
 """ + _function(HOST.read_text(), "wbe32") + "\n" + _function(HOST.read_text(), "stack_end") + "\n"
+        + _function(HOST.read_text(), "dma_ram") + "\n"
         + _function(HOST.read_text(), "w2c_env_osPiStartDma") + r"""
 int main(void) {
     w2c_env_osPiStartDma(NULL, 64, 0, 0, 1, 0, 2, 32);
@@ -1106,6 +1142,8 @@ unsigned port_tlb_n;
 uint32_t port_tlb_canon(uint32_t a) { return a; }
 uint32_t port_tlb_alias(uint32_t a) { (void)a; return 0; }
 uint32_t port_tlb_jump(uint32_t slot, uint32_t imm) { return (slot & 0xF0000000u) | imm; }
+uint32_t port_tlb_call(uint32_t a) { return a; }
+uint32_t port_tlb_spelled(uint32_t a) { return a; }
 void port_tlb_write(uint32_t pm, uint32_t hi, uint32_t lo0, uint32_t lo1) { (void)pm; (void)hi; (void)lo0; (void)lo1; }
 void port_tlb_set(unsigned i, uint32_t pm, uint32_t hi, uint32_t lo0, uint32_t lo1) { (void)i; (void)pm; (void)hi; (void)lo0; (void)lo1; }
 uint32_t port_tlb_probe(uint32_t hi) { (void)hi; return 0x80000000u; }
