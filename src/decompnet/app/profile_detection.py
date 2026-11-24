@@ -41,6 +41,7 @@ STRONG_SHARE = 2 / 3  # ... and at least this share of the neighbours read
 MAX_PROFILES = 16
 REFINE = 4  # more flag sets tried for the toolchain that scored best (refinements)
 SIGNATURE = 'profile-detection-v1:'
+_ROWS: dict = {}  # saved_rows' answers
 
 
 def _flags(flags) -> list[str]:
@@ -112,7 +113,7 @@ def _mapped(net, proj, fn, own) -> dict | None:
 def evidence(net, proj, cfg, fn, own) -> tuple[list[dict], dict, Counter, int]:
     """(profiles the evidence points to, best first; key -> what points to each; neighbour votes; neighbours read)."""
     from .. import consoles
-    from . import compiler_fingerprints, fp_fingerprints, move_fingerprints
+    from . import compiler_fingerprints, fp_fingerprints, move_fingerprints, scheduler_fingerprints
     reasons: dict[tuple, list[str]] = {}
     ordered: list[dict] = []
 
@@ -150,7 +151,46 @@ def evidence(net, proj, cfg, fn, own) -> tuple[list[dict], dict, Counter, int]:
                     add(profile, f'its code habits agree with that compiler better ({agree:+d} against {floor:+d})')
         except Exception:  # noqa: BLE001 - habits only order the profiles; the judge decides
             pass
+    if 'arch' in proj.keys() and proj['arch'] == 'mips':
+        try:
+            # (the same compiler with another scheduling setting, when only the order of the saved C's instructions differs)
+            for flags in scheduling_variants(net, proj, fn, own):
+                add({'toolchain': own['toolchain'], 'flags': flags},
+                    scheduler_fingerprints.why(own['flags'], saved_rows(net, proj, fn, own)))
+        except Exception:  # noqa: BLE001 - this only orders the profiles; the judge decides
+            pass
     return ordered, reasons, votes, read
+
+
+def saved_rows(net, proj, fn, own) -> list:
+    """The diff rows of the function's saved C under its own settings: the last diff the app kept for it, else one judge
+    compile of the saved C (cached per source and settings), else none."""
+    from .repair_ranking import evidence, instruction_rows
+    row = _row(fn)
+    key = (row.get('id'), hashlib.sha256((row.get('best_source') or '').encode()).hexdigest(), _key(own))
+    if key in _ROWS:
+        return _ROWS[key]
+    rows = instruction_rows(evidence(net, row['id'], None)) if 'id' in row else []
+    if not rows and row.get('best_source') and hasattr(net, '_judge_with'):
+        try:
+            _, diff, _ = net._judge_with(proj, fn, own['toolchain'], list(_flags(own['flags'])), row['best_source'])
+            rows = instruction_rows(getattr(diff, 'rows', []) or [])
+        except Exception:  # noqa: BLE001 - no rows: the profiles are ordered by the other evidence
+            rows = []
+    if len(_ROWS) > 256:
+        _ROWS.clear()
+    _ROWS[key] = rows
+    return rows
+
+
+def scheduling_variants(net, proj, fn, own) -> list[list[str]]:
+    """The function's own flags with another scheduling setting (scheduler_fingerprints), when the diff of its saved C
+    is only instruction order and the registers that follow. The diff is read (a judge compile) only when the profile
+    has such a variant."""
+    from . import scheduler_fingerprints
+    if not scheduler_fingerprints.variants(own['flags']) or not near_match(fn):
+        return []
+    return scheduler_fingerprints.probes(own, saved_rows(net, proj, fn, own))
 
 
 def candidates(net, proj, fn, base) -> tuple[list[dict], dict, Counter, int]:
