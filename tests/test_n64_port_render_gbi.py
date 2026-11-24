@@ -184,6 +184,27 @@ def test_s2dex_1x_draws_objects_with_its_own_opcodes(renderer, tmp_path):
     assert [out.r16(FB + (y * W + x) * 2) for x, y in at] == QUADRANT_COLOURS
 
 
+def test_s2dex_rectangle_r_goes_through_the_2d_matrix(renderer, tmp_path):
+    """G_OBJ_RECTANGLE_R (S2DEX 1.x 0xB2) places the sprite through the 2D matrix: here A = D = 1 with the
+    translation X, Y = (60, 20) pixels, so a sprite at (40, 30) lands at (100, 50), the same quadrants as the
+    unmatrixed sprite there. A game that lays its 2D layer out around a centre (objX, objY negative, the matrix X, Y
+    the centre) drew every object into the screen's top left corner when only the sprite's own place was used."""
+    mem = Memory()
+    g = Gfx(mem, "S2DEX")
+    g.frame().fill(0)
+    g.othermode(6 << 9, 0)
+    g(*TEX)
+    load_texture(g, quadrant_texture(mem))
+    matrix = mem.put(struct.pack(">iiiihhHH", 65536, 0, 0, 65536, 60 * 4, 20 * 4, 1024, 1024))
+    g(0x05170000, 0x80000000 | matrix)
+    g(0xB2000000, 0x80000000 | _sprite(mem, 40, 30, 4))
+    g(0xB8000000)
+    out, _ = run(renderer, mem, tmp_path, g.end())
+    at = [(108, 58), (124, 58), (108, 74), (124, 74)]
+    assert [out.r16(FB + (y * W + x) * 2) for x, y in at] == QUADRANT_COLOURS
+    assert out.r16(FB + (38 * W + 48) * 2) == 0  # nothing at the sprite's own, untranslated place
+
+
 def test_a_list_switches_microcode_with_g_load_ucode(renderer, tmp_path):
     """G_LOAD_UCODE (its data's address in G_RDPHALF_1) changes the microcode in the middle of a list, as a game
     draws a 2D background with S2DEX inside its 3D frame: F3DEX2, then S2DEX2's sprite, then F3DEX2 again for a
