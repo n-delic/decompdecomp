@@ -787,6 +787,18 @@ def recompiler_names(folder: Path | None) -> dict[str, int]:
     return found
 
 
+def _spelling_twin(name: str, defined) -> str | None:
+    """The one defined function that is `name` spelled another way (case and underscores aside): a call by `mat3x3_from_euler`
+    to what polishing renamed `mat3x3FromEuler`. With no recompiler there is no older name to look up (recompiler_names), and
+    the spelling is all that is left to go by; two candidates, or a name that is only an underscore short of a library's,
+    is no match."""
+    key = re.sub(r"[_\W]", "", name).lower()
+    if len(key) < 6 or key == name.lower():
+        return None
+    found = {d for d in defined if d != name and re.sub(r"[_\W]", "", d).lower() == key}
+    return next(iter(found)) if len(found) == 1 else None
+
+
 def renames(lls: list[Path], fixed: list[str], library_names=None, history: dict[str, int] | None = None) -> dict[str, str]:
     """{name a call uses: the defined function at its address}: C still calling a function by an older name (its
     automatic one, before polishing renamed it) links in the decomp through the symbol table; here it must name the
@@ -824,6 +836,9 @@ def renames(lls: list[Path], fixed: list[str], library_names=None, history: dict
             address = int(auto.group(1), 16)
         if address is None:
             address = (history or {}).get(n)
+        if address is None and n not in out and (twin := _spelling_twin(n, defined)):
+            out[n] = twin  # the same name in another spelling (a snake_case call to what polishing made camelCase)
+            continue
         here = at.get(address, set()) if address is not None else set()
         if len(here) > 1:
             # a port-only copy under the automatic name beside the matched function the project names now (a racing

@@ -951,15 +951,15 @@ def test_a_call_by_a_name_the_project_changed_goes_to_the_function_there_now(tmp
     from decompnet.port.wasm.build import recompiler_names, renames
 
     (tmp_path / "syms.toml").write_text('[[section]]\nname = "main"\nrom = 0x1000\nvram = 0x80001000\nsize = 0x40\n\n'
-                                        'functions = [\n    { name = "mat3_from_euler", vram = 0x80001000, size = 0x40 },\n]\n')
-    assert recompiler_names(tmp_path) == {"mat3_from_euler": 0x80001000}
+                                        'functions = [\n    { name = "legacy_rotation_builder", vram = 0x80001000, size = 0x40 },\n]\n')
+    assert recompiler_names(tmp_path) == {"legacy_rotation_builder": 0x80001000}
     assert recompiler_names(tmp_path / "missing") == {}
     ll = tmp_path / "a.ll"
     ll.write_text("define void @mat3FromEuler() {\n  ret void\n}\ndefine void @caller() {\n"
-                  "  call void @mat3_from_euler()\n  call void @unknown_name()\n  ret void\n}\n"
-                  "declare void @mat3_from_euler()\ndeclare void @unknown_name()\n")
+                  "  call void @legacy_rotation_builder()\n  call void @unknown_name()\n  ret void\n}\n"
+                  "declare void @legacy_rotation_builder()\ndeclare void @unknown_name()\n")
     fixed = ["mat3FromEuler 0x80001000 func"]
-    assert renames([ll], fixed, None, recompiler_names(tmp_path)) == {"mat3_from_euler": "mat3FromEuler"}
+    assert renames([ll], fixed, None, recompiler_names(tmp_path)) == {"legacy_rotation_builder": "mat3FromEuler"}
     assert renames([ll], fixed) == {}
 
 
@@ -1129,3 +1129,21 @@ def test_original_code_functions_are_left_to_the_interpreter_not_left_out_of_it(
 
     left = interpreter_left_out({"osCreateThread.c"}, {"bzero.c", "applyPackedRotation.c"}, {"applyPackedRotation.c"})
     assert left == {"osCreateThread", "bzero"}
+
+
+def test_a_call_by_another_spelling_of_a_defined_name_goes_to_it(tmp_path):
+    """With no recompiler's symbol table to look an older name up in (the browser export, the command-line build), a call by
+    `mat3x3_from_euler` to the function polishing renamed `mat3x3FromEuler` was a stub. The one defined function with the same
+    name, case and underscores aside, is the match; two candidates, or a short name, are not."""
+    from decompnet.port.wasm.build import renames
+
+    ll = tmp_path / "a.ll"
+    ll.write_text("define void @mat3x3FromEuler() {\n  ret void\n}\ndefine void @fooBar() {\n  ret void\n}\n"
+                  "define void @foo_Bar2() {\n  ret void\n}\n"
+                  "define void @caller() {\n  call void @mat3x3_from_euler()\n  call void @mat3x3_from_euler_x()\n  ret void\n}\n"
+                  "declare void @mat3x3_from_euler()\ndeclare void @mat3x3_from_euler_x()\n")
+    assert renames([ll], ["mat3x3FromEuler 0x80001000 func"]) == {"mat3x3_from_euler": "mat3x3FromEuler"}
+    two = tmp_path / "b.ll"
+    two.write_text("define void @fooBarBaz() {\n  ret void\n}\ndefine void @foo_bar_baz() {\n  ret void\n}\n"
+                   "declare void @FOO_BAR_BAZ()\n")
+    assert renames([two], []) == {}
