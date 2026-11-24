@@ -1934,7 +1934,11 @@ int main(int argc, char **argv) {
     clock_gettime(CLOCK_MONOTONIC, &start);
     vtime = getenv("PORT_VTIME") && atoi(getenv("PORT_VTIME")) != 0;
     wasm_rt_init();
+#ifdef PORT_WASM_NO_IMPORTS /* a module with no host imports takes no import state (build.py sets this) */
+    wasm2c_game_instantiate(&game);
+#else
     wasm2c_game_instantiate(&game, &env);
+#endif
     M = game.w2c_memory.data;
     LOG("memory: %llu MB, ROM %zu bytes", (unsigned long long)game.w2c_memory.size >> 20, rom_size);
     /* as the console's boot does: the game's code and data from the cartridge at their addresses, and the values

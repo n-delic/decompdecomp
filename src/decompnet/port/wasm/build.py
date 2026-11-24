@@ -620,6 +620,15 @@ def host_compiler(zig: Path) -> list:
 UNIVERSAL = ["-arch", "arm64", "-arch", "x86_64"]
 
 
+def host_import_flags(game_h: str) -> list:
+    """`-DPORT_WASM_NO_IMPORTS=1` for a module that imports nothing from the host. A game with so little C that no
+    function calls libultra gets `wasm2c_game_instantiate(w2c_game*)` with no import-state parameter, and the
+    host's two-argument call stopped its build ("too many arguments to function call")."""
+    if re.search(r"wasm2c_game_instantiate\(\s*w2c_game\s*\*\s*\)\s*;", game_h):
+        return ["-DPORT_WASM_NO_IMPORTS=1"]
+    return []
+
+
 def host_arch_flags(universal: bool, platform: str = sys.platform) -> list:
     """The flags that make the host a universal program: only on macOS, whose clang builds both architectures into
     one file; elsewhere the program is for this computer, as before."""
@@ -1227,6 +1236,7 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
     arch = host_arch_flags(universal)
     cc = [*host_compiler(zig), *arch]
     host_flags = ["-O1", "-g", "-fno-inline"]
+    host_flags += host_import_flags((out / "c" / "game.h").read_text(encoding="utf-8"))
     objs = out / ("obj-universal" if arch else "obj")
     objs.mkdir(parents=True, exist_ok=True)
 

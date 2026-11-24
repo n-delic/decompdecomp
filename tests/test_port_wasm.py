@@ -1103,3 +1103,15 @@ def test_routines_sharing_one_body_are_called_by_the_name_the_host_answers(monke
         1: {"names": ["osViGetCurrentFramebuffer", "osViGetNextFramebuffer"]},
         2: {"names": ["osMadeUpA", "osMadeUpB"]}})  # (no name the host answers: left alone)
     assert play.library_names(net, "game") == {"func_8003B550": "osViGetCurrentFramebuffer"}
+
+
+def test_a_module_with_no_host_imports_builds_the_host_without_import_state():
+    """A game whose C calls nothing the host provides gets `wasm2c_game_instantiate(w2c_game*)` with no import
+    state; the host's two-argument call stopped the build for a game that otherwise ran (224 graphics tasks)."""
+    from decompnet.port.wasm import build
+
+    assert build.host_import_flags("void wasm2c_game_instantiate(w2c_game*);") == ["-DPORT_WASM_NO_IMPORTS=1"]
+    assert build.host_import_flags("void wasm2c_game_instantiate(w2c_game *);\n") == ["-DPORT_WASM_NO_IMPORTS=1"]
+    assert build.host_import_flags("void wasm2c_game_instantiate(w2c_game*, struct w2c_env*);") == []
+    host = (get("n64").port_kit.wasm / "host.c").read_text(encoding="utf-8")
+    assert "#ifdef PORT_WASM_NO_IMPORTS" in host and "wasm2c_game_instantiate(&game);" in host
