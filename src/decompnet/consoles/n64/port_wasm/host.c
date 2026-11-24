@@ -935,16 +935,25 @@ void port_audio_task(uint32_t task); /* audio.c */
 static uint64_t monotonic_us(void);
 static pthread_mutex_t rcp_lock = PTHREAD_MUTEX_INITIALIZER;
 static unsigned char rcp_events[64];
+static unsigned long rcp_due_vi[64]; /* the retrace each held event may be raised at (PORT_RCP_RETRACES) */
 static unsigned rcp_count;
 static uint64_t rcp_due_us;
 #define RCP_DELAY_US 400
 #endif
+/* PORT_RCP_RETRACES=n: hold each task's SP and DP interrupts n retraces after the task was started, as a console whose RSP and RDP take
+   that long to finish a heavy frame does (the emulator's logic ran a frame behind the port's at the same graphics task when they came at once,
+   docs/PORTING.md). 0, the default, raises them when every game thread waits, as before. */
+static unsigned long rcp_delay_vi(void) {
+    static long n = -1;
+    if (n < 0) n = getenv("PORT_RCP_RETRACES") ? atol(getenv("PORT_RCP_RETRACES")) : 0;
+    return (unsigned long)n;
+}
 static void rcp_raise(int event) {
 #ifdef PORT_WEB
     post_event(event);
 #else
     pthread_mutex_lock(&rcp_lock);
-    if (rcp_count < sizeof rcp_events) rcp_events[rcp_count++] = (unsigned char)event;
+    if (rcp_count < sizeof rcp_events) { rcp_due_vi[rcp_count] = vi_count + rcp_delay_vi(); rcp_events[rcp_count++] = (unsigned char)event; }
     rcp_due_us = monotonic_us() + RCP_DELAY_US;
     pthread_mutex_unlock(&rcp_lock);
 #endif
@@ -952,12 +961,14 @@ static void rcp_raise(int event) {
 static void dp_deliver(int force) {
 #ifndef PORT_WEB
     unsigned char out[sizeof rcp_events];
-    unsigned n;
+    unsigned n = 0, keep = 0;
     pthread_mutex_lock(&rcp_lock);
     if (!rcp_count || (!force && monotonic_us() < rcp_due_us)) { pthread_mutex_unlock(&rcp_lock); return; }
-    n = rcp_count;
-    memcpy(out, rcp_events, n);
-    rcp_count = 0;
+    for (unsigned i = 0; i < rcp_count; i++) { /* in order: an event waits for the ones before it */
+        if (!keep && rcp_due_vi[i] <= vi_count) out[n++] = rcp_events[i];
+        else { rcp_events[keep] = rcp_events[i]; rcp_due_vi[keep++] = rcp_due_vi[i]; }
+    }
+    rcp_count = keep;
     pthread_mutex_unlock(&rcp_lock);
     for (unsigned i = 0; i < n; i++) post_event(out[i]);
 #else
