@@ -883,3 +883,11 @@ picture differed 18.5% from the console's instead of 16.65%. So "the port never 
 cause. What is known: the field holds leftover memory on both sides (text fragments on the console, the allocator's fill on the
 port: nothing in the game writes it for that model), so the shading of that car depends on what the heap held before, which
 differs between the two. Whether the car is lit by that field at all, and which tasks draw it, is not established.
+
+**The menu's second task matches too (0.00%).** The 47-73% that a menu's second task showed was the comparison, not the port. The
+console's buffers before a window hold noise where the game had drawn, so the console's side is now started from the port's
+buffers as they were at the window's first task (a second pass of `compare_run`: both sides then draw the window over the same
+background, and a difference is the window's own drawing). That alone left the lower half wrong: the first task of a pair draws 240 lines,
+the second 480, and carrying the first task's shorter picture on replaced the seeded lower half with the console's noise. Carrying now
+keeps the tail of what was there. On the menu route, windows at tasks 2392, 4184 and 5976 are 0.00% differing at every compared task
+(both buffers, both tasks of each frame); the race window's later tasks are still 12-17% (the opponent car, above).

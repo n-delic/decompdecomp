@@ -89,3 +89,22 @@ def test_a_picture_is_drawn_over_what_the_tasks_before_it_drew(tmp_path, monkeyp
     frame_compare.frames(Path("x"), dump, tmp_path, carry)
     frame_compare.frames(Path("x"), dump, tmp_path, carry)
     assert drawn[0] == bytes(4) and drawn[1] == bytes([1] * 4) and carry[0x100] == bytes([2] * 4)
+
+
+def test_a_task_that_draws_fewer_lines_leaves_the_rest_of_the_carried_picture(tmp_path, monkeypatch):
+    """A menu's first task draws 240 lines and its second 480: the first task's shorter picture must not cut the lower
+    half (seeded or drawn before) out of what is carried on."""
+    sizes = iter([8, 4])
+
+    def fake_draw(program, dump, task, work, kept=None):
+        kept[0x100] = bytes([7]) * next(sizes)
+        return {}
+
+    monkeypatch.setattr(frame_compare, "draw", fake_draw)
+    dump = tmp_path / "ram.bin"
+    dump.write_bytes(bytes(0x1000))
+    dump.with_name(dump.name + ".task").write_bytes(bytes(64))
+    carry = {0x100: bytes([9]) * 16}  # a seeded buffer of 16 bytes
+    frame_compare.frames(Path("x"), dump, tmp_path, carry)
+    frame_compare.frames(Path("x"), dump, tmp_path, carry)
+    assert carry[0x100] == bytes([7]) * 4 + bytes([7]) * 4 + bytes([9]) * 8  # the second task's 4 bytes, then the first's, then the seed

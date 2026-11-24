@@ -227,7 +227,8 @@ def frames(program: Path, dump: Path, work: Path,
         for addr, raw in kept.items() if base is not None else ():  # what a buffer held before the window's first task drew in it
             base.setdefault(addr, blob[addr & 0x7FFFFF:(addr & 0x7FFFFF) + len(raw)])
         if carry is not None:
-            carry.update(kept)
+            for addr, raw in kept.items():  # a task that draws fewer lines than an earlier one leaves the rest as it was
+                carry[addr] = raw + carry.get(addr, b"")[len(raw):]
         if drawn is None:
             pass  # a list still being built: skipped
             continue
@@ -456,7 +457,7 @@ def compare_run(game: Path, rom: Path, points: list[int], inputs: str, work: Pat
     pace_log = work / "tasks.log"
     pace_log.unlink(missing_ok=True)
     progress("Building the renderer", 0, 4)
-    program_ = program = build(work)
+    program = build(work)
     progress("Running the original game in the emulator", 1, 4)
     console = run_console(rom, sorted(set(points) | {early}), inputs, work, "frames", stop=stop,
                           extra_env={"EMU_TASK_LOG": str(pace_log)} if pace else None)
@@ -473,73 +474,82 @@ def compare_run(game: Path, rom: Path, points: list[int], inputs: str, work: Pat
     pacing = {"PORT_VTIME": "1", "PORT_VTIME_TRACE": str(pace_log)} if pace and pace_log.exists() else {}
     port = run_port(game, rom, sorted(set(points)), inputs, work, "frames", stop=stop, extra_env=pacing)
     results: list[dict] = []
-    carried: tuple[dict, dict] = ({}, {})
-    started: tuple[dict, dict] = ({}, {})  # what each side drew in the tasks before, within a window of consecutive ones
-    renderers: list[Renderer] = []
-
-    def fresh() -> None:  # a new window: each side's RDP starts again, with nothing of the tasks before
-        for r in renderers:
-            r.close()
-        renderers[:] = [Renderer(program_, work, "console"), Renderer(program_, work, "port")]
     runs: list[list[int]] = []  # the consecutive tasks taken at each moment
     for n in points:
         if runs and n == runs[-1][-1] + 1:
             runs[-1].append(n)
         else:
             runs.append([n])
-    warm = {n for run in runs for n in run[:len(run) // 2]}  # drawn for what they leave in the buffers, not compared
-    for i, n in enumerate(points):
-        if not i or n != points[i - 1] + 1:
-            carried, started = ({}, {}), ({}, {})
-            fresh()
+
+    def play(run: list[int], seed: dict[int, bytes]):
+        """The run's tasks drawn on each side, each side from a renderer of its own (the RDP starts again, with nothing of
+        the tasks before): [(task, console's pictures, port's pictures)] with the pictures paired, what each side's buffers
+        held when the window began to draw into them, and what they hold at its end. `seed` is put into the console's
+        buffers first."""
+        carried: tuple[dict, dict] = (dict(seed), {})
+        started: tuple[dict, dict] = ({}, {})
+        drawn = []
+        pair = (Renderer(program, work, "console"), Renderer(program, work, "port"))
+        try:
+            for n in run:
+                if stop():
+                    break
+                theirs = frames(program, console[n], work, carried[0], pair[0], started[0])
+                ours = frames(program, port[n], work, carried[1], pair[1], started[1])
+                only_a, only_b = [k for k in theirs if k not in ours], [k for k in ours if k not in theirs]
+                if only_a and len(only_a) == len(only_b):
+                    # the console and the port lay their buffers out differently (the same two pictures at 0x315280 and
+                    # 0x27F1C0 on one, 0x27F240 and 0x3152C0 on the other): a task's pictures are paired in drawing order
+                    moved = {k: ours.pop(k) for k in only_b}
+                    ours.update({a: moved[b] for a, b in zip(only_a, only_b)})
+                drawn.append((n, theirs, ours))
+        finally:
+            for r in pair:
+                r.close()
+        return drawn, started, carried
+
+    for run in runs:
         if stop():
             break
-        progress(f"Comparing frame {n}", i, len(points))
-        if n not in console:
-            results.append({"task": n, "missing": "console"})
+        progress(f"Comparing frames {run[0]} to {run[-1]}", len(results), len(points))
+        gone = [n for n in run if n not in console or n not in port]
+        if gone:
+            results += [{"task": n, "missing": "console" if n not in console else "port"} for n in gone]
             continue
-        if n not in port:
-            results.append({"task": n, "missing": "port"})
-            continue
-        theirs = frames(program, console[n], work, carried[0], renderers[0], started[0])
-        ours = frames(program, port[n], work, carried[1], renderers[1], started[1])
-        only_a, only_b = [k for k in theirs if k not in ours], [k for k in ours if k not in theirs]
-        if only_a and len(only_a) == len(only_b):
-            # the console and the port lay their buffers out differently (the same two pictures at 0x315280 and 0x27F1C0 on
-            # one, 0x27F240 and 0x3152C0 on the other): the pictures a task draws are paired in the order it draws them
-            moved = {k: ours.pop(k) for k in only_b}
-            ours.update({a: moved[b] for a, b in zip(only_a, only_b)})
-        if n in warm:
-            continue
-        if not theirs and not ours:  # a task that draws no picture (the game's other tasks): said, so it isn't read as a match
-            results.append({"task": n, "missing": "neither"})
-            continue
-        for key in sorted(set(theirs) | set(ours)):
-            a, b = theirs.get(key), ours.get(key)
-            name = out / f"frame{n:06d}_image{key[1]:06X}.png"
-            if not (a and b):
-                side_by_side(name, [a, b])
-                results.append({"task": n, "image": key[1], "missing": "port" if a else "console"})
-            elif a[:2] != b[:2]:
-                results.append({"task": n, "image": key[1], "missing": "size"})
-            else:
-                # the emulator draws nothing, so only the pixels its tasks in this window drew are the console's: the rest of
-                # the buffer was drawn by tasks before the window (a menu's background) and is noise on its side
-                depth = 4 if len(carried[0].get(key[1], b"")) == a[0] * a[1] * 4 else 2  # bytes a pixel
-                was = rgb(started[0].get(key[1], b"").ljust(a[0] * a[1] * depth, b"\0"), 0, a[0], 3 if depth == 4 else 2, a[1])
-                touched = [p != q for p, q in zip(a[2], was)]
-                covered = sum(touched)
-                if not covered:
-                    results.append({"task": n, "image": key[1], "missing": "undrawn"})
-                    continue
-                judged = [q if t else p for p, q, t in zip(a[2], b[2], touched)]
-                scale = len(a[2]) / covered  # percentages of the pixels the console drew, not of the whole buffer
-                c = compare(judged, a[2])
-                side_by_side(name, [a, b, (a[0], a[1], difference(a[2], judged))])
-                near = min(100.0, unmatched(a[2], judged, a[0], a[1], tolerance) * scale) if tolerance else None
-                results.append({"task": n, "image": key[1], "width": a[0], "lines": a[1],
-                                "differ_pct": min(100.0, c["differ_pct"] * scale), "beyond_pct": min(100.0, c["beyond_pct"] * scale),
-                                "covered_pct": 100.0 * covered / len(a[2]), "file": name.name, "near_pct": near})
-    for r in renderers:
-        r.close()
+        drawn, started, last = play(run, {})
+        # The emulator draws nothing, so before the window its buffers hold noise where the game had drawn (a menu's
+        # background) and the port's hold the real pictures. A second pass starts the console's buffers from the port's
+        # contents at the window's start (its first dump, as far as any task of the window draws into each), so each side
+        # draws the window over the same background and a difference is the window's own drawing. The buffers are paired
+        # by the order the first pass drew them. (A menu's second task differed 69% until its lower half, which the first
+        # task never draws, was seeded too and kept when the first task's shorter picture was carried on.)
+        seed: dict[int, bytes] = {}
+        first = port[run[0]].read_bytes()
+        for a, b in zip(started[0], started[1]):
+            size = max(len(started[0][a]), len(started[1][b]), len(last[0].get(a, b"")), len(last[1].get(b, b"")))
+            seed[a] = first[b & 0x7FFFFF:(b & 0x7FFFFF) + size]
+        seeded = bool(seed) and len(started[0]) == len(started[1])
+        if seeded:
+            drawn, started, last = play(run, seed)
+        warm = set(run[:len(run) // 2])  # drawn for what they leave in the buffers, not compared
+        for n, theirs, ours in drawn:
+            if n in warm:
+                continue
+            if not theirs and not ours:  # a task that draws no picture (the game's other tasks): said, so it isn't read as a match
+                results.append({"task": n, "missing": "neither"})
+                continue
+            for key in sorted(set(theirs) | set(ours)):
+                a, b = theirs.get(key), ours.get(key)
+                name = out / f"frame{n:06d}_image{key[1]:06X}.png"
+                if not (a and b):
+                    side_by_side(name, [a, b])
+                    results.append({"task": n, "image": key[1], "missing": "port" if a else "console"})
+                elif a[:2] != b[:2]:
+                    results.append({"task": n, "image": key[1], "missing": "size"})
+                else:
+                    c = compare(b[2], a[2])
+                    side_by_side(name, [a, b, (a[0], a[1], difference(a[2], b[2]))])
+                    results.append({"task": n, "image": key[1], "width": a[0], "lines": a[1], "differ_pct": c["differ_pct"],
+                                    "beyond_pct": c["beyond_pct"], "file": name.name, "seeded": seeded,
+                                    "near_pct": unmatched(a[2], b[2], a[0], a[1], tolerance) if tolerance else None})
     return results
