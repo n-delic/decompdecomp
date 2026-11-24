@@ -346,6 +346,12 @@ linting). In short:
 - Routine background synchronization should use a compact header indicator with details on demand, without
   inserting banners that shift content. Reserve prominent progress banners for full rechecks or work that
   requires attention; use explicit task scope rather than guessing from progress text.
+- A count of functions (or other items) that need action, such as "93 don't compile", is a button: clicking the number
+  opens the shared side drawer (`dialog(title, html, kind)` in `app/static/js/steering.js`) with every item and its
+  details (for functions: a link that opens the function, its kind, the reason, the first error). Never show only a
+  count, and never dump a long list inline in the card. The drawer's table follows the sorting rule above, and the data
+  comes from the server's report so the list is the same on reload. Examples: the Deep Permuter metrics,
+  `openPortFailures` in `app/static/js/port.js`.
 - Make summary metrics actionable when details exist: use the shared side drawer and retain function links.
   Verify collapsed/expanded, working, empty, success and error states for the UI touched. Existing examples:
   `machineDraftPanel`, `savedMatchRecoveryPanel` and project settings in `app/static/index.html`.

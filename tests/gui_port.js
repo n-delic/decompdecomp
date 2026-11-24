@@ -419,5 +419,18 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
      {slug:'a',build_mode:'compatibility',runtime:'n64modernruntime'});
    assert.equal(t.c.$('portStop').hidden,false);
    assert.match(t.c.$('portPlayLog').children.join(' '),/opened in the RT64 window/);}
+  {const t=setup();t.c.S.tab='porting';
+   const failures=[{name:'b',kinds:['undeclared'],message:'call to undeclared function',line:3,file:''},{name:'a',kinds:[],message:'',line:0,file:''}];
+   t.c.dialog=(title,html)=>{t.c.drawer={title,html};return t.c.drawerBody;};
+   t.c.drawerBody={...element(),querySelector(){return element();}};
+   t.c.closeDialog=()=>{};t.c.openFn=()=>{};
+   t.c.projectReport={...report,mode:'rom',pc:{ok:5,warned:1,failed:2,total:8,kinds:[],checked_at:1,failures}};
+   const step=t.run('portSteps(projectReport)').find(x=>x.title==='Compiles for a PC');
+   assert.equal(step.failures.length,2,'the step carries every failed function for its drawer');
+   t.run('renderPortSteps(projectReport)');
+   const detail=t.c.$('portSteps').children.find(r=>r.children[1].children.some(c=>c.children&&c.children[1]&&c.children[1].textContent==="2 don't")).children[1].children.find(c=>c.children&&c.children[1]&&c.children[1].textContent==="2 don't");
+   assert.match(detail.children[0],/6 of 8 functions compile, $/,'the count is a button that follows the text');
+   detail.children[1].onclick();
+   assert.match(t.c.drawer.title,/2 functions that don't compile/,'clicking the count opens the shared side drawer');}
   console.log('Port readiness panel: closed, read, stale reply, failure, asset map, extraction, link, suspicious calls, check behaviour, recompile, renamed calls, play, runtimes, the build bar, Stop, reattaching and export passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});

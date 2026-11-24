@@ -274,22 +274,39 @@ function portSteps(report) {
   return [recompileStep(report), ...steps];
 }
 
-// The functions a PC compile refuses, each with the first error and a link to its page, so they can be fixed by hand.
-function portFailureList(failures) {
-  const box = document.createElement("details"); box.className = "port-failures";
-  const head = document.createElement("summary");
-  head.textContent = `${failures.length.toLocaleString()} functions that don't compile`;
-  const list = document.createElement("ul"); list.className = "small";
-  for (const f of failures) {
-    const item = document.createElement("li");
-    const link = document.createElement("button"); link.type = "button"; link.className = "fn"; link.dataset.fn = f.name;
-    link.textContent = f.name; link.onclick = () => openFn(f.name);
-    const why = document.createElement("span"); why.className = "muted";
-    why.textContent = ` (${f.kinds.join(", ") || "error"})` + (f.message ? `: ${f.file ? f.file + ":" : "line "}${f.line}: ${f.message}` : "");
-    item.append(link, why); list.append(item);
-  }
-  box.append(head, list);
-  return box;
+// The functions a PC compile refuses, in the shared side drawer: each a link to its page, with its error kinds and the
+// first error clang gave. Columns sort by their headings (the choice stays while the drawer is open).
+function openPortFailures(failures) {
+  let key = "name", dir = 1;
+  const body = dialog(`${failures.length.toLocaleString()} functions that don't compile for a PC`,
+    `<p class="small muted">Compile for PC refuses these. Open a function to see its C and fix it; the first error is shown here.</p>
+     <table class="compiler-table port-failure-table"><thead><tr></tr></thead><tbody></tbody></table>`, "port-failures");
+  const cols = [["name", "Function"], ["kind", "Kind"], ["message", "First error"]];
+  const value = (f, k) => k === "kind" ? f.kinds.join(", ") : f[k] || "";
+  const draw = () => {
+    const rows = [...failures].sort((x, y) => {
+      const a = value(x, key), b = value(y, key);
+      return (a === "" ? 1 : b === "" ? -1 : a.localeCompare(b, undefined, {numeric: true}) * dir);
+    });
+    body.querySelector("tr").replaceChildren(...cols.map(([k, label]) => {
+      const th = document.createElement("th"); th.scope = "col";
+      th.setAttribute("aria-sort", k === key ? (dir > 0 ? "ascending" : "descending") : "none");
+      const sort = document.createElement("button"); sort.type = "button"; sort.className = "ghost small-btn";
+      sort.textContent = label + (k === key ? (dir > 0 ? " ▲" : " ▼") : "");
+      sort.onclick = () => { dir = k === key ? -dir : 1; key = k; draw(); };
+      th.append(sort); return th;
+    }));
+    body.querySelector("tbody").replaceChildren(...rows.map((f) => {
+      const tr = document.createElement("tr");
+      const name = document.createElement("td"), kind = document.createElement("td"), why = document.createElement("td");
+      const link = document.createElement("button"); link.type = "button"; link.className = "ghost small-btn mono";
+      link.textContent = f.name; link.onclick = () => { closeDialog(); openFn(f.name); };
+      name.append(link); kind.textContent = f.kinds.join(", ") || "error";
+      why.className = "small"; why.textContent = f.message ? `${f.file || "line"}${f.file ? ":" : " "}${f.line}: ${f.message}` : "";
+      tr.append(name, kind, why); return tr;
+    }));
+  };
+  draw();
 }
 
 function renderPortSteps(report, steps = portSteps(report)) {
@@ -323,6 +340,13 @@ function renderPortSteps(report, steps = portSteps(report)) {
     share.textContent = step.status || (step.unavailable ? "not checked" : step.pct == null ? (step.play ? "" : "to do") : step.pct + "%");
     head.append(title, share);
     const detail = document.createElement("p"); detail.className = "small muted"; detail.textContent = step.detail;
+    if (step.failures?.length) {  // the count opens the list
+      const open = document.createElement("button"); open.type = "button"; open.className = "link-btn";
+      open.textContent = `${step.failures.length.toLocaleString()} don't`;
+      open.title = "Show the functions that don't compile, with their first error";
+      open.onclick = () => openPortFailures(step.failures);
+      detail.replaceChildren(step.detail.replace(/\d[\d,]* don't$/, ""), open);
+    }
     body.append(head);
     if (step.pct != null || step.emptyMeter) {
       const meter = document.createElement("div"); meter.className = "meter";
@@ -351,7 +375,6 @@ function renderPortSteps(report, steps = portSteps(report)) {
     for (const id of step.buttons || []) if ($(id)) actions.append($(id));
     if (actions.children.length) body.append(actions);
     for (const id of step.logs || []) if ($(id)) body.append(...withWork($(id)));
-    if (step.failures?.length) body.append(portFailureList(step.failures));
     row.append(mark, body);
     return row;
   }));
