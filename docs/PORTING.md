@@ -286,6 +286,16 @@ header's entry address, and the host leaves what each chip's code leaves, which 
 of the boot code copied into RAM to run from (RAM 0x200 on), the RSP's memories filled (and 6103 or 6105 in the
 first word of its instruction memory) and osCicId. The cartridge also reads directly at 0xB0000000. A racing game
 missing any of these turned its screen upside down, mirrored its tracks or paused in its world.
+A game that pages its code in as it runs (a shooter linking its program at a virtual base and loading 4 KB pages from the
+cartridge when they fault) works on the host through a model of the TLB (the 32 entries the game writes, its Wired
+register, tlbwr replacing only the slots above it) and of the exception libultra's kernel would deliver: a fetch from a
+page an entry covers with the valid bit clear is TLB Invalid, and when the game registered a pager for OS_EVENT_FAULT
+the host fills the faulting OSThread, points `__osFaultedThread` at it (an address found in the game's own handler),
+posts the fault event and parks the thread until the pager clears the thread's fault flag (`port_tlb_fault`); the
+pager's `__osGetTLBHi` and `osUnmapTLB` read and clear entries of that table. The interpreter keeps the virtual address
+of code it reached through a window (its program counter is the frame in RAM, which is where the rest of the port finds
+functions), so the next page of the code is the next virtual page's frame, and a call made from it returns to a virtual
+`$ra`. `PORT_TLB_TRACE=1` prints every entry the game writes.
 The hand-written library code most games keep in assembly (`bzero`, `bcopy`, `bcmp`, the TLB, status-register and
 interrupt helpers, `osGetCount`) is the host's by its library name: the build renames a call by a function's
 automatic name to the name library detection found (`play.library_names`). What only one game needs, such as

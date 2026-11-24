@@ -113,7 +113,9 @@ void port_tlb_write(uint32_t pm, uint32_t entry_hi, uint32_t lo0, uint32_t lo1);
 void port_tlb_set(unsigned index, uint32_t pm, uint32_t entry_hi, uint32_t lo0, uint32_t lo1);
 uint32_t port_tlb_probe(uint32_t entry_hi);
 int port_tlb_read(unsigned index, uint32_t *pm, uint32_t *entry_hi, uint32_t *lo0, uint32_t *lo1);
+uint32_t port_tlb_wired(int set, uint32_t value); /* the Wired register: the slots below it are the game's alone */
 int port_tlb_invalid(uint32_t a); /* a page an entry covers with its valid bit clear: TLB Invalid, not a refill */
+int port_tlb_fault(uint32_t epc, uint32_t badvaddr, uint32_t cause); /* host.c: a fault the game's pager answers; 1 once it restarted the thread */
 /* (KSEG0 and KSEG1 are 0x80000000 to 0xBFFFFFFF: the one compare says "outside them", the mapped user, supervisor and
    KSEG2/KSEG3 space) */
 HOT uint32_t mapped(uint32_t a) { return __builtin_expect(a - 0x80000000u >= 0x40000000u && port_tlb_n, 0) ? port_tlb_canon(a) : a; }
@@ -823,7 +825,9 @@ static int step(Cpu *c, uint32_t pc, uint32_t op, uint32_t *target) {
         uint32_t *reg = rd == 12 ? &c->status : rd == 13 ? &c->cause : rd == 14 ? &c->epc : rd == 10 ? &c->entry_hi : rd == 0 ? &c->tlb_index :
                         rd == 5 ? &c->page_mask : rd == 4 ? &c->context : rd == 8 ? &c->badvaddr :
                         rd == 2 || rd == 3 ? &c->entry_lo[rd - 2] : NULL;
-        if (rs == 0 || rs == 1)
+        if ((rs == 0 || rs == 1) && rd == 6) r[rt] = (int64_t)port_tlb_wired(0, 0); /* Wired: tlbwr only replaces the slots above it */
+        else if ((rs == 4 || rs == 5) && rd == 6) port_tlb_wired(1, (uint32_t)r[rt]);
+        else if (rs == 0 || rs == 1)
             r[rt] = rd == 9 ? sx32(w2c_env_0x5F_builtin_mips_read_count(0)) : reg ? sx32(*reg) : 0;
         else if ((rs == 4 || rs == 5) && reg) *reg = (uint32_t)r[rt];
         /* The raw PI routine probes the TLB if its buffer lives on a compatibility stack.
@@ -953,6 +957,10 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
     if (!relocated) relocated = with_shape(entry);
     if (relocated) { call_c(&c, relocated); goto done; }
     uint32_t pc = entry;
+    /* The virtual address the code at `pc` has when it was reached through a TLB window (pc is its spelling in RAM,
+       which is what the rest of the port finds functions by): the next instruction of a page is the next virtual
+       page's, not the next frame in RAM (a game that pages its code in puts consecutive pages in any frames). */
+    uint32_t vpc = 0;
     unsigned long steps = 0;
     int zeros = 0;
     unsigned fault_n = 0;
@@ -972,6 +980,14 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
             uint32_t vector = port_tlb_invalid(pc) ? 0x80000180u : 0x80000000u;
             if (fetch(vector)) {
                 if (pc != fault_pc) { fault_pc = pc; fault_n = 0; }
+                /* TLB Invalid on a game that registered a pager for OS_EVENT_FAULT: libultra's kernel would send the
+                   fault to that thread and stop this one; the host does that (it keeps no kernel state for the game's
+                   own handler to run on) and the fetch is retried once the pager has restarted the thread */
+                if (vector == 0x80000180u && fault_n < 16 && port_tlb_fault(pc, pc, 2u << 2)) {
+                    fault_n++;
+                    if (tracing) fprintf(stderr, "interpreter: TLB invalid for a fetch at %08X: the game's pager answered\n", pc);
+                    continue;
+                }
                 if (fault_n++ < (vector == 0x80000180u ? 4u : 16u)) {
                     if (tracing) fprintf(stderr, "interpreter: TLB %s for a fetch at %08X (from %08X)\n",
                                          vector == 0x80000180u ? "invalid" : "refill", pc, entry);
@@ -981,7 +997,7 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
                     c.context = (c.context & ~0x7FFFF0u) | (((pc >> 13) & 0x7FFFFu) << 4);
                     c.cause = 2u << 2; /* TLBL */
                     c.status |= 2u;
-                    pc = vector;
+                    pc = vector; vpc = 0;
                     continue;
                 }
             }
@@ -1004,12 +1020,14 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
             c.cause = 8u << 2;
             c.status |= 2u;
             pc = 0x80000180u;
+            vpc = 0;
             continue;
         }
         if (op == 0x42000018u && (c.status & 2u)) {
             /* eret out of such an exception: back to where EPC says (the handler may have moved it), EXL cleared */
             c.status &= ~2u;
             pc = c.epc;
+            vpc = 0;
             continue;
         }
         if (op == 0x42000018u) {
@@ -1028,8 +1046,16 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
         c.r[0] = 0;
         int kind = step(&c, pc, op, &target);
         c.r[0] = 0;
-        if (kind == 3) { pc += 8; continue; }    /* a likely branch not taken: its delay slot skipped */
-        if (!kind) { pc += 4; goto counted; }
+        if (kind == 3) { /* a likely branch not taken: its delay slot skipped */
+            pc += 8;
+            if (vpc) { vpc += 8; if ((vpc & 0xFFFu) < 8) pc = mapped(vpc); }
+            continue;
+        }
+        if (!kind) {
+            pc += 4;
+            if (vpc) { vpc += 4; if (!(vpc & 0xFFFu)) pc = mapped(vpc); }
+            goto counted;
+        }
         /* the delay slot, then the jump */
         uint32_t slot = fetch(pc + 4), jop = op;
         {
@@ -1059,7 +1085,21 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
             port_idle_forever();
             continue; /* (only if it comes back: the same jump again) */
         }
-        target = mapped(target); /* a jump to a mapped virtual address runs the code at its spelling */
+        {
+            /* a jump to a mapped virtual address runs the code at its spelling; the virtual address is kept for the
+               instructions after it (a branch moves it by the same offset, a jump takes its target's) */
+            int absolute = jop >> 26 == 2 || jop >> 26 == 3 || (jop >> 26 == 0 && ((jop & 63) == 8 || (jop & 63) == 9));
+            uint32_t nv = absolute ? (target < 0x80000000u ? target : 0) : vpc ? vpc + (target - pc) : 0;
+            /* j and jal keep the top four bits of the delay slot's address: the virtual one, not the frame's */
+            if (vpc && (jop >> 26 == 2 || jop >> 26 == 3)) nv = ((vpc + 4) & 0xF0000000u) | ((jop & 0x03FFFFFFu) << 2);
+            /* a call made from code reached through a window returns to the virtual address after it, as the
+               console's $ra has it: the frame the code sits in may hold another page by the time it returns */
+            if (vpc && (jop >> 26 == 3 || (jop >> 26 == 0 && (jop & 63) == 9 && ((jop >> 11) & 31) == 31)))
+                c.r[31] = (uint64_t)(int64_t)(int32_t)(vpc + 8);
+            vpc = nv;
+            target = mapped(nv ? nv : target);
+            if (nv && target == nv) vpc = 0; /* not mapped: the fetch faults, as before */
+        }
         if (tracing >= 3) {
             unsigned k = jump_n++ % JUMP_HISTORY;
             jumps[k].from = pc; jumps[k].to = target; jumps[k].ra = (uint32_t)c.r[31]; jumps[k].sp = (uint32_t)c.r[29];
@@ -1082,6 +1122,7 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
                                          (uint32_t)c.r[4], (uint32_t)c.r[5], (uint32_t)c.r[6], (uint32_t)c.r[7]);
                 call_c(&c, fn);
                 pc = (uint32_t)c.r[31];
+                vpc = 0; /* (the code it returns to: reached by its address as the caller kept it) */
                 if (pc == RETURN) goto done;
             }
         }

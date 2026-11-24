@@ -122,3 +122,8 @@ sinf	float	float
 cosf	float	float
 ldexpf	float	float, i32
 frexpf	float	float, ptr
+__osGetTLBHi	i32	i32
+__osGetTLBLo0	i32	i32
+__osGetTLBLo1	i32	i32
+__osGetTLBPageMask	i32	i32
+osUnmapTLB	void	i32

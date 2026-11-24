@@ -36,6 +36,8 @@ void port_tlb_set(unsigned i, uint32_t pm, uint32_t hi, uint32_t lo0, uint32_t l
 uint32_t port_tlb_probe(uint32_t hi) { (void)hi; return 0x80000000u; }
 int port_tlb_read(unsigned i, uint32_t *pm, uint32_t *hi, uint32_t *lo0, uint32_t *lo1) { (void)i; (void)pm; (void)hi; (void)lo0; (void)lo1; return 0; }
 int port_tlb_invalid(uint32_t a) { (void)a; return 0; }
+int port_tlb_fault(uint32_t e, uint32_t b, uint32_t c) { (void)e; (void)b; (void)c; return 0; }
+uint32_t port_tlb_wired(int set, uint32_t v) { (void)set; (void)v; return 0; }
 uint64_t port_io_store(uint64_t a, uint64_t v) { (void)v; return a; }
 void port_safe_point(void) {}
 void port_boot_spin(void) {}
@@ -674,3 +676,59 @@ def test_trace_level_3_keeps_the_last_jumps_for_a_wild_one():
     text = MIPS.read_text()
     assert "PORT_INTERP_TRACE=3" in text and "jump_history(\"an unknown instruction\", pc)" in text
     assert "jump_history(\"no instructions\", pc)" in text
+
+
+def test_code_reached_through_a_window_goes_on_in_the_next_virtual_page_not_the_next_frame(tmp_path):
+    """A game that pages its code in puts consecutive virtual pages in any frames. The interpreter runs the code at its
+    spelling in RAM (the frame), so an instruction at the end of a page was followed by the next frame's: here the page at
+    virtual 0x400000 sits at 0x80000400 and the next virtual page 0x401000 at 0x80001600; the instruction after the
+    page's last word must come from the second."""
+    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if not cc:
+        pytest.skip("no C compiler")
+    source = HARNESS % {"c": C_FUNCTION, "code": CODE, "data": DATA}
+    source = source.replace("unsigned port_tlb_n;", "unsigned port_tlb_n = 1;")
+    source = source.replace("uint32_t port_tlb_canon(uint32_t a) { return a; }",
+                            "uint32_t port_tlb_canon(uint32_t a) { return a >= 0x400000u && a < 0x401000u ? a - 0x400000u + 0x80000400u : "
+                            "a >= 0x401000u && a < 0x402000u ? a - 0x401000u + 0x80001600u : a; }")
+    harness = tmp_path / "harness.c"
+    harness.write_text(source)
+    program = tmp_path / "interp"
+    done = subprocess.run([cc, "-o", str(program), str(harness), str(MIPS), "-lm"], capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr
+    prog = [lui("t2", 0x40), ori("t2", "t2", 0x0FF8), r_type(8, rs="t2"), NOP]  # jr 0x00400FF8: two words before the page's end
+    prog += [NOP] * (0x3F8 // 4 - len(prog))
+    prog += [addiu("v0", "zero", 10), addiu("v0", "v0", 5)]  # the page's last two words (frame offsets 0x3F8, 0x3FC)
+    prog += [addiu("v0", "zero", 99), JR_RA, NOP]            # the NEXT FRAME's code: the wrong place to go on at
+    prog += [NOP] * (0x600 // 4 - len(prog))
+    prog += [JR_RA, NOP]                                     # the next virtual page's first word: where it goes on
+    code = tmp_path / "code.bin"
+    code.write_bytes(b"".join(struct.pack(">I", w & 0xFFFFFFFF) for w in prog))
+    out = subprocess.run([str(program), str(code)], capture_output=True, text=True, timeout=30, check=True).stdout.split()
+    assert int(out[0], 16) == 15
+
+
+def test_a_call_from_window_code_returns_to_the_virtual_address(tmp_path):
+    """$ra of a call made from code reached through a window is the virtual address after the call, as on the console:
+    the frame it sits in may hold another page by the time the callee returns."""
+    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if not cc:
+        pytest.skip("no C compiler")
+    source = HARNESS % {"c": C_FUNCTION, "code": CODE, "data": DATA}
+    source = source.replace("unsigned port_tlb_n;", "unsigned port_tlb_n = 1;")
+    source = source.replace("uint32_t port_tlb_canon(uint32_t a) { return a; }",
+                            "uint32_t port_tlb_canon(uint32_t a) { return a >= 0x400000u && a < 0x401000u ? a - 0x400000u + 0x80000400u : a; }")
+    harness = tmp_path / "harness.c"
+    harness.write_text(source)
+    program = tmp_path / "interp"
+    done = subprocess.run([cc, "-o", str(program), str(harness), str(MIPS), "-lm"], capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr
+    prog = [lui("t2", 0x40), ori("t2", "t2", 0x0F00), r_type(8, rs="t2"), NOP]  # jr 0x00400F00 (frame offset 0x300)
+    prog += [NOP] * (0x300 // 4 - len(prog))
+    prog += [r_type(0x25, rd="s0", rs="ra", rt="zero"), jal(0x400F40), NOP, r_type(8, rs="s0"), NOP]  # keep $ra; jal the callee (virtual 0x400F40); return
+    prog += [NOP] * (0x340 // 4 - len(prog))
+    prog += [r_type(0x25, rd="v0", rs="ra", rt="zero"), JR_RA, NOP]             # the callee: $v0 = $ra
+    code = tmp_path / "code.bin"
+    code.write_bytes(b"".join(struct.pack(">I", w & 0xFFFFFFFF) for w in prog))
+    out = subprocess.run([str(program), str(code)], capture_output=True, text=True, timeout=30, check=True).stdout.split()
+    assert int(out[0], 16) == 0x400F0C

@@ -454,7 +454,9 @@ int main(void) {
 
 def test_pages_a_refill_handler_brings_in_one_by_one_make_one_window(tmp_path):
     """A refill handler writes a 4 KB page pair per exception: a program of a megabyte is 128 of them, which filled
-    the window table. A pair that continues a window (the next virtual pages onto the next physical ones) extends it."""
+    the window table. A pair that continues a window (the next virtual pages onto the next physical ones) extends it.
+    Past the 32 slots a tlbwr evicts what its slot mapped: the first nine pairs (the 40 written and the odd page after
+    them took slots 0 to 8 again) are gone from the windows, as they are from the console's TLB."""
     cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
     if not cc:
         pytest.skip("no C compiler")
@@ -475,7 +477,7 @@ int main(void) {
 """)
     subprocess.run([cc, "-o", str(tmp_path / "t"), str(source)], check=True, capture_output=True)
     done = subprocess.run([str(tmp_path / "t")], capture_output=True, text=True, check=True)
-    assert done.stdout.splitlines() == ["7F000000 50000 00300000", "7F200000 1000 00500000", "803000F8 8034F000"]
+    assert done.stdout.splitlines() == ["7F012000 3E000 00312000", "7F200000 1000 00500000", "7F0000F8 8034F000"]
 
 
 def test_the_tlb_keeps_the_entries_the_game_wrote_and_tells_an_invalid_page_from_a_missing_one(tmp_path):
@@ -545,6 +547,78 @@ int main(void) {
     # the host's own reads and writes of the game's structures, and a DMA's destination, go the same way
     assert "static inline uint32_t gv(uint32_t a)" in text and "memcpy(&v, M + gv(a), 4)" in text
     assert "static u32 dma_ram(u32 dram)" in text and "dram >= 0xC0000000u" in text and "dma_ram(dram_given)" in text
+
+
+def test_tlbwr_leaves_the_wired_slots_alone_and_osgettlbhi_and_osunmaptlb_read_and_clear_a_slot(tmp_path):
+    """A paging game wires its permanent mappings (the Wired register) and lets tlbwr replace the rest: a wired slot
+    is never the one a tlbwr takes. Its pager finds the slot of a page by reading every slot's EntryHi
+    (__osGetTLBHi: `mtc0 i, Index; tlbr; mfc0 EntryHi`) and unmaps it (osUnmapTLB), so the next access refills."""
+    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if not cc:
+        pytest.skip("no C compiler")
+    text = HOST.read_text()
+    code = text[text.index("static struct { uint32_t entry, target, bss, bss_size; int tv; } boot;"):
+                text.index("/* the console's RAM as the boot leaves it")]
+    source = tmp_path / "t.c"
+    source.write_text(_BOOT_HARNESS + code + """
+int main(void) {
+    uint32_t pm, hi, lo0, lo1;
+    port_tlb_set(0, 0x007FE000u, 0x70000000u, 0x1Fu, 1); /* a wired 4 MB page at 0x70000000 onto physical 0 */
+    port_tlb_set(1, 0, 0x60000000u, (0x300000u >> 12 << 6) | 2, 1); /* a wired page at 0x60000000 */
+    printf("%u ", port_tlb_wired(1, 2));
+    for (unsigned n = 0; n < 70; n++) /* more pages than the 30 slots left: the wired two must survive */
+        port_tlb_write(0, 0x7F000000u + n * 0x2000u, ((0x400000u + n * 0x2000u) >> 12 << 6) | 2, 1);
+    printf("%d %d\\n", port_tlb_read(0, &pm, &hi, &lo0, &lo1) && hi == 0x70000000u, port_tlb_read(1, &pm, &hi, &lo0, &lo1) && hi == 0x60000000u);
+    printf("%08X %08X\\n", port_tlb_canon(0x70000100u), port_tlb_canon(0x60000010u));
+    printf("%08X %08X\\n", w2c_env_0x5F_osGetTLBHi(0, 1), w2c_env_0x5F_osGetTLBHi(0, 31) == 0x80000000u ? 0x80000000u : 0);
+    w2c_env_osUnmapTLB(0, 1);
+    printf("%08X %08X\\n", w2c_env_0x5F_osGetTLBHi(0, 1), port_tlb_canon(0x60000010u));
+    return 0;
+}
+""")
+    subprocess.run([cc, "-o", str(tmp_path / "t"), str(source)], check=True, capture_output=True)
+    done = subprocess.run([str(tmp_path / "t")], capture_output=True, text=True, check=True)
+    lines = done.stdout.splitlines()
+    assert lines[0].startswith("2 1 1")
+    assert lines[1] == "80000100 80300010"
+    assert lines[2].split()[0] == "60000000"  # the readback of the wired slot
+    assert lines[3] == "80000000 60000010"  # unmapped: the slot reads as no program's address and the window is gone
+
+
+def test_the_faulted_thread_variable_is_found_in_the_games_own_exception_handler(tmp_path):
+    """The host delivers a TLB fault by filling the faulting OSThread and pointing __osFaultedThread at it, a variable it
+    finds in the game's libultra handler: the preamble at the general vector (`lui k0; addiu k0,k0,lo; jr k0`) leads to
+    __osException, whose panic block stores the faulted thread (`sw k0, var`) and marks it faulted (`sh x, 18(k0)`).
+    A handler linked in a TLB window is read through the window."""
+    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if not cc:
+        pytest.skip("no C compiler")
+    text = HOST.read_text()
+    code = text[text.index("static uint32_t fault_variable(void) {"):text.index("/* A TLB fault the game's own pager answers.")]
+    source = tmp_path / "t.c"
+    source.write_text(_BOOT_HARNESS + """
+static int verbose;
+#define LOG(...) do { } while (0)
+uint32_t port_tlb_canon(uint32_t a) { return a >= 0x70000000u && a < 0x70010000u ? a - 0x70000000u + 0x80300000u : a; }
+""" + code + """
+int main(void) {
+    /* the preamble: lui k0,0x7000; addiu k0,k0,0x1A0; jr k0 (the handler at virtual 0x700001A0, onto physical 0x3001A0) */
+    wbe32(0x80000180u, 0x3C1A7000u); wbe32(0x80000184u, 0x275A01A0u); wbe32(0x80000188u, 0x03400008u);
+    uint32_t h = 0x803001A0u;
+    wbe32(h + 0x00, 0x3C018002u);       /* lui at, 0x8002 */
+    wbe32(h + 0x04, 0x3C018002u);       /* lui at, 0x8002 */
+    wbe32(h + 0x08, 0xAC3A7734u);       /* sw k0, 0x7734(at): __osFaultedThread = 0x80027734 */
+    wbe32(h + 0x0C, 0x24090001u);       /* li t1, 1 */
+    wbe32(h + 0x10, 0xA7490010u);       /* sh t1, 16(k0) */
+    wbe32(h + 0x14, 0x24090002u);       /* li t1, 2 */
+    wbe32(h + 0x18, 0xA7490012u);       /* sh t1, 18(k0) */
+    printf("%08X\\n", fault_variable());
+    return 0;
+}
+""")
+    subprocess.run([cc, "-o", str(tmp_path / "t"), str(source)], check=True, capture_output=True)
+    done = subprocess.run([str(tmp_path / "t")], capture_output=True, text=True, check=True)
+    assert done.stdout.split()[-1] == "80027734"
 
 
 def test_a_jal_in_code_linked_at_a_windows_virtual_base_takes_the_windows_top_bits(tmp_path):
@@ -1149,6 +1223,8 @@ void port_tlb_set(unsigned i, uint32_t pm, uint32_t hi, uint32_t lo0, uint32_t l
 uint32_t port_tlb_probe(uint32_t hi) { (void)hi; return 0x80000000u; }
 int port_tlb_read(unsigned i, uint32_t *pm, uint32_t *hi, uint32_t *lo0, uint32_t *lo1) { (void)i; (void)pm; (void)hi; (void)lo0; (void)lo1; return 0; }
 int port_tlb_invalid(uint32_t a) { (void)a; return 0; }
+int port_tlb_fault(uint32_t e, uint32_t b, uint32_t c) { (void)e; (void)b; (void)c; return 0; }
+uint32_t port_tlb_wired(int set, uint32_t v) { (void)set; (void)v; return 0; }
 uint32_t w2c_env_0x5F_builtin_mips_read_count(struct w2c_env *e) { (void)e; return 0; }
 static void put(uint32_t at, const uint32_t *w, int n) {
     for (int i = 0; i < n; i++) { uint32_t b = __builtin_bswap32(w[i]); memcpy(mem + at + 4 * i, &b, 4); }

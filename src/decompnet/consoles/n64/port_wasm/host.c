@@ -130,6 +130,7 @@ typedef struct PortThread {
     pthread_t host;
     pthread_cond_t turn;
     uint32_t waiting_on;
+    int faulted; /* stopped by a TLB fault until the game's pager clears the fault flag of its OSThread (port_tlb_fault) */
     struct PortThread *next;
 } PortThread;
 
@@ -162,6 +163,28 @@ static PortThread *find(uint32_t t) {
 static void make_ready(PortThread *p) { p->state = READY; p->waiting_on = 0; p->ready_at = ++ticks; }
 static void schedule(void) {
     PortThread *best = NULL;
+    /* a thread the game's pager has restarted (it cleared the fault flag in the OSThread, as libultra's pager does
+       before it puts the thread back on the run queue): ready again */
+    for (PortThread *p = threads; p; p = p->next)
+        if (p->faulted && p->state == STOPPED && !(be16(p->os + 18) & 2)) {
+            static int said;
+            if (said++ < 3 || verbose > 1) LOG("thread %d: the game's pager has restarted it", p->number);
+            p->faulted = 0;
+            /* The pager put the thread back by __osEnqueueThread on the game's own run queue, and libultra's dispatcher
+               would pop it from there as it ran it: nothing here does, so the thread would stay linked and the next
+               enqueue of it (the next fault) would close a cycle. Take it off the queue (__osDequeueThread). */
+            uint32_t queue = be32(p->os + 8);
+            if (queue >= 0x80000000u && queue < 0x80800000u) {
+                uint32_t pred = queue, succ = be32(pred);
+                for (int steps = 0; succ && steps < 256 && succ >= 0x80000000u && succ < 0x80800000u; steps++) {
+                    if (succ == p->os) { wbe32(pred, be32(p->os)); break; }
+                    pred = succ;
+                    succ = be32(pred);
+                }
+                wbe32(p->os + 8, 0);
+            }
+            make_ready(p);
+        }
     for (PortThread *p = threads; p; p = p->next)
         if (p->state == READY && (!best || p->pri > best->pri || (p->pri == best->pri && p->ready_at < best->ready_at)))
             best = p;
@@ -1508,16 +1531,23 @@ static void tlb_set_entry(unsigned index, uint32_t pm, uint32_t entry_hi, uint32
 void port_tlb_set(unsigned index, uint32_t pm, uint32_t entry_hi, uint32_t lo0, uint32_t lo1) {
     tlb_set_entry(index, pm, entry_hi, lo0, lo1, 1);
 }
-/* tlbwr: the console picks a slot at random above the wired ones; a free one here, the oldest once all 32 are
-   taken. A page a refill handler brought in stays reachable through its window after its slot is reused: the port
-   reads code through windows that only ever grew, and a program of a megabyte brought in page by page is more pages
-   than the console holds at once (the console would fault on the evicted ones and refill them; here they stay). */
+/* tlbwr: the console picks a slot at random above the wired ones (the Wired register: a game keeps its permanent
+   mappings below it); a free one here, the oldest once all are taken. What a reused slot mapped before is gone, as on the console: a program of a megabyte brought in page by page is
+   more pages than the console holds at once, and it faults on the evicted ones and refills them. A paging game depends
+   on that: it reuses the page's frame for another page and trusts the stale entry to be gone (keeping it mapped, as the
+   port first did to spare the refills, ran the old page's address into the new page's code). */
+static unsigned tlb_wired_slots;
+uint32_t port_tlb_wired(int set, uint32_t value) {
+    if (set) tlb_wired_slots = value > TLB_ENTRIES ? TLB_ENTRIES : value;
+    return tlb_wired_slots;
+}
 void port_tlb_write(uint32_t pm, uint32_t entry_hi, uint32_t lo0, uint32_t lo1) {
     static unsigned next;
-    unsigned index = 0;
+    unsigned wired = tlb_wired_slots < TLB_ENTRIES ? tlb_wired_slots : TLB_ENTRIES - 1; /* (all 32 wired: the last takes it) */
+    unsigned index = wired;
     while (index < TLB_ENTRIES && tlb_ent[index].used) index++;
-    if (index == TLB_ENTRIES) index = next++ % TLB_ENTRIES;
-    tlb_set_entry(index, pm, entry_hi, lo0, lo1, 0);
+    if (index == TLB_ENTRIES) index = wired + next++ % (TLB_ENTRIES - wired);
+    tlb_set_entry(index, pm, entry_hi, lo0, lo1, tlb_ent[index].used);
 }
 /* tlbp: the slot whose virtual page pair holds EntryHi's address, or 0x80000000 */
 uint32_t port_tlb_probe(uint32_t entry_hi) {
@@ -1528,6 +1558,31 @@ uint32_t port_tlb_probe(uint32_t entry_hi) {
         if ((entry_hi & ~0x1FFFu & ~(2 * size - 1)) == va) return i;
     }
     return 0x80000000u;
+}
+/* libultra's TLB routines the game's own pager uses (hand-written assembly the port does not run: the entries live in this
+   table): __osGetTLBHi(i) and its siblings are `mtc0 i, Index; tlbr; mfc0 EntryHi / EntryLo0 / EntryLo1 / PageMask`, and
+   osUnmapTLB(i) writes the slot back as an unmapped page. A paging game finds the slot that holds the page it is
+   replacing by reading every slot's EntryHi, and unmaps it, so the next access takes a refill and its handler loads
+   the new page. A slot nothing wrote reads as an address no program maps (KSEG0). */
+uint32_t w2c_env_0x5F_osGetTLBHi(struct w2c_env *e, uint32_t index) {
+    (void)e;
+    index &= TLB_ENTRIES - 1;
+    return tlb_ent[index].used ? tlb_ent[index].hi : 0x80000000u;
+}
+uint32_t w2c_env_0x5F_osGetTLBLo0(struct w2c_env *e, uint32_t index) { (void)e; index &= TLB_ENTRIES - 1; return tlb_ent[index].used ? tlb_ent[index].lo0 : 0; }
+uint32_t w2c_env_0x5F_osGetTLBLo1(struct w2c_env *e, uint32_t index) { (void)e; index &= TLB_ENTRIES - 1; return tlb_ent[index].used ? tlb_ent[index].lo1 : 0; }
+uint32_t w2c_env_0x5F_osGetTLBPageMask(struct w2c_env *e, uint32_t index) { (void)e; index &= TLB_ENTRIES - 1; return tlb_ent[index].used ? tlb_ent[index].pm : 0; }
+void w2c_env_osUnmapTLB(struct w2c_env *e, uint32_t index) {
+    (void)e;
+    index &= TLB_ENTRIES - 1;
+    if (getenv("PORT_TLB_TRACE")) fprintf(stderr, "tlb[%u] unmapped\n", index);
+    if (tlb_ent[index].used && !(tlb_ent[index].pm & ~0x01FFE000u)) {
+        uint32_t va, size;
+        tlb_entry_pages(tlb_ent[index].pm, tlb_ent[index].hi, &va, &size);
+        for (int half = 0; half < 2; half++)
+            if ((half ? tlb_ent[index].lo1 : tlb_ent[index].lo0) & 2) tlb_unmap_page(va + (uint32_t)half * size, size);
+    }
+    memset(&tlb_ent[index], 0, sizeof tlb_ent[index]);
 }
 /* tlbr */
 int port_tlb_read(unsigned index, uint32_t *pm, uint32_t *entry_hi, uint32_t *lo0, uint32_t *lo1) {
@@ -2126,4 +2181,71 @@ void port_trace(void) {
 void port_bad_call(uint32_t index) {
     fprintf(stderr, "a call through a function pointer to table entry %u, which holds no function\n", index);
     port_trace();
+}
+
+uint32_t port_tlb_canon(uint32_t a);
+/* Where libultra's exception handler keeps __osFaultedThread: the game installed a preamble at the general vector
+   (`lui k0; addiu k0,k0,lo; jr k0`, or a `j`) that reaches __osException, whose `panic` block stores the thread that
+   faulted (`sw k0, __osFaultedThread`) and then marks it stopped and faulted (`sh x, 18(k0)`: OSThread's flags).
+   Found in the game's own code, so it holds for any libultra build; 0 when the handler is not libultra's. */
+static uint32_t fault_variable(void) {
+    static uint32_t found, tried;
+    if (tried) return found;
+    tried = 1;
+    uint32_t w0 = be32(0x80000180u), w1 = be32(0x80000184u), target = 0;
+    if ((w0 >> 16) == 0x3C1Au && ((w1 >> 16) == 0x275Au || (w1 >> 16) == 0x375Au) && be32(0x80000188u) == 0x03400008u)
+        target = (w1 >> 26) == 9 ? (w0 << 16) + (uint32_t)(int32_t)(int16_t)w1 : (w0 << 16) | (w1 & 0xFFFFu);
+    else if ((w0 >> 26) == 2)
+        target = 0x80000000u | ((w0 & 0x3FFFFFFu) << 2);
+    if (!target) return 0;
+    uint32_t base = target < 0x80000000u ? port_tlb_canon(target) : target; /* (a handler linked in a TLB window) */
+    if (base < 0x80000000u || base > 0x807FF000u) return 0;
+    for (uint32_t i = 1; i < 1024; i++) {
+        uint32_t op = be32(base + 4 * i), prev = be32(base + 4 * i - 4);
+        /* sw k0, lo(rs) right after lui rs, hi */
+        if ((op >> 26) != 0x2B || ((op >> 16) & 31) != 26 || (prev >> 26) != 0x0F) continue;
+        uint32_t rs = (op >> 21) & 31;
+        if (rs == 26 || ((prev >> 16) & 31) != rs) continue;
+        for (uint32_t j = 1; j <= 12; j++) {
+            uint32_t f = be32(base + 4 * (i + j));
+            if ((f >> 26) == 0x29 && ((f >> 21) & 31) == 26 && (f & 0xFFFFu) == 18) { /* sh x, 18(k0) */
+                found = (prev << 16) + (uint32_t)(int32_t)(int16_t)op;
+                LOG("the game's __osFaultedThread is at %08X", found);
+                return found;
+            }
+        }
+    }
+    return 0;
+}
+/* A TLB fault the game's own pager answers. A game that pages its code in as it runs (a shooter links its program at
+   a virtual base and brings 4 KB pages in) takes TLB Invalid exceptions that libultra's kernel turns into a message on
+   the queue the game registered for OS_EVENT_FAULT: the faulting thread stops, __osFaultedThread names it, and a
+   pager thread reads its cause and BadVAddr from the OSThread, maps the page and puts the thread back. The host runs
+   the game's threads itself and keeps no kernel state for libultra's handler to work on, so the fault is delivered
+   here instead: fill the faulting OSThread as __osException does, point __osFaultedThread at it, post the fault
+   event, and park the host thread until the pager clears the fault flag. Returns 1 when the thread has been
+   restarted (the caller retries the access), 0 when nothing here can deliver it (no pager registered, not a game
+   thread, a handler that is not libultra's). */
+int port_tlb_fault(uint32_t epc, uint32_t badvaddr, uint32_t cause) {
+    if (!self || !self->os || !events[12].queue) return 0;
+    uint32_t var = fault_variable();
+    if (var < 0x80000000u || var > 0x807FFFFFu) return 0;
+    uint32_t os = self->os;
+    pthread_mutex_lock(&lock);
+    wbe16(os + 16, 1); /* OS_STATE_STOPPED */
+    wbe16(os + 18, 2); /* OS_FLAG_FAULT */
+    wbe32(os + 284, epc); /* THREAD_PC */
+    wbe32(os + 288, cause); /* THREAD_CAUSE */
+    wbe32(os + 292, badvaddr); /* THREAD_BADVADDR */
+    wbe32(var, os);
+    self->state = STOPPED;
+    self->faulted = 1;
+    static int said;
+    if (said++ < 3 || verbose > 1) LOG("thread %d takes a TLB fault at %08X (EPC %08X): the game's pager is told", self->number, badvaddr, epc);
+    pthread_mutex_unlock(&lock);
+    post_event(12); /* a pager that outranks this thread runs now, and the thread waits for it */
+    pthread_mutex_lock(&lock);
+    if (self->state != READY) { schedule(); wait_turn(self); }
+    pthread_mutex_unlock(&lock);
+    return 1;
 }
