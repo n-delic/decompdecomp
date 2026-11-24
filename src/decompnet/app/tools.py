@@ -151,7 +151,9 @@ WORK_STRUCTS = """\
 The brief says when a function is handed a struct: guess_struct(function, "arg0") shows one as C."""
 WORK_BOUNDARY = """\
 The function runs on past its end into padding, linker leftovers or data? report_boundary(...) where it really
-ends, then work on as it is."""
+ends, then work on as it is. The brief says "possible start boundary problem"? Its first word is probably
+padding or dead code, so no C can match this extent: release the function with that in your notes instead of tuning
+it. A person reviews the suggested start; do not cut it yourself."""
 
 # A helper started on "make matched code readable" (options task=readable), in any project (app/readable.py);
 # {names}: step 3, as the project's mode has it (READABLE_ROM, READABLE_FORK)

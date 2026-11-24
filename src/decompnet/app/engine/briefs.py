@@ -457,7 +457,7 @@ class BriefMixin:
         return super().get_context(project, function)
 
     def _brief(self, fn, agent, header):
-        from .. import claim_state
+        from .. import claim_state, start_boundaries
         if header == "CLAIMED" and agent and claim_state.fast():
             return claim_state.brief(self,fn,agent,header)
         from .. import draft_reports
@@ -477,6 +477,8 @@ class BriefMixin:
         review='\n\nBoundary review before tuning:\n'+warning if warning else ''
         if warning:
             review += '\nUse get_boundary_evidence before compiling. Review any overlapping entry and original data references.'
+        if fn['status'] != 'matched' and (start_note := start_boundaries.brief(self, proj, fn)):
+            review += '\n\n' + start_note
         if header_report:review += '\n\n'+header_report
         from ..wrapper_contracts import brief as wrapper_hint
         advice=wrapper_hint(self,proj,fn,fn['matched_source'] or fn['best_source'] or fn['seed'] or '')

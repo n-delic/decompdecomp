@@ -114,6 +114,11 @@ def suggestions(net, slug, packet):
         item = json.loads(row['value'])
         if item['slug'] == slug and item['function'] == packet['function']:
             items.append({**item, 'stale': any(item[k] != packet[k] for k in ('revision', 'image'))})
+    # The start check's own suggestion (start_boundaries): read from the bytes each time, so never stale.
+    from . import start_boundaries
+    proj = net.project_row(slug)
+    if found := start_boundaries.findings(net, proj).get(packet['function']):
+        items.append(start_boundaries.suggestion(found, packet))
     return sorted(items, key=lambda item: item['time'], reverse=True)[:10]
 
 
