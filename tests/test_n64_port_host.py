@@ -890,7 +890,7 @@ def test_the_host_defines_every_function_the_kit_says_it_provides():
     text = "".join(p.read_text() for p in kit.glob("*.c"))
     defined = {re.sub(r"0x([0-9A-F]{2})", lambda m: chr(int(m.group(1), 16)), n)
                for n in re.findall(r"\bw2c_env_(\w+)\(struct w2c_env", text)}
-    provided = set(port.LIBULTRASHIP) | set(port.GLUE_PROVIDES) | set(port._OS_INTERNAL)
+    provided = set(port.LIBULTRASHIP) | set(port.GLUE_PROVIDES) | set(port._OS_INTERNAL) | (set(port._LIBC) - set(port._MATH))
     assert sorted(provided - defined - NOT_FUNCTIONS - NEVER_RUN) == []
 
 
@@ -1571,3 +1571,34 @@ def test_the_host_includes_setjmp_only_outside_the_browser_build():
     include = text.index("#include <setjmp.h>")
     assert text[:include].rstrip().endswith("#ifndef PORT_WEB")
     assert "setjmp(" not in text[:text.index("#ifndef PORT_WEB")]  # (and nothing uses it before the guarded boot code)
+
+
+def test_the_hosts_string_functions_do_what_the_c_library_does(tmp_path):
+    """The kit leaves the game's own strcmp, strncmp, strcpy... out of the build as the host's, so a host without them
+    stubbed them to nothing (every strncmp said "equal"): each answers as the C library does, on the game's memory."""
+    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if not cc:
+        pytest.skip("no C compiler")
+    names = ["memmove", "memcmp", "strcmp", "strncmp", "strcpy", "strncpy", "strcat", "strchr"]
+    source = tmp_path / "t.c"
+    source.write_text("""#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+typedef uint32_t u32;
+struct w2c_env { int unused; };
+static uint8_t ram[0x1000], *M;
+""" + "\n".join(_function(HOST.read_text(), f"w2c_env_{n}") for n in names) + """
+int main(void) {
+    M = ram;
+    strcpy((char *)M + 0x10, "alpha"); strcpy((char *)M + 0x20, "alpine");
+    printf("%d %d %d\\n", (int32_t)w2c_env_strcmp(0, 0x10, 0x20) < 0, (int32_t)w2c_env_strncmp(0, 0x10, 0x20, 3), (int32_t)w2c_env_memcmp(0, 0x20, 0x10, 4) > 0);
+    w2c_env_strcpy(0, 0x40, 0x10); w2c_env_strcat(0, 0x40, 0x20);
+    printf("%s %u %u\\n", (char *)M + 0x40, w2c_env_strchr(0, 0x40, 'p'), w2c_env_strchr(0, 0x40, 'z'));
+    w2c_env_strncpy(0, 0x80, 0x10, 3); w2c_env_memmove(0, 0x82, 0x80, 3);
+    printf("%.5s\\n", (char *)M + 0x80);
+    return 0;
+}
+""")
+    subprocess.run([cc, "-o", str(tmp_path / "t"), str(source)], check=True, capture_output=True)
+    out = subprocess.run([str(tmp_path / "t")], check=True, capture_output=True, text=True).stdout.splitlines()
+    assert out == ["1 0 1", "alphaalpine 66 0", "alalp"]
