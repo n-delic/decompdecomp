@@ -585,6 +585,14 @@ task 3,000 to 14,000 in steps of 500, 22 matched the emulator to the pixel (0.00
 10,500) differed by 48 percent exactly (25 percent with no match within 3 pixels), the backdrop's scroll about 25 pixels
 off at that one moment and exact again at 10,000 and 11,000. Each window is one graphics task's picture (the sky and mountain
 backdrop's), one route, one track.
+The one window of 23 that didn't match (task 10,500, 48 percent differing, then exact again at 11,000) is not a drawing or physics
+difference. Read from the dumps, the object whose position and look-at floats had been tracked is the chase camera (the console's
+writes to it come from `update_camera` and `updateChaseCamera`): through task 10,430 both sides have it at the same place, and
+by 10,460 both have moved it, 1,474 units apart. `updateChaseCamera` picks the camera's next track node with a random skip
+(`rand_seed(osGetTime())`, then `rand_next15() % 6`), so the camera cut goes where the clock's value at that moment sends it,
+and the console's cycle count and the port's virtual time are not the same number. Shifting every input event by two tasks
+left the episode unchanged. A game that seeds its random numbers from the clock will differ from the emulator wherever
+it draws on them, however exact the rest is; matching it means giving the port the clock value the console read at that call.
 `--prime-save` on `tools/n64_frame_compare.py` runs the port once through the input script first, so the compared run starts
 from the save (`game.eep`, in `--work`) that run wrote. It matters: on a racing game a port started from no save, from an all-zero
 or all-0xFF one, or from the save of a short boot had its car launch slower than the emulator's (and stay 2,000 and more
