@@ -75,3 +75,17 @@ def test_unexpected_files_lists_every_differing_file(tmp_path):
     expected = {'src/a.c': 'a', 'src/b.c': 'b', 'src/new.c': 'x'}
     assert saves.unexpected_files(tmp_path, names, expected) == ['src/b.c', 'src/new.c']
     assert saves.unexpected_files(tmp_path, names, expected, first=True) == ['src/b.c']
+
+
+def test_a_rename_of_only_capitals_is_not_an_outside_change(tmp_path):
+    """A function renamed in capitals only, on a disk that ignores them, found its own old file under the new
+    spelling, took it for an editor's change and rolled every save back."""
+    (tmp_path/'src').mkdir()
+    (tmp_path/'src'/'setScissorRect.c').write_text('int x;\n')
+    if not (tmp_path/'src'/'SETSCISSORRECT.c').exists():
+        import pytest
+        pytest.skip('this disk tells File.c from file.c')
+    expected = {'src/setScissorRect.c': 'int x;\n'}
+    assert saves.unexpected_files(tmp_path, {'src/SetScissorRect.c', 'src/setScissorRect.c'}, expected) == []
+    (tmp_path/'src'/'setScissorRect.c').write_text('int y;\n')
+    assert saves.unexpected_files(tmp_path, {'src/SetScissorRect.c'}, expected) == ['src/SetScissorRect.c']

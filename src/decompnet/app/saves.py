@@ -239,10 +239,18 @@ def unexpected_files(folder: Path, names, expected: dict[str, str], *, first: bo
     """The files of `names` whose disk contents aren't `expected` (None: absent), README.md aside; `first`: stop at
     the first. `_publish` refuses to write over them, and a sync that keeps being refused names them."""
     found = []
+    folded = {}
+    for key in expected:
+        folded.setdefault(key.lower(), key)
     for name in sorted(names):
         if name == "README.md" or name in SIDE_FILES.values():
             continue  # (the side files are compared as part of the joined manifest)
         path = folder / name
+        if name not in expected and path.exists() and folded.get(name.lower(), name) != name:
+            # A rename that only changes capitals, on a disk that ignores them: the file under the new spelling is
+            # the old one, which the sync read under its old spelling. Compare it with that, not with "absent",
+            # or every save finds it "changed on disk" and rolls back, forever.
+            expected = {**expected, name: expected[folded[name.lower()]]}
         if name == MANIFEST and path.exists():
             try:
                 current = read_manifest_text(folder)
