@@ -928,7 +928,8 @@ def test_a_void_function_that_branches_after_a_call_still_leaves_that_calls_resu
           "  %2 = icmp ne i32 %1, 0\n  br i1 %2, label %3, label %5\n"
           "3:\n  %4 = call i32 @align(i32 noundef %1, i32 noundef %n) #2\n  br label %5\n"
           "5:\n  ret void\n}\n"
-          "define void @plain() {\n  ret void\n}\n"
+          "define void @plain(ptr %p) {\n  store i32 1, ptr %p, align 4\n  ret void\n}\n"
+          "define void @empty() {\n  ret void\n}\n"
           "define void @caller() {\n  %y = call i32 @wrapper(i32 noundef 1)\n  ret void\n}\n")
     out = adapt(ir, [], Types(ir), {})
     wrapper = out.split("define void @wrapper")[1].split("\n}")[0]
@@ -939,6 +940,9 @@ def test_a_void_function_that_branches_after_a_call_still_leaves_that_calls_resu
     assert f"store i32 0, ptr {V0}" not in wrapper
     plain = out.split("define void @plain")[1].split("\n}")[0]
     assert f"store i32 0, ptr {V0}" in plain, "no call: 0 as before"
+    empty = out.split("define void @empty")[1].split("\n}")[0]
+    assert V0 not in empty, "an empty function (`jr $ra; nop`) leaves $v0 as its caller had it"
+
 
 def test_a_call_by_a_name_the_project_changed_goes_to_the_function_there_now(tmp_path):
     """C that still calls a function by a name polishing renamed (a port-only source, a recompiled body) was linked to

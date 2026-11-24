@@ -370,7 +370,13 @@ def adapt(text, report=None, types=None, byval=None):
     void_function = False
     for line in text.split("\n"):
         stripped = line.lstrip()
-        if void_function and stripped == "ret void" and out_lines and VOID_CALL.match(out_lines[-1]):
+        if void_function and stripped == "ret void" and out_lines and out_lines[-1].startswith("define "):
+            # an empty void function (`void f(void) {}`, the machine code's `jr $ra; nop`): $v0 is what the caller
+            # left there, on the console and so here: the register words start from the caller's registers
+            # (port_recomp_decomp). A loader polling `while (!send(..)) ;` through such a stub (a puzzle game's
+            # message call, compiled out) stopped for ever on the 0 this used to store.
+            pass
+        elif void_function and stripped == "ret void" and out_lines and VOID_CALL.match(out_lines[-1]):
             # a void function that ends with a call to another void function: $v0 is what that callee left there
             # (a racing game's start-yaw helper ended with a void atan2 wrapper whose angle its caller took; storing
             # 0 here turned every car round at the start). The callee has already stored it.

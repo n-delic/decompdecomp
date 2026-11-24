@@ -573,3 +573,13 @@ def test_a_function_that_raises_a_syscall_is_left_to_the_interpreter():
     plain = ("RECOMP_FUNC void func_80088320(uint8_t* rdram, recomp_context* ctx) {\n"
              "    ctx->r2 = 1;\n    return;\n;}\n")
     assert recomp.unfinished([thunk + plain]) == {"func_80088310"}
+
+
+def test_a_call_into_the_games_c_starts_the_v0_word_from_the_callers_v0():
+    """`void f(void) {}` is `jr $ra; nop`: $v0 is what the caller had. A loader polled `while (!send(...))` through
+    such a stub and stopped for ever on the 0 the port's register word held."""
+    from decompnet.port.wasm import recomp
+
+    runtime = recomp.BRIDGE_RUNTIME
+    call = runtime.index("port_calls[lo].invoke(")
+    assert "STORE_W(16, 0x%(regs)Xu, ctx->r2);" in runtime[:call][-300:]
