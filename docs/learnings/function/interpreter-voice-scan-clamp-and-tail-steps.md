@@ -10,7 +10,7 @@ What the function (or case) looked like and the exact compiler and flags:
 
 The 1315-instruction N64 sound-sequence interpreter of interpreter-arms-inline-helpers-and-tails.md (KMC GCC 2.7.2,
 `-G0 -mips3 -mgp32 -mfp32 -O2`, the app's judge), continued from its saved best 6125. Not matched: 6125 -> 3230 in this
-run, every step a library child now (decomp-repair family in brackets).
+run (then 3230 -> 2510, step 9), every step a library child now (decomp-repair family in brackets).
 
 The source change, and the measured result before and after (scores, the judge used):
 
@@ -50,6 +50,13 @@ Each step on the previous one (fast_judge, every new best confirmed with compile
    one `&&` chain `fold_truthop` merges the three tests into one `and; bne`) 3455 -> 3350
    [`field_chain_local_nest`]; an inline branch helper's `u32 value` as `u16` (the caller's mask after the helper's
    loads) 3350 -> 3230 [`inline_param_width`].
+9. The pan clamp's sum as an `s16` (a halfword pseudo: MIPS has no PROMOTE_MODE, so the shift reads the SImode sum and
+   the `s16` is the target's `move $v0, $v1` copy) 3230 -> 3160, read back from the halfword store that takes the raw
+   expression (`F = E; sum = F;`) 3160 -> 2960 [`narrow_sign_clamp_shift_test`'s first child now]; the slot test
+   (`return 1;`/`return 0;`) returning `s32` instead of `u8`, which keeps the caller's `andi` after the join, 2960 ->
+   2700 [`inline_param_width`, return widths]; the helper's parameter masked in both arms read through a `u8 slot`
+   copied just before the `if` (the target's delay-slot `move $a0, $v1`) 2700 -> 2515 [`inline_param_byte_copy`]; the
+   slot comparison written `y == x` 2515 -> 2510.
 
 Failed experiments that would otherwise be repeated:
 
@@ -67,7 +74,13 @@ Failed experiments that would otherwise be repeated:
   the switch, the last arm falls into the end label and jump.c's first cross-jump rule (insns before the label, minimum
   1) redirects every `a0 = v0; j end` arm into it (7760); with `default:` last too, the nine marker arms cross-jump
   into each other through the old default label (25460). Not solved.
-- `(u8)` copies of the variable-write command's index for its call (no change), `u16`/`s16` index types (3650).
+- `(u8)` copies of the variable-write command's index for its call (no change), `u16`/`s16` index types (3650); the
+  store address as `arg0 + off`, `(char *) arg0 + off`, an index, an integer sum: all the same code.
+- The clamp's `andi` of the copy: every result type and compare spelling with the `s16` sum compiles alike (2960).
+- 0x39's `if (t <= K) v = t << 15; else v = C;` (the target's layout, and with one value variable for 0x30 and 0x39
+  0x30's tail cross-jumps as the target's does) puts the value in `$a0` instead of `$v0` (2535); not solved.
+- The result's type (`u8`, `u16`, `s16`, `u32`), the 0xB product's operands as locals, the init block's load order:
+  all invariant.
 
 What is controlled evidence and what is one function:
 
