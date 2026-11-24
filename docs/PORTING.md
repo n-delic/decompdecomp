@@ -866,3 +866,13 @@ background drawn before the window is noise on its side): a picture's `covered_p
 well: a pixel blended over earlier history (a translucent menu layer) depends on a background the emulator never made, so those
 differ whatever the port does. On a race window the remaining difference is the opponent's car: the same frame on both sides
 except that car, which is drawn a little apart, a divergence of the game's own state (its opponent's position), not of the renderer.
+
+**A lead for the race frame's one remaining difference (not yet traced to a function).** At task 615 of a menu-to-race route the
+console and the port draw the same frame except the opponent's white and blue car, whose pixels are two to three times darker
+on the port. The display lists are the same but for addresses and the triangles' shade words differ: the shade comes from the
+vertex data the car's list loads (`G_VTX`, 32 vertices), whose positions are the same on both sides while the colour/normal
+field of every one of the port's vertices is `46 52 45 45` (the ASCII "FREE", the allocator's fill for unused memory), where the
+console's hold distinct bytes. So the port's code for that car never writes the field the lighting reads, or writes it
+somewhere else: a difference of the game's own state, found only because the pictures could now be compared. Where to look next:
+who writes that field on the console (`emulator.run(watches=...)` on a vertex's colour word in a run that reaches the task; the
+address moves between runs, so take it from a dump of the same run), and whether that function runs in the port.
