@@ -1,5 +1,5 @@
 ---
-title: A 2,267-instruction collision sweep: m2c's forward goto arms as else arms, the plane-behind test first, and the result pointer read once (24406 -> 13655)
+title: A 2,267-instruction collision sweep: m2c's forward goto arms as else arms, the plane-behind test first, and the result pointer read once (24406 -> 6792)
 kind: function
 compiler: gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2
 evidence: observation
@@ -44,8 +44,26 @@ Failed experiments that would otherwise be repeated:
 - Dropping the unused `volatile char pad;` local: 13660, frame unchanged.
 - An outer `for (;;)` around the retry walk so the miss arm continues it: 13835.
 
+Continued 13655 -> 6792 (same judge, each confirmed with `compile_and_diff`):
+
+6. m2c's `s16 sp1E6 = w & 0xFF00;` as `u16`: 13655 -> 12757. `unsigned_narrow_local` stood down for the whole
+   function because the target has an `lh` elsewhere; a local that only holds a mask past its sign bit is now offered
+   anyway (decomp-repair 0.5.941).
+7. Each `segmentClosestPoint(&edge, a, b, p); d = distanceSquared3D(&edge, p);` pair written through one pointer local
+   shared by all eight pairs (`pt = &edge; segmentClosestPoint(pt, ...); d = distanceSquared3D(pt, p);`): 12757 ->
+   7266, frame 0x2A0 -> 0x290. The target computes each address once into `$s0` for both calls; one local per pair
+   was worse (13360). decomp-repair `call_pair_address_share` (0.5.943).
+8. The clamp's identical-arm scaffold `if (p) { t = y + a7; } else { t = y + a7; }` as `do { t = y + a7; } while (0);`:
+   7266 -> 7009 and the float argument back in `$f30` (collapsed plainly: 8383, the argument loses its register).
+   decomp-repair `identical_arm_scope` (0.5.946).
+9. The `spXX` locals declared in slot order: 7009 -> 6792. `spill_name_order` already offers it.
+
+Also tried at 6792: `sp194` not volatile (7792, frame 0x298); the retry walk as
+`for (; p != NULL; p = p->next)` with the miss arm `continue`-ing it (7117); the clamp's statement orders without
+the scaffold (8383-8678); the hit arms' flag stores reordered (7466 / 7266).
+
 What is controlled evidence and what is one function:
 
-Steps 1-4 are one function, each measured alone against the state before it. Left at 13655: the frame (0x2a0 vs
+Steps 1-9 are one function, each measured alone against the state before it. Left at 6792: the frame (0x290 vs
 0x288) and register roles everywhere (`alloc_roles.py` replays only 62 of 165 allocnos here, so its what-ifs are not
 reliable on this function); the object/mesh pointers swap `$s5`/`$s6`, the three vertex pointers rotate `$s1-$s3`.
