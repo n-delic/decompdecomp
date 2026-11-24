@@ -27,6 +27,15 @@ base in every spelling, offers each adjacent swap and each move to the front or 
 first, at most 24), and `store_run_constant_local` offers a constant stored at two places as `k = C;` once. Measured
 with the app's judge from the reverted starts: `prove_chain.py --families all` (decomprepair 0.5.1021, the pin on main) goes 80 -> 0 at step 1 on all three from the reverted starts (the m2c draft for the first two, the matched source with its last two block statements swapped for the third), the child being `store_run_order` for the first two and `independent_statement_swap` for the third (its own child ranks first there; `store_run_order` offers the same swap, direct call: 80 -> 0 as the fourth of seven children). Before the release (0.5.1018) the same runs stopped at 80 on the first two ("no child of 189 / 207 improves on 80") and reached 0 only on the third (`independent_statement_swap`, in the library since 0.5.871, so also in the app's 0.5.1006): the third constructor's stores are spelled `(((Rec *) ...)->v)`, which `independent_statement_swap` reads, so that one never needed this family; the two with the address store did.
 
+Correction found afterwards: with `--combine 10 --children 400` (every child scored, 189 and 207) the 0.5.1018 library, and
+the app's 0.5.1006 (the module is unchanged since), also reaches 0 on the first two starts at step 1, through
+`identical_statement_comove`: the constant store `0x64 = 0xC8` appears twice in each function, and that family moves
+the identical statement one place up in every run that has it, which here includes the harmless move of the second copy.
+It sat behind the default 80-children cap of `prove_chain` (so "stalled at 80" above is the tool's cap, not a lack of
+children), and it only fires because the constant is stored twice; `store_run_order` reaches the move whether or not the
+statement repeats and ranks it first. Whether the Deep Permuter scored that child in its own runs was not checked (no
+run was started).
+
 A constant local was not needed to match the third constructor here: with the repeated `0x117` written literally, four of
 the 24 orders of the four-statement run score 0 (the same as with a local `k`), so `store_run_constant_local` is a
 variant the hand match used, not a measured requirement. From the 20 non-zero orders of that run a greedy chain of
