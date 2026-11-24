@@ -615,6 +615,14 @@ game the port's retrace count matched the console's within two or three retraces
 2,098, where the constant cost per task tried before was 1,298 and 86), which no model of the game's adaptive frame rate was
 needed for. The paused race grid still read 139 against the console's 140 in the horizon's fill rectangle (shift-tolerant
 mismatch 0.06 to 0.14 percent within 1 to 3 pixels), so the horizon's step isn't a function of the retrace count alone.
+Moving race frames with the console's pacing replayed (`PORT_VTIME_TRACE`, the same input timed in graphics tasks on both
+sides, `n64_frame_compare.py --tolerance 3`), a racing game's race at ten windows from task 6,000 to 14,000: the first
+(tasks 6,000 to 6,010) matched the emulator to the pixel (0.00 percent differing); the other windows differed exactly by 17 to
+38 percent but had 0.00 to 6.25 percent of pixels with no match within 3 pixels in eight of the nine (the same picture a pixel or
+three apart), and 8.8 to 12.6 percent at tasks 10,000 and 14,000, where the backdrop had scrolled about ten pixels: the car's
+heading had drifted a little from the console's, as an uncontrolled car's does after collisions. Before the replay the
+same windows were 29 to 44 percent differing exactly and 11 to 31 percent unmatched within 3 pixels. So a moving scene is drawn
+as the console draws it; what differs is where the car and camera are.
 What `PORT_VTIME` did and didn't settle for a racing game, with the same retrace-timed input on both sides: the port's
 video-mode blanks fell at the console's graphics tasks within one frame (485, 521, 632 against 485, 521, 637; the race
 start at 2,727 and 2,773 exactly), where the wall-clock port had been hundreds of tasks apart, so the two run the same
