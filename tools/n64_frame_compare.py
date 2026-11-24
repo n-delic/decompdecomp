@@ -32,276 +32,38 @@ built: it may run into old data and fail to draw, which is reported and skipped.
 from __future__ import annotations
 
 import argparse
-import os
-import shutil
-import struct
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent / "src"))
-from n64_rdp_compare import RENDER, commands, compare, images, png, rgb  # noqa: E402
-
-HARNESS = r"""
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-void port_render_task(uint32_t task);
-static uint8_t ram[0x800000];
-uint8_t *port_memory(void) { return ram - 0x80000000u; }
-int port_live_active(void) { return 0; }
-void port_live_frame(const uint8_t *rgb, int w, int h) { (void)rgb; (void)w; (void)h; }
-/* argv: a RAM dump, a task's address: the task drawn with PORT_RDPDUMP set, which writes its commands and memory */
-int main(int argc, char **argv) {
-    if (argc < 3) return 2;
-    FILE *f = fopen(argv[1], "rb");
-    if (!f) return 3;
-    size_t n = fread(ram, 1, sizeof ram, f);
-    fclose(f);
-    if (n < 0x400000) return 3;
-    port_render_task((uint32_t)strtoul(argv[2], NULL, 16));
-    return 0;
-}
-"""
-
-RAM = 0x800000
-
-
-def build(work: Path) -> Path:
-    """The port's renderer around a program that draws one task from a RAM dump."""
-    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
-    if not cc:
-        raise SystemExit("needs a C compiler (cc, clang or gcc)")
-    work.mkdir(parents=True, exist_ok=True)
-    (work / "frame.c").write_text(HARNESS)
-    program = work / "frame_task"
-    subprocess.run([cc, "-O2", "-o", str(program), str(work / "frame.c"), str(RENDER), "-lm"], check=True, timeout=600)
-    return program
-
-
-def _word(mem: bytes, a: int) -> int:
-    return struct.unpack_from(">I", mem, a)[0]
-
-
-def graphics_tasks(mem: bytes) -> list[int]:
-    """The RAM addresses of what look like libultra graphics tasks (OSTask, 8-byte aligned): type M_GFXTASK (1), its
-    boot code, microcode, microcode data and display list in RAM, the data at most 2 KB, as a microcode's is."""
-    size = min(len(mem), RAM)
-
-    def inside(p: int) -> bool:
-        return 0x80000000 <= p < 0x80000000 + size
-
-    found = []
-    for a in range(0, size - 64, 8):
-        if _word(mem, a) != 1:
-            continue
-        boot, code, data, data_size, dl = (_word(mem, a + 8), _word(mem, a + 16), _word(mem, a + 24),
-                                           _word(mem, a + 28), _word(mem, a + 48))
-        if all(inside(p) for p in (boot, code, data, dl)) and 0 < data_size <= 0x800 and dl % 8 == 0:
-            found.append(0x80000000 | a)
-    return found
-
-
-def draw(program: Path, dump: Path, task: int, work: Path) -> dict[int, tuple[int, int, list]] | None:
-    """The images one task draws: {address: (width, lines, RGB pixels)}, or None when it fails to draw."""
-    out = work / f"task_{task:08X}"
-    shutil.rmtree(out, ignore_errors=True)
-    out.mkdir(parents=True)
-    env = {**os.environ, "PORT_RDPDUMP": str(out), "PORT_RDPDUMP_TASKS": "1"}
-    try:
-        done = subprocess.run([str(program), str(dump), f"{task:x}"], env=env, capture_output=True, timeout=120)
-    except subprocess.TimeoutExpired:
-        return None
-    cmds, after = out / "000001.cmds", out / "000001.after"
-    if done.returncode or not cmds.exists() or not after.exists():
-        return None
-    mem = after.read_bytes()
-    drawn = {}
-    data = cmds.read_bytes()
-    depth = {w[1] & 0xFFFFFF for w in commands(data) if w[0] >> 24 & 0x3F == 0x3E}  # z images: cleared as colour
-    for addr, width, siz, lines in images(data):
-        if addr in depth:
-            continue
-        if addr + width * lines * (4 if siz == 3 else 2) <= len(mem):
-            drawn[addr] = (width, lines, rgb(mem, addr, width, siz, lines))
-    return drawn
-
-
-TASK_AT = 0x807FFFC0  # where a dump's own task is put for drawing: the last 64 bytes of the 8 MB
-
-
-def with_task(dump: Path, work: Path) -> tuple[Path, int] | None:
-    """The dump with the task its `.task` file holds placed at TASK_AT, and that address; None when the dump has no
-    such file. Both the emulator's video plugin and the port's host write the task the RSP was given beside each
-    frame dump: a game keeps its own copy wherever it likes, so scanning RAM for one (graphics_tasks) can find
-    nothing, or something that only looks like a task. The emulator's holds physical pointers; the renderer reads
-    pointers as the game's, so they get the 0x80000000 a game's own task has."""
-    sidecar = dump.with_name(dump.name + ".task")
-    if not sidecar.is_file() or sidecar.stat().st_size != 64:
-        return None
-    words = list(struct.unpack(">16I", sidecar.read_bytes()))
-    for i in (2, 4, 6, 8, 10, 12):  # boot, microcode, its data, the DRAM stack, the output buffer, the list
-        if words[i] and words[i] < 0x80000000:
-            words[i] |= 0x80000000
-    mem = bytearray(dump.read_bytes().ljust(RAM, b"\0"))
-    mem[TASK_AT & 0x7FFFFF:(TASK_AT & 0x7FFFFF) + 64] = struct.pack(">16I", *words)
-    placed = work / (dump.name + ".withtask")
-    placed.write_bytes(mem)
-    return placed, TASK_AT
-
-
-def frames(program: Path, dump: Path, work: Path) -> dict[tuple[int, int], tuple[int, int, list]]:
-    """Every graphics task in a dump drawn: {(task, image): (width, lines, pixels)}; tasks that fail are reported."""
-    out = {}
-    own = with_task(dump, work)
-    if own:  # the task the console or the port was running, not a guess from RAM
-        dump, tasks = own[0], [own[1]]
-    else:
-        tasks = graphics_tasks(dump.read_bytes())
-    for task in tasks:
-        drawn = draw(program, dump, task, work)
-        if drawn is None:
-            print(f"  {dump.name}: the task at {task:08X} didn't draw (a list still being built?)")
-            continue
-        for image, picture in drawn.items():
-            out[(task, image)] = picture
-    return out
-
-
-def retraces_per_second(rom: Path) -> int:
-    """50 for a PAL game, 60 otherwise, by the header's region (in any of the three byte orders)."""
-    head = rom.read_bytes()[:0x40]
-    if head[:4] == b"\x37\x80\x40\x12":
-        head = bytes(b for i in range(0, 0x40, 2) for b in (head[i + 1], head[i]))
-    elif head[:4] == b"\x40\x12\x37\x80":
-        head = b"".join(head[i:i + 4][::-1] for i in range(0, 0x40, 4))
-    return 50 if chr(head[0x3E]) in "DFHIPSUWXY" else 60
-
-
-def prime_save(game: Path, rom: Path, inputs: str, folder: Path, clock: str = "vi", seconds: int = 100) -> bool:
-    """Run the port once through the same input script in `folder` (where it keeps game.eep) before the run that is compared,
-    unless a save is there already. Observed on a racing game: a port started from no save, from an all-zero one or from the
-    save of a short boot had its car launch slower than the emulator's (687 units to the port's 116 in the first 200 tasks
-    of the race, 2,000 and more units behind from then on), while one started from the save a full run of the script had
-    written was at the console's position to the unit at every task sampled, and the race matched the emulator to the pixel
-    (seven of eight windows 0.00 percent differing). Why the emulator's blank save behaves like that one is not known. Returns
-    whether it ran."""
-    if (folder / "game.eep").exists():
-        return False
-    env = {k: v for k, v in os.environ.items() if k not in ("PORT_INPUT", "PORT_RAM_DUMPS", "PORT_FRAME_DUMPS", "PORT_VI_DUMPS")}
-    env["PORT_INPUT_CLOCK"] = clock
-    if inputs:
-        env["PORT_INPUT"] = inputs
-    subprocess.run([str(game.resolve()), str(rom.resolve()), str(seconds)], cwd=folder, env=env, capture_output=True,
-                   timeout=seconds * 6 + 120)
-    return (folder / "game.eep").exists()
-
-
-HEADER = 16  # bytes at the start of a save a game fills in with what it takes from the clock (a racing game's first 8 differed)
-
-
-def console_save(dump: Path, port_save: bytes) -> bytes | None:
-    """The save the emulator's game holds, taken from a console RAM dump taken after the game has read its EEPROM: the game keeps
-    a copy of the whole chip in RAM, so the port's save (from a run of its own) is looked for there by its body, past the first
-    HEADER bytes (a time-seeded stamp and a counter differ), and the console's bytes at that place are the console's save.
-    None when the body isn't found once. A port started from these bytes is at the console's position to the unit through a
-    racing game's whole race (a fresh port, whose boot writes a different header and counter, launched slower): see prime_save."""
-    if len(port_save) < HEADER + 32:
-        return None
-    body = port_save[HEADER:HEADER + 32]
-    mem = dump.read_bytes()
-    at = mem.find(body)
-    if at < HEADER or mem.find(body, at + 1) != -1 or at - HEADER + len(port_save) > len(mem):
-        return None
-    return mem[at - HEADER:at - HEADER + len(port_save)]
-
-
-def run_port(game: Path, rom: Path, points: list[int], inputs: str, folder: Path, clock: str = "vi") -> dict[int, Path]:
-    """The port run (in real time) until its RAM is written at each point: retraces (PORT_RAM_DUMPS) or, with `clock`
-    "frames", the game's graphics tasks (PORT_FRAME_DUMPS), its input timed the same way. Stopped once the last is
-    written."""
-    import time
-    dumps = {n: folder / f"port_{clock}_{n}.bin" for n in points}
-    for path in dumps.values():
-        path.unlink(missing_ok=True)
-    var = "PORT_FRAME_DUMPS" if clock == "frames" else "PORT_RAM_DUMPS"
-    env = {**os.environ, var: ",".join(f"{n}:{p}" for n, p in dumps.items()), "PORT_INPUT_CLOCK": clock}
-    for key in ("PORT_INPUT", "PORT_RAM_DUMPS", "PORT_FRAME_DUMPS"):
-        if key != var:
-            env.pop(key, None)
-    if inputs:
-        env["PORT_INPUT"] = inputs
-    # a frame takes at most 6 retraces (10 frames a second) in any game worth comparing
-    seconds = max(points) * (6 if clock == "frames" else 1) / retraces_per_second(rom) + 10
-    proc = subprocess.Popen([str(game.resolve()), str(rom.resolve()), f"{seconds:.0f}"], cwd=folder, env=env,
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    started = time.monotonic()
-    try:
-        while proc.poll() is None and time.monotonic() - started < seconds + 60:
-            if all(p.exists() and p.stat().st_size >= RAM for p in dumps.values()):
-                break
-            time.sleep(0.5)
-    finally:
-        if proc.poll() is None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-    return {n: p for n, p in dumps.items() if p.exists() and p.stat().st_size >= RAM}
-
-
-def run_console(rom: Path, points: list[int], inputs: str, folder: Path, clock: str = "vi") -> dict[int, Path]:
-    """The ROM in the reversing emulator, its RAM written at each point (retraces, or the game's frames)."""
-    from decompnet.consoles.n64 import emulator
-
-    dumps = {n: folder / f"console_{clock}_{n}.bin" for n in points}
-    for path in dumps.values():
-        path.unlink(missing_ok=True)
-    if clock == "frames":
-        emulator.run(rom, max(points) * 6 + 1200, inputs=inputs, frame_dumps=dumps, input_clock="frames")
-    else:
-        emulator.run(rom, max(points) + 1, inputs=inputs, dumps=dumps)
-    return {n: p for n, p in dumps.items() if p.exists()}
-
-
-def side_by_side(path: Path, pictures: list[tuple[int, int, list] | None]) -> None:
-    """Pictures left to right (a missing one black), each the first's size."""
-    width, lines = next((p[0], p[1]) for p in pictures if p)
-    rows = []
-    for y in range(lines):
-        row = []
-        for p in pictures:
-            row += p[2][y * width:(y + 1) * width] if p and p[0] == width and p[1] == lines else [(0, 0, 0)] * width
-        rows += row
-    png(path, rows, width * len(pictures), lines)
-
-
-def unmatched(a: list, b: list, width: int, lines: int, radius: int) -> float:
-    """The percentage of a's pixels with no equal pixel of b within `radius` pixels: what's left of a difference once a
-    small shift is allowed. A scene drawn the same but a pixel or two apart (a camera, a scroll, an animation caught a
-    frame earlier, as moving scenes are when the console and the port run apart) scores near 0, where a difference in what
-    is drawn stays high."""
-    bad = 0
-    for y in range(lines):
-        for x in range(width):
-            p = a[y * width + x]
-            found = False
-            for yy in range(max(0, y - radius), min(lines, y + radius + 1)):
-                row = yy * width
-                if p in b[row + max(0, x - radius):row + min(width, x + radius + 1)]:
-                    found = True
-                    break
-            bad += not found
-    return 100.0 * bad / max(width * lines, 1)
-
-
-def difference(a: list, b: list) -> list:
-    return [tuple(min(255, abs(x - y) * 4) for x, y in zip(p, q)) for p, q in zip(a, b)]
+# the engine is the app's (Check pictures in the Porting tab runs it too); the names stay here for the callers and tests
+from decompnet.port.frame_compare import (  # noqa: E402,F401
+    HARNESS,
+    HEADER,
+    RAM,
+    RENDER,
+    TASK_AT,
+    build,
+    commands,
+    compare,
+    console_save,
+    difference,
+    draw,
+    frames,
+    graphics_tasks,
+    images,
+    png,
+    prime_save,
+    retraces_per_second,
+    rgb,
+    run_console,
+    run_port,
+    side_by_side,
+    unmatched,
+    with_task,
+)
 
 
 def main(argv=None) -> int:

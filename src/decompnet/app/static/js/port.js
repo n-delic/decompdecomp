@@ -210,9 +210,16 @@ function recompileStep(report) {
 
 /* The steps, from the report: each {title, pct (null: done or not, no share to show), detail, buttons and logs (the
    panel's own elements, moved into the step)}. */
+// Fix calls by old names has work only where the link check found a call to a renamed function or to a static one;
+// it stays while it runs, so a refresh doesn't drop its button mid-job.
+function needsRenamedCalls(link) {
+  return !!link?.groups?.some((g) => g.kind === "renamed" || g.kind === "static") || !!$("portRenameCalls")?.disabled;
+}
+
 function portSteps(report) {
   const code = report.code, pc = report.pc, link = report.link, assets = report.assets, calls = report.calls;
-  const behaviour = report.behaviour, compared = behaviour ? behaviour.same + behaviour.differs : 0;
+  const behaviour = report.behaviour, compared = behaviour ? behaviour.same + behaviour.differs : 0, pictures = report.pictures;
+  const scan = report.render_scan;
   const library = code.replaced + code.native + (code.glue || 0);
   const steps = [
     { title: "The game's code in C", pct: pct(code.c, code.total),
@@ -228,7 +235,9 @@ function portSteps(report) {
       detail: report.addresses.literals ? `${report.addresses.literals} in ${report.addresses.functions} functions` : "none left" },
     { title: "Compiles for a PC", pct: pc ? pct(pc.ok + pc.warned, pc.total) : 0,
       detail: pc ? `${(pc.ok + pc.warned).toLocaleString()} of ${pc.total.toLocaleString()} functions compile, ${pc.failed} don't`
-        : "not tried yet", buttons: ["portCompile", "portRenameCalls"], logs: ["portCompileLog", "portRenameLog"] },
+        : "not tried yet", drawer: pc?.failures?.length ? {label: `${pc.failures.length.toLocaleString()} don't`,
+          title: "Show the functions that don't compile, with their first error", open: () => openPortFailures(pc.failures)} : null,
+        buttons: ["portCompile", ...(needsRenamedCalls(link) ? ["portRenameCalls"] : [])], logs: ["portCompileLog", "portRenameLog"] },
     { title: "Links for a PC", pct: link ? (link.undefined || link.duplicates.length ? null : 100) : 0,
       detail: link ? `${link.undefined.toLocaleString()} symbols needed and defined nowhere`
         + (link.duplicates.length ? `, ${link.duplicates.length} defined twice` : "") : "after Compile for PC" },
@@ -236,6 +245,8 @@ function portSteps(report) {
       detail: calls ? (calls.calls ? `${calls.calls.toLocaleString()} calls in ${calls.functions.toLocaleString()} `
         + "functions match but disagree with the function they call: a port can behave differently there"
         : "every call agrees with the function it calls") : "after Play builds the game",
+      drawer: calls?.callees?.length ? {label: `${calls.calls.toLocaleString()} calls`,
+        title: "Show the functions their callers disagree with, and why Make calls agree kept their C", open: () => openPortCallees(calls.callees)} : null,
       buttons: calls && calls.calls ? ["portFixCalls"] : [], logs: ["portFixCallsLog"] },
     { title: "Behaves like the original", pct: compared ? pct(behaviour.same, compared) : null,
       detail: !report.behaviour_available ? "needs a reversing emulator and a static recompiler for this console"
@@ -245,6 +256,21 @@ function portSteps(report) {
           + `; ${behaviour.not_reached.toLocaleString()} not reached in ${behaviour.settings.vis} VIs`,
       buttons: report.behaviour_available ? ["portBehaviour", "portBehaviourStop", "portBehaviourSettings"] : [],
       logs: ["portBehaviourLog"] },
+    ...(report.mode === "project" ? [] : [{ title: "Draws without faults", pct: scan && scan.frames ? pct(scan.frames - scan.flagged, scan.frames) : null,
+      detail: !scan ? "not scanned yet: Scan for rendering faults runs the game with a scripted controller and looks through its frames"
+        : `${scan.flagged.toLocaleString()} of ${scan.frames.toLocaleString()} frames look wrong (every ${scan.settings.every}th frame of `
+          + `${scan.settings.seconds} seconds)` + (scan.stopped ? `; the game stopped early: ${scan.stopped}` : ""),
+      scanFlagged: scan?.runs || 0,
+      buttons: ["portScan", "portScanStop", "portScanSettings"], logs: ["portScanLog"] }]),
+    { title: "Pictures match the console", pct: pictures ? pct(pictures.same, pictures.compared) : null,
+      detail: !report.pictures_available ? "needs a reversing emulator for this console"
+        : !pictures ? "not checked yet: Check pictures draws the console's frames and the port's from memory and compares them"
+        : `${pictures.same.toLocaleString()} of ${pictures.compared.toLocaleString()} pictures match (${pictures.exact} identical, `
+          + `${pictures.shifted} within ${pictures.settings.tolerance} px)` + (pictures.differ ? `, ${pictures.differ} differ` : ""),
+      drawer: pictures?.differing?.length ? {label: `${pictures.differ} differ`,
+        title: "Show the pictures that differ: the console's, the port's and their difference", open: () => openPortPictures(pictures)} : null,
+      buttons: report.pictures_available ? ["portPictures", "portPicturesStop", "portPicturesSettings"] : [],
+      logs: ["portPicturesLog"] },
     { title: "Assets extracted", pct: assets ? (assets.extracted && assets.extracted.current ? pct(assets.extracted.mapped, assets.extracted.total)
         : assets.written ? 50 : 0) : 0,
       detail: assets ? `${assets.resources} resources mapped` + (assets.extracted && assets.extracted.current
@@ -274,16 +300,76 @@ function portSteps(report) {
   return [recompileStep(report), ...steps];
 }
 
+// A list of functions in the shared side drawer, one row each with a link to the function, its details and a sortable
+// table (AGENTS.md: a count that needs action opens this). `cols` are {label, get(row), num?}; the first is the link.
+function openPortTable(title, intro, rows, cols) {
+  let key = 0, dir = 1;
+  const body = dialog(title, `<p class="small muted"></p><table class="compiler-table port-failure-table"><thead><tr></tr></thead><tbody></tbody></table>`, "port-table");
+  body.querySelector("p").textContent = intro;
+  const draw = () => {
+    const col = cols[key], value = (r) => col.get(r);
+    const sorted = [...rows].sort((x, y) => {
+      const a = value(x), b = value(y);
+      if (a === "" || a == null) return 1;
+      if (b === "" || b == null) return -1;
+      return (col.num ? a - b : String(a).localeCompare(String(b), undefined, {numeric: true})) * dir;
+    });
+    body.querySelector("tr").replaceChildren(...cols.map((c, i) => {
+      const th = document.createElement("th"); th.scope = "col";
+      th.setAttribute("aria-sort", i === key ? (dir > 0 ? "ascending" : "descending") : "none");
+      const sort = document.createElement("button"); sort.type = "button"; sort.className = "ghost small-btn";
+      sort.textContent = c.label + (i === key ? (dir > 0 ? " ▲" : " ▼") : "");
+      sort.onclick = () => { dir = i === key ? -dir : (c.num ? -1 : 1); key = i; draw(); };
+      th.append(sort); return th;
+    }));
+    body.querySelector("tbody").replaceChildren(...sorted.map((r) => {
+      const tr = document.createElement("tr");
+      cols.forEach((c, i) => {
+        const td = document.createElement("td");
+        if (i === 0) {
+          const link = document.createElement("button"); link.type = "button"; link.className = "ghost small-btn mono";
+          link.textContent = c.get(r); link.onclick = () => { closeDialog(); openFn(c.get(r)); };
+          td.append(link);
+        } else { td.className = "small"; td.textContent = c.get(r) ?? ""; }
+        tr.append(td);
+      });
+      return tr;
+    }));
+  };
+  draw();
+}
+
+// The functions a PC compile refuses: their error kinds and the first error clang gave.
+function openPortFailures(failures) {
+  openPortTable(`${failures.length.toLocaleString()} functions that don't compile for a PC`,
+    "Compile for PC refuses these. Open a function to see its C and fix it; the first error is shown here.", failures, [
+      {label: "Function", get: (f) => f.name},
+      {label: "Kind", get: (f) => f.kinds.join(", ") || "error"},
+      {label: "First error", get: (f) => f.message ? `${f.file || "line"}${f.file ? ":" : " "}${f.line}: ${f.message}` : ""}]);
+}
+
+// The functions whose definitions their callers disagree with, and why Make calls agree left each one's C alone.
+function openPortCallees(callees) {
+  openPortTable(`${callees.length.toLocaleString()} functions their callers disagree with`,
+    "Each function's definition differs from how its callers call it. Make calls agree rewrites them where the console "
+    + "build still matches; the reason shown is why it kept a function's C. Open one to change its C by hand.", callees, [
+      {label: "Function", get: (c) => c.name},
+      {label: "Calls", get: (c) => c.calls, num: true},
+      {label: "Callers", get: (c) => c.callers, num: true},
+      {label: "Disagreement", get: (c) => c.kinds.join(", ")},
+      {label: "Why its C was kept", get: (c) => c.refused || "not tried yet since the last build"}]);
+}
+
 function renderPortSteps(report, steps = portSteps(report)) {
   const list = $("portSteps");
   if (!list) return;
   const parked = $("portParked");
   for (const id of ["portDrafts", "portCompile", "portRenameCalls", "portFixCalls", "portAssets", "portExtract", "portPlay", "portStop",
-    "portBehaviour", "portBehaviourStop", "portBehaviourSettings", "portRecompile", "portRecompileStop"]) {
+    "portBehaviour", "portBehaviourStop", "portBehaviourSettings", "portScan", "portScanStop", "portScanSettings", "portPictures", "portPicturesStop", "portPicturesSettings", "portRecompile", "portRecompileStop"]) {
     if (parked && $(id)) parked.append($(id));  // back where they wait, then into their step
   }
   for (const id of ["portDraftLog", "portCompileLog", "portRenameLog", "portFixCallsLog", "portAssetsLog", "portExtractLog", "portPlayLog",
-    "portBehaviourLog", "portRecompileLog", "portDiscoveries"]) {
+    "portBehaviourLog", "portScanLog", "portPicturesLog", "portRecompileLog", "portDiscoveries"]) {
     if (parked && $(id)) parked.append(...withWork($(id)));
   }
   const shown = steps.filter((s) => !s.diagnostic && s.pct != null);
@@ -305,6 +391,21 @@ function renderPortSteps(report, steps = portSteps(report)) {
     share.textContent = step.status || (step.unavailable ? "not checked" : step.pct == null ? (step.play ? "" : "to do") : step.pct + "%");
     head.append(title, share);
     const detail = document.createElement("p"); detail.className = "small muted"; detail.textContent = step.detail;
+    if (step.drawer && step.detail.includes(step.drawer.label)) {  // the count opens the list in the side drawer
+      const open = document.createElement("button"); open.type = "button"; open.className = "link-btn";
+      open.textContent = step.drawer.label;
+      open.title = step.drawer.title;
+      open.onclick = step.drawer.open;
+      const [before, ...after] = step.detail.split(step.drawer.label);
+      detail.replaceChildren(before, open, after.join(step.drawer.label));
+    }
+    if (step.scanFlagged) {  // the count opens the frames
+      const open = document.createElement("button"); open.type = "button"; open.className = "link-btn";
+      open.textContent = `${step.scanFlagged.toLocaleString()} findings`;
+      open.title = "Show each run of flagged frames with its picture and graphics task";
+      open.onclick = () => openRenderFaults();
+      detail.append(" ", open);
+    }
     body.append(head);
     if (step.pct != null || step.emptyMeter) {
       const meter = document.createElement("div"); meter.className = "meter";
@@ -643,6 +744,148 @@ async function stopBehaviour() {
   catch (error) { showJobError($("portBehaviourLog"), error.message); stop.disabled = false; stop.textContent = "Stop checking"; }
 }
 
+// The frames Scan for rendering faults flagged, in the shared side drawer: the picture, why it was flagged and the graphics
+// task it came after (tools/n64_frame_compare.py --frames draws that task on the console's side). Columns sort by heading.
+async function openRenderFaults() {
+  const slug = S.slug;
+  let saved;
+  try { saved = await api("/api/render-scan?slug=" + encodeURIComponent(slug)); }
+  catch (error) { toast(error.message); return; }
+  if (S.slug !== slug) return;
+  const found = saved.findings || [];
+  let key = "frame", dir = 1;
+  const body = dialog(`${found.length.toLocaleString()} findings in the scan`,
+    `<p class="small muted">Frames the port showed that can't be right; a screen that stays broken is one row, from its first frame to
+     its last. To see what the console draws there, run the reversing emulator to the first frame's retrace with the same
+     controller script: <code>python tools/n64_frame_compare.py ROM --port GAME --vis RETRACE --input @SCRIPT --out DIR</code>
+     (the console's picture is the reference; the task is the graphics task that frame came after).${saved.stopped ? ` The game stopped early: ${saved.stopped}.` : ""}</p>
+     <table class="compiler-table port-failure-table"><thead><tr></tr></thead><tbody></tbody></table>`, "port-failures");
+  const cols = [["frame", "Frames"], ["retrace", "Retrace"], ["task", "Graphics task"], ["why", "What's wrong"], ["picture", "Picture"]];
+  const value = (f, k) => k === "why" ? f.details.join("; ") : k === "picture" ? (f.picture ? 1 : "") : f[k] ?? "";
+  const draw = () => {
+    const rows = [...found].sort((x, y) => {
+      const a = value(x, key), b = value(y, key);
+      if (a === "") return b === "" ? 0 : 1;
+      if (b === "") return -1;
+      return (typeof a === "number" && typeof b === "number" ? a - b : String(a).localeCompare(String(b), undefined, {numeric: true})) * dir;
+    });
+    body.querySelector("tr").replaceChildren(...cols.map(([k, label]) => {
+      const th = document.createElement("th"); th.scope = "col";
+      th.setAttribute("aria-sort", k === key ? (dir > 0 ? "ascending" : "descending") : "none");
+      const sort = document.createElement("button"); sort.type = "button"; sort.className = "ghost small-btn";
+      sort.textContent = label + (k === key ? (dir > 0 ? " ▲" : " ▼") : "");
+      sort.onclick = () => { dir = k === key ? -dir : 1; key = k; draw(); };
+      th.append(sort); return th;
+    }));
+    body.querySelector("tbody").replaceChildren(...rows.map((f) => {
+      const tr = document.createElement("tr");
+      const cells = [f.count > 1 ? `${f.frame}–${f.last} (${f.count})` : f.frame, f.retrace ?? "", f.task ?? "", f.details.join("; ")].map((text) => {
+        const td = document.createElement("td"); td.className = "small"; td.textContent = text; return td;
+      });
+      const pic = document.createElement("td");
+      if (f.picture) {
+        const img = document.createElement("img"); img.src = f.picture; img.alt = `Frame ${f.frame}`; img.width = 160;
+        pic.append(img);
+      } else pic.textContent = "not kept";
+      tr.append(...cells, pic); return tr;
+    }));
+  };
+  draw();
+}
+
+/* Scan for rendering faults (port/render_scan.py): the game run headless with a scripted controller, its frames looked
+   through. The bar counts the game's own time; Stop ends the run; a scan running when the panel is drawn again is
+   followed, not started again (report.play.render_scan_job). */
+let scanJob = null;
+
+async function scanRenderFaults(existing = null) {
+  if (scanJob) return;
+  const slug = S.slug, log = $("portScanLog"), stop = $("portScanStop");
+  scanJob = existing ? existing.id : "starting";
+  log.hidden = false; log._showJobProgress = true;
+  showJobError(log, "");
+  stop.hidden = false; stop.disabled = false; stop.textContent = "Stop scanning";
+  const finish = beginWork(log, "Scanning the game's frames for rendering faults", [$("portScan")], "Scanned.");
+  if (existing?.progress) updateWorkProgress(log, existing.progress);
+  try {
+    const body = { slug, seconds: Number($("portScanSeconds").value) || 60, every: Number($("portScanEvery").value) || 6,
+                   input: $("portScanInput").value || "" };
+    const result = existing ? { job: existing.id } : await api("/api/render-scan", { method: "POST", body });
+    if (result.job) { scanJob = result.job; await followJob(result.job, log, null, () => S.slug === slug); }
+  } catch (error) {
+    showJobError(log, error.message);
+  } finally {
+    scanJob = null; finish();
+    stop.hidden = true;
+  }
+  if (S.slug === slug) loadPortReadiness();
+}
+
+async function stopScan() {
+  const stop = $("portScanStop");
+  if (!scanJob || scanJob === "starting") return;
+  stop.disabled = true; stop.textContent = "Stopping…";
+  try { await api("/api/job/cancel", { method: "POST", body: { id: scanJob } }); }
+  catch (error) { showJobError($("portScanLog"), error.message); stop.disabled = false; stop.textContent = "Stop scanning"; }
+}
+
+/* Check pictures (app/picture_check.py): the port's pictures against the console's at chosen frames. Long: the console's
+   run, then the port's; Stop keeps nothing of the run; a check running when the panel is drawn again is followed, not
+   started again (report.play.pictures_job). */
+let picturesJob = null;
+
+async function checkPictures(existing = null) {
+  if (picturesJob) return;
+  const slug = S.slug, log = $("portPicturesLog"), stop = $("portPicturesStop");
+  picturesJob = existing ? existing.id : "starting";
+  log.hidden = false; log._showJobProgress = true;
+  showJobError(log, "");
+  stop.hidden = false; stop.disabled = false; stop.textContent = "Stop checking";
+  const finish = beginWork(log, "Comparing the port's pictures with the console's", [$("portPictures")], "Compared.");
+  if (existing?.progress) updateWorkProgress(log, existing.progress);
+  try {
+    const body = { slug, tasks: Number($("portPicturesTasks").value) || 6000, input: $("portPicturesInput").value || "",
+                   tolerance: Number($("portPicturesTolerance").value) };
+    const result = existing ? { job: existing.id } : await api("/api/picture-check", { method: "POST", body });
+    if (result.job) { picturesJob = result.job; await followJob(result.job, log, null, () => S.slug === slug); }
+  } catch (error) {
+    showJobError(log, error.message);
+  } finally {
+    picturesJob = null; finish();
+    stop.hidden = true;
+  }
+  if (S.slug === slug) loadPortReadiness();
+}
+
+async function stopPictures() {
+  const stop = $("portPicturesStop");
+  if (!picturesJob || picturesJob === "starting") return;
+  stop.disabled = true; stop.textContent = "Stopping…";
+  try { await api("/api/job/cancel", { method: "POST", body: { id: picturesJob } }); }
+  catch (error) { showJobError($("portPicturesLog"), error.message); stop.disabled = false; stop.textContent = "Stop checking"; }
+}
+
+/* The pictures that differ in the side drawer: each row opens its console | port | difference image. */
+function openPortPictures(pictures) {
+  const rows = pictures.differing.map((p) => `<tr><td>${p.task}</td><td>${p.differ_pct.toFixed(2)}%</td>`
+    + `<td>${p.near_pct == null ? "—" : p.near_pct.toFixed(2) + "%"}</td>`
+    + `<td><button class="ghost small-btn" type="button" data-picture="${esc(p.file)}">Show</button></td></tr>`).join("");
+  const drawer = dialog("Pictures that differ",
+    `<p class="small muted">Each image is the console's picture, the port's and their difference (brightened four times).</p>`
+    + `<table class="data-table"><thead><tr><th scope="col">Frame</th><th scope="col">Pixels that differ</th>`
+    + `<th scope="col">No match within ${pictures.settings.tolerance} px</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+    + `<div id="portPictureView"></div>`);
+  const root = drawer;
+  root.querySelectorAll("[data-picture]").forEach((button) => { button.onclick = async () => {
+    button.disabled = true;
+    try {
+      const got = await api(`/api/picture-check/image?slug=${encodeURIComponent(S.slug)}&file=${encodeURIComponent(button.dataset.picture)}`);
+      const view = root.querySelector("#portPictureView");
+      view.innerHTML = `<img alt="the console's picture, the port's and their difference" style="max-width:100%;image-rendering:pixelated" src="${got.url}">`;
+    } catch (error) { toast(error.message); } finally { button.disabled = false; }
+  }; });
+}
+
 async function fixRenamedCalls() {
   const slug = S.slug, log = $("portRenameLog");
   log.hidden = false; log._showJobProgress = true;
@@ -922,6 +1165,8 @@ async function showExport(state, kind, button) {
 function attachPlay(play) {
   if (!play) return;
   if (play.behaviour_job && !behaviourJob) checkBehaviour(play.behaviour_job);
+  if (play.render_scan_job && !scanJob) scanRenderFaults(play.render_scan_job);
+  if (play.pictures_job && !picturesJob) checkPictures(play.pictures_job);
   if (playJob) return;
   if (play.job) { playGame(play.job); return; }
   $("portStop").hidden = !play.url; playStopLabel();
@@ -954,6 +1199,10 @@ if ($("portPanel")) {
   $("portExtract").onclick = extractAssets;
   if ($("portBehaviour")) $("portBehaviour").onclick = () => checkBehaviour();
   if ($("portBehaviourStop")) $("portBehaviourStop").onclick = stopBehaviour;
+  if ($("portScan")) $("portScan").onclick = () => scanRenderFaults();
+  if ($("portScanStop")) $("portScanStop").onclick = stopScan;
+  if ($("portPictures")) $("portPictures").onclick = () => checkPictures();
+  if ($("portPicturesStop")) $("portPicturesStop").onclick = stopPictures;
   $("portAssets").onclick = writeAssetMap;
   $("portDrafts").onclick = draftPortData;
   $("portCompile").onclick = compileForPc;

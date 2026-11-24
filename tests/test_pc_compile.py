@@ -119,3 +119,18 @@ def test_the_same_c_compiled_twice_still_warns():
     source = f"typedef int s32;\nint {name};\nvoid update(void) {{ s32 k = (s32)&{name}; }}"
     for _ in range(2):
         assert [d["kind"] for d in pc_compile.compile_one("", source)] == ["pointer size"]
+
+
+def test_the_summary_lists_each_failed_function_with_its_first_error(project):  # noqa: F811
+    net, _ = project
+    with net.progress.view():
+        proj = net.project_row("game")
+    found = [{"level": "error", "kind": "undeclared", "line": 3, "file": "", "message": "call to undeclared function 'foo'"},
+             {"level": "error", "kind": "other", "line": 9, "file": "", "message": "later error"}]
+    with pc_compile._store(net, proj).tx() as db:
+        pc_compile.record(db, proj["id"], "update", found)
+        pc_compile.record(db, proj["id"], "helper", [])
+    with net.progress.view():
+        failures = pc_compile.summary(net, proj)["failures"]
+    assert failures == [{"name": "update", "kinds": ["other", "undeclared"], "line": 3, "file": "",
+                         "message": "call to undeclared function 'foo'"}]

@@ -278,7 +278,7 @@ def run(rom: Path, vis: int, *, inputs: str = "", dumps: dict[int, Path] | None 
         watches: list[tuple[int, int]] | tuple = (), breaks: list[int] | tuple = (), report_from: int = 0,
         max_hits: int = 200, expansion_pak: bool = False, timeout: float = 1800,
         record: tuple[Path, int] | None = None, stop=lambda: False, on_record=None, pending: int = 0,
-        frame_dumps: dict[int, Path] | None = None, input_clock: str = "vi") -> Run:
+        frame_dumps: dict[int, Path] | None = None, input_clock: str = "vi", extra_env: dict[str, str] | None = None) -> Run:
     """Run the user's ROM in the reversing emulator for `vis` vertical interrupts. `inputs`: the input script
     (input.c), timed in retraces or, with `input_clock` "frames", in the game's frames (its graphics tasks); `dumps`:
     {vi: file}; `frame_dumps`: {frame: file}, RDRAM as the game hands over that graphics task; `watches`: (physical address, length) write breakpoints; `breaks`: virtual
@@ -291,6 +291,7 @@ def run(rom: Path, vis: int, *, inputs: str = "", dumps: dict[int, Path] | None 
         env.pop(key, None)
     if input_clock == "frames":
         env["EMU_INPUT_CLOCK"] = "frames"
+    env.update(extra_env or {})  # (settings of the video plugin's own: EMU_TASK_LOG, EMU_VI_LOG; a job's thread sets none of os.environ)
     if frame_dumps:
         env["EMU_FRAME_DUMP"] = ",".join(f"{n}:{Path(p).resolve()}" for n, p in sorted(frame_dumps.items()))
     if inputs:

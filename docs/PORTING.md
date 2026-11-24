@@ -458,6 +458,12 @@ The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`)
   buffer, by the microcode the task loads (Fast3D, F3DEX, F3DEX2 and S2DEX by the signature in its data; Rare's
   F3DDKR, which has none, by its data's CRC), and `PORT_FRAMES=folder` saves the frames shown as PNG.
   2D screens draw correctly; the 3D path draws a racing game's races, textured.
+  `tools/n64_frame_scan.py` searches the saved frames for what looks wrong without an emulator: static, one flat
+  colour, runs of black, a picture streaked sideways (a texture read with the wrong stride or width) and a frame
+  with only its top drawn. A finding names its graphics task for `tools/n64_frame_compare.py --frames`.
+  The Porting tab's *Scan for rendering faults* (`port/render_scan.py`) does it in one click: it runs the port headless
+  (`PORT_VTIME=1`, the controller script in the Scan settings, every nth frame), scans the frames, and lists what it
+  flagged, with pictures, in the side drawer; the frames are deleted afterwards.
 
 #### Functions with no C yet
 
@@ -813,3 +819,29 @@ Repeated helper definitions kept as saved compilation context receive identities
 module. Each caller retains its own helper body; a real owner file retains the public function. Address-taken
 uses keep the original console address, and private context is not promoted as a public runtime implementation.
 This avoids duplicate symbols without selecting an arbitrary helper variant or relaxing the linker.
+
+
+## Check pictures (Porting tab)
+
+The comparison described above is a button: Check pictures (app/picture_check.py, engine port/frame_compare.py, the same
+code as tools/n64_frame_compare.py). It builds the port, runs the ROM in the reversing emulator through a controller
+script timed in the game's own frames, takes the console's RAM at about a dozen moments (each a graphics task and the one
+after it) and does the same in the port, which starts from the console's own save and replays the console's pacing
+(`EMU_TASK_LOG` and `PORT_VTIME_TRACE`). Both are drawn by the port's renderer; the Porting tab counts the pictures that
+are identical, the same within the allowed shift (a scene caught a frame apart), and those that differ, and its drawer shows
+each differing picture as console, port and difference. What it can't do: the emulator draws nothing, so blank frames and
+the browser build still have no pixel reference; a game that needs its own seeds replayed (a port-only override, `PORT_SEED_REPLAY`)
+still shows those pictures as differences until it has one.
+
+### What a per-task picture can't tell (a second route's car-selection screen)
+
+Frame 1204 of a menu route differed by 63% between the console and the port, and the cause was not a rendering fault.
+The two display lists were word for word the same except for addresses (the console's heap and the port's lay buffers and
+textures out differently), and the textures they sample held the same bytes at their own addresses. What differed was the
+rest of the colour buffer. A task draws only part of a picture (here the 3D car) over what the buffer held, and the
+emulator draws nothing, so its RAM holds noise where earlier tasks drew the menu text, while the port's holds the text.
+Drawing the tasks before it too, each side's earlier pictures put back into the next task's RAM (`frames(..., carry)`),
+made the buffer drawn within the window match the emulator's to the pixel (0.00% differing). The other buffer, whose
+earlier pictures were drawn before the window began, still shows the noise: a window's first half only rebuilds the
+buffers (`compare_run` draws it and does not compare it), and Check pictures takes windows of 24 tasks. Single sampled tasks
+can also draw nothing at all (a route's 19 samples every 300 frames did), hence windows rather than points.

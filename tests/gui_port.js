@@ -52,8 +52,8 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    t.run('renderPortReadiness(projectReport)');
    assert.notEqual(t.c.$('portOverall').textContent,'100%','unavailable build steps cannot show a finished port');
    t.c.reply=async()=>report;await t.run('loadPortReadiness()');
-   assert.ok(t.run('portSteps(projectReport).length')===11);
-   assert.ok(t.c.$('portSteps').children[10].children[1].children.some(c=>c.children&&c.children.includes(t.c.$('portPlay'))),
+   assert.ok(t.run('portSteps(projectReport).length')===12);
+   assert.ok(t.c.$('portSteps').children[12].children[1].children.some(c=>c.children&&c.children.includes(t.c.$('portPlay'))),
      'returning to a ROM report restores its supported controls');
   }
   {const t=setup();await t.run('loadPortReadiness()');assert.equal(t.calls.length,0,'another tab asks for nothing');}
@@ -62,9 +62,9 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    assert.deepEqual(t.calls,['/api/port-readiness?slug=a']);
    assert.equal(t.c.$('portBlockers').children.length,2);
    const steps=t.c.$('portSteps').children;
-   assert.equal(steps.length,11,'eleven steps');
+   assert.equal(steps.length,13,'thirteen steps');
    assert.match(steps[1].className,/part/);assert.equal(steps[1].children[1].children[0].children[1].textContent,'57%');
-   assert.ok(steps[10].children[1].children.some(c=>c.children&&c.children.includes(t.c.$('portPlay'))),'Play sits in its step');
+   assert.ok(steps[12].children[1].children.some(c=>c.children&&c.children.includes(t.c.$('portPlay'))),'Play sits in its step');
    assert.equal(steps[7].children[1].children[0].children[1].textContent,'to do','calls: not built yet');
    assert.match(t.c.$('portOverall').textContent,/^\d+%$/);
    assert.match(t.c.$('portKit').textContent,/libultraship and Torch/);
@@ -155,6 +155,48 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    await t.run('stopBehaviour()');assert.deepEqual(cancels,['b1'],'Stop cancels the check');
    follow.resolve({});await checking;
    assert.equal(t.c.$('portBehaviourStop').hidden,true);assert.equal(t.c.$('portBehaviour').disabled,false);}
+  {const t=setup();t.c.S.tab='porting';const follow=deferred(),cancels=[];t.c.followJob=()=>follow.promise;t.c.updateWorkProgress=()=>{};
+   const scanned={...report,render_scan:{at:1,frames:100,flagged:4,runs:2,stopped:null,settings:{seconds:60,every:6,input:''}}};
+   t.c.reply=async(url,opts)=>{if(url==='/api/render-scan')return {job:'s1'};if(url==='/api/job/cancel'){cancels.push(opts.body.id);return {};}return scanned;};
+   await t.run('loadPortReadiness()');
+   const step=t.c.$('portSteps').children[9].children[1];
+   assert.equal(step.children[0].children[0].textContent,'Draws without faults');
+   assert.equal(step.children[0].children[1].textContent,'96%','96 of 100 frames look right');
+   assert.ok(step.children.some(c=>c.children&&c.children.includes(t.c.$('portScan'))),'Scan for rendering faults sits in its step');
+   t.c.$('portScanSeconds').value='30';t.c.$('portScanEvery').value='3';t.c.$('portScanInput').value='20:START';
+   const scanning=t.run('scanRenderFaults()');for(let i=0;i<6;i++)await Promise.resolve();
+   assert.equal(JSON.stringify(t.bodies[t.calls.indexOf('/api/render-scan')]),'{"slug":"a","seconds":30,"every":3,"input":"20:START"}');
+   assert.equal(t.c.$('portScan').disabled,true,'one scan at a time');assert.equal(t.c.$('portScanStop').hidden,false);
+   await t.run('stopScan()');assert.deepEqual(cancels,['s1'],'Stop cancels the scan');
+   follow.resolve({});await scanning;
+   assert.equal(t.c.$('portScanStop').hidden,true);assert.equal(t.c.$('portScan').disabled,false);}
+  {const t=setup();t.c.S.tab='porting';const follow=deferred(),cancels=[];t.c.followJob=()=>follow.promise;t.c.updateWorkProgress=()=>{};
+   const checked={...report,pictures_available:true,pictures:{compared:12,exact:8,shifted:2,same:10,differ:2,missing:0,at:1,
+     settings:{tasks:6000,input:'',tolerance:3},differing:[{task:900,image:1,differ_pct:9,near_pct:4,file:'f.png'}],examples:[]}};
+   t.c.reply=async(url,opts)=>{if(url==='/api/picture-check')return {job:'p1'};if(url==='/api/job/cancel'){cancels.push(opts.body.id);return {};}return checked;};
+   await t.run('loadPortReadiness()');
+   const step=t.c.$('portSteps').children.map(c=>c.children[1]).find(c=>c&&c.children[0].children[0].textContent==='Pictures match the console');
+   assert.ok(step,'the pictures step is listed');assert.equal(step.children[0].children[1].textContent,'83%','10 of 12 pictures match');
+   assert.ok(step.children.some(c=>c.children&&c.children.includes(t.c.$('portPictures'))),'Check pictures sits in its step');
+   t.c.$('portPicturesTasks').value='3000';t.c.$('portPicturesInput').value='300:START';t.c.$('portPicturesTolerance').value='2';
+   const checking=t.run('checkPictures()');for(let i=0;i<6;i++)await Promise.resolve();
+   assert.equal(JSON.stringify(t.bodies[t.calls.indexOf('/api/picture-check')]),'{"slug":"a","tasks":3000,"input":"300:START","tolerance":2}');
+   assert.equal(t.c.$('portPictures').disabled,true,'one check at a time');assert.equal(t.c.$('portPicturesStop').hidden,false);
+   await t.run('stopPictures()');assert.deepEqual(cancels,['p1'],'Stop cancels the check');
+   follow.resolve({});await checking;
+   assert.equal(t.c.$('portPicturesStop').hidden,true);assert.equal(t.c.$('portPictures').disabled,false);}
+  {const t=setup();t.c.S.tab='porting';const followed=[];t.c.followJob=async(job)=>{followed.push(job);};t.c.updateWorkProgress=()=>{};
+   let running=true;
+   t.c.reply=async()=>{const play=running?{pictures_job:{id:'p9',progress:{done:1,total:4}}}:{};running=false;return {...report,pictures_available:true,play};};
+   await t.run('loadPortReadiness()');await Promise.resolve();await Promise.resolve();
+   assert.deepEqual(followed,['p9'],'a picture check running elsewhere is followed, not started again');
+   assert.ok(!t.calls.includes('/api/picture-check'));}
+  {const t=setup();t.c.S.tab='porting';const followed=[];t.c.followJob=async(job)=>{followed.push(job);};t.c.updateWorkProgress=()=>{};
+   let running=true;
+   t.c.reply=async()=>{const play=running?{pictures_job:{id:'p9',progress:{done:1,total:4}}}:{};running=false;return {...report,pictures_available:true,play};};
+   await t.run('loadPortReadiness()');await Promise.resolve();await Promise.resolve();
+   assert.deepEqual(followed,['p9'],'a picture check running elsewhere is followed, not started again');
+   assert.ok(!t.calls.includes('/api/picture-check'));}
   {const t=setup();t.c.S.tab='porting';const followed=[];t.c.followJob=async(job)=>{followed.push(job);};t.c.updateWorkProgress=()=>{};
    let running=true;  // (a server lists only running jobs: once followed to its end, it's gone)
    t.c.reply=async()=>{const play=running?{behaviour_job:{id:'b9',progress:{done:3,total:10}}}:{};running=false;return {...report,behaviour_available:true,play};};
@@ -170,7 +212,7 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    assert.ok(rows.some(r=>r.startsWith('Recompiled (N64Recomp): 2,125 of the split\'s functions and 12 it doesn\'t list, as C in 42 files: 14 set aside as stubs, 4 for the runtime to provide, 1 compile error')),rows.join('\n'));
    assert.ok(rows.some(r=>r.includes('set aside')&&r.includes('func_8008AE70 (cop0), ...')));
    assert.ok(rows.some(r=>r.includes('generated.c: invalid operand')));
-   const play=t.c.$('portSteps').children[10].children[1];
+   const play=t.c.$('portSteps').children[12].children[1];
    const buttons=play.children.flatMap(c=>c.children||[]);
    assert.ok(buttons.includes(t.c.$('portPlay')),'Play stays in the Play step');
    assert.ok(!buttons.includes(t.c.$('portRecompile')),'the diagnostic has its own step');
@@ -274,7 +316,7 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    assert.equal(t.c.$('portStop').hidden,false);assert.equal(t.c.$('portStop').textContent,'Stop the build');
    await t.run('playGame()');assert.deepEqual(t.calls.filter(u=>u==='/api/play'),['/api/play'],'a second click starts nothing');
    await t.run('loadPortReadiness()');
-   const body=t.c.$('portSteps').children[10].children[1].children;
+   const body=t.c.$('portSteps').children[12].children[1].children;
    assert.ok(body.includes(log._workStatus)&&body.includes(log._workBar)&&body.includes(log),'status, bar and log move together');
    assert.ok(body.indexOf(log._workBar)<body.indexOf(log));
    await t.run('stopGame()');assert.deepEqual(cancels,['p3'],'Stop cancels the build');
@@ -419,5 +461,36 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
      {slug:'a',build_mode:'compatibility',runtime:'n64modernruntime'});
    assert.equal(t.c.$('portStop').hidden,false);
    assert.match(t.c.$('portPlayLog').children.join(' '),/opened in the RT64 window/);}
+  {const t=setup();t.c.S.tab='porting';
+   const failures=[{name:'b',kinds:['undeclared'],message:'call to undeclared function',line:3,file:''},{name:'a',kinds:[],message:'',line:0,file:''}];
+   t.c.dialog=(title,html)=>{t.c.drawer={title,html};return t.c.drawerBody;};
+   t.c.drawerBody={...element(),querySelector(){return element();}};
+   t.c.closeDialog=()=>{};t.c.openFn=()=>{};
+   t.c.projectReport={...report,mode:'rom',pc:{ok:5,warned:1,failed:2,total:8,kinds:[],checked_at:1,failures}};
+   const step=t.run('portSteps(projectReport)').find(x=>x.title==='Compiles for a PC');
+   assert.equal(step.drawer.label,"2 don't",'the step carries its count for the drawer');
+   t.run('renderPortSteps(projectReport)');
+   const detail=t.c.$('portSteps').children.find(r=>r.children[1].children.some(c=>c.children&&c.children[1]&&c.children[1].textContent==="2 don't")).children[1].children.find(c=>c.children&&c.children[1]&&c.children[1].textContent==="2 don't");
+   assert.match(detail.children[0],/6 of 8 functions compile, $/,'the count is a button that follows the text');
+   detail.children[1].onclick();
+   assert.match(t.c.drawer.title,/2 functions that don't compile/,'clicking the count opens the shared side drawer');}
+  {const t=setup();t.c.S.tab='porting';
+   const pc={ok:5,warned:0,failed:0,total:5,kinds:[],checked_at:1,failures:[]};
+   const link={undefined:3,provided:0,duplicates:[],zeroed:0,unread:0,groups:[{kind:'data',symbols:3,users:1,about:'',examples:[]}]};
+   const rename=r=>t.run('portSteps('+JSON.stringify(r)+')').find(x=>x.title==='Compiles for a PC').buttons.includes('portRenameCalls');
+   assert.equal(rename({...report,mode:'rom',pc,link}),false,'no old names or static functions: nothing for Fix calls by old names to do');
+   assert.equal(rename({...report,mode:'rom',pc}),false,'before the link check');
+   assert.equal(rename({...report,mode:'rom',pc,link:{...link,groups:[{...link.groups[0],kind:'renamed'}]}}),true);
+   assert.equal(rename({...report,mode:'rom',pc,link:{...link,groups:[{...link.groups[0],kind:'static'}]}}),true);}
+  {const t=setup();t.c.S.tab='porting';
+   t.c.dialog=(title,html)=>{t.c.drawer={title,html};return {...element(),querySelector(){return element();}};};
+   t.c.closeDialog=()=>{};t.c.openFn=()=>{};
+   const callees=[{name:'f',calls:3,callers:2,kinds:['void-result'],refused:'the console build compiles but no longer matches'}];
+   t.c.projectReport={...report,mode:'rom',calls:{functions:2,calls:1311,kinds:[],callees}};
+   const step=t.run('portSteps(projectReport)').find(x=>x.title==='Calls agree with what they call');
+   assert.equal(step.drawer.label,'1,311 calls');
+   assert.ok(step.detail.includes(step.drawer.label),'the count is part of the sentence, so it can be the button');
+   step.drawer.open();
+   assert.match(t.c.drawer.title,/1 functions their callers disagree with/);}
   console.log('Port readiness panel: closed, read, stale reply, failure, asset map, extraction, link, suspicious calls, check behaviour, recompile, renamed calls, play, runtimes, the build bar, Stop, reattaching and export passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});

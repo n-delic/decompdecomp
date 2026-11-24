@@ -20,7 +20,10 @@ match, the trailing call's own type is tried: callers of 57 input checks declare
 with returns an int in their file, so `return (float)g()` added a conversion and `s32` kept the bytes.
 
 Each rewrite is judged as any rewrite of matched C: the game's own compiler must still build the function's exact
-bytes, or it keeps its C and is listed with why. Nothing else of the C changes, and no caller is touched. The next
+bytes, or it keeps its C and is listed with why. A rewrite the console's compiler can't take (its bytes move) is
+tried once more behind `#if defined(PORT) || defined(PORT_WASM)`, with the C as it was in the `#else`: the console
+build defines neither, so the match can't change, and a port (the 64-bit PC's PORT, the browser build's PORT_WASM)
+reads the agreeing one. Nothing else of the C changes, and no caller is touched. The next
 WebAssembly build reads the new definitions, and its list of disagreeing calls shrinks by what was put right.
 """
 
@@ -249,6 +252,11 @@ def _trailing_type(source: str, name: str, text: str) -> str:
     return (proto and proto[0] != "void" and local_type(proto[0], text)) or "s32"
 
 
+def behind_port(old: str, new: str) -> str:
+    """`new` for a port's build and `old` for the console's: the console build defines neither macro."""
+    return f"#if defined(PORT) || defined(PORT_WASM)\n{new.rstrip()}\n#else\n{old.rstrip()}\n#endif"
+
+
 def fix(net, slug: str, log=print) -> dict:
     """Put right every callee the last WebAssembly build lists, judged: {"callees", "kept", "refused"}."""
     from .wasm import play
@@ -277,11 +285,13 @@ def fix(net, slug: str, log=print) -> dict:
             contexts[unit] = context["header"] if context is not None else ""
         return contexts[unit]
 
-    plans = {c: p for c, p in plan(found).items() if c in rows}
+    every = plan(found)
+    plans = {c: p for c, p in every.items() if c in rows}
     log(f"{sum(sum(p['kinds'].values()) for p in plans.values())} disagreeing calls to {len(plans)} functions with "
         "matched C: rewriting each one's definition the way its callers call it, judged by the game's own compiler")
-    refused: dict[str, str] = {}
+    refused: dict[str, str] = {c: "it has no matched C to rewrite" for c in every if c not in rows}
     kept: dict[int, str] = {}
+    moved: dict[int, str] = {}  # rewrites the console's compiler can't take, for the #ifdef pass
     # the callers' prototype whole first, then only what has to change, then the trailing call's own result type
     for whole, own_result in ((True, False), (False, False), (False, True)):
         candidates = {}
@@ -311,17 +321,55 @@ def fix(net, slug: str, log=print) -> dict:
         for fn in judged:
             if fn["name"] in broken:
                 refused[fn["name"]] = f"the console build {broken[fn['name']]}"
+                moved[fn["id"]] = candidates[fn["id"]]
             else:
                 kept[fn["id"]] = candidates[fn["id"]]
                 refused.pop(fn["name"], None)
+                moved.pop(fn["id"], None)
+    behind = _behind_port(net, proj, rows, moved, header, refused, log)
+    kept.update(behind)
     done = _keep(net, proj, rows, kept)
+    names = {r["id"]: r["name"] for r in rows.values()}
+    behind_names = sorted(names[i] for i in behind if names[i] in done)
+    for name in behind_names:  # still listed until the next build reads them
+        refused[name] = "rewritten behind #ifdef PORT (the console keeps its C); build again to count it"
     calls = sum(sum(plans[n]["kinds"].values()) for n in done)
-    log(f"{len(done)} functions now agree with their callers ({calls} of the listed calls); "
-        f"{len(refused)} kept their C" + (": " + "; ".join(f"{n} ({w})" for n, w in sorted(refused.items())[:8])
-                                          if refused else "")
+    log(f"{len(done)} functions now agree with their callers ({calls} of the listed calls"
+        + (f", {len(behind_names)} behind #ifdef PORT" if behind_names else "") + "); "
+        f"{len(refused) - len(behind_names)} kept their C" + (": " + "; ".join(f"{n} ({w})" for n, w in sorted(refused.items()) if n not in behind_names)[:900]
+                                          if len(refused) > len(behind_names) else "")
         + ". Build again (Play in browser or an export) to see the calls left.")
-    return {"callees": len(plans), "kept": done, "calls": calls,
-            "refused": [{"function": n, "why": w} for n, w in sorted(refused.items())]}
+    from .wasm import calls as wasm_calls
+    # what the next report lists beside each disagreeing function, so the ones left can be fixed another way
+    (path.parent / wasm_calls.REFUSED).write_text(json.dumps(dict(sorted(refused.items())), indent=1), encoding="utf-8")
+    return {"callees": len(plans), "kept": done, "calls": calls, "behind_port": behind_names,
+            "refused": [{"function": n, "why": w} for n, w in sorted(refused.items()) if n not in behind_names]}
+
+
+def _behind_port(net, proj, rows, moved: dict[int, str], header, refused: dict[str, str], log) -> dict[int, str]:
+    """The rewrites the console's compiler couldn't take, each as `behind_port`: kept when the console build still
+    matches (it builds the old C) and the PC compiler finds no more errors than it did, else its refusal stays."""
+    if not moved:
+        return {}
+    from . import pc_compile, port_fix
+    by_id = {r["id"]: r for r in rows.values()}
+    wrapped = {i: behind_port(by_id[i]["matched_source"], new) for i, new in moved.items()}
+    judged = [by_id[i] for i in wrapped]
+    log(f"judging {len(judged)} rewrites the console can't take, behind #ifdef PORT")
+    broken = dict(net.regression_test(proj, None, sources=wrapped, only=judged, header_for=header))
+    cc = pc_compile.compiler(log)
+    out: dict[int, str] = {}
+    for fn in judged:
+        if fn["name"] in broken:
+            continue
+        with net.progress.view():
+            before = pc_compile.function(net, proj, fn["name"]) or []
+        found = pc_compile.compile_one(header(fn), wrapped[fn["id"]], cc=cc)
+        if port_fix._tally(found)[0] > port_fix._tally(before)[0]:
+            refused[fn["name"]] += "; behind #ifdef PORT the PC compiler finds more errors"
+            continue
+        out[fn["id"]] = wrapped[fn["id"]]
+    return out
 
 
 def _keep(net, proj, rows, kept: dict[int, str]) -> list[str]:

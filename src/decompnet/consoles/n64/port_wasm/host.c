@@ -573,6 +573,8 @@ static int save_dma(uint32_t dest, uint32_t cart, uint32_t size, uint32_t write)
     if (dest < 0x80000000u || size > end - dest) return -1;
     return flash_in_use ? port_flash_dma(dest, save_offset(cart), size, write) : port_sram_dma(dest, save_offset(cart), size, write);
 }
+static unsigned long dmas; /* (the count below, also of a game's own PI manager's transfers through the registers) */
+static unsigned long vi_count;
 static int pi_register(uint32_t addr, int write, uint32_t value, uint32_t *read) {
     static uint32_t dram, cart;
     switch (addr) {
@@ -602,9 +604,15 @@ static int pi_register(uint32_t addr, int write, uint32_t value, uint32_t *read)
         if (boot && dest >= BOOT_STACK_SIZE) end = 0;
         if (save_window(cart)) { save_dma(dest, cart, size, 0); post_event(EV_PI); return 1; }
         uint32_t offset = cart & 0x0FFFFFFEu;
-        if (cart >= 0x10000000u && cart < 0x1FC00000u && dest < end
-                && size <= end - dest && (uint64_t)offset + size <= rom_size)
-            memcpy(M + dest, rom + offset, size);
+        int copied = cart >= 0x10000000u && cart < 0x1FC00000u && dest < end
+                && size <= end - dest && (uint64_t)offset + size <= rom_size;
+        if (copied) memcpy(M + dest, rom + offset, size);
+        /* a game's own PI manager reads the cartridge through these registers: counted and logged as the host's own
+           osPiStartDma is (the summary said "0 DMAs" of a game that read its files this way), and a transfer the
+           host could not do says so */
+        dmas++;
+        if (dmas <= 20 || dmas % 500 == 0 || getenv("PORT_DMA_LOG"))
+            LOG("DMA %lu (retrace %lu): ROM %06X -> %08X, %X bytes%s", dmas, vi_count, offset, dest, size, copied ? "" : " (NOT DONE)");
         post_event(EV_PI);
         return 1;
     }

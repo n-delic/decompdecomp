@@ -2371,3 +2371,5 @@ img.rom-preview-media { image-rendering:pixelated; background:var(--bg-alt); bor
 .globals-table th[aria-sort="ascending"], .globals-table th[aria-sort="descending"] { color: var(--ink); }
 .globals-table th.r .sort-btn { text-align: right; }
 .globals-table .sort-btn:focus-visible { outline: 2px solid var(--accent, currentColor); outline-offset: -2px; }
+.port-failure-table td { vertical-align: top; }
+.port-failure-table td:last-child { overflow-wrap: anywhere; }

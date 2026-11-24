@@ -43,3 +43,21 @@ def test_static_flat_and_black_frames_are_told_apart_from_a_scene(tmp_path):
     assert found["black"] == [(1, 2), (6, 6)]
     assert [n for n, _, _ in found["noisy"]] == [4] and found["noisy"][0][2] == 20
     assert found["flat"] == [(5, 25)]  # the green leftovers, not black
+
+
+def test_a_streaked_strip_over_black_is_found_and_a_scene_or_letterbox_is_not(tmp_path):
+    tool = _tool()
+    w, h = 64, 48
+    rng = random.Random(2)
+    # a texture read with the wrong stride: every row one colour run, rows unrelated, only the top fifth drawn
+    streak = []
+    for y in range(h):
+        colour = bytes([rng.randrange(40, 255), rng.randrange(40, 255), rng.randrange(40, 255)])
+        streak += [colour if y < 10 else bytes(3)] * w
+    scene = [bytes([x * 3, y * 4, 90]) for y in range(h) for x in range(w)]
+    letterbox = [p if 6 <= i // w < h - 6 else bytes(3) for i, p in enumerate(scene)]
+    for n, pixels in enumerate([scene, streak, letterbox], start=1):
+        _png(tmp_path / f"frame_{n:05d}.png", pixels, w, h)
+    found = tool.scan(tmp_path)
+    assert [n for n, _, _ in found["smeared"]] == [2]
+    assert [n for n, _, _ in found["partial"]] == [2]

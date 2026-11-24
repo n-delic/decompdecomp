@@ -1173,3 +1173,20 @@ def test_a_call_by_another_spelling_of_a_defined_name_goes_to_it(tmp_path):
     two.write_text("define void @fooBarBaz() {\n  ret void\n}\ndefine void @foo_bar_baz() {\n  ret void\n}\n"
                    "declare void @FOO_BAR_BAZ()\n")
     assert renames([two], []) == {}
+
+
+def test_a_function_whose_c_returns_nothing_but_whose_caller_uses_a_result_is_found(tmp_path):
+    """A machine draft of a function that returns a pointer in $v0 can be declared void and still match its bytes;
+    in WebAssembly its callers' result is then nothing, and a file open took its error branch at once (a golf game
+    never read its cartridge). The build records those callees (calls.json's void-result) and builds again without
+    their C, so the original's own code returns the pointer."""
+    from decompnet.port.wasm.build import void_result_callees
+
+    calls = tmp_path / "calls.json"
+    calls.write_text(json.dumps({
+        "func_80094C24": [{"callee": "func_80092B44", "caller": "func_80094C24", "kind": "void-result"},
+                          {"callee": "func_80092B44", "caller": "func_80094C24", "kind": "extra-arguments",
+                           "declared": 0, "passed": 2}],
+        "func_80001000": [{"callee": "func_80002000", "caller": "func_80001000", "kind": "missing-arguments"}]}))
+    assert void_result_callees(calls) == {"func_80092B44"}
+    assert void_result_callees(tmp_path / "none.json") == set()

@@ -1069,6 +1069,16 @@ def place_all(out: Path, lls: list[Path], functions: set, zig, env: dict, log, s
     return _parallel(lls, place, log, "functions", step)
 
 
+def void_result_callees(calls: Path) -> set[str]:
+    """The functions the build's calls.json (port/wasm/calls.py) says a caller takes a result from though their
+    C declares them void."""
+    try:
+        found = json.loads(Path(calls).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    return {r["callee"] for records in found.values() for r in records if r.get("kind") == "void-result"}
+
+
 def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out=(), universal: bool = False,
           library_c=None, library_names=None, recomp=None, function_headers=None, ensure_host_import=False,
           runtime_image=None, code_offsets=None) -> Path:
@@ -1086,10 +1096,28 @@ def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out
     from ...app.recompile import build_turn
     recomp_turn = build_turn(recomp["folder"], log) if recomp else nullcontext()
     with build_turn(repo / "port" / "wasm" / "build", log, resource="native port build"), recomp_turn:
-        return _build(repo, console=console, log=log, steps=steps, leave_out=leave_out, universal=universal,
-                      library_c=library_c or {}, library_names=library_names or {}, recomp=recomp,
-                      function_headers=function_headers, ensure_host_import=ensure_host_import, runtime_image=runtime_image,
-                      code_offsets=code_offsets)
+        def run(extra):
+            from ...app.saves import _source_file
+            return _build(repo, console=console, log=log, steps=steps,
+                          leave_out=set(leave_out) | {_source_file(n) for n in extra}, universal=universal,
+                          library_c=library_c or {}, library_names=library_names or {}, recomp=recomp,
+                          function_headers=function_headers, ensure_host_import=ensure_host_import,
+                          runtime_image=runtime_image, code_offsets=code_offsets)
+        state = repo / "port" / "wasm" / "void_result.txt"
+        known = set(state.read_text(encoding="utf-8").split()) if state.is_file() else set()
+        program = run(known)
+        # A function whose C is declared void while a caller takes its result: a machine draft of a function that
+        # returns a pointer in $v0 (`lw $v0, ...; jr $ra; sw $zero, 4($v0)`) compiles to the same bytes as the void
+        # draft, but in WebAssembly its callers' result is nothing (0): a file open took its error branch at once
+        # and the game never read the cartridge. The original's own code, which the recompiler translates, returns it.
+        found = void_result_callees(program.parent / "calls.json") - known
+        if found:
+            log(f"{len(found)} functions whose C returns nothing while their callers use a result run as the "
+                "original's code instead")
+            known |= found
+            _write(state, "\n".join(sorted(known)) + "\n")
+            program = run(known)
+        return program
 
 
 def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool = False, library_c=None,
