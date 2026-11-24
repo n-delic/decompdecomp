@@ -117,6 +117,12 @@ def _render_scan(proj) -> dict | None:
             "stopped": saved.get("stopped")}
 
 
+def _pictures(net, proj) -> dict | None:
+    """The last Check pictures (app/picture_check.py): the port's pictures against the console's, counted. Never run here."""
+    from ..app.picture_check import summary
+    return summary(Path(proj["root"]))
+
+
 def _assets(net, slug: str) -> dict | None:
     """The asset map as it would be written now (port/asset_map.py), and whether the project's folder has it."""
     from .asset_map import current
@@ -265,6 +271,8 @@ def _readiness(net, slug: str) -> dict:
         "behaviour": _behaviour(net, proj) if rom_mode else None,
         "render_scan": _render_scan(proj) if rom_mode else None,
         "behaviour_available": rom_mode and console.recompiler is not None and console.emulator is not None,
+        "pictures": _pictures(net, proj) if rom_mode else None,
+        "pictures_available": rom_mode and console.emulator is not None,
     }
     report["blockers"] = blockers(report)
     report["ready"] = not report["blockers"]
@@ -364,6 +372,10 @@ def blockers(report: dict) -> list[str]:
     if report["addresses"]["literals"]:
         out.append(f"{report['addresses']['functions']} functions write {report['addresses']['literals']} addresses "
                    "as numbers: each needs to be a symbol so the port (and mods) can move it.")
+    pictures = report.get("pictures")
+    if pictures and pictures["differ"]:
+        out.append(f"{pictures['differ']} of {pictures['compared']} pictures the port draws differ from the console's "
+                   "(Check pictures): the game runs differently there, in its code, its host or its input.")
     behaviour = report.get("behaviour")
     if behaviour and behaviour["differs"]:
         out.append(f"{behaviour['differs']} matched functions behave differently from the original once built for "
@@ -483,6 +495,12 @@ def describe(report: dict) -> str:
                      f"{behaviour['not_reached']} not reached, {behaviour['errors']} couldn't run. compare_behaviour "
                      "shows one in full.")
         lines += [f"- {e}" for e in behaviour["examples"]]
+    pictures = report.get("pictures")
+    if pictures:
+        lines.append(f"Pictures against the console (Check pictures, {pictures['compared']} drawn from RAM at the game's own "
+                     f"frames): {pictures['exact']} identical, {pictures['shifted']} the same within "
+                     f"{pictures['settings']['tolerance']} px, {pictures['differ']} differ, {pictures['missing']} not drawn by one side.")
+        lines += [f"- {e}" for e in pictures["examples"]]
     recomp = report.get("recomp")
     if recomp:
         lines.append(f"Recompiled (static recompiler, last run): {recomp['functions']} of the split's functions and "

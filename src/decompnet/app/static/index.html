@@ -711,6 +711,10 @@
         <pre id="portCompileLog" class="joblog" hidden></pre>
         <pre id="portAssetsLog" class="joblog" hidden></pre>
         <pre id="portExtractLog" class="joblog" hidden></pre>
+        <button class="ghost small-btn" id="portPictures" type="button" title="Run the game in the reversing emulator and the port through the same controller script, then draw both from their memory at chosen frames with the port's renderer and compare the pictures. Local CPU, no AI tokens.">Check pictures</button>
+        <button class="ghost small-btn" id="portPicturesStop" type="button" hidden>Stop checking</button>
+        <details class="deep-advanced" id="portPicturesSettings"><summary>Settings</summary><div class="deep-advanced-fields"><label class="field"><span>Run the game for (frames)</span><input id="portPicturesTasks" type="number" min="700" max="60000" value="6000"><small>A frame is one of the game's graphics tasks. Twelve moments are compared, spread over this run.</small></label><label class="field"><span>Shift allowed (pixels)</span><input id="portPicturesTolerance" type="number" min="0" max="8" value="3"><small>A scene drawn the same but a frame apart still counts as the same within this many pixels.</small></label><label class="field"><span>Controller script</span><textarea id="portPicturesInput" rows="2" placeholder="300:START,330:,600:A"></textarea><small>"frame:BUTTON+BUTTON,frame:..." timed in the game's frames, so both sides get a press at the same picture (A B Z START L R UP DOWN LEFT RIGHT CU CD CL CR, SX=n SY=n).</small></label></div></details>
+        <pre id="portPicturesLog" class="joblog" hidden></pre>
         <pre id="portBehaviourLog" class="joblog" hidden></pre>
         <pre id="portScanLog" class="joblog" hidden></pre>
         <pre id="portRenameLog" class="joblog" hidden></pre>

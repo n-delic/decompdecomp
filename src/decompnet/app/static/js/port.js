@@ -218,7 +218,7 @@ function needsRenamedCalls(link) {
 
 function portSteps(report) {
   const code = report.code, pc = report.pc, link = report.link, assets = report.assets, calls = report.calls;
-  const behaviour = report.behaviour, compared = behaviour ? behaviour.same + behaviour.differs : 0;
+  const behaviour = report.behaviour, compared = behaviour ? behaviour.same + behaviour.differs : 0, pictures = report.pictures;
   const scan = report.render_scan;
   const library = code.replaced + code.native + (code.glue || 0);
   const steps = [
@@ -262,6 +262,15 @@ function portSteps(report) {
           + `${scan.settings.seconds} seconds)` + (scan.stopped ? `; the game stopped early: ${scan.stopped}` : ""),
       scanFlagged: scan?.runs || 0,
       buttons: ["portScan", "portScanStop", "portScanSettings"], logs: ["portScanLog"] }]),
+    { title: "Pictures match the console", pct: pictures ? pct(pictures.same, pictures.compared) : null,
+      detail: !report.pictures_available ? "needs a reversing emulator for this console"
+        : !pictures ? "not checked yet: Check pictures draws the console's frames and the port's from memory and compares them"
+        : `${pictures.same.toLocaleString()} of ${pictures.compared.toLocaleString()} pictures match (${pictures.exact} identical, `
+          + `${pictures.shifted} within ${pictures.settings.tolerance} px)` + (pictures.differ ? `, ${pictures.differ} differ` : ""),
+      drawer: pictures?.differing?.length ? {label: `${pictures.differ} differ`,
+        title: "Show the pictures that differ: the console's, the port's and their difference", open: () => openPortPictures(pictures)} : null,
+      buttons: report.pictures_available ? ["portPictures", "portPicturesStop", "portPicturesSettings"] : [],
+      logs: ["portPicturesLog"] },
     { title: "Assets extracted", pct: assets ? (assets.extracted && assets.extracted.current ? pct(assets.extracted.mapped, assets.extracted.total)
         : assets.written ? 50 : 0) : 0,
       detail: assets ? `${assets.resources} resources mapped` + (assets.extracted && assets.extracted.current
@@ -356,11 +365,11 @@ function renderPortSteps(report, steps = portSteps(report)) {
   if (!list) return;
   const parked = $("portParked");
   for (const id of ["portDrafts", "portCompile", "portRenameCalls", "portFixCalls", "portAssets", "portExtract", "portPlay", "portStop",
-    "portBehaviour", "portBehaviourStop", "portBehaviourSettings", "portScan", "portScanStop", "portScanSettings", "portRecompile", "portRecompileStop"]) {
+    "portBehaviour", "portBehaviourStop", "portBehaviourSettings", "portScan", "portScanStop", "portScanSettings", "portPictures", "portPicturesStop", "portPicturesSettings", "portRecompile", "portRecompileStop"]) {
     if (parked && $(id)) parked.append($(id));  // back where they wait, then into their step
   }
   for (const id of ["portDraftLog", "portCompileLog", "portRenameLog", "portFixCallsLog", "portAssetsLog", "portExtractLog", "portPlayLog",
-    "portBehaviourLog", "portScanLog", "portRecompileLog", "portDiscoveries"]) {
+    "portBehaviourLog", "portScanLog", "portPicturesLog", "portRecompileLog", "portDiscoveries"]) {
     if (parked && $(id)) parked.append(...withWork($(id)));
   }
   const shown = steps.filter((s) => !s.diagnostic && s.pct != null);
@@ -820,6 +829,63 @@ async function stopScan() {
   catch (error) { showJobError($("portScanLog"), error.message); stop.disabled = false; stop.textContent = "Stop scanning"; }
 }
 
+/* Check pictures (app/picture_check.py): the port's pictures against the console's at chosen frames. Long: the console's
+   run, then the port's; Stop keeps nothing of the run; a check running when the panel is drawn again is followed, not
+   started again (report.play.pictures_job). */
+let picturesJob = null;
+
+async function checkPictures(existing = null) {
+  if (picturesJob) return;
+  const slug = S.slug, log = $("portPicturesLog"), stop = $("portPicturesStop");
+  picturesJob = existing ? existing.id : "starting";
+  log.hidden = false; log._showJobProgress = true;
+  showJobError(log, "");
+  stop.hidden = false; stop.disabled = false; stop.textContent = "Stop checking";
+  const finish = beginWork(log, "Comparing the port's pictures with the console's", [$("portPictures")], "Compared.");
+  if (existing?.progress) updateWorkProgress(log, existing.progress);
+  try {
+    const body = { slug, tasks: Number($("portPicturesTasks").value) || 6000, input: $("portPicturesInput").value || "",
+                   tolerance: Number($("portPicturesTolerance").value) };
+    const result = existing ? { job: existing.id } : await api("/api/picture-check", { method: "POST", body });
+    if (result.job) { picturesJob = result.job; await followJob(result.job, log, null, () => S.slug === slug); }
+  } catch (error) {
+    showJobError(log, error.message);
+  } finally {
+    picturesJob = null; finish();
+    stop.hidden = true;
+  }
+  if (S.slug === slug) loadPortReadiness();
+}
+
+async function stopPictures() {
+  const stop = $("portPicturesStop");
+  if (!picturesJob || picturesJob === "starting") return;
+  stop.disabled = true; stop.textContent = "Stopping…";
+  try { await api("/api/job/cancel", { method: "POST", body: { id: picturesJob } }); }
+  catch (error) { showJobError($("portPicturesLog"), error.message); stop.disabled = false; stop.textContent = "Stop checking"; }
+}
+
+/* The pictures that differ in the side drawer: each row opens its console | port | difference image. */
+function openPortPictures(pictures) {
+  const rows = pictures.differing.map((p) => `<tr><td>${p.task}</td><td>${p.differ_pct.toFixed(2)}%</td>`
+    + `<td>${p.near_pct == null ? "—" : p.near_pct.toFixed(2) + "%"}</td>`
+    + `<td><button class="ghost small-btn" type="button" data-picture="${esc(p.file)}">Show</button></td></tr>`).join("");
+  const drawer = dialog("Pictures that differ",
+    `<p class="small muted">Each image is the console's picture, the port's and their difference (brightened four times).</p>`
+    + `<table class="data-table"><thead><tr><th scope="col">Frame</th><th scope="col">Pixels that differ</th>`
+    + `<th scope="col">No match within ${pictures.settings.tolerance} px</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+    + `<div id="portPictureView"></div>`);
+  const root = drawer;
+  root.querySelectorAll("[data-picture]").forEach((button) => { button.onclick = async () => {
+    button.disabled = true;
+    try {
+      const got = await api(`/api/picture-check/image?slug=${encodeURIComponent(S.slug)}&file=${encodeURIComponent(button.dataset.picture)}`);
+      const view = root.querySelector("#portPictureView");
+      view.innerHTML = `<img alt="the console's picture, the port's and their difference" style="max-width:100%;image-rendering:pixelated" src="${got.url}">`;
+    } catch (error) { toast(error.message); } finally { button.disabled = false; }
+  }; });
+}
+
 async function fixRenamedCalls() {
   const slug = S.slug, log = $("portRenameLog");
   log.hidden = false; log._showJobProgress = true;
@@ -1100,6 +1166,7 @@ function attachPlay(play) {
   if (!play) return;
   if (play.behaviour_job && !behaviourJob) checkBehaviour(play.behaviour_job);
   if (play.render_scan_job && !scanJob) scanRenderFaults(play.render_scan_job);
+  if (play.pictures_job && !picturesJob) checkPictures(play.pictures_job);
   if (playJob) return;
   if (play.job) { playGame(play.job); return; }
   $("portStop").hidden = !play.url; playStopLabel();
@@ -1134,6 +1201,8 @@ if ($("portPanel")) {
   if ($("portBehaviourStop")) $("portBehaviourStop").onclick = stopBehaviour;
   if ($("portScan")) $("portScan").onclick = () => scanRenderFaults();
   if ($("portScanStop")) $("portScanStop").onclick = stopScan;
+  if ($("portPictures")) $("portPictures").onclick = () => checkPictures();
+  if ($("portPicturesStop")) $("portPicturesStop").onclick = stopPictures;
   $("portAssets").onclick = writeAssetMap;
   $("portDrafts").onclick = draftPortData;
   $("portCompile").onclick = compileForPc;

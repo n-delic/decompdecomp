@@ -819,3 +819,16 @@ Repeated helper definitions kept as saved compilation context receive identities
 module. Each caller retains its own helper body; a real owner file retains the public function. Address-taken
 uses keep the original console address, and private context is not promoted as a public runtime implementation.
 This avoids duplicate symbols without selecting an arbitrary helper variant or relaxing the linker.
+
+
+## Check pictures (Porting tab)
+
+The comparison described above is a button: Check pictures (app/picture_check.py, engine port/frame_compare.py, the same
+code as tools/n64_frame_compare.py). It builds the port, runs the ROM in the reversing emulator through a controller
+script timed in the game's own frames, takes the console's RAM at about a dozen moments (each a graphics task and the one
+after it) and does the same in the port, which starts from the console's own save and replays the console's pacing
+(`EMU_TASK_LOG` and `PORT_VTIME_TRACE`). Both are drawn by the port's renderer; the Porting tab counts the pictures that
+are identical, the same within the allowed shift (a scene caught a frame apart), and those that differ, and its drawer shows
+each differing picture as console, port and difference. What it can't do: the emulator draws nothing, so blank frames and
+the browser build still have no pixel reference; a game that needs its own seeds replayed (a port-only override, `PORT_SEED_REPLAY`)
+still shows those pictures as differences until it has one.
