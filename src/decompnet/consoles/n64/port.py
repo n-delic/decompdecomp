@@ -97,10 +97,13 @@ GLUE_PROVIDES = frozenset({"osCreateThread", "osStartThread", "osStopThread", "o
 # libultra's own math, pure computation: the game's copy compiles for the PC (libultraship declares some, defines
 # none); the controller CRCs are the same kind of code
 _MATH = frozenset({"sins", "coss", "__sinf", "__cosf", "__osContAddressCrc", "__osContDataCrc"})
+# The C library functions the host answers by name (host.c defines each: tests/test_n64_port_host.py checks). What it doesn't
+# define stays the game's own copy, compiled as it is: a list entry the host lacks was left out of the build and stubbed to
+# nothing (every strncmp said "equal"), and `rand`'s sequence, printf's formatting and the division helpers are the game's
+# own code to run, not something the host's C library gives the same results for.
 _LIBC = frozenset({"bcopy", "bzero", "bcmp", "memcpy", "memset", "memmove", "memcmp", "strlen", "strcpy",
-                   "strncpy", "strcmp", "strncmp", "strcat", "strchr", "sprintf", "vsprintf", "sqrtf", "sinf",
-                   "cosf", "sins", "coss", "ldiv", "lldiv", "div", "abs", "rand", "srand", "ldexpf", "ldexp",
-                   "frexpf", "frexp", "modff", "modf"})
+                   "strncpy", "strcmp", "strncmp", "strcat", "strchr", "sqrtf", "sinf", "cosf", "sins", "coss",
+                   "abs", "ldexpf", "frexpf"})
 # libultra's own static helpers, named in its source without its prefixes: the VI manager's thread and the
 # Controller Pak's file system checks (libultraship does both), and the synthesizer's (compiled with it).
 _OS_INTERNAL = frozenset({"viMgrMain", "corrupted", "corrupted_init"})

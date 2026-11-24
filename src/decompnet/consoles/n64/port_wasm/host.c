@@ -1333,6 +1333,17 @@ void w2c_env_osMapTLB(struct w2c_env *e, u32 index, u32 pm, u32 va, u32 even, u3
 u32 w2c_env_memcpy(struct w2c_env *e, u32 d, u32 s, u32 n) { (void)e; memmove(M + d, M + s, n); return d; }
 u32 w2c_env_memset(struct w2c_env *e, u32 d, u32 c, u32 n) { (void)e; memset(M + d, (int)c, n); return d; }
 u32 w2c_env_strlen(struct w2c_env *e, u32 p) { (void)e; return (u32)strlen((char *)M + p); }
+/* The rest of the C library's string and memory functions the kit counts as the host's (port.py _LIBC): left out of the build
+   as the game's own copies, so one the host doesn't define was a stub returning 0: every strncmp said "equal" and every
+   strcpy copied nothing. Their results are the C library's (a comparison's sign, the destination). */
+u32 w2c_env_memmove(struct w2c_env *e, u32 d, u32 s, u32 n) { (void)e; memmove(M + d, M + s, n); return d; }
+u32 w2c_env_memcmp(struct w2c_env *e, u32 a, u32 b, u32 n) { (void)e; return (u32)(int32_t)memcmp(M + a, M + b, n); }
+u32 w2c_env_strcmp(struct w2c_env *e, u32 a, u32 b) { (void)e; return (u32)(int32_t)strcmp((char *)M + a, (char *)M + b); }
+u32 w2c_env_strncmp(struct w2c_env *e, u32 a, u32 b, u32 n) { (void)e; return (u32)(int32_t)strncmp((char *)M + a, (char *)M + b, n); }
+u32 w2c_env_strcpy(struct w2c_env *e, u32 d, u32 s) { (void)e; strcpy((char *)M + d, (char *)M + s); return d; }
+u32 w2c_env_strncpy(struct w2c_env *e, u32 d, u32 s, u32 n) { (void)e; strncpy((char *)M + d, (char *)M + s, n); return d; }
+u32 w2c_env_strcat(struct w2c_env *e, u32 d, u32 s) { (void)e; strcat((char *)M + d, (char *)M + s); return d; }
+u32 w2c_env_strchr(struct w2c_env *e, u32 s, u32 c) { (void)e; char *p = strchr((char *)M + s, (int)c); return p ? (u32)(p - (char *)M) : 0; }
 void w2c_env_0x5F_osCopyBytes(struct w2c_env *e, u32 s, u32 d, u32 n) { (void)e; memmove(M + d, M + s, n); }
 u32 w2c_env_abs(struct w2c_env *e, u32 x) { (void)e; return (u32)abs((int32_t)x); }
 /* What stays hand-written assembly in most games, answered by its library name: a game's C calls it by its automatic
