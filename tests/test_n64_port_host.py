@@ -720,6 +720,8 @@ static void wbe32(uint32_t a, uint32_t v) { M[a] = v >> 24; M[a + 1] = v >> 16; 
 static int port_ai_register(uint32_t a, int w, uint32_t v, uint32_t *r) { (void)a; (void)w; (void)v; (void)r; return 0; }
 static int si_register(uint32_t a, int w, uint32_t v, uint32_t *r) { (void)a; (void)w; (void)v; (void)r; return 0; }
 static int pi_register(uint32_t a, int w, uint32_t v, uint32_t *r) { (void)a; (void)w; (void)v; (void)r; return 0; }
+static int flash_in_use; static uint32_t save_offset(uint32_t b) { return (b & 0x1FFFFFFFu) - 0x08000000u; }
+static uint32_t port_flash_read(uint32_t o) { (void)o; return 0; } static void port_flash_command(uint32_t c) { (void)c; }
 """ + _function(HOST.read_text(), "rom32") + "\n" + _function(HOST.read_text(), "open_bus") + "\n" + _function(HOST.read_text(), "port_io_load") + "\n" + _function(HOST.read_text(), "port_io_store") + """
 int main(void) {
     rom[0x578] = 0x34; rom[0x579] = 0x21; rom[0x57A] = 0x89; rom[0x57B] = 0x65;
@@ -1048,6 +1050,8 @@ static void post_event(int event) { assert(event == EV_PI); interrupts++; }
 #define SHADOW_SIZE 0x100000u
 #define BOOT_STACK_SIZE 0x10000u
 #define BOOT_STACK_BUS 0x15000000u
+static int save_window(uint32_t bus) { (void)bus; return 0; }
+static int save_dma(uint32_t d, uint32_t c, uint32_t n, uint32_t w) { (void)d; (void)c; (void)n; (void)w; return 0; }
 """ + _function(host, "stack_end") + "\n" + _function(host, "port_stack_bus") + "\n" + _function(host, "pi_register") + """
 int main(void) {
     M = calloc(0x82000000u, 1);

@@ -553,13 +553,40 @@ uint32_t port_stack_bus(uint32_t addr) {
     if (!stack_end(addr)) return 0;
     return addr < BOOT_STACK_SIZE ? BOOT_STACK_BUS + addr : addr;
 }
+/* The cartridge's save window (domain 2: bus 0x08000000-0x0FFFFFFF, KSEG1 0xA8000000-0xAFFFFFFF) holds SRAM or a
+   FlashRAM chip. A game's own libultra reaches it without the host's osEPi* routines: stores and loads through the
+   uncached address (the flash command register at +0x10000, the status words) and raw PI transfers. All of them were
+   dropped (a strategy game's flash routines wrote the page-write commands, never saw the chip leave its id mode, and
+   polled the status for ever). A game that has sent the chip a command talks to FlashRAM; otherwise it is SRAM. */
+int port_sram_dma(uint32_t dram, uint32_t offset, uint32_t size, uint32_t write);
+int port_flash_dma(uint32_t dram, uint32_t offset, uint32_t size, uint32_t write);
+void port_flash_command(uint32_t command);
+uint32_t port_flash_read(uint32_t offset);
+static int flash_in_use;
+static int save_window(uint32_t bus) { bus &= 0x1FFFFFFFu; return bus >= 0x08000000u && bus < 0x10000000u; }
+static uint32_t save_offset(uint32_t bus) { return (bus & 0x1FFFFFFFu) - 0x08000000u; }
+static int save_dma(uint32_t dest, uint32_t cart, uint32_t size, uint32_t write) {
+    uint32_t end = 0x80800000u;
+    if (dest < 0x80000000u || size > end - dest) return -1;
+    return flash_in_use ? port_flash_dma(dest, save_offset(cart), size, write) : port_sram_dma(dest, save_offset(cart), size, write);
+}
 static int pi_register(uint32_t addr, int write, uint32_t value, uint32_t *read) {
     static uint32_t dram, cart;
     switch (addr) {
     case 0xA4600000u: if (write) dram = value; else *read = dram; return 1;
     case 0xA4600004u: if (write) cart = value; else *read = cart; return 1;
     case 0xA4600010u: if (!write) *read = cart_io_busy ? 2u : 0u; return 1;
-    case 0xA4600008u: if (!write) *read = 0; return 1; /* cartridge writes are ignored */
+    case 0xA4600008u: {
+        if (!write) { *read = 0; return 1; }
+        /* DRAM to the cartridge: only the save window takes a write (the ROM ignores it) */
+        if (save_window(cart)) {
+            uint32_t size = (value & 0x00FFFFFFu) + 1, bus = dram >= 0x00800000u && dram < 0x04000000u ? dram | 0x80000000u : dram;
+            uint32_t dest = bus < 0x00800000u ? 0x80000000u | (bus & 0x007FFFFEu) : bus;
+            save_dma(dest, cart, size, 1);
+            post_event(EV_PI);
+        }
+        return 1;
+    }
     case 0xA460000Cu: {
         if (!write) { *read = 0; return 1; }
         uint32_t size = (value & 0x00FFFFFFu) + 1;
@@ -570,6 +597,7 @@ static int pi_register(uint32_t addr, int write, uint32_t value, uint32_t *read)
         uint32_t end = bus >= 0x00800000u ? stack_end(dest) : 0x80800000u;
         if (bus < 0x00800000u) dest = 0x80000000u | (bus & 0x007FFFFEu);
         if (boot && dest >= BOOT_STACK_SIZE) end = 0;
+        if (save_window(cart)) { save_dma(dest, cart, size, 0); post_event(EV_PI); return 1; }
         uint32_t offset = cart & 0x0FFFFFFEu;
         if (cart >= 0x10000000u && cart < 0x1FC00000u && dest < end
                 && size <= end - dest && (uint64_t)offset + size <= rom_size)
@@ -590,6 +618,10 @@ static uint32_t open_bus(uint32_t bus) { return (bus & 0xFFFFu) * 0x10001u; }
 uint64_t port_io_load(uint64_t addr) {
     if (addr < 0xA0800000u) return addr - 0x20000000u; /* RAM, uncached: the same RAM */
     if (addr >= 0xA5000000u && addr < 0xA8000000u) { wbe32(IO_SCRATCH, open_bus((uint32_t)addr & ~3u)); return IO_SCRATCH + (addr & 3); }
+    if (addr >= 0xA8000000u && addr < 0xB0000000u) { /* the save window: FlashRAM's status or array words (SRAM is read by DMA) */
+        wbe32(IO_SCRATCH, flash_in_use ? port_flash_read(save_offset((uint32_t)addr) & ~3u) : 0);
+        return IO_SCRATCH + (addr & 3);
+    }
     if (addr == SP_STATUS) { wbe32(IO_SCRATCH, 1); return IO_SCRATCH; } /* halted: a task finishes at once */
     if (addr >= DPC_BASE + 0x0Cu && addr < DPC_BASE + 0x20u) {
         /* The RDP's command registers: the host draws a task when it starts, so the RDP is always idle. A game that
@@ -609,6 +641,10 @@ uint64_t port_io_load(uint64_t addr) {
 }
 uint64_t port_io_store(uint64_t addr, uint64_t value) {
     if (addr < 0xA0800000u) return addr - 0x20000000u;
+    if (addr >= 0xA8000000u && addr < 0xB0000000u) { /* the save window: the flash chip's command register */
+        if (save_offset((uint32_t)addr) == 0x10000u) { flash_in_use = 1; port_flash_command((uint32_t)value); }
+        return IO_SCRATCH + 4;
+    }
     if (addr >= 0xB0000000u && addr < 0xBFC00000u) {
         cart_io_last = (uint32_t)value;
         cart_io_busy = 1;
@@ -783,11 +819,7 @@ u32 w2c_env_osCartRomInit(struct w2c_env *e) {
     }
     return CART_HANDLE;
 }
-int port_sram_dma(uint32_t dram, uint32_t offset, uint32_t size, uint32_t write);
 /* FlashRAM (flash.c): a PI handle of type 8, libultra's DEVICE_TYPE_FLASH */
-int port_flash_dma(uint32_t dram, uint32_t offset, uint32_t size, uint32_t write);
-void port_flash_command(uint32_t command);
-uint32_t port_flash_read(uint32_t offset);
 #define PI_TYPE_FLASH 8
 static int flash_handle(u32 handle) { return handle && M[handle + 4] == PI_TYPE_FLASH; }
 static uint32_t flash_offset(u32 dev) { uint32_t bus = dev & 0x1FFFFFFFu; return bus >= 0x08000000u ? bus - 0x08000000u : bus; }
@@ -822,7 +854,7 @@ u32 w2c_env_osEPiReadIo(struct w2c_env *e, u32 handle, u32 dev, u32 data) {
 }
 u32 w2c_env_osEPiWriteIo(struct w2c_env *e, u32 handle, u32 dev, u32 data) {
     (void)e;
-    if (flash_handle(handle) && flash_offset(dev) == 0x10000u) port_flash_command(data); /* the command register */
+    if (flash_handle(handle) && flash_offset(dev) == 0x10000u) { flash_in_use = 1; port_flash_command(data); } /* the command register */
     return 0;
 }
 /* A local of the bootstrap wasm stack (the first 64 KiB, below console RAM's low memory) has no KSEG address: its

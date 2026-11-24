@@ -58,3 +58,17 @@ def test_the_host_sends_a_flash_handle_to_the_chip():
     text = (HOST / 'host.c').read_text()
     assert 'flash_handle(handle)' in text and 'port_flash_command(data)' in text
     assert 'PORT_FLASH' in (Path(__file__).resolve().parents[1] / 'src/decompnet/port/wasm/play.py').read_text()
+
+
+def test_the_host_routes_the_cartridges_save_window_to_the_chip():
+    """A game's own libultra reaches FlashRAM without the host's osEPi* routines: a store to the command register
+    through the uncached window (KSEG1 0xA8010000) and raw PI transfers with a cartridge address in domain 2 were
+    dropped, so the chip never left its id mode. They now reach the chip (or SRAM until a command shows it is flash)."""
+    text = (HOST / 'host.c').read_text()
+    store = text[text.index('uint64_t port_io_store('):]
+    load = text[text.index('uint64_t port_io_load('):text.index('uint64_t port_io_store(')]
+    assert 'addr >= 0xA8000000u && addr < 0xB0000000u' in store and 'port_flash_command((uint32_t)value)' in store
+    assert 'addr >= 0xA8000000u && addr < 0xB0000000u' in load and 'port_flash_read(' in load
+    pi = text[text.index('static int pi_register('):text.index('uint64_t port_io_load(')]
+    assert pi.count('save_window(cart)') == 2  # DRAM to the cartridge (0xA4600008) and back (0xA460000C)
+    assert 'flash_in_use ? port_flash_dma(' in text and 'port_sram_dma(dest, save_offset(cart)' in text
