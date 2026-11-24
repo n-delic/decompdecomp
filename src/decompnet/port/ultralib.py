@@ -76,12 +76,45 @@ def with_macro_targets(names: set, folder: Path) -> set:
     return set(names) | {target for macro, target in macro_targets(str(folder)).items() if macro in names}
 
 
+def prototype(definition: str) -> str:
+    """A function definition's own declaration, `f64 _ldexpf(f64 in, s32 ex);`, left where `extract` takes the
+    definition out: ultralib's `_getRate` calls `_ldexpf` and `_frexpf` that env.c defines just above it and no
+    header declares, so with the definitions gone the unit's calls were implicit `int` ones: `_ldexpf(invn, 30)` took
+    and returned an int, the shift count of `_getRate`'s loop came out -1 and the loop (`while (i_invn) i_invn >>= 1`)
+    never ended, with the audio thread at the top priority keeping every other thread off the CPU."""
+    head = re.sub(r"/\*.*?\*/|//[^\n]*", "", definition.split("{", 1)[0], flags=re.S).strip()
+    open_at = head.find("(")
+    if open_at < 0:
+        return "\n"
+    depth = 0
+    for at in range(open_at, len(head)):
+        depth += (head[at] == "(") - (head[at] == ")")
+        if depth == 0:
+            break
+    else:
+        return "\n"
+    if head[at + 1:].strip():  # (K&R parameter declarations after the list: only the name and return type)
+        head = head[:open_at].rstrip() + "()"
+    else:
+        head = head[:at + 1]
+    return head + ";\n"
+
+
 def extract(path: Path, name: str) -> str:
     """The file with only `name` of its exported functions: its directives, declarations and static helpers kept."""
-    kept = []
+    kept, dropped = [], []
     for chunk, defines, static in _items(path.read_text(encoding="utf-8", errors="replace")):
         if defines is None or static or defines == name:
             kept.append(chunk)
+        else:
+            kept.append(None)
+            dropped.append((len(kept) - 1, defines, chunk))
+    # a function taken out that the rest still names keeps its declaration in its place (see `prototype`)
+    rest = "".join(chunk for chunk in kept if chunk)
+    for at, defines, chunk in dropped:
+        if re.search(rf"\b{re.escape(defines)}\b", rest):
+            kept[at] = "\n" + prototype(chunk)
+    kept = [chunk for chunk in kept if chunk]
     # ultralib declares some helpers `static` in a prototype and defines them without it (`_bnkfPatchBank`): the
     # definition is then internal to the file, and the unit made for the function exported nothing, so its callers
     # stayed unresolved. The unit is that function's own file now: its prototype is not static.

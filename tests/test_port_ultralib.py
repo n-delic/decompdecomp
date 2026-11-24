@@ -54,7 +54,9 @@ def test_one_function_of_a_file_with_its_directives_and_static_helpers(tree):
     assert set(index) == {"guToyF", "guToy"}  # (the static helper is the file's own)
     text = ultralib.extract(index["guToy"], "guToy")
     assert '#include "guint.h"' in text and "static float twice" in text and "#if BUILD_VERSION" in text
-    assert "void guToy(Mtx" in text and "void guToyF" not in text and text.rstrip().endswith("#endif")
+    # (guToyF is guToy's callee: only its declaration stays, no body)
+    assert "void guToy(Mtx" in text and "void guToyF(float mf[4][4], float x);" in text
+    assert "twice(x);   /*" not in text and text.rstrip().endswith("#endif")
 
 
 def test_the_flags_are_those_of_the_build_the_game_matched(tree):
@@ -98,7 +100,8 @@ def test_units_are_ultralibs_c_and_need_it_installed(tree, monkeypatch):
     monkeypatch.setattr(sdk_assembly, "ultralib_set_aside", lambda n, p: {"guToy": ("src/gu/translate.c", "2.0J/libgultra")})
     units = ultralib.units(net, "game")
     text, flags = units["guToy.c"]
-    assert "void guToy(Mtx" in text and "guToyF(float" not in text and "-DBUILD_VERSION=VERSION_J" in flags
+    assert "void guToy(Mtx" in text and "guToyF(float mf[4][4], float x);" in text and "mf[3][0]" not in text
+    assert "-DBUILD_VERSION=VERSION_J" in flags
     monkeypatch.setattr(ultralib, "root", lambda: None)
     with pytest.raises(NetworkError, match="install libultra source"):
         ultralib.units(net, "game")
@@ -223,3 +226,32 @@ def test_ultralib_functions_the_games_own_c_calls_are_built_too(tree):
     assert ultralib.game_callees(units, tree, lambda name: name == "guToyF", game) == units  # provided elsewhere
     none = ultralib.game_callees({}, tree, lambda name: False, game)  # no unit: the default build
     assert set(none) == {"guToyF.c"} and "-DBUILD_VERSION=VERSION_L" in none["guToyF.c"][1]
+
+
+def test_a_function_taken_out_of_a_unit_leaves_its_prototype_for_the_calls_that_stay(tmp_path):
+    """env.c defines `_ldexpf` above `_getRate` and no header declares it: with the definition gone from the unit the
+    call was an implicit `int` one, and `_getRate`'s loop (`while (i_invn) i_invn >>= 1`) never ended."""
+    path = tmp_path / "toy.c"
+    path.write_text("""#include "toy.h"
+f64
+_ldexpf(f64 in, s32 ex)
+{
+    return in * (1 << ex);
+}
+
+s32 kandr(a, b)
+s32 a; s32 b;
+{
+    return a + b;
+}
+
+void alToyPull(void)
+{
+    f64 x = _ldexpf(0.5, 3);
+}
+""")
+    text = ultralib.extract(path, "alToyPull")
+    assert "_ldexpf(f64 in, s32 ex);" in text and "in * (1 << ex)" not in text
+    assert "alToyPull" in text and "_ldexpf(0.5, 3)" in text
+    assert ultralib.prototype("f64\n_ldexpf(f64 in, s32 ex)\n{ return in; }") == "f64\n_ldexpf(f64 in, s32 ex);\n"
+    assert ultralib.prototype("s32 kandr(a, b)\ns32 a; s32 b;\n{ return a; }") == "s32 kandr();\n"
