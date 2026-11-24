@@ -593,6 +593,15 @@ by 10,460 both have moved it, 1,474 units apart. `updateChaseCamera` picks the c
 and the console's cycle count and the port's virtual time are not the same number. Shifting every input event by two tasks
 left the episode unchanged. A game that seeds its random numbers from the clock will differ from the emulator wherever
 it draws on them, however exact the rest is; matching it means giving the port the clock value the console read at that call.
+What the emulator's blank save is, found: the game keeps a copy of its whole EEPROM in RAM (a racing game's at 0x800C70D0, 512
+bytes), and the console's copy (read from its RAM dump at task 600) has the same table as the port's but its first eight bytes
+differ (a time-seeded stamp, `4078d9de` on the console, `e62d8986` in the port) and so does one counter byte (`0x0C` against `0x00`).
+A fresh port started with exactly the console's 512 bytes as its `game.eep` reproduced the console's car position to the unit at
+tasks 3,400 and 6,000, where one started from no save, an all-zero or all-0xFF save, a 16 Kbit chip or no chip at all (every
+EEPROM call and the PIF's EEPROM channel answering as an absent device) did not. `--console-save` on
+`tools/n64_frame_compare.py` does it: a run of the script gives the port a save to look for, the game's copy is found in the
+console's RAM at `--save-at` (default frame 600) by the save's body past its header, and the console's bytes become the port's
+`game.eep` (from a fresh `--work`, three windows at tasks 3,000, 6,000 and 8,000 matched to the pixel, 0.00 percent differing).
 `--prime-save` on `tools/n64_frame_compare.py` runs the port once through the input script first, so the compared run starts
 from the save (`game.eep`, in `--work`) that run wrote. It matters: on a racing game a port started from no save, from an all-zero
 or all-0xFF one, or from the save of a short boot had its car launch slower than the emulator's (and stay 2,000 and more
