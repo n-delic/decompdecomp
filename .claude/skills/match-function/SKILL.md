@@ -425,6 +425,13 @@ says the fix and the library families it names; try those families with `prove_c
   it double-counts the references).
 - **Stray call arguments m2c leaves on one-argument callees** change sched1's order elsewhere: drop them all at once.
 - **A copy-back (`B = A;` after `A = B;`) that emits nothing** can fix ordering by making a variable multi-set.
+- **A table address the target loads fresh inside a guard, where every spelling gives a hoisted, spilled copy
+  reloaded into `$s7`** (KMC 2.7.2): loop.c moves a constant's set unless it is a user variable set where the loop may
+  not reach it (`maybe_never`) and used in a later block, and never moves registers made by an inner loop's
+  optimisation. Set a pointer in the guard (`u32 *tp = T;`) and read the loop through it; one pointer assigned in
+  several guards is never moved at all. `-dL`'s `done move-insn matches` lines show the merge that hoists it.
+  decomp-repair `guard_symbol_pointer`, `guard_alias_pointer`, `stepped_cursor_index` (290 -> 230 on a bit-stream
+  decoder; docs/learnings/function/bit-stream-decoder-guard-pointers-and-loop-made-registers.md).
 - **A goto loop stops loop.c hoisting constants** (do/while/for loops get the loop pass's treatment).
 - **Copy a short block in place of a `goto` to it** to give a value an extra use (cross-jumping merges the copies back).
 - **`const` pointer parameters** change the prologue's load order.
