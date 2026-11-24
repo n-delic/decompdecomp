@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sqlite3
 from pathlib import Path
 
 from . import FREE_ALLOWANCE, SAID_CHARS, Agent, args_brief, error_text, number, read_json, tool_name, usage_item
@@ -183,7 +184,33 @@ class Opencode(Agent):
             # the saved selection, but pass effort through its separate flag.
             base, _, variant = model.partition('#')
             model_args = ["-m", base, "--variant", variant]
-        return cmd + model_args, {"OPENCODE_DB": str((workdir / "opencode.db").resolve())}
+        database = (workdir / "opencode.db").resolve()
+        if standalone:
+            self.seed_database(database)
+        return cmd + model_args, {"OPENCODE_DB": str(database)}
+
+    @staticmethod
+    def user_database() -> Path:
+        if os.environ.get("OPENCODE_DB"):
+            return Path(os.environ["OPENCODE_DB"])
+        return Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share") / "opencode" / "opencode.db"
+
+    def seed_database(self, target: Path) -> None:
+        """opencode 2 keeps provider sign-ins and API keys (OpenCode Go, NVIDIA, ...) in its database, not in
+        auth.json as 1.x did, so a helper's own empty database knew no provider and every model failed at once with
+        `provider.no-route: Model unavailable`. The first session of a helper starts from a copy of the user's."""
+        source = self.user_database()
+        if target.exists() or not source.is_file():
+            return
+        partial = target.with_name(target.name + ".seed")
+        try:
+            partial.unlink(missing_ok=True)
+            with sqlite3.connect(f"file:{source}?mode=ro", uri=True, timeout=30) as src, \
+                    sqlite3.connect(partial, timeout=30) as dst:
+                src.backup(dst)
+            partial.replace(target)
+        except (sqlite3.Error, OSError):
+            partial.unlink(missing_ok=True)  # the session then starts empty, as before
 
     def parse(self, event: dict, state: dict) -> list[tuple[str, str] | None]:
         t = event.get("type")
