@@ -618,6 +618,13 @@ from the console's own save: 22 of 23 matched the emulator to the pixel (13,000,
 replay, now 0.00), the one that doesn't being task 10,500: the chase camera was at (-162,621, -2,263, -172,450) in the port with
 and without the replay and at (-164,095, -2,322, -172,490) on the console, so that cut is not decided by the seed alone (the
 track-node list ahead of the player, or the player's own position, are what is left to look at).
+Why task 10,500 still differs with the seeds replayed: the camera cut's node is the one nearest to the player at the moment of the call
+(then advanced by `rand_next15() % 6`, which agrees: the generator's state was one call apart at the dump, no more), and the player is
+moving then (about 750 units over tasks 10,430 to 10,460, the same on both sides at every dump). The console's first
+chase-camera call is at retrace 5,320, in the frame that starts at graphics task 10,445; the port's call with the same index (its
+1,565th seed, the console's first chase-camera one) was at task 10,450, a frame later. So the port's call falls a frame later against
+the player's movement, and the nearest node differs: a one-frame phase offset inside a respawn sequence, which aligning the two runs
+by graphics task (the replay's grain) cannot see. It is not the seed, the player's position at the dumps, or the draw.
 `--prime-save` on `tools/n64_frame_compare.py` runs the port once through the input script first, so the compared run starts
 from the save (`game.eep`, in `--work`) that run wrote. It matters: on a racing game a port started from no save, from an all-zero
 or all-0xFF one, or from the save of a short boot had its car launch slower than the emulator's (and stay 2,000 and more
