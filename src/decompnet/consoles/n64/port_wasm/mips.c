@@ -946,6 +946,29 @@ static int step(Cpu *c, uint32_t pc, uint32_t op, uint32_t *target) {
 #undef LIKELY
 }
 
+/* PORT_PC_TRACE=addr,addr,...: a line with the registers each time the interpreter executes an instruction at one of the
+   addresses (a function's entry, a call site): how a game's own control flow (its coroutines, its dispatchers) is followed. */
+static uint32_t pc_trace_at[8];
+static int pc_trace_n = -1;
+static void pc_trace(const Cpu *c, uint32_t pc) {
+    for (int i = 0; i < pc_trace_n; i++)
+        if (pc_trace_at[i] == pc) {
+            fprintf(stderr, "pc %08X: a0=%08X a1=%08X a2=%08X a3=%08X sp=%08X ra=%08X v0=%08X t0=%08X s0=%08X s1=%08X s2=%08X s3=%08X\n",
+                    pc, (uint32_t)c->r[4], (uint32_t)c->r[5], (uint32_t)c->r[6], (uint32_t)c->r[7], (uint32_t)c->r[29],
+                    (uint32_t)c->r[31], (uint32_t)c->r[2], (uint32_t)c->r[8], (uint32_t)c->r[16], (uint32_t)c->r[17],
+                    (uint32_t)c->r[18], (uint32_t)c->r[19]);
+            return;
+        }
+}
+static void pc_trace_init(void) {
+    pc_trace_n = 0;
+    const char *e = getenv("PORT_PC_TRACE");
+    while (e && *e && pc_trace_n < 8) {
+        pc_trace_at[pc_trace_n++] = (uint32_t)strtoul(e, (char **)&e, 16);
+        if (*e == ',') e++;
+    }
+}
+
 /* PORT_INTERP_STATS=1: the instructions interpreted so far and their rate, printed every 16 M (the host ends with
    _exit, so there is no later moment to print at): how the interpreter's speed is measured. */
 static void interp_stats(unsigned long n) {
@@ -967,9 +990,11 @@ static void interp_stats(unsigned long n) {
 
 /* Run the function at `entry` with the registers `r` and float registers `f` as o32 left them ($sp, $ra: the
    caller's sentinel, set by port_mips_enter), until it returns. */
+uint32_t port_interp_pc;
 void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
     if (!M) M = port_memory();
     if (tracing < 0) tracing = getenv("PORT_INTERP_TRACE") ? atoi(getenv("PORT_INTERP_TRACE")) : 0;
+    if (pc_trace_n < 0) pc_trace_init();
     entry = port_tlb_virtual(entry);
     /* an entry at a mapped virtual address (a callback pointer into a window): its virtual pc is kept from the first
        instruction, as for a jump into a window, so a branch lands on the next virtual page, not the next frame */
@@ -1038,6 +1063,7 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
             break;
         }
         if (op) zeros = 0;
+        if (__builtin_expect(pc_trace_n, 0)) pc_trace(&c, pc);
         if ((op >> 26) == 0 && (op & 63) == 12 && fetch(0x80000180u)) {
             /* syscall: an exception, taken as the console takes it. The game installed its own handler at the general
                exception vector (libultra's osInitialize copies a jump to __osException there), and a game's handler
@@ -1162,6 +1188,7 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
     counted:
         if (!(++steps & 0xFFFF)) { /* a thread spinning here gives the others their turn */
             interp_stats(0x10000);
+            port_interp_pc = pc; /* (PORT_SAMPLE prints it: where the interpreted game code is) */
             if (tracing > 1) fprintf(stderr, "interpreter: %08X still running, at %08X after %lu instructions\n", entry, pc, steps);
 #ifndef PORT_WEB
             port_boot_spin();

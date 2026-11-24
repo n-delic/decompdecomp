@@ -2120,7 +2120,9 @@ static void rom_byte_order(uint8_t *b, size_t n) {
 #endif
 /* PORT_SAMPLE: once a second, where the running game thread is (a backtrace for atos) */
 static void sample_handler(int sig) { (void)sig; port_trace(); }
+extern uint32_t port_interp_pc;
 static void sample(void) {
+    fprintf(stderr, "interpreter pc: %08X\n", port_interp_pc);
     pthread_mutex_lock(&lock);
     PortThread *r = running;
     pthread_t t = r ? r->host : 0;

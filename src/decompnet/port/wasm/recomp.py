@@ -430,12 +430,25 @@ def _addresses(fixed: list[str]) -> dict[str, int]:
     return where
 
 
+# a function that sets $sp from memory (`lw $sp, 8($a0)`: the end of a longjmp, a coroutine or thread switch): the C
+# of one ends in `return;`, not in the jump `jr $ra` made to the address it loaded
+STACK_FROM_MEMORY = re.compile(r"ctx->r29 = MEM_[A-Z]+\(")
+
+
 def unfinished(texts) -> set[str]:
     """The recompiled functions whose C can't compile as N64Recomp wrote it: a branch to a label the function doesn't
     have (a racing game's func_800424C0 branched past its end in the split, to L_80042650), and those that raise a
-    SYSCALL. Each runs only as the game's C, or is a stub that says so (the interpreter runs it from RAM)."""
+    SYSCALL. Each runs only as the game's C, or is a stub that says so (the interpreter runs it from RAM).
+
+    A game with coroutines of its own (a cooperative thread library over setjmp and longjmp: a shooter's scheduler
+    switches between its game's contexts) can't run them as C either: longjmp loads $sp and $ra from its buffer and
+    jumps to the address it saved, which C can't do, so the switch only returned to longjmp's caller and the game's
+    contexts never ran (0 graphics tasks for ever). The function that sets the stack from memory, and every function
+    that calls one, down to the game's contexts, run in the interpreter, which keeps the whole register state."""
     from ..csource import items
     out = set()
+    calls: dict[str, set[str]] = {}
+    switchers = set()
     for text in texts:
         for chunk, name, _ in items(text):
             if name and set(re.findall(r"goto (L_[0-9A-Fa-f]+);", chunk)) - set(re.findall(r"^\s*(L_[0-9A-Fa-f]+):", chunk, re.M)):
@@ -444,6 +457,22 @@ def unfinished(texts) -> set[str]:
             # words): recompiled C has no exception to take, so the interpreter runs such a function from RAM
             elif name and "recomp_syscall_handler(" in chunk:
                 out.add(name)
+            if name:
+                if STACK_FROM_MEMORY.search(chunk):
+                    switchers.add(name)
+                calls[name] = set(CALL.findall(chunk)) - {name}
+    if switchers:
+        callers: dict[str, set[str]] = {}
+        for caller, callees in calls.items():
+            for callee in callees:
+                callers.setdefault(callee, set()).add(caller)
+        todo = list(switchers)
+        out |= switchers
+        while todo:
+            for caller in callers.get(todo.pop(), ()):
+                if caller not in out:
+                    out.add(caller)
+                    todo.append(caller)
     return out
 
 
