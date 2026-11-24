@@ -82,7 +82,9 @@ int main(int argc, char **argv) {
 def _functions():
     """Each routine the Python tests build, and a near miss of it: (label, bytes)."""
     i, code = shapes._i, shapes._code
-    stores = [i(0x2B, 4, 6, o) for o in (0, 4, 8, 0xC, 0x10, 0x14)]
+    stores = shapes._queue_creation_stores()
+    heap = [i(0x2B, 5, 6, 0), i(0x2B, 5, 0, 4), i(0x2B, 4, 5, 0), i(0x2B, 4, 5, 4), i(0x2B, 4, 6, 8),
+            i(0x2B, 4, 6, 0xC), i(0x2B, 4, 6, 0x14), JR_RA, i(0x2B, 4, 0, 0x10)]
     out = [
         ("start", shapes._start_thread()),
         ("start-two-stores", shapes._start_thread(stores=[shapes._sh_state()] * 2)),
@@ -97,6 +99,8 @@ def _functions():
         ("queue", code(*stores, JR_RA, NOP, pad=2)),
         ("queue-short", code(*stores[:5], JR_RA, NOP, pad=3)),
         ("queue-load", code(*stores, i(0x23, 4, 8, 4), JR_RA, NOP, pad=1)),
+        ("queue-heap-initialiser", code(*heap)),  # the same six offsets with other registers: a game's heap
+        ("queue-ring-and-count-swapped", code(*stores[:4], i(0x2B, 4, 5, 0x10), i(0x2B, 4, 6, 0x14), JR_RA, NOP, pad=2)),
         ("event", shapes._event_message()),
         ("event-structure", shapes._event_message(tail=[i(0x2B, 10, 9, 8), shapes.JAL, shapes.JAL, JR_RA, NOP])),
     ]
@@ -192,7 +196,7 @@ def test_the_host_names_each_routine_it_can_replace(classified):
 def test_a_near_miss_is_no_routine(classified):
     by = {label: name for label, _, name in classified}
     for label in ("start-two-stores", "priority-reader", "destroy-runnable", "recv-no-modulo", "queue-short",
-                  "queue-load", "event-structure", "create-no-flags", "create-no-pc", "create-id-on-the-stack", "create-inline",
+                  "queue-load", "queue-heap-initialiser", "queue-ring-and-count-swapped", "event-structure", "create-no-flags", "create-no-pc", "create-id-on-the-stack", "create-inline",
                   "yield-not-runnable", "create-callees-not-interrupts", "create-one-callee-not-an-interrupt",
                   "create-behind-an-indirect-jump", "getter-other-field", "getter-no-branch", "getter-with-a-store",
                   "getter-calls"):

@@ -104,11 +104,36 @@ def test_the_message_queue_routines_are_told_by_how_they_work_the_ring_buffer():
         assert sdk_shapes.identify(_queue_routine(kind, modulo=False)) is None
 
 
+def _queue_creation_stores():
+    """osCreateMesgQueue's stores, as libultra has them: the thread-list sentinel (a temporary's address) at +0 and
+    +4, the valid count and first zeroed, the count argument ($a2) at +0x10 and the ring ($a1) at +0x14."""
+    return [_i(0x2B, 4, 14, 0), _i(0x2B, 4, 15, 4), _i(0x2B, 4, 0, 8), _i(0x2B, 4, 0, 0xC), _i(0x2B, 4, 6, 0x10),
+            _i(0x2B, 4, 5, 0x14)]
+
+
 def test_osCreateMesgQueue_is_told_by_its_six_stores_and_no_loads_or_calls():
-    stores = [_i(0x2B, 4, 6, o) for o in (0, 4, 8, 0xC, 0x10, 0x14)]
+    stores = _queue_creation_stores()
     assert sdk_shapes.identify(_code(*stores, JR_RA, NOP, pad=2))["name"] == "osCreateMesgQueue"
     assert sdk_shapes.identify(_code(*stores[:5], JR_RA, NOP, pad=3)) is None  # one store short
     assert sdk_shapes.identify(_code(*stores, _i(0x23, 4, 8, 4), JR_RA, NOP, pad=1)) is None  # a load
+
+
+def test_a_routine_storing_the_same_offsets_with_other_registers_is_no_message_queue():
+    """A game's heap initialiser stored the same six offsets (`sw $a2,0($a1)` first, then `$a1` and `$a2` through
+    $a0 with a zero at +0x10): the host's osCreateMesgQueue in its place wrote a queue over the heap's header, the
+    allocator found no free block, and a pool initialiser divided by nothing and looped 2^32 times."""
+    heap = [_i(0x2B, 5, 6, 0), _i(0x2B, 5, 0, 4), _i(0x2B, 4, 5, 0), _i(0x2B, 4, 5, 4), _i(0x2B, 4, 6, 8),
+            _i(0x2B, 4, 6, 0xC), _i(0x2B, 4, 6, 0x14), JR_RA, _i(0x2B, 4, 0, 0x10)]
+    assert sdk_shapes.identify(_code(*heap, pad=0)) is None
+    stores = _queue_creation_stores()
+    swapped = list(stores)
+    swapped[4], swapped[5] = _i(0x2B, 4, 5, 0x10), _i(0x2B, 4, 6, 0x14)  # the ring and the count the wrong way round
+    assert sdk_shapes.identify(_code(*swapped, JR_RA, NOP, pad=2)) is None
+    arguments = list(stores)
+    arguments[0] = _i(0x2B, 4, 0, 0)  # an empty list, not the sentinel's address
+    assert sdk_shapes.identify(_code(*arguments, JR_RA, NOP, pad=2)) is None
+    extra = list(stores) + [_i(0x2B, 4, 6, 0x18)]  # a seventh field: another structure
+    assert sdk_shapes.identify(_code(*extra, JR_RA, NOP, pad=1)) is None
 
 
 def _event_message(**override):

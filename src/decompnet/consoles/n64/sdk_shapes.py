@@ -227,10 +227,26 @@ def event_message(words: list[int], size: int) -> bool:
 
 def queue_creation(words: list[int], size: int) -> bool:
     """`osCreateMesgQueue(mq, msgs, count)`: six stores into the queue and no load or call: both lists empty
-    (the thread-list sentinel), the count and first zeroed, the size and the ring's address set."""
+    (the thread-list sentinel, an address built in a temporary), the valid count and first zeroed, the count
+    argument ($a2) at +0x10 and the ring's address ($a1) at +0x14, every store through $a0. The offsets alone
+    matched a game's heap initialiser (`sw $a2, 0($a1); sw $a1, 0($a0); ...; sw $zero, 0x10($a0)`), whose copy
+    replaced by the host's wrote a message queue over the heap's header and left the allocator with no free list
+    (a pool initialiser then divided by nothing and looped 2^32 times)."""
     f = _queue_features(words)
-    return (32 <= size <= 48 and f["calls"] == 0 and f["stored"] == {0, 4, 8, 0xC, 0x10, 0x14}
-            and not any(w >> 26 in (0x23, 0x21, 0x25) for w in words))
+    if not (32 <= size <= 48 and f["calls"] == 0 and f["stored"] == {0, 4, 8, 0xC, 0x10, 0x14}
+            and not any(w >> 26 in (0x23, 0x21, 0x25) for w in words)):
+        return False
+    by_offset = {}
+    for w in words:
+        if w >> 26 != 0x2B:
+            continue
+        if w >> 21 & 31 != 4:  # a store through any register but $a0 is not setting up the queue
+            return False
+        by_offset[w & 0xFFFF] = w >> 16 & 31
+    arguments = {4, 5, 6, 7}
+    return (set(by_offset) == {0, 4, 8, 0xC, 0x10, 0x14} and by_offset[8] == 0 and by_offset[0xC] == 0
+            and by_offset[0x10] == 6 and by_offset[0x14] == 5
+            and by_offset[0] not in arguments | {0} and by_offset[4] not in arguments | {0})
 
 
 def _hardware_features(words: list[int]) -> dict:

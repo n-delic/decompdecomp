@@ -393,6 +393,24 @@ static unsigned shape_thread_getter(const uint32_t *w, unsigned n) {
     return skip && lui && load && (IMM(last) == 0x14 || IMM(last) == 4) ? IMM(last) : 0;
 }
 
+/* osCreateMesgQueue's registers (sdk_shapes.py queue_creation): every store goes through $a0, the valid count and first
+   are $zero, the count argument ($a2) is stored at +0x10 and the ring's address ($a1) at +0x14, the two lists are a
+   temporary's address (no argument register, not $zero). The offsets alone matched a game's heap initialiser. */
+static int shape_queue_creation_registers(const uint32_t *w, unsigned n) {
+    int reg[6] = {-1, -1, -1, -1, -1, -1};
+    for (unsigned i = 0; i < n; i++) {
+        if (OPC(w[i]) != 0x2B) continue;
+        if (RS(w[i]) != 4) return 0;
+        uint32_t off = IMM(w[i]);
+        if (off > 0x14 || (off & 3)) return 0;
+        reg[off / 4] = (int)RT(w[i]);
+    }
+    for (int k = 0; k < 6; k++) if (reg[k] < 0) return 0;
+    if (reg[2] != 0 || reg[3] != 0 || reg[4] != 6 || reg[5] != 5) return 0;
+    for (int k = 0; k < 2; k++) if (reg[k] == 0 || (reg[k] >= 4 && reg[k] <= 7)) return 0;
+    return 1;
+}
+
 /* sdk_shapes.py's identify(), the same tests over the function's words: the library's name, or 0 */
 static const char *shape_identify_words(const uint32_t *w, unsigned n) {
     unsigned size = n * 4;
@@ -445,7 +463,8 @@ static const char *shape_identify_words(const uint32_t *w, unsigned n) {
         if (f.first_stores == 0 && !f.valid_down && f.valid_up) return "osSendMesg";
         if (f.first_stores == 1 && f.valid_down && f.count_loads >= 3 && f.valid_up) return "osJamMesg";
     }
-    if (size >= 32 && size <= 48 && f.calls == 0 && f.stored == 0x3Fu && !f.wide_load) return "osCreateMesgQueue";
+    if (size >= 32 && size <= 48 && f.calls == 0 && f.stored == 0x3Fu && !f.wide_load
+        && shape_queue_creation_registers(w, n)) return "osCreateMesgQueue";
     if (shape_event_message(w, n, size)) return "osSetEventMesg";
     return shape_hardware(w, n, size, f.calls);
 }
