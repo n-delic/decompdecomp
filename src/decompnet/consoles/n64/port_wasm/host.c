@@ -621,6 +621,7 @@ static int pi_register(uint32_t addr, int write, uint32_t value, uint32_t *read)
    the DP interrupt the game's scheduler waits for. With these registers plain memory the list was never drawn and the
    DP event never came: a racing-style game's scheduler waited for ever after its second list. */
 static uint32_t dpc_start, dpc_end, dpc_cur;
+static uint32_t dpc_start_word, dpc_end_word; /* the words as written: what a self-test of the registers reads back */
 static int dpc_start_valid;
 static void rcp_raise(int event);
 static void dpc_run(void) {
@@ -654,7 +655,7 @@ uint64_t port_io_load(uint64_t addr) {
     }
     if (addr == SP_STATUS) { wbe32(IO_SCRATCH, 1); return IO_SCRATCH; } /* halted: a task finishes at once */
     if (addr >= DPC_BASE && addr < DPC_BASE + 0x0Cu) { /* the list the RDP was given: start, end, and where it is (done) */
-        wbe32(IO_SCRATCH, addr == DPC_BASE ? dpc_start : addr == DPC_BASE + 4u ? dpc_end : dpc_cur);
+        wbe32(IO_SCRATCH, addr == DPC_BASE ? dpc_start_word : addr == DPC_BASE + 4u ? dpc_end_word : dpc_cur);
         return IO_SCRATCH;
     }
     if (addr >= DPC_BASE + 0x0Cu && addr < DPC_BASE + 0x20u) {
@@ -685,8 +686,8 @@ uint64_t port_io_store(uint64_t addr, uint64_t value) {
         return IO_SCRATCH + 4;
     }
     if (addr == SP_STATUS) return IO_SCRATCH + 4; /* a command (clear halt, set a signal): nothing to keep */
-    if (addr == DPC_BASE) { dpc_start = (uint32_t)value & 0x00FFFFF8u; dpc_start_valid = 1; return IO_SCRATCH + 4; }
-    if (addr == DPC_BASE + 4u) { dpc_end = (uint32_t)value & 0x00FFFFF8u; dpc_run(); return IO_SCRATCH + 4; }
+    if (addr == DPC_BASE) { dpc_start_word = (uint32_t)value; dpc_start = (uint32_t)value & 0x00FFFFF8u; dpc_start_valid = 1; return IO_SCRATCH + 4; }
+    if (addr == DPC_BASE + 4u) { dpc_end_word = (uint32_t)value; dpc_end = (uint32_t)value & 0x00FFFFF8u; dpc_run(); return IO_SCRATCH + 4; }
     if (addr == DPC_BASE + 0x0Cu) return IO_SCRATCH + 4; /* a command to the RDP's status: nothing to keep (see port_io_load) */
     if (port_ai_register((uint32_t)addr, 1, (uint32_t)value, NULL) || si_register((uint32_t)addr, 1, (uint32_t)value, NULL)
             || pi_register((uint32_t)addr, 1, (uint32_t)value, NULL))

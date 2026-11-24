@@ -1784,3 +1784,16 @@ int main(void) {
     env.pop("PORT_SEED_REPLAY")
     assert subprocess.run([str(tmp_path / "t")], env=env, check=True, capture_output=True, text=True).stdout.split() == [
         "7", "8", "9", "10"]
+
+
+def test_the_rdp_start_and_end_registers_read_back_the_word_a_game_wrote():
+    """A game's startup writes 0x12345678 to DPC_START and reads it back: a register self-test. The registers keep
+    only 24 bits when the RDP runs a list, but a read gave the masked word, so the test failed and the game stopped
+    after its first graphics task (a military shooter: 2 graphics tasks, then hundreds without the fix). The words
+    are kept as written for the readback; the masked copies run the list."""
+    text = HOST.read_text()
+    load = text[text.index("uint64_t port_io_load("):text.index("uint64_t port_io_store(")]
+    assert "addr == DPC_BASE ? dpc_start_word : addr == DPC_BASE + 4u ? dpc_end_word : dpc_cur" in load
+    store = text[text.index("uint64_t port_io_store("):text.index("/* ---------------------------------------------------------------- VI */")]
+    assert "dpc_start_word = (uint32_t)value;" in store and "dpc_end_word = (uint32_t)value;" in store
+    assert "dpc_start = (uint32_t)value & 0x00FFFFF8u;" in store  # the list still runs from the masked address
