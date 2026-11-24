@@ -785,6 +785,7 @@ static int si_register(uint32_t a, int w, uint32_t v, uint32_t *r) { (void)a; (v
 static int pi_register(uint32_t a, int w, uint32_t v, uint32_t *r) { (void)a; (void)w; (void)v; (void)r; return 0; }
 static int flash_in_use; static uint32_t save_offset(uint32_t b) { return (b & 0x1FFFFFFFu) - 0x08000000u; }
 static uint32_t port_flash_read(uint32_t o) { (void)o; return 0; } static void port_flash_command(uint32_t c) { (void)c; }
+static uint32_t dpc_start, dpc_end, dpc_cur; static int dpc_start_valid; static void dpc_run(void) {}
 """ + _function(HOST.read_text(), "rom32") + "\n" + _function(HOST.read_text(), "open_bus") + "\n" + _function(HOST.read_text(), "port_io_load") + "\n" + _function(HOST.read_text(), "port_io_store") + """
 int main(void) {
     rom[0x578] = 0x34; rom[0x579] = 0x21; rom[0x57A] = 0x89; rom[0x57B] = 0x65;
@@ -1446,6 +1447,24 @@ def test_the_rdp_command_status_reads_idle_so_a_game_polling_it_gets_on():
     assert "addr == DPC_BASE + 0x0Cu ? 0x80u : 0u" in load  # status: CBUF_READY alone; clock and busy counters 0
     store = text[text.index("uint64_t port_io_store("):text.index("/* ---------------------------------------------------------------- VI */")]
     assert "addr == DPC_BASE + 0x0Cu" in store  # the status write is a command, nothing to keep
+
+
+def test_a_command_list_the_game_gives_the_rdp_is_drawn_and_raises_the_dp_event():
+    """A scheduler that draws without an RSP task calls osDpSetNextBuffer: DPC_START, then DPC_END (0xA4100000/04).
+    The registers were plain memory, so the list was never drawn and the DP event the scheduler waited for never came:
+    a game's second list stalled it for ever (one graphics task, then nothing). Writing DPC_END now draws
+    [current, end) with the software RDP and raises the DP interrupt at a full sync (command 0x29)."""
+    text = HOST.read_text()
+    store = text[text.index("uint64_t port_io_store("):text.index("/* ---------------------------------------------------------------- VI */")]
+    assert "addr == DPC_BASE) { dpc_start" in store and "addr == DPC_BASE + 4u) { dpc_end" in store and "dpc_run();" in store
+    load = text[text.index("uint64_t port_io_load("):text.index("uint64_t port_io_store(")]
+    assert "addr >= DPC_BASE && addr < DPC_BASE + 0x0Cu" in load  # start, end and current read back
+    run = text[text.index("static void dpc_run(void)"):text.index("static int dd_range(")]
+    assert "port_render_rdp_list(cmds, bytes)" in run and "if (sync) rcp_raise(EV_DP)" in run
+    assert "if (id == 0x29) sync = 1;" in run
+    render = (HOST.parent / "render.c").read_text()
+    assert "void port_render_rdp_list(const uint8_t *cmds, size_t bytes)" in render
+    assert "port_rdp_replay(cmds, bytes, NULL, 0)" in render
 
 
 def test_a_first_function_that_loops_in_the_games_own_code_after_starting_threads_is_the_idle_thread():

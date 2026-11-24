@@ -56,6 +56,7 @@ static void wbe32(uint32_t a, uint32_t v) { v = __builtin_bswap32(v); memcpy(M +
 static void wbe16(uint32_t a, uint16_t v) { v = __builtin_bswap16(v); memcpy(M + gv(a), &v, 2); }
 uint8_t *port_memory(void) { return M; } /* for the renderer (render.c) */
 void port_render_task(uint32_t task); /* render.c: a graphics task's display list, drawn into the game's frame buffer */
+void port_render_rdp_list(const uint8_t *cmds, size_t bytes); /* render.c: a list the game gives the RDP itself */
 
 /* ---------------------------------------------------------------- the game's functions by address */
 
@@ -615,6 +616,33 @@ static int pi_register(uint32_t addr, int write, uint32_t value, uint32_t *read)
    (the 64DD support some cartridges carry) reads the status register at 0x05000508 and, finding a nonzero word,
    returns at once with "no 64DD"; answered with 0 it built its disk manager and waited for it for ever (a racing
    game's main thread spun on the manager's reply). */
+/* The RDP's own command list (osDpSetNextBuffer, a scheduler that draws without an RSP task): DPC_START names where the
+   list begins, and writing DPC_END starts the RDP, which draws [current, end) and, at a full sync (command 0x29), raises
+   the DP interrupt the game's scheduler waits for. With these registers plain memory the list was never drawn and the
+   DP event never came: a racing-style game's scheduler waited for ever after its second list. */
+static uint32_t dpc_start, dpc_end, dpc_cur;
+static int dpc_start_valid;
+static void rcp_raise(int event);
+static void dpc_run(void) {
+    if (dpc_start_valid) { dpc_cur = dpc_start; dpc_start_valid = 0; }
+    uint32_t from = dpc_cur & 0x00FFFFF8u, to = dpc_end;
+    if (to <= from || to - from > 0x100000u || to > 0x00800000u) { dpc_cur = to > from ? from : dpc_cur; return; }
+    const uint8_t *cmds = M + gv(0x80000000u + from);
+    size_t bytes = to - from;
+    int sync = 0;
+    for (size_t at = 0; at + 8 <= bytes;) { /* the list's commands: length by opcode, a full sync raises the interrupt */
+        uint32_t id = cmds[at] & 0x3Fu, words = 2;
+        if (id >= 0x08 && id <= 0x0F) words = 8 + (id & 4 ? 16 : 0) + (id & 2 ? 16 : 0) + (id & 1 ? 4 : 0);
+        else if (id == 0x24 || id == 0x25) words = 4;
+        if (id == 0x29) sync = 1;
+        at += words * 4;
+    }
+    static int said;
+    if (said++ < 3) LOG("the game gave the RDP a command list: %06X to %06X (%s)", from, to, sync ? "ends in a full sync" : "no full sync");
+    port_render_rdp_list(cmds, bytes);
+    dpc_cur = to;
+    if (sync) rcp_raise(EV_DP);
+}
 static int dd_range(uint32_t bus) { bus &= 0x1FFFFFFFu; return bus >= 0x05000000u && bus < 0x08000000u; }
 static uint32_t open_bus(uint32_t bus) { return (bus & 0xFFFFu) * 0x10001u; }
 uint64_t port_io_load(uint64_t addr) {
@@ -625,6 +653,10 @@ uint64_t port_io_load(uint64_t addr) {
         return IO_SCRATCH + (addr & 3);
     }
     if (addr == SP_STATUS) { wbe32(IO_SCRATCH, 1); return IO_SCRATCH; } /* halted: a task finishes at once */
+    if (addr >= DPC_BASE && addr < DPC_BASE + 0x0Cu) { /* the list the RDP was given: start, end, and where it is (done) */
+        wbe32(IO_SCRATCH, addr == DPC_BASE ? dpc_start : addr == DPC_BASE + 4u ? dpc_end : dpc_cur);
+        return IO_SCRATCH;
+    }
     if (addr >= DPC_BASE + 0x0Cu && addr < DPC_BASE + 0x20u) {
         /* The RDP's command registers: the host draws a task when it starts, so the RDP is always idle. A game that
            writes the status (clear XBUS DMEM DMA) and polls bit 0 until it drops (libultra's osDpSetStatus users)
@@ -653,6 +685,8 @@ uint64_t port_io_store(uint64_t addr, uint64_t value) {
         return IO_SCRATCH + 4;
     }
     if (addr == SP_STATUS) return IO_SCRATCH + 4; /* a command (clear halt, set a signal): nothing to keep */
+    if (addr == DPC_BASE) { dpc_start = (uint32_t)value & 0x00FFFFF8u; dpc_start_valid = 1; return IO_SCRATCH + 4; }
+    if (addr == DPC_BASE + 4u) { dpc_end = (uint32_t)value & 0x00FFFFF8u; dpc_run(); return IO_SCRATCH + 4; }
     if (addr == DPC_BASE + 0x0Cu) return IO_SCRATCH + 4; /* a command to the RDP's status: nothing to keep (see port_io_load) */
     if (port_ai_register((uint32_t)addr, 1, (uint32_t)value, NULL) || si_register((uint32_t)addr, 1, (uint32_t)value, NULL)
             || pi_register((uint32_t)addr, 1, (uint32_t)value, NULL))
@@ -941,6 +975,14 @@ void w2c_env_osSpTaskStartGo(struct w2c_env *e, u32 task) {
         port_render_task(task);
     }
     if (type == 2) port_audio_task(task);
+    { /* the first task of each type, whatever the count: a game's own task types (not 1 or 2) count as audio above */
+        static unsigned seen_types;
+        if (type < 32 && !(seen_types & (1u << type))) {
+            seen_types |= 1u << type;
+            LOG("first RSP task of type %u: flags %X, ucode %08X, data %08X (%X bytes)", type, be32(task + 4), be32(task + 16),
+                be32(task + 48), be32(task + 52));
+        }
+    }
     if (gfx_tasks + audio_tasks <= 4) LOG("RSP task type %u flags %X: data %08X, %X bytes", type, be32(task + 4), be32(task + 48), be32(task + 52));    if (type == 1 && gfx_tasks == 2 && getenv("PORT_TASK")) {
         uint32_t ud = be32(task + 24) & 0x1FFFFFFF, uds = be32(task + 28), dl = be32(task + 48) & 0x1FFFFFFF;
         fprintf(stderr, "gfx task: ucode %08X (%X), ucode data %08X (%X), data %08X\n",

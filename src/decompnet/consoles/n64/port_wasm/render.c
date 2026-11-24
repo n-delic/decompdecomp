@@ -2346,6 +2346,19 @@ void port_rdp_replay(const uint8_t *cmds, size_t bytes, const uint8_t *hidden, s
         } else rdp((uint8_t)(0xC0 | id), w[0], w[1]);
     }
 }
+/* A command list the game hands the RDP itself (osDpSetNextBuffer: DPC_START and DPC_END, no RSP task), drawn into its
+   frame buffer as the RDP would. `cmds` are the list's big-endian words in RDRAM. */
+void port_render_rdp_list(const uint8_t *cmds, size_t bytes) {
+    static int zinit;
+    make_tables();
+    R = port_memory();
+    gpu_use(port_gpu_ready());
+    if (!zinit && !render_tasks) {
+        zinit = 1;
+        for (int i = 0; i < MAXW * MAXH; i++) zbuf_private[i] = 0x3FFFF; /* the farthest depth */
+    }
+    port_rdp_replay(cmds, bytes, NULL, 0);
+}
 static void render_list(uint32_t task) {
     ucode = identify_ucode(rd32(task + 24)); /* the microcode's data names it */
     /* The GBI 2 microcode starts each task with fresh other-mode registers. The RDP keeps its old mode until a
