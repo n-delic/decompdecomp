@@ -148,6 +148,17 @@ def source(name: str, hint: dict, fingerprint: str | None = None) -> tuple[Path,
 CALLEE = re.compile(r"\b([A-Za-z_]\w*)\b")  # (called or its address taken: a handler is passed as a pointer)
 
 
+def beside(flag: list[str], path: Path) -> list[str]:
+    """`flag` (the flags of another unit's build of the library) for the function in `path`: the same build, with the
+    include folder of the file's own directory. `flags` ends with `-I <the file's folder>`, which holds the private
+    headers beside it (`synthInternals.h`, `seqp.h`); a callee built with its caller's flags in another folder stopped
+    at 'file not found', was left to a stub ("not implemented, skipped"), and the synthesizer's `__freeParam` never
+    returned a parameter to its list (72 callees of one audio-heavy game)."""
+    if len(flag) >= 2 and flag[-2] == "-I":
+        return [*flag[:-1], str(path.parent)]
+    return list(flag)
+
+
 def game_callees(units: dict[str, tuple[str, list[str]]], folder: Path, skip, texts) -> dict[str, tuple[str, list[str]]]:
     """`units` plus the ultralib functions the GAME's own C names (calls or takes the address of) that nothing
     provides (`skip`), built with the flags most of `units` use (the same build of the library). A game's own `alInit`
@@ -165,7 +176,8 @@ def game_callees(units: dict[str, tuple[str, list[str]]], folder: Path, skip, te
     for callee in sorted(names & known.keys()):
         file = f"{callee}.c"
         if file not in out and not skip(callee):
-            out[file] = (extract(known[callee], callee), list(common or flags(folder, known[callee], "")))
+            out[file] = (extract(known[callee], callee),
+                         beside(list(common), known[callee]) if common else flags(folder, known[callee], ""))
     return out
 
 
@@ -184,7 +196,7 @@ def with_callees(units: dict[str, tuple[str, list[str]]], folder: Path, skip) ->
         for callee in sorted(with_macro_targets(set(CALLEE.findall(text)), folder)):
             file = f"{callee}.c"
             if callee in known and file not in out and not skip(callee):
-                out[file] = (extract(known[callee], callee), flag)
+                out[file] = (extract(known[callee], callee), beside(flag, known[callee]))
                 pending.append((file, out[file]))
     return out
 

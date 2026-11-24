@@ -127,6 +127,22 @@ def test_ultralib_functions_a_unit_calls_are_built_with_it(tree):
     assert set(ultralib.with_callees(units, tree, lambda name: name == "guToyF")) == {"guToy.c"}
 
 
+def test_a_callee_is_built_with_the_include_folder_of_its_own_file(tree):
+    """72 callees of one audio-heavy game (`__freeParam`: `synthInternals.h` beside it) stopped at 'file not found':
+    they were built with their caller's flags, whose last `-I` is the CALLER's folder. They were left to stubs
+    ("not implemented, skipped") and the synthesizer's parameter free list never got a parameter back."""
+    known = ultralib.index(str(tree))
+    other = str(tree / "src" / "somewhere_else")
+    caller_flags = ["-DBUILD_VERSION=VERSION_J", "-I", other]
+    text = ultralib.extract(known["guToy"], "guToy")
+    out = ultralib.with_callees({"guToy.c": (text, caller_flags)}, tree, lambda name: False)
+    assert out["guToyF.c"][1] == ["-DBUILD_VERSION=VERSION_J", "-I", str(known["guToyF"].parent)]
+    assert out["guToy.c"][1] == caller_flags  # the unit itself keeps its own
+    # the game's own C naming it: the common flags of the units, with the callee's folder
+    both = ultralib.game_callees({"guToy.c": (text, caller_flags)}, tree, lambda name: False, ["guToyF(1, 2);"])
+    assert both["guToyF.c"][1] == ["-DBUILD_VERSION=VERSION_J", "-I", str(known["guToyF"].parent)]
+
+
 def test_a_helper_declared_static_in_the_files_own_prototype_or_header_is_exported(tmp_path):
     """`_bnkfPatchBank` and `_sndpVoiceHandler` are declared static (in the file, or in a header beside it) and
     defined without it: the unit built for the function must export it, else its callers stay unresolved."""
