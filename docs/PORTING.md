@@ -623,6 +623,14 @@ three apart), and 8.8 to 12.6 percent at tasks 10,000 and 14,000, where the back
 heading had drifted a little from the console's, as an uncontrolled car's does after collisions. Before the replay the
 same windows were 29 to 44 percent differing exactly and 11 to 31 percent unmatched within 3 pixels. So a moving scene is drawn
 as the console draws it; what differs is where the car and camera are.
+What was left of the moving-race difference was the pause, not the drawing. The route's START presses (a pause every 160
+graphics tasks) land a few frames apart on the two sides, because the game pauses a frame or two after the pad is read and the
+replay's retraces still differ by two or three, and the car stops at a scroll offset that differs by ten pixels (the backdrop's
+texture rectangle at x 154 on the console and 143 in the port, display lists otherwise identical). With the same route but no
+START after the race has begun (A only), a racing game's race at seven windows from task 6,000 to 14,000 matched the
+emulator to the pixel at three (8,000, 12,000 and 14,000: 0.00 percent differing), to 0.02 percent within 3 pixels at a fourth
+(10,000, a pixel or two of scroll), and differed by 4.3 to 8.1 percent within 3 pixels at the three earliest (6,000 to 6,500, the
+race's first seconds, still near the last pause presses). A moving scene is drawn exactly as the console draws it.
 What `PORT_VTIME` did and didn't settle for a racing game, with the same retrace-timed input on both sides: the port's
 video-mode blanks fell at the console's graphics tasks within one frame (485, 521, 632 against 485, 521, 637; the race
 start at 2,727 and 2,773 exactly), where the wall-clock port had been hundreds of tasks apart, so the two run the same
