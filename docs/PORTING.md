@@ -893,3 +893,15 @@ keeps the tail of what was there. On the menu route, windows at tasks 2392, 4184
 (both buffers, both tasks of each frame); the race window's later tasks are still 12-17% (the opponent car, above).
 
 **The opponent car: where the difference starts (still not fixed).** Taking the console's whole vertex data into the port's for a task of the race window leaves 99.7% of the RDP commands equal, and the matrices are all equal (0 of 19 differ). What still differs are values the game builds into the display list: a render-mode word (`c8113078` on the console, `c8104b70` in the port), four triangles, and the environment colour that lights the car (`c3c3c3` on the console, `fefefe` in the port). A watch on the console's display-list word shows that colour written every frame by one function (func_80016B3C, called with 0xC300 as the intensity): it averages 12 bytes sampled from a byte array (a light map read at the car's position), scales them to 0..255 and clamps. The console's average gives 0xC3; the port's gives 0xFF, so the 12 bytes the port reads differ, from the array's contents or from the position they are taken at. The player's car, lit by the same code, matches. Next: read those 12 samples in both runs (their addresses are the function's `lbu` at 0x80017518) and see whether the indexes or the bytes differ.
+
+**The opponent car: one branch, not three differences.** `func_80016B3C` sets a brightness and the mode flags for the object it draws:
+the player's car (`obj == gGame->unk24`) takes the light-map average, any other car with the shade mode at 2 and the flag byte at
+`stream_state + 0x7678` zero takes `if (func_8007BA1C(obj) == 0xFF) { flags &= ~2; bright = 0xC4; } else bright = 0xFF`.
+Recorded at the function's entry, the opponent's calls have exactly that state (object 0x802A5000, `gGame->unk24` 0x80159640, shade
+mode 2, flag 0), and the console's display list holds the 0xC4 result (env colour `c3c3c3`: 0xFF * 0xC4 >> 8) and the render-mode word
+`flags &= ~2` gives (`c8113078`). The port's holds env `fefefe` (bright 0xFF) and `c8104b70`: so the two differences found earlier are one:
+the port does not take the `== 0xFF` branch. `func_8007BA1C` itself returns 0xFF in the port for those calls (run through PORT_CALL, at its entry
+and at the call site's state, six calls each, matching the console), so what differs is the port's `func_80016B3C` reaching or testing it. The port's
+source for that function is the project's decompiled C (`src/code_80012114/func_80016B3C.c`), whose branch conditions read the same as the
+original's; the next step is a trace inside the port's run of that function (which condition fails), or the port's function run
+through behaviour comparison against the recompiled one with the opponent's recorded state.
