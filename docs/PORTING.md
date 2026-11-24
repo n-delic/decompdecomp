@@ -602,6 +602,12 @@ EEPROM call and the PIF's EEPROM channel answering as an absent device) did not.
 `tools/n64_frame_compare.py` does it: a run of the script gives the port a save to look for, the game's copy is found in the
 console's RAM at `--save-at` (default frame 600) by the save's body past its header, and the console's bytes become the port's
 `game.eep` (from a fresh `--work`, three windows at tasks 3,000, 6,000 and 8,000 matched to the pixel, 0.00 percent differing).
+The sweep with `--console-save` from a fresh `--work` (a racing game's race at 23 windows, graphics tasks 3,000 to 14,000 in steps of
+500): 19 matched the emulator to the pixel (3,000 to 10,000 and 11,000 to 12,500, 0.00 percent differing), four did not: 10,500 (48
+percent, the clock-seeded random camera cut described above) and 13,000, 13,500 and 14,000 (17, 26 and 28 percent), where the chase
+camera, at the same place on both sides at 12,500, was 8 and 43 units apart at 13,000 and 3 and 476 at 14,000, a drift from after the
+cut and not a second jump. (With the save of a run of the script, `--prime-save`, the same sweep had matched at 22 of 23: the 13,000 and
+later windows then agreed; which windows agree after a clock-seeded random draw is not something the port controls.)
 `--prime-save` on `tools/n64_frame_compare.py` runs the port once through the input script first, so the compared run starts
 from the save (`game.eep`, in `--work`) that run wrote. It matters: on a racing game a port started from no save, from an all-zero
 or all-0xFF one, or from the save of a short boot had its car launch slower than the emulator's (and stay 2,000 and more
