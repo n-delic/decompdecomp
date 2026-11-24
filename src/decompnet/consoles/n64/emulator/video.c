@@ -77,9 +77,19 @@ EXPORT m64p_error CALL PluginGetVersion(m64p_plugin_type *type, int *version, in
     return M64ERR_SUCCESS;
 }
 EXPORT int CALL InitiateGFX(GFX_INFO info) { gfx = info; ready = 1; return 1; }
+static unsigned vis; /* video refreshes so far: one a retrace */
+/* EMU_TASK_LOG=file: "TASK VI" for each graphics task handed over: the retrace the console was at when the game started that
+   task, so the port's virtual time (PORT_VTIME_TRACE) can reach each task at the retrace the console did: the console
+   spends two to three retraces on a frame it adapts its frame rate to, which no per-task cost reproduces. */
+static void task_log(void) {
+    static FILE *log; static int tried;
+    if (!tried) { const char *path = getenv("EMU_TASK_LOG"); tried = 1; if (path) log = fopen(path, "w"); }
+    if (log) { fprintf(log, "%u %u\n", frames, vis); fflush(log); }
+}
 EXPORT void CALL ProcessDList(void) {
     if (!ready) return;
     frames++;
+    task_log();
     frame_dumps();
     *gfx.MI_INTR_REG |= 0x20; /* MI_INTR_DP: the frame is drawn */
     gfx.CheckInterrupts();
@@ -99,7 +109,6 @@ EXPORT void CALL ShowCFB(void) {}
    width W hvideo H": N the graphics tasks handed over so far. libultra's osViBlack blanks the picture by writing 0 to
    the horizontal video register (an active area no wide), leaving the status alone, so the file says when the console
    showed nothing, to compare with the port's PORT_SWAP_LOG (tools/n64_vi_compare.py). */
-static unsigned vis; /* video refreshes so far: one a retrace */
 static void vi_log(void) {
     static FILE *log; static int tried; static unsigned last_status = ~0u, last_origin = ~0u, last_hvideo = ~0u;
     if (!ready || !gfx.VI_STATUS_REG || !gfx.VI_ORIGIN_REG) return;

@@ -701,6 +701,14 @@ void w2c_env_osViSetSpecialFeatures(struct w2c_env *e, u32 f) {
 #endif
 }
 void port_frame_shown(uint32_t fb, unsigned long n); /* render.c: saves it when asked */
+#ifndef PORT_WEB
+static int vtime; /* PORT_VTIME (the clock is below) */
+static uint64_t vclock_us;
+static unsigned *vtrace; /* PORT_VTIME_TRACE: the console's retrace at each graphics task, by task number */
+static unsigned vtrace_n;
+static unsigned long vi_target; /* the retrace the console was at when it started the latest graphics task */
+static int retrace_us(void);
+#endif
 static unsigned long gfx_tasks, audio_tasks;
 /* PORT_SWAP_LOG=file (or - for stderr, among the host's other lines): a line for each buffer the game hands the VI, "frame NUMBER task GRAPHICS-TASKS-SO-FAR retrace
    VI-COUNT buffer ADDRESS black 0|1" (black: the VI blanked, osViBlack): which graphics task (the unit of PORT_FRAME_DUMPS and tools/n64_frame_compare.py --frames) a
@@ -917,6 +925,13 @@ void w2c_env_osSpTaskStartGo(struct w2c_env *e, u32 task) {
     (void)e;
     uint32_t type = be32(task);
     if (type == 1) gfx_tasks++; else audio_tasks++;
+#ifndef PORT_WEB
+    if (type == 1 && vtime && vtrace && gfx_tasks < vtrace_n) { /* the console started this task at this retrace */
+        uint64_t want = (uint64_t)vtrace[gfx_tasks] * (uint64_t)retrace_us();
+        if (vclock_us < want) vclock_us = want;
+        if (vtrace[gfx_tasks] > vi_target) vi_target = vtrace[gfx_tasks];
+    }
+#endif
     if (type == 1) ram_dumps("PORT_FRAME_DUMPS", gfx_tasks, task);
     if (type == 1) {
 #ifndef PORT_WEB
@@ -963,8 +978,7 @@ u32 w2c_env_0x5F_builtin_mips_write_compare(struct w2c_env *e, u32 v) { (void)e;
    retraces) see the game at the same point at the same retrace, and a game's own timing (race clocks, animations)
    can be compared with the console's retrace for retrace. Reads of the clock within a retrace advance it a microsecond
    each, so a loop waiting for the time to pass still ends. */
-static int vtime;
-static uint64_t vclock_us;
+static uint64_t vnext_us; /* when the next retrace is due */
 static unsigned vsub;
 static unsigned long vtime_forced; /* retraces fired with a thread still running, after the wait's limit */
 static int retrace_us(void);
@@ -1990,6 +2004,24 @@ static uint64_t monotonic_us(void) {
     clock_gettime(CLOCK_MONOTONIC, &t);
     return (uint64_t)t.tv_sec * 1000000 + (uint64_t)t.tv_nsec / 1000;
 }
+#ifndef PORT_WEB
+/* PORT_VTIME_TRACE=file: "TASK VI" lines (the emulator's EMU_TASK_LOG): the retrace the console was at when it started each graphics
+   task, kept by task number in `vtrace`. */
+static void vtrace_load(const char *path) {
+    FILE *tf = fopen(path, "r");
+    unsigned t, v;
+    while (tf && fscanf(tf, "%u %u", &t, &v) == 2) {
+        if (t >= vtrace_n) {
+            unsigned n = t + 4096;
+            vtrace = realloc(vtrace, (size_t)n * sizeof *vtrace);
+            for (unsigned k = vtrace_n; k < n; k++) vtrace[k] = 0;
+            vtrace_n = n;
+        }
+        vtrace[t] = v;
+    }
+    if (tf) fclose(tf);
+}
+#endif
 /* The audio interface can drain several buffers between VI interrupts. Give the game a chance to refill them. */
 static void wait_retrace(void) {
     if (vtime) { /* PORT_VTIME: when every game thread is waiting (or after 3 s of wall time, for one that spins) */
@@ -2025,7 +2057,9 @@ static void wait_retrace(void) {
                 LOG("virtual time: retrace %lu fired with thread %d (priority %d) running, %u ready", vi_count, n, pri, ready);
             }
         }
-        vclock_us += (unsigned)retrace_us();
+        /* idle: the next retrace is due, or late by the time the console's trace put the clock ahead of it */
+        if (vclock_us < vnext_us) vclock_us = vnext_us;
+        vnext_us += (unsigned)retrace_us();
         vsub = 0;
         return;
     }
@@ -2178,6 +2212,8 @@ int main(int argc, char **argv) {
     if (getenv("PORT_VERBOSE")) verbose = atoi(getenv("PORT_VERBOSE"));
     clock_gettime(CLOCK_MONOTONIC, &start);
     vtime = getenv("PORT_VTIME") && atoi(getenv("PORT_VTIME")) != 0;
+    vnext_us = (unsigned)retrace_us();
+    if (vtime && getenv("PORT_VTIME_TRACE")) vtrace_load(getenv("PORT_VTIME_TRACE"));
     wasm_rt_init();
 #ifdef PORT_WASM_NO_IMPORTS /* a module with no host imports takes no import state (build.py sets this) */
     wasm2c_game_instantiate(&game);
@@ -2206,9 +2242,13 @@ int main(int argc, char **argv) {
     schedule();
     pthread_mutex_unlock(&lock);
     /* the VI retrace: 50 a second for PAL, 60 for NTSC */
-    for (int frame = 0; seconds <= 0 || frame < seconds * 1000000 / retrace_us(); frame++) {
+    for (int frame = 0; seconds <= 0 || (vtime ? (int)(vi_count) : frame) < seconds * 1000000 / retrace_us(); frame++) {
         wait_retrace();
         retrace();
+        /* the retraces the console had while it worked on a frame (PORT_VTIME_TRACE), fired as the game goes idle:
+           they queue for it as they did there */
+        while (vtime && vi_count < vi_target) retrace();
+        if (vtime && vi_target) vnext_us = ((uint64_t)vi_count + 1) * (unsigned)retrace_us();
         port_live_pump();
         if (getenv("PORT_SAMPLE") && frame % 10 == 5) sample();
     }
