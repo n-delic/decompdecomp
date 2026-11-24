@@ -19,6 +19,10 @@ import zlib
 from pathlib import Path
 
 NOISE_LIMIT = 25.0  # mean change between neighbouring pixels: scenes score 3 to 15, a mis-shown buffer 40 and up
+SMEAR_RATIO = 3.0  # vertical change over horizontal change: a picture drawn with the wrong texture stride or width is
+SMEAR_MIN = 8.0  # streaked sideways (rows alike, columns unrelated); a scene stays near 1, so a streaked one scores far above
+PARTIAL_BLACK = 0.4  # the share of a frame's height, black at the bottom under something drawn, that no scene leaves
+PARTIAL_DRAWN = 0.02  # ...and the share of rows that must hold something, or it is a fade or a blank screen, not a half
 
 
 def read_png(path: Path) -> tuple[int, int, bytes]:
@@ -64,7 +68,8 @@ def unfilter(width: int, height: int, raw: bytes) -> list[bytearray]:
 def judge(path: Path) -> dict:
     """{"noise": mean difference between neighbouring pixels, "flat": a few colours at most: all zero} of one frame."""
     width, height, raw = read_png(path)
-    rows = unfilter(width, height, raw)[::4]
+    every = unfilter(width, height, raw)
+    rows = every[::4]
     total = count = 0
     colours = set()
     for row in rows:
@@ -73,7 +78,31 @@ def judge(path: Path) -> dict:
             count += 3
             colours.add(bytes(row[x:x + 3]))
     noise = total / max(count, 1)
-    return {"noise": noise, "flat": len(colours) <= 4 and colours != {b"\0\0\0"}, "black": colours == {b"\0\0\0"}}
+    return {"noise": noise, "flat": len(colours) <= 4 and colours != {b"\0\0\0"}, "black": colours == {b"\0\0\0"},
+            **layout(every, width)}
+
+
+def layout(rows: list[bytearray], width: int) -> dict:
+    """{"smear": vertical over horizontal change in the drawn rows, "partial": the black share of the height under
+    the last drawn row} of sampled rows. A texture read with the wrong stride or width draws streaks (#smear) and
+    often only a strip of the screen (#partial): the case a neighbour-noise score alone misses, as it looks smooth."""
+    drawn = [any(row) for row in rows]
+    if not any(drawn):
+        return {"smear": 0.0, "partial": 0.0}
+    last = max(i for i, d in enumerate(drawn) if d)
+    partial = (len(rows) - 1 - last) / len(rows) if sum(drawn) / len(rows) >= PARTIAL_DRAWN else 0.0
+    horizontal = vertical = pairs = 0
+    for i in range(1, last + 1):
+        if not (drawn[i] and drawn[i - 1]):
+            continue  # a letterbox edge is not a texture
+        for x in range(0, width * 3 - 3, 12):
+            horizontal += abs(rows[i][x] - rows[i][x + 3]) + abs(rows[i][x + 1] - rows[i][x + 4])
+            vertical += abs(rows[i][x] - rows[i - 1][x]) + abs(rows[i][x + 1] - rows[i - 1][x + 1])
+            pairs += 2
+    if pairs < 40:
+        return {"smear": 0.0, "partial": partial}
+    horizontal, vertical = horizontal / pairs, vertical / pairs
+    return {"smear": vertical / max(horizontal, 1.0) if vertical >= SMEAR_MIN else 0.0, "partial": partial}
 
 
 def scan(folder: Path, swap_log: Path | None = None) -> dict:
@@ -84,13 +113,17 @@ def scan(folder: Path, swap_log: Path | None = None) -> dict:
             m = re.match(r"frame (\d+) task (\d+)", line)
             if m:
                 tasks[int(m[1])] = int(m[2])
-    noisy, flat, black, runs = [], [], [], []
+    noisy, flat, black, runs, smeared, partial = [], [], [], [], [], []
     frames = sorted(folder.glob("frame_*.png"))
     for path in frames:
         n = int(path.stem.split("_")[1])
         found = judge(path)
         if found["noise"] > NOISE_LIMIT:
             noisy.append((n, round(found["noise"], 1), tasks.get(n)))
+        if found["smear"] >= SMEAR_RATIO:
+            smeared.append((n, round(found["smear"], 1), tasks.get(n)))
+        if found["partial"] >= PARTIAL_BLACK:
+            partial.append((n, round(found["partial"], 2), tasks.get(n)))
         if found["black"]:
             runs.append(n)
         elif found["flat"]:
@@ -100,11 +133,12 @@ def scan(folder: Path, swap_log: Path | None = None) -> dict:
             black[-1] = (black[-1][0], n)
         else:
             black.append((n, n))
-    return {"frames": len(frames), "noisy": noisy, "flat": flat, "black": black}
+    return {"frames": len(frames), "noisy": noisy, "flat": flat, "black": black, "smeared": smeared,
+            "partial": partial}
 
 
 def main(argv=None) -> int:
-    p = argparse.ArgumentParser(description="Find frames a port showed that look wrong (static, flat, black runs).")
+    p = argparse.ArgumentParser(description="Find frames a port showed that look wrong (static, flat, streaked, half-drawn, black runs).")
     p.add_argument("folder", type=Path)
     p.add_argument("--swap-log", type=Path, help="PORT_SWAP_LOG's file, to name each frame's graphics task")
     args = p.parse_args(argv)
@@ -114,9 +148,14 @@ def main(argv=None) -> int:
         print(f"frame {n}: looks like static (noise {noise})" + (f", after graphics task {task}" if task else ""))
     for n, task in found["flat"]:
         print(f"frame {n}: one flat colour, not black" + (f", after graphics task {task}" if task else ""))
+    for n, ratio, task in found["smeared"]:
+        print(f"frame {n}: picture streaked sideways (rows alike, columns not: {ratio}x), a texture read with the wrong "
+              f"stride or width" + (f", after graphics task {task}" if task else ""))
+    for n, share, task in found["partial"]:
+        print(f"frame {n}: only the top is drawn, {share:.0%} below it black" + (f", after graphics task {task}" if task else ""))
     for first, last in found["black"]:
         print(f"frames {first}-{last}: black ({last - first + 1} frames; expected only at the start and at a change of video mode)")
-    return 1 if found["noisy"] or found["flat"] else 0
+    return 1 if found["noisy"] or found["flat"] or found["smeared"] or found["partial"] else 0
 
 
 if __name__ == "__main__":

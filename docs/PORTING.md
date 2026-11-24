@@ -458,6 +458,9 @@ The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`)
   buffer, by the microcode the task loads (Fast3D, F3DEX, F3DEX2 and S2DEX by the signature in its data; Rare's
   F3DDKR, which has none, by its data's CRC), and `PORT_FRAMES=folder` saves the frames shown as PNG.
   2D screens draw correctly; the 3D path draws a racing game's races, textured.
+  `tools/n64_frame_scan.py` searches the saved frames for what looks wrong without an emulator: static, one flat
+  colour, runs of black, a picture streaked sideways (a texture read with the wrong stride or width) and a frame
+  with only its top drawn. A finding names its graphics task for `tools/n64_frame_compare.py --frames`.
 
 #### Functions with no C yet
 
