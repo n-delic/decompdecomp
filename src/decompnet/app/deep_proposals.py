@@ -155,7 +155,7 @@ class Pool:
         self.background=background
         self.executor = Executor(max_workers=count, purpose='Repair proposal generation',thread_name_prefix='deep-proposals')
         self.capacity = threading.BoundedSemaphore(count*2)
-        self.local = threading.local()
+        self.idle = []  # open workers no request holds: a worker belongs to the pool, not to a thread
         self.workers = []
         self.lock = threading.RLock()
         self.cache = OrderedDict()
@@ -174,16 +174,28 @@ class Pool:
                 if self.stop.is_set():raise RuntimeError('Proposal generation stopped')
                 check()
             for attempt in range(RETRIES+1):
-                worker = getattr(self.local,'worker',None)
-                if worker is None or worker.closed.is_set():
-                    worker = self.local.worker = Worker()
+                # A worker per *thread* leaked: the executor lends its threads back after a few idle seconds and
+                # borrows others, so every new thread started a process (~50 MB each) and the old ones stayed up
+                # until the pool closed: hundreds of them, tens of GB, in half an hour of a deep search.
+                with self.lock:
+                    worker = None
+                    while self.idle and worker is None:
+                        worker = self.idle.pop()
+                        if worker.closed.is_set():worker = None
+                if worker is None:
+                    worker = Worker()
                     with self.lock:
                         self.workers = [w for w in self.workers if not w.closed.is_set()]+[worker]
                 try:
-                    return worker.run(request,checkpoint)
+                    result = worker.run(request,checkpoint)
                 except WorkerStopped:  # (run closed it: the next try starts a fresh one)
                     if attempt == RETRIES:raise
                     log.info('Asking a fresh proposal worker again (attempt %d of %d)',attempt+2,RETRIES+1)
+                    continue
+                with self.lock:
+                    if not self.stop.is_set() and not worker.closed.is_set():self.idle.append(worker);return result
+                worker.close()
+                return result
         finally:
             with self.lock:self.running -= 1
 
