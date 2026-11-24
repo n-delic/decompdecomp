@@ -9,12 +9,12 @@ from decompnet.app import picture_check
 from decompnet.port import frame_compare
 
 
-def test_points_start_after_the_save_is_read_and_come_in_pairs():
+def test_points_are_windows_of_consecutive_tasks_from_after_the_save_is_read():
     chosen = picture_check.points(6000)
-    assert chosen[0] == 600 and chosen == sorted(set(chosen)) and chosen[-1] <= 6000
-    assert len(chosen) >= picture_check.POINTS  # each moment with the task after it
-    assert picture_check.points(700)[0] == 600
-    assert picture_check.points(2) == [1, 2]
+    assert chosen[0] == 600 and chosen[-1] < 6000 and chosen == sorted(set(chosen))
+    assert len(chosen) == picture_check.POINTS * picture_check.WINDOW  # twelve windows of six
+    assert all(n + 1 in chosen for n in chosen[:picture_check.WINDOW - 1])
+    assert picture_check.points(10)[0] >= 1
 
 
 def _saved(root: Path, pictures: list[dict], tolerance: int = 3) -> None:

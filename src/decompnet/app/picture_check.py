@@ -30,17 +30,21 @@ def results_file(root: Path) -> Path:
     return folder(root) / "results.json"
 
 
+WINDOW = 6  # consecutive tasks taken at each moment
+
+
 def points(tasks: int, count: int = POINTS) -> list[int]:
-    """`count` graphics tasks spread from the 600th (the game has read its save by then) to `tasks`, each followed by
-    its next one: a game draws a picture over several tasks, so a window of two catches the one the screen shows."""
-    tasks = max(int(tasks), 2)
-    first = min(600, tasks - 1)
-    step = max((tasks - first) // max(count - 1, 1), 1)
-    out: list[int] = []
+    """`count` moments spread from the 600th graphics task (the game has read its save by then) to `tasks`, each a window
+    of WINDOW consecutive tasks: a game draws a picture in some of its tasks and the rest draw into it or elsewhere (a
+    test run's 19 single tasks on one route drew nothing at all on either side), so one or two tasks can miss the picture."""
+    tasks = max(int(tasks), WINDOW + 1)
+    first = min(600, tasks - WINDOW)
+    step = max((tasks - WINDOW - first) // max(count - 1, 1), 1)
+    out: set[int] = set()
     for i in range(count):
-        n = min(first + i * step, tasks - 1)
-        out += [n, n + 1] if not out or out[-1] != n else [n + 1]
-    return sorted(set(out))
+        n = min(first + i * step, tasks - WINDOW)
+        out.update(range(n, n + WINDOW))
+    return sorted(out)
 
 
 def check(net, slug: str, tasks: int = 6000, inputs: str = "", tolerance: int = TOLERANCE, pace: bool = True,

@@ -397,6 +397,9 @@ def compare_run(game: Path, rom: Path, points: list[int], inputs: str, work: Pat
         only_a, only_b = [k for k in theirs if k not in ours], [k for k in ours if k not in theirs]
         if len(only_a) == len(only_b) == 1 and only_a[0][0] == only_b[0][0]:
             ours[only_a[0]] = ours.pop(only_b[0])  # the two rotate their frame buffers differently: one picture
+        if not theirs and not ours:  # a task that draws no picture (the game's other tasks): said, so it isn't read as a match
+            results.append({"task": n, "missing": "neither"})
+            continue
         for key in sorted(set(theirs) | set(ours)):
             a, b = theirs.get(key), ours.get(key)
             name = out / f"frame{n:06d}_image{key[1]:06X}.png"
