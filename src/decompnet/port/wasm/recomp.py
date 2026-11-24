@@ -967,6 +967,7 @@ void port_recomp_other(uint32_t vram, recomp_func_t *self, uint8_t *rdram, recom
    the game maps at 0x0F000000 with osMapTLB) is the code at the spelling the split gives it. */
 extern unsigned port_tlb_n;
 uint32_t port_tlb_canon(uint32_t a);
+uint32_t port_tlb_call(uint32_t a);
 recomp_func_t *get_function(int32_t vram) {
     port_safe_point();
     if (__builtin_expect((uint32_t)vram < 0x80000000u && port_tlb_n, 0)) vram = (int32_t)port_tlb_canon((uint32_t)vram);
@@ -979,6 +980,15 @@ recomp_func_t *get_function(int32_t vram) {
     unsigned lo = 0, hi = %(tables)d;
     while (lo < hi) { unsigned mid = (lo + hi) / 2; if (port_recomp_table[mid].vram < (uint32_t)vram) lo = mid + 1; else hi = mid; }
     if (lo < %(tables)du && port_recomp_table[lo].vram == (uint32_t)vram) return port_recomp_table[lo].func;
+    /* a call the project spelled against KSEG0 (func_8029CDA0, from a jal at virtual 0x29CDA0) that lies in a window kept
+       at its physical address: the code is at the window's physical alias, and that is where it is interpreted */
+    if (port_tlb_n) {
+        uint32_t w = port_tlb_call((uint32_t)vram);
+        if (w != (uint32_t)vram && port_mips_has_code(w)) {
+            port_recomp_unlisted = w;
+            return port_recomp_interpret;
+        }
+    }
     if (port_mips_has_code((uint32_t)vram)) {
         static int said;
         if (said++ < 8) fprintf(stderr, "recompiled code called %%08X, which no listed function starts: interpreted\n", (uint32_t)vram);

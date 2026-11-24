@@ -123,7 +123,13 @@ int port_tlb_fault(uint32_t epc, uint32_t badvaddr, uint32_t cause); /* host.c: 
    KSEG2/KSEG3 space) */
 HOT uint32_t mapped(uint32_t a) { return __builtin_expect(a - 0x80000000u >= 0x40000000u && port_tlb_n, 0) ? port_tlb_canon(a) : a; }
 HOT uint8_t *at_load(uint32_t a) { a = mapped(a); return M + (a >= 0xA0000000u ? (uint32_t)port_io_load(a) : a); }
-HOT uint8_t *at_store(uint32_t a, uint64_t v) { a = mapped(a); return M + (a >= 0xA0000000u ? (uint32_t)port_io_store(a, v) : a); }
+extern uint32_t port_spell_lo, port_spell_len, port_real_lo, port_real_len;
+void port_tlb_spell_store(uint32_t a); /* host.c: the game's own data at the spelling of a window */
+HOT uint8_t *at_store(uint32_t a, uint64_t v) {
+    if (__builtin_expect(a - port_spell_lo < port_spell_len, 0)) port_tlb_spell_store(a); /* (a KSEG0 name of memory a window is spelled at) */
+    a = mapped(a);
+    return M + (a >= 0xA0000000u ? (uint32_t)port_io_store(a, v) : a);
+}
 HOT uint32_t lw(uint32_t a) { uint32_t v; memcpy(&v, at_load(a), 4); return __builtin_bswap32(v); }
 /* An instruction: where a window's code was never written at its spelling (zero words), the bytes at its physical
    address (the boot chip's image, a decompressed program). A block of four zero words, so a nop alone is no hole. */
@@ -1000,6 +1006,9 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
     /* an entry at a mapped virtual address (a callback pointer into a window): its virtual pc is kept from the first
        instruction, as for a jump into a window, so a branch lands on the next virtual page, not the next frame */
     uint32_t entry_virtual = (entry - 0x80000000u >= 0x40000000u && port_tlb_n && mapped(entry) != entry) ? entry : 0;
+    /* an entry at the spelling of a window kept at its physical address is the code the console runs at the window's
+       virtual address: its jumps keep the virtual top bits (a `jal 0x00201634` made from physical 0x1C60 is virtual) */
+    if (!entry_virtual && __builtin_expect(entry - port_real_lo < port_real_len, 0)) entry_virtual = entry & 0x7FFFFFFFu;
     entry = port_tlb_call(mapped(entry));
     port_note_entry(entry);
     if (tracing) fprintf(stderr, "interpreter: %08X (%08X, %08X, %08X, %08X)\n", entry, (uint32_t)regs[4],
@@ -1057,6 +1066,12 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
                     continue;
                 }
             }
+        }
+        /* code running at the spelling of a window that has since been kept at its physical address (the game's own data
+           arrived at the spelling, and the copy of the code made there is gone) goes on from the window's alias */
+        if (__builtin_expect(pc - port_real_lo < port_real_len, 0)) {
+            if (!vpc) vpc = pc & 0x7FFFFFFFu;
+            pc = port_tlb_call(pc);
         }
         uint32_t op = fetch(pc), target = 0;
         if (op == 0 && ++zeros > 64) { /* a run of nothing: no code there (no ROM loaded where it was looked for) */
@@ -1160,6 +1175,12 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
             vpc = nv;
             target = mapped(nv ? nv : target);
             if (nv && target == nv) vpc = 0; /* not mapped: the fetch faults, as before */
+            /* a jump to the spelling of a window kept at its physical address runs the code there (the project spelled
+               a call `0x80201CB0` for what the console runs at virtual 0x00201CB0, physical 0x1CB0), at that virtual pc */
+            if (__builtin_expect(target - port_real_lo < port_real_len, 0)) {
+                if (!vpc) vpc = target & 0x7FFFFFFFu;
+                target = port_tlb_call(target);
+            }
             /* a jump or call to code in a high window's frame by the frame's name (the project spells those calls by
                the physical address): the code's virtual address is that window's, so its next page is the next
                virtual page and not the next frame */

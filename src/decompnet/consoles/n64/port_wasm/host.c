@@ -1559,6 +1559,7 @@ static void tlb_mirror(uint32_t lo, uint32_t size, uint32_t phys) {
 }
 /* pm: the page mask register (PM_1M is 0x1FE000), va the pair's virtual address, even/odd the physical addresses of
    its two pages (-1: not mapped) */
+static void tlb_spell_span(void);
 static void tlb_map(uint32_t pm, uint32_t va, uint32_t even, uint32_t odd) {
     uint32_t size = ((pm >> 13) + 1) << 12;
     if ((pm & ~0x01FFE000u) || size > 0x1000000u) return;
@@ -1597,6 +1598,7 @@ static void tlb_map(uint32_t pm, uint32_t va, uint32_t even, uint32_t odd) {
             if (lo + size > wasm_hi) wasm_hi = lo + size;
         }
     }
+    tlb_spell_span();
 }
 /* The interpreter's `tlbwi`/`tlbwr`: the registers the game's own code wrote (a game that sets its TLB up in its
    first C function, with mtc0 and a tlbwi, as the entry routine's osMapTLB-style call does for others). An EntryLo
@@ -1763,6 +1765,37 @@ void port_tlb_physical_use(uint32_t a, uint32_t size) {
             if (getenv("PORT_TLB_TRACE")) fprintf(stderr, "window %08X + %X: the game's own data is at its spelling (%08X): kept at physical %08X from now on\n", tlb_win[i].lo, tlb_win[i].size, a, tlb_win[i].phys);
         }
     }
+    tlb_spell_span();
+}
+/* The span of the console's memory the windows not kept at their physical address are spelled at (0x80000000 | virtual).
+   A store of the game's own into it, through a KSEG0 name and not the window's virtual one, is data of its own at the
+   spelling, as a transfer there is (port_tlb_physical_use): a game whose loader copies its tables with stores, under a
+   window at virtual 0x200000 onto physical 0, had its code (at the physical alias) read as those tables. */
+uint32_t port_spell_lo = 0xFFFFFFFFu, port_spell_len;
+/* and the span of the spellings of the windows kept at their physical address: a jump there goes to the physical alias
+   (port_tlb_call), as the console runs the window's code, not what sits at the spelling */
+uint32_t port_real_lo = 0xFFFFFFFFu, port_real_len;
+static void tlb_spell_span(void) {
+    uint32_t lo = 0xFFFFFFFFu, hi = 0, rlo = 0xFFFFFFFFu, rhi = 0;
+    for (unsigned i = 0; i < port_tlb_n; i++) {
+        if (tlb_win[i].lo >= 0x00800000u || tlb_win[i].lo == tlb_win[i].phys || tlb_win[i].lo < 0x00001000u) continue;
+        uint32_t s = 0x80000000u | tlb_win[i].lo;
+        if (tlb_win[i].real) {
+            if (s < rlo) rlo = s;
+            if (s + tlb_win[i].size > rhi) rhi = s + tlb_win[i].size;
+        } else {
+            if (s < lo) lo = s;
+            if (s + tlb_win[i].size > hi) hi = s + tlb_win[i].size;
+        }
+    }
+    port_spell_lo = lo;
+    port_spell_len = hi > lo ? hi - lo : 0;
+    port_real_lo = rlo;
+    port_real_len = rhi > rlo ? rhi - rlo : 0;
+}
+void port_tlb_spell_store(uint32_t a) {
+    port_tlb_physical_use(a, 4);
+    tlb_spell_span();
 }
 uint32_t port_tlb_spelled(uint32_t a) {
     if (!port_tlb_n || a < 0x80000000u || a >= 0x80800000u) return a;

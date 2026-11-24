@@ -425,6 +425,38 @@ int main(void) {
     assert done.stdout.split() == ["80747080", "80400010", "80100010", "80747080", "80347080", "80500000"]
 
 
+def test_a_store_of_the_games_own_into_a_windows_spelling_keeps_the_window_at_its_physical_address(tmp_path):
+    """A loader that copies its tables with stores (not a transfer) to 0x80200000, under a window at virtual 0x200000 onto
+    physical 0, destroyed the copy of the window's code made at the spelling and the interpreter then ran the tables as
+    code (a break and garbage at 0x802012E0). The store, made through the KSEG0 name, keeps the window at its physical
+    address like a transfer does; the span of such spellings (port_spell_*) names where to look, and the span of the
+    kept windows (port_real_*) is where a jump goes to the physical alias."""
+    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if not cc:
+        pytest.skip("no C compiler")
+    text = HOST.read_text()
+    code = text[text.index("static struct { uint32_t entry, target, bss, bss_size; int tv; } boot;"):
+                text.index("/* the console's RAM as the boot leaves it")]
+    source = tmp_path / "t.c"
+    source.write_text(_BOOT_HARNESS + code + """
+int main(void) {
+    port_tlb_write(0x1FE000, 0x00200000, 2u, 1u); /* 0x200000 -> physical 0, spelled at 0x80200000 */
+    printf("%08X %08X %08X %08X\\n", port_spell_lo, port_spell_len, port_real_lo, port_real_len);
+    printf("%08X\\n", port_tlb_canon(0x002012A0u));
+    port_tlb_spell_store(0x802012A0u);
+    printf("%08X %08X %08X\\n", port_spell_len, port_real_lo, port_real_len);
+    printf("%08X %08X\\n", port_tlb_canon(0x002012A0u), port_tlb_call(0x80201CB0u));
+    return 0;
+}
+""")
+    subprocess.run([cc, "-o", str(tmp_path / "t"), str(source)], check=True, capture_output=True)
+    done = subprocess.run([str(tmp_path / "t")], capture_output=True, text=True, check=True)
+    assert done.stdout.split() == ["80200000", "00100000", "FFFFFFFF", "00000000",   # spelled: watched, none kept
+                                   "802012A0",                                     # read at the spelling
+                                   "00000000", "80200000", "00100000",             # kept: nothing watched, the span kept
+                                   "800012A0", "80001CB0"]                         # read at, and a jump goes to, the alias
+
+
 def test_a_call_spelled_in_kseg0_beyond_the_ram_names_the_high_windows_virtual_address(tmp_path):
     """A game that pages its code in at 0x15xxxxxx (4 KB pages) has calls the project spelled `func_85016170`: the
     `jal 0x05016170` made from KSEG0 code took its top four bits from there. No console has RAM at 0x85016170, and
@@ -1286,6 +1318,8 @@ uint32_t port_tlb_alias(uint32_t a) { (void)a; return 0; }
 uint32_t port_tlb_jump(uint32_t slot, uint32_t imm) { return (slot & 0xF0000000u) | imm; }
 uint32_t port_tlb_call(uint32_t a) { return a; }
 uint32_t port_tlb_spelled(uint32_t a) { return a; }
+uint32_t port_spell_lo = 0xFFFFFFFFu, port_spell_len, port_real_lo = 0xFFFFFFFFu, port_real_len; /* (no window to watch or keep here) */
+void port_tlb_spell_store(uint32_t a) { (void)a; }
 uint32_t port_tlb_virtual(uint32_t a) { return a; }
 uint32_t port_tlb_virtual_of(uint32_t a) { (void)a; return 0; }
 void port_tlb_write(uint32_t pm, uint32_t hi, uint32_t lo0, uint32_t lo1) { (void)pm; (void)hi; (void)lo0; (void)lo1; }

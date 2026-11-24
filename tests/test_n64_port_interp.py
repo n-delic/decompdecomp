@@ -31,6 +31,8 @@ uint32_t port_tlb_alias(uint32_t a) { return a; }
 uint32_t port_tlb_jump(uint32_t slot, uint32_t imm) { return (slot & 0xF0000000u) | imm; }
 uint32_t port_tlb_call(uint32_t a) { return a; }     /* (no window kept at its physical address here) */
 uint32_t port_tlb_spelled(uint32_t a) { return a; }
+uint32_t port_spell_lo = 0xFFFFFFFFu, port_spell_len, port_real_lo = 0xFFFFFFFFu, port_real_len; /* (no window to watch or keep here) */
+void port_tlb_spell_store(uint32_t a) { (void)a; }
 uint32_t port_tlb_virtual(uint32_t a) { return a; }
 uint32_t port_tlb_virtual_of(uint32_t a) { (void)a; return 0; }
 void port_tlb_write(uint32_t pm, uint32_t hi, uint32_t lo0, uint32_t lo1) { (void)pm; (void)hi; (void)lo0; (void)lo1; }
