@@ -62,6 +62,7 @@ class Nintendo64(Console):
         Compiler("ido-5.3", "IDO 5.3", "early N64 games (1996-97)"),
         Compiler("sn-n64-281", "SN64 GCC 2.8.1", "SN Systems toolchains used by some third-party games"),
         Compiler("sn-n64-272-0001", "SN64 GCC 2.7.2 (0001)", "earlier SN Systems N64 toolchains"),
+        Compiler("sn-n64-272-0001-as0004", "SN64 GCC 2.7.2 (0001 + 0004 assembler)", "SN 2.7.2 games whose doubles load with ldc1"),
         Compiler("sn-n64-272-0004", "SN64 GCC 2.7.2 (0004)", "preserved SN compiler and assembler build"),
         Compiler("sn-n64-272-0006", "SN64 GCC 2.7.2 (0006)", "later SN 2.7.2 build used in some boot code"),
         Compiler("gcc-2.8.1-pm-sn-as", "GCC 2.8.1 + SN ASN64 2.56", "GCC code generation with original SN assembly"),

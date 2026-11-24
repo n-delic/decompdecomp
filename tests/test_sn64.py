@@ -14,7 +14,7 @@ from decompnet.elfobj import extract_function
 from decompnet.project import compiler_config
 
 
-@pytest.mark.parametrize('tid', ['sn-n64-281', 'sn-n64-272-0001', 'sn-n64-272-0004', 'sn-n64-272-0006'])
+@pytest.mark.parametrize('tid', ['sn-n64-281', 'sn-n64-272-0001', 'sn-n64-272-0001-as0004', 'sn-n64-272-0004', 'sn-n64-272-0006'])
 def test_sn64_registered_as_full_n64_compiler(tid):
     tc = toolchains.get(tid)
     assert tid in [c.id for c in N64.compilers]
@@ -66,7 +66,7 @@ def test_sn64_pipeline_order_and_failed_steps(tmp_path, monkeypatch):
         sn_compile(**tools, source=src, output=out, include=inc, flags=[])
 
 
-@pytest.mark.parametrize('tid', ['sn-n64-281', 'sn-n64-272-0001', 'sn-n64-272-0004', 'sn-n64-272-0006'])
+@pytest.mark.parametrize('tid', ['sn-n64-281', 'sn-n64-272-0001', 'sn-n64-272-0001-as0004', 'sn-n64-272-0004', 'sn-n64-272-0006'])
 def test_original_sn64_compiles_and_preserves_relocations(tmp_path, tid):
     required = [tid, 'wibo', 'psyq-obj-parser']
     if any(toolchains.installed(t) is None for t in required):
@@ -88,7 +88,7 @@ def test_original_sn64_compiles_and_preserves_relocations(tmp_path, tid):
     assert extract_function(result.obj, 'probe').code
 
 
-@pytest.mark.parametrize('tid', ['sn-n64-281', 'sn-n64-272-0001', 'sn-n64-272-0004', 'sn-n64-272-0006'])
+@pytest.mark.parametrize('tid', ['sn-n64-281', 'sn-n64-272-0001', 'sn-n64-272-0001-as0004', 'sn-n64-272-0004', 'sn-n64-272-0006'])
 def test_original_sn64_supports_export_style_relative_builds(tmp_path, tid):
     from decompnet.compiler import run_in
 
@@ -113,7 +113,7 @@ def test_original_sn64_supports_export_style_relative_builds(tmp_path, tid):
 def test_sn64_uses_gcc_flag_search_and_permuter_weights():
     from decompnet.app.engine.compilers import CompilerMixin
     from decompnet.app.permute import weight_family
-    for tid in ['sn-n64-281', 'sn-n64-272-0001', 'sn-n64-272-0004', 'sn-n64-272-0006']:
+    for tid in ['sn-n64-281', 'sn-n64-272-0001', 'sn-n64-272-0001-as0004', 'sn-n64-272-0004', 'sn-n64-272-0006']:
         assert weight_family({'compiler': {'toolchain': tid}}, None, False) == 'gcc'
         assert ['-O2', '-g3'] in CompilerMixin.debug_flag_variants(tid, ['-O2'])
 
@@ -179,3 +179,31 @@ def test_gcc_sn_switch_readonly_object_converts(tmp_path):
     fn = extract_function(result.obj, 'probe')
     assert fn.code
     assert any(r.symbol == 'call' for r in fn.relocs)
+
+
+def test_sn_0001_with_0004_assembler_reuses_the_pinned_downloads():
+    """The pairing downloads nothing new: 0001's archive and 0004's assembler, each under its pinned checksum."""
+    pair = toolchains.get('sn-n64-272-0001-as0004')
+    assert pair.proprietary and pair.requires == toolchains.get('sn-n64-272-0001').requires
+    pins = {(p['url'], p['sha256']) for p in pair.parts}
+    assert pins <= {(p['url'], p['sha256']) for t in ('sn-n64-272-0001', 'sn-n64-272-0004') for p in toolchains.get(t).parts}
+    # the 0004 assembler is saved under its own name, so 0001's own asn64.exe stays beside it
+    assert {p.get('binary') for p in pair.parts} == {None, 'asn64-0004.exe'}
+    assert '{tc}/asn64-0004.exe' in pair.cmd and '{tc}/cc1n64.exe' in pair.cmd
+    assert pair.flags == toolchains.get('sn-n64-272-0001').flags
+    assert pair.own_copy is False
+
+
+def test_sn_0001_with_0004_assembler_loads_doubles_with_one_ldc1(tmp_path):
+    ids = ['sn-n64-272-0001', 'sn-n64-272-0001-as0004', 'sn-n64-272-0004']
+    if any(toolchains.installed(t) is None for t in [*ids, 'wibo', 'psyq-obj-parser']):
+        pytest.skip('needs the installed SN 2.7.2 packs (proprietary: accepted in Setup)')
+    code = {}
+    for tid in ids:
+        result = compile_source(compiler_config(tmp_path, {'compiler': {'toolchain': tid}}), '',
+                                'double g; double probe(double x){return x*g+2.5;}')
+        assert result.ok, result.log
+        code[tid] = extract_function(result.obj, 'probe').code
+    ldc1 = lambda c: [c[i:i + 4] for i in range(0, len(c), 4) if c[i] >> 2 == 0x35]
+    assert not ldc1(code[ids[0]]) and len(ldc1(code[ids[1]])) == 2  # 0001 splits l.d into lwc1 pairs
+    assert code[ids[1]] == code[ids[2]]  # same code here as 0004, whose compiler differs elsewhere

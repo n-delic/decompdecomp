@@ -78,6 +78,7 @@ class Toolchain:
     headers: list[str] = field(default_factory=list)  # shared compiler header packs
     local_files: list[str] = field(default_factory=list)
     local_places: list[str] = field(default_factory=list)
+    own_copy: bool = True  # false: a pairing of two packs' files; a user's folder of one compiler can't run like it (kits/owncompiler.py)
     compiler_source: str = ""  # the `*-source` entry holding the GCC source nearest this compiler (source_for)
 
     def __post_init__(self):

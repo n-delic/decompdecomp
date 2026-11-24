@@ -36,7 +36,7 @@ def packs(platform: str) -> dict[str, tuple[str, str, str, tuple[str, ...]]]:
     pinned = tomllib.loads(resources.files("decompnet").joinpath("toolchains.toml").read_text(encoding="utf-8"))
     out = {}
     for tid, spec in pinned.items():
-        if spec.get("kind", "compiler") != "compiler" or spec.get("platform") != platform:
+        if spec.get("kind", "compiler") != "compiler" or spec.get("platform") != platform or spec.get("own_copy") is False:
             continue
         program = next((m for m in _PROGRAM.findall(" ".join([*spec.get("cc", []), *spec.get("cmd", [])]))
                         if m != "include"), None)

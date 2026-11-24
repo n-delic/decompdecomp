@@ -2138,6 +2138,29 @@ build = "sn64-gcc"
 recipe = 2
 platforms = ["macos-x86_64", "macos-arm64"]
 
+["sn-n64-272-0001-as0004"]
+family = "gcc"
+name = "SN Systems N64 GCC 2.7.2 (0001 + 0004 assembler)"
+arch = "mips"
+platform = "N64"
+license = "proprietary"
+source = "decompme/compilers n64_sn272_0001 (preprocessor and compiler); Mr-Wiseguy/pcsx-redux n64 preserved build 0004 (assembler)"
+description = "Build 0001's preprocessor and compiler with build 0004's ASN64. Both compilers write `l.d` as a macro; 0001's assembler always splits it into two lwc1, 0004's writes one ldc1. Some games' target is this pairing (SN 2.7.2 code that loads doubles with ldc1). Same pinned downloads as the two packs it combines."
+own_copy = false  # two builds' files in one folder: no copy of the user's is laid out like it
+requires = ["wibo", "psyq-obj-parser"]
+driver = "consoles/n64/sn64.py"
+flags = ["-G0", "-mips3", "-O2", "-mgas", "-meb", "-mhard-float"]
+cmd = ["{python}", "{driver}", "--cc", "{tc}/cc1n64.exe", "--cpp", "{tc}/cppn64.exe", "--assembler", "{tc}/asn64-0004.exe", "--converter", "{tc:psyq-obj-parser}/psyq-obj-parser", "--runner", "{tc:wibo}/wibo", "{src}", "{obj}", "{include}", "{flags}"]
+[["sn-n64-272-0001-as0004".parts]]
+url = "https://github.com/decompme/compilers/releases/download/compilers/n64_sn272_0001.tar.gz"
+sha256 = "17c57ccd5f2305fe5445c576d4cc2c1fea681dd78b29dd3d1f15c5ca0fdf2cea"
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
+[["sn-n64-272-0001-as0004".parts]]
+url = "https://github.com/Mr-Wiseguy/pcsx-redux/releases/download/n64/asn64.exe"
+sha256 = "1e04e1195f6504fe711c3db67ad94eb50d47f2a0f21e87dbbe20cbac4d83db39"
+binary = "asn64-0004.exe"
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
+
 ["sn-n64-272-0004"]
 family = "gcc"
 name = "SN Systems N64 GCC 2.7.2 (0004)"
