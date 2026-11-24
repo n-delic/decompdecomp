@@ -826,6 +826,12 @@ the existing families on the saved best first (`prove_chain.py --list`): what th
 
 ## 5c. Handing off (only by the clock, never early)
 
+**The strongest model never hands off.** The clock exists so a weaker model (Sonnet) passes a stalled near-match
+to a stronger one (Opus). An Opus agent would only hand off to another Opus, so it doesn't: it never waits for the
+clock and never stops to hand off. Out of ideas, it goes back to step 1 with a new angle (another compiler profile
+through `try_compiler`, the pass that decides the rows, grids over combined edits). The one exception is its own
+context running low: then it writes the note with `handoff.py` so the next agent starts from its evidence.
+
 Persistence is the default: a near-match nobody finishes is worth more than three abandoned ones. A hand-off is allowed
 only when `clock.py <holder>` (or `clock.py --slug S --function F --agent NAME --since T`) prints **"hand-off allowed"**:
 at least 45 minutes on the function **and** 45 minutes since your last improvement, read from the app's attempt history,
