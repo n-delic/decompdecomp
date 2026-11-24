@@ -1494,7 +1494,13 @@ static int tlb_spelling_in_use(uint32_t lo, uint32_t size) {
     return 0;
 }
 unsigned port_tlb_n;
-unsigned port_tlb_hi; /* windows at 0x00800000 up: the game's compiled C reads them as aliases of RAM (port_tlb_wasm) */
+unsigned port_tlb_hi; /* windows the game's compiled C reads as aliases of RAM (port_tlb_wasm): at 0x00800000 up, and low ones above the module's own data */
+/* The module's own low memory: its stack and data sit below `--global-base` plus its data (build.py LINK_FLAGS: 1 MB, and
+   the data after it, `__data_end`). A game's low TLB window above that (a code and data page pair at virtual 0x200000)
+   names RAM the compiled C would otherwise read as zeros: a class table's function pointers, behind a method slot
+   the game calls, read as null. main() raises the floor to the module's data end. */
+uint32_t port_wasm_floor = 0x00100000u;
+static uint32_t wasm_lo = 0xFFFFFFFFu, wasm_hi; /* the span of the windows port_tlb_wasm answers for */
 /* A low window shows the same RAM at two names: the console reads a table at virtual 0x00102330 from physical 0x2330
    (a jump table of a function the project has no C for: the bytes were copied to the boot image at the physical
    address, and nothing wrote them where the port spells the virtual address, 0x80102330). The words of the
@@ -1534,6 +1540,7 @@ static void tlb_map(uint32_t pm, uint32_t va, uint32_t even, uint32_t odd) {
             for (unsigned j = 0; j < port_tlb_n; j++)
                 if (tlb_win[j].lo + tlb_win[j].size == lo && tlb_win[j].phys + tlb_win[j].size == phys && tlb_win[j].size < 0x01000000u && tlb_win[j].real == real) {
                     tlb_win[j].size += size;
+                    if (tlb_win[j].lo + tlb_win[j].size > wasm_hi && (tlb_win[j].lo >= 0x00800000u || tlb_win[j].lo >= port_wasm_floor)) wasm_hi = tlb_win[j].lo + tlb_win[j].size;
                     phys = 0xFFFFFFFFu;
                     break;
                 }
@@ -1542,7 +1549,11 @@ static void tlb_map(uint32_t pm, uint32_t va, uint32_t even, uint32_t odd) {
         if (i == port_tlb_n && port_tlb_n == TLB_WINDOWS) return;
         tlb_win[i].lo = lo; tlb_win[i].size = size; tlb_win[i].phys = phys; tlb_win[i].real = real;
         if (i == port_tlb_n) port_tlb_n++;
-        if (lo >= 0x00800000u) port_tlb_hi = 1;
+        if (lo >= 0x00800000u || lo >= port_wasm_floor) {
+            port_tlb_hi = 1;
+            if (lo < wasm_lo) wasm_lo = lo;
+            if (lo + size > wasm_hi) wasm_hi = lo + size;
+        }
     }
 }
 /* The interpreter's `tlbwi`/`tlbwr`: the registers the game's own code wrote (a game that sets its TLB up in its
@@ -1750,9 +1761,14 @@ uint32_t port_tlb_call(uint32_t a) {
    build writes (port/wasm/bemem.py) ask here once a window high in the virtual space exists, and read the same RAM at
    its KSEG0 spelling. Windows in the low 8 MB are left alone: the module's own low memory lives there. */
 uint32_t port_tlb_wasm(uint32_t a) {
-    for (unsigned i = 0; i < port_tlb_n; i++)
-        if (tlb_win[i].lo >= 0x00800000u && a >= tlb_win[i].lo && a - tlb_win[i].lo < tlb_win[i].size)
-            return 0x80000000u | (tlb_win[i].phys + (a - tlb_win[i].lo));
+    if (a < wasm_lo || a >= wasm_hi) return a; /* (the stack and the module's data are below every window) */
+    for (unsigned i = 0; i < port_tlb_n; i++) {
+        if (a < tlb_win[i].lo || a - tlb_win[i].lo >= tlb_win[i].size) continue;
+        if (tlb_win[i].lo >= 0x00800000u) return 0x80000000u | (tlb_win[i].phys + (a - tlb_win[i].lo));
+        /* a low window above the module's data is named as the interpreter and the DMA name it (port_tlb_canon): its
+           spelling 0x80000000 | virtual, or the physical address where the window was kept there */
+        if (tlb_win[i].lo >= port_wasm_floor) return port_tlb_canon(a);
+    }
     return a;
 }
 /* The address a `j`/`jal` at the (delay slot) address `slot` goes to, given its 26-bit field `imm` (already shifted).
@@ -1838,6 +1854,8 @@ static int read_boot(void) {
     port_tlb_n = 0;
     memset(tlb_ent, 0, sizeof tlb_ent);
     port_tlb_hi = 0;
+    wasm_lo = 0xFFFFFFFFu;
+    wasm_hi = 0;
     boot.entry = boot_entry();
     /* a call is the game's first function when only a `break` follows it; one with more code after it is a helper
        (a fill, a TLB setup) the routine returns from */
@@ -2221,6 +2239,7 @@ int main(int argc, char **argv) {
     wasm2c_game_instantiate(&game, &env);
 #endif
     M = game.w2c_memory.data;
+    if (game.w2c_0x5F_data_end > port_wasm_floor) port_wasm_floor = (game.w2c_0x5F_data_end + 0xFFFu) & ~0xFFFu;
     LOG("memory: %llu MB, ROM %zu bytes", (unsigned long long)game.w2c_memory.size >> 20, rom_size);
     /* as the console's boot does: the game's code and data from the cartridge at their addresses, and the values
        the boot leaves in low memory for libultra */

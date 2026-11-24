@@ -1628,3 +1628,29 @@ int main(int argc, char **argv) {
     subprocess.run([cc, "-o", str(tmp_path / "t"), str(source)], check=True, capture_output=True)
     out = subprocess.run([str(tmp_path / "t"), str(trace)], check=True, capture_output=True, text=True).stdout.split()
     assert out == ["1", "2", "2299", "0", "1", "0"]
+
+
+def test_the_compiled_c_reads_a_low_window_above_the_modules_data_as_ram(tmp_path):
+    """A game maps a page pair at virtual 0x200000 (1 MB pages onto physical 0 and 0x100000) and keeps a class table at
+    virtual 0x43CAE0 in another window: its compiled C read the raw wasm address and got zeros, so a method slot read
+    as null and the call died ('called 00000000'). The loads and stores ask the window table for a window above the
+    module's own data (port_wasm_floor, 1 MB: the stack and the data sit below it), and get the RAM it maps."""
+    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if not cc:
+        pytest.skip("no C compiler")
+    text = HOST.read_text()
+    code = text[text.index("static struct { uint32_t entry, target, bss, bss_size; int tv; } boot;"):
+                text.index("/* the console's RAM as the boot leaves it")]
+    source = tmp_path / "t.c"
+    source.write_text(_BOOT_HARNESS + code + """
+int main(void) {
+    port_tlb_write(0x1FE000, 0x200000, 0x1F, 0x401F); /* 1 MB pages, valid: physical 0 and 0x100000 */
+    printf("%u %08X %08X %08X %08X %08X\\n", port_tlb_hi, port_tlb_wasm(0x200010), port_tlb_wasm(0x300010),
+           port_tlb_wasm(0x0FFFF0), port_tlb_wasm(0x400000), port_tlb_wasm(0x9000C));
+    return 0;
+}
+""")
+    subprocess.run([cc, "-o", str(tmp_path / "t"), str(source)], check=True, capture_output=True)
+    done = subprocess.run([str(tmp_path / "t")], capture_output=True, text=True, check=True)
+    # the window's two halves at their spelling (the bytes are copied there), nothing below the floor or past the windows
+    assert done.stdout.split() == ["1", "80200010", "80300010", "000FFFF0", "00400000", "0009000C"]
