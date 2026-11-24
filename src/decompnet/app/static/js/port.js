@@ -247,6 +247,7 @@ function portSteps(report) {
         : "every call agrees with the function it calls") : "after Play builds the game",
       drawer: calls?.callees?.length ? {label: `${calls.calls.toLocaleString()} calls`,
         title: "Show the functions their callers disagree with, and why Make calls agree kept their C", open: () => openPortCallees(calls.callees)} : null,
+      help: {title: "What it means for calls to disagree", html: CALLS_HELP},
       buttons: calls && calls.calls ? ["portFixCalls"] : [], logs: ["portFixCallsLog"] },
     { title: "Behaves like the original", pct: compared ? pct(behaviour.same, compared) : null,
       detail: !report.behaviour_available ? "needs a reversing emulator and a static recompiler for this console"
@@ -299,6 +300,39 @@ function portSteps(report) {
   }
   return [recompileStep(report), ...steps];
 }
+
+// What "calls disagree" means, with an example, in the shared side drawer (the ? beside the step's title).
+const CALLS_HELP = `<p>A call <b>disagrees</b> when the C of the function being called says one thing and the function calling it
+assumes another. Take two functions in a game:</p>
+<pre>// the function being called, as the game's matched C has it
+void getScore(void *arg0) {
+    ...
+}
+
+// a function that calls it
+void showHud(void) {
+    int s = getScore(player);   // takes a result, passes one argument
+}</pre>
+<p><code>getScore</code> is declared <code>void</code>, so it returns nothing. <code>showHud</code> still uses its result as if it
+were an <code>int</code>.</p>
+<h4>Why the game still works on the console</h4>
+<p>On the N64's MIPS processor a function's result is left in a register (<code>$v0</code>) and arguments travel in other
+registers. The original code really did return a value in <code>$v0</code>; the decompiled C just has the wrong return type.
+The compiler builds the same bytes either way, so the function still matches.</p>
+<h4>Why it breaks in a port</h4>
+<p>A modern compiler for a PC or the browser reads the C as written. A <code>void</code> function returns nothing, so
+<code>showHud</code> gets garbage instead of the score. The browser build bridges this by copying <code>$v0</code> as MIPS did,
+but that is a workaround. The same happens with arguments:</p>
+<ul><li><b>Too few or too many:</b> <code>showHud</code> calls <code>getScore(player, 3)</code> but <code>getScore</code> is declared
+with one argument.</li><li><b>Wrong size:</b> one side says <code>u8</code> and the other <code>s32</code>.</li></ul>
+<h4>What Make calls agree does</h4>
+<p>It fixes the called function's definition to match how everyone calls it:</p>
+<pre>s32 getScore(void *arg0) {
+    return computeScore(arg0);   // its last call's value is the result
+}</pre>
+<p>That compiles to the same bytes on the console, so the match is kept. Where the console's compiler would build different
+bytes, the new C goes behind <code>#ifdef PORT</code> with the old C in the <code>#else</code>. The count in this step is how
+many calls like this still disagree.</p>`;
 
 // A list of functions in the shared side drawer, one row each with a link to the function, its details and a sortable
 // table (AGENTS.md: a count that needs action opens this). `cols` are {label, get(row), num?}; the first is the link.
@@ -389,6 +423,12 @@ function renderPortSteps(report, steps = portSteps(report)) {
     const share = document.createElement("span"); share.className = "port-pct";
     if (step.diagnostic) share.id = "portRecompileState";
     share.textContent = step.status || (step.unavailable ? "not checked" : step.pct == null ? (step.play ? "" : "to do") : step.pct + "%");
+    if (step.help) {  // a ? beside the title explains the step in the side drawer
+      const help = document.createElement("button"); help.type = "button"; help.className = "port-help";
+      help.textContent = "?"; help.setAttribute("aria-label", step.help.title); help.title = step.help.title;
+      help.onclick = () => dialog(step.help.title, step.help.html, "port-help");
+      title.append(" ", help);
+    }
     head.append(title, share);
     const detail = document.createElement("p"); detail.className = "small muted"; detail.textContent = step.detail;
     if (step.drawer && step.detail.includes(step.drawer.label)) {  // the count opens the list in the side drawer
