@@ -258,6 +258,77 @@ def _plain_bytes(unit) -> list[str] | None:
     return out
 
 
+_STACK_LOCAL = re.compile(r"^([ \t]+)((?:unsigned |signed )?\w+(?: \*+|\*+ | ))(sp([0-9A-Fa-f]+))(?:\[(0x[0-9A-Fa-f]+|\d+)\])?;[ \t]*$")
+_DECLARATION = re.compile(r"^[ \t]+(?:(?:unsigned|signed|struct|const|volatile) )*\w+[ \t*]+\w+(?:\[[^\]]*\])?;[ \t]*$")
+_SCALAR_SIZE = {"char": 1, "s8": 1, "u8": 1, "int8_t": 1, "uint8_t": 1, "s16": 2, "u16": 2, "short": 2,
+                "int16_t": 2, "uint16_t": 2, "s32": 4, "u32": 4, "f32": 4, "int": 4, "float": 4, "int32_t": 4,
+                "uint32_t": 4, "s64": 8, "u64": 8, "f64": 8, "double": 8, "int64_t": 8, "uint64_t": 8,
+                "unsigned char": 1, "signed char": 1, "unsigned short": 2, "unsigned int": 4, "unsigned long": 4}
+
+
+def contiguous_stack_locals(text: str) -> str:
+    """m2c names a function's stack locals by their stack offset (`sp10`, `sp30`), and the console's compiler kept
+    them where the offsets say: a call that is handed `sp10` and reads past it (a 0x28-byte record built as a name
+    buffer `char sp10[0x20]` with two words after it, `s32 sp30[2]`) reads the next locals. clang places locals
+    where it likes, so the record's words were stack junk: an all-star baseball game's table of exports got
+    entries whose handler was the bytes of a string, and it called 0x64000000. Locals that are neighbours in the
+    frame (one ends where the next begins) are declared as one struct, so they stay neighbours."""
+    lines = text.split("\n")
+    i = 0
+    while i < len(lines):
+        n = 0
+        while i + n < len(lines) and (_STACK_LOCAL.match(lines[i + n]) or _DECLARATION.match(lines[i + n])):
+            n += 1
+        run = lines[i:i + n]
+        found = [(k, m) for k, line in enumerate(run) if (m := _STACK_LOCAL.match(line))]
+        if len(found) < 2:
+            i += max(n, 1)
+            continue
+        members = []
+        for k, m in found:
+            kind = " ".join(m.group(2).replace("*", " * ").split())
+            size = 4 if "*" in kind else _SCALAR_SIZE.get(kind)
+            if size is None:  # a type it can't size: the run is left as it was
+                members = None
+                break
+            members.append((int(m.group(4), 16), size * (int(m.group(5), 0) if m.group(5) else 1), size, k, m))
+        if members is None:
+            i += n
+            continue
+        members.sort(key=lambda member: member[0])
+        chains, chain = [], [members[0]]
+        for member in members[1:]:
+            if member[0] == chain[-1][0] + chain[-1][1] and (member[0] - chain[0][0]) % member[2] == 0:
+                chain.append(member)
+            else:
+                chains.append(chain)
+                chain = [member]
+        chains.append(chain)
+        replaced, renamed = {}, {}
+        for chain in (c for c in chains if len(c) > 1):
+            frame = f"_frame_{chain[0][0]:X}"
+            declared = "".join(f" {m.group(2).rstrip()} {m.group(3)}{'[' + m.group(5) + ']' if m.group(5) else ''};"
+                               for *_, m in chain)
+            first = min(k for *_, k, _m in chain)
+            for *_, k, m in chain:
+                replaced[k] = f"{chain[0][4].group(1)}struct {{{declared} }} {frame};" if k == first else None
+                renamed[m.group(3)] = f"{frame}.{m.group(3)}"
+        if not renamed:
+            i += n
+            continue
+        merged = [replaced.get(k, line) for k, line in enumerate(run) if replaced.get(k, line) is not None]
+        lines[i:i + n] = merged
+        i += len(merged)
+        # the function's body to its closing brace in the first column: the locals' names are its own
+        end = i
+        while end < len(lines) and lines[end] != "}":
+            end += 1
+        pattern = re.compile(r"\b(" + "|".join(sorted(map(re.escape, renamed), key=len, reverse=True)) + r")\b")
+        for j in range(i, end):
+            lines[j] = pattern.sub(lambda hit, names=renamed: names[hit.group(1)], lines[j])
+    return "\n".join(lines)
+
+
 def big_endian_bitfields(text: str) -> str:
     """Bitfields laid out as the console's compiler does: a big-endian MIPS compiler gives a unit's first field its
     top bits, wasm32 its bottom ones. Each unit's fields are declared in reverse (a unit left part-empty gets its
@@ -490,7 +561,7 @@ def gather(repo: Path, out: Path, leave_out=(), function_headers=None, *, ensure
         header = f"common_{unit}.h" if unit and f"common_{unit}.h" in headers else "common.h"
         if not re.search(r'^#include "common(_\w+)?\.h"', text, re.M):
             text = f'#include "{header}"\n' + text
-        _write(out / "src" / name, big_endian_bitfields(ido_c(text)))
+        _write(out / "src" / name, contiguous_stack_locals(big_endian_bitfields(ido_c(text))))
     # By name in any case: on a case-insensitive disk (macOS, Windows) a file an old save wrote as SelectStateReset.c
     # is the one just written as selectStateReset.c, and deleting it as stale deleted that function's C
     if not chosen or ensure_host_import:  # standalone leaves may have no host imports of their own

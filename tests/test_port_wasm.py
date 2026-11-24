@@ -279,6 +279,32 @@ def test_bitfields_get_the_consoles_bits():
     assert big_endian_bitfields(padding) == padding  # padding alone may start mid-unit: as it was
 
 
+def test_stack_locals_that_touch_in_the_frame_stay_one_record():
+    """m2c names stack locals by their offset: `char sp10[0x20]` and `s32 sp30[2]` are one 0x28-byte record the
+    console's compiler built in the frame, and a callee that is handed `sp10` and reads past it reads the words
+    after. clang lays locals out as it likes, so an all-star baseball game's export table got entries whose
+    handler was stack junk."""
+    from decompnet.port.wasm.build import contiguous_stack_locals
+    text = ("void func_80025984(s32 arg0, s32 arg1, s32 arg2) {\n    char sp10[0x20];\n    s32 sp30[2];\n"
+            "    s32 sp50;\n\n    func_8001A888(sp10, arg0);\n    sp30[0] = arg1;\n    sp30[1] = arg2;\n"
+            "    func_8002668C(&D_80086990, sp10);\n    sp50 = 1;\n}\n")
+    out = contiguous_stack_locals(text)
+    assert "struct { char sp10[0x20]; s32 sp30[2]; } _frame_10;" in out
+    assert "func_8001A888(_frame_10.sp10, arg0);" in out
+    assert "_frame_10.sp30[1] = arg2;" in out
+    assert "func_8002668C(&D_80086990, _frame_10.sp10);" in out
+    assert out.count("sp30[2];") == 1 and "    s32 sp50;" in out  # a local that doesn't touch them stays alone
+    # a gap between locals (the frame has room the function never names) keeps them apart, and a function with
+    # one local, or none, is as it was
+    apart = "void f(void) {\n    s32 sp10;\n    s32 sp18;\n    g(&sp10, &sp18);\n}\n"
+    assert contiguous_stack_locals(apart) == apart
+    single = "void f(void) {\n    char sp10[8];\n    g(sp10);\n}\n"
+    assert contiguous_stack_locals(single) == single
+    # the rename stops at the function's end: a later function's own `sp10` is not this one's
+    two = text + "void h(void) {\n    s32 sp10;\n    sp10 = 1;\n}\n"
+    assert two.endswith(contiguous_stack_locals(two)[-len("void h(void) {\n    s32 sp10;\n    sp10 = 1;\n}\n"):])
+
+
 def test_a_struct_passed_by_value_keeps_every_word_the_caller_passed():
     """A loader's C declared its by-value block 640 bytes; its caller passed 708, and on MIPS the loader read the
     words past 640 from the caller's stack. The thunk copied 640: the last texture name was cut short."""

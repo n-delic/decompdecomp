@@ -2333,6 +2333,18 @@ static void *watchdog(void *arg) {
     _exit(0);
     return NULL;
 }
+/* PORT_DUMPBIN=addr,len,file: memory as bytes at the end of the run, for comparing with the ROM's or with the
+   reference emulator's dump. It also runs when the game stops on a call to nothing (port_trace), so a run that
+   dies has its memory to read. */
+static void dump_memory_if_asked(void) {
+    const char *spec_env = getenv("PORT_DUMPBIN");
+    if (!spec_env) return;
+    char spec[512]; snprintf(spec, sizeof spec, "%s", spec_env);
+    char *a = strtok(spec, ","), *n = strtok(NULL, ","), *path = strtok(NULL, ",");
+    FILE *f = a && n && path ? fopen(path, "wb") : NULL;
+    if (f) { fwrite(M + strtoul(a, NULL, 16), 1, strtoul(n, NULL, 0), f); fclose(f); }
+}
+
 int main(int argc, char **argv) {
     if (SIGUSR1) signal(SIGUSR1, sample_handler);
     if (argc < 2) port_live_app(argv[0]); /* an exported app, opened from the Finder: its settings beside it */
@@ -2387,12 +2399,7 @@ int main(int argc, char **argv) {
         port_live_pump();
         if (getenv("PORT_SAMPLE") && frame % 10 == 5) sample();
     }
-    if (getenv("PORT_DUMPBIN")) { /* addr,len,file: memory as bytes at the end, for comparing with the ROM's */
-        char spec[512]; snprintf(spec, sizeof spec, "%s", getenv("PORT_DUMPBIN"));
-        char *a = strtok(spec, ","), *n = strtok(NULL, ","), *path = strtok(NULL, ",");
-        FILE *f = a && n && path ? fopen(path, "wb") : NULL;
-        if (f) { fwrite(M + strtoul(a, NULL, 16), 1, strtoul(n, NULL, 0), f); fclose(f); }
-    }
+    dump_memory_if_asked();
     if (getenv("PORT_DUMP")) { /* addr,len: memory as text at the end */
         uint32_t a = (uint32_t)strtoul(getenv("PORT_DUMP"), NULL, 16);
         int n = strchr(getenv("PORT_DUMP"), ',') ? atoi(strchr(getenv("PORT_DUMP"), ',') + 1) : 256;
@@ -2416,6 +2423,7 @@ void port_trace(void) { fprintf(stderr, "(no backtrace on Windows)\n"); }
 #include <mach-o/dyld.h>
 #endif
 void port_trace(void) {
+    dump_memory_if_asked();
     void *frames[24];
     int n = backtrace(frames, 24);
 #ifdef __APPLE__
