@@ -134,6 +134,7 @@ static struct {
     bool (*SetHint)(const char *, const char *);
     void *(*CreateWindow)(const char *, int, int, uint64_t);
     bool (*SetWindowTitle)(void *, const char *);
+    bool (*RaiseWindow)(void *);
     uint64_t (*GetTicksNS)(void);
     void *(*CreateRenderer)(void *, const char *);
     bool (*SetRenderLogicalPresentation)(void *, int, int, int);
@@ -184,7 +185,7 @@ static int load_sdl(void) {
         if (names[i]) lib = dlopen(names[i], RTLD_NOW | RTLD_LOCAL);
     if (!lib) return 0;
 #define SYM(name) if (!(*(void **)&sdl.name = dlsym(lib, "SDL_" #name))) return 0
-    SYM(SetWindowTitle); SYM(GetTicksNS);
+    SYM(SetWindowTitle); SYM(RaiseWindow); SYM(GetTicksNS);
     SYM(Init); SYM(SetHint); SYM(CreateWindow); SYM(CreateRenderer); SYM(SetRenderLogicalPresentation);
     SYM(CreateTexture); SYM(SetTextureScaleMode); SYM(DestroyTexture); SYM(UpdateTexture); SYM(SetRenderDrawColor);
     SYM(RenderClear); SYM(RenderTexture); SYM(RenderPresent); SYM(PollEvent); SYM(WaitEventTimeout);
@@ -223,6 +224,9 @@ int port_sdl_start(void) {
         return 0;
     }
     sdl.SetHint("SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS", "1");
+    /* the game's window opens in front: this program isn't an app bundle, so without the hint its window opened
+       behind the app that started it (a Play from the app showed a window nobody could see) */
+    sdl.SetHint("SDL_FORCE_RAISEWINDOW", "1");
     if (!sdl.Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD)) {
         fprintf(stderr, "SDL_Init: %s\n", sdl.GetError());
         return 0;
@@ -231,12 +235,14 @@ int port_sdl_start(void) {
     const char *adapter = getenv("PORT_RT64");
     if (adapter && *adapter) {
         window = sdl.CreateWindow(title(), 960, 720, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_METAL);
+        if (window && sdl.RaiseWindow) sdl.RaiseWindow(window);
         if (window && open_rt64(sdl_library, window, adapter)) return 1;
         sdl.Quit();
         return 0;
     }
 #endif
     window = sdl.CreateWindow(title(), 960, 720, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+    if (window && sdl.RaiseWindow) sdl.RaiseWindow(window);
     renderer = window ? sdl.CreateRenderer(window, NULL) : NULL; /* SDL3 presents without vsync unless asked */
     if (!renderer) {
         fprintf(stderr, "SDL: no window: %s\n", sdl.GetError());

@@ -1797,3 +1797,12 @@ def test_the_rdp_start_and_end_registers_read_back_the_word_a_game_wrote():
     store = text[text.index("uint64_t port_io_store("):text.index("/* ---------------------------------------------------------------- VI */")]
     assert "dpc_start_word = (uint32_t)value;" in store and "dpc_end_word = (uint32_t)value;" in store
     assert "dpc_start = (uint32_t)value & 0x00FFFFF8u;" in store  # the list still runs from the masked address
+
+
+def test_the_games_window_raises_itself_when_it_opens():
+    """The game program isn't an app bundle, so its window opened behind the app that started it (and a capture or
+    a player saw the app, not the game): the window code asks SDL to raise it, forcing the raise on macOS."""
+    text = (KIT / "window" / "sdl.c").read_text()
+    assert "SDL_FORCE_RAISEWINDOW" in text and "SYM(RaiseWindow)" in text
+    # raised right after each of the two places the window is created
+    assert text.count("sdl.RaiseWindow(window)") >= 2
