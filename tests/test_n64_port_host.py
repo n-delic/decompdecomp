@@ -1562,3 +1562,12 @@ def test_the_console_reports_the_expansion_pak_unless_the_project_says_otherwise
         return subprocess.run([str(tmp_path / "t")], check=True, capture_output=True, text=True, env=env).stdout.strip()
     assert [run(None), run("8"), run("4"), run("0x400000"), run("garbage")] == ["800000", "800000", "400000", "400000", "800000"]
     assert "wbe32(0x80000318, console_memory());" in text
+
+
+def test_the_host_includes_setjmp_only_outside_the_browser_build():
+    """The browser (wasm32-wasi) host can't include <setjmp.h> (the toolchain's header refuses without exception-handling
+    support), so every browser export failed to build once the boot hand-over (boot_idle) added it unguarded."""
+    text = HOST.read_text()
+    include = text.index("#include <setjmp.h>")
+    assert text[:include].rstrip().endswith("#ifndef PORT_WEB")
+    assert "setjmp(" not in text[:text.index("#ifndef PORT_WEB")]  # (and nothing uses it before the guarded boot code)
