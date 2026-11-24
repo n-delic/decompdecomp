@@ -147,6 +147,63 @@ def discover(rom: bytes, segments: list[dict], functions: list[dict], entry: int
     return out
 
 
+def split_call_targets(rom: bytes, segments: list[dict], functions: list[dict]) -> tuple[list[dict], list[dict]]:
+    """The functions with each `jal` target inside another function's body made a function start. N64Recomp can call
+    only a function's first instruction: a `jal` to the middle of a listed function (hand-written assembly with a
+    second entry point, or a split that merged two functions) was refused as "No function found for jal target", and
+    so was every function that called a refused one, up to a game's main thread, which then ran in the ROM
+    interpreter at a fraction of the speed (a platformer's loader and main loop: black for minutes; 57 of 96 projects
+    here had such refusals). The listed function is cut at the target: its first part runs on into the new function
+    (as a function that doesn't end in a return does, `falls_into_next`), and the target is a function of its own.
+    Returns (all functions, the new ones: {"name", "vram", "rom", "size", "why"})."""
+    import bisect
+    ordered = sorted(functions, key=lambda f: (f["vram"], f["rom"]))
+    starts = {f["vram"] for f in ordered}
+    keys = [f["vram"] for f in ordered]
+    cuts: dict[int, set[int]] = {}  # an index in `ordered`: the addresses it is cut at
+
+    def container(target: int):
+        # the function with the greatest start below the target, if the target is inside its body
+        i = bisect.bisect_left(keys, target) - 1
+        while i >= 0 and keys[i] == target:
+            i -= 1
+        for j in range(i, max(i - 8, -1), -1):  # (overlapping sections list a few functions over one range)
+            f = ordered[j]
+            if f["vram"] < target < f["vram"] + f["size"]:
+                return j
+        return None
+
+    for f in ordered:
+        for i in range(0, f["size"], 4):
+            word = _word(rom, f["rom"] + i)
+            if word >> 26 != 3:  # jal
+                continue
+            target = ((f["vram"] + i + 4) & 0xF0000000) | ((word & 0x03FFFFFF) << 2)
+            if target in starts or target & 3:
+                continue
+            if _segment(segments, target) is None:
+                continue
+            if (j := container(target)) is not None:
+                cuts.setdefault(j, set()).add(target)
+    if not cuts:
+        return list(functions), []
+    out, new = [], []
+    for j, f in enumerate(ordered):
+        if j not in cuts:
+            out.append(f)
+            continue
+        end = f["vram"] + f["size"]
+        points = sorted(cuts[j])
+        out.append({**f, "size": points[0] - f["vram"]})
+        for k, vram in enumerate(points):
+            piece = {"name": f"func_{vram:08X}", "vram": vram, "rom": f["rom"] + vram - f["vram"],
+                     "size": (points[k + 1] if k + 1 < len(points) else end) - vram,
+                     "why": f"called in the middle of {f['name']}"}
+            out.append(piece)
+            new.append(piece)
+    return out, new
+
+
 def _toml_name(name: str) -> str:
     return json.dumps(name)  # TOML basic strings take JSON's escapes
 
@@ -471,7 +528,10 @@ def recompile(program: Path, rom_path: Path, segments: list[dict], functions: li
     entry = _word(rom, 8)
     found = discover(rom, segments, usable, entry if _segment(segments, entry) else None)
     at_entry = any(f["vram"] == entry and f["rom"] == 0x1000 for f in usable + found)
-    everything = usable + found
+    everything, split = split_call_targets(rom, segments, usable + found)
+    if split:
+        log(f"N64Recomp: {len(split)} functions started where the code calls into the middle of a listed function")
+        found = found + split
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     # An interrupted rebuild leaves generated files without a completed summary.
@@ -499,7 +559,7 @@ def recompile(program: Path, rom_path: Path, segments: list[dict], functions: li
     translated = {name if name in known else name.removesuffix("_recomp") for name in passed - refused.keys()}
     succeeded = len((translated & known) - refused.keys())
     written = len(list((out / "funcs").glob("*.c")))
-    summary = {"at": time.time(), "bank_filter_version": 2, "image_sha1": hashlib.sha1(rom).hexdigest(), "functions": len(usable),
+    summary = {"at": time.time(), "bank_filter_version": 2, "call_splits": 1, "image_sha1": hashlib.sha1(rom).hexdigest(), "functions": len(usable),
                "found": found, "succeeded": succeeded,
                "refused": [{"name": n, "why": w} for n, w in refused.items()], "renamed": sorted(renamed),
                "runtime": provided, "errors": errors[:40], "error_count": len(errors),
@@ -530,6 +590,10 @@ def load(root: Path) -> dict | None:
         sections = tomllib.loads((f.parent / "syms.toml").read_text(encoding="utf-8")).get("section", [])
     except (OSError, ValueError):
         return summary
+    # Results made before calls into the middle of a function were cut there (split_call_targets) refused the callers.
+    if summary.get("call_splits") != 1 and any("No function found for jal target" in r.get("why", "")
+                                                 for r in summary.get("refused") or []):
+        return None
     # Results made while overlapping sections each listed a function (see symbols) define it twice: rebuild them.
     names = [fn.get("name") for sec in sections for fn in sec.get("functions", [])]
     if len(names) != len(set(names)):

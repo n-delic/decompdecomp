@@ -396,3 +396,42 @@ def test_a_saved_recompile_listing_a_function_twice_is_rebuilt(tmp_path):
     assert recomp.load(tmp_path) == {"files": 1}
     (folder / "syms.toml").write_text(one % "a" + "\n" + one % "b")
     assert recomp.load(tmp_path) is None
+
+
+def test_a_call_into_the_middle_of_a_function_cuts_it_there():
+    """N64Recomp refuses `jal` to anything but a function's first instruction, and every caller of a refused
+    function with it, up to a game's main thread (which then ran interpreted, minutes slower to its first frame).
+    A listed function that is called in the middle becomes two, the first running on into the second."""
+    import struct
+
+    def rom_of(call):
+        words = [0] * 0x40
+        words[8] = jal(call)  # in `caller`, at 0x80000020
+        return struct.pack(">64I", *words) + bytes(0x100)
+
+    caller = {"name": "caller", "vram": 0x80000000, "rom": 0, "size": 0x30}
+    callee = {"name": "callee", "vram": 0x80000030, "rom": 0x30, "size": 0x20}
+    segments = [{"name": "code", "rom_start": 0, "rom_end": 0x200, "vram": 0x80000000}]
+    # `caller` calls 0x80000040, the middle of `callee`
+    out, new = recomp.split_call_targets(rom_of(0x80000040), segments, [caller, callee])
+    assert [f["name"] for f in new] == ["func_80000040"]
+    by_name = {f["name"]: f for f in out}
+    assert by_name["callee"]["size"] == 0x10
+    assert (by_name["func_80000040"]["vram"], by_name["func_80000040"]["rom"], by_name["func_80000040"]["size"]) == (
+        0x80000040, 0x40, 0x10)
+    # a call to a function's first instruction, or to an address no segment holds, cuts nothing
+    assert recomp.split_call_targets(rom_of(0x80000030), segments, [caller, callee])[1] == []
+    assert recomp.split_call_targets(rom_of(0x80900040), segments, [caller, callee])[1] == []
+
+
+def test_a_saved_recompile_that_refused_calls_into_a_function_is_rebuilt(tmp_path):
+    """Results made before calls into the middle of a function were cut there kept every caller refused."""
+    folder = recomp.folder(tmp_path)
+    folder.mkdir(parents=True)
+    refused = [{"name": "func_8013EB18", "why": "No function found for jal target: 0x80139C40"}]
+    (folder / "recomp.json").write_text(json.dumps({"files": 1, "refused": refused}))
+    (folder / "syms.toml").write_text('[[section]]\nname = "a"\nrom = 0x1000\nvram = 0x80000400\nsize = 0x100\n\n'
+                                      'functions = [\n    { name = "func_80000400", vram = 0x80000400, size = 0x10 },\n]\n')
+    assert recomp.load(tmp_path) is None
+    (folder / "recomp.json").write_text(json.dumps({"files": 1, "refused": refused, "call_splits": 1}))
+    assert recomp.load(tmp_path)["files"] == 1
