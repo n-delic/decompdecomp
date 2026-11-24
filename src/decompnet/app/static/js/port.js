@@ -228,7 +228,7 @@ function portSteps(report) {
       detail: report.addresses.literals ? `${report.addresses.literals} in ${report.addresses.functions} functions` : "none left" },
     { title: "Compiles for a PC", pct: pc ? pct(pc.ok + pc.warned, pc.total) : 0,
       detail: pc ? `${(pc.ok + pc.warned).toLocaleString()} of ${pc.total.toLocaleString()} functions compile, ${pc.failed} don't`
-        : "not tried yet", buttons: ["portCompile", "portRenameCalls"], logs: ["portCompileLog", "portRenameLog"] },
+        : "not tried yet", failures: pc?.failures, buttons: ["portCompile", "portRenameCalls"], logs: ["portCompileLog", "portRenameLog"] },
     { title: "Links for a PC", pct: link ? (link.undefined || link.duplicates.length ? null : 100) : 0,
       detail: link ? `${link.undefined.toLocaleString()} symbols needed and defined nowhere`
         + (link.duplicates.length ? `, ${link.duplicates.length} defined twice` : "") : "after Compile for PC" },
@@ -272,6 +272,24 @@ function portSteps(report) {
     steps[6].detail = "Call checks need a project port build.";
   }
   return [recompileStep(report), ...steps];
+}
+
+// The functions a PC compile refuses, each with the first error and a link to its page, so they can be fixed by hand.
+function portFailureList(failures) {
+  const box = document.createElement("details"); box.className = "port-failures";
+  const head = document.createElement("summary");
+  head.textContent = `${failures.length.toLocaleString()} functions that don't compile`;
+  const list = document.createElement("ul"); list.className = "small";
+  for (const f of failures) {
+    const item = document.createElement("li");
+    const link = document.createElement("button"); link.type = "button"; link.className = "fn"; link.dataset.fn = f.name;
+    link.textContent = f.name; link.onclick = () => openFn(f.name);
+    const why = document.createElement("span"); why.className = "muted";
+    why.textContent = ` (${f.kinds.join(", ") || "error"})` + (f.message ? `: ${f.file ? f.file + ":" : "line "}${f.line}: ${f.message}` : "");
+    item.append(link, why); list.append(item);
+  }
+  box.append(head, list);
+  return box;
 }
 
 function renderPortSteps(report, steps = portSteps(report)) {
@@ -333,6 +351,7 @@ function renderPortSteps(report, steps = portSteps(report)) {
     for (const id of step.buttons || []) if ($(id)) actions.append($(id));
     if (actions.children.length) body.append(actions);
     for (const id of step.logs || []) if ($(id)) body.append(...withWork($(id)));
+    if (step.failures?.length) body.append(portFailureList(step.failures));
     row.append(mark, body);
     return row;
   }));

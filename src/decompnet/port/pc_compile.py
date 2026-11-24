@@ -284,7 +284,7 @@ def _status(found: list[dict]) -> str:
 def summary(net, proj) -> dict | None:
     """The last check: {"checked_at", "target", "total", "ok", "warned", "failed", "kinds": [{"kind", "about",
     "functions", "examples"}]}, or None before the first."""
-    rows = _store(net, proj).all("SELECT name, status, kinds, checked_at FROM port_compile WHERE project_id=? "
+    rows = _store(net, proj).all("SELECT name, status, kinds, diagnostics, checked_at FROM port_compile WHERE project_id=? "
                                  "ORDER BY name", proj["id"])
     if not rows:
         return None
@@ -296,7 +296,16 @@ def summary(net, proj) -> dict | None:
     kinds = [{"kind": k, "about": about, "functions": len(by_kind[k]), "examples": by_kind[k][:12]}
              for k, about in KINDS.items() if k in by_kind]
     return {"checked_at": max(r["checked_at"] for r in rows), "target": TARGET, "total": len(rows), **count,
-            "kinds": kinds}
+            "kinds": kinds, "failures": [_failure(r) for r in rows if r["status"] == "failed"]}
+
+
+def _failure(row) -> dict:
+    """One function the PC compile refuses, for the Porting tab: {"name", "kinds", "message", "line", "file"}, the
+    message being the first error clang gave (the rest are on the function's page for the port-fix agents)."""
+    found = json.loads(row["diagnostics"] or "[]")
+    first = next((d for d in found if d["level"] == "error"), found[0] if found else {})
+    return {"name": row["name"], "kinds": json.loads(row["kinds"] or "[]"), "message": first.get("message", ""),
+            "line": first.get("line", 0), "file": first.get("file", "")}
 
 
 def function(net, proj, name: str) -> list[dict] | None:
