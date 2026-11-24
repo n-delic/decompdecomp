@@ -14,7 +14,8 @@ Requests:
   {"error": ...} when it can't be judged here. That happens when the project isn't here, or its function's target
   bytes differ from the hosted ones (another build of the game). With "diff": true the reply also carries "diff", the
   app's own side-by-side rows for the candidate, the first "rows" of them (default 60; the last line counts the rest)
-  (DiffResult.render: the same normalisation compile_and_diff shows). With "raw_rows": true it carries "rows", every
+  (DiffResult.render: the same normalisation compile_and_diff shows; when only a jump table's data differs, its lines
+  name the cases whose entry differs, and "jump_tables" carries them as rows). With "raw_rows": true it carries "rows", every
   (marker, target, candidate) row of that diff, unrendered (the skill's region view, regions.py). Every compiled reply
   carries "code", a digest of the candidate's instructions: two sources with one digest compiled the same (the skill's
   invariant-spelling hint, invariant.py).
@@ -108,13 +109,23 @@ def judge(net, request: dict) -> dict:
     flags = compiler.get("flags") or []
     if not toolchain:
         return {"error": "no compiler named"}
+    net._last_judge_checks = {}
     matched, diff, log = net._judge_with(proj, fn, toolchain, list(flags), source)
+    checks = getattr(net, "_last_judge_checks", None) or {}
     rows = request.get("rows")  # how many rows the diff shows (default 60); the rest is counted in its last line
     shown = {}
     if request.get("diff") and diff is not None:
         shown = {"diff": diff.render(max_rows=rows if isinstance(rows, int) and rows > 0 else 60, more_hint=False)}
     if request.get("raw_rows") and diff is not None:
         shown["rows"] = [list(row) for row in diff.rows]
+    # Every instruction exact but the jump table's data: the diff has no rows and the score still says 1. The rows name the
+    # cases whose entry differs (case | target destination | compiled destination), the evidence the case-label families read.
+    jump_tables = checks.get("jump_tables") or []
+    if jump_tables and not matched:
+        from .app.switch_tables import difference_text
+        shown["jump_tables"] = jump_tables
+        if "diff" in shown:
+            shown["diff"] += "\n" + difference_text(jump_tables)
     if getattr(diff, "rows", None) is not None:  # what the candidate compiled to, so the skill sees spellings that make identical code
         import hashlib
         shown["code"] = hashlib.sha1("\n".join(str(row[2]) for row in diff.rows).encode()).hexdigest()[:16]

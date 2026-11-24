@@ -569,9 +569,13 @@ class Search(Permuter):
         callees = ''
         if any('callees' in item.needs for item in library_registry.runnable('local', arch)):
             callees = draft_repairs.capture_followup_repairs.callee_evidence(self.net, proj, fn, source)
+        # (the target's jump tables only when a declared repair asks for them: which arm a case enters)
+        tables = []
+        if any('tables' in item.needs for item in library_registry.runnable('local', arch)):
+            tables = switch_tables.read(self.net, proj, fn)
         calls += library_registry.local_calls(library_registry.draft_context(source, name, header, arch, asm, flags,
                                                                              float_literal_words.read(self.net, proj, fn),
-                                                                             callees))
+                                                                             callees, tables))
         register = permuter_focus.classify(rows, arch) == 'register'
         if register:
             calls.append((L + 'identical_float_guard.variants', (source, name, header, arch)))

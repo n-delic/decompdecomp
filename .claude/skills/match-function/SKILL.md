@@ -377,6 +377,13 @@ says the fix and the library families it names; try those families with `prove_c
   them in a block opened after it, in the target's order (no `volatile` needed). decomp-repair `late_aggregate_scope`;
   the m2c `(flag = p != NULL, a) || (flag = p != NULL, b)` then `flag && q` guard sinks with `boolean_guard_operands`
   (220 -> 5 -> 0 on a 418-instruction function; docs/learnings/finding/address-taken-scalar-slot-after-block-arrays.md).
+- **A `switch` whose arms meet at an m2c `block_N:` label (`case A: v = 1; block_4: if (t == v) { case 6: ... return 1; } return 0; case B: v = 2; goto block_4;`).**
+  The compiler lays the block directly after the arm that falls into it, so which arm holds it, and the arms' order, are
+  bytes (570 -> 0 on a 31-instruction predicate); no whole-arm reorder moves the block. `switch_join_host` moves it and
+  tries the orders (the target's jump table, `tables`, names the host arm); `switch_join_values` exchanges the constants of
+  two arms that reach one join. A **score of 1 with no differing rows** is the jump table's data: `fast_judge.py --diff` now
+  prints "Linked jump-table differences" (case | target | compiled) and `prove_chain.py` hands them to `linked_switch_labels`
+  (docs/learnings/finding/switch-join-block-host-and-order.md).
 - **Several changes that are each no better alone** are the normal shape of a late match. Offer the combination as
   one child, and keep non-improving children for a second step (`operand_order_pass`'s combined step).
 - **A copy that lands in the wrong register (`$v1` for `$v0`) beside a `goto blockN` join.** m2c writes `v = s;`
