@@ -208,6 +208,13 @@ full scanout from game memory when RT64 has cached only part of the framebuffer 
 missing lower portion of the picture in a matched SDL3 and Metal replay of a retail race.
 Broader retail renderer accuracy, RT64 exports, and other desktop platforms remain open.
 
+What RT64 draws can be saved without a screenshot (the game's window can't be captured from outside, and the host's own
+`PORT_FRAMES` dumps come from the software renderer, which shows black for games RT64 draws fine and the reverse):
+`PORT_RT64_FRAMES=<folder>` (`PORT_RT64_FRAME_EVERY=n`) makes the adapter copy each frame RT64 presented, read back
+from its swap chain, into `frame_NNNNN.png` (8-bit RGB, window-sized). It costs nothing when unset. The adapter's draw
+hook blits the drawable (its layer is made readable) into a shared buffer that the next frame's hook writes out.
+This is the evidence that a game renders under RT64 to a menu: a run of a project through Play with the variable set.
+
 ROM offsets the game uses as numbers (where an archive starts in the cartridge) and the values the N64's boot leaves
 in low memory for libultra are defined by Compile for PC too (`port/fixed_symbols.py`): offsets as symbols at those
 addresses, boot values with what the boot would leave, the TV system from the game code's country.

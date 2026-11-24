@@ -1296,3 +1296,45 @@ def test_a_tasks_sp_and_dp_interrupts_arrive_after_the_call_that_started_it():
     # the web build, which has no tick, raises them at once as before
     web = text[text.index("static void rcp_raise(int event) {"):text.index("static void dp_deliver(int force) {")]
     assert "#ifdef PORT_WEB\n    post_event(event);" in web
+
+
+def test_the_rt64_frame_readback_writes_pngs_a_reader_decodes(tmp_path):
+    """PORT_RT64_FRAMES saves what RT64 presented (the window can't be captured from outside): the adapter's PNG
+    writer (rt64/png_dump.h, standard library only) turns BGRA pixels into 8-bit RGB, and the adapter wires the
+    variable to RT64's draw hook."""
+    import struct
+    import zlib
+
+    cxx = shutil.which("c++") or shutil.which("clang++") or shutil.which("g++")
+    if not cxx:
+        pytest.skip("no C++ compiler")
+    folder = Path(__file__).resolve().parents[1] / "src/decompnet/consoles/n64/port_wasm/rt64"
+    source = tmp_path / "png.cpp"
+    source.write_text('#include "png_dump.h"\n#include <cstdint>\n'
+                      "int main(int, char **argv) {\n"
+                      "  uint8_t px[2 * 2 * 4] = {10, 20, 30, 255,   40, 50, 60, 255,   70, 80, 90, 255,   0, 0, 255, 255};\n"
+                      "  return png_dump::write(argv[1], px, 2, 2, 8) ? 0 : 1;\n}\n")
+    program = tmp_path / "png"
+    built = subprocess.run([cxx, "-std=c++17", f"-I{folder}", str(source), "-o", str(program)],
+                           capture_output=True, text=True, timeout=120)
+    assert built.returncode == 0, built.stderr
+    out = tmp_path / "frame.png"
+    subprocess.run([str(program), str(out)], check=True, timeout=30)
+    data = out.read_bytes()
+    assert data[:8] == b"\x89PNG\r\n\x1a\n"
+    pos, idat, size = 8, b"", None
+    while pos < len(data):
+        length, kind = struct.unpack(">I4s", data[pos:pos + 8])
+        body = data[pos + 8:pos + 8 + length]
+        assert struct.unpack(">I", data[pos + 8 + length:pos + 12 + length])[0] == zlib.crc32(kind + body)
+        if kind == b"IHDR":
+            size = struct.unpack(">II", body[:8]) + tuple(body[8:10])
+        if kind == b"IDAT":
+            idat += body
+        pos += 12 + length
+    assert size == (2, 2, 8, 2)  # 2x2, 8 bits, RGB
+    raw = zlib.decompress(idat)
+    # a filter byte per row, then R G B from the BGRA input
+    assert raw == bytes([0, 30, 20, 10, 60, 50, 40, 0, 90, 80, 70, 255, 0, 0])
+    adapter = (folder / "adapter.cpp").read_text()
+    assert "PORT_RT64_FRAMES" in adapter and "SetRenderHooks" in adapter and "setFramebufferOnly" in adapter
