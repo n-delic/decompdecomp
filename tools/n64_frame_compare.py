@@ -201,6 +201,25 @@ def prime_save(game: Path, rom: Path, inputs: str, folder: Path, clock: str = "v
     return (folder / "game.eep").exists()
 
 
+HEADER = 16  # bytes at the start of a save a game fills in with what it takes from the clock (a racing game's first 8 differed)
+
+
+def console_save(dump: Path, port_save: bytes) -> bytes | None:
+    """The save the emulator's game holds, taken from a console RAM dump taken after the game has read its EEPROM: the game keeps
+    a copy of the whole chip in RAM, so the port's save (from a run of its own) is looked for there by its body, past the first
+    HEADER bytes (a time-seeded stamp and a counter differ), and the console's bytes at that place are the console's save.
+    None when the body isn't found once. A port started from these bytes is at the console's position to the unit through a
+    racing game's whole race (a fresh port, whose boot writes a different header and counter, launched slower): see prime_save."""
+    if len(port_save) < HEADER + 32:
+        return None
+    body = port_save[HEADER:HEADER + 32]
+    mem = dump.read_bytes()
+    at = mem.find(body)
+    if at < HEADER or mem.find(body, at + 1) != -1 or at - HEADER + len(port_save) > len(mem):
+        return None
+    return mem[at - HEADER:at - HEADER + len(port_save)]
+
+
 def run_port(game: Path, rom: Path, points: list[int], inputs: str, folder: Path, clock: str = "vi") -> dict[int, Path]:
     """The port run (in real time) until its RAM is written at each point: retraces (PORT_RAM_DUMPS) or, with `clock`
     "frames", the game's graphics tasks (PORT_FRAME_DUMPS), its input timed the same way. Stopped once the last is
@@ -302,6 +321,12 @@ def main(argv=None) -> int:
     p.add_argument("--prime-save", action="store_true",
                    help="run the port once through the input script first, so the compared run starts from the save that "
                         "run wrote (game.eep in --work): a port started with no save diverged from the emulator's race")
+    p.add_argument("--console-save", action="store_true",
+                   help="start the port from the console's own save: the game's copy of its EEPROM is found in the console's RAM "
+                        "at --save-at (after a run of the script that gives the port a save to look for) and written as the "
+                        "port's game.eep; a port that starts from nothing boots differently from the emulator")
+    p.add_argument("--save-at", type=int, default=600, help="with --console-save, the frame (or retrace) of the console RAM to "
+                   "take the save from, after the game has read it (default 600)")
     p.add_argument("--tolerance", type=int, default=0, metavar="PIXELS",
                    help="also report the share of pixels with no equal pixel within PIXELS of the other side's picture "
                         "(a moving scene the two runs reach at slightly different moments)")
@@ -330,9 +355,17 @@ def main(argv=None) -> int:
         work = args.work or Path(tmp)
         work.mkdir(parents=True, exist_ok=True)
         program = build(work)
-        console = run_console(args.rom, points, inputs, work, clock)
-        if args.port and args.prime_save and prime_save(args.port, args.rom, port_inputs, work, clock):
+        early = args.save_at if args.console_save and args.port else None
+        console = run_console(args.rom, sorted(set(points) | ({early} if early else set())), inputs, work, clock)
+        if args.port and (args.prime_save or args.console_save) and prime_save(args.port, args.rom, port_inputs, work, clock):
             print("primed the port's save (game.eep) by a run of the input script: see prime_save")
+        if early and early in console and (work / "game.eep").exists():
+            from_console = console_save(console[early], (work / "game.eep").read_bytes())
+            if from_console:
+                (work / "game.eep").write_bytes(from_console)
+                print(f"the port's save is the console's own, from its RAM at {unit.lower()} {early} (see console_save)")
+            else:
+                print(f"couldn't find the game's save in the console's RAM at {unit.lower()} {early}: the port keeps its own")
         port = run_port(args.port, args.rom, sorted(set(port_points)), port_inputs, work, clock) if args.port else {}
         for n in points:
             pn = pairs[n]

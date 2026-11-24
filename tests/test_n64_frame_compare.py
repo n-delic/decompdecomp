@@ -151,3 +151,25 @@ def test_the_port_is_run_once_through_the_script_to_make_its_save_first(tmp_path
         assert (work / "runs.txt").read_text() == "150:A,200:-|frames|\n"
     finally:
         os.environ.pop("PORT_FRAME_DUMPS", None)
+
+
+def test_the_consoles_save_is_found_in_its_ram_by_the_ports_save_body(tmp_path):
+    """console_save: the game's copy of its EEPROM is in the console's RAM with a different header (a time-seeded stamp); the
+    port's save is searched for there past the header and the console's bytes at that place are returned; not found, or
+    found twice, is None."""
+    tool = _tool()
+    body = bytes(range(1, 241))
+    port_save = b"PORTHDR_" + b"\0" * 8 + body + b"\xff" * 256            # 16-byte header, then the chip's contents
+    console_chip = b"CONSOLE!" + b"\x0c" + b"\0" * 7 + body + b"\xff" * 256  # the same contents, its own header
+    ram = bytearray(0x2000)
+    ram[0x500:0x500 + len(console_chip)] = console_chip
+    dump = tmp_path / "console_frames_600.bin"
+    dump.write_bytes(bytes(ram))
+    assert tool.console_save(dump, port_save) == console_chip
+    twice = bytearray(ram)
+    twice[0x1000:0x1000 + len(console_chip)] = console_chip
+    dump.write_bytes(bytes(twice))
+    assert tool.console_save(dump, port_save) is None                          # two copies: not told apart
+    dump.write_bytes(b"\0" * 0x2000)
+    assert tool.console_save(dump, port_save) is None
+    assert tool.console_save(dump, b"short") is None
