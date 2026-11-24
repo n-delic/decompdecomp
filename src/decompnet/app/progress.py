@@ -1176,6 +1176,27 @@ class Progress:
         self.baselines[project_id] = baseline
         self.states[project_id] = _State(dirty_token, config_key)
 
+    def _remember_written(self, project_id: int, written: dict[str, str | None]) -> None:
+        """Record in the disk baseline the files this sync itself just wrote, before the saved judge runs.
+
+        The judge of a large save takes many minutes and stops on any interruption (a helper's match landing
+        meanwhile, Stop, a restart). The files were already written by then but the baseline only recorded them at
+        the end, so every later sync took the app's own writes for contributions: it judged the whole folder again
+        (an N64 game's checkpoint said "1572 more file(s) changed while capturing progress" for days) and, once the
+        database moved on (renames), judged those stale copies and reopened matches from them. Only the disk side
+        changes: the projected side still says what the database last published, so the next sync publishes the
+        database's newer C over these files, and a contributor's file (never in `written`) is still judged."""
+        if not written:
+            return
+        old = self._baseline(project_id)
+        if old is None:
+            return
+        store = self.net.project_store(project_id)
+        with store.tx() as db:
+            self._write_side_changes(db, project_id, "disk", written, old.disk)
+        self.baselines[project_id] = _Baseline(old.disk.changed(written, None), old.projected,
+                                               old.dirty_token, old.config_key, old.stored)
+
     def prune_matched_drafts(self, slug: str) -> int:
         """Remove acknowledged drafts only while their verified selected C is still present unchanged."""
         store = self.net.project_store(slug)
@@ -2563,8 +2584,10 @@ class Progress:
             judging_change = True  # Unknown import shapes conservatively invalidate in-flight results.
             pending = {}
             reconciled_renames = False
+            database_files = {}
             if projected is not None:
                 rendered = comparison if comparison is not None else saves._render(net, slug)[0]
+                database_files = rendered
                 previous = projected
                 pending = {name: text for name, text in rendered.items()
                            if name not in changed and previous.files.get(name) != _hash(text)
@@ -2803,6 +2826,11 @@ class Progress:
             self.published[slug] = set(pending) | set(removed)
             # Publication changes file versions, so the read reloads those files and reuses the rest.
             disk = _read(folder, cache=self.file_cache)
+            # (only the database's own files: a contributor's file moved by a rename, and the manifest, which
+            # describes the whole folder and is acknowledged with it, are still read again if this judge stops)
+            self._remember_written(pid, {name: disk.get(name) for name in removed if name != saves.MANIFEST} | {
+                name: disk.get(name) for name, text in pending.items()
+                if name != saves.MANIFEST and text == database_files.get(name)})
             known_names = {row["name"] for row in metadata_rows(store, ("name",),
                 "SELECT name FROM functions WHERE project_id=?", pid)}
             manifest = _manifest(disk, cfg, known_names)
