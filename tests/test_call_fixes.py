@@ -5,7 +5,7 @@ import json
 import pytest
 
 from decompnet.network import NetworkError
-from decompnet.port import call_fixes
+from decompnet.port import call_fixes, pc_compile
 from decompnet.port.wasm import play
 from tests.test_port_readiness import project  # noqa: F401  (the fixture)
 
@@ -59,19 +59,25 @@ def test_each_rewrite_is_judged_and_only_matches_are_kept(project, monkeypatch, 
 
     def console(proj, header, sources=None, only=None, header_for=None, progress=None):
         judged.extend(sorted(f["name"] for f in only))
-        return [("draw_hud", "compiles but no longer matches")]  # as if its bytes moved
+        # as if its bytes moved, unless the console is given its old C behind #else
+        return [(f["name"], "compiles but no longer matches") for f in only
+                if f["name"] == "draw_hud" and "#else" not in sources[f["id"]]]
     monkeypatch.setattr(net, "regression_test", console)
+    monkeypatch.setattr(pc_compile, "compiler", lambda log=print: ["cc"])
+    monkeypatch.setattr(pc_compile, "compile_one", lambda header, source, **kw: [])
     result = call_fixes.fix(net, "game", print)
     assert judged[:2] == ["draw_hud", "helper"]  # the callees, not their callers
-    assert result["kept"] == ["helper"] and result["calls"] == 1
+    assert result["kept"] == ["draw_hud", "helper"] and result["behind_port"] == ["draw_hud"] and result["calls"] == 2
     assert net._function("helper", "game")["matched_source"] == \
         "s32 helper(char *arg0) {\n    return draw_hud(arg0);\n}"
-    assert net._function("draw_hud", "game")["matched_source"] == "void draw_hud(void) {\n}"  # refused: stays
-    assert [r["function"] for r in result["refused"]] == ["draw_hud"]
+    # the console's compiler can't take the rewrite, so it's behind #ifdef PORT with the old C in the #else
+    assert net._function("draw_hud", "game")["matched_source"] == call_fixes.behind_port(
+        "void draw_hud(void) {\n}", "void draw_hud(s32 arg0) {\n}")
+    assert result["refused"] == []
     # the next report lists each function still disagreeing with why its C was kept, for the Porting tab's drawer
     from decompnet.port.wasm import calls
     listed = {c["name"]: c for c in calls.load(build)["callees"]}
-    assert listed["draw_hud"]["refused"] == "the console build compiles but no longer matches"
+    assert "behind #ifdef PORT" in listed["draw_hud"]["refused"]
     assert listed["draw_hud"]["calls"] == 1 and listed["draw_hud"]["callers"] == 1
     assert listed["helper"]["refused"] == "" and listed["helper"]["kinds"] == ["void-result"]
 
