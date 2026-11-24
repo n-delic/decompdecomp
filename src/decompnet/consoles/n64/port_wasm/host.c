@@ -2409,6 +2409,20 @@ int main(int argc, char **argv) {
     pthread_mutex_unlock(&lock);
     /* the VI retrace: 50 a second for PAL, 60 for NTSC */
     for (int frame = 0; seconds <= 0 || (vtime ? (int)(vi_count) : frame) < seconds * 1000000 / retrace_us(); frame++) {
+        /* PORT_VTIME_TRACE: the console was at retrace vtrace[n] when it started graphics task n, and no later until the game had: a game
+           that works for a few milliseconds between two tasks sees no retrace in them. The port's threads, once idle, would fire
+           retraces at once (virtual time) and the game's logic, counted in retraces, ran a frame ahead of the console's at the same task
+           (the track's line points changed at tasks 604, 609, 614 in the port and 603, 608, 613 on the console). Once the retrace the
+           next task started at has come, none follows until the game has started it (200 ms of wall time at most; PORT_VTIME_HOLD=0: not at all). */
+        static int hold = -1;
+        if (hold < 0) hold = !getenv("PORT_VTIME_HOLD") || atoi(getenv("PORT_VTIME_HOLD")) != 0;
+        if (hold && vtime && vtrace) {
+            volatile unsigned long *started = &gfx_tasks;
+            unsigned long was = *started;
+            uint64_t from = monotonic_us();
+            while (was + 1 < vtrace_n && vi_count >= vtrace[was + 1] && vtrace[was + 1] && *started == was && monotonic_us() - from < 200000)
+                usleep(100);
+        }
         wait_retrace();
         retrace();
         /* the retraces the console had while it worked on a frame (PORT_VTIME_TRACE), fired as the game goes idle:
