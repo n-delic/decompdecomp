@@ -711,7 +711,7 @@ static __thread struct { uint32_t from, to, ra, sp; } jumps[JUMP_HISTORY];
 static __thread unsigned jump_n;
 static void jump_history(const char *why, uint32_t pc) {
     static int said;
-    if (tracing < 3 || said++ >= 4) return;
+    if (tracing < 3 || said++ >= 16) return;
     fprintf(stderr, "interpreter: %s at %08X; the last jumps (from -> to, $ra, $sp):\n", why, pc);
     for (unsigned i = 0; i < JUMP_HISTORY && i < jump_n; i++) {
         unsigned k = (jump_n - 1 - i) % JUMP_HISTORY;
@@ -1190,7 +1190,7 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
             interp_stats(0x10000);
             port_interp_pc = pc; /* (PORT_SAMPLE prints it: where the interpreted game code is) */
             if (tracing > 1) fprintf(stderr, "interpreter: %08X still running, at %08X after %lu instructions\n", entry, pc, steps);
-            if (tracing >= 3 && steps >= (1ul << 22)) jump_history("a thread still running", pc); /* (a spin: what it was called from) */
+            if (tracing >= 3 && steps >= (1ul << 22) && !(steps & (steps - 1))) jump_history("a thread still running", pc); /* (a spin: what it was called from, at each power of two) */
 #ifndef PORT_WEB
             port_boot_spin();
 #endif
