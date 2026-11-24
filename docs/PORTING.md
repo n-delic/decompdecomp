@@ -580,6 +580,11 @@ register, the status stays), the port's `PORT_SWAP_LOG` says when it blanked, an
 number and length. On a racing game they did: six blanks of 25, 25, 21, 25, 25 and 21 graphics tasks on both sides
 (where each began differed for three of them: a menu advanced hundreds of tasks apart between runs). On the console the
 screen is black at those moments; before the port honoured osViBlack it showed the buffer's leftovers instead.
+Widened, with the port primed (`--prime-save`) and the console's pacing replayed: a racing game's race at 23 windows from graphics
+task 3,000 to 14,000 in steps of 500, 22 matched the emulator to the pixel (0.00 percent of pixels differing) and one (task
+10,500) differed by 48 percent exactly (25 percent with no match within 3 pixels), the backdrop's scroll about 25 pixels
+off at that one moment and exact again at 10,000 and 11,000. Each window is one graphics task's picture (the sky and mountain
+backdrop's), one route, one track.
 `--prime-save` on `tools/n64_frame_compare.py` runs the port once through the input script first, so the compared run starts
 from the save (`game.eep`, in `--work`) that run wrote. It matters: on a racing game a port started from no save, from an all-zero
 or all-0xFF one, or from the save of a short boot had its car launch slower than the emulator's (and stay 2,000 and more
