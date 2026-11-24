@@ -905,3 +905,14 @@ and at the call site's state, six calls each, matching the console), so what dif
 source for that function is the project's decompiled C (`src/code_80012114/func_80016B3C.c`), whose branch conditions read the same as the
 original's; the next step is a trace inside the port's run of that function (which condition fails), or the port's function run
 through behaviour comparison against the recompiled one with the opponent's recorded state.
+
+**The opponent car, and the one-frame offset: the port's game state leads the console's by about a logic frame at the same graphics task.** The values
+the sight-cone test reads (the track's saved line points at 0x800A1860..0x800A1874, set each logic frame) change in the console's RAM at graphics
+tasks 603, 608, 613, 618 and in the port's at 604, 609, 614, 619, and each value the console holds from task 603 to 607 the port already holds at task 600
+to 603: the port's logic is four tasks (of a five-task frame) ahead of the console's at the same task number. The tasks that draw before the
+logic update (a frame's first task: the background) match to the pixel, and the ones that draw after it (the cars, with the sight-cone test
+at a threshold) are a frame apart: the opponent's brightness branch reads a result of 0xFF on the console's state and 0x3C on the port's
+(`objInsideSightCone` run through PORT_CALL on each side's own RAM; the opponent's object address is not the same in the two
+runs, so run it on the console's recorded call for that object). This is the same kind of difference as a camera cut one frame off, and the
+likely place to look is the timing of the RSP/RDP completion events and when the game's logic thread starts its next frame (host.c: `rcp_raise`, delivered from the
+tick when every game thread waits in virtual time, within 400 microseconds otherwise), against what the emulator does.
