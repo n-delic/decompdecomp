@@ -112,7 +112,9 @@ void port_tlb_set(unsigned index, uint32_t pm, uint32_t entry_hi, uint32_t lo0, 
 uint32_t port_tlb_probe(uint32_t entry_hi);
 int port_tlb_read(unsigned index, uint32_t *pm, uint32_t *entry_hi, uint32_t *lo0, uint32_t *lo1);
 int port_tlb_invalid(uint32_t a); /* a page an entry covers with its valid bit clear: TLB Invalid, not a refill */
-HOT uint32_t mapped(uint32_t a) { return __builtin_expect(a < 0x80000000u && port_tlb_n, 0) ? port_tlb_canon(a) : a; }
+/* (KSEG0 and KSEG1 are 0x80000000 to 0xBFFFFFFF: the one compare says "outside them", the mapped user, supervisor and
+   KSEG2/KSEG3 space) */
+HOT uint32_t mapped(uint32_t a) { return __builtin_expect(a - 0x80000000u >= 0x40000000u && port_tlb_n, 0) ? port_tlb_canon(a) : a; }
 HOT uint8_t *at_load(uint32_t a) { a = mapped(a); return M + (a >= 0xA0000000u ? (uint32_t)port_io_load(a) : a); }
 HOT uint8_t *at_store(uint32_t a, uint64_t v) { a = mapped(a); return M + (a >= 0xA0000000u ? (uint32_t)port_io_store(a, v) : a); }
 HOT uint32_t lw(uint32_t a) { uint32_t v; memcpy(&v, at_load(a), 4); return __builtin_bswap32(v); }
@@ -956,7 +958,7 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
            EntryHi its address, Cause the code (2, TLBL), EPC the fetch itself. A page that stays faulting after 16
            refills (4 invalid exceptions: a libultra handler that hands the thread to a pager thread through kernel
            state the host does not keep never retries) has no handler that maps it, and the fetch goes on as before. */
-        if (__builtin_expect(pc < 0x80000000u && port_tlb_n && !(c.status & 2u), 0) && mapped(pc) == pc) {
+        if (__builtin_expect(pc - 0x80000000u >= 0x40000000u && port_tlb_n && !(c.status & 2u), 0) && mapped(pc) == pc) {
             uint32_t vector = port_tlb_invalid(pc) ? 0x80000180u : 0x80000000u;
             if (fetch(vector)) {
                 if (pc != fault_pc) { fault_pc = pc; fault_n = 0; }

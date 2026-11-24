@@ -481,6 +481,39 @@ int main(void) {
                                         "1 7E000000 00010002 00000001", "0 80501010"]
 
 
+def test_a_window_in_kernel_mapped_space_names_the_ram_it_maps_and_unmapped_space_is_left_alone(tmp_path):
+    """A game maps its 8 MB of RAM at 0xE0000000 (KSEG3: two 4 MB pages onto physical 0 and 0x400000, by osMapTLB) and
+    keeps its queues, threads and decompression buffers there. Windows at 0x80000000 up were refused and the lookups
+    only looked below 0x80000000, so the host read a queue at 0xE010D628 from one place and the interpreter wrote it
+    to another: a loader's decompressed program never reached the physical bytes it jumped into ("no instructions at
+    80002950"). KSEG0 and KSEG1 (0x80000000 to 0xBFFFFFFF) are not mapped by the TLB and stay as they are."""
+    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if not cc:
+        pytest.skip("no C compiler")
+    text = HOST.read_text()
+    code = text[text.index("static struct { uint32_t entry, target, bss, bss_size; int tv; } boot;"):
+                text.index("/* the console's RAM as the boot leaves it")]
+    source = tmp_path / "t.c"
+    source.write_text(_BOOT_HARNESS + code + """
+int main(void) {
+    port_tlb_write(0x7FE000, 0xE0000000, 0x1F, 0x1001F); /* the EntryLo words: valid, page frames 0 and 0x400 */
+    port_tlb_write(0x7FE000, 0xA0000000, 0x1F, 0x1001F); /* KSEG1 is not mapped: no window */
+    for (unsigned i = 0; i < port_tlb_n; i++) printf("%08X %X %08X\\n", tlb_win[i].lo, tlb_win[i].size, tlb_win[i].phys);
+    printf("%08X %08X %08X %08X\\n", port_tlb_canon(0xE010D628), port_tlb_canon(0xE0400010), port_tlb_canon(0xA0001000),
+           port_tlb_canon(0x80001050));
+    printf("%08X\\n", port_tlb_wasm(0xE0170240));
+    return 0;
+}
+""")
+    subprocess.run([cc, "-o", str(tmp_path / "t"), str(source)], check=True, capture_output=True)
+    done = subprocess.run([str(tmp_path / "t")], capture_output=True, text=True, check=True)
+    assert done.stdout.strip().splitlines() == [
+        "E0000000 800000 00000000", "8010D628 80400010 A0001000 80001050", "80170240"]
+    # the host's own reads and writes of the game's structures, and a DMA's destination, go the same way
+    assert "static inline uint32_t gv(uint32_t a)" in text and "memcpy(&v, M + gv(a), 4)" in text
+    assert "dram = gv(dram);" in text
+
+
 def test_a_jal_in_code_linked_at_a_windows_virtual_base_takes_the_windows_top_bits(tmp_path):
     """A game links its program at 0x70000400 (one 4 MB page onto physical 0, set by its own tlbwi) and the port
     keeps that code at its KSEG0 spelling, so a `jal` took its top four bits from 0x8...: `jal 0x7F000CD0` went to
@@ -863,6 +896,8 @@ static int put(u32 mq, u32 msg, int flag, int jam) {
     assert(mq == 32 && msg == 64);
     return 0;
 }
+uint32_t port_tlb_canon(uint32_t a) { return a; }
+static inline uint32_t gv(uint32_t a) { return a >= 0xC0000000u ? port_tlb_canon(a) : a; }
 """ + _function(HOST.read_text(), "wbe32") + "\n" + _function(HOST.read_text(), "stack_end") + "\n"
         + _function(HOST.read_text(), "w2c_env_osPiStartDma") + r"""
 int main(void) {

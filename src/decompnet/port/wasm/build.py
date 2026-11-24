@@ -1239,17 +1239,23 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
     cc = [*host_compiler(zig), *arch]
     host_flags = ["-O1", "-g", "-fno-inline"]
     host_flags += host_import_flags((out / "c" / "game.h").read_text(encoding="utf-8"))
+    # The interpreter and the software renderer are where a game's time goes while it decompresses its code or draws
+    # (a loader's decompressor ran for minutes at -O1): they get -O2; the rest of the host stays -O1 for readable
+    # stack samples.
+    hot_flags = ["-O2" if f == "-O1" else f for f in host_flags]
+    hot_units = {"mips.c", "render.c"}
     objs = out / ("obj-universal" if arch else "obj")
     objs.mkdir(parents=True, exist_ok=True)
 
     def compile_unit(unit: Path) -> str | None | bool:
         obj = objs / (unit.stem + ".o")
         extra = quiet if unit.parent == out / "recomp" else []
-        key = files.key(unit, [wabt / "include", rt, out / "c", out / "recomp"], *cc, *host_flags, *extra)
+        flags = hot_flags if unit.name in hot_units else host_flags
+        key = files.key(unit, [wabt / "include", rt, out / "c", out / "recomp"], *cc, *flags, *extra)
         if _fresh(obj, key):
             return False
         _unstamp(obj)
-        done = _run([*cc, *host_flags, *extra, *includes, "-c", unit, "-o", obj], log, env=env)
+        done = _run([*cc, *flags, *extra, *includes, "-c", unit, "-o", obj], log, env=env)
         if done.returncode:
             return (done.stderr.strip().splitlines() or ["failed"])[0]
         _stamp(obj, key)
