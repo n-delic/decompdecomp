@@ -1353,3 +1353,27 @@ def test_the_rt64_adapter_leaves_a_microcode_rt64_does_not_know_to_the_hosts_rdp
     assert guard < task.index("processDisplayLists(") and "return;" in task[guard:task.index("processDisplayLists(")]
     assert "constexpr uint32_t snapshot_size = 0x1000000;" in adapter  # RT64's RDP_ADDRESS_MASK is 0xFFFFFF
     assert "MAP_NORESERVE" in adapter and "__builtin_bswap32" in adapter
+
+
+def test_the_console_reports_the_expansion_pak_unless_the_project_says_otherwise(tmp_path):
+    """A game that needs the Expansion Pak checks osMemSize and shows 'N64 Expansion Pak not installed' on 4 MB (a
+    platform game then never ran its first frame); the host maps 8 MB for every game, so 8 MB is the default, and
+    PORT_MEMSIZE (Play passes the project's rom.memory_size) gives a 4 MB game the console it was built for."""
+    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if not cc:
+        pytest.skip("no C compiler")
+    text = HOST.read_text()
+    helper = re.search(r"static uint32_t console_memory\(void\) \{.*?\n\}\n", text, re.S)
+    assert helper, "console_memory is in host.c"
+    source = ("#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n" + helper.group(0) +
+              "int main(void) { printf(\"%X\\n\", console_memory()); return 0; }\n")
+    (tmp_path / "t.c").write_text(source)
+    subprocess.run([cc, "-o", str(tmp_path / "t"), str(tmp_path / "t.c")], check=True, capture_output=True, text=True)
+
+    def run(value):
+        env = {k: v for k, v in os.environ.items() if k != "PORT_MEMSIZE"}
+        if value is not None:
+            env["PORT_MEMSIZE"] = value
+        return subprocess.run([str(tmp_path / "t")], check=True, capture_output=True, text=True, env=env).stdout.strip()
+    assert [run(None), run("8"), run("4"), run("0x400000"), run("garbage")] == ["800000", "800000", "400000", "400000", "800000"]
+    assert "wbe32(0x80000318, console_memory());" in text

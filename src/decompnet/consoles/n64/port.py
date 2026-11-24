@@ -216,7 +216,7 @@ def boot_globals(cfg: dict) -> dict:
     return {0x80000300: ("osTvType", "int32_t", 4, tv), 0x80000304: ("osRomType", "int32_t", 4, 0),
             0x80000308: ("osRomBase", "uint32_t", 4, 0xB0000000), 0x8000030C: ("osResetType", "int32_t", 4, 0),
             0x80000310: ("osCicId", "int32_t", 4, 0), 0x80000314: ("osVersion", "int32_t", 4, 0),
-            0x80000318: ("osMemSize", "uint32_t", 4, 0x400000), 0x8000031C: ("osAppNMIBuffer", "uint8_t", 64, 0)}
+            0x80000318: ("osMemSize", "uint32_t", 4, 0x800000), 0x8000031C: ("osAppNMIBuffer", "uint8_t", 64, 0)}
 
 
 # libultra's rspboot, the program the RSP starts every task with, as every game links it: the microcode text follows it.

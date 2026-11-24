@@ -202,3 +202,10 @@ def test_relative_analysis_bank_c_is_left_for_runtime_loading(tmp_path):
             db.execute('INSERT INTO functions(project_id,name,size,n_insns,status,rom_offset) VALUES(?,?,?,?,?,?)',
                        (pid, name, 16, 4, 'matched', offset))
     assert play.relative_bank_code(net, 'game', log=lambda line: None) == {'banked.c'}
+
+
+def test_play_gives_the_host_the_console_memory_the_project_names():
+    """rom.memory_size (4 or 8, in MB) reaches the host as PORT_MEMSIZE, so a game built for a 4 MB console keeps it."""
+    from pathlib import Path
+    text = (Path(__file__).resolve().parents[1] / "src/decompnet/port/wasm/play.py").read_text()
+    assert '(cfg.get("rom") or {}).get("memory_size")' in text and 'env["PORT_MEMSIZE"] = str(memory)' in text

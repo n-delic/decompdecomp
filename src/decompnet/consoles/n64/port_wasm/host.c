@@ -1650,6 +1650,21 @@ static int read_boot(void) {
     boot.tv = strchr("DFHIPSUWXY", region) ? 0 : region == 'B' ? 2 : 1;
     return boot.entry >= 0x80000000u && boot.target >= 0x80000000u;
 }
+/* osMemSize: what the boot chip's memory test leaves for libultra. The host maps 8 MB of RAM for every game, and a
+   console with the Expansion Pak is what a player has: a game that needs the pak refuses to run on 4 MB (it shows
+   "N64 Expansion Pak not installed" and goes no further), while one that works on 4 MB reads the larger size as an
+   option (hi-res modes, a bigger heap). So 8 MB is the default; PORT_MEMSIZE ("4" or "8" in MB, or a byte count)
+   gives a game the console it was meant for (Play passes the project's `rom.memory_size` setting that way). */
+static uint32_t console_memory(void) {
+#ifdef PORT_WEB
+    return 0x800000u;
+#else
+    const char *v = getenv("PORT_MEMSIZE");
+    unsigned long n = v ? strtoul(v, NULL, 0) : 0;
+    if (n >= 1 && n <= 8) n <<= 20;
+    return n == 0x400000ul ? 0x400000u : 0x800000u;
+#endif
+}
 /* the console's RAM as the boot leaves it: the game's image copied in, its BSS zeroed, the values libultra reads */
 static int boot_memory(void) {
     if (!read_boot()) {
@@ -1669,7 +1684,7 @@ static int boot_memory(void) {
     wbe32(0x80000300, (uint32_t)boot.tv); /* osTvType */
     wbe32(0x80000308, 0xB0000000);    /* osRomBase */
     wbe32(0x8000030C, 0);             /* osResetType: cold */
-    wbe32(0x80000318, 0x400000);      /* osMemSize */
+    wbe32(0x80000318, console_memory()); /* osMemSize */
     for (unsigned i = 0; i < port_tlb_n; i++) LOG("TLB: virtual %08X + %X is physical %08X", tlb_win[i].lo, tlb_win[i].size, tlb_win[i].phys);
     LOG("boot: image at %08X, BSS %08X + %X, first C function %08X, %s", boot.entry, boot.bss, boot.bss_size,
         boot.target, boot.tv == 0 ? "PAL" : boot.tv == 2 ? "MPAL" : "NTSC");

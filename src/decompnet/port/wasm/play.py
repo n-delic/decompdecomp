@@ -377,6 +377,8 @@ def play(net, slug: str, log=print, *, adapter: Path | None = None) -> dict:
     from ...consoles.n64.code import RUNTIME_ENTRIES
     env = {**os.environ, "PORT_LIVE": str(port), "PORT_SAVE": str(out / "game.eep"), "PORT_SRAM": str(out / "game.sra"),
            "PORT_FLASH": str(out / "game.fla"), "PORT_ENTRIES": str(rom.parent / RUNTIME_ENTRIES)}
+    if memory := (cfg.get("rom") or {}).get("memory_size"):  # the console the game was meant for (host.c console_memory)
+        env["PORT_MEMSIZE"] = str(memory)
     env.pop("PORT_RT64", None)
     if adapter:
         from ... import toolchains

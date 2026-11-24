@@ -208,6 +208,11 @@ full scanout from game memory when RT64 has cached only part of the framebuffer 
 missing lower portion of the picture in a matched SDL3 and Metal replay of a retail race.
 Broader retail renderer accuracy, RT64 exports, and other desktop platforms remain open.
 
+The host reports an Expansion Pak console (osMemSize 8 MB) to every game: it maps 8 MB of RAM anyway, and a game that
+needs the pak shows "N64 Expansion Pak not installed" and goes no further on 4 MB (a 32 MB platform game stayed on that
+screen; with 8 MB it plays its intro). A project that was built for 4 MB sets `rom.memory_size` to 4 (or the host's
+`PORT_MEMSIZE=4`) and keeps the console it expects.
+
 What RT64 draws can be saved without a screenshot (the game's window can't be captured from outside, and the host's own
 `PORT_FRAMES` dumps come from the software renderer, which shows black for games RT64 draws fine and the reverse):
 `PORT_RT64_FRAMES=<folder>` (`PORT_RT64_FRAME_EVERY=n`) makes the adapter copy each frame RT64 presented, read back
