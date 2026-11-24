@@ -5,6 +5,8 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <sys/mman.h>
 #include <memory>
 #include <string>
 #include <vector>
@@ -94,8 +96,26 @@ void enable_frame_readback(void *layer) {
 
 namespace {
 constexpr uint32_t rdram_size = 0x800000;
+// RT64 masks every RDP address with 0xFFFFFF (rt64_rdp.h RDP_ADDRESS_MASK) and indexes its RDRAM with the result, so
+// the view it reads spans 16 MB, not the console's 8 MB. The host keeps the MIPS stacks of recompiled and interpreted
+// code in KSEG0 just above the 8 MB (physical 0x800000 and up), where a game's locals (a palette, a vertex list built
+// on the stack) can be what a display list points at.
+constexpr uint32_t snapshot_size = 0x1000000;
 constexpr uint32_t physical_mask = 0x1FFFFFFF;
-std::array<uint8_t, rdram_size> memory;
+// RT64 computes some RDRAM indexes from display-list fields without bounding them. The bytes past the 16 MB it is
+// given are reserved address space that reads as zero (4 GB and a margin, lazily backed), so a stray index reads
+// zeros instead of faulting the host: a fault inside RT64 is taken by the game's wasm trap handler and showed up as a
+// bogus "out-of-bounds" stop of a game thread.
+struct Ram {
+    uint8_t *base = nullptr;
+    uint8_t *data() { return base; }
+    static constexpr size_t size() { return snapshot_size; }
+    void reserve() {
+        if (base) return;
+        void *p = mmap(nullptr, (size_t(1) << 32) + (size_t(1) << 28), PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE | MAP_NORESERVE, -1, 0);
+        base = p == MAP_FAILED ? nullptr : static_cast<uint8_t *>(p);
+    }
+} memory;
 std::array<uint8_t, 0x1000> dmem, imem;
 std::array<uint8_t, 0x40> header;
 std::array<uint32_t, 8> dpc;
@@ -110,11 +130,18 @@ auto *vi() {
 }
 
 void snapshot(const uint8_t *rdram) {
-    for (uint32_t i = 0; i < rdram_size; ++i)
-        memory[i ^ 3] = rdram[i];
+    // The game's memory is big-endian bytes; RT64 reads each word byte-swapped (memory[i ^ 3]): one swap per word.
+    for (uint32_t i = 0; i < snapshot_size; i += 4) {
+        uint32_t word;
+        std::memcpy(&word, rdram + i, 4);
+        word = __builtin_bswap32(word);
+        std::memcpy(memory.data() + i, &word, 4);
+    }
 }
 
 int open(void *window, void *layer) {
+    memory.reserve();
+    if (!memory.base) { std::fprintf(stderr, "RT64 RDRAM mapping failed\n"); return 0; }
     enable_frame_readback(layer);
     RT64::Application::Core core{};
     core.window = {window, layer};
@@ -176,7 +203,19 @@ void task(const uint8_t *rdram, uint32_t ucode, uint32_t ucode_data, uint32_t di
     snapshot(rdram);
     app->state->rsp->reset();
     app->interpreter->loadUCodeGBI(ucode, ucode_data, true);
-    if (!app->interpreter->hleGBI) return;
+    // A microcode RT64's database does not know (a game's own Fast3D build, switched to for some tasks) gives no GBI,
+    // or one with no commands: its display-list loop then reads on, past the list, until the host faults or hangs
+    // (Glover, Frogger 2, Flying Dragon: the crash surfaced as a bogus game-thread trap, the picture stayed black).
+    // The task is left to the host's own RDP, whose writes RT64 presents from game memory.
+    const auto *gbi = app->interpreter->hleGBI;
+    if (!gbi || gbi->ucode == RT64::GBIUCode::Unknown) {
+        static std::vector<uint32_t> reported;  // each such microcode is named once, though a game may alternate two
+        if (std::find(reported.begin(), reported.end(), ucode) == reported.end()) {
+            reported.push_back(ucode);
+            std::fprintf(stderr, "RT64 does not know the microcode at %08X: its tasks are drawn by the host's RDP\n", ucode);
+        }
+        return;
+    }
     app->processDisplayLists(memory.data(), display_list, 0, true);
     static bool first = true;
     if (first) {

@@ -215,6 +215,17 @@ from its swap chain, into `frame_NNNNN.png` (8-bit RGB, window-sized). It costs 
 hook blits the drawable (its layer is made readable) into a shared buffer that the next frame's hook writes out.
 This is the evidence that a game renders under RT64 to a menu: a run of a project through Play with the variable set.
 
+RT64 identifies a graphics microcode by hashing its text and data against a database, and interprets only the ones it
+knows. A game's own Fast3D build, or one it switches to for some tasks (a racing game's F3DEX2 with changes, two
+retail platformers' second microcode), is unknown to it: RT64 gets no GBI, or one with no commands, and its display-list
+loop reads on past the list until the host faults or hangs. A fault inside RT64 is taken by the game's wasm trap
+handler, so it looked like a game thread stopping on "out-of-bounds access", with a black picture. The adapter now
+leaves such a task to the host's own RDP and RT64 presents the result from game memory ("RT64 does not know the
+microcode at ..." is printed once for each); a game whose every task is of that kind (a racing game's title screen)
+renders through that path alone. RT64 also indexes its RDRAM with 24-bit masked addresses, so it is given a 16 MB view
+(the host's stacks live just above the console's 8 MB) backed by a larger zero-filled reservation: a stray index reads
+zeros.
+
 ROM offsets the game uses as numbers (where an archive starts in the cartridge) and the values the N64's boot leaves
 in low memory for libultra are defined by Compile for PC too (`port/fixed_symbols.py`): offsets as symbols at those
 addresses, boot values with what the boot would leave, the TV system from the game code's country.

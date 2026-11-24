@@ -1338,3 +1338,18 @@ def test_the_rt64_frame_readback_writes_pngs_a_reader_decodes(tmp_path):
     assert raw == bytes([0, 30, 20, 10, 60, 50, 40, 0, 90, 80, 70, 255, 0, 0])
     adapter = (folder / "adapter.cpp").read_text()
     assert "PORT_RT64_FRAMES" in adapter and "SetRenderHooks" in adapter and "setFramebufferOnly" in adapter
+
+
+def test_the_rt64_adapter_leaves_a_microcode_rt64_does_not_know_to_the_hosts_rdp():
+    """A microcode outside RT64's database (a game's own Fast3D build, a second microcode some tasks switch to) gives
+    no GBI or one with no commands, and RT64's display-list loop then ran on past the list until the host faulted or
+    hung: Glover, Frogger 2, Flying Dragon and F-Zero X stopped a game thread on a bogus 'out-of-bounds' trap and
+    drew nothing. The task is skipped before RT64 walks it, and RT64's view of RDRAM spans what its 24-bit address
+    mask reaches, with a zero-filled reservation behind it."""
+    folder = Path(__file__).resolve().parents[1] / "src/decompnet/consoles/n64/port_wasm/rt64"
+    adapter = (folder / "adapter.cpp").read_text()
+    task = adapter[adapter.index("void task(const uint8_t *rdram"):adapter.index("void features(")]
+    guard = task.index("RT64::GBIUCode::Unknown")
+    assert guard < task.index("processDisplayLists(") and "return;" in task[guard:task.index("processDisplayLists(")]
+    assert "constexpr uint32_t snapshot_size = 0x1000000;" in adapter  # RT64's RDP_ADDRESS_MASK is 0xFFFFFF
+    assert "MAP_NORESERVE" in adapter and "__builtin_bswap32" in adapter
