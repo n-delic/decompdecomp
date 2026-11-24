@@ -631,6 +631,18 @@ START after the race has begun (A only), a racing game's race at seven windows f
 emulator to the pixel at three (8,000, 12,000 and 14,000: 0.00 percent differing), to 0.02 percent within 3 pixels at a fourth
 (10,000, a pixel or two of scroll), and differed by 4.3 to 8.1 percent within 3 pixels at the three earliest (6,000 to 6,500, the
 race's first seconds, still near the last pause presses). A moving scene is drawn exactly as the console draws it.
+Where the moving-race difference comes from, for a racing game with the console's pacing replayed and the same input (A only after
+the race starts): not the drawing and not the timing (the port's retrace count at tasks 2,727 to 6,500 was within two of the
+console's), but how far the car has travelled. Reading the car object's position out of the dumps (the object is found in the
+port's dump by its position floats), the two cars stand at the same place on the grid through task 3,400 (z within 24 units), then
+the console's accelerates harder: tasks 3,400 to 3,600 it covers 687 units to the port's 116, to 4,000 4,234 against 2,530, and it
+stays about 2,000 to 2,570 units (twenty-five to thirty frames of travel) ahead until both cars reach the same wall and stop,
+within a few units of each other, by task 7,000. That ahead-by-a-constant is why the picture is exact on straight road and
+exact again once both are stopped, and 28 pixels off (the backdrop's scroll, from the car's yaw) where the road bends and the
+console gets there first. Some of the car object's orientation-like floats already differ at task 3,400 (a value of
+-0.21 on the console, +0.16 in the port). The stick and buttons are fed the same way on both sides (zero stick, the same events).
+Why the console launches harder is not known (a clock the physics reads, or float arithmetic in the engine and the tyres, are
+the candidates).
 What `PORT_VTIME` did and didn't settle for a racing game, with the same retrace-timed input on both sides: the port's
 video-mode blanks fell at the console's graphics tasks within one frame (485, 521, 632 against 485, 521, 637; the race
 start at 2,727 and 2,773 exactly), where the wall-clock port had been hundreds of tasks apart, so the two run the same
