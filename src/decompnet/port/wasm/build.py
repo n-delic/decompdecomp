@@ -441,6 +441,15 @@ def _save_manifest(repo: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def interpreter_left_out(excluded, leave_out, original) -> set[str]:
+    """The names the interpreter doesn't run: the files the build leaves out on purpose (exclude.txt, library code the host
+    provides), without the functions that need the original instructions. Those are left out of the C so that the original
+    code runs, and the interpreter is what runs it where N64Recomp doesn't (a build with no recompiler, the browser
+    export): counted among the left-out they were stubs that did nothing, though the build said the interpreter ran
+    them (a racing game's wheel rotation, its menu's quad allocator)."""
+    return {n.removesuffix(".c") for n in set(excluded) | set(leave_out)} - {n.removesuffix(".c") for n in original}
+
+
 def original_code(host: Path, manifest: dict, fixed: list[str]) -> set[str]:
     """Functions that need the original instructions, keyed by ROM and address so renames still leave them out."""
     sha1 = (manifest.get("game") or {}).get("sha1") or ""
@@ -1138,7 +1147,7 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
     # what only recompiled C or the interpreter runs (interp.py): MIPS's own shape
     from . import interp
     from . import recomp as recomp_c
-    left_out = {n.removesuffix(".c") for n in _names(repo / "port" / "wasm" / "exclude.txt") | set(leave_out)}
+    left_out = interpreter_left_out(_names(repo / "port" / "wasm" / "exclude.txt"), leave_out, original)
     replaced = (lambda n: kit.sdk_group(n) in ("replaced", "glue")) if kit and kit.sdk_group else (lambda n: False)
     known = _rows(out / "sigs.txt", "\t")
     extra = []

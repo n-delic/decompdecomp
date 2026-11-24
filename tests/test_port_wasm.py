@@ -1119,3 +1119,13 @@ def test_a_module_with_no_host_imports_builds_the_host_without_import_state():
     assert build.host_import_flags("void wasm2c_game_instantiate(w2c_game*, struct w2c_env*);") == []
     host = (get("n64").port_kit.wasm / "host.c").read_text(encoding="utf-8")
     assert "#ifdef PORT_WASM_NO_IMPORTS" in host and "wasm2c_game_instantiate(&game);" in host
+
+
+def test_original_code_functions_are_left_to_the_interpreter_not_left_out_of_it():
+    """The functions a game's .original file names are left out of the C so the original code runs; the interpreter is what runs
+    it where N64Recomp doesn't. They were counted among the names the interpreter skips, so a build without a recompiler
+    (the browser export) stubbed them to nothing."""
+    from decompnet.port.wasm.build import interpreter_left_out
+
+    left = interpreter_left_out({"osCreateThread.c"}, {"bzero.c", "applyPackedRotation.c"}, {"applyPackedRotation.c"})
+    assert left == {"osCreateThread", "bzero"}

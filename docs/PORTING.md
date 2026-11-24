@@ -594,6 +594,11 @@ on the function that wrote it (`drawPanelFill`) showed the console's own horizon
 retraces at the race start, then holding while paused: the port was paused nine retraces later in that settling, so
 the difference was when START landed, not a drawing or logic fault. A moving scene can't be matched by task or retrace
 number, but a scene held still by a pause or a menu can, and a difference there is found to the command.
+The functions a game's `.original` file names run from the original instructions: N64Recomp translates them where the
+build has it (Play), and the interpreter runs them everywhere else. Until the interpreter's own list of what it leaves
+alone stopped including them, a build with no recompiler (the command-line build, and the browser export, which has
+none) stubbed them to nothing while saying the interpreter ran them: a racing game's wheel rotation and its menu's quad
+allocator did nothing in a browser export (`applyPackedRotation: not implemented, skipped` in the page's console).
 `PORT_VTIME=1` makes the native host's time virtual: the retrace fires when every game thread is waiting (or only the
 lowest-priority thread, the console's idle spin, is left) and the clock the game reads (osGetTime, the count register,
 the audio interface's drain) advances a retrace at a time, a microsecond per read within one. A run is the same
