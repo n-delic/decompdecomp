@@ -2041,6 +2041,7 @@ static int boot_memory(void) {
     wbe32(0x80000308, 0xB0000000);    /* osRomBase */
     wbe32(0x8000030C, 0);             /* osResetType: cold */
     wbe32(0x80000318, console_memory()); /* osMemSize */
+    wbe32(0x800003F0, console_memory()); /* the boot chip's RAM test also leaves the size here (the console's RDRAM total) */
     for (unsigned i = 0; i < port_tlb_n; i++) LOG("TLB: virtual %08X + %X is physical %08X", tlb_win[i].lo, tlb_win[i].size, tlb_win[i].phys);
     LOG("boot: image at %08X, BSS %08X + %X, first C function %08X, %s", boot.entry, boot.bss, boot.bss_size,
         boot.target, boot.tv == 0 ? "PAL" : boot.tv == 2 ? "MPAL" : "NTSC");

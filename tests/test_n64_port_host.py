@@ -1649,6 +1649,9 @@ def test_the_console_reports_the_expansion_pak_unless_the_project_says_otherwise
         return subprocess.run([str(tmp_path / "t")], check=True, capture_output=True, text=True, env=env).stdout.strip()
     assert [run(None), run("8"), run("4"), run("0x400000"), run("garbage")] == ["800000", "800000", "400000", "400000", "800000"]
     assert "wbe32(0x80000318, console_memory());" in text
+    # the boot chip's RAM test leaves the same total at 0x800003F0 too (a real console's RAM word at that address
+    # matched the reference emulator's dump; the port left it 0)
+    assert "wbe32(0x800003F0, console_memory());" in text
 
 
 def test_the_host_includes_setjmp_only_outside_the_browser_build():
