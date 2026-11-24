@@ -163,9 +163,22 @@ def probe(search, agent, proj, fn, source, profile, *, scored=False):
             raise SearchLimit(f'Exact match found with {settings}; run the pass again to reverify and apply it')
         search.check()
         search.tested += 2
+        # (the floating-point register model changes every FP register of the build: the user reviews it, even when
+        # automatic compiler changes are on, as with a `-ffast-math` trial)
+        from .. import consoles
+        from ..project import compiler_for
+        from .fp_fingerprints import is_fp_variant
+        cfg = search.net.cfg(proj)
+        own = compiler_for(cfg, fn['vram'], fn)
+        bases = [own['flags']] if own['toolchain'] == profile['toolchain'] else []
+        try:
+            bases.append(consoles.default_flags(cfg, profile['toolchain']))
+        except Exception:  # noqa: BLE001 - a toolchain this install doesn't know has no default to compare with
+            pass
+        review = {'review_only': True} if any(is_fp_variant(flags, profile['flags']) for flags in bases) else {}
         said = search.net.suggest(agent, proj['slug'], 'Deep permuter found an exact source/compiler profile pair.',
                                   compiler=profile['toolchain'], flags=' '.join(profile['flags']),
-                                  function=fn['name'], source=source)
+                                  function=fn['name'], source=source, **review)
         if search.net._function(fn['name'],proj['slug'])['status'] == 'matched':
             return 0
         # The exact pair waits for the user (automatic compiler changes off) or was refused. Searching on spent the
