@@ -45,6 +45,7 @@ from decompnet.port.frame_compare import (  # noqa: E402,F401
     RAM,
     RENDER,
     TASK_AT,
+    Renderer,
     build,
     commands,
     compare,

@@ -853,3 +853,16 @@ sides) set both images to address 0 in the renderer's own account of the list (`
 what the game draws there is not judged: a gap, not a match. Whether address 0 is the game's own render target or a segment the
 harness doesn't have (the renderer starts each task with no state from the tasks before it) is not settled; until it is, "neither
 side drew a picture" in Check pictures means "nothing was compared here", and a window with only those is no evidence.
+
+**What the RDP keeps between tasks, and what the emulator never wrote.** The windows that "set both images to address 0" were
+not the game's doing: the RDP keeps its colour image, depth image, scissor and modes from one task to the next (a menu
+and a race set the colour image in an earlier task than the ones that draw into it), and a renderer started fresh for each task
+has none of it. `frame_compare.Renderer` is one process drawing a window's tasks in turn (the harness without arguments reads
+"dump task" lines), so those tasks draw into their buffers. Beside the colour images the depth buffer is carried too: without it
+a race frame on the console was sky and hills only, the road and cars failing a depth test against the noise the emulator left
+(12-17% of the picture differing instead of 77%). Pictures are paired by the order a task draws them, since the console and the
+port lay their two buffers out at different addresses, and compared only where the console's tasks in the window drew (a
+background drawn before the window is noise on its side): a picture's `covered_pct` says how much. What is still not judged
+well: a pixel blended over earlier history (a translucent menu layer) depends on a background the emulator never made, so those
+differ whatever the port does. On a race window the remaining difference is the opponent's car: the same frame on both sides
+except that car, which is drawn a little apart, a divergence of the game's own state (its opponent's position), not of the renderer.

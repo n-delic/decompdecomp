@@ -32,10 +32,10 @@ def _as_task(mem: Memory, task: int) -> None:
     mem.w32(task + 28, 0x800)
 
 
-def _red_square(mem: Memory) -> int:
+def _red_square(mem: Memory, frame: bool = True) -> int:
     g = Gfx(mem)
     _as_task(mem, g.task)
-    g.frame().fill(0)
+    g.frame().fill(0) if frame else g.fill(0)
     g(0xED000000, (W * 4) << 12 | H * 4)
     g(0xDA380007, 0x80000000 | mem.put(matrix()))
     g(0xDA380003, 0x80000000 | mem.put(matrix([0.5, 0, 0, 0, 0, 0.5, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1])))  # half size
@@ -173,3 +173,27 @@ def test_the_consoles_save_is_found_in_its_ram_by_the_ports_save_body(tmp_path):
     dump.write_bytes(b"\0" * 0x2000)
     assert tool.console_save(dump, port_save) is None
     assert tool.console_save(dump, b"short") is None
+
+
+@pytest.mark.skipif(not (shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")), reason="needs a C compiler")
+def test_the_rdp_keeps_its_colour_image_from_one_task_to_the_next(tmp_path):
+    """A game sets the colour image in one task and draws into it in the ones after (a menu's was set once). One renderer
+    process draws the tasks in turn, so the second, which never sets it, still draws into the first's image; drawn alone
+    (a fresh process) its image is at address 0."""
+    tool = _tool()
+    first, second = Memory(), Memory()
+    t1 = _red_square(first)
+    t2 = _red_square(second, frame=False)
+    d1, d2 = tmp_path / "one.bin", tmp_path / "two.bin"
+    for mem, dump in ((first, d1), (second, d2)):
+        dump.write_bytes(bytes(mem.ram) + bytes(0x800000 - len(mem.ram)))
+    program = tool.build(tmp_path / "work")
+    alone = tool.draw(program, d2, t2, tmp_path / "work")
+    assert not alone or FB not in alone  # nothing set the image: it is address 0 (the same as the depth image's)
+    renderer = tool.Renderer(program, tmp_path / "work", "x")
+    try:
+        assert renderer.draw(d1, t1) and FB in renderer.draw(d1, t1)
+        carried = renderer.draw(d2, t2)
+    finally:
+        renderer.close()
+    assert carried and FB in carried and carried[FB][2][(H // 2) * W + W // 2] == (248, 0, 0)

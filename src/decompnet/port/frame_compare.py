@@ -30,15 +30,33 @@ static uint8_t ram[0x800000];
 uint8_t *port_memory(void) { return ram - 0x80000000u; }
 int port_live_active(void) { return 0; }
 void port_live_frame(const uint8_t *rgb, int w, int h) { (void)rgb; (void)w; (void)h; }
-/* argv: a RAM dump, a task's address: the task drawn with PORT_RDPDUMP set, which writes its commands and memory */
-int main(int argc, char **argv) {
-    if (argc < 3) return 2;
-    FILE *f = fopen(argv[1], "rb");
-    if (!f) return 3;
+static int load(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return 0;
+    memset(ram, 0, sizeof ram);
     size_t n = fread(ram, 1, sizeof ram, f);
     fclose(f);
-    if (n < 0x400000) return 3;
-    port_render_task((uint32_t)strtoul(argv[2], NULL, 16));
+    return n >= 0x400000;
+}
+/* argv: a RAM dump, a task's address: the task drawn with PORT_RDPDUMP set, which writes its commands and memory.
+   Without arguments: lines "dump task" on stdin, each drawn in turn by this one process and answered "ok" or "fail": the
+   RDP keeps its colour image, depth image, scissor and modes from one task to the next, as on the console, and a game
+   sets them in an earlier task than the one that draws with them (a menu's colour image was only ever set once). */
+int main(int argc, char **argv) {
+    if (argc >= 3) {
+        if (!load(argv[1])) return 3;
+        port_render_task((uint32_t)strtoul(argv[2], NULL, 16));
+        return 0;
+    }
+    char line[4096];
+    while (fgets(line, sizeof line, stdin)) {
+        char *space = strrchr(line, ' ');
+        if (!space) { puts("fail"); fflush(stdout); continue; }
+        *space = 0;
+        if (!load(line)) { puts("fail"); fflush(stdout); continue; }
+        port_render_task((uint32_t)strtoul(space + 1, NULL, 16));
+        puts("ok"); fflush(stdout);
+    }
     return 0;
 }
 """
@@ -80,6 +98,65 @@ def graphics_tasks(mem: bytes) -> list[int]:
     return found
 
 
+class Renderer:
+    """One renderer process drawing task after task, the RDP's state carried from each to the next (see HARNESS)."""
+
+    def __init__(self, program: Path, work: Path, tag: str):
+        self.dir = work / f"rdp_{tag}"
+        shutil.rmtree(self.dir, ignore_errors=True)
+        self.dir.mkdir(parents=True)
+        env = {**os.environ, "PORT_RDPDUMP": str(self.dir), "PORT_RDPDUMP_TASKS": "1-999999999"}
+        self.proc = subprocess.Popen([str(program)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                     stderr=subprocess.DEVNULL, env=env, text=True)
+        self.count = 0
+
+    def close(self) -> None:
+        if self.proc.poll() is None:
+            self.proc.stdin.close()
+            try:
+                self.proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+
+    def draw(self, dump: Path, task: int, kept: dict[int, bytes] | None = None):
+        """The images one task draws, as the module's `draw`, from the state the tasks before it left."""
+        try:
+            self.proc.stdin.write(f"{dump} {task:x}\n")
+            self.proc.stdin.flush()
+            answer = self.proc.stdout.readline().strip()
+        except (BrokenPipeError, OSError):
+            return None
+        self.count += 1
+        cmds, after = self.dir / f"{self.count:06d}.cmds", self.dir / f"{self.count:06d}.after"
+        try:
+            if answer != "ok" or not cmds.exists() or not after.exists():
+                return None
+            return _images(cmds.read_bytes(), after.read_bytes(), kept)
+        finally:
+            for f in self.dir.glob(f"{self.count:06d}.*"):
+                f.unlink(missing_ok=True)  # 8 MB each: only the pictures are kept
+
+
+def _images(data: bytes, mem: bytes, kept: dict[int, bytes] | None) -> dict[int, tuple[int, int, list]]:
+    drawn = {}
+    depth = {w[1] & 0xFFFFFF for w in commands(data) if w[0] >> 24 & 0x3F == 0x3E}  # z images: cleared as colour
+    for addr, width, siz, lines in images(data):
+        if addr in depth:
+            continue
+        if addr + width * lines * (4 if siz == 3 else 2) <= len(mem):
+            drawn[addr] = (width, lines, rgb(mem, addr, width, siz, lines))
+            if kept is not None:
+                kept[addr] = mem[addr:addr + width * lines * (4 if siz == 3 else 2)]
+    if kept is not None:
+        # the depth buffer too: the emulator writes no depth either, and what is drawn tests against it (a menu's frame
+        # was sky only on the console, the road and cars failing a depth test against noise)
+        shape = next(((w, h) for _, w, _, h in images(data)), None)
+        for addr in depth - {0}:
+            if shape and addr + shape[0] * shape[1] * 2 <= len(mem):
+                kept[addr] = mem[addr:addr + shape[0] * shape[1] * 2]
+    return drawn
+
+
 def draw(program: Path, dump: Path, task: int, work: Path,
          kept: dict[int, bytes] | None = None) -> dict[int, tuple[int, int, list]] | None:
     """The images one task draws: {address: (width, lines, RGB pixels)}, or None when it fails to draw. `kept` takes each
@@ -95,18 +172,7 @@ def draw(program: Path, dump: Path, task: int, work: Path,
     cmds, after = out / "000001.cmds", out / "000001.after"
     if done.returncode or not cmds.exists() or not after.exists():
         return None
-    mem = after.read_bytes()
-    drawn = {}
-    data = cmds.read_bytes()
-    depth = {w[1] & 0xFFFFFF for w in commands(data) if w[0] >> 24 & 0x3F == 0x3E}  # z images: cleared as colour
-    for addr, width, siz, lines in images(data):
-        if addr in depth:
-            continue
-        if addr + width * lines * (4 if siz == 3 else 2) <= len(mem):
-            drawn[addr] = (width, lines, rgb(mem, addr, width, siz, lines))
-            if kept is not None:
-                kept[addr] = mem[addr:addr + width * lines * (4 if siz == 3 else 2)]
-    return drawn
+    return _images(cmds.read_bytes(), after.read_bytes(), kept)
 
 
 TASK_AT = 0x807FFFC0  # where a dump's own task is put for drawing: the last 64 bytes of the 8 MB
@@ -133,8 +199,10 @@ def with_task(dump: Path, work: Path) -> tuple[Path, int] | None:
 
 
 def frames(program: Path, dump: Path, work: Path,
-           carry: dict[int, bytes] | None = None) -> dict[tuple[int, int], tuple[int, int, list]]:
+           carry: dict[int, bytes] | None = None, renderer: Renderer | None = None,
+           base: dict[int, bytes] | None = None) -> dict[tuple[int, int], tuple[int, int, list]]:
     """Every graphics task in a dump drawn: {(task, image): (width, lines, pixels)}; tasks that fail are skipped.
+    `base` ({address: bytes}) takes what each buffer held when its first task of the window began to draw into it.
     `carry` ({address: bytes}) is the pictures the tasks before this one drew: the emulator draws nothing, so its RAM holds
     no pixels of what the game drew earlier into the same buffer (a menu's text, drawn by an earlier task, was noise on
     the console and there on the port), and each is put back before this task draws over it. It is updated with this
@@ -152,9 +220,12 @@ def frames(program: Path, dump: Path, work: Path,
             mem[at:at + len(raw)] = raw
         dump = dump.with_name(dump.name + ".carried")
         dump.write_bytes(mem)
+    blob = dump.read_bytes() if base is not None else b""
     for task in tasks:
         kept: dict[int, bytes] = {}
-        drawn = draw(program, dump, task, work, kept)
+        drawn = renderer.draw(dump, task, kept) if renderer else draw(program, dump, task, work, kept)
+        for addr, raw in kept.items() if base is not None else ():  # what a buffer held before the window's first task drew in it
+            base.setdefault(addr, blob[addr & 0x7FFFFF:(addr & 0x7FFFFF) + len(raw)])
         if carry is not None:
             carry.update(kept)
         if drawn is None:
@@ -385,7 +456,7 @@ def compare_run(game: Path, rom: Path, points: list[int], inputs: str, work: Pat
     pace_log = work / "tasks.log"
     pace_log.unlink(missing_ok=True)
     progress("Building the renderer", 0, 4)
-    program = build(work)
+    program_ = program = build(work)
     progress("Running the original game in the emulator", 1, 4)
     console = run_console(rom, sorted(set(points) | {early}), inputs, work, "frames", stop=stop,
                           extra_env={"EMU_TASK_LOG": str(pace_log)} if pace else None)
@@ -402,7 +473,14 @@ def compare_run(game: Path, rom: Path, points: list[int], inputs: str, work: Pat
     pacing = {"PORT_VTIME": "1", "PORT_VTIME_TRACE": str(pace_log)} if pace and pace_log.exists() else {}
     port = run_port(game, rom, sorted(set(points)), inputs, work, "frames", stop=stop, extra_env=pacing)
     results: list[dict] = []
-    carried: tuple[dict, dict] = ({}, {})  # what each side drew in the tasks before, within a window of consecutive ones
+    carried: tuple[dict, dict] = ({}, {})
+    started: tuple[dict, dict] = ({}, {})  # what each side drew in the tasks before, within a window of consecutive ones
+    renderers: list[Renderer] = []
+
+    def fresh() -> None:  # a new window: each side's RDP starts again, with nothing of the tasks before
+        for r in renderers:
+            r.close()
+        renderers[:] = [Renderer(program_, work, "console"), Renderer(program_, work, "port")]
     runs: list[list[int]] = []  # the consecutive tasks taken at each moment
     for n in points:
         if runs and n == runs[-1][-1] + 1:
@@ -411,8 +489,9 @@ def compare_run(game: Path, rom: Path, points: list[int], inputs: str, work: Pat
             runs.append([n])
     warm = {n for run in runs for n in run[:len(run) // 2]}  # drawn for what they leave in the buffers, not compared
     for i, n in enumerate(points):
-        if i and n != points[i - 1] + 1:
-            carried = ({}, {})
+        if not i or n != points[i - 1] + 1:
+            carried, started = ({}, {}), ({}, {})
+            fresh()
         if stop():
             break
         progress(f"Comparing frame {n}", i, len(points))
@@ -422,11 +501,14 @@ def compare_run(game: Path, rom: Path, points: list[int], inputs: str, work: Pat
         if n not in port:
             results.append({"task": n, "missing": "port"})
             continue
-        theirs = frames(program, console[n], work, carried[0])
-        ours = frames(program, port[n], work, carried[1])
+        theirs = frames(program, console[n], work, carried[0], renderers[0], started[0])
+        ours = frames(program, port[n], work, carried[1], renderers[1], started[1])
         only_a, only_b = [k for k in theirs if k not in ours], [k for k in ours if k not in theirs]
-        if len(only_a) == len(only_b) == 1 and only_a[0][0] == only_b[0][0]:
-            ours[only_a[0]] = ours.pop(only_b[0])  # the two rotate their frame buffers differently: one picture
+        if only_a and len(only_a) == len(only_b):
+            # the console and the port lay their buffers out differently (the same two pictures at 0x315280 and 0x27F1C0 on
+            # one, 0x27F240 and 0x3152C0 on the other): the pictures a task draws are paired in the order it draws them
+            moved = {k: ours.pop(k) for k in only_b}
+            ours.update({a: moved[b] for a, b in zip(only_a, only_b)})
         if n in warm:
             continue
         if not theirs and not ours:  # a task that draws no picture (the game's other tasks): said, so it isn't read as a match
@@ -441,9 +523,23 @@ def compare_run(game: Path, rom: Path, points: list[int], inputs: str, work: Pat
             elif a[:2] != b[:2]:
                 results.append({"task": n, "image": key[1], "missing": "size"})
             else:
-                c = compare(b[2], a[2])
-                side_by_side(name, [a, b, (a[0], a[1], difference(a[2], b[2]))])
-                results.append({"task": n, "image": key[1], "width": a[0], "lines": a[1], "differ_pct": c["differ_pct"],
-                                "beyond_pct": c["beyond_pct"], "file": name.name,
-                                "near_pct": unmatched(a[2], b[2], a[0], a[1], tolerance) if tolerance else None})
+                # the emulator draws nothing, so only the pixels its tasks in this window drew are the console's: the rest of
+                # the buffer was drawn by tasks before the window (a menu's background) and is noise on its side
+                depth = 4 if len(carried[0].get(key[1], b"")) == a[0] * a[1] * 4 else 2  # bytes a pixel
+                was = rgb(started[0].get(key[1], b"").ljust(a[0] * a[1] * depth, b"\0"), 0, a[0], 3 if depth == 4 else 2, a[1])
+                touched = [p != q for p, q in zip(a[2], was)]
+                covered = sum(touched)
+                if not covered:
+                    results.append({"task": n, "image": key[1], "missing": "undrawn"})
+                    continue
+                judged = [q if t else p for p, q, t in zip(a[2], b[2], touched)]
+                scale = len(a[2]) / covered  # percentages of the pixels the console drew, not of the whole buffer
+                c = compare(judged, a[2])
+                side_by_side(name, [a, b, (a[0], a[1], difference(a[2], judged))])
+                near = min(100.0, unmatched(a[2], judged, a[0], a[1], tolerance) * scale) if tolerance else None
+                results.append({"task": n, "image": key[1], "width": a[0], "lines": a[1],
+                                "differ_pct": min(100.0, c["differ_pct"] * scale), "beyond_pct": min(100.0, c["beyond_pct"] * scale),
+                                "covered_pct": 100.0 * covered / len(a[2]), "file": name.name, "near_pct": near})
+    for r in renderers:
+        r.close()
     return results
