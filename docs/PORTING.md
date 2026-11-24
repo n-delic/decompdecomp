@@ -845,3 +845,11 @@ made the buffer drawn within the window match the emulator's to the pixel (0.00%
 earlier pictures were drawn before the window began, still shows the noise: a window's first half only rebuilds the
 buffers (`compare_run` draws it and does not compare it), and Check pictures takes windows of 24 tasks. Single sampled tasks
 can also draw nothing at all (a route's 19 samples every 300 frames did), hence windows rather than points.
+
+Check pictures on a menu route, four windows of 24 tasks (600, 2392, 4184 and 5976): the first window's three pictures matched the
+emulator to the pixel (0.00% differing), and the other three drew no picture at all by the comparison's rule, which skips a colour
+image whose address is also the depth image's. Those tasks (a menu's later tasks, 250 triangles each, identical in size on both
+sides) set both images to address 0 in the renderer's own account of the list (`SetColorImage` and `SetDepthImage` 0, 320x480), so
+what the game draws there is not judged: a gap, not a match. Whether address 0 is the game's own render target or a segment the
+harness doesn't have (the renderer starts each task with no state from the tasks before it) is not settled; until it is, "neither
+side drew a picture" in Check pictures means "nothing was compared here", and a window with only those is no evidence.
