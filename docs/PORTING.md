@@ -876,3 +876,10 @@ console's hold distinct bytes. So the port's code for that car never writes the 
 somewhere else: a difference of the game's own state, found only because the pictures could now be compared. Where to look next:
 who writes that field on the console (`emulator.run(watches=...)` on a vertex's colour word in a run that reaches the task; the
 address moves between runs, so take it from a dump of the same run), and whether that function runs in the port.
+
+**Correction to the lead above.** Putting the console's value of that field into every one of the port's vertices for the
+tasks of the frame (tasks 609 to 615, each vertex load paired with the console's by order) did not bring the car closer: the
+picture differed 18.5% from the console's instead of 16.65%. So "the port never writes the lighting field" is not shown to be the
+cause. What is known: the field holds leftover memory on both sides (text fragments on the console, the allocator's fill on the
+port: nothing in the game writes it for that model), so the shading of that car depends on what the heap held before, which
+differs between the two. Whether the car is lit by that field at all, and which tasks draw it, is not established.
