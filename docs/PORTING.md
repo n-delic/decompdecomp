@@ -916,3 +916,9 @@ at a threshold) are a frame apart: the opponent's brightness branch reads a resu
 runs, so run it on the console's recorded call for that object). This is the same kind of difference as a camera cut one frame off, and the
 likely place to look is the timing of the RSP/RDP completion events and when the game's logic thread starts its next frame (host.c: `rcp_raise`, delivered from the
 tick when every game thread waits in virtual time, within 400 microseconds otherwise), against what the emulator does.
+
+**The completion delay is not the cause (tested).** With `PORT_RCP_RETRACES=1` (a task's SP and DP interrupts held one retrace after it starts, host.c) the sight-cone line points still change at
+the port's tasks 604, 609, 614, 619 and the console's 603, 608, 613, 618, and the race window's later tasks differ as before (12-18%). So when the RSP/RDP interrupts arrive does
+not move the game's logic against the graphics tasks; the lead of about a logic frame is somewhere else: how many logic updates the game has run when
+it hands over its nth task (the console's first retraces, its loading, the scheduler's frame skips), which the trace of the retrace at each task start should replay
+but evidently does not for the logic thread's own timing. The next experiments: log the port's and the emulator's retrace count at each logic update (a break on the function that updates the line points) and compare them task by task.
