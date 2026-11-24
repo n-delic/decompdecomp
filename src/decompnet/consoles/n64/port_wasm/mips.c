@@ -1190,6 +1190,7 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
             interp_stats(0x10000);
             port_interp_pc = pc; /* (PORT_SAMPLE prints it: where the interpreted game code is) */
             if (tracing > 1) fprintf(stderr, "interpreter: %08X still running, at %08X after %lu instructions\n", entry, pc, steps);
+            if (tracing >= 3 && steps >= (1ul << 22)) jump_history("a thread still running", pc); /* (a spin: what it was called from) */
 #ifndef PORT_WEB
             port_boot_spin();
 #endif

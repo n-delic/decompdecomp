@@ -142,6 +142,29 @@ def link_branches(text: str) -> str:
     )
 
 
+_FUNCTION = re.compile(r"^(RECOMP_FUNC void \w+\(uint8_t\* rdram, recomp_context\* ctx\) \{\n)(.*?\n;\})", re.M | re.S)
+_JR_REGISTER = re.compile(r"^( *)LOOKUP_FUNC\(ctx->r(?!31\))(\d+)\)\(rdram, ctx\);$", re.M)
+
+
+def return_through_copy(text: str) -> str:
+    """A `jr` through a register that holds the function's own return address is a return.
+
+    A hand-written math routine copies $ra at entry (`or $a1, $ra, $zero`) and ends in `jr $a1` (a platformer's sine
+    and cosine). N64Recomp compiles every `jr` but `jr $ra` as a call to the address in the register, and link_branches
+    gives that register the real return address: the caller's next instruction, which no function starts. The
+    interpreter then ran the game from there, the rest of the caller and everything above it, while the recompiled
+    frames waited on the host's own stack to run it all again: a game's whole main thread ran interpreted, and
+    repeated. A function that keeps its entry $ra now returns when the register still holds it."""
+    def one(function: re.Match) -> str:
+        head, body = function[1], function[2]
+        if not _JR_REGISTER.search(body):
+            return function[0]
+        body = _JR_REGISTER.sub(
+            lambda m: f"{m[1]}if ((uint32_t)ctx->r{m[2]} == (uint32_t)entry_ra) return; /* (a copy of $ra: a return) */\n{m[0]}", body)
+        return f"{head}    gpr entry_ra = ctx->r31;\n{body}"
+    return _FUNCTION.sub(one, text)
+
+
 def stores(text: str) -> str:
     """N64Recomp's stores, `MEM_W(o, r) = v;`, as calls: the port's memory is big-endian, not an lvalue."""
     return STORE.sub(lambda m: f"{m.group(1)}STORE_{m.group(2)}({m.group(3)}, {m.group(4)});", text)
@@ -610,7 +633,7 @@ def prepare(folder: Path, out: Path, game_h: str, fixed: list[str], hosts: list[
         text = only(text, drop & set(DEFINED.findall(text)))
         final_defined.update(DEFINED.findall(text))
         target = out / f"rec_{f.stem}.c"
-        _write(target, stores(rename(loops(link_branches(text)))))
+        _write(target, stores(rename(loops(return_through_copy(link_branches(text))))))
         units.append(target)
     for f in list(out.glob("rec_*.c")):
         if f not in units:

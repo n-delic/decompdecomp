@@ -587,6 +587,26 @@ def test_a_call_into_the_games_c_starts_the_v0_word_from_the_callers_v0():
     assert "STORE_W(16, 0x%(regs)Xu, ctx->r2);" in runtime[:call][-300:]
 
 
+def test_a_jr_through_a_copy_of_ra_returns_instead_of_calling_the_callers_next_instruction():
+    """A platformer's sine routine copies $ra (`or $a1, $ra, $zero`) and ends in `jr $a1`: compiled as a call to the
+    caller's next instruction, the interpreter ran the game's main thread from there (and the recompiled frames ran
+    it again). A function holding its entry $ra in the register returns; a switch's `jr` is still a jump."""
+    from decompnet.port.wasm.recomp import return_through_copy
+
+    generated = ("RECOMP_FUNC void func_800137F4(uint8_t* rdram, recomp_context* ctx) {\n"
+                 "    uint64_t hi = 0, lo = 0, result = 0;\n    int c1cs = 0;\n"
+                 "    // 0x80013804: or          $a1, $ra, $zero\n    ctx->r5 = ctx->r31 | 0;\n"
+                 "    // 0x80013810: jr          $a1\n    LOOKUP_FUNC(ctx->r5)(rdram, ctx);\n    return;\n\n;}\n"
+                 "RECOMP_FUNC void func_80013900(uint8_t* rdram, recomp_context* ctx) {\n"
+                 "    uint64_t hi = 0, lo = 0, result = 0;\n    LOOKUP_FUNC(ctx->r31)(rdram, ctx);\n    return;\n\n;}\n")
+    fixed = return_through_copy(generated)
+    first, second = fixed.split("RECOMP_FUNC void func_80013900")
+    assert "gpr entry_ra = ctx->r31;" in first
+    assert "if ((uint32_t)ctx->r5 == (uint32_t)entry_ra) return;" in first
+    assert first.index("entry_ra) return;") < first.index("LOOKUP_FUNC(ctx->r5)")
+    assert "entry_ra" not in second  # `jr $ra` is already a return; a function with no other `jr` is left as it is
+
+
 def test_a_longjmp_and_everything_that_calls_it_is_left_to_the_interpreter():
     """A game's cooperative threads switch contexts with setjmp and longjmp: longjmp loads $sp and $ra from the
     buffer, which C can't jump to, so as recompiled C the switch returned to longjmp's caller and no game context ever

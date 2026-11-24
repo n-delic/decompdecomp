@@ -810,7 +810,7 @@ u32 w2c_env_osPiStartDma(struct w2c_env *e, u32 mb, u32 pri, u32 dir, u32 dev, u
     if (dir != 0) LOG("osPiStartDma: a write to the cartridge (%08X), ignored", dev);
     else if (offset + (uint64_t)size > rom_size) LOG("osPiStartDma: %08X+%X is past the ROM's end", dev, size);
     else memcpy(M + dram, rom + offset, size);
-    if (dmas <= 20 || dmas % 500 == 0) LOG("DMA %lu: ROM %06X -> %08X, %X bytes", dmas, offset, dram, size);
+    if (dmas <= 20 || dmas % 500 == 0 || getenv("PORT_DMA_LOG")) LOG("DMA %lu (retrace %lu): ROM %06X -> %08X, %X bytes", dmas, vi_count, offset, dram, size);
     if (mb) { wbe32(mb + 8, dram_given); wbe32(mb + 12, dev); wbe32(mb + 16, size); }
     if (mq) put(mq, mb, 0, 0);
     return 0;
