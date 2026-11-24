@@ -80,8 +80,10 @@ def graphics_tasks(mem: bytes) -> list[int]:
     return found
 
 
-def draw(program: Path, dump: Path, task: int, work: Path) -> dict[int, tuple[int, int, list]] | None:
-    """The images one task draws: {address: (width, lines, RGB pixels)}, or None when it fails to draw."""
+def draw(program: Path, dump: Path, task: int, work: Path,
+         kept: dict[int, bytes] | None = None) -> dict[int, tuple[int, int, list]] | None:
+    """The images one task draws: {address: (width, lines, RGB pixels)}, or None when it fails to draw. `kept` takes each
+    image's bytes as drawn ({address: bytes}), for the next task to start from (frames, `carry`)."""
     out = work / f"task_{task:08X}"
     shutil.rmtree(out, ignore_errors=True)
     out.mkdir(parents=True)
@@ -102,6 +104,8 @@ def draw(program: Path, dump: Path, task: int, work: Path) -> dict[int, tuple[in
             continue
         if addr + width * lines * (4 if siz == 3 else 2) <= len(mem):
             drawn[addr] = (width, lines, rgb(mem, addr, width, siz, lines))
+            if kept is not None:
+                kept[addr] = mem[addr:addr + width * lines * (4 if siz == 3 else 2)]
     return drawn
 
 
@@ -128,16 +132,31 @@ def with_task(dump: Path, work: Path) -> tuple[Path, int] | None:
     return placed, TASK_AT
 
 
-def frames(program: Path, dump: Path, work: Path) -> dict[tuple[int, int], tuple[int, int, list]]:
-    """Every graphics task in a dump drawn: {(task, image): (width, lines, pixels)}; tasks that fail are reported."""
+def frames(program: Path, dump: Path, work: Path,
+           carry: dict[int, bytes] | None = None) -> dict[tuple[int, int], tuple[int, int, list]]:
+    """Every graphics task in a dump drawn: {(task, image): (width, lines, pixels)}; tasks that fail are skipped.
+    `carry` ({address: bytes}) is the pictures the tasks before this one drew: the emulator draws nothing, so its RAM holds
+    no pixels of what the game drew earlier into the same buffer (a menu's text, drawn by an earlier task, was noise on
+    the console and there on the port), and each is put back before this task draws over it. It is updated with this
+    task's own pictures."""
     out = {}
     own = with_task(dump, work)
     if own:  # the task the console or the port was running, not a guess from RAM
         dump, tasks = own[0], [own[1]]
     else:
         tasks = graphics_tasks(dump.read_bytes())
+    if carry:
+        mem = bytearray(dump.read_bytes())
+        for addr, raw in carry.items():
+            at = addr & 0x7FFFFF
+            mem[at:at + len(raw)] = raw
+        dump = dump.with_name(dump.name + ".carried")
+        dump.write_bytes(mem)
     for task in tasks:
-        drawn = draw(program, dump, task, work)
+        kept: dict[int, bytes] = {}
+        drawn = draw(program, dump, task, work, kept)
+        if carry is not None:
+            carry.update(kept)
         if drawn is None:
             pass  # a list still being built: skipped
             continue
@@ -383,7 +402,17 @@ def compare_run(game: Path, rom: Path, points: list[int], inputs: str, work: Pat
     pacing = {"PORT_VTIME": "1", "PORT_VTIME_TRACE": str(pace_log)} if pace and pace_log.exists() else {}
     port = run_port(game, rom, sorted(set(points)), inputs, work, "frames", stop=stop, extra_env=pacing)
     results: list[dict] = []
+    carried: tuple[dict, dict] = ({}, {})  # what each side drew in the tasks before, within a window of consecutive ones
+    runs: list[list[int]] = []  # the consecutive tasks taken at each moment
+    for n in points:
+        if runs and n == runs[-1][-1] + 1:
+            runs[-1].append(n)
+        else:
+            runs.append([n])
+    warm = {n for run in runs for n in run[:len(run) // 2]}  # drawn for what they leave in the buffers, not compared
     for i, n in enumerate(points):
+        if i and n != points[i - 1] + 1:
+            carried = ({}, {})
         if stop():
             break
         progress(f"Comparing frame {n}", i, len(points))
@@ -393,10 +422,13 @@ def compare_run(game: Path, rom: Path, points: list[int], inputs: str, work: Pat
         if n not in port:
             results.append({"task": n, "missing": "port"})
             continue
-        theirs, ours = frames(program, console[n], work), frames(program, port[n], work)
+        theirs = frames(program, console[n], work, carried[0])
+        ours = frames(program, port[n], work, carried[1])
         only_a, only_b = [k for k in theirs if k not in ours], [k for k in ours if k not in theirs]
         if len(only_a) == len(only_b) == 1 and only_a[0][0] == only_b[0][0]:
             ours[only_a[0]] = ours.pop(only_b[0])  # the two rotate their frame buffers differently: one picture
+        if n in warm:
+            continue
         if not theirs and not ours:  # a task that draws no picture (the game's other tasks): said, so it isn't read as a match
             results.append({"task": n, "missing": "neither"})
             continue

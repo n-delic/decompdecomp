@@ -18,7 +18,7 @@ from pathlib import Path
 
 from ..network import NetworkError
 
-POINTS = 12  # windows compared, spread over the run
+POINTS = 4  # windows compared, spread over the run
 TOLERANCE = 3  # pixels a picture may be shifted before a pixel counts as different (a camera caught a frame earlier)
 
 
@@ -30,13 +30,14 @@ def results_file(root: Path) -> Path:
     return folder(root) / "results.json"
 
 
-WINDOW = 6  # consecutive tasks taken at each moment
+WINDOW = 24  # consecutive tasks taken at each moment: the first half only rebuilds what the buffers held (frame_compare.compare_run)
 
 
 def points(tasks: int, count: int = POINTS) -> list[int]:
     """`count` moments spread from the 600th graphics task (the game has read its save by then) to `tasks`, each a window
-    of WINDOW consecutive tasks: a game draws a picture in some of its tasks and the rest draw into it or elsewhere (a
-    test run's 19 single tasks on one route drew nothing at all on either side), so one or two tasks can miss the picture."""
+    of WINDOW consecutive tasks: a game draws a picture over several tasks, in two buffers taking turns, and the emulator
+    draws none of them, so a buffer's picture is only whole once the window has drawn it from its first task (on a menu
+    route a single task showed 63% different where, with the tasks before it drawn too, the picture matched to the pixel)."""
     tasks = max(int(tasks), WINDOW + 1)
     first = min(600, tasks - WINDOW)
     step = max((tasks - WINDOW - first) // max(count - 1, 1), 1)

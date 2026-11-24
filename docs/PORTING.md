@@ -837,11 +837,11 @@ still shows those pictures as differences until it has one.
 
 Frame 1204 of a menu route differed by 63% between the console and the port, and the cause was not a rendering fault.
 The two display lists were word for word the same except for addresses (the console's heap and the port's lay buffers and
-textures out differently: a picture at 0x315280 on one side, 0x27F240 on the other), and the textures they sample held the
-same bytes at their own addresses. What differed was the rest of the colour buffer: a task draws only part of a picture
-(here the 3D car), and the dump holds whatever that buffer held before, which is the menu text on the port and uninitialised
-noise on the console. So a comparison at one graphics task judges the buffer's history as much as the task. Taking the
-task whose picture the video interface then scans out (the one the player sees) would judge a finished frame; until
-Check pictures does, read a large difference at a task that draws a sixth of the screen as "a different moment in building
-the frame" and look at the neighbouring tasks before calling it a fault. Single sampled tasks can also all draw nothing:
-a route's 19 samples every 300 frames drew no picture on either side, hence the windows of six.
+textures out differently), and the textures they sample held the same bytes at their own addresses. What differed was the
+rest of the colour buffer. A task draws only part of a picture (here the 3D car) over what the buffer held, and the
+emulator draws nothing, so its RAM holds noise where earlier tasks drew the menu text, while the port's holds the text.
+Drawing the tasks before it too, each side's earlier pictures put back into the next task's RAM (`frames(..., carry)`),
+made the buffer drawn within the window match the emulator's to the pixel (0.00% differing). The other buffer, whose
+earlier pictures were drawn before the window began, still shows the noise: a window's first half only rebuilds the
+buffers (`compare_run` draws it and does not compare it), and Check pictures takes windows of 24 tasks. Single sampled tasks
+can also draw nothing at all (a route's 19 samples every 300 frames did), hence windows rather than points.
