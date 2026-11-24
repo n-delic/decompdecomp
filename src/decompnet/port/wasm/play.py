@@ -34,7 +34,9 @@ def save_repository(folder: Path) -> Path:
     """The save repository holding `folder`, the project's progress folder: the build reads its progress/ and port/."""
     folder = Path(folder)
     for repo in (folder.parent, folder):
-        if (repo / "progress" / "decompdecomp.json").is_file() and (repo / "progress" / "src").is_dir():
+        # (a save of a game with nothing matched yet has no progress/src: it still runs, from the recompiled code
+        # and the ROM interpreter)
+        if (repo / "progress" / "decompdecomp.json").is_file():
             return repo
     raise NetworkError(f"{folder} isn't a saved project yet: Save the project first, then Play builds from the save")
 

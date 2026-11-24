@@ -433,8 +433,10 @@ def _empty_unit(out: Path) -> Path:
 def _save_manifest(repo: Path) -> dict:
     progress = repo / "progress"
     path = progress / "decompdecomp.json"
-    if not (progress / "src").is_dir() or not path.is_file():
-        raise NetworkError(f"{repo} has no progress/src and progress/decompdecomp.json: choose the game's save "
+    # progress/src is absent in the save of a game with nothing matched yet: the build then has no game C
+    # (EMPTY_UNIT) and the recompiled code and the interpreter run every function
+    if not path.is_file():
+        raise NetworkError(f"{repo} has no progress/decompdecomp.json: choose the game's save "
                            "repository (the folder Save writes)")
     return json.loads(path.read_text(encoding="utf-8"))
 
