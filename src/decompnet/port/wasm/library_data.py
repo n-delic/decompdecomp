@@ -73,23 +73,46 @@ def data_addresses(code: bytes, vram: int, outside: tuple[list[int], list[int]])
     return found
 
 
-def function_addresses(code: bytes, vram: int, starts: set[int]) -> set[int]:
+def function_address_list(code: bytes, vram: int, starts: set[int],
+                          gaps: tuple[list[int], list[int]] | None = None) -> list[int]:
     """The addresses of functions (`starts`: the save's function starts) a function's machine code builds with a `lui`
-    and the `addiu` or `ori` that finishes it: the functions it takes the address of (a filter's handler, passed to
-    its constructor)."""
+    and the `addiu` or `ori` that finishes it, in the order it builds them: the functions it takes the address of (a
+    filter's handler, then its setParam, passed to its constructor).
+
+    A game that maps its code through the TLB builds a function's address at the window's virtual spelling
+    (`lui 0x2A; addiu 0xBE20` for 0x002ABE20) while the project names it at the KSEG0 spelling (0x802ABE20): the same
+    function, found by its KSEG0 start. `gaps` (the save's function starts and ends, sorted) also admits an address
+    in the code image that no function of the save covers: code the analysis took for data (a function that follows
+    another's `jr $ra` after a stray word) is still code a constructor names."""
     from capstone import CS_ARCH_MIPS, CS_MODE_BIG_ENDIAN, CS_MODE_MIPS32, Cs
-    found, high = set(), {}
+    found, high = [], {}
+
+    def uncovered(address: int) -> bool:
+        if not gaps or not gaps[0] or address & 3:
+            return False
+        first, ends = gaps
+        if not first[0] <= address < ends[-1]:
+            return False
+        at = bisect.bisect_right(first, address) - 1
+        return at < 0 or address >= ends[at]
     for insn in Cs(CS_ARCH_MIPS, CS_MODE_MIPS32 + CS_MODE_BIG_ENDIAN).disasm(code, vram):
         if insn.mnemonic == "lui" and (m := LUI.match(f"lui {insn.op_str}")):
             high[m.group(1)] = (int(m.group(2), 0) & 0xFFFF) << 16
         elif (m := ALU.match(f"{insn.mnemonic} {insn.op_str}")) and m.group(3) in high:
             low = int(m.group(4), 0)
             address = (high[m.group(3)] | (low & 0xFFFF)) if m.group(1) == "ori" else high[m.group(3)] + signed16(low)
-            if address in starts:
-                found.add(address)
+            canonical = address | 0x80000000 if 0 < address < 0x80000000 else address
+            if canonical in starts or uncovered(canonical):
+                if canonical not in found:
+                    found.append(canonical)
             if m.group(2) != m.group(3):
                 high.pop(m.group(2), None)
     return found
+
+
+def function_addresses(code: bytes, vram: int, starts: set[int]) -> set[int]:
+    """`function_address_list` as a set, for the save's function starts alone."""
+    return set(function_address_list(code, vram, starts))
 
 
 IR_FUNCTION = re.compile(r"^(?:declare|define) [^@\n]*@([\w.$]+)\(", re.M)
@@ -185,6 +208,8 @@ def pair(out: Path, units: set[str], layout: list[dict], names: dict[str, str], 
     # reference accounts for, that is it. Without it the C takes a wasm table index (`2`) and the recompiled code
     # that calls the handler jumps to address 2.
     starts = {f["vram"] for f in layout} | set(entries)  # entries: every function start the build knows (fixed.txt)
+    spans = (sorted(f["vram"] for f in layout if f["size"]),  # where the save's code is: starts, and their ends
+             [e for _, e in sorted((f["vram"], f["vram"] + f["size"]) for f in layout if f["size"])])
     unit_names = {u[:-2] for u in units}
     learned: dict[str, int] = {}  # a function the constructors name but nothing else does (alFilterNew itself)
 
@@ -211,17 +236,29 @@ def pair(out: Path, units: set[str], layout: list[dict], names: dict[str, str], 
             body = "\n".join(line for line in text.splitlines() if not line.startswith(("declare", "define")))
             # the functions whose address this one takes (a call's address is not built by `lui`/`addiu`)
             referenced = {n for n in IR_TAKEN.findall(body) if n in functions_here and n != name}
-            unknown = sorted(n for n in referenced if address_of(n) is None)
+            # the unknown functions in the order the unit's C takes them (a filter's handler, then its setParam)
+            order = list(dict.fromkeys(n for n in IR_TAKEN.findall(body) if n in referenced and address_of(n) is None))
+            unknown = sorted(order)
             if not unknown:
                 continue
-            built = function_addresses(code, f["vram"], starts) - {f["vram"]}
-            leftover = built - {a for n in referenced if (a := address_of(n)) is not None}
-            if len(leftover) == len(unknown):  # every function the code builds is one the unit references
-                guesses.append((unknown, leftover))
+            built = function_address_list(code, f["vram"], starts, spans)
+            built = [a for a in built if a != f["vram"]]
+            known = {a for n in referenced if (a := address_of(n)) is not None}
+            leftover_list = [a for a in built if a not in known]
+            leftover = set(leftover_list)
+            if len(leftover) == len(unknown) == 1 or (len(leftover) == len(unknown) and len(order) == len(leftover_list)
+                                                      and len(order) > 1):
+                # every function the code builds is one the unit references; with several, the order the machine
+                # code builds them is the order the C takes them (a1 then a2 of the call to alFilterNew)
+                guesses.append((order if len(order) > 1 else unknown, leftover_list if len(order) > 1 else leftover))
         # a function several constructors name (alFilterNew) is the one address all their leftovers share; one only
         # a constructor names (its own handler) is what is left of that constructor's addresses
         candidates: dict[str, set[int]] = {}
         for unknown, leftover in guesses:
+            if isinstance(leftover, list):  # several: each name takes the address built at its place in the order
+                for n, address in zip(unknown, leftover):
+                    candidates[n] = candidates[n] & {address} if n in candidates else {address}
+                continue
             for n in unknown:
                 candidates[n] = candidates[n] & leftover if n in candidates else set(leftover)
         sure = {n: next(iter(c)) for n, c in candidates.items() if len(c) == 1}

@@ -192,7 +192,9 @@ def test_an_unnamed_handler_the_constructor_takes_is_found_from_the_constructors
     assert own["alMixPull"] == 0x80002000 and shared == {}
 
 
-def test_two_unnamed_functions_a_constructor_takes_are_not_guessed_apart(tmp_path):
+def test_two_unnamed_functions_a_constructor_takes_together_pair_in_the_order_it_builds_them(tmp_path):
+    """A constructor hands its handler and its setParam to alFilterNew in one call (a1, then a2): the machine code
+    builds the two addresses in that order, so each name takes the address at its place."""
     layout, rom, units, handlers, _ = constructor_project(
         tmp_path, {"alMixNew": [("alMixPull", 0x80002000), ("alMixOther", 0x80002100)]})
     layout += [{"name": "func_80002000", "vram": 0x80002000, "size": 0x100},
@@ -201,7 +203,38 @@ def test_two_unnamed_functions_a_constructor_takes_are_not_guessed_apart(tmp_pat
         (tmp_path / "ll" / f"{name}.ll").write_text(f"define ptr @{name}(ptr %a) {{\n}}\n")
         units.add(name + ".c")
     own = library_data.pair(tmp_path, units, layout, {}, rom, IMAGE, set())[1]
-    assert "alMixPull" not in own and "alMixOther" not in own
+    assert own["alMixPull"] == 0x80002000 and own["alMixOther"] == 0x80002100
+
+
+def test_function_addresses_take_the_windows_virtual_spelling_and_code_the_save_has_no_function_for():
+    """A game that maps its code through the TLB builds a handler at the window's virtual spelling (0x00002100 for
+    the function the project names 0x80002100), and a function the analysis took for data (a stray word after the
+    one before it) is no function of the save: both are still addresses a constructor names."""
+    words = build_address(5, 0x00002100) + build_address(6, 0x80002200) + build_address(7, 0x80009000) + [JR_RA, NOP]
+    starts = {0x80002100}
+    assert library_data.function_address_list(code(*words), 0x80000500, starts) == [0x80002100]
+    spans = ([0x80000400, 0x80002100, 0x80003000], [0x80000800, 0x80002140, 0x80003100])  # 0x80002200: in a gap
+    assert library_data.function_address_list(code(*words), 0x80000500, starts, spans) == [0x80002100, 0x80002200]
+    assert library_data.function_addresses(code(*words), 0x80000500, starts) == {0x80002100}
+
+
+def test_a_constructor_building_the_windows_spelling_names_functions_the_save_split_as_data(tmp_path):
+    """Armorines: alMainBusNew builds 0x0029BE20 (alMainBusPull) and 0x0029BF60 (alMainBusParam); the save has a
+    function at 0x8029BF60 only, the code before it taken for data."""
+    (tmp_path / "ll").mkdir()
+    words = build_address(5, 0x00002000) + build_address(6, 0x00002100) + [JR_RA, NOP]
+    (tmp_path / "ll" / "alMixNew.ll").write_text(
+        "declare void @alFilterNew(ptr, ptr, ptr, i32)\ndeclare ptr @alMixPull(ptr)\ndeclare i32 @alMixParam(ptr)\n"
+        "define void @alMixNew(ptr %f) {\n  call void @alFilterNew(ptr %f, ptr @alMixPull, ptr @alMixParam, i32 4)\n"
+        "  ret void\n}\n")
+    for name in ("alMixPull", "alMixParam"):
+        (tmp_path / "ll" / f"{name}.ll").write_text(f"define ptr @{name}(ptr %a) {{\n}}\n")
+    layout = [{"name": "alMixNew", "vram": IMAGE, "size": 4 * len(words)},
+              {"name": "func_80002100", "vram": 0x80002100, "size": 0x40}]
+    rom = bytes(0x1000) + code(*words)
+    units = {"alMixNew.c", "alMixPull.c", "alMixParam.c"}
+    own = library_data.pair(tmp_path, units, layout, {}, rom, IMAGE, set())[1]
+    assert own["alMixPull"] == 0x80002000 and own["alMixParam"] == 0x80002100
 
 
 def test_a_function_several_constructors_take_is_the_address_they_all_build(tmp_path):
