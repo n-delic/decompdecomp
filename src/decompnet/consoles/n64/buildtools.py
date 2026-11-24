@@ -4,24 +4,44 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 from ... import toolchains
 
 
+def _crc_tool(root: Path) -> None:
+    """Public N64 projects fix the ROM's checksum with tools/n64crc, which their `make dependencies` compiles next to
+    a whole IDO build. Compile just that one file when it's missing, so the final link step has its tool (a
+    failure here stays silent: the project's own error then says what it lacks)."""
+    source, tool = root / "tools" / "n64crc.c", root / "tools" / "n64crc"
+    cc = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
+    if source.is_file() and not tool.exists() and cc:
+        try:
+            subprocess.run([cc, str(source), "-o", str(tool)], capture_output=True, timeout=120,
+                           stdin=subprocess.DEVNULL, check=False)
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+
 def command(project, argv: list[str]) -> list[str]:
     if os.name == "nt":
         return argv  # these compiler binaries run inside WSL on Windows
-    if Path(argv[0]).name not in ("make", "gmake") or any(a.startswith("IDO=") for a in argv[1:]):
+    if Path(argv[0]).name not in ("make", "gmake") or any(a.startswith(("IDO=", "CC=")) for a in argv[1:]):
         return argv
     makefile = project.root / "Makefile"
     if not makefile.is_file():
         return argv
+    _crc_tool(project.root)
     text = makefile.read_text(encoding="utf-8", errors="replace")
-    declared = re.search(r"^IDO\s*[:?]?=\s*([^\s#]+)", text, re.M)
+    # The variable is usually IDO; some projects name it CC, indented inside an if/else (a community decomp of a
+    # racing game builds its compiler in tools/ and picks it with `CC := ...` under `else`). A command-line
+    # value beats the makefile's own assignment, so one override reaches both spellings.
+    declared = re.search(r"^[ \t]*(IDO|CC)[ \t]*[:?]?=[ \t]*([^\s#]*/(?:5\.3|7\.1)/(?:[^\s#]*/)?cc)[ \t]*(?:#.*)?$", text, re.M)
     if not declared:
         return argv
-    path = declared[1]
+    name, path = declared[1], declared[2]
     # Resolve only unique literal declarations (usually TOOLS := tools), never Make functions or conditions.
     for variable in re.findall(r"\$\((\w+)\)", path):
         values = set(re.findall(rf"^{re.escape(variable)}\s*[:?]?=\s*([^\s#$]+)\s*$", text, re.M))
@@ -45,4 +65,4 @@ def command(project, argv: list[str]) -> list[str]:
         alias.symlink_to(source, target_is_directory=True)
     if not alias.is_symlink() or alias.resolve() != source.resolve():
         return argv
-    return [*argv, "IDO=" + (alias / "cc").relative_to(project.root).as_posix()]
+    return [*argv, name + "=" + (alias / "cc").relative_to(project.root).as_posix()]

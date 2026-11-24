@@ -91,3 +91,27 @@ def test_n64_reuses_only_the_declared_missing_ido_version(tmp_path, monkeypatch)
     local.unlink()
     monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: None)
     assert consoles.get("n64").project_build_command(project, ["make"]) == ["make"]
+
+
+def test_n64_redirects_a_cc_variable_and_builds_the_crc_tool(tmp_path, monkeypatch):
+    """A community decomp that picks its compiler with an indented `CC :=` under an else (after a qemu line that
+    also assigns CC) still gets the installed IDO, and tools/n64crc is compiled for its checksum step."""
+    from decompnet.consoles.n64 import buildtools
+
+    source = tmp_path / "ido"
+    source.mkdir()
+    (source / "cc").write_text("compiler")
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(buildtools.toolchains, "require", lambda tid: source)
+    ran = []
+    monkeypatch.setattr(buildtools.subprocess, "run", lambda argv, **kw: ran.append(argv))
+    monkeypatch.setattr(buildtools.shutil, "which", lambda name: "/usr/bin/cc" if name == "cc" else None)
+    root = tmp_path / "project"
+    (root / "tools").mkdir(parents=True)
+    (root / "tools" / "n64crc.c").write_text("int main(void){return 0;}")
+    make = ("TOOLS_DIR = tools\nifeq ($(USE_QEMU_IRIX),1)\n\tCC := $(QEMU_IRIX) -silent $(TOOLS_DIR)/x/cc\n"
+            "\telse\n\tCC\t := $(TOOLS_DIR)/ido-static-recomp/build/5.3/out/cc\n\tendif\n")
+    (root / "Makefile").write_text(make)
+    prepared = consoles.get("n64").project_build_command(SimpleNamespace(root=root), ["make", "-j4"])
+    assert prepared == ["make", "-j4", "CC=.decomp-wtf/build-tools/ido-5.3/cc"]
+    assert ran and ran[0][0] == "/usr/bin/cc" and ran[0][-1].endswith("tools/n64crc")
