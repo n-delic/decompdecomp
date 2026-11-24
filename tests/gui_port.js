@@ -432,5 +432,13 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    assert.match(detail.children[0],/6 of 8 functions compile, $/,'the count is a button that follows the text');
    detail.children[1].onclick();
    assert.match(t.c.drawer.title,/2 functions that don't compile/,'clicking the count opens the shared side drawer');}
+  {const t=setup();t.c.S.tab='porting';
+   const pc={ok:5,warned:0,failed:0,total:5,kinds:[],checked_at:1,failures:[]};
+   const link={undefined:3,provided:0,duplicates:[],zeroed:0,unread:0,groups:[{kind:'data',symbols:3,users:1,about:'',examples:[]}]};
+   const rename=r=>t.run('portSteps('+JSON.stringify(r)+')').find(x=>x.title==='Compiles for a PC').buttons.includes('portRenameCalls');
+   assert.equal(rename({...report,mode:'rom',pc,link}),false,'no old names or static functions: nothing for Fix calls by old names to do');
+   assert.equal(rename({...report,mode:'rom',pc}),false,'before the link check');
+   assert.equal(rename({...report,mode:'rom',pc,link:{...link,groups:[{...link.groups[0],kind:'renamed'}]}}),true);
+   assert.equal(rename({...report,mode:'rom',pc,link:{...link,groups:[{...link.groups[0],kind:'static'}]}}),true);}
   console.log('Port readiness panel: closed, read, stale reply, failure, asset map, extraction, link, suspicious calls, check behaviour, recompile, renamed calls, play, runtimes, the build bar, Stop, reattaching and export passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});

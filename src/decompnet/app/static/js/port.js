@@ -210,6 +210,12 @@ function recompileStep(report) {
 
 /* The steps, from the report: each {title, pct (null: done or not, no share to show), detail, buttons and logs (the
    panel's own elements, moved into the step)}. */
+// Fix calls by old names has work only where the link check found a call to a renamed function or to a static one;
+// it stays while it runs, so a refresh doesn't drop its button mid-job.
+function needsRenamedCalls(link) {
+  return !!link?.groups?.some((g) => g.kind === "renamed" || g.kind === "static") || !!$("portRenameCalls")?.disabled;
+}
+
 function portSteps(report) {
   const code = report.code, pc = report.pc, link = report.link, assets = report.assets, calls = report.calls;
   const behaviour = report.behaviour, compared = behaviour ? behaviour.same + behaviour.differs : 0;
@@ -228,7 +234,7 @@ function portSteps(report) {
       detail: report.addresses.literals ? `${report.addresses.literals} in ${report.addresses.functions} functions` : "none left" },
     { title: "Compiles for a PC", pct: pc ? pct(pc.ok + pc.warned, pc.total) : 0,
       detail: pc ? `${(pc.ok + pc.warned).toLocaleString()} of ${pc.total.toLocaleString()} functions compile, ${pc.failed} don't`
-        : "not tried yet", failures: pc?.failures, buttons: ["portCompile", "portRenameCalls"], logs: ["portCompileLog", "portRenameLog"] },
+        : "not tried yet", failures: pc?.failures, buttons: ["portCompile", ...(needsRenamedCalls(link) ? ["portRenameCalls"] : [])], logs: ["portCompileLog", "portRenameLog"] },
     { title: "Links for a PC", pct: link ? (link.undefined || link.duplicates.length ? null : 100) : 0,
       detail: link ? `${link.undefined.toLocaleString()} symbols needed and defined nowhere`
         + (link.duplicates.length ? `, ${link.duplicates.length} defined twice` : "") : "after Compile for PC" },
