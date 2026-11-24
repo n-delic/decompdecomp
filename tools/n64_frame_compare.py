@@ -182,6 +182,25 @@ def retraces_per_second(rom: Path) -> int:
     return 50 if chr(head[0x3E]) in "DFHIPSUWXY" else 60
 
 
+def prime_save(game: Path, rom: Path, inputs: str, folder: Path, clock: str = "vi", seconds: int = 100) -> bool:
+    """Run the port once through the same input script in `folder` (where it keeps game.eep) before the run that is compared,
+    unless a save is there already. Observed on a racing game: a port started from no save, from an all-zero one or from the
+    save of a short boot had its car launch slower than the emulator's (687 units to the port's 116 in the first 200 tasks
+    of the race, 2,000 and more units behind from then on), while one started from the save a full run of the script had
+    written was at the console's position to the unit at every task sampled, and the race matched the emulator to the pixel
+    (seven of eight windows 0.00 percent differing). Why the emulator's blank save behaves like that one is not known. Returns
+    whether it ran."""
+    if (folder / "game.eep").exists():
+        return False
+    env = {k: v for k, v in os.environ.items() if k not in ("PORT_INPUT", "PORT_RAM_DUMPS", "PORT_FRAME_DUMPS", "PORT_VI_DUMPS")}
+    env["PORT_INPUT_CLOCK"] = clock
+    if inputs:
+        env["PORT_INPUT"] = inputs
+    subprocess.run([str(game.resolve()), str(rom.resolve()), str(seconds)], cwd=folder, env=env, capture_output=True,
+                   timeout=seconds * 6 + 120)
+    return (folder / "game.eep").exists()
+
+
 def run_port(game: Path, rom: Path, points: list[int], inputs: str, folder: Path, clock: str = "vi") -> dict[int, Path]:
     """The port run (in real time) until its RAM is written at each point: retraces (PORT_RAM_DUMPS) or, with `clock`
     "frames", the game's graphics tasks (PORT_FRAME_DUMPS), its input timed the same way. Stopped once the last is
@@ -280,6 +299,9 @@ def main(argv=None) -> int:
                                       "apart (the port loads in no time and never drops a frame): the same count")
     p.add_argument("--input", default="", help="vi:BUTTON+BUTTON+SX=n+SY=n,... or @file")
     p.add_argument("--port-input", help="the port's own script (default: --input's)")
+    p.add_argument("--prime-save", action="store_true",
+                   help="run the port once through the input script first, so the compared run starts from the save that "
+                        "run wrote (game.eep in --work): a port started with no save diverged from the emulator's race")
     p.add_argument("--tolerance", type=int, default=0, metavar="PIXELS",
                    help="also report the share of pixels with no equal pixel within PIXELS of the other side's picture "
                         "(a moving scene the two runs reach at slightly different moments)")
@@ -309,6 +331,8 @@ def main(argv=None) -> int:
         work.mkdir(parents=True, exist_ok=True)
         program = build(work)
         console = run_console(args.rom, points, inputs, work, clock)
+        if args.port and args.prime_save and prime_save(args.port, args.rom, port_inputs, work, clock):
+            print("primed the port's save (game.eep) by a run of the input script: see prime_save")
         port = run_port(args.port, args.rom, sorted(set(port_points)), port_inputs, work, clock) if args.port else {}
         for n in points:
             pn = pairs[n]
