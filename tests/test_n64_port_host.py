@@ -817,7 +817,7 @@ static int si_register(uint32_t a, int w, uint32_t v, uint32_t *r) { (void)a; (v
 static int pi_register(uint32_t a, int w, uint32_t v, uint32_t *r) { (void)a; (void)w; (void)v; (void)r; return 0; }
 static int flash_in_use; static uint32_t save_offset(uint32_t b) { return (b & 0x1FFFFFFFu) - 0x08000000u; }
 static uint32_t port_flash_read(uint32_t o) { (void)o; return 0; } static void port_flash_command(uint32_t c) { (void)c; }
-static uint32_t dpc_start, dpc_end, dpc_cur; static int dpc_start_valid; static void dpc_run(void) {}
+static uint32_t dpc_start, dpc_end, dpc_cur, dpc_start_word, dpc_end_word; static int dpc_start_valid; static void dpc_run(void) {}
 """ + _function(HOST.read_text(), "rom32") + "\n" + _function(HOST.read_text(), "open_bus") + "\n" + _function(HOST.read_text(), "port_io_load") + "\n" + _function(HOST.read_text(), "port_io_store") + """
 int main(void) {
     rom[0x578] = 0x34; rom[0x579] = 0x21; rom[0x57A] = 0x89; rom[0x57B] = 0x65;
@@ -1140,6 +1140,8 @@ static uint8_t rom[] = {0, 1, 2, 3, 4, 5};
 static size_t rom_size = sizeof rom;
 static int cart_io_busy;
 static int interrupts;
+static unsigned long dmas, vi_count;
+#define LOG(...) ((void)0)
 enum { EV_PI = 8 };
 static void post_event(int event) { assert(event == EV_PI); interrupts++; }
 #define SHADOW_STACKS 0x10000000u
@@ -1806,3 +1808,13 @@ def test_the_games_window_raises_itself_when_it_opens():
     assert "SDL_FORCE_RAISEWINDOW" in text and "SYM(RaiseWindow)" in text
     # raised right after each of the two places the window is created
     assert text.count("sdl.RaiseWindow(window)") >= 2
+
+
+def test_a_game_that_reads_the_cartridge_through_the_pi_registers_is_counted():
+    """A game's own PI manager starts its transfers by writing the PI registers: the summary said '0 DMAs' of one that
+    read its file table that way, which looked like a game that never loaded anything. They are counted and logged
+    (PORT_DMA_LOG) as osPiStartDma's are, and a transfer the host could not do says so."""
+    text = HOST.read_text()
+    start = text.index("case 0xA460000Cu:")
+    body = text[start:start + 2500]
+    assert "dmas++;" in body and "NOT DONE" in body

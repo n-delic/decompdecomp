@@ -591,6 +591,48 @@ int main(int argc, char **argv) {
     assert has(0x80100000) == "0"  # outside any window
 
 
+def test_a_function_spelled_at_a_window_kept_at_its_physical_address_has_code_there(tmp_path):
+    """A game linked at virtual 0x100000 and loaded at physical 0 spells its functions 0x80100000 | offset, where RAM
+    holds zeros: the console runs them at the physical alias, which the host keeps the window at (port_tlb_call). The
+    interpreter's entry went there but `port_mips_has_code` asked the spelling, found nothing and skipped, as a stub,
+    every function the recompiler could not translate (a switch through a table): Shadow Man's main thread called one
+    and never got an answer."""
+    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if not cc:
+        pytest.skip("no C compiler")
+    source = HARNESS % {"c": C_FUNCTION, "code": CODE, "data": DATA}
+    source = source.replace("unsigned port_tlb_n;", "unsigned port_tlb_n = 1;")
+    source = source.replace("uint32_t port_tlb_call(uint32_t a) { return a; }",
+                            "uint32_t port_tlb_call(uint32_t a) { return a >= 0x80100000u && a < 0x80200000u ? "
+                            "0x80000000u + (a - 0x80100000u) : a; }")
+    source = source.replace("int main(int argc, char **argv) {", """int port_mips_has_code(uint32_t address);
+int main(int argc, char **argv) {
+    if (argc > 2 && !strncmp(argv[2], "has:", 4)) {
+        mem = mmap(NULL, 1ull << 32, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
+        uint32_t w = __builtin_bswap32(0x24020001u); /* addiu $v0, $zero, 1: at physical 0x12470 only */
+        memcpy(mem + 0x80012470u, &w, 4);
+        printf("%d\\n", port_mips_has_code((uint32_t)strtoul(argv[2] + 4, NULL, 16)));
+        return 0;
+    }""", 1)
+    harness = tmp_path / "harness.c"
+    harness.write_text(source)
+    program = tmp_path / "interp"
+    done = subprocess.run([cc, "-O1", "-o", str(program), str(harness), str(MIPS), "-lm"],
+                          capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr
+    code = tmp_path / "unused.bin"
+    code.write_bytes(b"")
+
+    def has(address):
+        out = subprocess.run([str(program), str(code), f"has:{address:08X}"], capture_output=True, text=True,
+                             timeout=30, check=True)
+        return out.stdout.strip()
+
+    assert has(0x80012470) == "1"  # the physical alias itself
+    assert has(0x80112470) == "1"  # the spelling: the code is at the alias the window is kept at
+    assert has(0x80112474) == "0"  # nothing next to it
+
+
 def test_a_fetch_from_an_invalid_page_takes_the_general_vector_with_the_tlbl_cause(tmp_path):
     """A page an entry covers with its valid bit clear is TLB Invalid: the console enters the general exception vector
     (0x80000180, not the refill vector 0x80000000), with Cause TLBL (code 2), BadVAddr and EPC the fetch. The game's

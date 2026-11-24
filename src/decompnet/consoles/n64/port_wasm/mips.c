@@ -1320,7 +1320,10 @@ void port_mips_copy_in(uint64_t *r, int slot, uint32_t from, int words) {
    runs through a window never started its threads' work. */
 int port_mips_has_code(uint32_t address) {
     if (!M) M = port_memory();
-    address = mapped(address);
+    /* the code at a name the project spells against a window kept at its physical address is at the physical alias
+       (the entry below goes there: port_tlb_call): asked at the spelling, a function the recompiler couldn't
+       translate looked empty and was skipped as a stub, and a game whose main thread called it never moved on */
+    address = port_tlb_call(mapped(address));
     if (address < 0x80000400u || address >= 0x80800000u || (address & 3)) return 0;
     return fetch(address) != 0 || fetch(address + 4) != 0;
 }
