@@ -25,6 +25,8 @@ The source change, and the measured result before and after (the app's judge-wor
 | 1 | the code-assignment pass's inner test through a pointer its guard sets: `u32 *tp = T;` after `u32 hb = 1 << c;`, `while (tp[k] == c)` | 290 -> 275 | `guard_symbol_pointer` (new, decomp-repair #1607) |
 | 2 | the three later passes' bounds through one function-level pointer set in each guard: `u32 *lim; gp = H_sym; lim = (u32 *)((char *)gp + off);` (the first pass's `H + c` left alone) | 275 -> 235 | `guard_alias_pointer` (#1607) |
 | 3 | the code-assignment pass's cursor and byte offset dropped: `if (T[k] == c)`, `while (*(u32 *)((char *)T + (k << 2)) != 0)` | 235 -> 230 | `stepped_cursor_index` (new, #1608) |
+| 4 | the code-assignment pass's guard and do-while as the `while (T[k] == c) { y = i \| (1 << c); .. }` it was (no `hb`, no guard pointer) | 230 -> 215 | `guarded_do_while_loop` (new, #1611) |
+| 5 | the later passes as `for (i = 1; i <= H_sym[c]; i++, k++)` (no `lim`, `off` or shared pointer), the length pass's outer loop as `for (c = 1; c < tb; c++)`, the code-assignment pass's outer loop as `while (*(u32 *)((char *)T + (k << 2)) != 0)` | 215 (same code, natural source) | |
 
 Why (read from the 2.7.2 source, `loop.c`): `scan_loop` moves a constant's set out of a loop only when it is used in
 its own basic block, or is not a user variable, or is reached on every iteration and not used before it; it never moves
@@ -53,7 +55,13 @@ Failed experiments that would otherwise be repeated:
 - The decode pass's mask as `(1 << tb) - 1`: 310 (lifts `tb` past the saved count again; a `do { } while (0)` on the
   last pass's pointer to rebalance it: 360).
 
-Still different at 230 (47 rows): the first passes' counter (`$t3` for `$a3`) and the histogram increment's
+Steps 4 and 5 are the same rule seen from the source the developer wrote: jump.c copies a `while`/`for` test in front
+of the loop and loop.c moves the loop's invariants into the preheader after that copy, so the fresh loads sit in the
+"guard" without any pointer local; steps 1-3 were stand-ins that the natural loops replace (step 2's shared pointer is
+gone at 215). The same rewrite of the passes' outer `if (c < 16) { do { } while (c < 16); }` as `for (; c < 16; c++)`
+was worse (335-650, the frame), as was the decode-table pass's do-while as a `for` (515).
+
+Still different at 230 (47 rows; at 215, 43: the code-assignment pass's inner pointer now loads fresh): the first passes' counter (`$t3` for `$a3`) and the histogram increment's
 `$v0`/`$v1`; the sort loop's length and pointer (`$a0`/`$a3`) and count (`$a2` for `$t3`); the code-assignment pass's
 inner pointer from the hoisted copy again (step 3's guard read `T[k]` is a temporary that cse shares with the
 guard's pointer); the last pass's `off` in `$s0` for `$t9` and its inner pointers (`$t5`-`$t9`, `$s0`).
