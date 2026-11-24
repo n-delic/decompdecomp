@@ -292,6 +292,14 @@ class Sweeps:
             db.execute('INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)',
                        (f'deep-sweep:{proj["id"]}', json.dumps(cfg)))
 
+    def stalled(self, slug, fn):
+        """Passes in a row that finished this function with no improvement (0 when it improved, or is new)."""
+        row = self._store(slug).one('SELECT result FROM deep_permutation_passes WHERE function_id=?', fn['id'])
+        try:
+            return max(0, int(json.loads(row['result']).get('stalled_passes', 0))) if row else 0
+        except (ValueError, TypeError):
+            return 0
+
     def history(self, slug, fn):
         row = self._store(slug).one('SELECT * FROM deep_permutation_passes WHERE function_id=?', fn['id'])
         if not row:
@@ -552,6 +560,9 @@ class Sweeps:
     def completed(self, slug, before, minutes, variants, result, build_scope):
         self.improvement(before, result.get('best_score'))
         fresh = self.net._function(before['name'], slug)
+        start, end = before['best_score'], fresh['best_score']
+        improved = fresh['status'] == 'matched' or (start is not None and end is not None and end < start)
+        result['stalled_passes'] = 0 if improved else self.stalled(slug, before) + 1
         proj = self.net.project_row(slug)
         stable = build_scope == candidate_scope.key(self.net, proj, before)
         self.record(fresh, signature(self.net, proj, fresh, minutes, variants, result.get('compiler_profiles'),
@@ -578,11 +589,14 @@ class Sweeps:
     def record(self, fn, scope, state, minutes, variants, result=None, error=''):
         with self.lock:
             self.queue_cache.clear()
+        result = dict(result or {})
+        if 'stalled_passes' not in result and (kept := self.stalled(fn['project_id'], fn)):
+            result['stalled_passes'] = kept  # an error or a reopened pass keeps the count it had
         with self._store(fn['project_id']).tx() as db:
             db.execute('INSERT OR REPLACE INTO deep_permutation_passes '
                        '(function_id,scope,state,minutes,max_variants,completed_at,result,error) VALUES(?,?,?,?,?,?,?,?)',
                        (fn['id'], scope, state, minutes, variants, time.time() if state == 'completed' else None,
-                        json.dumps(result or {}), error))
+                        json.dumps(result), error))
 
     @deep_throughput.sweep
     def run(self, slug, minutes, variants, log, threads=1, loop=False):

@@ -1337,3 +1337,34 @@ def test_functions_are_searched_in_the_order_the_project_chose(sweep, monkeypatc
         import time
         time.sleep(.02)
     assert calls[:2] == ['f0', 'f1']
+
+
+def test_stalled_passes_count_passes_without_improvement_and_reset_on_one(sweep):
+    obj, net, calls, path = sweep
+    proj = net.project_row('game')
+    before = dict(net._function('f0', 'game'))
+    scope = deep_sweep.signature(net, proj, net._function('f0', 'game'), 1, 10)
+    assert obj.stalled('game', before) == 0
+    for expected in (1, 2, 3):
+        obj.completed('game', dict(net._function('f0', 'game')), 1, 10, {'best_score': 50}, deep_sweep.candidate_scope.key(net, proj, before))
+        assert obj.stalled('game', before) == expected
+        assert deep_permuter.stalled_passes(net, proj, before) == expected
+    # an error record keeps the count it replaced
+    obj.record(net._function('f0', 'game'), scope, 'error', 1, 10, error='compile failed')
+    assert obj.stalled('game', before) == 3
+    # a pass that lowers the score starts the count again
+    pre = dict(net._function('f0', 'game'))
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_score=10 WHERE name='f0'")
+    obj.completed('game', pre, 1, 10, {'best_score': 10}, deep_sweep.candidate_scope.key(net, proj, before))
+    assert obj.stalled('game', before) == 0
+
+
+def test_the_pair_search_widens_with_stalled_passes_and_is_capped():
+    assert [deep_permuter.escalation(n) for n in (0, 1, 2, 4, 9, None)] == [1, 1.5, 2, 3, 3, 1]
+    search = deep_permuter.Search(SimpleNamespace(), 1, 10, Log())
+    assert search.pair_scale == 1.0
+    search.escalate(0)
+    assert search.pair_scale == 1.0
+    search.escalate(2)
+    assert search.pair_scale == 2.0 and search.seconds == 60 and search.limit == 10

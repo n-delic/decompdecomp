@@ -63,6 +63,28 @@ EXTEND_STEP = 0.5
 EXTEND_MAX = 3
 
 
+# A function that comes back to the deep search again and again with no improvement (deep_sweep records its
+# `stalled_passes`) gets a wider pair search: each such pass adds STALL_STEP of the base width, at most STALL_MAX
+# passes' worth (x3). Pair search found the most matches per compile-second on a 1,200-match PS1 project (18 matches
+# in 2,470 s, against 82 in 221,915 s for the local repairs). The time and candidate budgets are not touched here:
+# a looping sweep already doubles them every cycle.
+STALL_STEP = 0.5
+STALL_MAX = 4
+
+
+def escalation(stalled):
+    return 1 + STALL_STEP * min(max(0, stalled or 0), STALL_MAX)
+
+
+def stalled_passes(net, proj, fn):
+    """Passes in a row that finished `fn` with no improvement; 0 when it improved, is new, or nothing is recorded."""
+    try:
+        row = net.project_store(proj['id']).one('SELECT result FROM deep_permutation_passes WHERE function_id=?', fn['id'])
+        return max(0, int(json.loads(row['result']).get('stalled_passes', 0))) if row else 0
+    except Exception:  # (advice for the search: a missing table or an old record is just "not stalled")
+        return 0
+
+
 class SearchLimit(Exception):
     pass
 
@@ -142,6 +164,7 @@ class Search(Permuter):
         self.limit = self.random_trial_limit = max_variants
         self.base_seconds, self.base_limit = self.seconds, max_variants
         self.extensions = 0
+        self.pair_scale = 1.0  # x the pair search's width (escalate)
         self.improved_at = None  # (tested, monotonic time) of the latest new best
         # A caller that caps the run (parallel lanes, maintenance tasks) owns its deadline; only a plain run extends.
         self.extendable = getattr(log, 'maximum_seconds', None) is None
@@ -245,6 +268,15 @@ class Search(Permuter):
             raise SearchLimit('Time limit reached')
         if self.tested >= self.limit:
             raise SearchLimit('Variant limit reached')
+
+    def escalate(self, stalled):
+        """Widen the pair search for a function that earlier passes left unimproved."""
+        factor = escalation(stalled)
+        if factor > 1:
+            self.pair_scale = factor
+            self.log(f'{stalled} earlier pass{"es" if stalled != 1 else ""} left this function unimproved: '
+                     f'the pair search is x{factor:g} wider.')
+        return factor
 
     def _extend(self):
         """Grow the budget when the best score improved in its last EXTEND_WINDOW; True when it grew."""
@@ -682,13 +714,13 @@ class Search(Permuter):
         proposals, _ = self._local_proposals(source, proj, fn, rows)
         kids, seen = [], {source}
         for family, child in proposals:
-            if child not in seen and len(kids) < pair_search.MAX_SINGLES:
+            if child not in seen and len(kids) < int(pair_search.MAX_SINGLES * self.pair_scale):
                 seen.add(child)
                 kids.append((family, child))
         if not kids:
             return best
         self.log(f'Searching pairs of repairs: judging {len(kids)} single children, then pairs of the best '
-                 f'{pair_search.TOP_K} from different families.')
+                 f'{int(pair_search.TOP_K * self.pair_scale)} from different families.')
         with judge_pool.JudgePool(proj['slug'], fn, own['toolchain'], flags, size=self.PAIR_WORKERS) as pool:
             cover = parent_bad = None
             if pair_search.row_coverage_enabled(self.net.cfg(proj)):
@@ -713,7 +745,8 @@ class Search(Permuter):
                 found = pair_search.search(
                     pool.judge_many, source, singles, best, check=self.check, log=self.log,
                     regenerate=lambda parent: self._local_proposals(parent, proj, fn, rows)[0], skip=self.local_seen,
-                    cover=cover, parent_bad=parent_bad)
+                    cover=cover, parent_bad=parent_bad, top=int(pair_search.TOP_K * self.pair_scale),
+                    budget=int(pair_search.PAIR_BUDGET * self.pair_scale))
                 found = (found[0], found[1], found[2], found[3] + len(kids))
         self.tested += max(1, found[3] // 50)
         self.report()
@@ -2386,6 +2419,7 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
         raise NetworkError('Multiple compiler profiles require a ROM project; imported builds own their compiler settings.')
     search = Search(net, minutes, max_variants, log, fn)
     search.compile_pool = getattr(log, 'compile_pool', None)
+    search.escalate(stalled_passes(net, proj, fn))
     if rank_candidates:
         from .deep_candidate_order import for_function
         search.candidate_order = for_function(proj, fn, log)
