@@ -70,6 +70,9 @@ def brief(net, fn, agent, header):
     focus = current_focus(store.one, proj, fn, focus_record)
     if focus:
         lines.append('Claim objective. ' + GOALS.get(focus, 'Resolve one ' + focus.lower() + ' mismatch.'))
+    from .start_boundaries import brief as start_brief
+    if note := start_brief(net, proj, fn):
+        lines.append(note)
     lines.append('For a compact working packet with the current C, use get_function(section="work").')
     lines.extend(history(net, fn))
     if source:

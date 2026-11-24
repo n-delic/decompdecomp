@@ -427,6 +427,8 @@ completes parents truncated to a one/two-instruction prologue. Existing projects
 explicit reimport; ambiguous mappings, indirect flow, kernel stubs and other processors or
 project builds retain review/adapters rather than guessed ownership.
 
+Implemented: possible start-boundary suggestions (`app/start_boundaries.py`): a leading word that looks like alignment padding or a dead word is suggested as "start +4" in the brief and Review function boundaries, never changed. Planned: a reviewer's one-click apply (cut the word off with a retained padding piece and undo record), and the same check for processors other than MIPS.
+
 Implemented: guided mapped MIPS boundary evidence, neighbouring instruction windows, explicit before/after extents and one-shot agent recommendations with cited supporting/counter-evidence and uncertainty. Advice never edits layouts, claims work or compiles, and stale inputs are labelled.
 
 Implemented: mapped MIPS boundary audit/quarantine, original-byte repair previews, retained-record delay-slot/join/end/padding/data/keep decisions and guarded undo. Guided evidence/agent investigation and repair adapters for other processors and imported object projects remain planned; source-free audit/repair evidence and limitations are documented in docs/CODE_COVERAGE_REVIEW.md. Safe-fix discovery now shares layout/image reads, avoids discarded full previews and coalesces saved-folder checks within each decision while retaining the complete safety fingerprint and commit guards.

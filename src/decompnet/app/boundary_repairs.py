@@ -121,6 +121,10 @@ def audit(net, slug):
         # These are possible repairs, not evidence that adjacent entries belong together.
         suggested='delay_slot' if target and rabbitizer.Instruction(last).hasDelaySlot() else ''
         findings.append({**finding,'suggested_action':suggested})
+    # Possible leading padding is a suggestion to inspect, not a block: agents may still claim these.
+    from .start_boundaries import audit_rows
+    seen={f['function'] for f in findings}
+    findings+=[row for row in audit_rows(net,proj) if row['function'] not in seen]
     history=[]
     for r in net.project_store(proj['id']).all('SELECT key,value FROM settings WHERE key LIKE ?',PREFIX+str(proj['id'])+':%'):
         item=json.loads(r['value'])
