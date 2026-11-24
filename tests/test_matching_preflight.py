@@ -532,3 +532,32 @@ def test_nearby_match_proposes_its_entry_specific_compiler_flags():
 
     assert state['calls'] == [['-O2'], ['-O3']]
     assert result['best']['exact']
+
+
+def test_address_split_rows_probe_another_small_data_threshold_with_the_externs_widened(monkeypatch):
+    """The target keeps a float global in `$at` and splits an integer one: `-G4` plus a two-word array declaration matches
+    (small_data_fingerprints); the exact pair is only ever a review-only suggestion, even with automatic changes on."""
+    from decompnet.app import repair_ranking
+
+    net, proj, fn, state = setup()
+    proj['arch'] = 'mips'
+    state['auto'] = True
+    net.cfg(proj)['compiler'] = {'toolchain': 'sn-n64-281', 'flags': ['-G0', '-mips2', '-O2']}
+    source = 'extern f32 F;\nextern s32 I;\nf32 f(f32 a) {\n    return (f32) I * a + F;\n}\n'
+    asm = ('lui $v0, %hi(I)\nlw $v1, %lo(I)($v0)\nlui $at, %hi(F)\nlwc1 $f2, %lo(F)($at)\n')
+    fn.update(asm=asm, best_source=source, name='f', n_insns=4)
+    rows = [('>', '', 'lui $v0, %hi(F)'), ('<', 'lui $at, %hi(F)', ''), ('r', 'lwc1 $f2, %lo(F)($at)', 'lwc1 $f2, %lo(F)($v0)')]
+    monkeypatch.setattr(repair_ranking, 'evidence', lambda *a: rows)
+    monkeypatch.setattr(preflight.toolchains, 'compiler_family', lambda tid: 'gcc')
+    net.flag_variants = lambda *a: []
+
+    def judge(proj, fn, toolchain, flags, source):
+        state['calls'].append((flags, source))
+        exact = '-G4' in flags and 'I[2]' in source
+        return exact, SimpleNamespace(score=0 if exact else 110 if '-G4' in flags else 100, rows=rows), ''
+
+    net._judge_with = judge
+    result = preflight.run(net, proj, fn, max_profiles=4)
+    assert result['best']['exact'] and result['best']['flags'][0] == '-G4' and 'I[2]' in result['best']['source']
+    assert result.get('review_only') is True and not state['applied']
+    assert state['suggested'] and state['suggested'][0].get('review_only') is True

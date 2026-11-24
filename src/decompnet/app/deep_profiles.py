@@ -169,6 +169,7 @@ def probe(search, agent, proj, fn, source, profile, *, scored=False):
         from ..project import compiler_for
         from .fp_fingerprints import is_fp_variant
         from .scheduler_fingerprints import is_scheduler_variant
+        from .small_data_fingerprints import is_small_data_variant
         cfg = search.net.cfg(proj)
         own = compiler_for(cfg, fn['vram'], fn)
         bases = [own['flags']] if own['toolchain'] == profile['toolchain'] else []
@@ -177,6 +178,7 @@ def probe(search, agent, proj, fn, source, profile, *, scored=False):
         except Exception:  # noqa: BLE001 - a toolchain this install doesn't know has no default to compare with
             pass
         review = ({'review_only': True} if any(is_fp_variant(flags, profile['flags']) or is_scheduler_variant(flags, profile['flags'])
+                                               or is_small_data_variant(flags, profile['flags'])
                                                for flags in bases) else {})
         said = search.net.suggest(agent, proj['slug'], 'Deep permuter found an exact source/compiler profile pair.',
                                   compiler=profile['toolchain'], flags=' '.join(profile['flags']),

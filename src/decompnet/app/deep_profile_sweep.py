@@ -88,6 +88,16 @@ def run(search, agent, proj, fn, source):
     try:
         if sweep(chosen):
             return True
+        if detecting and search.limit - search.tested > 0:
+            # (the saved C scored worse under another `-G` alone, but its small externs may need declaring as arrays too)
+            own = compiler_for(search.net.cfg(proj), fn['vram'], fn)
+            for profile, child in profile_detection.small_data_pairs(search.net, proj, fn, own):
+                search.check()
+                if search.limit - search.tested <= 0:
+                    break
+                search.log(f"Trying {profile_detection.settings(profile)} with the small externs declared as arrays.")
+                if deep_profiles.probe(search, agent, proj, fn, child, profile) == 0:
+                    return True
         if (detecting and search.limit - search.tested > 0
                 and (lead := profile_detection.refine_lead(search.net, proj, fn, scores, reasons)) is not None):
             # (the toolchain the evidence or the scores point to, with its other flag sets: SN's own default flags

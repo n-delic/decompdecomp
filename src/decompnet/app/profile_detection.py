@@ -113,7 +113,13 @@ def _mapped(net, proj, fn, own) -> dict | None:
 def evidence(net, proj, cfg, fn, own) -> tuple[list[dict], dict, Counter, int]:
     """(profiles the evidence points to, best first; key -> what points to each; neighbour votes; neighbours read)."""
     from .. import consoles
-    from . import compiler_fingerprints, fp_fingerprints, move_fingerprints, scheduler_fingerprints
+    from . import (
+        compiler_fingerprints,
+        fp_fingerprints,
+        move_fingerprints,
+        scheduler_fingerprints,
+        small_data_fingerprints,
+    )
     reasons: dict[tuple, list[str]] = {}
     ordered: list[dict] = []
 
@@ -159,6 +165,14 @@ def evidence(net, proj, cfg, fn, own) -> tuple[list[dict], dict, Counter, int]:
                     scheduler_fingerprints.why(own['flags'], saved_rows(net, proj, fn, own)))
         except Exception:  # noqa: BLE001 - this only orders the profiles; the judge decides
             pass
+    if 'arch' in proj.keys() and proj['arch'] == 'mips':
+        try:
+            # (the same compiler with another small-data threshold, when the diff is only an address built in `$at` on one side)
+            for flags in small_data_variants(net, proj, fn, own):
+                add({'toolchain': own['toolchain'], 'flags': flags},
+                    small_data_fingerprints.why(own['flags'], saved_rows(net, proj, fn, own)))
+        except Exception:  # noqa: BLE001 - this only orders the profiles; the judge decides
+            pass
     return ordered, reasons, votes, read
 
 
@@ -191,6 +205,35 @@ def scheduling_variants(net, proj, fn, own) -> list[list[str]]:
     if not scheduler_fingerprints.variants(own['flags']) or not near_match(fn):
         return []
     return scheduler_fingerprints.probes(own, saved_rows(net, proj, fn, own))
+
+
+def small_data_variants(net, proj, fn, own) -> list[list[str]]:
+    """The function's own flags with another `-G` (small_data_fingerprints), when the diff of its saved C is only
+    address-split rows. The diff is read (a judge compile) only when the profile names a `-G`."""
+    from . import small_data_fingerprints
+    if small_data_fingerprints.threshold(own['flags']) is None or not near_match(fn):
+        return []
+    return small_data_fingerprints.probes(own, saved_rows(net, proj, fn, own))
+
+
+def small_data_pairs(net, proj, fn, own) -> list[tuple[dict, str]]:
+    """[(profile, C)]: the saved C with its small externs widened, under each other `-G` the diff points to. These are
+    what the saved C alone cannot show (it scored worse under the profile: the globals the target splits stayed small)."""
+    from . import small_data_fingerprints
+    row = _row(fn)
+    flag_sets = small_data_variants(net, proj, fn, own)
+    if not flag_sets:
+        return []
+    header = ''
+    try:
+        header = net._context(proj['id'], row['unit'])['header']
+    except Exception:  # noqa: BLE001 - without the header the library's own checks decide
+        pass
+    out = []
+    for flags in flag_sets:
+        out += [({'toolchain': own['toolchain'], 'flags': flags}, child)
+                for child in small_data_fingerprints.widened(flags, row['best_source'], row['name'], header, row.get('asm') or '')]
+    return out
 
 
 def candidates(net, proj, fn, base) -> tuple[list[dict], dict, Counter, int]:
