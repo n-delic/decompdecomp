@@ -425,6 +425,34 @@ int main(void) {
     assert done.stdout.split() == ["80747080", "80400010", "80100010", "80747080", "80347080", "80500000"]
 
 
+def test_a_call_spelled_in_kseg0_beyond_the_ram_names_the_high_windows_virtual_address(tmp_path):
+    """A game that pages its code in at 0x15xxxxxx (4 KB pages) has calls the project spelled `func_85016170`: the
+    `jal 0x05016170` made from KSEG0 code took its top four bits from there. No console has RAM at 0x85016170, and
+    the interpreter ran zeros ("no instructions"). With one window base below 8 (here 1) such a spelling names
+    the virtual address (0x15016170), so a mapped page translates it and an evicted one takes the game's refill
+    handler. Two bases are ambiguous and an address inside the RAM is left alone."""
+    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if not cc:
+        pytest.skip("no C compiler")
+    text = HOST.read_text()
+    code = text[text.index("static struct { uint32_t entry, target, bss, bss_size; int tv; } boot;"):
+                text.index("/* the console's RAM as the boot leaves it")]
+    source = tmp_path / "t.c"
+    source.write_text(_BOOT_HARNESS + code + """
+int main(void) {
+    printf("%08X ", port_tlb_virtual(0x85016170u));  /* no window yet: the address as given */
+    port_tlb_write(0, 0x15016000, (0x2CE000u >> 12 << 6) | 2, 1u);
+    printf("%08X %08X %08X ", port_tlb_virtual(0x85016170u), port_tlb_virtual(0x802CE170u), port_tlb_virtual(0xB5016170u));
+    port_tlb_write(0, 0x25006000, (0x2CF000u >> 12 << 6) | 2, 1u);  /* a second base: ambiguous */
+    printf("%08X\\n", port_tlb_virtual(0x85016170u));
+    return 0;
+}
+""")
+    subprocess.run([cc, "-o", str(tmp_path / "t"), str(source)], check=True, capture_output=True)
+    done = subprocess.run([str(tmp_path / "t")], capture_output=True, text=True, check=True)
+    assert done.stdout.split() == ["85016170", "15016170", "802CE170", "B5016170", "85016170"]
+
+
 def test_a_page_mapped_at_virtual_zero_is_read_at_its_physical_address(tmp_path):
     """A game keeps its own call dispatcher at virtual address 0 (a 4 KB page onto physical 0x42000; its `jr $zero` thunks
     jump there). Spelled `0x80000000 | virtual` that is where libultra's osInitialize writes the exception vectors, so
@@ -1225,6 +1253,7 @@ uint32_t port_tlb_alias(uint32_t a) { (void)a; return 0; }
 uint32_t port_tlb_jump(uint32_t slot, uint32_t imm) { return (slot & 0xF0000000u) | imm; }
 uint32_t port_tlb_call(uint32_t a) { return a; }
 uint32_t port_tlb_spelled(uint32_t a) { return a; }
+uint32_t port_tlb_virtual(uint32_t a) { return a; }
 void port_tlb_write(uint32_t pm, uint32_t hi, uint32_t lo0, uint32_t lo1) { (void)pm; (void)hi; (void)lo0; (void)lo1; }
 void port_tlb_set(unsigned i, uint32_t pm, uint32_t hi, uint32_t lo0, uint32_t lo1) { (void)i; (void)pm; (void)hi; (void)lo0; (void)lo1; }
 uint32_t port_tlb_probe(uint32_t hi) { (void)hi; return 0x80000000u; }

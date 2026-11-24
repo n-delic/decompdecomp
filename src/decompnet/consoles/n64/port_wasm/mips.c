@@ -107,6 +107,7 @@ extern unsigned port_tlb_n;
 uint32_t port_tlb_canon(uint32_t a);
 uint32_t port_tlb_alias(uint32_t a);
 uint32_t port_tlb_jump(uint32_t slot, uint32_t imm); /* the target of a j/jal: top bits from the window's virtual base */
+uint32_t port_tlb_virtual(uint32_t a); /* a KSEG0 spelling beyond the RAM of a high window's virtual address: that address */
 uint32_t port_tlb_call(uint32_t a); /* a call spelled against KSEG0 that a window kept at its physical address maps */
 uint32_t port_tlb_spelled(uint32_t a); /* the project's name (0x80000000 | virtual) for code such a window holds */
 void port_tlb_write(uint32_t pm, uint32_t entry_hi, uint32_t lo0, uint32_t lo1);
@@ -945,6 +946,10 @@ static int step(Cpu *c, uint32_t pc, uint32_t op, uint32_t *target) {
 void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
     if (!M) M = port_memory();
     if (tracing < 0) tracing = getenv("PORT_INTERP_TRACE") ? atoi(getenv("PORT_INTERP_TRACE")) : 0;
+    entry = port_tlb_virtual(entry);
+    /* an entry at a mapped virtual address (a callback pointer into a window): its virtual pc is kept from the first
+       instruction, as for a jump into a window, so a branch lands on the next virtual page, not the next frame */
+    uint32_t entry_virtual = (entry - 0x80000000u >= 0x40000000u && port_tlb_n && mapped(entry) != entry) ? entry : 0;
     entry = port_tlb_call(mapped(entry));
     port_note_entry(entry);
     if (tracing) fprintf(stderr, "interpreter: %08X (%08X, %08X, %08X, %08X)\n", entry, (uint32_t)regs[4],
@@ -960,7 +965,7 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
     /* The virtual address the code at `pc` has when it was reached through a TLB window (pc is its spelling in RAM,
        which is what the rest of the port finds functions by): the next instruction of a page is the next virtual
        page's, not the next frame in RAM (a game that pages its code in puts consecutive pages in any frames). */
-    uint32_t vpc = 0;
+    uint32_t vpc = entry_virtual;
     unsigned long steps = 0;
     int zeros = 0;
     unsigned fault_n = 0;
@@ -1028,6 +1033,10 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
             c.status &= ~2u;
             pc = c.epc;
             vpc = 0;
+            /* EPC is the faulting fetch's virtual address, which the handler has mapped by now: the code goes on at
+               its frame with that virtual address kept (a refill handler that brought one page in left the rest of
+               the program's pages to come the same way) */
+            if (pc - 0x80000000u >= 0x40000000u && port_tlb_n && mapped(pc) != pc) { vpc = pc; pc = mapped(pc); }
             continue;
         }
         if (op == 0x42000018u) {

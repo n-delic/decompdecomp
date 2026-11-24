@@ -51,6 +51,7 @@ int port_tlb_invalid(uint32_t a) { (void)a; return 0; }
 int port_tlb_fault(uint32_t e, uint32_t b, uint32_t c) { (void)e; (void)b; (void)c; return 0; }
 uint32_t port_tlb_call(uint32_t a) { return a; }
 uint32_t port_tlb_spelled(uint32_t a) { return a; }
+uint32_t port_tlb_virtual(uint32_t a) { return a; }
 uint32_t port_tlb_wired(int set, uint32_t v) { (void)set; (void)v; return 0; }
 uint64_t port_io_store(uint64_t a, uint64_t v) { (void)v; return a; }
 void port_safe_point(void) {}

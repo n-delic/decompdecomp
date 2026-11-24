@@ -1692,6 +1692,25 @@ uint32_t port_tlb_spelled(uint32_t a) {
             return 0x80000000u | (tlb_win[i].lo + (p - tlb_win[i].phys));
     return a;
 }
+/* A call target the project spelled in KSEG0 that no console has RAM at (0x85016170) and that names code a high window
+   maps: a `jal 0x05016170` made from code the project places in KSEG0 takes its top four bits from there (8), though
+   the game ran it at the window's virtual address (0x15016170). The window's own top bits are the ones the game's
+   TLB entries use: a game that maps its code at one base (0x15xxxxxx) has exactly one top nibble below 8 among its
+   windows. Returns the virtual address (so a mapped page translates, and an evicted one takes the game's refill
+   handler, as the console would), or the address itself when no single base is known. */
+uint32_t port_tlb_virtual(uint32_t a) {
+    if (!port_tlb_n || a < 0x80800000u || a >= 0xA0000000u) return a;
+    uint32_t v = a & 0x0FFFFFFFu, nibble = 0;
+    int found = 0;
+    for (unsigned i = 0; i < port_tlb_n; i++) {
+        if (tlb_win[i].lo < 0x00800000u || tlb_win[i].lo >= 0x80000000u) continue;
+        uint32_t n = tlb_win[i].lo >> 28;
+        if (found && n != nibble) return a; /* two bases: ambiguous */
+        nibble = n;
+        found = 1;
+    }
+    return found ? (nibble << 28) | v : a;
+}
 uint32_t port_tlb_call(uint32_t a) {
     if (!port_tlb_n || a < 0x80000000u || a >= 0x80800000u) return a;
     uint32_t v = a & 0x7FFFFFFFu;

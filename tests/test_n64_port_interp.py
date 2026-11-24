@@ -31,6 +31,7 @@ uint32_t port_tlb_alias(uint32_t a) { return a; }
 uint32_t port_tlb_jump(uint32_t slot, uint32_t imm) { return (slot & 0xF0000000u) | imm; }
 uint32_t port_tlb_call(uint32_t a) { return a; }     /* (no window kept at its physical address here) */
 uint32_t port_tlb_spelled(uint32_t a) { return a; }
+uint32_t port_tlb_virtual(uint32_t a) { return a; }
 void port_tlb_write(uint32_t pm, uint32_t hi, uint32_t lo0, uint32_t lo1) { (void)pm; (void)hi; (void)lo0; (void)lo1; }
 void port_tlb_set(unsigned i, uint32_t pm, uint32_t hi, uint32_t lo0, uint32_t lo1) { (void)i; (void)pm; (void)hi; (void)lo0; (void)lo1; }
 uint32_t port_tlb_probe(uint32_t hi) { (void)hi; return 0x80000000u; }
@@ -706,6 +707,50 @@ def test_code_reached_through_a_window_goes_on_in_the_next_virtual_page_not_the_
     code.write_bytes(b"".join(struct.pack(">I", w & 0xFFFFFFFF) for w in prog))
     out = subprocess.run([str(program), str(code)], capture_output=True, text=True, timeout=30, check=True).stdout.split()
     assert int(out[0], 16) == 15
+
+
+def test_a_page_the_refill_handler_mapped_goes_on_in_the_next_virtual_page(tmp_path):
+    """A refill returns with eret to EPC, the virtual address of the fetch that missed. The interpreter ran on at the
+    page's frame with no virtual address kept, so a relative branch or the end of the page landed in the next
+    *frame* (the neighbouring physical page: "no instructions" in a game that pages its code in through a plain
+    refill handler). Here a fetch in virtual page 0x400000 faults; the handler maps it (`tlbwr`) and returns. The
+    code takes a relative branch (which moves the interpreter to the page's frame), and a second branch at the
+    page's end must land in the next virtual page, not the neighbouring frame."""
+    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if not cc:
+        pytest.skip("no C compiler")
+    source = HARNESS % {"c": C_FUNCTION, "code": CODE, "data": DATA}
+    source = source.replace("unsigned port_tlb_n;", "unsigned port_tlb_n = 1; static int tlb_mapped;")
+    source = source.replace("uint32_t port_tlb_canon(uint32_t a) { return a; }",
+                            "uint32_t port_tlb_canon(uint32_t a) { return !tlb_mapped ? a : a >= 0x400000u && a < 0x401000u ? "
+                            "a - 0x400000u + 0x80000400u : a >= 0x401000u && a < 0x402000u ? a - 0x401000u + 0x80001600u : a; }")
+    source = source.replace("void port_tlb_write(uint32_t pm, uint32_t hi, uint32_t lo0, uint32_t lo1) { (void)pm; (void)hi; "
+                            "(void)lo0; (void)lo1; }",
+                            "void port_tlb_write(uint32_t pm, uint32_t hi, uint32_t lo0, uint32_t lo1) { (void)pm; (void)hi; "
+                            "(void)lo0; (void)lo1; tlb_mapped = 1; }")
+    harness = tmp_path / "harness.c"
+    harness.write_text(source)
+    program = tmp_path / "interp"
+    done = subprocess.run([cc, "-O1", "-o", str(program), str(harness), str(MIPS), "-lm"],
+                          capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr
+    handler = CODE + 0x100
+    jump = 0x08000000 | (handler & 0x0FFFFFFF) >> 2
+    prog = [lui("t0", 0x8000), lui("t1", jump >> 16), ori("t1", "t1", jump & 0xFFFF), sw("t1", 0, "t0"),
+            lui("t2", 0x40), ori("t2", "t2", 0x0FE0), r_type(8, rs="t2"), NOP]  # jr 0x00400FE0: no TLB entry yet
+    prog += [NOP] * (0x100 // 4 - len(prog))
+    prog += [0x42000006, NOP, ERET, NOP]  # the refill handler: tlbwr, eret
+    prog += [NOP] * (0x3E0 // 4 - len(prog))
+    beq = lambda off: i_type(4, "zero", "zero", off)
+    prog += [beq(2), NOP, addiu("v0", "zero", 77), addiu("v0", "zero", 10)]  # a taken branch, over the 77
+    prog += [NOP, NOP, beq(1), NOP]                                          # at virtual 0x400FF8: into the next page
+    prog += [addiu("v0", "zero", 99), JR_RA, NOP]            # the next FRAME's code: the wrong place to go on at
+    prog += [NOP] * (0x600 // 4 - len(prog))
+    prog += [JR_RA, NOP]                                     # the next virtual page's first word
+    code = tmp_path / "code.bin"
+    code.write_bytes(b"".join(struct.pack(">I", w & 0xFFFFFFFF) for w in prog))
+    out = subprocess.run([str(program), str(code)], capture_output=True, text=True, timeout=30, check=True).stdout.split()
+    assert int(out[0], 16) == 10  # (99: the neighbouring frame; the next virtual page's code returns with $v0 as it was)
 
 
 def test_a_call_from_window_code_returns_to_the_virtual_address(tmp_path):
