@@ -51,6 +51,31 @@ def index(folder: str) -> dict[str, Path]:
     return out
 
 
+MACRO = re.compile(r"^[ \t]*#[ \t]*define[ \t]+(\w+)\([^)]*\)[ \t]+\(?[ \t]*(?:\([^)]*\)[ \t]*)?(\w+)[ \t]*\(", re.M)
+
+
+@lru_cache(maxsize=1)
+def macro_targets(folder: str) -> dict[str, str]:
+    """{macro: the ultralib function its expansion calls} from the library's headers: a game's C says `alHeapAlloc(...)`
+    and the compiled code calls `alHeapDBAlloc`, a name the game's source text never holds."""
+    known = index(folder)
+    out = {}
+    for path in sorted(Path(folder, "include").rglob("*.h")):
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for macro, target in MACRO.findall(text):
+            if target in known and macro not in known:
+                out.setdefault(macro, target)
+    return out
+
+
+def with_macro_targets(names: set, folder: Path) -> set:
+    """`names` plus the functions the library's macros among them expand to (`macro_targets`)."""
+    return set(names) | {target for macro, target in macro_targets(str(folder)).items() if macro in names}
+
+
 def extract(path: Path, name: str) -> str:
     """The file with only `name` of its exported functions: its directives, declarations and static helpers kept."""
     kept = []
@@ -127,19 +152,20 @@ def game_callees(units: dict[str, tuple[str, list[str]]], folder: Path, skip, te
     """`units` plus the ultralib functions the GAME's own C names (calls or takes the address of) that nothing
     provides (`skip`), built with the flags most of `units` use (the same build of the library). A game's own `alInit`
     called `alSynNew`, which no unit calls and the project had not set aside: nothing defined it, the link stubbed it
-    ("not implemented, skipped") and the audio never started. With no unit there is no known build: nothing is added."""
-    if not units:
-        return units
-    flags = Counter(tuple(flag) for _, flag in units.values()).most_common(1)[0][0]
+    ("not implemented, skipped") and the audio never started. With no unit there is no known build of the library:
+    each callee is built with ultralib's default one (the project set nothing aside, and a game's own `alHeapAlloc`,
+    which is `alHeapDBAlloc`, then reached a stub and the game's audio setup went on with a null pointer)."""
     known = index(str(folder))
     names = set()
     for text in texts:
         names.update(CALLEE.findall(text))
+    names = with_macro_targets(names, folder)
+    common = Counter(tuple(flag) for _, flag in units.values()).most_common(1)[0][0] if units else None
     out = dict(units)
     for callee in sorted(names & known.keys()):
         file = f"{callee}.c"
         if file not in out and not skip(callee):
-            out[file] = (extract(known[callee], callee), list(flags))
+            out[file] = (extract(known[callee], callee), list(common or flags(folder, known[callee], "")))
     return out
 
 
@@ -155,7 +181,7 @@ def with_callees(units: dict[str, tuple[str, list[str]]], folder: Path, skip) ->
     pending = list(out.items())
     while pending:
         _, (text, flag) = pending.pop()
-        for callee in sorted(set(CALLEE.findall(text))):
+        for callee in sorted(with_macro_targets(set(CALLEE.findall(text)), folder)):
             file = f"{callee}.c"
             if callee in known and file not in out and not skip(callee):
                 out[file] = (extract(known[callee], callee), flag)

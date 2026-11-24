@@ -1277,6 +1277,9 @@ f32 w2c_env_sqrtf(struct w2c_env *e, f32 x) { (void)e; return sqrtf(x); }
 f32 w2c_env_sinf(struct w2c_env *e, f32 x) { (void)e; return sinf(x); }
 f32 w2c_env_cosf(struct w2c_env *e, f32 x) { (void)e; return cosf(x); }
 f32 w2c_env_ldexpf(struct w2c_env *e, f32 x, u32 n) { (void)e; return ldexpf(x, (int)n); }
+/* the exponent goes to the game's int, big-endian; port.py lists it with the host's C library (a game's own call to it
+   was "not implemented, skipped" and the float it returned was 0) */
+f32 w2c_env_frexpf(struct w2c_env *e, f32 x, u32 p) { (void)e; int ex = 0; f32 r = frexpf(x, &ex); if (p) wbe32(p, (u32)ex); return r; }
 u32 w2c_env_osGetCount(struct w2c_env *e) { return w2c_env_0x5F_builtin_mips_read_count(e); }
 void w2c_env_osMapTLBRdb(struct w2c_env *e) { (void)e; }
 void w2c_env_osUnmapTLBAll(struct w2c_env *e) { (void)e; }

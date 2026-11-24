@@ -1026,7 +1026,7 @@ def test_the_host_defines_the_libm_functions_the_port_says_it_provides():
 
     text = HOST.read_text()
     sigs = {line.split("\t")[0] for line in (HOST.parent / "libultra.sigs").read_text().splitlines()}
-    for name in ("sqrtf", "sinf", "cosf", "ldexpf"):
+    for name in ("sqrtf", "sinf", "cosf", "ldexpf", "frexpf"):
         assert port._sdk_group(name) == "replaced", name
         assert re.search(rf"\bw2c_env_{name}\(struct w2c_env", text), name
         assert name in sigs, name

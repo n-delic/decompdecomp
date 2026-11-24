@@ -166,6 +166,23 @@ def test_the_link_report_names_ultralib_apart_from_the_games_assembly(monkeypatc
     assert pc_link._group(None, None, "func_80001000") == "assembly"
 
 
+def test_a_game_with_no_set_aside_function_still_gets_the_callees_its_code_names_through_a_header_macro(tree):
+    """A game's C says `alHeapAlloc(...)`, a macro in libaudio.h for `alHeapDBAlloc(...)`: the compiled code imports
+    `alHeapDBAlloc`, a name no source text held, and with no function set aside there was no known build either, so
+    nothing was built for it ("alHeapDBAlloc: not implemented, skipped" and the game went on with a null pointer).
+    Header macros are followed, and the library's default build is used when there is no unit to take one from."""
+    (tree / "include" / "PR" / "alias.h").write_text("#define guToyAlias(m, a) guToyF(m, a)\n#define NOT_A_CALL 3\n")
+    ultralib.macro_targets.cache_clear()
+    assert ultralib.macro_targets(str(tree)) == {"guToyAlias": "guToyF"}
+    out = ultralib.game_callees({}, tree, lambda name: False, ["void g(void) { guToyAlias(m, 1); }"])
+    assert set(out) == {"guToyF.c"} and "-DBUILD_VERSION=VERSION_L" in out["guToyF.c"][1]
+    # a unit's own macro use is followed too
+    units = {"x.c": ("void x(void) { guToyAlias(m, 2); }", ["-DX"])}
+    assert set(ultralib.with_callees(units, tree, lambda name: False)) == {"x.c", "guToyF.c"}
+    # the game's own C or the host providing it leaves it to them
+    assert ultralib.game_callees({}, tree, lambda name: True, ["guToyAlias(m, 1);"]) == {}
+
+
 def test_ultralib_is_a_pinned_proprietary_pack_at_the_tables_commit():
     pack = toolchains.get("ultralib-source")
     assert pack.proprietary  # installed only when the user accepts it in Compilers & tools
@@ -181,11 +198,12 @@ def test_ultralib_functions_the_games_own_c_calls_are_built_too(tree):
     """A game's own alInit called alSynNew, which no unit calls and the project had not set aside: nothing defined it,
     the link stubbed it ("not implemented, skipped") and the audio never started. A name the game's C uses that
     ultralib defines and nothing provides is built with the flags most units use; with no unit there is no known
-    build and nothing is added."""
+    build, so the library's default one is used (a game that set nothing aside still got no `alHeapDBAlloc`)."""
     text = ultralib.extract(ultralib.index(str(tree))["guToy"], "guToy")
     units = {"guToy.c": (text, ["-DBUILD_VERSION=VERSION_J"])}
     game = ["void game_init(void) { guToyF(0, 0); }", "int unrelated(void) { return guNotInUltralib(1); }"]
     out = ultralib.game_callees(units, tree, lambda name: False, game)
     assert set(out) == {"guToy.c", "guToyF.c"} and out["guToyF.c"][1] == ["-DBUILD_VERSION=VERSION_J"]
     assert ultralib.game_callees(units, tree, lambda name: name == "guToyF", game) == units  # provided elsewhere
-    assert ultralib.game_callees({}, tree, lambda name: False, game) == {}  # no unit: no known build
+    none = ultralib.game_callees({}, tree, lambda name: False, game)  # no unit: the default build
+    assert set(none) == {"guToyF.c"} and "-DBUILD_VERSION=VERSION_L" in none["guToyF.c"][1]

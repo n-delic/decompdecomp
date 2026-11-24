@@ -121,3 +121,4 @@ osSetIntMask	i32	i32
 sinf	float	float
 cosf	float	float
 ldexpf	float	float, i32
+frexpf	float	float, ptr

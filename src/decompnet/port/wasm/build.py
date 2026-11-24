@@ -503,7 +503,7 @@ def _library(out: Path, units: dict, sources: dict, log, provided=None) -> dict[
     port's recompiled and interpreted code); ultralib's other functions the units call are built too
     (ultralib.with_callees), so the link has them in place of stubs."""
     folder = out / "ultralib"
-    if units and provided is not None and (ultralib_folder := ultralib.root()) is not None:
+    if provided is not None and (ultralib_folder := ultralib.root()) is not None:
         units = ultralib.game_callees(units, ultralib_folder, provided, (
             path.read_text(encoding="utf-8", errors="replace") for path in sources.values() if Path(path).is_file()))
         units = ultralib.with_callees(units, ultralib_folder, provided)
