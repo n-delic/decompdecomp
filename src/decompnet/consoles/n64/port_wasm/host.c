@@ -16,7 +16,9 @@
  */
 #include <math.h>
 #include <pthread.h>
-#include <setjmp.h>
+#ifndef PORT_WEB
+#include <setjmp.h> /* the boot code's hand-over to the game's threads (boot_idle): the browser build's boot is the page's */
+#endif
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
