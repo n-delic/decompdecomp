@@ -259,7 +259,8 @@ function portSteps(report) {
     ...(report.mode === "project" ? [] : [{ title: "Draws without faults", pct: scan && scan.frames ? pct(scan.frames - scan.flagged, scan.frames) : null,
       detail: !scan ? "not scanned yet: Scan for rendering faults runs the game with a scripted controller and looks through its frames"
         : `${scan.flagged.toLocaleString()} of ${scan.frames.toLocaleString()} frames look wrong (every ${scan.settings.every}th frame of `
-          + `${scan.settings.seconds} seconds)`, scanFlagged: scan?.flagged || 0,
+          + `${scan.settings.seconds} seconds)` + (scan.stopped ? `; the game stopped early: ${scan.stopped}` : ""),
+      scanFlagged: scan?.runs || 0,
       buttons: ["portScan", "portScanStop", "portScanSettings"], logs: ["portScanLog"] }]),
     { title: "Assets extracted", pct: assets ? (assets.extracted && assets.extracted.current ? pct(assets.extracted.mapped, assets.extracted.total)
         : assets.written ? 50 : 0) : 0,
@@ -391,8 +392,8 @@ function renderPortSteps(report, steps = portSteps(report)) {
     }
     if (step.scanFlagged) {  // the count opens the frames
       const open = document.createElement("button"); open.type = "button"; open.className = "link-btn";
-      open.textContent = `${step.scanFlagged.toLocaleString()} look wrong`;
-      open.title = "Show the flagged frames with their pictures and graphics tasks";
+      open.textContent = `${step.scanFlagged.toLocaleString()} findings`;
+      open.title = "Show each run of flagged frames with its picture and graphics task";
       open.onclick = () => openRenderFaults();
       detail.append(" ", open);
     }
@@ -744,11 +745,13 @@ async function openRenderFaults() {
   if (S.slug !== slug) return;
   const found = saved.findings || [];
   let key = "frame", dir = 1;
-  const body = dialog(`${found.length.toLocaleString()} frames that look wrong`,
-    `<p class="small muted">Frames the port showed that can't be right. The task is the graphics task the frame came after: draw it on the
-     console's side with tools/n64_frame_compare.py --frames to see whether the game itself differs.</p>
+  const body = dialog(`${found.length.toLocaleString()} findings in the scan`,
+    `<p class="small muted">Frames the port showed that can't be right; a screen that stays broken is one row, from its first frame to
+     its last. To see what the console draws there, run the reversing emulator to the first frame's retrace with the same
+     controller script: <code>python tools/n64_frame_compare.py ROM --port GAME --vis RETRACE --input @SCRIPT --out DIR</code>
+     (the console's picture is the reference; the task is the graphics task that frame came after).${saved.stopped ? ` The game stopped early: ${saved.stopped}.` : ""}</p>
      <table class="compiler-table port-failure-table"><thead><tr></tr></thead><tbody></tbody></table>`, "port-failures");
-  const cols = [["frame", "Frame"], ["task", "Graphics task"], ["why", "What's wrong"], ["picture", "Picture"]];
+  const cols = [["frame", "Frames"], ["retrace", "Retrace"], ["task", "Graphics task"], ["why", "What's wrong"], ["picture", "Picture"]];
   const value = (f, k) => k === "why" ? f.details.join("; ") : k === "picture" ? (f.picture ? 1 : "") : f[k] ?? "";
   const draw = () => {
     const rows = [...found].sort((x, y) => {
@@ -767,7 +770,7 @@ async function openRenderFaults() {
     }));
     body.querySelector("tbody").replaceChildren(...rows.map((f) => {
       const tr = document.createElement("tr");
-      const cells = [f.frame, f.task ?? "", f.details.join("; ")].map((text) => {
+      const cells = [f.count > 1 ? `${f.frame}–${f.last} (${f.count})` : f.frame, f.retrace ?? "", f.task ?? "", f.details.join("; ")].map((text) => {
         const td = document.createElement("td"); td.className = "small"; td.textContent = text; return td;
       });
       const pic = document.createElement("td");

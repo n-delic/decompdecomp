@@ -156,7 +156,7 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    follow.resolve({});await checking;
    assert.equal(t.c.$('portBehaviourStop').hidden,true);assert.equal(t.c.$('portBehaviour').disabled,false);}
   {const t=setup();t.c.S.tab='porting';const follow=deferred(),cancels=[];t.c.followJob=()=>follow.promise;t.c.updateWorkProgress=()=>{};
-   const scanned={...report,render_scan:{at:1,frames:100,flagged:4,settings:{seconds:60,every:6,input:''}}};
+   const scanned={...report,render_scan:{at:1,frames:100,flagged:4,runs:2,stopped:null,settings:{seconds:60,every:6,input:''}}};
    t.c.reply=async(url,opts)=>{if(url==='/api/render-scan')return {job:'s1'};if(url==='/api/job/cancel'){cancels.push(opts.body.id);return {};}return scanned;};
    await t.run('loadPortReadiness()');
    const step=t.c.$('portSteps').children[9].children[1];

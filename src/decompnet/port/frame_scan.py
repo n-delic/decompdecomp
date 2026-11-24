@@ -22,6 +22,8 @@ NOISE_LIMIT = 25.0  # mean change between neighbouring pixels: scenes score 3 to
 SMEAR_RATIO = 3.0  # vertical change over horizontal change: a picture drawn with the wrong texture stride or width is
 SMEAR_MIN = 8.0  # streaked sideways (rows alike, columns unrelated); a scene stays near 1, so a streaked one scores far above
 PARTIAL_BLACK = 0.4  # the share of a frame's height, black at the bottom under something drawn, that no scene leaves
+PARTIAL_FILL = 0.5  # ...and the share of the drawn rows' pixels that hold something: a picture fills its strip, while a
+# screen of text on black (a legal notice) leaves most of its rows black
 PARTIAL_DRAWN = 0.02  # ...and the share of rows that must hold something, or it is a fade or a blank screen, not a half
 
 
@@ -91,6 +93,14 @@ def layout(rows: list[bytearray], width: int) -> dict:
         return {"smear": 0.0, "partial": 0.0}
     last = max(i for i, d in enumerate(drawn) if d)
     partial = (len(rows) - 1 - last) / len(rows) if sum(drawn) / len(rows) >= PARTIAL_DRAWN else 0.0
+    if partial:
+        filled = total = 0
+        for row in rows[:last + 1]:
+            for x in range(0, width * 3 - 2, 12):
+                filled += any(row[x:x + 3])
+                total += 1
+        if filled / total < PARTIAL_FILL:
+            partial = 0.0
     horizontal = vertical = pairs = 0
     for i in range(1, last + 1):
         if not (drawn[i] and drawn[i - 1]):
@@ -107,12 +117,14 @@ def layout(rows: list[bytearray], width: int) -> dict:
 
 def scan(folder: Path, swap_log: Path | None = None) -> dict:
     """{"frames": n, "noisy": [(frame, noise)], "flat": [frames], "black": [(first, last)]} for a folder's frame_NNNNN.png."""
-    tasks = {}
+    tasks, retraces = {}, {}
     if swap_log and swap_log.is_file():
         for line in swap_log.read_text().splitlines():
-            m = re.match(r"frame (\d+) task (\d+)", line)
+            m = re.match(r"frame (\d+) task (\d+)(?: retrace (\d+))?", line)
             if m:
                 tasks[int(m[1])] = int(m[2])
+                if m[3]:
+                    retraces[int(m[1])] = int(m[3])
     noisy, flat, black, runs, smeared, partial = [], [], [], [], [], []
     frames = sorted(folder.glob("frame_*.png"))
     for path in frames:
@@ -134,7 +146,7 @@ def scan(folder: Path, swap_log: Path | None = None) -> dict:
         else:
             black.append((n, n))
     return {"frames": len(frames), "noisy": noisy, "flat": flat, "black": black, "smeared": smeared,
-            "partial": partial}
+            "partial": partial, "retraces": retraces}
 
 
 def main(argv=None) -> int:

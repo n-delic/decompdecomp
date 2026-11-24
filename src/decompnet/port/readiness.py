@@ -113,7 +113,8 @@ def _render_scan(proj) -> dict | None:
     if saved is None:
         return None
     return {"at": saved["at"], "settings": saved["settings"], "frames": saved["frames"],
-            "flagged": len(saved["findings"])}
+            "flagged": sum(f.get("count", 1) for f in saved["findings"]), "runs": len(saved["findings"]),
+            "stopped": saved.get("stopped")}
 
 
 def _assets(net, slug: str) -> dict | None:

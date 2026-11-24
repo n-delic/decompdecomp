@@ -39,6 +39,7 @@ def _frames(folder: Path) -> None:
 def test_findings_lists_each_frame_once_with_every_reason():
     rows = render_scan.findings({"noisy": [(4, 40.0, 9)], "flat": [], "smeared": [(2, 5.5, 3), (4, 4.0, 9)],
                                  "partial": [(2, 0.8, 3)], "black": [], "frames": 5})
+    assert [r["count"] for r in rows] == [1, 1]
     assert [r["frame"] for r in rows] == [2, 4]
     assert rows[0]["kinds"] == ["smeared", "partial"] and rows[0]["task"] == 3
     assert rows[1]["kinds"] == ["noisy", "smeared"]
@@ -59,18 +60,46 @@ def test_a_headless_run_is_looked_through_and_the_streaked_frame_flagged(tmp_pat
         'test "$PORT_VTIME" = 1 && test "$PORT_INPUT" = "60:START,90:" && exit 0\nexit 3\n')
     program.chmod(program.stat().st_mode | stat.S_IEXEC)
     out = tmp_path / "out"
-    frames = render_scan.run(program, tmp_path / "rom.z64", out, seconds=5, every=1, input="60:START\n90:")
+    frames, ended = render_scan.run(program, tmp_path / "rom.z64", out, seconds=5, every=1, input="60:START\n90:")
+    assert ended is None
     rows = render_scan.findings(frame_scan.scan(frames, out / "swaps.log"))
     assert [r["frame"] for r in rows] == [2] and rows[0]["task"] == 10
     assert {"smeared", "partial"} <= set(rows[0]["kinds"])
 
 
-def test_a_game_that_stops_with_an_error_says_where_its_log_is(tmp_path):
+def test_a_game_that_stops_before_its_first_frame_says_where_its_log_is(tmp_path):
     program = tmp_path / "game"
     program.write_text("#!/bin/sh\necho boom\nexit 2\n")
     program.chmod(program.stat().st_mode | stat.S_IEXEC)
     with pytest.raises(NetworkError, match="run.log"):
         render_scan.run(program, tmp_path / "rom.z64", tmp_path / "out", seconds=5, every=1, input="")
+
+
+def test_a_crash_after_some_frames_is_reported_and_the_frames_are_still_scanned(tmp_path):
+    source = tmp_path / "src"
+    source.mkdir()
+    _frames(source)
+    program = tmp_path / "game"
+    program.write_text(f'#!/bin/sh\ncp {source}/frame_*.png "$PORT_FRAMES"/\necho "thread 1 stopped: out of bounds"\nexit 3\n')
+    program.chmod(program.stat().st_mode | stat.S_IEXEC)
+    frames, ended = render_scan.run(program, tmp_path / "rom.z64", tmp_path / "out", seconds=5, every=1, input="")
+    assert ended == "thread 1 stopped: out of bounds" and len(list(frames.glob("frame_*.png"))) == 3
+
+
+def test_a_screen_that_stays_broken_is_one_run_and_text_on_black_is_not_half_a_picture(tmp_path):
+    from decompnet.port import frame_scan
+
+    rows = render_scan.findings({"noisy": [], "flat": [], "smeared": [(n, 5.0, n - 3) for n in (6, 12, 18, 30)],
+                                 "partial": [], "black": [], "frames": 9}, every=6)
+    assert [(r["frame"], r["last"], r["count"]) for r in rows] == [(6, 18, 3), (30, 30, 1)]
+    swaps = tmp_path / "swaps.log"
+    swaps.write_text("frame 6 task 3 retrace 40\nframe 12 task 9 retrace 52\n")
+    (tmp_path / "frame_00006.png").write_bytes(_png(8, 8, [bytes(3)] * 64))
+    assert frame_scan.scan(tmp_path, swaps)["retraces"] == {6: 40, 12: 52}
+    w, h = 64, 48  # a legal notice: a few lit pixels in rows of black, the lower half empty
+    text = [bytes([200, 200, 200]) if y < 20 and (x + y) % 9 == 0 else bytes(3) for y in range(h) for x in range(w)]
+    (tmp_path / "frame_00001.png").write_bytes(_png(w, h, text))
+    assert frame_scan.scan(tmp_path)["partial"] == []
 
 
 def test_summary_is_none_before_a_scan_and_reads_the_saved_one(tmp_path):

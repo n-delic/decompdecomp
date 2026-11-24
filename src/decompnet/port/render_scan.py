@@ -39,8 +39,10 @@ def summary(root: Path) -> dict | None:
         return None
 
 
-def findings(found: dict) -> list[dict]:
-    """One row per flagged frame, from frame_scan.scan's answer, with every reason it was flagged."""
+def findings(found: dict, every: int = 1) -> list[dict]:
+    """One row per flagged frame, from frame_scan.scan's answer, with every reason it was flagged. Frames `every` apart
+    flagged for the same reasons are one run (a screen that stays broken is one finding, not hundreds): the row names
+    its first frame, its last and how many frames it holds."""
     rows: dict[int, dict] = {}
 
     def add(frame, kind, detail, task):
@@ -55,7 +57,14 @@ def findings(found: dict) -> list[dict]:
         add(frame, "smeared", f"{ratio}x more change down than across", task)
     for frame, share, task in found["partial"]:
         add(frame, "partial", f"{share:.0%} of the height", task)
-    return [rows[n] for n in sorted(rows)]
+    runs: list[dict] = []
+    for n in sorted(rows):
+        row = rows[n]
+        if runs and runs[-1]["kinds"] == row["kinds"] and n - runs[-1]["last"] <= every:
+            runs[-1]["last"], runs[-1]["count"] = n, runs[-1]["count"] + 1
+        else:
+            runs.append({**row, "last": n, "count": 1, "retrace": (found.get("retraces") or {}).get(n)})
+    return runs
 
 
 def _picture(path: Path) -> str | None:
@@ -66,8 +75,10 @@ def _picture(path: Path) -> str | None:
 
 
 def run(program: Path, rom: Path, out: Path, *, seconds: int, every: int, input: str, log=print,
-        env: dict | None = None) -> Path:
-    """Run the port headless for `seconds` of the game's own time, saving every `every`th frame under out/frames."""
+        env: dict | None = None) -> tuple[Path, str | None]:
+    """Run the port headless for `seconds` of the game's own time, saving every `every`th frame under out/frames.
+    Returns the folder and, when the game stopped before the time was up, its last line (a crash is a finding, and the
+    frames it showed before are still looked through)."""
     frames = out / "frames"
     shutil.rmtree(out, ignore_errors=True)
     frames.mkdir(parents=True)
@@ -100,10 +111,13 @@ def run(program: Path, rom: Path, out: Path, *, seconds: int, every: int, input:
         if proc.poll() is None:
             proc.kill()
             proc.wait()
+    ended = None
     if proc.returncode:
-        raise NetworkError(f"The game stopped with status {proc.returncode} before the scan finished: see "
-                           f"{out / 'run.log'}")
-    return frames
+        lines = (out / "run.log").read_text(encoding="utf-8", errors="replace").strip().splitlines()
+        ended = (lines[-1] if lines else f"stopped with status {proc.returncode}")[:300]
+        if not any(frames.glob("frame_*.png")):
+            raise NetworkError(f"The game stopped before it showed a frame ({ended}): see {out / 'run.log'}")
+    return frames, ended
 
 
 def scan(net, slug: str, *, seconds: int = 60, every: int = 6, input: str = "", log=print) -> dict:
@@ -118,15 +132,17 @@ def scan(net, slug: str, *, seconds: int = 60, every: int = 6, input: str = "", 
     env = {"PORT_SAVE": str(out / "game.eep"), "PORT_SRAM": str(out / "game.sra"), "PORT_FLASH": str(out / "game.fla")}
     if memory := (cfg.get("rom") or {}).get("memory_size"):
         env["PORT_MEMSIZE"] = str(memory)
-    frames = run(program, rom, out, seconds=seconds, every=every, input=input, log=log, env=env)
+    frames, ended = run(program, rom, out, seconds=seconds, every=every, input=input, log=log, env=env)
     found = frame_scan.scan(frames, out / "swaps.log")
-    rows = findings(found)
+    rows = findings(found, every)
     for row in rows[:KEPT]:
         row["picture"] = _picture(frames / f"frame_{row['frame']:05d}.png")
     result = {"at": time.time(), "settings": {"seconds": seconds, "every": every, "input": input},
-              "frames": found["frames"], "black": found["black"], "findings": rows}
+              "frames": found["frames"], "black": found["black"], "findings": rows, "stopped": ended}
     shutil.rmtree(frames, ignore_errors=True)
     results_file(root).write_text(json.dumps(result), encoding="utf-8")
-    log(f"{found['frames']} frames looked through: {len(rows)} look wrong." if rows
+    if ended:
+        log(f"The game stopped early: {ended}")
+    log(f"{found['frames']} frames looked through: {len(rows)} findings." if rows
         else f"{found['frames']} frames looked through: none look wrong.")
     return {k: v for k, v in result.items() if k != "findings"} | {"flagged": len(rows)}
