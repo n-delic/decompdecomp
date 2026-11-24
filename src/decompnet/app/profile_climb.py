@@ -24,6 +24,10 @@ PROFILES_MEASURED = 6  # profiles measured on the current C before choosing one 
 CLIMB_SHARE = 4  # at most this fraction of the remaining compile allowance (1/4) goes to the climb
 CLIMB_MAX = 400  # ... and never more than this many compiles
 RANDOM_PER_ROUND = 24  # random rewrites tried after each round of local proposals
+CHAIN_SHARE = 2  # a floating-point profile's repair chain may use at most this fraction (1/2) of the climb's compiles
+CHAIN_STEPS = 4  # ... in at most this many steps of best-child greedy search
+CHAIN_CHILDREN = 100  # ... judging at most this many children a step
+FP_FIRST = ('float_literal', 'double_literal', 'operand_order')  # families whose names say they fix FP constants/operands
 
 
 def lead(search, agent, proj, fn, source, own_score, *, check=None):
@@ -124,6 +128,103 @@ def _judge(search, proj, fn, profile, source, *, require_clean=False):
     return 0 if exact else max(1, diff.score)
 
 
+def proposal_options(search, proj, fn, source, header):
+    """What the repair families are given besides the source: the jump tables, the callees' matched C, the opening
+    scope and the words of the function's float constants, as the Deep Permuter's local lane and prove_chain give them.
+
+    The climb used to give the families the header alone: float_literal_global and double_literal_global need the words
+    (the value the C cannot show), so a climb under a floating-point profile never proposed the literal that, with the
+    profile, made four N64 functions exact (a replay from their saved bests under -mfp32 stalled at 10 and 40 with
+    no literal proposed; with the words the same families reached 0). A search with no project store (a fake, a
+    fork project) gets the header alone."""
+    options = dict(limit=None, header=header)
+    try:
+        net = search.net
+        if net.fork_slug(proj['slug']):
+            return options
+        from . import draft_repairs, float_literal_words, switch_tables
+        found = dict(tables=switch_tables.read(net, proj, fn),
+                     callees=draft_repairs.capture_followup_repairs.callee_evidence(net, proj, fn, source),
+                     entry_scope=draft_repairs.promoted_entry_repairs.scope(net, proj, fn),
+                     words=float_literal_words.read(net, proj, fn))
+    except Exception:  # noqa: BLE001 - context only widens the proposals: without it the climb goes on as before
+        return options
+    return {**options, **found}
+
+
+def fp_variant(search, proj, fn, profile) -> bool:
+    """True when `profile` is the function's own settings with only the floating-point register model flipped."""
+    try:
+        from ..project import compiler_for
+        from .fp_fingerprints import is_fp_variant
+        own = compiler_for(search.net.cfg(proj), fn['vram'], fn)
+        return own['toolchain'] == profile['toolchain'] and is_fp_variant(own['flags'], profile['flags'])
+    except Exception:  # noqa: BLE001 - not knowing the function's settings is not being an FP variant
+        return False
+
+
+def _fp_first(options):
+    """[(family, child)] with the FP-constant and operand families first (stable otherwise): a step judges at most
+    CHAIN_CHILDREN of them, and the literal inlining that matches under the flipped profile is one child among hundreds."""
+    return sorted(options, key=lambda item: not any(word in item[0] for word in FP_FIRST))
+
+
+def repair_chain(search, agent, proj, fn, source, score, profile, budget, check, header, key):
+    """Best-child greedy chain of the registered repair families, judged under `profile` (the flipped floating-point
+    profile): what prove_chain does from a saved best, inside the climb. A match under the flipped profile alone is
+    what profile_detection records; this is for the functions whose source also needs a repair there (float literals
+    written inline, a commutative swap) which neither the profile nor the repair reaches alone: four N64 functions
+    of one game were 70, 75 and 60 under -mfp64, 45, 40 and 30 under -mfp32 and exact under -mfp32 with the repair.
+
+    Each step judges the children (at most CHAIN_CHILDREN, FP families first) and keeps the best one that beats the
+    current score, up to CHAIN_STEPS steps and `budget` compiles. Returns (best source, best score, compiles spent).
+    The profile is only the judging profile of this search: nothing here changes the function's settings."""
+    from . import draft_repairs
+    from .prove_chain import chain
+    spent = [0]
+    known = {source: score}
+    pool = getattr(search, 'compile_pool', None)
+    args_for = lambda text: (text, fn['name'], proj['arch'], fn['asm'] or '', profile['flags'])  # noqa: E731
+
+    def generate(text):
+        options = proposal_options(search, proj, fn, text, header)
+        labels = {}
+        if pool is not None:
+            texts, labels, _ = pool.proposal_pool().generate(args_for(text), options, check)
+        else:
+            try:
+                texts = draft_repairs.variants(*args_for(text), labels, **options)
+            except Exception:  # noqa: BLE001 - a family's bug on an edited source must not end the search
+                texts = []
+        return _fp_first([(labels.get(child, 'unlabelled'), child) for child in texts])
+
+    def judge(sources):
+        scores, done = [], False
+        for text in sources:
+            if text in known:
+                scores.append(known[text])
+                continue
+            if done or spent[0] >= budget or search.tested >= search.limit:
+                scores.append(None)
+                continue
+            check()
+            spent[0] += 1
+            known[text] = result = _judge(search, proj, fn, profile, text)
+            scores.append(result)
+            done = result == 0  # (an exact child ends the step: the rest need no compile)
+        return scores
+
+    def limit():
+        check()
+        if spent[0] >= budget:
+            raise TimeoutError  # (chain's own signal for "out of time": its budget is compiles here)
+
+    final, best, taken, notes = chain(source, generate, judge, None, CHAIN_STEPS, CHAIN_CHILDREN, limit)
+    for family, result, scored, offered in taken:
+        search.log(f'Under {key}: {result} ({family}; {scored} of {offered} children judged)')
+    return final, best if best is not None else score, spent[0]
+
+
 def climb(search, agent, proj, fn, source, profile, score, seed=0, *, require_clean=False, check=None):
     """Greedy search under `profile` from `source` (scoring `score` there). 0 when an exact pair was found and handed
     to deep_profiles.probe; else the best score reached under the profile (its C kept in search.profile_bests)."""
@@ -146,18 +247,28 @@ def climb(search, agent, proj, fn, source, profile, score, seed=0, *, require_cl
     seen = {hashlib.sha256(source.encode()).hexdigest()}
     best_source, best = source, score
     spent = 0
+    if fp_variant(search, proj, fn, profile):
+        # (the flipped floating-point profile: the source may need a repair under it too: a best-child chain first)
+        best_source, best, spent = repair_chain(search, agent, proj, fn, source, score, profile,
+                                                max(1, budget // CHAIN_SHARE), check, header, key)
+        seen.add(hashlib.sha256(best_source.encode()).hexdigest())
+        if best == 0:
+            search.profile_bests[key] = (0, best_source)
+            deep_profiles.probe(search, agent, proj, fn, best_source, profile)
+            return 0
     while spent < budget:
         improved = False
         labels = {}
         args = (best_source, fn['name'], proj['arch'], fn['asm'] or '', profile['flags'])
         pool = getattr(search, 'compile_pool', None)
+        options = proposal_options(search, proj, fn, best_source, header)
         if pool is not None:
             # A broad generation on a worker thread can run past the shared
             # deadline. The proposal pool can interrupt its child process.
-            proposals, labels, _ = pool.proposal_pool().generate(args, dict(limit=None, header=header), check)
+            proposals, labels, _ = pool.proposal_pool().generate(args, options, check)
         else:
             try:
-                proposals = draft_repairs.variants(*args, labels, limit=None, header=header)
+                proposals = draft_repairs.variants(*args, labels, **options)
             except Exception:  # noqa: BLE001 - standalone probes can still try random rewrites
                 proposals = []
         for _ in range(RANDOM_PER_ROUND):
