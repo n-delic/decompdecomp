@@ -127,3 +127,27 @@ def test_a_shifted_picture_matches_within_a_tolerance_and_a_different_one_does_n
     assert tool.unmatched(a, shifted, w, h, 0) > 20.0
     assert tool.unmatched(a, shifted, w, h, 1) == 100.0 / w  # all but the column the shift pushed out of the picture
     assert tool.unmatched(a, other, w, h, 2) == 100.0
+
+
+def test_the_port_is_run_once_through_the_script_to_make_its_save_first(tmp_path):
+    """prime_save: one run of the port with the input script writes game.eep before the compared run; a save already there is
+    left alone, and the compared run's dump settings aren't passed to the priming run."""
+    import os
+    import stat
+
+    tool = _tool()
+    game = tmp_path / "game"
+    game.write_text("#!/bin/sh\necho \"$PORT_INPUT|$PORT_INPUT_CLOCK|$PORT_FRAME_DUMPS\" >> runs.txt\nprintf 'save' > game.eep\n")
+    game.chmod(game.stat().st_mode | stat.S_IEXEC)
+    rom = tmp_path / "rom.z64"
+    rom.write_bytes(b"\0" * 64)
+    work = tmp_path / "work"
+    work.mkdir()
+    os.environ["PORT_FRAME_DUMPS"] = "5:x.bin"
+    try:
+        assert tool.prime_save(game, rom, "150:A,200:-", work, "frames", seconds=1) is True
+        assert (work / "game.eep").read_bytes() == b"save"
+        assert tool.prime_save(game, rom, "150:A,200:-", work, "frames", seconds=1) is False  # a save is there: no second run
+        assert (work / "runs.txt").read_text() == "150:A,200:-|frames|\n"
+    finally:
+        os.environ.pop("PORT_FRAME_DUMPS", None)
