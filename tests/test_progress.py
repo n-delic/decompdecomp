@@ -4312,3 +4312,73 @@ def test_merging_global_types_by_address():
     current = deepcopy(old); current["global_types"].append({"address": 8, "type": "u8", "source": "emulator"})
     merged = _merge_manifest(old, new, current)
     assert {i["address"]: i["type"] for i in merged["global_types"]} == {4: "f32", 8: "u8"}
+
+
+def _interrupt_the_saved_judge(net, monkeypatch):
+    """Make the next saved judge stop partway, as a helper's match landing meanwhile, Stop or a restart does."""
+    def stopped(*args, **kwargs):
+        raise NetworkError("Saved-progress compilation stopped.")
+    monkeypatch.setattr(net.progress, "_judge_saved", stopped)
+
+
+def test_files_a_sync_wrote_are_recorded_even_when_its_judge_stops(project, monkeypatch):
+    """An import wrote the database's C, then its judge stopped: the baseline recorded nothing, so every later
+    sync took the app's own writes for contributions and judged the whole folder again (an N64 game's checkpoint
+    said "1572 more file(s) changed while capturing progress" for days)."""
+    net, folder, judged = project
+    pid = net._project("game")["id"]
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched',matched_source='good f',matched_at=1 WHERE name='f'")
+    net.progress.sync("game", force=True)
+    # A contribution (g's draft) and the database's newer f arrive together.
+    (folder / "best").mkdir(exist_ok=True)
+    (folder / "best/g.c").write_text("contributed g", encoding="utf-8")
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET matched_source='good f renamed' WHERE name='f'")
+    original = net.progress._judge_saved
+    _interrupt_the_saved_judge(net, monkeypatch)
+    with pytest.raises(NetworkError):
+        net.progress.sync("game", force=True)
+    assert (folder / "src/f.c").read_text() == "good f renamed\n"
+    baseline = net.progress._baseline(pid)
+    from decompnet.app.progress import _hash
+    assert baseline.disk.files["src/f.c"] == _hash("good f renamed\n")
+    assert "best/g.c" not in baseline.disk.files  # the contribution is still judged next time
+    # A fresh Progress reads the record from the database, not memory.
+    net.progress.baselines.pop(pid, None)
+    monkeypatch.setattr(net.progress, "_judge_saved", original)
+    judged.clear()
+    net.progress.sync("game", force=True)
+    assert ("g", "contributed g") in judged and not any(name == "f" for name, _ in judged)
+    assert net._function("f", "game")["status"] == "matched"
+    assert not net.progress.sync("game", force=True)
+
+
+def test_check_again_keeps_a_match_whose_saved_copy_the_app_wrote_before_a_rename(project, monkeypatch):
+    """Check again judged the app's own older copies (written before rename_symbol rewrote the matches, by a save
+    whose judge stopped) like a person's edit, and reopened four matches of an N64 game from them."""
+    net, folder, judged = project
+    pid = net._project("game")["id"]
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched',matched_source='good f',matched_at=1 WHERE name='f'")
+    net.progress.sync("game", force=True)
+    (folder / "best").mkdir(exist_ok=True)
+    (folder / "best/g.c").write_text("contributed g", encoding="utf-8")
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET matched_source='good f v2' WHERE name='f'")
+    original = net.progress._judge_saved
+    _interrupt_the_saved_judge(net, monkeypatch)
+    with pytest.raises(NetworkError):
+        net.progress.sync("game", force=True)
+    monkeypatch.setattr(net.progress, "_judge_saved", original)
+    # The rename: the database moves on again; its folder copy is the app's own, now stale.
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET matched_source='good f renamed' WHERE name='f'")
+        fid = db.execute("SELECT id FROM functions WHERE name='f'").fetchone()["id"]
+        db.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                   (f"saved_match_checks:{pid}", json.dumps({str(fid): ""})))
+    net.progress.sync("game", force=True)
+    fn = net._function("f", "game")
+    assert fn["status"] == "matched" and fn["matched_source"] == "good f renamed"
+    assert (folder / "src/f.c").read_text() == "good f renamed\n"
+
