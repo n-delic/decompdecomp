@@ -461,6 +461,9 @@ The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`)
   `tools/n64_frame_scan.py` searches the saved frames for what looks wrong without an emulator: static, one flat
   colour, runs of black, a picture streaked sideways (a texture read with the wrong stride or width) and a frame
   with only its top drawn. A finding names its graphics task for `tools/n64_frame_compare.py --frames`.
+  The Porting tab's *Scan for rendering faults* (`port/render_scan.py`) does it in one click: it runs the port headless
+  (`PORT_VTIME=1`, the controller script in the Scan settings, every nth frame), scans the frames, and lists what it
+  flagged, with pictures, in the side drawer; the frames are deleted afterwards.
 
 #### Functions with no C yet
 

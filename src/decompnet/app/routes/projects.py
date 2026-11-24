@@ -460,6 +460,29 @@ def register(app: App) -> None:
         return {"job": jobs.start("behaviour-check", lambda log: behaviour.batch(net, slug, vis, text, log=log),
                                   project=slug)}
 
+    def p_render_scan(slug, request, data):
+        """Scan for rendering faults: run the port headless with a scripted controller and look through the frames it
+        shows (port/render_scan.py), in the background; Stop ends the run."""
+        from pathlib import Path
+
+        from ...port import render_scan
+        if request.method == "GET":  # the last scan's findings, with the flagged frames' pictures, for the drawer
+            return render_scan.summary(Path(net.project_row(slug, sync=False)["root"])) or {"findings": []}
+        try:
+            seconds, every = int(data.get("seconds") or 60), int(data.get("every") or 6)
+        except (TypeError, ValueError):
+            raise NetworkError("How long to run is a number of seconds, and how often to look a number of frames") from None
+        if not 5 <= seconds <= 600:
+            raise NetworkError("Run the game for 5 to 600 seconds")
+        if not 1 <= every <= 60:
+            raise NetworkError("Look at every 1st to 60th frame")
+        text = str(data.get("input") or "")[:20000]
+        with jobs._lock:
+            if (running := jobs.active(("render-scan",), project=slug)):  # a second click follows the run
+                return {"job": running["id"]}
+            return {"job": jobs.start("render-scan", lambda log: render_scan.scan(
+                net, slug, seconds=seconds, every=every, input=text, log=log), project=slug)}
+
     def g_port_readiness(slug, request, data):
         """What stands between the game and a port, and its Play build: still building (the job, for the panel to
         follow again after navigating away) or running (its address)."""
@@ -468,7 +491,8 @@ def register(app: App) -> None:
         report = readiness(net, slug)
         report["play"] = {"job": jobs.active(("play",), project=slug), "url": play.running(slug),
                           "export_job": jobs.active(("play-export",), project=slug),
-                          "behaviour_job": jobs.active(("behaviour-check",), project=slug)}
+                          "behaviour_job": jobs.active(("behaviour-check",), project=slug),
+                          "render_scan_job": jobs.active(("render-scan",), project=slug)}
         return report
 
     def p_rom_explorer(slug, request, data):
@@ -1483,6 +1507,7 @@ def register(app: App) -> None:
         "/api/asset-extract": (p_asset_extract, ["POST"]),
         "/api/recompile": (port_recompile, ["GET", "POST"]),
         "/api/behaviour-check": (p_behaviour_check, ["POST"]),
+        "/api/render-scan": (p_render_scan, ["GET", "POST"]),
         "/api/compilermap": (p_compilermap, ["GET", "POST"]),
         "/api/verification": (p_verification, ["POST"]),
     }
