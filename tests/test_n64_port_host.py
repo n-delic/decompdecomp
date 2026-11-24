@@ -666,12 +666,15 @@ def test_the_games_c_reads_a_high_tlb_window_as_ram_and_no_stack_sits_in_one():
 
 @pytest.mark.parametrize("crc,want", [
     # CIC-6103: its code from 0x4C0 copied to RAM 0, both RSP memories filled with -1, then 6103 in IMEM and osCicId
-    (0x0B050EE0, "AC290000 240B17D7 FFFFFFFF FFFFFFFF 000017D7 000017D7 00000000"),
-    (0x90BB6CB5, "AC290000 240B17D7 00000000 00000000 00000000 00000000 00000000"),  # CIC-6102: zeroes them, leaves no ID
-    (0x12345678, "00000000 00000000 00000000 00000000 00000000 00000000 00000000"),  # a boot chip it doesn't know: nothing
+    (0x0B050EE0, "AC290000 240B17D7 FFFFFFFF FFFFFFFF 000017D7 000017D7 00000000 00000000 00000000"),
+    (0x90BB6CB5, "AC290000 240B17D7 00000000 00000000 00000000 00000000 00000000 00000000 00000000"),  # CIC-6102: zeroes them, leaves no ID
+    (0x12345678, "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000"),  # a boot chip it doesn't know: nothing
+    # CIC-6106: no copy of its (scrambled) code, the RSP's memories as the 6103's with ID 6104, and the decoded words
+    # a racing game's seven boot self-tests read back (RAM 0x164 and 0x2B8 shown): it parked its main thread on purpose
+    (0xACC8580A, "00000000 00000000 FFFFFFFF FFFFFFFF 000017D8 000017D8 00000000 01EC6021 8941680C"),
     # CIC-6105: its boot code keeps a constant at ROM 0x750 (copied to RAM 0x200) and leaves it at 0x2FE1C0 too: a
     # platformer's first function hangs for ever when the word isn't there
-    (0x98BC2C86, "AD170014 00000000 A4002000 A4002000 000017D9 000017D9 AD170014"),
+    (0x98BC2C86, "AD170014 00000000 A4002000 A4002000 000017D9 000017D9 AD170014 00000000 00000000"),
 ])
 def test_the_boot_leaves_what_the_boot_chips_code_leaves(tmp_path, crc, want):
     """A racing game made for the 6103 checks what the boot chip's code leaves: RAM 0x200 and 0x284 (copies of the boot
@@ -690,8 +693,8 @@ def test_the_boot_leaves_what_the_boot_chips_code_leaves(tmp_path, crc, want):
 int main(int argc, char **argv) {
     FILE *f = fopen(argv[1], "rb"); rom = malloc(1 << 16); rom_size = fread(rom, 1, 1 << 16, f);
     boot_leftovers();
-    printf("%08X %08X %08X %08X %08X %08X %08X\\n", be32(0x80000200), be32(0x80000284), be32(0xA4000000), be32(0xA4001FFC),
-           be32(0xA4001000), be32(0x80000310), be32(0x802FE1C0));
+    printf("%08X %08X %08X %08X %08X %08X %08X %08X %08X\\n", be32(0x80000200), be32(0x80000284), be32(0xA4000000),
+           be32(0xA4001FFC), be32(0xA4001000), be32(0x80000310), be32(0x802FE1C0), be32(0x80000164), be32(0x800002B8));
     return 0;
 }
 """)

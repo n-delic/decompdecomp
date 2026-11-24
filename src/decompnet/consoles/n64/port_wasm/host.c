@@ -1404,16 +1404,25 @@ static uint32_t boot_crc(void) {
    6103 turns its screen upside down when the cartridge's word at 0x578 isn't its own, mirrors its tracks when RAM
    0x200 isn't the boot code's, and pauses in its world when the instruction memory doesn't start with 6103. The
    6106's copy is scrambled as it goes, so it has none here yet. */
+/* Words of a boot chip's decoded boot code that stay in low RAM, where the ROM keeps them scrambled (so no copy from
+   the ROM gives them): {physical address, word}, as a game's self-test reads them back */
+static const uint32_t cic6106_words[][2] = {{0x164, 0x01EC6021u}, {0x1BC, 0x8FBF001Cu}, {0x234, 0xAD130004u}, {0x2B8, 0x8941680Cu}};
 static const struct boot_chip {
     uint32_t crc, entry_less, copy_from, copy_to, copy_at, sp_fill, id;
     uint32_t mark_at, mark_from; /* a word the boot code stores in RAM (its address, and where in the ROM's boot code it
                                     is kept), 0 for none */
+    const uint32_t (*words)[2]; unsigned word_count; /* decoded words it leaves in RAM (above) */
 } boot_chips[] = {
     {0x90BB6CB5u, 0, 0x4C0, 0x774, 0, 0, 0, 0, 0},                  /* CIC-6102 (7101) */
     {0x009E9EA3u, 0, 0x4C0, 0x750, 0, 0, 0, 0, 0},                  /* CIC-7102 */
     {0x0B050EE0u, 0x100000u, 0x4C0, 0x768, 0, 0xFFFFFFFFu, 6103, 0, 0}, /* CIC-6103 (7103) */
     {0x98BC2C86u, 0, 0x554, 0x888, 4, 0xA4002000u, 6105, 0x002FE1C0u, 0x750},       /* CIC-6105 (7105) */
-    {0xACC8580Au, 0x200000u, 0, 0, 0, 0, 0, 0, 0},                  /* CIC-6106 (7106) */
+    /* CIC-6106 (7106): its copy of itself is scrambled as it goes, so the copy isn't made; the RSP's memories are
+       filled and tagged the way the 6103's are, with the ID 6104, and the four decoded words a game reads back are
+       set (cic6106_words). A racing game made for it runs seven self-tests at boot (DMEM[0] must be -1, IMEM[0]
+       0x17D8, and four words of RAM below 0x300 the boot code's) and parks its main thread in a `b .` on purpose
+       when one fails. */
+    {0xACC8580Au, 0x200000u, 0, 0, 0, 0xFFFFFFFFu, 6104, 0, 0, cic6106_words, 4},
 };
 static const struct boot_chip *boot_chip(void) {
     uint32_t crc = boot_crc();
@@ -1437,6 +1446,7 @@ static void boot_leftovers(void) {
        anti-piracy check at the very start of a platformer's first function: it waited on an uncached read that
        never changed, 0 DMAs, a black window). */
     if (chip->mark_at) wbe32(0x80000000u | chip->mark_at, rom32(chip->mark_from));
+    for (unsigned i = 0; i < chip->word_count; i++) wbe32(0x80000000u | chip->words[i][0], chip->words[i][1]);
 }
 /* The TLB windows a game maps its code through (its entry routine's setup, or osMapTLB later): a 1 MB page pair at
    the virtual address 0x00200000 puts the game's code at what the project spells 0x80200000 (the split names every
