@@ -67,6 +67,9 @@ def _run(net, proj, fn, log, check, max_profiles):
         if fp := fp_fingerprints.probe(own, bytes(dict(fn).get('target') or b''), instruction_rows(evidence(net, fn['id'], None)),
                                        bool(dict(proj).get('big_endian', 1))):
             focused.insert(0, fp)
+        # ... and with another scheduling setting when the diff is only the order of the same instructions
+        from . import scheduler_fingerprints
+        focused[:0] = scheduler_fingerprints.probes(own, instruction_rows(evidence(net, fn['id'], None)))
     for flags in focused+captured(net,proj,own)+debug+prioritized(proj, fn, own)+neighbours(net, proj, fn, own):
         if flags not in choices:choices.append(flags)
     # Other candidates retain the existing optimization-first exploration order.
@@ -167,6 +170,10 @@ def _run(net, proj, fn, log, check, max_profiles):
                                                        instruction_rows(getattr(diff, 'rows', [])),
                                                        bool(dict(proj).get('big_endian', 1))):
                             item['inferred'] = [fp]
+                        # (and the same compiler with another scheduling setting, for a diff of only instruction order)
+                        from . import scheduler_fingerprints
+                        if scheduled := scheduler_fingerprints.probes(own, instruction_rows(getattr(diff, 'rows', []))):
+                            item['inferred'] = [*item.get('inferred', []), *scheduled]
                     if index == 0 and item['link'] and dict(proj).get('arch') == 'mips':
                         from decomprepair.aligned_relocation_names import replacement
                         item['relocation_source'] = replacement(source, getattr(diff, 'rows', ()),
@@ -247,8 +254,11 @@ def _run(net, proj, fn, log, check, max_profiles):
         if (current['status'] == 'open' and current['best_source'] == fn['best_source']
                 and net._comparison_digest(fresh,current,current['best_source'],candidates)==input_digest):
             from .fp_fingerprints import is_fp_variant
+            from .scheduler_fingerprints import is_scheduler_variant
+            # (KMC's scheduling variants are the older, proven route: kmc_variants)
             review_only = (('-ffast-math' in best['flags'] and '-ffast-math' not in own['flags'])
-                           or is_fp_variant(own['flags'], best['flags']))
+                           or is_fp_variant(own['flags'], best['flags'])
+                           or (own['toolchain'] != 'gcc-2.7.2-kmc' and is_scheduler_variant(own['flags'], best['flags'])))
             result['review_only'] = review_only and best['exact']
             if (best['exact'] and not review_only and net.auto_adjusts(fresh)
                     and best.get('source', fn['best_source']) == fn['best_source']):
