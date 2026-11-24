@@ -29,6 +29,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 uint8_t *port_memory(void);
 uint64_t port_io_load(uint64_t addr);
@@ -128,8 +129,12 @@ HOT uint32_t lw(uint32_t a) { uint32_t v; memcpy(&v, at_load(a), 4); return __bu
 HOT uint32_t fetch(uint32_t a) {
     uint32_t w = lw(a);
     if (__builtin_expect(w == 0 && port_tlb_n && mapped(a) >= 0x80000000u, 0)) {
-        uint32_t b = port_tlb_alias(mapped(a)), blk = mapped(a) & ~15u;
-        if (b && !lw(blk) && !lw(blk + 4) && !lw(blk + 8) && !lw(blk + 12)) return lw(b);
+        /* (the block of zero words first: a nop is a zero word, and the alias is a search through the game's windows) */
+        uint32_t blk = mapped(a) & ~15u;
+        if (!lw(blk) && !lw(blk + 4) && !lw(blk + 8) && !lw(blk + 12)) {
+            uint32_t b = port_tlb_alias(mapped(a));
+            if (b) return lw(b);
+        }
     }
     return w;
 }
@@ -941,6 +946,25 @@ static int step(Cpu *c, uint32_t pc, uint32_t op, uint32_t *target) {
 #undef LIKELY
 }
 
+/* PORT_INTERP_STATS=1: the instructions interpreted so far and their rate, printed every 16 M (the host ends with
+   _exit, so there is no later moment to print at): how the interpreter's speed is measured. */
+static void interp_stats(unsigned long n) {
+    static int on = -1;
+    static unsigned long total, next = 1ul << 24;
+    static struct timespec t0;
+    if (on < 0) { on = getenv("PORT_INTERP_STATS") != 0; if (on) clock_gettime(CLOCK_MONOTONIC, &t0); }
+    if (!on) return;
+    unsigned long t = __atomic_add_fetch(&total, n, __ATOMIC_RELAXED);
+    if (t >= next) {
+        next = t + (1ul << 24);
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        double secs = (double)(now.tv_sec - t0.tv_sec) + (double)(now.tv_nsec - t0.tv_nsec) / 1e9;
+        fprintf(stderr, "interpreter stats: %lu M instructions in %.1f s: %.1f M/s\n", t >> 20, secs,
+                secs > 0 ? (double)t / secs / 1e6 : 0.0);
+    }
+}
+
 /* Run the function at `entry` with the registers `r` and float registers `f` as o32 left them ($sp, $ra: the
    caller's sentinel, set by port_mips_enter), until it returns. */
 void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
@@ -1137,6 +1161,7 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
         }
     counted:
         if (!(++steps & 0xFFFF)) { /* a thread spinning here gives the others their turn */
+            interp_stats(0x10000);
             if (tracing > 1) fprintf(stderr, "interpreter: %08X still running, at %08X after %lu instructions\n", entry, pc, steps);
 #ifndef PORT_WEB
             port_boot_spin();

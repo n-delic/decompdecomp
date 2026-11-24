@@ -777,3 +777,15 @@ def test_a_call_from_window_code_returns_to_the_virtual_address(tmp_path):
     code.write_bytes(b"".join(struct.pack(">I", w & 0xFFFFFFFF) for w in prog))
     out = subprocess.run([str(program), str(code)], capture_output=True, text=True, timeout=30, check=True).stdout.split()
     assert int(out[0], 16) == 0x400F0C
+
+
+def test_the_interpreter_reports_its_rate_and_a_nop_does_not_search_the_windows():
+    """A game that spins in interpreted code and one that is slow look alike from outside: PORT_INTERP_STATS=1 prints
+    the instructions run and their rate (a racing game's decompressor and a puzzle game's main loop both ran at
+    30-125 M/s, so neither was too slow: the second just never blocked). And a nop (a zero word, common in delay
+    slots) first looks at its block of four, so the search through the game's TLB windows (port_tlb_alias) happens
+    only where the block really is empty."""
+    text = MIPS.read_text()
+    assert 'getenv("PORT_INTERP_STATS")' in text and "interpreter stats:" in text and "interp_stats(0x10000)" in text
+    fetch = text[text.index("HOT uint32_t fetch("):text.index("HOT uint64_t ld(")]
+    assert fetch.index("!lw(blk)") < fetch.index("port_tlb_alias(")
