@@ -832,3 +832,16 @@ are identical, the same within the allowed shift (a scene caught a frame apart),
 each differing picture as console, port and difference. What it can't do: the emulator draws nothing, so blank frames and
 the browser build still have no pixel reference; a game that needs its own seeds replayed (a port-only override, `PORT_SEED_REPLAY`)
 still shows those pictures as differences until it has one.
+
+### What a per-task picture can't tell (a second route's car-selection screen)
+
+Frame 1204 of a menu route differed by 63% between the console and the port, and the cause was not a rendering fault.
+The two display lists were word for word the same except for addresses (the console's heap and the port's lay buffers and
+textures out differently: a picture at 0x315280 on one side, 0x27F240 on the other), and the textures they sample held the
+same bytes at their own addresses. What differed was the rest of the colour buffer: a task draws only part of a picture
+(here the 3D car), and the dump holds whatever that buffer held before, which is the menu text on the port and uninitialised
+noise on the console. So a comparison at one graphics task judges the buffer's history as much as the task. Taking the
+task whose picture the video interface then scans out (the one the player sees) would judge a finished frame; until
+Check pictures does, read a large difference at a task that draws a sixth of the screen as "a different moment in building
+the frame" and look at the neighbouring tasks before calling it a fault. Single sampled tasks can also all draw nothing:
+a route's 19 samples every 300 frames drew no picture on either side, hence the windows of six.
