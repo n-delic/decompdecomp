@@ -1388,6 +1388,21 @@ void w2c_env_osMapTLB(struct w2c_env *e, u32 index, u32 pm, u32 va, u32 even, u3
 }
 u32 w2c_env_memcpy(struct w2c_env *e, u32 d, u32 s, u32 n) { (void)e; memmove(M + d, M + s, n); return d; }
 u32 w2c_env_memset(struct w2c_env *e, u32 d, u32 c, u32 n) { (void)e; memset(M + d, (int)c, n); return d; }
+/* PORT_SEED_REPLAY=file: the seeds a game's random-number generator was given on the console, one number a line, in the order its
+   seeding function was called (the emulator's break on that function reports its argument). A port-only override of that function
+   (port/wasm/src/) passes the seed it was given through port_seed_replay: the next number from the file while there are any, the
+   seed itself after them. A game that seeds from the clock (osGetTime) gets the console's draws, where the port's clock, which
+   isn't the console's cycle count, would send each one elsewhere. */
+u32 w2c_env_port_seed_replay(struct w2c_env *e, u32 fallback) {
+    (void)e;
+#ifndef PORT_WEB
+    static FILE *file; static int tried;
+    if (!tried) { const char *path = getenv("PORT_SEED_REPLAY"); tried = 1; if (path) file = fopen(path, "r"); }
+    unsigned long seed;
+    if (file && fscanf(file, "%lu", &seed) == 1) return (u32)seed;
+#endif
+    return fallback;
+}
 u32 w2c_env_strlen(struct w2c_env *e, u32 p) { (void)e; return (u32)strlen((char *)M + p); }
 /* The rest of the C library's string and memory functions the kit counts as the host's (port.py _LIBC): left out of the build
    as the game's own copies, so one the host doesn't define was a stub returning 0: every strncmp said "equal" and every

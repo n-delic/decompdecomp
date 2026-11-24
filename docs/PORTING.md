@@ -608,6 +608,16 @@ percent, the clock-seeded random camera cut described above) and 13,000, 13,500 
 camera, at the same place on both sides at 12,500, was 8 and 43 units apart at 13,000 and 3 and 476 at 14,000, a drift from after the
 cut and not a second jump. (With the save of a run of the script, `--prime-save`, the same sweep had matched at 22 of 23: the 13,000 and
 later windows then agreed; which windows agree after a clock-seeded random draw is not something the port controls.)
+Clock-seeded randomness can be replayed. `tools/n64_record_seeds.py ROM ADDRESS --input @script --vis N --out seeds.txt` records the
+argument the emulator's game gave its seeding function (the break on its address: `rand_seed(osGetTime())` in a racing game, 2,391
+calls through its first 7,142 retraces, mostly a spawn timer's, 87 the chase camera's); the port, with `PORT_SEED_REPLAY=seeds.txt`,
+gives those to a port-only override of that function (`port/wasm/src/rand_seed.c`, which stores what `port_seed_replay(seed)`
+returns, the host's: the next recorded number while there are any, the seed passed in after them). The call order was the same on both
+sides (the port's call 1,565, at task 10,450, was the console's first chase-camera seed). Race windows 3,000 to 14,000 in steps of 500,
+from the console's own save: 22 of 23 matched the emulator to the pixel (13,000, 13,500 and 14,000, 17 to 28 percent off without the
+replay, now 0.00), the one that doesn't being task 10,500: the chase camera was at (-162,621, -2,263, -172,450) in the port with
+and without the replay and at (-164,095, -2,322, -172,490) on the console, so that cut is not decided by the seed alone (the
+track-node list ahead of the player, or the player's own position, are what is left to look at).
 `--prime-save` on `tools/n64_frame_compare.py` runs the port once through the input script first, so the compared run starts
 from the save (`game.eep`, in `--work`) that run wrote. It matters: on a racing game a port started from no save, from an all-zero
 or all-0xFF one, or from the save of a short boot had its car launch slower than the emulator's (and stay 2,000 and more

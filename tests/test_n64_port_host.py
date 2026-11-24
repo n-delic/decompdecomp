@@ -1754,3 +1754,33 @@ int main(void) {
     done = subprocess.run([str(tmp_path / "t")], capture_output=True, text=True, check=True)
     # the window's two halves at their spelling (the bytes are copied there), nothing below the floor or past the windows
     assert done.stdout.split() == ["1", "80200010", "80300010", "000FFFF0", "00400000", "0009000C"]
+
+
+def test_seeds_the_console_used_are_replayed_in_order_then_the_game_s_own(tmp_path):
+    """PORT_SEED_REPLAY: a port-only override of a game's seeding function passes its seed through port_seed_replay, which gives the
+    next number of the recorded file (the seeds the console's game was given) while there are any and the seed passed in after them."""
+    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if not cc:
+        pytest.skip("no C compiler")
+    source = tmp_path / "t.c"
+    source.write_text("""#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+typedef uint32_t u32;
+struct w2c_env { int unused; };
+""" + _function(HOST.read_text(), "w2c_env_port_seed_replay") + """
+int main(void) {
+    printf("%u %u %u %u\\n", w2c_env_port_seed_replay(0, 7), w2c_env_port_seed_replay(0, 8), w2c_env_port_seed_replay(0, 9),
+           w2c_env_port_seed_replay(0, 10));
+    return 0;
+}
+""")
+    subprocess.run([cc, "-o", str(tmp_path / "t"), str(source)], check=True, capture_output=True)
+    seeds = tmp_path / "seeds.txt"
+    seeds.write_text("4000000000\n123\n")
+    env = {**os.environ, "PORT_SEED_REPLAY": str(seeds)}
+    assert subprocess.run([str(tmp_path / "t")], env=env, check=True, capture_output=True, text=True).stdout.split() == [
+        "4000000000", "123", "9", "10"]
+    env.pop("PORT_SEED_REPLAY")
+    assert subprocess.run([str(tmp_path / "t")], env=env, check=True, capture_output=True, text=True).stdout.split() == [
+        "7", "8", "9", "10"]
