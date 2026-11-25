@@ -1080,3 +1080,9 @@ The route that holds START for 50 frames (a pause held that long): 43-89%. The m
 further or less far in the port, and a pause that opens and shuts at slightly other moments leaves the scene elsewhere. That is the signature of a step the game takes from the clock (the time between two frames, read with osGetTime or a
 counter) rather than a fixed step: on the console the time between frames is the cycle count the CPU spent, the port's virtual clock moves by whole retraces, and a tap is too short to show it. To test: the game's clock reads on each side (the emulator's break on
 `osGetTime`, the port's `osGetTime` result at the same frames) and whether the frame-to-frame difference is the same.
+
+**How much the game reads the clock (console, retraces 520-600; `emulator.run(breaks=[0x8008BADC], record=...)` at osGetTime's return, the 64-bit time from the recorded $v0/$v1).** The game reads `osGetTime` 27 times in each heavy retrace
+(the one a task frame starts at) and 6 in each light one, from a handful of callers (0x80014224, 0x800142C4, 0x80014324, 0x8001416C, 0x80013F6C, 0x80013ED0), the timing code around 0x80013ED0-0x80014324. The counter runs at about 1.57 million ticks a retrace,
+and the gaps between consecutive reads range from 130 ticks to 1.8 million (a whole retrace), median about 3,000: it is measuring the cycles its own code takes. The port answers each read from its virtual clock (a retrace's worth
+advanced by whole steps and small sub-steps), so any decision the game takes from these measurements (a detail level, a frame skip, a time step) can come out otherwise there. This makes the clock-step hypothesis for held buttons
+(taps exact, holds drifting) a specific one to test: log the port's `osGetTime` at the same call sites and compare the reads that reach a decision with the console's.

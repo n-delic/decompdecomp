@@ -92,10 +92,10 @@ def update(net, proj, folder, initial, best, details=None):
         compiler = compiler.get("toolchain") if isinstance(compiler, dict) else str(compiler)
         details = (f"- **Game:** {proj['name']}\n- **Platform:** {cfg.get('platform') or 'not recorded'}\n"
                    f"- **Compiler:** {compiler or 'not recorded'}")
-    _update_root(folder, details, progress)
+    _update_root(folder, details, progress, _port_progress(net, proj, folder))
 
 
-def _update_root(folder, details, progress):
+def _update_root(folder, details, progress, port=None):
     """In a rebuildable repository the progress folder is a subfolder, and visitors land on the root README: carry
     the game, platform, compiler, counts and progress map there too (the picture is the progress folder's own)."""
     root = folder.parent
@@ -108,11 +108,16 @@ def _update_root(folder, details, progress):
     newline = "\r\n" if "\r\n" in text else "\n"
     visuals = (f"![Decompilation completion and function map](progress/{CARD})\n\n"
                "Green: matched. Gold: attempted. Grey: open. Red: set aside.")
-    blocks = [(name, content) for name, content in (("details", details), ("progress", progress), ("visuals", visuals))
-              if content is not None]
+    blocks = [(name, content) for name, content in (("details", details), ("progress", progress), ("visuals", visuals),
+                                                    ("port", port)) if content is not None]
     if "<!-- decompdecomp:visuals:start -->" in text:
         for name, content in blocks:
-            text = _replace(text, name, content)
+            if name == "port" and "<!-- decompdecomp:port:start -->" not in text:
+                # Repositories saved before this section existed: add it right after the progress map.
+                text = text.replace("<!-- decompdecomp:visuals:end -->",
+                                    "<!-- decompdecomp:visuals:end -->" + newline * 2 + block(name, content, newline), 1)
+            else:
+                text = _replace(text, name, content)
     else:
         # First time: put the summary under the title, before the build instructions, instead of at the very end.
         summary = newline.join(block(name, content, newline) for name, content in blocks)
@@ -173,3 +178,32 @@ def _card(states, counts, total, pct, platform=""):
                 x += width
         svg.append('</g>')
     return "\n".join(svg + ['</g></svg>', ''])
+
+
+def _port_progress(net, proj, folder):
+    """The Porting tab's checklist as README text, so visitors see how far a native build of the game is. None when the
+    report can't be read (a save must never fail on it) or the project isn't in a rebuildable repository."""
+    if folder.name != "progress" or not (folder.parent / "build.json").is_file():
+        return None
+    try:
+        from ..port.readiness import STEPS, readiness, steps_done
+        report = readiness(net, proj["slug"])
+        done = steps_done(report)
+    except Exception:  # noqa: BLE001 - a README refresh is never a reason to lose a save
+        return None
+    pc, link, assets = report.get("pc"), report.get("link"), report.get("assets")
+    detail = {"code": f"{report['code']['c']:,} of {report['code']['total']:,} functions in C",
+              "compiles": f"{pc['ok'] + pc['warned']:,} of {pc['total']:,} functions compile" if pc else "not checked yet",
+              "links": f"{link['undefined']:,} symbols still undefined" if link else "not checked yet",
+              "assets": (f"{assets['resources']:,} resources mapped" if assets else "not checked yet")}
+    lines = ["## Porting progress", "",
+             "A native build of the game (Windows, Linux, macOS) needs these steps. The game's own data is never in this "
+             "repository: each person's port is built from their own copy.", "", "| Step | Status | Detail |", "| :-- | :-- | :-- |"]
+    lines += [f"| {title} | {'✅ done' if step in done else '⬜ in progress'} | {detail[step]} |"
+              for step, title in STEPS.items()]
+    runtimes = report.get("runtimes") or []
+    if runtimes:
+        lines += ["", "**Runtimes:** " + "; ".join(
+            f"{r['name']}: " + ("ready to play" if r["playable"] else "needs " + ", ".join(r["missing"][:3]).lower() if r["missing"]
+                                else "not built yet") for r in runtimes)]
+    return "\n".join(lines)

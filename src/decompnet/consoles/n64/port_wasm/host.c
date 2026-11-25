@@ -2103,7 +2103,14 @@ static void boot_call(void) {
 #endif
 }
 /* the VI retrace's period: 50 a second for PAL, 60 otherwise */
-static int retrace_us(void) { return boot.tv == 0 ? 20000 : 16667; }
+/* The retrace period in microseconds: PAL 20 ms, NTSC 16.667 ms, or PORT_RETRACE_US (the reversing emulator's own period for a PAL game, read from the count between its
+   retraces, is 992,835 ticks of the 46.875 MHz counter: 21,180 us, not 20,000; the time a game measures between frames, its physics step, then differs by 6% in the port). */
+static int retrace_us(void) {
+    static int override = -1;
+    if (override < 0) override = getenv("PORT_RETRACE_US") ? atoi(getenv("PORT_RETRACE_US")) : 0;
+    if (override > 1000) return override;
+    return boot.tv == 0 ? 20000 : 16667;
+}
 
 #ifdef PORT_WEB
 /* The page's start: the ROM the player chose (in memory the page got from port_web_alloc), then the boot, as main()
