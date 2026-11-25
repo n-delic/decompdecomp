@@ -24,6 +24,9 @@ mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources" "$OUT"
 ditto "$(dirname "$(dirname "$PYTHON")")" "$CONTENTS/Runtime"
 "$CONTENTS/Runtime/bin/python3.12" -c 'import sys; assert sys.prefix.endswith("Runtime") and sys.prefix == sys.base_prefix'
 uv pip install --break-system-packages --python "$CONTENTS/Runtime/bin/python3.12" "$WORK"/wheel/*.whl >/dev/null
+uv run --no-project --python 3.12 --with cython --with setuptools "$ROOT/packaging/build_library_native.py" \
+  "$("$CONTENTS/Runtime/bin/python3.12" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')" \
+  || echo "The optional native library modules were not built."
 
 "$CONTENTS/Runtime/bin/python3.12" "$ROOT/packaging/stamp_build.py" "$ROOT"
 
