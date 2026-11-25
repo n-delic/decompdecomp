@@ -414,3 +414,27 @@ def test_a_sha1_file_beside_the_splat_config_names_the_original_rom(tmp_path):
     (tmp_path / "game.us.sha1").write_text("a" * 40 + "\n")
     assert config_sha1(config, {"options": {}}) == "a" * 40
     assert config_sha1(config, {"sha1": "b" * 40, "options": {}}) == "b" * 40
+
+
+
+def test_the_cross_gcc_shim_is_only_provided_to_makefiles_that_assemble_through_it(tmp_path, monkeypatch):
+    pinned(tmp_path, monkeypatch)
+    monkeypatch.setattr(mips_tools.shutil, "which", lambda name: "/usr/bin/cpp" if name == "cpp" else None)
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "Makefile").write_text("XGCC = $(CROSS)gcc\n$(O): %.c\n\t$(XGCC) -c $<\n")
+    folder = mips_tools.build_paths(SimpleNamespace(root=root))[0]
+    assert not (folder / "mips-linux-gnu-gcc").exists()
+    (root / "Makefile").write_text("%.o: %.s\n\t$(CROSS)gcc -x assembler-with-cpp -c $<\n")
+    folder = mips_tools.build_paths(SimpleNamespace(root=root))[0]
+    assert (folder / "mips-linux-gnu-gcc").is_file()
+
+
+def test_cc_check_through_a_host_compiler_variable_is_skipped_on_a_mac(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools
+
+    monkeypatch.setattr(buildtools.sys, "platform", "darwin")
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "Makefile").write_text("CC_CHECK = $(HOSTCC) --target=i686-linux-gnu -fsyntax-only -std=gnu90\nall:\n\ttrue\n")
+    assert consoles.get("n64").project_build_command(SimpleNamespace(root=root), ["make"])[-1] == "CC_CHECK=true"
