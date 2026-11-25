@@ -976,7 +976,13 @@ class ForkProject:
             make = (self.root / "Makefile").read_text(errors="replace", encoding="utf-8")
             chosen = [f"VERSION={version}"] if version and self.splat_baseroms() else []
             steps = [["make", *chosen, t] for t in ("tools", "setup", "extract") if re.search(rf"^{t}\s*:", make, re.M)]
-            jobs = min(os.cpu_count() or 4, 4) if self._docker_only_macos() else os.cpu_count() or 4
+            config, splitter = self._splat_yaml(), self.root / "tools" / "splat" / "split.py"
+            if (not steps and config and splitter.is_file() and not (self.root / "assets").exists()
+                    and re.search(r"\bassets/", make) and not re.search(r"^(?:split|setup|extract)\s*:", make, re.M)):
+                # a project whose README says "run splat" before `make`: its Makefile links assets/*.bin (and the
+                # like) that only the split writes
+                steps = [["python", str(splitter.relative_to(self.root)), config.name]]
+            jobs =min(os.cpu_count() or 4, 4) if self._docker_only_macos() else os.cpu_count() or 4
             return steps + [["make", *chosen, f"-j{jobs}"]]
         if kind == "objdiff":
             cfg = self.objdiff_config()

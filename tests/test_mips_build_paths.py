@@ -324,3 +324,19 @@ def test_n64_replaces_an_old_mac_assembler_that_lacks_the_mul_flag(tmp_path, mon
     old.write_bytes(b"\xcf\xfa\xed\xfe vr4300mul-off")
     buildtools._update_old_mac_assembler(SimpleNamespace(root=root), root / "tools")
     assert old.read_bytes().endswith(b"vr4300mul-off")
+
+
+def test_n64_replaces_a_qemu_irix_compiler_command_with_the_installed_ido(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools
+
+    ido = tmp_path / "ido"
+    ido.mkdir()
+    (ido / "cc").write_text("compiler")
+    monkeypatch.setattr(buildtools.sys, "platform", "darwin")
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(buildtools.toolchains, "require", lambda tid: ido)
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "Makefile").write_text("IDO := ~/qemu-irix -L tools/ido_irix tools/ido_irix/usr/bin/cc\nall:\n\ttrue\n")
+    prepared = consoles.get("n64").project_build_command(SimpleNamespace(root=root), ["make"])
+    assert prepared[-1].startswith("IDO=.decomp-wtf/build-tools/ido-") and prepared[-1].endswith("/cc")

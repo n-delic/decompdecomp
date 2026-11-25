@@ -1738,3 +1738,14 @@ def test_code_under_a_macro_the_compiler_defines_isnt_hidden(tmp_path, macro):
     text = f"#ifdef {macro}\nint f(void) {{ return 1; }}\n#endif\n"
     (tmp_path / "src" / "a.c").write_text(text)
     assert ForkEngine._hidden(ForkProject(tmp_path), text, text.index("int f")) is None
+
+
+def test_splat_project_without_a_split_target_runs_its_bundled_splat_for_the_assets(tmp_path):
+    (tmp_path / "Makefile").write_text("B_FILES := $(wildcard assets/*.bin)\nall:\n\ttrue\n")
+    (tmp_path / "game.yaml").write_text("options:\n  platform: n64\n  target_path: baserom.z64\nsegments: []\n")
+    (tmp_path / "tools" / "splat").mkdir(parents=True)
+    (tmp_path / "tools" / "splat" / "split.py").write_text("")
+    first = ForkProject(tmp_path).setup_commands()[0]
+    assert first[1:] == ["tools/splat/split.py", "game.yaml"]
+    (tmp_path / "assets").mkdir()
+    assert ForkProject(tmp_path).setup_commands()[0][0] == "make"
