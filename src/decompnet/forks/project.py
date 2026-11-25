@@ -1285,6 +1285,18 @@ class ForkProject:
         if any((self.root / folder / "pyvenv.cfg").is_file() for folder in (".venv", "venv")):
             return
         requirements, pyproject = self.root / "requirements.txt", self.root / "pyproject.toml"
+        if not requirements.is_file() and (self.root / "tools" / "requirements.txt").is_file():
+            requirements = self.root / "tools" / "requirements.txt"  # (where some projects keep theirs)
+        needs = requirements.relative_to(self.root).as_posix()
+        # The version of splat the project's Dockerfile installs: its extensions are written for that one, and a
+        # requirements file that says only "<1.0" would install a newer splat they can't load into
+        pins = []
+        try:
+            docker = (self.root / "Dockerfile").read_text(errors="replace", encoding="utf-8")
+            pins = [f"splat64{extra}{spec}" for extra, spec in re.findall(
+                r"[\"']?splat64(\[[\w,]+\])?\s*([<>=!~]=?[\w.]+)[\"']?", docker)][:1]
+        except OSError:
+            pass
         uses_pyproject = False
         if pyproject.is_file():
             text = pyproject.read_text(errors="replace", encoding="utf-8")
@@ -1304,12 +1316,12 @@ class ForkProject:
                       uv, "sync", "--python", sys.executable]]
         elif uv:
             steps = [[uv, "venv", "--seed", "--python", sys.executable, str(self.root / folder)],
-                     [uv, "pip", "install", "--python", python, "-r", "requirements.txt"] if requirements.is_file()
+                     [uv, "pip", "install", "--python", python, "-r", needs, *pins] if requirements.is_file()
                      else [uv, "pip", "install", "--python", python, "."]]
         else:
             steps = [[sys.executable, "-m", "venv", str(self.root / folder)]]
             if requirements.is_file():
-                steps.append([python, "-m", "pip", "install", "-r", "requirements.txt"])
+                steps.append([python, "-m", "pip", "install", "-r", needs, *pins])
         for step in steps:
             ok, tail = self.run(step, log=log, timeout=1800)
             if not ok:

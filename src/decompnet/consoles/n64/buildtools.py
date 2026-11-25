@@ -76,6 +76,11 @@ def _provide_compiler_dirs(project) -> None:
     wanted: list[tuple[str, str]] = []
     if re.search(r"tools/gcc[_-]2\.7\.2/(?:macos|\$\(DETECTED_OS\))", texts) and sys.platform == "darwin":
         wanted.append(("tools/gcc_2.7.2/macos", "gcc-2.7.2-kmc"))
+    if sys.platform == "darwin":
+        # the folder itself, as a Linux-only project names it (tools/gcc-2.7.2/gcc; $(TOOLS_DIR)/gcc-2.7.2/)
+        for name in set(re.findall(r"(?:\btools|\$\(TOOLS(?:_DIR)?\))/(gcc[_-]2\.7\.2)/(?!macos|\$\(DETECTED_OS\))",
+                                   texts)):
+            wanted.append((f"tools/{name}", "gcc-2.7.2-kmc"))
     for version in set(re.findall(r"tools/ido/(5\.3|7\.1)(?![\d])", texts)):
         wanted.append((f"tools/ido/{version}", f"ido-{version}"))
     for folder, version in set(re.findall(r"(tools/ido(5\.3|7\.1)[\w.-]*)(?=\s|$|/)", texts, re.M)):
