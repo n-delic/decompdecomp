@@ -66,3 +66,7 @@ the project's ROM and extracts argument locations from the caller's register
 and stack setup. It checks the original stack loads and adds the findings to
 the function's briefing notes. Pass a prototype in `context` to refine
 unknown types. Review the result and judge the draft with `compile_and_diff`.
+
+## Polishing matched m2c output
+
+When you make a matched function readable, keep the `#ifndef M2C_DEFINES` ... `#endif` prelude and the declarations above the function: the body still uses `M2C_FIELD`, `M2C_UNK` and the externs, and without them it is a compile error (the app puts back what a rewrite drops, but say so in your plan). Leave the constructs there for the match as they are: `do { } while (0)` wrappers, goto loops, `register`, `volatile` frame fillers, `__repair_*` locals. Rename and comment; do not restructure.
