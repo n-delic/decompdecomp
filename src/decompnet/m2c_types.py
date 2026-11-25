@@ -16,9 +16,11 @@ reads C text only; it never compiles or judges.
 """
 import re
 
-_INTEGER_START = re.compile(r"0x[0-9A-Fa-f]+\b|\(\w+ \* (?:0x[0-9A-Fa-f]+|\d+)\)")
+# An operand that is a number: a literal, a scaled index, a word read from memory (`*(s32 *)0x430350`, a field read as s32).
+_INTEGER_START = re.compile(r"0x[0-9A-Fa-f]+\b|\(\w+ \* (?:0x[0-9A-Fa-f]+|\d+)\)|\*\((?:s|u)32 \*\)"
+                            r"|M2C_FIELD\(.*?, (?:s|u)32 \*, (?:0x[0-9A-Fa-f]+|\d+)\)")
 # What may stand before a unary `*`: an operator, an opening bracket, `return`, or a cast (`(M2C_UNK *) *(...)`).
-_UNARY_BEFORE = re.compile(r"(?:^|[=(,;{?:&|!<>+\-*/%]|\breturn|\(\s*[\w ]+\*+\s*\))\s*$")
+_UNARY_BEFORE = re.compile(r"(?:^|[=(,;{?:&|!<>+\-*/%]|\breturn|\(\s*[\w ]+\*+\s*\)|\(\s*(?:[us](?:8|16|32|64)|f32|f64|M2C_\w+)\s*\))\s*$")
 
 
 def _balanced(text: str, start: int) -> int | None:
@@ -52,7 +54,7 @@ def _integer_dereferences(source: str) -> str:
         # `(T *) *(...)` is a cast of the dereference, not of the sum: the `*` is still unary.
         end = _balanced(source, start + 1)
         inner = source[start + 2:end - 1] if end else ""
-        if not end or not _INTEGER_START.match(inner) or not re.search(r"[+\-]", inner):
+        if not end or not any(_INTEGER_START.match(inner[i:]) for i in range(min(3, len(inner))) if i == 0 or inner[:i].strip("( ") == "") or not re.search(r"\s[+\-|]\s", inner):
             continue
         out.append(source[index:start] + "*(s32 *)(" + inner + ")")
         index = end
@@ -76,6 +78,8 @@ def _scalar_dereferences(source: str) -> str:
         if start < index or not _UNARY_BEFORE.search(source[max(0, start - 24):start]):
             continue
         rest = source[start + 1:]
+        if re.match(r"\s*[\w ]+\(\s*$", source[source.rfind("\n", 0, start) + 1:start + 1]):
+            continue  # a declaration (`u16 (*sp26C)[];`), not a dereference
         if rest.startswith("("):
             end = _balanced(source, start + 1)
             inner = source[start + 2:end - 1] if end else ""
@@ -111,7 +115,11 @@ def _table_calls(source: str) -> str:
 
 
 def _address_sums(source: str) -> str:
-    return re.sub(r"\(&(\w+) \+ &(\w+)\)", r"((u32) &\1 + (u32) &\2)", source)
+    source = re.sub(r"\(&(\w+) \+ &(\w+)\)", r"((u32) &\1 + (u32) &\2)", source)
+    # a number minus an address (`var_s0 - &D_80140000`) and a byte distance divided by a size (`(a - b) / 688`)
+    source = re.sub(r"(?<=[\w)] )- &(\w+)\b", r"- (s32) &\1", source)
+    source = re.sub(r"\((\w+) - (\w+)\) / (\d+)\b", r"((s32) \1 - (s32) \2) / \3", source)
+    return re.sub(r"\b[su]24\b", "s32", source)  # (a 24-bit type m2c names for a packed field)
 
 
 _PROTOTYPE = re.compile(r"^(?P<head>[^\n(){};=]*?\b(?P<name>\w+)\()(?P<params>[^;{}\n]*)(?P<tail>\);[ \t]*/\* extern \*/)$", re.M)

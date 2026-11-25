@@ -51,3 +51,23 @@ def test_a_prototype_that_disagrees_with_a_call_becomes_a_declaration_without_pa
     assert "M2C_UNK func_2(f32 *, M2C_UNK);" in out  # the calls agree: untouched
     assert "s32 func_4(void);" in out
     assert m2c_types.repair(out) == out
+
+
+def test_numbers_and_addresses_in_arithmetic_are_cast_to_numbers():
+    assert m2c_types.repair("return (arg1 - temp) / 688;") == "return ((s32) arg1 - (s32) temp) / 688;"
+    assert m2c_types.repair("t = var - &D_80140000;") == "t = var - (s32) &D_80140000;"
+    assert m2c_types.repair("s24 sp40;") == "s32 sp40;"
+    assert m2c_types.repair("x = a - b;") == "x = a - b;"
+
+
+def test_a_word_read_from_memory_that_is_dereferenced_and_cast_values_are_read_through_a_pointer():
+    assert m2c_types.repair("t = *(*(s32 *)0x430350 + i);") == "t = *(s32 *)(*(s32 *)0x430350 + i);"
+    assert m2c_types.repair("y = (f32) *((i * 8) + p);") == "y = (f32) *(s32 *)((i * 8) + p);"
+    assert m2c_types.repair("*(M2C_FIELD(p, s32 *, 0x10) + (a - b)) = 0xFF;").startswith("*(s32 *)(M2C_FIELD(")
+
+
+def test_a_declaration_with_a_pointer_to_an_array_is_not_a_dereference():
+    src = "void f(void) {\n    u16 (*sp26C)[];\n    s32 x;\n    x = sp26C;\n}\n"
+    assert m2c_types.repair(src) == src
+    from decompnet import seeds
+    assert seeds.declare_unset_reads(src, "f") == src

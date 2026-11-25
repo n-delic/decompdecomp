@@ -63,3 +63,10 @@ def test_unset_stack_and_saved_register_reads_are_declared_locals():
     assert out.count("s32 sp20;") == 1  # the declared slot is not declared again
     assert seeds.declare_unset_reads(out, "f") == out
     assert seeds.declare_unset_reads("int x;\n", "f") == "int x;\n"
+
+
+def test_two_moves_with_a_conversion_between_them_are_two_values_not_one_double():
+    code = ("mtc1 $v0, $f2\ncvt.d.w $f2, $f2\nmtc1 $v1, $f3\ncvt.s.w $f3, $f3\nadd.s $f0, $f3, $f4\n"
+            "add.d $f2, $f2, $f0\n")
+    out = m2c_fp64.pair_free(code)
+    assert out != code and '$f3' not in out

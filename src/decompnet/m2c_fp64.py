@@ -61,15 +61,16 @@ def _memory_key(operand: str):
     return match[5], match[2], int(number, 0)
 
 
-def _composed(moves: list[tuple[str, int, list[str]]]) -> set[int]:
+def _composed(moves: list[tuple[int, str, int, list[str]]]) -> set[int]:
     """Even registers whose odd neighbour is the other half of a double built or taken apart as two singles
     (`lwc1 $f0, 4(a0)` with `lwc1 $f1, 0(a0)`, `mtc1 $a2, $f12` with `mtc1 $a3, $f13`): m2c's own pairing."""
     found = set()
-    for op, number, operands in moves:
+    for index, op, number, operands in moves:
         if number % 2 or not operands:
             continue
-        for other_op, other, other_operands in moves:
-            if other_op != op or other != number + 1 or not other_operands:
+        for other_index, other_op, other, other_operands in moves:
+            # (two moves with a conversion between them are two values: `mtc1 $v0, $f2; cvt.d.w $f2, $f2; mtc1 $v1, $f3`)
+            if other_op != op or other != number + 1 or not other_operands or abs(other_index - index) > 1:
                 continue
             if op in ('mtc1', 'mfc1'):
                 names = [_GPR.index(o.lstrip('$')) if o.lstrip('$') in _GPR else -1 for o in (operands[0], other_operands[0])]
@@ -99,7 +100,7 @@ def _scan(asm: str):
             number = _NUMBER[_REGISTER.fullmatch(register)[1]]
             (doubles if role == 'd' else singles).add(number)
             if match['op'] in _SINGLE_MOVES:
-                moves.append((match['op'], number, [o for o in operands if o != register]))
+                moves.append((index, match['op'], number, [o for o in operands if o != register]))
         uses.append(index)
     return uses, doubles, singles, _composed(moves)
 
