@@ -438,3 +438,38 @@ def test_cc_check_through_a_host_compiler_variable_is_skipped_on_a_mac(tmp_path,
     root.mkdir()
     (root / "Makefile").write_text("CC_CHECK = $(HOSTCC) --target=i686-linux-gnu -fsyntax-only -std=gnu90\nall:\n\ttrue\n")
     assert consoles.get("n64").project_build_command(SimpleNamespace(root=root), ["make"])[-1] == "CC_CHECK=true"
+
+
+def test_a_torch_assets_target_runs_in_setup_and_a_cmake_tool_with_spdlog_gets_clangs_fmt_switch(tmp_path):
+    from decompnet.forks import project as forks_project
+
+    plain = "tools:\n\ttrue\nassets:\n\techo hi\nextract:\n\ttrue\n"
+    assert forks_project._setup_targets(plain) == ["tools", "extract"]  # (an `assets` that isn't Torch's stays alone)
+    torch = "assets:\n\t@echo x\n\t$(V)$(TORCH) code $(BASEROM)\n\nall:\n\ttrue\n"
+    assert forks_project._setup_targets(torch) == ["assets"]
+    (tmp_path / "tools" / "torch").mkdir(parents=True)
+    assert forks_project._mac_cxx_env(tmp_path) == {}
+    (tmp_path / "tools" / "torch" / "CMakeLists.txt").write_text("FetchContent_Declare(spdlog)\n")
+    assert forks_project._mac_cxx_env(tmp_path) == {"CXX": "c++ -DFMT_CONSTEVAL="}
+
+
+def test_a_mac_iconv_shim_writes_a_backslash_after_japanese_text_as_one_byte(tmp_path, monkeypatch):
+    import subprocess
+
+    tools = tmp_path / "pinned"
+    tools.mkdir()
+    (tools / "mips-ps2-decompals-ld").write_text("#!/bin/sh\n")
+    monkeypatch.setattr(mips_tools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(mips_tools.toolchains, "require", lambda tid: tools)
+    monkeypatch.setattr(mips_tools.sys, "platform", "darwin")
+    real = tmp_path / "real-iconv"
+    real.write_text("#!/bin/sh\nprintf 'system iconv'\n")
+    real.chmod(0o755)
+    monkeypatch.setattr(mips_tools.shutil, "which", lambda name: str(real) if name == "iconv" else None)
+    folder = mips_tools.build_paths(SimpleNamespace(root=tmp_path / "project"))[0]
+    source = tmp_path / "x.c"
+    source.write_text("ト\\n\n", encoding="utf-8")
+    made = subprocess.run([str(folder / "iconv"), "-t", "EUC-JP", "-f", "UTF-8", str(source)], capture_output=True)
+    assert made.stdout == b"\xa5\xc8\\n\n"
+    other = subprocess.run([str(folder / "iconv"), "-t", "UTF-16", "-f", "UTF-8", str(source)], capture_output=True)
+    assert other.stdout == b"system iconv"
