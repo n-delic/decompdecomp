@@ -1,4 +1,4 @@
-# A tag v* (e.g. v1.0.0-alpha) builds the Linux packages and Windows setup bundle and attaches them to the tag's GitHub
+# A tag v* (e.g. v1.0.0-alpha) builds the Linux packages and Windows portable ZIP and attaches them to the tag's GitHub
 # release, creating the release when there isn't one yet, as the latest (alphas too: the version says what it is,
 # and GitHub shows "Latest" and serves releases/latest only for a release that isn't a pre-release). It can also be
 # run by hand for a tag that's already pushed: gh workflow run release -f tag=v1.0.0-alpha
@@ -67,9 +67,9 @@ jobs:
       - name: Check portable launcher argument forwarding
         shell: pwsh
         run: uv run pytest tests/test_windows_portable.py -q
-      - name: Build Windows setup and portable downloads
+      - name: Build the Windows portable download (no installer is released)
         shell: pwsh
-        run: packaging/windows/build.ps1
+        run: packaging/windows/build.ps1 -PortableOnly
       - name: The MCP gateway on its own, for installs from source (decomp setup downloads it)
         shell: pwsh
         run: |
@@ -80,17 +80,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
-          $installer = (Get-ChildItem dist -Filter '*-windows-x64-setup.exe' | Select-Object -First 1).FullName
-          if (-not $installer) { throw 'Windows setup bundle was not created.' }
           $portable = (Get-ChildItem dist -Filter '*-windows-x64-portable.zip' | Select-Object -First 1).FullName
           if (-not $portable) { throw 'Windows portable ZIP was not created.' }
           $gateway = (Get-ChildItem dist -Filter 'decomp-mcp-gateway-*').FullName
           if (-not $gateway) { throw 'The MCP gateway asset was not created.' }
           gh release view $env:TAG 2>$null | Out-Null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload $env:TAG $installer $portable @gateway --clobber
+            gh release upload $env:TAG $portable @gateway --clobber
           } else {
-            gh release create $env:TAG $installer $portable @gateway --generate-notes --latest
+            gh release create $env:TAG $portable @gateway --generate-notes --latest
           }
 
   macos:

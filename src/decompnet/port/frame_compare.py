@@ -470,9 +470,16 @@ def seed_offset(port_calls: dict[int, int], task_vi: dict[int, int], seed_vis: l
     return int(statistics.median_low(gaps)) if gaps else 0  # a call made a hair after a task starts shows as a gap of zero at the odd task: the usual one counts
 
 
+def _shifted(seeds: list[str], shift: int) -> list[str]:
+    return ([seeds[0]] * shift + seeds) if shift > 0 and seeds else seeds[-shift:] if shift < 0 else seeds
+
+
 def align_seeds(game: Path, rom: Path, inputs: str, work: Path, pace_log: Path, env: dict[str, str], stop=lambda: False) -> int:
-    """Shift work/seeds.txt so the port's k-th seeding call gets the console's k-th seed (seed_offset): a short run of the port in a scratch
-    folder (its save is a copy) counts its calls at each task. Returns the shift made (+n: n copies of the first seed put in front)."""
+    """Shift work/seeds.txt so the port's k-th seeding call gets the console's k-th seed. Short runs of the port in a scratch folder (its
+    save is a copy) count its seeding calls at each graphics task for each candidate shift until one keeps going to task 600 (its call counts do not depend on
+    the file's contents, only on the game running on), and the gap between those counts and the console's is the shift made: a seed file out of line leaves a game at a few hundred of a thousand graphics tasks, which a single
+    probe cannot measure (it reaches no first call; found on a route where a probe of the raw file logged 196 tasks and no gap). Returns the shift made
+    (+n: n copies of the first seed put in front)."""
     import re
     import tempfile
     seeds_file, vis_file = work / "seeds.txt", work / "seed_vis.txt"
@@ -483,26 +490,38 @@ def align_seeds(game: Path, rom: Path, inputs: str, work: Path, pace_log: Path, 
         parts = line.split()
         if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
             task_vi[int(parts[0])] = int(parts[1])
-    probe_env = {**os.environ, **env, "PORT_SEED_LOG": "1", "PORT_SEED_REPLAY": str(seeds_file), "PORT_INPUT_CLOCK": "frames"}
+    vis = [int(x) for x in vis_file.read_text().split()]
+    original = seeds_file.read_text().split()
+    probe_file = work / "seeds_probe.txt"
+    probe_env = {**os.environ, **env, "PORT_SEED_LOG": "1", "PORT_SEED_REPLAY": str(probe_file), "PORT_INPUT_CLOCK": "frames"}
     if inputs:
         probe_env["PORT_INPUT"] = inputs
     for key in ("PORT_RAM_DUMPS", "PORT_FRAME_DUMPS"):
         probe_env.pop(key, None)
-    with tempfile.TemporaryDirectory(prefix="seed-probe-") as scratch:
-        if (work / "game.eep").exists():
-            shutil.copy(work / "game.eep", Path(scratch) / "game.eep")
-        try:
-            done = subprocess.run([str(game.resolve()), str(rom.resolve()), "24"], cwd=scratch, env=probe_env, capture_output=True,
-                                  text=True, timeout=300)
-        except subprocess.TimeoutExpired:
-            return 0
-    calls = {int(m.group(1)): int(m.group(2)) for m in re.finditer(r"SEEDS task (\d+) calls (\d+)", done.stderr)}
-    vis = [int(x) for x in vis_file.read_text().split()]
-    shift = seed_offset(calls, task_vi, vis)
+    best = (0, 0)  # (tasks reached, shift) when nothing keeps step
+    for shift in (1, 0, 2, -1, 3):
+        if stop():
+            break
+        probe_file.write_text("".join(f"{x}\n" for x in _shifted(original, shift)))
+        with tempfile.TemporaryDirectory(prefix="seed-probe-") as scratch:
+            if (work / "game.eep").exists():
+                shutil.copy(work / "game.eep", Path(scratch) / "game.eep")
+            try:
+                done = subprocess.run([str(game.resolve()), str(rom.resolve()), str(PROBE_SECONDS)], cwd=scratch, env=probe_env,
+                                      capture_output=True, text=True, timeout=300)
+            except subprocess.TimeoutExpired:
+                continue
+        calls = {int(m.group(1)): int(m.group(2)) for m in re.finditer(r"SEEDS task (\d+) calls (\d+)", done.stderr)}
+        reached = max(calls) if calls else 0
+        if reached > best[0]:
+            best = (reached, shift)
+        if reached >= 600:  # a run that kept going counts its calls: its gap to the console's is the shift the file needs
+            best = (reached, seed_offset(calls, task_vi, vis, last=reached))
+            break
+    probe_file.unlink(missing_ok=True)
+    shift = best[1]
     if shift:
-        seeds = seeds_file.read_text().split()
-        seeds = ([seeds[0]] * shift + seeds) if shift > 0 and seeds else seeds[-shift:]
-        seeds_file.write_text("".join(f"{x}\n" for x in seeds))
+        seeds_file.write_text("".join(f"{x}\n" for x in _shifted(original, shift)))
     return shift
 
 
