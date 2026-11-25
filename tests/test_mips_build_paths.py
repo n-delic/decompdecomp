@@ -486,9 +486,9 @@ def test_a_torch_assets_target_runs_in_setup_and_a_cmake_tool_with_spdlog_gets_c
     (tmp_path / "tools" / "torch").mkdir(parents=True)
     assert forks_project._mac_cxx_env(tmp_path) == {}
     (tmp_path / "tools" / "torch" / "CMakeLists.txt").write_text("project(x)\n")
-    assert forks_project._mac_cxx_env(tmp_path) == {"CMAKE_POLICY_VERSION_MINIMUM": "3.5"}
+    assert forks_project._mac_cxx_env(tmp_path) == {"CMAKE_POLICY_VERSION_MINIMUM": "3.5", "CXX": "c++ -ffp-contract=off"}
     (tmp_path / "tools" / "torch" / "CMakeLists.txt").write_text("FetchContent_Declare(spdlog)\n")
-    assert forks_project._mac_cxx_env(tmp_path)["CXX"] == "c++ -DFMT_CONSTEVAL= -Wno-error=parentheses"
+    assert forks_project._mac_cxx_env(tmp_path)["CXX"] == "c++ -ffp-contract=off -DFMT_CONSTEVAL= -Wno-error=parentheses"
 
 
 def test_a_mac_iconv_shim_writes_a_backslash_after_japanese_text_as_one_byte(tmp_path, monkeypatch):
@@ -933,3 +933,84 @@ def test_the_gcc_shim_links_when_the_makefile_uses_the_driver_as_its_linker(tmp_
     subprocess.run([sys.executable, str(driver), "-march=vr4300", "-nostartfiles", "-Wl,-T,game.ld", "-Wl,-Map,game.map",
                     "-o", "game.elf"], check=True, env={**os.environ, "LD_ARGS": str(record)})
     assert record.read_text().split() == ["-T", "game.ld", "-Map", "game.map", "-o", "game.elf"]
+
+
+def test_the_kmc_assembler_stand_in_drops_the_o32_spelling_it_does_not_know(tmp_path, monkeypatch):
+    import subprocess
+
+    from decompnet.consoles.n64 import buildtools
+
+    installed = tmp_path / "kmc"
+    installed.mkdir()
+    for name in ("gcc", "cc1"):
+        (installed / name).write_text("installed " + name)
+    (installed / "as").write_text('#!/bin/sh\necho "$@"\n')
+    (installed / "as").chmod(0o755)
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(buildtools.toolchains, "require", lambda tid: installed)
+    monkeypatch.setattr(buildtools.sys, "platform", "darwin")
+    root = tmp_path / "project"
+    (root / "tools/gcc-2.7.2").mkdir(parents=True)
+    elf = b"\x7fELF" + b"\0" * 12 + b"GNU C version 2.7.2"
+    for name in ("gcc", "cc1", "as"):
+        (root / "tools/gcc-2.7.2" / name).write_bytes(elf)
+        (root / "tools/gcc-2.7.2" / name).chmod(0o755)
+    buildtools._wrap_foreign_ido(SimpleNamespace(root=root))
+    said = subprocess.run([str(root / "tools/gcc-2.7.2/as"), "-mabi32", "-G0", "x.s"], capture_output=True, text=True).stdout
+    assert said.split() == ["-G0", "x.s"]
+
+
+def test_asm_processor_a_build_calls_by_path_is_fetched_once_at_a_pinned_commit(tmp_path, monkeypatch):
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "configure.py").write_text('CMD = f"python3 tools/asm-processor/build.py {CC} -- {AS} --"\n')
+    fp = ForkProject(root)
+    monkeypatch.setattr(fp, "kind", lambda: "configure")
+    calls = []
+    monkeypatch.setattr(fp, "run", lambda cmd, log=print, timeout=0, **kw: (calls.append(cmd) or True, ""))
+    monkeypatch.setattr("decompnet.forks.project.shutil.which", lambda name: "/usr/bin/git")
+    fp.fetch_pinned_tool_repos(log=lambda *a: None)
+    assert calls[0][:4] == ["git", "clone", "-q", "https://github.com/simonlindholm/asm-processor.git"]
+    assert calls[0][4] == "tools/asm-processor" and calls[1][:3] == ["git", "-C", "tools/asm-processor"]
+    (root / "tools/asm-processor").mkdir(parents=True)
+    calls.clear()
+    fp.fetch_pinned_tool_repos(log=lambda *a: None)
+    assert calls == []
+
+
+def test_a_projects_own_mac_assembler_that_does_not_know_mabi32_is_replaced(tmp_path, monkeypatch):
+    import subprocess
+
+    from decompnet.consoles.n64 import buildtools
+
+    installed = tmp_path / "kmc"
+    installed.mkdir()
+    (installed / "as").write_text('#!/bin/sh\necho "$@"\n')
+    (installed / "as").chmod(0o755)
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(buildtools.toolchains, "require", lambda tid: installed)
+    monkeypatch.setattr(buildtools.sys, "platform", "darwin")
+    root = tmp_path / "project"
+    (root / "tools/gcc-2.7.2").mkdir(parents=True)
+    (root / "Makefile.common").write_text("CFLAGS := -mips3 -mabi32\n")
+    (root / "tools/gcc-2.7.2/as").write_bytes(b"\xcf\xfa\xed\xfe" + b"\0" * 64)
+    (root / "tools/gcc-2.7.2/as").chmod(0o755)
+    buildtools._update_old_mac_assembler(SimpleNamespace(root=root), root / "tools")
+    said = subprocess.run([str(root / "tools/gcc-2.7.2/as"), "-mabi32", "-G0"], capture_output=True, text=True).stdout
+    assert said.split() == ["-G0"] and (root / "tools/gcc-2.7.2/as.old").is_file()
+
+
+def test_a_splat_project_with_no_split_rule_and_no_linker_script_is_split_with_decompdecomps_splat(tmp_path, monkeypatch):
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "Makefile").write_text("all: game.bin\ngame.bin: build/game.elf\n")
+    (root / "game.yaml").write_text(
+        "name: Game\nsha1: " + "a" * 40 + "\noptions:\n  target_path: game.z64\n  base_path: .\n  platform: n64\n"
+        "  ld_script_path: game.ld\nsegments:\n  - [0, header]\n")
+    project = ForkProject(root)
+    project.platform = "n64"
+    monkeypatch.setattr(ForkProject, "kind", lambda self: "splat")
+    steps = project.setup_commands()
+    assert steps[0] == ["python", "-m", "splat", "split", "game.yaml"]
+    (root / "game.ld").write_text("")
+    assert ForkProject(root).setup_commands()[0][0] == "make"

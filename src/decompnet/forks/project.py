@@ -216,9 +216,12 @@ def _mac_cxx_env(root: Path) -> dict[str, str]:
     for cmake in (root / "tools").glob("*/CMakeLists.txt"):
         # (CMake 4 refuses the fetched libraries' old minimum versions unless told the policy floor, by environment too)
         found.setdefault("CMAKE_POLICY_VERSION_MINIMUM", "3.5")
+        # (an Apple Silicon clang fuses a*b+c into one rounding by default; the x86 builds the projects' bytes come
+        # from don't, and an asset tool that writes floats then differs in their last bit)
+        found.setdefault("CXX", "c++ -ffp-contract=off")
         try:
             if "spdlog" in cmake.read_text(encoding="utf-8", errors="replace"):
-                found["CXX"] = "c++ -DFMT_CONSTEVAL= -Wno-error=parentheses"
+                found["CXX"] = "c++ -ffp-contract=off -DFMT_CONSTEVAL= -Wno-error=parentheses"
         except OSError:
             continue
     return found
@@ -459,7 +462,7 @@ class ForkProject:
         default, or the version the user's ROM matched) or a literal `baserom.z64`. No SHA-1: the project's own
         check (its .sha1/.md5 file) says whether it is the right game."""
         text = ""
-        for name in ("Makefile", "Makefile.common"):
+        for name in ("Makefile", "Makefile.common", "configure"):  # (`configure`: a shell script that checks the ROM)
             try:
                 text += (self.root / name).read_text(errors="replace", encoding="utf-8") + "\n"
             except OSError:
@@ -1025,6 +1028,18 @@ class ForkProject:
         except (ValueError, IndexError, KeyError):
             return None
 
+    def _ld_script_missing(self, config: Path) -> bool:
+        """Does the splat config name a linker script (written by the split) that isn't there yet?"""
+        import yaml
+
+        try:
+            options = (yaml.safe_load(config.read_text(encoding="utf-8")) or {}).get("options") or {}
+        except (OSError, ValueError, yaml.YAMLError, AttributeError):
+            return False
+        name = options.get("ld_script_path")
+        rel = self._inside(str(config.parent / options.get("base_path", ".") / name)) if isinstance(name, str) else None
+        return bool(rel) and not (self.root / rel).exists()
+
     def setup_commands(self, version: str | None = None) -> list[list[str]]:
         """The commands that set the project up for a version of its game, as its kind of build does it."""
         kind = self.kind()
@@ -1055,6 +1070,9 @@ class ForkProject:
             if version and "--version" in flags and version in self.rom_originals():
                 cmd += ["--version", version]
             return [*steps, cmd, [_tool("ninja") or "ninja"]]
+        if kind == "custom" and (self.root / "configure").is_file() and not (self.root / "Makefile").is_file():
+            # a shell `configure` (it checks the ROM, splits it, writes build.ninja), then ninja
+            return [["bash", "./configure"], [_tool("ninja") or "ninja"]]
         if kind == "custom" and (self.root / "Makefile").is_file():
             # no splat config at the root, but a Makefile with the usual targets (setup, extract, then the build)
             text = (self.root / "Makefile").read_text(errors="replace", encoding="utf-8")
@@ -1078,6 +1096,10 @@ class ForkProject:
                     and not re.search(r"^(?:split|setup|extract)\s*:", make, re.M)):
                 # a project whose README says "run splat" before `make`: the split writes those pieces
                 steps = [["python", str(splitter.relative_to(self.root)), config.name]]
+            elif (not steps and config and not splitter and self._ld_script_missing(config)
+                    and not re.search(r"^(?:split|setup|extract)\s*:", make, re.M)):
+                # the same, for a project that names no splat of its own: the one decompdecomp runs from
+                steps = [["python", "-m", "splat", "split", config.name]]
             jobs = min(os.cpu_count() or 4, 4) if self._docker_only_macos() else os.cpu_count() or 4
             return steps + [["make", *chosen, f"-j{jobs}"]]
         if kind == "objdiff":
@@ -1335,12 +1357,45 @@ class ForkProject:
                      if (folder / "pyvenv.cfg").is_file()
                      and (folder / ("Scripts/python.exe" if os.name == "nt" else "bin/python3")).is_file()), None)
 
+    # a public tool's sources a project's build calls by path without carrying them or any script that fetches them:
+    # (folder as the build names it, repository, the commit fetched)
+    KNOWN_TOOL_REPOS = (
+        ("asm-processor", "https://github.com/simonlindholm/asm-processor", "f3b2f85a5bc7e8ae2030ea5a83ea8aa0bcbede03"),
+    )
+
+    def _fetch_known_tool_repos(self, log) -> None:
+        """`python3 tools/asm-processor/build.py ...` in a project's configure.py or Makefile, with no such folder, no
+        submodule for it and no setup script: the repository the whole community uses, at one pinned commit."""
+        text = ""
+        for name in ("configure.py", "Makefile", "Makefile.common"):
+            try:
+                text += (self.root / name).read_text(errors="replace", encoding="utf-8") + "\n"
+            except OSError:
+                pass
+        try:
+            modules = (self.root / ".gitmodules").read_text(errors="replace", encoding="utf-8")
+        except OSError:
+            modules = ""
+        for folder, url, commit in self.KNOWN_TOOL_REPOS:
+            where = next((p for p in (f"tools/{folder}", folder) if re.search(
+                rf"(?<![\w/.-])(?:\./)?{re.escape(p)}/build\.py", text)), None)
+            if not where or (self.root / where).exists() or where in modules:
+                continue
+            log(f"fetching {url} into {where} (the build runs it from there), at {commit[:10]}")
+            ok, tail = self.run(["git", "clone", "-q", url + ".git", where], log=log, timeout=900)
+            if ok:
+                ok, tail = self.run(["git", "-C", where, "checkout", "-q", commit], log=log, timeout=300)
+            if not ok:
+                shutil.rmtree(self.root / where, ignore_errors=True)
+                log(f"could not fetch {url}: {tail[-300:]}")
+
     def fetch_pinned_tool_repos(self, log=print) -> None:
         """A project whose own tools/setup.sh clones a public repository under tools/ (an SDK's sources pinned to a
         commit) that its Makefile then reads: clone that one, at that commit, when the folder is missing. Only
         `git clone` / `git -C <dir> checkout <commit>` lines of that script are read, never run as a script."""
         if self.kind() == "manifest" or not shutil.which("git"):
             return
+        self._fetch_known_tool_repos(log)
         make = (self.root / "Makefile").read_text(errors="replace", encoding="utf-8") if (
             self.root / "Makefile").is_file() else ""
         for name in ("tools/setup.sh", "setup.sh"):
