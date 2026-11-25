@@ -270,3 +270,22 @@ def test_n64_links_an_os_named_ido_folder_and_wraps_a_missing_host_tool(tmp_path
     consoles.get("n64").project_build_command(SimpleNamespace(root=root), ["make"])
     assert (root / "tools/ido_recomp/macos/5.3").resolve() == ido
     assert str(hosts / "armips") in (root / "tools/armips").read_text()
+
+
+def test_a_make_shim_and_a_broken_mac_ido_and_cc_check_variants(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools
+
+    monkeypatch.setattr(buildtools.sys, "platform", "darwin")
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "Makefile").write_text("CC_CHECK ?= gcc\nall:\n\ttrue\n")
+    assert consoles.get("n64").project_build_command(SimpleNamespace(root=root), ["make"])[-1] == "CC_CHECK=true"
+    tools = tmp_path / "pinned"
+    tools.mkdir()
+    (tools / "mips-ps2-decompals-ld").write_text("#!/bin/sh\n")
+    monkeypatch.setattr(mips_tools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(mips_tools.toolchains, "require", lambda tid: tools)
+    monkeypatch.setattr(mips_tools.sys, "platform", "darwin")
+    monkeypatch.setattr(mips_tools.shutil, "which", lambda name: f"/opt/{name}" if name == "gmake" else None)
+    folder = mips_tools.build_paths(SimpleNamespace(root=root))[0]
+    assert "/opt/gmake" in (folder / "make").read_text()

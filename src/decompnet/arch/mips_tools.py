@@ -105,6 +105,12 @@ def build_paths(project) -> list[Path]:
                     driver.write_text(_ASSEMBLER_DRIVER.format(python=sys.executable, cpp=str(host_cpp),
                                                                assembler=str(folder / (prefix + "as"))), encoding="utf-8")
                     driver.chmod(0o755)
+        # a Makefile that runs `make` itself (MAKE = make, in tools/) gets macOS's make 3.81: GNU make 4 instead
+        if sys.platform == "darwin" and (gmake := shutil.which("gmake")):
+            tool = folder / "make"
+            if not tool.exists():
+                tool.write_text(f'#!/bin/sh\nexec "{gmake}" "$@"\n', encoding="utf-8")
+                tool.chmod(0o755)
         # GNU coreutils' nproc (a Mac has sysctl instead), which Makefiles use to pick their -j
         if not shutil.which("nproc"):
             tool = folder / "nproc"
