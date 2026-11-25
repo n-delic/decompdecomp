@@ -16,7 +16,7 @@ from pathlib import Path
 
 from decompnet.hostenv import NO_WINDOW
 
-from . import compile_timing, limits, m2c_fp64, scoring, toolchains
+from . import compile_timing, limits, m2c_fp64, m2c_types, scoring, toolchains
 from .elfobj import FunctionObj
 
 # What m2c's --valid-syntax output needs to compile: its unknown types and macros, defined the simplest way that
@@ -513,7 +513,7 @@ def drop_saved_register_reads(source: str) -> str:
     return re.sub(r"^[ \t]*\w+ = saved_reg_\w+;[ \t]*\n", "", source, flags=re.M)
 
 
-_UNSET_READ = re.compile(r"\b(?:unk)?sp[0-9A-Fa-f]+\b|\bsaved_reg_\w+\b")
+_UNSET_READ = re.compile(r"\b(?:unk)?sp[0-9A-Fa-f]+\b|\bsaved_reg_\w+\b|(?<![\w.])sp\b")
 _NOT_A_TYPE = {"return", "else", "case", "goto", "do", "sizeof"}
 
 
@@ -533,7 +533,12 @@ def declare_unset_reads(source: str, name: str) -> str:
             missing.append(found)
     if not missing:
         return source
-    lines = "".join(f"    s32 {found};\n" for found in missing)
+    def declaration(found):
+        if found == "sp":  # the frame's own address (`var_t1 = sp;`): a buffer
+            return "    u8 sp[256];\n"
+        # a slot m2c indexes (`&sp10[0]`) is a buffer, not a word
+        return f"    s32 {found}[16];\n" if re.search(rf"\b{found}\[", body) else f"    s32 {found};\n"
+    lines = "".join(declaration(found) for found in missing)
     return source[:head.end()] + "\n" + lines.rstrip("\n") + source[head.end():]
 
 
@@ -688,4 +693,4 @@ def _run_m2c(asm_text: str, name: str, target: str, context_header: str = "", da
             if strict:
                 raise DraftError(reason or (_failure(res) if out or res.stderr or res.returncode else 'm2c produced no C for this function.'))
             return None
-        return declare_unset_reads(drop_saved_register_reads(out), name) if valid else out
+        return m2c_types.repair(declare_unset_reads(drop_saved_register_reads(out), name)) if valid else out
