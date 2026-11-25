@@ -443,9 +443,26 @@ void w2c_env_osCreateMesgQueue(struct w2c_env *e, u32 mq, u32 buf, u32 count) {
 }
 static int has_room(uint32_t mq) { return (int32_t)be32(mq + Q_VALID) < (int32_t)be32(mq + Q_COUNT); }
 static int has_mesg(uint32_t mq) { return (int32_t)be32(mq + Q_VALID) > 0; }
+static void dp_deliver(int force);
+static int rcp_pending(void);
+/* A thread that is about to wait first lets the RSP's and RDP's held interrupts arrive (PORT_RCP_AT_BLOCK=0: not): on the console a task's few
+   hundred microseconds end before a lower-priority thread has run for long, and the scheduler thread that started it, ranking above the game's
+   logic (priority 113 and 115 against 5, read from the emulator's running thread at each osSpTaskStartGo and each line-point update), runs again
+   before the logic thread does. Held to the host's tick, the logic ran between a frame's fourth and fifth graphics task. */
+static int rcp_at_block(void) {
+    static int on = -1;
+    if (on < 0) on = !getenv("PORT_RCP_AT_BLOCK") || atoi(getenv("PORT_RCP_AT_BLOCK")) != 0;
+    return on;
+}
 static int block_on(uint32_t mq, uint32_t flag, int (*ready)(uint32_t)) {
     while (!ready(mq)) {
         if (flag != OS_MESG_BLOCK || !self) return -1;
+        if (rcp_at_block() && rcp_pending()) {
+            pthread_mutex_unlock(&lock);
+            dp_deliver(1);
+            pthread_mutex_lock(&lock);
+            continue;
+        }
         if (verbose > 1 || self->waits++ < 3) {
             LOG("thread %d waits on queue %08X", self->number, mq);
             if (verbose > 1) port_trace();
@@ -939,6 +956,14 @@ static unsigned char rcp_events[64];
 static unsigned rcp_count;
 static uint64_t rcp_due_us;
 #define RCP_DELAY_US 400
+static int rcp_pending(void) {
+    pthread_mutex_lock(&rcp_lock);
+    int n = rcp_count > 0;
+    pthread_mutex_unlock(&rcp_lock);
+    return n;
+}
+#else
+static int rcp_pending(void) { return 0; }
 #endif
 static void rcp_raise(int event) {
 #ifdef PORT_WEB
