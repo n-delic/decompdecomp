@@ -949,7 +949,7 @@ class ForkEngine:
     def _match_version(self, proj, fp: ForkProject, cfg: dict, game: Path, log) -> None:
         """A GameCube/Wii disc names its version (GP6E01, GP6P01...): use the project's matching version, or say
         which ones the project has, instead of failing deep in the build."""
-        originals = fp.splat_baseroms() if fp.kind() == "splat" else {}
+        originals = fp.rom_originals()
         if originals:
             from ..consoles.n64.rom import file_hashes
 

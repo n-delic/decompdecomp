@@ -115,3 +115,39 @@ def test_n64_redirects_a_cc_variable_and_builds_the_crc_tool(tmp_path, monkeypat
     prepared = consoles.get("n64").project_build_command(SimpleNamespace(root=root), ["make", "-j4"])
     assert prepared == ["make", "-j4", "CC=.decomp-wtf/build-tools/ido-5.3/cc"]
     assert ran and ran[0][0] == "/usr/bin/cc" and ran[0][-1].endswith("tools/n64crc")
+
+
+def test_decomp_yaml_names_the_rom_and_place_game_aliases_the_build_scripts_name(tmp_path):
+    """A community decomp whose decomp.yaml says paperboy.z64 beside a configure.py that reads baserom.z64: setup
+    knows where the ROM goes (and which version a hash is) and leaves it under both names."""
+    from decompnet.forks.project import ForkProject
+
+    root = tmp_path / "p"
+    root.mkdir()
+    (root / "decomp.yaml").write_text(
+        "versions:\n- name: us\n  sha1: " + "a" * 40 + "\n  paths:\n    target: game.z64\n"
+        "- name: eu\n  paths:\n    baserom: ver/eu/baserom.z64\n")
+    (root / "configure.py").write_text('rom = open("baserom.z64")\n')
+    (root / "eu.sha1").write_text("b" * 40 + "  baserom.z64\n")
+    fp = ForkProject(root)
+    assert fp.decomp_yaml_roms() == {"us": ("game.z64", "a" * 40), "eu": ("ver/eu/baserom.z64", "b" * 40)}
+    assert fp.rom_originals() == {"us": "a" * 40, "eu": "b" * 40}
+    assert fp.needs("eu")["path"] == "ver/eu/baserom.z64"
+
+
+def test_n64_wraps_a_linux_ido_driver_on_a_mac(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools
+
+    source = tmp_path / "installed"
+    source.mkdir()
+    (source / "cc").write_text("compiler")
+    monkeypatch.setattr(buildtools.sys, "platform", "darwin")
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(buildtools.toolchains, "require", lambda tid: source)
+    root = tmp_path / "project"
+    driver = root / "tools" / "ido_5.3" / "usr" / "lib" / "cc"
+    driver.parent.mkdir(parents=True)
+    driver.write_bytes(b"\x7fELF....")
+    buildtools._wrap_foreign_ido(SimpleNamespace(root=root))
+    assert driver.read_text().startswith("#!/bin/sh") and str(source / "cc") in driver.read_text()
+    assert driver.with_name("cc.linux").read_bytes().startswith(b"\x7fELF")

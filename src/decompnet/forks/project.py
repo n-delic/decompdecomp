@@ -413,6 +413,53 @@ class ForkProject:
                 configs[version] = path
         return configs
 
+    def decomp_yaml_roms(self) -> dict[str, tuple[str, str | None]]:
+        """{version: (where the project wants its ROM, its SHA-1 or None)} from the project's decomp.yaml (the
+        decomp.dev convention many community decomps keep: a `versions` list whose `paths` name the original image
+        as `target` or `baserom`). The hash is the entry's `sha1`, else a `checksum*.sha1` / `<version>.sha1` file
+        that names it (its build's own name; the hash is the same one the original has when the game matches).
+        Only cartridge-ROM paths count: a disc or archive is another console's setup."""
+        path = self.root / "decomp.yaml"
+        if not path.is_file():
+            return {}
+        import yaml
+
+        try:
+            data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, yaml.YAMLError):
+            return {}
+        entries = data.get("versions") if isinstance(data, dict) else None
+        if not isinstance(entries, list):
+            return {}
+        out: dict[str, tuple[str, str | None]] = {}
+        for entry in entries:
+            paths = entry.get("paths") if isinstance(entry, dict) else None
+            name = str(entry.get("name") or "") if isinstance(entry, dict) else ""
+            if not isinstance(paths, dict) or not name:
+                continue
+            target = paths.get("target") or paths.get("baserom")
+            rel = self._inside(target) if isinstance(target, str) else None
+            if not rel or not rel.lower().endswith((".z64", ".n64", ".v64")):
+                continue
+            digest = entry.get("sha1")
+            if not (isinstance(digest, str) and re.fullmatch(r"[0-9a-fA-F]{40}", digest)):
+                digest = None
+                files = sorted(self.root.glob(f"*{name}*.sha1")) or (sorted(self.root.glob("checksum*.sha1"))
+                                                                    if len(entries) == 1 else [])
+                for f in files[:3]:
+                    found = re.search(r"\b[0-9a-fA-F]{40}\b", f.read_text(errors="replace", encoding="utf-8"))
+                    if found:
+                        digest = found.group(0)
+                        break
+            out[name] = (rel, digest.lower() if digest else None)
+        return out
+
+    def rom_originals(self) -> dict[str, str]:
+        """{version: SHA-1} of the original ROMs the project can be set up with (splat's, else decomp.yaml's)."""
+        if originals := self.splat_baseroms():
+            return originals
+        return {v: digest for v, (_, digest) in self.decomp_yaml_roms().items() if digest}
+
     def splat_baseroms(self) -> dict[str, str]:
         """Original ROM hashes for direct versioned splits and generated decompressed images.
 
@@ -660,13 +707,24 @@ class ForkProject:
             return {"what": "your copy of the game's disc (ISO, GCM, RVZ, WIA, WBFS, CISO, NFS or GCZ)",
                     "path": f"orig/{v}/", "sha1": None, "auto": True,
                     "help": f"Version {v}. The build checks the disc's main executable against the project's hash."}
+        # (a splat project whose Makefile has no versioned baseroms of its own still names them in decomp.yaml)
+        roms = self.decomp_yaml_roms() if kind in ("configure", "custom") or (
+            kind == "splat" and not self.splat_baseroms()) else {}
+        if roms:
+            chosen = version if version in roms else next(iter(roms))
+            path, digest = roms[chosen]
+            return {"what": f"your original game ROM ({Path(path).name})", "path": path, "sha1": digest, "auto": True,
+                    "rom_versions": [{"version": v, "sha1": d} for v, (_, d) in roms.items() if d],
+                    "help": "Supply an original cartridge ROM in .z64, .v64 or .n64 byte order; its SHA-1 picks "
+                            "the project's version and decompdecomp saves a .z64 copy where the project reads it."}
         if kind == "configure":
             v = version or ""
             if v and (self.root / "orig" / v).is_dir():
                 return {"what": "your copy of the game (see the README for the exact file)", "path": f"orig/{v}/",
                         "sha1": None, "auto": True, "help": "The build checks the game against the project's hashes."}
-            return manual
-        if kind == "splat":
+            if not self._splat_yaml():
+                return manual
+        if kind in ("splat", "configure"):
             originals = self.splat_baseroms()
             if originals:
                 selected = version if version in originals else self.splat_default_version()
@@ -709,8 +767,33 @@ class ForkProject:
     # ------------------------------------------------------------------ setup
 
     def place_game(self, src: Path, filename: str, version: str | None = None, move: bool = False, log=None) -> Path:
-        """Put the user's game file where the project expects it, checking its sha1 when the project has one.
-        Works from a file on disk, so multi-gigabyte discs are never read into memory."""
+        """Put the user's game file where the project expects it, checking its sha1 when the project has one, and
+        under the one other name its build script spells out (a decomp.yaml that says paperboy.z64 beside a
+        configure.py that reads baserom.z64)."""
+        dest = self._place_game(src, filename, version, move, log)
+        if dest.suffix.lower() == ".z64" and self.kind() in ("configure", "custom", "splat"):
+            names: set[str] = set()
+            literal: set[str] = set()  # (several literal names are several versions': never this game under all)
+            for script in ("configure.py", "Makefile", "Makefile.common"):
+                try:
+                    text = (self.root / script).read_text(errors="replace", encoding="utf-8")
+                except OSError:
+                    continue
+                literal |= set(re.findall(r"[\"']?(baserom(?:[.-][A-Za-z0-9]+)*\.z64)[\"']?\b", text))
+                if version:  # baserom.$(VERSION).z64 / baserom.{version}.z64: this game's version fills it in
+                    names |= {re.sub(r"\$\([^)]*\)|\{[^}]*\}", version, m) for m in re.findall(
+                        r"(baserom\.(?:\$\([^)]*\)|\{[^}]*\})\.z64)", text)}
+            names |= literal if len(literal) == 1 else set()
+            for name in sorted(n for n in names if "$" not in n and "{" not in n)[:4]:
+                if name != dest.name and not (self.root / name).exists():
+                    try:
+                        os.link(dest, self.root / name)
+                    except OSError:
+                        shutil.copyfile(dest, self.root / name)
+        return dest
+
+    def _place_game(self, src: Path, filename: str, version: str | None = None, move: bool = False, log=None) -> Path:
+        """Put the user's game file where the project expects it (see place_game)."""
         need = self.needs(version)
         if not need["path"]:
             raise ForkError("decompdecomp doesn't know where this project expects the game; follow its README")
@@ -806,7 +889,16 @@ class ForkProject:
                 cmd += ["--version", version]
             return [cmd, [_tool("ninja") or "ninja"]]
         if kind == "configure":
-            return [[sys.executable, "configure.py"], [_tool("ninja") or "ninja"]]
+            flags = self._configure_flags()
+            steps = []
+            if "--setup" in flags:  # the project's own download of its compiler, as its README says to run first
+                steps.append(["python", "configure.py", "--setup"])
+            cmd = ["python", "configure.py"]  # (its own environment's python, if any)
+            if "--split" in flags:  # splitting is a flag here; plain configure.py then only writes nothing
+                cmd.append("--split")
+            if version and "--version" in flags and version in self.rom_originals():
+                cmd += ["--version", version]
+            return [*steps, cmd, [_tool("ninja") or "ninja"]]
         if kind == "splat":
             make = (self.root / "Makefile").read_text(errors="replace", encoding="utf-8")
             chosen = [f"VERSION={version}"] if version and self.splat_baseroms() else []
@@ -1013,10 +1105,76 @@ class ForkProject:
             dtk.vfs_copy(disc, files, orig / parent)
         return len(missing)
 
+    def _configure_flags(self) -> set[str]:
+        """The long options the project's configure.py accepts, from its own --help (empty when it can't say)."""
+        try:
+            cmd = [str(self._project_python() or sys.executable), "configure.py", "--help"]
+            res = subprocess.run(cmd, cwd=self.root, capture_output=True, text=True, timeout=60, errors="replace",
+                                 encoding="utf-8", stdin=subprocess.DEVNULL, creationflags=NO_WINDOW)
+        except (OSError, subprocess.SubprocessError):
+            return set()
+        return set(re.findall(r"(?<![\w-])(--[a-z][a-z0-9-]*)", res.stdout + res.stderr))
+
+    def _project_python(self) -> Path | None:
+        return next((folder / ("Scripts/python.exe" if os.name == "nt" else "bin/python3")
+                     for folder in (self.root / ".venv", self.root / "venv")
+                     if (folder / "pyvenv.cfg").is_file()
+                     and (folder / ("Scripts/python.exe" if os.name == "nt" else "bin/python3")).is_file()), None)
+
+    def ensure_python_env(self, log=print) -> None:
+        """Give a project its own Python environment when it lists requirements and has none: its configure.py and
+        splat run in it (`_execute` puts a `.venv` or `venv` first on PATH), as `pip install -r requirements.txt`
+        in a README would. Never installs into decompdecomp's own Python. A failure is logged, not raised: the
+        step that needed the package then says what's missing."""
+        if self.kind() == "manifest" or self._docker_only_macos():
+            return
+        if any((self.root / folder / "pyvenv.cfg").is_file() for folder in (".venv", "venv")):
+            return
+        requirements, pyproject = self.root / "requirements.txt", self.root / "pyproject.toml"
+        uses_pyproject = False
+        if pyproject.is_file():
+            text = pyproject.read_text(errors="replace", encoding="utf-8")
+            uses_pyproject = bool(re.search(r"^dependencies\s*=\s*\[\s*\S", text, re.M))
+        if not requirements.is_file() and not uses_pyproject:
+            return
+        uv = _tool("uv")
+        # a Makefile that runs `venv/bin/python3` names the folder: use that one, else the usual .venv
+        make = (self.root / "Makefile").read_text(errors="replace", encoding="utf-8") if (
+            self.root / "Makefile").is_file() else ""
+        folder = "venv" if re.search(r"(?<![.\w])venv/bin/", make) else ".venv"
+        log(f"installing the project's Python requirements into its own environment ({folder})")
+        python = str(self.root / folder / ("Scripts/python.exe" if os.name == "nt" else "bin/python"))
+        if uv and uses_pyproject and (self.root / "uv.lock").is_file():
+            # (UV_PROJECT_ENVIRONMENT would otherwise send the sync into the environment decompdecomp runs from)
+            steps = [[*(["env", f"UV_PROJECT_ENVIRONMENT={self.root / folder}"] if os.name != "nt" else []),
+                      uv, "sync", "--python", sys.executable]]
+        elif uv:
+            steps = [[uv, "venv", "--python", sys.executable, str(self.root / folder)],
+                     [uv, "pip", "install", "--python", python, "-r", "requirements.txt"] if requirements.is_file()
+                     else [uv, "pip", "install", "--python", python, "."]]
+        else:
+            steps = [[sys.executable, "-m", "venv", str(self.root / folder)]]
+            if requirements.is_file():
+                steps.append([python, "-m", "pip", "install", "-r", "requirements.txt"])
+        for step in steps:
+            ok, tail = self.run(step, log=log, timeout=1800)
+            if not ok:
+                log(f"the project's Python requirements could not be installed: {tail[-400:]}")
+                return
+        try:  # (its environment is not part of its sources)
+            exclude = self.root / ".git" / "info" / "exclude"
+            if exclude.parent.is_dir() and (not exclude.exists() or folder not in exclude.read_text(
+                    errors="replace", encoding="utf-8")):
+                with open(exclude, "a", encoding="utf-8") as f:
+                    f.write(f"\n{folder}/\n")
+        except OSError:
+            pass
+
     def setup(self, version: str | None = None, log=print) -> None:
         """Set the project up for the user's copy of the game: unpack it, run the setup commands, and build
         every source once so objdiff can measure each unit."""
         self.unpack_disc(version, log=log)
+        self.ensure_python_env(log=log)
         for cmd in self.setup_commands(version):
             ok, tail = self.run(cmd, log=log)
             make_step = Path(cmd[0]).name.removesuffix('.exe') in ('make', 'gmake')
