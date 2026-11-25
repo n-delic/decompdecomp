@@ -916,6 +916,8 @@ class CompilerMixin:
         if tc := next((t.id for t in consoles.of(cfg).compilers if compiler.strip().lower() in (t.id, t.name.lower())), None):
             if why := consoles.too_new(cfg, tc):
                 raise NetworkError(why)
+            if toolchains.is_disabled(tc):
+                raise NetworkError(f"{consoles.compiler_name(tc)} is disabled (Compilers & tools); enable it there to use it")
         names = [c.id for c in consoles.of(cfg).compilers_for(cfg)]
         tc = next((t for t in names if compiler.strip().lower() in (t, consoles.compiler_name(t).lower())), None)
         if tc is None:

@@ -230,8 +230,8 @@ function renderTools() {
     <p class="small">${vm.ready ? "✓ Ready" : esc(vm.why)}</p>
     <button class="ghost small-btn" id="prepareLinuxVm" type="button">${vm.ready ? "Check Linux runner" : "Prepare Linux runner"}</button></div>` : "";
   if ($("prepareLinuxVm")) $("prepareLinuxVm").onclick = prepareLinuxVm;
-  $("toolGrid").innerHTML = vmCard + rows.map((t) => `<div class="tool-card ${t.installed && !(t.missing_dependencies || []).length ? "ok" : ""}">
-      <div class="tc-top"><b>${esc(t.name)}</b>${t.license === "proprietary" ? `<span class="chip-s warn">proprietary</span>` : ""}${t.platform ? `<span class="chip-s">${esc(t.platform)}</span>` : ""}${t.linux_vm ? `<span class="chip-s">Linux VM</span>` : ""}</div>
+  $("toolGrid").innerHTML = vmCard + rows.map((t) => `<div class="tool-card ${t.installed && !(t.missing_dependencies || []).length && !t.disabled ? "ok" : ""}">
+      <div class="tc-top"><b>${esc(t.name)}</b>${t.disabled ? `<span class="chip-s warn">disabled</span>` : ""}${t.license === "proprietary" ? `<span class="chip-s warn">proprietary</span>` : ""}${t.platform ? `<span class="chip-s">${esc(t.platform)}</span>` : ""}${t.linux_vm ? `<span class="chip-s">Linux VM</span>` : ""}</div>
       <p class="muted small">${esc(t.use)}</p>
       ${(t.missing_dependencies || []).length ? `<p class="small warn-text">Required tools missing: ${t.missing_dependencies.map(d => esc(d.name)).join(", ")}. Install them to use this compiler.</p>` : ""}
       ${(t.copies || []).map((c) => `<div class="row copy"><span class="grow copy-text"><span class="ok-mark">✓ ${esc(c.build || "your copy")}</span>`
@@ -242,12 +242,20 @@ function renderTools() {
       <div class="row">${!t.supported ? `<span class="muted small">not available for this computer</span>`
         : t.local ? `<span class="grow"></span><button class="ghost small-btn" data-local="${esc(t.id)}" type="button">${t.installed ? "Add a copy" : "Choose your folder"}</button>`
         : t.installed && (t.missing_dependencies || []).length ? `<button class="ghost small-btn" data-tc="${esc(t.id)}" data-prop="${t.license === "proprietary" ? 1 : ""}" type="button">Install missing tools</button>`
-        : t.installed ? `<span class="ok-mark">✓ installed</span>${t.linux_vm || t.wsl ? `<button class="ghost small-btn" data-tc="${esc(t.id)}" data-prop="${t.license === "proprietary" ? 1 : ""}" data-force="1" type="button">Reinstall</button>` : ""}`
+        : t.installed ? `<span class="ok-mark">✓ installed</span><span class="grow"></span>${t.kind === "compiler" ? `<button class="ghost small-btn" data-disable="${esc(t.id)}" data-off="${t.disabled ? "" : 1}" type="button" title="${t.disabled ? "Use this compiler again" : "Compiler checks and agents will skip it"}">${t.disabled ? "Enable" : "Disable"}</button>` : ""}${t.linux_vm || t.wsl ? `<button class="ghost small-btn" data-tc="${esc(t.id)}" data-prop="${t.license === "proprietary" ? 1 : ""}" data-force="1" type="button">Reinstall</button>` : ""}`
         : `${t.changed ? `<span class="muted small grow">changed since you installed it</span>` : ""}`
           + `<button class="ghost small-btn" data-tc="${esc(t.id)}" data-prop="${t.license === "proprietary" ? 1 : ""}"`
           + ` type="button">${t.changed ? "Install again" : "Install"}</button>`}</div></div>`).join("");
   $("toolGrid").querySelectorAll("[data-tc]").forEach((b) => { b.onclick = () => { b.disabled = true; installToolchain(b.dataset.tc, !!b.dataset.prop, !!b.dataset.force).finally(() => { b.disabled = false; }); }; });
   $("toolGrid").querySelectorAll("[data-local]").forEach((b) => { b.onclick = () => useLocalToolchain(b.dataset.local); });
+  $("toolGrid").querySelectorAll("[data-disable]").forEach((b) => {
+    b.onclick = async () => {
+      b.disabled = true;
+      b.textContent = b.dataset.off ? "Disabling…" : "Enabling…";
+      try { await api("/api/toolchain/disable", { method: "POST", body: { id: b.dataset.disable, disabled: !!b.dataset.off } }); await loadState(); renderTools(); }
+      catch (e) { toast(e.message, "err"); await loadState(); renderTools(); }
+    };
+  });
   $("toolGrid").querySelectorAll("[data-remove]").forEach((b) => {
     b.onclick = async () => {
       b.disabled = true;

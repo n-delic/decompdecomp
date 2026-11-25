@@ -143,7 +143,7 @@ class PlayStation(Console):
     def after_import(self, net, slug: str, *, chosen: bool, log=print) -> None:
         """A PS-X EXE doesn't say which PSY-Q built it: unless the user picked one, the GCCs are tried on its code."""
         if not chosen:
-            net.test_compilers(slug, [c.id for c in self.compilers], log=log)
+            net.test_compilers(slug, [c.id for c in self.enabled_compilers()], log=log)
 
     def asm_reason(self, code: bytes) -> str | None:
         words = [int.from_bytes(code[at:at + 4], "little") for at in range(0, min(len(code), 16) - 3, 4)]
