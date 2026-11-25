@@ -49,6 +49,9 @@ def microcode(image: bytes) -> list[dict]:
 
 
 SCHEDULER = re.compile(r"osCreateScheduler$|osSc[A-Z]\w*$|__sc[A-Z]\w*$")
+# libultra's RCP monitor (rmon/: the debugger stub of the debug libraries and the exception path), and the helpers only
+# it calls. A port never runs a debugger over the RCP; the SDK's own names, so never a game's code.
+RMON = re.compile(r"_{0,2}rmon[A-Z]\w*$|(CleanupFromRCPop|SetUpForRCPop|ClearTempBreakpoint|SetTempBreakpoint|MonitorInitBreak)$")
 
 
 def _sdk_group(name: str) -> str | None:
@@ -62,6 +65,10 @@ def _sdk_group(name: str) -> str | None:
     # none of, and its main loop waited for a scheduler that was never made.
     if SCHEDULER.match(name):
         return None
+    # (before the "other" names: library detection set the monitor aside only when this answered, and a game's
+    # __rmonGetGRegisters, named from the SDK's exact signature, stayed open for agents and the deep permuter)
+    if RMON.match(name):
+        return "glue"
     if name in _MATH:  # before the C library: libultra's __cosf is its own, not the host's cosf
         return "native"
     # (libultra's printf is the host's: _Printf and every helper of its xprintf.c and xldtob.c; an N64 game's _Ldunscale,
