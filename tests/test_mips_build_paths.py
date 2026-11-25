@@ -153,3 +153,17 @@ def test_n64_wraps_a_linux_ido_driver_on_a_mac(tmp_path, monkeypatch):
     buildtools._wrap_foreign_ido(SimpleNamespace(root=root))
     assert driver.read_text().startswith("#!/bin/sh") and str(source / "cc") in driver.read_text()
     assert driver.with_name("cc.linux").read_bytes().startswith(b"\x7fELF")
+
+
+def test_a_makefile_or_readme_names_the_rom_when_nothing_else_does(tmp_path):
+    from decompnet.forks.project import ForkProject
+
+    root = tmp_path / "p"
+    root.mkdir()
+    (root / "Makefile").write_text("VERSION ?= us\nBASEROM := baserom.$(VERSION).z64\nsetup:\n\ttrue\n")
+    fp = ForkProject(root)
+    assert fp.needs(None)["path"] == "baserom.us.z64"
+    assert fp.setup_commands(None)[0][-1] == "setup"
+    (root / "Makefile").write_text("all:\n\ttrue\n")
+    (root / "README.md").write_text("Copy your rom to roms/baserom.us.z64 and run ./setup\n")
+    assert ForkProject(root).needs(None)["path"] == "roms/baserom.us.z64"

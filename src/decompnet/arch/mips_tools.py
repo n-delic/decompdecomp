@@ -58,4 +58,10 @@ def build_paths(project) -> list[Path]:
                 if not shim.exists():
                     shim.write_text(f'#!/bin/sh\nexec "{host_cpp}" "$@"\n', encoding="utf-8")
                     shim.chmod(0o755)
+        # Makefiles check the ROM with GNU coreutils' sha1sum, which a Mac lacks (shasum takes the same -c file)
+        if not shutil.which("sha1sum") and (shasum := shutil.which("shasum")):
+            tool = folder / "sha1sum"
+            if not tool.exists():
+                tool.write_text(f'#!/bin/sh\nexec "{shasum}" -a 1 "$@"\n', encoding="utf-8")
+                tool.chmod(0o755)
     return [folder, source]
