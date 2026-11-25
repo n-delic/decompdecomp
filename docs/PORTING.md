@@ -1000,3 +1000,8 @@ every task of every window. A route that presses START as well (the race route):
 is a cream Citroën where the port's is red, with other opponents (3406, 3408), and at 8991 the two have the same red car on a road seen from slightly different camera positions. So where START is pressed at a given frame the two games make
 other choices (a livery, the opponents) or are a step apart in a run, consistent with a menu that is a frame ahead in the port (the logic lead above) taking an input at another moment. The other race route (`in_route_nostart2`, no START) matched to within 2% at the same
 windows, which isolates START and the menu's timing as what differs.
+
+**Where the START route first differs.** Windows of 24 tasks along the route (seeds replayed): the menus at tasks 1200-2720 are 0.00% differing at every task except 1.0% at two tasks of the 1800 window; the race windows at 2813-2923 are 0.8-1.7%, the
+opponent-car kind of difference; the windows at 3113-3223 are 60-77% different (30% at the first task of a frame, 0.04% with no match within 3 px: the same picture shifted). So the break is between tasks 2923 and 3113, which holds the route's `A`
+press at frame 3030 (held 50 frames: the accelerator), not the menu presses, which all match. At 3406 the console's player car is seen larger and whiter (closer, or a different moment of the start-line view) than the port's. The first task of each frame
+of those windows matching to within a few thousandths of a percent with a shift left says the two are drawing the same scene a step apart in time, the logic lead's effect on a scene that moves, rather than other models or textures.
