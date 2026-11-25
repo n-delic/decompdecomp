@@ -1293,6 +1293,10 @@ def register(app: App) -> None:
         from ..globals_view import globals_list
         return globals_list(net, slug)
 
+    def p_global_users(slug, request, data):
+        from ..globals_view import global_users
+        return global_users(net, slug, request.query_params.get('name', ''))
+
     def p_variants(slug, request, data):
         from .. import variants
         if request.method == 'POST':
@@ -1528,6 +1532,7 @@ def register(app: App) -> None:
         "/api/cross-game/run": (p_cross_run, ["POST"]),
         "/api/variants": (p_variants, ["GET", "POST"]),
         "/api/globals": (p_globals, ["GET"]),
+        "/api/global-users": (p_global_users, ["GET"]),
         "/api/regional": (p_regional, ["GET", "POST"]),
         "/api/regional/names": (p_regional_names, ["POST"]),
         "/api/regional/code": (p_regional_code, ["POST"]),

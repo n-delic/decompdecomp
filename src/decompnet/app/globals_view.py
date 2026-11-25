@@ -8,6 +8,8 @@ lists it.
 """
 from __future__ import annotations
 
+import json
+
 KEYS = ["name", "address", "size", "kind", "preview", "original", "type", "type_source"]
 
 
@@ -65,3 +67,27 @@ def set_type(net, slug: str, name: str, c_type: str, source: str = "agent") -> s
                    (c_type or None, source if c_type else None, proj["id"], row["address"]))
     return (f"✅ {row['name']} (0x{row['address']:08X}) is now typed `{c_type}`" if c_type
             else f"✅ cleared the type of {row['name']}")
+
+
+def global_users(net, slug: str, name: str) -> dict:
+    """The functions that reference one data symbol: their relocations name it (by its current or its D_ name), the
+    way the function view's assembly does. Read from the stored relocations, so it needs no compile."""
+    if net.fork_slug(slug):
+        raise NetworkError("Global users are listed for ROM projects; search this project's source files instead")
+    proj = net._project(slug)
+    store = net.project_store(proj["id"])
+    sym = store.one("SELECT name, address FROM symbols WHERE project_id=? AND name=? AND kind<>'func'", proj["id"], name)
+    if sym is None:
+        raise NetworkError(f"`{name}` is not a data symbol of this game")
+    names = {sym["name"], f"D_{sym['address']:08X}"}
+    users = []
+    for f in store.all("SELECT name, vram, status, relocs FROM functions WHERE project_id=?", proj["id"]):
+        try:
+            relocs = json.loads(f["relocs"] or "[]")
+        except ValueError:
+            continue
+        count = sum(1 for r in relocs if len(r) > 2 and r[2] in names)
+        if count:
+            users.append({"name": f["name"], "address": f["vram"], "status": f["status"], "references": count})
+    users.sort(key=lambda u: (u["address"] or 0, u["name"]))
+    return {"name": sym["name"], "address": sym["address"], "users": users}
