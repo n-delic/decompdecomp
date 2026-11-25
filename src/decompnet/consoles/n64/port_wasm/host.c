@@ -2164,16 +2164,17 @@ static void vtrace_load(const char *path) {
 }
 #endif
 /* The audio interface can drain several buffers between VI interrupts. Give the game a chance to refill them. */
-static void wait_retrace(void) {
-    if (vtime) { /* PORT_VTIME: when every game thread is waiting (or after 3 s of wall time, for one that spins) */
-        uint64_t limit = monotonic_us() + 3000000;
+/* PORT_VTIME: run until every game thread is waiting (three samples in a row), or `wall_us` of wall time has passed (a thread that spins).
+   Returns whether the threads went idle. The virtual clock is not touched. */
+static int vtime_idle(uint64_t wall_us, int strict) {
+        uint64_t limit = monotonic_us() + wall_us;
         int idle = 0;
         while (idle < 3 && monotonic_us() < limit) {
             pthread_mutex_lock(&lock);
             /* no thread running, or only the idle thread: a console spins in its lowest-priority thread until an
                interrupt switches away, so a lone ready thread no other thread ranks below is the CPU with nothing to do */
             int none = booted && running == NULL;
-            if (booted && running) {
+            if (booted && running && !strict) { /* (strict: a thread just woken by the message is not the CPU with nothing to do) */
                 unsigned ready = 0;
                 int lowest = 1;
                 for (PortThread *p = threads; p; p = p->next) {
@@ -2187,6 +2188,11 @@ static void wait_retrace(void) {
             if (none) dp_deliver(1); /* the RCP finishes while the CPU has nothing to do */
             usleep(none ? 100 : 50);
         }
+    return idle >= 3;
+}
+static void wait_retrace(void) {
+    if (vtime) { /* PORT_VTIME: when every game thread is waiting (or after 3 s of wall time, for one that spins) */
+        int idle = vtime_idle(3000000, 0) ? 3 : 0;
         if (idle < 3) {
             vtime_forced++;
             if (vtime_forced <= 3 || vtime_forced % 100 == 0) {
@@ -2403,7 +2409,15 @@ int main(int argc, char **argv) {
         retrace();
         /* the retraces the console had while it worked on a frame (PORT_VTIME_TRACE), fired as the game goes idle:
            they queue for it as they did there */
-        while (vtime && vi_count < vi_target) retrace();
+        /* each catch-up retrace gets the game's threads run to idle (20 ms of wall time at most) before the next, without the virtual clock moving
+           again: fired back to back a frame's retraces queue together on the game's VI queue, and the logic they pace runs in bursts the
+           console's did not. PORT_VTIME_BURST=1: back to back. */
+        static int burst = -1;
+        if (burst < 0) burst = getenv("PORT_VTIME_BURST") && atoi(getenv("PORT_VTIME_BURST")) != 0;
+        while (vtime && vi_count < vi_target) {
+            if (!burst) vtime_idle(20000, 1);
+            retrace();
+        }
         if (vtime && vi_target) vnext_us = ((uint64_t)vi_count + 1) * (unsigned)retrace_us();
         port_live_pump();
         if (getenv("PORT_SAMPLE") && frame % 10 == 5) sample();
