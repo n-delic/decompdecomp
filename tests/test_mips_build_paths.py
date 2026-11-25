@@ -702,3 +702,30 @@ def test_the_target_image_derived_from_a_verified_rom_gets_its_sha1_from_the_bui
     assert splatrefs.built_image_sha1(tmp_path, image) == hashlib.sha1(b"expanded").hexdigest()
     (tmp_path / "build" / "game.z64").write_bytes(b"another rom")
     assert splatrefs.built_image_sha1(tmp_path, image) is None
+
+
+def test_gcc_shim_for_a_makefile_whose_assembler_is_the_cross_gcc(tmp_path):
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "Makefile").write_text("CROSS := mips-linux-gnu-\nAS      := $(CROSS)gcc\nLD := $(CROSS)ld\n")
+    assert mips_tools._assembles_through_gcc(SimpleNamespace(root=root))
+    (root / "Makefile").write_text("CC := $(CROSS)gcc\nAS := $(CROSS)as\n")
+    assert not mips_tools._assembles_through_gcc(SimpleNamespace(root=root))
+
+
+def test_plain_ar_is_the_pinned_one_for_elf_objects_on_a_mac(tmp_path, monkeypatch):
+    """Apple's ar answers "not a mach-o file" to ELF members and leaves an empty archive; a project that hands
+    AR=ar to a library's build needs the pinned ar for those, and Apple's for anything else."""
+    import subprocess
+
+    tools, _ = pinned(tmp_path, monkeypatch)
+    for name in ("ar", "ranlib"):
+        (tools / f"mips-ps2-decompals-{name}").write_text(f"#!/bin/sh\necho pinned-{name}\n")
+        (tools / f"mips-ps2-decompals-{name}").chmod(0o755)
+    monkeypatch.setattr(mips_tools.sys, "platform", "darwin")
+    paths = mips_tools.build_paths(SimpleNamespace(root=tmp_path / "project"))
+    elf = tmp_path / "x.o"
+    elf.write_bytes(b"\x7fELF" + b"\0" * 60)
+    done = subprocess.run([str(paths[0] / "ar"), "rcs", str(tmp_path / "x.a"), str(elf)], capture_output=True, text=True)
+    assert done.stdout.strip() == "pinned-ar"
+    assert "pinned-ranlib" in subprocess.run([str(paths[0] / "ranlib"), "x.a"], capture_output=True, text=True).stdout
