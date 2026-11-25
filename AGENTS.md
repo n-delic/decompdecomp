@@ -149,6 +149,13 @@ in `pyproject.toml` and `uv lock` here. A repair that needs the network or a pro
 (`mips_stack`, `mips_regions`, `mips_runtime`, the CP0/FPU leaves `mips_count` etc., since 0.2.0) are names for the
 library's modules (`tests/test_decomprepair.py`); `seeds.intrinsic_leaf` decides which compilers get the leaves. The ~130 tests here that exercise its families with the app's compilers stay here.
 
+A repair that only finds one C shape and writes another can be a rule instead of a module: a JSON file (the
+library's `rules.py` and `rules/abs_idiom.json`, `app/guide/repair-rules.md` for agents) that `registry.declared()` lists
+beside the modules, so every lane runs it. The app points `DECOMP_REPAIR_RULES` at `<home>/.decomp/repair-rules`
+(`app/repair_rules.py`, when a home opens; the Deep Permuter's worker inherits it) and agents write rules there with
+`add_repair_rule`, which saves one only when it makes a child on the function it was written for. A rule that proves itself
+moves into the library by copying its file to `rules/`; one that needs to walk blocks or track scopes is a module.
+
 The asset recognisers are a library of their own too, decompassets, in RetroReversing/decomp-assets (public,
 AGPL-3.0, history kept), pinned by tag the same way: the N64 recognisers (textures, sound banks, models, animation,
 fonts, resource directories), RNC, and the pixel/PCM/VAG readers every console shares. It uses only the standard
