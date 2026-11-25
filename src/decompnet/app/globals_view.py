@@ -72,10 +72,11 @@ def set_type(net, slug: str, name: str, c_type: str, source: str = "agent") -> s
 def global_users(net, slug: str, name: str) -> dict:
     """The functions that reference one data symbol, read from their stored relocations (no compile needed).
 
-    A relocation names a symbol plus an addend. It is a direct use when the symbol is this global (by its current or
-    its D_ name), and an inside use when symbol address + addend lands in the global's bytes: code that indexes a
-    table or a struct names the table's first symbol, or a neighbour, not the member it reaches. `references` counts
-    both, `inside` only the second kind."""
+    A stored relocation is `[offset, type, target address]`: the absolute address the instruction was made to reach
+    (the `lui`/`addiu` pair's %hi/%lo, a `jal`'s target), not a symbol name. A function uses the global when a
+    target is its address (a direct use) or lands inside its bytes (an inside use: code indexing a table or a struct
+    reaches a member, not the first byte). Most data has no recorded size, and the next symbol can be kilobytes away
+    (an unnamed gap), so a global without one matches its exact address only. `references` counts both kinds, `inside` only the second."""
     if net.fork_slug(slug):
         raise NetworkError("Global users are listed for ROM projects; search this project's source files instead")
     proj = net._project(slug)
@@ -83,10 +84,8 @@ def global_users(net, slug: str, name: str) -> dict:
     sym = store.one("SELECT name, address, size FROM symbols WHERE project_id=? AND name=? AND kind<>'func'", proj["id"], name)
     if sym is None:
         raise NetworkError(f"`{name}` is not a data symbol of this game")
-    names = {sym["name"], f"D_{sym['address']:08X}"}
-    low, high = sym["address"], sym["address"] + max(sym["size"] or 0, 1)
-    where = {r["name"]: r["address"] for r in store.all(
-        "SELECT name, address FROM symbols WHERE project_id=? AND kind<>'func'", proj["id"])}
+    low = sym["address"]
+    high = low + (sym["size"] or 1)
     users = []
     for f in store.all("SELECT name, vram, status, relocs FROM functions WHERE project_id=?", proj["id"]):
         try:
@@ -95,15 +94,12 @@ def global_users(net, slug: str, name: str) -> dict:
             continue
         direct = inside = 0
         for r in relocs:
-            if len(r) < 4:
+            target = r[2] if len(r) > 2 and isinstance(r[2], int) else None
+            if target is None or not low <= target < high:
                 continue
-            if r[2] in names:
+            if target == low:
                 direct += 1
-                continue
-            base = where.get(r[2])
-            if base is None and (m := re.fullmatch(r"D_([0-9A-Fa-f]{8})", str(r[2]))):
-                base = int(m.group(1), 16)
-            if base is not None and low <= base + (r[3] or 0) < high:
+            else:
                 inside += 1
         if direct + inside:
             users.append({"name": f["name"], "address": f["vram"], "status": f["status"],
