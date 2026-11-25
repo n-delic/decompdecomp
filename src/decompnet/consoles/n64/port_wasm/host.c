@@ -481,8 +481,18 @@ static int32_t put(uint32_t mq, uint32_t msg, uint32_t flag, int jam) {
 }
 /* a game's DMA request queue, watched for requests to outside RAM (a game's own host file sets it; none by default) */
 __attribute__((weak)) uint32_t port_dma_watch_queue = 0;
+/* The RSP's and RDP's interrupts of a task arrive when the thread that started it next calls the OS (its next message), not when every thread is waiting:
+   on the console the RSP's few hundred microseconds end before the scheduler thread's next move, and its handler, ranking above the game's logic,
+   runs before the logic thread gets the CPU in between; held until the host's tick the logic ran between a frame's fourth and fifth task. PORT_RCP_AT_TICK=1: as before. */
+static void dp_deliver(int force);
+static void rcp_at_next_call(void) {
+    static int at_tick = -1;
+    if (at_tick < 0) at_tick = getenv("PORT_RCP_AT_TICK") && atoi(getenv("PORT_RCP_AT_TICK")) != 0;
+    if (!at_tick) dp_deliver(1);
+}
 u32 w2c_env_osSendMesg(struct w2c_env *e, u32 mq, u32 msg, u32 flag) {
     (void)e;
+    rcp_at_next_call();
     if (mq && mq == port_dma_watch_queue && be32(msg + 4) < 0x80000000u) { /* a DMA request to outside RAM: who asks */
         fprintf(stderr, "DMA request ROM %08X -> %08X, %X bytes\n", be32(msg), be32(msg + 4), be32(msg + 8));
         port_trace();
@@ -492,6 +502,7 @@ u32 w2c_env_osSendMesg(struct w2c_env *e, u32 mq, u32 msg, u32 flag) {
 u32 w2c_env_osJamMesg(struct w2c_env *e, u32 mq, u32 msg, u32 flag) { (void)e; return (u32)put(mq, msg, flag, 1); }
 u32 w2c_env_osRecvMesg(struct w2c_env *e, u32 mq, u32 msg, u32 flag) {
     (void)e;
+    rcp_at_next_call();
     pthread_mutex_lock(&lock);
     if (msg_log()) fprintf(stderr, "MSG t%d recv %08X flag %u valid %d vi %lu\n", self ? self->number : -1, mq, flag, (int)be32(mq + Q_VALID), vi_count);
     if (block_on(mq, flag, has_mesg) < 0) { pthread_mutex_unlock(&lock); return (u32)-1; }
@@ -954,13 +965,17 @@ static void dp_deliver(int force) {
 #ifndef PORT_WEB
     unsigned char out[sizeof rcp_events];
     unsigned n;
+    static __thread int delivering; /* an event's message wakes a thread that calls back here: not again from inside */
+    if (delivering) return;
     pthread_mutex_lock(&rcp_lock);
     if (!rcp_count || (!force && monotonic_us() < rcp_due_us)) { pthread_mutex_unlock(&rcp_lock); return; }
     n = rcp_count;
     memcpy(out, rcp_events, n);
     rcp_count = 0;
     pthread_mutex_unlock(&rcp_lock);
+    delivering = 1;
     for (unsigned i = 0; i < n; i++) post_event(out[i]);
+    delivering = 0;
 #else
     (void)force;
 #endif
