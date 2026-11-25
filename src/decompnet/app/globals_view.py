@@ -75,8 +75,8 @@ def global_users(net, slug: str, name: str) -> dict:
     A stored relocation is `[offset, type, target address]`: the absolute address the instruction was made to reach
     (the `lui`/`addiu` pair's %hi/%lo, a `jal`'s target), not a symbol name. A function uses the global when a
     target is its address (a direct use) or lands inside its bytes (an inside use: code indexing a table or a struct
-    reaches a member, not the first byte). Splat records no size for most data, so a global with none ends where the
-    next symbol begins. `references` counts both kinds, `inside` only the second."""
+    reaches a member, not the first byte). Most data has no recorded size, and the next symbol can be kilobytes away
+    (an unnamed gap), so a global without one matches its exact address only. `references` counts both kinds, `inside` only the second."""
     if net.fork_slug(slug):
         raise NetworkError("Global users are listed for ROM projects; search this project's source files instead")
     proj = net._project(slug)
@@ -85,10 +85,7 @@ def global_users(net, slug: str, name: str) -> dict:
     if sym is None:
         raise NetworkError(f"`{name}` is not a data symbol of this game")
     low = sym["address"]
-    high = low + sym["size"] if sym["size"] else 0
-    if not high:
-        following = store.one("SELECT MIN(address) AS a FROM symbols WHERE project_id=? AND address>?", proj["id"], low)
-        high = following["a"] if following and following["a"] else low + 1
+    high = low + (sym["size"] or 1)
     users = []
     for f in store.all("SELECT name, vram, status, relocs FROM functions WHERE project_id=?", proj["id"]):
         try:

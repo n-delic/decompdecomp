@@ -128,8 +128,8 @@ def test_a_use_inside_a_table_or_struct_counts(tmp_path):
     users = {u["name"]: u for u in global_users(net, "g", "sDirectKey")["users"]}
     assert users["indexes"]["references"] == 2 and users["indexes"]["inside"] == 1  # 0x...E3C is the table's end
 
-    with store.tx() as db:  # no recorded size: the global runs up to the next symbol
+    with store.tx() as db:  # no recorded size: only its exact address
         db.execute("UPDATE symbols SET size=0 WHERE name='sDirectKey'")
     users = {u["name"]: u for u in global_users(net, "g", "sDirectKey")["users"]}
-    assert users["indexes"]["references"] == 1 and users["indexes"]["inside"] == 0  # 0x...E00 is the next symbol's
+    assert users["indexes"]["references"] == 1 and users["indexes"]["inside"] == 0  # members past the first byte need a recorded size
     store.close_readers(); store.conn.close()
