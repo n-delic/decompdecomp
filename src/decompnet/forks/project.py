@@ -413,6 +413,45 @@ class ForkProject:
                 configs[version] = path
         return configs
 
+    def _makefile_rom(self, version: str | None) -> dict | None:
+        """The ROM a Makefile reads, when nothing else names it: `baserom.$(VERSION).z64` (VERSION is the Makefile's
+        default, or the version the user's ROM matched) or a literal `baserom.z64`. No SHA-1: the project's own
+        check (its .sha1/.md5 file) says whether it is the right game."""
+        text = ""
+        for name in ("Makefile", "Makefile.common"):
+            try:
+                text += (self.root / name).read_text(errors="replace", encoding="utf-8") + "\n"
+            except OSError:
+                pass
+        default = re.search(r"^VERSION\s*[:?]?=\s*([A-Za-z0-9._-]+)\s*$", text, re.M)
+        ver = version or (default.group(1) if default else None)
+        found = re.search(r"baserom(\.\$\((?:VERSION|REGION)\))?\.z64", text)
+        if not found or (found.group(1) and not ver):
+            return self._readme_rom()
+        rel = f"baserom.{ver}.z64" if found.group(1) else "baserom.z64"
+        return {"what": f"your original game ROM ({rel})", "path": rel, "sha1": None, "auto": True,
+                "help": "Supply an original cartridge ROM in .z64, .v64 or .n64 byte order; decompdecomp saves a "
+                        ".z64 copy where the project's Makefile reads it, and the project's own check says "
+                        "whether it is the right release."}
+
+    def _readme_rom(self) -> dict | None:
+        """Where the README says to put the ROM ("copy it to roms/baserom.us.z64"), for a project whose build files
+        don't spell it out: the one literal path it names, or the North American one when it names several."""
+        try:
+            text = (self.root / "README.md").read_text(errors="replace", encoding="utf-8")
+        except OSError:
+            return None
+        names = list(dict.fromkeys(re.findall(r"(?<![\w/.-])((?:\.?/)?(?:[\w-]+/)*baserom(?:\.[\w]+)*\.z64)\b", text)))
+        names = [n[2:] if n.startswith("./") else n for n in names if "$" not in n and ".." not in n]
+        pick = names[0] if len(names) == 1 else next(
+            (n for n in names if re.search(r"(?:^|[./-])(us|u|usa|ntsc-u)(?:[./-]|$)", n)), None)
+        rel = self._inside(pick) if pick else None
+        if not rel:
+            return None
+        return {"what": f"your original game ROM ({rel})", "path": rel, "sha1": None, "auto": True,
+                "help": "Supply an original cartridge ROM in .z64, .v64 or .n64 byte order; decompdecomp saves a "
+                        ".z64 copy where the project's README says to put it."}
+
     def decomp_yaml_roms(self) -> dict[str, tuple[str, str | None]]:
         """{version: (where the project wants its ROM, its SHA-1 or None)} from the project's decomp.yaml (the
         decomp.dev convention many community decomps keep: a `versions` list whose `paths` name the original image
@@ -762,7 +801,7 @@ class ForkProject:
                              "This splat config does not specify a SHA-1, so decompdecomp cannot check the game "
                              "file by hash before setup. Check the project's README for the required version. ") +
                             "For PlayStation projects, a disc image can supply the expected file."}
-        return manual
+        return self._makefile_rom(version) or manual
 
     # ------------------------------------------------------------------ setup
 
@@ -771,6 +810,7 @@ class ForkProject:
         under the one other name its build script spells out (a decomp.yaml that says paperboy.z64 beside a
         configure.py that reads baserom.z64)."""
         dest = self._place_game(src, filename, version, move, log)
+        self._rom_placed = dest
         if dest.suffix.lower() == ".z64" and self.kind() in ("configure", "custom", "splat"):
             names: set[str] = set()
             literal: set[str] = set()  # (several literal names are several versions': never this game under all)
@@ -899,6 +939,12 @@ class ForkProject:
             if version and "--version" in flags and version in self.rom_originals():
                 cmd += ["--version", version]
             return [*steps, cmd, [_tool("ninja") or "ninja"]]
+        if kind == "custom" and (self.root / "Makefile").is_file():
+            # no splat config at the root, but a Makefile with the usual targets (setup, extract, then the build)
+            text = (self.root / "Makefile").read_text(errors="replace", encoding="utf-8")
+            chosen = [f"VERSION={version}"] if version and re.search(r"^VERSION\s*[:?]?=", text, re.M) else []
+            steps = [["make", *chosen, t] for t in ("setup", "extract") if re.search(rf"^{t}\s*:", text, re.M)]
+            return steps + [["make", *chosen, f"-j{os.cpu_count() or 4}"]]
         if kind == "splat":
             make = (self.root / "Makefile").read_text(errors="replace", encoding="utf-8")
             chosen = [f"VERSION={version}"] if version and self.splat_baseroms() else []
@@ -933,7 +979,8 @@ class ForkProject:
         started: its output used to be read to the end before the limit was looked at, so a compiler that never
         finished on an agent's code (stuck under wibo, or CodeWarrior looping on one #pragma) kept the build, and
         the project's build lock, for hours (#114, whose fix this is)."""
-        console = consoles.get((self.manifest or {}).get("platform") or platform or self.detect_platform())
+        console = consoles.get((self.manifest or {}).get("platform") or platform or getattr(self, "platform", None)
+                               or self.detect_platform())
         if self._docker_only_macos() and Path(cmd[0]).name in ("make", "gmake"):
             self._prepare_docker(log)
             cmd = self._docker_command(["make", *cmd[1:]])
@@ -1179,6 +1226,15 @@ class ForkProject:
         self.ensure_python_env(log=log)
         for cmd in self.setup_commands(version):
             ok, tail = self.run(cmd, log=log)
+            if not ok and (missing := re.search(r"No rule to make target [`'‘](baserom[\w.-]*\.z64)['’]", tail)) \
+                    and getattr(self, "_rom_placed", None) and not (self.root / missing.group(1)).exists():
+                # the Makefile reads the ROM under a name nothing else said: that name, then, for this game
+                try:
+                    os.link(self._rom_placed, self.root / missing.group(1))
+                except OSError:
+                    shutil.copyfile(self._rom_placed, self.root / missing.group(1))
+                log(f"the project reads the game as {missing.group(1)}: saved it under that name too")
+                ok, tail = self.run(cmd, log=log)
             make_step = Path(cmd[0]).name.removesuffix('.exe') in ('make', 'gmake')
             if (not ok and make_step and not (self.root / 'objdiff.json').exists()
                     and re.search(r'computed checksum did NOT match|build succeeded, but did not match', tail)):
