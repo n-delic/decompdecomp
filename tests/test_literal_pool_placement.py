@@ -80,3 +80,19 @@ def test_a_single_reference_is_no_vote(tmp_path):
     target = [(hi[0] + 0x40, match.R_MIPS_HI16, POOL + offsets[0])]
     result = match.link(obj, 'f', match.RomTarget('f', 0x80001000, bytes(size), target), SymbolTable(), read)
     assert any('has no address' in p for p in result.problems), result.problems
+
+
+@pytest.mark.skipif(toolchains.installed('sn-n64-281') is None, reason='needs the pinned SN compiler')
+def test_a_literal_where_the_target_refers_to_another_datum_still_takes_the_pool(tmp_path):
+    obj, size, refs = compiled(tmp_path)
+    offsets = pool_offsets(refs)
+    hi = [off for off, kind, *_ in refs if kind == match.R_MIPS_HI16]
+    lo = [off for off, kind, *_ in refs if kind == match.R_MIPS_LO16]
+    # The target's code is two words further on from the second literal: at our instructions it refers to a global.
+    other = 0x80300000
+    target = [(hi[0], match.R_MIPS_HI16, POOL + offsets[0]), (lo[0], match.R_MIPS_LO16, POOL + offsets[0]),
+              (hi[1], match.R_MIPS_HI16, other), (lo[1], match.R_MIPS_LO16, other),
+              (hi[1] + 8, match.R_MIPS_HI16, POOL + offsets[1]), (lo[1] + 8, match.R_MIPS_LO16, POOL + offsets[1])]
+    result = match.link(obj, 'f', match.RomTarget('f', 0x80001000, bytes(size), target), SymbolTable(), read)
+    assert sorted(next(iter(result.placements.values())).values()) == [POOL + offsets[0], POOL + offsets[1]]
+    assert not any('differs from the ROM' in p for p in result.problems), result.problems

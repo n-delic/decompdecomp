@@ -27,6 +27,10 @@ target's was "refers to .rdata+0x.. where the ROM's code has no address", 150 ea
 candidate's own sections by the base the nearby target references vote for (`section_bases`), the same literal
 source scores 15462, against 19121 for the extern form (fp64: 15927 against 19541).
 
+A literal whose instruction sits where the target refers to a global (the code a word off) was then still named
+after that global; linking a non-match again with every own literal placed by the voted base (`prefer_base`, kept
+when it has no more problems) took a later source of the same function from 7065 to 4965.
+
 Failed experiments that would otherwise be repeated:
 
 Literals before the judge fix: 26102 (worse than the externs, so a search keeps the externs and can never match).
