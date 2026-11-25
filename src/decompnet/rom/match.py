@@ -219,7 +219,9 @@ def compiler_library_name(name: str) -> bool:
 
 
 class _Linker:
-    def __init__(self, obj: bytes, name: str, target: RomTarget, symbols: SymbolTable, read: ReadFn):
+    def __init__(self, obj: bytes, name: str, target: RomTarget, symbols: SymbolTable, read: ReadFn, *,
+                 prefer_base: bool = False):
+        self.prefer_base = prefer_base  # place own unnamed data by the voted base even where the target refers elsewhere
         self.elf = candidate_elf(obj, ELFFile)
         self.name, self.target, self.symbols, self.read = name, target, symbols, read
         self.symtab = self.elf.get_section_by_name(".symtab")
@@ -323,7 +325,8 @@ class _Linker:
                 self.local_map.setdefault((shndx, off), addr)  # g++'s `.sdata+4`: the export places the section
         else:
             want = self.target_at.get(r["off"])
-            if (want is None or want[0] != r["type"]) and (placed := self.section_place(shndx, off, r["type"])):
+            if (self.prefer_base or want is None or want[0] != r["type"]) and (
+                    placed := self.section_place(shndx, off, r["type"])):
                 want = (r["type"], placed)
             if want is None or want[0] != r["type"]:
                 label = f"{named[0]}+0x{named[1]:X}" if named else f"{self.elf.get_section(shndx).name}+0x{off:X}"
@@ -574,7 +577,16 @@ class _Linker:
 def link(obj: bytes, name: str, target: RomTarget, symbols: SymbolTable, read: ReadFn) -> LinkResult:
     """Link a compiled candidate at the target's address and compare it with the ROM."""
     obj = unmangle(obj, lambda n: n in symbols.by_name or bool(AUTO_NAME.match(n)))  # C++ names: the game's
-    return _Linker(obj, name, target, symbols, read).run()
+    first = _Linker(obj, name, target, symbols, read)
+    result = first.run()
+    if result.exact or not getattr(first, "bases", None):
+        return result
+    # Not a match: once the code above a literal is a word off, the target's reference at the same instruction is
+    # some other datum (a global's %hi), so the first link names the wrong address. Link again placing the own
+    # data by its voted base everywhere, and keep whichever has fewer problems (a pool the ROM keeps in pieces
+    # gets data mismatches by the base and keeps the first). Only the diff changes: a match was decided above.
+    again = _Linker(obj, name, target, symbols, read, prefer_base=True).run()
+    return again if len(again.problems) <= len(result.problems) else result
 
 
 def diff(target: FunctionObj, result: LinkResult) -> scoring.DiffResult:
