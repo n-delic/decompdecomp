@@ -549,6 +549,32 @@ def test_plan_accepts_rdata_and_constructor_tables(tmp_path):
     assert unit['name'] == 'demo' and unit['sections'] == {'.rodata': 0x80000410}
 
 
+
+def test_plan_accepts_auto_offsets_and_dict_data_subsegments(tmp_path):
+    cfg = config(tmp_path)
+    (tmp_path / 'src/real.c').write_text('int real_func(void) { return 1; }')
+    (tmp_path / 'build/src/real.o').write_bytes(b'candidate')
+    cfg['segments'][0]['subsegments'] = [
+        [0, 'c', 'demo'], ['auto', 'hasm', 'libm_vals'], [8, 'c', 'real'], [0x20, 'data', 'real'],
+        {'start': 0x30, 'type': '.data', 'vram': 0x80000430, 'name': 'real'},
+        {'start': 0x40, 'type': '.rodata', 'vram': 0x80000440, 'name': 'only_data'},
+        {'start': 0x50, 'type': '.bss', 'vram': 0x80000450, 'name': 'real'}]
+    units = splatrefs.plan(tmp_path, cfg)
+    assert [unit['name'] for unit in units] == ['demo', 'real']
+    assert units[1]['sections']['.data'] == 0x80000430 and units[1]['sections']['.bss'] == 0x80000450
+
+
+def test_versions_follow_a_makefile_that_names_its_config_through_variables(tmp_path):
+    (tmp_path / 'versions/us').mkdir(parents=True)
+    (tmp_path / 'versions/eu').mkdir()
+    for version in ('us', 'eu'):
+        (tmp_path / f'versions/{version}/game.yaml').write_text('options: {}\nsegments: []\n')
+    (tmp_path / 'Makefile').write_text('VERSION ?= us\nTARGET := game\nVERSION_DIR := versions/$(VERSION)\n'
+                                       'SPLAT_YAML := $(VERSION_DIR)/$(TARGET).yaml\n'
+                                       'SPLAT := splat split $(SPLAT_YAML)\n')
+    found = ForkProject(tmp_path)._splat_version_configs()
+    assert sorted(found) == ['eu', 'us']
+
 def test_an_elf_counts_when_only_the_header_crc_and_the_tail_padding_differ_and_the_built_cartridge_is_the_original(
         tmp_path, monkeypatch):
     original = bytearray(b"A" * 0x1100)
@@ -590,3 +616,4 @@ def test_a_library_source_named_with_a_parent_path_is_a_unit_named_by_its_place_
     cfg['segments'][0]['subsegments'][0][2] = '../../../outside'  # (still never outside the checkout)
     with pytest.raises(ForkError):
         splatrefs.plan(tmp_path, cfg)
+

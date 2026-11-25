@@ -496,7 +496,7 @@ class ForkProject:
             # (a Makefile that writes the name out: `splat split blastcorps.$(VERSION).yaml`)
             basename = re.search(r"(?<![\w$./-])([A-Za-z0-9_-]+)\.\$\(VERSION\)\.yaml", make)
             if not basename:
-                return {}
+                return self._splat_variable_configs(make)
             suffix = basename[0]
         nested = "config/$(VERSION)/" + suffix
         if nested in make:
@@ -513,6 +513,35 @@ class ForkProject:
                     self.root.resolve() in path.resolve().parents):
                 configs[version] = path
         return configs
+
+    def _splat_variable_configs(self, make: str) -> dict[str, Path]:
+        """Editions whose splat config the Makefile names through variables: `VERSION_DIR := versions/$(VERSION)` and
+        `SPLAT_YAML := $(VERSION_DIR)/$(TARGET).yaml`. Only a path the `splat` command of the Makefile really reads
+        counts (the variable is expanded textually; VERSION stays the placeholder)."""
+        variables = {m[1]: m[2].strip() for m in re.finditer(r"^(\w+)\s*[:?]?=\s*(.*?)\s*$", make, re.M)}
+
+        def expand(text: str, depth: int = 0) -> str:
+            if depth > 8:
+                return text
+            return re.sub(r"\$\((\w+)\)", lambda m: (m[0] if m[1] == "VERSION" or m[1] not in variables
+                                                      else expand(variables[m[1]], depth + 1)), text)
+
+        reads = {expand(value) for name, value in variables.items() if re.search(r"splat", name, re.I)
+                 and name != "SPLAT_DIR"} | {expand(m[1]) for m in re.finditer(r"splat\s+split\s+(\S+)", make)}
+        found = {}
+        for text in reads:
+            for candidate in re.findall(r"[\w./$()-]*\$\(VERSION\)[\w./$()-]*\.ya?ml", text):
+                if "$(" in candidate.replace("$(VERSION)", ""):
+                    continue
+                if candidate.count("$(VERSION)") != 1:
+                    continue
+                head, tail = candidate.split("$(VERSION)")
+                for path in sorted(self.root.glob(candidate.replace("$(VERSION)", "*"))):
+                    relative = path.relative_to(self.root).as_posix()
+                    version = relative[len(head):len(relative) - len(tail)]
+                    if (re.fullmatch(r"[A-Za-z0-9._-]+", version) and self.root.resolve() in path.resolve().parents):
+                        found[version] = path
+        return found
 
     def _makefile_rom(self, version: str | None) -> dict | None:
         """The ROM a Makefile reads, when nothing else names it: `baserom.$(VERSION).z64` (VERSION is the Makefile's
