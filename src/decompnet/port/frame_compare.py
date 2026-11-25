@@ -457,8 +457,12 @@ def seed_offset(port_calls: dict[int, int], task_vi: dict[int, int], seed_vis: l
     Replaying the console's seeds in order from the port's call k hands it the console's call k: one call too many in the port hands every later draw the
     previous seed (a race start's opponents were other cars than the console's until a seed was added at the front: 0.00% at every task)."""
     import bisect
-    gaps = [port_calls[n] - bisect.bisect_right(seed_vis, task_vi[n]) for n in sorted(port_calls)
-            if first <= n <= last and n in task_vi]
+    gaps = []
+    for n in sorted(port_calls):
+        if first <= n <= last and n in task_vi:
+            mine, theirs = port_calls[n], bisect.bisect_right(seed_vis, task_vi[n])
+            if mine or theirs:  # before either has called there is nothing to be ahead by
+                gaps.append(mine - theirs)
     return min(gaps) if gaps else 0
 
 

@@ -131,3 +131,12 @@ def test_the_seed_offset_is_the_ports_extra_calls_at_the_same_task():
     drift = {n: c + 1 + (n > 450) for n, c in console.items()}  # then a frame ahead later: the smallest gap counts
     assert frame_compare.seed_offset(drift, task_vi, seed_vis) == 1
     assert frame_compare.seed_offset({}, task_vi, seed_vis) == 0
+
+
+def test_the_seed_offset_ignores_the_tasks_before_either_side_has_called():
+    task_vi = {n: n for n in range(200, 700, 50)}
+    seed_vis = [420]  # the console's first call
+    console = {200: 0, 250: 0, 300: 0, 350: 0, 400: 0, 450: 1, 500: 1, 550: 1, 600: 1, 650: 1}
+    port = {n: c + (1 if n >= 450 else 0) + (0 if n < 450 else 0) for n, c in console.items()}
+    port[400] = 1  # the port called a little before the console did
+    assert frame_compare.seed_offset(port, task_vi, seed_vis) == 1
