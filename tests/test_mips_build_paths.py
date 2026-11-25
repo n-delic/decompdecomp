@@ -864,6 +864,34 @@ def test_the_assembler_shim_leaves_section_symbols_unnamed(tmp_path):
     assert struct.unpack_from(">I", made, first_symbol)[0] == 0
 
 
+def test_a_compiler_folder_an_install_script_unpacks_into_gets_the_installed_compilers(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools
+
+    (tmp_path / "install_compilers.sh").write_text("tar zx -C tools/build/cc/gcc2.7.2\ntar zx -C tools/build/cc/ido5.3\n")
+    for name in ("gcc2.7.2", "ido5.3"):
+        (tmp_path / "tools/build/cc" / name).mkdir(parents=True)
+    installed = tmp_path / "installed"
+    installed.mkdir()
+    (installed / "gcc").write_text("x")
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(buildtools.toolchains, "require", lambda tid: installed)
+    buildtools._provide_compiler_dirs(SimpleNamespace(root=tmp_path))
+    assert (tmp_path / "tools/build/cc/gcc2.7.2/gcc").is_symlink()
+    assert (tmp_path / "tools/build/cc/ido5.3/gcc").is_symlink()
+
+
+def test_an_irix_compiler_tree_that_the_project_recompiles_is_not_replaced_by_a_wrapper(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools
+
+    cc = tmp_path / "tools" / "ido5.3_compiler" / "usr" / "bin" / "cc"
+    cc.parent.mkdir(parents=True)
+    cc.write_bytes(b"\x7fELF" + b"\0" * 12)
+    monkeypatch.setattr(buildtools.sys, "platform", "darwin")
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(buildtools.toolchains, "require", lambda tid: tmp_path)
+    buildtools._wrap_foreign_ido(SimpleNamespace(root=tmp_path))
+    assert cc.read_bytes().startswith(b"\x7fELF") and not cc.with_name("cc.linux").exists()
+
 def test_a_bundled_splat_gets_the_packages_of_its_own_era(tmp_path, monkeypatch):
     root = tmp_path / "project"
     (root / "tools/splat").mkdir(parents=True)

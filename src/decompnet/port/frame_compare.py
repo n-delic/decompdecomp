@@ -449,6 +449,9 @@ def difference(a: list, b: list) -> list:
 
 
 
+PROBE_SECONDS = 24  # virtual seconds the probe run lasts: a run of 10 reached only task 408 on one route, before the first seeding call
+
+
 def seed_offset(port_calls: dict[int, int], task_vi: dict[int, int], seed_vis: list[int], first: int = 200, last: int = 700) -> int:
     """How many more seeding calls the port has made than the console's game at the same graphics task, early in the run: the usual
     difference over the tasks from `first` to `last` (a call made a hair after a task starts is a gap of zero at an odd task, and the logic lead's
@@ -489,7 +492,7 @@ def align_seeds(game: Path, rom: Path, inputs: str, work: Path, pace_log: Path, 
         if (work / "game.eep").exists():
             shutil.copy(work / "game.eep", Path(scratch) / "game.eep")
         try:
-            done = subprocess.run([str(game.resolve()), str(rom.resolve()), "10"], cwd=scratch, env=probe_env, capture_output=True,
+            done = subprocess.run([str(game.resolve()), str(rom.resolve()), "24"], cwd=scratch, env=probe_env, capture_output=True,
                                   text=True, timeout=300)
         except subprocess.TimeoutExpired:
             return 0

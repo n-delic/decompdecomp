@@ -189,6 +189,12 @@ def _tool_dirs() -> list[Path]:
     return [Path(sys.executable).parent, *([bundled] if bundled.is_dir() else [])]
 
 
+def _version_var(makefile: str) -> str | None:
+    """The variable a Makefile picks the game's version by, when it has a default for it (`VERSION ?= us`, or Perfect
+    Dark's `ROMID ?= ntsc-final`): `make <var>=<version>` builds another."""
+    return next((v for v in ("VERSION", "ROMID") if re.search(rf"^{v}\s*[:?]?=", makefile, re.M)), None)
+
+
 def _setup_targets(makefile: str) -> list[str]:
     """The Makefile's own preparation targets, in the order its README runs them. `assets` counts only when its recipe
     runs Torch (a Makefile whose README says `make -C tools`, `make assets`, `make`): the headers its compile step
@@ -225,6 +231,25 @@ def _mac_cxx_env(root: Path) -> dict[str, str]:
         except OSError:
             continue
     return found
+
+
+def _iconv_override(root: Path, tool_dirs: list[Path], path: str) -> str | None:
+    """A Makefile that names Homebrew's libiconv for its text preprocessing (`ICONV := $(shell brew --prefix)/opt/libiconv/
+    bin/iconv`, as the Zelda decomps' do) fails on a Mac without that formula: "iconv: No such file". The iconv decompdecomp
+    puts on the build's PATH (the shim that keeps a backslash after a multi-byte character as ASCII, as GNU's does) or the
+    system's does the job, so make is told to use it. Nothing changes when the formula is installed."""
+    try:
+        text = (root / "Makefile").read_text(errors="replace", encoding="utf-8")
+    except OSError:
+        return None
+    if not re.search(r"^\s*ICONV\s*:?=.*libiconv", text, re.M):
+        return None
+    if any((Path(p) / "opt/libiconv/bin/iconv").is_file() for p in ("/opt/homebrew", "/usr/local")):
+        return None
+    for folder in tool_dirs:
+        if (folder / "iconv").is_file():
+            return str(folder / "iconv")
+    return shutil.which("iconv", path=path)
 
 
 def _tool(name: str) -> str | None:
@@ -525,7 +550,7 @@ class ForkProject:
         Only cartridge-ROM paths count: a disc or archive is another console's setup."""
         path = self.root / "decomp.yaml"
         if not path.is_file():
-            return self._splat_dir_roms()
+            return self._splat_dir_roms() or self._sha1_file_roms()
         import yaml
 
         try:
@@ -553,6 +578,9 @@ class ForkProject:
                 digest = None
                 files = sorted(self.root.glob(f"*{name}*.sha1")) or (sorted(self.root.glob("checksum*.sha1"))
                                                                     if len(entries) == 1 else [])
+                if not files and re.fullmatch(r"[\w.-]+", name):  # (ver/<name>/checksum.sha1: Paper Mario's)
+                    files = sorted(self.root.glob(f"ver/{name}/checksum*.sha1")) + sorted(
+                        self.root.glob(f"{name}/checksum*.sha1"))
                 for f in files[:3]:
                     found = re.search(r"\b[0-9a-fA-F]{40}\b", f.read_text(errors="replace", encoding="utf-8"))
                     if found:
@@ -614,6 +642,61 @@ class ForkProject:
         if originals := self.splat_baseroms():
             return originals
         return {v: digest for v, (_, digest) in self.decomp_yaml_roms().items() if digest}
+
+    def md5_roms(self) -> dict[str, tuple[str, set[str]]]:
+        """{version: (where the project wants its ROM, the MD5s of the originals it accepts)} for a project that names
+        its originals by MD5, not SHA-1: `baseroms/<version>/checksum*compressed.md5` (the Zelda decomps: the ROM goes
+        in `baseroms/<version>/baserom.z64`), or a table of `| ROM ID | description | MD5 |` rows in the README with the
+        ROM named `<game>.<ROM ID>.z64` there (Perfect Dark). The hash the build is checked against is the original's
+        when the game matches, as with a decomp.yaml's."""
+        out: dict[str, tuple[str, set[str]]] = {}
+        base = self.root / "baseroms"
+        if base.is_dir():
+            for folder in sorted(p for p in base.iterdir() if p.is_dir()):
+                for f in sorted(folder.glob("checksum*compressed.md5")):
+                    try:
+                        found = re.findall(r"\b[0-9a-fA-F]{32}\b", f.read_text(errors="replace", encoding="utf-8"))
+                    except OSError:
+                        continue
+                    rel = self._inside(f"baseroms/{folder.name}/baserom.z64") or f"baseroms/{folder.name}/baserom.z64"
+                    out.setdefault(folder.name, (rel, set()))[1].update(m.lower() for m in found)
+        if out:
+            return out
+        try:
+            text = (self.root / "README.md").read_text(errors="replace", encoding="utf-8")
+        except OSError:
+            return {}
+        rows = {m[0]: m[1].lower() for m in re.findall(
+            r"^\|\s*`?([A-Za-z0-9][A-Za-z0-9._-]*)`?\s*\|[^|\n]*\|\s*`?([0-9a-fA-F]{32})`?\s*\|", text, re.M)}
+        for stem, ident in re.findall(r"(?<![\w/.-])([A-Za-z0-9_-]+)\.([A-Za-z0-9][A-Za-z0-9._-]*)\.z64\b", text):
+            if ident in rows:
+                template = f"{stem}.{{}}.z64"
+                return {v: (self._inside(template.format(v)) or template.format(v), {md5})
+                        for v, md5 in rows.items()}
+        return {}
+
+    def _sha1_file_roms(self) -> dict[str, tuple[str, str]]:
+        """{version: (where its ROM goes, SHA-1)} for a project with one `<name>.<version>.sha1` file per version (the
+        hash of the ROM its build makes, the original's when the game matches) and a README, Makefile or script that
+        says the original goes in `baserom.<version>.z64` (the Mario 64 decomp)."""
+        files = {m[2]: f for f in sorted(self.root.glob("*.*.sha1"))
+                 if (m := re.fullmatch(r"([\w-]+)\.([A-Za-z0-9-]+)\.sha1", f.name))}
+        if not files:
+            return {}
+        text = ""
+        for name in ("README.md", "Makefile", "extract_assets.py"):
+            try:
+                text += (self.root / name).read_text(errors="replace", encoding="utf-8") + "\n"
+            except OSError:
+                pass
+        if not re.search(r"baserom\.(?:<\w+>|\$\(\w+\)|\{\w+\}|" + "|".join(map(re.escape, files)) + r")\.z64", text):
+            return {}
+        out = {}
+        for version, f in files.items():
+            found = re.search(r"\b[0-9a-fA-F]{40}\b", f.read_text(errors="replace", encoding="utf-8"))
+            if found:
+                out[version] = (f"baserom.{version}.z64", found.group(0).lower())
+        return out
 
     def splat_baseroms(self) -> dict[str, str]:
         """Original ROM hashes for direct versioned splits and generated decompressed images.
@@ -874,6 +957,13 @@ class ForkProject:
                     "rom_versions": [{"version": v, "sha1": d} for v, (_, d) in roms.items() if d],
                     "help": "Supply an original cartridge ROM in .z64, .v64 or .n64 byte order; its SHA-1 picks "
                             "the project's version and decompdecomp saves a .z64 copy where the project reads it."}
+        if kind in ("configure", "custom") and (named := self.md5_roms()):
+            chosen = version if version in named else next(iter(named))
+            path, md5s = named[chosen]
+            return {"what": f"your original game ROM ({Path(path).name})", "path": path, "sha1": None, "auto": True,
+                    "md5": sorted(md5s), "md5_versions": [{"version": v, "md5": sorted(m)} for v, (_, m) in named.items()],
+                    "help": "Supply an original cartridge ROM in .z64, .v64 or .n64 byte order; its MD5 picks the project's "
+                            "version and decompdecomp saves a .z64 copy where the project reads it."}
         if kind == "configure":
             v = version or ""
             if v and (self.root / "orig" / v).is_dir():
@@ -1003,6 +1093,10 @@ class ForkProject:
             dest = dest / (Path(filename).name or "game.iso")
         else:
             dest.parent.mkdir(parents=True, exist_ok=True)
+        if (need["path"].endswith(".z64") and not need.get("sha1") and normalized_sha1 and normalized_sha1 != supplied_sha1
+                and not dest.exists()):  # (a project that names no SHA-1 still reads big-endian: v64/n64 is converted)
+            copy_z64_file(src, dest)
+            return dest
         # A user may select the game already placed by setup, including through a symlink or hard link.
         # Validate its hash above, then leave it in place instead of copying or moving it onto itself.
         if dest.exists() and src.samefile(dest):
@@ -1070,13 +1164,13 @@ class ForkProject:
             if version and "--version" in flags and version in self.rom_originals():
                 cmd += ["--version", version]
             return [*steps, cmd, [_tool("ninja") or "ninja"]]
-        if kind == "custom" and (self.root / "configure").is_file() and not (self.root / "Makefile").is_file():
-            # a shell `configure` (it checks the ROM, splits it, writes build.ninja), then ninja
-            return [["bash", "./configure"], [_tool("ninja") or "ninja"]]
+        if kind == "custom" and not (self.root / "Makefile").is_file() and (self.root / "configure").is_file():
+            # `./configure` (a script that writes build.ninja from the original's splat output), then ninja
+            return [[str(self.root / "configure")], [_tool("ninja") or "ninja"]]
         if kind == "custom" and (self.root / "Makefile").is_file():
             # no splat config at the root, but a Makefile with the usual targets (setup, extract, then the build)
             text = (self.root / "Makefile").read_text(errors="replace", encoding="utf-8")
-            chosen = [f"VERSION={version}"] if version and re.search(r"^VERSION\s*[:?]?=", text, re.M) else []
+            chosen = [f"{var}={version}"] if version and (var := _version_var(text)) else []
             if version and "." in version and re.search(r"^REGION\s*[:?]?=", text, re.M):
                 chosen = ["REGION=" + version.split(".")[0], "VERSION=" + version.split(".", 1)[1]]  # (us.v77)
             steps = [["make", *chosen, t] for t in _setup_targets(text)]
@@ -1161,6 +1255,10 @@ class ForkProject:
                     break
         if sys.platform == "darwin" and (self.root / "tools").is_dir():
             env.update({k: v for k, v in _mac_cxx_env(self.root).items() if k not in env})
+        if sys.platform == "darwin" and Path(cmd[0]).name in ("make", "gmake") and not any(a.startswith("ICONV=") for a in cmd):
+            iconv = _iconv_override(self.root, project_tools, env["PATH"])
+            if iconv:
+                cmd = [*cmd, f"ICONV={iconv}"]
         env["NINJA_STATUS"] = "[%f/%t] "  # (ninja's own: its progress lines are what a run of units is read by)
         # found on that PATH (decompdecomp's own ninja): Linux looks a command up there itself, Windows only in this
         # process's PATH, where decompdecomp's environment isn't when it's installed
@@ -1438,6 +1536,8 @@ class ForkProject:
         if not requirements.is_file():  # (where some projects keep theirs)
             requirements = next((p for name in ("requirements.txt", "requirements-python.txt")
                                  if (p := self.root / "tools" / name).is_file()), requirements)
+        if not requirements.is_file() and (self.root / "tools/configure/requirements.txt").is_file():
+            requirements = self.root / "tools/configure/requirements.txt"  # (a `./configure` that is a script of its own)
         bundled = None
         if not requirements.is_file() and not (pyproject.is_file() and re.search(
                 r"^dependencies\s*=\s*\[\s*\S", pyproject.read_text(errors="replace", encoding="utf-8"), re.M)):
@@ -1557,6 +1657,23 @@ class ForkProject:
                 log("the build raced with its own clean step; running it again one job at a time")
                 cmd = [a for a in cmd if not a.startswith("-j")] + ["-j1"]
                 ok, tail = self.run(cmd, log=log)
+            if (not ok and Path(cmd[0]).name in ("make", "gmake") and any(a.startswith("-j") and a != "-j1" for a in cmd)
+                    and re.search(r"undefined reference to|mkdir: [^\n]*File exists|No such file or directory", "\n".join(seen))):
+                # Makefiles that assume their steps run in order (a copy into a folder another job makes, a link that
+                # needs a sibling's output) lose that race under -j on a first build; what the first pass built stays
+                # built, so the build run again one job at a time finishes it. A folder-shaped name that a raced
+                # copy left as a file in the build folder is removed first.
+                for name in re.findall(r"mkdir: (\S+): File exists", "\n".join(seen)):
+                    stale = (self.root / name).resolve()
+                    if stale.is_file() and (self.root / "build").resolve() in stale.parents:
+                        stale.unlink()
+                log("the build lost a race between its own steps; running it again")
+                # (-k first: one that picked a link rule before the sibling file it needs was built has that file
+                # built by the other targets now; then the plain build, one job at a time, finishes what is left)
+                ok, tail = self.run([*cmd, "-k"], log=log)
+                if not ok:
+                    cmd = [a for a in cmd if not a.startswith("-j")] + ["-j1"]
+                    ok, tail = self.run(cmd, log=log)
             for _ in range(6):  # (each run names the next missing package)
                 if ok or not self._install_missing_tools(tail, log):
                     break

@@ -177,3 +177,14 @@ def test_every_relocation_kind_is_applied_with_the_linkers_formulas():
     obj = ELFFile(io.BytesIO(built_object(OBJECT_TEXT)))
     out = maprefs.relocate(obj, "k", {("k", ".text"): (0x80000000, 16)}, {"foo": FOO, "bar": BAR})
     assert out[".text"] == LINKED_TEXT
+
+
+def test_the_projects_decompressed_copy_is_offered_as_an_original_image(tmp_path):
+    from types import SimpleNamespace
+
+    rom = tmp_path / "baseroms" / "v" / "baserom.z64"
+    rom.parent.mkdir(parents=True)
+    for name in ("baserom.z64", "baserom-decompressed.z64", "other.z64"):
+        (rom.parent / name).write_bytes(b"\0")
+    found = maprefs.decompressed_images(SimpleNamespace(root=tmp_path), rom)
+    assert [p.name for p in found] == ["baserom-decompressed.z64"]

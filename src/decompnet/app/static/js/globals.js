@@ -1,6 +1,6 @@
 /* The Globals tab: the game's data symbols, searchable by the name they have now or the D_ address name they started
    as (D_800A4DFC → sDirectKey). Read-only, like the Functions list; renames happen through the agents' rename_symbol. */
-const G = { slug: null, rows: [], supported: true, reason: "", q: "", filter: "all", sort: "address", dir: 1, limit: 500, request: 0 };
+const G = { slug: null, rows: [], supported: true, reason: "", q: "", filter: "all", sort: "address", dir: 1, limit: 500, request: 0, learned: new Set() };
 const GLOBAL_ROWS = 500;
 const GLOBAL_COLUMNS = [["address", "Address"], ["name", "Name"], ["original", "Address name"], ["type", "Type"], ["size", "Size", "r"], ["kind", "Kind"], ["preview", "Value"]];
 
@@ -10,8 +10,15 @@ async function loadGlobals(slug) {
   const request = ++G.request;
   $("globalsShown").textContent = "Loading globals…";
   try {
-    const data = await api(`/api/globals?slug=${encodeURIComponent(slug)}`);
+    let data = await api(`/api/globals?slug=${encodeURIComponent(slug)}`);
     if (request !== G.request || S.slug !== slug) return;  // another project or a newer answer
+    if (data.supported && !G.learned.has(slug)) {
+      // types and sizes from the code that already matched (app/global_types.py), once per project and session
+      G.learned.add(slug);
+      const learned = await api("/api/global-types/learn", { method: "POST", body: { slug } }).catch(() => ({ changed: 0 }));
+      if (learned.changed) data = await api(`/api/globals?slug=${encodeURIComponent(slug)}`);
+      if (request !== G.request || S.slug !== slug) return;
+    }
     G.supported = data.supported; G.reason = data.reason || "";
     G.rows = data.rows.map((r) => Object.fromEntries(data.keys.map((k, i) => [k, r[i]])));
     renderGlobals();
@@ -73,7 +80,7 @@ async function openGlobal(name) {
     box.className = "";
     box.innerHTML = data.users.length
       ? `<h3>${plural(data.users.length, "function")} use it</h3><div class="compiler-table"><table><thead><tr><th>Function</th><th>Address</th><th>Status</th><th class="r">Uses</th></tr></thead><tbody>${data.users.map((u) =>
-        `<tr><td><a href="#" class="mono" data-fn="${esc(u.name)}">${esc(u.name)}</a></td><td class="mono dim">${u.address == null ? "" : hex8(u.address)}</td><td>${esc(u.status || "")}</td><td class="r mono">${u.references}</td></tr>`).join("")}</tbody></table></div>`
+        `<tr><td><a href="#" class="mono" data-fn="${esc(u.name)}">${esc(u.name)}</a></td><td class="mono dim">${u.address == null ? "" : hex8(u.address)}</td><td>${esc(u.status || "")}</td><td class="r mono" title="${u.inside ? `${u.inside} reach it through a table or struct that starts elsewhere` : ""}">${u.references}${u.inside ? ` <span class="dim">(${u.inside} inside)</span>` : ""}</td></tr>`).join("")}</tbody></table></div>`
       : `<p class="muted">No function's code references this global.</p>`;
     box.querySelectorAll("[data-fn]").forEach((a) => { a.onclick = (e) => { e.preventDefault(); openFn(a.dataset.fn); }; });
   } catch (error) {
