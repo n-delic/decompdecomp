@@ -441,10 +441,12 @@ def test_legacy_automatic_captures_are_triaged_without_overwriting_review_notes(
     case=net.repair_feedback.listing('demo')['examples'][0]['id']
     with net.store.tx() as db:
         db.execute("UPDATE repair_examples SET status='new',review_note='' WHERE id=?",(case,))
+    net.store.conn.execute("DELETE FROM settings WHERE key LIKE 'schema-stamp:%'")  # an upgrade: the code's stamp is stale
     RepairFeedback(net)
     assert net.repair_feedback.detail('demo',case)['status']=='implemented'
     with net.store.tx() as db:
         db.execute("UPDATE repair_examples SET status='new',review_note='Investigate further' WHERE id=?",(case,))
+    net.store.conn.execute("DELETE FROM settings WHERE key LIKE 'schema-stamp:%'")  # an upgrade: the code's stamp is stale
     RepairFeedback(net)
     assert net.repair_feedback.detail('demo',case)['status']=='new'
 
@@ -708,6 +710,7 @@ def test_repair_baseline_migration_preserves_frozen_baselines_and_reviews(setup)
             db.execute('INSERT INTO repair_examples(id,project_id,function_id,created_at,evidence,category,status,review_note) '
                        'VALUES(?,?,?,0,?,?,?,?)', (case, pid, fid, json.dumps(evidence), category, status, 'Keep this note.'))
         db.execute('INSERT INTO repair_example_votes(example_id,agent_id) VALUES(1,7)')
+    net.store.conn.execute("DELETE FROM settings WHERE key LIKE 'schema-stamp:%'")  # an upgrade: the code's stamp is stale
     RepairFeedback(net)
     rows = net.store.all('SELECT category,status,review_note FROM main.repair_examples ORDER BY id')
     assert [tuple(row) for row in rows] == [
@@ -718,6 +721,7 @@ def test_repair_baseline_migration_preserves_frozen_baselines_and_reviews(setup)
     ]
     assert net.store.one('SELECT COUNT(*) n FROM repair_example_votes')['n'] == 1
     net.repair_feedback.review('demo', 1, 'reviewed', 'other')
+    net.store.conn.execute("DELETE FROM settings WHERE key LIKE 'schema-stamp:%'")  # an upgrade: the code's stamp is stale
     RepairFeedback(net)
     assert net.store.one('SELECT category FROM main.repair_examples WHERE id=1')['category'] == 'other'
 
