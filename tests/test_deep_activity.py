@@ -52,6 +52,31 @@ def test_elapsed_time_is_measured_and_frozen_on_completion(monkeypatch):
     assert snapshots[-1]['workers'][0]['elapsed_seconds'] == 0
 
 
+def test_time_since_last_improvement_resets_on_each_improvement(monkeypatch):
+    now = [100.0]
+    monkeypatch.setattr('decompnet.app.deep_activity.time.monotonic', lambda: now[0])
+    snapshots = []
+    class Log:
+        def progress(self, value):
+            snapshots.append(value)
+    activity = Activity(Log())
+    activity.update('a', {'improvements': 0})
+    now[0] += 30
+    activity.publish({})
+    assert snapshots[-1]['workers'][0]['since_improvement_seconds'] is None
+    activity.update('a', {'improvements': 1})
+    now[0] += 12
+    activity.publish({})
+    assert snapshots[-1]['workers'][0]['since_improvement_seconds'] == 12
+    activity.update('a', {'improvements': 1})
+    now[0] += 5
+    activity.publish({})
+    assert snapshots[-1]['workers'][0]['since_improvement_seconds'] == 17
+    activity.update('a', {'improvements': 2})
+    activity.publish({})
+    assert snapshots[-1]['workers'][0]['since_improvement_seconds'] == 0
+
+
 def test_bursts_coalesce_and_trailing_timer_flushes_latest(monkeypatch):
     timers, snapshots = [], []
     class Timer:
