@@ -1073,3 +1073,29 @@ def test_the_gcc_272_a_carried_library_keeps_in_its_own_tools_folder_gets_the_in
         (folder / name).chmod(0o755)
     buildtools._wrap_foreign_ido(SimpleNamespace(root=root))
     assert str(installed / "gcc") in (folder / "gcc").read_text()
+
+
+def test_a_project_folder_that_links_to_an_installed_toolchain_is_never_written_over(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools
+
+    store = tmp_path / "toolchains"
+    installed = store / "gcc-2.7.2-kmc"
+    installed.mkdir(parents=True)
+    macho = b"\xcf\xfa\xed\xfe" + b"\0" * 64
+    elf = b"\x7fELF" + b"\0" * 12 + b"GNU C version 2.7.2"
+    for name in ("gcc", "cc1"):
+        (installed / name).write_bytes(elf)
+        (installed / name).chmod(0o755)
+    (installed / "as").write_bytes(macho)
+    (installed / "as").chmod(0o755)
+    monkeypatch.setattr(buildtools.toolchains, "root", lambda: store)
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(buildtools.toolchains, "require", lambda tid: installed)
+    monkeypatch.setattr(buildtools.sys, "platform", "darwin")
+    root = tmp_path / "project"
+    (root / "tools").mkdir(parents=True)
+    (root / "tools/gcc-2.7.2").symlink_to(installed, target_is_directory=True)
+    (root / "Makefile").write_text("CFLAGS := -mabi32 -Wa,--vr4300mul-off\nCC := tools/gcc-2.7.2/gcc\n")
+    buildtools._wrap_foreign_ido(SimpleNamespace(root=root))
+    assert (installed / "as").read_bytes() == macho and not (installed / "as.old").exists()
+    assert (installed / "gcc").read_bytes() == elf and not (installed / "gcc.linux").exists()
