@@ -45,7 +45,8 @@ function renderDeepActivity(progress = {}) {
     };
     card.querySelector("[data-duration]").textContent =
       `Elapsed ${duration(worker.elapsed_seconds)}` +
-      (worker.seconds_left != null ? ` · ${duration(worker.seconds_left)} left` : "");
+      (worker.seconds_left != null ? ` · ${duration(worker.seconds_left)} left` : "") +
+      (worker.since_improvement_seconds != null ? ` · last improvement ${duration(worker.since_improvement_seconds)} ago` : " · no improvement yet");
     card.querySelector("[data-output]").textContent = (worker.lines || []).join("\n");
   }
   $("deepActivityEmpty").hidden = rows.length > 0;

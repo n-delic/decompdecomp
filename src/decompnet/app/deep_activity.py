@@ -14,6 +14,7 @@ class Activity:
         self.summary = {}
         self.candidates = []
         self.started = {}
+        self.improved = {}  # function -> monotonic time of its latest improvement
         self.last_publish = float('-inf')
         self.timer = None
 
@@ -28,12 +29,15 @@ class Activity:
                 value.get('improvements', 0) > item.get('improvements', 0) or
                 value.get('phase', item.get('phase')) != item.get('phase') or value.get('error')))
             if value:
+                if value.get('improvements', 0) > item.get('improvements', 0):
+                    self.improved[name] = time.monotonic()
                 item.update(value)
             if line is not None:
                 item['lines'] = [*item['lines'], str(line)[-800:]][-6:]
             item['updated_at'] = time.time()
             if finished:
                 item['elapsed_seconds'] = max(0, time.monotonic() - self.started.pop(name))
+                self.improved.pop(name, None)
                 self.recent = [dict(item), *self.recent][:8]
                 self.active.pop(name, None)
             try:
@@ -93,6 +97,9 @@ class Activity:
         if prep := summary.get('preparation'):
             # The scanner only appends. Copy the published prefix so counts and names agree.
             summary['preparation'] = {**prep, 'candidates': self.candidates[:prep['eligible']]}
-        self.log.progress({**summary, 'workers': [dict(w, elapsed_seconds=max(0, time.monotonic() - self.started[name]))
+        now = time.monotonic()
+        # Seconds since the function's last improvement; None until it has had one (the card shows the run's age).
+        self.log.progress({**summary, 'workers': [dict(w, elapsed_seconds=max(0, now - self.started[name]),
+                                                       since_improvement_seconds=max(0, now - self.improved[name]) if name in self.improved else None)
                                                      for name, w in self.active.items()],
                            'recent_workers': list(self.recent)})
