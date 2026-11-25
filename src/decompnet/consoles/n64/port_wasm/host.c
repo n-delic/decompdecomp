@@ -984,6 +984,14 @@ void w2c_env_osSpTaskStartGo(struct w2c_env *e, u32 task) {
         uint64_t want = (uint64_t)vtrace[gfx_tasks] * (uint64_t)retrace_us();
         if (vclock_us < want) vclock_us = want;
         if (vtrace[gfx_tasks] > vi_target) vi_target = vtrace[gfx_tasks];
+        /* the console had had those retraces before it started the task, so the threads they wake (the game's logic, counted in
+           retraces) have run before the task's RAM is taken or its list drawn: raised here, from the thread that starts the task, as an
+           interrupt would be. Left to the host's loop they came after the task started, and the port's logic, taken task by task, ran
+           a frame ahead of the console's (the track's line points changed at tasks 604, 609, 614 and, on the console, 603, 608, 613).
+           PORT_VTIME_EARLY=0 restores the later raising. */
+        static int early = -1;
+        if (early < 0) early = !getenv("PORT_VTIME_EARLY") || atoi(getenv("PORT_VTIME_EARLY")) != 0;
+        while (early && vi_count < vtrace[gfx_tasks]) retrace();
     }
 #endif
     if (type == 1) ram_dumps("PORT_FRAME_DUMPS", gfx_tasks, task);
