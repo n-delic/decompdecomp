@@ -227,3 +227,12 @@ def test_n64_links_installed_compiler_folders_a_project_expects(tmp_path, monkey
     prepared = consoles.get("n64").project_build_command(SimpleNamespace(root=root), ["make"])
     assert (root / "tools/gcc_2.7.2/macos").resolve() == gcc and (root / "tools/ido/7.1").resolve() == ido
     assert "CC_HOST=true" in prepared
+
+
+def test_rom_path_through_makefile_variables(tmp_path):
+    from decompnet.forks.project import ForkProject
+
+    root = tmp_path / "p"
+    root.mkdir()
+    (root / "Makefile").write_text("VERSION ?= us\nBASEROM_DIR := baseroms/$(VERSION)\nBASEROM := $(BASEROM_DIR)/baserom.z64\n")
+    assert ForkProject(root).needs(None)["path"] == "baseroms/us/baserom.z64"
