@@ -12,9 +12,11 @@ description: Match one function by hand against the running decompdecomp app, th
 - Never leave copies of this skill's text anywhere, including `~/.claude` tool-result files: delete them after reading.
 - Never touch, restart or update the user's running app or the primary checkout.
 - No Deep Permuter and no `scratch_run.py` (see below).
-- A matching agent started by a coordinator opens no PRs and makes no decomp-repair changes: it matches, and writes what
-  the permuter lacked into its note and report (builders turn those into families). Steps 5 and 6 below apply when you
-  are asked to land permuter work yourself.
+- **Haiku: never change the repo and never open a PR.** Write the repair report instead (the symptom, the exact C
+  before/after, the profile, which function it fixed) in `report_repair` and in your final report; a Sonnet builder
+  implements it. **Every other model (Sonnet, Opus, ...): land the repair as a merged PR** (a decomp-repair family or
+  an app change; follow the flow in AGENTS.md: decomp-repair PR, release tag, then the pin PR the library-pin workflow
+  opens), so the Deep Permuter finds the match by itself next time. Step 5 below is that flow.
 - No `try_compiler` and no compiler ranges. The app's `compiler_experiments` trials plus `suggest` (First moves) are the
   way to change a function's profile.
 - At most 2 parallel judge runs, and one agent runs ONE judge or compile process at a time (parallel grids overloaded the
@@ -140,7 +142,7 @@ improvements found during the run merged with their tests.
 - Keep a private checkpoint with the latest live verdict, the measured search seeds and their scores, pending
   MCP calls, the next experiment, and open PRs. Resume from it across context changes.
   A plateau calls for a different experiment. Keep the claim while working on the match.
-- Report success after the judge records 0 and the tested permuter improvements from step 5 are merged.
+- Report success after the judge records 0 and (Sonnet, Opus and other non-Haiku models) the tested permuter improvements from step 5 are merged; a Haiku agent reports the repair instead.
 
 The aim is two things, and a run that delivers only the first has not finished:
 

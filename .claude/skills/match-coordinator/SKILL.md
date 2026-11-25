@@ -27,9 +27,10 @@ around it.
 ## The matcher brief (keep it short; the skill holds the rules)
 
 > Goal (treat like /goal; do not stop until met): match one open, unmatched function in the decompdecomp project
-> "SLUG" (judged 0 by the running app) and land each permuter improvement you discover as merged PRs — the goal
-> isn't met until the steps the permuter couldn't find exist as decomp-repair families that declare `REPAIR` (the app needs no wiring; docs alone don't
-> count). Read the latest match-function skill WITHOUT touching the primary checkout and follow it exactly:
+> "SLUG" (judged 0 by the running app). Sonnet/Opus matchers: also land each permuter improvement you discover as a
+> merged PR; the goal isn't met until the steps the permuter couldn't find exist as decomp-repair families that declare
+> `REPAIR` (the app needs no wiring; docs alone don't count). Haiku matchers: report repairs, don't change the repo or
+> open PRs (the repair report goes in `report_repair` and your final report: symptom, C before/after, profile). Read the latest match-function skill WITHOUT touching the primary checkout and follow it exactly:
 > `git -C REPO fetch -q origin && git -C REPO show origin/main:.claude/skills/match-function/SKILL.md`, plus
 > AGENTS.md from origin/main. Claim as the skill says. If the function is enormous, release it and claim another
 > — once; then stick with it. Keep every file under your own /tmp/dd-<holder>/. Don't tidy a matched source —
@@ -42,8 +43,11 @@ Brief template notes (for a Haiku or any list-based agent):
 - List the functions by name with each saved best, instruction count and any hint from earlier notes.
 - Say who else holds which functions (claims keep agents apart) and give each agent its holder name.
 - Paste the profile findings: which address stretches use which compiler.
-- Matching agents open no PRs: the brief's PR goal above is for a builder or an Opus agent told to land permuter work.
-  Others report what the permuter lacked and a builder takes it (see the end of this file).
+- Only Haiku agents are barred from repo changes and PRs (tell them: "report repairs, don't change the repo"). Sonnet
+  and Opus matchers land the repair PR themselves (tell them so, and to check decomp-repair main first, sync before
+  release, add tests and a learnings file; the library-pin PR is opened by the workflow). Don't attribute rules to the
+  user that the user did not state (no "as you asked" for a rule you invented); the user's preferences are: merge PRs
+  right after creating them, and never restart or update their running app.
 
 Wording traps that cost runs: "claim exactly once" made agents refuse to release enormous functions — say "release
 and re-claim once"; telling agents to tidy before the final try wasted time — polishing does that.
@@ -57,7 +61,9 @@ Verify before you relay anything. A report is not proof.
   reports sometimes overcount, and other interactive sessions (`manual-...`) work the same lists, so many functions
   turn out already matched.
 - `gh pr view N --json state` for every app/library PR it lists: MERGED.
-- Matched but no declared family → send it back (SendMessage) to build the families from its edit list, prove them
+- A function is not done until its permuter improvement exists as a merged family, for Sonnet/Opus matchers. For Haiku
+  matchers collect their repair reports and, after each batch, start a Sonnet builder for every repair no existing
+  family covers (check decomp-repair main's registry first). Matched but no declared family (non-Haiku) → send it back (SendMessage) to build the families from its edit list, prove them
   from the saved best with prove_chain/fast_judge, never touching the saved match.
 - Not matched and it stopped: if near 0 and it has worked ≥45 minutes without improving, start a stronger-model
   agent on that function with a brief that includes the full state from the report (remaining rows, edit list,
@@ -94,7 +100,7 @@ any problem it caused. Keep it short; no internal IDs.
 
 ## Turn findings into library families
 
-After each batch, read the agents' "what a permuter would need" lines. For each recurring rewrite start a Sonnet builder
+After each batch, read the agents' repair reports (Haiku) and "what a permuter would need" lines. For each repair no existing family covers, and each recurring rewrite, start a Sonnet builder
 (its own worktree and PR in decomp-repair; check decomp-repair's main first to avoid duplicates). Built this way in one
 session: `float_argument_prototype`, `induction_reverse_reduction`, `void_returned_local` (extended), `float_literal_global`
 (extended), `merge_disjoint_temporaries`, `small_data_global_local`, `second_field_read`, `callback_pointer_local`,
