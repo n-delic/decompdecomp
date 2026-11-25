@@ -26,6 +26,19 @@ def _crc_tool(root: Path) -> None:
             pass
 
 
+def _ido_hint(project) -> str:
+    """Which IDO a project that doesn't name it in a path wants: what its README or Makefile says, else 5.3 (most
+    N64 games)."""
+    said = ""
+    for name in ("README.md", "Makefile"):
+        try:
+            said += (project.root / name).read_text(errors="replace", encoding="utf-8")
+        except OSError:
+            pass
+    mention = re.search(r"(?i)ido[ _-]*(?:version\s*)?v?(5\.3|7\.1)", said)
+    return mention[1] if mention else "5.3"
+
+
 def _wrap_foreign_ido(project) -> None:
     """On a Mac a project's own copy of IDO is usually a Linux program (its CI's) its build can't run ("Exec format
     error"). Replace each such `cc` driver, once, with a script that runs the installed IDO of the version its
@@ -47,9 +60,10 @@ def _wrap_foreign_ido(project) -> None:
         except OSError:
             continue
         version = re.search(r"(?<!\d)(5)[._](3)(?!\d)|(?<!\d)(7)[._](1)(?!\d)", str(driver.relative_to(tools)))
-        if not version:
-            continue
-        tid = "ido-" + ("5.3" if version[1] else "7.1")
+        if version:
+            tid = "ido-" + ("5.3" if version[1] else "7.1")
+        else:  # tools/ido/cc: the README or Makefile says which
+            tid = "ido-" + _ido_hint(project)
         if toolchains.installed(tid) is None:
             continue  # compiler installation and license acceptance stay in Setup
         source = toolchains.require(tid) / "cc"
@@ -63,6 +77,19 @@ def _wrap_foreign_ido(project) -> None:
 
 
 def command(project, argv: list[str]) -> list[str]:
+    argv = _redirect(project, argv)
+    makefile = project.root / "Makefile"
+    if (sys.platform == "darwin" and Path(argv[0]).name in ("make", "gmake") and makefile.is_file()
+            and not any(a.startswith("CC_CHECK=") for a in argv[1:])
+            and re.search(r"^CC_CHECK\s*[:?]?=\s*gcc\b[^\n]*-fsyntax-only",
+                          makefile.read_text(encoding="utf-8", errors="replace"), re.M)):
+        # a host-gcc syntax pass before each compile: clang answers `gcc` here and rejects its -m32 headers; the
+        # real compile (IDO) is what builds the game
+        argv = [*argv, "CC_CHECK=true"]
+    return argv
+
+
+def _redirect(project, argv: list[str]) -> list[str]:
     if os.name == "nt":
         return argv  # these compiler binaries run inside WSL on Windows
     _wrap_foreign_ido(project)
@@ -76,7 +103,8 @@ def command(project, argv: list[str]) -> list[str]:
     # The variable is usually IDO; some projects name it CC, indented inside an if/else (a community decomp of a
     # racing game builds its compiler in tools/ and picks it with `CC := ...` under `else`). A command-line
     # value beats the makefile's own assignment, so one override reaches both spellings.
-    declared = re.search(r"^[ \t]*(IDO|CC)[ \t]*[:?]?=[ \t]*([^\s#]*/(?:5\.3|7\.1)/(?:[^\s#]*/)?cc)[ \t]*(?:#.*)?$", text, re.M)
+    declared = re.search(r"^[ \t]*(IDO|CC)[ \t]*[:?]?=[ \t]*([^\s#]*(?:/(?:5\.3|7\.1)/|ido)(?:[^\s#]*/)?cc)[ \t]*(?:#.*)?$",
+                         text, re.M)
     if not declared:
         return argv
     name, path = declared[1], declared[2]
@@ -86,9 +114,9 @@ def command(project, argv: list[str]) -> list[str]:
         if len(values) == 1:
             path = path.replace(f"$({variable})", values.pop())
     version = re.search(r"/(5\.3|7\.1)/", path)
-    if "$" in path or not path.endswith("/cc") or not version or (project.root / path).exists():
+    if "$" in path or not path.endswith("/cc") or (project.root / path).exists():
         return argv
-    tid = "ido-" + version[1]
+    tid = "ido-" + (version[1] if version else _ido_hint(project))
     if toolchains.installed(tid) is None:
         return argv  # compiler installation and license acceptance stay in Setup
     source = toolchains.require(tid)

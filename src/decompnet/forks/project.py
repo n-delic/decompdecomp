@@ -944,6 +944,8 @@ class ForkProject:
             text = (self.root / "Makefile").read_text(errors="replace", encoding="utf-8")
             chosen = [f"VERSION={version}"] if version and re.search(r"^VERSION\s*[:?]?=", text, re.M) else []
             steps = [["make", *chosen, t] for t in ("setup", "extract") if re.search(rf"^{t}\s*:", text, re.M)]
+            if not steps and re.search(r"^split\s*:", text, re.M):  # (splat's output: *_auto.txt the link reads)
+                steps = [["make", *chosen, "split"]]
             return steps + [["make", *chosen, f"-j{os.cpu_count() or 4}"]]
         if kind == "splat":
             make = (self.root / "Makefile").read_text(errors="replace", encoding="utf-8")
@@ -1234,6 +1236,17 @@ class ForkProject:
                 except OSError:
                     shutil.copyfile(self._rom_placed, self.root / missing.group(1))
                 log(f"the project reads the game as {missing.group(1)}: saved it under that name too")
+                ok, tail = self.run(cmd, log=log)
+            for _ in range(4):  # (the link names one missing list at a time)
+                auto = re.findall(r"cannot open linker script file (\S+_auto\.txt)", tail) if not ok else []
+                made = False
+                for name in dict.fromkeys(auto):
+                    # splat's "auto" symbol lists the link reads: empty, when the project's split didn't write them
+                    if (target := self._inside(name)) and not (self.root / target).exists():
+                        (self.root / target).write_text("", encoding="utf-8")
+                        made = True
+                if not made:
+                    break
                 ok, tail = self.run(cmd, log=log)
             make_step = Path(cmd[0]).name.removesuffix('.exe') in ('make', 'gmake')
             if (not ok and make_step and not (self.root / 'objdiff.json').exists()
