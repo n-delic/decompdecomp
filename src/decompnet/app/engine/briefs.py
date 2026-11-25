@@ -723,12 +723,14 @@ class BriefMixin:
             # previews for the game's entire symbol table on every brief.
             names = list(dict.fromkeys(syms.name_at(a)[0] for a in used[:40]))
             prev = {r["name"]: r for r in self.project_store(proj['id']).all(
-                "SELECT name,kind,size,preview FROM symbols WHERE project_id=? AND name IN "
+                "SELECT name,kind,size,c_type,preview FROM symbols WHERE project_id=? AND name IN "
                 "(SELECT value FROM json_each(?))", proj["id"], json.dumps(names))}
             for a in used[:40]:
                 name, off = syms.name_at(a)
                 r = prev.get(name)
                 desc = f"{r['kind']}, {r['size']} bytes" if r else "unknown size"
+                if r and r["c_type"]:
+                    desc = f"`{r['c_type']}`, " + desc
                 if r and r["preview"]:
                     desc += f": {r['preview']}"
                 lines.append(f"- {syms.label(a)} (0x{a:08X}; {desc})")

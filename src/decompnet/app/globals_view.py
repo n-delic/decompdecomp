@@ -32,7 +32,7 @@ import re
 
 from ..network import NetworkError
 
-SOURCES = ("agent", "emulator", "user")
+SOURCES = ("agent", "emulator", "user", "match")
 # A C type as it would be written in a declaration: qualifiers, a name, pointers, array sizes. No statements, no braces.
 C_TYPE = re.compile(r"^(?:(?:const|volatile|unsigned|signed|struct|union|enum)\s+)*[A-Za-z_]\w*(?:\s*\*+)*(?:\s*\[\s*\w*\s*\])*$")
 

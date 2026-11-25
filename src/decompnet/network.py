@@ -2695,6 +2695,8 @@ class Network:
                 pass  # the attempt itself still returns its diff; the next claim moves on
         if matched and not retain_match_credit and not replacement:
             store.after_commit(lambda: self.on_match(store.one("SELECT * FROM projects WHERE id=?", fn["project_id"]), fn["id"], agent))
+            from .app import global_types
+            store.after_commit(lambda: global_types.learn(self, store.one("SELECT * FROM projects WHERE id=?", fn["project_id"]), fn, source))
         elif improved:
             self.on_improvement(store.one("SELECT * FROM projects WHERE id=?", fn["project_id"]), fn["id"])
 
