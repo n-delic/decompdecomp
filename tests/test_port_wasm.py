@@ -311,6 +311,39 @@ def test_bitfields_declared_on_one_line_get_the_consoles_bits_too():
     assert big_endian_bitfields(plain) == plain
 
 
+def test_several_bitfields_on_one_line_are_one_run():
+    """`u32 color:8; u32 mid:16; u32 kind:6; u32 low:2;` on one line: the first was a unit of its own with the rest as
+    trailing text, so the struct grew from 44 to 48 bytes."""
+    from decompnet.port.wasm.build import big_endian_bitfields
+    out = big_endian_bitfields("typedef struct {\n    s32 a;\n    u32 color:8; u32 mid:16; u32 kind:6; u32 low:2;\n} Obj;\n")
+    assert [" ".join(line.split()) for line in out.splitlines()[2:-1]] == [
+        "u32 low : 2;", "u32 kind : 6;", "u32 mid : 16;", "u32 color : 8;", "u32 : 0;"]
+    code = "void f(void) {\n    for (i = 0; i < 4; i++) { x = c ? a : 1; }\n}\n"
+    assert big_endian_bitfields(code) == code
+
+
+def test_bits_that_a_member_after_them_shares_stay_in_a_unit_of_their_size():
+    """`unsigned type : 6; unsigned length : 2;` then `char buf[3]` is four bytes under the console's compiler (the
+    members start where the bits end). Closed with a zero-width `unsigned` they took a word of their own: eight."""
+    from decompnet.port.wasm.build import big_endian_bitfields
+    out = big_endian_bitfields("typedef struct {\n    unsigned type : 6;\n    unsigned length : 2;\n    char buf[3];\n} P;\n")
+    assert [" ".join(line.split()) for line in out.splitlines()[1:-2]] == [
+        "unsigned char length : 2;", "unsigned char type : 6;", "unsigned char : 0;"]
+    assert "} __attribute__((aligned(4))) P;" in out
+    wide = big_endian_bitfields("struct S {\n  u32 a : 1; u32 b : 1; u32 c : 14;\n  u8 gain;\n};\n")
+    assert "unsigned short" in wide and "u32" not in wide.split("gain")[0].split("\n", 1)[1]
+
+
+def test_comma_separated_bitfields_are_declared_one_by_one():
+    """`unsigned int b0 : 1, b1 : 1, ...;` is eight fields: the rewrite saw one and a tail, and the struct was 8 bytes
+    where the console's compiler makes it 4."""
+    from decompnet.port.wasm.build import big_endian_bitfields
+    out = big_endian_bitfields("typedef struct {\n    unsigned int b0 : 1, b1 : 1, b2 : 1, b3 : 1, b4 : 1, b5 : 1, b6 : 1, b7 : 1;\n"
+                               "    unsigned int rest : 24;\n} Flags;\n")
+    fields = [" ".join(line.split()) for line in out.splitlines()[1:-1]]
+    assert fields == ["unsigned int rest : 24;"] + [f"unsigned int b{n} : 1;" for n in range(7, -1, -1)] + ["unsigned int : 0;"]
+
+
 def test_stack_locals_that_touch_in_the_frame_stay_one_record():
     """m2c names stack locals by their offset: `char sp10[0x20]` and `s32 sp30[2]` are one 0x28-byte record the
     console's compiler built in the frame, and a callee that is handed `sp10` and reads past it reads the words
@@ -895,7 +928,9 @@ def test_a_bitfield_shares_its_unit_with_the_members_after_it():
     assert "  signed char cmd;" in out and ": 0;" not in out
     # a unit that closes the struct, or isn't whole bytes, is laid out in reverse as before
     assert "int : 0;" in big_endian_bitfields("struct s {\n  int a:8;\n};")
-    assert "int : 0;" in big_endian_bitfields("struct s {\n  int a:3;\n  char b;\n};")
+    # bits a member after them shares: the smallest unit that holds them, the struct as aligned as `int` makes it
+    shared = big_endian_bitfields("struct s {\n  int a:3;\n  char b;\n};")
+    assert "signed char a : 3;" in shared and "} __attribute__((aligned(4)));" in shared
 
 
 def test_compatibility_stack_buffers_keep_eight_byte_alignment_for_rom_calls():
@@ -1222,3 +1257,33 @@ def test_a_function_whose_c_returns_nothing_but_whose_caller_uses_a_result_is_fo
         "func_80001000": [{"callee": "func_80002000", "caller": "func_80001000", "kind": "missing-arguments"}]}))
     assert void_result_callees(calls) == {"func_80092B44"}
     assert void_result_callees(tmp_path / "none.json") == set()
+
+
+def test_functions_that_compile_but_cannot_be_placed_run_as_original_code(tmp_path, monkeypatch):
+    """A file the bitfield rewrite used to break (its layout asserts failed) fell back to the original's code; once its
+    structs were right it compiled and the LLVM backend then refused to place it, which failed the whole build. A
+    function that can't be placed is left out of the next attempt, as one clang rejects is."""
+    from contextlib import nullcontext
+
+    from decompnet.app import recompile
+    from decompnet.port.wasm import build
+
+    monkeypatch.setattr(recompile, "build_turn", lambda *a, **k: nullcontext())
+    calls = []
+
+    def fake_build(repo, **kwargs):
+        calls.append(set(kwargs["leave_out"]))
+        if len(calls) == 1:
+            raise build._PlaceFallback("1 functions couldn't be placed", {"func_8026F8E8"})
+        return tmp_path / "port" / "wasm" / "build" / "game"
+    monkeypatch.setattr(build, "_build", fake_build)
+    logged = []
+    build.build(tmp_path, log=logged.append)
+    assert len(calls) == 2 and "func_8026F8E8.c" in calls[1] and not calls[0]
+    assert any("can't be placed run as the original's code" in line for line in logged)
+    # the same function failing again is an error, not a loop
+    monkeypatch.setattr(build, "_build", lambda repo, **k: (_ for _ in ()).throw(
+        build._PlaceFallback("couldn't be placed", {"func_8026F8E8"})))
+    import pytest
+    with pytest.raises(Exception, match="couldn't be placed"):
+        build.build(tmp_path, log=logged.append)

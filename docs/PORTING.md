@@ -465,6 +465,24 @@ The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`)
   (`PORT_VTIME=1`, the controller script in the Scan settings, every nth frame), scans the frames, and lists what it
   flagged, with pictures, in the side drawer; the frames are deleted afterwards.
 
+#### Bitfield layout check
+
+The console's compiler and clang lay bitfields out differently (a big-endian MIPS compiler gives a unit's first field its
+top bits, wasm32 its bottom ones), so `build.big_endian_bitfields` re-declares them. A run it gets wrong changes the size
+of a struct, and an array of those has the wrong stride: one record's fields overwrite the next one's, far from the code
+that did it (an intro cutscene faulted on a pointer of -1, a title screen was drawn as a strip of two-pixel rows).
+`port/wasm/bitfield_layout.py` compiles every source and header the rewrite changed twice for wasm32, as it was and as
+it is, and the build's log says `layout check: NAME is 32 bytes after the bitfield rewrite, 28 before (in FILE)` for any
+record whose size differs. A warning, not an error: a game that builds goes on building. The rewrite handles bitfields
+on lines of their own, several on one line (`u32 a:8; u32 b:8;`), comma-separated (`unsigned b0 : 1, b1 : 1;`), in an
+inline `struct { ... } bits;`, as `unsigned x : 4;`, after a smaller member that shares their word, and bits that a
+member after them shares (kept in the smallest unit that holds them, the struct as aligned as its declared type).
+Every project in the dev home passes the check (tests/test_bitfield_layout.py has the cases that failed it).
+With the layouts right, files that used to fail to compile (a game's own `audio_ctx_assert_0x5368[offsetof == 0x5368 ? 1 : -1]`
+layout asserts) compile, and a few then meet an LLVM backend error (`Function addresses with offsets not supported`) while
+placing their symbols. A function whose C compiles but cannot be placed runs as the original's code in a second attempt,
+as one clang rejects does (`build._PlaceFallback`).
+
 #### Functions with no C yet
 
 A function the game's C calls (or reaches through a pointer, or starts a thread at) that has no C yet runs from the

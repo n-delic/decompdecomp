@@ -381,9 +381,24 @@ def _expand_inline_bitfields(text: str) -> str:
         start = match.string.rfind("\n", 0, match.start()) + 1
         indent = re.match(r"\s*", match.string[start:]).group(0)
         return "{\n" + "".join(f"{indent}    {d};\n" for d in pieces) + indent + "}"
-    return _INLINE_BITFIELDS.sub(split, text)
+    text = _INLINE_BITFIELDS.sub(split, text)
+
+    def several(match):
+        pieces = [d.strip() for d in match.group(2).split(";") if d.strip()]
+        if len(pieces) < 2 or not any(_BITFIELD_DECL.match(d) for d in pieces) or not all(
+                _BITFIELD_DECL.match(d) or _MEMBER_DECL.match(d) for d in pieces):
+            return match.group(0)
+        return "\n".join(f"{match.group(1)}{d};" for d in pieces)
+    # `unsigned int b0 : 1, b1 : 1, b2 : 1;`: one declarator a line, each with the type
+    text = re.sub(r"^([ \t]*)((?:(?:unsigned|signed|const|volatile)[ \t]+)*\w+(?:[ \t]+(?:long|int|short|char))?)[ \t]+"
+                  r"(\w*[ \t]*:[ \t]*\d+(?:[ \t]*,[ \t]*\w*[ \t]*:[ \t]*\d+)+)[ \t]*;[ \t]*$",
+                  lambda m: "\n".join(f"{m.group(1)}{m.group(2)} {part.strip()};" for part in m.group(3).split(",")),
+                  text, flags=re.M)
+    # `u32 color:8; u32 mid:16; u32 kind:6;` on a line of a struct: one declaration a line, as the rewrite reads them
+    return re.sub(r"^([ \t]*)([^{}\n]*:\s*\d+\s*;[^{}\n]*;)[ \t]*$", several, text, flags=re.M)
 
 
+_UNSIGNED = re.compile(r"\bunsigned\b|\bu(8|16|32|64)\b")
 # `unsigned x : 4;` (no type word after `unsigned`): the type is `unsigned int`, which the rewrite below can size
 _SHORTHAND_BITFIELD = re.compile(r"^([ \t]*)(unsigned|signed)[ \t]+(?!int\b|char\b|short\b|long\b)(\w+)[ \t]*:[ \t]*(\d+)[ \t]*;",
                                  re.M)
@@ -396,14 +411,18 @@ def big_endian_bitfields(text: str) -> str:
     with its unit's width from the big-endian memory. A racing game's track setup looked for the segment whose
     `b0 : 1` was set, read the top bit instead, ran off the end of its table and corrupted the next one."""
     lines = _SHORTHAND_BITFIELD.sub(r"\1\2 int \3 : \4;", _expand_inline_bitfields(text)).split("\n")
-    result, i = [], 0
+    result, i, depth, align_at = [], 0, 0, {}
     while i < len(lines):
         run = []
         while (i + len(run) < len(lines) and ":" in lines[i + len(run)]
                and (m := _BITFIELD.match(lines[i + len(run)])) and int(m.group(5))):
             run.append(m)
         if not run:
-            result.append(lines[i])
+            line = lines[i]
+            if align_at.get(depth) and line.lstrip().startswith("}"):
+                line = line.replace("}", f"}} __attribute__((aligned({align_at.pop(depth)})))", 1)
+            depth += lines[i].count("{") - lines[i].count("}")
+            result.append(line)
             i += 1
             continue
         # the run's first bytes may share a unit with the member before it: a `u16` then five `u32 x : 8` has two of
@@ -448,9 +467,26 @@ def big_endian_bitfields(text: str) -> str:
             units.append((unit, used, size))
             nxt = lines[i + len(run)] if i + len(run) < len(lines) else ""
             for unit, used, size in units:
-                if (unit is units[-1][0] and used < size * 8 and not re.match(r"\s*}", nxt)
-                        and (plain := _plain_bytes(unit))):
+                shared = unit is units[-1][0] and used < size * 8 and not re.match(r"\s*}", nxt)
+                if shared and (plain := _plain_bytes(unit)):
                     result.extend(plain)  # the members after it share its unit, as IDO packs them
+                    continue
+                if shared:
+                    # the members after it start where its bits end (`unsigned type : 6; unsigned length : 2;` then
+                    # `char buf[3]` is four bytes, not eight): it is held in the smallest unit that has them
+                    if used > 16:
+                        result.extend(m.group(0) for m in unit)  # a unit no member can share: as it was
+                        continue
+                    small, held = ("char", 1) if used <= 8 else ("short", 2)
+                    if size > held:  # the struct is still as aligned as its declared type makes it
+                        align_at[depth] = max(align_at.get(depth, 0), size)
+                    indent = unit[0].group(1)
+                    kinds = [("unsigned" if _UNSIGNED.search(m.group(2)) else "signed") + f" {small}" for m in unit]
+                    if used < held * 8:
+                        result.append(f"{indent}{kinds[0]} : {held * 8 - used};")
+                    result.extend(f"{m.group(1)}{kind} {m.group(4)} : {m.group(5)};{m.group(6)}"
+                                  for m, kind in reversed(list(zip(unit, kinds))))
+                    result.append(f"{indent}{kinds[0]} : 0;")
                     continue
                 if not any(m.group(4) for m in unit):  # only padding: nothing reads it, and it may start mid-unit
                     result.extend(m.group(0) for m in unit)
@@ -613,11 +649,13 @@ def original_code(host: Path, manifest: dict, fixed: list[str]) -> set[str]:
             if kind == "func" and int(address, 16) in addresses}
 
 
-def gather(repo: Path, out: Path, leave_out=(), function_headers=None, *, ensure_host_import=False, manifest=None) -> dict[str, Path]:
+def gather(repo: Path, out: Path, leave_out=(), function_headers=None, *, ensure_host_import=False, manifest=None,
+           rewritten: dict | None = None) -> dict[str, Path]:
     """The C the build compiles, in out/src (one file per function, the shared header included) and out/include.
     `leave_out`: more matched files to leave out than exclude.txt names (play.library). `function_headers`: the
     project's own {function: part} (play.function_headers), over the save's, which an older save lacks. Returns
-    {file name: where it came from}."""
+    {file name: where it came from}. `rewritten`, if given, gets {"src": {name: text}, "include": {name: text}} of the
+    files the bitfield rewrite changed, as they were before it (bitfield_layout.check)."""
     progress, port = repo / "progress", repo / "port" / "wasm"
     if manifest is None:
         manifest = _save_manifest(repo)
@@ -641,7 +679,11 @@ def gather(repo: Path, out: Path, leave_out=(), function_headers=None, *, ensure
         header = f"common_{unit}.h" if unit and f"common_{unit}.h" in headers else "common.h"
         if not re.search(r'^#include "common(_\w+)?\.h"', text, re.M):
             text = f'#include "{header}"\n' + text
-        _write(out / "src" / name, contiguous_stack_locals(big_endian_bitfields(ido_c(text))))
+        before = ido_c(text)
+        after = big_endian_bitfields(before)
+        if rewritten is not None and after != before:
+            rewritten.setdefault("src", {})[name] = before
+        _write(out / "src" / name, contiguous_stack_locals(after))
     # By name in any case: on a case-insensitive disk (macOS, Windows) a file an old save wrote as SelectStateReset.c
     # is the one just written as selectStateReset.c, and deleting it as stale deleted that function's C
     if not chosen or ensure_host_import:  # standalone leaves may have no host imports of their own
@@ -653,8 +695,11 @@ def gather(repo: Path, out: Path, leave_out=(), function_headers=None, *, ensure
             stale.unlink()
     for folder in (progress / "include", port / "include"):
         for header in folder.glob("*.h"):
-            _write(out / "include" / header.name,
-                   big_endian_bitfields(static_prototypes(ido_c(header.read_text(encoding="utf-8")))))
+            before = static_prototypes(ido_c(header.read_text(encoding="utf-8")))
+            after = big_endian_bitfields(before)
+            if rewritten is not None and after != before:
+                rewritten.setdefault("include", {})[header.name] = before
+            _write(out / "include" / header.name, after)
     return chosen
 
 
@@ -800,6 +845,12 @@ def host_arch_flags(universal: bool, platform: str = sys.platform) -> list:
 def _run(argv: list, log, cwd: Path | None = None, env: dict | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(limits.capped([str(a) for a in argv]), cwd=cwd, env=env, capture_output=True, text=True,
                           timeout=TIMEOUT)
+
+
+def _run_quiet(argv, env=None) -> subprocess.CompletedProcess:
+    """A compile whose output is read, not shown (bitfield_layout)."""
+    return subprocess.run([str(a) for a in argv], capture_output=True, text=True, env=env, encoding="utf-8",
+                          errors="replace")
 
 
 def compile_ir(zig, src: Path, ll: Path, include: Path, env: dict, log, port=()):
@@ -1183,9 +1234,22 @@ def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out
                           library_c=library_c or {}, library_names=library_names or {}, recomp=recomp,
                           function_headers=function_headers, ensure_host_import=ensure_host_import,
                           runtime_image=runtime_image, code_offsets=code_offsets)
+        placed_by_original: set[str] = set()
+
+        def attempt(names):
+            while True:
+                try:
+                    return run(names | placed_by_original)
+                except _PlaceFallback as retry:
+                    fresh = retry.names - placed_by_original - names
+                    if not fresh:
+                        raise NetworkError(str(retry)) from None
+                    placed_by_original.update(fresh)
+                    log(f"{len(fresh)} functions whose C compiles but can't be placed run as the original's code "
+                        f"instead: {', '.join(sorted(fresh)[:4])}{'…' if len(fresh) > 4 else ''}")
         state = repo / "port" / "wasm" / "void_result.txt"
         known = set(state.read_text(encoding="utf-8").split()) if state.is_file() else set()
-        program = run(known)
+        program = attempt(known)
         # A function whose C is declared void while a caller takes its result: a machine draft of a function that
         # returns a pointer in $v0 (`lw $v0, ...; jr $ra; sw $zero, 4($v0)`) compiles to the same bytes as the void
         # draft, but in WebAssembly its callers' result is nothing (0): a file open took its error branch at once
@@ -1196,8 +1260,17 @@ def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out
                 "original's code instead")
             known |= found
             _write(state, "\n".join(sorted(known)) + "\n")
-            program = run(known)
+            program = attempt(known)
         return program
+
+
+class _PlaceFallback(NetworkError):
+    """Some functions' C compiled but could not be placed at their console addresses (an LLVM backend error on that
+    file): they can run as the original's code, as a file clang rejects does. `names` are the functions."""
+
+    def __init__(self, message: str, names: set[str]):
+        super().__init__(message)
+        self.names = names
 
 
 def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool = False, library_c=None,
@@ -1228,7 +1301,12 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
         log(f"using the original game code for {len(original)} functions that depend on the console's "
             "stack layout or registers")
     leave_out = set(leave_out) | original
-    sources = gather(repo, out, leave_out, function_headers, ensure_host_import=ensure_host_import, manifest=manifest)
+    rewritten: dict = {}
+    sources = gather(repo, out, leave_out, function_headers, ensure_host_import=ensure_host_import, manifest=manifest,
+                     rewritten=rewritten)
+    from . import bitfield_layout
+    bitfield_layout.check(_run_quiet, zig, IR_FLAGS, out, rewritten.get("src", {}), rewritten.get("include", {}), log,
+                          env=env)
     from . import recomp as recomp_c
     hosted = {recomp_c._demangle(c) for path in sorted(host.glob("*.c")) for c in
               re.findall(r"\bw2c_env_(\w+)\(struct w2c_env \*", path.read_text(encoding="utf-8", errors="replace"))}
@@ -1360,7 +1438,13 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
     progress.start(STEPS[3])
     log("placing every symbol at its console address, data big-endian")
     if failed := place_all(out, lls, set(functions), zig, env, log, progress.files):
-        raise NetworkError(f"{len(failed)} functions couldn't be placed at their addresses: " + "; ".join(failed[:3]))
+        message = f"{len(failed)} functions couldn't be placed at their addresses: " + "; ".join(failed[:3])
+        # a file whose C compiled but the backend cannot place runs as the original's code, as a file clang rejects does
+        named = [(m.group(1) + ".c", f) for f in failed if (m := re.search(r"[/\\]ll[/\\]([^/\\\s:]+)\.ll", f))]
+        if len(named) == len(failed) and (fallen := fallback_failed_sources(
+                [f"{name}: {why}" for name, why in named], sources, repo, out, fixed)):
+            raise _PlaceFallback(message, {name.removesuffix(".c") for name in fallen})
+        raise NetworkError(message)
     objects = linked(out / "o", {*sources, *library})
     _write(out / "objects.txt", "\n".join(str(p) for p in objects) + "\n")
     from . import calls
