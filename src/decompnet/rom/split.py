@@ -637,8 +637,35 @@ def _complete_delay_slot(fn: RomFunction, rom: bytes, big_endian: bool = True) -
                             if " " in insn.disassemble().strip() else ""))
 
 
+def unlisted_table_targets(name: str, fn: RomFunction, image: bytes, segments: list[Segment],
+                           big_endian: bool) -> set[int]:
+    """Where a jump table points when no splat segment lists the table (a boot image that keeps its data after its
+    code, so `jtbl_800C28A8` is only an undefined symbol). Its bytes are at some segment's own ROM-to-address offset:
+    the one whose words, read from the table's address, are 4-aligned addresses inside the function's own segment is
+    the table. Words stored without the KSEG0 bit (`0x0042_0018` for `0x8042_0018`) count as the address with it. Three
+    such words in a row are taken as the table, and the run ends at the first word that is not one."""
+    own = next((s for s in segments if s.contains(fn.vram)), None)
+    if own is None:
+        return set()
+    address, fmt = int(name[-8:], 16), ">I" if big_endian else "<I"
+    low, high = own.vram, own.vram + (own.rom_end - own.rom_start)
+    for delta in dict.fromkeys(s.rom_start - s.vram for s in segments):
+        found: set[int] = set()
+        at = address + delta
+        while 0 <= at and at + 4 <= len(image):
+            word = struct.unpack_from(fmt, image, at)[0]
+            word |= 0x80000000 if word and not word & 0x80000000 else 0
+            if word % 4 or not low <= word < high:
+                break
+            found.add(word)
+            at += 4
+        if len(found) >= 3 and sum(1 for w in found if w > fn.vram) >= 3:
+            return {w for w in found if w > fn.vram}
+    return set()
+
+
 def merge_switch_cases(functions: list[RomFunction], data: list[DataSymbol], image: bytes,
-                       big_endian: bool) -> list[RomFunction]:
+                       big_endian: bool, segments: list[Segment] | None = None) -> list[RomFunction]:
     """spimdisasm can end a function with a switch at its first return and make each later case a function of its
     own: it does with EE-GCC 3.2, which loads the jump table with `addiu %lo(jtbl)` and then `lw 0(reg)`. A function
     or piece right after one whose jump table points at it is a case of that switch: put it back. Pieces nothing
@@ -662,6 +689,8 @@ def merge_switch_cases(functions: list[RomFunction], data: list[DataSymbol], ima
             if t is not None:
                 raw = image[t.rom:t.rom + t.size]
                 targets |= {w for (w,) in struct.iter_unpack(fmt, raw[:len(raw) // 4 * 4]) if w > fn.vram}
+            elif segments and not any(d.name == name for d in data):
+                targets |= unlisted_table_targets(name, fn, image, segments, big_endian)
     return out
 
 
@@ -790,7 +819,7 @@ def split_rom(workdir: Path, rom_name: str = "rom.z64", console=None, picked: Pi
 
     segments = segments_from_config(config)
     unique = repair(unique, data, rom, console, segments, symbols=symbols or (), log=log, inline_data=inline_data)
-    unique = merge_switch_cases(unique, data, rom, big_endian)
+    unique = merge_switch_cases(unique, data, rom, big_endian, segments)
     if not unique:
         raise RomError("splat found no functions; the code may be compressed or use an unusual boot layout")
     segments = segments_from_config(config)
