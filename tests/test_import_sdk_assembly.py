@@ -415,3 +415,13 @@ def test_the_2_0h_archives_and_branch_ending_routines_are_in_the_tables():
     assert sum(1 for name, size, *_ in pack.KNOWN.values() if name == 'bcopy' and size in (772, 856)) == 2
     assert any('2.0H' in variant for _, _, variant, _ in pack.KNOWN.values())
     assert any('2.0H' in variant for _, _, variant in pack.KNOWN_C.values())
+
+
+def test_a_libgcc_division_body_is_told_by_its_image():
+    from decompnet.consoles.n64 import sdk_linked
+
+    image = 'ed0fe7c9a2e8015bdf8262d35065f53c6fcea60f'
+    digest = '4bee29095ef2f2997a0e010696463aaba82d3bb7c2f4ecd64cebede00dc2a16a'
+    assert sdk_linked._KNOWN[image][digest] == ('__udivmoddi4', 1596)
+    assert 1596 in sdk_linked.SIZES
+    assert sdk_linked.identify(b'\0' * 1596, image) is None

@@ -21,6 +21,13 @@ _KNOWN = {
         'd1b8e02bfd5e2c5514fe5b58ba1aca3f52fde2cd6e4e6a66f2721176b394ddd9': ('strcpy', 200),
         '82b5982445b3366b275d92e0bc0370cd7122c0ecf804a7658c906ab1ddb31594': ('strupr', 96),
     },
+    # libgcc2.c's __udivmoddi4 (GCC 2.7.2) with longlong.h's count_leading_zeros table (__clz_tab, 0,1,2,2,3,3,3,3,4...)
+    # and its MIPS umul_ppmm asm. Told by its callers: __divdi3, __udivdi3 and __umoddi3 of this image match the libgcc2
+    # sources and call it as (u, v, &remainder); the divide-by-zero `break 7` and the two-word udiv_qrnnd_c steps agree.
+    # Only this image's copy is listed: the image digest binds the body to it.
+    'ed0fe7c9a2e8015bdf8262d35065f53c6fcea60f': {
+        '4bee29095ef2f2997a0e010696463aaba82d3bb7c2f4ecd64cebede00dc2a16a': ('__udivmoddi4', 1596),
+    },
 }
 # The PI manager references the EPI DMA entry. The scheduler uses linked
 # addresses for queues and OS globals when saving and restoring context.
