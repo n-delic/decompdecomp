@@ -956,3 +956,9 @@ the console's game does work at every retrace (about 43 operations at the retrac
 and receives them back to back at the second, so two of every three retraces' work happens a retrace late, at the next task start. Those pairs are the catch-up retraces fired when a task starts. Pacing the catch-up
 retraces with a wait for the threads to idle (tried, removed) did not change when the line points change, but the message log was not looked at then: whether the pairs disappeared is not known. Checking that
 (the same pacing, then `PORT_MSGLOG`, looking for `valid 1/12` on the VI queue) is the cheap next step, and the result would say whether the lag is the batching or something else.
+
+**Fixed: the VI messages are no longer batched; the logic lead is unchanged.** With the catch-up retraces paced by a strict idle (no game thread running, 20 ms at most: `vtime_idle(..., 1)` in host.c, `PORT_VTIME_BURST=1` for the old
+back-to-back firing) the port's VI queue never holds two messages (0 of 101 sends from retrace 500 to 600) and the game does work at every retrace (6-18 operations a retrace on the static queues against the console's 11-17), as the
+console's does. The race window is exactly as before: the line points change at the port's tasks 604, 609, 614, 619 and the console's 603, 608, 613, 618, and the opponent's frames are 12-18% different. So the late handling of two of three
+retraces was real but is not what puts the port's logic a frame ahead. Kept because it makes the port's pacing match the console's. What remains untried: compare the two message logs operation by operation inside one frame (the
+order of the sends and receives on the static queues, which this only counted), since the same counts can come in another order.
