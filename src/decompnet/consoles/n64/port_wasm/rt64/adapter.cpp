@@ -48,8 +48,53 @@ void hook_init(RenderInterface *, RenderDevice *device) {
     hook_device = device;
 }
 
+/* The host's menu over the game: RT64 has drawn the frame into the drawable; the host paints its panel into an RGBA
+ * buffer the drawable's size (the callback decides where, and how big for the screen) and only that rectangle is
+ * copied over the drawable, converted to its BGRA order, by the same command list, so it is on screen with the frame
+ * and in the saved frames. Three upload buffers take turns: the GPU may still be reading the last frame's. */
+PortRt64Paint overlay_paint;
+std::vector<uint8_t> overlay_pixels;
+std::unique_ptr<RenderBuffer> overlay_upload[3];
+uint64_t overlay_upload_size[3];
+unsigned overlay_turn;
+
+void draw_overlay(RenderCommandList *list, MTL::Texture *texture) {
+    const uint32_t w = uint32_t(texture->width()), h = uint32_t(texture->height());
+    overlay_pixels.assign(size_t(w) * h * 4, 0);
+    PortRt64Rect r{};
+    if (!overlay_paint(overlay_pixels.data(), w, h, &r) || !r.width || !r.height || r.x + r.width > w || r.y + r.height > h)
+        return;
+    const uint64_t row = uint64_t(r.width) * 4, size = row * r.height;
+    const unsigned i = overlay_turn++ % 3;
+    if (!overlay_upload[i] || overlay_upload_size[i] < size) {
+        overlay_upload[i] = hook_device->createBuffer(RenderBufferDesc::UploadBuffer(size));
+        overlay_upload_size[i] = size;
+    }
+    auto *bytes = static_cast<uint8_t *>(overlay_upload[i]->map(0, nullptr));
+    if (!bytes) return;
+    for (uint32_t y = 0; y < r.height; y++) {
+        const uint8_t *from = overlay_pixels.data() + (size_t(r.y + y) * w + r.x) * 4;
+        uint8_t *to = bytes + y * row;
+        for (uint32_t x = 0; x < r.width; x++, from += 4, to += 4) { // RGBA to the drawable's BGRA
+            to[0] = from[2]; to[1] = from[1]; to[2] = from[0]; to[3] = from[3];
+        }
+    }
+    overlay_upload[i]->unmap(0, nullptr);
+    auto *metal_list = static_cast<MetalCommandList *>(list);
+    auto *buffer = static_cast<MetalBuffer *>(overlay_upload[i].get());
+    metal_list->checkActiveBlitEncoder();
+    metal_list->activeBlitEncoder->copyFromBuffer(buffer->mtl, 0, row, size, MTL::Size(r.width, r.height, 1), texture, 0, 0,
+                                                  MTL::Origin(r.x, r.y, 0));
+}
+
 void hook_draw(RenderCommandList *list, RenderFramebuffer *framebuffer) {
-    if (!frames_dir || !hook_device) return;
+    if (!hook_device) return;
+    if (overlay_paint) {
+        auto *target = static_cast<MetalFramebuffer *>(framebuffer);
+        MTL::Texture *texture = target->colorAttachments.empty() ? nullptr : target->colorAttachments[0].getTexture();
+        if (texture && texture->pixelFormat() == MTL::PixelFormatBGRA8Unorm) draw_overlay(list, texture);
+    }
+    if (!frames_dir) return;
     // The previous frame's copy is finished: write it out.
     if (readback_pending && readback) {
         char name[32];
@@ -80,12 +125,10 @@ void hook_draw(RenderCommandList *list, RenderFramebuffer *framebuffer) {
     readback_pending = true;
 }
 
-void enable_frame_readback(void *layer) {
+void enable_hooks(void *layer) {
     frames_dir = std::getenv("PORT_RT64_FRAMES");
-    if (!frames_dir || !*frames_dir) {
-        frames_dir = nullptr;
-        return;
-    }
+    if (!frames_dir || !*frames_dir) frames_dir = nullptr;
+    if (!frames_dir && !overlay_paint) return;
     if (const char *every = std::getenv("PORT_RT64_FRAME_EVERY"))
         frames_every = std::max(1, std::atoi(every));
     // A drawable can only be copied from when its layer isn't framebuffer-only.
@@ -142,7 +185,7 @@ void snapshot(const uint8_t *rdram) {
 int open(void *window, void *layer) {
     memory.reserve();
     if (!memory.base) { std::fprintf(stderr, "RT64 RDRAM mapping failed\n"); return 0; }
-    enable_frame_readback(layer);
+    enable_hooks(layer);
     RT64::Application::Core core{};
     core.window = {window, layer};
     core.HEADER = header.data();
@@ -297,6 +340,10 @@ void mode(const uint32_t *w) {
     vertical_scale = 1.0f;
 }
 
+void overlay(PortRt64Paint paint) {
+    overlay_paint = paint;
+}
+
 void yscale(float scale) {
     if (scale > 0 && scale <= 4)
         vertical_scale = scale;
@@ -309,6 +356,6 @@ void close() {
 }
 
 extern "C" __attribute__((visibility("default"))) const PortRt64 *decompnet_rt64_adapter(void) {
-    static const PortRt64 api = {PORT_RT64_ABI, open, task, screen, mode, yscale, close, features, retrace};
+    static const PortRt64 api = {PORT_RT64_ABI, open, task, screen, mode, yscale, close, features, retrace, overlay};
     return &api;
 }

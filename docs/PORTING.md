@@ -599,9 +599,13 @@ recomp-ui (MIT, Dear ImGui, github.com/RetroPortingToolKit/recomp-ui) is the com
 static recompilation ports. It is not linked in yet: it needs a C++17 toolchain and an ImGui renderer, which the window
 host (SDL3 opened at run time, no headers) doesn't have, so the first menu paints itself with a built-in font into
 SDL's renderer. Planned: a backend that hands `port_settings` to recomp-ui's overlay, and a launcher page in place of
-the ROM chooser. The menu is not offered where the picture isn't SDL's: with RT64 (the macOS Metal window) it needs an
-adapter call that draws an RGBA layer over RT64's frame (an `abi` bump in `rt64/adapter.h`), and the web and Miyoo builds
-need a page of their own that reads the same rows. ROADMAP.md's table says so.
+the ROM chooser. In the RT64 Metal window (macOS) RT64 owns the picture, so the menu goes through the adapter: the host hands it a painter
+(`overlay` in `rt64/adapter.h`, ABI 4, before `open`, which also makes the window's layer copyable), RT64's draw hook calls
+it once per presented frame with the drawable's size, and only the panel's rectangle is blitted, opaque, over the frame
+(so it is in `PORT_RT64_FRAMES`'s saved frames too). An adapter built before the call is refused with the usual
+"different version" message: rebuild it with `tools/build_rt64_adapter.py`. It compiles against the pinned RT64
+headers; it has not yet been run on a GPU. The web and Miyoo builds need a page of their own that reads the same rows.
+ROADMAP.md's table says so.
 
 ### 5. Play, and check that it runs
 
