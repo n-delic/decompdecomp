@@ -1297,6 +1297,11 @@ def register(app: App) -> None:
         from ..global_types import learn_project
         return learn_project(net, slug)
 
+    def p_global_type(slug, request, data):
+        from ..global_types import change_type
+        name, c_type = str(data.get('name') or ''), str(data.get('type') or '')
+        return {'job': jobs.start('Change global type', lambda log: change_type(net, slug, name, c_type, log), project=slug)}
+
     def p_global_users(slug, request, data):
         from ..globals_view import global_users
         return global_users(net, slug, request.query_params.get('name', ''))
@@ -1538,6 +1543,7 @@ def register(app: App) -> None:
         "/api/globals": (p_globals, ["GET"]),
         "/api/global-users": (p_global_users, ["GET"]),
         "/api/global-types/learn": (p_global_types, ["POST"]),
+        "/api/global-types/change": (p_global_type, ["POST"]),
         "/api/regional": (p_regional, ["GET", "POST"]),
         "/api/regional/names": (p_regional_names, ["POST"]),
         "/api/regional/code": (p_regional_code, ["POST"]),
