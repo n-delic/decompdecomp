@@ -989,3 +989,8 @@ port holds the interrupts until its host tick and counts the lone main thread as
 both changed the game's pacing altogether: with the console's trace, graphics task 610 came at retrace 170 where the console's is 545, and the line points never changed in the log's span. The
 interrupts' timing is tied to something in the host's virtual time (the tick that decides every thread is idle, and the retrace catch-up) that these changes break. Next: find what in `wait_retrace`/`vtime_idle` the earlier delivery
 upsets (log `vtime_forced`, the 3 s wall-time fallbacks: a game whose threads never idle waits 3 s a retrace), then deliver at the block with that fixed.
+
+**Delivering a task's interrupts when its starter next waits (the third try, reverted).** Only the thread that started the task, when it next has to wait, got the RSP and RDP interrupts, the narrowest form of "the scheduler runs again before the logic" the
+host allows. The pacing broke the same way: with the console's trace, graphics task 608 at retrace 170 (the console's: 545), no change of the line points in the log. Three ways of delivering the interrupts earlier have now each
+changed what the game waits for between tasks, not only when the logic runs. The log with the original delivery (`ORDER task 618 vi 536`, the line points changing between tasks 618 and 619) is the baseline.
+Further work on the order inside a frame needs a different lever than the interrupt timing: the game's own message flow (which reply the main thread waits for between tasks) from the port's `PORT_MSGLOG`.
