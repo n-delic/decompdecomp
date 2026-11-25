@@ -305,8 +305,11 @@ def plan(root: Path, config: dict, *, independent: bool = False, prefer: tuple[s
         raise ForkError("automatic objdiff setup cannot yet verify compressed or overlay code segments")
     for segment in segments:
         if not isinstance(segment, dict):
+            # (a top-level `[start, type, name]` is one data segment: a project's own types, from its splat
+            # extension, such as a compressed asset, hold no code of their own)
             if isinstance(segment, list) and segment and isinstance(segment[0], int) and (
-                    len(segment) == 1 or segment[1] in ('header', 'bin', 'pad')):
+                    len(segment) == 1 or segment[1] in ('header', 'bin', 'pad')
+                    or (isinstance(segment[1], str) and segment[1] not in ('c', 'cpp', 'asm', 'hasm', 'code'))):
                 continue
             raise ForkError("automatic objdiff setup needs explicit splat segment mappings; set this project up manually")
         if segment.get('type') != 'code' or segment.get('extract') is False:
