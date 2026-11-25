@@ -994,3 +994,9 @@ upsets (log `vtime_forced`, the 3 s wall-time fallbacks: a game whose threads ne
 host allows. The pacing broke the same way: with the console's trace, graphics task 608 at retrace 170 (the console's: 545), no change of the line points in the log. Three ways of delivering the interrupts earlier have now each
 changed what the game waits for between tasks, not only when the logic runs. The log with the original delivery (`ORDER task 618 vi 536`, the line points changing between tasks 618 and 619) is the baseline.
 Further work on the order inside a frame needs a different lever than the interrupt timing: the game's own message flow (which reply the main thread waits for between tasks) from the port's `PORT_MSGLOG`.
+
+**Two more routes through `compare_run` (seeds replayed; windows at tasks 600, 3400, 6190, 8980 of a 9,000-frame run).** A menu-navigation route (`A` pressed every 150 frames): all 41 pictures compared at 0.00% differing, both buffers,
+every task of every window. A route that presses START as well (the race route): the demo race at tasks 600-623 as on the other race route (0.0% at the first task of a frame, 4-6% and 0.5-0.7% with no match within 3 px at the others), but the windows from task 3400 are 43-89% different: at the race start the console's player car
+is a cream Citroën where the port's is red, with other opponents (3406, 3408), and at 8991 the two have the same red car on a road seen from slightly different camera positions. So where START is pressed at a given frame the two games make
+other choices (a livery, the opponents) or are a step apart in a run, consistent with a menu that is a frame ahead in the port (the logic lead above) taking an input at another moment. The other race route (`in_route_nostart2`, no START) matched to within 2% at the same
+windows, which isolates START and the menu's timing as what differs.
