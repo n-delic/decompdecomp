@@ -51,6 +51,25 @@ def index(folder: str) -> dict[str, Path]:
     return out
 
 
+@lru_cache(maxsize=1)
+def static_index(folder: str) -> dict[str, Path]:
+    """{function: its C file} of the functions ultralib's C defines `static`, for the ones one file alone defines (a
+    name two files define is ambiguous, and a unit can't tell which a game's copy is). `index` leaves them out on
+    purpose: a unit takes its file's static helpers along, and a callee built apart from its caller would be a second
+    copy. Only `source` reads this, for a function library detection names that no exported definition has: the
+    sequence player's `__handleMIDIMsg`, `read8`, `_handleEvent`."""
+    found: dict[str, set[Path]] = {}
+    for path in sorted(Path(folder, "src").rglob("*.c")):
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for _, name, static in _items(text):
+            if name and static:
+                found.setdefault(name, set()).add(path)
+    return {name: next(iter(paths)) for name, paths in found.items() if len(paths) == 1}
+
+
 MACRO = re.compile(r"^[ \t]*#[ \t]*define[ \t]+(\w+)\([^)]*\)[ \t]+\(?[ \t]*(?:\([^)]*\)[ \t]*)?(\w+)[ \t]*\(", re.M)
 
 
@@ -104,7 +123,12 @@ def extract(path: Path, name: str) -> str:
     """The file with only `name` of its exported functions: its directives, declarations and static helpers kept."""
     kept, dropped = [], []
     for chunk, defines, static in _items(path.read_text(encoding="utf-8", errors="replace")):
-        if defines is None or static or defines == name:
+        if static and defines == name:
+            # a function the file defines `static` that library detection found in a game: the unit built for it
+            # exports it (the game's other code, or the port's, calls it by name now)
+            head, brace, body = chunk.partition("{")
+            kept.append(re.sub(r"\bstatic\s+", "", head, count=1) + brace + body)
+        elif defines is None or static or defines == name:
             kept.append(chunk)
         else:
             kept.append(None)
@@ -170,7 +194,7 @@ def source(name: str, hint: dict, fingerprint: str | None = None) -> tuple[Path,
     folder = root()
     if folder is None or not any(c.startswith(CORPUS) for c in hint.get("corpora") or []):
         return None
-    path = index(str(folder)).get(name)
+    path = index(str(folder)).get(name) or static_index(str(folder)).get(name)
     builds = _builds().get(hint.get("fingerprint") or fingerprint or "", [])
     if path is None or not builds:
         return None

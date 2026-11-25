@@ -162,6 +162,32 @@ def test_a_helper_declared_static_in_the_files_own_prototype_or_header_is_export
     assert "static void _patch" in handler  # (another function's prototype stays)
 
 
+def test_a_function_ultralib_defines_static_is_found_and_exported_when_one_file_has_it(tmp_path, monkeypatch):
+    """`__handleMIDIMsg`, `read8` and `_handleEvent` are `static` in ultralib's sequence player: library detection named
+    them, but only exported functions had a source, so they stayed open for agents and the deep permuter."""
+    folder = tmp_path / "ultralib"
+    audio = folder / "src" / "audio"
+    audio.mkdir(parents=True)
+    (folder / "include").mkdir()
+    (audio / "seq.c").write_text('#include <ultra64.h>\nstatic int read8(int *p);\n\n'
+                                 'static int helper(int x) { return x; }\n\n'
+                                 'static int read8(int *p)\n{\n    return helper(*p);\n}\n\n'
+                                 'int alSeqOther(int *p) { return read8(p); }\n')
+    (audio / "a.c").write_text("static int shared(void) { return 1; }\n")
+    (audio / "b.c").write_text("static int shared(void) { return 2; }\n")
+    monkeypatch.setattr(ultralib, "root", lambda: folder)
+    monkeypatch.setattr(ultralib, "_builds", lambda: {"f" * 40: ["2.0I/libgultra"]})
+    ultralib.index.cache_clear()
+    ultralib.static_index.cache_clear()
+    assert "read8" not in ultralib.index(str(folder))  # (a callee is never built apart from its file's own copy)
+    hint = {"corpora": ["built in / decompals/ultralib e24c836796df"], "fingerprint": "f" * 40}
+    assert ultralib.source("read8", hint) == (audio / "seq.c", "2.0I/libgultra")
+    assert ultralib.source("shared", hint) is None  # two files define it: ambiguous
+    text = ultralib.extract(audio / "seq.c", "read8")
+    assert "\nint read8(int *p)\n{" in text and "static int read8" not in text  # exported, prototype and definition
+    assert "static int helper" in text and "alSeqOther" not in text.replace("int alSeqOther(int *p);", "")
+
+
 def test_the_build_adds_callees_nothing_else_provides(tree, tmp_path):
     text = ultralib.extract(ultralib.index(str(tree))["guToy"], "guToy")
     units = {"guToy.c": (text, ["-DX"])}
