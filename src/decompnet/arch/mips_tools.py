@@ -84,6 +84,19 @@ sys.exit(code)
 '''
 
 
+def _assembles_through_gcc(project) -> bool:
+    """Do the project's makefiles run the cross gcc as an assembler driver (`-x assembler-with-cpp`)? True too when
+    there is no makefile to read."""
+    names = [p for pattern in ("Makefile", "Makefile.*", "*.mk", "makefile") for p in sorted(project.root.glob(pattern))]
+    text = ""
+    for path in names:
+        try:
+            text += path.read_text(errors="replace", encoding="utf-8")
+        except OSError:
+            pass
+    return not text or "assembler-with-cpp" in text or "-x assembler" in text
+
+
 def build_paths(project) -> list[Path]:
     # On Windows these pinned tools run inside WSL, not in a native process's PATH.
     if os.name == "nt" or toolchains.installed("binutils-mips") is None:
@@ -137,10 +150,15 @@ def build_paths(project) -> list[Path]:
                 plain.chmod(0o755)
         # `mips-linux-gnu-gcc -x assembler-with-cpp -c x.s`: the gcc driver's one job in these builds, which binutils
         # alone can't do: preprocess with the host's cpp, then assemble with the pinned `as`
+        # (only for a project whose makefiles assemble through it: one that probes for the cross gcc to compile C
+        # with, and falls back to another compiler without it, would be handed an assembler for its C files)
+        wanted = _assembles_through_gcc(project)
         if host_cpp:
             for prefix in _PREFIXES:
                 driver = folder / (prefix + "gcc")
-                if not driver.exists():
+                if not wanted and driver.is_file() and "mips gcc shim" in driver.read_text(errors="replace"):
+                    driver.unlink()
+                if wanted and not driver.exists():
                     driver.write_text(_ASSEMBLER_DRIVER.format(python=sys.executable, cpp=str(host_cpp),
                                                                assembler=str(folder / (prefix + "as"))), encoding="utf-8")
                     driver.chmod(0o755)
