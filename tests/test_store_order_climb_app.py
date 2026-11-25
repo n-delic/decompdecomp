@@ -136,3 +136,19 @@ def test_the_deep_permuter_and_the_autopilots_saved_source_pass_call_it():
     root = Path(deep_permuter.__file__).parent
     assert 'store_order_pass' in (root / 'deep_permuter.py').read_text()
     assert 'store_order_autopilot' in (root / 'engine' / 'autopilot.py').read_text()
+
+
+def test_the_deep_permuters_pass_reads_the_header_from_the_context_row(monkeypatch):
+    """The header comes from a database row (no `.get`): every function failed with "'sqlite3.Row' object has no
+    attribute 'get'" until it was read by key, and a function with no context at all gets an empty header."""
+    import sqlite3
+    db = sqlite3.connect(':memory:')
+    db.row_factory = sqlite3.Row
+    row = db.execute("SELECT 'typedef int s32;' AS header").fetchone()
+    seen = []
+    monkeypatch.setattr(store_order_climb, 'run', lambda s, a, p, f, src, header, fork: seen.append(header))
+    monkeypatch.setattr(deep_permuter, '_candidate_source', lambda fn, best: 'int f(void){return 1;}')
+    for context, want in ((row, 'typedef int s32;'), (None, '')):
+        search = SimpleNamespace(net=SimpleNamespace(_context=lambda pid, unit, c=context: c))
+        deep_permuter.Search.store_order_pass(search, None, PROJ, {'unit': 'u', 'name': 'f'}, 5, None)
+        assert seen[-1] == want

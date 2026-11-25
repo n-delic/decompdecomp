@@ -973,8 +973,9 @@ class Search(Permuter):
         source = _candidate_source(fn, best)
         if not best or not source:
             return best
-        header = self.net.forks.permuter_header(fork, fn['name']) if fork else (
-            (self.net._context(proj['id'], fn['unit']) or {}).get('header', ''))
+        # (`_context` is a database row, which has no `.get`: every function failed here until this read it by key)
+        context = None if fork else self.net._context(proj['id'], fn['unit'])
+        header = self.net.forks.permuter_header(fork, fn['name']) if fork else (context['header'] if context else '')
         reached = store_order_climb.run(self, agent, proj, dict(fn, best_score=best), source, header, fork)
         return best if reached is None else min(best, reached)
 
