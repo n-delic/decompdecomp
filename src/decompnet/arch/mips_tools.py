@@ -106,7 +106,7 @@ while i < len(args):
         cpp.append(a)
         if a.startswith("-I"):  # (the assembler reads .include files too)
             asm.append(a)
-    elif a.startswith(("-march=", "-mabi=", "-mtune=", "-mips", "-EB", "-EL")):
+    elif a.startswith(("-march=", "-mabi=", "-mtune=", "-mips", "-EB", "-EL", "-G")):
         asm.append(a)
         if a == "-EL":
             big = False
@@ -120,14 +120,54 @@ if not out or len(sources) != 1:
 cpp = (["-D_MIPSEB", "-D__MIPSEB__", "-D__MIPSEB", "-DMIPSEB"] if big else
        ["-D_MIPSEL", "-D__MIPSEL__", "-D__MIPSEL", "-DMIPSEL"]) + cpp
 with tempfile.NamedTemporaryFile("w", suffix=".s", delete=False) as t:
+    # a distribution's mips gas starts .text, .data and .bss at 16-byte alignment (and pads each to it); these
+    # binutils use 4, which shortens every section a ROM layout counts
+    t.write(".text\\n.balign 16\\n.data\\n.balign 16\\n.bss\\n.balign 16\\n.text\\n")
+    t.flush()
     done = subprocess.run(["{cpp}", "-x", "assembler-with-cpp", *cpp, sources[0]], stdout=t)
+    # (and pads the end of .data and .bss to it, which these binutils only do for code)
+    t.write("\\n.data\\n.balign 16\\n.bss\\n.balign 16\\n.text\\n")
 if done.returncode:
     sys.exit(done.returncode)
 code = subprocess.run(["{assembler}", *asm, "-o", out, t.name]).returncode
 os.unlink(t.name)
+if code == 0:
+    # these binutils name their section symbols (".text"); a distribution's leave the name empty, and asm-processor
+    # merges the symbols of two objects by name, so a second ".text" there is "defined twice"
+    import struct
+    with open(out, "r+b") as f:
+        d = bytearray(f.read())
+        if d[:4] == b"\\x7fELF" and d[4] == 1:
+            e = ">" if d[5] == 2 else "<"
+            shoff = struct.unpack_from(e + "I", d, 32)[0]
+            shentsize, shnum = struct.unpack_from(e + "HH", d, 46)
+            for k in range(shnum):
+                sh = shoff + k * shentsize
+                if struct.unpack_from(e + "I", d, sh + 4)[0] == 2:
+                    off, size = struct.unpack_from(e + "II", d, sh + 16)
+                    entsize = struct.unpack_from(e + "I", d, sh + 36)[0] or 16
+                    for sym in range(off, off + size, entsize):
+                        if d[sym + 12] & 15 == 3:
+                            d[sym:sym + 4] = b"\\0\\0\\0\\0"
+            f.seek(0)
+            f.write(d)
 sys.exit(code)
 '''
 
+
+# The cross gcc's cpp: Makefiles hand it the compile flags of the same invocation (-G0, -mips3, -mgp32 ...), which the
+# host's cpp rejects, and rely on the macros the cross compiler predefines for byte order
+_CPP_DRIVER = '''#!{python}
+import os, sys
+args = [a for a in sys.argv[1:] if not (a.startswith("-m") and a != "-m32" or a in ("-EB", "-EL")
+                                        or (a.startswith("-G") and a[2:].isdigit()))]
+big = "-EL" not in sys.argv[1:]
+predefined = (["-D_MIPSEB", "-D__MIPSEB__", "-D__MIPSEB", "-DMIPSEB"] if big else
+              ["-D_MIPSEL", "-D__MIPSEL__", "-D__MIPSEL", "-DMIPSEL"]) + ["-D__mips__", "-Dmips=1", "-D_MIPS_SZINT=32", "-D_MIPS_SZPTR=32", "-D_ABIO32=1", "-D_MIPS_SIM=_ABIO32"]
+if any(a.endswith((".s", ".S")) for a in args):  # (the cross gcc defines these for assembler input)
+    predefined += ["-D_LANGUAGE_ASSEMBLY", "-D__ASSEMBLER__"]
+os.execv("{cpp}", ["{cpp}", *predefined, *args])
+'''
 
 # GNU sha1sum under shasum's options; its --check also reads a line with one space between the hash and the file name
 # (`echo "$(cat x.sha1) build/x.bin" | sha1sum --check`), which shasum rejects
@@ -242,8 +282,9 @@ def build_paths(project) -> list[Path]:
         if host_cpp := (str(gnu[-1]) if gnu else None) or shutil.which("cpp"):
             for prefix in _PREFIXES:
                 shim = folder / (prefix + "cpp")
-                if not shim.exists():
-                    shim.write_text(f'#!/bin/sh\nexec "{host_cpp}" "$@"\n', encoding="utf-8")
+                text = _CPP_DRIVER.format(python=sys.executable, cpp=str(host_cpp))
+                if not shim.exists() or shim.read_text(errors="replace") != text:
+                    shim.write_text(text, encoding="utf-8")
                     shim.chmod(0o755)
             # A Mac's own /usr/bin/cpp answers "cc: error: no input files" to `cpp ... -MD -MF x.d src.c -o /dev/null`,
             # the dependency pass many projects run after each compile: a plain `cpp` that is GNU's accepts it.
@@ -261,10 +302,20 @@ def build_paths(project) -> list[Path]:
                 driver = folder / (prefix + "gcc")
                 if not wanted and driver.is_file() and "mips gcc shim" in driver.read_text(errors="replace"):
                     driver.unlink()
-                if wanted and not driver.exists():
-                    driver.write_text(_ASSEMBLER_DRIVER.format(python=sys.executable, cpp=str(host_cpp),
-                                                               assembler=str(folder / (prefix + "as"))), encoding="utf-8")
+                text = _ASSEMBLER_DRIVER.format(python=sys.executable, cpp=str(host_cpp),
+                                                assembler=str(folder / (prefix + "as")))
+                if wanted and (not driver.exists() or driver.read_text(errors="replace") != text):
+                    driver.write_text(text, encoding="utf-8")
                     driver.chmod(0o755)
+        # A Makefile that archives with a bare `ar` (ultralib's `AR := ar`) gets macOS's ar, which does not take ELF
+        # members: the pinned GNU ar does that job for ELF objects, the host's for anything else
+        if sys.platform == "darwin" and (host_ar := shutil.which("ar")) and (gnu_ar := folder / "mips-linux-gnu-ar").exists():
+            tool = folder / "ar"
+            text = ('#!/bin/sh\nfor a; do case "$a" in *.o) [ "$(head -c 4 "$a" 2>/dev/null | od -An -c | tr -d \' \')" = "177ELF" ] '
+                    f'&& exec "{gnu_ar}" "$@"; break;; esac; done\nexec "{host_ar}" "$@"\n')
+            if not tool.exists() or tool.read_text(errors="replace") != text:
+                tool.write_text(text, encoding="utf-8")
+                tool.chmod(0o755)
         # a Makefile that runs `make` itself (MAKE = make, in tools/) gets macOS's make 3.81: GNU make 4 instead
         if sys.platform == "darwin" and (gmake := shutil.which("gmake")):
             tool = folder / "make"

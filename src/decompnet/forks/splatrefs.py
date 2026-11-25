@@ -243,6 +243,8 @@ def plan(root: Path, config: dict, *, independent: bool = False) -> list[dict]:
     options = config.get('options', {})
     source_root = options.get('src_path', 'src')
     build_root = options.get('build_path', 'build')
+    if build_root.isupper() and not (root / build_root).exists():
+        build_root = 'build'  # (a placeholder the project's Makefile fills in: -DBUILD_PATH=build/us)
     units = []
     segments = config.get('segments', [])
     if not isinstance(segments, list):
@@ -292,11 +294,19 @@ def plan(root: Path, config: dict, *, independent: bool = False) -> list[dict]:
                 raise ForkError("automatic objdiff setup needs relative unit names without parent paths")
             source = base = None
             if kind == 'c':
+                bare = str(entry[2]) if len(entry) > 2 else name
+                if (segment.get('dir') and bare != name and not (root / source_root / (name + '.c')).is_file()
+                        and (root / source_root / (bare + '.c')).is_file()):
+                    name = bare  # (the names already carry their folder: src/code0/main under dir code0)
                 source = inside(root, str(Path(source_root) / (name + '.c')))
                 relative = source.relative_to(root)
                 candidates = [inside(root, str(Path(build_root) / relative.with_suffix('.o'))),
                               inside(root, str(Path(build_root) / (str(relative) + '.o')))]
                 built = [path for path in candidates if path.is_file()]
+                if not built:  # (a per-version build folder: build/us/src/code0/main.c.o)
+                    built = [path for path in (*(root / build_root).glob(f'*/{relative.with_suffix(".o").as_posix()}'),
+                                               *(root / build_root).glob(f'*/{relative.as_posix()}.o'))
+                             if path.is_file()]
                 if not source.is_file() or not built:
                     raise ForkError("automatic objdiff setup needs the project's C objects built first; follow its README")
                 if len(built) != 1:
