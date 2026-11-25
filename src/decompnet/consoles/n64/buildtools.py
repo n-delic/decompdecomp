@@ -158,6 +158,7 @@ def _wrap_foreign_ido(project) -> None:
             extra = f' -B"{installed}/"' if program.name == "gcc" else ""
             program.write_text(f'#!/bin/sh\nexec "{mine}"{extra} "$@"\n', encoding="utf-8")
             program.chmod(0o755)
+    _update_old_mac_assembler(project, tools)
     # The same for a project's other committed Linux programs (tools/pigment64, ...) when the host has the tool:
     # `cargo install` and the system's own packages are where those come from.
     path = os.pathsep.join([os.environ.get("PATH", ""), str(Path.home() / ".cargo" / "bin")])
@@ -177,6 +178,35 @@ def _wrap_foreign_ido(project) -> None:
             tool.chmod(0o755)
     done.parent.mkdir(parents=True, exist_ok=True)
     done.write_text(seen, encoding="utf-8")
+
+
+def _update_old_mac_assembler(project, tools: Path) -> None:
+    """A project's own Mac build of the KMC GCC 2.7.2 (tools/gcc_2.7.2/macos) can carry an older `as` than its
+    Makefile expects: the compiler is told `-Wa,--vr4300mul-off` and the assembler answers "unrecognized option".
+    The installed KMC `as` knows the option, so it stands in for the old one (the old one is kept as as.old)."""
+    if sys.platform != "darwin" or toolchains.installed("gcc-2.7.2-kmc") is None:
+        return
+    try:
+        makefile = (project.root / "Makefile").read_text(errors="replace", encoding="utf-8")
+    except OSError:
+        return
+    if "vr4300mul-off" not in makefile:
+        return
+    mine = toolchains.require("gcc-2.7.2-kmc") / "as"
+    if not mine.is_file():
+        return
+    for old in tools.glob("*gcc*2.7.2*/macos/as"):
+        if old.is_symlink() or not old.is_file():
+            continue
+        try:
+            data = old.read_bytes()
+        except OSError:
+            continue
+        if data[:4] not in (b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe") or b"vr4300mul-off" in data:
+            continue
+        old.rename(old.with_name("as.old"))
+        old.write_text(f'#!/bin/sh\nexec "{mine}" "$@"\n', encoding="utf-8")
+        old.chmod(0o755)
 
 
 def command(project, argv: list[str]) -> list[str]:

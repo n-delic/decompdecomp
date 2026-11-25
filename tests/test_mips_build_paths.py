@@ -302,3 +302,25 @@ def test_plain_cpp_shim_is_gnu_when_the_host_has_one(tmp_path, monkeypatch):
     pinned(tmp_path, monkeypatch)
     paths = mips_tools.build_paths(SimpleNamespace(root=tmp_path / "project"))
     assert str(gnu[-1]) in (paths[0] / "cpp").read_text()
+
+
+def test_n64_replaces_an_old_mac_assembler_that_lacks_the_mul_flag(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools
+
+    installed = tmp_path / "gcc"
+    installed.mkdir()
+    (installed / "as").write_text("assembler")
+    monkeypatch.setattr(buildtools.sys, "platform", "darwin")
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(buildtools.toolchains, "require", lambda tid: installed)
+    root = tmp_path / "project"
+    old = root / "tools" / "gcc_2.7.2" / "macos" / "as"
+    old.parent.mkdir(parents=True)
+    old.write_bytes(b"\xcf\xfa\xed\xfe old assembler")
+    (root / "Makefile").write_text("CFLAGS := -Wa,--vr4300mul-off\n")
+    buildtools._update_old_mac_assembler(SimpleNamespace(root=root), root / "tools")
+    assert str(installed / "as") in old.read_text() and old.with_name("as.old").exists()
+    # an assembler that already knows the option is left alone
+    old.write_bytes(b"\xcf\xfa\xed\xfe vr4300mul-off")
+    buildtools._update_old_mac_assembler(SimpleNamespace(root=root), root / "tools")
+    assert old.read_bytes().endswith(b"vr4300mul-off")
