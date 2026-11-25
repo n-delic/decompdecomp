@@ -87,6 +87,19 @@ def _provide_compiler_dirs(project) -> None:
     if re.search(r"tools/gcc[_-]2\.7\.2/(?:macos|\$\(DETECTED_OS\))", texts) and sys.platform == "darwin":
         wanted.append(("tools/gcc_2.7.2/macos", "gcc-2.7.2-kmc"))
     if sys.platform == "darwin":
+        # tools/gcc_kmc/$(DETECTED_OS)/2.7.2, tools/gcc_egcs/$(DETECTED_OS)/1.1.2-4: the project's `make setup` downloads
+        # a tarball for each (one of them may no longer exist); the installed compilers stand in. Each makefile
+        # (the root's, a library's) names its own OS folder (mac, macos).
+        for name in ("Makefile", "lib/Makefile"):
+            try:
+                own = (project.root / name).read_text(errors="replace", encoding="utf-8")
+            except OSError:
+                continue
+            mac = re.search(r"DETECTED_OS\s*:?=\s*(mac\w*)", own)
+            for kind, version in set(re.findall(r"tools/(gcc_kmc|gcc_egcs)/\$\(DETECTED_OS\)/(2\.7\.2|1\.1\.2-4)", own)):
+                if mac and (kind, version) in (("gcc_kmc", "2.7.2"), ("gcc_egcs", "1.1.2-4")):
+                    wanted.append((f"tools/{kind}/{mac[1]}/{version}",
+                                   "gcc-2.7.2-kmc" if kind == "gcc_kmc" else "gcc-egcs-2.91.66"))
         # the folder itself, as a Linux-only project names it (tools/gcc-2.7.2/gcc; $(TOOLS_DIR)/gcc-2.7.2/)
         for name in set(re.findall(r"(?:\btools|\$\(TOOLS(?:_DIR)?\))/(gcc[_-]2\.7\.2)/(?!macos|\$\(DETECTED_OS\))",
                                    texts)):
