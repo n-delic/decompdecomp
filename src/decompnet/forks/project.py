@@ -112,7 +112,7 @@ _CHECK = re.compile(r"^build (\S+[/\\]ok): check\b")  # dtk-template writes buil
 # program each runs first (build_problem)
 _NINJA_PROGRAM = re.compile(r"^(?:([A-Za-z_][\w.-]*)|\s+command)\s*=\s*(.*)$")
 # A target the build couldn't make: ninja's "FAILED: out.o", make's "make: *** [Makefile:12: out.o] Error 1"
-_FAILED = re.compile(r"^FAILED: (.+)$|^make(?:\[\d+\])?: \*\*\* \[(?:[^\]]*?:\d+: )?([^\]]+)\] Error")
+_FAILED = re.compile(r"^FAILED: (.+)$|^g?make(?:\[\d+\])?: \*\*\* \[(?:[^\]]*?:\d+: )?([^\]]+)\] Error")
 _BUILD_ERROR = re.compile(r"(?:fatal error:|\berror:|\bError:|No such file or directory|"
                           r"command not found|cannot execute binary|ModuleNotFoundError:|Traceback \(most recent|^within )")
 # CodeWarrior's linker warnings are harmless and can run to thousands of lines.
@@ -262,6 +262,30 @@ def _mac_cxx_env(root: Path) -> dict[str, str]:
         except OSError:
             continue
     return found
+
+
+def _mac_host_headers(root: Path) -> Path | None:
+    """The folder of stand-in headers for a project's own host tools (tools/*/*.c) that include a Linux-only header the
+    Mac doesn't have: `<crypt.h>` (glibc's; Perfect Dark's mkrom includes it from its gzip code and calls nothing in it).
+    An empty header is the stand-in, written once under the project's own state folder; None when nothing needs one."""
+    names = ("crypt.h",)
+    wanted: set[str] = set()
+    for source in list((root / "tools").glob("*/*.c"))[:400]:
+        try:
+            text = source.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        wanted.update(n for n in names if re.search(rf'^\s*#\s*include\s*[<"]{re.escape(n)}[>"]', text, re.M)
+                      and not (root / "tools" / source.parent.name / n).exists())
+    if not wanted:
+        return None
+    folder = root / ".decomp-wtf" / "host-include"
+    folder.mkdir(parents=True, exist_ok=True)
+    for name in wanted:
+        if not (folder / name).exists() and not (Path("/usr/include") / name).exists():
+            (folder / name).write_text("/* a stand-in: the Mac has no such header and the project's tool uses nothing in it */\n",
+                                       encoding="utf-8")
+    return folder
 
 
 def _iconv_override(root: Path, tool_dirs: list[Path], path: str) -> str | None:
@@ -1337,6 +1361,8 @@ class ForkProject:
                     break
         if sys.platform == "darwin" and (self.root / "tools").is_dir():
             env.update({k: v for k, v in _mac_cxx_env(self.root).items() if k not in env})
+        if sys.platform == "darwin" and (self.root / "tools").is_dir() and (stand_in := _mac_host_headers(self.root)):
+            env["CPATH"] = os.pathsep.join(filter(None, [env.get("CPATH"), str(stand_in)]))
         if sys.platform == "darwin" and Path(cmd[0]).name in ("make", "gmake") and not any(a.startswith("ICONV=") for a in cmd):
             iconv = _iconv_override(self.root, project_tools, env["PATH"])
             if iconv:
@@ -1777,7 +1803,21 @@ class ForkProject:
                 log("the build lost a race between its own steps; running it again")
                 # (-k first: one that picked a link rule before the sibling file it needs was built has that file
                 # built by the other targets now; then the plain build, one job at a time, finishes what is left)
-                ok, tail = self.run([*cmd, "-k"], log=log)
+                failed_targets: list[str] = []
+                ok, tail = self.run([*cmd, "-k"], log=log, failed=failed_targets)
+                asked: set[str] = set()
+                for _ in range(8):  # (each pass reaches the targets that waited on the last one's)
+                    if ok or not (fresh := [t for t in failed_targets if t not in asked]):
+                        break
+                    # GNU make 4.4 picks the generic `%.elf` rule over a project's own, more specific one (with
+                    # target-specific variables it second-expands) for a target it only reaches as an intermediate
+                    # (Super Mario 64's leveldata.elf), where 4.3 picked the specific one; asked for by name, the
+                    # target takes its own rule. So what failed is asked for first, then the build runs again.
+                    asked.update(fresh)
+                    flags = [a for a in cmd[1:] if a.startswith("-") or "=" in a]
+                    self.run([cmd[0], *flags, "-k", *fresh[:400]], log=log)
+                    failed_targets = []
+                    ok, tail = self.run([*cmd, "-k"], log=log, failed=failed_targets)
                 if not ok:
                     cmd = [a for a in cmd if not a.startswith("-j")] + ["-j1"]
                     ok, tail = self.run(cmd, log=log)
