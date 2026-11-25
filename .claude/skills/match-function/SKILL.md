@@ -5,6 +5,115 @@ description: Match one function by hand against the running decompdecomp app, th
 
 # Match a function by hand, then teach the permuter
 
+## Never (read first)
+
+- Never print `connection.json` (it holds a bearer token).
+- Never delete `/tmp/dd-skill`; if it is missing, re-extract it with `git archive` (see "Start").
+- Never leave copies of this skill's text anywhere, including `~/.claude` tool-result files: delete them after reading.
+- Never touch, restart or update the user's running app or the primary checkout.
+- No Deep Permuter and no `scratch_run.py` (see below).
+- A matching agent started by a coordinator opens no PRs and makes no decomp-repair changes: it matches, and writes what
+  the permuter lacked into its note and report (builders turn those into families). Steps 5 and 6 below apply when you
+  are asked to land permuter work yourself.
+- No `try_compiler` and no compiler ranges. The app's `compiler_experiments` trials plus `suggest` (First moves) are the
+  way to change a function's profile.
+- At most 2 parallel judge runs, and one agent runs ONE judge or compile process at a time (parallel grids overloaded the
+  machine twice).
+- zsh does not split a flag string held in a variable: pass flags literally.
+
+## First moves, in this order
+
+Most matches in a 1,000-function session came from this order, not from clever spelling.
+
+1. **Read the function's notes and the app's diff** (`get_function` sections `work` and notes; step 1). Earlier dead ends
+   are evidence.
+2. **`prove_chain.py --slug S --function F --families all --children 40`**, then **`prove_chain.py ... --fp-flip`**. Cheap, and it
+   closes many near-misses by itself.
+3. **Float constants.** Float pool words in the target (`lui; lwc1` of data) are float literals in C: read the ROM value
+   with `read_data` and write `1.5f`. Then try the app's `compiler_experiments` trial with
+   `-G0 -mips3 -O2 -mgas -meb -mcpu=VR4300 -mhard-float -mfp32` when the target never uses odd float registers
+   (two-thirds of the N64 functions in the last project needed this per-function profile).
+4. **Other compilers.** The target ends `jr ra; nop` (gcc-2.8.1 always fills that slot), or the stretch was built by SN GCC
+   2.7.2: try the `sn-n64-272-0001`, `-0004` and `-0006` trials (`-G8 -mips2 -O2`, or `-G0 -mips2` / `-G0 -mips3`).
+   libultra and other SDK code: KMC 2.7.2 `-G0 -mips3 -O2 -mgp32 -mfp32`.
+5. **Then hand edits** from the fix catalog below.
+
+Rules for the trials:
+- The exact flag set matters: `-G8 -mips2 -O2 -mfp32` scored 110 where `-G0 -mips3 ... -mfp32` was exact.
+- The app's trial is the truth. `fast_judge.py --flags` may append to the function's flags instead of replacing them: read
+  the flags it prints.
+- **An exact trial is applied with `suggest(function=FUNC, trial_id=ID)` WITHOUT `review_only`.** The user has allowed
+  compiler-setting changes without asking. (Haiku agents once left seven exact trials queued.) Then check
+  `get_function(section="summary")` shows the profile and `matched` 0, and report the profile change.
+
+## Fix catalog (symptom, then the fix)
+
+One line each. Detail is in `docs/learnings/` (`python tools/learnings.py search "<symptom>"`) and in section 3 below.
+
+- **The draft has an extra or missing call argument.** Drop arguments the target never sets up. Add one the callee's
+  matched C reads: a register still holding a value at the call is an argument; a float in an integer register is a
+  missing argument; a `bnel` where you wrote `bnez` hints an argument already in `$a0`. (`signatures.py`.)
+- **A `void` function whose target ends `move $v0,reg`** returns the object: give it the return type.
+- **An unfilled delay slot before the epilogue means `$v0` is live:** declare `s32` and return nothing.
+- **Scaffolding in a saved best** (`if (0)` goto ladders, loop-weight wrappers, phantom locals, `do { } while (0)` fences):
+  strip it (`plain_best.py`). An unused `buf[N]` sometimes really sizes the frame: test before deleting.
+- **Two calls where the target has one:** one call per branch (cross-jumping merges the tail).
+- **Jump table one entry larger than the cases:** an empty `case`. A switch on a call's result inside a switch: an inner switch.
+- **A few stores or loads in the wrong order:** a store-order grid (`grid.py`). More than 8 statements: a move-one-line hill
+  climb, not a full grid.
+- **The target reads a just-stored field back:** write the read-back.
+- **A temporary the target keeps in one register across blocks:** reuse one local across the blocks. A local assigned twice
+  moves address and constant builds.
+- **Raw offset accesses (`*(T *)((u8 *)p + 0x10)`):** retype as one struct per pointer family. Struct field versus plain
+  global alias is a real source difference.
+- **`extern u8 X[]` read as `(*(T *)X)`, or array externs under `-G8`:** match the target's gp-relative or `lui` form by
+  the declared type.
+- **`p[i]` versus a pointer walk:** try both; loop.c reduces `p[k]` itself, so write the index form first.
+- **`abs()` and `sqrtf`:** builtins give the target's inline form; a hand-written `if` does not.
+- **A loop bound the target keeps in a register:** put it in a local.
+- **`cvt` after an int in a float loop:** `x = (f32)i; x *= K`.
+- **Float literals versus keeping `extern f32`:** under `-G8` the target reads small-data floats; write the form that gives
+  `lwc1 ...($gp)` or `lui; lwc1`.
+- **String literals:** a `lui; addiu` pair with a rodata address is a literal, not a symbol.
+- **Callee address `(s8 *)&f + 8`:** the target jumps past a prologue; write that call (it also shows the real entry
+  offset).
+- **A strided table:** one record array (`Row t[]`), not parallel byte tables.
+- **`slti` versus `sltiu`:** signed versus unsigned compare; fix the type.
+- **Wrong global types and stale offsets in a saved best** are real source errors: fix them, the score may rise first.
+- **A twin matched already:** adapt its C, then re-read every constant and callee in yours.
+- **Known library code (zlib, libultra, libmus, libgcc):** write it from its reference source, then adjust.
+
+## Claims, submissions and notes
+
+- **Finish a function before releasing it.** `setup.py` refuses to re-claim a function the same session released.
+- **Submit EVERY candidate that beats the app's saved score** with `setup.py try` so the progress is kept. Never submit
+  an unfaithful source (for example a sign-flipped function that scores lower by coincidence): it cannot be removed from
+  the record.
+- **Notes** (`add_note`, field `text`) only on functions you hold, and never test notes.
+- **`report_repair` after each match.** A profile-suggested match may be refused: that is fine.
+- After `suggest`, check `get_function` shows `matched` 0.
+
+## Triage: boundary and SDK
+
+Do not grind these; say so in the note and release.
+
+- **Boundary problem:** a stray word before the prologue, a `break 7` left by the previous function, padding words, a
+  first-word branch outside the extent, or an end that swallows the next function. Note the body, release with a
+  "boundary" verdict. The user fixes boundaries in Review function boundaries.
+- **Probably SDK or hand-written assembly:** a short leaf that reads a hardware status register with unfilled delay slots.
+  Say so in the note.
+- **Callbacks stored as `func_X + 8`** reveal a real entry offset.
+
+## Tool gotchas
+
+- `passes.py`, `handoff.py`, `dumps.py` and `explain_regs.py` refuse sn-n64-281 profiles. Write a small `cc1n64.exe`-under-`wibo`
+  wrapper with `-dl -dg -dS -dR` for allocation and scheduler dumps. The gcc-2.8.1-pm native cc1 is a good stand-in for 2.8.1
+  except for byte compares and branch delay-slot fills. It is NOT a stand-in for 2.7.2.
+- `grid.py` has no `--flags` option: patch a copy.
+- A long store list (over 8) needs a move-one-line hill climb, not a full grid.
+- `report_repair` categories: `mcp.py <holder> report_repair --help` prints the valid ones.
+
+
 In Claude Code, use `/match-function PROJECT [FUNCTION]`. In Codex, use
 `$match-function PROJECT [FUNCTION]`. Both clients load this file and use the same MCP tools.
 For persistent Codex goal tracking, start with `/goal` and include the skill, the project and the
@@ -260,11 +369,10 @@ It prints how many of the target's instructions agree and where the first differ
 immediates normalised; the callee's address ignored). When a candidate reaches 1.000 it still has to pass the app's
 judge: `compile_and_diff`. A candidate that looks better locally has to beat the best in the app.
 
-An exact `compiler_experiments` trial under another profile is diagnostic, not a recorded match. Preserve its
-trial ID and frozen source/flags. When the app exposes it, `suggest(function=FUNC, trial_id=ID, review_only=true)`
-queues that exact pair without applying it, even if automatic compiler changes are enabled. On older apps, preserve
-the trial for review: ordinary `suggest` can apply it immediately. Respect the user's authorization for project
-settings, and verify `get_function(section="summary")` after an approved application.
+An exact `compiler_experiments` trial under another profile: keep its trial ID and frozen source/flags, then apply it
+with `suggest(function=FUNC, trial_id=ID)` (no `review_only`: the user allows compiler-setting changes without asking, see
+"First moves") and verify `get_function(section="summary")`. Use `review_only=true` only when a brief says to queue
+trials for review.
 
 **For a search, use the app's own judge standalone.** `decomp judge-worker` returns exactly the app's score (a
 source judged 1090 in the app judged 1090 here) in about 0.1 s, needs no claim, runs beside the app without touching
@@ -836,7 +944,7 @@ the existing families on the saved best first (`prove_chain.py --list`): what th
 **The strongest model never hands off.** The clock exists so a weaker model (Sonnet) passes a stalled near-match
 to a stronger one (Opus). An Opus agent would only hand off to another Opus, so it doesn't: it never waits for the
 clock and never stops to hand off. Out of ideas, it goes back to step 1 with a new angle (another compiler profile
-through `try_compiler`, the pass that decides the rows, grids over combined edits). The one exception is its own
+through a `compiler_experiments` trial, the pass that decides the rows, grids over combined edits). The one exception is its own
 context running low: then it writes the note with `handoff.py` so the next agent starts from its evidence.
 
 Persistence is the default: a near-match nobody finishes is worth more than three abandoned ones. A hand-off is allowed
