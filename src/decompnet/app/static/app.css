@@ -444,6 +444,10 @@ a.ghost, a.primary { text-decoration: none; }
 .st { font: 500 11px/1 var(--mono); padding: 4px 7px; border-radius: var(--r-sm); color: var(--muted); border: 1px solid var(--line); }
 .st.matched { background: var(--match-bg); color: var(--match-ink); border-color: transparent; }
 .session-group { grid-column: 1 / -1; margin: 6px 0 0; font: 600 12px/1 var(--sans); letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.session-group-toggle { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 0; cursor: pointer; font: inherit; letter-spacing: inherit; text-transform: inherit; color: inherit; }
+.session-group-toggle:hover { color: var(--text); }
+.session-group-toggle:focus-visible { outline: 2px solid var(--accent, currentColor); outline-offset: 2px; }
+.session-group-count { margin-left: auto; font-weight: 400; }
 .st.polished { background: var(--polished); color: var(--bg); }
 .st.sdk { background: var(--match-bg); color: var(--match-ink); border-color: var(--sdk); }
 .task-tag { margin-left: 4px; padding: 0 5px; border: 1px solid var(--line); border-radius: 4px; font-size: 11px; color: var(--muted); }

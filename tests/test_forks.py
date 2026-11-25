@@ -1827,3 +1827,23 @@ def test_make_is_told_the_iconv_decompdecomp_has_when_the_makefile_wants_homebre
     assert module._iconv_override(tmp_path, [shim], "") == str(shim / "iconv")
     (tmp_path / "Makefile").write_text("ICONV := iconv\n")
     assert module._iconv_override(tmp_path, [shim], "") is None
+
+
+def test_a_mac_gets_a_stand_in_for_a_linux_only_header_a_project_tool_includes(tmp_path):
+    """Perfect Dark's tools/mkrom includes <crypt.h> (glibc's) from its gzip code and uses nothing in it."""
+    from decompnet.forks import project as module
+
+    (tmp_path / "tools/mkrom").mkdir(parents=True)
+    (tmp_path / "tools/mkrom/gzip_bits.c").write_text('#include "gzip.h"\n#include "crypt.h"\n')
+    folder = module._mac_host_headers(tmp_path)
+    assert folder and (folder / "crypt.h").is_file()
+    (tmp_path / "tools/mkrom/crypt.h").write_text("")  # (a project that ships its own needs no stand-in)
+    (tmp_path / ".decomp-wtf").rename(tmp_path / "gone")
+    assert module._mac_host_headers(tmp_path) is None
+
+
+def test_a_gmake_failure_line_names_its_target():
+    from decompnet.forks.project import _FAILED
+
+    match = _FAILED.match("gmake: *** [Makefile:582: build/us/levels/bbh/leveldata.elf] Error 1")
+    assert match and match.group(2) == "build/us/levels/bbh/leveldata.elf"

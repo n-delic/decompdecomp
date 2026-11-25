@@ -305,8 +305,11 @@ def plan(root: Path, config: dict, *, independent: bool = False, prefer: tuple[s
         raise ForkError("automatic objdiff setup cannot yet verify compressed or overlay code segments")
     for segment in segments:
         if not isinstance(segment, dict):
+            # (a top-level `[start, type, name]` is one data segment: a project's own types, from its splat
+            # extension, such as a compressed asset, hold no code of their own)
             if isinstance(segment, list) and segment and isinstance(segment[0], int) and (
-                    len(segment) == 1 or segment[1] in ('header', 'bin', 'pad')):
+                    len(segment) == 1 or segment[1] in ('header', 'bin', 'pad')
+                    or (isinstance(segment[1], str) and segment[1] not in ('c', 'cpp', 'asm', 'hasm', 'code'))):
                 continue
             raise ForkError("automatic objdiff setup needs explicit splat segment mappings; set this project up manually")
         if segment.get('type') != 'code' or segment.get('extract') is False:
@@ -435,6 +438,34 @@ def verify(elf_path: Path, image: bytes, unit: dict) -> None:
                                 "verify; configure this project manually")
 
 
+def non_ascii_strings(folder: Path) -> bool:
+    """Whether any generated assembly holds a string directive with text outside ASCII."""
+    for path in folder.rglob('*.s'):
+        try:
+            text = path.read_text(encoding='utf-8', errors='replace')
+        except OSError:
+            continue
+        if any(not line.isascii() and re.search(r'\.(?:asciz|ascii)\b', line) for line in text.splitlines()):
+            return True
+    return False
+
+
+def combine_parts(texts: list[str]) -> str:
+    """Join a unit's code and data assembly; an `.include` an earlier part already made is dropped from the later
+    ones (each file brings the project's macro.inc, and including it twice redefines every macro)."""
+    seen, out = set(), []
+    for text in texts:
+        lines = []
+        for line in text.splitlines():
+            if re.match(r'\s*\.include\s+"[^"]+"\s*$', line):
+                if line.strip() in seen:
+                    continue
+                seen.add(line.strip())
+            lines.append(line)
+        out.append('\n'.join(lines))
+    return '\n'.join(out)
+
+
 def assemble(root: Path, work: Path, unit: dict, definitions: dict, image: bytes, assembler: str,
              linker: str, flags: tuple, log) -> Path:
     name = unit['name']
@@ -442,7 +473,7 @@ def assemble(root: Path, work: Path, unit: dict, definitions: dict, image: bytes
     text = Path(os.path.normpath(work / 'asm' / (raw + '.s')))
     if not text.is_file() and Path(os.path.normpath(work / 'src' / (raw + '.s'))).is_file():
         text = Path(os.path.normpath(work / 'src' / (raw + '.s')))  # (hasm_in_src_path: written beside the sources)
-    parts = [text]
+    parts = [text] if text.is_file() else []
     sections = {'.text': unit['vram']}
     for section in ('data', 'rodata', 'bss'):
         path = Path(os.path.normpath(work / 'asm/data' / (raw + '.' + section + '.s')))
@@ -453,9 +484,11 @@ def assemble(root: Path, work: Path, unit: dict, definitions: dict, image: bytes
                 raise ForkError("cannot establish a reference data section's original address")
             sections['.' + section] = configured if configured is not None else int(match[1], 16)
             parts.append(path)
+    if not parts:
+        return None  # (a zero-size code unit: splat wrote no assembly, so there are no bytes to verify or compare)
     source = work / 'combined' / (name + '.s')
     source.parent.mkdir(parents=True, exist_ok=True)
-    source.write_text('\n'.join(path.read_text(encoding='utf-8') for path in parts), encoding='utf-8')
+    source.write_text(combine_parts([path.read_text(encoding='utf-8') for path in parts]), encoding='utf-8')
     target = work / 'objects' / (name + '.o')
     target.parent.mkdir(parents=True, exist_ok=True)
     run([assembler, *flags, '-I', str(work / 'include'), '-I', str(root / 'include'),
@@ -620,7 +653,8 @@ def generate(project, config_path: Path, config: dict, console, log=print) -> bo
         definitions = symbols(candidates[0]) if candidates else {}
     except ELFError:
         raise ForkError('automatic objdiff setup needs a readable linked ELF for unresolved symbols') from None
-    if not candidates:  # (no linked ELF to read names from: the project's own symbol lists give the addresses)
+    if True:  # (the project's own symbol lists give addresses with no linked ELF, and for names the ELF lacks, e.g. a
+        # bss symbol its C declares extern but a reference unit's asm still uses; ELF addresses win)
         listed = options.get('symbol_addrs_path') or []
         files = [inside(original_base, v) for v in (listed if isinstance(listed, list) else [listed])]
         files += [root / name for name in ('undefined_syms.txt', 'undefined_syms_auto.txt', 'undefined_funcs.txt',
@@ -696,6 +730,15 @@ def generate(project, config_path: Path, config: dict, console, log=print) -> bo
         # (the project's own environment first: its splat extensions are written for the splat it pins)
         run([console_python(str(project._project_python() or sys.executable)), '-m', 'splat', 'split', str(private_config)],
             root, log)
+        if non_ascii_strings(work / 'asm'):
+            # Splat guessed strings in a game text encoding it was not told about and wrote them as text the
+            # assembler would encode differently. The bytes are what is verified, so keep them as words.
+            log('The reference assembly decodes non-ASCII strings; splitting again without string guessing.')
+            shutil.rmtree(work / '.splache', ignore_errors=True)  # (else splat skips what it thinks unchanged)
+            opts.update(rodata_string_guesser_level=0, data_string_guesser_level=0)
+            private_config.write_text(yaml.safe_dump(split, sort_keys=False), encoding='utf-8')
+            run([console_python(str(project._project_python() or sys.executable)), '-m', 'splat', 'split',
+                 str(private_config)], root, log)
         linked_definitions = dict(definitions)
         definitions.update(reference_symbols(work))
         entries = []
@@ -703,6 +746,8 @@ def generate(project, config_path: Path, config: dict, console, log=print) -> bo
         for index, unit in enumerate(units, 1):
             log(f'Verifying objdiff reference {index}/{len(units)}: {unit["name"]}')
             target = assemble(root, work, unit, definitions, image, assembler, linker, console.as_flags, log)
+            if target is None:
+                continue
             entry = {'name': unit['source'].relative_to(root).with_suffix('').as_posix() if unit['source'] else 'asm/' + unit['name'],
                      'target_path': (destination / target.relative_to(work)).relative_to(root).as_posix()}
             if unit['source']:

@@ -511,6 +511,9 @@ def test_a_mac_iconv_shim_writes_a_backslash_after_japanese_text_as_one_byte(tmp
     assert made.stdout == b"\xa5\xc8\\n\n"
     other = subprocess.run([str(folder / "iconv"), "-t", "UTF-16", "-f", "UTF-8", str(source)], capture_output=True)
     assert other.stdout == b"system iconv"
+    long_form = subprocess.run([str(folder / "iconv"), "--from-code=UTF-8", "--to-code=EUC-JP", str(source)],
+                               capture_output=True)  # (the spelling a decomp's Makefile uses)
+    assert long_form.stdout == b"\xa5\xc8\\n\n"
 
 
 def test_n64_gets_wibo_and_an_o32_assembler(tmp_path, monkeypatch):
@@ -1219,3 +1222,28 @@ def test_the_host_shim_gives_an_assemblys_global_symbols_the_underscore_macho_wa
     assert "[-c]" in out and "[a.o]" in out
     assert ".global _gSigs" in out and "\n_gSigs:" in out and '.incbin "x.defl"' in out
     assert source.read_text().startswith(".global gSigs")  # (the project's own file is untouched)
+
+def test_n64_copies_the_installed_ido_where_a_project_builds_its_own_and_never_links_it(tmp_path, monkeypatch):
+    """Perfect Dark's Makefile builds build/recomp/5.3/cc from the IRIX binaries; a folder link let that rule write
+    cc.c and a crashing cc into the installed compiler. A copy, newer than what the rule depends on, runs nothing."""
+    from decompnet.consoles.n64 import buildtools
+
+    ido = tmp_path / "toolchains" / "ido-5.3"
+    ido.mkdir(parents=True)
+    for name in ("cc", "cfe", "uopt", "cc.c"):
+        (ido / name).write_text(name)
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: {"id": tid} if tid == "ido-5.3" else None)
+    monkeypatch.setattr(buildtools.toolchains, "require", lambda tid: ido)
+    monkeypatch.setattr(buildtools.toolchains, "root", lambda: tmp_path / "toolchains")
+    root = tmp_path / "project"
+    (root / "tools/recomp").mkdir(parents=True)
+    (root / "tools/recomp/recomp.cpp").write_text("int main(){}")
+    (root / "build/recomp").mkdir(parents=True)
+    (root / "build/recomp/5.3").symlink_to(ido, target_is_directory=True)  # (what an older run left)
+    (root / "Makefile").write_text("build/recomp/recomp: tools/recomp/recomp.cpp\n\tcc -o $@ $<\n"
+                                   "build/recomp/5.3/cc: build/recomp/recomp\n\t./build/recomp/recomp > $@.c\n")
+    buildtools._provide_compiler_dirs(SimpleNamespace(root=root))
+    folder = root / "build/recomp/5.3"
+    assert not folder.is_symlink() and (folder / "cc").read_text() == "cc" and not (folder / "cc.c").exists()
+    assert (folder / "cc").stat().st_mtime > (root / "build/recomp/recomp").stat().st_mtime
+    assert (ido / "cc").read_text() == "cc"

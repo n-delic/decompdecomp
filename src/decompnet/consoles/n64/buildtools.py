@@ -164,6 +164,7 @@ def _provide_compiler_dirs(project) -> None:
             mine.write_text(f'#!/bin/sh\nexec "{host}" "$@"\n', encoding="utf-8")
             mine.chmod(0o755)
     _provide_sn64(project)
+    _provide_built_ido(project, texts)
     for rel, tid in wanted:
         target = project.root / rel
         if toolchains.installed(tid) is None:
@@ -192,6 +193,45 @@ def _provide_compiler_dirs(project) -> None:
         elif source.is_dir():
             target.parent.mkdir(parents=True, exist_ok=True)
             target.symlink_to(source, target_is_directory=True)
+
+
+def _provide_built_ido(project, texts: str) -> None:
+    """A project that builds its own IDO from the IRIX binaries (`build/recomp/5.3/cc: build/recomp/recomp`, Perfect
+    Dark's) is given the installed one, as a *copy* in that folder: the recompiled one crashes here ("mmap: Invalid
+    argument"), and a folder link would let the Makefile's own rules write their output through it into the installed
+    compiler. The copies are newer than what the rules depend on (stand-ins for the tools that would be built), so
+    make considers each program up to date and runs nothing."""
+    import time
+
+    found = re.findall(r"^((?:[\w.-]+/)*build/(?:[\w.-]+/)*(5\.3|7\.1)/cc)[ \t]*:([^=\n]*)(?:\n|$)", texts, re.M)
+    now = time.time()
+    for rel, version, prerequisites in found:
+        tid = f"ido-{version}"
+        if toolchains.installed(tid) is None:
+            continue
+        source = toolchains.require(tid)
+        folder = project.root / rel.rsplit("/", 1)[0]
+        if not (source / "cc").is_file():
+            continue
+        if folder.is_symlink() and _in_installed_toolchains(folder):
+            folder.unlink()  # (an earlier link: a rule would have written the installed compiler)
+        if (folder / "cc").exists() and not folder.is_symlink():
+            continue
+        if folder.exists() and not folder.is_dir():
+            folder.unlink()
+        folder.mkdir(parents=True, exist_ok=True)
+        for wanted in prerequisites.split():
+            stub = project.root / wanted
+            if "%" in wanted or "$" in wanted or stub.exists() or not wanted.startswith("build/"):
+                continue
+            stub.parent.mkdir(parents=True, exist_ok=True)
+            stub.write_text("", encoding="utf-8")
+            stub.chmod(0o755)
+            os.utime(stub, (now, now))
+        for item in source.iterdir():
+            if item.is_file() and item.suffix != ".c" and not (folder / item.name).exists():
+                shutil.copy2(item, folder / item.name)
+                os.utime(folder / item.name, (now + 5, now + 5))
 
 
 def _wrap_foreign_ido(project) -> None:
