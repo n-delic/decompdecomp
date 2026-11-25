@@ -244,6 +244,17 @@ def rt64_adapter() -> Path | None:
     return next((library for library in candidates if library.is_absolute() and library.is_file()), None)
 
 
+def recomp_ui_library() -> Path | None:
+    """recomp-ui's menu model for the game's own window, if tools/build_recomp_ui.py has built it: the configured
+    override (DECOMPNET_RECOMP_UI), else the toolchains folder's copy. Without it the window's built-in menu runs."""
+    from ... import toolchains
+
+    name = "libdecompnet-recomp-ui" + (".dylib" if sys.platform == "darwin" else ".so")
+    override = os.environ.get("DECOMPNET_RECOMP_UI")
+    candidates = (Path(override).expanduser(),) if override else (toolchains.root() / "recomp-ui" / name,)
+    return next((library for library in candidates if library.is_absolute() and library.is_file()), None)
+
+
 def runtime_sdk_patterns(image: bytes, hosted: set[str]):
     from .port_relocated import patterns
 
