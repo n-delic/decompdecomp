@@ -127,25 +127,35 @@ def cleanup_net(net, monkeypatch):
     return net
 
 
-def test_cleanup_only_moves_exact_matches_and_preserves_sources(cleanup_net, monkeypatch):
+def test_cleanup_removes_a_profile_only_when_every_function_moves(cleanup_net, monkeypatch):
     from decompnet.app import compiler_cleanup
     from decompnet.project import compiler_for
     n = cleanup_net
     before = [tuple(r) for r in n.store.all('SELECT name,status,matched_source FROM functions ORDER BY id')]
     monkeypatch.setattr(n, '_judge_with', lambda proj, fn, tc, flags, source: (fn['name'] == 'f0', None, ''))
+    monkeypatch.setattr(n, 'regression_test', lambda *a, **k: pytest.fail('nothing moved, so nothing to recheck'))
+    out = compiler_cleanup.cleanup(n, 'demo', log=lambda _: None)
+    # f1 cannot leave -O1, so the profile stays and f0 is not moved on its own.
+    assert out['changed'] == [] and out['profiles_after'] == out['profiles_before']
+    assert compiler_for(n.cfg(n.project_row('demo')), 0x80001000)['flags'] == ['-O1']
+    assert before == [tuple(r) for r in n.store.all('SELECT name,status,matched_source FROM functions ORDER BY id')]
+
+
+def test_cleanup_moves_all_functions_of_a_removable_profile(cleanup_net, monkeypatch):
+    from decompnet.app import compiler_cleanup
+    from decompnet.project import compiler_for
+    n = cleanup_net
+    monkeypatch.setattr(n, '_judge_with', lambda proj, fn, tc, flags, source: (True, None, ''))
     checked = []
     def regression(proj, header, only, **kwargs):
         checked.extend(fn['name'] for fn in only)
-        assert compiler_for(n.cfg(proj), only[0]['vram'])['flags'] == ['-O2']
         return []
     monkeypatch.setattr(n, 'regression_test', regression)
     out = compiler_cleanup.cleanup(n, 'demo', log=lambda _: None)
-    assert [r['function'] for r in out['changed']] == ['f0']
-    assert checked == ['f0']
+    assert {r['function'] for r in out['changed']} == {'f0', 'f1'}
+    assert out['profiles_after'] == 1 and 'f0' in checked
     cfg = n.cfg(n.project_row('demo'))
-    assert compiler_for(cfg, 0x80001000)['flags'] == ['-O2']
-    assert compiler_for(cfg, 0x80001010)['flags'] == ['-O1']
-    assert before == [tuple(r) for r in n.store.all('SELECT name,status,matched_source FROM functions ORDER BY id')]
+    assert compiler_for(cfg, 0x80001000)['flags'] == ['-O2'] and compiler_for(cfg, 0x80001010)['flags'] == ['-O2']
 
 
 def test_cleanup_final_guard_rejects_regression(cleanup_net, monkeypatch):
@@ -241,7 +251,7 @@ def test_selected_profile_checks_all_matches_against_only_default(cleanup_net, m
         return fn['name'] == 'f0', SimpleNamespace(score=0), ''
     monkeypatch.setattr(n, '_judge_with', judge)
     monkeypatch.setattr(n, 'regression_test', lambda *a, **k: [])
-    out = compiler_cleanup.cleanup(n, 'demo', rare_limit=1, log=lambda _: None,
+    out = compiler_cleanup.cleanup(n, 'demo', log=lambda _: None,
                                    source_profile={'toolchain': 'ido-5.3', 'flags': ['-O1']})
     assert calls == [('f0', ['-O2']), ('f1', ['-O2'])]
     assert [item['function'] for item in out['changed']] == ['f0']
