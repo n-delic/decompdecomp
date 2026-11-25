@@ -928,3 +928,8 @@ the game has started that task) left the race window exactly as it was (614-616 
 console's 603, 608, 613, 618. The console updates them every 3 retraces (watch on the line points: retraces 482, 485, 488...) and starts tasks 603-607 at retrace 542, so the port's
 logic is not simply running on more retraces. Still untested: the retrace count at each logic update in the port (a log in the host when the game writes the line points), and
 whether the game's logic is paced by something else the console has, such as its audio interface or a timer the port's virtual time does not replay.
+
+**Raising the console's retraces before a task starts, from the thread that starts it, stalls the game (tried, reverted).** The change (host.c, `retrace()` called in `osSpTaskStartGo` until
+the retrace the console was at) left the game's line points unchanged after task 600 and every compared picture 95-100% different: the game does not run when its retraces are fired from inside the
+call that starts a task. A way to give the threads the retraces before the task would have to let them run first (a yield, or the retraces raised by the host's loop with the game held in
+`osSpTaskStartGo` until they have been handled), which is not what was tried.
