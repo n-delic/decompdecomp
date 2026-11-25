@@ -673,3 +673,16 @@ def test_byte_exact_builtin_sdk_evidence_resolves_nonreturning_assembly_extent()
     assert repair.reason(console, {**row, 'target': raw(0x00002021, 0x0c000104, 0)})
     row['meta'] = json.dumps({'verified_assembly': proof, 'boundary_tail_review': 'Independent end evidence'})
     assert repair.reason(console, row) == 'Independent end evidence'
+
+
+@pytest.mark.parametrize('archived',[False,True])
+def test_a_call_in_archived_padding_does_not_keep_pieces_apart(tmp_path,monkeypatch,archived):
+    """An N64 game's three filler words, archived as padding by a person, held a `jal` into the second piece of a
+    function, and Apply safe fixes would never join it: archived words never run."""
+    net,_=layout(tmp_path,monkeypatch,[('start',[STEP,STEP],'open'),('rest',[JR_RA,NOP],'open'),
+                                       ('filler',[jal(BASE+8),NOP],'open'),('after',[JR_RA,NOP],'open')])
+    if archived:
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET meta=? WHERE name='filler'",(json.dumps({'gone':True,'boundary_classification':'padding'}),))
+    fixed=[(f['flagged'],f['action']) for f in repair.apply_safe(net,'game')['fixed']]
+    assert (('start','join_previous') in fixed)==archived

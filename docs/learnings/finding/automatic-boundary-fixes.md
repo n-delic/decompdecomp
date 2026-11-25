@@ -42,7 +42,23 @@ Negative control: every matched function's extent is proven by the judge, so a f
 positive. Run as if unmatched over 30,339 matched functions of 36 N64 games (built with several compilers) and the
 homemade N64 demo's 96 symbol extents: 0 flagged.
 
+Three more rules (a follow-up on the same game, after a person had applied one start trim by hand): a value the
+stray words compute and lose before anything reads it (an ALU result is hard evidence; a load soft, since a device
+register's read is a load nobody uses), which found the start word that only loads from an argument; an empty
+function (`jr $ra; nop`) other code calls with another function's words after it in its extent, split after its
+return, which with the lost-value rule takes the swallowed function's three cuts to the end; and a retained tail a
+person's adjustment left for review, kept when other code points at its first word; and a function cut where its
+first part opens the frame and branches into the rest, which nothing else enters, joined (it fired once over the
+93 games, on that function). Functions set aside only by their shape (asm_reason's "writes $s3 before saving it",
+no verdict) are fixed too: four were set aside for the very words a trim cuts off. Negative control: 41,251
+matched functions of 93 N64 games, 0 flagged.
+
 Failed experiments that would otherwise be repeated:
+
+- Splitting after any early return nothing branches past (not only an empty function's): 110 more functions split
+  over the 93 games, most followed by a lone unreachable `jr $ra; nop` their compiler left, or by data.
+- A delay slot's write counted as overwriting the value: a branch-likely's slot runs only when it branches, so
+  `v0 = a1; if (...) v0 = a0;` read as a lost value (two real starts of a role-playing game would have been trimmed).
 
 - A stored word in the image equal to the entry, counted as a callback: 7 false positives over the 36 games (data
   that happens to equal an address). Stored words now only ever block a fix (they may be a jump table).

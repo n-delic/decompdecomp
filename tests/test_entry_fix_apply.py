@@ -220,3 +220,52 @@ def test_the_review_dialog_turns_it_off_and_apply_safe_fixes_still_applies_on_re
     from decompnet.network import NetworkError
     with pytest.raises(NetworkError, match='Choose whether'):
         repair.set_entry_fixes(net, 'game', 'no')
+
+
+def test_a_retained_tail_is_confirmed_and_an_undone_confirmation_stays_undone(tmp_path, monkeypatch):
+    """A person's adjust left `boundary_tail_...` waiting for review (its keep never committed on an N64 game): a
+    matched callback builder points at its first word, so Check again keeps it and agents may claim it."""
+    tail = BASE + 0x10
+    net, _ = project(tmp_path, monkeypatch, [
+        ('prev', [addiu(V0, 0, 1), addiu(V0, 0, 2), JR_RA, NOP], 'matched', []),
+        ('boundary_tail_80001010', body(), 'open', []),
+        ('caller', calling(BASE + 0x100), 'matched', [[0, 5, tail], [4, 6, tail]])])
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET meta=? WHERE name='boundary_tail_80001010'",
+                   (json.dumps({'boundary_tail_review': 'Retained tail from a reviewed boundary adjustment.'}),))
+    fid = net._function('boundary_tail_80001010', 'game')['id']
+    assert fid in repair.blocked(net, net.project_row('game'))
+    result = repair.apply_entry_fixes(net, 'game')
+    assert [(f['kind'], f['function']) for f in result['fixed']] == [('keep', 'boundary_tail_80001010')]
+    assert fid not in repair.blocked(net, net.project_row('game'))
+    repair.undo(net, 'game', repair.audit(net, 'game')['history'][0]['key'])
+    assert fid in repair.blocked(net, net.project_row('game'))
+    assert repair.apply_entry_fixes(net, 'game')['fixed'] == []
+
+
+def test_a_function_set_aside_only_for_its_stray_words_is_fixed(tmp_path, monkeypatch):
+    """asm_reason filed four functions of an N64 game as assembly for the very words a trim cuts off ("writes $s3
+    before saving it"): with no verdict on them, the fix applies; a person's or agents' verdict keeps it a suggestion."""
+    for where, meta, fixed in (('a', {'asm_code': 'writes s3 before saving it'}, True),
+                               ('b', {'asm_code': '2 agents found no C makes it', 'not_c': {'m': {'why': 'x'}}}, False)):
+        net, _ = stray_start(tmp_path / where, monkeypatch, status='asm')
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET meta=? WHERE name='f'", (json.dumps(meta),))
+        result = repair.apply_entry_fixes(net, 'game')
+        assert bool(result['fixed']) == fixed
+        if fixed:
+            assert net._function('func_80001014', 'game')['status'] == 'open'
+
+
+def test_the_rest_of_a_function_is_joined_and_an_undone_join_stays_undone(tmp_path, monkeypatch):
+    first = [addiu(SP, SP, -0x18), sw(RA, SP, 0x10), 0x10800005, 0, jal(BASE + 0x100), 0, j(BASE + 0x30), 0]
+    rest = [addiu(V0, 0, 1), lw(RA, SP, 0x10), 0x03E00008, addiu(SP, SP, 0x18)]
+    net, _ = project(tmp_path, monkeypatch, [
+        ('prev', [addiu(V0, 0, 1), addiu(V0, 0, 2), 0x03E00008, 0], 'matched', []),
+        ('a', first, 'open', []), ('b', rest, 'open', [])])
+    result = repair.apply_entry_fixes(net, 'game')
+    assert [(f['kind'], f['function']) for f in result['fixed']] == [('join_previous', 'a')]
+    assert net._function('a', 'game')['size'] == 48 and net._function('b', 'game')['gone_mark'] is not None
+    repair.undo(net, 'game', repair.audit(net, 'game')['history'][0]['key'])
+    assert net._function('a', 'game')['size'] == 32
+    assert repair.apply_entry_fixes(net, 'game')['fixed'] == []

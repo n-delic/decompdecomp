@@ -26,8 +26,13 @@ The start rule. The stray words [S, E) and the real entry E = S + 4k (k <= 3) mu
   - and either other code enters E (a callback `lui`/`addiu` pair, a `jal`, a stored word), or the stray words
     contradict being an entry outright (`contradiction`: they read a temporary nobody set, use a callee-saved
     register's value, give back a frame never taken, open a second frame, trap with `break`, load `$ra`, call out
-    before saving `$ra`, jump to themselves or over the frame, or store into the caller's frame).
+    before saving `$ra`, jump to themselves or over the frame, store into the caller's frame, or compute a value
+    that is lost before anything reads it: an ALU result is hard evidence, a load soft, as a device register's read
+    is a load nobody uses).
 Whole pieces of at most three words that hold the same way between two functions are archived as padding.
+An empty function (`jr $ra; nop`) other code points at, with other code after it in its extent, is split after its
+return; the code after it is judged again next round. A retained tail a reviewed adjustment left for review
+(`boundary_tail_review`) is kept when other code points at its first word and it reads as a function from there.
 
 The end rule. Inside a function at E (not its first word), all must hold:
   - the two words before E are an unconditional transfer and its delay slot (the loop that never returns);
@@ -36,7 +41,8 @@ The end rule. Inside a function at E (not its first word), all must hold:
   - [E, end) gives its frame back before `jr $ra` or never returns, and opens no second frame.
 Each threshold was checked on real games: a matched function's extent is proven by the judge, so a fix proposed for
 one is a false positive. Over 30,339 matched functions of 36 N64 games (built with several compilers), read as if
-unmatched, none is flagged; on the game above 25 of the 28 are fixed (docs/learnings/finding/automatic-boundary-fixes.md)."""
+unmatched, none is flagged (41,252 of 93 N64 games with the lost-value, empty-function and retained-tail rules); on
+the game above 25 of the 28 are fixed, and the rest but one with those rules (docs/learnings/finding/automatic-boundary-fixes.md)."""
 import struct
 from dataclasses import dataclass, field
 
@@ -46,6 +52,7 @@ MAX_WORDS = 3  # `func + 4`, `+ 8`, `+ 0xC`: the stray runs seen are at most thr
 SP, RA, GP = 29, 31, 28
 ARGS = frozenset({0, 4, 5, 6, 7, GP, SP, RA})  # what a caller leaves defined
 SAVED = frozenset(range(16, 24)) | {30}  # callee-saved: read only to save them
+CALLER_SAVED = frozenset({1, 2, 3, 24, 25}) | frozenset(range(8, 16))  # lost across a call (a0-a3 the callee reads)
 FP_ARGS = frozenset({12, 13, 14, 15})
 FP_SAVED = frozenset(range(20, 32))
 POINTER_RELOCS = (2, 4, 5, 6)  # 32-bit word, 26-bit jump, %hi, %lo
@@ -66,7 +73,8 @@ class Entry:
 class Fix:
     name: str
     vram: int
-    kind: str  # 'trim_start' (the function starts at `at`), 'padding' (the whole piece), 'split_end' (a new function at `at`)
+    kind: str  # 'trim_start' (the function starts at `at`), 'padding' (the whole piece), 'split_end' (a new function
+    # at `at`), 'keep' (a retained tail confirmed as an entry), 'join_previous' (the rest of the function at `at`)
     at: int
     confidence: str  # 'auto' | 'suggest'
     evidence: list = field(default_factory=list)  # sentences, strongest first
@@ -79,6 +87,10 @@ class Fix:
                     f'{words} left in the image as padding')
         if self.kind == 'padding':
             return f'{self.name} is leftover words between two functions; it is archived as padding'
+        if self.kind == 'join_previous':
+            return f'{self.name} is the rest of the function at 0x{self.at:08X}; it is joined to it'
+        if self.kind == 'keep':
+            return f'{self.name} is a function from its first word; its review is cleared so agents can work on it'
         return f'{self.name} swallowed the next function: a new function starts at 0x{self.at:08X}'
 
 
@@ -150,9 +162,42 @@ class Why(str):
         return self
 
 
+def _overwritten(words, i, reg):
+    """Whether the value words[i] writes to `reg` is lost before anything reads it: a later instruction of the straight
+    line sets `reg` again, or (for a register a call doesn't keep) the line calls out first. Compiled code doesn't
+    compute a value nobody reads; a word left over from the function before often does."""
+    for j in range(i + 1, len(words)):
+        reads, written = _regs(rabbitizer.Instruction(words[j]))[:2]
+        if reg in reads:
+            return False
+        if rabbitizer.Instruction(words[j]).hasDelaySlot():
+            if _try(rabbitizer.Instruction(words[j]).isBranchLikely):
+                return False  # its delay slot runs only when it branches: the value lives on the other path
+            if j + 1 < len(words):
+                reads, written = _regs(rabbitizer.Instruction(words[j + 1]))[:2]
+                if reg in reads:
+                    return False
+                if written == reg:
+                    return True
+            return _calls(words[j]) and reg in CALLER_SAVED
+        if written == reg:
+            return True
+    return False
+
+
 def contradiction(words, base, stop, *, frame_after=False):
-    """Why the straight-line code words[0:stop] can't be the start of a compiled function (the first reason, a
-    `Why`), or None. `frame_after`: the function's real frame opens at words[stop], so a jump over it contradicts."""
+    """Why the straight-line code words[0:stop] can't be the start of a compiled function (a `Why`: the first hard
+    reason, else the first soft one), or None. `frame_after`: the function's real frame opens at words[stop], so a
+    jump over it contradicts. Words after `stop` are read only to see whether a value the stray words compute is used."""
+    soft = None
+    for why in _reasons(words, base, stop, frame_after):
+        if why.hard:
+            return why
+        soft = soft or why
+    return soft
+
+
+def _reasons(words, base, stop, frame_after):
     defined, fdefined = set(ARGS), set(FP_ARGS)
     saved_ra = framed = False
     for i in range(stop):
@@ -164,44 +209,48 @@ def contradiction(words, base, stop, *, frame_after=False):
         base_reg = word >> 21 & 31
         data = word >> 16 & 31 if store else None
         if name in ('break', 'syscall') or _try(ins.isTrap):
-            return Why(f'`{name}` traps; a function never begins with one (the previous one\'s divide check left it)')
+            yield Why(f'`{name}` traps; a function never begins with one (the previous one\'s divide check left it)')
         step = _sp_step(word)
         if step is not None and step > 0 and not framed:
-            return Why(f'gives back a {step:#x} frame that was never taken')
+            yield Why(f'gives back a {step:#x} frame that was never taken')
         if step is not None and step < 0 and framed:
-            return Why('opens a second stack frame; a compiled function opens one')
+            yield Why('opens a second stack frame; a compiled function opens one')
         if step is not None and step < 0:
             framed = True
         if store and base_reg == SP and not framed and (word & 0xFFFF) >= 0x10 and (word & 0xFFFF) < 0x8000:
-            return Why(f'stores into the caller\'s frame at {word & 0xFFFF:#x}($sp) before opening its own')
+            yield Why(f'stores into the caller\'s frame at {word & 0xFFFF:#x}($sp) before opening its own')
         for reg in reads:
             if reg in SAVED and not (store and reg == data and base_reg == SP) and reg not in defined:
-                return Why(f'uses ${NAMES[reg]}, a callee-saved register, before setting it', hard=False)
+                yield Why(f'uses ${NAMES[reg]}, a callee-saved register, before setting it', hard=False)
             if reg not in defined and reg not in SAVED:
-                return Why(f'reads ${NAMES[reg]}, which no caller sets', hard=False)
+                yield Why(f'reads ${NAMES[reg]}, which no caller sets', hard=False)
         for reg in fread:
             if reg in FP_SAVED and not (store and base_reg == SP) and reg not in fdefined:
-                return Why(f'uses $f{reg}, a callee-saved register, before setting it', hard=False)
+                yield Why(f'uses $f{reg}, a callee-saved register, before setting it', hard=False)
             if reg not in fdefined and reg not in FP_SAVED:
-                return Why(f'reads $f{reg}, which no caller sets', hard=False)
+                yield Why(f'reads $f{reg}, which no caller sets', hard=False)
         if hilo and not any(_try(rabbitizer.Instruction(w).modifiesLO) for w in words[:i]):
-            return Why(f'`{name}` reads a multiply result nothing computed', hard=False)
+            yield Why(f'`{name}` reads a multiply result nothing computed', hard=False)
         if written == RA and not _try(ins.doesLink):
-            return Why('sets $ra before saving it, so it could never return to its caller')
+            yield Why('sets $ra before saving it, so it could never return to its caller')
         if store and data == RA and base_reg == SP:
             saved_ra = True
         if _calls(word) and not saved_ra:
-            return Why(f'calls out (`{name}`) before saving $ra, so it could never return to its caller')
+            yield Why(f'calls out (`{name}`) before saving $ra, so it could never return to its caller')
         target = _target(word, at)
         if target is not None and _unconditional(word):
             if target == base:
-                return Why('jumps to itself: a loop that never returns, the end of the function before')
+                yield Why('jumps to itself: a loop that never returns, the end of the function before')
             if frame_after and target > base + 4 * stop:
-                return Why('jumps over the frame the function opens, which its epilogue then gives back')
+                yield Why('jumps over the frame the function opens, which its epilogue then gives back')
+        # A value computed and then lost (an ALU result: hard; a load: soft, since a volatile read of a device
+        # register is a load nobody uses). Not in a delay slot, which may be used on the other path only.
+        if (written is not None and written not in (0, SP, RA) and not ins.hasDelaySlot()
+                and not (i and rabbitizer.Instruction(words[i - 1]).hasDelaySlot()) and _overwritten(words, i, written)):
+            yield Why(f'computes ${NAMES[written]} and loses it before anything reads it', hard=not _try(ins.doesLoad))
         if written is not None:
             defined.add(written)
         fdefined |= fwrite
-    return None
 
 
 NAMES = ('zero at v0 v1 a0 a1 a2 a3 t0 t1 t2 t3 t4 t5 t6 t7 s0 s1 s2 s3 s4 s5 s6 s7 t8 t9 k0 k1 gp sp fp ra').split()
@@ -259,8 +308,10 @@ def _handwritten(words, base):
     return None
 
 
-def decide(entries, *, big_endian=True, word_at=None, stored=frozenset()):
+def decide(entries, *, big_endian=True, word_at=None, stored=frozenset(), reviewed=frozenset()):
     """{function name: Fix} for the unmatched functions whose start or end the bytes settle (or suggest).
+    `reviewed`: the names of tails a reviewed boundary adjustment kept for review (`boundary_tail_review`); one whose
+    start other code points at and that reads as a function from there is kept ('keep'), so agents may claim it.
     `word_at(address)`: the image's word there, or None, for the code before a function no live entry covers.
     `stored`: code addresses some aligned word of the image holds (function tables, a switch's jump table): an
     address there is entered, whatever the relocations say. Asked only of the few words a fix would cut off, so it
@@ -318,10 +369,43 @@ def decide(entries, *, big_endian=True, word_at=None, stored=frozenset()):
         if any(address in stored for address in range(e.vram, cut, 4)):
             continue  # a word of data points into the words to cut off (a table): they may be entered after all
         if fix is None:
-            fix = _end(e, words, pointed, flow)
+            fix = _end(e, words, pointed, flow) or _returned_early(e, words, pointed, flow)
+        if fix is None and e.name in reviewed:
+            fix = _entry(e, words, pointed)
         if fix is not None:
             found[e.name] = fix
+    for before, after in zip(entries, entries[1:]):
+        if before.name not in found and after.name not in found and (fix := _runs_on(before, after, pointed, shared, big_endian)):
+            found[after.name] = fix
     return found
+
+
+def _runs_on(before, after, pointed, shared, big_endian):
+    """`after` is the rest of `before`: `before` opens a frame and branches into `after`, which nothing else enters,
+    opens no frame of its own and gives `before`'s frame back (an N64 game cut one function where its first part
+    ended in a jump, though that part's own branch went to the next word). Compiled code never branches into another
+    function (a `j` may, as a tail call: only branches count). Fix.at is `before`'s start: the joined function's."""
+    if 'matched' in (before.status, after.status) or before.vram + len(before.code) != after.vram:
+        return None
+    first, rest = _words(before.code, big_endian), _words(after.code, big_endian)
+    lo, hi = after.vram, after.vram + 4 * len(rest)
+    if any(a in shared for a in range(before.vram, hi, 4)):
+        return None
+    into = sorted({before.vram + 4 * i for i, w in enumerate(first) if w >> 26 != 2 and not _calls(w)
+                   and (t := _target(w, before.vram + 4 * i)) is not None and lo <= t < hi})
+    if not into or _callers(after, after.vram, pointed) or _sp_step(rest[0]) is not None:
+        return None
+    words = first + rest
+    if not _frame_shape(words, 0) or any(_sp_step(w) is not None and _sp_step(w) > 0 for w in first):
+        return None  # `before` gives its frame back only in `after`: one function
+    if any(words[i] & 0xFFFF8000 == 0x27BD8000 and words[i - 2] == JR_RA for i in range(2, len(words))):
+        return None  # a return, then a new frame: another function starts in there
+    asm = _handwritten(words, before.vram)
+    return Fix(after.name, after.vram, 'join_previous', before.vram, 'suggest' if asm else 'auto', [
+        f'{before.name} branches into {after.name} (from 0x{into[0]:08X}); compiled code never branches into another '
+        'function, and nothing else points at it.',
+        f'{before.name} opens a frame that only {after.name} gives back, and {after.name} opens none of its own.'],
+        f'`{asm}` is an instruction no compiler emits: this may be hand-written assembly, so it is left for review.' if asm else '')
 
 
 def _start(e, words, pointed, entered, returned_before, starts, owner_words):
@@ -383,6 +467,49 @@ def _start(e, words, pointed, entered, returned_before, starts, owner_words):
                        'a fragment of compiled code, so it is left for review.')
         return Fix(e.name, S, 'trim_start', E, confidence, evidence, warning)
     return None
+
+
+def _callers(e, address, pointed):
+    return sorted({name for name, _ in pointed.get(address, ())} - {e.name})
+
+
+def _entry(e, words, pointed):
+    """A retained tail confirmed as an entry: other code points at its first word, it opens the frame its epilogue
+    gives back (or is a frameless leaf), and its straight line reads nothing a caller leaves undefined."""
+    callers = _callers(e, e.vram, pointed)
+    stop = _closed(words, e.vram, 0)
+    shape = _frame_shape(words, 0, stop) or _leaf_shape(words, 0, stop)
+    line = _straight(words, 0)
+    if not callers or not shape or contradiction(line, e.vram, len(line)) is not None:
+        return None
+    return Fix(e.name, e.vram, 'keep', e.vram, 'auto', [
+        f'{", ".join(callers[:3])}{" and others" if len(callers) > 3 else ""} point{"s" if len(callers) == 1 else ""} '
+        f'at 0x{e.vram:08X}, the first word of this retained tail.',
+        f'0x{e.vram:08X} ' + ('opens the frame the function\'s epilogue gives back.' if _sp_step(words[0]) is not None
+                             else 'begins a frameless leaf that ends on its return.')])
+
+
+def _returned_early(e, words, pointed, flow):
+    """An empty function (`jr $ra; nop`) other code calls, with the words of other code after it inside its extent:
+    nothing after the return can run as part of it, so they are split off (an N64 game had one; their own start is
+    judged again next round). Only this shape: a function returning further in may be followed by an unreachable
+    `jr $ra` its compiler left, or by data (110 functions of 93 N64 games would have been split that way)."""
+    S = e.vram
+    if not _callers(e, S, pointed):
+        return None
+    stop = 2
+    if len(words) < stop + 3 or words[0] != JR_RA or words[stop] in (0, JR_RA) or not any(_unconditional(w) for w in words[stop:-1]):
+        return None  # zeros, another bare return or something that never ends: alignment or data, not a function
+    C = S + 4 * stop
+    if any(src >= C for t in range(S, C, 4) for src in flow.get(t, ())):
+        return None  # the code after the return branches back into it: they are one piece of code
+    asm = _handwritten(words, S)
+    return Fix(e.name, S, 'split_end', C, 'suggest' if asm else 'auto', [
+        f'{", ".join(_callers(e, S, pointed)[:3])} point at 0x{S:08X}, and its code returns at 0x{C - 8:08X} '
+        'with no branch or jump table reaching beyond.',
+        f'Nothing from before 0x{C:08X} runs into the code after it, so that code is not part of {e.name}.'],
+        f'`{asm}` is an instruction no compiler emits: this may be hand-written assembly, so it is left for review.'
+        if asm else '')
 
 
 def _end(e, words, pointed, flow):
