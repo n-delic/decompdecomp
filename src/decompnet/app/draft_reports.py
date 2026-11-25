@@ -7,7 +7,7 @@ import time
 PREFIX = 'machine-draft:'
 GENERATION_PREFIX = 'machine-draft-generation:'
 # Bump when optional initial-draft trials change, so completed misses can retry.
-REPAIR_REVISION = 19  # 19: see DRAFT_REVISION; 18: see DRAFT_REVISION; 17: see DRAFT_REVISION; 16: see DRAFT_REVISION; 15: see DRAFT_REVISION; 14: see DRAFT_REVISION; 13: see DRAFT_REVISION; 12: more m2c draft repairs (see DRAFT_REVISION); 11: m2c drafts that never compiled (64-bit FPU doubles, KSEG0-stripped jump tables, undeclared slots, pointer and void types, argument counts) retry; 7: drafts repaired from the compiler's diagnostics (app/compile_error_repair.py), 8: assembly set aside and entry loops drafted, 9: oversized drafts compacted, a self-call's arguments converted; 10: the source guard admits a 190 KB draft; so functions with no saved C retry
+REPAIR_REVISION = 20  # 20: see DRAFT_REVISION. 19: see DRAFT_REVISION; 18: see DRAFT_REVISION; 17: see DRAFT_REVISION; 16: see DRAFT_REVISION; 15: see DRAFT_REVISION; 14: see DRAFT_REVISION; 13: see DRAFT_REVISION; 12: more m2c draft repairs (see DRAFT_REVISION); 11: m2c drafts that never compiled (64-bit FPU doubles, KSEG0-stripped jump tables, undeclared slots, pointer and void types, argument counts) retry; 7: drafts repaired from the compiler's diagnostics (app/compile_error_repair.py), 8: assembly set aside and entry loops drafted, 9: oversized drafts compacted, a self-call's arguments converted; 10: the source guard admits a 190 KB draft; so functions with no saved C retry
 
 
 def generation(net, fid, *, project_id=None):

@@ -55,3 +55,16 @@ def test_a_label_with_hex_words_in_its_suffix_is_a_local_label():
 def test_subroutine_arguments_m2c_names_are_declared():
     out = seeds.declare_unset_reads('void f(void) {\n    g(subroutine_arg3);\n}\n', 'f')
     assert 's32 subroutine_arg3;' in out
+
+
+def test_a_float_register_read_before_it_is_set_is_an_unset_float_local(monkeypatch):
+    class Done:
+        returncode, stderr = 0, ''
+        stdout = ("void f(f32 arg0) {\n    f32 y;\n\n"
+                  "    y = arg0 * GLUE_F64(M2C_ERROR(/* Read from unset register $f5 */), 0U) + M2C_ERROR(/* Read from unset register $f16 */);\n}\n")
+    monkeypatch.setattr(seeds, '_execute_m2c', lambda argv, timeout: Done())
+    monkeypatch.setattr(seeds, 'available', lambda: True)
+    monkeypatch.setattr(seeds.toolchains, 'venv_bin', lambda *a: '/bin/true')
+    out = seeds.run_m2c('glabel f\nnop\n', 'f', 'mips-ido-c', valid=True, strict=True)
+    assert 'M2C_ERROR' not in out and 'GLUE' not in out
+    assert 'y = arg0 * unset_f5 + unset_f16;' in out and 'f32 unset_f5;' in out and 'f32 unset_f16;' in out

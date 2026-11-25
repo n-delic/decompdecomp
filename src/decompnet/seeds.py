@@ -524,6 +524,7 @@ def drop_saved_register_reads(source: str) -> str:
     return re.sub(r"^[ \t]*\w+ = saved_reg_\w+;[ \t]*\n", "", source, flags=re.M)
 
 
+_UNSET_DOUBLE = re.compile(r"GLUE_F64\(M2C_ERROR\(/\* Read from unset register \$(f\w+) \*/\), 0U\)")
 _UNSET_REGISTER = re.compile(r"M2C_ERROR\(/\* Read from unset register \$(\w+) \*/\)")
 _UNSET_READ = re.compile(r"\b(?:unk)?sp[0-9A-Fa-f]+\b|\bsaved_reg_\w+\b|\bunset_\w+\b|\bsubroutine_arg\d+\b|(?<![\w.])sp\b")
 _NOT_A_TYPE = {"return", "else", "case", "goto", "do", "sizeof"}
@@ -549,6 +550,8 @@ def declare_unset_reads(source: str, name: str) -> str:
         if found == "sp":  # the frame's own address (`var_t1 = sp;`): a buffer
             return "    u8 sp[256];\n"
         # a slot m2c indexes (`&sp10[0]`) is a buffer, not a word
+        if found.startswith("unset_f"):  # a floating-point register nothing set
+            return f"    f32 {found};\n"
         return f"    s32 {found}[16];\n" if re.search(rf"\b{found}\[", body) else f"    s32 {found};\n"
     lines = "".join(declaration(found) for found in missing)
     return source[:head.end()] + "\n" + lines.rstrip("\n") + source[head.end():]
@@ -718,10 +721,12 @@ def _run_m2c(asm_text: str, name: str, target: str, context_header: str = "", da
         errors = [line.strip() for line in out.splitlines()
                   if re.match(r"\s*(?://\s*Error:|Bad function call operand\b)", line)
                   or (valid and re.search(r"\bM2C_ERROR\s*\(", line))]
-        if errors and valid and out.count("Read from unset register $f") == 0:
+        if errors and valid and ("Read from unset register $f" not in out or drop_float_saves(original) == original):
+            # (a prologue's float saves come out of the assembly first, in run_m2c: they are not reads)
             # a register the code reads before anything set it (an argument past the ones m2c saw, a temporary the caller
             # left): the original read whatever was there, so the draft reads an unset local
-            replaced = _UNSET_REGISTER.sub(lambda found: "unset_" + found[1], out)
+            replaced = _UNSET_DOUBLE.sub(lambda found: "unset_" + found[1], out)  # (a double whose half nothing set)
+            replaced = _UNSET_REGISTER.sub(lambda found: "unset_" + found[1], replaced)
             if replaced != out:
                 out = replaced
                 errors = [line.strip() for line in out.splitlines()
