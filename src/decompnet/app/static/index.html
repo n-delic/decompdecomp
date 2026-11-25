@@ -943,8 +943,7 @@
           </div><div id="compilerParts"></div>
           <details id="compilerCleanup" class="compiler-cleanup more" hidden>
             <summary>Reduce the number of compiler profiles</summary><div class="more-body">
-            <label>Rare profiles: at most <input id="compilerRareLimit" type="number" min="1" max="25" value="3"> functions</label>
-            <p class="small muted">Test matched C from rare profiles against up to three more-common installed profiles. Change settings only when the same source matches byte for byte. Busy functions, shared overlay addresses and unfinished drafts keep their settings. The final check protects every affected match.</p>
+            <p class="small muted">Find the fewest compiler profiles that keep every match byte for byte. Starting with the least used profile, each of its matched functions is tried with the same C under the profiles that remain; a profile is removed only when all its functions match under another one. Profiles with unmatched, busy or shared-overlay functions stay. The final check protects every affected match.</p>
             <button id="compilerCleanupGo" class="ghost" type="button">Clean up compiler settings</button>
             <p id="compilerCleanupResult" class="small" role="status"></p>
             <pre id="compilerCleanupLog" class="joblog" hidden></pre>
