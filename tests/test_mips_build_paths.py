@@ -167,3 +167,20 @@ def test_a_makefile_or_readme_names_the_rom_when_nothing_else_does(tmp_path):
     (root / "Makefile").write_text("all:\n\ttrue\n")
     (root / "README.md").write_text("Copy your rom to roms/baserom.us.z64 and run ./setup\n")
     assert ForkProject(root).needs(None)["path"] == "roms/baserom.us.z64"
+
+
+def test_a_missing_python_tool_is_installed_into_the_project_environment(tmp_path, monkeypatch):
+    from decompnet.forks import project as project_module
+    from decompnet.forks.project import ForkProject
+
+    root = tmp_path / "p"
+    (root / ".venv" / "bin").mkdir(parents=True)
+    (root / ".venv" / "pyvenv.cfg").write_text("")
+    (root / ".venv" / "bin" / "python3").write_text("")
+    fp = ForkProject(root)
+    ran = []
+    monkeypatch.setattr(project_module, "_tool", lambda name: "/bin/uv")
+    monkeypatch.setattr(fp, "run", lambda cmd, log=print, **kw: (ran.append(cmd) or (True, "")))
+    assert fp._install_missing_tools("FAILED: [code=127] x\npigment64 to-bin a b\n/bin/sh: pigment64: command not found", print)
+    assert ran[0][:3] == ["/bin/uv", "pip", "install"] and ran[0][-1] == "pigment64"
+    assert not fp._install_missing_tools("make: *** Error 1", print)
