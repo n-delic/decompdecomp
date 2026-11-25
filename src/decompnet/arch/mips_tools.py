@@ -28,10 +28,19 @@ while i < len(args):
         else:
             to = args[i + 1]
         i += 1
-    elif a.startswith("-f") and len(a) > 2:
+    elif a.startswith("-f") and len(a) > 2 and not a.startswith("--"):
         frm = a[2:]
-    elif a.startswith("-t") and len(a) > 2:
+    elif a.startswith("-t") and len(a) > 2 and not a.startswith("--"):
         to = a[2:]
+    elif a.startswith("--from-code") or a.startswith("--to-code"):  # (GNU's long spellings: --from-code=UTF-8)
+        name, _, value = a.partition("=")
+        if not value:
+            value = args[i + 1] if i + 1 < len(args) else ""
+            i += 1
+        if name == "--from-code":
+            frm = value
+        else:
+            to = value
     elif a in ("-c", "-s"):
         pass
     else:
@@ -368,8 +377,9 @@ def build_paths(project) -> list[Path]:
                 tool.chmod(0o755)
         if sys.platform == "darwin" and (iconv := shutil.which("iconv")) and Path(iconv).parent != folder:
             tool = folder / "iconv"
-            if not tool.exists():
-                tool.write_text(_ICONV_SHIM.format(python=sys.executable, iconv=iconv), encoding="utf-8")
+            text = _ICONV_SHIM.format(python=sys.executable, iconv=iconv)
+            if not tool.exists() or tool.read_text(errors="replace") != text:  # (an older shim didn't read --to-code=)
+                tool.write_text(text, encoding="utf-8")
                 tool.chmod(0o755)
         # GNU sed where Homebrew has it (`brew install gnu-sed`): a project's own sed scripts use its labels, \x27 escapes
         # and `-i` without a suffix, none of which macOS's sed reads
