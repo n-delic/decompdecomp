@@ -201,3 +201,63 @@ def test_big_and_little_endian_agree():
     for big in (True, False):
         found = ef.decide(game([BREAK7], big_endian=big), big_endian=big)
         assert found['f'].at == 0x80001014
+
+
+def test_a_value_computed_and_lost_is_a_leftover():
+    """A leaf nothing points at, after two leftover words: `addiu $v0,1` that the leaf's first word overwrites (an
+    ALU result nobody reads: no compiler leaves one), so the soft `$s1` read before it doesn't decide alone."""
+    leaf = [lui(V0, 0x8014), lw(V1, V0, -0x48C), JR_RA, move(V0, V1)]
+    f = ef.decide(game([sw(V0, S1, 0x7C), addiu(V0, 0, 1)], after=leaf))['f']
+    assert (f.kind, f.at, f.confidence) == ('trim_start', 0x80001018, 'auto')
+    assert any('loses it before anything reads it' in line for line in f.evidence)
+    assert not ef.decide(game([sw(V0, S1, 0x7C), addiu(A1, 0, 1)], after=leaf)), 'a value kept for later is no evidence'
+
+
+def test_a_load_lost_across_the_first_call_counts_beside_a_frame_only():
+    """`lw $v0` before the frame, dead once the call returns: soft (a device register's read is a load nobody uses)."""
+    f = ef.decide(game([lw(V0, A0, 0x90)]))['f']
+    assert (f.kind, f.at) == ('trim_start', 0x80001014)
+    leaf = [lui(V0, 0x8014), lw(V1, V0, -0x48C), JR_RA, move(V0, V1)]
+    assert not ef.decide(game([lw(V0, A0, 0x90)], after=leaf))
+    passes = [addiu(SP, SP, -0x18), sw(RA, SP, 0x10), jal(0x80023D58), NOP, lw(RA, SP, 0x10), JR_RA, addiu(SP, SP, 0x18)]
+    assert not ef.decide(game([lw(A0, A0, 0x90)], after=passes)), 'the callee reads its arguments'
+    assert ef.decide(game([lw(V0, A0, 0x90)], after=passes))['f'].at == 0x80001014
+
+
+def test_code_after_an_early_return_is_split_off():
+    """An empty function other code calls (`jr $ra; nop`), then the words of another inside the same extent."""
+    other = [sw(V0, S1, 0x7C), lui(V0, 0x8014), lw(V1, V0, -0x48C), JR_RA, move(V0, V1)]
+    f = ef.decide(game([], after=[JR_RA, NOP] + other, pointer=0x80001010))['f']
+    assert (f.kind, f.at, f.confidence) == ('split_end', 0x80001018, 'auto')
+    assert not ef.decide(game([], after=[JR_RA, NOP] + other)), 'nothing points at it: no evidence it is an entry'
+    branch = [beqz(A0, 3), NOP, JR_RA, NOP] + other  # the branch reaches past the return
+    assert not ef.decide(game([], after=branch, pointer=0x80001010))
+    table = [0x00400008, NOP, JR_RA, NOP] + other  # jr $v0: a switch's table may reach anything
+    assert not ef.decide(game([], after=table, pointer=0x80001010))
+    assert not ef.decide(game([], after=[JR_RA, NOP, NOP, NOP], pointer=0x80001010)), 'alignment after a return'
+
+
+def test_a_retained_tail_other_code_points_at_is_kept():
+    tail = entry('boundary_tail_80001010', 0x80001010, body())
+    prev = entry('prev', 0x80001000, returning(0x80001000))
+    caller = entry('caller', 0x80002000, [JR_RA, NOP, NOP, NOP], pointer_to(0x80001010))
+    f = ef.decide([prev, tail, caller], reviewed={tail.name})[tail.name]
+    assert (f.kind, f.at, f.confidence) == ('keep', 0x80001010, 'auto') and 'caller' in f.evidence[0]
+    assert not ef.decide([prev, tail, caller]), 'only a tail kept for review is confirmed'
+    assert not ef.decide([prev, tail, entry('caller', 0x80002000, [JR_RA, NOP])], reviewed={tail.name})
+
+
+def test_a_function_cut_where_its_first_part_branches_into_the_rest_is_joined():
+    """The first part opens the frame and branches into the second, which gives that frame back: one function."""
+    first = [addiu(SP, SP, -0x18), sw(RA, SP, 0x10), beqz(A0, 5), NOP, jal(0x80023D58), NOP, j(0x80001024), NOP]
+    rest = [addiu(V0, 0, 1), lw(RA, SP, 0x10), JR_RA, addiu(SP, SP, 0x18)]
+    prev = entry('prev', 0x80000FF0, returning(0x80000FF0))
+    a, b = entry('a', 0x80001000, first), entry('b', 0x80001020, rest)
+    f = ef.decide([prev, a, b])['b']
+    assert (f.kind, f.at, f.confidence) == ('join_previous', 0x80001000, 'auto')
+    caller = entry('caller', 0x80002000, [JR_RA, NOP, NOP, NOP], pointer_to(0x80001020))
+    assert 'b' not in ef.decide([prev, a, b, caller]), 'other code points at it: an entry of its own'
+    jumping = entry('a', 0x80001000, first[:2] + [NOP, NOP] + first[4:])  # only the `j` goes there: a tail call
+    assert 'b' not in ef.decide([prev, jumping, b])
+    framed = entry('b', 0x80001020, [addiu(SP, SP, -0x18)] + rest[1:])
+    assert 'b' not in ef.decide([prev, a, framed])

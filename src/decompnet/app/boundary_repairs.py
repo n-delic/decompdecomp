@@ -408,14 +408,25 @@ def safe_job_kind(slug):
     return 'Apply safe boundary fixes: '+slug
 
 
-def _call_targets(image, segments, big_endian):
-    """Direct `jal` destinations anywhere in the mapped image: an entry something calls is never absorbed."""
+def _call_targets(image, segments, big_endian, skip=frozenset()):
+    """Direct `jal` destinations anywhere in the mapped image: an entry something calls is never absorbed. `skip`:
+    image offsets of words a person or a proven fix archived as padding or data, which never run (an N64 game's
+    three filler words held a `jal` into the middle of a function and kept its pieces from being joined)."""
     out=set();fmt='>I' if big_endian else '<I'
     for s in segments:
         end=min(s.rom_end,len(image));start=s.rom_start+(-s.rom_start%4)
         for (word,),at in zip(struct.iter_unpack(fmt,image[start:end-(end-start)%4]),range(start,end,4)):
-            if word>>26==3:out.add(((s.vram+at-s.rom_start+4)&0xF0000000)|((word&0x3FFFFFF)<<2))
+            if word>>26==3 and at not in skip:out.add(((s.vram+at-s.rom_start+4)&0xF0000000)|((word&0x3FFFFFF)<<2))
     return out
+
+
+def _archived_words(net, proj):
+    """Image offsets of the words archived as padding or data, unless a live function still covers them."""
+    rows=net.project_store(proj['id']).all("SELECT rom_offset,size,gone_mark,json_extract(meta,'$.boundary_classification') AS kind "
+                                           "FROM functions WHERE project_id=? AND rom_offset IS NOT NULL AND size>0",proj['id'])
+    live={at for r in rows if r['gone_mark'] is None for at in range(r['rom_offset'],r['rom_offset']+r['size'],4)}
+    return frozenset(at for r in rows if r['gone_mark'] is not None and r['kind'] in ('padding','data')
+                     for at in range(r['rom_offset'],r['rom_offset']+r['size'],4) if at not in live)
 
 
 def _decided(meta):
@@ -597,7 +608,7 @@ def _apply_safe(net, slug, log=print):
     if not total:
         log('No incomplete entries need review.');return {'fixed':entry,'remaining':0}
     image,segments=_image(net,proj)
-    calls=_call_targets(image,segments,proj['big_endian']);flow=_flow_targets(image,segments,proj['big_endian'])
+    calls=_call_targets(image,segments,proj['big_endian'],_archived_words(net,proj));flow=_flow_targets(image,segments,proj['big_endian'])
     log(f'Checking {total} flagged entries for repairs the original bytes settle…')
     log('Reverifying existing matches before any boundary decision…')
     broken=_verify_matches(net,proj,log)
@@ -712,7 +723,9 @@ class _Stored:
 
 def entry_findings(net, proj, *, layout=None, mapped=None):
     """{name: entry_fixes.Fix} for the project's live functions. Only open functions nobody decided on may be
-    fixed automatically; for the rest (assembly set aside, a person's verdict) a fix is a suggestion at most."""
+    fixed automatically, and those set aside by their shape alone (`asm_code` from asm_reason, no verdict): on an N64
+    game four such functions were filed as assembly only for the stray words a fix cuts off ("writes $s3 before
+    saving it"). For the rest (a person's or agents' verdict, verified or twin assembly) a fix is a suggestion at most."""
     from . import entry_fixes
     if proj['arch']!='mips':return {}
     layout=layout if layout is not None else _layout_rows(net,proj)
@@ -729,11 +742,14 @@ def entry_findings(net, proj, *, layout=None, mapped=None):
                 at=seg.rom_start+address-seg.vram
                 return int.from_bytes(image[at:at+4],order) if 0<=at<=len(image)-4 else None
         return None
-    found=entry_fixes.decide(entries,big_endian=bool(proj['big_endian']),word_at=word_at,stored=_Stored(image,proj['big_endian']))
+    # Tails a reviewed adjustment kept for review: confirmed when other code points at their first word.
+    reviewed={r['name'] for r in live if (m:=json.loads(r['meta'] or '{}')).get('boundary_tail_review') and not m.get('boundary_override')}
+    found=entry_fixes.decide(entries,big_endian=bool(proj['big_endian']),word_at=word_at,stored=_Stored(image,proj['big_endian']),reviewed=reviewed)
     rows={r['name']:r for r in live}
     for name,fix in found.items():
-        row=rows[name]
-        if row['status']!='open' or _decided(json.loads(row['meta'] or '{}')):
+        row=rows[name];meta=json.loads(row['meta'] or '{}')
+        shape_only=row['status']=='asm' and meta.get('asm_code') and not meta.get('not_c')
+        if not (row['status']=='open' or shape_only) or _decided(meta):
             fix.confidence='suggest'
             fix.warning=fix.warning or (f'{name} is {"set aside" if row["status"]=="asm" else row["status"]}: a decision on it is a person\'s.')
     return found
@@ -758,6 +774,12 @@ def apply_entry_fixes(net, slug, log=print):
         if progress is not None:progress.sync(slug,force=True)
 
 
+def _undo_key(fix):
+    """What an undone automatic fix is remembered by (_declined): its history's start and entry."""
+    if fix.kind=='join_previous':return (fix.at,None)  # the joined function starts where the one before did
+    return (fix.vram,fix.at if fix.kind in ('trim_start','split_end') else None)
+
+
 def _apply_entry_fixes(net, slug, proj, log):
     cancel=getattr(log,'check_cancel',lambda:None);progress=getattr(log,'progress',lambda value:None)
     try:mapped=_image(net,proj)
@@ -769,12 +791,12 @@ def _apply_entry_fixes(net, slug, proj, log):
         found=entry_findings(net,proj,layout=layout,mapped=mapped)
         suggested=sum(f.confidence!='auto' for f in found.values())
         todo=[f for f in sorted(found.values(),key=lambda f:f.vram) if f.confidence=='auto' and f.name not in failed
-              and (f.vram,f.at if f.kind!='padding' else None) not in declined]
+              and _undo_key(f) not in declined]
         if not todo:break
         if not verified:
             # Matched code that refers into a changed extent is the code a new symbol could relink: build it
             # again first. Everything else is untouched, so a 2,000-match game doesn't recompile them all.
-            spans=[(f.vram,f.vram+next(r['size'] for r in layout if r['name']==f.name)) for f in todo]
+            spans=[(min(f.vram,f.at),f.vram+next(r['size'] for r in layout if r['name']==f.name)) for f in todo]
             matched=_referring(net,proj,spans)
             if matched:
                 log(f'Checking {len(matched)} matched functions that refer into the functions to fix…')
@@ -786,12 +808,12 @@ def _apply_entry_fixes(net, slug, proj, log):
         for index,fix in enumerate(todo):
             cancel()
             progress({'phase':'Fixing proven function boundaries','done':len(fixed),'total':len(fixed)+len(todo)-index})
-            action='padding' if fix.kind=='padding' else fix.kind
+            action=fix.kind
             note='Automatic: '+fix.summary()+'. '+' '.join(fix.evidence)
             try:
                 with _lookups(net):
                     if net._function(fix.name,slug)['gone_mark'] is not None:continue
-                    plan=preview(net,slug,fix.name,action,None if action=='padding' else fix.at)
+                    plan=preview(net,slug,fix.name,action,fix.at if action in ('trim_start','split_end') else None)
                     result=_commit(net,proj,plan,fix.name,action,plan['revision'],plan['image'],note,automatic=True)
             except NetworkError as error:
                 # Claimed meanwhile or the layout moved: it stays a suggestion, tried again next time.
