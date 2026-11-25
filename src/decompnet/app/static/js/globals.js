@@ -73,7 +73,7 @@ async function openGlobal(name) {
     box.className = "";
     box.innerHTML = data.users.length
       ? `<h3>${plural(data.users.length, "function")} use it</h3><div class="compiler-table"><table><thead><tr><th>Function</th><th>Address</th><th>Status</th><th class="r">Uses</th></tr></thead><tbody>${data.users.map((u) =>
-        `<tr><td><a href="#" class="mono" data-fn="${esc(u.name)}">${esc(u.name)}</a></td><td class="mono dim">${u.address == null ? "" : hex8(u.address)}</td><td>${esc(u.status || "")}</td><td class="r mono">${u.references}</td></tr>`).join("")}</tbody></table></div>`
+        `<tr><td><a href="#" class="mono" data-fn="${esc(u.name)}">${esc(u.name)}</a></td><td class="mono dim">${u.address == null ? "" : hex8(u.address)}</td><td>${esc(u.status || "")}</td><td class="r mono" title="${u.inside ? `${u.inside} reach it through a table or struct that starts elsewhere` : ""}">${u.references}${u.inside ? ` <span class="dim">(${u.inside} inside)</span>` : ""}</td></tr>`).join("")}</tbody></table></div>`
       : `<p class="muted">No function's code references this global.</p>`;
     box.querySelectorAll("[data-fn]").forEach((a) => { a.onclick = (e) => { e.preventDefault(); openFn(a.dataset.fn); }; });
   } catch (error) {

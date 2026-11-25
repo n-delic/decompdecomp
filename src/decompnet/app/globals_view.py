@@ -70,24 +70,43 @@ def set_type(net, slug: str, name: str, c_type: str, source: str = "agent") -> s
 
 
 def global_users(net, slug: str, name: str) -> dict:
-    """The functions that reference one data symbol: their relocations name it (by its current or its D_ name), the
-    way the function view's assembly does. Read from the stored relocations, so it needs no compile."""
+    """The functions that reference one data symbol, read from their stored relocations (no compile needed).
+
+    A relocation names a symbol plus an addend. It is a direct use when the symbol is this global (by its current or
+    its D_ name), and an inside use when symbol address + addend lands in the global's bytes: code that indexes a
+    table or a struct names the table's first symbol, or a neighbour, not the member it reaches. `references` counts
+    both, `inside` only the second kind."""
     if net.fork_slug(slug):
         raise NetworkError("Global users are listed for ROM projects; search this project's source files instead")
     proj = net._project(slug)
     store = net.project_store(proj["id"])
-    sym = store.one("SELECT name, address FROM symbols WHERE project_id=? AND name=? AND kind<>'func'", proj["id"], name)
+    sym = store.one("SELECT name, address, size FROM symbols WHERE project_id=? AND name=? AND kind<>'func'", proj["id"], name)
     if sym is None:
         raise NetworkError(f"`{name}` is not a data symbol of this game")
     names = {sym["name"], f"D_{sym['address']:08X}"}
+    low, high = sym["address"], sym["address"] + max(sym["size"] or 0, 1)
+    where = {r["name"]: r["address"] for r in store.all(
+        "SELECT name, address FROM symbols WHERE project_id=? AND kind<>'func'", proj["id"])}
     users = []
     for f in store.all("SELECT name, vram, status, relocs FROM functions WHERE project_id=?", proj["id"]):
         try:
             relocs = json.loads(f["relocs"] or "[]")
         except ValueError:
             continue
-        count = sum(1 for r in relocs if len(r) > 2 and r[2] in names)
-        if count:
-            users.append({"name": f["name"], "address": f["vram"], "status": f["status"], "references": count})
+        direct = inside = 0
+        for r in relocs:
+            if len(r) < 4:
+                continue
+            if r[2] in names:
+                direct += 1
+                continue
+            base = where.get(r[2])
+            if base is None and (m := re.fullmatch(r"D_([0-9A-Fa-f]{8})", str(r[2]))):
+                base = int(m.group(1), 16)
+            if base is not None and low <= base + (r[3] or 0) < high:
+                inside += 1
+        if direct + inside:
+            users.append({"name": f["name"], "address": f["vram"], "status": f["status"],
+                          "references": direct + inside, "inside": inside})
     users.sort(key=lambda u: (u["address"] or 0, u["name"]))
     return {"name": sym["name"], "address": sym["address"], "users": users}
