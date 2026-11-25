@@ -2856,7 +2856,17 @@ class Network:
             matched = store.all("SELECT * FROM functions WHERE project_id=? AND status='matched'", proj["id"])
             rewritten = {r["id"]: word.sub(new, r["matched_source"]) for r in matched}
             header_for = lambda fn: changed.get(self._effective_unit(fn, units), current[self._effective_unit(fn, units)]["header"])  # noqa: B023  called within this pass of the loop
-            broken = self.regression_test(proj, None, sources=rewritten, only=matched, header_for=header_for)
+            skipped = self._rename_unverifiable(proj, matched, old, new, current)
+            checked = [r for r in matched if r["id"] not in skipped]
+            broken = self.regression_test(proj, None, sources=rewritten, only=checked, header_for=header_for)
+            if broken:
+                # one that fails as it is (before the rename) isn't broken by it: an N64 game's every rename was refused
+                # for a matched function that no longer compiled, and polishing, which needs a name, stopped
+                names = {name for name, _ in broken}
+                before = {name for name, _ in self.regression_test(
+                    proj, None, only=[r for r in checked if r["name"] in names],
+                    header_for=lambda fn: current[self._effective_unit(fn, units)]["header"])}  # noqa: B023
+                broken = [(name, why) for name, why in broken if name not in before]
             if broken:
                 listing = "\n".join(f"- {name}: {why}" for name, why in broken[:10])
                 return f"❌ REJECTED: renaming breaks {len(broken)} matched function(s).\n{listing}"
@@ -2877,9 +2887,37 @@ class Network:
                                     "AND best_source IS NOT NULL", (proj["id"],)).fetchall():
                     db.execute("UPDATE functions SET best_source=? WHERE id=?", (word.sub(new, r["best_source"]), r["id"]))
                 self._event(db, proj["id"], agent.id, "context", f"{msg} ({len(changed)} header(s))")
+            unchecked = "".join(f"\n(Not rechecked: {why})" for why in dict.fromkeys(skipped.values()))
             return (f"✅ renamed `{old}` -> `{new}` in {len(changed)} header(s) and in {len(rewritten)} matched "
-                    f"sources; all still match.")
+                    f"sources; all still match.{unchecked}")
         raise NetworkError("headers are being edited heavily right now; retry")
+
+    def _rename_unverifiable(self, proj, matched, old: str, new: str, current: dict) -> dict[int, str]:
+        """Matched functions a rename can't be checked on now (their compiler can't start: an N64 game's one function
+        built by a compiler in the Linux runner, while that was stopped, failed every rename for hours, and polishing
+        gave up on nine functions that needed a name) and can't change: their C mentions neither name, and no header
+        macro or inline body mentions the old one (a declaration renamed alone leaves their code as it was).
+        function id -> why."""
+        from . import toolchains
+        cfg = self.cfg(proj)
+        if not cfg.get("compiler"):
+            return {}
+        word = re.compile(rf"\b(?:{re.escape(old)}|{re.escape(new)})\b")
+        if any(word.search(line) and ("#define" in line or "{" in line)
+               for c in current.values() for line in c["header"].splitlines()):
+            return {}
+        down: dict[str, str | None] = {}
+        out = {}
+        for fn in matched:
+            tid = compiler_for(cfg, fn["vram"], fn).get("toolchain")
+            if tid not in down:
+                try:
+                    down[tid] = toolchains.runtime_error(tid) if tid else None
+                except toolchains.ToolchainError:
+                    down[tid] = None
+            if down[tid] and not word.search(fn["matched_source"] or ""):
+                out[fn["id"]] = f"the functions built with {tid}, which can't start now ({down[tid]}); they don't use the name."
+        return out
 
     def _latest_version(self, db, project_id: int, unit: str) -> int | None:
         row = db.execute("SELECT MAX(version) AS v FROM context_versions WHERE project_id=? AND unit=?",
@@ -2911,7 +2949,9 @@ class Network:
             res = self._compile(proj, header_for(fn) if header_for else header,
                                 (sources or {}).get(fn["id"], fn["matched_source"]), fn)
             if not res.ok:
-                return fn["name"], "no longer compiles: " + res.log.strip().splitlines()[0][:200] if res.log.strip() else "compile failed"
+                lines = res.log.strip().splitlines()
+                first = next((ln for ln in lines if re.search(r"error|:\d+:", ln, re.I)), lines[0] if lines else "")
+                return fn["name"], "no longer compiles: " + first[:200] if first else "compile failed"
             cand, verdict, _ = self._evaluate(fn, proj, res.obj)
             if verdict is None and cand is not None:
                 want = self._target_obj(fn, proj).fingerprint()

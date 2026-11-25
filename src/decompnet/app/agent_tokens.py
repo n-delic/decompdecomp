@@ -614,8 +614,10 @@ def function_view(net, agent, slug, function, section='summary', start=0, limit=
                 +(stub_note+'\n' if stub_note else '')+
                 'Use section=brief for a working packet, candidate for complete editable C, history/quality/notes for evidence, or get_assembly for instruction pages. Supporting sections accept character offsets start/limit.')
     text=_function_view(net,agent,slug,function,section)
-    if section in {'candidate','source','draft','matched','brief'}:
-        return text  # Never silently truncate editable C.
+    # Never silently truncate editable C. A matched function's C is paged only when asked to (start > 0) or when it is
+    # over what a helper's tool can return: a polish brief points at its next page (readable.BRIEF_C), with a header.
+    if section in {'candidate','source','draft','brief'} or section == 'matched' and int(start) <= 0 and len(text) <= 40000:
+        return text
     start=max(0,int(start));limit=max(200,min(12000,int(limit)))
     if start==0 and len(text)<=limit:
         return text
