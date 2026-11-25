@@ -193,7 +193,10 @@ def _setup_targets(makefile: str) -> list[str]:
     runs Torch (a Makefile whose README says `make -C tools`, `make assets`, `make`): the headers its compile step
     includes are made there, and a build without them stops at the first #include. Another project's `assets`
     target is its own business."""
-    found = [t for t in ("tools", "setup", "extract") if re.search(rf"^{t}\s*:", makefile, re.M)]
+    found = [t for t in ("tools", "toolchain", "setup", "extract") if re.search(rf"^{t}\s*:", makefile, re.M)]
+    if "decompress" not in found and re.search(r"^decompress\s*:", makefile, re.M) and re.search(r"(?i)uncompressed", makefile):
+        # (a game whose retail image is compressed: the uncompressed copy `extract` reads is made from it first)
+        found.insert(found.index("extract") if "extract" in found else len(found), "decompress")
     if re.search(r"^prerequisites\s*:[^\n]*(?:tools|extract)", makefile, re.M):
         found.append("prerequisites")  # (one that builds the host tools and extracts assets: rules like the RSP's use them unordered)
     recipe = re.search(r"^assets\s*:[^\n]*\n((?:[ \t][^\n]*\n?)*)", makefile, re.M)
@@ -208,13 +211,16 @@ def _mac_cxx_env(root: Path) -> dict[str, str]:
     project sets CMAKE_CXX_FLAGS itself, so neither CXXFLAGS nor a command-line flag reaches it. CMake does read flags
     that ride in the CXX variable: fmt's own switch for turning that check off goes there. Only a CMake project that
     names spdlog gets it; any other build is left as it was."""
+    found: dict[str, str] = {}
     for cmake in (root / "tools").glob("*/CMakeLists.txt"):
+        # (CMake 4 refuses the fetched libraries' old minimum versions unless told the policy floor, by environment too)
+        found.setdefault("CMAKE_POLICY_VERSION_MINIMUM", "3.5")
         try:
             if "spdlog" in cmake.read_text(encoding="utf-8", errors="replace"):
-                return {"CXX": "c++ -DFMT_CONSTEVAL="}
+                found["CXX"] = "c++ -DFMT_CONSTEVAL= -Wno-error=parentheses"
         except OSError:
             continue
-    return {}
+    return found
 
 
 def _tool(name: str) -> str | None:
@@ -1079,8 +1085,8 @@ class ForkProject:
                     env["LIBRARY_PATH"] = os.pathsep.join(filter(None, [env.get("LIBRARY_PATH"), f"{prefix}/lib"]))
                     env["CPATH"] = os.pathsep.join(filter(None, [env.get("CPATH"), f"{prefix}/include"]))
                     break
-        if sys.platform == "darwin" and "CXX" not in env and (self.root / "tools").is_dir():
-            env.update(_mac_cxx_env(self.root))
+        if sys.platform == "darwin" and (self.root / "tools").is_dir():
+            env.update({k: v for k, v in _mac_cxx_env(self.root).items() if k not in env})
         env["NINJA_STATUS"] = "[%f/%t] "  # (ninja's own: its progress lines are what a run of units is read by)
         # found on that PATH (decompdecomp's own ninja): Linux looks a command up there itself, Windows only in this
         # process's PATH, where decompdecomp's environment isn't when it's installed
@@ -1322,8 +1328,9 @@ class ForkProject:
         if any((self.root / folder / "pyvenv.cfg").is_file() for folder in (".venv", "venv")):
             return
         requirements, pyproject = self.root / "requirements.txt", self.root / "pyproject.toml"
-        if not requirements.is_file() and (self.root / "tools" / "requirements.txt").is_file():
-            requirements = self.root / "tools" / "requirements.txt"  # (where some projects keep theirs)
+        if not requirements.is_file():  # (where some projects keep theirs)
+            requirements = next((p for name in ("requirements.txt", "requirements-python.txt")
+                                 if (p := self.root / "tools" / name).is_file()), requirements)
         needs = requirements.relative_to(self.root).as_posix()
         # The version of splat the project's Dockerfile installs: its extensions are written for that one, and a
         # requirements file that says only "<1.0" would install a newer splat they can't load into
