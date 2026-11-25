@@ -71,6 +71,23 @@ def test_overlay_profile_stops_before_other_entry_without_changing_its_compiler(
     assert compiler_for(cfg,4104)==cfg['compiler']
 
 
+def test_archived_entry_inside_the_function_does_not_block_its_profile():
+    """A stale symbol inside a function, archived by a boundary repair, refused every exact per-function profile with
+    "overlaps another function" (an N64 game's 231-instruction loader with a retired entry 44 instructions in)."""
+    from decompnet.project import compiler_for
+    net,proj,fn=prepared_net()
+    with net.store.tx() as db:
+        db.execute('UPDATE functions SET size=16,rom_offset=100 WHERE id=1')
+        db.execute("INSERT INTO functions(project_id,name,vram,size,rom_offset,meta) VALUES(1,'stale',4104,8,108,?)",
+                   (json.dumps({'gone':True}),))
+    fn=net.store.one('SELECT * FROM functions WHERE id=1')
+    expected=prep.inputs(net,proj,fn)
+    settings={'toolchain':'ido-5.3','flags':['-O3']}
+    with net.store.tx() as db:evidence.publish_profile(net,db,fn,expected,settings,Agent(1,'autopilot',None))
+    cfg=json.loads(net.store.one('SELECT config FROM projects')['config'])
+    assert compiler_for(cfg,4096,fn)['toolchain']=='ido-5.3'
+
+
 def test_same_address_overlays_have_independent_profiles():
     net,proj,fn=prepared_net();settings={'toolchain':'ido-5.3','flags':['-O3']}
     with net.store.tx() as db:

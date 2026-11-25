@@ -58,8 +58,10 @@ def publish_profile(net, db, fn, expected, settings, agent):
     own=compiler_for(json.loads(proj['config']),fn['vram'], fn)
     if all(own.get(k)==settings.get(k) for k in ('toolchain','flags')):
         return prep.inputs(net,proj,fn)  # private headers can change without republishing an unchanged profile
+    # An archived entry (a stale symbol a boundary repair retired, gone_mark set) is not a function any more: a
+    # function it used to split stays one range, so it neither blocks the bundle nor ends its range early.
     overlaps=db.execute('SELECT id,vram,rom_offset,size FROM functions WHERE project_id=? AND id!=? '
-                        'AND vram<? AND vram+size>?',
+                        'AND gone_mark IS NULL AND vram<? AND vram+size>?',
                         (fn['project_id'],fn['id'],fn['vram']+fn['size'],fn['vram'])).fetchall()
     for other in overlaps:
         if (fn['rom_offset'] is None or other['rom_offset'] is None
@@ -67,7 +69,7 @@ def publish_profile(net, db, fn, expected, settings, agent):
             raise NetworkError('The compiler range overlaps another function. Resolve the boundary before applying this bundle.')
     # Profiles select function entry addresses. Distinct overlay images may overlap in RAM;
     # stop before every other entry rather than changing any neighbour's selected profile.
-    next_start=db.execute('SELECT MIN(vram) FROM functions WHERE project_id=? AND vram>?',
+    next_start=db.execute('SELECT MIN(vram) FROM functions WHERE project_id=? AND vram>? AND gone_mark IS NULL',
                           (fn['project_id'],fn['vram'])).fetchone()[0]
     end=min(fn['vram']+fn['size'],next_start) if next_start is not None else fn['vram']+fn['size']
     cfg=scoped_config(proj,{**dict(fn),'size':end-fn['vram']},settings)
