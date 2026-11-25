@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import sys
 import threading
@@ -163,7 +164,9 @@ def _assembles_through_gcc(project) -> bool:
             text += path.read_text(errors="replace", encoding="utf-8")
         except OSError:
             pass
-    return not text or "assembler-with-cpp" in text or "-x assembler" in text
+    # (or the assembler variable is the cross gcc itself: `AS := $(CROSS)gcc`, which takes .s files by their suffix)
+    return (not text or "assembler-with-cpp" in text or "-x assembler" in text
+            or bool(re.search(r"^[ \t]*(?:AS|ASM|ASSEMBLER)[ \t]*[:?]?=[ \t]*\S*gcc[ \t]*(?:#.*)?$", text, re.M)))
 
 
 def _is_n64(project) -> bool:
@@ -268,6 +271,21 @@ def build_paths(project) -> list[Path]:
             if not tool.exists():
                 tool.write_text(f'#!/bin/sh\nexec "{gmake}" "$@"\n', encoding="utf-8")
                 tool.chmod(0o755)
+        # A plain `ar` (a Makefile that passes AR=ar to a library's build) is Apple's on a Mac, which drops ELF
+        # members ("not a mach-o file") and leaves an empty archive: the pinned one takes ELF objects, Apple's
+        # everything else
+        if sys.platform == "darwin":
+            for name in ("ar", "ranlib"):
+                pinned_tool = folder / ("mips-linux-gnu-" + name)
+                tool = folder / name
+                if pinned_tool.exists() and not tool.exists():
+                    if name == "ar":
+                        body = ('for a; do if [ -f "$a" ] && [ "$(head -c4 "$a" | od -An -c | tr -d \' \')" = 177ELF ]; '
+                                f'then exec "{pinned_tool}" "$@"; fi; done\nexec /usr/bin/ar "$@"\n')
+                    else:  # (an archive of ELF members: the pinned one answers; any other, Apple's)
+                        body = f'"{pinned_tool}" "$@" 2>/dev/null && exit 0\nexec /usr/bin/ranlib "$@"\n'
+                    tool.write_text("#!/bin/sh\n" + body, encoding="utf-8")
+                    tool.chmod(0o755)
         # `wibo tools/bin/cc1n64.exe ...`: Makefiles and ninja files call the Windows-program runner by name
         if toolchains.installed("wibo") is not None and not shutil.which("wibo"):
             wibo = toolchains.require("wibo") / "wibo"
