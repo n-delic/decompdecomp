@@ -962,3 +962,11 @@ back-to-back firing) the port's VI queue never holds two messages (0 of 101 send
 console's does. The race window is exactly as before: the line points change at the port's tasks 604, 609, 614, 619 and the console's 603, 608, 613, 618, and the opponent's frames are 12-18% different. So the late handling of two of three
 retraces was real but is not what puts the port's logic a frame ahead. Kept because it makes the port's pacing match the console's. What remains untried: compare the two message logs operation by operation inside one frame (the
 order of the sends and receives on the static queues, which this only counted), since the same counts can come in another order.
+
+**What the numbers say about the logic lead (tasks 600-623 of a menu-to-race route).** The task numbering is not offset: matching each task's display-list size (the `.task` sidecars) of the console against the port's gives the same
+sequence at shift 0 (2816, 272, 88, 680, 5312 bytes, a five-task frame) and no other shift. The one task whose list differs is the fifth of each frame, the one that draws the cars: 5312 bytes on the console, 5328 in the port (two more
+commands, the render-mode pair the opponent's `flags &= ~2` branch changes), and the pictures that differ are that task and the next two (the cars carried on). In that task the port's line points are the next frame's values and
+the console's are the current frame's: the console's logic update for frame k+1 runs after the cars' list of frame k is built (it first shows in its RAM at the frame's fourth task, 603, 608...), the port's before it (604, 609...). So
+what differs is the order of two things inside a frame, the logic update and the building of the cars' display list, not the retrace count or the task numbering. The game's seeding function is also called once a frame
+on both sides and the port's count is one call ahead at the same task (`PORT_SEED_LOG`, against the emulator's breaks on `rand_seed`), the same one-frame lead. Replaying the console's seeds in order keeps the
+draws aligned (each call gets the console's next seed), but a draw that depends on when in the frame it is made would still differ.
