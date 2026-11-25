@@ -76,9 +76,56 @@ def test_a_fillable_nop_epilogue_points_to_sn_2_7_2_builds_in_both_flag_sets():
                           for f in n64_probes.SN_272_FLAGS]
 
 
+PACK = 'sn-n64-272-0001-as0004'
+PACK_FLAGS = [' '.join(f) for f in n64_probes.AS0004_FLAGS]
+
+
+def pack_keys(plan):
+    return [(p['toolchain'], ' '.join(p['flags'])) for p in plan if p['toolchain'] == PACK]
+
+
 def test_an_ldc1_target_tries_the_0004_assembler_pack_first():
     plan = profile_probe.plan(N64, facts(words=[LDC1, ADDIU_SP, JR, NOP]))
-    assert [p['toolchain'] for p in plan][:2] == ['sn-n64-272-0001-as0004'] * 2
+    assert [(p['toolchain'], ' '.join(p['flags'])) for p in plan][:3] == [(PACK, f) for f in PACK_FLAGS]
+    assert PACK_FLAGS[0] == '-G0 -mips3 -O2 -mgas -meb -mhard-float'
+
+
+def test_the_pack_leads_the_flag_variants_of_the_functions_own_compiler():
+    rows = [('>', 'lwc1 $f2, 0x0($a0)', 'lwc1 $f1, 0x0($a0)')]  # FP register rows: `-mfp32` would be planned
+    plan = profile_probe.plan(N64, facts(words=[LDC1, ADDIU_SP, JR, ADDIU_SP], rows=rows))
+    assert [p['toolchain'] for p in plan][:3] == [PACK] * 3
+    assert 'fp' in {p['family'] for p in plan[3:]}  # the flag variants still follow
+
+
+def test_the_pack_is_offered_for_an_ldc1_target_whatever_the_profile_or_epilogue():
+    filled = [LDC1, 0x8FBF0014, ADDIU_SP, JR, ADDIU_SP]  # the delay slot is filled: no `jr ra; nop` tell
+    on_281 = profile_probe.plan(N64, facts(words=filled))
+    assert [k for _, k in pack_keys(on_281)] == PACK_FLAGS
+    for own in ({'toolchain': 'sn-n64-272-0004', 'flags': ['-G0', '-mips3', '-O2']},
+                {'toolchain': 'sn-n64-272-0001', 'flags': ['-G8', '-mips2', '-O2']},
+                {'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-O2']}):
+        plan = profile_probe.plan(N64, facts(own=own, words=filled))
+        assert [k for _, k in pack_keys(plan)] == PACK_FLAGS, own
+    # the nop epilogue on 2.8.1 still adds its own 2.7.2 probes, and the pack is not planned twice
+    both = profile_probe.plan(N64, facts(words=[LDC1, ADDIU_SP, JR, NOP]))
+    assert len(pack_keys(both)) == len(set(pack_keys(both))) == 3
+    assert any(p['family'] == 'sn272' for p in both)
+
+
+def test_the_pack_on_its_own_profile_is_not_judged_under_those_same_settings_again():
+    own = {'toolchain': PACK, 'flags': PACK_FLAGS[1].split()}
+    plan = profile_probe.plan(N64, facts(own=own, words=[LDC1, JR, NOP]))
+    assert [k for _, k in pack_keys(plan)] == [PACK_FLAGS[0], PACK_FLAGS[2]]
+
+
+def test_no_ldc1_means_the_pack_is_not_offered():
+    assert pack_keys(profile_probe.plan(N64, facts(words=[0x8FBF0014, ADDIU_SP, JR, NOP]))) == []
+    assert pack_keys(profile_probe.plan(N64, facts(words=[0x8FBF0014, ADDIU_SP, JR, ADDIU_SP]))) == []
+
+
+def test_a_pack_that_is_not_installed_is_not_offered():
+    plan = profile_probe.plan(N64, facts(words=[LDC1, ADDIU_SP, JR, NOP], ready=lambda t: t != PACK))
+    assert pack_keys(plan) == [] and plan  # the 2.7.2 builds that are installed are still planned
 
 
 def test_only_installed_toolchains_are_planned():

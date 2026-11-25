@@ -17,6 +17,9 @@ two-thirds of ~1,000 hand matches needed a profile of their own, and each family
 - an epilogue `jr $ra; nop` after an instruction a scheduler could have moved into the slot (SN 2.8.1 always fills it):
   SN 2.7.2 (`sn-n64-272-0001`, `-0004`, `-0006`, and `-0001-as0004` where doubles load with `ldc1`) with `-G8 -mips2 -O2`
   or `-G0 -mips3 -O2 -mgas -meb -mhard-float` (no `-mcpu`);
+- an `ldc1` (a double loaded whole; 0001's assembler writes two `lwc1`) anywhere in the target, on any profile and with
+  any epilogue: `sn-n64-272-0001-as0004` with `-G0 -mips3 -O2 -mgas -meb -mhard-float`, `-G8 -mips2 -O2`, `-G0 -mips2 -O2`
+  (planned first, ahead of the flag variants of the function's own compiler);
 - libultra / SDK code (`osXxx`, rmon and scheduler blocks): KMC GCC 2.7.2, `-G0 -mips3 -O2 -mgp32 -mfp32`.
 
 The source change, and the measured result before and after (scores, the judge used):
@@ -49,3 +52,13 @@ What is controlled evidence and what is one function:
 
 The coverage numbers are one game's labelled data, with the hand-matched C as input: they say the plan names the profile
 when the C is right, not that a draft that is still wrong will match under it. The four applications are single functions.
+
+Widening the `ldc1` rule (2026-11): the pack used to be offered only to an SN 2.8.1 function whose target ends `jr ra; nop`,
+so an `ldc1` target with a filled delay slot, or one already on a 2.7.2 profile, never got it. On a throwaway copy of the
+same game's project, with five functions of the SN 2.7.2 audio/zlib stretch reset to open (their per-function profiles
+removed, so three sat on the project's 2.8.1 default, one on the 2.7.2 range, one with a filled slot), the lane planned the pack
+first for each and found the exact trial in one compile (three judge compiles with the apply's two rechecks): 5 of 5, nothing
+else applied. In that project 300 of the 2,099 matched and open functions contain `ldc1`, 275 of them under 2.8.1 profiles
+(238 matched, 37 open; 5 are on the pack, 5 on 2.7.2-0004, 15 on KMC): the rule costs three compiles once per (function, saved C) for the 37
+open ones, and finds nothing for a 2.8.1 function whose doubles it writes itself. Not covered: `sdc1` alone (no `ldc1`) does
+not trigger it, and no other console has an assembler-split pair of compilers, so none got an analogue.

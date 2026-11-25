@@ -130,7 +130,11 @@ def plan(console, facts) -> list[dict]:
     when nothing in the target points anywhere. Never the function's own profile, never one that isn't installed."""
     seen = {key(facts.own)}
     chosen = []
-    for item in [*neighbour(facts), *mips_gcc(facts), *console.profile_probes(facts)]:
+    hints = console.profile_probes(facts)
+    # a console's `lead` hint is a tell that settles the compiler's build outright (an `ldc1` and the assembler that
+    # writes it): judged before the flag variants of the function's own compiler, which cannot fix a missing build
+    ordered = [*neighbour(facts), *(h for h in hints if h.get('lead')), *mips_gcc(facts), *(h for h in hints if not h.get('lead'))]
+    for item in ordered:
         k = key(item)
         if k in seen or not facts.ready(item['toolchain']):
             continue
