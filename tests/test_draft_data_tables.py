@@ -93,3 +93,20 @@ def test_a_table_stored_without_the_kseg0_bit_still_names_the_functions_instruct
     fn = {"asm": ASM + "lui $at, %hi(jtbl_800E1DE8)\n"}
     lines = draft_data.read(net, {"id": 1}, fn)
     assert lines[1:] == ["dlabel jtbl_800E1DE8", *(".word .L%08X" % w for w in CASES)]
+
+
+def test_a_table_in_the_boot_segments_data_is_found_through_another_segments_offset():
+    """A jump table at 0x800AD078 sits after the boot code; the function's own overlay has another ROM offset."""
+    segment = lambda start, vram: SimpleNamespace(rom_start=start, vram=vram)  # noqa: E731
+    rom = bytearray(0x2000)
+    boot = segment(0x100, 0x80000100)
+    table_at = 0x900  # BASE is far above this boot image, so give the table an address the boot offset reaches
+    address = 0x80000100 + table_at - 0x100
+    cases = (0x8025A1D8, 0x8025A1E0)
+    rom[table_at:table_at + 8] = b"".join(struct.pack(">I", w & 0x7FFFFFFF) for w in cases)
+    net = SimpleNamespace(_rom=lambda _: (bytes(rom), [segment(0x1000, 0x80200000), boot]))
+    readers = draft_data.delta_readers(net, {}, {})
+    name = "jtbl_%08X" % address
+    found = [draft_data.jump_table_extent(name, r, set(cases), ">") for r in readers]
+    assert found == [None, (address, 8)]
+    assert draft_data.delta_readers(SimpleNamespace(_rom=lambda _: 1 / 0), {}, {}) == []
