@@ -1200,3 +1200,22 @@ def test_a_host_tool_that_links_statically_gets_a_shim_dropping_what_apples_ld_l
     out = subprocess.run([str(shim), "-static", "-s", "-Wl,--gc-sections,-lm", "a b.o"], capture_output=True,
                          text=True).stdout.split("\n")
     assert out[:3] == ["[-s]", "[-Wl,-dead_strip,-lm]", "[a b.o]"]
+
+
+def test_the_host_shim_gives_an_assemblys_global_symbols_the_underscore_macho_wants(tmp_path):
+    import subprocess
+
+    from decompnet.arch import mips_tools
+
+    real = tmp_path / "real"
+    real.write_text('#!/bin/sh\nfor a; do case "$a" in *.s) cat "$a";; *) echo "[$a]";; esac; done\n')
+    real.chmod(0o755)
+    shim = tmp_path / "gcc"
+    shim.write_text(mips_tools._HOST_LINK_SHIM.format(real=real))
+    shim.chmod(0o755)
+    source = tmp_path / "sigs.s"
+    source.write_text('.global gSigs\n\ngSigs:\n    .incbin "x.defl"\n    .long 0\n')
+    out = subprocess.run([str(shim), "-c", str(source), "-o", "a.o"], capture_output=True, text=True).stdout
+    assert "[-c]" in out and "[a.o]" in out
+    assert ".global _gSigs" in out and "\n_gSigs:" in out and '.incbin "x.defl"' in out
+    assert source.read_text().startswith(".global gSigs")  # (the project's own file is untouched)

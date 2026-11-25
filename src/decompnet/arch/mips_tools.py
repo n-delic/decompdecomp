@@ -222,17 +222,33 @@ def _is_n64(project) -> bool:
     return (manifest.get("platform") or getattr(project, "platform", None)) == "n64"
 
 
-_HOST_LINK_SHIM = """#!/bin/sh
-# host link flags Apple's ld doesn't have: a static executable and GNU ld's --gc-sections
+_HOST_LINK_SHIM = r"""#!/bin/sh
+# host link flags Apple's ld doesn't have: a static executable and GNU ld's --gc-sections; and an assembly file's global
+# symbols, which Mach-O spells with a leading underscore (the C++ side asks for _name)
+temp=
 for a; do
   shift
   case "$a" in
     -static) ;;
     -Wl,*) set -- "$@" "$(printf '%s' "$a" | sed 's/--gc-sections/-dead_strip/g')" ;;
+    *.s)
+      if [ -f "$a" ]; then
+        temp="$(mktemp "${{TMPDIR:-/tmp}}/hostasm.XXXXXX")" && mv "$temp" "$temp.s" && temp="$temp.s"
+        cp "$a" "$temp"
+        for name in $(sed -n 's/^[[:space:]]*\.glob[a]*l[[:space:]]\{{1,\}}\([A-Za-z_][A-Za-z0-9_]*\).*/\1/p' "$a"); do
+          sed -E -i.bak "s/(^|[^A-Za-z0-9_.])$name([^A-Za-z0-9_]|$)/\1_$name\2/g" "$temp"
+        done
+        set -- "$@" "$temp"
+      else
+        set -- "$@" "$a"
+      fi ;;
     *) set -- "$@" "$a" ;;
   esac
 done
-exec "{real}" "$@"
+"{real}" "$@"
+status=$?
+[ -n "$temp" ] && rm -f "$temp" "$temp.bak"
+exit $status
 """
 
 
@@ -411,8 +427,9 @@ def build_paths(project) -> list[Path]:
             for name in ("g++", "gcc", "c++", "cc"):
                 real = shutil.which(name, path=rest)
                 tool = folder / name
-                if real and not tool.exists():
-                    tool.write_text(_HOST_LINK_SHIM.format(real=real), encoding="utf-8")
+                text = _HOST_LINK_SHIM.format(real=real)
+                if real and (not tool.exists() or tool.read_text(errors="replace") != text):
+                    tool.write_text(text, encoding="utf-8")
                     tool.chmod(0o755)
         if sys.platform == "darwin":
             for name in ("head", "tail"):
