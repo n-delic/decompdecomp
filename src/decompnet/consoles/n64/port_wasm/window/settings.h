@@ -47,6 +47,7 @@ static PortSetting port_settings[] = {
 #define PS_ROWS ((int)(sizeof port_settings / sizeof *port_settings))
 
 static struct { int open, row; unsigned changed; } port_menu;
+static struct { int x, y, w, h; } ps_panel; /* where ps_draw put the panel, for a renderer that copies only that */
 
 static PortSetting *ps_find(const char *key) {
     for (int i = 0; i < PS_ROWS; i++)
@@ -160,11 +161,15 @@ static int ps_text(uint8_t *rgba, int w, int h, int x, int y, int s, const char 
 /* The menu over a w by h picture: everything outside the panel stays clear (alpha 0) so the game shows through. */
 static void ps_draw(uint8_t *rgba, int w, int h) {
     memset(rgba, 0, (size_t)w * h * 4);
-    int s = h >= 480 ? 2 : 1, line = 12 * s, pw = 200 * s;
+    int s = h / 240 < w / 340 ? h / 240 : w / 340, line, pw; /* 640x480: 2 */
+    if (s < 1) s = 1;
+    line = 12 * s;
+    pw = 200 * s;
     int heads = 0;
     for (int i = 0; i < PS_ROWS; i++)
         if (i == 0 || strcmp(port_settings[i].section, port_settings[i - 1].section)) heads++;
     int ph = (PS_ROWS + 3) * line + heads * (line * 3 / 2), x0 = (w - pw) / 2, y0 = (h - ph) / 2;
+    ps_panel.x = x0; ps_panel.y = y0; ps_panel.w = pw; ps_panel.h = ph;
     ps_rect(rgba, w, h, x0, y0, pw, ph, 0x000000d8);
     ps_rect(rgba, w, h, x0, y0, pw, s, 0xffffffff);
     ps_rect(rgba, w, h, x0, y0 + ph - s, pw, s, 0xffffffff);

@@ -3,7 +3,14 @@
 
 #include <stdint.h>
 
-enum { PORT_RT64_ABI = 3, PORT_RT64_VI_MODE_WORDS = 19, PORT_RT64_VI_SERRATE = 0x40 };
+enum { PORT_RT64_ABI = 4, PORT_RT64_VI_MODE_WORDS = 19, PORT_RT64_VI_SERRATE = 0x40 };
+
+/* The host's overlay painter (the settings menu), called on RT64's render thread once per presented frame with a
+   cleared-by-you RGBA buffer of the drawable's width by height. Return 0 to draw nothing this frame; otherwise set
+   `rect` to the part of the buffer to put over the game (x, y, width, height, in pixels): only that part is uploaded
+   and it replaces the game's pixels there, so paint it opaque. */
+typedef struct { uint32_t x, y, width, height; } PortRt64Rect;
+typedef int (*PortRt64Paint)(uint8_t *rgba, uint32_t width, uint32_t height, PortRt64Rect *rect);
 
 typedef struct {
     uint32_t abi;
@@ -15,6 +22,7 @@ typedef struct {
     void (*close)(void);
     void (*features)(uint32_t flags);
     void (*retrace)(unsigned field);
+    void (*overlay)(PortRt64Paint paint); /* before open: the window's layer is then made copyable */
 } PortRt64;
 
 #ifndef PORT_WEB

@@ -19,8 +19,8 @@
  * Z, Q and W are L and R, I/J/K/L are the C buttons; F or F11 is full screen, Escape leaves it. A gamepad works as in
  * the browser (SDL's gamepad layout): the left stick steers, the right stick is the C buttons, the triggers are Z.
  * Tab or F1 (a gamepad's Back button) opens the settings menu (settings.h): full screen, scaling, FPS, volume. It is
- * drawn over the picture by SDL's renderer, so it is not there while RT64 owns the window (ROADMAP.md), and its
- * choices are kept in PORT_SETTINGS (settings.ini beside the saves).
+ * drawn over the picture by SDL's renderer, or, in the RT64 Metal window, copied over RT64's frame by its adapter
+ * (rt64_paint, rt64/adapter.cpp), and its choices are kept in PORT_SETTINGS (settings.ini beside the saves).
  * Closing the window quits (the EEPROM is written as the game writes it, so its saves are kept).
  */
 #include <pthread.h>
@@ -40,6 +40,9 @@ static const PortRt64 *rt64;
 static void *rt64_view;
 static void (*destroy_rt64_view)(void *);
 static pthread_mutex_t rt64_lock = PTHREAD_MUTEX_INITIALIZER;
+static int rt64_menu; /* the menu is painted through RT64's render thread */
+
+static int rt64_paint(uint8_t *rgba, uint32_t w, uint32_t h, PortRt64Rect *rect);
 
 static int open_rt64(void *sdl_lib, void *window, const char *path) {
     void *library = dlopen(path, RTLD_NOW | RTLD_LOCAL);
@@ -55,7 +58,7 @@ static int open_rt64(void *sdl_lib, void *window, const char *path) {
         dlclose(library);
         return 0;
     }
-    if (!api || !api->features || !api->retrace || !properties || !pointer || !create_view || !layer || !destroy_rt64_view) {
+    if (!api || !api->features || !api->retrace || !api->overlay || !properties || !pointer || !create_view || !layer || !destroy_rt64_view) {
         const char *error = dlerror();
         fprintf(stderr, "Cannot load the RT64 adapter: %s\n", error ? error : "incompatible adapter or SDL3");
         if (library) dlclose(library);
@@ -64,6 +67,7 @@ static int open_rt64(void *sdl_lib, void *window, const char *path) {
     void *native = pointer(properties(window), "SDL.window.cocoa.window", NULL);
     void *view = native ? create_view(window) : NULL;
     void *metal_layer = view ? layer(view) : NULL;
+    api->overlay(rt64_paint); /* before open: it makes the window's layer copyable for the menu's panel */
     if (!metal_layer || !api->open(native, metal_layer)) {
         fprintf(stderr, "Cannot start RT64 in the Metal window\n");
         if (view) destroy_rt64_view(view);
@@ -71,6 +75,7 @@ static int open_rt64(void *sdl_lib, void *window, const char *path) {
     }
     rt64 = api;
     rt64_view = view;
+    rt64_menu = 1;
     return 1;
 }
 
@@ -88,6 +93,7 @@ void port_rt64_retrace(unsigned field) { RT64_CALL(retrace, (field)); }
 void port_rt64_yscale(float scale) { RT64_CALL(yscale, (scale)); }
 void port_rt64_features(uint32_t flags) { RT64_CALL(features, (flags)); }
 #else
+#define rt64_menu 0
 void port_rt64_task(const uint8_t *ram, uint32_t ucode, uint32_t data, uint32_t list) {
     (void)ram; (void)ucode; (void)data; (void)list;
 }
@@ -210,6 +216,13 @@ static int load_sdl(void) {
 
 static void *window, *renderer, *texture, *overlay, *pad;
 static char settings_path[4096];
+static pthread_mutex_t menu_lock = PTHREAD_MUTEX_INITIALIZER; /* the menu's state: the main thread changes it, RT64's render thread paints it */
+static void load_settings(void) {
+    const char *kept = getenv("PORT_SETTINGS");
+    snprintf(settings_path, sizeof settings_path, "%s", kept && *kept ? kept : "settings.ini");
+    ps_load(settings_path);
+}
+static void menu_toggle(void) { pthread_mutex_lock(&menu_lock); port_menu.open = !port_menu.open; pthread_mutex_unlock(&menu_lock); }
 static int texture_w, texture_h;
 static uint64_t fps_since;
 static unsigned fps_frames;
@@ -242,7 +255,11 @@ int port_sdl_start(void) {
     if (adapter && *adapter) {
         window = sdl.CreateWindow(title(), 960, 720, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_METAL);
         if (window && sdl.RaiseWindow) sdl.RaiseWindow(window);
-        if (window && open_rt64(sdl_library, window, adapter)) return 1;
+        load_settings();
+        if (window && open_rt64(sdl_library, window, adapter)) {
+            if (ps_value("fullscreen")) sdl.SetWindowFullscreen(window, true);
+            return 1;
+        }
         sdl.Quit();
         return 0;
     }
@@ -262,9 +279,7 @@ int port_sdl_start(void) {
     /* PORT_FULLSCREEN=1: the whole screen from the start (the Steam Deck's launcher, steamdeck.py), for a handheld
        with no key to make it so; F still leaves it */
     const char *full = getenv("PORT_FULLSCREEN");
-    const char *kept = getenv("PORT_SETTINGS");
-    snprintf(settings_path, sizeof settings_path, "%s", kept && *kept ? kept : "settings.ini");
-    ps_load(settings_path);
+    load_settings();
     if ((full && *full && *full != '0') || ps_value("fullscreen")) sdl.SetWindowFullscreen(window, true);
     fps_since = sdl.GetTicksNS();
     fps_frames = 0;
@@ -391,9 +406,33 @@ static void read_controls(void) {
 }
 
 /* One key or button for the open menu: apply what it changed, keep the choices, and act on Quit. */
+#ifdef __APPLE__
+/* RT64's render thread asks, once per presented frame, for the menu's panel (rt64/adapter.cpp copies only that
+   rectangle over the game): painted into the drawable-sized buffer, then made opaque over a dark backing, because a
+   copy replaces what is there rather than blending with it. */
+static int rt64_paint(uint8_t *rgba, uint32_t w, uint32_t h, PortRt64Rect *rect) {
+    pthread_mutex_lock(&menu_lock);
+    int open = port_menu.open;
+    if (open) ps_draw(rgba, (int)w, (int)h);
+    pthread_mutex_unlock(&menu_lock);
+    if (!open || ps_panel.w <= 0) return 0;
+    for (int y = ps_panel.y; y < ps_panel.y + ps_panel.h; y++)
+        for (int x = ps_panel.x; x < ps_panel.x + ps_panel.w; x++) {
+            uint8_t *p = rgba + ((size_t)y * w + x) * 4;
+            for (int k = 0; k < 3; k++) p[k] = (uint8_t)((p[k] * p[3] + 16 * (255 - p[3])) / 255);
+            p[3] = 255;
+        }
+    rect->x = (uint32_t)ps_panel.x; rect->y = (uint32_t)ps_panel.y;
+    rect->width = (uint32_t)ps_panel.w; rect->height = (uint32_t)ps_panel.h;
+    return 1;
+}
+#endif
+
 static void menu_input(int nav) {
+    pthread_mutex_lock(&menu_lock);
     port_menu.changed = 0;
     int result = ps_input(nav);
+    pthread_mutex_unlock(&menu_lock);
     if (port_menu.changed) {
         sdl.SetWindowFullscreen(window, ps_value("fullscreen") != 0);
         if (texture) sdl.SetTextureScaleMode(texture, ps_value("smooth") ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);
@@ -411,7 +450,7 @@ void port_sdl_pump(void) {
         else if (e.type == SDL_EVENT_KEY_DOWN && !e.bytes[EV_KEY_REPEAT]) {
             int32_t code;
             memcpy(&code, e.bytes + EV_KEY_SCANCODE, 4);
-            if (renderer && (code == S_TAB || code == S_F1)) port_menu.open = !port_menu.open;
+            if ((renderer || rt64_menu) && (code == S_TAB || code == S_F1)) menu_toggle();
             else if (port_menu.open) {
                 int nav = code == S_UP ? PS_UP : code == S_DOWN ? PS_DOWN : code == S_LEFT ? PS_LEFT :
                           code == S_RIGHT ? PS_RIGHT : code == S_RETURN || code == S_SPACE ? PS_ACCEPT :
@@ -421,9 +460,9 @@ void port_sdl_pump(void) {
                 if (code == S_F || code == S_F11) toggle_fullscreen(0);
                 if (code == S_ESCAPE) toggle_fullscreen(1);
             }
-        } else if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && renderer) {
+        } else if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && (renderer || rt64_menu)) {
             int button = e.bytes[EV_PAD_BUTTON];
-            if (button == G_BACK) port_menu.open = !port_menu.open;
+            if (button == G_BACK) menu_toggle();
             else if (port_menu.open) {
                 int nav = button == G_UP ? PS_UP : button == G_DOWN ? PS_DOWN : button == G_LEFT ? PS_LEFT :
                           button == G_RIGHT ? PS_RIGHT : button == G_SOUTH ? PS_ACCEPT : button == G_EAST ? PS_BACK : -1;
