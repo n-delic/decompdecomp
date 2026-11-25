@@ -726,6 +726,17 @@ def test_nothing_is_handed_out_while_the_compiler_cannot_run(game, monkeypatch):
     assert net.readability.claim(agent, 'game').startswith('MAKE READABLE')
 
 
+def test_blocked_reason_tells_a_helper_to_wait_for_the_compiler(game, monkeypatch):
+    # A helper whose session could only hear "the compiler can't run" was counted as failing and paused after five.
+    from decompnet import toolchains
+
+    net, _, _ = game
+    monkeypatch.setattr(toolchains, 'runtime_error', lambda tid: 'The Linux compiler runner is not ready.')
+    assert net.readability.blocked_reason('game') == 'The Linux compiler runner is not ready.'
+    monkeypatch.setattr(toolchains, 'runtime_error', lambda tid: None)
+    assert net.readability.blocked_reason('game') == ''
+
+
 def test_a_function_is_handed_out_only_when_its_own_compiler_can_run(game, monkeypatch):
     # An N64 game's smallest function is built with the compiler its Linux runner runs; the check looked only at
     # the game's own compiler, which ran, and the function was handed out 10 times while the runner was down.

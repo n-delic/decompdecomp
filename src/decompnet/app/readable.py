@@ -177,6 +177,14 @@ class Readability:
                 pass
         return blocked
 
+    def blocked_reason(self, slug: str) -> str:
+        """Why polishing can't hand out work now (its compilers can't start), or "": a helper then waits for the
+        compiler instead of ending a session that could do nothing (and being paused as failing)."""
+        proj = self.net._project(slug)
+        if not self.net.is_rom(proj):
+            return ""
+        return "; ".join(dict.fromkeys(self._blocked(proj).values()))
+
     def _own_compiler(self, proj, fn) -> str | None:
         from ..project import compiler_for
         cfg = self.net.cfg(proj)

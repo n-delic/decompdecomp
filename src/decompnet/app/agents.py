@@ -129,6 +129,7 @@ FAST_FAILURE = 2 * 60
 FAST_FAILURES_TO_PAUSE = 5
 # the provider's limit of requests at once (HTTP 429): not the helper's failure, so waited out, this many times
 THROTTLE_WAIT = 60
+RUNNER_WAIT = 120  # polishing with its compiler unable to start: look again in two minutes
 THROTTLES_IN_A_ROW = 10
 # A plan's usage limit resets by itself: wait until the time the agent says, a little after it; when it says none,
 # from LIMIT_WAIT_FIRST doubling up to LIMIT_WAIT_LONGEST. A reset further away than LIMIT_RESET_FURTHEST is misread.
@@ -1753,13 +1754,15 @@ class Manager:
                 s.push('info', 'Session ended early; continuing once with explicit compilation guidance.')
             readable_progress = task == 'readable' and self.net.project_store(s.slug).one('SELECT COUNT(*) AS n FROM events WHERE agent_id=?',agent.id)['n'] > activity_before
             work_remains = task != "boundary" and self._left(s.slug,task) > 0
+            runner_down = (self.net.readability.blocked_reason(s.slug) if task == 'readable' and ok and work_remains
+                           and compiled == 0 and not s.stop.is_set() and not s.rotated else "")
             no_progress = (task not in {'boundary', 'readable'} and ok and not investigation
                            and work_remains and not s.stop.is_set() and not s.rotated and compiled == 0
                            and not (s.limited or s.throttled or s.auth_failed or s.signed_out))
             if getattr(self.net, '_progress_disturbed', {}).pop(agent.id, 0):
                 no_progress = False  # saves and rechecks kept its tools from working: not a reason to pause it
             no_progress_sessions = no_progress_sessions + 1 if no_progress else 0
-            if ok and not investigation and not followup and not readable_progress and work_remains and not s.stop.is_set() and not s.rotated and compiled == 0:
+            if ok and not investigation and not followup and not readable_progress and not runner_down and work_remains and not s.stop.is_set() and not s.rotated and compiled == 0:
                 s.error = "The discovery session ended without a structured finding or unsuccessful approach." if task=="assets" else "the session ended without compiling anything (its messages are in its details)"
                 s.push("error", s.error)
                 ok = False
@@ -1820,6 +1823,10 @@ class Manager:
                            else "fewer agents at once on this account would wait less")
                 continue
             throttles = 0
+            if ok and runner_down and not readable_progress:  # nothing could be handed out: not a failure, so no pause
+                self._wait(s, f"polishing's compiler can't run right now: {runner_down}", time.time() + RUNNER_WAIT,
+                           "this helper carries on by itself once the compiler can run")
+                continue
             if ok:
                 failures = fast = limits = 0
                 self._set(s, "waiting", "Session ended early; continuing with compilation guidance." if followup else "Session completed; helper is continuing. The next session starts in a moment.")
