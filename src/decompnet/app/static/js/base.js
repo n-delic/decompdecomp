@@ -48,6 +48,8 @@ const pctNum = (p) => (p < 10 ? p.toFixed(2) : p.toFixed(1));
 /* A project's share matched of the code C can make: what's set aside (assembly, pieces of functions, what agents
    agreed no C makes) is out of both sides. */
 const codeBytes = (p) => Math.max(0, (p.bytes || 0) - (p.set_aside_bytes || 0));
+// Readable functions are a subset of the matched ones: their share of what matches
+const readableText = (p) => `${p.readable.toLocaleString()} readable${p.matched ? ` (${pctNum((100 * p.readable) / p.matched)}% of matched)` : ""}`;
 const codePct = (p) => (codeBytes(p) ? (100 * (p.matched_bytes || 0)) / codeBytes(p) : 0);
 const cFunctions = (p) => (p.functions || 0) - (p.set_aside || 0);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

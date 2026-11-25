@@ -565,7 +565,7 @@ function renderHeader(ov) {
   $("phPct").textContent = pctNum(pct);
   $("phBar").style.width = pct + "%";
   $("phSub").textContent = fork && !ov.ready ? "set up the project to start"
-    : `${ov.matched.toLocaleString()} / ${cFunctions(ov).toLocaleString()} functions${ov.readable ? ` · ${ov.readable.toLocaleString()} readable` : ""}${linkedText(ov)} · ${plural(ov.attempts || 0, "compile")}${S.today ? ` · ${S.today} matched today` : ""}`;
+    : `${ov.matched.toLocaleString()} / ${cFunctions(ov).toLocaleString()} functions${ov.readable ? ` · ${readableText(ov)}` : ""}${linkedText(ov)} · ${plural(ov.attempts || 0, "compile")}${S.today ? ` · ${S.today} matched today` : ""}`;
   $("phSub").title = ov.readable ? "Readable: matched functions renamed, typed and commented by agents, and still matching byte for byte" : "";
   const w = workingAgents();
   $("phWorking").hidden = !w.n;
@@ -777,10 +777,10 @@ function renderOverview() {
   $("fnStack").innerHTML = seg("matched", "s-match") + seg("sdk", "s-sdk") + seg("working", "s-work") + seg("tried", "s-tried") + seg("asm", "s-asm") + seg("boundary", "s-work") + seg("open", "s-open");
   setWidths($("fnStack"));
   const togo = cFunctions(S.ov) - S.ov.matched;
-  $("fnSub").textContent = `${togo.toLocaleString()} to go${c.tried ? ` · ${c.tried.toLocaleString()} tried` : ""}${c.working ? ` · ${c.working} in progress` : ""}${c.sdk ? ` · ${c.sdk} SDK library code` : ""}${c.asm ? ` · ${c.asm} set aside (no C makes them)` : ""}${S.ov.readable ? ` · ${S.ov.readable.toLocaleString()} readable (renamed, typed and commented, still matching)` : ""}${S.ov.left_out ? ` · ${plural(S.ov.left_out, "function")} left out: library code (see Settings)` : ""}`;
+  $("fnSub").textContent = `${togo.toLocaleString()} to go${c.tried ? ` · ${c.tried.toLocaleString()} tried` : ""}${c.working ? ` · ${c.working} in progress` : ""}${c.sdk ? ` · ${c.sdk} SDK library code` : ""}${c.asm ? ` · ${c.asm} set aside (no C makes them)` : ""}${S.ov.readable ? ` · ${readableText(S.ov)} (renamed, typed and commented, still matching)` : ""}${S.ov.left_out ? ` · ${plural(S.ov.left_out, "function")} left out: library code (see Settings)` : ""}`;
   if (S.ov.status_breakdown) {
     const b=S.ov.status_breakdown;
-    $("fnSub").textContent = `${b.exact_c.toLocaleString()} exact C · ${b.verified_source_assembly.toLocaleString()} verified source assembly · ${(b.verified_sdk_assembly || 0).toLocaleString()} verified SDK assembly · ${b.other_assembly.toLocaleString()} other set-aside entries · ${b.open.toLocaleString()} open${c.boundary ? ` · ${c.boundary} require boundary review (included in saved counts)` : ""}${c.working ? ` · ${c.working} working` : ""}${S.ov.readable ? ` · ${S.ov.readable.toLocaleString()} readable` : ""}`;
+    $("fnSub").textContent = `${b.exact_c.toLocaleString()} exact C · ${b.verified_source_assembly.toLocaleString()} verified source assembly · ${(b.verified_sdk_assembly || 0).toLocaleString()} verified SDK assembly · ${b.other_assembly.toLocaleString()} other set-aside entries · ${b.open.toLocaleString()} open${c.boundary ? ` · ${c.boundary} require boundary review (included in saved counts)` : ""}${c.working ? ` · ${c.working} working` : ""}${S.ov.readable ? ` · ${readableText(S.ov)}` : ""}`;
     $("fnSub").title="Verified source assembly is checked against supplied local source. Other assembly includes unverified fallbacks. Zero open functions does not mean 100% C.";
   }
 
