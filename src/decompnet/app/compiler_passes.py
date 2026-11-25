@@ -40,13 +40,13 @@ def run(net, agent, slug, function, revision, passes=None):
     return render(result, passes, revision) + source_line(result.get('toolchain') or profile.get('toolchain'))
 
 
-def diagnose(net, proj, fn, source, passes, excerpt_chars=compiler_diagnostics.EXCERPT_CHARS, extra_flags=()):
+def diagnose(net, proj, fn, source, passes, excerpt_chars=compiler_diagnostics.EXCERPT_CHARS, extra_flags=(), keep_files=False):
     """The isolated diagnostic compile of `source` under the function's own profile (the tool's and the skill's
     passes.py share it): (result, profile)."""
     header = net._context(proj['id'], fn['unit'])['header']
     profile = compiler_for(net.cfg(proj), fn['vram'], fn)
     result = compiler_diagnostics.diagnose(profile, header, source, fn['name'], root=proj['root'], excerpts=passes,
-                                           excerpt_chars=excerpt_chars, extra_flags=extra_flags)
+                                           excerpt_chars=excerpt_chars, extra_flags=extra_flags, keep_files=keep_files)
     if result.get('skipped'):
         raise NetworkError(f"{result['skipped']} compiler_passes needs a pinned, installed GCC-family compiler "
                            f"(this function's is {profile.get('toolchain') or 'a custom command'}); use compile_variants "
@@ -54,7 +54,8 @@ def diagnose(net, proj, fn, source, passes, excerpt_chars=compiler_diagnostics.E
     return result, profile
 
 
-SKILL_PASSES = ('greg', 'sched', 'sched2')
+SKILL_PASSES = ('greg', 'sched', 'sched2', 'loop')
+LOOP_NOTE_LINES = 80
 SKILL_EXCERPT_CHARS = 60000  # a whole function's dump: the skill's passes.py reads orders, not a bounded excerpt
 
 
@@ -106,18 +107,33 @@ def verbose_schedule(result):
     return [line for line in text.splitlines() if line.startswith(';;')]
 
 
-def report(net, proj, fn, source, passes=SKILL_PASSES, sched_verbose=False):
+def loop_decisions(result):
+    """The loop optimizer's own notes from the `loop` dump (loop.c writes them between the RTL: which insns it hoisted
+    out of a loop and why, the induction variables it found, which givs it combined or reduced and what it refused):
+    the lines that are prose, not RTL. An SN or KMC GCC loop that is hoisted or strength-reduced differently from the
+    target shows here first."""
+    text = ((result.get('phases') or {}).get('loop') or {}).get('excerpt', '')
+    lines = [line.rstrip() for line in text.splitlines() if line[:1].isalpha()]
+    return lines[:LOOP_NOTE_LINES] + ([f'... {len(lines) - LOOP_NOTE_LINES} more in the loop dump'] if len(lines) > LOOP_NOTE_LINES else [])
+
+
+def report(net, proj, fn, source, passes=SKILL_PASSES, sched_verbose=False, files=None):
     """What the skill's passes.py prints: the allocation priority table, register preferences, scheduling orders and
     where the compiler's source is. Diagnostic only, like the tool: nothing is recorded or judged. `sched_verbose`
-    makes sure the first scheduler's dump is taken and prints its notes (the launch priorities)."""
+    makes sure the first scheduler's dump is taken and prints its notes (the launch priorities). `files`, a dict, is
+    filled with every file the diagnostic compile left (the preprocessed C, the final assembly, each pass dump)."""
     if sched_verbose and 'sched' not in passes:
         passes = (*passes, 'sched')
-    result, profile = diagnose(net, proj, fn, source, passes, SKILL_EXCERPT_CHARS)
+    result, profile = diagnose(net, proj, fn, source, passes, SKILL_EXCERPT_CHARS, **({'keep_files': True} if files is not None else {}))
+    if files is not None:
+        files.update(result.get('files') or {})
     out = [render(result, (), 'candidate', rows=None)]
     if prefs := preferences(result):
         out += ['', 'Register preferences (greg):', *prefs]
     if lines := conflicts(result):
         out += ['', 'Hard registers each pseudo is live with (it cannot take these):', *lines]
+    if 'loop' in passes and (notes := loop_decisions(result)):
+        out += ['', 'Loop optimizer decisions (hoists, induction variables, givs; the `loop` dump):', *('  ' + n for n in notes)]
     for phase in ('sched', 'sched2'):
         if phase in passes:
             order = schedule_order(result, phase)
