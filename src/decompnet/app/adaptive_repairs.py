@@ -8,7 +8,6 @@ import json
 import math
 import statistics
 import time
-from itertools import zip_longest
 
 from ..project import compiler_for
 from . import trial_bookkeeping
@@ -142,11 +141,31 @@ def order(net, proj, fn, rows, families):
     from .repair_sequences import starting
     learned = starting(net,proj,fn,rows)
     ranked = sorted(families, key=lambda family: (family not in learned,-measured.get(family, 1)))
-    # Interleave the original queue so a changed policy cannot starve unexplored families.
-    result=list(dict.fromkeys(family for pair in zip_longest(ranked, families)
-                              for family in pair if family is not None))
     from .repair_ranking import guarded_first
-    return guarded_first(result)
+    return guarded_first(explore(ranked, learned, measured))
+
+
+EXPLORE_EVERY = 3  # one unmeasured family after this many ranked ones
+
+
+def explore(ranked, learned, measured):
+    """`ranked` (best first) with the families nobody has measured yet fed in among the proven ones, one per EXPLORE_EVERY,
+    and every family measured as poor (a factor under 1, not `learned` for this function) after all the rest.
+
+    The whole original queue used to be interleaved one for one with the ranking, which pulled a family measured as poor
+    back to where it started: on a 588-function N64 game the weight ladders spent 48 of 273 minutes on misses and 20 more
+    went to families that never improved anything in hundreds of functions, all of them early in the queue and kept near
+    it. A poor family still runs once the others are spent, and a loop's larger budget reaches it."""
+    def poor(family):
+        return family in measured and measured[family] < 1 and family not in learned
+    fresh = [family for family in ranked if family not in measured and family not in learned]
+    proven = [family for family in ranked if family not in fresh and not poor(family)]
+    result = []
+    for index, family in enumerate(proven, 1):
+        result.append(family)
+        if index % EXPLORE_EVERY == 0 and fresh:
+            result.append(fresh.pop(0))
+    return result + fresh + [family for family in ranked if poor(family)]
 
 
 def efficiency(net):

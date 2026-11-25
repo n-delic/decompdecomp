@@ -760,7 +760,7 @@
         <fieldset class="local-search-options" id="deepSweepSettings">
           <legend class="sr-only">Search options</legend>
           <h3>Search limits</h3>
-          <div class="local-search-option-pair"><label class="field"><span>Minutes per function (1–120)</span><input id="deepSweepMinutes" type="number" min="1" max="120" value="5" required></label><label class="field"><span>Candidates per function (1–1,000,000)</span><input id="deepSweepVariants" type="number" min="1" max="1000000" value="2500" required></label></div>
+          <div class="local-search-option-pair"><label class="field"><span>Minutes per function (1–120)</span><input id="deepSweepMinutes" type="number" min="1" max="120" value="5" required></label><label class="field"><span>Candidates per function (1–1,000,000)</span><input id="deepSweepVariants" type="number" min="1" max="1000000" value="750" required></label></div>
           <label class="field"><span>Compiler profiles per candidate (1–16)</span><input id="deepSweepProfiles" type="number" min="1" max="16" value="1" required><small>Each function's own settings first, then the project default (always tried when it differs), then other profiles ranked by matched functions. Each profile uses compile allowance. ROM rooms submit exact source, header and compiler settings for host verification. Imported builds use their own compiler settings.</small></label>
           <label class="field"><span>Functions to search first</span><select id="deepSweepOrder">
             <option value="smart">Near misses first, then small functions</option>
@@ -778,7 +778,7 @@
           <div class="local-search-option-pair"><label class="field"><span>Concurrent compiles (1–256)</span><input id="deepSweepCompileSlots" type="number" min="1" max="256" placeholder="auto"><small>Blank uses all cores in maximum mode; balanced mode keeps its normal compiler allowance.</small></label><label class="field"><span>Functions at a time (1 or more)</span><input id="deepSweepThreads" type="number" min="1" placeholder="auto"><small>Leave blank for automatic.</small></label></div>
           <label class="field"><span>Threads per function (1–256)</span><input id="deepSweepFunctionThreads" type="number" min="1" max="256" value="1" required><small>Search independent candidate paths in parallel. The time and candidate limits apply to the whole function. Total workers = functions × threads per function.</small></label>
           <h3>Repeat searches</h3>
-          <label class="deep-sweep-repeat"><input id="deepSweepLoop" type="checkbox"><span>Loop indefinitely<small>Double the time and variant budgets per function after each pass. Waiting functions go to the back of the queue.</small></span></label><label class="deep-sweep-repeat"><input id="deepSweepRepeat" type="checkbox"><span>Repeat completed passes<small>Otherwise, search untested or changed functions.</small></span></label>
+          <label class="deep-sweep-repeat"><input id="deepSweepLoop" type="checkbox" checked><span>Loop indefinitely<small>Double the time and variant budgets per function after each pass. Waiting functions go to the back of the queue.</small></span></label><label class="deep-sweep-repeat"><input id="deepSweepRepeat" type="checkbox"><span>Repeat completed passes<small>Otherwise, search untested or changed functions.</small></span></label>
         </fieldset>
         </div>
         <div class="small" id="deepSweepStatus" role="status" hidden></div>

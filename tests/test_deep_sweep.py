@@ -1313,9 +1313,11 @@ def test_the_smart_order_is_the_one_a_pass_always_used():
     assert deep_sweep.order_functions(rows, details, 'smart') == deep_sweep.closeness_order(rows, details)
 
 
-def test_a_pass_starts_at_2500_candidates_and_remembers_which_functions_to_search_first(sweep, monkeypatch):
+def test_a_pass_starts_at_750_candidates_looping_and_remembers_which_functions_to_search_first(sweep, monkeypatch):
     obj, net, calls, path = sweep
-    assert deep_sweep.DEFAULT_VARIANTS == 2500 and obj.config('game')['max_variants'] == 2500
+    assert deep_sweep.DEFAULT_VARIANTS == 750 and obj.config('game')['max_variants'] == 750
+    # (every later loop doubles it, so no function is held to the first budget)
+    assert obj.config('game')['loop'] is True
     assert obj.config('game')['function_order'] == 'smart'
     with pytest.raises(NetworkError, match='which functions to search first'):
         obj.start('game', function_order='newest')
