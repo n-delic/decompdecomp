@@ -2427,7 +2427,15 @@ int main(int argc, char **argv) {
         retrace();
         /* the retraces the console had while it worked on a frame (PORT_VTIME_TRACE), fired as the game goes idle:
            they queue for it as they did there */
-        while (vtime && vi_count < vi_target) retrace();
+        /* each catch-up retrace gets the game's threads run to idle before the next: fired back to back (PORT_VTIME_BURST=1) a frame's
+           three retraces queued on the game's VI queue together (the port's log: three sends, then the receivers), and the logic they pace
+           ran in bursts the console's, which had its threads work between retraces, did not */
+        static int burst = -1;
+        if (burst < 0) burst = getenv("PORT_VTIME_BURST") && atoi(getenv("PORT_VTIME_BURST")) != 0;
+        while (vtime && vi_count < vi_target) {
+            if (!burst) wait_retrace();
+            retrace();
+        }
         if (vtime && vi_target) vnext_us = ((uint64_t)vi_count + 1) * (unsigned)retrace_us();
         port_live_pump();
         if (getenv("PORT_SAMPLE") && frame % 10 == 5) sample();
