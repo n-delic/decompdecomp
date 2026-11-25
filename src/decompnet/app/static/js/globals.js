@@ -72,8 +72,14 @@ $("globalsHead").addEventListener("click", (e) => {
 async function openGlobal(name) {
   const slug = S.slug, g = G.rows.find((r) => r.name === name);
   if (!g) return;
-  const body = dialog(g.name, `<p class="muted small mono">${hex8(g.address)}${g.name !== g.original ? ` · ${esc(g.original)}` : ""}${g.type ? ` · ${esc(g.type)}` : ""}${g.size ? ` · ${g.size.toLocaleString()} bytes` : ""}</p><div id="globalUsers" class="muted">Finding the functions that use it…</div>`);
+  const body = dialog(g.name, `<p class="muted small mono">${hex8(g.address)}${g.name !== g.original ? ` · ${esc(g.original)}` : ""}${g.type ? ` · ${esc(g.type)}` : ""}${g.size ? ` · ${g.size.toLocaleString()} bytes` : ""}</p><form id="globalType" class="row" autocomplete="off"><label for="globalTypeInput">C type</label>
+      <input id="globalTypeInput" class="mono" value="${esc(g.type || "")}" placeholder="s32, u8[16], struct Actor *" spellcheck="false" maxlength="80" ${G.supported ? "" : "disabled"}>
+      <button class="primary" type="submit">Change type</button></form>
+    <p class="muted small">Rewrites every declaration of ${esc(g.name)} (headers and matched code), then rebuilds the matched functions that use it. Nothing is changed if one stops matching.</p>
+    <pre id="globalTypeLog" class="log" hidden></pre>
+    <div id="globalUsers" class="muted">Finding the functions that use it…</div>`);
   const box = body.querySelector("#globalUsers");
+  wireGlobalType(body, g, slug);
   try {
     const data = await api(`/api/global-users?slug=${encodeURIComponent(slug)}&name=${encodeURIComponent(name)}`);
     if (!box.isConnected || S.slug !== slug) return;
@@ -89,3 +95,29 @@ async function openGlobal(name) {
 }
 $("globalsRows").addEventListener("click", (e) => { const tr = e.target.closest("[data-gname]"); if (tr) openGlobal(tr.dataset.gname); });
 $("globalsRows").addEventListener("keydown", (e) => { if (e.key !== "Enter") return; const tr = e.target.closest("[data-gname]"); if (tr) openGlobal(tr.dataset.gname); });
+
+/* Change the type: a job that edits the declarations and checks the functions that use the global. The first click
+   disables the form; the log keeps the bar, the progress and any refusal. */
+function wireGlobalType(body, g, slug) {
+  const form = body.querySelector("#globalType"), input = form.querySelector("input"), button = form.querySelector("button");
+  const log = body.querySelector("#globalTypeLog");
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const c_type = input.value.trim();
+    if (!c_type || c_type === (g.type || "")) { input.focus(); return; }
+    log.hidden = false; log.textContent = "";
+    showJobError(log, "");
+    const finish = beginWork(log, `Changing ${g.name} to ${c_type}`, [input, button], "Type changed.");
+    try {
+      const { job } = await api("/api/global-types/change", { method: "POST", body: { slug, name: g.name, type: c_type } });
+      const result = await followJob(job, log, undefined, () => S.slug === slug);
+      if (result) {
+        g.type = result.type; g.type_source = "user";
+        if (S.slug === slug) { const row = G.rows.find((r) => r.name === g.name); if (row) Object.assign(row, { type: result.type, type_source: "user" }); renderGlobals(); loadGlobals(slug); }
+        log.textContent = result.message;
+      }
+    } catch (error) {
+      showJobError(log, error.message);
+    } finally { finish(); }
+  };
+}

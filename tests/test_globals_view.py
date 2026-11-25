@@ -174,3 +174,79 @@ def test_a_match_or_header_types_the_global_but_never_over_a_users_type(tmp_path
     row = store.one("SELECT c_type, type_source, size FROM symbols WHERE name='sDirectKey'")
     assert (row["c_type"], row["type_source"], row["size"]) == ("f32", "user", 16)  # a size once known stays
     store.close_readers(); store.conn.close()
+
+
+def test_declarations_are_rewritten_with_the_new_type():
+    from decompnet.app.global_types import declaration_text, rewrite
+
+    assert declaration_text("u8[16]", "gBuf") == "u8 gBuf[16]"
+    assert declaration_text("struct Actor *", "gActor") == "struct Actor *gActor"
+    text = "extern s32 gScore;\nextern s32 gOther;\nvoid f(void) {\n    gScore = 1;\n    s32 gScore2;\n}\n"
+    assert rewrite(text, "gScore", "f32") == ("extern f32 gScore;\nextern s32 gOther;\nvoid f(void) {\n    gScore = 1;\n    s32 gScore2;\n}\n", 1)
+    assert rewrite("static const s16 gTab[4] = {1,2,3,4};\n", "gTab", "u8[8]") == ("static u8 gTab[8] = {1,2,3,4};\n", 1)  # `const` is part of the type
+    assert rewrite("extern s32 gScore;", "gMissing", "f32") == ("extern s32 gScore;", 0)
+
+
+def _changing_net(tmp_path, broken=()):
+    import time
+
+    net, store = _net(tmp_path)
+    with store.tx() as db:
+        db.execute("INSERT INTO context_versions(project_id,version,header,agent_id,message,created_at,unit) VALUES(1,1,?,0,'',?,'')",
+                   ("extern s32 sDirectKey;\n", time.time()))
+        db.execute("UPDATE functions SET status='matched', matched_source=?, best_source=?, relocs=? WHERE id=1",
+                   ("void main(void) { sDirectKey = 1; }", "void main(void) { sDirectKey = 1; }", json.dumps([[0, 5, 0x800A4DFC]])))
+    ran = []
+
+    def regression_test(proj, header, sources=None, only=None, header_for=None, progress=None):
+        ran.append(([r["name"] for r in only], header_for(only[0]), sources))
+        return [("main", "compiles but no longer matches")] if broken and header_for(only[0]).count("f32") else []
+
+    from types import SimpleNamespace
+    net.is_rom = lambda proj: True
+    net.local_agent = lambda who: (SimpleNamespace(id=0), True)
+    net._unit_contexts = lambda pid: set()
+    net._context = lambda pid, unit: store.one("SELECT * FROM context_versions WHERE project_id=? AND unit=? ORDER BY version DESC LIMIT 1", pid, unit)
+    net._effective_unit = lambda fn, units: ""
+    net.regression_test = regression_test
+    net._latest_version = lambda db, pid, unit: db.execute("SELECT MAX(version) AS v FROM context_versions WHERE project_id=?", (pid,)).fetchone()["v"]
+    net._next_version = lambda db, pid: net._latest_version(db, pid, "") + 1
+    net._event = lambda *a: None
+    net.progress = SimpleNamespace(sync=lambda *a, **k: None)
+    return net, store, ran
+
+
+def test_changing_a_type_rechecks_its_users_and_saves(tmp_path):
+    from decompnet.app.global_types import change_type
+
+    net, store, ran = _changing_net(tmp_path)
+    done = change_type(net, "g", "sDirectKey", "f32", SimpleLog())
+    assert ran[0][0] == ["main"] and "f32" in ran[0][1] and done["changed_headers"] == 1 and done["changed_sources"] == 0
+    assert store.one("SELECT header FROM context_versions WHERE version=2")["header"] == "extern f32 sDirectKey;\n"
+    row = store.one("SELECT c_type, type_source, size FROM symbols WHERE name='sDirectKey'")
+    assert (row["c_type"], row["type_source"], row["size"]) == ("f32", "user", 4)
+    store.close_readers(); store.conn.close()
+
+
+def test_a_type_that_breaks_a_match_is_refused_and_nothing_is_saved(tmp_path):
+    import pytest
+
+    from decompnet.app.global_types import change_type
+    from decompnet.network import NetworkError
+
+    net, store, ran = _changing_net(tmp_path, broken=True)
+    # (the stub fails the "before" check for nobody, so main is blamed)
+    net_before = net.regression_test
+    net.regression_test = lambda *a, **k: net_before(*a, **k) if k.get("header_for") and "f32" in k["header_for"](k["only"][0]) else []
+    with pytest.raises(NetworkError, match="breaks 1 matched function"):
+        change_type(net, "g", "sDirectKey", "f32", SimpleLog())
+    assert store.one("SELECT COUNT(*) AS n FROM context_versions")["n"] == 1
+    assert store.one("SELECT c_type FROM symbols WHERE name='sDirectKey'")["c_type"] is None
+    with pytest.raises(NetworkError, match="not a C type"):
+        change_type(net, "g", "sDirectKey", "s32; evil", SimpleLog())
+    store.close_readers(); store.conn.close()
+
+
+class SimpleLog:
+    def progress(self, _):
+        pass
