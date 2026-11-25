@@ -1009,14 +1009,6 @@ class ForkProject:
             make = (self.root / "Makefile").read_text(errors="replace", encoding="utf-8")
             chosen = [f"VERSION={version}"] if version and self.splat_baseroms() else []
             steps = [["make", *chosen, t] for t in _setup_targets(make)]
-            config, splitter = self._splat_yaml(), self.root / "tools" / "splat" / "split.py"
-            if (not steps and config and splitter.is_file() and not (self.root / "assets").exists()
-                    and re.search(r"\bassets/", make) and not re.search(r"^(?:split|setup|extract)\s*:", make, re.M)):
-                # a project whose README says "run splat" before `make`: its Makefile links assets/*.bin (and the
-                # like) that only the split writes
-
-
-            steps = [["make", *chosen, t] for t in ("tools", "setup", "extract") if re.search(rf"^{t}\s*:", make, re.M)]
             config = self._splat_yaml()
             splitter = next((s for s in (self.root / "tools" / "splat" / "split.py", self.root / "splat" / "split.py")
                              if s.is_file()), None)
