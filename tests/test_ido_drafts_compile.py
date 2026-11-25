@@ -31,3 +31,27 @@ def test_a_call_to_a_local_label_is_named_like_a_function():
 def test_a_store_printed_as_a_call_through_a_cast_is_a_store():
     out = seeds._compilable("void f(void) {\n    ((void (*)()) *(s32 *))(a + 4) = 1;\n}\n", 'f', '', '', 'ido-7.1')
     assert '*(s32 *)(a + 4) = 1;' in out and '(void (*)())' not in out
+
+
+def test_a_register_read_before_it_is_set_becomes_an_unset_local(monkeypatch):
+    class Done:
+        returncode, stderr = 0, ''
+        stdout = ("void f(void) {\n    s32 x;\n\n    x = M2C_ERROR(/* Read from unset register $t0 */) + 1;\n}\n")
+    monkeypatch.setattr(seeds, '_execute_m2c', lambda argv, timeout: Done())
+    monkeypatch.setattr(seeds, 'available', lambda: True)
+    monkeypatch.setattr(seeds.toolchains, 'venv_bin', lambda *a: '/bin/true')
+    out = seeds.run_m2c('glabel f\nnop\n', 'f', 'mips-ido-c', valid=True, strict=True)
+    assert 'M2C_ERROR' not in out and 'x = unset_t0 + 1;' in out and 's32 unset_t0;' in out
+
+
+def test_a_label_with_hex_words_in_its_suffix_is_a_local_label():
+    from decompnet.rom.split import _LABEL
+    assert _LABEL.match('.L80116830_code_80115DF0_DC550:')
+    out = seeds._compilable('void f(void) {\n    .L80116830_code_80115DF0_DC550();\n}\n', 'f',
+                            '/* 0 80000000 0C000400 */ nop', '', 'ido-7.1')
+    assert 'func_80116830_code_80115DF0_DC550();' in out
+
+
+def test_subroutine_arguments_m2c_names_are_declared():
+    out = seeds.declare_unset_reads('void f(void) {\n    g(subroutine_arg3);\n}\n', 'f')
+    assert 's32 subroutine_arg3;' in out

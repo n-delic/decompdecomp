@@ -23,7 +23,7 @@ from . import DisassemblyTimeout, Picked, RomError
 _INSN = re.compile(r"^\s*/\* ([0-9A-F]+) ([0-9A-F]{8}) ([0-9A-F]{8}) \*/\s+(\S+)\s*(.*?)\s*$")
 # A label may carry the name of the overlay or slot it lives in (`_overlay_001`, `_ovl_01`, `_raw_slot_03`,
 # `_packed_program_02`, `_dma_overlay_01`): any lower-case word suffix, so a new kind of slot needs no change here.
-_LOCAL_NAME = r"\.?L([0-9A-F]{8})(?:_[a-z][a-z0-9]*(?:_[a-z0-9]+)*)?"
+_LOCAL_NAME = r"\.?L([0-9A-F]{8})(?:_[a-z][a-z0-9]*(?:_[A-Za-z0-9]+)*)?"  # (`_code_80115DF0_DFF10`: hex words too)
 _LOCAL_REF = re.compile(r"(?<![\w.$])" + _LOCAL_NAME + r"(?![\w.$])")
 _BRANCH = re.compile(r"(?:b(?!\w*al)\w*|j)$")  # branches and jumps, not calls (jal, jalr, bal and the other linking branches)
 _FUNC_REF = re.compile(r"(?<![\w.$])func_([0-9A-Fa-f]{8})(?:_[a-z][a-z0-9_]*)?(?![\w.$])")

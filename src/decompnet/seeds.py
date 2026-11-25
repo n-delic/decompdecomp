@@ -513,7 +513,7 @@ def _compilable(source: str | None, name='', asm='', header='', toolchain=None, 
         # what the recovery left: a call to a code address inside the same overlay slot (`jal .L8033193C_raw_slot_09`)
         # is named for its label, and `.L...` is no C name: it is a function like the others (`func_<address>`), as the
         # split names the piece
-        source = re.sub(r"(?<![\w.])\.L([0-9A-Fa-f]{8}(?:_[a-z][a-z0-9]*(?:_[a-z0-9]+)*)?)(?![\w.])", r"func_\1", source)
+        source = re.sub(r"(?<![\w.])\.L([0-9A-Fa-f]{8}(?:_[a-z][a-z0-9]*(?:_[A-Za-z0-9]+)*)?)(?![\w.])", r"func_\1", source)
     return source
 
 
@@ -524,7 +524,8 @@ def drop_saved_register_reads(source: str) -> str:
     return re.sub(r"^[ \t]*\w+ = saved_reg_\w+;[ \t]*\n", "", source, flags=re.M)
 
 
-_UNSET_READ = re.compile(r"\b(?:unk)?sp[0-9A-Fa-f]+\b|\bsaved_reg_\w+\b|(?<![\w.])sp\b")
+_UNSET_REGISTER = re.compile(r"M2C_ERROR\(/\* Read from unset register \$(\w+) \*/\)")
+_UNSET_READ = re.compile(r"\b(?:unk)?sp[0-9A-Fa-f]+\b|\bsaved_reg_\w+\b|\bunset_\w+\b|\bsubroutine_arg\d+\b|(?<![\w.])sp\b")
 _NOT_A_TYPE = {"return", "else", "case", "goto", "do", "sizeof"}
 
 
@@ -717,6 +718,15 @@ def _run_m2c(asm_text: str, name: str, target: str, context_header: str = "", da
         errors = [line.strip() for line in out.splitlines()
                   if re.match(r"\s*(?://\s*Error:|Bad function call operand\b)", line)
                   or (valid and re.search(r"\bM2C_ERROR\s*\(", line))]
+        if errors and valid and out.count("Read from unset register $f") == 0:
+            # a register the code reads before anything set it (an argument past the ones m2c saw, a temporary the caller
+            # left): the original read whatever was there, so the draft reads an unset local
+            replaced = _UNSET_REGISTER.sub(lambda found: "unset_" + found[1], out)
+            if replaced != out:
+                out = replaced
+                errors = [line.strip() for line in out.splitlines()
+                          if re.match(r"\s*(?://\s*Error:|Bad function call operand\b)", line)
+                          or re.search(r"\bM2C_ERROR\s*\(", line)]
         reason = '\n'.join(errors)[-MAX_REASON_CHARS:]
         if res.returncode != 0 or not out or errors:
             if strict:
