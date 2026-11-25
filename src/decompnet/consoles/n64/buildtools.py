@@ -248,6 +248,24 @@ def _redirect(project, argv: list[str]) -> list[str]:
     # value beats the makefile's own assignment, so one override reaches both spellings.
     declared = re.search(r"^[ \t]*(IDO|CC)[ \t]*[:?]?=[ \t]*([^\s#]*(?:/(?:5\.3|7\.1)/|ido)(?:[^\s#]*/)?cc)[ \t]*(?:#.*)?$",
                          text, re.M)
+    qemu = None if declared else re.search(
+        r"^[ \t]*(IDO|CC)[ \t]*[:?]?=[ \t]*\S*qemu-irix[^\n#]*(?<!\s)[ \t]*(?:#.*)?$", text, re.M)
+    if qemu:
+        # `IDO := ~/qemu-irix -L tools/ido_irix tools/ido_irix/usr/bin/cc`: an IRIX IDO run through the author's
+        # own qemu, which a Mac doesn't have; the installed IDO (a native build of the same compiler) replaces it
+        tid = "ido-" + _ido_hint(project)
+        if toolchains.installed(tid) is None:
+            return argv
+        source = toolchains.require(tid)
+        tools = project.root / ".decomp-wtf" / "build-tools"
+        tools.mkdir(parents=True, exist_ok=True)
+        (tools / ".gitignore").write_text("*\n", encoding="utf-8")
+        alias = tools / tid
+        if not (source / "cc").is_file():
+            return argv
+        if not alias.exists():
+            alias.symlink_to(source, target_is_directory=True)
+        return [*argv, qemu[1] + "=" + (alias / "cc").relative_to(project.root).as_posix()]
     if not declared:
         return argv
     name, path = declared[1], declared[2]
