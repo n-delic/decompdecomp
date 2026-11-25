@@ -279,6 +279,22 @@ def test_bitfields_get_the_consoles_bits():
     assert big_endian_bitfields(padding) == padding  # padding alone may start mid-unit: as it was
 
 
+def test_bytes_that_share_a_word_with_the_member_before_them_stay_in_it():
+    """A `u16` then five bytes declared `u32 x : 8` put two of them in the u16's word under the console's compiler.
+    Every run was started on a fresh word, so they split four and one, the struct grew from 28 to 32 bytes, and the
+    array of them an intro cutscene's tracks live in had a stride four bytes too long: its object pointers were
+    overwritten by the next fields and the port faulted on the first object it used."""
+    from decompnet.port.wasm.build import big_endian_bitfields
+    text = ("typedef struct {\n    s32 unk0;\n    f32 unk4;\n    u16 unk14;\n    u32 unk16 : 8;\n"
+            "    u32 unk17 : 8;\n    u32 unk18 : 8;\n    u32 unk19 : 8;\n    u32 unk1A : 8;\n} TrackSound;\n")
+    lines = [line.strip() for line in big_endian_bitfields(text).splitlines()]
+    assert lines[3:6] == ["u16 unk14;", "unsigned char unk16;", "unsigned char unk17;"]
+    assert lines[6:] == ["u32 : 8;", "u32 unk1A : 8;", "u32 unk19 : 8;", "u32 unk18 : 8;", "u32 : 0;", "} TrackSound;"]
+    # the same bytes after a word-sized member start a fresh word, as before
+    fresh = big_endian_bitfields("struct F {\n    s32 a;\n    u32 b : 8;\n    u32 c : 8;\n};\n")
+    assert "unsigned char" not in fresh
+
+
 def test_stack_locals_that_touch_in_the_frame_stay_one_record():
     """m2c names stack locals by their offset: `char sp10[0x20]` and `s32 sp30[2]` are one 0x28-byte record the
     console's compiler built in the frame, and a callee that is handed `sp10` and reads past it reads the words

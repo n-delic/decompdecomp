@@ -241,12 +241,47 @@ def _unit_size(type_text: str) -> int | None:
     return _FIELD_TYPES.get(" ".join(w for w in words if w not in ("unsigned", "signed")))
 
 
-def _plain_bytes(unit) -> list[str] | None:
+_STRUCT_OPEN = re.compile(r"^\s*(?:typedef\s+)?(struct|union)\b[^;]*\{\s*$")
+_MEMBER = re.compile(r"^\s*((?:(?:unsigned|signed|const|volatile)\s+)*\w+(?:\s+(?:long|int|short|char))?)\s*(\*+)?\s*(\w+)((?:\[[^\]]+\])*)\s*;")
+
+
+def _lead_bytes(lines: list[str], at: int) -> int | None:
+    """Where the bitfield at lines[at] starts in its struct, in bytes, when every member before it is a plain scalar,
+    pointer or array of them (None otherwise). A console compiler packs a bitfield right after the member before it
+    (a `u16` then bytes declared as `u32 x : 8` start two bytes into the word), not at a fresh unit."""
+    j, members = at - 1, []
+    while j >= 0 and not _STRUCT_OPEN.match(lines[j]):
+        members.append(lines[j])
+        j -= 1
+    if j < 0 or _STRUCT_OPEN.match(lines[j]).group(1) != "struct":
+        return None
+    offset = 0
+    for line in reversed(members):
+        if not line.strip() or line.strip().startswith(("//", "/*")):
+            continue
+        m = _MEMBER.match(line)
+        if not m or ":" in line.split(";")[0]:
+            return None
+        type_text, star, count = m.group(1), m.group(2), 1
+        for dim in re.findall(r"\[([^\]]+)\]", m.group(4)):
+            try:
+                count *= int(dim, 0)
+            except ValueError:
+                return None
+        words = [w for w in type_text.split() if w not in ("const", "volatile")]
+        size = 4 if star else _SCALAR_SIZE.get(" ".join(w for w in words if w not in ("unsigned", "signed")) or "int")
+        if size is None:
+            return None
+        offset = -(-offset // size) * size + size * count
+    return offset
+
+
+def _plain_bytes(unit, start_bits: int = 0) -> list[str] | None:
     """A partly used unit's fields as plain members, when each is a whole byte or halfword at its own alignment:
     the members declared after them then fill the unit's spare bytes, as IDO lays them out. `int cmd:8;` then three
     `unsigned char`s is libultra's Gsetcolor: closed with a zero-width field it took a word of its own, the struct
     grew to 12 bytes, Gfx to 16, and a packed shooter's text rectangles read padding as their texture coordinates."""
-    out, at = [], 0
+    out, at = [], start_bits
     for m in unit:
         width = int(m.group(5))
         if width not in (8, 16) or at % width:
@@ -346,6 +381,26 @@ def big_endian_bitfields(text: str) -> str:
             result.append(lines[i])
             i += 1
             continue
+        # the run's first bytes may share a unit with the member before it: a `u16` then five `u32 x : 8` has two of
+        # them in that word, and starting every unit fresh split them four and one, a struct a word too big
+        first_size = _unit_size(run[0].group(2))
+        lead = _lead_bytes(lines, i) if first_size else None
+        if first_size and lead and lead % first_size:
+            room, head = (first_size - lead % first_size) * 8, []
+            for m in run:
+                if sum(int(h.group(5)) for h in head) + int(m.group(5)) > room:
+                    break
+                head.append(m)
+            plain = _plain_bytes(head, (lead % first_size) * 8) if any(m.group(4) for m in head) else None
+            if plain is None or (len(head) < len(run) and sum(int(h.group(5)) for h in head) != room):
+                result.extend(m.group(0) for m in run)  # not whole bytes, or a gap before the next unit: as it was
+                i += len(run)
+                continue
+            result.extend(plain)
+            i += len(head)
+            run = run[len(head):]
+            if not run:
+                continue
         units, unit, used, size = [], [], 0, 0
         for m in run:
             width, field_size = int(m.group(5)), _unit_size(m.group(2))
