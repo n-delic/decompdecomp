@@ -728,6 +728,21 @@ says the fix and the library families it names; try those families with `prove_c
   copies the target keeps in the switch arms though never read, and local-alloc's `optimize_reg_copy_1` comparing a
   clamp on its copy.
 
+- **SN64 GCC 2.8.1: a loop local stepped by a constant (`y = 0x37; ... y += 0xE` in both arms) whose `li` sits first in
+  the preheader where the target has it after loop.c's pointers:** write it as a giv of a zero-based row counter,
+  `y = row * 14 + 0x37;` at the top of the body and `row++;` before the counter's step (bivs are reduced newest first),
+  60 -> 0; decomp-repair `stepped_constant_row_giv` (docs/learnings/finding/stepped-constant-local-li-first-in-preheader.md).
+- **A `move` the target keeps before a value's uses (a count copied for an allocation size), every plain copy merged
+  away:** cse2 rewrites a block-local copy's uses to its source and local-alloc ties it; a variable the later loop uses
+  (its counter, or a byte offset stepped beside it) lives across blocks and stays apart: `loop_offset_copy_reuse`
+  (150 -> 0, docs/learnings/finding/count-copy-kept-by-loop-variable.md).
+- **`if (G == 1)` with the load and the constant in each other's registers, three local quantities in the block:**
+  local-alloc's fixed three-way exchange lets the short-lived constant win; load `G` into a local in a two-deep
+  `do { } while (0)` (`compare_load_weight`, 15 -> 0, docs/learnings/finding/three-quantity-block-constant-outranks-load.md).
+- **`passes.py` refuses sn-n64-281:** run cc1n64.exe under wibo yourself: preprocess with `cppn64.exe -P -undef -nostdinc
+  -D_LANGUAGE_C -D__GNUC__=2` (the header from `fast_judge.py --header` prepended), then `cc1n64.exe -quiet <flags> -dl
+  -dg -dS -dR -dL -ds FILE.i -o FILE.s`; the dumps land beside the `.i` (consoles/n64/sn64.py has the exact commands).
+
 ## 3a. The fast tools (use them before writing variants by hand)
 
 - **A claim starts with several sources.** `setup.py` prints the saved best, its plain form (`plain_best.py`:
