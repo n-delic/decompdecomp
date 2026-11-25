@@ -982,3 +982,10 @@ port: the update between the fourth and fifth task) suggested the interrupts, he
 Raising them at the next `osSendMesg`/`osRecvMesg` of any thread (host.c `rcp_at_next_call`) changed the game's pacing altogether instead: with the console's trace, task 600 came at retrace 169 (the console's: 539),
 about three graphics tasks a retrace, and the line points never changed in the log's span. So the game's own sequence (what it waits for between tasks) depends on the interrupts' timing more than this change allows for;
 the console's ordering is still unexplained, and the port's `PORT_ORDER_LOG` (`ORDER task n vi v`, `ORDER change old -> new`) against the emulator's watch on the word plus a break on `osSpTaskStartGo` (0x8008DF0C) is the way to test the next idea.
+
+**Who runs when: the console's threads, and the second try that changed the pacing (reverted).** The emulator's running thread (`__osRunningThread`, 0x800A2520, read from the RDRAM recorded at each break) at each `osSpTaskStartGo` and each line-point update:
+the scheduler starts the graphics tasks from threads at priority 113 and 115, the game's main thread (priority 5) runs `checkNearPoint`. So the five tasks of a frame start back to back (each interrupt runs the scheduler again before the main thread gets the CPU) and the logic runs after them. The
+port holds the interrupts until its host tick and counts the lone main thread as idle, so the logic ran between the fourth and fifth task. Two ways of raising the interrupts earlier (at the next OS message call of any thread; when a thread is about to wait)
+both changed the game's pacing altogether: with the console's trace, graphics task 610 came at retrace 170 where the console's is 545, and the line points never changed in the log's span. The
+interrupts' timing is tied to something in the host's virtual time (the tick that decides every thread is idle, and the retrace catch-up) that these changes break. Next: find what in `wait_retrace`/`vtime_idle` the earlier delivery
+upsets (log `vtime_forced`, the 3 s wall-time fallbacks: a game whose threads never idle waits 3 s a retrace), then deliver at the block with that fixed.
