@@ -43,7 +43,7 @@ function renderGlobals() {
   $("globalsHead").innerHTML = `<tr>${GLOBAL_COLUMNS.map(([k, label, cls]) =>
     `<th scope="col" class="${cls || ""}" aria-sort="${G.sort === k ? (G.dir > 0 ? "ascending" : "descending") : "none"}"><button type="button" class="sort-btn" data-gsort="${k}">${label}${G.sort === k ? (G.dir > 0 ? " ↑" : " ↓") : ""}</button></th>`).join("")}</tr>`;
   $("globalsRows").innerHTML = rows.slice(0, G.limit).map((r) =>
-    `<tr><td class="mono dim">${hex8(r.address)}</td><td class="mono name">${esc(r.name)}</td><td class="mono dim">${named(r) ? esc(r.original) : ""}</td><td class="mono" title="${r.type_source ? `recorded by ${esc(r.type_source)}` : ""}">${r.type ? esc(r.type) : `<span class="dim">–</span>`}</td>
+    `<tr class="clickable" tabindex="0" data-gname="${esc(r.name)}"><td class="mono dim">${hex8(r.address)}</td><td class="mono name">${esc(r.name)}</td><td class="mono dim">${named(r) ? esc(r.original) : ""}</td><td class="mono" title="${r.type_source ? `recorded by ${esc(r.type_source)}` : ""}">${r.type ? esc(r.type) : `<span class="dim">–</span>`}</td>
       <td class="r mono">${r.size ? r.size.toLocaleString() : `<span class="dim">–</span>`}</td><td>${esc(r.kind)}</td><td class="mono dim">${esc(r.preview || "")}</td></tr>`).join("")
     || `<tr class="none"><td colspan="7">${G.rows.length ? `No global matches${q ? ` “${esc(G.q)}”` : ""}.` : "No data symbols recorded for this project."}</td></tr>`;
   $("globalsShown").textContent = rows.length > G.limit ? `${G.limit.toLocaleString()} of ${rows.length.toLocaleString()} shown` : plural(rows.length, "global");
@@ -59,3 +59,26 @@ $("globalsHead").addEventListener("click", (e) => {
   if (G.sort === b.dataset.gsort) G.dir = -G.dir; else { G.sort = b.dataset.gsort; G.dir = 1; }
   renderGlobals();
 });
+
+/* Click a global: the side drawer lists the functions whose code references it, each opening like a row of the
+   Functions list. */
+async function openGlobal(name) {
+  const slug = S.slug, g = G.rows.find((r) => r.name === name);
+  if (!g) return;
+  const body = dialog(g.name, `<p class="muted small mono">${hex8(g.address)}${g.name !== g.original ? ` · ${esc(g.original)}` : ""}${g.type ? ` · ${esc(g.type)}` : ""}${g.size ? ` · ${g.size.toLocaleString()} bytes` : ""}</p><div id="globalUsers" class="muted">Finding the functions that use it…</div>`);
+  const box = body.querySelector("#globalUsers");
+  try {
+    const data = await api(`/api/global-users?slug=${encodeURIComponent(slug)}&name=${encodeURIComponent(name)}`);
+    if (!box.isConnected || S.slug !== slug) return;
+    box.className = "";
+    box.innerHTML = data.users.length
+      ? `<h3>${plural(data.users.length, "function")} use it</h3><div class="compiler-table"><table><thead><tr><th>Function</th><th>Address</th><th>Status</th><th class="r">Uses</th></tr></thead><tbody>${data.users.map((u) =>
+        `<tr><td><a href="#" class="mono" data-fn="${esc(u.name)}">${esc(u.name)}</a></td><td class="mono dim">${u.address == null ? "" : hex8(u.address)}</td><td>${esc(u.status || "")}</td><td class="r mono" title="${u.inside ? `${u.inside} reach it through a table or struct that starts elsewhere` : ""}">${u.references}${u.inside ? ` <span class="dim">(${u.inside} inside)</span>` : ""}</td></tr>`).join("")}</tbody></table></div>`
+      : `<p class="muted">No function's code references this global.</p>`;
+    box.querySelectorAll("[data-fn]").forEach((a) => { a.onclick = (e) => { e.preventDefault(); openFn(a.dataset.fn); }; });
+  } catch (error) {
+    if (box.isConnected) { box.className = "muted"; box.textContent = `Could not load the functions: ${error.message}`; }
+  }
+}
+$("globalsRows").addEventListener("click", (e) => { const tr = e.target.closest("[data-gname]"); if (tr) openGlobal(tr.dataset.gname); });
+$("globalsRows").addEventListener("keydown", (e) => { if (e.key !== "Enter") return; const tr = e.target.closest("[data-gname]"); if (tr) openGlobal(tr.dataset.gname); });

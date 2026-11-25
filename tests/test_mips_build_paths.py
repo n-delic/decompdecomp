@@ -355,7 +355,7 @@ def test_the_assembler_shim_predefines_what_the_cross_gcc_does(tmp_path):
     assembler.write_text('#!/bin/sh\nwhile [ "$1" != "-o" ]; do shift; done\n: > "$2"\n')
     assembler.chmod(0o755)
     driver = tmp_path / "gcc"
-    driver.write_text(mips_tools._ASSEMBLER_DRIVER.format(python=sys.executable, cpp=cpp, assembler=assembler))
+    driver.write_text(mips_tools._ASSEMBLER_DRIVER.format(python=sys.executable, cpp=cpp, assembler=assembler, linker=str(tmp_path / "ld")))
     (tmp_path / "x.s").write_text("nop\n")
     record = tmp_path / "args"
     subprocess.run([sys.executable, str(driver), "-EB", "-x", "assembler-with-cpp", "-c", "-o", str(tmp_path / "x.o"),
@@ -857,7 +857,7 @@ def test_the_assembler_shim_leaves_section_symbols_unnamed(tmp_path):
     (tmp_path / "model.o").write_bytes(elf_with_named_section_symbol())
     (tmp_path / "x.s").write_text("nop\n")
     driver = tmp_path / "gcc"
-    driver.write_text(mips_tools._ASSEMBLER_DRIVER.format(python=sys.executable, cpp=cpp, assembler=assembler))
+    driver.write_text(mips_tools._ASSEMBLER_DRIVER.format(python=sys.executable, cpp=cpp, assembler=assembler, linker=str(tmp_path / "ld")))
     subprocess.run([sys.executable, str(driver), "-c", "-o", str(tmp_path / "x.o"), str(tmp_path / "x.s")], check=True)
     made = (tmp_path / "x.o").read_bytes()
     first_symbol = 52 + len(b"\0.text\0") + 16
@@ -891,3 +891,73 @@ def test_an_irix_compiler_tree_that_the_project_recompiles_is_not_replaced_by_a_
     monkeypatch.setattr(buildtools.toolchains, "require", lambda tid: tmp_path)
     buildtools._wrap_foreign_ido(SimpleNamespace(root=tmp_path))
     assert cc.read_bytes().startswith(b"\x7fELF") and not cc.with_name("cc.linux").exists()
+
+def test_a_bundled_splat_gets_the_packages_of_its_own_era(tmp_path, monkeypatch):
+    root = tmp_path / "project"
+    (root / "tools/splat").mkdir(parents=True)
+    (root / "tools/splat/requirements.txt").write_text("spimdisasm>=1.9.0\n")
+    (root / "Makefile").write_text("all:\n")
+    project = ForkProject(root)
+    project.platform = "n64"
+    steps = []
+
+    def fake_run(self, cmd, **kw):
+        steps.append(cmd)
+        return ("2023-01-16" not in cmd, "")  # (that day's rabbitizer has no wheel for this Python)
+
+    monkeypatch.setattr(ForkProject, "run", fake_run)
+    monkeypatch.setattr(ForkProject, "kind", lambda self: "splat")
+    monkeypatch.setattr(ForkProject, "git", lambda self, *a: (True, "2023-01-15"))
+    monkeypatch.setattr("decompnet.forks.project._tool", lambda name: "uv")
+    project.ensure_python_env(log=lambda *_: None)
+    installs = [cmd for cmd in steps if "install" in cmd]
+    assert "2023-01-16" in installs[0] and "tools/splat/requirements.txt" in installs[0]
+    assert "2023-05-15" in installs[1] and "--exclude-newer" in installs[1]
+
+
+def test_the_sn64_gcc_a_project_downloads_is_not_taken_for_the_kmc_one_and_runs_through_the_native_driver(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools, sn64_gcc
+
+    kmc, sn = tmp_path / "kmc", tmp_path / "sn"
+    for folder, names in ((kmc, ("gcc", "cc1", "as")), (sn, ("cc1", "cpp"))):
+        folder.mkdir()
+        for name in names:
+            (folder / name).write_text("installed " + name)
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(buildtools.toolchains, "require", lambda tid: sn if "sn-n64" in tid else kmc)
+    monkeypatch.setattr(buildtools.sys, "platform", "darwin")
+    root = tmp_path / "project"
+    elf = b"\x7fELF" + b"\0" * 12 + b"GNU C version 2.7.2"
+    for folder in ("gcc-2.7.2", "modern-sn64"):
+        (root / "tools" / folder).mkdir(parents=True)
+        for name in ("gcc", "cc1"):
+            (root / "tools" / folder / name).write_bytes(elf)
+            (root / "tools" / folder / name).chmod(0o755)
+    (root / "tools/modern-sn64/modern-asn64.py").write_text("#!/usr/bin/env python3\n")
+    (root / "tools/modern-sn64/as").write_text("#!/bin/bash\n")
+    buildtools._wrap_foreign_ido(SimpleNamespace(root=root))
+    assert str(kmc / "gcc") in (root / "tools/gcc-2.7.2/gcc").read_text()
+    wrapper = (root / "tools/modern-sn64/gcc").read_text()
+    assert "sn64_gcc.py" in wrapper and str(sn) in wrapper
+    assert (root / "tools/modern-sn64/gcc.linux").read_bytes() == elf
+    assert (root / "tools/modern-sn64/cc1").read_bytes() == elf  # (the project's own cc1 is not replaced by KMC's)
+    source, output, cpp, cc1, asm = sn64_gcc.split(
+        ["-G0", "-mcpu=vr4300", "-Wa,-G0,-EB,-mips3", "-O2", "-Iinclude", "-D", "X=1", "a.c", "-c", "-o", "a.o"])
+    assert (source, output, cpp, cc1, asm) == ("a.c", "a.o", ["-Iinclude", "-DX=1"], ["-G0", "-mcpu=vr4300", "-O2"],
+                                               ["-G0", "-EB", "-mips3"])
+
+
+def test_the_gcc_shim_links_when_the_makefile_uses_the_driver_as_its_linker(tmp_path):
+    import subprocess
+    import sys
+
+    linker = tmp_path / "ld"
+    linker.write_text('#!/bin/sh\necho "$@" > "$LD_ARGS"\n')
+    linker.chmod(0o755)
+    driver = tmp_path / "gcc"
+    driver.write_text(mips_tools._ASSEMBLER_DRIVER.format(python=sys.executable, cpp="false", assembler="false",
+                                                          linker=str(linker)))
+    record = tmp_path / "args"
+    subprocess.run([sys.executable, str(driver), "-march=vr4300", "-nostartfiles", "-Wl,-T,game.ld", "-Wl,-Map,game.map",
+                    "-o", "game.elf"], check=True, env={**os.environ, "LD_ARGS": str(record)})
+    assert record.read_text().split() == ["-T", "game.ld", "-Map", "game.map", "-o", "game.elf"]

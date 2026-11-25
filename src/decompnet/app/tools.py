@@ -173,7 +173,9 @@ functions, then stop:
    tests a suggested pattern. Shared names still use rename_symbol. For complex scopes or restructuring use
    make_readable(function, source): the same function with meaningful parameter and local names, the header's
    types and names, and one comment saying what it does. Preserve the original behavior and the code shape that
-   matching requires. Each rewrite is judged again and must still match byte for byte, or it's refused and the matching C stays. Refused? Undo
+   matching requires: keep the m2c prelude (#ifndef M2C_DEFINES ... #endif) and the declarations above the
+   function, and the constructs the claim lists as there for the match (do {{ }} while (0), goto loops, register,
+   volatile, __repair_* locals). Each rewrite is judged again and must still match byte for byte, or it's refused and the matching C stays. Refused? Undo
    your last change and try a smaller one.
 
 Once every function in a source file is readable, claim_readable may give you the file to tidy instead (TIDY A
@@ -1355,7 +1357,7 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
     @tool
     async def get_function(ctx: Context, function: str, section: str = 'summary', start: int = 0, limit: int = 6000) -> str:
         """Show any function (by name or address): assembly, status, best attempt, notes. Read matched
-        functions to learn how this codebase is written. section: summary (default), work (one objective, complete current C, mismatch and recent measurements), brief, all, history, candidate, experiment, quality, notes, declarations, compiler, layouts. start/limit page supporting sections by character offset; candidate/brief always return complete C. Prefer the specific section you need."""
+        functions to learn how this codebase is written. section: summary (default), work (one objective, complete current C, mismatch and recent measurements), brief, all, history, candidate, experiment, quality, notes, declarations, compiler, layouts. start/limit page supporting sections by character offset, and section=matched (a matched function's C) when it is long; candidate/brief always return complete C. Prefer the specific section you need."""
         return await run(ctx, "get_function", function=function, section=section, start=start, limit=limit)
 
     @tool

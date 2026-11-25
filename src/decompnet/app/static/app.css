@@ -2375,3 +2375,6 @@ img.rom-preview-media { image-rendering:pixelated; background:var(--bg-alt); bor
 .port-failure-table td:last-child { overflow-wrap: anywhere; }
 .port-help { width: 18px; height: 18px; padding: 0; border-radius: 50%; border: 1px solid var(--line, currentColor); background: none; color: var(--muted); font: 600 11px/1 var(--mono); cursor: pointer; vertical-align: middle; }
 .port-help:hover, .port-help:focus-visible { color: var(--ink); border-color: var(--ink); }
+
+tr[data-gname] { cursor: pointer; }
+tr[data-gname]:hover, tr[data-gname]:focus-visible { background: var(--bg-alt); }
