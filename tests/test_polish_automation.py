@@ -751,11 +751,13 @@ def test_a_function_is_handed_out_only_when_its_own_compiler_can_run(game, monke
         db.execute("UPDATE functions SET n_insns=60 WHERE name='g'")  # g first, as the bigger one
     down = {'gcc-4.4.0-n64': 'The Linux compiler runner is not ready.'}
     monkeypatch.setattr(toolchains, 'runtime_error', lambda tid: down.get(tid))
+    assert net.readability.blocked_reason('game') == ''  # f can still be polished: the helper isn't parked
     assert net.readability.claim(agent, 'game').startswith('MAKE READABLE: f')  # g skipped, not handed out
     with net.store.tx() as db:
         db.execute("UPDATE functions SET readable=1 WHERE name='f'")
         db.execute('DELETE FROM claims')
     said = net.readability.claim(agent, 'game')
+    assert net.readability.blocked_reason('game') == 'The Linux compiler runner is not ready.'
     assert said.startswith("The compiler for what's left can't run right now")
     assert [r['detail'] for r in net.store.all("SELECT detail FROM events WHERE kind='polish'")] == ['f']
     down.clear()
