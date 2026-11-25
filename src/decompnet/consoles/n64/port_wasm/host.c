@@ -965,6 +965,7 @@ static void dp_deliver(int force) {
     (void)force;
 #endif
 }
+static unsigned long seed_calls; /* (counted in port_seed_replay below) */
 void w2c_env_osSpTaskStartGo(struct w2c_env *e, u32 task) {
     (void)e;
     uint32_t type = be32(task);
@@ -976,6 +977,7 @@ void w2c_env_osSpTaskStartGo(struct w2c_env *e, u32 task) {
         if (vtrace[gfx_tasks] > vi_target) vi_target = vtrace[gfx_tasks];
     }
 #endif
+    if (type == 1 && getenv("PORT_SEED_LOG")) fprintf(stderr, "SEEDS task %lu calls %lu\n", gfx_tasks, seed_calls);
     if (type == 1) ram_dumps("PORT_FRAME_DUMPS", gfx_tasks, task);
     if (type == 1) {
 #ifndef PORT_WEB
@@ -1403,8 +1405,10 @@ u32 w2c_env_memset(struct w2c_env *e, u32 d, u32 c, u32 n) { (void)e; memset(M +
    (port/wasm/src/) passes the seed it was given through port_seed_replay: the next number from the file while there are any, the
    seed itself after them. A game that seeds from the clock (osGetTime) gets the console's draws, where the port's clock, which
    isn't the console's cycle count, would send each one elsewhere. */
+static unsigned long seed_calls; /* PORT_SEED_LOG: how many seeds the game has asked for, said at each graphics task */
 u32 w2c_env_port_seed_replay(struct w2c_env *e, u32 fallback) {
     (void)e;
+    seed_calls++;
 #ifndef PORT_WEB
     static FILE *file; static int tried;
     if (!tried) { const char *path = getenv("PORT_SEED_REPLAY"); tried = 1; if (path) file = fopen(path, "r"); }
