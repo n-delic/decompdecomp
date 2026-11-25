@@ -498,8 +498,11 @@ def register(app: App) -> None:
             raise NetworkError("The tolerance is 0 to 8 pixels")
         text = str(data.get("input") or "")[:20000]
         pace = data.get("pace") is not False
-        return {"job": jobs.start("picture-check", lambda log: picture_check.check(net, slug, tasks, text, tolerance, pace, log=log),
-                                  project=slug)}
+        with jobs._lock:
+            if (running := jobs.active(("picture-check",), project=slug)):  # a second click follows the run: two would clear each other's folder
+                return {"job": running["id"]}
+            return {"job": jobs.start("picture-check", lambda log: picture_check.check(net, slug, tasks, text, tolerance, pace, log=log),
+                                      project=slug)}
 
     def g_picture_image(slug, request, data):
         """One side-by-side picture of the last Check pictures (the console's, the port's, their difference x4), as a data URL."""
