@@ -1014,6 +1014,17 @@ class ForkProject:
                     and re.search(r"\bassets/", make) and not re.search(r"^(?:split|setup|extract)\s*:", make, re.M)):
                 # a project whose README says "run splat" before `make`: its Makefile links assets/*.bin (and the
                 # like) that only the split writes
+
+
+            steps = [["make", *chosen, t] for t in ("tools", "setup", "extract") if re.search(rf"^{t}\s*:", make, re.M)]
+            config = self._splat_yaml()
+            splitter = next((s for s in (self.root / "tools" / "splat" / "split.py", self.root / "splat" / "split.py")
+                             if s.is_file()), None)
+            # the directories its Makefile links binary pieces from (assets/*.bin, bin/*.bin) that only a split writes
+            wanted = [d for d in ("assets", "bin") if re.search(rf"(?<![\w/.-]){d}/|BIN_DIRS\s*[:?]?=\s*[^\n]*\b{d}\b", make)]
+            if (not steps and config and splitter and wanted and not any((self.root / d).exists() for d in wanted)
+                    and not re.search(r"^(?:split|setup|extract)\s*:", make, re.M)):
+                # a project whose README says "run splat" before `make`: the split writes those pieces
                 steps = [["python", str(splitter.relative_to(self.root)), config.name]]
             jobs = min(os.cpu_count() or 4, 4) if self._docker_only_macos() else os.cpu_count() or 4
             return steps + [["make", *chosen, f"-j{jobs}"]]
@@ -1338,6 +1349,12 @@ class ForkProject:
                     shutil.copyfile(self._rom_placed, self.root / missing.group(1))
                 log(f"the project reads the game as {missing.group(1)}: saved it under that name too")
                 ok, tail = self.run(cmd, log=log)
+            if (not ok and any(Path(part).name == "split.py" for part in cmd[:3])
+                    and "assert(unk_size + rest_size == total_size)" in tail):
+                # an old bundled splat's closing statistics check fails when its yaml leaves part of the game
+                # unmapped, after it has written every piece the build reads
+                log("the bundled splat stopped at its closing statistics check; its split files are written")
+                ok = True
             if not ok and re.search(r"cannot execute binary file|Exec format error|Permission denied", tail):
                 # a program the step itself fetched (a submodule's committed Linux compiler): the console's hook
                 # looks at the tree again before every command, so the step runs once more

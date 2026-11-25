@@ -1749,3 +1749,11 @@ def test_splat_project_without_a_split_target_runs_its_bundled_splat_for_the_ass
     assert first[1:] == ["tools/splat/split.py", "game.yaml"]
     (tmp_path / "assets").mkdir()
     assert ForkProject(tmp_path).setup_commands()[0][0] == "make"
+
+
+def test_splat_project_links_bin_pieces_from_a_bundled_splat_and_forgives_its_closing_statistics(tmp_path):
+    (tmp_path / "Makefile").write_text("BIN_DIRS = bin\nall:\n\ttrue\n")
+    (tmp_path / "game.yaml").write_text("options:\n  platform: n64\n  target_path: baserom.z64\nsegments: []\n")
+    (tmp_path / "splat").mkdir()
+    (tmp_path / "splat" / "split.py").write_text("")
+    assert ForkProject(tmp_path).setup_commands()[0] == ["python", "splat/split.py", "game.yaml"]
