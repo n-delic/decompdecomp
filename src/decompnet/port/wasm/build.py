@@ -364,13 +364,38 @@ def contiguous_stack_locals(text: str) -> str:
     return "\n".join(lines)
 
 
+_INLINE_BITFIELDS = re.compile(r"\{([^{}\n]*:\s*\d+\s*;[^{}\n]*)\}")
+_BITFIELD_DECL = re.compile(r"^\s*(?:[A-Za-z_]\w*\s+)*[A-Za-z_]\w*\s*\w*\s*:\s*\d+\s*$")
+_MEMBER_DECL = re.compile(r"^[\w\s*\[\]]+$")
+
+
+def _expand_inline_bitfields(text: str) -> str:
+    """`struct { unsigned :16; unsigned x : 4; unsigned y : 4; unsigned :8; } bits;` on one line is a bitfield run
+    like any other: each declaration goes on its own line, so the rewrite below sees it. Only a body of plain
+    declarations with a bitfield in it: `{ x = c ? a : 1; }` is code."""
+    def split(match):
+        pieces = [d.strip() for d in match.group(1).split(";") if d.strip()]
+        if not any(_BITFIELD_DECL.match(d) for d in pieces) or not all(
+                _BITFIELD_DECL.match(d) or _MEMBER_DECL.match(d) for d in pieces):
+            return match.group(0)
+        start = match.string.rfind("\n", 0, match.start()) + 1
+        indent = re.match(r"\s*", match.string[start:]).group(0)
+        return "{\n" + "".join(f"{indent}    {d};\n" for d in pieces) + indent + "}"
+    return _INLINE_BITFIELDS.sub(split, text)
+
+
+# `unsigned x : 4;` (no type word after `unsigned`): the type is `unsigned int`, which the rewrite below can size
+_SHORTHAND_BITFIELD = re.compile(r"^([ \t]*)(unsigned|signed)[ \t]+(?!int\b|char\b|short\b|long\b)(\w+)[ \t]*:[ \t]*(\d+)[ \t]*;",
+                                 re.M)
+
+
 def big_endian_bitfields(text: str) -> str:
     """Bitfields laid out as the console's compiler does: a big-endian MIPS compiler gives a unit's first field its
     top bits, wasm32 its bottom ones. Each unit's fields are declared in reverse (a unit left part-empty gets its
     unused bits first) and closed with a zero-width field, so every field lands on the console's bits and is read
     with its unit's width from the big-endian memory. A racing game's track setup looked for the segment whose
     `b0 : 1` was set, read the top bit instead, ran off the end of its table and corrupted the next one."""
-    lines = text.split("\n")
+    lines = _SHORTHAND_BITFIELD.sub(r"\1\2 int \3 : \4;", _expand_inline_bitfields(text)).split("\n")
     result, i = [], 0
     while i < len(lines):
         run = []

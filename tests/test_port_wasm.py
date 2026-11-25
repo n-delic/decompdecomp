@@ -295,6 +295,22 @@ def test_bytes_that_share_a_word_with_the_member_before_them_stay_in_it():
     assert "unsigned char" not in fresh
 
 
+def test_bitfields_declared_on_one_line_get_the_consoles_bits_too():
+    """`struct { unsigned :16; unsigned x : 4; unsigned y : 4; unsigned :8; } bits;` was left as written, so clang gave
+    x and y the bits wasm32 does (the second byte of the word) where the console's compiler puts them in the third:
+    a menu's text nodes wrote their counts over the height byte of a sprite record, and a title screen was drawn as a
+    strip of two-pixel rows."""
+    from decompnet.port.wasm.build import big_endian_bitfields
+    out = big_endian_bitfields("typedef struct {\n    u8 a;\n    struct { unsigned :16; unsigned x : 4; unsigned y : 4;"
+                               " unsigned :8; } bits;\n} Node;\n")
+    lines = [" ".join(line.split()) for line in out.splitlines()]
+    assert lines[2:] == ["struct {", "unsigned : 8;", "unsigned int y : 4;",
+                         "unsigned int x : 4;", "unsigned : 16;", "unsigned : 0;", "} bits;", "} Node;"]
+    # a struct on one line with no bitfields is left alone
+    plain = "union { struct { u8 h; u8 th; } a; s32 w; } u;\n"
+    assert big_endian_bitfields(plain) == plain
+
+
 def test_stack_locals_that_touch_in_the_frame_stay_one_record():
     """m2c names stack locals by their offset: `char sp10[0x20]` and `s32 sp30[2]` are one 0x28-byte record the
     console's compiler built in the frame, and a callee that is handed `sp10` and reads past it reads the words
