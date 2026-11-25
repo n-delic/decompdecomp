@@ -55,11 +55,32 @@ def _provide_compiler_dirs(project) -> None:
         wanted.append(("tools/gcc_2.7.2/macos", "gcc-2.7.2-kmc"))
     for version in set(re.findall(r"tools/ido/(5\.3|7\.1)(?![\d])", texts)):
         wanted.append((f"tools/ido/{version}", f"ido-{version}"))
+    for folder, version in set(re.findall(r"(tools/ido(5\.3|7\.1)[\w.-]*)(?=\s|$|/)", texts, re.M)):
+        wanted.append((folder, f"ido-{version}"))
+    if sys.platform == "darwin":
+        for folder, version in set(re.findall(r"(tools/ido[\w-]*)/(?:macos|\$\(DETECTED_OS\))/(5\.3|7\.1)(?![\d])", texts)):
+            wanted.append((f"{folder}/macos/{version}", f"ido-{version}"))
+    # tools/<name> the Makefile runs that isn't there (not built, or not for this computer) but the computer has
+    path = os.pathsep.join([os.environ.get("PATH", ""), str(Path.home() / ".cargo" / "bin")])
+    for name in sorted(set(re.findall(r"(?<![\w/.-])tools/([A-Za-z][\w-]*)(?=\s|$|\))", texts, re.M))):
+        mine = project.root / "tools" / name
+        host = shutil.which(name, path=path)
+        if host and not mine.exists() and not mine.is_symlink() and (project.root / "tools").is_dir():
+            mine.write_text(f'#!/bin/sh\nexec "{host}" "$@"\n', encoding="utf-8")
+            mine.chmod(0o755)
     for rel, tid in wanted:
         target = project.root / rel
-        if target.exists() or target.is_symlink() or toolchains.installed(tid) is None:
+        if toolchains.installed(tid) is None:
             continue
         source = toolchains.require(tid)
+        if target.is_dir() and not target.is_symlink() and not (target / "cc").exists() and source.is_dir():
+            # the project's own folder for it holds sources it would build the compiler from: the built one goes in
+            for item in source.iterdir():
+                if not (target / item.name).exists():
+                    (target / item.name).symlink_to(item)
+            continue
+        if target.exists() or target.is_symlink():
+            continue
         if source.is_dir():
             target.parent.mkdir(parents=True, exist_ok=True)
             target.symlink_to(source, target_is_directory=True)
