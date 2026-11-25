@@ -77,10 +77,11 @@ def tail_dispatch(net, proj, fn):
     return None
 
 
-def probe(search, agent, proj, fn, source, profile, *, scored=False):
+def probe(search, agent, proj, fn, source, profile, *, scored=False, review_variants=True):
     """Cache misses separately by profile; only a reverified exact bundle can change settings. 0 for an exact pair,
     else None, or with `scored` a miss's score (a cached one's too, when its record kept it): what compiler
-    detection compares (profile_detection)."""
+    detection compares (profile_detection). `review_variants=False` (the profile probe, profile_probe.py) applies an exact
+    floating-point, small-data or scheduling variant like any other profile, by the project's own automatic-change rule."""
     from . import agent_tokens, ido_compat
     search.check()
     search.visited += 1
@@ -177,7 +178,7 @@ def probe(search, agent, proj, fn, source, profile, *, scored=False):
             bases.append(consoles.default_flags(cfg, profile['toolchain']))
         except Exception:  # noqa: BLE001 - a toolchain this install doesn't know has no default to compare with
             pass
-        review = ({'review_only': True} if any(is_fp_variant(flags, profile['flags']) or is_scheduler_variant(flags, profile['flags'])
+        review = ({'review_only': True} if review_variants and any(is_fp_variant(flags, profile['flags']) or is_scheduler_variant(flags, profile['flags'])
                                                or is_small_data_variant(flags, profile['flags'])
                                                for flags in bases) else {})
         said = search.net.suggest(agent, proj['slug'], 'Deep permuter found an exact source/compiler profile pair.',

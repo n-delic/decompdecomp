@@ -371,7 +371,10 @@ class AutopilotMixin:
             db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fid, agent.id, now, now + 300))
         try:
             from ..return_repair_autopilot import run as return_repair
-            if repair_only:return 'match' if return_repair(self,agent,proj,fn) else 'skip'
+            if repair_only:
+                if return_repair(self,agent,proj,fn):return 'match'
+                from ..profile_probe_autopilot import run as profile_probe
+                return 'match' if profile_probe(self,agent,proj,fn) else 'skip'
             if not _draft_pipeline.get() and return_repair(self, agent, proj, fn):
                 return 'match'
             ctx = self._context(proj["id"], fn["unit"])

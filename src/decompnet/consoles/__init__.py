@@ -493,6 +493,14 @@ class Console:
     def after_import(self, net, slug: str, *, chosen: bool, log=print) -> None:
         """Work a new project gets once (`chosen`: the user picked its compiler)."""
 
+    def profile_probes(self, facts) -> list[dict]:
+        """Per-function compiler profiles worth judging an open function's saved C under, from what its target shows
+        (app/profile_probe.py: `facts` has the profile it is judged under, its instruction words, the diff, its library
+        identity and the profiles its matched neighbours use): [{"toolchain", "flags", "family", "why"}], the likeliest
+        first, none when nothing points anywhere. Rules that depend only on the processor's flags (a MIPS GCC's `-mfp32`,
+        `-G`) are in the app; what is this console's own (which older or library compiler its games mixed in) is here."""
+        return []
+
     sdk_assembly_sizes: tuple[int, ...] = ()
 
     def sdk_assembly_identity(self, code: bytes, big_endian: bool = True) -> dict | None:
