@@ -939,6 +939,8 @@ class ForkProject:
             cmd = self._docker_command(["make", *cmd[1:]])
         else:
             cmd = console.project_build_command(self, cmd)
+        if Path(cmd[0]).name == "make" and sys.platform == "darwin" and (gnu := shutil.which("gmake")):
+            cmd = [gnu, *cmd[1:]]  # macOS's make is 3.81: public Makefiles use what GNU make 4 added
         env = dict(os.environ)
         # Existing project environments carry its pinned extractor dependencies. Do not install into the app.
         python = next((folder / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python3')

@@ -31,7 +31,9 @@ def test_all_mips_consoles_expose_the_same_installed_tools(tmp_path, monkeypatch
     paths = consoles.get(console).project_tool_paths(project)
     assert paths[-1] == tools
     for prefix in ("mips-linux-gnu-", "mips64-linux-gnu-", "mips64-elf-"):
-        assert (paths[0] / (prefix + "ld")).resolve() == ld
+        wrapper = (paths[0] / (prefix + "ld")).read_text()  # (a script: it renames the emulation, then runs ld)
+        assert str(ld.resolve()) in wrapper and "elf32btsmip) a=elf32ebmip" in wrapper
+        assert (paths[0] / (prefix + "ld")).stat().st_mode & 0o111
     assert consoles.get(console).project_tool_paths(project) == paths  # repeated builds reuse the links
     assert consoles.get("gc").project_tool_paths(project) == []
 
