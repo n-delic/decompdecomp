@@ -55,6 +55,55 @@ if (to or "").upper().replace("-", "").replace("_", "") in ("EUCJP", "UJIS") and
     sys.exit(0)
 os.execv("{iconv}", ["iconv", *sys.argv[1:]])
 '''
+# The N64 `mips-linux-gnu-as`: o32 unless told otherwise (a distribution's assembles for the o32 ABI; the pinned PS2 one
+# does not set it, and ld then refuses `ld -r -b binary` objects beside the code: "linking 32-bit code with 64-bit
+# code"), and with .text, .data and .bss at 16-byte alignment, the way a distribution's gas starts them (these binutils
+# use 4, so a ROM layout that counts each object's alignment, like the assembly files of an SDK's libultra in a
+# community decomp, comes out shorter and every address after it moves).
+_N64_AS = '''#!{python}
+import os, subprocess, sys, tempfile
+args = sys.argv[1:]
+if not any(a.startswith("-mabi=") for a in args):
+    args = ["-mabi=32", *args]
+valued = {{"-o", "-I", "-Z", "-a", "--defsym", "-march", "-mtune", "-MD", "--MD", "-MF", "-MT"}}
+inputs, skip, stray = [], False, False
+for k, a in enumerate(args):
+    if skip:
+        skip = False
+    elif a in valued:
+        skip = True
+    elif a == "-" or (not a.startswith("-") and os.path.isfile(a)):
+        inputs.append(k)
+    elif not a.startswith("-"):
+        stray = True  # (a source that isn't there: the assembler says so)
+stdin = None
+if not inputs and stray:
+    sys.exit(subprocess.run(["{assembler}", *args]).returncode)
+if not inputs:
+    inputs = [len(args)]
+    args = [*args, "-"]
+temporary = []
+code = 1
+try:
+    for k in inputs:
+        if args[k] == "-":
+            if stdin is None:
+                stdin = sys.stdin.buffer.read()
+            body = stdin
+        else:
+            with open(args[k], "rb") as f:
+                body = f.read()
+        with tempfile.NamedTemporaryFile("wb", suffix=".s", delete=False) as t:
+            t.write(b".text\\n.balign 16\\n.data\\n.balign 16\\n.bss\\n.balign 16\\n.text\\n" + body
+                    + b"\\n.data\\n.balign 16\\n.bss\\n.balign 16\\n.text\\n")
+            temporary.append(t.name)
+        args[k] = t.name
+    code = subprocess.run(["{assembler}", *args]).returncode
+finally:
+    for name in temporary:
+        os.unlink(name)
+sys.exit(code)
+'''
 # macOS's head and tail lack GNU's long spellings (--bytes=+11) and head's "all but the last N" (head -c -8), which a
 # project's compress script uses to cut gzip's header and trailer. The shim reads those spellings itself and leaves
 # every other call to the system's program.
@@ -320,8 +369,7 @@ def build_paths(project) -> list[Path]:
                     # A distribution's mips-linux-gnu-as assembles for the o32 ABI unless told otherwise; the pinned
                     # (PS2) one does not set it, and ld then refuses `ld -r -b binary` objects beside the code
                     # ("linking 32-bit code with 64-bit code")
-                    wrapper = (f'#!/bin/sh\nfor a; do case "$a" in -mabi=*) exec "{binary.resolve()}" "$@";; esac; done\n'
-                               f'exec "{binary.resolve()}" -mabi=32 "$@"\n')
+                    wrapper = _N64_AS.format(python=sys.executable, assembler=str(binary.resolve()))
                     if not alias.is_file() or alias.is_symlink() or alias.read_text(errors="replace") != wrapper:
                         alias.unlink(missing_ok=True)
                         alias.write_text(wrapper, encoding="utf-8")

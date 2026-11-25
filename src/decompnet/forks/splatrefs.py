@@ -26,7 +26,7 @@ from .. import limits, toolchains
 from ..hostenv import NO_WINDOW, console_python
 from .project import STATE, ForkError
 
-MAX_UNITS = 2000
+MAX_UNITS = 4000  # (a decomp of ~2,100 objects: Paper Mario's; the same as maprefs.MAX_UNITS)
 TIMEOUT = 180
 SYMBOL = re.compile(r"[A-Za-z_.$][\w.$]*")
 ADDRESS_COMMENT = re.compile(r"/\* [0-9A-Fa-f]+ ([0-9A-Fa-f]{8})")

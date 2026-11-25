@@ -1847,3 +1847,13 @@ def test_a_gmake_failure_line_names_its_target():
 
     match = _FAILED.match("gmake: *** [Makefile:582: build/us/levels/bbh/leveldata.elf] Error 1")
     assert match and match.group(2) == "build/us/levels/bbh/leveldata.elf"
+
+
+def test_a_splat_config_per_version_in_ver_is_found(tmp_path):
+    """Paper Mario keeps ver/<version>/splat.yaml (beside splat-debug.yaml and splat-shift.yaml, which are not it)."""
+    from decompnet.forks.project import ForkProject
+
+    (tmp_path / "ver/us").mkdir(parents=True)
+    (tmp_path / "ver/us/splat.yaml").write_text("options:\n  platform: n64\nsegments: []\n")
+    (tmp_path / "ver/us/splat-debug.yaml").write_text("options:\n  platform: n64\nsegments: []\n")
+    assert ForkProject(tmp_path)._splat_yaml() == tmp_path / "ver/us/splat.yaml"

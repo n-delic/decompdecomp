@@ -498,7 +498,7 @@ class ForkProject:
 
     def _splat_yaml(self) -> Path | None:
         for p in sorted(self.root.glob("*.yaml")) + sorted(self.root.glob("config/*.yaml")) + sorted(self.root.glob("config/**/*.yaml")) \
-                + sorted(self.root.glob("versions/*/*.yaml")):
+                + sorted(self.root.glob("versions/*/*.yaml")) + sorted(self.root.glob("ver/*/splat.yaml")):
             try:
                 text = p.read_text(errors="replace", encoding="utf-8")
             except OSError:
@@ -515,7 +515,8 @@ class ForkProject:
         from .splatrefs import config_sha1
 
         for path in [*sorted(self.root.glob("*.yaml")), *sorted(self.root.glob("config/*.yaml")),
-                     *sorted(self.root.glob("config/**/*.yaml")), *sorted(self.root.glob("versions/*/*.yaml"))]:
+                     *sorted(self.root.glob("config/**/*.yaml")), *sorted(self.root.glob("versions/*/*.yaml")),
+                     *sorted(self.root.glob("ver/*/splat.yaml"))]:
             try:
                 config = yaml.safe_load(path.read_text(encoding="utf-8"))
                 options = config["options"]
@@ -1888,7 +1889,7 @@ class ForkProject:
         if version:
             path = self._splat_version_configs().get(version) or next(
                 (p for p in [*self.root.glob("*.yaml"), *self.root.glob(f"versions/{version}/*.yaml"),
-                         *self.root.glob(f"config/{version}/*.yaml")]
+                         *self.root.glob(f"config/{version}/*.yaml"), *self.root.glob(f"ver/{version}/splat.yaml")]
                  if p.name.endswith(f".{version}.yaml") or p.parent.name == version), path)
         if path is None:
             if (getattr(self, "platform", None) or self.detect_platform()) == "n64":
