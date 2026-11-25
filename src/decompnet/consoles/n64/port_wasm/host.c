@@ -1141,6 +1141,15 @@ static void script_input(void) {
 void w2c_env_osContGetReadData(struct w2c_env *e, u32 pad) {
     (void)e;
     scripted_input();
+    /* PORT_PAD_LOG=file: "PAD <task> <buttons>" at the first read that returns each change of the pad (the emulator's EMU_PAD_LOG, for
+       finding how many tasks later the game sees an edge on each side) */
+    static uint16_t last_shown = 0xFFFF;
+    if (buttons != last_shown) {
+        last_shown = buttons;
+        const char *path = getenv("PORT_PAD_LOG");
+        FILE *log = path ? fopen(path, "a") : NULL;
+        if (log) { fprintf(log, "PAD %lu %04X\n", (unsigned long)gfx_tasks, buttons); fclose(log); }
+    }
     for (int i = 0; i < 4; i++) {
         wbe16(pad + 6 * i, i == 0 ? buttons : 0);
         M[pad + 6 * i + 2] = i == 0 ? (uint8_t)stick_x : 0; M[pad + 6 * i + 3] = i == 0 ? (uint8_t)stick_y : 0;

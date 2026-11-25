@@ -4,6 +4,7 @@
    game's frames, the graphics tasks the video plugin has seen, DecompFrames). The last entry at or before the
    current time wins. */
 #include <dlfcn.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "m64p_plugin.h"
@@ -46,6 +47,8 @@ EXPORT void CALL GetKeys(int control, BUTTONS *keys) {
         if (h) frames = (unsigned int (*)(void))dlsym(h, "DecompFrames");
     }
     unsigned int now = frames ? frames() : vi_count();
+    static unsigned int last_bits = ~0u;
+    unsigned int shown = 0;
     while (*p) {
         char *end;
         unsigned long at = strtoul(p, &end, 10);
@@ -63,6 +66,15 @@ EXPORT void CALL GetKeys(int control, BUTTONS *keys) {
         }
         if (at <= now) keys->Value = bits | ((unsigned)(sx & 0xFF) << 16) | ((unsigned)(sy & 0xFF) << 24);
         if (*p == ',') p++;
+    }
+    /* EMU_PAD_LOG=file: "PAD <time> <buttons>" at the first poll that shows each change of the pad (docs/PORTING.md: the task the
+       game first sees an edge at, which the port's PORT_PAD_LOG gives for the same script) */
+    shown = keys->Value & 0xFFFF;
+    if (shown != last_bits) {
+        last_bits = shown;
+        const char *path = getenv("EMU_PAD_LOG");
+        FILE *log = path ? fopen(path, "a") : NULL;
+        if (log) { fprintf(log, "PAD %u %04X\n", now, shown); fclose(log); }
     }
 }
 EXPORT void CALL ControllerCommand(int control, unsigned char *command) { (void)control; (void)command; }

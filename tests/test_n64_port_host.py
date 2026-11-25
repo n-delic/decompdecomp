@@ -1829,3 +1829,12 @@ def test_a_game_that_reads_the_cartridge_through_the_pi_registers_is_counted():
     start = text.index("case 0xA460000Cu:")
     body = text[start:start + 2500]
     assert "dmas++;" in body and "NOT DONE" in body
+
+
+def test_both_sides_can_log_the_polls_that_first_show_each_pad_change():
+    """EMU_PAD_LOG (the emulator's input plugin) and PORT_PAD_LOG (the host) write "PAD <task> <buttons>" at the first controller
+    read that shows each change, so the task an edge reaches the game at can be compared per edge (docs/PORTING.md)."""
+    plugin = (HOST.parent.parent / "emulator" / "input.c").read_text()
+    assert "EMU_PAD_LOG" in plugin and '"PAD %u %04X' in plugin
+    host = HOST.read_text()
+    assert "PORT_PAD_LOG" in _function(host, "w2c_env_osContGetReadData")
