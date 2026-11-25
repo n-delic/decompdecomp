@@ -1063,3 +1063,9 @@ of those windows matching to within a few thousandths of a percent with a shift 
 Before it (the menus to 2720, the race grid at 2813-2923) both match, and the menu route's 41 pictures match exactly, so what differs is the pause: what a START held for 50 frames does during the race, a button held across many frames, whose
 first-press and repeat handling is counted in frames or retraces. Seeds are not it: shifting the replayed seeds into line with the port's calls fixed the opponents of the other race route (0.00% at its race start) and left this route as it was.
 Next: look at the pictures at 2870-2930 and 3190-3260 (the pause screen on each side) and what the game reads of the button (`PORT_INPUT` frames: a hold of 50 frames is one press for the game's edge detection, or fifty).
+
+**The START route is exact when its buttons are tapped (3 frames) instead of held (50).** The same route (`in_route`) with each press cut to a 3-frame tap, seeds aligned, windows at tasks 3100, 3400 and 6190 (24 pictures, the race grid, the start and mid-race):
+every picture 0.00% differing, both buffers. The held route was 43-89% different at the same windows. So the race, its cars, camera and opponents are the console's to the pixel; what differs is the game's
+handling of a START held for 50 of the game's frames (10 of its 5-task frames), and A held the same way (the other race route, 2%). A long press that the game measures with a clock (osGetTime, a retrace counter) would take
+the port's virtual time, which is not the console's cycle count, and a pause that begins and ends at another moment leaves the scene at another point, as seen. Where to look: what the game does with a button
+held (a pause toggled, a repeat), via the emulator's watch on the controller data (the `OSContPad` buffer) and the port's `PORT_ORDER_LOG` on the same address.

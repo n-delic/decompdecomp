@@ -96,3 +96,22 @@ def test_an_emulator_run_types_a_variable_its_stores_agree_on(tmp_path):
     sym.size = 8  # a store of another width than the symbol says nothing
     assert emulator_watch.infer_type(net, proj, run, 0x800A4DFC) is None
     store.close_readers(); store.conn.close()
+
+
+def test_a_global_lists_the_functions_that_reference_it(tmp_path):
+    from decompnet.app.globals_view import global_users
+
+    net, store = _net(tmp_path)
+    with store.tx() as db:
+        db.execute("UPDATE functions SET relocs=?, vram=? WHERE id=1", (json.dumps([[0, 5, "D_800A4DFC", 0], [8, 6, "D_800A4DFC", 0]]), 0x80001000))
+        db.execute("INSERT INTO functions(id,project_id,name,target,status,unit,relocs) VALUES(2,1,'other',x'00','open','',?)",
+                   (json.dumps([[0, 5, "D_800A4E00", 0]]),))
+    data = global_users(net, "g", "sDirectKey")
+    assert [(u["name"], u["references"]) for u in data["users"]] == [("main", 2)]  # reached by its D_ name, counted twice
+    assert global_users(net, "g", "D_800A4E00")["users"][0]["name"] == "other"
+    store.close_readers(); store.conn.close()
+
+
+def test_the_global_drawer_is_wired():
+    js = (STATIC / "js/globals.js").read_text()
+    assert "/api/global-users" in js and "openGlobal" in js
