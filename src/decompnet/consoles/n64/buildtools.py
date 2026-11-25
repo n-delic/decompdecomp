@@ -228,7 +228,7 @@ def command(project, argv: list[str]) -> list[str]:
         argv = [*argv, "CC_HOST=true"]  # the same host pass under another name  # the project's own switch for its host-gcc pass (clang answers gcc here)
     if (sys.platform == "darwin" and Path(argv[0]).name in ("make", "gmake") and makefile.is_file()
             and not any(a.startswith("CC_CHECK=") for a in argv[1:])
-            and re.search(r"^[ \t]*CC_CHECK\s*[:+?]*=\s*(?:gcc|cc|clang)\b(?:[^\n]*-fsyntax-only|[ \t]*$)",
+            and re.search(r"^[ \t]*CC_CHECK\s*[:+?]*=\s*(?:(?:gcc|cc|clang)\b(?:[^\n]*-fsyntax-only|[ \t]*$)|\$\(\w*CC\w*\)[^\n]*-fsyntax-only)",
                           makefile.read_text(encoding="utf-8", errors="replace"), re.M)):
         # a host-gcc syntax pass before each compile: clang answers `gcc` here and rejects its -m32 headers; the
         # real compile (IDO) is what builds the game

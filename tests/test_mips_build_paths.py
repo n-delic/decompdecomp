@@ -280,6 +280,8 @@ def test_a_make_shim_and_a_broken_mac_ido_and_cc_check_variants(tmp_path, monkey
     root.mkdir()
     (root / "Makefile").write_text("CC_CHECK ?= gcc\nall:\n\ttrue\n")
     assert consoles.get("n64").project_build_command(SimpleNamespace(root=root), ["make"])[-1] == "CC_CHECK=true"
+    (root / "Makefile").write_text("CC_CHECK := $(HOSTCC) $(HOSTCC_CHECK_FLAGS) -fsyntax-only -std=gnu90\n")
+    assert consoles.get("n64").project_build_command(SimpleNamespace(root=root), ["make"])[-1] == "CC_CHECK=true"
     tools = tmp_path / "pinned"
     tools.mkdir()
     (tools / "mips-ps2-decompals-ld").write_text("#!/bin/sh\n")
