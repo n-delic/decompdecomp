@@ -113,7 +113,7 @@ def test_a_call_before_saving_ra_and_a_reload_of_ra():
     leaf = [lw(RA, SP, 0x28)], [0x00840018, 0x00001012, JR_RA, NOP]  # lw $ra; then mult; mflo; jr; nop
     f = ef.decide(game(leaf[0], after=leaf[1]))['f']
     assert (f.at, f.confidence) == (0x80001014, 'auto')
-    assert any('loads $ra before saving it' in line for line in f.evidence)
+    assert any('sets $ra before saving it' in line for line in f.evidence)
 
 
 def test_a_soft_reason_alone_needs_a_frame_or_a_pointer():

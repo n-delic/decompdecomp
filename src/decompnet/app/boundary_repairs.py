@@ -123,21 +123,23 @@ def audit(net, slug):
         findings.append({**finding,'suggested_action':suggested})
     # Possible leading padding is a suggestion to inspect, not a block: agents may still claim these.
     from .start_boundaries import audit_rows
-    seen={f['function'] for f in findings}
-    findings+=[row for row in audit_rows(net,proj) if row['function'] not in seen]
-    # Entry fixes the importer left alone (set aside, hand-written-looking, turned off): suggestions to inspect.
+    # Entry fixes the importer left alone (set aside, hand-written-looking, turned off): suggestions to inspect,
+    # before start_boundaries' vaguer "the first word may be padding" for the same function.
     seen={f['function'] for f in findings}
     try:entries=entry_findings(net,proj,layout=rows)
     except NetworkError:entries={}
     findings+=[{'function':f.name,'suggested_action':f.kind,'start':f.vram,'entry':f.at,'confidence':f.confidence,
                 'note':f.summary()+('. '+f.warning if f.warning else ''),'evidence':f.evidence,'override':True}
                for f in entries.values() if f.name not in seen and (f.confidence!='auto' or not entry_fixes_enabled(net,proj))]
+    seen={f['function'] for f in findings}
+    findings+=[row for row in audit_rows(net,proj) if row['function'] not in seen]
     history=[]
     for r in net.project_store(proj['id']).all('SELECT key,value FROM settings WHERE key LIKE ?',PREFIX+str(proj['id'])+':%'):
         item=json.loads(r['value'])
         if not item.get('undone'):history.append({'key':r['key'],'function':item['function'],'action':item['action'],'time':item['time'],'evidence':item.get('evidence',''),'entries':[int(fid) for fid in item['before']],
                                                   'automatic':bool(item.get('automatic')),'entry':item.get('entry')})
-    return {'findings':findings,'history':sorted(history,key=lambda r:r['time'],reverse=True)[:30]}
+    return {'findings':findings,'history':sorted(history,key=lambda r:r['time'],reverse=True)[:30],
+            'automatic':entry_fixes_enabled(net,proj)}
 
 
 def preview(net, slug, name, action, end=None, *, investigation=False):
@@ -540,14 +542,17 @@ def apply_safe(net, slug, log=print):
 
 
 def _apply_safe(net, slug, log=print):
-    """Apply every repair the original bytes settle, one undoable decision each; leave the rest for review."""
+    """Apply every repair the original bytes settle, one undoable decision each; leave the rest for review. The
+    start and end fixes the importer makes (apply_entry_fixes) come first: the click asks for them even when the
+    project's automatic runs are turned off."""
     proj=_supported(net,slug)
     if slug in net.rooms or net._link(slug) is not None:raise NetworkError('Leave the room before editing shared function boundaries.')
     progress=getattr(log,'progress',lambda value:None);cancel=getattr(log,'check_cancel',lambda:None)
+    entry=[{**f,'flagged':f['function']} for f in _apply_entry_fixes(net,slug,proj,log)['fixed']]
     from .code_coverage import boundaries
     total=len([f for f in boundaries(net,proj) if not f['override']])
     if not total:
-        log('No incomplete entries need review.');return {'fixed':[],'remaining':0}
+        log('No incomplete entries need review.');return {'fixed':entry,'remaining':0}
     image,segments=_image(net,proj)
     calls=_call_targets(image,segments,proj['big_endian']);flow=_flow_targets(image,segments,proj['big_endian'])
     log(f'Checking {total} flagged entries for repairs the original bytes settle…')
@@ -580,7 +585,7 @@ def _apply_safe(net, slug, log=print):
             progress({'phase':'Applying safe fixes','done':len(fixed),'total':total})
     remaining=len([f for f in boundaries(net,proj) if not f['override']])
     log(f'Applied {len(fixed)} safe fixes; {remaining} entries still need review. Each fix can be undone from Repair history.')
-    return {'fixed':fixed,'remaining':remaining}
+    return {'fixed':entry+fixed,'remaining':remaining}
 
 
 def _invalidate(net, proj):
@@ -694,7 +699,8 @@ def apply_entry_fixes(net, slug, log=print):
     Repair history; leave the rest as suggestions. Runs at import (before anything is drafted) and on Check again.
     Matched functions are never changed (the preview refuses them), and the few matches that refer into a changed
     extent are compiled again first. Idempotent: a fixed function no longer looks broken, and an undone fix is never
-    applied again. Returns {'fixed': [...], 'suggested': n}.
+    applied again. Apply safe fixes runs the same fixes on a person's click, even when automatic runs are off.
+    Returns {'fixed': [...], 'suggested': n}.
     ROM mode, MIPS only, like every repair here: a project-mode game's extents are its own build's (objdiff units,
     split_source), and other processors need their own entry rules (ROADMAP.md, "automatic start and end fixes")."""
     proj=net.project_row(slug)
@@ -752,3 +758,11 @@ def _apply_entry_fixes(net, slug, proj, log):
         log(f'Fixed {len(fixed)} proven function boundar{"y" if len(fixed)==1 else "ies"} automatically; each can be '
             'undone from Review function boundaries → Repair history.')
     return {'fixed':fixed,'suggested':suggested}
+
+
+def set_entry_fixes(net, slug, enabled):
+    """Turn the automatic start and end fixes on or off for a project (Review function boundaries' checkbox)."""
+    _supported(net,slug)
+    if not isinstance(enabled,bool):raise NetworkError('Choose whether to fix proven boundaries automatically.')
+    net._update_cfg(slug,lambda cfg:cfg.update({ENTRY_FIX_SETTING:enabled}))
+    return {'automatic':enabled}

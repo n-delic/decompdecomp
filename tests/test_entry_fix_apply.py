@@ -204,3 +204,19 @@ def test_a_new_import_fixes_them_before_any_agent_or_draft_sees_the_function(tmp
     assert net._function('func_80001010', slug)['gone_mark'] is not None
     assert net._function('func_80001014', slug)['status'] == 'open'
     assert repair.audit(net, slug)['history'][0]['automatic']
+
+
+def test_the_review_dialog_turns_it_off_and_apply_safe_fixes_still_applies_on_request(tmp_path, monkeypatch):
+    net, _ = stray_start(tmp_path, monkeypatch)
+    assert repair.audit(net, 'game')['automatic'] is True
+    assert repair.set_entry_fixes(net, 'game', False) == {'automatic': False}
+    assert repair.audit(net, 'game')['automatic'] is False
+    assert repair.apply_entry_fixes(net, 'game')['fixed'] == []  # import and Check again leave it alone now
+    listed = {f['function']: f for f in repair.audit(net, 'game')['findings']}
+    assert listed['f']['suggested_action'] == 'trim_start' and listed['f']['entry'] == BASE + 0x14
+    result = repair.apply_safe(net, 'game')  # a person's click asks for it
+    assert [(f['flagged'], f['action']) for f in result['fixed']] == [('f', 'trim_start')]
+    assert net._function('func_80001014', 'game')['status'] == 'open'
+    from decompnet.network import NetworkError
+    with pytest.raises(NetworkError, match='Choose whether'):
+        repair.set_entry_fixes(net, 'game', 'no')

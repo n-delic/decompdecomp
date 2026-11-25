@@ -187,7 +187,7 @@ def contradiction(words, base, stop, *, frame_after=False):
         if hilo and not any(_try(rabbitizer.Instruction(w).modifiesLO) for w in words[:i]):
             return Why(f'`{name}` reads a multiply result nothing computed', hard=False)
         if written == RA and not _try(ins.doesLink):
-            return Why('loads $ra before saving it, so it could never return to its caller')
+            return Why('sets $ra before saving it, so it could never return to its caller')
         if store and data == RA and base_reg == SP:
             saved_ra = True
         if _calls(word) and not saved_ra:
@@ -313,7 +313,7 @@ def decide(entries, *, big_endian=True, word_at=None, stored=frozenset()):
         words = _words(e.code, big_endian)
         if any(a in shared for a in range(e.vram, e.vram + 4 * len(words), 4)):
             continue  # another overlay shares these addresses: pointers and flow can't be told apart
-        fix = _start(e, words, pointed, entered, returned_before, starts)
+        fix = _start(e, words, pointed, entered, returned_before, starts, word)
         cut = (fix.at if fix.kind == 'trim_start' else e.vram + 4 * len(words)) if fix is not None else e.vram
         if any(address in stored for address in range(e.vram, cut, 4)):
             continue  # a word of data points into the words to cut off (a table): they may be entered after all
@@ -324,7 +324,7 @@ def decide(entries, *, big_endian=True, word_at=None, stored=frozenset()):
     return found
 
 
-def _start(e, words, pointed, entered, returned_before, starts):
+def _start(e, words, pointed, entered, returned_before, starts, owner_words):
     S = e.vram
     if not returned_before(S):
         return None
@@ -335,8 +335,13 @@ def _start(e, words, pointed, entered, returned_before, starts):
             return None  # something enters the words that would be cut off: they are this function's own
         why = contradiction(words, S, k, frame_after=k < len(words) and _sp_step(words[k]) is not None)
         if k == len(words):
-            # The whole piece is leftovers between two functions.
-            if why and E in starts:
+            # The whole piece is leftovers between two functions: the next one must be an entry (it opens a frame
+            # or other code enters it), and a lone word must sit where alignment puts filler (4 past 8, before an
+            # 8-aligned entry; boundary_repairs' alignment rule decides the rest).
+            nxt = owner_words(E)
+            entry_after = nxt is not None and (_sp_step(nxt) is not None and _sp_step(nxt) < 0
+                                               or {name for name, _ in pointed.get(E, ())} - {e.name})
+            if why and E in starts and entry_after and (k > 1 or S % 8 == 4):
                 return Fix(e.name, S, 'padding', S, 'auto', [
                     f'The code before 0x{S:08X} returns, so nothing runs on into it, and nothing points at it.',
                     f'Read as a function it {why}.', f'The next function starts right after it, at 0x{E:08X}.'])
@@ -358,6 +363,8 @@ def _start(e, words, pointed, entered, returned_before, starts):
             continue  # the code from E doesn't read like an entry either
         if not (callers or why and (why.hard or framed)):
             continue
+        if not callers and leaf and stop - k <= 2:
+            continue  # a bare `jr $ra` nothing calls may be the end of the code before: no evidence of an entry
         evidence = []
         if callers:
             evidence.append(f'{", ".join(callers[:3])}{" and others" if len(callers) > 3 else ""} '

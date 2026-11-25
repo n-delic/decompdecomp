@@ -145,6 +145,7 @@ def register(app: App) -> None:
                 running=jobs.active((repairs.safe_job_kind(slug),))
                 return {'job':running['id'] if running else jobs.start(repairs.safe_job_kind(slug),lambda log:repairs.apply_safe(net,slug,log),project=slug,
                                                                          cancel_message='Safe boundary fixes stopped. Fixes already applied are kept and can be undone.')}
+        if action=='automatic':return repairs.set_entry_fixes(net,slug,data.get('enabled'))
         if action=='preview':return repairs.public(repairs.preview(net,slug,data.get('function'),data.get('repair'),data.get('end')))
         if action=='undo':return {'job':jobs.start('Undo boundary decision',lambda log:repairs.undo(net,slug,data.get('key'),log))}
         return {'job':jobs.start('Verify boundary repair',lambda log:repairs.apply(net,slug,data.get('function'),data.get('repair'),data.get('revision'),data.get('image'),data.get('end'),data.get('note',''),log))}
