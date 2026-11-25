@@ -774,11 +774,9 @@ sudo dnf install ./decompdecomp-*.x86_64.rpm       # Fedora
 chmod +x decompdecomp-*-x86_64.AppImage && ./decompdecomp-*-x86_64.AppImage   # any other distribution
 ```
 
-On **Windows**, download and open `decompdecomp-<version>-windows-x64-setup.exe` from the [releases](https://github.com/RetroReversing/decompdecomp/releases). Setup
-installs the Microsoft Edge WebView2 Runtime and .NET Framework 4.8 when they are missing, then opens the
-app installer. It may ask for administrator permission and needs an internet connection to download missing
-Microsoft components. The app installer lets you choose where decompdecomp goes and whether to add a
-desktop shortcut (selected by default); it always adds a shortcut to Start.
+On **Windows**, download `decompdecomp-<version>-windows-x64-portable.zip` from the [releases](https://github.com/RetroReversing/decompdecomp/releases), extract it
+and open `decompdecomp.exe`. Keep its bundled folders next to it. It needs .NET Framework 4.8 and the Microsoft
+Edge WebView2 Runtime, both already part of current Windows 10 and 11.
 
 To install from source with [uv](https://docs.astral.sh/uv/getting-started/installation/) instead, open a new PowerShell window and run:
 
