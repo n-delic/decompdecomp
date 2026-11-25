@@ -57,23 +57,44 @@ def _plain(chunk: str) -> str:
 
 
 @lru_cache(maxsize=1)
-def static_index(folder: str) -> dict[str, Path]:
-    """{function: its C file} of the functions ultralib's C defines `static`, for the ones one file alone defines, or
-    several files define with the same body (the audio library's `_getVol` is in env.c and n_env.c: whichever the
-    game links, the unit is the same). A name two files define differently is ambiguous: a unit can't tell which a
-    game's copy is. `index` leaves them out on purpose: a unit takes its file's static helpers along, and a callee
-    built apart from its caller would be a second copy. Only `source` reads this, for a function library detection
-    names that no exported definition has: the sequence player's `__handleMIDIMsg`, `read8`, `_handleEvent`."""
-    found: dict[str, dict[Path, str]] = {}
+def _scan(folder: str) -> tuple[dict[str, dict[Path, str]], dict[Path, set[str]]]:
+    """({static function: {file: its body without comments and spacing}}, {file: every function it defines})."""
+    copies: dict[str, dict[Path, str]] = {}
+    defined: dict[Path, set[str]] = {}
     for path in sorted(Path(folder, "src").rglob("*.c")):
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
         for chunk, name, static in _items(text):
-            if name and static:
-                found.setdefault(name, {})[path] = _plain(chunk)
-    return {name: next(iter(copies)) for name, copies in found.items() if len(set(copies.values())) == 1}
+            if name:
+                defined.setdefault(path, set()).add(name)
+                if static:
+                    copies.setdefault(name, {})[path] = _plain(chunk)
+    return copies, defined
+
+
+def static_index(folder: str) -> dict[str, Path]:
+    """{function: its C file} of the functions ultralib's C defines `static`, for the ones one file alone defines, or
+    several files define with the same body (the audio library's `_getVol` is in env.c and n_env.c: whichever the
+    game links, the unit is the same). A name two files define differently is ambiguous (`by_neighbours` may still
+    tell). `index` leaves them out on purpose: a unit takes its file's static helpers along, and a callee built apart
+    from its caller would be a second copy. Only `source` reads this, for a function library detection names that no
+    exported definition has: the sequence player's `__handleMIDIMsg`, `read8`, `_handleEvent`."""
+    return {name: next(iter(copies)) for name, copies in _scan(folder)[0].items() if len(set(copies.values())) == 1}
+
+
+def by_neighbours(folder: str, name: str, neighbours) -> Path | None:
+    """The file of a static function several files define differently, told by the game's other library functions: the
+    C sequence player's csplayer.c and the audio library's env.c both have a `_getVol` (and seqplayer.c and csplayer.c
+    a `__setUsptFromTempo`), and a game that links the one has the rest of that file's functions too. The file with
+    the most of the game's other names wins, when it wins alone: a game with only the helper says nothing."""
+    copies, defined = _scan(folder)
+    scores = sorted(((len((defined[path] - {name}) & set(neighbours)), path) for path in copies.get(name, {})),
+                    key=lambda item: -item[0])
+    if scores and scores[0][0] > 0 and (len(scores) == 1 or scores[0][0] > scores[1][0]):
+        return scores[0][1]
+    return None
 
 
 OBJECT_MACRO = re.compile(r"^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)[ \t]+([A-Za-z_]\w*)[ \t]*(?:/[*/].*)?$", re.M)
@@ -237,14 +258,15 @@ def _builds() -> dict[str, list[str]]:
     return out
 
 
-def source(name: str, hint: dict, fingerprint: str | None = None) -> tuple[Path, str] | None:
+def source(name: str, hint: dict, fingerprint: str | None = None, neighbours=()) -> tuple[Path, str] | None:
     """(ultralib's file, the build) for a function library detection found as ultralib's own build (`hint`: its
-    identity), or None: no ultralib installed, another library's code, or a name ultralib's C doesn't define."""
+    identity), or None: no ultralib installed, another library's code, or a name ultralib's C doesn't define.
+    `neighbours`: the names of the game's other library functions, which tell a helper two files define differently."""
     folder = root()
     if folder is None or not any(c.startswith(CORPUS) for c in hint.get("corpora") or []):
         return None
     path = (index(str(folder)).get(name) or static_index(str(folder)).get(name)
-            or alias_index(str(folder)).get(name))
+            or alias_index(str(folder)).get(name) or (by_neighbours(str(folder), name, neighbours) if neighbours else None))
     builds = _builds().get(hint.get("fingerprint") or fingerprint or "", [])
     if path is None or not builds:
         return None

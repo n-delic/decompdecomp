@@ -88,7 +88,7 @@ def test_native_library_code_is_set_aside_for_ultralibs_c(example, tree, monkeyp
     monkeypatch.setattr(ultralib, "root", lambda: None)
     assert sdk_assembly.discover_c(net, net.project_row('game'), threading.Event()) == 0  # no ultralib: C work
     monkeypatch.setattr(ultralib, "root", lambda: tree)
-    monkeypatch.setattr(ultralib, "source", lambda name, hint, fp=None: (tree / "src/gu/translate.c", "2.0I/libgultra"))
+    monkeypatch.setattr(ultralib, "source", lambda name, hint, fp=None, neighbours=(): (tree / "src/gu/translate.c", "2.0I/libgultra"))
     assert sdk_assembly.discover_c(net, net.project_row('game'), threading.Event()) == 1
     assert sdk_assembly.ultralib_set_aside(net, net.project_row('game')) == {'osToyRead': ('src/gu/translate.c', '2.0I/libgultra')}
 
@@ -178,7 +178,7 @@ def test_a_function_ultralib_defines_static_is_found_and_exported_when_one_file_
     monkeypatch.setattr(ultralib, "root", lambda: folder)
     monkeypatch.setattr(ultralib, "_builds", lambda: {"f" * 40: ["2.0I/libgultra"]})
     ultralib.index.cache_clear()
-    ultralib.static_index.cache_clear()
+    ultralib._scan.cache_clear()
     assert "read8" not in ultralib.index(str(folder))  # (a callee is never built apart from its file's own copy)
     hint = {"corpora": ["built in / decompals/ultralib e24c836796df"], "fingerprint": "f" * 40}
     assert ultralib.source("read8", hint) == (audio / "seq.c", "2.0I/libgultra")
@@ -198,9 +198,29 @@ def test_static_twins_with_one_body_resolve_and_different_ones_do_not(tmp_path, 
     (audio / "env.c").write_text("static int _getRate(int x) { return x * 2; }\nstatic int _getVol(int x) { return x; }\n")
     (audio / "n_env.c").write_text("/* n_ copy */\nstatic int _getRate(int x)\n{\n    return x * 2; /* same */\n}\n")
     (audio / "csplayer.c").write_text("static int _getVol(int x) { return x + 1; }\n")
-    ultralib.static_index.cache_clear()
+    ultralib._scan.cache_clear()
     index = ultralib.static_index(str(folder))
     assert index["_getRate"] in (audio / "env.c", audio / "n_env.c") and "_getVol" not in index
+
+
+def test_a_helper_two_files_define_differently_is_told_by_the_games_other_library_functions(tmp_path, monkeypatch):
+    """`_getVol` is in env.c (the synthesizer) and in csplayer.c (the C sequence player), as different functions: a
+    game that also has the player's `alCSPNew` has the player's."""
+    folder = tmp_path / "ultralib"
+    audio = folder / "src" / "audio"
+    audio.mkdir(parents=True)
+    (folder / "include").mkdir()
+    (audio / "env.c").write_text("void alEnvmixerPull(void) { }\nstatic int _getVol(int x) { return x; }\n")
+    (audio / "csplayer.c").write_text("void alCSPNew(void) { }\nstatic int _getVol(int x) { return x + 1; }\n")
+    monkeypatch.setattr(ultralib, "root", lambda: folder)
+    monkeypatch.setattr(ultralib, "_builds", lambda: {"f" * 40: ["2.0I/libgultra"]})
+    for cached in (ultralib.index, ultralib._scan, ultralib.macros, ultralib.alias_index):
+        cached.cache_clear()
+    hint = {"corpora": ["built in / decompals/ultralib e24c836796df"], "fingerprint": "f" * 40}
+    assert ultralib.source("_getVol", hint) is None  # (nothing to tell them by)
+    assert ultralib.source("_getVol", hint, None, {"alCSPNew"})[0] == audio / "csplayer.c"
+    assert ultralib.source("_getVol", hint, None, {"alEnvmixerPull"})[0] == audio / "env.c"
+    assert ultralib.source("_getVol", hint, None, {"alCSPNew", "alEnvmixerPull"}) is None  # a tie says nothing
 
 
 def test_a_symbol_a_define_gives_a_function_has_its_source_and_f3dex2_flags(tmp_path, monkeypatch):
@@ -214,7 +234,7 @@ def test_a_symbol_a_define_gives_a_function_has_its_source_and_f3dex2_flags(tmp_
     (folder / "include" / "PR" / "sp.h").write_text("#if defined(F3DEX_GBI_2)\n#define\tspInit\t\tspX2Init\n#endif\n")
     (folder / "src" / "sp" / "sprite.c").write_text('#include <PR/sp.h>\nvoid spInit(int *g) { *g = 1; }\nvoid spOther(void) { }\n')
     (folder / "src" / "gu" / "sinf.c").write_text("#define fsin __sinf\nstatic const int P[] = {1};\nfloat fsin(float x) { return x; }\n")
-    for cached in (ultralib.index, ultralib.static_index, ultralib.macros, ultralib.alias_index):
+    for cached in (ultralib.index, ultralib._scan, ultralib.macros, ultralib.alias_index):
         cached.cache_clear()
     monkeypatch.setattr(ultralib, "root", lambda: folder)
     monkeypatch.setattr(ultralib, "_builds", lambda: {"f" * 40: ["2.0I/libgultra"]})
