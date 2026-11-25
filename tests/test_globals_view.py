@@ -102,12 +102,12 @@ def test_a_global_lists_the_functions_that_reference_it(tmp_path):
     from decompnet.app.globals_view import global_users
 
     net, store = _net(tmp_path)
-    with store.tx() as db:
-        db.execute("UPDATE functions SET relocs=?, vram=? WHERE id=1", (json.dumps([[0, 5, "D_800A4DFC", 0], [8, 6, "D_800A4DFC", 0]]), 0x80001000))
+    with store.tx() as db:  # relocations are [offset, type, absolute target address]
+        db.execute("UPDATE functions SET relocs=?, vram=? WHERE id=1", (json.dumps([[0, 5, 0x800A4DFC], [8, 6, 0x800A4DFC]]), 0x80001000))
         db.execute("INSERT INTO functions(id,project_id,name,target,status,unit,relocs) VALUES(2,1,'other',x'00','open','',?)",
-                   (json.dumps([[0, 5, "D_800A4E00", 0]]),))
+                   (json.dumps([[0, 5, 0x800A4E00]]),))
     data = global_users(net, "g", "sDirectKey")
-    assert [(u["name"], u["references"]) for u in data["users"]] == [("main", 2)]  # reached by its D_ name, counted twice
+    assert [(u["name"], u["references"], u["inside"]) for u in data["users"]] == [("main", 2, 0)]
     assert global_users(net, "g", "D_800A4E00")["users"][0]["name"] == "other"
     store.close_readers(); store.conn.close()
 
@@ -124,8 +124,12 @@ def test_a_use_inside_a_table_or_struct_counts(tmp_path):
     with store.tx() as db:
         db.execute("UPDATE symbols SET size=0x40 WHERE name='sDirectKey'")  # a table of 16 words
         db.execute("INSERT INTO functions(id,project_id,name,target,status,unit,relocs) VALUES(3,1,'indexes',x'00','open','',?)",
-                   (json.dumps([[0, 5, "D_800A4DF0", 0x10], [4, 5, "D_800A4DFC", 0x8], [8, 5, "D_800A4DF0", 0x4]]),))
+                   (json.dumps([[0, 5, 0x800A4DFC], [4, 5, 0x800A4E08], [8, 6, 0x800A4E3C]]),))
     users = {u["name"]: u for u in global_users(net, "g", "sDirectKey")["users"]}
-    # 0x800A4DF0+0x10 and 0x800A4DFC+0x8 land inside it; +0x4 stops short; the second names it directly
-    assert users["indexes"]["references"] == 2 and users["indexes"]["inside"] == 1
+    assert users["indexes"]["references"] == 2 and users["indexes"]["inside"] == 1  # 0x...E3C is the table's end
+
+    with store.tx() as db:  # no recorded size: the global runs up to the next symbol
+        db.execute("UPDATE symbols SET size=0 WHERE name='sDirectKey'")
+    users = {u["name"]: u for u in global_users(net, "g", "sDirectKey")["users"]}
+    assert users["indexes"]["references"] == 1 and users["indexes"]["inside"] == 0  # 0x...E00 is the next symbol's
     store.close_readers(); store.conn.close()
