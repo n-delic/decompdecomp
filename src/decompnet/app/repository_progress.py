@@ -211,6 +211,11 @@ def snapshot(net, slug, root, log, *, recover=True, allow_unrelated_edits=False,
         scaffold = rebuildable_repository.files(root)
         paths.update(scaffold)
         paths.update(rebuildable_repository.retired(root))
+        # The root README shows the progress map and compiler (save_readme._update_root), so each checkpoint keeps it current.
+        readme = root/'README.md'
+        if prefix == 'progress/' and rebuildable_repository.full(root) and readme.is_file() and not readme.is_symlink():
+            paths.add('README.md')
+            scaffold.setdefault('README.md', readme.read_bytes())
         changed = set(filter(None, repository_sync.git(root, 'diff', '--name-only', '--no-renames', '-z', *([head] if head else [])).decode().split('\0')))
         changed.update(filter(None, repository_sync.git(root, 'ls-files', '--others', '--exclude-standard', '-z').decode().split('\0')))
         if changed - paths and not allow_unrelated_edits:

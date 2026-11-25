@@ -99,7 +99,8 @@ def files(root):
     for name in names:
         if name.startswith('progress/'):continue
         path = repository_sync.inside(root, name)
-        if not path.is_file() or (name != MARKER and repository_sync.digest(path) != record.get('hashes', {}).get(name)):
+        # README.md carries the live progress summary (save_readme._update_root), so it may change after the export.
+        if not path.is_file() or (name not in (MARKER, 'README.md') and repository_sync.digest(path) != record.get('hashes', {}).get(name)):
             raise NetworkError('Generated build file changed before its first checkpoint: '+name+'. Review it before retrying.')
         captured[name] = path.read_bytes()
     return captured

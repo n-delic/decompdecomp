@@ -86,6 +86,44 @@ def update(net, proj, folder, initial, best, details=None):
         path.write_bytes(encoded)
     if not image.exists() or image.read_text(encoding="utf-8") != svg:
         image.write_text(svg, encoding="utf-8")
+    if details is None:
+        cfg = net.cfg(proj)
+        compiler = cfg.get("compiler") or {}
+        compiler = compiler.get("toolchain") if isinstance(compiler, dict) else str(compiler)
+        details = (f"- **Game:** {proj['name']}\n- **Platform:** {cfg.get('platform') or 'not recorded'}\n"
+                   f"- **Compiler:** {compiler or 'not recorded'}")
+    _update_root(folder, details, progress)
+
+
+def _update_root(folder, details, progress):
+    """In a rebuildable repository the progress folder is a subfolder, and visitors land on the root README: carry
+    the game, platform, compiler, counts and progress map there too (the picture is the progress folder's own)."""
+    root = folder.parent
+    if folder.name != "progress" or not (root / "build.json").is_file():
+        return
+    path = root / "README.md"
+    if path.is_symlink() or path.is_dir() or not path.is_file():
+        return
+    text = path.read_bytes().decode("utf-8")
+    newline = "\r\n" if "\r\n" in text else "\n"
+    visuals = (f"![Decompilation completion and function map](progress/{CARD})\n\n"
+               "Green: matched. Gold: attempted. Grey: open. Red: set aside.")
+    blocks = [(name, content) for name, content in (("details", details), ("progress", progress), ("visuals", visuals))
+              if content is not None]
+    if "<!-- decompdecomp:visuals:start -->" in text:
+        for name, content in blocks:
+            text = _replace(text, name, content)
+    else:
+        # First time: put the summary under the title, before the build instructions, instead of at the very end.
+        summary = newline.join(block(name, content, newline) for name, content in blocks)
+        head, sep, rest = text.partition(newline)
+        if head.startswith("# "):
+            text = head + sep + newline + summary + newline + (rest if rest.startswith(newline) else newline + rest)
+        else:
+            text = summary + newline + newline + text
+    encoded = text.encode("utf-8")
+    if path.read_bytes() != encoded:
+        path.write_bytes(encoded)
 
 
 def progress_content(states, best, platform):

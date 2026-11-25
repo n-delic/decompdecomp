@@ -177,3 +177,22 @@ def test_large_progress_map_preserves_order_and_bounds_native_row_handoffs(proje
     svg = ET.fromstring((folder / save_readme.CARD).read_text())
     assert len(svg.findall('.//{*}g/{*}g')) == 513
     assert 'gone' not in (folder / save_readme.CARD).read_text()
+
+
+def test_a_rebuildable_repository_root_readme_shows_the_progress_map_and_compiler(project):
+    """The root README is what visitors see: it carries the details, counts and map of progress/ and stays current."""
+    net, folder = project
+    root = folder.parent
+    (root / "build.json").write_text("{}")
+    (root / "README.md").write_text("# Project\n\nBuild it with build.py.\n", encoding="utf-8")
+    saves.save(net, "p")
+    text = (root / "README.md").read_text(encoding="utf-8")
+    assert text.startswith("# Project\n") and "Build it with build.py." in text
+    assert "progress/decompdecomp-progress.svg" in text and "**Compiler:**" in text
+    assert "1 / 2 functions (50.0%)" in text
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched' WHERE name='open<&'")
+    saves.save(net, "p")
+    updated = (root / "README.md").read_text(encoding="utf-8")
+    assert "2 / 2 functions (100.0%)" in updated and "50.0%" not in updated
+    assert updated.count("decompdecomp:visuals:start") == 1 and "Build it with build.py." in updated
