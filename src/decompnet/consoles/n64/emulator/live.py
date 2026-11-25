@@ -21,7 +21,11 @@ from .... import limits
 from . import SO, EmulatorError, current, installed
 
 HEADER = 256
-SEQ, FRAMES, VI, TASK, INPUT = 0, 4, 8, 16, 128
+RAM_MAX = 8 << 20
+VIRAM = HEADER + RAM_MAX
+TOTAL = VIRAM + RAM_MAX
+SEQ, FRAMES, VI, GATE, TASK, VISEQ, VIVI, INPUT = 0, 4, 8, 12, 16, 32, 36, 128
+FREE = 0xFFFFFFFF  # the gate of a run that isn't in lockstep
 sys_order = sys.byteorder  # the header's words are the host's
 
 
@@ -35,12 +39,13 @@ def pad_value(buttons: int, x: int, y: int) -> int:
 class Shared:
     """The shared file, made here and mapped by both sides."""
 
-    def __init__(self, path: Path, expansion_pak: bool = False):
+    def __init__(self, path: Path, expansion_pak: bool = False, lockstep: bool = False):
         self.path = Path(path)
         self.ram_size = (8 if expansion_pak else 4) << 20
         with self.path.open("w+b") as f:
-            f.truncate(HEADER + self.ram_size)
-            self.map = mmap.mmap(f.fileno(), HEADER + self.ram_size)
+            f.truncate(TOTAL)
+            self.map = mmap.mmap(f.fileno(), TOTAL)
+        self.set_gate(0 if lockstep else FREE)  # lockstep: the emulator parks at its first retrace
 
     def _word(self, at: int) -> int:
         return int.from_bytes(self.map[at:at + 4], sys_order)
@@ -59,6 +64,22 @@ class Shared:
             if self._word(SEQ) == before:
                 return frames, vi, task, ram
         return None
+
+    def set_gate(self, vi: int) -> None:
+        """Lockstep: the emulator may complete every retrace up to `vi`."""
+        self.map[GATE:GATE + 4] = (vi & 0xFFFFFFFF).to_bytes(4, sys_order)
+
+    def parked(self) -> int:
+        """The retrace the emulator last published its RAM at (0: none yet)."""
+        return self._word(VIVI) if self._word(VISEQ) & 1 == 0 else 0
+
+    def retrace_ram(self, vi: int) -> bytes | None:
+        """The RAM at retrace `vi`, when that is the one the emulator parked at; None otherwise (or while it writes)."""
+        before = self._word(VISEQ)
+        if before == 0 or before & 1 or self._word(VIVI) != vi:
+            return None
+        ram = bytes(self.map[VIRAM:VIRAM + self.ram_size])
+        return ram if self._word(VISEQ) == before else None
 
     def set_pad(self, buttons: int, x: int, y: int) -> None:
         self.map[INPUT:INPUT + 4] = (pad_value(buttons, x, y) & 0xFFFFFFFF).to_bytes(4, sys_order)

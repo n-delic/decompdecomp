@@ -2341,13 +2341,13 @@ reuse the saved map. See [ROM Explorer](docs/ROM_EXPLORER.md) for support and li
 
 ## Next
 
-### Side-by-side viewer: lockstep, difference overlay, app button
+### Side-by-side viewer: symbols, sound, speed, app button
 
-The live side-by-side page (`port/wasm/side_by_side.py`, docs/PORTING.md "Side by side, live") runs the port and the
-console in real time with one pad, but they drift (the port never drops a frame), the console half draws about 13 frames
-a second, and it starts from the command line. Next: advance both by retrace so a game that times its menus in retraces
-stays on the same screen; a live RAM-difference overlay naming the first differing words and their symbols; the
-console's sound; a faster draw of the console's frames; and a Play-style button in the Porting tab.
+The side-by-side page (`port/wasm/side_by_side.py`, docs/PORTING.md "Side by side, live") runs the port and the console in
+lockstep by retrace with one pad and lists the RAM regions that differ. Next: name the differing addresses (the project's
+symbols), the console's sound, a faster draw of the console's frames (about 13 a second), and a Play-style button in the
+Porting tab instead of the command line. The numbering of retraces is assumed equal on both sides (`--emulator-offset`
+corrects it); a check on more games would confirm it.
 
 ### Compiler detection for project mode
 

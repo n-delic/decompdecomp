@@ -32,6 +32,7 @@
 #include <dlfcn.h>
 #include <unistd.h>
 #include <stdint.h>
+#include "live.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -82,7 +83,27 @@ static void dump(const char *path, unsigned int vi) {
 
 /* The core calls this at every vertical interrupt (its DecompSetViHook): dumps land on the VI asked for, and the run
    stops on the one it should, whatever the host's speed. */
+static volatile uint32_t *live;
+
+/* EMU_LIVE with a gate (lockstep): the RAM as of this retrace goes in the file's second block (live.h), then the
+   emulation waits here until the viewer allows the retrace, so the port and the console go on one retrace at a time. */
+static void live_gate(unsigned int vi) {
+    if (!live) return;
+    uint32_t *rdram = mem_pointer(M64P_DBG_PTR_RDRAM);
+    if (live[LIVE_GATE / 4] != 0xFFFFFFFFu && rdram) {
+        size_t words = (expansion ? 8u << 20 : 4u << 20) / 4;
+        volatile uint32_t *out = live + LIVE_VIRAM / 4;
+        uint32_t seq = live[LIVE_VISEQ / 4];
+        __atomic_store_n(&live[LIVE_VISEQ / 4], seq | 1, __ATOMIC_RELEASE);
+        live[LIVE_VIVI / 4] = vi;
+        for (size_t i = 0; i < words; i++) out[i] = __builtin_bswap32(rdram[i]);
+        __atomic_store_n(&live[LIVE_VISEQ / 4], (seq | 1) + 1, __ATOMIC_RELEASE);
+    }
+    while (vi > __atomic_load_n(&live[LIVE_GATE / 4], __ATOMIC_ACQUIRE)) usleep(200);
+}
+
 static void on_vi(unsigned int vi) {
+    live_gate(vi);
     const char *p = getenv("EMU_DUMP");
     while (p && *p) {
         char *end;
@@ -261,6 +282,7 @@ int main(int argc, char **argv) {
         ptr_DebugSetCallbacks set_callbacks = (ptr_DebugSetCallbacks)dlsym(core, "DebugSetCallbacks");
         set_callbacks(dbg_init, dbg_update, dbg_vi);
     }
+    live = live_map();
     set_vi_hook(on_vi);
     int limiter = getenv("EMU_LIVE") != NULL; /* live (a person plays it beside the port): real time; otherwise as fast as the host allows */
     do_command(M64CMD_CORE_STATE_SET, M64CORE_SPEED_LIMITER, &limiter);

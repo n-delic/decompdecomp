@@ -57,6 +57,12 @@ static unsigned long frame_number;
 static uint16_t live_buttons;
 static int8_t live_x, live_y;
 static int active;
+/* PORT_LOCKSTEP (with PORT_VTIME): the host parks before every retrace until the viewer lets it go on (POST /gate?to=N
+   allows retraces up to N), and the RAM it holds there is served at GET /ram?vi=N, so the side-by-side viewer
+   (port/wasm/side_by_side.py) can run the port and the console one retrace at a time and compare them. */
+static int lockstep;
+static unsigned long gate_to, parked_at;
+static const uint8_t *gate_ram; /* RDRAM, given by the host at each park */
 /* the sound: the last few seconds of 16-bit stereo, numbered by frame, which the page fetches as it plays */
 #define RING (1 << 17)
 static int16_t ring[RING * 2];
@@ -145,7 +151,7 @@ static void *serve(void *arg) {
                     memcpy(copy + 12, frame + 8, frame_size - 8);
                 }
                 pthread_mutex_unlock(&live_lock);
-                if (copy) break;
+                if (copy || lockstep) break; /* lockstep: the viewer asks once a retrace and takes what there is */
                 sleep_ms(10);
             }
             reply(fd, "application/octet-stream", copy ? (const void *)copy : "", size);
@@ -167,6 +173,27 @@ static void *serve(void *arg) {
             pthread_mutex_unlock(&live_lock);
             reply(fd, "application/octet-stream", out, size);
             free(out);
+        } else if (lockstep && !strncmp(req, "POST /gate", 10)) {
+            const char *t = strstr(req, "to=");
+            pthread_mutex_lock(&live_lock);
+            if (t) gate_to = strtoul(t + 3, NULL, 10);
+            pthread_mutex_unlock(&live_lock);
+            reply(fd, "text/plain", "", 0);
+        } else if (lockstep && !strncmp(req, "GET /state", 10)) { /* the retrace the host is parked before, 0 while it runs */
+            char text[96];
+            pthread_mutex_lock(&live_lock);
+            int k = snprintf(text, sizeof text, "{\"parked\":%lu,\"gate\":%lu}", parked_at, gate_to);
+            pthread_mutex_unlock(&live_lock);
+            reply(fd, "application/json", text, (size_t)k);
+        } else if (lockstep && !strncmp(req, "GET /ram", 8)) { /* the 8 MB as parked before retrace vi, or nothing */
+            const char *v = strstr(req, "vi=");
+            unsigned long want = v ? strtoul(v + 3, NULL, 10) : 0;
+            uint8_t *copy = NULL;
+            pthread_mutex_lock(&live_lock);
+            if (want && parked_at == want && gate_ram && (copy = malloc(0x800000))) memcpy(copy, gate_ram, 0x800000);
+            pthread_mutex_unlock(&live_lock);
+            reply(fd, "application/octet-stream", copy ? (const void *)copy : "", copy ? 0x800000 : 0);
+            free(copy);
         } else if (!strncmp(req, "POST /input", 11)) {
             const char *b = strstr(req, "b="), *x = strstr(req, "x="), *y = strstr(req, "y=");
             pthread_mutex_lock(&live_lock);
@@ -252,6 +279,7 @@ void port_live_start(void) {
         return;
     }
     active = 1;
+    lockstep = getenv("PORT_LOCKSTEP") != NULL;
     pthread_t t;
     pthread_create(&t, NULL, serve, (void *)(intptr_t)server);
     pthread_detach(t);
@@ -303,4 +331,22 @@ void port_live_audio(const int16_t *lr, int frames, int hz) {
         ring[(ring_end % RING) * 2 + 1] = lr[i * 2 + 1];
     }
     pthread_mutex_unlock(&live_lock);
+}
+
+/* The host's main thread, before each retrace (`next` is its number, `ram` its 8 MB of RDRAM): with PORT_LOCKSTEP, park until the viewer allows
+   it. The game's threads are idle here (PORT_VTIME), so the RAM served meanwhile is whole. */
+void port_live_gate(unsigned long next, const uint8_t *ram) {
+    if (!lockstep) return;
+    pthread_mutex_lock(&live_lock);
+    parked_at = next;
+    gate_ram = ram;
+    pthread_mutex_unlock(&live_lock);
+    for (;;) {
+        pthread_mutex_lock(&live_lock);
+        int go = next <= gate_to;
+        if (go) parked_at = 0;
+        pthread_mutex_unlock(&live_lock);
+        if (go) return;
+        sleep_ms(1);
+    }
 }

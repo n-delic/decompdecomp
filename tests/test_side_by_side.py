@@ -63,12 +63,16 @@ def test_an_image_is_picked_and_turned_into_the_pages_bytes():
 
 class FakePort(http.server.BaseHTTPRequestHandler):
     inputs: list = []
+    ram = b""  # served at /ram?vi=1 (lockstep)
 
     def log_message(self, *args):
         pass
 
     def do_GET(self):
-        body = struct.pack("<III", 1, 1, 5) + b"\x01\x02\x03"
+        if self.path.startswith("/ram"):
+            body = FakePort.ram if self.path.endswith("vi=1") else b""
+        else:
+            body = struct.pack("<III", 1, 1, 5) + b"\x01\x02\x03"
         self.send_response(200)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -140,3 +144,79 @@ def test_the_real_console_runs_live_and_takes_the_pad(tmp_path):
     finally:
         proc.kill()
         shared.close()
+
+
+def test_differing_blocks_are_found_inside_the_ranges_asked_for_and_described():
+    a, b = bytearray(0x2000), bytearray(0x2000)
+    b[0x100:0x104] = b"\x00\x00\x00\x2A"  # one block in the first page
+    b[0x1100:0x1104] = b"\xDE\xAD\xBE\xEF"  # one in the second
+    assert sbs.differing_blocks(bytes(a), bytes(b)) == [0x100, 0x1100]
+    assert sbs.differing_blocks(bytes(a), bytes(b), [(0x1000, 0x2000)]) == [0x1100]
+    lines = sbs.regions([0x100, 0x1100], bytes(a), bytes(b))
+    assert lines[0].startswith("80000100-80000200  first 80000100: 00000000 vs 0000002A")
+    assert lines[1].startswith("80001100-80001200  first 80001100: 00000000 vs DEADBEEF")
+    assert sbs.regions([0x100, 0x200], bytes(a), bytes(b))[0].startswith("80000100-80000300")  # neighbours are one region
+
+
+def test_the_emulator_parks_at_the_gate_and_its_retrace_ram_is_read_whole(tmp_path):
+    shared = live.Shared(tmp_path / "live.bin", lockstep=True)
+    assert shared._word(live.GATE) == 0 and shared.parked() == 0 and shared.retrace_ram(1) is None
+    m = shared.map
+    m[live.VIRAM:live.VIRAM + 4] = b"\x80\x00\x00\x10"
+    m[live.VIVI:live.VIVI + 4] = (3).to_bytes(4, live.sys_order)
+    m[live.VISEQ:live.VISEQ + 4] = (2).to_bytes(4, live.sys_order)
+    assert shared.parked() == 3 and shared.retrace_ram(3)[:4] == b"\x80\x00\x00\x10" and shared.retrace_ram(2) is None
+    shared.set_gate(3)
+    assert shared._word(live.GATE) == 3
+    assert live.Shared(tmp_path / "free.bin")._word(live.GATE) == live.FREE  # not in lockstep: never waits
+    shared.close()
+
+
+def test_a_tap_stays_down_for_a_few_retraces():
+    class Quiet:
+        shared = type("S", (), {"set_pad": lambda *a: None})()
+        port_url = "http://127.0.0.1:9"
+    ls = sbs.Lockstep.__new__(sbs.Lockstep)
+    ls.session, ls.held, ls.pad, ls.sent_pad = Quiet(), {}, (0, 0, 0), None
+    ls._port = lambda *a, **k: b""
+    ls.press(0x8000, 0, 0)
+    ls.press(0, 0, 0)  # released before the next retrace
+    sent = []
+    for _ in range(6):
+        ls._apply_pad()
+        sent.append(ls.sent_pad[0])
+    assert sent[:sbs.Lockstep.TAP] == [0x8000] * sbs.Lockstep.TAP and sent[-1] == 0
+
+
+def test_lockstep_compares_both_rams_at_a_retrace_then_lets_both_go_on(tmp_path, monkeypatch):
+    ram = bytearray(0x800000)
+    ram[0x400:0x404] = b"\x00\x00\x00\x07"
+    FakePort.ram, FakePort.inputs = bytes(ram), []
+    port = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakePort)
+    threading.Thread(target=port.serve_forever, daemon=True).start()
+
+    class Quiet:
+        def poll(self):
+            return None
+
+        def kill(self):
+            pass
+
+    monkeypatch.setattr(live, "start", lambda *a, **k: Quiet())
+    monkeypatch.setattr(sbs, "ConsoleView", StubConsole)
+    session = sbs.Session(tmp_path / "rom.z64", f"http://127.0.0.1:{port.server_address[1]}/", tmp_path, lockstep=True, rate=200)
+    try:
+        m = session.shared.map  # the emulator, parked at retrace 1 with a RAM that differs at 0x400 only
+        m[live.VIVI:live.VIVI + 4] = (1).to_bytes(4, live.sys_order)
+        m[live.VISEQ:live.VISEQ + 4] = (2).to_bytes(4, live.sys_order)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and not session.lockstep.regions:
+            time.sleep(0.05)
+        assert session.lockstep.vi == 1 and session.lockstep.first_vi == 1 and session.lockstep.blocks == 1
+        assert session.lockstep.regions[0].startswith("80000400-80000500  first 80000400: 00000007 vs 00000000")
+        with urllib.request.urlopen(session.url + "state", timeout=5) as r:
+            assert b'"lockstep": true' in r.read()
+        assert "/gate?to=1" in FakePort.inputs and session.shared._word(live.GATE) == 1  # both let go on
+    finally:
+        session.close()
+        port.shutdown()

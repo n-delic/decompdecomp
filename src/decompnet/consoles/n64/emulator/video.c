@@ -86,7 +86,7 @@ static void live_frame(void) {
 
 EXPORT m64p_error CALL PluginStartup(m64p_dynlib_handle core, void *context, void (*debug)(void *, int, const char *)) {
     (void)core; (void)context; (void)debug;
-    live = live_map(LIVE_HEADER + (getenv("EMU_8MB") ? 8u << 20 : 4u << 20));
+    live = live_map();
     return M64ERR_SUCCESS;
 }
 EXPORT m64p_error CALL PluginShutdown(void) { return M64ERR_SUCCESS; }

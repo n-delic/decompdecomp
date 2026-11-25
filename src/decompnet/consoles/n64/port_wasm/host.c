@@ -1094,6 +1094,7 @@ u32 w2c_env_osContStartReadData(struct w2c_env *e, u32 mq) { (void)e; si_done(mq
 static int8_t stick_x, stick_y;
 int port_live_input(uint16_t *buttons, int8_t *x, int8_t *y); /* live.c: the keyboard, with PORT_LIVE */
 void port_live_start(void);
+void port_live_gate(unsigned long next, const uint8_t *ram); /* live.c: PORT_LOCKSTEP parks here before retrace `next` until the viewer allows it */
 void port_live_pump(void); /* live.c: the main thread's turn at the window (PORT_WINDOW), every retrace */
 void port_live_app(const char *argv0); /* live.c: an exported app's settings, when no ROM is named */
 const char *port_live_rom(void);        /* live.c: the ROM the player chooses in the window */
@@ -2445,6 +2446,7 @@ int main(int argc, char **argv) {
     /* the VI retrace: 50 a second for PAL, 60 for NTSC */
     for (int frame = 0; seconds <= 0 || (vtime ? (int)(vi_count) : frame) < seconds * 1000000 / retrace_us(); frame++) {
         wait_retrace();
+        port_live_gate(vi_count + 1, M + 0x80000000u);
         retrace();
         /* the retraces the console had while it worked on a frame (PORT_VTIME_TRACE), fired as the game goes idle:
            they queue for it as they did there */

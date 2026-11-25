@@ -6,14 +6,20 @@ renderer (port/frame_compare.py), the console's RAM carried from one frame to th
 halves is the game running differently (the port's code, its host or its input), not a different renderer. The page's
 keyboard or gamepad is sent to both at once.
 
-Both run in real time and are not kept in step (the port loads in no time and never drops a frame; the console does):
-each half shows its own frame count, so drift is visible. Lockstep by retrace is the next step (ROADMAP.md).
+Free-running, both play in real time and drift apart (the port loads in no time and never drops a frame; the console
+does), and each half shows its own frame count. With --lockstep (the default when this starts the port) the viewer is
+the clock: the port (PORT_LOCKSTEP and PORT_VTIME) and the emulator (the shared file's gate) each park before every
+retrace, the viewer reads both RAMs there, says which regions differ and which are new at this retrace, sets the one
+pad for both and lets them go on one retrace. A game that times its menus in retraces then stays on the same screen on
+both sides, and the first retrace at which the RAMs part is on the page. Pause, Step (one retrace) and the rate are
+in the page.
 
     python -m decompnet.port.wasm.side_by_side ROM (--port-url http://127.0.0.1:PORT/ | --program build/game)
 """
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import socket
 import struct
@@ -39,6 +45,8 @@ h2{margin:0 0 6px;font-size:14px;font-weight:600}p{text-align:center;margin:6px}
 </style></head><body><div class=row>
 <div class=side><h2>Port</h2><canvas id=p width=320 height=240></canvas><p id=ps></p></div>
 <div class=side><h2>Console (mupenRE)</h2><canvas id=e width=320 height=240></canvas><p id=es></p></div></div>
+<p id=hud hidden><button id=run>Pause</button> <button id=step>Step</button> <span id=vi></span></p>
+<pre id=diff hidden style="margin:6px auto;max-width:900px;text-align:left;color:#9c9;font:12px ui-monospace,monospace"></pre>
 <p>Arrows steer &middot; X: A &middot; Z: B &middot; Enter: Start &middot; Space: Z &middot; Q/W: L/R &middot; I/J/K/L: C buttons &middot; or a gamepad. Both sides get the same pad.</p>
 <script>
 const keys={ArrowUp:0x0800,ArrowDown:0x0400,ArrowLeft:0x0200,ArrowRight:0x0100,KeyX:0x8000,KeyZ:0x4000,KeyC:0x4000,
@@ -64,6 +72,15 @@ if(canvas.width!=w||canvas.height!=h){canvas.width=w;canvas.height=h;}const im=g
 for(let i=0,j=12;i<w*h;i++,j+=3){p[i*4]=b[j];p[i*4+1]=b[j+1];p[i*4+2]=b[j+2];p[i*4+3]=255;}g.putImageData(im,0,0);shown++;
 const now=performance.now();if(now-t0>1000){label.textContent='frame '+last+' · '+Math.round(shown*1000/(now-t0))+' a second';shown=0;t0=now;}}}
 catch(e){await new Promise(r=>setTimeout(r,500));}requestAnimationFrame(loop);}loop();}
+let running=true;
+async function status(){try{const r=await fetch('/state');const d=await r.json();
+if(d.lockstep){document.getElementById('hud').hidden=false;document.getElementById('diff').hidden=false;
+document.getElementById('run').textContent=d.running?'Pause':'Resume';running=d.running;
+document.getElementById('vi').textContent='retrace '+d.vi+' · '+d.blocks+' differing 256-byte blocks'+(d.first_vi?' · first seen at retrace '+d.first_vi:'');
+document.getElementById('diff').textContent=(d.new.length?'new at this retrace:\n'+d.new.join('\n')+'\n\n':'')+'regions (port vs console):\n'+d.regions.join('\n')+(d.note?'\n\n'+d.note:'');}}catch(e){}setTimeout(status,250);}
+status();
+document.getElementById('run').onclick=()=>fetch('/control?run='+(running?0:1),{method:'POST'});
+document.getElementById('step').onclick=()=>fetch('/control?step=1',{method:'POST'});
 side('/port/frame',document.getElementById('p'),document.getElementById('ps'));
 side('/emu/frame',document.getElementById('e'),document.getElementById('es'));
 </script></body></html>"""
@@ -145,18 +162,169 @@ class ConsoleView:
         self.renderer.close()
 
 
+BLOCK = 256  # the unit the RAM comparison reports in
+
+
+def differing_blocks(a: bytes, b: bytes, ranges: list[tuple[int, int]] | None = None) -> list[int]:
+    """The offsets of the BLOCK-byte blocks where two RAM dumps differ, over the shorter of them, or only inside
+    `ranges` (RAM offsets, start to end): the port's RAM isn't laid out like the console's everywhere (its exception
+    vectors, its memory size, its stacks), so a person looking for a game's own difference names the game's data."""
+    n = min(len(a), len(b)) // BLOCK * BLOCK
+    spans = [(max(0, lo) // BLOCK * BLOCK, min(n, hi)) for lo, hi in ranges] if ranges else [(0, n)]
+    return [i for lo, hi in spans for i in range(lo, hi - BLOCK + 1, BLOCK) if a[i:i + BLOCK] != b[i:i + BLOCK]]
+
+
+def regions(blocks: list[int], a: bytes, b: bytes, limit: int = 12) -> list[str]:
+    """Runs of differing blocks as text lines: the address range and the first word that differs in each, with both values."""
+    out, i = [], 0
+    while i < len(blocks) and len(out) < limit:
+        j = i
+        while j + 1 < len(blocks) and blocks[j + 1] == blocks[j] + BLOCK:
+            j += 1
+        start, end = blocks[i], blocks[j] + BLOCK
+        w = next(o for o in range(start, end, 4) if a[o:o + 4] != b[o:o + 4])
+        out.append(f"{0x80000000 + start:08X}-{0x80000000 + end:08X}  first {0x80000000 + w:08X}: "
+                   f"{a[w:w + 4].hex().upper()} vs {b[w:w + 4].hex().upper()}")
+        i = j + 1
+    return out
+
+
+class Lockstep:
+    """The viewer as the clock: both sides park before each retrace, their RAMs are compared there, then the one pad is
+    given to both and they go on one retrace (docs/PORTING.md, "Side by side, live")."""
+
+    def __init__(self, session: "Session", rate: float = 60.0, offset: int = 0, ranges: list | None = None):
+        self.session, self.interval, self.offset, self.ranges = session, 1.0 / rate, offset, ranges
+        self.running, self.stepping, self.stop = True, False, False
+        self.pad, self.sent_pad = (0, 0, 0), None
+        self.held: dict[int, int] = {}  # button bit: retraces it stays down at least (a tap shorter than a game's poll is still seen)
+        self.vi, self.blocks, self.first_vi, self.new, self.regions, self.note = 0, 0, 0, [], [], "starting"
+        self.previous: set[int] = set()
+        self.lock = threading.Condition()
+        self.frame: bytes | None = None
+        self.number = 0
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def _port(self, path: str, post: bool = False, timeout: float = 10) -> bytes:
+        request = urllib.request.Request(self.session.port_url + path, method="POST" if post else "GET")
+        with urllib.request.urlopen(request, timeout=timeout) as r:
+            return r.read()
+
+    def _wait(self, n: int, give_up: float = 30.0):
+        """Both RAMs at retrace n, once both sides have parked there: (port, console), or None if one didn't."""
+        end = time.monotonic() + give_up
+        port = emu = None
+        while time.monotonic() < end and not self.stop:
+            if port is None:
+                try:
+                    port = self._port(f"/ram?vi={n}") or None
+                except OSError:
+                    port = None
+            if emu is None:
+                emu = self.session.shared.retrace_ram(n + self.offset)
+            if port and emu:
+                return port, emu
+            time.sleep(0.003)
+        return None
+
+    TAP = 4  # retraces
+
+    def press(self, buttons: int, x: int, y: int) -> None:
+        """The page's pad, kept until the next retrace; a button pressed since the last one stays down for TAP retraces."""
+        for bit in range(16):
+            if buttons >> bit & 1 and not self.pad[0] >> bit & 1:
+                self.held[bit] = self.TAP
+        self.pad = (buttons, x, y)
+
+    def _apply_pad(self) -> None:
+        buttons = self.pad[0]
+        for bit in list(self.held):
+            buttons |= 1 << bit
+            self.held[bit] -= 1
+            if self.held[bit] <= 0:
+                del self.held[bit]
+        pad = (buttons, self.pad[1], self.pad[2])
+        if pad != self.sent_pad:
+            self.sent_pad = pad
+            self.session.shared.set_pad(*pad)
+            try:
+                self._port("/input?b=%d&x=%d&y=%d" % pad, post=True, timeout=2)
+            except OSError:
+                pass
+
+    def _compare(self, n: int, port: bytes, emu: bytes) -> None:
+        blocks = differing_blocks(port, emu, self.ranges)
+        now = set(blocks)
+        new = sorted(now - self.previous)
+        self.previous = now
+        self.vi, self.blocks = n, len(blocks)
+        if blocks and not self.first_vi:
+            self.first_vi = n
+        self.new = regions(new, port, emu, 6)
+        self.regions = regions(blocks, port, emu)
+
+    def _run(self) -> None:
+        n = 1
+        while not self.stop:
+            if not (self.running or self.stepping):
+                time.sleep(0.02)
+                continue
+            began = time.monotonic()
+            both = self._wait(n)
+            if both is None:
+                self.note = f"waiting: retrace {n} not reached by both sides yet (the port needs PORT_LOCKSTEP=1 PORT_VTIME=1)"
+                continue
+            self.note = ""
+            self._compare(n, *both)
+            try:
+                frame = self._port("/frame?after=-1")
+            except OSError:
+                frame = b""
+            if len(frame) > 12 and (self.frame is None or frame[12:] != self.frame[12:]):
+                with self.lock:
+                    self.number += 1
+                    self.frame = frame[:8] + struct.pack("<I", self.number) + frame[12:]
+                    self.lock.notify_all()
+            self._apply_pad()
+            self.stepping = False
+            try:  # let both go on to the next retrace
+                self._port(f"/gate?to={n}", post=True)
+            except OSError:
+                continue
+            self.session.shared.set_gate(n + self.offset)
+            n += 1
+            left = self.interval - (time.monotonic() - began)
+            if left > 0 and self.running:
+                time.sleep(left)
+
+    def wait(self, after: int, timeout: float = 1.0) -> bytes | None:
+        with self.lock:
+            self.lock.wait_for(lambda: self.frame is not None and self.number != after, timeout)
+            return self.frame if self.frame is not None and self.number != after else None
+
+    def state(self) -> dict:
+        return {"lockstep": True, "running": self.running, "vi": self.vi, "blocks": self.blocks, "first_vi": self.first_vi,
+                "new": self.new, "regions": self.regions, "note": self.note}
+
+    def close(self) -> None:
+        self.stop = True
+
+
 class Session:
     """The viewer: a page on 127.0.0.1 showing the port (proxied from its live view) beside the console, one pad."""
 
-    def __init__(self, rom: Path, port_url: str, work: Path | None = None, *, expansion_pak: bool = False):
+    def __init__(self, rom: Path, port_url: str, work: Path | None = None, *, expansion_pak: bool = False,
+                 lockstep: bool = False, rate: float = 60.0, offset: int = 0, ranges: list | None = None):
         from ...consoles.n64.emulator import live
         self.port_url = port_url.rstrip("/")
         self._tmp = tempfile.TemporaryDirectory(prefix="decomp-side-by-side-") if work is None else None
         self.work = Path(work or self._tmp.name)
         self.work.mkdir(parents=True, exist_ok=True)
-        self.shared = live.Shared(self.work / "live.bin", expansion_pak)
+        self.shared = live.Shared(self.work / "live.bin", expansion_pak, lockstep)
         self.emulator = live.start(rom, self.shared, expansion_pak=expansion_pak)
         self.console = ConsoleView(self.shared, self.work)
+        self.lockstep = Lockstep(self, rate, offset, ranges) if lockstep else None
         session = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -181,6 +349,11 @@ class Session:
                     self._send(PAGE.encode(), "text/html; charset=utf-8")
                 elif url.path == "/emu/frame":
                     self._send(session.console.wait(after) or b"")
+                elif url.path == "/state":
+                    state = session.lockstep.state() if session.lockstep else {"lockstep": False}
+                    self._send(json.dumps(state).encode(), "application/json")
+                elif url.path == "/port/frame" and session.lockstep:  # the viewer fetches it once a retrace
+                    self._send(session.lockstep.wait(after) or b"")
                 elif url.path == "/port/frame":
                     try:
                         with urllib.request.urlopen(f"{session.port_url}/frame?after={after}", timeout=5) as r:
@@ -192,10 +365,19 @@ class Session:
 
             def do_POST(self):
                 url = urlparse(self.path)
+                q = parse_qs(url.query)
+                if url.path == "/control" and session.lockstep:
+                    if "run" in q:
+                        session.lockstep.running = q["run"][0] == "1"
+                    if "step" in q:
+                        session.lockstep.running, session.lockstep.stepping = False, True
+                    return self._send(b"", "text/plain")
                 if url.path != "/input":
                     return self._send(b"", status=404)
-                q = parse_qs(url.query)
                 buttons, x, y = (int((q.get(k) or ["0"])[0]) for k in ("b", "x", "y"))
+                if session.lockstep:  # latched: both sides get it at the next retrace, never mid-step
+                    session.lockstep.press(buttons, x, y)
+                    return self._send(b"", "text/plain")
                 session.shared.set_pad(buttons, x, y)
                 try:
                     urllib.request.urlopen(urllib.request.Request(
@@ -210,6 +392,8 @@ class Session:
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
 
     def close(self) -> None:
+        if self.lockstep:
+            self.lockstep.close()
         self.server.shutdown()
         self.console.close()
         if self.emulator.poll() is None:
@@ -219,12 +403,14 @@ class Session:
             self._tmp.cleanup()
 
 
-def start_port(program: Path, rom: Path, work: Path) -> tuple[subprocess.Popen, str]:
+def start_port(program: Path, rom: Path, work: Path, lockstep: bool = False) -> tuple[subprocess.Popen, str]:
     """A built port running with its live view on a free port, as Play starts it; (process, its address)."""
     port = _free_port()
     env = {**os.environ, "PORT_LIVE": str(port), "PORT_SAVE": str(work / "game.eep")}
     for key in ("PORT_RT64", "PORT_WINDOW", "PORT_RECOMP_UI"):
         env.pop(key, None)
+    if lockstep:  # parked before each retrace until the viewer says go; virtual time, so the game is idle there
+        env.update(PORT_LOCKSTEP="1", PORT_VTIME="1")
     proc = subprocess.Popen([str(program), str(rom), "0"], cwd=work, env=env, stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
     url = f"http://127.0.0.1:{port}/"
@@ -247,14 +433,25 @@ def main(argv: list[str] | None = None) -> int:
     where.add_argument("--port-url", help="the address of a port already running with PORT_LIVE (Play's)")
     where.add_argument("--program", type=Path, help="a built port to start (its build/game)")
     ap.add_argument("--expansion-pak", action="store_true", help="8 MB of RAM, as the game's console had")
+    ap.add_argument("--lockstep", action=argparse.BooleanOptionalAction, default=None,
+                    help="advance both one retrace at a time and compare their RAM (the default when --program starts the port; "
+                         "a port given by --port-url needs PORT_LOCKSTEP=1 PORT_VTIME=1)")
+    ap.add_argument("--rate", type=float, default=60.0, help="retraces a second in lockstep (50 for a PAL game)")
+    ap.add_argument("--emulator-offset", type=int, default=0, help="lockstep: the console's retrace number minus the port's")
+    ap.add_argument("--range", action="append", default=[], metavar="START-END",
+                    help="lockstep: compare only this RAM range (hex addresses, repeatable): the game's data, not the port's "
+                         "own layout (exception vectors, memory size, stacks) where the two always differ")
     ap.add_argument("--no-open", action="store_true", help="don't open the page in the browser")
     args = ap.parse_args(argv)
     with tempfile.TemporaryDirectory(prefix="decomp-side-by-side-") as tmp:
         port_proc = None
         url = args.port_url
+        lockstep = bool(args.program) if args.lockstep is None else args.lockstep
+        ranges = [tuple(int(x, 16) & 0x1FFFFFFF for x in r.split("-")) for r in args.range]
         if args.program:
-            port_proc, url = start_port(args.program.resolve(), args.rom.resolve(), Path(tmp))
-        session = Session(args.rom.resolve(), url, Path(tmp), expansion_pak=args.expansion_pak)
+            port_proc, url = start_port(args.program.resolve(), args.rom.resolve(), Path(tmp), lockstep)
+        session = Session(args.rom.resolve(), url, Path(tmp), expansion_pak=args.expansion_pak, lockstep=lockstep,
+                          rate=args.rate, offset=args.emulator_offset, ranges=ranges)
         print(f"side by side at {session.url}  (Ctrl-C to stop)", flush=True)
         if not args.no_open:
             webbrowser.open(session.url)

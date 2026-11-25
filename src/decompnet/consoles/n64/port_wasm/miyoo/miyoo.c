@@ -116,6 +116,7 @@ void port_live_start(void) {
 
 int port_live_active(void) { return active; }
 
+void port_live_gate(unsigned long next, const uint8_t *ram) { (void)next; (void)ram; } /* no lockstep viewer on the Mini */
 void port_live_pump(void) {} /* the Mini's SDL 1.2 is driven from the game's threads, as it always was */
 void port_live_app(const char *argv0) { (void)argv0; } /* its launch.sh names the ROM */
 const char *port_live_rom(void) { return NULL; }

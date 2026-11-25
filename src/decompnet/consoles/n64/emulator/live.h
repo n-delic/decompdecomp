@@ -6,9 +6,14 @@
      4   frames   the game's frames so far (the graphics tasks handed over)
      8   vi       video refreshes so far
      16  task     the 64-byte OSTask the RSP was given, big-endian, pointers physical (frame_dumps' NAME.task)
+     12  gate     lockstep: the highest retrace the emulator may complete (written by the viewer; 0xFFFFFFFF: free-running)
+     32  viseq    like seq, for the second block below
+     36  vivi     the retrace the second block was written at
      128 input    the first controller as the input plugin gives it: the buttons in bits 0-15, the stick's x in 16-23
                   and y in 24-31 (the same layout as EMU_INPUT's, input.c)
-   Keep the numbers in step with side_by_side.py. */
+   RDRAM (8 MB reserved, the console's 4 or 8) is there twice: at LIVE_HEADER as of the newest graphics task (what the
+   picture is drawn from) and at LIVE_VIRAM as of the newest retrace, where lockstep parks the emulator until the viewer
+   lets it go on (frontend.c). Keep the numbers in step with live.py. */
 #ifndef DECOMP_LIVE_H
 #define DECOMP_LIVE_H
 #include <fcntl.h>
@@ -22,10 +27,17 @@
 #define LIVE_VI 8
 #define LIVE_TASK 16
 #define LIVE_INPUT 128
+#define LIVE_GATE 12
+#define LIVE_VISEQ 32
+#define LIVE_VIVI 36
 #define LIVE_HEADER 256
+#define LIVE_RAM_MAX (8u << 20)
+#define LIVE_VIRAM (LIVE_HEADER + LIVE_RAM_MAX)
+#define LIVE_TOTAL (LIVE_VIRAM + LIVE_RAM_MAX)
 
-/* the shared file's words, or NULL when EMU_LIVE isn't set or the file can't be mapped (`bytes`: header and RAM) */
-static inline volatile uint32_t *live_map(size_t bytes) {
+/* the shared file's words, or NULL when EMU_LIVE isn't set or the file can't be mapped */
+static inline volatile uint32_t *live_map(void) {
+    size_t bytes = LIVE_TOTAL;
     const char *path = getenv("EMU_LIVE");
     if (!path || !*path) return NULL;
     int fd = open(path, O_RDWR);

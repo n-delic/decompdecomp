@@ -639,9 +639,16 @@ one keyboard or gamepad for both. The console is mupenRE run in real time (`cons
 the video plugin writes the console's RAM into a shared file (`live.h`: a seqlock, the task, RAM) as the game hands over each
 graphics task, the input plugin reads the pad from the same file, and the viewer draws each frame with the port's renderer
 (carrying what earlier frames drew, as Check pictures does). Each half shows its own frame count: the two aren't kept in step
-(the port never drops a frame or waits for a load), so they drift; measured on a menu screen, the console half drew about 13
-frames a second while the game ran at 60. Not done yet: lockstep by retrace, a live RAM-difference
-overlay, sound from the console, and a button in the app (ROADMAP.md).
+(the port never drops a frame or waits for a load), so they drift. With `--lockstep` (the default when `--program` starts the port;
+a port given by `--port-url` needs `PORT_LOCKSTEP=1 PORT_VTIME=1`) the viewer is the clock instead: the port (live.c's
+`port_live_gate`, before each retrace) and the emulator (the shared file's gate, frontend.c) park at every retrace, the
+viewer reads both RAMs there (`GET /ram?vi=N` on the port, the file's second RAM block on the console), lists the regions that
+differ and the ones that are new at this retrace, latches the page's pad (a tap stays down four retraces) and lets both go on
+one. The page has Pause, Step and the list; `--rate 50` for a PAL game, `--range START-END` (repeatable) to compare only the
+game's own data (the port's exception vectors, its 8 MB `osMemSize` against the console's 4 and its stacks always differ),
+`--emulator-offset` if the two count retraces one apart. Measured on an N64 game's menu: both on the same screen, a Start press
+moved both on together, about 52 retraces a second. Not done yet: symbol names in the difference list, sound from the console,
+a faster draw of the console's frames, and a button in the app (ROADMAP.md).
 `tools/n64_vi_compare.py ROM --port BUILD --input @script` checks the VI's blanking against the console's: the
 emulator's video plugin logs the VI's registers (`EMU_VI_LOG`; osViBlack blanks by writing 0 to the horizontal video
 register, the status stays), the port's `PORT_SWAP_LOG` says when it blanked, and the two lists of blanks must agree in
