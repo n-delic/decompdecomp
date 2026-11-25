@@ -611,12 +611,14 @@ On 50 KMC GCC 2.7.2 functions of about 109 instructions, the link took 1.33 ms b
 extraction 1.22 ms and 0.67 ms; the link results (code, relocations, verdicts, problems) were identical with and
 without it. A compile of such a function takes about 20 ms, so this is a few percent of a trial.
 
-### Compiled library modules (Cython, optional)
+### Compiled library kernels (Cython, optional)
 
-decomp-repair's `native_build.py` compiles its hottest 150 modules unchanged from Python source. The bundle builds run
-it on the library they installed (`packaging/build_library_native.py`, skipped with `DECOMP_NATIVE_LIBRARY=0`, an older
-library or no C compiler). Untyped compilation measured about 3% on a draft pass (0.96 s against 0.99 s); the larger
-gains came from fixing the library's quadratic scans in plain Python (1.92 s to 0.83 s).
+decomp-repair's `native_build.py` builds its typed Cython kernels (`_scan.pyx`: the bracket and loop scans many families
+share, 10x to 70x faster per call, a few seconds to compile). The bundle builds run it on the library they installed
+(`packaging/build_library_native.py`; skipped with `DECOMP_NATIVE_LIBRARY=0`, with an older library, or without a C
+compiler). Compiling the library's plain modules unchanged (`native_build.py --all`, about an hour) measured only about
+3% on a draft pass (0.96 s against 0.99 s), so bundles don't do it; the larger gains came from fixing the library's
+quadratic scans and regex backtracking in plain Python (1.92 s to 0.27 s on real functions).
 
 ### Incremental notification source cursors
 
