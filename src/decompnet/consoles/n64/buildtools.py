@@ -22,6 +22,15 @@ def _is_gcc_272(driver: Path) -> bool:
         return False
 
 
+def _in_installed_toolchains(path: Path) -> bool:
+    """Is this file one of the installed toolchains' own (a project's tools/ folder that is a link to one)? Those are
+    shared with every project and the app: a stand-in is never written over them."""
+    try:
+        return toolchains.root().resolve() in path.resolve().parents
+    except OSError:
+        return False
+
+
 def _is_sn64_folder(folder: Path) -> bool:
     """The SN Systems GCC 2.7.2 a project keeps next to the KMC one (also "GNU C 2.7.2", so the KMC stand-in must
     not take it): its `as` is modern-asn64, which no KMC folder has."""
@@ -37,6 +46,8 @@ def _wrap_sn64_gcc(folders) -> None:
     driver = Path(__file__).with_name("sn64_gcc.py")
     for folder in folders:
         gcc, assembler = folder / "gcc", folder / "as"
+        if _in_installed_toolchains(gcc):
+            continue
         try:
             with open(gcc, "rb") as f:
                 if f.read(4) != b"\x7fELF" or not assembler.is_file():
@@ -188,6 +199,8 @@ def _wrap_foreign_ido(project) -> None:
     # (looked at every time: a project's own setup step can fetch its Linux compiler again over a wrapper)
     drivers = [(root, driver) for root in roots if root.is_dir() for driver in root.glob("**/cc")]
     for tools_root, driver in drivers:
+        if _in_installed_toolchains(driver):
+            continue
         if len(driver.relative_to(tools_root).parts) > 5 or driver.is_symlink() or not driver.is_file():
             continue
         if driver.parent.name == "bin" and driver.parent.parent.name == "usr":
@@ -244,7 +257,8 @@ def _wrap_foreign_ido(project) -> None:
         installed = toolchains.require("gcc-2.7.2-kmc")
         for program in folder.iterdir():
             mine = installed / program.name
-            if not program.is_file() or program.is_symlink() or not mine.is_file() or program.suffix:
+            if (not program.is_file() or program.is_symlink() or not mine.is_file() or program.suffix
+                    or _in_installed_toolchains(program)):
                 continue
             with open(program, "rb") as f:
                 if f.read(4) != b"\x7fELF":
@@ -307,7 +321,7 @@ def _update_old_mac_assembler(project, tools: Path) -> None:
     if not mine.is_file():
         return
     for old in {*tools.glob("*gcc*2.7.2*/macos/as"), *tools.glob("*gcc*2.7.2*/as")}:
-        if old.is_symlink() or not old.is_file():
+        if old.is_symlink() or not old.is_file() or _in_installed_toolchains(old):
             continue
         try:
             data = old.read_bytes()
