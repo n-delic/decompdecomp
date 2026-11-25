@@ -276,6 +276,14 @@ def command(project, argv: list[str]) -> list[str]:
         # a host-gcc syntax pass before each compile: clang answers `gcc` here and rejects its -m32 headers; the
         # real compile (IDO) is what builds the game
         argv = [*argv, "CC_CHECK=true"]
+    if (sys.platform == "darwin" and Path(argv[0]).name in ("make", "gmake") and makefile.is_file()
+            and not any(a.startswith("CPP=") for a in argv[1:])):
+        text = makefile.read_text(encoding="utf-8", errors="replace")
+        # a macOS branch that points CPP at `clang -E -P -x c` while a recipe pipes into `$(CPP) -E -P ...` (stdin):
+        # clang wants a `-` for that and says "no input files"; the cpp of the build path (GNU's) reads stdin as the
+        # Linux branch's `cpp` does
+        if re.search(r"^[ \t]*CPP\s*:?=\s*clang\b[^\n]*-E", text, re.M) and re.search(r"\|\s*\$\(CPP\)", text):
+            argv = [*argv, "CPP=cpp"]
     return argv
 
 

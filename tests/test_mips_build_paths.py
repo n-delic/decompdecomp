@@ -743,3 +743,16 @@ def test_a_tools_requirements_python_file_is_where_the_project_environment_insta
     project.run = lambda cmd, log=print, **kw: (installed.append(cmd) or (True, ""))
     project.ensure_python_env(log=lambda *a: None)
     assert any("tools/requirements-python.txt" in cmd for cmd in installed)
+
+
+def test_a_clang_cpp_that_a_recipe_pipes_into_is_replaced_by_the_build_paths_cpp_on_a_mac(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools
+
+    monkeypatch.setattr(buildtools.sys, "platform", "darwin")
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "Makefile").write_text("ifeq ($(HOST_OS),macos)\n  CPP := clang -E -P -x c\nelse\n  CPP := cpp\nendif\n"
+                                   "%.o: %.s\n\ticonv $< | $(CPP) -E -P -Iinclude | $(AS) -o $@\n")
+    assert consoles.get("n64").project_build_command(SimpleNamespace(root=root), ["make"])[-1] == "CPP=cpp"
+    (root / "Makefile").write_text("CPP := clang -E -P -x c\nx:\n\t$(CPP) -o $@ $<\n")  # (a file argument: fine)
+    assert consoles.get("n64").project_build_command(SimpleNamespace(root=root), ["make"]) == ["make"]
