@@ -1293,6 +1293,10 @@ def register(app: App) -> None:
         from ..globals_view import globals_list
         return globals_list(net, slug)
 
+    def p_global_types(slug, request, data):
+        from ..global_types import learn_project
+        return learn_project(net, slug)
+
     def p_global_users(slug, request, data):
         from ..globals_view import global_users
         return global_users(net, slug, request.query_params.get('name', ''))
@@ -1533,6 +1537,7 @@ def register(app: App) -> None:
         "/api/variants": (p_variants, ["GET", "POST"]),
         "/api/globals": (p_globals, ["GET"]),
         "/api/global-users": (p_global_users, ["GET"]),
+        "/api/global-types/learn": (p_global_types, ["POST"]),
         "/api/regional": (p_regional, ["GET", "POST"]),
         "/api/regional/names": (p_regional_names, ["POST"]),
         "/api/regional/code": (p_regional_code, ["POST"]),

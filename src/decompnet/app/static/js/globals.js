@@ -1,6 +1,6 @@
 /* The Globals tab: the game's data symbols, searchable by the name they have now or the D_ address name they started
    as (D_800A4DFC → sDirectKey). Read-only, like the Functions list; renames happen through the agents' rename_symbol. */
-const G = { slug: null, rows: [], supported: true, reason: "", q: "", filter: "all", sort: "address", dir: 1, limit: 500, request: 0 };
+const G = { slug: null, rows: [], supported: true, reason: "", q: "", filter: "all", sort: "address", dir: 1, limit: 500, request: 0, learned: new Set() };
 const GLOBAL_ROWS = 500;
 const GLOBAL_COLUMNS = [["address", "Address"], ["name", "Name"], ["original", "Address name"], ["type", "Type"], ["size", "Size", "r"], ["kind", "Kind"], ["preview", "Value"]];
 
@@ -10,8 +10,15 @@ async function loadGlobals(slug) {
   const request = ++G.request;
   $("globalsShown").textContent = "Loading globals…";
   try {
-    const data = await api(`/api/globals?slug=${encodeURIComponent(slug)}`);
+    let data = await api(`/api/globals?slug=${encodeURIComponent(slug)}`);
     if (request !== G.request || S.slug !== slug) return;  // another project or a newer answer
+    if (data.supported && !G.learned.has(slug)) {
+      // types and sizes from the code that already matched (app/global_types.py), once per project and session
+      G.learned.add(slug);
+      const learned = await api("/api/global-types/learn", { method: "POST", body: { slug } }).catch(() => ({ changed: 0 }));
+      if (learned.changed) data = await api(`/api/globals?slug=${encodeURIComponent(slug)}`);
+      if (request !== G.request || S.slug !== slug) return;
+    }
     G.supported = data.supported; G.reason = data.reason || "";
     G.rows = data.rows.map((r) => Object.fromEntries(data.keys.map((k, i) => [k, r[i]])));
     renderGlobals();

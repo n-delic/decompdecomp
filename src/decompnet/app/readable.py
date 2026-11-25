@@ -595,6 +595,8 @@ class Readability:
                         lambda: match_commits.enqueue(self.net, self.net.project_row(proj['slug']), fn['id'], polished=True))
         from .polish_automation import learn
         learn(self.net,proj,fn,baseline,source)
+        from . import global_types
+        global_types.learn(self.net, proj, fn, source)
         counts = self.counts(proj)
         return (f"✅ {fn['name']} is readable now, and still matches byte for byte ({counts['readable']} of "
                 f"{counts['matched']} readable). claim_readable for the next one.")
