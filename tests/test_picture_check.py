@@ -118,3 +118,16 @@ def test_a_seeding_override_is_found_by_the_function_that_replays_the_seed(tmp_p
                                      "    *(s32 *)0 = (s32)port_seed_replay((u32)seed);\n}\n")
     assert picture_check.seeding_function(tmp_path) == "rand_seed"
     assert picture_check.seeding_function(tmp_path / "nothing") is None
+
+
+def test_the_seed_offset_is_the_ports_extra_calls_at_the_same_task():
+    task_vi = {n: 100 + n for n in range(200, 700, 50)}  # the console's retrace at each task
+    seed_vis = list(range(300, 800, 10))  # its calls, one every ten retraces
+    import bisect
+    console = {n: bisect.bisect_right(seed_vis, task_vi[n]) for n in task_vi}
+    assert frame_compare.seed_offset(console, task_vi, seed_vis) == 0
+    ahead = {n: c + 1 for n, c in console.items()}  # an extra call at the port's boot
+    assert frame_compare.seed_offset(ahead, task_vi, seed_vis) == 1
+    drift = {n: c + 1 + (n > 450) for n, c in console.items()}  # then a frame ahead later: the smallest gap counts
+    assert frame_compare.seed_offset(drift, task_vi, seed_vis) == 1
+    assert frame_compare.seed_offset({}, task_vi, seed_vis) == 0

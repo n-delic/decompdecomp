@@ -407,6 +407,7 @@ def run_console(rom: Path, points: list[int], inputs: str, folder: Path, clock: 
                            extra_env=extra_env, **seeding)
         if seeds_at:
             (folder / "seeds.txt").write_text("".join(f"{int(h.args[0]) & 0xFFFFFFFF}\n" for h in run.hits))
+            (folder / "seed_vis.txt").write_text("".join(f"{h.vi}\n" for h in run.hits))
     else:
         emulator.run(rom, max(points) + 1, inputs=inputs, dumps=dumps, stop=stop, extra_env=extra_env)
     return {n: p for n, p in dumps.items() if p.exists()}
@@ -448,6 +449,55 @@ def difference(a: list, b: list) -> list:
 
 
 
+def seed_offset(port_calls: dict[int, int], task_vi: dict[int, int], seed_vis: list[int], first: int = 200, last: int = 700) -> int:
+    """How many more seeding calls the port has made than the console's game at the same graphics task, early in the run: the smallest
+    difference over the tasks from `first` to `last` (a call the console makes a hair after a task starts is a one-off difference of one at some
+    tasks, the logic lead's drift grows later; an extra call the port makes at boot is a difference at every task). port_calls: {task: calls
+    so far} (PORT_SEED_LOG), task_vi: {task: the console's retrace at its start} (the trace), seed_vis: the retrace of each of the console's calls.
+    Replaying the console's seeds in order from the port's call k hands it the console's call k: one call too many in the port hands every later draw the
+    previous seed (a race start's opponents were other cars than the console's until a seed was added at the front: 0.00% at every task)."""
+    import bisect
+    gaps = [port_calls[n] - bisect.bisect_right(seed_vis, task_vi[n]) for n in sorted(port_calls)
+            if first <= n <= last and n in task_vi]
+    return min(gaps) if gaps else 0
+
+
+def align_seeds(game: Path, rom: Path, inputs: str, work: Path, pace_log: Path, env: dict[str, str], stop=lambda: False) -> int:
+    """Shift work/seeds.txt so the port's k-th seeding call gets the console's k-th seed (seed_offset): a short run of the port in a scratch
+    folder (its save is a copy) counts its calls at each task. Returns the shift made (+n: n copies of the first seed put in front)."""
+    import re
+    import tempfile
+    seeds_file, vis_file = work / "seeds.txt", work / "seed_vis.txt"
+    if not seeds_file.exists() or not vis_file.exists() or not pace_log.exists():
+        return 0
+    task_vi: dict[int, int] = {}
+    for line in pace_log.read_text().split("\n"):
+        parts = line.split()
+        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+            task_vi[int(parts[0])] = int(parts[1])
+    probe_env = {**os.environ, **env, "PORT_SEED_LOG": "1", "PORT_SEED_REPLAY": str(seeds_file), "PORT_INPUT_CLOCK": "frames"}
+    if inputs:
+        probe_env["PORT_INPUT"] = inputs
+    for key in ("PORT_RAM_DUMPS", "PORT_FRAME_DUMPS"):
+        probe_env.pop(key, None)
+    with tempfile.TemporaryDirectory(prefix="seed-probe-") as scratch:
+        if (work / "game.eep").exists():
+            shutil.copy(work / "game.eep", Path(scratch) / "game.eep")
+        try:
+            done = subprocess.run([str(game.resolve()), str(rom.resolve()), "10"], cwd=scratch, env=probe_env, capture_output=True,
+                                  text=True, timeout=300)
+        except subprocess.TimeoutExpired:
+            return 0
+    calls = {int(m.group(1)): int(m.group(2)) for m in re.finditer(r"SEEDS task (\d+) calls (\d+)", done.stderr)}
+    vis = [int(x) for x in vis_file.read_text().split()]
+    shift = seed_offset(calls, task_vi, vis)
+    if shift:
+        seeds = seeds_file.read_text().split()
+        seeds = ([seeds[0]] * shift + seeds) if shift > 0 and seeds else seeds[-shift:]
+        seeds_file.write_text("".join(f"{x}\n" for x in seeds))
+    return shift
+
+
 def compare_run(game: Path, rom: Path, points: list[int], inputs: str, work: Path, out: Path, *, tolerance: int = 3,
                 pace: bool = True, seeds_at: int | None = None, stop=lambda: False,
                 progress=lambda text, done, total: None) -> list[dict]:
@@ -479,6 +529,7 @@ def compare_run(game: Path, rom: Path, points: list[int], inputs: str, work: Pat
     progress("Running the port", 3, 4)
     pacing = {"PORT_VTIME": "1", "PORT_VTIME_TRACE": str(pace_log)} if pace and pace_log.exists() else {}
     if seeds_at and (work / "seeds.txt").exists():  # a game that seeds from the clock draws the console's numbers
+        align_seeds(game, rom, inputs, work, pace_log, pacing, stop)
         pacing["PORT_SEED_REPLAY"] = str(work / "seeds.txt")
     port = run_port(game, rom, sorted(set(points)), inputs, work, "frames", stop=stop, extra_env=pacing)
     results: list[dict] = []
