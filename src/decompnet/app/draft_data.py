@@ -65,6 +65,25 @@ def beside_code_reader(rom, fn, reader):  # (`rom`: the bytes, or a function tha
     return read
 
 
+def delta_readers(net, proj, fn):
+    """Readers of the ROM at each segment's own ROM-to-address offset, for a table in data no segment lists: a game
+    whose boot image holds its data after the code (a jump table at 0x800AD078, 79 functions) has them at the boot
+    segment's offset, not at the function's overlay's. Each reader is wrong for most addresses, which is safe: a table
+    is only accepted when its words are this function's own instruction addresses (`jump_table_extent`)."""
+    try:
+        data, segments = net._rom(proj)
+    except Exception:  # (no ROM to read: nothing to offer)
+        return []
+    deltas = dict.fromkeys(s.rom_start - s.vram for s in segments)
+
+    def reader(delta):
+        def read(address, size):
+            at = address + delta
+            return data[at:at + size] if 0 <= at and at + size <= len(data) else None
+        return read
+    return [reader(delta) for delta in deltas]
+
+
 def read(net, proj, fn):
     """Supply known-size tables/constants and terminated strings; never invent missing bytes or case targets."""
     syms = net.symbols(proj['id'])
@@ -79,6 +98,7 @@ def read(net, proj, fn):
     names.sort(key=lambda name: not name.startswith('jtbl_'))
     count = tables = 0
     beside = []
+    found_readers = {}
 
     def table_reader():  # (only tables, which are checked against the function's own addresses)
         if not beside:
@@ -90,8 +110,11 @@ def read(net, proj, fn):
         if (not symbol or not symbol.size) and name.startswith('jtbl_'):
             if reader is None:
                 reader = net.reader(proj, fn)
-            if extent := jump_table_extent(name, table_reader(), instruction_addresses, endian):
-                symbol = SimpleNamespace(address=extent[0], size=extent[1], kind='jtbl')
+            for candidate in (table_reader(), *delta_readers(net, proj, fn)):
+                if extent := jump_table_extent(name, candidate, instruction_addresses, endian):
+                    symbol = SimpleNamespace(address=extent[0], size=extent[1], kind='jtbl')
+                    found_readers[name] = candidate
+                    break
         if not symbol:
             continue
         table = name.startswith('jtbl_') or symbol.kind == 'jtbl'
@@ -106,7 +129,7 @@ def read(net, proj, fn):
             break
         if reader is None:
             reader = net.reader(proj, fn)
-        data = (table_reader() if table else reader)(symbol.address, size)
+        data = (found_readers.get(name) or (table_reader() if table else reader))(symbol.address, size)
         if data is None or len(data) != size:
             continue
         if table:
