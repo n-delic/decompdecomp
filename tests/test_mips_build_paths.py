@@ -1178,3 +1178,25 @@ def test_a_zapd_assets_target_behind_a_version_conditional_runs_in_setup():
             "else\n\t$(PYTHON) tools/extract_assets.py extracted/n64-us/baserom\nendif\n\nall:\n\ttrue\n")
     assert forks_project._setup_targets(make) == ["assets"]
     assert forks_project._setup_targets("assets:\nifeq ($(A),b)\n\techo hi\nendif\n") == []
+
+
+def test_a_host_tool_that_links_statically_gets_a_shim_dropping_what_apples_ld_lacks(tmp_path):
+    import subprocess
+
+    from decompnet.arch import mips_tools
+
+    (tmp_path / "tools" / "n64sym").mkdir(parents=True)
+    makefile = tmp_path / "tools" / "n64sym" / "Makefile"
+    makefile.write_text("LDFLAGS=-static -s -Wl,--gc-sections,-lm,-lpthread\n")
+    assert mips_tools._host_links_statically(tmp_path)
+    makefile.write_text("LDFLAGS=-lm\n")
+    assert not mips_tools._host_links_statically(tmp_path)
+    real = tmp_path / "real"
+    real.write_text('#!/bin/sh\nfor a; do echo "[$a]"; done\n')
+    real.chmod(0o755)
+    shim = tmp_path / "g++"
+    shim.write_text(mips_tools._HOST_LINK_SHIM.format(real=real))
+    shim.chmod(0o755)
+    out = subprocess.run([str(shim), "-static", "-s", "-Wl,--gc-sections,-lm", "a b.o"], capture_output=True,
+                         text=True).stdout.split("\n")
+    assert out[:3] == ["[-s]", "[-Wl,-dead_strip,-lm]", "[a b.o]"]

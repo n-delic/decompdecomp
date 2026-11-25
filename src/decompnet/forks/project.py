@@ -1874,7 +1874,21 @@ class ForkProject:
                 from .splatnested import generate
 
                 return generate(self, path, config, console, version=version, log=log)
-            return console.generate_objdiff(self, path, config, log=log)
+            try:
+                return console.generate_objdiff(self, path, config, log=log)
+            except ForkError:
+                # a splat config the independent planner can't use (compressed cartridge segments with no numeric
+                # start or vram) of an N64 project whose own build matches: its linker map plans the units, each
+                # proved against the original cartridge (maprefs.py, which skips any other console's project)
+                from .maprefs import generate as from_map
+
+                try:
+                    done = from_map(self, version, log=log)
+                except ForkError:
+                    done = False
+                if not done:
+                    raise
+                return True
         except (OSError, ValueError, ELFError, yaml.YAMLError, subprocess.TimeoutExpired, toolchains.ToolchainError) as error:
             raise ForkError(f"automatic objdiff setup could not finish: {error}. Check the project's setup manually.") from None
 

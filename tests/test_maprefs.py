@@ -238,3 +238,21 @@ def test_a_map_that_proves_only_a_trivial_share_of_the_code_is_not_published(tmp
     with pytest.raises(ForkError, match="too little to measure"):
         maprefs.generate(proj, "us", log=lambda *_: None)
     assert not (proj.root / "objdiff.json").exists()
+
+
+def test_a_splat_config_the_planner_cannot_use_falls_back_to_the_builds_own_map(tmp_path, monkeypatch):
+    """A compressed-cartridge game's splat segments have no numeric start/vram: the matching build's map plans it."""
+    from decompnet import consoles
+    from decompnet.forks.project import ForkProject
+
+    (tmp_path / "game.yaml").write_text("options:\n  platform: n64\nsegments:\n  - {name: main, type: code}\n")
+    stub = SimpleNamespace(generate_objdiff=lambda *a, **k: (_ for _ in ()).throw(
+        ForkError("automatic objdiff setup needs a numeric start and vram for each code segment")))
+    monkeypatch.setattr(consoles, "get", lambda platform: stub)
+    seen = []
+    monkeypatch.setattr(maprefs, "generate", lambda proj, version, log=print: seen.append(version) or True)
+    assert ForkProject(tmp_path).generate_objdiff("us", log=lambda *_: None) is True
+    assert seen == ["us"]
+    monkeypatch.setattr(maprefs, "generate", lambda proj, version, log=print: False)
+    with pytest.raises(ForkError, match="numeric start"):
+        ForkProject(tmp_path).generate_objdiff("us", log=lambda *_: None)

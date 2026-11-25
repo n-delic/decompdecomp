@@ -222,6 +222,32 @@ def _is_n64(project) -> bool:
     return (manifest.get("platform") or getattr(project, "platform", None)) == "n64"
 
 
+_HOST_LINK_SHIM = """#!/bin/sh
+# host link flags Apple's ld doesn't have: a static executable and GNU ld's --gc-sections
+for a; do
+  shift
+  case "$a" in
+    -static) ;;
+    -Wl,*) set -- "$@" "$(printf '%s' "$a" | sed 's/--gc-sections/-dead_strip/g')" ;;
+    *) set -- "$@" "$a" ;;
+  esac
+done
+exec "{real}" "$@"
+"""
+
+
+def _host_links_statically(root: Path) -> bool:
+    """Whether a Makefile under the project's tools/ links its host program the Linux way (-static, --gc-sections)."""
+    try:
+        for makefile in sorted((root / "tools").glob("*/Makefile"))[:40]:
+            if re.search(r"^\s*\w*LDFLAGS\s*[:?+]*=[^\n]*(?:-static\b|--gc-sections)", makefile.read_text(
+                    errors="replace", encoding="utf-8"), re.M):
+                return True
+    except OSError:
+        pass
+    return False
+
+
 def build_paths(project) -> list[Path]:
     # On Windows these pinned tools run inside WSL, not in a native process's PATH.
     if os.name == "nt" or toolchains.installed("binutils-mips") is None:
@@ -378,6 +404,16 @@ def build_paths(project) -> list[Path]:
             if not tool.exists():
                 tool.write_text(f'#!/bin/sh\nexec "{gsed}" "$@"\n', encoding="utf-8")
                 tool.chmod(0o755)
+        if sys.platform == "darwin" and _host_links_statically(project.root):
+            # a host tool's Makefile links with `-static` and `-Wl,--gc-sections` (Linux's ld): Apple's ld has neither a
+            # static executable nor that spelling (its own is -dead_strip); the shims keep the rest of the command as is
+            rest = os.pathsep.join(p for p in os.environ.get("PATH", "").split(os.pathsep) if Path(p) != folder)
+            for name in ("g++", "gcc", "c++", "cc"):
+                real = shutil.which(name, path=rest)
+                tool = folder / name
+                if real and not tool.exists():
+                    tool.write_text(_HOST_LINK_SHIM.format(real=real), encoding="utf-8")
+                    tool.chmod(0o755)
         if sys.platform == "darwin":
             for name in ("head", "tail"):
                 real = shutil.which(name)
