@@ -558,7 +558,15 @@ def compare_run(game: Path, rom: Path, points: list[int], inputs: str, work: Pat
     if seeds_at and (work / "seeds.txt").exists():  # a game that seeds from the clock draws the console's numbers
         align_seeds(game, rom, inputs, work, pace_log, pacing, stop)
         pacing["PORT_SEED_REPLAY"] = str(work / "seeds.txt")
-    port = run_port(game, rom, sorted(set(points)), inputs, work, "frames", stop=stop, extra_env=pacing)
+    wanted = sorted(set(points))
+    port: dict[int, Path] = {}
+    for attempt in range(3):
+        # The port's virtual time waits for its threads to idle in wall-clock time, so a loaded computer (a load average of 12 to 40 while other
+        # jobs ran) leaves it at a few hundred of a thousand graphics tasks, differently each time: the same run on a quiet one reached all of them.
+        port = run_port(game, rom, wanted, inputs, work, "frames", stop=stop, extra_env=pacing)
+        if len(port) * 2 >= len(wanted) or stop():
+            break
+        progress(f"The port stalled ({len(port)} of {len(wanted)} frames reached): running it again", 3, 4)
     results: list[dict] = []
     runs: list[list[int]] = []  # the consecutive tasks taken at each moment
     for n in points:
