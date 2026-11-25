@@ -323,6 +323,8 @@ class _Linker:
                 self.local_map.setdefault((shndx, off), addr)  # g++'s `.sdata+4`: the export places the section
         else:
             want = self.target_at.get(r["off"])
+            if (want is None or want[0] != r["type"]) and (placed := self.section_place(shndx, off, r["type"])):
+                want = (r["type"], placed)
             if want is None or want[0] != r["type"]:
                 label = f"{named[0]}+0x{named[1]:X}" if named else f"{self.elf.get_section(shndx).name}+0x{off:X}"
                 self.problem(f"your code refers to {label} where the ROM's code has no address")
@@ -340,6 +342,59 @@ class _Linker:
         return addr
 
     # ------------------------------------------------------------------ the candidate's own data
+
+    # How far (in bytes) from a reference of ours the target's references may be to vote for where our section sits.
+    BASE_WINDOW = 0x200
+
+    def section_bases(self, raw: list[dict], fn_shndx: int, pairs: MipsRelocationPairs | None) -> None:
+        """Where each of the candidate's own unnamed data sections (an assembler's float literal pool, a jump table)
+        sits in the ROM, voted by the target's references near each of ours: (ROM address - offset) counted over
+        every pair of a reference of ours and one of the target's of the same type within BASE_WINDOW.
+
+        A literal pool is laid out in the order the code uses it, so one base places all of it; the target's
+        reference at the very same instruction (what `address` asks first) is only there while the code above is
+        aligned. A 1,389-instruction state machine whose source used the game's literals (`li.s`, 40 of them) scored
+        26102 with each misplaced one charged as an unknown address, against 19121 for the same code with the pool
+        declared as `extern f32 D_...`, a form that can never match (the target loads them through `$at`). Only a
+        base that wins at least two votes counts, and `section_place` only places an offset the target really
+        refers to; `verify_data` still compares the data with the ROM, so a match is decided as before."""
+        self.bases: dict[int, int] = {}
+        votes: dict[int, dict[int, int]] = {}
+        by_type: dict[int, list[tuple[int, int]]] = {}
+        for off, (rtype, addr) in self.target_at.items():
+            by_type.setdefault(rtype, []).append((off, addr))
+        for k, r in enumerate(raw):
+            if r["type"] not in (R_MIPS_HI16, R_MIPS_LO16):
+                continue
+            sym = r["symtab"].get_symbol(r["symidx"])
+            shndx = sym["st_shndx"]
+            if not isinstance(shndx, int) or shndx == fn_shndx or shndx >= 0xFF00:
+                continue
+            residual = section_target("mips", raw, k, pairs=pairs)
+            if residual is None:
+                continue
+            off = residual if sym["st_info"]["type"] == "STT_SECTION" else sym["st_value"] + residual
+            named = symbol_at(self.symtab, shndx, off)
+            if named and self.symbols.resolve(named[0]) is not None:
+                continue
+            tally = votes.setdefault(shndx, {})
+            for toff, taddr in by_type.get(r["type"], ()):
+                if abs(toff - r["off"]) <= self.BASE_WINDOW:
+                    base = (taddr - off) & 0xFFFFFFFF
+                    tally[base] = tally.get(base, 0) + 1
+        for shndx, tally in votes.items():
+            ranked = sorted(tally.items(), key=lambda kv: -kv[1])
+            if ranked and ranked[0][1] >= 2 and (len(ranked) == 1 or ranked[0][1] > ranked[1][1]):
+                self.bases[shndx] = ranked[0][0]
+
+    def section_place(self, shndx: int, off: int, rtype: int) -> int | None:
+        """The ROM address of `off` in one of the candidate's own sections by its voted base, when the target
+        refers to that address with a reference of the same type somewhere in the function."""
+        base = getattr(self, "bases", {}).get(shndx)
+        if base is None:
+            return None
+        addr = (base + off) & 0xFFFFFFFF
+        return addr if any(t == rtype and a == addr for t, a in self.target_at.values()) else None
 
     def _relocs_in(self, shndx: int):
         """(offset, type, symbol) of relocations inside one of the candidate's data sections."""
@@ -488,6 +543,7 @@ class _Linker:
         self.words = list(words)
         relocs: list[Reloc] = []
         pairs = MipsRelocationPairs(raw)
+        self.section_bases(raw, shndx, pairs)
         for k, r in enumerate(raw):
             addr = self.address(raw, k, shndx, start, pairs=pairs)
             if addr is None:
