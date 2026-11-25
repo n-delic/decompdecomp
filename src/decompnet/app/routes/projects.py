@@ -867,7 +867,7 @@ def register(app: App) -> None:
 
     def p_set_aside(slug, request, data):
         """You set a function aside: no C makes it (Network.set_aside_by_you)."""
-        net.set_aside_by_you(str(data.get("name", "")), slug, str(data.get("why", "")))
+        net.set_aside_by_you(str(data.get("name", "")), slug, str(data.get("why", "")), library=data.get("library") is True)
         return {"ok": True}
 
     def p_reopen(slug, request, data):

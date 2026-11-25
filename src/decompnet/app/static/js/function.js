@@ -477,12 +477,17 @@ async function refreshFn(first) {
       }
     }
 
-    $("fnSetAside").hidden = d.status !== "open";
+    const library = d.status === "matched";  // a matched function that isn't the game's own code
+    $("fnSetAside").hidden = d.status !== "open" && !library;
+    $("fnSetAside").textContent = library ? "Set aside: library code" : "Set aside: no C makes it";
     $("fnSetAside").onclick = async () => {
-      const why = prompt(`Why does no C make ${d.name}? (optional: agents and you read it on its page)`, "hand-written assembly");
+      const why = prompt(library
+        ? `Why is ${d.name} not the game's own code? It leaves the matched count and polishing; Give it back to the agents undoes it.`
+        : `Why does no C make ${d.name}? (optional: agents and you read it on its page)`,
+        library ? "SDK or compiler runtime routine" : "hand-written assembly");
       if (why === null) return;
       try {
-        await api("/api/setaside", { method: "POST", body: { slug: S.slug, name: d.name, why } });
+        await api("/api/setaside", { method: "POST", body: { slug: S.slug, name: d.name, why, library } });
         toast(`<code>${esc(d.name)}</code> is set aside: agents aren't handed it.`);
         await refreshFn(false);
         await refreshMap(true);

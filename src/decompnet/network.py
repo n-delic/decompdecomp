@@ -1980,21 +1980,29 @@ class Network:
                 n += 1
         return n
 
-    def set_aside_by_you(self, function: str, project: str | None = None, why: str = "") -> None:
+    def set_aside_by_you(self, function: str, project: str | None = None, why: str = "", library: bool = False) -> None:
         """The user sets a function aside: no C makes it (hand-written assembly, a piece of another function). Their
         word needs no agents agreeing (theirs is the project); "Give it back to the agents" undoes it. Never
-        "matched": only the judge says that."""
+        "matched": only the judge says that.
+        `library`: a function that already matches but isn't the game's own code (an SDK or compiler-runtime routine
+        some other compiler's tail call happened to match: a 64-bit division helper filed under a 2009 GCC). It leaves
+        the matched count and polishing like any set-aside function; its matched C stays in the row, and giving it back
+        to the agents opens it again."""
         fn = self._function(function, project)
         store = self.project_store(fn["project_id"])
-        if fn["status"] != "open":
-            raise NetworkError(f"{fn['name']} isn't open (it's {fn['status']}): only an open function can be set aside")
-        why = why.strip() or "no C makes it"
+        allowed = ("open", "matched") if library else ("open",)
+        if fn["status"] not in allowed:
+            raise NetworkError(f"{fn['name']} isn't open (it's {fn['status']}): only an open function can be set aside"
+                               + (" (a matched one only as library code)" if fn["status"] == "matched" else ""))
+        why = why.strip() or ("library or runtime code, not the game's own" if library else "no C makes it")
         meta = {k: v for k, v in json.loads(fn["meta"] or "{}").items() if k != "reopened"}
         meta["not_c"] = {**meta.get("not_c", {}), "you": {"model": "you", "why": why[:NOTE_CHARS], "t": time.time()}}
-        meta["asm_code"] = f"you set it aside: {why}"
+        meta["asm_code"] = f"you set it aside{' as library code' if library else ''}: {why}"
+        if fn["status"] == "matched":
+            meta["was_matched"] = True
         with store.tx() as db:
             db.execute("DELETE FROM claims WHERE function_id=?", (fn["id"],))
-            db.execute("UPDATE functions SET status='asm', meta=? WHERE id=? AND status='open'", (json.dumps(meta), fn["id"]))
+            db.execute("UPDATE functions SET status='asm', meta=? WHERE id=? AND status=?", (json.dumps(meta), fn["id"], fn["status"]))
             self._event(db, fn["project_id"], None, "not_c", f"{fn['name']}: set aside by you ({why[:120]})")
 
     def joined(self, function: str, project: str | None = None) -> None:
