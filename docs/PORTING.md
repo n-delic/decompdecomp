@@ -970,3 +970,9 @@ the console's are the current frame's: the console's logic update for frame k+1 
 what differs is the order of two things inside a frame, the logic update and the building of the cars' display list, not the retrace count or the task numbering. The game's seeding function is also called once a frame
 on both sides and the port's count is one call ahead at the same task (`PORT_SEED_LOG`, against the emulator's breaks on `rand_seed`), the same one-frame lead. Replaying the console's seeds in order keeps the
 draws aligned (each call gets the console's next seed), but a draw that depends on when in the frame it is made would still differ.
+
+**The console's order inside a frame (breaks on the two functions, `emulator.run(breaks=[0x8007B2A4, 0x80016B3C])`, retraces 536-551, one frame every 3 retraces).** Each frame calls, in this order:
+`checkNearPoint(player)` (the function that writes the line points at 0x800A1860, called with the player's object), `draw_object_dl(opponent)`, `checkNearPoint(player)` twice, `draw_object_dl(player)`. So the line points the sight-cone
+test reads while the opponent's list is built are the ones the first `checkNearPoint` of that frame has just written. The port's order has not been traced: an lldb run with breakpoints on the generated functions
+(`w2c_game_checkNearPoint0x2E1`, `w2c_game_draw_object_dl0x2E1`, a callback writing the retrace count) set both but logged no hits from a live run (the process launched from lldb's batch mode did not report exiting), which is the thing to
+fix first. With that, the order and the retrace of each call in the port set against the console's lines above would say which call is early.
