@@ -194,6 +194,8 @@ def _setup_targets(makefile: str) -> list[str]:
     includes are made there, and a build without them stops at the first #include. Another project's `assets`
     target is its own business."""
     found = [t for t in ("tools", "setup", "extract") if re.search(rf"^{t}\s*:", makefile, re.M)]
+    if re.search(r"^prerequisites\s*:[^\n]*(?:tools|extract)", makefile, re.M):
+        found.append("prerequisites")  # (one that builds the host tools and extracts assets: rules like the RSP's use them unordered)
     recipe = re.search(r"^assets\s*:[^\n]*\n((?:[ \t][^\n]*\n?)*)", makefile, re.M)
     if recipe and re.search(r"(?i)torch", recipe[1]):
         found.append("assets")
