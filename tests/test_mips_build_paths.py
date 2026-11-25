@@ -1042,3 +1042,34 @@ def test_a_splat_project_with_no_split_rule_and_no_linker_script_is_split_with_d
     assert steps[0] == ["python", "-m", "splat", "split", "game.yaml"]
     (root / "game.ld").write_text("")
     assert ForkProject(root).setup_commands()[0][0] == "make"
+
+
+def test_a_makefile_whose_first_rule_is_clean_or_help_is_built_through_the_target_that_builds():
+    from decompnet.forks.project import _real_default_goal
+
+    assert _real_default_goal("clean:\n\trm -r build\nall: split\n\tmake rom\n") == ["all"]
+    assert _real_default_goal("help:\n\t@echo hi\nbuild: prepare\n") == ["build"]
+    assert _real_default_goal("all: game\nclean:\n") == []
+    assert _real_default_goal(".DEFAULT_GOAL := rom\nclean:\nall:\n") == []
+
+
+def test_the_gcc_272_a_carried_library_keeps_in_its_own_tools_folder_gets_the_installed_one(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools
+
+    installed = tmp_path / "kmc"
+    installed.mkdir()
+    for name in ("gcc", "cc1"):
+        (installed / name).write_text("installed " + name)
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(buildtools.toolchains, "require", lambda tid: installed)
+    monkeypatch.setattr(buildtools.sys, "platform", "darwin")
+    root = tmp_path / "project"
+    (root / "tools").mkdir(parents=True)
+    folder = root / "lib/ultralib/tools/gcc"
+    folder.mkdir(parents=True)
+    elf = b"\x7fELF" + b"\0" * 12 + b"GNU C version 2.7.2"
+    for name in ("gcc", "cc1"):
+        (folder / name).write_bytes(elf)
+        (folder / name).chmod(0o755)
+    buildtools._wrap_foreign_ido(SimpleNamespace(root=root))
+    assert str(installed / "gcc") in (folder / "gcc").read_text()
