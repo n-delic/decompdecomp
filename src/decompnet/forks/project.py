@@ -200,6 +200,26 @@ def _real_default_goal(makefile: str) -> list[str]:
     return next(([t] for t in ("all", "build", "rom") if re.search(rf"^{t}\s*:", makefile, re.M)), [])
 
 
+def _makefile_version_word(text: str, var: str, version: str) -> str:
+    """The word a Makefile's `ifeq ($(VERSION), US)` blocks compare its version variable with, for a game whose
+    version is named differently (a ROM called baserom.u.z64, sha1 file ge007.u.sha1): the same word in another case,
+    or the block that sets `COUNTRYCODE := u` and builds the plain `OUTCODE := $(COUNTRYCODE)` image. The
+    version itself when the Makefile compares nothing or already knows it."""
+    words = re.findall(rf"^\s*ifeq\s*\(\$\({re.escape(var)}\),\s*([\w.-]+)\)", text, re.M)
+    if not words or version in words:
+        return version
+    for word in words:
+        if word.lower() == version.lower():
+            return word
+    for block in re.finditer(rf"^\s*ifeq\s*\(\$\({re.escape(var)}\),\s*([\w.-]+)\)(.*?)^\s*endif", text, re.M | re.S):
+        body = block.group(2)
+        code = re.search(r"^\s*COUNTRYCODE\s*:?=\s*(\S+)", body, re.M)
+        out = re.search(r"^\s*OUTCODE\s*:?=\s*(\S+)", body, re.M)
+        if code and out and code.group(1) == version and out.group(1) in ("$(COUNTRYCODE)", version):
+            return block.group(1)
+    return version
+
+
 def _version_var(makefile: str) -> str | None:
     """The variable a Makefile picks the game's version by, when it has a default for it (`VERSION ?= us`, or Perfect
     Dark's `ROMID ?= ntsc-final`): `make <var>=<version>` builds another."""
@@ -1231,7 +1251,8 @@ class ForkProject:
         if kind == "custom" and (self.root / "Makefile").is_file():
             # no splat config at the root, but a Makefile with the usual targets (setup, extract, then the build)
             text = (self.root / "Makefile").read_text(errors="replace", encoding="utf-8")
-            chosen = [f"{var}={version}"] if version and (var := _version_var(text)) else []
+            chosen = [f"{var}={_makefile_version_word(text, var, version)}"] if version and (
+                var := _version_var(text)) else []
             if version and "." in version and re.search(r"^REGION\s*[:?]?=", text, re.M):
                 chosen = ["REGION=" + version.split(".")[0], "VERSION=" + version.split(".", 1)[1]]  # (us.v77)
             steps = [["make", *chosen, t] for t in _setup_targets(text)]
