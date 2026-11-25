@@ -1156,6 +1156,28 @@ class ForkProject:
             dtk.vfs_copy(disc, files, orig / parent)
         return len(missing)
 
+    # Python packages whose command line tools public decomps call without listing them in their requirements
+    PYTHON_TOOLS = {"pigment64": "pigment64", "crunch64": "crunch64", "mapfile_parser": "mapfile-parser",
+                    "n64img": "n64img", "spimdisasm": "spimdisasm", "splat64": "splat64[mips]", "m2c": "m2c",
+                    "ninja_syntax": "ninja-syntax", "rabbitizer": "rabbitizer", "pyyaml": "pyyaml",
+                    "pypng": "pypng", "tqdm": "tqdm", "colorama": "colorama", "capstone": "capstone"}
+
+    def _install_missing_tools(self, tail: str, log) -> bool:
+        """A build that stops on `<tool>: command not found` (or a missing Python module) for a package from
+        PYTHON_TOOLS installs it into the project's own environment: True when something was installed, so the
+        step can run again."""
+        wanted = {m.group(1) for m in re.finditer(r"([\w-]+): (?:command )?not found", tail)}
+        wanted |= {m.group(1) for m in re.finditer(r"No module named '([\w.]+)'", tail)}
+        if "code=127" in tail or "not found" in tail:  # (ninja's report shows the command line that failed)
+            wanted |= {name for name in self.PYTHON_TOOLS if re.search(rf"^{re.escape(name)} ", tail, re.M)}
+        packages = sorted({self.PYTHON_TOOLS[w.split(".")[0]] for w in wanted if w.split(".")[0] in self.PYTHON_TOOLS})
+        python, uv = self._project_python(), _tool("uv")
+        if not packages or python is None or not uv:
+            return False
+        log(f"the build needs {', '.join(packages)}: installing it into the project's Python environment")
+        ok, _ = self.run([uv, "pip", "install", "--python", str(python), *packages], log=log, timeout=900)
+        return ok
+
     def _configure_flags(self) -> set[str]:
         """The long options the project's configure.py accepts, from its own --help (empty when it can't say)."""
         try:
@@ -1236,6 +1258,8 @@ class ForkProject:
                 except OSError:
                     shutil.copyfile(self._rom_placed, self.root / missing.group(1))
                 log(f"the project reads the game as {missing.group(1)}: saved it under that name too")
+                ok, tail = self.run(cmd, log=log)
+            if not ok and self._install_missing_tools(tail, log):
                 ok, tail = self.run(cmd, log=log)
             for _ in range(4):  # (the link names one missing list at a time)
                 auto = re.findall(r"cannot open linker script file (\S+_auto\.txt)", tail) if not ok else []
