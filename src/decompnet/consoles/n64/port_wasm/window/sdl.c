@@ -18,6 +18,9 @@
  * Keys as the browser view's: arrows steer (the stick and the d-pad), X is A, Z (or C) is B, Enter is Start, Space is
  * Z, Q and W are L and R, I/J/K/L are the C buttons; F or F11 is full screen, Escape leaves it. A gamepad works as in
  * the browser (SDL's gamepad layout): the left stick steers, the right stick is the C buttons, the triggers are Z.
+ * Tab or F1 (a gamepad's Back button) opens the settings menu (settings.h): full screen, scaling, FPS, volume. It is
+ * drawn over the picture by SDL's renderer, so it is not there while RT64 owns the window (ROADMAP.md), and its
+ * choices are kept in PORT_SETTINGS (settings.ini beside the saves).
  * Closing the window quits (the EEPROM is written as the game writes it, so its saves are kept).
  */
 #include <pthread.h>
@@ -28,6 +31,7 @@
 #include <string.h>
 
 #include "../rt64/adapter.h"
+#include "settings.h"
 
 /* RT64 is loaded only for explicit macOS desktop Play. Keep the ordinary native host free of RT64 links. */
 #if defined(__APPLE__)
@@ -111,17 +115,17 @@ typedef struct { const char *name, *pattern; } SdlFileFilter;    /* SDL_DialogFi
 /* SDL_Event: a 128-byte union whose first field is its type. A key event's scancode is at byte 24 and its repeat
    flag at byte 37; a gamepad device event's joystick id at byte 16. */
 typedef union { uint32_t type; uint8_t bytes[128]; } SdlEvent;
-enum { EV_KEY_SCANCODE = 24, EV_KEY_REPEAT = 37, EV_PAD_WHICH = 16 };
+enum { EV_KEY_SCANCODE = 24, EV_KEY_REPEAT = 37, EV_PAD_WHICH = 16, EV_PAD_BUTTON = 20 };
 
 enum { SDL_INIT_AUDIO = 0x10, SDL_INIT_VIDEO = 0x20, SDL_INIT_GAMEPAD = 0x2000, SDL_WINDOW_FULLSCREEN = 0x1,
-       SDL_WINDOW_RESIZABLE = 0x20, SDL_WINDOW_HIGH_PIXEL_DENSITY = 0x2000, SDL_WINDOW_METAL = 0x20000000, SDL_PIXELFORMAT_RGB24 = 0x17101803,
-       SDL_TEXTUREACCESS_STREAMING = 1, SDL_SCALEMODE_NEAREST = 0, SDL_LOGICAL_PRESENTATION_LETTERBOX = 2,
-       SDL_EVENT_QUIT = 0x100, SDL_EVENT_KEY_DOWN = 0x300, SDL_EVENT_GAMEPAD_ADDED = 0x653,
+       SDL_WINDOW_RESIZABLE = 0x20, SDL_WINDOW_HIGH_PIXEL_DENSITY = 0x2000, SDL_WINDOW_METAL = 0x20000000, SDL_PIXELFORMAT_RGB24 = 0x17101803, SDL_PIXELFORMAT_RGBA32 = 0x16762004, SDL_BLENDMODE_BLEND = 1,
+       SDL_TEXTUREACCESS_STREAMING = 1, SDL_SCALEMODE_NEAREST = 0, SDL_SCALEMODE_LINEAR = 1, SDL_LOGICAL_PRESENTATION_LETTERBOX = 2,
+       SDL_EVENT_QUIT = 0x100, SDL_EVENT_KEY_DOWN = 0x300, SDL_EVENT_GAMEPAD_BUTTON_DOWN = 0x651, SDL_EVENT_GAMEPAD_ADDED = 0x653,
        SDL_EVENT_GAMEPAD_REMOVED = 0x654, SDL_AUDIO_S16LE = 0x8010, SDL_MESSAGEBOX_ERROR = 0x10 };
 #define SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK 0xFFFFFFFFu
 /* scancodes (USB usage ids) */
 enum { S_C = 6, S_F = 9, S_I = 12, S_J = 13, S_K = 14, S_L = 15, S_Q = 20, S_W = 26, S_X = 27, S_Z = 29,
-       S_RETURN = 40, S_ESCAPE = 41, S_SPACE = 44, S_F11 = 68, S_RIGHT = 79, S_LEFT = 80, S_DOWN = 81, S_UP = 82 };
+       S_RETURN = 40, S_ESCAPE = 41, S_TAB = 43, S_SPACE = 44, S_F1 = 58, S_F11 = 68, S_RIGHT = 79, S_LEFT = 80, S_DOWN = 81, S_UP = 82 };
 /* gamepad buttons and axes */
 enum { G_SOUTH, G_EAST, G_WEST, G_NORTH, G_BACK, G_GUIDE, G_START, G_LSTICK, G_RSTICK, G_LSHOULDER, G_RSHOULDER,
        G_UP, G_DOWN, G_LEFT, G_RIGHT };
@@ -140,6 +144,7 @@ static struct {
     bool (*SetRenderLogicalPresentation)(void *, int, int, int);
     void *(*CreateTexture)(void *, uint32_t, int, int, int);
     bool (*SetTextureScaleMode)(void *, int);
+    bool (*SetTextureBlendMode)(void *, uint32_t);
     void (*DestroyTexture)(void *);
     bool (*UpdateTexture)(void *, const void *, const void *, int);
     bool (*SetRenderDrawColor)(void *, uint8_t, uint8_t, uint8_t, uint8_t);
@@ -187,7 +192,7 @@ static int load_sdl(void) {
 #define SYM(name) if (!(*(void **)&sdl.name = dlsym(lib, "SDL_" #name))) return 0
     SYM(SetWindowTitle); SYM(RaiseWindow); SYM(GetTicksNS);
     SYM(Init); SYM(SetHint); SYM(CreateWindow); SYM(CreateRenderer); SYM(SetRenderLogicalPresentation);
-    SYM(CreateTexture); SYM(SetTextureScaleMode); SYM(DestroyTexture); SYM(UpdateTexture); SYM(SetRenderDrawColor);
+    SYM(CreateTexture); SYM(SetTextureScaleMode); SYM(SetTextureBlendMode); SYM(DestroyTexture); SYM(UpdateTexture); SYM(SetRenderDrawColor);
     SYM(RenderClear); SYM(RenderTexture); SYM(RenderPresent); SYM(PollEvent); SYM(WaitEventTimeout);
     SYM(GetKeyboardState); SYM(GetWindowFlags); SYM(SetWindowFullscreen); SYM(OpenGamepad); SYM(CloseGamepad);
     SYM(GetGamepadID); SYM(GetGamepadButton); SYM(GetGamepadAxis); SYM(OpenAudioDeviceStream);
@@ -203,7 +208,8 @@ static int load_sdl(void) {
 
 /* ---------------------------------------------------------------- the window (the main thread) */
 
-static void *window, *renderer, *texture, *pad;
+static void *window, *renderer, *texture, *overlay, *pad;
+static char settings_path[4096];
 static int texture_w, texture_h;
 static uint64_t fps_since;
 static unsigned fps_frames;
@@ -256,7 +262,10 @@ int port_sdl_start(void) {
     /* PORT_FULLSCREEN=1: the whole screen from the start (the Steam Deck's launcher, steamdeck.py), for a handheld
        with no key to make it so; F still leaves it */
     const char *full = getenv("PORT_FULLSCREEN");
-    if (full && *full && *full != '0') sdl.SetWindowFullscreen(window, true);
+    const char *kept = getenv("PORT_SETTINGS");
+    snprintf(settings_path, sizeof settings_path, "%s", kept && *kept ? kept : "settings.ini");
+    ps_load(settings_path);
+    if ((full && *full && *full != '0') || ps_value("fullscreen")) sdl.SetWindowFullscreen(window, true);
     fps_since = sdl.GetTicksNS();
     fps_frames = 0;
     fprintf(stderr, "playing in a window of its own (SDL3)\n");
@@ -373,11 +382,24 @@ static void read_controls(void) {
         if (cy > 16384) b |= 0x0004;
         if (cy < -16384) b |= 0x0008;
     }
+    if (port_menu.open) { b = 0; x = y = 0; } /* the menu has the keys: the game gets none */
     pthread_mutex_lock(&lock);
     held_buttons = b;
     held_x = (int8_t)(x > 80 ? 80 : x < -80 ? -80 : x);
     held_y = (int8_t)(y > 80 ? 80 : y < -80 ? -80 : y);
     pthread_mutex_unlock(&lock);
+}
+
+/* One key or button for the open menu: apply what it changed, keep the choices, and act on Quit. */
+static void menu_input(int nav) {
+    port_menu.changed = 0;
+    int result = ps_input(nav);
+    if (port_menu.changed) {
+        sdl.SetWindowFullscreen(window, ps_value("fullscreen") != 0);
+        if (texture) sdl.SetTextureScaleMode(texture, ps_value("smooth") ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);
+        if (!ps_save(settings_path)) fprintf(stderr, "the settings couldn't be kept in %s\n", settings_path);
+    }
+    if (result == PS_QUIT) quit();
 }
 
 void port_sdl_pump(void) {
@@ -389,8 +411,24 @@ void port_sdl_pump(void) {
         else if (e.type == SDL_EVENT_KEY_DOWN && !e.bytes[EV_KEY_REPEAT]) {
             int32_t code;
             memcpy(&code, e.bytes + EV_KEY_SCANCODE, 4);
-            if (code == S_F || code == S_F11) toggle_fullscreen(0);
-            if (code == S_ESCAPE) toggle_fullscreen(1);
+            if (renderer && (code == S_TAB || code == S_F1)) port_menu.open = !port_menu.open;
+            else if (port_menu.open) {
+                int nav = code == S_UP ? PS_UP : code == S_DOWN ? PS_DOWN : code == S_LEFT ? PS_LEFT :
+                          code == S_RIGHT ? PS_RIGHT : code == S_RETURN || code == S_SPACE ? PS_ACCEPT :
+                          code == S_ESCAPE ? PS_BACK : -1;
+                if (nav >= 0) menu_input(nav);
+            } else {
+                if (code == S_F || code == S_F11) toggle_fullscreen(0);
+                if (code == S_ESCAPE) toggle_fullscreen(1);
+            }
+        } else if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && renderer) {
+            int button = e.bytes[EV_PAD_BUTTON];
+            if (button == G_BACK) port_menu.open = !port_menu.open;
+            else if (port_menu.open) {
+                int nav = button == G_UP ? PS_UP : button == G_DOWN ? PS_DOWN : button == G_LEFT ? PS_LEFT :
+                          button == G_RIGHT ? PS_RIGHT : button == G_SOUTH ? PS_ACCEPT : button == G_EAST ? PS_BACK : -1;
+                if (nav >= 0) menu_input(nav);
+            }
         } else if (e.type == SDL_EVENT_GAMEPAD_ADDED && !pad) { /* SDL3 announces the ones already plugged in too */
             pad = sdl.OpenGamepad(which);
         } else if (e.type == SDL_EVENT_GAMEPAD_REMOVED && pad && sdl.GetGamepadID(pad) == which) {
@@ -406,7 +444,7 @@ void port_sdl_pump(void) {
         if (!texture || texture_w != frame_w || texture_h != frame_h) {
             if (texture) sdl.DestroyTexture(texture);
             texture = sdl.CreateTexture(renderer, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING, frame_w, frame_h);
-            if (texture) sdl.SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST); /* sharp, as the browser's */
+            if (texture) sdl.SetTextureScaleMode(texture, ps_value("smooth") ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST); /* sharp, as the browser's, unless the menu says smooth */
             texture_w = frame_w; texture_h = frame_h;
         }
         if (texture) fresh = sdl.UpdateTexture(texture, NULL, frame, frame_w * 3);
@@ -415,13 +453,23 @@ void port_sdl_pump(void) {
     pthread_mutex_unlock(&lock);
     sdl.RenderClear(renderer);
     if (texture) sdl.RenderTexture(renderer, texture, NULL, NULL);
+    if (port_menu.open) {
+        static uint8_t panel[640 * 480 * 4];
+        if (!overlay) {
+            overlay = sdl.CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STREAMING, 640, 480);
+            if (overlay) sdl.SetTextureBlendMode(overlay, SDL_BLENDMODE_BLEND);
+        }
+        ps_draw(panel, 640, 480);
+        if (overlay && sdl.UpdateTexture(overlay, NULL, panel, 640 * 4)) sdl.RenderTexture(renderer, overlay, NULL, NULL);
+    }
     bool presented = sdl.RenderPresent(renderer);
     /* Count new pictures, not the retraces that redraw the previous picture. Window calls stay on this thread. */
     if (fresh && presented) fps_frames++;
     uint64_t now = sdl.GetTicksNS(), elapsed = now - fps_since;
     if (elapsed >= 1000000000ULL) {
         char caption[1024];
-        snprintf(caption, sizeof caption, "%s — %.1f FPS", title(), fps_frames * 1e9 / elapsed);
+        if (ps_value("fps")) snprintf(caption, sizeof caption, "%s — %.1f FPS", title(), fps_frames * 1e9 / elapsed);
+        else snprintf(caption, sizeof caption, "%s", title());
         sdl.SetWindowTitle(window, caption);
         fps_since = now;
         fps_frames = 0;
@@ -466,6 +514,14 @@ void port_sdl_audio(const int16_t *lr, int frames, int hz) {
         sdl.ResumeAudioStreamDevice(stream);
     }
     if (sdl.GetAudioStreamQueued(stream) > hz) sdl.ClearAudioStream(stream); /* hz bytes: 1/4 s of 16-bit stereo */
-    sdl.PutAudioStreamData(stream, lr, frames * 4);
+    int volume = ps_value("volume"); /* the choice's index: 0 to 10, tenths */
+    if (volume >= 10) { sdl.PutAudioStreamData(stream, lr, frames * 4); return; }
+    int16_t scaled[2048];
+    for (int done = 0; done < frames * 2;) {
+        int n = frames * 2 - done < 2048 ? frames * 2 - done : 2048;
+        for (int i = 0; i < n; i++) scaled[i] = (int16_t)(lr[done + i] * volume / 10);
+        sdl.PutAudioStreamData(stream, scaled, n * 2);
+        done += n;
+    }
 }
 #endif
