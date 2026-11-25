@@ -277,7 +277,9 @@ def plan(root: Path, config: dict, *, independent: bool = False) -> list[dict]:
                 raise ForkError("automatic objdiff setup needs explicit numeric subsegment offsets")
             if independent and kind == 'pad':
                 continue
-            if kind not in ('c', 'asm', 'hasm', 'data', 'rodata', 'bss', '.data', '.rodata', '.bss', 'bin'):
+            if kind not in ('c', 'asm', 'hasm', 'data', 'rodata', 'bss', '.data', '.rodata', '.bss', 'bin',
+                            'rdata', '.rdata', 'ctors', '.ctors', 'dtors', '.dtors'):  # (rdata: splat's other spelling of rodata; the
+                # constructor and destructor tables are data no unit's functions are counted from)
                 raise ForkError(f"automatic objdiff setup does not support splat subsegment {kind!r} yet")
             if kind not in ('c', 'asm', 'hasm'):
                 continue
@@ -313,6 +315,7 @@ def plan(root: Path, config: dict, *, independent: bool = False) -> list[dict]:
                 if not isinstance(sibling, list) or len(sibling) < 3 or not isinstance(sibling[0], int):
                     continue
                 section = str(sibling[1]).lstrip('.')
+                section = 'rodata' if section == 'rdata' else section
                 sibling_name = (Path(str(segment.get('dir', ''))) / str(sibling[2])).as_posix()
                 if section in ('data', 'rodata') and sibling_name == name:
                     mapped_sections['.' + section] = segment['vram'] + sibling[0] - segment['start']
@@ -544,6 +547,8 @@ def generate(project, config_path: Path, config: dict, console, log=print) -> bo
                     entry[1] = 'asm'
                 elif entry[1] in ('.data', '.rodata', '.bss'):
                     entry[1] = entry[1][1:]
+                elif entry[1] in ('.rdata', 'rdata'):
+                    entry[1] = 'rodata'
         private_config = work / 'config.yaml'
         private_config.write_text(yaml.safe_dump(split, sort_keys=False), encoding='utf-8')
         log('Generating ROM-derived objdiff reference assembly…')

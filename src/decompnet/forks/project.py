@@ -1326,6 +1326,7 @@ class ForkProject:
         every source once so objdiff can measure each unit."""
         self.unpack_disc(version, log=log)
         self.ensure_python_env(log=log)
+        self._drop_stale_splat_cache()
         for cmd in self.setup_commands(version):
             ok, tail = self.run(cmd, log=log)
             if not ok and (missing := re.search(r"No rule to make target [`'‘](baserom[\w.-]*\.z64)['’]", tail)) \
@@ -1380,6 +1381,23 @@ class ForkProject:
         if not (self.root / "objdiff.json").exists():
             raise ForkError("the project built, but has no objdiff.json, so decompdecomp can't measure matches. "
                             "Some projects generate it with an extra step; check the README.")
+
+    def _drop_stale_splat_cache(self) -> None:
+        """splat skips what its cache (.splache) says it already split, and then writes the symbol lists it collects
+        while splitting (undefined_syms_auto.txt) empty: a project set up before (a failed first try) would link
+        without them. The cache goes when the project has such a list; the next split is a few seconds."""
+        cache = self.root / ".splache"
+        yaml = self._splat_yaml()
+        if not cache.exists() or yaml is None:
+            return
+        try:
+            text = yaml.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return
+        for name in re.findall(r"^\s*undefined_(?:syms|funcs)_auto_path:\s*[\"']?([\w./-]+)", text, re.M):
+            if self._inside(name) is not None:
+                cache.unlink(missing_ok=True)
+                return
 
     def generate_objdiff(self, version: str | None = None, log=print) -> bool:
         """Try the console's supported reference generator without changing an existing configuration."""

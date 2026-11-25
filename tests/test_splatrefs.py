@@ -538,3 +538,12 @@ def test_import_maps_generated_names_to_linked_c_names(tmp_path, platform):
     base = tmp_path / unit['base_path']
     assert splatrefs.source_symbol_mappings(target, base, {'readable_function': 0x80000404}, 0x80000400) == {}
     assert splatrefs.source_symbol_mappings(target, tmp_path / 'missing.o', {}, 0x80000400) == {}
+
+
+def test_plan_accepts_rdata_and_constructor_tables(tmp_path):
+    """splat's `.rdata` is rodata under another name, and `.ctors`/`.dtors` hold no functions to count."""
+    cfg = config(tmp_path)
+    cfg['segments'][0]['subsegments'] = [[0, 'c', 'demo'], [0x10, '.rdata', 'demo'], [0x20, '.ctors', 'demo'],
+                                         [0x30, 'dtors', 'demo']]
+    (unit,) = splatrefs.plan(tmp_path, cfg)
+    assert unit['name'] == 'demo' and unit['sections'] == {'.rodata': 0x80000410}

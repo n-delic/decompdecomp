@@ -130,6 +130,11 @@ def _assembles_through_gcc(project) -> bool:
     return not text or "assembler-with-cpp" in text or "-x assembler" in text
 
 
+def _is_n64(project) -> bool:
+    manifest = getattr(project, "manifest", None) or {}
+    return (manifest.get("platform") or getattr(project, "platform", None)) == "n64"
+
+
 def build_paths(project) -> list[Path]:
     # On Windows these pinned tools run inside WSL, not in a native process's PATH.
     if os.name == "nt" or toolchains.installed("binutils-mips") is None:
@@ -153,6 +158,17 @@ def build_paths(project) -> list[Path]:
                     # distribution's cross ld ask for elf32btsmip (the same o32 big-endian format)
                     wrapper = (f'#!/bin/sh\nfor a; do shift; case "$a" in elf32btsmip) a=elf32ebmip;; esac; '
                                f'set -- "$@" "$a"; done\nexec "{binary.resolve()}" "$@"\n')
+                    if not alias.is_file() or alias.is_symlink() or alias.read_text(errors="replace") != wrapper:
+                        alias.unlink(missing_ok=True)
+                        alias.write_text(wrapper, encoding="utf-8")
+                        alias.chmod(0o755)
+                    continue
+                if tool == "as" and prefix == "mips-linux-gnu-" and _is_n64(project):
+                    # A distribution's mips-linux-gnu-as assembles for the o32 ABI unless told otherwise; the pinned
+                    # (PS2) one does not set it, and ld then refuses `ld -r -b binary` objects beside the code
+                    # ("linking 32-bit code with 64-bit code")
+                    wrapper = (f'#!/bin/sh\nfor a; do case "$a" in -mabi=*) exec "{binary.resolve()}" "$@";; esac; done\n'
+                               f'exec "{binary.resolve()}" -mabi=32 "$@"\n')
                     if not alias.is_file() or alias.is_symlink() or alias.read_text(errors="replace") != wrapper:
                         alias.unlink(missing_ok=True)
                         alias.write_text(wrapper, encoding="utf-8")
@@ -200,6 +216,13 @@ def build_paths(project) -> list[Path]:
             tool = folder / "make"
             if not tool.exists():
                 tool.write_text(f'#!/bin/sh\nexec "{gmake}" "$@"\n', encoding="utf-8")
+                tool.chmod(0o755)
+        # `wibo tools/bin/cc1n64.exe ...`: Makefiles and ninja files call the Windows-program runner by name
+        if toolchains.installed("wibo") is not None and not shutil.which("wibo"):
+            wibo = toolchains.require("wibo") / "wibo"
+            tool = folder / "wibo"
+            if wibo.is_file() and not tool.exists():
+                tool.write_text(f'#!/bin/sh\nexec "{wibo}" "$@"\n', encoding="utf-8")
                 tool.chmod(0o755)
         # GNU coreutils' nproc (a Mac has sysctl instead), which Makefiles use to pick their -j
         if not shutil.which("nproc"):
