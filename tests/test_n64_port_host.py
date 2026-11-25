@@ -139,7 +139,8 @@ def test_the_window_code_agrees_with_sdl3s_own_headers(tmp_path):
     pairs["SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK"] = re.search(r"#define SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK (\w+)u", source)[1]
     offsets = {"EV_KEY_SCANCODE": "offsetof(SDL_KeyboardEvent, scancode)",
                "EV_KEY_REPEAT": "offsetof(SDL_KeyboardEvent, repeat)",
-               "EV_PAD_WHICH": "offsetof(SDL_GamepadDeviceEvent, which)"}
+               "EV_PAD_WHICH": "offsetof(SDL_GamepadDeviceEvent, which)",
+               "EV_PAD_BUTTON": "offsetof(SDL_GamepadButtonEvent, button)"}
     scancodes = dict(re.findall(r"\bS_([A-Z0-9]+) = (\d+)", source))
     checks = [f"_Static_assert({offsets.get(name, name)} == {value}, \"{name}\");" for name, value in pairs.items()]
     checks += [f"_Static_assert(SDL_SCANCODE_{name} == {value}, \"S_{name}\");" for name, value in scancodes.items()]

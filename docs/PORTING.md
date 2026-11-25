@@ -567,6 +567,24 @@ Found on the first game, all things the judge can't see:
 - C that reached locals through the console's stack layout;
 - functions the split had left as data.
 
+### The settings menu (window ports)
+
+The game in its own window (`PORT_WINDOW=1`, `window/sdl.c`) has a standard settings menu: Tab or F1 (a gamepad's Back
+button) opens it over the game, the arrows (d-pad) and Enter (A) work it, Escape (B) closes it, and the game gets no input
+while it is open. Its rows are declared once in `window/settings.h`, header-only C with no dependencies: sections of
+CHOICE and ACTION rows, the shape recomp-ui's runtime overlay takes (`RecompRuntimeUiItem`: sectioned rows with read,
+apply and persist steps), so that overlay can show the same rows. Choices are kept as `KEY=VALUE` lines in
+`PORT_SETTINGS` (`settings.ini` in the app's own folder, beside the saves); a value that isn't one of a row's choices is
+ignored. Today: full screen, scaling (sharp or smooth), the FPS in the title, and volume.
+
+recomp-ui (MIT, Dear ImGui, github.com/RetroPortingToolKit/recomp-ui) is the community's launcher and in-game overlay for
+static recompilation ports. It is not linked in yet: it needs a C++17 toolchain and an ImGui renderer, which the window
+host (SDL3 opened at run time, no headers) doesn't have, so the first menu paints itself with a built-in font into
+SDL's renderer. Planned: a backend that hands `port_settings` to recomp-ui's overlay, and a launcher page in place of
+the ROM chooser. The menu is not offered where the picture isn't SDL's: with RT64 (the macOS Metal window) it needs an
+adapter call that draws an RGBA layer over RT64's frame (an `abi` bump in `rt64/adapter.h`), and the web and Miyoo builds
+need a page of their own that reads the same rows. ROADMAP.md's table says so.
+
 ### 5. Play, and check that it runs
 
 A **Play port** button builds and starts it. A headless check runs N frames: it starts, doesn't crash, and the
