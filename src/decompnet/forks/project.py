@@ -15,6 +15,7 @@ that's how its progress is reported.
 from __future__ import annotations
 
 import collections
+import datetime
 import functools
 import hashlib
 import json
@@ -521,7 +522,7 @@ class ForkProject:
         Only cartridge-ROM paths count: a disc or archive is another console's setup."""
         path = self.root / "decomp.yaml"
         if not path.is_file():
-            return {}
+            return self._splat_dir_roms()
         import yaml
 
         try:
@@ -530,7 +531,7 @@ class ForkProject:
             return {}
         entries = data.get("versions") if isinstance(data, dict) else None
         if not isinstance(entries, list):
-            return {}
+            return self._base_rom_of(data)
         out: dict[str, tuple[str, str | None]] = {}
         for entry in entries:
             paths = entry.get("paths") if isinstance(entry, dict) else None
@@ -556,6 +557,54 @@ class ForkProject:
                         break
             out[name] = (rel, digest.lower() if digest else None)
         return out
+
+    def _splat_dir_roms(self) -> dict[str, tuple[str, str | None]]:
+        """{version: (ROM path, SHA-1)} for a project that keeps one splat config per edition in ver/splat
+        (`dkr.us.v77.yaml`, each with its `sha1` and a `target_path` inside the project): the version is the part of
+        the file name after the basename, which the project's Makefile reads as REGION.VERSION."""
+        import yaml
+
+        out: dict[str, tuple[str, str | None]] = {}
+        for path in sorted((self.root / "ver" / "splat").glob("*.*.*.yaml")):
+            try:
+                config = yaml.safe_load(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, yaml.YAMLError):
+                continue
+            options = config.get("options") if isinstance(config, dict) else None
+            target, base = (options or {}).get("target_path"), (options or {}).get("base_path", ".")
+            digest = config.get("sha1") if isinstance(config, dict) else None
+            if not (isinstance(target, str) and isinstance(base, str) and isinstance(digest, str)
+                    and re.fullmatch(r"[0-9a-fA-F]{40}", digest) and target.lower().endswith((".z64", ".n64", ".v64"))):
+                continue
+            rel = self._inside(str(path.parent / base / target))
+            if rel:
+                out[path.name.split(".", 1)[1].removesuffix(".yaml")] = (rel, digest.lower())
+        return out
+
+    def _base_rom_of(self, data) -> dict[str, tuple[str, str | None]]:
+        """decomp.yaml's own `base_rom: baserom.z64` (the decomp.dev agent configuration) for a project whose splat
+        config names the ROM by the author's absolute path: the cartridge goes where decomp.yaml says, its hash from
+        the splat config."""
+        target = data.get("base_rom") if isinstance(data, dict) else None
+        rel = self._inside(target) if isinstance(target, str) else None
+        if not rel or not rel.lower().endswith((".z64", ".n64", ".v64")):
+            return {}
+        import yaml
+
+        from .splatrefs import config_sha1
+
+        config_path = self._splat_yaml()
+        try:
+            config = yaml.safe_load(config_path.read_text(encoding="utf-8")) if config_path else None
+        except (OSError, ValueError, yaml.YAMLError):
+            return {}
+        digest = config_sha1(config_path, config) if isinstance(config, dict) else None
+        if not (isinstance(digest, str) and re.fullmatch(r"[0-9a-fA-F]{40}", digest)):
+            return {}
+        make = (self.root / "Makefile").read_text(errors="replace", encoding="utf-8") if (
+            self.root / "Makefile").is_file() else ""
+        default = re.search(r"^VERSION\s*[:?]?=\s*([A-Za-z0-9._-]+)\s*$", make, re.M)
+        return {default.group(1) if default else "default": (rel, digest.lower())}
 
     def rom_originals(self) -> dict[str, str]:
         """{version: SHA-1} of the original ROMs the project can be set up with (splat's, else decomp.yaml's)."""
@@ -1010,6 +1059,8 @@ class ForkProject:
             # no splat config at the root, but a Makefile with the usual targets (setup, extract, then the build)
             text = (self.root / "Makefile").read_text(errors="replace", encoding="utf-8")
             chosen = [f"VERSION={version}"] if version and re.search(r"^VERSION\s*[:?]?=", text, re.M) else []
+            if version and "." in version and re.search(r"^REGION\s*[:?]?=", text, re.M):
+                chosen = ["REGION=" + version.split(".")[0], "VERSION=" + version.split(".", 1)[1]]  # (us.v77)
             steps = [["make", *chosen, t] for t in _setup_targets(text)]
             if not steps and re.search(r"^split\s*:", text, re.M):  # (splat's output: *_auto.txt the link reads)
                 steps = [["make", *chosen, "split"]]
@@ -1332,6 +1383,13 @@ class ForkProject:
         if not requirements.is_file():  # (where some projects keep theirs)
             requirements = next((p for name in ("requirements.txt", "requirements-python.txt")
                                  if (p := self.root / "tools" / name).is_file()), requirements)
+        bundled = None
+        if not requirements.is_file() and not (pyproject.is_file() and re.search(
+                r"^dependencies\s*=\s*\[\s*\S", pyproject.read_text(errors="replace", encoding="utf-8"), re.M)):
+            # (a project that carries its own splat: that splat's requirements, as of the day it was committed)
+            bundled = next((p for p in (self.root / "tools/splat/requirements.txt", self.root / "splat/requirements.txt")
+                            if p.is_file()), None)
+            requirements = bundled or requirements
         needs = requirements.relative_to(self.root).as_posix()
         # The version of splat the project's Dockerfile installs: its extensions are written for that one, and a
         # requirements file that says only "<1.0" would install a newer splat they can't load into
@@ -1368,7 +1426,17 @@ class ForkProject:
             if requirements.is_file():
                 steps.append([python, "-m", "pip", "install", "-r", needs, *pins])
         for step in steps:
-            ok, tail = self.run(step, log=log, timeout=1800)
+            era = bundled is not None and uv and step[0] == uv and "install" in step
+            # the bundled splat is written for the spimdisasm of its day (a newer one writes assembly its macros
+            # don't define): the newest packages as of that day, or the first later day that builds on this Python,
+            # and only then what the requirements ask for today
+            for date in [*(self._era_dates(bundled.parent) if era else []), None]:
+                if date:
+                    log(f"installing the packages as of {date}, the era of the project's own splat")
+                ok, tail = self.run([*step[:5], "--exclude-newer", date, *step[5:]] if date else step,
+                                    log=log, timeout=1800)
+                if ok:
+                    break
             if not ok:
                 log(f"the project's Python requirements could not be installed: {tail[-400:]}")
                 return
@@ -1380,6 +1448,19 @@ class ForkProject:
                     f.write(f"\n{folder}/\n")
         except OSError:
             pass
+
+    def _era_dates(self, folder: Path) -> list[str]:
+        """The day the project last changed `folder` (its bundled splat), then later days, as `uv --exclude-newer`
+        dates: packages from before a Python's wheels exist can't be built, so each later date is a fallback."""
+        ok, out = self.git("log", "-1", "--format=%cs", "--", folder.relative_to(self.root).as_posix())
+        try:
+            day = datetime.date.fromisoformat(out.strip().splitlines()[-1]) if ok and out.strip() else None
+        except ValueError:
+            day = None
+        if day is None:
+            return []
+        return [(day + datetime.timedelta(days=n)).isoformat() for n in (1, 120, 240, 480)
+                if day + datetime.timedelta(days=n) <= datetime.date.today()]
 
     def setup(self, version: str | None = None, log=print) -> None:
         """Set the project up for the user's copy of the game: unpack it, run the setup commands, and build

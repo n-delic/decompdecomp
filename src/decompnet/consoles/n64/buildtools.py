@@ -22,6 +22,33 @@ def _is_gcc_272(driver: Path) -> bool:
         return False
 
 
+def _is_sn64_folder(folder: Path) -> bool:
+    """The SN Systems GCC 2.7.2 a project keeps next to the KMC one (also "GNU C 2.7.2", so the KMC stand-in must
+    not take it): its `as` is modern-asn64, which no KMC folder has."""
+    return (folder / "modern-asn64.py").is_file() or "sn64" in folder.name.lower()
+
+
+def _wrap_sn64_gcc(folders) -> None:
+    """The project's SN `gcc` is a 32-bit Linux driver: a Mac runs the installed, natively built SN compiler
+    (`sn-n64-272-970404`) through decompdecomp's driver (sn64_gcc.py) instead; the original stays as gcc.linux."""
+    if sys.platform != "darwin" or toolchains.installed("sn-n64-272-970404") is None:
+        return
+    installed = toolchains.require("sn-n64-272-970404")
+    driver = Path(__file__).with_name("sn64_gcc.py")
+    for folder in folders:
+        gcc, assembler = folder / "gcc", folder / "as"
+        try:
+            with open(gcc, "rb") as f:
+                if f.read(4) != b"\x7fELF" or not assembler.is_file():
+                    continue
+        except OSError:
+            continue
+        gcc.rename(gcc.with_name("gcc.linux"))
+        gcc.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{driver}" "{installed}" "{assembler.resolve()}" "$@"\n',
+                       encoding="utf-8")
+        gcc.chmod(0o755)
+
+
 def _crc_tool(root: Path) -> None:
     """Public N64 projects fix the ROM's checksum with tools/n64crc, which their `make dependencies` compiles next to
     a whole IDO build. Compile just that one file when it's missing, so the final link step has its tool (a
@@ -195,9 +222,12 @@ def _wrap_foreign_ido(project) -> None:
     # A project's own copy of the KMC-style GCC 2.7.2 (tools/gcc_2.7.2/{gcc,cc1,as,...}, Linux programs): the
     # installed one stands in for each program it has under that name.
     # (or tools/gcc itself, beside its cc1: a project that keeps the compiler's programs directly in tools/)
+    sn = {d.parent for d in (*tools.glob("*/gcc"), *tools.glob("*/*/gcc")) if _is_sn64_folder(d.parent)}
+    _wrap_sn64_gcc(sn)
     plain = {d.parent for d in (*tools.glob("gcc"), *tools.glob("*/gcc")) if (d.parent / "cc1").is_file()
-             and d.is_file() and not d.is_symlink() and _is_gcc_272(d)}
-    for folder in {d.parent for d in tools.glob("*gcc*2.7.2*/gcc")} | {d.parent for d in tools.glob("*/*gcc*2.7.2*/gcc")} | plain:
+             and d.is_file() and not d.is_symlink() and _is_gcc_272(d) and d.parent not in sn}
+    for folder in ({d.parent for d in tools.glob("*gcc*2.7.2*/gcc")} | {d.parent for d in tools.glob("*/*gcc*2.7.2*/gcc")}
+                   | plain) - sn:
         if toolchains.installed("gcc-2.7.2-kmc") is None:
             break
         installed = toolchains.require("gcc-2.7.2-kmc")

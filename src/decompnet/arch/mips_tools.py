@@ -85,6 +85,7 @@ os.execv(real, [name, *out, *(count or ()), *files])
 _ASSEMBLER_DRIVER = '''#!{python}
 import os, subprocess, sys, tempfile
 args, out, sources, cpp, asm = sys.argv[1:], None, [], [], []
+link, objects = [], []
 # what the real cross gcc predefines for assembler sources (headers pick register names, endianness and ABI by them)
 cpp += ["-D__ASSEMBLER__", "-D_LANGUAGE_ASSEMBLY", "-D__mips__", "-D_MIPS_SZINT=32", "-D_MIPS_SZPTR=32",
         "-D_MIPS_SZLONG=32", "-D_ABIO32=1", "-D_MIPS_SIM=_ABIO32", "-D_MIPS_ARCH_MIPS3", "-D__mips=3", "-Dmips=1"]
@@ -110,11 +111,18 @@ while i < len(args):
         asm.append(a)
         if a == "-EL":
             big = False
+    elif a.startswith("-Wl,"):
+        link += [w for w in a[4:].split(",") if w]
     elif a.startswith("-"):
         pass
+    elif a.endswith((".o", ".a")):
+        objects.append(a)
     else:
         sources.append(a)
     i += 1
+if out and not sources and (link or objects):
+    # (the gcc driver as a linker: `gcc -Wl,-T,game.ld -Wl,-Map,game.map -o game.elf [objects]` is ld's job)
+    sys.exit(subprocess.run(["{linker}", *link, "-o", out, *objects]).returncode)
 if not out or len(sources) != 1:
     sys.exit("mips gcc shim: needs -o and one source")
 cpp = (["-D_MIPSEB", "-D__MIPSEB__", "-D__MIPSEB", "-DMIPSEB"] if big else
@@ -303,7 +311,8 @@ def build_paths(project) -> list[Path]:
                 if not wanted and driver.is_file() and "mips gcc shim" in driver.read_text(errors="replace"):
                     driver.unlink()
                 text = _ASSEMBLER_DRIVER.format(python=sys.executable, cpp=str(host_cpp),
-                                                assembler=str(folder / (prefix + "as")))
+                                                assembler=str(folder / (prefix + "as")),
+                                                linker=str(folder / (prefix + "ld")))
                 if wanted and (not driver.exists() or driver.read_text(errors="replace") != text):
                     driver.write_text(text, encoding="utf-8")
                     driver.chmod(0o755)
