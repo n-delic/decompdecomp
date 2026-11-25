@@ -1074,3 +1074,9 @@ held (a pause toggled, a repeat), via the emulator's watch on the controller dat
 the last windows ending at task 9,003): every one of the 74 pictures 0.00% differing, both buffers, every task of every window, across the race grid, the start and the stages after. The runs that compared nothing were the port
 stalling on a loaded computer (a load average of 12-40 while other jobs ran: the port's virtual time waits for its threads to idle in wall-clock time), not seeds or inputs; the same inputs on a quiet one reached task 1,885 in 24 virtual seconds where a loaded one reached 9 to 495.
 So with taps the port matches the console to the pixel over thousands of frames of play; what does not (the held 50-frame presses, the demo race's opponent car at tasks 614-621) is the open part.
+
+**What the held and tapped routes say together (a hypothesis, not yet tested).** Taps: 0.00% over 74 pictures to frame 9,000. The race route that holds `A` (the accelerator) for 50 frames at a time: within 1-2% at the same windows, shifted pictures (not other scenes).
+The route that holds START for 50 frames (a pause held that long): 43-89%. The more a button is held, and the more the game does with it over time, the further the scenes drift: a car accelerating for 50 frames goes a little
+further or less far in the port, and a pause that opens and shuts at slightly other moments leaves the scene elsewhere. That is the signature of a step the game takes from the clock (the time between two frames, read with osGetTime or a
+counter) rather than a fixed step: on the console the time between frames is the cycle count the CPU spent, the port's virtual clock moves by whole retraces, and a tap is too short to show it. To test: the game's clock reads on each side (the emulator's break on
+`osGetTime`, the port's `osGetTime` result at the same frames) and whether the frame-to-frame difference is the same.
