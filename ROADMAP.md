@@ -427,7 +427,9 @@ completes parents truncated to a one/two-instruction prologue. Existing projects
 explicit reimport; ambiguous mappings, indirect flow, kernel stubs and other processors or
 project builds retain review/adapters rather than guessed ownership.
 
-Implemented: possible start-boundary suggestions (`app/start_boundaries.py`): a leading word that looks like alignment padding or a dead word is suggested as "start +4" in the brief and Review function boundaries, never changed. Planned: a reviewer's one-click apply (cut the word off with a retained padding piece and undo record), and the same check for processors other than MIPS.
+Implemented: possible start-boundary suggestions (`app/start_boundaries.py`): a leading word that looks like alignment padding or a dead word is suggested as "start +4" in the brief and Review function boundaries.
+
+Implemented: automatic start and end fixes the bytes prove (`app/entry_fixes.py` decides, `boundary_repairs.apply_entry_fixes` applies): stray words before a function's real entry (another function's leftovers: delay filler, a frame given back and taken again, `break 7`, `j self`, a callback's `lui`/`addiu`) are archived as padding and the real entry becomes the function; a function swallowed after a loop that never returns is split off. Applied on import (before drafts) and Check again through the same guarded preview/commit as a person's repair, each labelled automatic in Repair history with undo; an undone fix is never applied again; matched functions are never changed and the matches that refer into a changed extent are rebuilt first; the project setting `automatic_boundary_fixes: false` turns it off. On an N64 game 25 of 28 known problems are fixed; over 30,339 matched functions of 36 N64 games none is flagged. Planned: run it on a PS1, PS2 and PSP game (the shared MIPS path reaches them, but no game or demo build was available to check it), carry the old row's saved C to the new entry (5 of 23 trimmed functions on an N64 game matched with it at once), the same rules for other processors, and project mode (objdiff units have no image-wide layout to cut; `split_source` would carry it).
 
 Implemented: guided mapped MIPS boundary evidence, neighbouring instruction windows, explicit before/after extents and one-shot agent recommendations with cited supporting/counter-evidence and uncertainty. Advice never edits layouts, claims work or compiles, and stale inputs are labelled.
 
@@ -873,6 +875,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Gap recovery between code on one mapping: built pointers, leaves, switches (import) | ✓ | — | — | — | — | — | — | — | — | — | — | — |
 | Function entries seen running in Play, taken by the next import | ✓ | — | — | — | — | — | — | — | — | — | — | — |
 | Automatic proven framed/leaf boundary repair on import/reimport | ✓ | ✓ | ✓ (scalar decoder) | — | — | ✓ | — | — | — | — | — | — |
+| Automatic start/end fixes the bytes prove (`entry_fixes`, import and Check again, undoable) | ✓ | ✓ shared MIPS path, not yet run on a game | ✓ shared MIPS path, not yet run on a game | — | — | ✓ shared MIPS path, not yet run on a game | — | — | — | — | — | — |
 | Guided boundary repair and advisory agent investigation (local mapped ROM) | ✓ | ✓ | ✓ (scalar decoder) | — | — | ✓ | — | — | — | — | — | — |
 | Function-end reports (`report_boundary`) | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ (2-byte boundaries) | — | ✓ (agents agree, the rebuild checks) | ✓ | — | — |
 | Your own compiler (Setup: another build of one it has) | ✓ | ✓ | ✓ | ✓ your SDK | — | ✓ | ✓ | — | ✓ your Visual C++, for 32-bit games (64-bit ones build with the pack's 2017) | ✓ your XDK | — | the project's own build |

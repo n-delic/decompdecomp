@@ -74,8 +74,9 @@ class Fix:
 
     def summary(self):
         if self.kind == 'trim_start':
+            words = 'the words before it are' if self.at - self.vram > 4 else 'the word before it is'
             return (f'{self.name} starts {self.at - self.vram} bytes late: the real entry is 0x{self.at:08X}; '
-                    f'the word{"s" if self.at - self.vram > 4 else ""} before it are left in the image as padding')
+                    f'{words} left in the image as padding')
         if self.kind == 'padding':
             return f'{self.name} is leftover words between two functions; it is archived as padding'
         return f'{self.name} swallowed the next function: a new function starts at 0x{self.at:08X}'
@@ -262,7 +263,8 @@ def decide(entries, *, big_endian=True, word_at=None, stored=frozenset()):
     """{function name: Fix} for the unmatched functions whose start or end the bytes settle (or suggest).
     `word_at(address)`: the image's word there, or None, for the code before a function no live entry covers.
     `stored`: code addresses some aligned word of the image holds (function tables, a switch's jump table): an
-    address there is entered, whatever the relocations say."""
+    address there is entered, whatever the relocations say. Asked only of the few words a fix would cut off, so it
+    may search the image lazily."""
     entries = sorted((e for e in entries if len(e.code) >= 4), key=lambda e: e.vram)
     pointed = {}  # address -> {(function name, address of the instruction pointing there)}
     for e in entries:
@@ -300,8 +302,7 @@ def decide(entries, *, big_endian=True, word_at=None, stored=frozenset()):
     def entered(lo, hi, sources):
         """Whether anything outside `sources` enters [lo, hi)."""
         for address in range(lo, hi, 4):
-            if (address in stored or {at for _, at in pointed.get(address, ())} - sources
-                    or flow.get(address, set()) - sources):
+            if {at for _, at in pointed.get(address, ())} - sources or flow.get(address, set()) - sources:
                 return True
         return False
 
@@ -313,6 +314,9 @@ def decide(entries, *, big_endian=True, word_at=None, stored=frozenset()):
         if any(a in shared for a in range(e.vram, e.vram + 4 * len(words), 4)):
             continue  # another overlay shares these addresses: pointers and flow can't be told apart
         fix = _start(e, words, pointed, entered, returned_before, starts)
+        cut = (fix.at if fix.kind == 'trim_start' else e.vram + 4 * len(words)) if fix is not None else e.vram
+        if any(address in stored for address in range(e.vram, cut, 4)):
+            continue  # a word of data points into the words to cut off (a table): they may be entered after all
         if fix is None:
             fix = _end(e, words, pointed, flow)
         if fix is not None:

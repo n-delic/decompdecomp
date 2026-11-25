@@ -33,6 +33,11 @@ The source change, and the measured result before and after (scores, the judge u
 No source change: the importer's extents. Over that game, 25 of the 28 are fixed automatically (20 starts trimmed, one
 whole leftover piece archived as padding, 4 swallowed functions split); the other 3 have no evidence in the bytes
 (one start word that only loads from an argument, one entry many functions call, one end with no inner entry).
+Applied through the app's own path on a copy of that project, 30 fixes went in (25 of the 28, four more of the
+same shapes the list had missed, and in a second round a function the first round's trim had exposed as holding
+two), 97 matches that refer into the changed extents were rebuilt first and all still matched, and a second run
+changed nothing. Five of the 23 trimmed functions matched at once with the C agents had already written for the
+old extent, renamed: the boundary was all that stood in the way.
 Negative control: every matched function's extent is proven by the judge, so a fix proposed for one is a false
 positive. Run as if unmatched over 30,339 matched functions of 36 N64 games (built with several compilers) and the
 homemade N64 demo's 96 symbol extents: 0 flagged.

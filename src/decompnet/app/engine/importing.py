@@ -524,6 +524,13 @@ class ImportMixin:
             self.surveys.pop(slug, None)
             self.twins.stop(slug)
             self.permuter.stop(slug)
+        # Starts and ends the bytes prove wrong are fixed before anything is drafted or claimed, so no agent works
+        # on an extent no C can match (boundary_repairs.apply_entry_fixes; each fix undoable in Review boundaries).
+        from ..boundary_repairs import apply_entry_fixes
+        try:
+            apply_entry_fixes(self, slug, log)
+        except NetworkError as e:
+            log(f"function boundaries were not fixed automatically: {e}")
         console.after_import(self, slug, chosen=chosen, log=log)
         if reimport is not None and backup is not None:
             try:
