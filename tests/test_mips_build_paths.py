@@ -289,3 +289,16 @@ def test_a_make_shim_and_a_broken_mac_ido_and_cc_check_variants(tmp_path, monkey
     monkeypatch.setattr(mips_tools.shutil, "which", lambda name: f"/opt/{name}" if name == "gmake" else None)
     folder = mips_tools.build_paths(SimpleNamespace(root=root))[0]
     assert "/opt/gmake" in (folder / "make").read_text()
+
+
+def test_plain_cpp_shim_is_gnu_when_the_host_has_one(tmp_path, monkeypatch):
+    """A Mac's /usr/bin/cpp rejects the `-MD -MF x.d src.c -o /dev/null` pass projects run after a compile; a GNU cpp
+    (Homebrew's cpp-N) is put first in the build path under the plain name."""
+    from pathlib import Path
+
+    gnu = sorted(m for d in ("/opt/homebrew/bin", "/usr/local/bin") for m in Path(d).glob("cpp-[0-9]*"))
+    if not gnu:
+        pytest.skip("needs a GNU cpp-N")
+    pinned(tmp_path, monkeypatch)
+    paths = mips_tools.build_paths(SimpleNamespace(root=tmp_path / "project"))
+    assert str(gnu[-1]) in (paths[0] / "cpp").read_text()

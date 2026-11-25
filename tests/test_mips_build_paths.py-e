@@ -1,0 +1,305 @@
+"""Public MIPS builds find installed pinned binutils without global links or project-source changes."""
+
+import json
+import os
+from types import SimpleNamespace
+
+import pytest
+
+from decompnet import consoles
+from decompnet.arch import mips_tools
+from decompnet.forks.project import ForkProject
+
+pytestmark = pytest.mark.skipif(os.name == "nt", reason="pinned MIPS binaries run inside WSL on Windows")
+
+
+def pinned(tmp_path, monkeypatch):
+    tools = tmp_path / "pinned"
+    tools.mkdir()
+    ld = tools / "mips-ps2-decompals-ld"
+    ld.write_text("#!/bin/sh\nprintf 'pinned MIPS linker\\n'\n")
+    ld.chmod(0o755)
+    monkeypatch.setattr(mips_tools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(mips_tools.toolchains, "require", lambda tid: tools)
+    return tools, ld
+
+
+@pytest.mark.parametrize("console", ["n64", "ps", "ps2"])
+def test_all_mips_consoles_expose_the_same_installed_tools(tmp_path, monkeypatch, console):
+    tools, ld = pinned(tmp_path, monkeypatch)
+    project = SimpleNamespace(root=tmp_path / "project")
+    paths = consoles.get(console).project_tool_paths(project)
+    assert paths[-1] == tools
+    for prefix in ("mips-linux-gnu-", "mips64-linux-gnu-", "mips64-elf-"):
+        wrapper = (paths[0] / (prefix + "ld")).read_text()  # (a script: it renames the emulation, then runs ld)
+        assert str(ld.resolve()) in wrapper and "elf32btsmip) a=elf32ebmip" in wrapper
+        assert (paths[0] / (prefix + "ld")).stat().st_mode & 0o111
+    assert consoles.get(console).project_tool_paths(project) == paths  # repeated builds reuse the links
+    assert consoles.get("gc").project_tool_paths(project) == []
+
+
+def test_missing_toolchain_creates_nothing_and_downloads_nothing(tmp_path, monkeypatch):
+    monkeypatch.setattr(mips_tools.toolchains, "installed", lambda tid: None)
+    project = SimpleNamespace(root=tmp_path)
+    assert mips_tools.build_paths(project) == []
+    assert not (tmp_path / ".decomp-wtf").exists()
+
+
+def test_make_detects_pinned_tools_in_its_process_path(tmp_path, monkeypatch):
+    import shutil
+
+    if not shutil.which("make"):
+        pytest.skip("needs make")
+    pinned(tmp_path, monkeypatch)
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / ".decomp.wtf.json").write_text(json.dumps({"platform": "n64"}))
+    makefile = root / "Makefile"
+    contents = ("ifeq ($(shell which mips-linux-gnu-ld 2>/dev/null),)\n"
+                "$(error Unable to detect a suitable MIPS toolchain installed)\nendif\n"
+                "all:\n\t@mips-linux-gnu-ld --version\n")
+    makefile.write_text(contents)
+    path = os.environ.get("PATH")
+    ok, log = ForkProject(root).run(["make"], log=lambda *_: None)
+    assert ok and "pinned MIPS linker" in log
+    assert os.environ.get("PATH") == path and makefile.read_text() == contents
+
+
+def test_n64_reuses_only_the_declared_missing_ido_version(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools
+
+    source = tmp_path / "installed compiler with spaces"
+    source.mkdir()
+    (source / "cc").write_text("compiler")
+    (source / "cfe").write_text("compiler sibling")
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(buildtools.toolchains, "require", lambda tid: source)
+    root = tmp_path / "project"
+    root.mkdir()
+    make = "TOOLS := tools\nIDO := $(TOOLS)/ido-static-recomp/build/5.3/out/cc\n"
+    (root / "Makefile").write_text(make)
+    project = SimpleNamespace(root=root)
+    prepared = consoles.get("n64").project_build_command(project, ["make", "extract"])
+    assert prepared == ["make", "extract", "IDO=.decomp-wtf/build-tools/ido-5.3/cc"]
+    assert (root / ".decomp-wtf/build-tools/ido-5.3/cfe").read_text() == "compiler sibling"
+    assert (root / "Makefile").read_text() == make
+    explicit = ["make", "IDO=my-own-compiler"]
+    assert consoles.get("n64").project_build_command(project, explicit) == explicit
+    assert consoles.get("ps2").project_build_command(project, ["make"]) == ["make"]
+    local = root / "tools/ido-static-recomp/build/5.3/out/cc"
+    local.parent.mkdir(parents=True)
+    local.write_text("existing local compiler")
+    assert consoles.get("n64").project_build_command(project, ["make"]) == ["make"]
+    local.unlink()
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: None)
+    assert consoles.get("n64").project_build_command(project, ["make"]) == ["make"]
+
+
+def test_n64_redirects_a_cc_variable_and_builds_the_crc_tool(tmp_path, monkeypatch):
+    """A community decomp that picks its compiler with an indented `CC :=` under an else (after a qemu line that
+    also assigns CC) still gets the installed IDO, and tools/n64crc is compiled for its checksum step."""
+    from decompnet.consoles.n64 import buildtools
+
+    source = tmp_path / "ido"
+    source.mkdir()
+    (source / "cc").write_text("compiler")
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(buildtools.toolchains, "require", lambda tid: source)
+    ran = []
+    monkeypatch.setattr(buildtools.subprocess, "run", lambda argv, **kw: ran.append(argv))
+    monkeypatch.setattr(buildtools.shutil, "which", lambda name: "/usr/bin/cc" if name == "cc" else None)
+    root = tmp_path / "project"
+    (root / "tools").mkdir(parents=True)
+    (root / "tools" / "n64crc.c").write_text("int main(void){return 0;}")
+    make = ("TOOLS_DIR = tools\nifeq ($(USE_QEMU_IRIX),1)\n\tCC := $(QEMU_IRIX) -silent $(TOOLS_DIR)/x/cc\n"
+            "\telse\n\tCC\t := $(TOOLS_DIR)/ido-static-recomp/build/5.3/out/cc\n\tendif\n")
+    (root / "Makefile").write_text(make)
+    prepared = consoles.get("n64").project_build_command(SimpleNamespace(root=root), ["make", "-j4"])
+    assert prepared == ["make", "-j4"]  # (CC itself stays the project's: its folder links to the installed IDO)
+    assert (root / "tools/ido-static-recomp/build/5.3/out").resolve() == source.resolve()
+    assert ran and ran[0][0] == "/usr/bin/cc" and ran[0][-1].endswith("tools/n64crc")
+
+
+def test_decomp_yaml_names_the_rom_and_place_game_aliases_the_build_scripts_name(tmp_path):
+    """A community decomp whose decomp.yaml says paperboy.z64 beside a configure.py that reads baserom.z64: setup
+    knows where the ROM goes (and which version a hash is) and leaves it under both names."""
+    from decompnet.forks.project import ForkProject
+
+    root = tmp_path / "p"
+    root.mkdir()
+    (root / "decomp.yaml").write_text(
+        "versions:\n- name: us\n  sha1: " + "a" * 40 + "\n  paths:\n    target: game.z64\n"
+        "- name: eu\n  paths:\n    baserom: ver/eu/baserom.z64\n")
+    (root / "configure.py").write_text('rom = open("baserom.z64")\n')
+    (root / "eu.sha1").write_text("b" * 40 + "  baserom.z64\n")
+    fp = ForkProject(root)
+    assert fp.decomp_yaml_roms() == {"us": ("game.z64", "a" * 40), "eu": ("ver/eu/baserom.z64", "b" * 40)}
+    assert fp.rom_originals() == {"us": "a" * 40, "eu": "b" * 40}
+    assert fp.needs("eu")["path"] == "ver/eu/baserom.z64"
+
+
+def test_n64_wraps_a_linux_ido_driver_on_a_mac(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools
+
+    source = tmp_path / "installed"
+    source.mkdir()
+    (source / "cc").write_text("compiler")
+    monkeypatch.setattr(buildtools.sys, "platform", "darwin")
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(buildtools.toolchains, "require", lambda tid: source)
+    root = tmp_path / "project"
+    driver = root / "tools" / "ido_5.3" / "usr" / "lib" / "cc"
+    driver.parent.mkdir(parents=True)
+    driver.write_bytes(b"\x7fELF....")
+    buildtools._wrap_foreign_ido(SimpleNamespace(root=root))
+    assert driver.read_text().startswith("#!/bin/sh") and str(source / "cc") in driver.read_text()
+    assert driver.with_name("cc.linux").read_bytes().startswith(b"\x7fELF")
+
+
+def test_a_makefile_or_readme_names_the_rom_when_nothing_else_does(tmp_path):
+    from decompnet.forks.project import ForkProject
+
+    root = tmp_path / "p"
+    root.mkdir()
+    (root / "Makefile").write_text("VERSION ?= us\nBASEROM := baserom.$(VERSION).z64\nsetup:\n\ttrue\n")
+    fp = ForkProject(root)
+    assert fp.needs(None)["path"] == "baserom.us.z64"
+    assert fp.setup_commands(None)[0][-1] == "setup"
+    (root / "Makefile").write_text("all:\n\ttrue\n")
+    (root / "README.md").write_text("Copy your rom to roms/baserom.us.z64 and run ./setup\n")
+    assert ForkProject(root).needs(None)["path"] == "roms/baserom.us.z64"
+
+
+def test_a_missing_python_tool_is_installed_into_the_project_environment(tmp_path, monkeypatch):
+    from decompnet.forks import project as project_module
+    from decompnet.forks.project import ForkProject
+
+    root = tmp_path / "p"
+    (root / ".venv" / "bin").mkdir(parents=True)
+    (root / ".venv" / "pyvenv.cfg").write_text("")
+    (root / ".venv" / "bin" / "python3").write_text("")
+    fp = ForkProject(root)
+    ran = []
+    monkeypatch.setattr(project_module, "_tool", lambda name: "/bin/uv")
+    monkeypatch.setattr(fp, "run", lambda cmd, log=print, **kw: (ran.append(cmd) or (True, "")))
+    assert fp._install_missing_tools("FAILED: [code=127] x\npigment64 to-bin a b\n/bin/sh: pigment64: command not found", print)
+    assert ran[0][:3] == ["/bin/uv", "pip", "install"] and ran[0][-1] == "pigment64"
+    assert not fp._install_missing_tools("make: *** Error 1", print)
+
+
+def test_n64_swaps_a_committed_linux_tool_for_the_hosts_and_skips_the_hosts_gcc_pass(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools
+
+    monkeypatch.setattr(buildtools.sys, "platform", "darwin")
+    host = tmp_path / "bin" / "pigment64"
+    host.parent.mkdir()
+    host.write_text("#!/bin/sh\n")
+    host.chmod(0o755)
+    monkeypatch.setenv("PATH", str(host.parent))
+    root = tmp_path / "project"
+    tool = root / "tools" / "pigment64"
+    tool.parent.mkdir(parents=True)
+    tool.write_bytes(b"\x7fELF....")
+    tool.chmod(0o755)
+    ido = root / "tools" / "ido" / "macos" / "cc"
+    ido.parent.mkdir(parents=True)
+    ido.write_bytes(b"\xcf\xfa\xed\xfe")
+    (ido.parent / "cfe").write_bytes(b"\xcf\xfa\xed\xfe....")
+    buildtools._wrap_foreign_ido(SimpleNamespace(root=root))
+    assert str(host) in tool.read_text() and tool.with_name("pigment64.linux").exists()
+    assert (ido.parent / "cfe").stat().st_mode & 0o111 and ido.stat().st_mode & 0o111 or True
+    (root / "Makefile").write_text("RUN_CC_CHECK ?= 1\nall:\n\ttrue\n")
+    prepared = consoles.get("n64").project_build_command(SimpleNamespace(root=root), ["make"])
+    assert prepared[-1] == "RUN_CC_CHECK=0"
+
+
+def test_n64_links_installed_compiler_folders_a_project_expects(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools
+
+    ido, gcc = tmp_path / "ido", tmp_path / "gcc"
+    ido.mkdir()
+    gcc.mkdir()
+    monkeypatch.setattr(buildtools.sys, "platform", "darwin")
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(buildtools.toolchains, "require", lambda tid: ido if tid.startswith("ido") else gcc)
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "Makefile").write_text("CC := tools/gcc_2.7.2/$(DETECTED_OS)/gcc\nX = tools/ido/7.1/cc\nCC_HOST := gcc\n")
+    prepared = consoles.get("n64").project_build_command(SimpleNamespace(root=root), ["make"])
+    assert (root / "tools/gcc_2.7.2/macos").resolve() == gcc and (root / "tools/ido/7.1").resolve() == ido
+    assert "CC_HOST=true" in prepared
+
+
+def test_rom_path_through_makefile_variables(tmp_path):
+    from decompnet.forks.project import ForkProject
+
+    root = tmp_path / "p"
+    root.mkdir()
+    (root / "Makefile").write_text("VERSION ?= us\nBASEROM_DIR := baseroms/$(VERSION)\nBASEROM := $(BASEROM_DIR)/baserom.z64\n")
+    assert ForkProject(root).needs(None)["path"] == "baseroms/us/baserom.z64"
+
+
+def test_a_decompressed_splat_target_means_the_cartridge_rom_is_named_elsewhere(tmp_path):
+    from decompnet.forks.project import ForkProject
+
+    root = tmp_path / "p"
+    root.mkdir()
+    (root / "Makefile").write_text("BASEROM := baserom.us.z64\nsetup:\n\ttrue\n")
+    (root / "splat.yaml").write_text("options:\n  platform: n64\n  target_path: decompressed.us.z64\nsegments: []\n")
+    need = ForkProject(root).needs(None)
+    assert need["path"] == "baserom.us.z64" and need["sha1"] is None
+
+
+def test_n64_links_an_os_named_ido_folder_and_wraps_a_missing_host_tool(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools
+
+    ido = tmp_path / "ido"
+    ido.mkdir()
+    (ido / "cc").write_text("compiler")
+    hosts = tmp_path / "bin"
+    hosts.mkdir()
+    (hosts / "armips").write_text("#!/bin/sh\n")
+    (hosts / "armips").chmod(0o755)
+    monkeypatch.setenv("PATH", str(hosts))
+    monkeypatch.setattr(buildtools.sys, "platform", "darwin")
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(buildtools.toolchains, "require", lambda tid: ido)
+    root = tmp_path / "project"
+    (root / "tools").mkdir(parents=True)
+    (root / "Makefile").write_text("CC := tools/ido_recomp/$(DETECTED_OS)/5.3/cc\nASM := tools/armips -sym x\n")
+    consoles.get("n64").project_build_command(SimpleNamespace(root=root), ["make"])
+    assert (root / "tools/ido_recomp/macos/5.3").resolve() == ido
+    assert str(hosts / "armips") in (root / "tools/armips").read_text()
+
+
+<<<<<<< HEAD
+def test_a_make_shim_and_a_broken_mac_ido_and_cc_check_variants(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools
+
+    monkeypatch.setattr(buildtools.sys, "platform", "darwin")
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "Makefile").write_text("CC_CHECK ?= gcc\nall:\n\ttrue\n")
+    assert consoles.get("n64").project_build_command(SimpleNamespace(root=root), ["make"])[-1] == "CC_CHECK=true"
+    tools = tmp_path / "pinned"
+    tools.mkdir()
+    (tools / "mips-ps2-decompals-ld").write_text("#!/bin/sh\n")
+    monkeypatch.setattr(mips_tools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(mips_tools.toolchains, "require", lambda tid: tools)
+    monkeypatch.setattr(mips_tools.sys, "platform", "darwin")
+    monkeypatch.setattr(mips_tools.shutil, "which", lambda name: f"/opt/{name}" if name == "gmake" else None)
+    folder = mips_tools.build_paths(SimpleNamespace(root=root))[0]
+    assert "/opt/gmake" in (folder / "make").read_text()
+=======
+def test_plain_cpp_shim_is_gnu_when_the_host_has_one(tmp_path, monkeypatch):
+    """A Mac's /usr/bin/cpp rejects the `-MD -MF x.d src.c -o /dev/null` pass projects run after a compile; a GNU cpp
+    (Homebrew's cpp-N) is put first in the build path under the plain name."""
+    from pathlib import Path
+
+    gnu = sorted(m for d in ("/opt/homebrew/bin", "/usr/local/bin") for m in Path(d).glob("cpp-[0-9]*"))
+    if not gnu:
+        pytest.skip("needs a GNU cpp-N")
+    pinned(tmp_path, monkeypatch)
+    paths = mips_tools.build_paths(SimpleNamespace(root=tmp_path / "project"))
+    assert str(gnu[-1]) in (paths[0] / "cpp").read_text()
+>>>>>>> 91058b703 (fix: a GNU cpp under the plain name for project builds on a Mac)

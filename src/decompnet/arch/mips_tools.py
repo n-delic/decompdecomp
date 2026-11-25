@@ -96,6 +96,12 @@ def build_paths(project) -> list[Path]:
                 if not shim.exists():
                     shim.write_text(f'#!/bin/sh\nexec "{host_cpp}" "$@"\n', encoding="utf-8")
                     shim.chmod(0o755)
+            # A Mac's own /usr/bin/cpp answers "cc: error: no input files" to `cpp ... -MD -MF x.d src.c -o /dev/null`,
+            # the dependency pass many projects run after each compile: a plain `cpp` that is GNU's accepts it.
+            plain = folder / "cpp"
+            if gnu and not plain.exists():
+                plain.write_text(f'#!/bin/sh\nexec "{gnu[-1]}" "$@"\n', encoding="utf-8")
+                plain.chmod(0o755)
         # `mips-linux-gnu-gcc -x assembler-with-cpp -c x.s`: the gcc driver's one job in these builds, which binutils
         # alone can't do: preprocess with the host's cpp, then assemble with the pinned `as`
         if host_cpp:
