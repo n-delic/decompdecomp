@@ -190,9 +190,11 @@ def test_a_rebuildable_repository_root_readme_shows_the_progress_map_and_compile
     assert text.startswith("# Project\n") and "Build it with build.py." in text
     assert "progress/decompdecomp-progress.svg" in text and "**Compiler:**" in text
     assert "1 / 2 functions (50.0%)" in text
+    assert "## Porting progress" in text and "Compiles for a PC" in text and text.count("decompdecomp:port:start") == 1
     with net.store.tx() as db:
         db.execute("UPDATE functions SET status='matched' WHERE name='open<&'")
     saves.save(net, "p")
     updated = (root / "README.md").read_text(encoding="utf-8")
     assert "2 / 2 functions (100.0%)" in updated and "50.0%" not in updated
+    assert updated.count("decompdecomp:port:start") == 1
     assert updated.count("decompdecomp:visuals:start") == 1 and "Build it with build.py." in updated
