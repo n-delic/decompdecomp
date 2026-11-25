@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import threading
 from pathlib import Path
 
@@ -36,4 +37,12 @@ def build_paths(project) -> list[Path]:
                 temporary.unlink(missing_ok=True)
                 temporary.symlink_to(binary.resolve())
                 temporary.replace(alias)
+        # Projects preprocess with the cross gcc's cpp, which binutils don't include: the host's cpp (clang's on a Mac)
+        # does the same job, under the same prefixes.
+        if host_cpp := shutil.which("cpp"):
+            for prefix in _PREFIXES:
+                shim = folder / (prefix + "cpp")
+                if not shim.exists():
+                    shim.write_text(f'#!/bin/sh\nexec "{host_cpp}" "$@"\n', encoding="utf-8")
+                    shim.chmod(0o755)
     return [folder, source]

@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from ... import toolchains
@@ -25,9 +26,46 @@ def _crc_tool(root: Path) -> None:
             pass
 
 
+def _wrap_foreign_ido(project) -> None:
+    """On a Mac a project's own copy of IDO is usually a Linux program (its CI's) its build can't run ("Exec format
+    error"). Replace each such `cc` driver, once, with a script that runs the installed IDO of the version its
+    path names (5.3 or 7.1); the original is kept beside it as cc.linux. Only drivers that are Linux ELF files
+    are touched, so a project's own Mac build, or its own makefile's redirect, stays as it was."""
+    if sys.platform != "darwin":
+        return
+    done = project.root / ".decomp-wtf" / "build-tools" / ".ido-wrapped"
+    tools = project.root / "tools"
+    if done.exists() or not tools.is_dir():
+        return
+    for driver in tools.glob("**/cc"):
+        if len(driver.relative_to(tools).parts) > 5 or driver.is_symlink() or not driver.is_file():
+            continue
+        try:
+            with open(driver, "rb") as f:
+                if f.read(4) != b"\x7fELF":
+                    continue
+        except OSError:
+            continue
+        version = re.search(r"(?<!\d)(5)[._](3)(?!\d)|(?<!\d)(7)[._](1)(?!\d)", str(driver.relative_to(tools)))
+        if not version:
+            continue
+        tid = "ido-" + ("5.3" if version[1] else "7.1")
+        if toolchains.installed(tid) is None:
+            continue  # compiler installation and license acceptance stay in Setup
+        source = toolchains.require(tid) / "cc"
+        if not source.is_file():
+            continue
+        driver.rename(driver.with_name("cc.linux"))
+        driver.write_text(f'#!/bin/sh\nexec "{source}" "$@"\n', encoding="utf-8")
+        driver.chmod(0o755)
+    done.parent.mkdir(parents=True, exist_ok=True)
+    done.write_text("", encoding="utf-8")
+
+
 def command(project, argv: list[str]) -> list[str]:
     if os.name == "nt":
         return argv  # these compiler binaries run inside WSL on Windows
+    _wrap_foreign_ido(project)
     if Path(argv[0]).name not in ("make", "gmake") or any(a.startswith(("IDO=", "CC=")) for a in argv[1:]):
         return argv
     makefile = project.root / "Makefile"
