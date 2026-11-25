@@ -374,7 +374,9 @@ class AutopilotMixin:
             if repair_only:
                 if return_repair(self,agent,proj,fn):return 'match'
                 from ..profile_probe_autopilot import run as profile_probe
-                return 'match' if profile_probe(self,agent,proj,fn) else 'skip'
+                if profile_probe(self,agent,proj,fn):return 'match'
+                from ..store_order_autopilot import run as store_order
+                return 'match' if store_order(self,agent,proj,fn) else 'skip'
             if not _draft_pipeline.get() and return_repair(self, agent, proj, fn):
                 return 'match'
             ctx = self._context(proj["id"], fn["unit"])

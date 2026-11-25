@@ -57,6 +57,7 @@ def test_preparation_precedes_other_paths_and_credentials_are_distinct(monkeypat
     monkeypatch.setattr(deep_permuter.Search, '_baseline', baseline)
     monkeypatch.setattr(deep_permuter.Search, 'local_repairs', lambda *a, **k: (40, 'x'))
     monkeypatch.setattr(deep_permuter.Search, 'neutral_plateau_pass', lambda self, agent, proj, fn, best, fork: best)
+    monkeypatch.setattr(deep_permuter.Search, 'store_order_pass', lambda self, agent, proj, fn, best, fork: best)
     def permute(self, agent, proj, fn, state):
         # The random phase must not mutate compiler settings underneath another path.
         self._compiler_preflight(proj, fn, state, self.deadline)
