@@ -100,6 +100,35 @@ def binary_span(path: Path) -> int | None:
         return None
 
 
+def _through_header_crc(root: Path, build_dir: Path, elves, image_path: Path, sha1: str, objcopy: Path,
+                        binary: Path) -> list[Path]:
+    """Most cartridge builds finish the ELF's flat binary with two steps of their own: the header's CRC pair (bytes
+    0x10-0x17, computed from everything after the first 0x1000 bytes) and padding to the cartridge size. An ELF
+    counts when the project has built a cartridge that is exactly the original (the SHA-1 above, so both steps
+    reproduce) and its flat binary equals the original in every other byte, the tail being one repeated fill byte."""
+    size = image_path.stat().st_size
+    built = [p for p in (*build_dir.rglob('*'), *root.glob('*')) if p.is_file() and p != image_path
+             and p.suffix.lower() in ('.z64', '.n64', '.v64') and p.stat().st_size == size and digest(p) == sha1]
+    if not built:
+        return []
+    original = image_path.read_bytes()
+    matches = []
+    for elf in sorted(elves):
+        if binary_span(elf) is None:
+            continue
+        for fill in ([], ['--gap-fill', '0xff']):
+            try:
+                run([str(objcopy), '-O', 'binary', *fill, str(elf), str(binary)], root, log=lambda *_: None)
+            except (ForkError, subprocess.TimeoutExpired):
+                break
+            data = binary.read_bytes()
+            if (len(data) <= size and len(data) > 0x1000 and data[:0x10] == original[:0x10]
+                    and data[0x18:] == original[0x18:len(data)] and len(set(original[len(data):])) <= 1):
+                matches.append(elf)
+                break
+    return matches
+
+
 def verified_rebuild(project, config_path: Path, config: dict, image_path: Path, sha1: str, log) -> bool:
     """Freeze linked code objects only when objcopy of the ELF reproduces the complete original image.
 
@@ -126,7 +155,8 @@ def verified_rebuild(project, config_path: Path, config: dict, image_path: Path,
     with tempfile.TemporaryDirectory(prefix='verified-rebuild-', dir=parent) as temp:
         binary = Path(temp) / 'rebuilt.z64'
         configured = inside(root, options.get('elf_path', str(build_dir.relative_to(root) / 'project.elf')))
-        elves = set(build_dir.glob('*.elf')) | ({configured} if configured.is_file() else set())
+        elves = (set(build_dir.glob('*.elf')) | set(root.glob('*.elf'))  # (a Makefile that links in the project root)
+                 | ({configured} if configured.is_file() else set()))
         for elf in sorted(elves):
             span = binary_span(elf)
             if span is None or span > image_path.stat().st_size:
@@ -142,6 +172,8 @@ def verified_rebuild(project, config_path: Path, config: dict, image_path: Path,
                 if digest(binary) == sha1:
                     matches.append(elf)
                     break
+        if not matches:
+            matches = _through_header_crc(root, build_dir, elves, image_path, sha1, objcopy, binary)
         if len(matches) != 1:
             raise ForkError("overlay references need exactly one ELF whose complete binary matches the original "
                             "image's SHA-1")
@@ -260,8 +292,8 @@ def plan(root: Path, config: dict, *, independent: bool = False) -> list[dict]:
                     len(segment) == 1 or segment[1] in ('header', 'bin', 'pad')):
                 continue
             raise ForkError("automatic objdiff setup needs explicit splat segment mappings; set this project up manually")
-        if segment.get('type') != 'code':
-            continue
+        if segment.get('type') != 'code' or segment.get('extract') is False:
+            continue  # (extract: false: splat writes nothing for it, so there is no reference to derive)
         if not isinstance(segment.get('start'), int) or not isinstance(segment.get('vram'), int):
             raise ForkError("automatic objdiff setup needs a numeric start and vram for each code segment")
         if any(key in segment for key in ('compressed', 'decompressor')) or (not independent and 'exclusive_ram_id' in segment):
@@ -272,6 +304,8 @@ def plan(root: Path, config: dict, *, independent: bool = False) -> list[dict]:
         for index, entry in enumerate(entries):
             if isinstance(entry, dict) and entry.get('type') in ('bss', '.bss'):
                 continue
+            if isinstance(entry, dict) and entry.get('type') not in ('c', 'asm', 'hasm', 'cpp', 'pad', 'textbin'):
+                continue  # (a project's own data segment type, from its splat extension: no code of its own to count)
             if not isinstance(entry, list) or len(entry) < 2:
                 raise ForkError("automatic objdiff setup does not support this splat subsegment layout yet")
             offset, kind = entry[:2]
@@ -280,7 +314,7 @@ def plan(root: Path, config: dict, *, independent: bool = False) -> list[dict]:
             if independent and kind == 'pad':
                 continue
             if kind not in ('c', 'asm', 'hasm', 'data', 'rodata', 'bss', '.data', '.rodata', '.bss', 'bin',
-                            'rdata', '.rdata', 'ctors', '.ctors', 'dtors', '.dtors'):  # (rdata: splat's other spelling of rodata; the
+                            'rdata', '.rdata', 'ctors', '.ctors', 'dtors', '.dtors', 'textbin', 'databin', 'rodatabin'):  # (rdata: splat's other spelling of rodata; the
                 # constructor and destructor tables are data no unit's functions are counted from)
                 raise ForkError(f"automatic objdiff setup does not support splat subsegment {kind!r} yet")
             if kind not in ('c', 'asm', 'hasm'):
@@ -290,15 +324,23 @@ def plan(root: Path, config: dict, *, independent: bool = False) -> list[dict]:
                 continue  # An explicitly empty code subsegment has no function denominator.
             name = str(entry[2]) if len(entry) > 2 else f'{offset:X}'
             name = (Path(str(segment.get('dir', ''))) / name).as_posix()
+            raw_name, outside_src = name, False
+            if '..' in Path(name).parts and '\\' not in name and ':' not in name and not Path(name).is_absolute():
+                # (`../lib/nusys/nuboot` under src: a library's source the project builds; named by its place in the
+                # checkout, which must still be inside it)
+                full = os.path.normpath((Path(source_root) / name).as_posix()).replace(os.sep, '/')
+                if full != '..' and not full.startswith('../') and not os.path.isabs(full):
+                    name, outside_src = full, True
             if Path(name).is_absolute() or '..' in Path(name).parts or '\\' in name or ':' in name:
                 raise ForkError("automatic objdiff setup needs relative unit names without parent paths")
             source = base = None
             if kind == 'c':
                 bare = str(entry[2]) if len(entry) > 2 else name
-                if (segment.get('dir') and bare != name and not (root / source_root / (name + '.c')).is_file()
+                if (not outside_src and segment.get('dir') and bare != name
+                        and not (root / source_root / (name + '.c')).is_file()
                         and (root / source_root / (bare + '.c')).is_file()):
                     name = bare  # (the names already carry their folder: src/code0/main under dir code0)
-                source = inside(root, str(Path(source_root) / (name + '.c')))
+                source = inside(root, name + '.c' if outside_src else str(Path(source_root) / (name + '.c')))
                 relative = source.relative_to(root)
                 candidates = [inside(root, str(Path(build_root) / relative.with_suffix('.o'))),
                               inside(root, str(Path(build_root) / (str(relative) + '.o')))]
@@ -315,11 +357,13 @@ def plan(root: Path, config: dict, *, independent: bool = False) -> list[dict]:
             unit = {'name': name, 'source': source, 'base': base, 'offset': offset,
                     'vram': segment['vram'] + offset - segment['start'],
                     'delta': segment['start'] - segment['vram']}
+            if outside_src:
+                unit['raw'] = raw_name
             mapped_sections = {}
             for sibling in entries:
                 if isinstance(sibling, dict) and sibling.get('type') in ('bss', '.bss'):
                     sibling_name = (Path(str(segment.get('dir', ''))) / str(sibling.get('name', ''))).as_posix()
-                    if sibling_name == name and isinstance(sibling.get('vram'), int):
+                    if sibling_name in (name, raw_name) and isinstance(sibling.get('vram'), int):
                         mapped_sections['.bss'] = sibling['vram']
                     continue
                 if not isinstance(sibling, list) or len(sibling) < 3 or not isinstance(sibling[0], int):
@@ -327,7 +371,7 @@ def plan(root: Path, config: dict, *, independent: bool = False) -> list[dict]:
                 section = str(sibling[1]).lstrip('.')
                 section = 'rodata' if section == 'rdata' else section
                 sibling_name = (Path(str(segment.get('dir', ''))) / str(sibling[2])).as_posix()
-                if section in ('data', 'rodata') and sibling_name == name:
+                if section in ('data', 'rodata') and sibling_name in (name, raw_name):
                     mapped_sections['.' + section] = segment['vram'] + sibling[0] - segment['start']
             if mapped_sections:
                 unit['sections'] = mapped_sections
@@ -369,10 +413,11 @@ def verify(elf_path: Path, image: bytes, unit: dict) -> None:
 def assemble(root: Path, work: Path, unit: dict, definitions: dict, image: bytes, assembler: str,
              linker: str, flags: tuple, log) -> Path:
     name = unit['name']
-    parts = [work / 'asm' / (name + '.s')]
+    raw = unit.get('raw', name)  # (a name with `..` is where splat wrote it: asm/../lib/x.s is lib/x.s)
+    parts = [Path(os.path.normpath(work / 'asm' / (raw + '.s')))]
     sections = {'.text': unit['vram']}
     for section in ('data', 'rodata', 'bss'):
-        path = work / 'asm/data' / (name + '.' + section + '.s')
+        path = Path(os.path.normpath(work / 'asm/data' / (raw + '.' + section + '.s')))
         if path.exists():
             match = ADDRESS_COMMENT.search(path.read_text(encoding='utf-8'))
             configured = unit.get('sections', {}).get('.' + section)
@@ -512,7 +557,8 @@ def generate(project, config_path: Path, config: dict, console, log=print) -> bo
                 raise
             units = plan(root, config, independent=True)
     configured_elf = inside(root, options.get('elf_path', 'build/project.elf'))
-    candidates = [configured_elf] if configured_elf.is_file() else list(inside(root, 'build').rglob('*.elf'))
+    candidates = ([configured_elf] if configured_elf.is_file()
+                  else list(inside(root, 'build').rglob('*.elf')) or sorted(root.glob('*.elf')))  # (a link in the root)
     # Prefer a complete matching image; original disassembly addresses override an incomplete build below.
     matching = [elf for elf in candidates if any(p.is_file() and digest(p) == sha1.lower()
                                                   for p in (elf.with_suffix('.z64'), elf.with_suffix('.bin'),
@@ -583,7 +629,9 @@ def generate(project, config_path: Path, config: dict, console, log=print) -> bo
         private_config = work / 'config.yaml'
         private_config.write_text(yaml.safe_dump(split, sort_keys=False), encoding='utf-8')
         log('Generating ROM-derived objdiff reference assembly…')
-        run([console_python(sys.executable), '-m', 'splat', 'split', str(private_config)], root, log)
+        # (the project's own environment first: its splat extensions are written for the splat it pins)
+        run([console_python(str(project._project_python() or sys.executable)), '-m', 'splat', 'split', str(private_config)],
+            root, log)
         linked_definitions = dict(definitions)
         definitions.update(reference_symbols(work))
         entries = []

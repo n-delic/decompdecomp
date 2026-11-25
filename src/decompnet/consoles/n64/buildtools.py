@@ -177,7 +177,19 @@ def _provide_compiler_dirs(project) -> None:
             continue
         if target.exists() or target.is_symlink():
             continue
-        if source.is_dir():
+        if source.is_dir() and tid == "gcc-2.7.2-kmc" and "mabi32" in texts and sys.platform == "darwin":
+            # the project's compiler is told `-mabi32`, which the installed assembler doesn't know (it assembles
+            # o32 already): a folder of its own, with links to every installed program and an `as` that drops it
+            target.mkdir(parents=True, exist_ok=True)
+            for item in source.iterdir():
+                if item.name != "as" and not (target / item.name).exists():
+                    (target / item.name).symlink_to(item)
+            mine = source / "as"
+            if mine.is_file():
+                (target / "as").write_text('#!/bin/sh\nfor a; do shift; [ "$a" = -mabi32 ] || set -- "$@" "$a"; done\n'
+                                           f'exec "{mine}" "$@"\n', encoding="utf-8")
+                (target / "as").chmod(0o755)
+        elif source.is_dir():
             target.parent.mkdir(parents=True, exist_ok=True)
             target.symlink_to(source, target_is_directory=True)
 
