@@ -1099,3 +1099,62 @@ def test_a_project_folder_that_links_to_an_installed_toolchain_is_never_written_
     buildtools._wrap_foreign_ido(SimpleNamespace(root=root))
     assert (installed / "as").read_bytes() == macho and not (installed / "as.old").exists()
     assert (installed / "gcc").read_bytes() == elf and not (installed / "gcc.linux").exists()
+
+
+def test_a_compiler_folder_for_a_project_that_passes_mabi32_has_an_assembler_that_drops_it(tmp_path, monkeypatch):
+    import subprocess
+
+    from decompnet.consoles.n64 import buildtools
+
+    installed = tmp_path / "kmc"
+    installed.mkdir()
+    for name in ("gcc", "cc1"):
+        (installed / name).write_text("installed " + name)
+    (installed / "as").write_text('#!/bin/sh\necho "$@"\n')
+    (installed / "as").chmod(0o755)
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(buildtools.toolchains, "require", lambda tid: installed)
+    monkeypatch.setattr(buildtools.sys, "platform", "darwin")
+    root = tmp_path / "project"
+    (root / "tools").mkdir(parents=True)
+    (root / "Makefile.common").write_text("TOOLS_DIR := tools\nKMC_PATH := $(TOOLS_DIR)/gcc-2.7.2/\nAFLAGS := -mabi32\n")
+    buildtools._provide_compiler_dirs(SimpleNamespace(root=root))
+    folder = root / "tools/gcc-2.7.2"
+    assert not folder.is_symlink() and (folder / "cc1").resolve() == (installed / "cc1").resolve()
+    said = subprocess.run([str(folder / "as"), "-mabi32", "-G0"], capture_output=True, text=True).stdout
+    assert said.split() == ["-G0"] and (installed / "as").read_text().startswith("#!/bin/sh\necho")
+
+
+def test_a_host_program_the_setup_script_compiles_is_built_before_the_makefile_runs_it(tmp_path, monkeypatch):
+    root = tmp_path / "project"
+    (root / "tools/build").mkdir(parents=True)
+    for name in ("mkldscript.c", "util.c"):
+        (root / "tools/build" / name).write_text("int x;\n")
+    (root / "tools/setup.sh").write_text(
+        "sudo apt install -y build-essential\ngcc -o tools/build/mkldscript tools/build/mkldscript.c tools/build/util.c\n"
+        "chmod +x tools/build/mkldscript\n")
+    fp = ForkProject(root)
+    monkeypatch.setattr(fp, "kind", lambda: "splat")
+    calls = []
+    monkeypatch.setattr(fp, "run", lambda cmd, log=print, timeout=0, **kw: (calls.append(cmd) or True, ""))
+    monkeypatch.setattr("decompnet.forks.project.shutil.which", lambda name: "/usr/bin/cc")
+    fp.build_setup_script_host_tools(log=lambda *a: None)
+    assert calls == [["/usr/bin/cc", "-o", "tools/build/mkldscript", "tools/build/mkldscript.c", "tools/build/util.c"]]
+
+
+def test_the_splat_config_of_the_edition_whose_rom_is_in_the_project_is_the_one_used(tmp_path):
+    import hashlib
+
+    root = tmp_path / "project"
+    rom = b"US ROM" * 100
+    (root / "config/jp").mkdir(parents=True)
+    (root / "config/us").mkdir(parents=True)
+    (root / "baserom.us.z64").write_bytes(rom)
+    for edition, data in (("jp", b"other"), ("us", rom)):
+        (root / f"config/{edition}/splat.{edition}.yaml").write_text(
+            f"sha1: {hashlib.sha1(data).hexdigest()}\noptions:\n  target_path: baserom.{edition}.z64\n  base_path: ../..\n"
+            "segments: []\n")
+    project = ForkProject(root)
+    assert project._splat_yaml_of_placed_rom() == root / "config/us/splat.us.yaml"
+    (root / "baserom.us.z64").write_bytes(b"something else")
+    assert ForkProject(root)._splat_yaml_of_placed_rom() is None

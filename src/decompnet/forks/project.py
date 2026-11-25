@@ -463,6 +463,27 @@ class ForkProject:
                 return p
         return None
 
+    def _splat_yaml_of_placed_rom(self) -> Path | None:
+        """Of several splat configs (one per edition: config/jp, config/us), the one whose original ROM is the file
+        in the project: its target_path exists and has the config's SHA-1. None when no edition says so."""
+        import yaml
+
+        from .splatrefs import config_sha1
+
+        for path in [*sorted(self.root.glob("*.yaml")), *sorted(self.root.glob("config/*.yaml")),
+                     *sorted(self.root.glob("config/**/*.yaml")), *sorted(self.root.glob("versions/*/*.yaml"))]:
+            try:
+                config = yaml.safe_load(path.read_text(encoding="utf-8"))
+                options = config["options"]
+                digest = config_sha1(path, config)
+                target = self._inside(str(path.parent / options.get("base_path", ".") / options["target_path"]))
+            except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError):
+                continue
+            if target and isinstance(digest, str) and (self.root / target).is_file() and \
+                    _file_sha1(self.root / target) == digest.lower():
+                return path
+        return None
+
     def _splat_version_configs(self) -> dict[str, Path]:
         """Only infer editions from the YAML template the project's Makefile actually uses."""
         makefile = self.root / "Makefile"
@@ -1498,6 +1519,30 @@ class ForkProject:
                 shutil.rmtree(self.root / where, ignore_errors=True)
                 log(f"could not fetch {url}: {tail[-300:]}")
 
+    def build_setup_script_host_tools(self, log=print) -> None:
+        """A tools/setup.sh that compiles a small host program its Makefile then runs
+        (`gcc -o tools/build/mkldscript tools/build/mkldscript.c tools/build/spec.c ...`): that one command, with the
+        host's C compiler, when the program isn't built yet. Only a plain `gcc|cc -o <out> <sources>.c` line of the
+        script is read, never run as a script."""
+        cc = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
+        if self.kind() == "manifest" or not cc:
+            return
+        for name in ("tools/setup.sh", "setup.sh"):
+            try:
+                script = (self.root / name).read_text(errors="replace", encoding="utf-8")
+            except OSError:
+                continue
+            for out, sources in re.findall(r"^\s*(?:gcc|cc)\s+-o\s+([\w./-]+)\s+((?:[\w./-]+\.c\s*)+)$", script, re.M):
+                target, inputs = self._inside(out), [self._inside(src) for src in sources.split()]
+                if not target or None in inputs or (self.root / target).exists():
+                    continue
+                if not all((self.root / src).is_file() for src in inputs):
+                    continue
+                log(f"building {target} with the host's C compiler, as the project's setup script does")
+                ok, tail = self.run([cc, "-o", target, *inputs], log=log, timeout=600)
+                if not ok:
+                    log(f"could not build {target}: {tail[-300:]}")
+
     def fetch_pinned_tool_repos(self, log=print) -> None:
         """A project whose own tools/setup.sh clones a public repository under tools/ (an SDK's sources pinned to a
         commit) that its Makefile then reads: clone that one, at that commit, when the folder is missing. Only
@@ -1634,6 +1679,7 @@ class ForkProject:
         self.unpack_disc(version, log=log)
         self.ensure_python_env(log=log)
         self.fetch_pinned_tool_repos(log=log)
+        self.build_setup_script_host_tools(log=log)
         self._drop_stale_splat_cache()
         for cmd in self.setup_commands(version):
             seen: list[str] = []
@@ -1747,9 +1793,12 @@ class ForkProject:
         if (self.root / "objdiff.json").exists():
             return False
         path = self._splat_yaml()
+        if not version and path is not None:
+            path = self._splat_yaml_of_placed_rom() or path
         if version:
             path = self._splat_version_configs().get(version) or next(
-                (p for p in [*self.root.glob("*.yaml"), *self.root.glob(f"versions/{version}/*.yaml")]
+                (p for p in [*self.root.glob("*.yaml"), *self.root.glob(f"versions/{version}/*.yaml"),
+                         *self.root.glob(f"config/{version}/*.yaml")]
                  if p.name.endswith(f".{version}.yaml") or p.parent.name == version), path)
         if path is None:
             if (getattr(self, "platform", None) or self.detect_platform()) == "n64":
