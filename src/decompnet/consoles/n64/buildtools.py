@@ -111,15 +111,22 @@ def _wrap_foreign_ido(project) -> None:
                 magic = f.read(4)
         except OSError:
             continue
-        if magic in (b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xfe\xed\xfa\xcf"):
+        macho = (b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xfe\xed\xfa\xcf", b"\xce\xfa\xed\xfe")
+        if magic in macho:
             # a project's own Mac IDO whose files lost their execute bit (a zip, or Windows, on the way to git)
             for program in driver.parent.iterdir():
                 if program.is_file() and not program.is_symlink() and not program.stat().st_mode & 0o111:
                     with open(program, "rb") as f:
-                        if f.read(4) == magic:
+                        if f.read(4) in macho:
                             program.chmod(0o755)
-            continue
-        if magic != b"\x7fELF":
+            try:  # a fat binary whose slices are damaged ("malformed Mach-o file") is no more use than a Linux one
+                runs = subprocess.run([str(driver)], capture_output=True, timeout=20, stdin=subprocess.DEVNULL
+                                      ).returncode != 127
+            except (OSError, subprocess.SubprocessError):
+                runs = False
+            if runs:
+                continue
+        if magic != b"\x7fELF" and magic not in macho:
             continue
         version = re.search(r"(?<!\d)(5)[._](3)(?!\d)|(?<!\d)(7)[._](1)(?!\d)", str(driver.relative_to(tools_root)))
         if version:
@@ -186,7 +193,7 @@ def command(project, argv: list[str]) -> list[str]:
         argv = [*argv, "CC_HOST=true"]  # the same host pass under another name  # the project's own switch for its host-gcc pass (clang answers gcc here)
     if (sys.platform == "darwin" and Path(argv[0]).name in ("make", "gmake") and makefile.is_file()
             and not any(a.startswith("CC_CHECK=") for a in argv[1:])
-            and re.search(r"^CC_CHECK\s*[:?]?=\s*gcc\b[^\n]*-fsyntax-only",
+            and re.search(r"^[ \t]*CC_CHECK\s*[:+?]*=\s*(?:gcc|cc|clang)\b(?:[^\n]*-fsyntax-only|[ \t]*$)",
                           makefile.read_text(encoding="utf-8", errors="replace"), re.M)):
         # a host-gcc syntax pass before each compile: clang answers `gcc` here and rejects its -m32 headers; the
         # real compile (IDO) is what builds the game
