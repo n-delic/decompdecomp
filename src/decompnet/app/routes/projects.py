@@ -523,7 +523,14 @@ def register(app: App) -> None:
         follow again after navigating away) or running (its address)."""
         from ...port.readiness import readiness
         from ...port.wasm import play
-        report = readiness(net, slug)
+        from .. import view_cache
+        proj = net.project_row(slug)
+        # The tab asks for its last saved report first so it opens at once, then for a fresh one (#cache).
+        if request.query_params.get("cached"):
+            report = view_cache.load(net, proj, "port-readiness") or {"cache_miss": True}
+        else:
+            report = readiness(net, slug)
+            view_cache.save(net, proj, "port-readiness", report)
         report["play"] = {"job": jobs.active(("play",), project=slug), "url": play.running(slug),
                           "export_job": jobs.active(("play-export",), project=slug),
                           "behaviour_job": jobs.active(("behaviour-check",), project=slug),
@@ -541,7 +548,12 @@ def register(app: App) -> None:
             q = request.query_params
             if q.get('view') == 'status':return rom_explorer.status(net,slug,jobs)
             if q.get('region'):return rom_explorer.detail(net,slug,q['region'],q.get('image_hash',''))
-            return rom_explorer.listing(net,slug)
+            from .. import view_cache
+            proj=net.project_row(slug)
+            if q.get('cached'):return view_cache.load(net,proj,'rom-explorer') or {'cache_miss':True}
+            result=rom_explorer.listing(net,slug)
+            view_cache.save(net,proj,'rom-explorer',result)
+            return result
         # Reserve discovery and start atomically: double clicks and two windows
         # must attach to the same project job rather than launch duplicate scans.
         with jobs._lock:
