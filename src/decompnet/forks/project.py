@@ -968,14 +968,14 @@ class ForkProject:
             # no splat config at the root, but a Makefile with the usual targets (setup, extract, then the build)
             text = (self.root / "Makefile").read_text(errors="replace", encoding="utf-8")
             chosen = [f"VERSION={version}"] if version and re.search(r"^VERSION\s*[:?]?=", text, re.M) else []
-            steps = [["make", *chosen, t] for t in ("setup", "extract") if re.search(rf"^{t}\s*:", text, re.M)]
+            steps = [["make", *chosen, t] for t in ("tools", "setup", "extract") if re.search(rf"^{t}\s*:", text, re.M)]
             if not steps and re.search(r"^split\s*:", text, re.M):  # (splat's output: *_auto.txt the link reads)
                 steps = [["make", *chosen, "split"]]
             return steps + [["make", *chosen, f"-j{os.cpu_count() or 4}"]]
         if kind == "splat":
             make = (self.root / "Makefile").read_text(errors="replace", encoding="utf-8")
             chosen = [f"VERSION={version}"] if version and self.splat_baseroms() else []
-            steps = [["make", *chosen, t] for t in ("setup", "extract") if re.search(rf"^{t}\s*:", make, re.M)]
+            steps = [["make", *chosen, t] for t in ("tools", "setup", "extract") if re.search(rf"^{t}\s*:", make, re.M)]
             jobs = min(os.cpu_count() or 4, 4) if self._docker_only_macos() else os.cpu_count() or 4
             return steps + [["make", *chosen, f"-j{jobs}"]]
         if kind == "objdiff":

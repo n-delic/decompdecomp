@@ -248,3 +248,25 @@ def test_a_decompressed_splat_target_means_the_cartridge_rom_is_named_elsewhere(
     (root / "splat.yaml").write_text("options:\n  platform: n64\n  target_path: decompressed.us.z64\nsegments: []\n")
     need = ForkProject(root).needs(None)
     assert need["path"] == "baserom.us.z64" and need["sha1"] is None
+
+
+def test_n64_links_an_os_named_ido_folder_and_wraps_a_missing_host_tool(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools
+
+    ido = tmp_path / "ido"
+    ido.mkdir()
+    (ido / "cc").write_text("compiler")
+    hosts = tmp_path / "bin"
+    hosts.mkdir()
+    (hosts / "armips").write_text("#!/bin/sh\n")
+    (hosts / "armips").chmod(0o755)
+    monkeypatch.setenv("PATH", str(hosts))
+    monkeypatch.setattr(buildtools.sys, "platform", "darwin")
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(buildtools.toolchains, "require", lambda tid: ido)
+    root = tmp_path / "project"
+    (root / "tools").mkdir(parents=True)
+    (root / "Makefile").write_text("CC := tools/ido_recomp/$(DETECTED_OS)/5.3/cc\nASM := tools/armips -sym x\n")
+    consoles.get("n64").project_build_command(SimpleNamespace(root=root), ["make"])
+    assert (root / "tools/ido_recomp/macos/5.3").resolve() == ido
+    assert str(hosts / "armips") in (root / "tools/armips").read_text()
