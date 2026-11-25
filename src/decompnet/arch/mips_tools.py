@@ -45,6 +45,42 @@ if (to or "").upper().replace("-", "").replace("_", "") in ("EUCJP", "UJIS") and
     sys.exit(0)
 os.execv("{iconv}", ["iconv", *sys.argv[1:]])
 '''
+# macOS's head and tail lack GNU's long spellings (--bytes=+11) and head's "all but the last N" (head -c -8), which a
+# project's compress script uses to cut gzip's header and trailer. The shim reads those spellings itself and leaves
+# every other call to the system's program.
+_HEAD_TAIL_SHIM = '''#!{python}
+import os, sys
+real, name, args = "{real}", "{name}", sys.argv[1:]
+out, files, i = [], [], 0
+count = None  # (flag, value) of the byte or line count
+while i < len(args):
+    a = args[i]
+    if a.startswith(("--bytes=", "--lines=")):
+        count = ("-c" if a.startswith("--bytes") else "-n", a.split("=", 1)[1])
+    elif a in ("--bytes", "--lines") and i + 1 < len(args):
+        count = ("-c" if a == "--bytes" else "-n", args[i + 1]); i += 1
+    elif a in ("-c", "-n") and i + 1 < len(args):
+        count = (a, args[i + 1]); i += 1
+    elif a in ("-q", "--quiet", "--silent"):
+        out.append("-q")
+    elif a.startswith("-") and len(a) > 1 and not a[1:].isdigit():
+        out.append(a)
+    elif a.startswith("-") and len(a) > 1:
+        count = ("-n", a[1:])
+    else:
+        files.append(a)
+    i += 1
+if count and count[1].startswith("-") and name == "head":
+    data = b"".join(open(f, "rb").read() for f in files) if files else sys.stdin.buffer.read()
+    drop = int(count[1][1:])
+    if count[0] == "-c":
+        sys.stdout.buffer.write(data[:max(len(data) - drop, 0)])
+    else:
+        lines = data.splitlines(True)
+        sys.stdout.buffer.write(b"".join(lines[:max(len(lines) - drop, 0)]))
+    sys.exit(0)
+os.execv(real, [name, *out, *(count or ()), *files])
+'''
 _ASSEMBLER_DRIVER = '''#!{python}
 import os, subprocess, sys, tempfile
 args, out, sources, cpp, asm = sys.argv[1:], None, [], [], []
@@ -254,4 +290,18 @@ def build_paths(project) -> list[Path]:
             if not tool.exists():
                 tool.write_text(_ICONV_SHIM.format(python=sys.executable, iconv=iconv), encoding="utf-8")
                 tool.chmod(0o755)
+        # GNU sed where Homebrew has it (`brew install gnu-sed`): a project's own sed scripts use its labels, \x27 escapes
+        # and `-i` without a suffix, none of which macOS's sed reads
+        if sys.platform == "darwin" and (gsed := shutil.which("gsed")):
+            tool = folder / "sed"
+            if not tool.exists():
+                tool.write_text(f'#!/bin/sh\nexec "{gsed}" "$@"\n', encoding="utf-8")
+                tool.chmod(0o755)
+        if sys.platform == "darwin":
+            for name in ("head", "tail"):
+                real = shutil.which(name)
+                tool = folder / name
+                if real and Path(real).parent != folder and not tool.exists():
+                    tool.write_text(_HEAD_TAIL_SHIM.format(python=sys.executable, real=real, name=name), encoding="utf-8")
+                    tool.chmod(0o755)
     return [folder, source]

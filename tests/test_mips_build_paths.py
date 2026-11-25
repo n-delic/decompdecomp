@@ -612,3 +612,43 @@ def test_a_build_that_races_with_its_clean_step_is_run_once_more_serially(tmp_pa
     monkeypatch.setattr(ForkProject, "_all_source", lambda self: False)
     project.setup(None, log=lambda *_: None)
     assert calls == [["make", "-j8"], ["make", "-j1"]]
+
+
+def test_a_mac_head_tail_shim_reads_gnus_long_spellings_and_negative_counts(tmp_path, monkeypatch):
+    import subprocess
+
+    tools = tmp_path / "pinned"
+    tools.mkdir()
+    (tools / "mips-ps2-decompals-ld").write_text("#!/bin/sh\n")
+    monkeypatch.setattr(mips_tools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(mips_tools.toolchains, "require", lambda tid: tools)
+    monkeypatch.setattr(mips_tools.sys, "platform", "darwin")
+    monkeypatch.setattr(mips_tools.shutil, "which", lambda name: f"/usr/bin/{name}" if name in ("head", "tail") else None)
+    folder = mips_tools.build_paths(SimpleNamespace(root=tmp_path / "project"))[0]
+    cut = subprocess.run(f'printf "0123456789ABCDEFGHIJ" | "{folder}/tail" --bytes=+11 | "{folder}/head" --bytes=-8',
+                         shell=True, capture_output=True)
+    assert cut.stdout == b"AB"
+    lines = subprocess.run(f'printf "a\\nb\\nc\\n" | "{folder}/head" -n -1', shell=True, capture_output=True)
+    assert lines.stdout == b"a\nb\n"
+    first = subprocess.run(f'printf "a\\nb\\nc\\n" | "{folder}/head" -2', shell=True, capture_output=True)
+    assert first.stdout == b"a\nb\n"
+
+
+def test_a_prerequisites_target_that_builds_tools_and_assets_runs_before_the_build():
+    from decompnet.forks import project as forks_project
+
+    make = "prerequisites: print_info create_directories build_tools extractassets\n\nall: x\n"
+    assert forks_project._setup_targets(make) == ["prerequisites"]
+    assert forks_project._setup_targets("prerequisites:\n\ttrue\n") == []
+
+
+def test_a_mac_sed_shim_runs_gnu_sed_when_homebrew_has_it(tmp_path, monkeypatch):
+    tools = tmp_path / "pinned"
+    tools.mkdir()
+    (tools / "mips-ps2-decompals-ld").write_text("#!/bin/sh\n")
+    monkeypatch.setattr(mips_tools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(mips_tools.toolchains, "require", lambda tid: tools)
+    monkeypatch.setattr(mips_tools.sys, "platform", "darwin")
+    monkeypatch.setattr(mips_tools.shutil, "which", lambda name: "/opt/homebrew/bin/gsed" if name == "gsed" else None)
+    folder = mips_tools.build_paths(SimpleNamespace(root=tmp_path / "project"))[0]
+    assert '/opt/homebrew/bin/gsed" "$@"' in (folder / "sed").read_text()
