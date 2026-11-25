@@ -756,3 +756,26 @@ def test_a_clang_cpp_that_a_recipe_pipes_into_is_replaced_by_the_build_paths_cpp
     assert consoles.get("n64").project_build_command(SimpleNamespace(root=root), ["make"])[-1] == "CPP=cpp"
     (root / "Makefile").write_text("CPP := clang -E -P -x c\nx:\n\t$(CPP) -o $@ $<\n")  # (a file argument: fine)
     assert consoles.get("n64").project_build_command(SimpleNamespace(root=root), ["make"]) == ["make"]
+
+
+def test_gcc_kmc_and_egcs_folders_named_by_detected_os_are_linked_on_a_mac(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools
+
+    kmc, egcs = tmp_path / "kmc", tmp_path / "egcs"
+    kmc.mkdir()
+    egcs.mkdir()
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(buildtools.toolchains, "require", lambda tid: kmc if tid == "gcc-2.7.2-kmc" else egcs)
+    monkeypatch.setattr(buildtools.sys, "platform", "darwin")
+    root = tmp_path / "project"
+    (root / "lib").mkdir(parents=True)
+    (root / "tools").mkdir()
+    (root / "Makefile").write_text("ifeq ($(UNAME_S),Darwin)\n    DETECTED_OS := mac\nendif\n"
+                                   "COMPILER_DIR := tools/gcc_kmc/$(DETECTED_OS)/2.7.2\n"
+                                   "COMPILER_DIR := tools/gcc_egcs/$(DETECTED_OS)/1.1.2-4\n")
+    (root / "lib/Makefile").write_text("ifeq ($(UNAME_S),Darwin)\n\tDETECTED_OS := macos\nendif\n"
+                                       "COMPILER_DIR := ../tools/gcc_kmc/$(DETECTED_OS)/2.7.2\n")
+    buildtools._provide_compiler_dirs(SimpleNamespace(root=root))
+    assert (root / "tools/gcc_kmc/mac/2.7.2").resolve() == kmc.resolve()
+    assert (root / "tools/gcc_egcs/mac/1.1.2-4").resolve() == egcs.resolve()
+    assert (root / "tools/gcc_kmc/macos/2.7.2").resolve() == kmc.resolve()
