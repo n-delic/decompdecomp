@@ -528,7 +528,7 @@ def declare_unset_reads(source: str, name: str) -> str:
     body = source[head.end():]
     missing = []
     for found in dict.fromkeys(_UNSET_READ.findall(body)):
-        declared = re.compile(rf"^[ \t]*(?:\w+[ \t]+)+\**{re.escape(found)}\b[^(=\n]*[;=,\[]", re.M)
+        declared = re.compile(rf"^[ \t]*(?:\w+[ \t]+)+(?:\(\s*\*+|\**){re.escape(found)}\b[^(=\n]*[;=,\[)]", re.M)
         if not any(m[0].split()[0] not in _NOT_A_TYPE for m in declared.finditer(body)):
             missing.append(found)
     if not missing:
@@ -648,6 +648,7 @@ def _run_m2c(asm_text: str, name: str, target: str, context_header: str = "", da
         raise ValueError('Unsupported machine-draft option.')
     if not available():
         return None
+    original = asm_text
     if target.startswith('mips-'):
         from .arch.mips import abi_register_names
         from .rom.split import draft_asm
@@ -693,4 +694,8 @@ def _run_m2c(asm_text: str, name: str, target: str, context_header: str = "", da
             if strict:
                 raise DraftError(reason or (_failure(res) if out or res.stderr or res.returncode else 'm2c produced no C for this function.'))
             return None
+        if valid and "--no-switches" not in options and "/* irregular */" in out:
+            # a switch m2c could not structure leaves `case` labels outside any `switch`; as gotos it compiles
+            return _run_m2c(original, name, target, context_header, data_asm, timeout, valid, strict,
+                            (*options, "--no-switches"))
         return m2c_types.repair(declare_unset_reads(drop_saved_register_reads(out), name)) if valid else out
