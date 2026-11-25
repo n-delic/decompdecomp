@@ -244,7 +244,7 @@ class PlayStationPortable(Console):
         note says is only a first guess (CodeWarrior's builds all write the same note)."""
         set_stubs_aside(net, slug, log=log)
         if not chosen:
-            net.test_compilers(slug, [c.id for c in self.compilers], log=log)
+            net.test_compilers(slug, [c.id for c in self.enabled_compilers()], log=log)
             set_module_small_data(net, slug, log=log)
 
     def export_asm(self, text: str) -> str:

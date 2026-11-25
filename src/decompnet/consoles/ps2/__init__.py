@@ -164,7 +164,7 @@ class PlayStation2(Console):
                 net.set_compiler_ranges(slug, spans, by_guess[guess].id)
                 log(f"{len(spans)} stretches of object files are {by_guess[guess].name}'s, by the "
                     f"program's symbols: they build with it")
-            net.test_compilers(slug, [c.id for c in self.compilers], log=log)
+            net.test_compilers(slug, [c.id for c in self.enabled_compilers()], log=log)
         net._update_cfg(slug, lambda c: c.__setitem__("object_reading", OBJECT_READING))
         name_kernel_calls(net, slug, log=log)
 

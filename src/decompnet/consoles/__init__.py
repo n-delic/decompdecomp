@@ -629,7 +629,7 @@ class Console:
     def project_compilers(self, fp, cfg: dict | None = None) -> list[Compiler]:
         """Compilers able to build this project's target (and, with its settings, not newer than the game)."""
         target = self.target(fp)
-        return [compiler for compiler in (self.compilers_for(cfg) if cfg is not None else self.compilers)
+        return [compiler for compiler in (self.compilers_for(cfg) if cfg is not None else self.enabled_compilers())
                 if not target or not compiler.target or compiler.target == target]
 
     def compilers_for(self, cfg: dict) -> tuple[Compiler, ...]:
@@ -637,7 +637,12 @@ class Console:
         (`released`, set in the project's Settings). A game built in 1998 was not built with a 2009 compiler, and a
         6-instruction function that matches both says nothing about which one."""
         year = released_year(cfg)
-        return tuple(c for c in self.compilers if not year or not c.released or c.released <= year)
+        return tuple(c for c in self.compilers if (not year or not c.released or c.released <= year)
+                     and not toolchains.is_disabled(c.id))
+
+    def enabled_compilers(self) -> tuple[Compiler, ...]:
+        """`compilers` without the ones the user disabled in Compilers & tools."""
+        return tuple(c for c in self.compilers if not toolchains.is_disabled(c.id))
 
     def file_compiler(self, fp, source: str) -> str | None:
         """The compiler (one of `compilers`) the project builds a source file with, when its build lets each file have

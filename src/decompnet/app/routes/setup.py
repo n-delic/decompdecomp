@@ -105,6 +105,18 @@ def register(app: App) -> None:
             return fail(e)
         return JSONResponse({"ok": True})
 
+    @mcp.custom_route("/api/toolchain/disable", methods=["POST"])
+    async def api_toolchain_disable(request: Request) -> Response:
+        """Switch a compiler off (or on again): checks, drafts and agents skip a disabled one."""
+        if (bad := guard(request, write=True)):
+            return bad
+        data = await body(request)
+        try:
+            await app.control(lambda: toolchains.set_disabled(str(data.get("id", "")), bool(data.get("disabled"))))
+        except (toolchains.ToolchainError, KeyError) as e:
+            return fail(e)
+        return JSONResponse({"ok": True})
+
     @mcp.custom_route("/api/toolchain/all", methods=["POST"])
     async def api_toolchain_all(request: Request) -> Response:
         """Every compiler of a project's console, then its compiler test again (Engine.install_compilers)."""
