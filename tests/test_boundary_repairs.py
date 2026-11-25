@@ -91,12 +91,34 @@ def test_restore_gives_back_references_older_decisions_dropped_and_undo_still_wo
     tail=net._function('tail','game')
     with net.store.tx() as db:db.execute('UPDATE functions SET relocs=? WHERE id=?',(json.dumps([[0,5,0x80008260]]),tail['id']))
     with monkeypatch.context() as m:
+        m.setattr(repair,'_ANNOTATION',{})
         m.setattr(repair,'_carried',lambda found,vram,code,relocs:relocs)  # as decisions were saved before
         result=decide(net,'head','delay_slot')
     assert not any(r[1]==5 for r in json.loads(net._function('head','game')['relocs']))
     assert repair.restore_relocs(net,net.project_row('game'))==1
     assert [4,5,0x80008260] in json.loads(net._function('head','game')['relocs'])
     assert repair.restore_relocs(net,net.project_row('game'))==0  # idempotent
+    repair.undo(net,'game',result['key'])
+    assert net._function('head','game')['size']==4
+
+
+def test_rebuilt_lines_carry_the_split_annotations(tmp_path,monkeypatch):
+    """The stored assembly says `%hi`/`%lo` again, so the float-literal families (which read `lwc1 %lo(S)($at)`) fire."""
+    net,_=layout(tmp_path,monkeypatch,[('head',[0x3C018001],'open'),('tail',[0xC4348274,0x03E00008,0],'open')])
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET relocs=? WHERE name='head'",(json.dumps([[0,5,0x80008274]]),))
+        db.execute("UPDATE functions SET relocs=? WHERE name='tail'",(json.dumps([[0,6,0x80008274]]),))
+    with monkeypatch.context() as m:
+        m.setattr(repair,'_ANNOTATION',{})
+        m.setattr(repair,'_carried',lambda found,vram,code,relocs:relocs)  # a decision saved before the fix
+        result=decide(net,'tail','join_previous')
+    head=net._function('head','game')
+    assert '%hi' not in head['asm'] and not [r for r in json.loads(head['relocs']) if r[1]!=4]
+    assert repair.restore_relocs(net,net.project_row('game'))==1
+    head=net._function('head','game')
+    assert '%hi(D_80008274)' in head['asm'] and '%lo(D_80008274)($at)' in head['asm']
+    assert [0,5,0x80008274] in json.loads(head['relocs']) and [4,6,0x80008274] in json.loads(head['relocs'])
+    assert repair.restore_relocs(net,net.project_row('game'))==0
     repair.undo(net,'game',result['key'])
     assert net._function('head','game')['size']==4
 

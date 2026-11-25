@@ -2,6 +2,7 @@
 import base64
 import hashlib
 import json
+import re
 import struct
 import time
 from contextlib import nullcontext
@@ -266,15 +267,40 @@ def _data_relocs(pieces):
     return found
 
 
-def _carried(found, vram, code, relocs):
-    """`relocs` (offset, type, address) with the data relocations of `found` inside [vram, vram + len(code)) added,
-    where the word there is still the one they were recorded on.
+_ANNOTATION = {5: 'hi', 6: 'lo', 7: 'gp_rel'}  # R_MIPS_HI16, LO16, GPREL16: written into the line as the split wrote them
+_IMMEDIATE = re.compile(r'-?(?:0x[0-9A-Fa-f]+|\d+)(?=\s*(?:\(\$\w+\))?\s*$)')
 
-    A decision rebuilds the changed extent from the raw words, and those carry only jumps: every data reference of
-    the split's annotated assembly was lost with it (all 35 boundary-adjusted functions of an N64 game, the ones that
-    still had to match among them). The linker places a candidate's own data (string and float literals in its
+
+def _lines(raw, vram, rom, big_endian, found, symbols):
+    """The words of an extent as assembly lines, each data reference `found` recorded on the same word written back as
+    the split's annotation (`%hi(D_80008274)`, `%lo(...)`), so the target, its relocations and the stored assembly
+    say what the import said.
+
+    A decision rebuilds the changed extent from the raw words, and rabbitizer's lines carry only jumps: every data
+    reference of the split's annotated assembly was lost with it (23 of 35 boundary-adjusted functions of an N64 game,
+    the ones still open there among them). The linker places a candidate's own data (string and float literals in its
     `.rdata`) only where the target refers to it, so a float literal the target loads with `lui $at; lwc1` could never
-    link, and every `lui`/`addiu` of a named string was a differing row though its bytes matched."""
+    link; every `lui`/`addiu` of a named string was a differing row though its bytes matched; and the float-literal
+    families never fired, since they read the constants from the assembly's `%lo(...)($at)` loads."""
+    order = 'big' if big_endian else 'little'
+    lines = []
+    for i in range(0, len(raw) - 3, 4):
+        word = int.from_bytes(raw[i:i + 4], order)
+        ins = rabbitizer.Instruction(word, vram + i)
+        operands = ins.disassemble().split(None, 1)[-1]
+        hit = found.get(vram + i)
+        if hit and hit[0] in _ANNOTATION and hit[2] == raw[i:i + 4]:
+            name, off = symbols.name_at(hit[1])
+            text = f"%{_ANNOTATION[hit[0]]}({name}{f' + 0x{off:X}' if off else ''})"
+            annotated, n = _IMMEDIATE.subn(text, operands, count=1)
+            operands = annotated if n else operands
+        lines.append(split.AsmLine(rom + i, vram + i, word, ins.getOpcodeName(), operands))
+    return lines
+
+
+def _carried(found, vram, code, relocs):
+    """`relocs` (offset, type, address) with what `_lines` could not write into a line (another relocation type) added
+    from `found`, where the word there is still the one it was recorded on."""
     have = {off for off, _, _ in relocs}
     out = list(relocs)
     for at, (rtype, addr, word) in found.items():
@@ -285,10 +311,21 @@ def _carried(found, vram, code, relocs):
     return sorted(out)
 
 
+def _rebuilt(net, proj, name, vram, rom, unit, raw, found):
+    """(target, assembly text, line count) of an extent rebuilt from its words with the data references `found`."""
+    symbols = net.symbols(proj['id'])
+    lines = _lines(raw, vram, rom, proj['big_endian'], found, symbols)
+    rf = split.RomFunction(name, vram, rom, unit, lines, Path(), set())
+    target = net._make_target(proj, rf, symbols)
+    target.relocs = _carried(found, vram, target.code, target.relocs)
+    return target, net.console(proj).function_asm(rf), len(lines)
+
+
 def restore_relocs(net, proj):
-    """Give back the data relocations that decisions saved before `_carried` existed dropped (the targets they rebuilt
-    and the tails they created), from the original rows each decision keeps for undo. Idempotent; the decision's
-    `after` record is updated with the row so undo still recognises it. Returns how many functions changed."""
+    """Give back the data references that decisions saved before `_lines` existed dropped (the targets they rebuilt
+    and the tails they created: relocations and stored assembly), from the original rows each decision keeps for undo.
+    Idempotent; the decision's `after` record is updated with the row so undo still recognises it. Returns how many
+    functions changed."""
     store = net.project_store(proj['id'])
     histories = []
     for row in store.all('SELECT key,value FROM settings WHERE key LIKE ?', PREFIX + str(proj['id']) + ':%'):
@@ -310,17 +347,26 @@ def restore_relocs(net, proj):
             dirty = False
             for fid in {*history['after'], *map(str, history.get('created', ()))}:
                 row = db.execute('SELECT * FROM functions WHERE id=? AND project_id=?', (int(fid), proj['id'])).fetchone()
-                if row is None or row['vram'] is None or not row['target']:
+                if (row is None or row['vram'] is None or not row['target'] or row['id'] in changed
+                        or row['gone_mark'] is not None or json.loads(row['meta'] or '{}').get('gone')):
                     continue
                 relocs = [tuple(r) for r in json.loads(row['relocs'] or '[]')]
-                carried = _carried(found, row['vram'], row['target'], relocs)
-                if carried == sorted(relocs):
+                if not any(row['vram'] <= at < row['vram'] + len(row['target']) for at in found):
                     continue
+                target, asm, _ = _rebuilt(net, proj, row['name'], row['vram'], row['rom_offset'], row['unit'], row['target'], found)
+                if target.code != bytes(row['target']):
+                    continue
+                restored = sorted({*relocs, *map(tuple, target.relocs)})
+                # the assembly only where a rebuild wrote it without annotations (a split's own text has its labels)
+                bare = not re.search(r'%(?:hi|lo|gp_rel)\(', row['asm'] or '')
+                if restored == sorted(relocs) and (asm == row['asm'] or not bare):
+                    continue
+                asm = asm if bare else row['asm']
                 packed = _pack(row)
-                db.execute('UPDATE functions SET relocs=? WHERE id=?', (json.dumps([list(r) for r in carried]), row['id']))
+                db.execute('UPDATE functions SET relocs=?,asm=? WHERE id=?', (json.dumps([list(r) for r in restored]), asm, row['id']))
                 changed.add(row['id'])
                 if history['after'].get(fid) == packed:
-                    history['after'][fid] = {**packed, 'relocs': json.dumps([list(r) for r in carried])}
+                    history['after'][fid] = _pack(db.execute('SELECT * FROM functions WHERE id=?', (row['id'],)).fetchone())
                     dirty = True
             if dirty:
                 db.execute('UPDATE settings SET value=? WHERE key=?', (json.dumps(history), key))
@@ -413,18 +459,12 @@ def _commit(net, proj, plan, name, action, revision, image_hash, note, automatic
             for child in rows[1:]:
                 childmeta=json.loads(child['meta'] or '{}');childmeta.update(gone=True,boundary_absorbed_by=head['name'])
                 db.execute('UPDATE functions SET meta=? WHERE id=?',(json.dumps(childmeta),child['id']))
-            # Rebuild relocation/assembly targets through the same console adapter as import.
-            lines=[]
-            for i in range(0,len(plan['raw']),4):
-                word=int.from_bytes(plan['raw'][i:i+4],'big' if proj['big_endian'] else 'little')
-                ins=rabbitizer.Instruction(word,head['vram']+i)
-                lines.append(split.AsmLine(head['rom_offset']+i,head['vram']+i,word,ins.getOpcodeName(),ins.disassemble().split(None,1)[-1]))
-            rf=split.RomFunction(head['name'],head['vram'],head['rom_offset'],head['unit'],lines,Path(),set())
-            target=net._make_target(proj,rf,net.symbols(proj['id']))
+            # Rebuild relocation/assembly targets through the same console adapter as import, keeping the split's
+            # data references (_lines).
             carried=_data_relocs(rows)
-            target.relocs=_carried(carried,head['vram'],target.code,target.relocs)
+            target,asm,count=_rebuilt(net,proj,head['name'],head['vram'],head['rom_offset'],head['unit'],plan['raw'],carried)
             db.execute("UPDATE functions SET size=?,n_insns=?,target=?,relocs=?,asm=?,status='open',meta=?,best_score=NULL,seed=NULL,seed_key=NULL WHERE id=?",
-                       (len(plan['raw']),len(lines),target.code,json.dumps(target.to_json()),net.console(proj).function_asm(rf),json.dumps(meta),head['id']))
+                       (len(plan['raw']),count,target.code,json.dumps(target.to_json()),asm,json.dumps(meta),head['id']))
             db.execute('UPDATE symbols SET size=? WHERE project_id=? AND name=?',(len(plan['raw']),proj['id'],head['name']))
             if action=='trim_start':
                 # The words before the real entry stay in the image, outside any function, under this row with
@@ -440,16 +480,10 @@ def _commit(net, proj, plan, name, action, revision, image_hash, note, automatic
                 offset=len(plan['raw'])
                 tailmeta=json.dumps({'boundary_split_from':head['name'],'boundary_decision':meta['boundary_decision']} if entry else
                                     {'boundary_tail_review':'Retained tail from a reviewed boundary adjustment; confirm its entry point before agent work.'})
-                tailraw=head['target'][offset:];taillines=[]
-                for i in range(0,len(tailraw),4):
-                    word=int.from_bytes(tailraw[i:i+4],'big' if proj['big_endian'] else 'little')
-                    ins=rabbitizer.Instruction(word,plan['end']+i)
-                    taillines.append(split.AsmLine(head['rom_offset']+offset+i,plan['end']+i,word,ins.getOpcodeName(),ins.disassemble().split(None,1)[-1]))
-                tailrf=split.RomFunction(tailname,plan['end'],head['rom_offset']+offset,head['unit'],taillines,Path(),set())
-                tailtarget=net._make_target(proj,tailrf,net.symbols(proj['id']))
-                tailtarget.relocs=_carried(carried,plan['end'],tailtarget.code,tailtarget.relocs)
+                tailraw=head['target'][offset:]
+                tailtarget,tailasm,tailcount=_rebuilt(net,proj,tailname,plan['end'],head['rom_offset']+offset,head['unit'],tailraw,carried)
                 fid=db.execute("INSERT INTO functions(project_id,name,vram,rom_offset,size,n_insns,target,relocs,asm,unit,meta) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                    (proj['id'],tailname,plan['end'],head['rom_offset']+offset,len(tailraw),len(taillines),tailtarget.code,json.dumps(tailtarget.to_json()),net.console(proj).function_asm(tailrf),head['unit'],tailmeta)).lastrowid
+                    (proj['id'],tailname,plan['end'],head['rom_offset']+offset,len(tailraw),tailcount,tailtarget.code,json.dumps(tailtarget.to_json()),tailasm,head['unit'],tailmeta)).lastrowid
                 created.append(fid)
                 if entry:
                     # A real entry is a function symbol, so references to it read by name like any other.
