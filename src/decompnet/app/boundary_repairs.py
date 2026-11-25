@@ -65,6 +65,21 @@ def _digest(value):
     return hashlib.sha256(json.dumps(value,sort_keys=True,default=encode).encode()).hexdigest()
 
 
+# Project settings that record work rather than layout or compiler inputs. Saved progress bumps progress_revision about
+# every 45 s while agents work, so hashing it made a 150 s match check almost never commit on an N64 game with 2,000
+# matches ("Project inputs changed while checking matches", six times in a row). candidate_recovery, partial_reuse
+# and exact_match_inputs ignore the same counters.
+VOLATILE = ('claim_order', 'repository_sync_folder')
+
+
+def _config_inputs(config):
+    """A project's config without the settings that only record work, spending or where things are saved."""
+    from .exact_match_inputs import WORKFLOW_SETTINGS
+    cfg=json.loads(config) if isinstance(config,str) else dict(config)
+    for key in WORKFLOW_SETTINGS+VOLATILE:cfg.pop(key,None)
+    return cfg
+
+
 def _revision(net, proj, affected=()):
     # Unrelated workers may keep submitting candidates. Guard layout, matched C,
     # shared inputs and the complete edited rows, not incidental counters elsewhere.
@@ -80,7 +95,8 @@ def _revision(net, proj, affected=()):
     for index,row in enumerate(rows):
         row['target']=bytes.fromhex(row['target']) if row['target'] is not None else None
         if row['id'] in edited:rows[index]=edited[row['id']]
-    return _digest([dict(net.project_row(proj['slug'])),rows,
+    project=dict(net.project_row(proj['slug']));project['config']=_config_inputs(project['config'])
+    return _digest([project,rows,
                     [list(r) for r in store.all('SELECT * FROM symbols WHERE project_id=? ORDER BY name',proj['id'])],
                     [list(r) for r in store.all('SELECT unit,version,header FROM context_versions WHERE project_id=? ORDER BY version',proj['id'])]])
 
@@ -253,19 +269,46 @@ def _verify_matches(net, proj, log, only=None):
     return net.regression_test(proj,None,only=only,header_for=lambda f:net._context(proj['id'],f['unit'])['header'],progress=progress)
 
 
+def _referring(net, proj, spans):
+    """The matched functions whose relocations point into any of `spans` ([lo, hi) addresses): the only matched code
+    a boundary change can relink (a resized or new symbol, an archived piece). Everything else links as before, so a
+    2,000-match game checks a few dozen instead of all of them (140-210 s, which saved progress outran)."""
+    return [r for r in net.project_store(proj['id']).all("SELECT * FROM functions WHERE project_id=? AND status='matched' AND gone_mark IS NULL",proj['id'])
+            if any(lo<=address<hi for _,_,address in json.loads(r['relocs'] or '[]') for lo,hi in spans)]
+
+
+def _spans(plan):
+    return [(min(plan['start'],*(p['start'] for p in plan['affected'])),max(plan['old_end'],plan['end'],*(p['end'] for p in plan['affected'])))]
+
+
+COMMIT_TRIES = 3
+
+
 def apply(net, slug, name, action, revision, image_hash, end=None, note='', log=print):
     proj=_supported(net,slug)
     if slug in net.rooms or net._link(slug) is not None:raise NetworkError('Leave the room before editing shared function boundaries.')
     if not isinstance(note,str) or not note.strip():raise NetworkError('Record the evidence for this boundary decision.')
     plan=preview(net,slug,name,action,end)
     if plan['revision']!=revision or plan['image']!=image_hash:raise NetworkError('The project or original image changed. Preview again.')
-    log('Reverifying existing matches before the boundary decision…')
-    broken=_verify_matches(net,proj,log)
-    if broken:raise NetworkError('Existing matches could not be reverified: '+', '.join(n for n,_ in broken[:5]))
-    getattr(log,'check_cancel',lambda:None)()
-    result=_commit(net,proj,plan,name,action,plan['revision'],image_hash,note)
-    log('Boundary decision saved. Original records and attempt history retained.')
-    return result
+    first=public(plan)
+    for attempt in range(COMMIT_TRIES):
+        if attempt:
+            # A worker matched or changed something while the check ran: the same decision, checked again on what
+            # is there now. A different preview (the layout itself moved) is the person's to review.
+            plan=preview(net,slug,name,action,end)
+            if {k:v for k,v in public(plan).items() if k!='revision'}!={k:v for k,v in first.items() if k!='revision'} or plan['image']!=image_hash:
+                raise NetworkError('The project or original image changed. Preview again.')
+        matched=_referring(net,proj,_spans(plan))
+        log(f'Reverifying {len(matched)} existing match{"" if len(matched)==1 else "es"} that refer into the changed extent…')
+        broken=_verify_matches(net,proj,log,only=matched)
+        if broken:raise NetworkError('Existing matches could not be reverified: '+', '.join(n for n,_ in broken[:5]))
+        getattr(log,'check_cancel',lambda:None)()
+        try:result=_commit(net,proj,plan,name,action,plan['revision'],image_hash,note)
+        except NetworkError as error:
+            if 'while checking matches' not in str(error) or attempt==COMMIT_TRIES-1:raise
+            log('Project inputs changed while checking matches; checking again…');continue
+        log('Boundary decision saved. Original records and attempt history retained.')
+        return result
 
 
 def _commit(net, proj, plan, name, action, revision, image_hash, note, automatic=False):
@@ -336,7 +379,7 @@ def _commit(net, proj, plan, name, action, revision, image_hash, note, automatic
         history={'evidence':note[:4000],'function':name,'action':action,'time':time.time(),'before':old,'after':after,'created':created,'symbols':symbols,
                  'created_symbols':created_symbols,'automatic':bool(automatic),'start':head['vram'],'entry':plan['end'] if action in ('trim_start','split_end') else None,
                  'image':image_hash,'symbol_after':[dict(r) for r in net.project_store(proj['id']).all('SELECT name,size FROM symbols WHERE project_id=? AND name=?',proj['id'],head['name'])],
-                 'config':proj['config'],'contexts':_digest([list(r) for r in net.project_store(proj['id']).all('SELECT unit,version,header FROM context_versions WHERE project_id=? ORDER BY version',proj['id'])]),
+                 'config':json.dumps(_config_inputs(proj['config']),sort_keys=True),'contexts':_digest([list(r) for r in net.project_store(proj['id']).all('SELECT unit,version,header FROM context_versions WHERE project_id=? ORDER BY version',proj['id'])]),
                  'attempt_id':db.execute('SELECT COALESCE(MAX(id),0) FROM attempts').fetchone()[0]}
         db.execute('INSERT INTO settings VALUES(?,?)',(key,json.dumps(history)))
         _invalidate_shared_entries(db, proj['id'])
@@ -602,15 +645,17 @@ def undo(net,slug,key,log=print):
     if not row:raise NetworkError('Repair history is unavailable.')
     history=json.loads(row['value'])
     if history.get('undone'):raise NetworkError('This decision was already undone.')
-    if proj['config']!=history['config'] or _digest([list(r) for r in net.project_store(proj['id']).all('SELECT unit,version,header FROM context_versions WHERE project_id=? ORDER BY version',proj['id'])])!=history['contexts']:
+    if _config_inputs(proj['config'])!=_config_inputs(history['config']) or _digest([list(r) for r in net.project_store(proj['id']).all('SELECT unit,version,header FROM context_versions WHERE project_id=? ORDER BY version',proj['id'])])!=history['contexts']:
         raise NetworkError('Compiler settings, mappings or headers changed since this repair. Review those changes before undoing.')
     if _digest(_image(net,proj)[0])!=history['image']:raise NetworkError('The original image changed since this repair. Reimport/review it before undoing.')
     if history['symbol_after'] and [dict(r) for r in net.project_store(proj['id']).all('SELECT name,size FROM symbols WHERE project_id=? AND name=?',proj['id'],history['symbol_after'][0]['name'])]!=history['symbol_after']:
         raise NetworkError('The repaired symbol changed. Undo would overwrite newer work.')
     ids=[int(fid) for fid in history['after']]
     revision=_revision(net,proj,ids)
+    spans=[(saved['vram'],saved['vram']+saved['size']) for saved in (*history['before'].values(),*history['after'].values())
+           if saved.get('vram') is not None and saved.get('size') is not None]
     log('Checking existing matches before undo…')
-    if _verify_matches(net,proj,log):
+    if _verify_matches(net,proj,log,only=_referring(net,proj,spans)):
         raise NetworkError('Existing matches could not be reverified. Undo was not applied.')
     with net.project_store(proj['id']).tx() as db:
         if _revision(net,proj,ids)!=revision or _digest(_image(net,proj)[0])!=history['image']:raise NetworkError('Project or original image changed during undo verification. Try again.')
@@ -730,8 +775,7 @@ def _apply_entry_fixes(net, slug, proj, log):
             # Matched code that refers into a changed extent is the code a new symbol could relink: build it
             # again first. Everything else is untouched, so a 2,000-match game doesn't recompile them all.
             spans=[(f.vram,f.vram+next(r['size'] for r in layout if r['name']==f.name)) for f in todo]
-            matched=[r for r in net.project_store(proj['id']).all("SELECT * FROM functions WHERE project_id=? AND status='matched' AND gone_mark IS NULL",proj['id'])
-                     if any(lo<=address<hi for _,_,address in json.loads(r['relocs'] or '[]') for lo,hi in spans)]
+            matched=_referring(net,proj,spans)
             if matched:
                 log(f'Checking {len(matched)} matched functions that refer into the functions to fix…')
                 broken=_verify_matches(net,proj,log,only=matched)
