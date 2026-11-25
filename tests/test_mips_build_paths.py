@@ -449,8 +449,10 @@ def test_a_torch_assets_target_runs_in_setup_and_a_cmake_tool_with_spdlog_gets_c
     assert forks_project._setup_targets(torch) == ["assets"]
     (tmp_path / "tools" / "torch").mkdir(parents=True)
     assert forks_project._mac_cxx_env(tmp_path) == {}
+    (tmp_path / "tools" / "torch" / "CMakeLists.txt").write_text("project(x)\n")
+    assert forks_project._mac_cxx_env(tmp_path) == {"CMAKE_POLICY_VERSION_MINIMUM": "3.5"}
     (tmp_path / "tools" / "torch" / "CMakeLists.txt").write_text("FetchContent_Declare(spdlog)\n")
-    assert forks_project._mac_cxx_env(tmp_path) == {"CXX": "c++ -DFMT_CONSTEVAL="}
+    assert forks_project._mac_cxx_env(tmp_path)["CXX"] == "c++ -DFMT_CONSTEVAL= -Wno-error=parentheses"
 
 
 def test_a_mac_iconv_shim_writes_a_backslash_after_japanese_text_as_one_byte(tmp_path, monkeypatch):
@@ -729,3 +731,15 @@ def test_plain_ar_is_the_pinned_one_for_elf_objects_on_a_mac(tmp_path, monkeypat
     done = subprocess.run([str(paths[0] / "ar"), "rcs", str(tmp_path / "x.a"), str(elf)], capture_output=True, text=True)
     assert done.stdout.strip() == "pinned-ar"
     assert "pinned-ranlib" in subprocess.run([str(paths[0] / "ranlib"), "x.a"], capture_output=True, text=True).stdout
+
+
+def test_a_tools_requirements_python_file_is_where_the_project_environment_installs_from(tmp_path):
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "tools" / "requirements-python.txt").write_text("spimdisasm==1.25.1\n")
+    (tmp_path / "Makefile").write_text("all:\n\ttrue\n")
+    installed = []
+    project = ForkProject(tmp_path)
+    project.kind = lambda: "custom"
+    project.run = lambda cmd, log=print, **kw: (installed.append(cmd) or (True, ""))
+    project.ensure_python_env(log=lambda *a: None)
+    assert any("tools/requirements-python.txt" in cmd for cmd in installed)
