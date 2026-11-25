@@ -30,7 +30,7 @@ from .. import scoring
 from ..forks.csource import _blank, find
 from ..forks.project import ForkProject
 from ..network import GAME_CODE, IN_BUILD, Agent, NetworkError
-from . import polish_checklist
+from . import polish_checklist, polish_scaffolding
 from .function_names import needs_name
 
 
@@ -74,6 +74,7 @@ POLISH_CLAIMS = 10
 # function at its line: an N64 game's audio library functions came to 7,500 lines (64,000 characters), a brief agents
 # couldn't read, so each was handed out 10 times without a rewrite.
 BIG_PREAMBLE = 8_000
+BRIEF_C = 24_000  # characters of a function's C a claim shows; the rest is paged (get_function section=matched)
 # what polishing takes (claim) and what a polishing helper's session counts as left (agents.Manager._left): the game's
 # own matched code that isn't readable yet and isn't given up on: one no rewrite kept matching was handed out again
 # and again, to every helper, being the biggest. (TODO and GIVEN_UP each take one ?, the project's id, after the
@@ -191,8 +192,8 @@ class Readability:
         return compiler_for(cfg, fn["vram"], fn).get("toolchain") if cfg.get("compiler") else None
 
     def _retry_unread(self, proj) -> None:
-        """Give a function one fresh start (polish_retry) when it was given up on while its brief was too big to read:
-        those hand-outs say nothing about the function. Once per function, so one that fails again stays given up."""
+        """Give a function one fresh start (polish_retry) when it was given up on while its brief was too big to read,
+        or without a single judged rewrite failing: those hand-outs say nothing about the function. Once per function, so one that fails again stays given up."""
         if proj["id"] in self._retried:
             return
         self._retried.add(proj["id"])
@@ -200,7 +201,13 @@ class Readability:
         rows = store.all(f"SELECT * FROM functions WHERE project_id=? AND status='matched' AND readable=0 AND {GAME_CODE} "
                          f"AND name IN ({GIVEN_UP}) AND name NOT IN (SELECT detail FROM events WHERE project_id=? "
                          "AND kind='polish_retry')", proj["id"], proj["id"], proj["id"])
-        unread = [fn["name"] for fn in rows if self.preamble(self._matching_c(proj, fn), fn["name"])]
+        # nor do hand-outs whose helpers never got a rewrite judged: an N64 game's nine small functions were given up
+        # on after ten hand-outs each, every one ended by a rename that couldn't run (its compiler's runner was down),
+        # and four big ones whose brief was over what a helper's tool could return
+        failed = {r["detail"] for r in store.all("SELECT DISTINCT detail FROM events WHERE project_id=? "
+                                                 "AND kind='polish_failed'", proj["id"])}
+        unread = [fn["name"] for fn in rows if fn["name"] not in failed
+                  or self.preamble(self._matching_c(proj, fn), fn["name"])]
         if unread:
             with store.tx() as db:
                 for name in unread:
@@ -400,6 +407,15 @@ class Readability:
             alone = (f"(Only the function: the {before:,} lines above it, declarations and blank lines that keep it at "
                      f"line {before + 1:,}, stay as they are. Polish it in place, or give make_readable the function "
                      "alone: it goes back under them, on the same line.)\n")
+        if len(shown) > BRIEF_C:
+            # a 1,928-instruction function's 56,000 characters were over what a helper's tool could return: nine
+            # sessions in a row saw no C at all and gave up, until its hand-outs ran out
+            cut = shown.rfind("\n", 0, BRIEF_C) + 1 or BRIEF_C
+            offset = len("```c\n") + source.find(shown) + cut  # in section=matched's text, after its fence
+            alone += (f"(The first {cut:,} of its {len(shown):,} characters. Read the rest with get_function("
+                      f"\"{fn['name']}\", section=\"matched\", start={offset}, limit=12000), page by page. Polish it "
+                      "with polish_function's rename map rather than sending the whole C.)\n")
+            shown = shown[:cut].rstrip() + "\n/* ... continues ... */"
         from ..release_receipts import current
         lease = current(self.net, fn, agent)
         from .tools import project_tools
@@ -413,6 +429,7 @@ class Readability:
                 + prepared + polish_checklist.brief(options, pc_tool=pc_tool) + "\nMake it readable without changing what the compiler makes of it:\n" + names +
                 "- give parameters and locals meaningful names; write one comment saying what the function does;\n"
                 "- keep the statement order, casts and temporaries that matching requires.\n"
+                + polish_scaffolding.brief(source)
                 + steering_checklist(self.net, fn, source)
                 + ("- it's a big function: rename and comment in place, statement for statement; don't restructure it "
                    "(one slip anywhere in it and the rewrite is refused).\n" if fn["n_insns"] > BIG_INSNS else "") +
@@ -492,11 +509,15 @@ class Readability:
             if not res.get("matched"):
                 return rejected(res["text"])
             return self._readable(proj, fn, agent, source, original=original)
+        # ROM mode only: a project's function is replaced inside its file, whose declarations stay where they are
+        source, restored = polish_scaffolding.restore(original, source, fn["name"])
+        put_back = (f"\n(Put back what it removed and still uses: {len(restored)} declaration block(s), the m2c "
+                    "prelude among them; keep them.)" if restored else "")
         ctx = self.net._context(proj["id"], fn["unit"])
         result = self.net._compile(proj, ctx["header"], source, fn)
         if not result.ok:
             self.net._record(fn, agent, None, source, ctx["version"])  # its compiles count, as a decompiling one's
-            return rejected(f"❌ COMPILE ERROR: the matching C stays.\n{result.log.strip()}",
+            return rejected(f"❌ COMPILE ERROR: the matching C stays.{put_back}\n{result.log.strip()}",
                             polish_automation.deterministic_error(result.log))
         polish_automation.check_inputs(self.net, proj, fn, original, source, key, receipt, 'compile')
         cand, verdict, problems = self.net._evaluate(fn, proj, result.obj)
@@ -509,8 +530,10 @@ class Readability:
         self.net._record(fn, agent, d.score, source, ctx["version"])  # not as a match: it was one already
         if not (d.bytes_match if verdict is None else verdict):
             note = "\n".join(f"- {p}" for p in problems)
+            scaffolding = polish_scaffolding.changed(original, source)
             return rejected(f"❌ It no longer matches (score {d.score}): the matching C stays. Keep the statements' shape and "
-                    f"change names, types and comments only.\n{d.render()}" + (f"\n{note}" if note else ""), cacheable=d.score > 0 and not problems)
+                    f"change names, types and comments only.\n" + (scaffolding + "\n" if scaffolding else "") + d.render()
+                    + (f"\n{note}" if note else ""), cacheable=d.score > 0 and not problems)
         polish_automation.check_inputs(self.net, proj, fn, original, source, key, receipt, 'judge')
         return self._readable(proj, fn, agent, source, original=original)
 
@@ -572,6 +595,8 @@ class Readability:
                         lambda: match_commits.enqueue(self.net, self.net.project_row(proj['slug']), fn['id'], polished=True))
         from .polish_automation import learn
         learn(self.net,proj,fn,baseline,source)
+        from . import global_types
+        global_types.learn(self.net, proj, fn, source)
         counts = self.counts(proj)
         return (f"✅ {fn['name']} is readable now, and still matches byte for byte ({counts['readable']} of "
                 f"{counts['matched']} readable). claim_readable for the next one.")

@@ -971,6 +971,21 @@ class ForkEngine:
                 cfg["version"] = version
                 self._save_cfg(proj, cfg)
             return
+        if md5s := {v: m for v, (_, m) in fp.md5_roms().items()}:  # (a project that names its originals by MD5: the Zelda decomps)
+            from ..consoles.n64.rom import z64_file_md5
+
+            digest = z64_file_md5(game)
+            version = next((v for v, found in md5s.items() if digest in found), None) if digest else None
+            if version is None:
+                if digest:
+                    raise NetworkError("that ROM isn't a version this project can be built from: its MD5 is not in the "
+                                       f"project's checksum files (versions: {', '.join(md5s)}).\nMD5: {digest}")
+                return
+            if version != cfg.get("version"):
+                log(f"your ROM matches the project's {version} version")
+                cfg["version"] = version
+                self._save_cfg(proj, cfg)
+            return
         if fp.kind() != "dtk":
             return
         versions = fp.versions()

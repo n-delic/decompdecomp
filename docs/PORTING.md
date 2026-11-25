@@ -611,6 +611,14 @@ that goes full screen so it shows there too, and Scaling applies only once a pla
 its own look until then). The Miyoo build still has none: it needs the menu drawn into its SDL 1.2 surface.
 ROADMAP.md's table says so.
 
+recomp-ui's menu model is used when its library is there. `tools/build_recomp_ui.py` builds it from the pinned commit
+`16e2c867e474648e523e2cd21eca813ebe58c795` (three plain C files, the system C compiler, no ImGui or GPU) into the
+toolchains folder (or `DECOMPNET_RECOMP_UI`); with `PORT_RECOMP_UI=<library>` the window host (`window/recomp_ui.h`) turns
+settings.h's rows into recomp-ui's items and takes navigation, pages (Video, Audio, Game), the shared key names and Quit's
+second press from it, while the panel stays settings.h's own, drawing recomp-ui's rows, so the same picture shows over SDL's
+renderer and over RT64. Without the library, or if it can't open, the built-in menu runs and says so in the log. Not yet:
+recomp-ui's own ImGui look (its `render_imgui` needs a GL or RT64 ImGui frame) and bundling the library in an exported app.
+
 ### 5. Play, and check that it runs
 
 A **Play port** button builds and starts it. A headless check runs N frames: it starts, doesn't crash, and the
@@ -1049,3 +1057,15 @@ windows, which isolates START and the menu's timing as what differs.
 opponent-car kind of difference; the windows at 3113-3223 are 60-77% different (30% at the first task of a frame, 0.04% with no match within 3 px: the same picture shifted). So the break is between tasks 2923 and 3113, which holds the route's `A`
 press at frame 3030 (held 50 frames: the accelerator), not the menu presses, which all match. At 3406 the console's player car is seen larger and whiter (closer, or a different moment of the start-line view) than the port's. The first task of each frame
 of those windows matching to within a few thousandths of a percent with a shift left says the two are drawing the same scene a step apart in time, the logic lead's effect on a scene that moves, rather than other models or textures.
+
+**The START route differs from the other race route only by what it does at the race: it pauses it.** The two scripts (`in_route`, `in_route_nostart2`) are the same through frame 2870, and from there `in_route` presses START
+(2870, 3190, 3510, each held 50 frames) where `in_route_nostart2` presses A (the accelerator). The first matches the console to within about 2% at the race windows; the second 43-89% different from the first window after the first START (tasks 3113 on).
+Before it (the menus to 2720, the race grid at 2813-2923) both match, and the menu route's 41 pictures match exactly, so what differs is the pause: what a START held for 50 frames does during the race, a button held across many frames, whose
+first-press and repeat handling is counted in frames or retraces. Seeds are not it: shifting the replayed seeds into line with the port's calls fixed the opponents of the other race route (0.00% at its race start) and left this route as it was.
+Next: look at the pictures at 2870-2930 and 3190-3260 (the pause screen on each side) and what the game reads of the button (`PORT_INPUT` frames: a hold of 50 frames is one press for the game's edge detection, or fifty).
+
+**The START route is exact when its buttons are tapped (3 frames) instead of held (50).** The same route (`in_route`) with each press cut to a 3-frame tap, seeds aligned, windows at tasks 3100, 3400 and 6190 (24 pictures, the race grid, the start and mid-race):
+every picture 0.00% differing, both buffers. The held route was 43-89% different at the same windows. So the race, its cars, camera and opponents are the console's to the pixel; what differs is the game's
+handling of a START held for 50 of the game's frames (10 of its 5-task frames), and A held the same way (the other race route, 2%). A long press that the game measures with a clock (osGetTime, a retrace counter) would take
+the port's virtual time, which is not the console's cycle count, and a pause that begins and ends at another moment leaves the scene at another point, as seen. Where to look: what the game does with a button
+held (a pause toggled, a repeat), via the emulator's watch on the controller data (the `OSContPad` buffer) and the port's `PORT_ORDER_LOG` on the same address.

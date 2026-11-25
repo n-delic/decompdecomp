@@ -22,6 +22,44 @@ def _is_gcc_272(driver: Path) -> bool:
         return False
 
 
+def _in_installed_toolchains(path: Path) -> bool:
+    """Is this file one of the installed toolchains' own (a project's tools/ folder that is a link to one)? Those are
+    shared with every project and the app: a stand-in is never written over them."""
+    try:
+        return toolchains.root().resolve() in path.resolve().parents
+    except OSError:
+        return False
+
+
+def _is_sn64_folder(folder: Path) -> bool:
+    """The SN Systems GCC 2.7.2 a project keeps next to the KMC one (also "GNU C 2.7.2", so the KMC stand-in must
+    not take it): its `as` is modern-asn64, which no KMC folder has."""
+    return (folder / "modern-asn64.py").is_file() or "sn64" in folder.name.lower()
+
+
+def _wrap_sn64_gcc(folders) -> None:
+    """The project's SN `gcc` is a 32-bit Linux driver: a Mac runs the installed, natively built SN compiler
+    (`sn-n64-272-970404`) through decompdecomp's driver (sn64_gcc.py) instead; the original stays as gcc.linux."""
+    if sys.platform != "darwin" or toolchains.installed("sn-n64-272-970404") is None:
+        return
+    installed = toolchains.require("sn-n64-272-970404")
+    driver = Path(__file__).with_name("sn64_gcc.py")
+    for folder in folders:
+        gcc, assembler = folder / "gcc", folder / "as"
+        if _in_installed_toolchains(gcc):
+            continue
+        try:
+            with open(gcc, "rb") as f:
+                if f.read(4) != b"\x7fELF" or not assembler.is_file():
+                    continue
+        except OSError:
+            continue
+        gcc.rename(gcc.with_name("gcc.linux"))
+        gcc.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{driver}" "{installed}" "{assembler.resolve()}" "$@"\n',
+                       encoding="utf-8")
+        gcc.chmod(0o755)
+
+
 def _crc_tool(root: Path) -> None:
     """Public N64 projects fix the ROM's checksum with tools/n64crc, which their `make dependencies` compiles next to
     a whole IDO build. Compile just that one file when it's missing, so the final link step has its tool (a
@@ -78,7 +116,7 @@ def _provide_compiler_dirs(project) -> None:
     if os.name == "nt":
         return
     texts = ""
-    for name in ("Makefile", "Makefile.common", "README.md", "setup.py", "setup.sh"):
+    for name in ("Makefile", "Makefile.common", "README.md", "setup.py", "setup.sh", "install_compilers.sh"):
         try:
             texts += (project.root / name).read_text(errors="replace", encoding="utf-8") + "\n"
         except OSError:
@@ -104,6 +142,12 @@ def _provide_compiler_dirs(project) -> None:
         for name in set(re.findall(r"(?:\btools|\$\(TOOLS(?:_DIR)?\))/(gcc[_-]2\.7\.2)/(?!macos|\$\(DETECTED_OS\))",
                                    texts)):
             wanted.append((f"tools/{name}", "gcc-2.7.2-kmc"))
+    # tools/build/cc/<compiler>: where a project's `install_compilers.sh` unpacks the compilers it would download
+    # (Paper Mario's: its own GCC 2.8.1, KMC's 2.7.2, EGCS, IDO 5.3), as empty folders the installed ones fill
+    for name, tid in (("gcc2.7.2", "gcc-2.7.2-kmc"), ("gcc", "gcc-2.8.1-pm"), ("egcs", "gcc-egcs-2.91.66"),
+                      ("ido5.3", "ido-5.3")):
+        if re.search(rf"tools/build/cc/{re.escape(name)}(?![\w.])", texts):
+            wanted.append((f"tools/build/cc/{name}", tid))
     for version in set(re.findall(r"tools/ido/(5\.3|7\.1)(?![\d])", texts)):
         wanted.append((f"tools/ido/{version}", f"ido-{version}"))
     for folder, version in set(re.findall(r"(tools/ido(5\.3|7\.1)[\w.-]*)(?=\s|$|/)", texts, re.M)):
@@ -133,7 +177,19 @@ def _provide_compiler_dirs(project) -> None:
             continue
         if target.exists() or target.is_symlink():
             continue
-        if source.is_dir():
+        if source.is_dir() and tid == "gcc-2.7.2-kmc" and "mabi32" in texts and sys.platform == "darwin":
+            # the project's compiler is told `-mabi32`, which the installed assembler doesn't know (it assembles
+            # o32 already): a folder of its own, with links to every installed program and an `as` that drops it
+            target.mkdir(parents=True, exist_ok=True)
+            for item in source.iterdir():
+                if item.name != "as" and not (target / item.name).exists():
+                    (target / item.name).symlink_to(item)
+            mine = source / "as"
+            if mine.is_file():
+                (target / "as").write_text('#!/bin/sh\nfor a; do shift; [ "$a" = -mabi32 ] || set -- "$@" "$a"; done\n'
+                                           f'exec "{mine}" "$@"\n', encoding="utf-8")
+                (target / "as").chmod(0o755)
+        elif source.is_dir():
             target.parent.mkdir(parents=True, exist_ok=True)
             target.symlink_to(source, target_is_directory=True)
 
@@ -155,8 +211,12 @@ def _wrap_foreign_ido(project) -> None:
     # (looked at every time: a project's own setup step can fetch its Linux compiler again over a wrapper)
     drivers = [(root, driver) for root in roots if root.is_dir() for driver in root.glob("**/cc")]
     for tools_root, driver in drivers:
+        if _in_installed_toolchains(driver):
+            continue
         if len(driver.relative_to(tools_root).parts) > 5 or driver.is_symlink() or not driver.is_file():
             continue
+        if driver.parent.name == "bin" and driver.parent.parent.name == "usr":
+            continue  # (usr/bin/cc of an IRIX tree: the input ido-static-recomp turns into this computer's compiler)
         try:
             with open(driver, "rb") as f:
                 magic = f.read(4)
@@ -195,22 +255,35 @@ def _wrap_foreign_ido(project) -> None:
     # A project's own copy of the KMC-style GCC 2.7.2 (tools/gcc_2.7.2/{gcc,cc1,as,...}, Linux programs): the
     # installed one stands in for each program it has under that name.
     # (or tools/gcc itself, beside its cc1: a project that keeps the compiler's programs directly in tools/)
-    plain = {d.parent for d in (*tools.glob("gcc"), *tools.glob("*/gcc")) if (d.parent / "cc1").is_file()
-             and d.is_file() and not d.is_symlink() and _is_gcc_272(d)}
-    for folder in {d.parent for d in tools.glob("*gcc*2.7.2*/gcc")} | {d.parent for d in tools.glob("*/*gcc*2.7.2*/gcc")} | plain:
+    # (the project's own tools/, and those of a library it carries, lib/ultralib/tools/gcc)
+    def found(*patterns):
+        return [d for root in roots if root.is_dir() for pattern in patterns for d in root.glob(pattern)]
+
+    sn = {d.parent for d in found("*/gcc", "*/*/gcc") if _is_sn64_folder(d.parent)}
+    _wrap_sn64_gcc(sn)
+    plain = {d.parent for d in found("gcc", "*/gcc") if (d.parent / "cc1").is_file()
+             and d.is_file() and not d.is_symlink() and _is_gcc_272(d) and d.parent not in sn}
+    for folder in ({d.parent for d in found("*gcc*2.7.2*/gcc", "*/*gcc*2.7.2*/gcc")} | plain) - sn:
         if toolchains.installed("gcc-2.7.2-kmc") is None:
             break
         installed = toolchains.require("gcc-2.7.2-kmc")
         for program in folder.iterdir():
             mine = installed / program.name
-            if not program.is_file() or program.is_symlink() or not mine.is_file() or program.suffix:
+            if (not program.is_file() or program.is_symlink() or not mine.is_file() or program.suffix
+                    or _in_installed_toolchains(program)):
                 continue
             with open(program, "rb") as f:
                 if f.read(4) != b"\x7fELF":
                     continue
             program.rename(program.with_name(program.name + ".linux"))
             extra = f' -B"{installed}/"' if program.name == "gcc" else ""
-            program.write_text(f'#!/bin/sh\nexec "{mine}"{extra} "$@"\n', encoding="utf-8")
+            if program.name == "as":
+                # (the project's assembler takes the o32 spelling `-mabi32`; the installed one is o32 already and
+                # doesn't know it)
+                program.write_text(f'#!/bin/sh\nfor a; do shift; [ "$a" = -mabi32 ] || set -- "$@" "$a"; done\n'
+                                   f'exec "{mine}" "$@"\n', encoding="utf-8")
+            else:
+                program.write_text(f'#!/bin/sh\nexec "{mine}"{extra} "$@"\n', encoding="utf-8")
             program.chmod(0o755)
     _update_old_mac_assembler(project, tools)
     # The same for a project's other committed Linux programs (tools/pigment64, ...) when the host has the tool:
@@ -246,26 +319,31 @@ def _update_old_mac_assembler(project, tools: Path) -> None:
     The installed KMC `as` knows the option, so it stands in for the old one (the old one is kept as as.old)."""
     if sys.platform != "darwin" or toolchains.installed("gcc-2.7.2-kmc") is None:
         return
-    try:
-        makefile = (project.root / "Makefile").read_text(errors="replace", encoding="utf-8")
-    except OSError:
-        return
-    if "vr4300mul-off" not in makefile:
+    makefile = ""
+    for name in ("Makefile", "Makefile.common"):
+        try:
+            makefile += (project.root / name).read_text(errors="replace", encoding="utf-8") + "\n"
+        except OSError:
+            pass
+    # (`-Wa,--vr4300mul-off`, or `-mabi32` on the compiler's own command line, which it hands to the assembler)
+    markers = [m for m in ("vr4300mul-off", "mabi32") if m in makefile]
+    if not markers:
         return
     mine = toolchains.require("gcc-2.7.2-kmc") / "as"
     if not mine.is_file():
         return
-    for old in tools.glob("*gcc*2.7.2*/macos/as"):
-        if old.is_symlink() or not old.is_file():
+    for old in {*tools.glob("*gcc*2.7.2*/macos/as"), *tools.glob("*gcc*2.7.2*/as")}:
+        if old.is_symlink() or not old.is_file() or _in_installed_toolchains(old):
             continue
         try:
             data = old.read_bytes()
         except OSError:
             continue
-        if data[:4] not in (b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe") or b"vr4300mul-off" in data:
+        if data[:4] not in (b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe") or any(m.encode() in data for m in markers):
             continue
         old.rename(old.with_name("as.old"))
-        old.write_text(f'#!/bin/sh\nexec "{mine}" "$@"\n', encoding="utf-8")
+        old.write_text(f'#!/bin/sh\nfor a; do shift; [ "$a" = -mabi32 ] || set -- "$@" "$a"; done\n'
+                       f'exec "{mine}" "$@"\n', encoding="utf-8")
         old.chmod(0o755)
 
 
@@ -360,7 +438,7 @@ def _redirect(project, argv: list[str]) -> list[str]:
         alias.symlink_to(source, target_is_directory=True)
     if not alias.is_symlink() or alias.resolve() != source.resolve():
         return argv
-    if name == "CC":
+    if name == "CC" and not Path(path).is_absolute():  # (/opt/ido/cc is the author's: never written to)
         # (a command-line CC would reach the project's sub-makes too, which build their host tools with it: the
         # compiler's own folder is linked where the Makefile looks instead)
         folder = (project.root / path).parent

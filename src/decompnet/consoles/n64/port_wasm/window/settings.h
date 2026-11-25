@@ -158,39 +158,58 @@ static int ps_text(uint8_t *rgba, int w, int h, int x, int y, int s, const char 
     return x;
 }
 
+/* What the panel lists: a row's words, whichever model supplies them (the built-in rows below, or recomp-ui's menu
+   through recomp_ui.h). `heading` starts a group (built-in rows only), `value` is "" for a row with none. */
+typedef struct { char label[96], value[96], heading[32]; int current; } PsRow;
+#define PS_MAX_ROWS 40
+static int (*ps_rows_hook)(PsRow *out, int max, char *title, int title_size); /* NULL: the built-in rows */
+
+static int ps_rows(PsRow *out, int max, char *title, int title_size) {
+    if (ps_rows_hook) return ps_rows_hook(out, max, title, title_size);
+    snprintf(title, (size_t)title_size, "SETTINGS");
+    for (int i = 0; i < PS_ROWS && i < max; i++) {
+        PortSetting *r = &port_settings[i];
+        snprintf(out[i].label, sizeof out[i].label, "%s", r->label);
+        out[i].value[0] = 0;
+        if (r->type == PS_CHOICE) snprintf(out[i].value, sizeof out[i].value, "< %s >", r->values[r->value]);
+        out[i].heading[0] = 0;
+        if (i == 0 || strcmp(r->section, port_settings[i - 1].section)) snprintf(out[i].heading, sizeof out[i].heading, "%s", r->section);
+        out[i].current = i == port_menu.row;
+    }
+    return PS_ROWS < max ? PS_ROWS : max;
+}
+
 /* The menu over a w by h picture: everything outside the panel stays clear (alpha 0) so the game shows through. */
 static void ps_draw(uint8_t *rgba, int w, int h) {
+    PsRow rows[PS_MAX_ROWS];
+    char title[64];
+    int count = ps_rows(rows, PS_MAX_ROWS, title, sizeof title);
     memset(rgba, 0, (size_t)w * h * 4);
     int s = h / 240 < w / 340 ? h / 240 : w / 340, line, pw; /* 640x480: 2 */
     if (s < 1) s = 1;
     line = 12 * s;
     pw = 200 * s;
     int heads = 0;
-    for (int i = 0; i < PS_ROWS; i++)
-        if (i == 0 || strcmp(port_settings[i].section, port_settings[i - 1].section)) heads++;
-    int ph = (PS_ROWS + 3) * line + heads * (line * 3 / 2), x0 = (w - pw) / 2, y0 = (h - ph) / 2;
+    for (int i = 0; i < count; i++) heads += rows[i].heading[0] != 0;
+    int ph = (count + 3) * line + heads * (line * 3 / 2), x0 = (w - pw) / 2, y0 = (h - ph) / 2;
     ps_panel.x = x0; ps_panel.y = y0; ps_panel.w = pw; ps_panel.h = ph;
     ps_rect(rgba, w, h, x0, y0, pw, ph, 0x000000d8);
     ps_rect(rgba, w, h, x0, y0, pw, s, 0xffffffff);
     ps_rect(rgba, w, h, x0, y0 + ph - s, pw, s, 0xffffffff);
     int y = y0 + line;
-    ps_text(rgba, w, h, x0 + 8 * s, y, s, "SETTINGS", 0xffffffff);
+    ps_text(rgba, w, h, x0 + 8 * s, y, s, title, 0xffffffff);
     y += line;
-    for (int i = 0; i < PS_ROWS; i++) {
-        PortSetting *r = &port_settings[i];
-        if (i == 0 || strcmp(r->section, port_settings[i - 1].section)) {
+    for (int i = 0; i < count; i++) {
+        if (rows[i].heading[0]) {
             y += line / 2;
-            ps_text(rgba, w, h, x0 + 8 * s, y, s, r->section, 0x8899aaff);
+            ps_text(rgba, w, h, x0 + 8 * s, y, s, rows[i].heading, 0x8899aaff);
             y += line;
         }
-        uint32_t c = i == port_menu.row ? 0xffe060ff : 0xe0e0e0ff;
-        if (i == port_menu.row) ps_text(rgba, w, h, x0 + 8 * s, y, s, ">", c);
-        ps_text(rgba, w, h, x0 + 20 * s, y, s, r->label, c);
-        if (r->type == PS_CHOICE) {
-            char value[32];
-            snprintf(value, sizeof value, "< %s >", r->values[r->value]);
-            ps_text(rgba, w, h, x0 + pw - 8 * s - (int)strlen(value) * 6 * s, y, s, value, c);
-        }
+        uint32_t c = rows[i].current ? 0xffe060ff : 0xe0e0e0ff;
+        if (rows[i].current) ps_text(rgba, w, h, x0 + 8 * s, y, s, ">", c);
+        ps_text(rgba, w, h, x0 + 20 * s, y, s, rows[i].label, c);
+        if (rows[i].value[0])
+            ps_text(rgba, w, h, x0 + pw - 8 * s - (int)strlen(rows[i].value) * 6 * s, y, s, rows[i].value, c);
         y += line;
     }
 }

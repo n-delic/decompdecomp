@@ -107,6 +107,23 @@ def copy_z64_file(src: Path, dest: Path) -> None:
             tmp.unlink(missing_ok=True)
 
 
+def z64_file_md5(path: Path) -> str | None:
+    """The MD5 of a cartridge image in big-endian (.z64) order, whatever order the file is in; None when it isn't an
+    N64 image. Projects that check their original with a `checksum.md5` (the Zelda decomps) name no SHA-1."""
+    try:
+        with path.open("rb") as source:
+            fmt = MAGIC.get(source.read(4))
+            if fmt is None or path.stat().st_size % 4:
+                return None
+            source.seek(0)
+            digest = hashlib.md5()
+            for chunk in iter(lambda: source.read(1 << 20), b""):
+                digest.update(_z64_chunk(chunk, fmt))
+    except OSError:
+        return None
+    return digest.hexdigest()
+
+
 @dataclass(frozen=True)
 class RomFileHashes:
     source_sha1: str

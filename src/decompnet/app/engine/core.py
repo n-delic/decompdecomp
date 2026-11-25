@@ -35,6 +35,8 @@ class Core(Network):
     def __init__(self, db_path: str | Path, workspace: Path, claim_ttl: int = 30 * 60, *, project_databases=False):
         super().__init__(db_path, claim_ttl=claim_ttl,project_databases=project_databases)
         self.workspace = Path(workspace)
+        from .. import repair_rules
+        repair_rules.configure(self.workspace)   # the library's declarative rules live in the home (DECOMP_REPAIR_RULES)
         self._syms: dict[int, SymbolTable] = {}
         self._sym_override: dict[int, SymbolTable] = {}
         # project id -> held by one rename at a time, from reading the symbols to writing the new name: two at once

@@ -50,6 +50,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "uv pip install of locked runtime dependencies failed with exit code $LASTEXITCODE" }
     uv pip install --python (Join-Path $bundlePython 'python.exe') --target $packages --no-deps $wheel
     if ($LASTEXITCODE -ne 0) { throw "uv pip install failed with exit code $LASTEXITCODE" }
+    uv run --no-project --python 3.12 --with cython --with setuptools packaging/build_library_native.py $packages  # optional: skips itself without a C compiler
     & (Join-Path $bundlePython 'python.exe') (Join-Path $repoRoot 'packaging/stamp_build.py') $repoRoot $packages
     if ($LASTEXITCODE -ne 0) { throw 'Could not stamp package build identity.' }
     # uv's console-script wrappers in packages/bin hard-code this build folder's python.exe, and each dist-info's

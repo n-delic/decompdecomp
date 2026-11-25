@@ -491,6 +491,11 @@ async function loadPortReadiness() {
   const recompileStatus = loadRecompileStatus(slug, epoch);
   const finish = beginWork(log, "Reading the project", [$("portReload")], "Read.");
   try {
+    // Draw the last saved report at once, then replace it with the fresh one.
+    try {
+      const saved = await api("/api/port-readiness?cached=1&slug=" + encodeURIComponent(slug));
+      if (!saved.cache_miss && epoch === portEpoch && S.slug === slug) renderPortReadiness(saved);
+    } catch (_) { /* no saved copy is not an error */ }
     const report = await api("/api/port-readiness?slug=" + encodeURIComponent(slug));
     if (epoch === portEpoch && S.slug === slug) renderPortReadiness(report);
   } catch (error) {

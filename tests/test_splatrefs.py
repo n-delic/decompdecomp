@@ -549,6 +549,7 @@ def test_plan_accepts_rdata_and_constructor_tables(tmp_path):
     assert unit['name'] == 'demo' and unit['sections'] == {'.rodata': 0x80000410}
 
 
+
 def test_plan_accepts_auto_offsets_and_dict_data_subsegments(tmp_path):
     cfg = config(tmp_path)
     (tmp_path / 'src/real.c').write_text('int real_func(void) { return 1; }')
@@ -573,3 +574,46 @@ def test_versions_follow_a_makefile_that_names_its_config_through_variables(tmp_
                                        'SPLAT := splat split $(SPLAT_YAML)\n')
     found = ForkProject(tmp_path)._splat_version_configs()
     assert sorted(found) == ['eu', 'us']
+
+def test_an_elf_counts_when_only_the_header_crc_and_the_tail_padding_differ_and_the_built_cartridge_is_the_original(
+        tmp_path, monkeypatch):
+    original = bytearray(b"A" * 0x1100)
+    original[0x10:0x18] = b"CRCCRC12"
+    original += b"\xff" * 64
+    image = tmp_path / "baserom.z64"
+    image.write_bytes(bytes(original))
+    (tmp_path / "game.z64").write_bytes(bytes(original))  # (the project's own finished cartridge)
+    build = tmp_path / "build"
+    build.mkdir()
+    elf = build / "game.elf"
+    elf.write_bytes(b"elf")
+    flat = bytearray(original[:0x1100])
+    flat[0x10:0x18] = b"\0" * 8
+    binary = tmp_path / "out.bin"
+    monkeypatch.setattr(splatrefs, "binary_span", lambda path: 0x1100)
+    monkeypatch.setattr(splatrefs, "run", lambda cmd, root, log: binary.write_bytes(bytes(flat)))
+    sha1 = splatrefs.digest(image)
+    found = lambda: splatrefs._through_header_crc(tmp_path, build, {elf}, image, sha1, tmp_path / "objcopy", binary)
+    assert found() == [elf]
+    flat[0x500] = 0x42  # (any other byte differing is no match)
+    assert found() == []
+    flat[0x500] = ord("A")
+    (tmp_path / "game.z64").unlink()  # (no finished cartridge that is the original)
+    assert found() == []
+
+
+def test_a_library_source_named_with_a_parent_path_is_a_unit_named_by_its_place_in_the_checkout(tmp_path):
+    cfg = config(tmp_path)
+    (tmp_path / 'lib/nusys').mkdir(parents=True)
+    (tmp_path / 'build/lib/nusys').mkdir(parents=True)
+    (tmp_path / 'lib/nusys/boot.c').write_text('void boot(void) {}')
+    (tmp_path / 'build/lib/nusys/boot.o').write_bytes(b'candidate')
+    cfg['segments'][0]['subsegments'][0][2] = '../lib/nusys/boot'
+    cfg['segments'][0]['subsegments'].insert(1, {'type': 'custom_data', 'start': 8, 'name': 'data/anim'})
+    unit = splatrefs.plan(tmp_path, cfg)[0]
+    assert unit['name'] == 'lib/nusys/boot' and unit['raw'] == '../lib/nusys/boot'
+    assert unit['source'] == tmp_path / 'lib/nusys/boot.c' and unit['base'] == tmp_path / 'build/lib/nusys/boot.o'
+    cfg['segments'][0]['subsegments'][0][2] = '../../../outside'  # (still never outside the checkout)
+    with pytest.raises(ForkError):
+        splatrefs.plan(tmp_path, cfg)
+

@@ -37,6 +37,9 @@ rm -rf "$APP/python/lib/python3.12/EXTERNALLY-MANAGED" "$APP/python/lib/python3.
 uv pip install --quiet --python "$APP/python/bin/python3.12" --break-system-packages \
   --requirements "$WORK/runtime-requirements.txt"
 uv pip install --quiet --python "$APP/python/bin/python3.12" --break-system-packages --no-deps "$WORK"/wheel/*.whl
+uv run --no-project --python 3.12 --with cython --with setuptools "$ROOT/packaging/build_library_native.py" \
+  "$("$APP/python/bin/python3.12" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')" \
+  || echo "The optional native library modules were not built."
 "$APP/python/bin/python3.12" "$ROOT/packaging/stamp_build.py" "$ROOT"
 [ "${DECOMP_BUILD_GATEWAY:-1}" = 0 ] || "$APP/python/bin/python3.12" -c 'from decompnet.app import mcp_gateway; assert mcp_gateway.built(), "no MCP gateway in the package"'
 rm -f "$APP/python/bin/decomp"  # its shebang names this build's folder: the launchers below run the module instead

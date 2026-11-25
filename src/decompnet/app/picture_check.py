@@ -61,6 +61,19 @@ def seeding_function(repo: Path) -> str | None:
     return None
 
 
+def stalled(results: list[dict]) -> str | None:
+    """A sentence when the port never reached most of the moments to compare (it stopped, hung or stalled: replaying the console's seeds
+    has left a game at a few hundred of its thousand graphics tasks), None when the run is worth keeping: a run that compares nothing must
+    not read as a port with nothing differing."""
+    moments = {r["task"] for r in results}
+    gone = {r["task"] for r in results if r.get("missing") == "port"}
+    compared = [r for r in results if "differ_pct" in r]
+    if moments and (len(gone) * 2 > len(moments) or not compared and gone):
+        return (f"The port never reached {len(gone)} of the {len(moments)} frames to compare, so no result is kept: it stopped or stalled before them. "
+                "Run it again; if it repeats, try a shorter run or another controller script.")
+    return None
+
+
 def check(net, slug: str, tasks: int = 6000, inputs: str = "", tolerance: int = TOLERANCE, pace: bool = True,
           log=print) -> dict:
     """Run the comparison (a background job): the summary, saved in results_file."""
@@ -104,6 +117,9 @@ def check(net, slug: str, tasks: int = 6000, inputs: str = "", tolerance: int = 
         shutil.rmtree(work, ignore_errors=True)  # the RAM dumps: 8 MB each
     if stop.is_set():
         raise NetworkError("Stopped: no pictures were kept for this run.")
+    unreached = stalled(results)
+    if unreached:
+        raise NetworkError(unreached)
     saved = {"at": time.time(), "settings": {"tasks": int(tasks), "input": inputs.strip(), "tolerance": int(tolerance),
                                              "pace": bool(pace)}, "pictures": results}
     tmp = results_file(root).with_suffix(".tmp")

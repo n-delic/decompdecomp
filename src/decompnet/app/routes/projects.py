@@ -523,7 +523,14 @@ def register(app: App) -> None:
         follow again after navigating away) or running (its address)."""
         from ...port.readiness import readiness
         from ...port.wasm import play
-        report = readiness(net, slug)
+        from .. import view_cache
+        proj = net.project_row(slug)
+        # The tab asks for its last saved report first so it opens at once, then for a fresh one (#cache).
+        if request.query_params.get("cached"):
+            report = view_cache.load(net, proj, "port-readiness") or {"cache_miss": True}
+        else:
+            report = readiness(net, slug)
+            view_cache.save(net, proj, "port-readiness", report)
         report["play"] = {"job": jobs.active(("play",), project=slug), "url": play.running(slug),
                           "export_job": jobs.active(("play-export",), project=slug),
                           "behaviour_job": jobs.active(("behaviour-check",), project=slug),
@@ -541,7 +548,12 @@ def register(app: App) -> None:
             q = request.query_params
             if q.get('view') == 'status':return rom_explorer.status(net,slug,jobs)
             if q.get('region'):return rom_explorer.detail(net,slug,q['region'],q.get('image_hash',''))
-            return rom_explorer.listing(net,slug)
+            from .. import view_cache
+            proj=net.project_row(slug)
+            if q.get('cached'):return view_cache.load(net,proj,'rom-explorer') or {'cache_miss':True}
+            result=rom_explorer.listing(net,slug)
+            view_cache.save(net,proj,'rom-explorer',result)
+            return result
         # Reserve discovery and start atomically: double clicks and two windows
         # must attach to the same project job rather than launch duplicate scans.
         with jobs._lock:
@@ -855,7 +867,7 @@ def register(app: App) -> None:
 
     def p_set_aside(slug, request, data):
         """You set a function aside: no C makes it (Network.set_aside_by_you)."""
-        net.set_aside_by_you(str(data.get("name", "")), slug, str(data.get("why", "")))
+        net.set_aside_by_you(str(data.get("name", "")), slug, str(data.get("why", "")), library=data.get("library") is True)
         return {"ok": True}
 
     def p_reopen(slug, request, data):
@@ -1281,6 +1293,19 @@ def register(app: App) -> None:
         from ..globals_view import globals_list
         return globals_list(net, slug)
 
+    def p_global_types(slug, request, data):
+        from ..global_types import learn_project
+        return learn_project(net, slug)
+
+    def p_global_type(slug, request, data):
+        from ..global_types import change_type
+        name, c_type = str(data.get('name') or ''), str(data.get('type') or '')
+        return {'job': jobs.start('Change global type', lambda log: change_type(net, slug, name, c_type, log), project=slug)}
+
+    def p_global_users(slug, request, data):
+        from ..globals_view import global_users
+        return global_users(net, slug, request.query_params.get('name', ''))
+
     def p_variants(slug, request, data):
         from .. import variants
         if request.method == 'POST':
@@ -1516,6 +1541,9 @@ def register(app: App) -> None:
         "/api/cross-game/run": (p_cross_run, ["POST"]),
         "/api/variants": (p_variants, ["GET", "POST"]),
         "/api/globals": (p_globals, ["GET"]),
+        "/api/global-users": (p_global_users, ["GET"]),
+        "/api/global-types/learn": (p_global_types, ["POST"]),
+        "/api/global-types/change": (p_global_type, ["POST"]),
         "/api/regional": (p_regional, ["GET", "POST"]),
         "/api/regional/names": (p_regional_names, ["POST"]),
         "/api/regional/code": (p_regional_code, ["POST"]),
