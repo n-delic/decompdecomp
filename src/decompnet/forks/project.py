@@ -1001,7 +1001,9 @@ class ForkProject:
             env['VIRTUAL_ENV'] = str(python.parent.parent)
         project_tools = console.project_tool_paths(self)
         env.update(console.build_env())  # what its console's builds need (Console.build_env)
-        env["PATH"] = os.pathsep.join([*(str(d) for d in [*project_python, *_tool_dirs(), *project_tools]), env.get("PATH", "")])
+        cargo = Path.home() / ".cargo" / "bin"  # (what `cargo install` put there: pigment64, crunch64's CLI, ...)
+        env["PATH"] = os.pathsep.join([*(str(d) for d in [*project_python, *_tool_dirs(), *project_tools]),
+                                       env.get("PATH", ""), *([str(cargo)] if cargo.is_dir() else [])])
         env["NINJA_STATUS"] = "[%f/%t] "  # (ninja's own: its progress lines are what a run of units is read by)
         # found on that PATH (decompdecomp's own ninja): Linux looks a command up there itself, Windows only in this
         # process's PATH, where decompdecomp's environment isn't when it's installed
