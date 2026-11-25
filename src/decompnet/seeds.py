@@ -498,11 +498,22 @@ def _compilable(source: str | None, name='', asm='', header='', toolchain=None, 
         return source
     from decomprepair import large_switch_drafts
     source = large_switch_drafts.rewrite(source) or source
+    if (toolchain or '').startswith('ido'):
+        # IDO refuses arithmetic on `void *` (GCC 2.x allows it): the names m2c adds to are byte pointers
+        from decomprepair import void_pointer_arithmetic
+        source = void_pointer_arithmetic.rewrite(source, name) or source
+        source = void_pointer_arithmetic.externs(source, name) or source
+    from decomprepair import void_pointer_arithmetic as stores
+    source = stores.stores(source) or source  # a store m2c printed as a call through a cast, which no compiler reads
     if asm:
         from decomprepair import draft_call_recovery
 
         if repaired := draft_call_recovery.variants(source, name, asm, header, toolchain, resolve=resolve):
             return repaired[0][1]
+        # what the recovery left: a call to a code address inside the same overlay slot (`jal .L8033193C_raw_slot_09`)
+        # is named for its label, and `.L...` is no C name: it is a function like the others (`func_<address>`), as the
+        # split names the piece
+        source = re.sub(r"(?<![\w.])\.L([0-9A-Fa-f]{8}(?:_[a-z][a-z0-9]*(?:_[a-z0-9]+)*)?)(?![\w.])", r"func_\1", source)
     return source
 
 
@@ -613,6 +624,18 @@ def entry_label(asm_text: str, name: str) -> str:
     return "\n".join(out) if placed else asm_text
 
 
+_FLOAT_SAVE = re.compile(r"^[ \t]*(?:/\*.*?\*/[ \t]*)?s(?:wc1|dc1)[ \t]+\$(?:fs\d+f?|f(?:2\d|3[01]))[ \t]*,[ \t]*[-+\w]+\(\$sp\)[ \t]*$",
+                         re.M)
+
+
+def drop_float_saves(asm_text: str) -> str:
+    """The prologue's stores of callee-saved FPU registers (`swc1 $fs0, 0x18($sp)`) removed. A function that keeps a
+    float in $f20..$f31 saves the caller's value first, and m2c reads that register as a use of a register nothing
+    set ("Read from unset register $f20"), so no draft of it compiled (a fifth of one game's drafts that failed to
+    compile). The save is the compiler's, not the C's, so the draft is the same without it."""
+    return _FLOAT_SAVE.sub("", asm_text)
+
+
 @compile_timing.timed('generation')
 def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", data_asm: str | None = None,
             timeout: float = 20, valid: bool = False, strict: bool = False, options: tuple[str, ...] = ()) -> str | None:
@@ -630,6 +653,9 @@ def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", dat
                 if looped == asm_text:
                     raise
                 asm_text = looped
+                continue
+            if "Read from unset register $f" in str(error) and (saved := drop_float_saves(asm_text)) != asm_text:
+                asm_text = saved
                 continue
             found = _DELAY_SLOT_LABEL.search(str(error))
             if not found:
