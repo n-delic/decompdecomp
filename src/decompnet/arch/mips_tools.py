@@ -163,6 +163,18 @@ def build_paths(project) -> list[Path]:
                         alias.write_text(wrapper, encoding="utf-8")
                         alias.chmod(0o755)
                     continue
+                if tool == "objcopy":
+                    # a distribution's objcopy calls the o32 formats elf32-tradbigmips / elf32-tradlittlemips; these
+                    # binutils spell them elf32-bigmips / elf32-littlemips
+                    wrapper = ('#!/bin/sh\nfor a; do shift; case "$a" in *elf32-tradbigmips*) a=$(printf %s "$a" | '
+                               'sed s/tradbigmips/bigmips/g);; *elf32-tradlittlemips*) a=$(printf %s "$a" | '
+                               'sed s/tradlittlemips/littlemips/g);; esac; set -- "$@" "$a"; done\n'
+                               f'exec "{binary.resolve()}" "$@"\n')
+                    if not alias.is_file() or alias.is_symlink() or alias.read_text(errors="replace") != wrapper:
+                        alias.unlink(missing_ok=True)
+                        alias.write_text(wrapper, encoding="utf-8")
+                        alias.chmod(0o755)
+                    continue
                 if tool == "as" and prefix == "mips-linux-gnu-" and _is_n64(project):
                     # A distribution's mips-linux-gnu-as assembles for the o32 ABI unless told otherwise; the pinned
                     # (PS2) one does not set it, and ld then refuses `ld -r -b binary` objects beside the code

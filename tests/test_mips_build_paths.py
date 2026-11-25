@@ -520,3 +520,46 @@ def test_sn64_compiler_files_are_linked_into_tools_bin(tmp_path, monkeypatch):
     (root / "configure.py").write_text('CC1N64 = "tools/bin/cc1n64.exe"\n')
     buildtools._provide_sn64(SimpleNamespace(root=root))
     assert (root / "tools/bin/cc1n64.exe").is_symlink() and (root / "tools/bin/cc1pln64.exe").is_symlink()
+
+
+def test_gcc_272_folder_a_linux_only_project_names_is_linked_on_a_mac(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools
+
+    source = tmp_path / "kmc"
+    source.mkdir()
+    (source / "gcc").write_text("compiler")
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(buildtools.toolchains, "require", lambda tid: source)
+    monkeypatch.setattr(buildtools.sys, "platform", "darwin")
+    root = tmp_path / "project"
+    (root / "tools").mkdir(parents=True)
+    (root / "Makefile.common").write_text("TOOLS_DIR := tools\nKMC_PATH := $(TOOLS_DIR)/gcc-2.7.2/\n")
+    buildtools._provide_compiler_dirs(SimpleNamespace(root=root))
+    assert (root / "tools/gcc-2.7.2").resolve() == source.resolve()
+
+
+def test_objcopy_accepts_the_distribution_names_of_the_o32_formats(tmp_path, monkeypatch):
+    tools, _ = pinned(tmp_path, monkeypatch)
+    (tools / "mips-ps2-decompals-objcopy").write_text("#!/bin/sh\nprintf '%s\\n' \"$@\"\n")
+    (tools / "mips-ps2-decompals-objcopy").chmod(0o755)
+    paths = mips_tools.build_paths(SimpleNamespace(root=tmp_path / "project"))
+    import subprocess
+
+    said = subprocess.run([str(paths[0] / "mips-linux-gnu-objcopy"), "-O", "elf32-tradbigmips", "-B", "mips"],
+                          capture_output=True, text=True).stdout.split()
+    assert said == ["-O", "elf32-bigmips", "-B", "mips"]
+
+
+def test_dockerfile_splat_pin_and_tools_requirements_make_the_project_environment(tmp_path, monkeypatch):
+    root = tmp_path / "project"
+    (root / "tools").mkdir(parents=True)
+    (root / "tools/requirements.txt").write_text("splat64[mips]>=0.36.3,<1.0.0\n")
+    (root / "Dockerfile").write_text('RUN pip install -U \\\n  "splat64[mips]<0.40.0"\n')
+    (root / "Makefile").write_text("all:\n")
+    project = ForkProject(root)
+    project.platform = "n64"
+    steps = []
+    monkeypatch.setattr(ForkProject, "run", lambda self, cmd, **kw: (steps.append(cmd) or (True, "")))
+    monkeypatch.setattr(ForkProject, "kind", lambda self: "splat")
+    project.ensure_python_env(log=lambda *_: None)
+    assert any("tools/requirements.txt" in cmd and "splat64[mips]<0.40.0" in cmd for cmd in steps)
