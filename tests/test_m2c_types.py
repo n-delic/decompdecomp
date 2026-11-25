@@ -66,8 +66,62 @@ def test_a_word_read_from_memory_that_is_dereferenced_and_cast_values_are_read_t
     assert m2c_types.repair("*(M2C_FIELD(p, s32 *, 0x10) + (a - b)) = 0xFF;").startswith("*(s32 *)(M2C_FIELD(")
 
 
-def test_a_declaration_with_a_pointer_to_an_array_is_not_a_dereference():
+def test_a_declaration_with_a_pointer_to_an_array_is_a_pointer_to_the_element_not_a_dereference():
     src = "void f(void) {\n    u16 (*sp26C)[];\n    s32 x;\n    x = sp26C;\n}\n"
-    assert m2c_types.repair(src) == src
+    out = m2c_types.repair(src)
+    assert out == src.replace("u16 (*sp26C)[];", "u16 *sp26C;")
     from decompnet import seeds
-    assert seeds.declare_unset_reads(src, "f") == src
+    assert seeds.declare_unset_reads(out, "f") == out
+
+
+def test_pointers_to_arrays_of_unknown_length_become_pointers_to_the_element():
+    src = "s32 g(void *, u16 (*)[]);\nvoid f(void) {\n    u16 (*p)[];\n    p = (u16 (*)[]) &sp20[0];\n    t = p[0][0];\n}\n"
+    out = m2c_types.repair(src)
+    assert "g(void *, u16 *)" in out and "u16 *p;" in out and "(u16 *) &sp20[0]" in out and "t = p[0];" in out
+
+
+def test_case_labels_outside_any_switch_are_dropped_and_those_inside_stay():
+    src = ("void f(int x) {\n    if (x) {\n        switch (x) {\n        case 1:\n            g();\n            break;\n"
+           "        }\n    } else {\n    default:  /* switch 1 */\n        h();\n    }\n}\n")
+    out = m2c_types.repair(src)
+    assert "default" not in out and "        case 1:\n" in out and "        h();" in out
+
+
+def test_a_library_call_keeps_only_the_arguments_the_library_takes():
+    assert m2c_types.repair("memcpy(a, b, (n * 2) + 8, var_a3);") == "memcpy(a, b, (n * 2) + 8);"
+    assert m2c_types.repair("memcpy(a, b, 8);") == "memcpy(a, b, 8);"
+
+
+def test_a_function_pointer_called_without_arguments_is_declared_without_parameters():
+    out = m2c_types.repair("s32 f(void *a, s32 (*cb)(void *)) {\n    return cb();\n}\n")
+    assert "s32 (*cb)()" in out
+    field = m2c_types.repair("t = M2C_FIELD(p, f32 *(**)(void *), 0x18)();")
+    assert field == "t = M2C_FIELD(p, f32 *(**)(), 0x18)();"
+    assert m2c_types.repair("t = cb(1);\ns32 (*cb)(void *);") == "t = cb(1);\ns32 (*cb)(void *);"
+
+
+def test_a_call_to_a_literal_address_casts_inside_the_parentheses_that_are_called():
+    assert m2c_types.repair("(M2C_UNK (*)())0x80000400();") == "((M2C_UNK (*)())0x80000400)();"
+
+
+def test_a_store_through_a_number_is_not_mistaken_for_a_table_call():
+    out = m2c_types.repair("    *(arg3 + temp) = M2C_FIELD(v, u8 *, 3);\n")
+    assert "void (*)()" not in out
+
+
+def test_floats_stored_through_pointers_to_unknown_pointers_become_words_and_float_temporaries():
+    src = ("void f(void) {\n    M2C_UNK **p;\n    M2C_UNK *temp_f0;\n    *p = M2C_BITWISE(M2C_UNK **, temp_f0);\n"
+           "    x = M2C_BITWISE(f32, temp_f0);\n}\n")
+    out = m2c_types.repair(src)
+    assert "s32 *p;" in out and "f32 temp_f0;" in out and "M2C_BITWISE(s32, temp_f0)" in out
+    plain = "void f(void) {\n    M2C_UNK **p;\n    *p = 0;\n}\n"
+    assert m2c_types.repair(plain) == plain  # (only where a float is stored: otherwise m2c's types stand)
+
+
+def test_the_other_half_of_a_double_no_register_pair_could_hold_prints_as_zero():
+    assert m2c_types.repair("x = (f32) ((second half of f64) * y);\nz = second half of f64;") == "x = (f32) (0.0 * y);\nz = 0.0;"
+
+
+def test_an_address_read_through_two_levels_is_cast_at_each():
+    out = m2c_types.repair("    s32 t;\n    **t = 5;\n")
+    assert "*(s32 *)*(s32 *)t = 5;" in out

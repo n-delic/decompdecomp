@@ -83,6 +83,15 @@ def _composed(moves: list[tuple[int, str, int, list[str]]]) -> set[int]:
     return found
 
 
+def _is_save(op: str, number: int, operands: list[str]) -> bool:
+    """A callee-saved register stored to or loaded from the stack frame in the prologue or epilogue (`sdc1 $f20,
+    0x20($sp)`): the whole register is kept, whatever the function holds in it, so it says nothing about a double
+    or a single. Counting it made every saved register look like a double in use, and a function with a double in
+    each had no free pair to rename into (5 of one game's functions kept `(second half of f64)`)."""
+    return (op in _SINGLE_MOVES + _DOUBLE_MOVES and number >= 20 and bool(operands)
+            and operands[-1].replace(' ', '').endswith('($sp)'))
+
+
 def _scan(asm: str):
     """[line index] of floating-point instructions, the registers used as a double or as a single, and the even
     registers whose neighbour is the other half of a double (`_composed`)."""
@@ -98,6 +107,8 @@ def _scan(asm: str):
             continue
         for register, role in zip(floating, roles):
             number = _NUMBER[_REGISTER.fullmatch(register)[1]]
+            if _is_save(match['op'], number, operands):
+                continue
             (doubles if role == 'd' else singles).add(number)
             if match['op'] in _SINGLE_MOVES:
                 moves.append((index, match['op'], number, [o for o in operands if o != register]))
@@ -126,9 +137,11 @@ def pair_free(asm: str) -> str:
     saved = [p for p in free if p >= 20]  # a callee-saved register stays one (m2c skips its save and restore)
     pairs = iter(free)
     saved_pairs = iter(saved)
-    singles_free = iter(p for p in (*range(1, 32, 2), *range(2, 32, 2))
-                        if p not in used and p ^ 1 not in used and p not in reserved and p ^ 1 not in reserved
-                        and p not in _SPECIAL)
+    candidates = [p for p in (*range(1, 32, 2), *range(2, 32, 2))
+                  if p not in used and p ^ 1 not in used and p not in reserved and p ^ 1 not in reserved
+                  and p not in _SPECIAL]
+    singles_free = iter(p for p in candidates if p < 20)
+    saved_singles = iter(p for p in candidates if p >= 20)
 
     def place(number: int, double: bool) -> bool:
         if double and number >= 20:
@@ -136,7 +149,8 @@ def pair_free(asm: str) -> str:
             while taken is not None and taken in reserved:
                 taken = next(saved_pairs, None)
         else:
-            taken = next(pairs, None) if double else next(singles_free, None)
+            # (a single kept in a callee-saved register stays in one: in a temporary, m2c reads it as unset after a call)
+            taken = next(pairs, None) if double else next(saved_singles if number >= 20 else singles_free, None)
             while double and taken is not None and taken in reserved:
                 taken = next(pairs, None)
         if taken is None:
