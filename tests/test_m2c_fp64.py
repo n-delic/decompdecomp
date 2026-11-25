@@ -60,6 +60,6 @@ def test_unset_stack_and_saved_register_reads_are_declared_locals():
            "    if (saved_reg_s0 != 0) { return; }\n}\n")
     out = seeds.declare_unset_reads(src, "f")
     assert "    s32 sp24;\n" in out and "    s32 unksp28;\n" in out and "    s32 saved_reg_s0;\n" in out
-    assert out.count("sp20;") == 2  # the declared slot is not declared again
+    assert out.count("s32 sp20;") == 1  # the declared slot is not declared again
     assert seeds.declare_unset_reads(out, "f") == out
     assert seeds.declare_unset_reads("int x;\n", "f") == "int x;\n"
