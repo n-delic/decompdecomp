@@ -209,3 +209,54 @@ def test_play_gives_the_host_the_console_memory_the_project_names():
     from pathlib import Path
     text = (Path(__file__).resolve().parents[1] / "src/decompnet/port/wasm/play.py").read_text()
     assert '(cfg.get("rom") or {}).get("memory_size")' in text and 'env["PORT_MEMSIZE"] = str(memory)' in text
+
+
+def test_playing_beside_the_console_is_for_n64_games_and_its_viewer_ends_with_the_game(tmp_path):
+    """Play beside the console (side_by_side.py): one viewer per running game, closed when the game stops, and the
+    running view says it is one, so a second click can't swap it for a plain Play."""
+    class Net:
+        class progress:
+            @staticmethod
+            @contextmanager
+            def view():
+                yield
+
+        def _project(self, slug):
+            return {"slug": slug}
+
+        def console(self, proj):
+            return type("C", (), {"id": "ps1"})()
+
+    with pytest.raises(NetworkError, match="N64 games"):
+        play.play(Net(), "game", log=lambda line: None, compare=True)
+
+    closed = []
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    play._running["game"] = (proc, "http://127.0.0.1:1/")
+    play._sessions["game"] = type("S", (), {"close": lambda self: closed.append(1)})()
+    assert play.running_result("game") == {"url": "http://127.0.0.1:1/", "compare": True}
+    assert play.stop("game") and closed == [1] and "game" not in play._sessions
+
+
+def test_the_viewer_names_addresses_from_the_projects_symbols_and_functions():
+    class Store:
+        def all(self, sql, *args):
+            if "FROM symbols" in sql:
+                return [{"name": "gScore", "address": 0x80100000, "size": 4}]
+            return [{"name": "func_80001000", "vram": 0x80001000, "size": 0x20}]
+
+    class Net:
+        class progress:
+            @staticmethod
+            @contextmanager
+            def view():
+                yield
+
+        def _project(self, slug):
+            return {"id": 1}
+
+        def project_store(self, project_id):
+            return Store()
+
+    names = play.project_symbols(Net(), "game")
+    assert names.name(0x80100000) == "gScore" and names.name(0x80001008) == "func_80001000+0x8"

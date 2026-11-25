@@ -27,6 +27,7 @@ STARTING = "Starting the game"  # the progress bar's last step, after the build'
 _running: dict[str, tuple[subprocess.Popen, str]] = {}
 _native: set[str] = set()
 _windows: dict[str, subprocess.Popen] = {}  # each game's own window, closed when the game stops
+_sessions: dict = {}  # each game played beside the console: its side-by-side viewer (side_by_side.Session)
 _lock = threading.Lock()
 
 
@@ -60,10 +61,18 @@ def running_result(slug: str) -> dict | None:
     with _lock:
         entry = _running.get(slug)
         if entry and entry[0].poll() is None:
-            return {"url": entry[1], "native": True} if slug in _native else {"url": entry[1]}
+            view = {"url": entry[1], "native": True} if slug in _native else {"url": entry[1]}
+            return {**view, "compare": True} if slug in _sessions else view
         _running.pop(slug, None)
         _native.discard(slug)
+        _end_session(slug)
         return None
+
+
+def _end_session(slug: str) -> None:
+    session = _sessions.pop(slug, None)
+    if session is not None:
+        session.close()
 
 
 def running(slug: str) -> str | None:
@@ -100,6 +109,7 @@ def stop(slug: str) -> bool:
         entry = _running.pop(slug, None)
         _native.discard(slug)
         win = _windows.pop(slug, None)
+    _end_session(slug)
     if win is not None and win.poll() is None:
         win.terminate()
     if entry and entry[0].poll() is None:
@@ -359,13 +369,36 @@ def library_c(net, slug: str) -> dict:
     return ultralib.units(net, slug)
 
 
-def play(net, slug: str, log=print, *, adapter: Path | None = None) -> dict:
+def project_symbols(net, slug: str):
+    """The project's names for addresses (its symbols and functions), for the side-by-side viewer's difference list."""
+    from .side_by_side import Symbols
+
+    with net.progress.view():
+        proj = net._project(slug)
+    store = net.project_store(proj["id"])
+    rows = [(r["address"], r["size"], r["name"]) for r in
+            store.all("SELECT name, address, size FROM symbols WHERE project_id=? AND address IS NOT NULL", proj["id"])]
+    rows += [(r["vram"], r["size"], r["name"]) for r in
+             store.all("SELECT name, vram, size FROM functions WHERE project_id=? AND vram IS NOT NULL", proj["id"])]
+    return Symbols(rows)
+
+
+def play(net, slug: str, log=print, *, adapter: Path | None = None, compare: bool = False) -> dict:
     """Build the project's game for the PC if anything changed, start it with its live view, and return its address
-    once it answers: {"url": ...}."""
+    once it answers: {"url": ...}. `compare`: play it beside the console (side_by_side.py): the game and the reversing
+    emulator run in lockstep in one page, one pad for both, and the RAM that differs is listed; the address is that page's."""
     from . import build
 
     if view := running_result(slug):
         return view
+    if compare:
+        from ...consoles.n64 import emulator
+        with net.progress.view():
+            console = net.console(net._project(slug)).id
+        if console != "n64" or adapter:
+            raise NetworkError("Playing beside the console works for N64 games in the decompdecomp runtime today.")
+        if emulator.ensure(log) is None:
+            raise NetworkError("The reversing emulator (mupenRE) isn't available: install it under Compilers & tools → Tools.")
     repo, cfg, rom = game(net, slug)
     steps = (*build.STEPS, STARTING)
     program = build.build(repo, console=cfg.get("platform", "n64"), log=log, steps=steps, runtime_image=rom,
@@ -379,6 +412,8 @@ def play(net, slug: str, log=print, *, adapter: Path | None = None) -> dict:
            "PORT_FLASH": str(out / "game.fla"), "PORT_ENTRIES": str(rom.parent / RUNTIME_ENTRIES)}
     if memory := (cfg.get("rom") or {}).get("memory_size"):  # the console the game was meant for (host.c console_memory)
         env["PORT_MEMSIZE"] = str(memory)
+    if compare:  # parked before each retrace until the viewer lets it go on, in virtual time so the game is idle there
+        env.update(PORT_LOCKSTEP="1", PORT_VTIME="1")
     env.pop("PORT_RT64", None)
     env.pop("PORT_RECOMP_UI", None)
     if adapter:
@@ -423,6 +458,20 @@ def play(net, slug: str, log=print, *, adapter: Path | None = None) -> dict:
         if proc.poll() is None:
             end(proc)
         raise
+    title = f"{cfg['rom'].get('title') or slug} (PC port)"
+    if compare:
+        from . import side_by_side
+        megabytes = int(memory or 8)  # "4" or "8" or a byte count, as the host reads it (host.c console_memory)
+        megabytes = megabytes >> 20 if megabytes > 8 else megabytes
+        try:  # the emulator has the Expansion Pak when the port's console does (the port defaults to it)
+            session = side_by_side.Session(rom, url, out / "side-by-side", expansion_pak=megabytes != 4,
+                                           lockstep=True, symbols=project_symbols(net, slug))
+        except BaseException:
+            end(proc)
+            raise
+        _sessions[slug] = session
+        url, title = session.url, title.replace("(PC port)", "(PC port beside the console)")
+        log("Playing beside the console: the port and the reversing emulator run in lockstep, with one pad for both.")
     with _lock:
         _running[slug] = (proc, url)
         if adapter:
@@ -431,7 +480,7 @@ def play(net, slug: str, log=print, *, adapter: Path | None = None) -> dict:
         log("Playing in the RT64 Metal window.")
         return {"url": url, "native": True}
     log(f"playing at {url}")
-    return {"url": url, "window": _open_window(slug, url, proc.pid, f"{cfg['rom'].get('title') or slug} (PC port)")}
+    return {"url": url, "window": _open_window(slug, url, proc.pid, title), **({"compare": True} if compare else {})}
 
 
 def unlisted_entries(net, slug: str) -> list[int]:

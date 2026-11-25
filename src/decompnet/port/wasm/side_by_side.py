@@ -19,8 +19,10 @@ in the page.
 from __future__ import annotations
 
 import argparse
+import bisect
 import json
 import os
+import re
 import socket
 import struct
 import subprocess
@@ -174,8 +176,41 @@ def differing_blocks(a: bytes, b: bytes, ranges: list[tuple[int, int]] | None = 
     return [i for lo, hi in spans for i in range(lo, hi - BLOCK + 1, BLOCK) if a[i:i + BLOCK] != b[i:i + BLOCK]]
 
 
-def regions(blocks: list[int], a: bytes, b: bytes, limit: int = 12) -> list[str]:
-    """Runs of differing blocks as text lines: the address range and the first word that differs in each, with both values."""
+class Symbols:
+    """Names for addresses: (address, size, name) entries, looked up as `name+0xN` inside an entry's size (an entry with no
+    size covers up to 0x100 bytes, a function's usual reach for a label)."""
+
+    def __init__(self, entries=()):
+        self.entries = sorted(set((int(a) & 0xFFFFFFFF, int(n or 0), str(name)) for a, n, name in entries))
+        self.starts = [e[0] for e in self.entries]
+
+    def __bool__(self) -> bool:
+        return bool(self.entries)
+
+    def name(self, address: int) -> str:
+        i = bisect.bisect_right(self.starts, address) - 1
+        if i < 0:
+            return ""
+        start, size, name = self.entries[i]
+        offset = address - start
+        if offset >= (size or 0x100):
+            return ""
+        return f"{name}+0x{offset:X}" if offset else name
+
+    @classmethod
+    def from_file(cls, path: Path) -> "Symbols":
+        """A symbol list in the usual `name = 0xADDRESS; // size:0xN` form (splat's symbol_addrs.txt)."""
+        out = []
+        for line in Path(path).read_text(encoding="utf-8", errors="replace").splitlines():
+            m = re.match(r"\s*(\w+)\s*=\s*(0x[0-9A-Fa-f]+|\d+)\s*;(?:.*size:\s*(0x[0-9A-Fa-f]+|\d+))?", line)
+            if m:
+                out.append((int(m.group(2), 0), int(m.group(3), 0) if m.group(3) else 0, m.group(1)))
+        return cls(out)
+
+
+def regions(blocks: list[int], a: bytes, b: bytes, limit: int = 12, symbols: Symbols | None = None) -> list[str]:
+    """Runs of differing blocks as text lines: the address range and the first word that differs in each, with both
+    values, and the symbol that word is in when the project's names are known."""
     out, i = [], 0
     while i < len(blocks) and len(out) < limit:
         j = i
@@ -183,8 +218,9 @@ def regions(blocks: list[int], a: bytes, b: bytes, limit: int = 12) -> list[str]
             j += 1
         start, end = blocks[i], blocks[j] + BLOCK
         w = next(o for o in range(start, end, 4) if a[o:o + 4] != b[o:o + 4])
-        out.append(f"{0x80000000 + start:08X}-{0x80000000 + end:08X}  first {0x80000000 + w:08X}: "
-                   f"{a[w:w + 4].hex().upper()} vs {b[w:w + 4].hex().upper()}")
+        where = symbols.name(0x80000000 + w) if symbols else ""
+        out.append(f"{0x80000000 + start:08X}-{0x80000000 + end:08X}  first {0x80000000 + w:08X}"
+                   f"{f' ({where})' if where else ''}: {a[w:w + 4].hex().upper()} vs {b[w:w + 4].hex().upper()}")
         i = j + 1
     return out
 
@@ -193,8 +229,10 @@ class Lockstep:
     """The viewer as the clock: both sides park before each retrace, their RAMs are compared there, then the one pad is
     given to both and they go on one retrace (docs/PORTING.md, "Side by side, live")."""
 
-    def __init__(self, session: "Session", rate: float = 60.0, offset: int = 0, ranges: list | None = None):
+    def __init__(self, session: "Session", rate: float = 60.0, offset: int = 0, ranges: list | None = None,
+                 symbols: Symbols | None = None):
         self.session, self.interval, self.offset, self.ranges = session, 1.0 / rate, offset, ranges
+        self.symbols = symbols
         self.running, self.stepping, self.stop = True, False, False
         self.pad, self.sent_pad = (0, 0, 0), None
         self.held: dict[int, int] = {}  # button bit: retraces it stays down at least (a tap shorter than a game's poll is still seen)
@@ -261,8 +299,8 @@ class Lockstep:
         self.vi, self.blocks = n, len(blocks)
         if blocks and not self.first_vi:
             self.first_vi = n
-        self.new = regions(new, port, emu, 6)
-        self.regions = regions(blocks, port, emu)
+        self.new = regions(new, port, emu, 6, self.symbols)
+        self.regions = regions(blocks, port, emu, 12, self.symbols)
 
     def _run(self) -> None:
         n = 1
@@ -315,7 +353,8 @@ class Session:
     """The viewer: a page on 127.0.0.1 showing the port (proxied from its live view) beside the console, one pad."""
 
     def __init__(self, rom: Path, port_url: str, work: Path | None = None, *, expansion_pak: bool = False,
-                 lockstep: bool = False, rate: float = 60.0, offset: int = 0, ranges: list | None = None):
+                 lockstep: bool = False, rate: float = 60.0, offset: int = 0, ranges: list | None = None,
+                 symbols: Symbols | None = None):
         from ...consoles.n64.emulator import live
         self.port_url = port_url.rstrip("/")
         self._tmp = tempfile.TemporaryDirectory(prefix="decomp-side-by-side-") if work is None else None
@@ -324,7 +363,7 @@ class Session:
         self.shared = live.Shared(self.work / "live.bin", expansion_pak, lockstep)
         self.emulator = live.start(rom, self.shared, expansion_pak=expansion_pak)
         self.console = ConsoleView(self.shared, self.work)
-        self.lockstep = Lockstep(self, rate, offset, ranges) if lockstep else None
+        self.lockstep = Lockstep(self, rate, offset, ranges, symbols) if lockstep else None
         session = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -401,12 +440,17 @@ class Session:
         self.shared.close()
         if self._tmp:
             self._tmp.cleanup()
+        else:
+            self.shared.path.unlink(missing_ok=True)  # 16 MB of the console's RAM, not kept
 
 
-def start_port(program: Path, rom: Path, work: Path, lockstep: bool = False) -> tuple[subprocess.Popen, str]:
+def start_port(program: Path, rom: Path, work: Path, lockstep: bool = False,
+               expansion_pak: bool = False) -> tuple[subprocess.Popen, str]:
     """A built port running with its live view on a free port, as Play starts it; (process, its address)."""
     port = _free_port()
-    env = {**os.environ, "PORT_LIVE": str(port), "PORT_SAVE": str(work / "game.eep")}
+    # the same console on both sides: the port defaults to 8 MB, the emulator to 4 unless it has the Expansion Pak
+    env = {**os.environ, "PORT_LIVE": str(port), "PORT_SAVE": str(work / "game.eep"),
+           "PORT_MEMSIZE": "8" if expansion_pak else "4"}
     for key in ("PORT_RT64", "PORT_WINDOW", "PORT_RECOMP_UI"):
         env.pop(key, None)
     if lockstep:  # parked before each retrace until the viewer says go; virtual time, so the game is idle there
@@ -441,6 +485,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--range", action="append", default=[], metavar="START-END",
                     help="lockstep: compare only this RAM range (hex addresses, repeatable): the game's data, not the port's "
                          "own layout (exception vectors, memory size, stacks) where the two always differ")
+    ap.add_argument("--symbols", type=Path, help="a symbol list (name = 0xADDRESS; // size:0xN) to name the differing addresses")
     ap.add_argument("--no-open", action="store_true", help="don't open the page in the browser")
     args = ap.parse_args(argv)
     with tempfile.TemporaryDirectory(prefix="decomp-side-by-side-") as tmp:
@@ -449,9 +494,10 @@ def main(argv: list[str] | None = None) -> int:
         lockstep = bool(args.program) if args.lockstep is None else args.lockstep
         ranges = [tuple(int(x, 16) & 0x1FFFFFFF for x in r.split("-")) for r in args.range]
         if args.program:
-            port_proc, url = start_port(args.program.resolve(), args.rom.resolve(), Path(tmp), lockstep)
+            port_proc, url = start_port(args.program.resolve(), args.rom.resolve(), Path(tmp), lockstep, args.expansion_pak)
         session = Session(args.rom.resolve(), url, Path(tmp), expansion_pak=args.expansion_pak, lockstep=lockstep,
-                          rate=args.rate, offset=args.emulator_offset, ranges=ranges)
+                          rate=args.rate, offset=args.emulator_offset, ranges=ranges,
+                          symbols=Symbols.from_file(args.symbols) if args.symbols else None)
         print(f"side by side at {session.url}  (Ctrl-C to stop)", flush=True)
         if not args.no_open:
             webbrowser.open(session.url)

@@ -15,6 +15,7 @@ function portBuildAvailable() {
 
 function updatePortBuildActions() {
   $("portPlay").disabled = !!playJob || !portBuildAvailable();
+  if ($("portBeside")) $("portBeside").disabled = !!playJob || !portBuildAvailable();
   if (exportState?.slug === S.slug) renderExportControls(exportState);
 }
 
@@ -279,7 +280,7 @@ function portSteps(report) {
         : "map not written yet", buttons: ["portAssets", "portExtract"], logs: ["portAssetsLog", "portExtractLog"] },
     { title: "Play it", pct: null, play: true,
       detail: "Play your last save using the selected build mode and runtime.",
-      buttons: ["portPlay", "portStop"],
+      buttons: ["portPlay", "portBeside", "portStop"],
       logs: ["portPlayLog"] },
   ];
   if (report.mode === "project") {
@@ -398,7 +399,7 @@ function renderPortSteps(report, steps = portSteps(report)) {
   const list = $("portSteps");
   if (!list) return;
   const parked = $("portParked");
-  for (const id of ["portDrafts", "portCompile", "portRenameCalls", "portFixCalls", "portAssets", "portExtract", "portPlay", "portStop",
+  for (const id of ["portDrafts", "portCompile", "portRenameCalls", "portFixCalls", "portAssets", "portExtract", "portPlay", "portBeside", "portStop",
     "portBehaviour", "portBehaviourStop", "portBehaviourSettings", "portScan", "portScanStop", "portScanSettings", "portPictures", "portPicturesStop", "portPicturesSettings", "portRecompile", "portRecompileStop"]) {
     if (parked && $(id)) parked.append($(id));  // back where they wait, then into their step
   }
@@ -969,19 +970,19 @@ function playStopLabel() {
   $("portStop").textContent = playJob ? "Stop the build" : "Stop the game";
 }
 
-async function playGame(existing = null) {
+async function playGame(existing = null, beside = false) {
   if (playJob || (!existing && !portBuildAvailable())) return;
   const slug = S.slug, log = $("portPlayLog");
   playJob = existing ? existing.id : "starting";
   log.hidden = false; log._showJobProgress = true;
   showJobError(log, "");
-  const finish = beginWork(log, "Building the game for the PC", [$("portPlay")], "Playing.");
+  const finish = beginWork(log, "Building the game for the PC", [$("portPlay"), $("portBeside")].filter(Boolean), "Playing.");
   if (existing?.progress) updateWorkProgress(log, existing.progress);
   $("portStop").hidden = false; $("portStop").disabled = false; playStopLabel();
   let playing = false;
   try {
     let result = existing ? { job: existing.id }
-      : await api("/api/play", { method: "POST", body: { slug, ...portBuildRequest() } });
+      : await api("/api/play", { method: "POST", body: { slug, ...portBuildRequest(), ...(beside ? { compare: true } : {}) } });
     if (result.job) { playJob = result.job; result = await followJob(result.job, log, null, () => S.slug === slug); }
     if (result?.native) {
       log.append("\nThe game opened in the RT64 window.");
@@ -989,6 +990,7 @@ async function playGame(existing = null) {
     } else if (result && result.url) {
       const link = document.createElement("a");
       link.href = result.url; link.target = "_blank"; link.rel = "noopener"; link.textContent = result.url;
+      if (result.compare) log.append("\nThe port and the console run side by side in one page (the port on the left, the console on the right, one pad for both, the RAM that differs listed below). ");
       if (result.window) log.append("\nThe game opened in its own window; closing it stops the game. Or play in the browser at ", link, ".");
       else { log.append("\nThe game runs at ", link, " (opened in your browser)."); window.open(result.url, "_blank", "noopener"); }
       playing = true;
@@ -1235,6 +1237,7 @@ if ($("portPanel")) {
     }
   };
   $("portPlay").onclick = () => playGame();
+  if ($("portBeside")) $("portBeside").onclick = () => playGame(null, true);
   $("portStop").onclick = stopGame;
   for (const input of exportChoices()) input.onchange = saveExportTargets;
   $("portExportStart").onclick = () => exportGame();

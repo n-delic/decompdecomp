@@ -645,10 +645,16 @@ a port given by `--port-url` needs `PORT_LOCKSTEP=1 PORT_VTIME=1`) the viewer is
 viewer reads both RAMs there (`GET /ram?vi=N` on the port, the file's second RAM block on the console), lists the regions that
 differ and the ones that are new at this retrace, latches the page's pad (a tap stays down four retraces) and lets both go on
 one. The page has Pause, Step and the list; `--rate 50` for a PAL game, `--range START-END` (repeatable) to compare only the
-game's own data (the port's exception vectors, its 8 MB `osMemSize` against the console's 4 and its stacks always differ),
+game's own data (the port's exception vectors and its stacks always differ),
 `--emulator-offset` if the two count retraces one apart. Measured on an N64 game's menu: both on the same screen, a Start press
-moved both on together, about 52 retraces a second. Not done yet: symbol names in the difference list, sound from the console,
-a faster draw of the console's frames, and a button in the app (ROADMAP.md).
+moved both on together, about 52 retraces a second.
+
+In the app it is the Porting tab's **Play beside the console** button, next to Play (N64 games; `play.play(compare=True)`):
+it builds and starts the port as Play does, in lockstep, starts the emulator and opens the page in the game's window. The
+differing addresses carry the project's names (`gScore+0x4`: its symbols and functions, `play.project_symbols`; on the command
+line `--symbols FILE`), and both sides get the same console memory (the emulator the Expansion Pak when the port has its 8 MB, so
+`osMemSize` is no longer a difference). Stop ends both. Not done yet: sound from the console and a faster draw of the
+console's frames (ROADMAP.md).
 `tools/n64_vi_compare.py ROM --port BUILD --input @script` checks the VI's blanking against the console's: the
 emulator's video plugin logs the VI's registers (`EMU_VI_LOG`; osViBlack blanks by writing 0 to the horizontal video
 register, the status stays), the port's `PORT_SWAP_LOG` says when it blanked, and the two lists of blanks must agree in

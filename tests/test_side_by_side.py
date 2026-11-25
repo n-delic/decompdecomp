@@ -220,3 +220,41 @@ def test_lockstep_compares_both_rams_at_a_retrace_then_lets_both_go_on(tmp_path,
     finally:
         session.close()
         port.shutdown()
+
+
+def test_addresses_are_named_from_the_symbols_and_the_difference_list_says_so(tmp_path):
+    symbols = sbs.Symbols([(0x80000100, 0x40, "gScore"), (0x80000200, 0, "label")])
+    assert symbols.name(0x80000100) == "gScore" and symbols.name(0x8000010C) == "gScore+0xC"
+    assert symbols.name(0x80000140) == "" and symbols.name(0x800000FF) == ""  # outside every entry
+    assert symbols.name(0x800002F0) == "label+0xF0" and symbols.name(0x80000300) == ""  # no size: 0x100 reach
+    listing = tmp_path / "symbol_addrs.txt"
+    listing.write_text("gHealth = 0x80000400; // size:0x8\nbare = 0x80000500;\nnot a symbol\n")
+    from_file = sbs.Symbols.from_file(listing)
+    assert from_file.name(0x80000404) == "gHealth+0x4" and from_file.name(0x80000510) == "bare+0x10"
+    a, b = bytearray(0x400), bytearray(0x400)
+    b[0x100:0x104] = b"\x00\x00\x00\x01"
+    line = sbs.regions([0x100], bytes(a), bytes(b), symbols=symbols)[0]
+    assert "first 80000100 (gScore): 00000000 vs 00000001" in line
+    assert "(" not in sbs.regions([0x100], bytes(a), bytes(b))[0].split("first")[1].split(":")[0]  # none known: no name
+
+
+def test_the_port_and_emulator_have_the_same_memory(tmp_path, monkeypatch):
+    seen = {}
+
+    class Proc:
+        def poll(self):
+            return None
+
+        def kill(self):
+            pass
+
+    def popen(argv, **kw):
+        seen.update(kw["env"])
+        return Proc()
+
+    monkeypatch.setattr(sbs.subprocess, "Popen", popen)
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: type("R", (), {"close": lambda s: None})())
+    sbs.start_port(tmp_path / "game", tmp_path / "rom.z64", tmp_path, lockstep=True)
+    assert seen["PORT_MEMSIZE"] == "4" and seen["PORT_LOCKSTEP"] == "1" and seen["PORT_VTIME"] == "1"
+    sbs.start_port(tmp_path / "game", tmp_path / "rom.z64", tmp_path, expansion_pak=True)
+    assert seen["PORT_MEMSIZE"] == "8"

@@ -2341,13 +2341,13 @@ reuse the saved map. See [ROM Explorer](docs/ROM_EXPLORER.md) for support and li
 
 ## Next
 
-### Side-by-side viewer: symbols, sound, speed, app button
+### Side-by-side viewer: sound and speed
 
-The side-by-side page (`port/wasm/side_by_side.py`, docs/PORTING.md "Side by side, live") runs the port and the console in
-lockstep by retrace with one pad and lists the RAM regions that differ. Next: name the differing addresses (the project's
-symbols), the console's sound, a faster draw of the console's frames (about 13 a second), and a Play-style button in the
-Porting tab instead of the command line. The numbering of retraces is assumed equal on both sides (`--emulator-offset`
-corrects it); a check on more games would confirm it.
+Play beside the console (Porting tab; `port/wasm/side_by_side.py`, docs/PORTING.md "Side by side, live") runs the port and the
+console in lockstep with one pad and lists the differing RAM with the project's names. Next: the console's sound, a faster draw
+of the console's frames (about 13 a second), and a check on more games that both sides number retraces alike
+(`--emulator-offset` corrects it). Other consoles with an emulator would take the same page (the lockstep gate is the
+console part's: PS1 and PS2 have no reversing emulator yet).
 
 ### Compiler detection for project mode
 

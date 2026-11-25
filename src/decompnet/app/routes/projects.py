@@ -339,14 +339,17 @@ def register(app: App) -> None:
         if data.get("build_mode", "compatibility") != "compatibility":
             require_port_build(data)
         adapter = play.native_adapter(net, slug, runtime) if runtime != "wasm" else None
+        compare = bool(data.get("compare"))  # beside the console: port/wasm/side_by_side.py
         if (view := play.running_result(slug)):
-            if bool(adapter) == view.get("native", False):
+            if bool(adapter) == view.get("native", False) and compare == view.get("compare", False):
                 return view
-            raise NetworkError("Stop the running game before switching runtimes.")
+            raise NetworkError("Stop the running game before switching runtimes or playing beside the console.")
         if (building := jobs.active(("play",), project=slug)):  # a second click, or another window: the same build
             return {"job": building["id"]}
         def launch(log):
-            return play.play(net, slug, log, adapter=adapter) if adapter else play.play(net, slug, log)
+            if adapter:
+                return play.play(net, slug, log, adapter=adapter)
+            return play.play(net, slug, log, compare=True) if compare else play.play(net, slug, log)
 
         return {"job": jobs.start("play", launch, project=slug)}
 
