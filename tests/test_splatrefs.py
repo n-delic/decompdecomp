@@ -617,3 +617,20 @@ def test_a_library_source_named_with_a_parent_path_is_a_unit_named_by_its_place_
     with pytest.raises(ForkError):
         splatrefs.plan(tmp_path, cfg)
 
+
+
+def test_plan_takes_cpp_units_and_the_build_folder_the_checksum_file_names(tmp_path):
+    (tmp_path / 'src').mkdir()
+    (tmp_path / 'src/demo.cpp').write_text('int demo_func(void) { return 8; }')
+    for variant in ('ntsc', 'pal'):
+        (tmp_path / f'build/{variant}/src').mkdir(parents=True)
+        (tmp_path / f'build/{variant}/src/demo.o').write_bytes(b'candidate')
+    cfg = {'options': {'src_path': 'src', 'build_path': '.', 'platform': 'n64'},
+           'segments': [{'type': 'code', 'start': 0, 'vram': 0x80000400, 'subsegments': [[0, 'cpp', 'demo']]}]}
+    with pytest.raises(ForkError, match='ambiguous'):
+        splatrefs.plan(tmp_path, cfg)
+    (tmp_path / 'checksum.sha1').write_text('A' * 40 + '  build/ntsc/game.z64\n')
+    prefer = splatrefs.verified_build_folders(tmp_path, 'a' * 40)
+    assert prefer == ('build/ntsc',)
+    units = splatrefs.plan(tmp_path, cfg, prefer=prefer)
+    assert units[0]['base'] == tmp_path / 'build/ntsc/src/demo.o' and units[0]['source'].name == 'demo.cpp'
