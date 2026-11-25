@@ -58,6 +58,12 @@ def build_paths(project) -> list[Path]:
                 if not shim.exists():
                     shim.write_text(f'#!/bin/sh\nexec "{host_cpp}" "$@"\n', encoding="utf-8")
                     shim.chmod(0o755)
+        # GNU coreutils' nproc (a Mac has sysctl instead), which Makefiles use to pick their -j
+        if not shutil.which("nproc"):
+            tool = folder / "nproc"
+            if not tool.exists():
+                tool.write_text('#!/bin/sh\nexec sysctl -n hw.ncpu\n', encoding="utf-8")
+                tool.chmod(0o755)
         # Makefiles check the ROM with GNU coreutils' sha1sum, which a Mac lacks (shasum takes the same -c file)
         if not shutil.which("sha1sum") and (shasum := shutil.which("shasum")):
             tool = folder / "sha1sum"

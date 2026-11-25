@@ -425,10 +425,11 @@ class ForkProject:
                 pass
         default = re.search(r"^VERSION\s*[:?]?=\s*([A-Za-z0-9._-]+)\s*$", text, re.M)
         ver = version or (default.group(1) if default else None)
-        found = re.search(r"baserom(\.\$\((?:VERSION|REGION)\))?\.z64", text)
-        if not found or (found.group(1) and not ver):
+        found = re.search(r"((?:[\w-]+/)*)baserom(\.\$\((?:VERSION|REGION)\))?\.z64", text)
+        if not found or (found.group(2) and not ver):
             return self._readme_rom()
-        rel = f"baserom.{ver}.z64" if found.group(1) else "baserom.z64"
+        rel = f"{found.group(1)}baserom.{ver}.z64" if found.group(2) else f"{found.group(1)}baserom.z64"
+        rel = self._inside(rel) or rel
         return {"what": f"your original game ROM ({rel})", "path": rel, "sha1": None, "auto": True,
                 "help": "Supply an original cartridge ROM in .z64, .v64 or .n64 byte order; decompdecomp saves a "
                         ".z64 copy where the project's Makefile reads it, and the project's own check says "
@@ -793,8 +794,8 @@ class ForkProject:
             # Nested configs resolve their base against their own directory, not the checkout root.
             path = self._inside(str(config_path.parent / base / target)) if (
                 isinstance(target, str) and isinstance(base, str)) else None
-            if path is None:
-                return manual
+            if path is None or path.startswith("build/"):  # (a generated image: the original is named elsewhere)
+                return self._makefile_rom(version) or manual
             return {"what": f"your copy of the game ({Path(path).name})", "path": path,
                     "sha1": sha1, "auto": True,
                     "help": ("Checked against the SHA-1 in the project's splat config. " if sha1 else
@@ -1162,7 +1163,11 @@ class ForkProject:
     PYTHON_TOOLS = {"pigment64": "pigment64", "crunch64": "crunch64", "mapfile_parser": "mapfile-parser",
                     "n64img": "n64img", "spimdisasm": "spimdisasm", "splat64": "splat64[mips]", "m2c": "m2c",
                     "ninja_syntax": "ninja-syntax", "rabbitizer": "rabbitizer", "pyyaml": "pyyaml",
-                    "pypng": "pypng", "tqdm": "tqdm", "colorama": "colorama", "capstone": "capstone"}
+                    "pypng": "pypng", "tqdm": "tqdm", "colorama": "colorama", "capstone": "capstone",
+                    "pygfxd": "pygfxd", "intervaltree": "intervaltree", "pylibyaml": "pylibyaml",
+                    "yaml": "pyyaml", "git": "gitpython", "splat": "splat64[mips]", "png": "pypng",
+                    "requests": "requests", "attr": "attrs", "PIL": "pillow", "elftools": "pyelftools",
+                    "zstandard": "zstandard"}
 
     def _install_missing_tools(self, tail: str, log) -> bool:
         """A build that stops on `<tool>: command not found` (or a missing Python module) for a package from
@@ -1261,7 +1266,9 @@ class ForkProject:
                     shutil.copyfile(self._rom_placed, self.root / missing.group(1))
                 log(f"the project reads the game as {missing.group(1)}: saved it under that name too")
                 ok, tail = self.run(cmd, log=log)
-            if not ok and self._install_missing_tools(tail, log):
+            for _ in range(6):  # (each run names the next missing package)
+                if ok or not self._install_missing_tools(tail, log):
+                    break
                 ok, tail = self.run(cmd, log=log)
             for _ in range(4):  # (the link names one missing list at a time)
                 auto = re.findall(r"cannot open linker script file (\S+_auto\.txt)", tail) if not ok else []

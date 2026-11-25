@@ -39,6 +39,32 @@ def _ido_hint(project) -> str:
     return mention[1] if mention else "5.3"
 
 
+def _provide_compiler_dirs(project) -> None:
+    """A project that expects a compiler folder it doesn't ship for this computer (tools/gcc_2.7.2/macos,
+    tools/ido/7.1) gets a link to the installed one, in its own tree: the folder is never in git."""
+    if os.name == "nt":
+        return
+    texts = ""
+    for name in ("Makefile", "Makefile.common", "README.md", "setup.py", "setup.sh"):
+        try:
+            texts += (project.root / name).read_text(errors="replace", encoding="utf-8") + "\n"
+        except OSError:
+            pass
+    wanted: list[tuple[str, str]] = []
+    if re.search(r"tools/gcc[_-]2\.7\.2/(?:macos|\$\(DETECTED_OS\))", texts) and sys.platform == "darwin":
+        wanted.append(("tools/gcc_2.7.2/macos", "gcc-2.7.2-kmc"))
+    for version in set(re.findall(r"tools/ido/(5\.3|7\.1)(?![\d])", texts)):
+        wanted.append((f"tools/ido/{version}", f"ido-{version}"))
+    for rel, tid in wanted:
+        target = project.root / rel
+        if target.exists() or target.is_symlink() or toolchains.installed(tid) is None:
+            continue
+        source = toolchains.require(tid)
+        if source.is_dir():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.symlink_to(source, target_is_directory=True)
+
+
 def _wrap_foreign_ido(project) -> None:
     """On a Mac a project's own copy of IDO is usually a Linux program (its CI's) its build can't run ("Exec format
     error"). Replace each such `cc` driver, once, with a script that runs the installed IDO of the version its
@@ -81,6 +107,23 @@ def _wrap_foreign_ido(project) -> None:
         driver.rename(driver.with_name("cc.linux"))
         driver.write_text(f'#!/bin/sh\nexec "{source}" "$@"\n', encoding="utf-8")
         driver.chmod(0o755)
+    # A project's own copy of the KMC-style GCC 2.7.2 (tools/gcc_2.7.2/{gcc,cc1,as,...}, Linux programs): the
+    # installed one stands in for each program it has under that name.
+    for folder in {d.parent for d in tools.glob("*gcc*2.7.2*/gcc")} | {d.parent for d in tools.glob("*/*gcc*2.7.2*/gcc")}:
+        if toolchains.installed("gcc-2.7.2-kmc") is None:
+            break
+        installed = toolchains.require("gcc-2.7.2-kmc")
+        for program in folder.iterdir():
+            mine = installed / program.name
+            if not program.is_file() or program.is_symlink() or not mine.is_file() or program.suffix:
+                continue
+            with open(program, "rb") as f:
+                if f.read(4) != b"\x7fELF":
+                    continue
+            program.rename(program.with_name(program.name + ".linux"))
+            extra = f' -B"{installed}/"' if program.name == "gcc" else ""
+            program.write_text(f'#!/bin/sh\nexec "{mine}"{extra} "$@"\n', encoding="utf-8")
+            program.chmod(0o755)
     # The same for a project's other committed Linux programs (tools/pigment64, ...) when the host has the tool:
     # `cargo install` and the system's own packages are where those come from.
     path = os.pathsep.join([os.environ.get("PATH", ""), str(Path.home() / ".cargo" / "bin")])
@@ -108,7 +151,12 @@ def command(project, argv: list[str]) -> list[str]:
     if (sys.platform == "darwin" and Path(argv[0]).name in ("make", "gmake") and makefile.is_file()
             and not any(a.startswith("RUN_CC_CHECK=") for a in argv[1:])
             and re.search(r"^RUN_CC_CHECK\s*[:?]?=", makefile.read_text(encoding="utf-8", errors="replace"), re.M)):
-        argv = [*argv, "RUN_CC_CHECK=0"]  # the project's own switch for its host-gcc pass (clang answers gcc here)
+        argv = [*argv, "RUN_CC_CHECK=0"]
+    if (sys.platform == "darwin" and Path(argv[0]).name in ("make", "gmake") and makefile.is_file()
+            and not any(a.startswith("CC_HOST=") for a in argv[1:])
+            and re.search(r"^CC_HOST\s*[:?]?=\s*(?:gcc|cc|clang)\s*$",
+                          makefile.read_text(encoding="utf-8", errors="replace"), re.M)):
+        argv = [*argv, "CC_HOST=true"]  # the same host pass under another name  # the project's own switch for its host-gcc pass (clang answers gcc here)
     if (sys.platform == "darwin" and Path(argv[0]).name in ("make", "gmake") and makefile.is_file()
             and not any(a.startswith("CC_CHECK=") for a in argv[1:])
             and re.search(r"^CC_CHECK\s*[:?]?=\s*gcc\b[^\n]*-fsyntax-only",
@@ -123,6 +171,7 @@ def _redirect(project, argv: list[str]) -> list[str]:
     if os.name == "nt":
         return argv  # these compiler binaries run inside WSL on Windows
     _wrap_foreign_ido(project)
+    _provide_compiler_dirs(project)
     if Path(argv[0]).name not in ("make", "gmake") or any(a.startswith(("IDO=", "CC=")) for a in argv[1:]):
         return argv
     makefile = project.root / "Makefile"

@@ -210,3 +210,20 @@ def test_n64_swaps_a_committed_linux_tool_for_the_hosts_and_skips_the_hosts_gcc_
     (root / "Makefile").write_text("RUN_CC_CHECK ?= 1\nall:\n\ttrue\n")
     prepared = consoles.get("n64").project_build_command(SimpleNamespace(root=root), ["make"])
     assert prepared[-1] == "RUN_CC_CHECK=0"
+
+
+def test_n64_links_installed_compiler_folders_a_project_expects(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools
+
+    ido, gcc = tmp_path / "ido", tmp_path / "gcc"
+    ido.mkdir()
+    gcc.mkdir()
+    monkeypatch.setattr(buildtools.sys, "platform", "darwin")
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(buildtools.toolchains, "require", lambda tid: ido if tid.startswith("ido") else gcc)
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "Makefile").write_text("CC := tools/gcc_2.7.2/$(DETECTED_OS)/gcc\nX = tools/ido/7.1/cc\nCC_HOST := gcc\n")
+    prepared = consoles.get("n64").project_build_command(SimpleNamespace(root=root), ["make"])
+    assert (root / "tools/gcc_2.7.2/macos").resolve() == gcc and (root / "tools/ido/7.1").resolve() == ido
+    assert "CC_HOST=true" in prepared
