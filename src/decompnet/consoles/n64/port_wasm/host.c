@@ -965,6 +965,20 @@ static void dp_deliver(int force) {
     (void)force;
 #endif
 }
+#ifndef PORT_WEB
+/* PORT_ORDER_LOG=addr: a thread that says, with the retrace and graphics-task counts, each time the word at `addr` changes, so the order of a game's
+   state updates and its graphics tasks can be set beside the emulator's (a watch on the word and a break on osSpTaskStartGo): docs/PORTING.md. */
+static void *order_watch(void *arg) {
+    uint32_t addr = (uint32_t)(uintptr_t)arg;
+    uint32_t last = be32(addr);
+    for (;;) {
+        uint32_t now = be32(addr);
+        if (now != last) { fprintf(stderr, "ORDER change %08X -> %08X vi %lu task %lu\n", last, now, vi_count, gfx_tasks); last = now; }
+        usleep(20);
+    }
+    return NULL;
+}
+#endif
 static unsigned long seed_calls; /* (counted in port_seed_replay below) */
 void w2c_env_osSpTaskStartGo(struct w2c_env *e, u32 task) {
     (void)e;
@@ -978,6 +992,7 @@ void w2c_env_osSpTaskStartGo(struct w2c_env *e, u32 task) {
     }
 #endif
     if (type == 1 && getenv("PORT_SEED_LOG")) fprintf(stderr, "SEEDS task %lu calls %lu\n", gfx_tasks, seed_calls);
+    if (type == 1 && getenv("PORT_ORDER_LOG")) fprintf(stderr, "ORDER task %lu vi %lu\n", gfx_tasks, vi_count);
     if (type == 1) ram_dumps("PORT_FRAME_DUMPS", gfx_tasks, task);
     if (type == 1) {
 #ifndef PORT_WEB
@@ -2398,6 +2413,10 @@ int main(int argc, char **argv) {
         pthread_t guard;
         watchdog_seconds = seconds;
         if (pthread_create(&guard, NULL, watchdog, NULL) == 0) pthread_detach(guard);
+    }
+    if (getenv("PORT_ORDER_LOG")) {
+        pthread_t watcher;
+        if (pthread_create(&watcher, NULL, order_watch, (void *)(uintptr_t)strtoul(getenv("PORT_ORDER_LOG"), NULL, 16)) == 0) pthread_detach(watcher);
     }
     boot_active = 1;
     if (!setjmp(boot_jmp)) boot_call();
