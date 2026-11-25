@@ -933,3 +933,11 @@ whether the game's logic is paced by something else the console has, such as its
 the retrace the console was at) left the game's line points unchanged after task 600 and every compared picture 95-100% different: the game does not run when its retraces are fired from inside the
 call that starts a task. A way to give the threads the retraces before the task would have to let them run first (a yield, or the retraces raised by the host's loop with the game held in
 `osSpTaskStartGo` until they have been handled), which is not what was tried.
+
+**Waiting for the game's threads to idle between the catch-up retraces stalls the game too (tried, reverted).** The port's message log shows a frame's catch-up retraces
+fired back to back (three sends on the game's VI queue, then the receivers), where the console's threads ran between them. Calling `wait_retrace()` before each catch-up
+retrace (host.c, `PORT_VTIME_BURST`) left the game's line points unchanged after task 600 and every compared picture 95-100% different, as raising the retraces from
+inside `osSpTaskStartGo` had: both change how many virtual clock periods pass per retrace (`wait_retrace` advances `vnext_us` and the virtual clock each call), so the
+game's timers see a different time. A version that gives the threads time between retraces without advancing the clock again is untried. The message log
+also shows the port's queues sit at other addresses than the console's for the dynamically allocated ones (only the static queues at 0x800B4xxx match), so the two logs
+compare by the static queues and the order of operations on them.
