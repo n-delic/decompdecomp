@@ -108,9 +108,14 @@ Do not grind these; say so in the note and release.
 
 ## Tool gotchas
 
-- `passes.py`, `handoff.py`, `dumps.py` and `explain_regs.py` refuse sn-n64-281 profiles. Write a small `cc1n64.exe`-under-`wibo`
-  wrapper with `-dl -dg -dS -dR` for allocation and scheduler dumps. The gcc-2.8.1-pm native cc1 is a good stand-in for 2.8.1
-  except for byte compares and branch delay-slot fills. It is NOT a stand-in for 2.7.2.
+- `passes.py`, `handoff.py`, `dumps.py` and `explain_regs.py` work for every SN profile (sn-n64-281 and the 2.7.2 ones) as for
+  the GCC ones: the app runs cc1n64.exe under wibo with `-da`. One command gets everything the old hand-rolled recipe did:
+  `passes.py CAND.c --slug S --function F --save DIR` prints the allocation table (priority, refs, live insns), preferences,
+  conflicts, both scheduler orders and the loop optimizer's notes (hoists "moved to", bivs, givs combined or refused), and
+  writes `DIR/F.i` (preprocessed C), `F.s` (final assembly), `F.{rtl,jump,cse,loop,cse2,flow,combine,sched,lreg,greg,
+  sched2,jump2,dbr}` and `F.report.txt`. `preprocess.py` prints the `wibo cc1n64.exe -quiet <flags> IN.i -o OUT.s` line to rerun
+  with other dump flags (`-dl -dg -dS -dR -dL -ds`). The gcc-2.8.1-pm native cc1 is still a stand-in for 2.8.1 only apart
+  from byte compares and branch delay-slot fills; it is NOT a stand-in for 2.7.2.
 - `grid.py` has no `--flags` option: patch a copy.
 - A long store list (over 8) needs a move-one-line hill climb, not a full grid.
 - `report_repair` categories: `mcp.py <holder> report_repair --help` prints the valid ones.
@@ -739,9 +744,9 @@ says the fix and the library families it names; try those families with `prove_c
 - **`if (G == 1)` with the load and the constant in each other's registers, three local quantities in the block:**
   local-alloc's fixed three-way exchange lets the short-lived constant win; load `G` into a local in a two-deep
   `do { } while (0)` (`compare_load_weight`, 15 -> 0, docs/learnings/finding/three-quantity-block-constant-outranks-load.md).
-- **`passes.py` refuses sn-n64-281:** run cc1n64.exe under wibo yourself: preprocess with `cppn64.exe -P -undef -nostdinc
-  -D_LANGUAGE_C -D__GNUC__=2` (the header from `fast_judge.py --header` prepended), then `cc1n64.exe -quiet <flags> -dl
-  -dg -dS -dR -dL -ds FILE.i -o FILE.s`; the dumps land beside the `.i` (consoles/n64/sn64.py has the exact commands).
+- **SN profiles (sn-n64-281, 2.7.2):** `passes.py ... --save DIR` is the one command (see Tool gotchas). By hand it is
+  `cppn64.exe -P -undef -nostdinc -D_LANGUAGE_C -D__GNUC__=2` then `cc1n64.exe -quiet <flags> -da FILE.i -o FILE.s`, both under
+  wibo; the dumps land beside the `.i` as `FILE.i.lreg` etc. (consoles/n64/sn64.py has the exact commands).
 
 ## 3a. The fast tools (use them before writing variants by hand)
 

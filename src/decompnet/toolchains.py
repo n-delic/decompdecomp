@@ -72,6 +72,7 @@ class Toolchain:
     source_extension: str = "c"
     cplusplus: bool = False  # it compiles C++ too (by the file's extension: .cpp)
     driver: str = ""  # packaged, console-owned compiler adapter, staged read-only with the tools
+    pass_dumps: bool = False  # its driver passes -da on to cc1, which writes the pass dumps (compiler_diagnostics)
     build: str = ""  # native source-built tools, after checksum-verified parts are extracted
     family: str = ""  # backend family when the registry id doesn't carry its compiler's name
     wine: bool = False  # Windows programs wibo cannot run: use wine on Linux and macOS

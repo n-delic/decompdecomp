@@ -99,15 +99,45 @@ def phase_summary(work, name=None, arch=None, excerpts=(), excerpt_chars=EXCERPT
                 'allocation':gcc_allocation.summarize(texts,name,arch)} if name else {})}
 
 
-def diagnose(profile, header, source, name, *, root='.', baseline_obj=None, on_compile=lambda: None, excerpts=(), excerpt_chars=EXCERPT_CHARS, extra_flags=()):
+KEEP_SKIP = {'o', 'obj', 'addressof'}  # what keep_files leaves out: objects and a pass nobody reads
+KEEP_BYTES = 2 * 1024 * 1024  # of one kept file
+
+
+def kept_files(work):
+    """Every text file the diagnostic compile left in its directory, by its last extension (`i` the preprocessed C,
+    `s` the final assembly, `lreg`, `greg`, `loop`, ... the pass dumps), with line ends normalised. SN's driver writes
+    them as func.sn.i, func.sn.s and func.sn.i.lreg; the GCC drivers as func.c.lreg and the like."""
+    files = {}
+    for path in sorted(Path(work).glob('func.*')):
+        kind = path.suffix[1:]
+        if kind in KEEP_SKIP or kind in files or path.is_symlink() or not path.is_file():
+            continue
+        files[kind] = path.read_bytes()[:KEEP_BYTES].decode(errors='replace').replace('\r\n', '\n')
+    return files
+
+
+def driver_cc1_words(cfg):
+    """The cc1 command of a driver-run compiler (SN's: `wibo cc1n64.exe -quiet <flags> IN.i -o OUT.s`), from the
+    compile's own command, so an agent can rerun the compiler proper on the preprocessed C with other dump flags.
+    The driver keeps -D/-U/-I for the preprocessor and gives cc1 the rest (consoles/n64/sn64.py). None when the
+    command has no --cc."""
+    words = list(cfg.cmd)
+    if '--cc' not in words or '{include}' not in words:
+        return None
+    flags = [w for w in words[words.index('{include}') + 1:] if not w.startswith(('-D', '-U', '-I'))]
+    runner = words[words.index('--runner') + 1] if '--runner' in words else None
+    return [*([runner] if runner else []), words[words.index('--cc') + 1], '-quiet', *flags, 'IN.i', '-o', 'OUT.s']
+
+
+def diagnose(profile, header, source, name, *, root='.', baseline_obj=None, on_compile=lambda: None, excerpts=(), excerpt_chars=EXCERPT_CHARS, extra_flags=(), keep_files=False):
     tid = profile.get('toolchain','')
     if not tid or 'cmd' in profile or not toolchains.installed(tid):
         return {'skipped':'Diagnostics require an already installed pinned compiler; nothing is downloaded.'}
     tc = toolchains.get(tid)
-    if not (tid.startswith('gcc-') or tc.family=='gcc') or tc.driver:
+    if not (tid.startswith('gcc-') or tc.family=='gcc') or (tc.driver and not tc.pass_dumps):
         return {'skipped':'Phase capture currently supports native GCC drivers only.'}
     cfg = compiler_config(Path(root),{'compiler':{'toolchain':tid,'flags':profile.get('flags',[])}})
-    if cfg.wsl or cfg.linux_vm or 'gcc' not in Path(cfg.cmd[0]).name.lower():
+    if cfg.wsl or cfg.linux_vm or ('gcc' not in Path(cfg.cmd[0]).name.lower() and not tc.pass_dumps):
         return {'skipped':'This compiler adapter/runtime does not expose native GCC dump files.'}
     if baseline_obj is None:
         on_compile()
@@ -118,6 +148,8 @@ def diagnose(profile, header, source, name, *, root='.', baseline_obj=None, on_c
     captured = {}
     def collect(work):
         captured.update(phase_summary(work,name,tc.arch,excerpts,excerpt_chars))
+        if keep_files:
+            captured['files'] = kept_files(work)
     with capture_artifacts(collect):
         on_compile()
         diagnostic = compile_source(replace(cfg,cmd=[*cfg.cmd,'-da',*extra_flags]),header,source)

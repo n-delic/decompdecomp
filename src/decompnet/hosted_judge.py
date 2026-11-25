@@ -25,7 +25,7 @@ Requests:
   tables, as switch_tables.read), "callees" (its callees' matched C, capture_followup_repairs.callee_evidence) and
   "entry_scope" (promoted_entry_repairs.scope), "words" ({symbol: word} of its float constants, float_literal_words.read): the context the app's draft path hands draft_repairs.variants}: everything a local search needs to judge without being told the function's bytes
   (the match-function skill's fast_judge.py).
-- {"op": "passes", "slug", "name", "source", "passes" (optional), "sched_verbose" (optional: the first scheduler's
+- {"op": "passes", "slug", "name", "source", "passes" (optional), "save" (optional: also return every file of the compile, the preprocessed C, the final assembly and each pass dump, as "files"), "sched_verbose" (optional: the first scheduler's
   notes too)} -> {"text"}: the compiler's allocation priority
   table, register preferences and scheduling orders for that C under the function's profile (compiler_passes.report,
   the code behind the compiler_passes tool; the skill's passes.py).
@@ -190,8 +190,10 @@ def passes_report(net, request: dict) -> dict:
     if not isinstance(source, str) or not source.strip():
         return {"error": "no source"}
     passes = tuple(request.get("passes") or compiler_passes.SKILL_PASSES)
+    files = {} if request.get("save") else None
     try:
-        return {"text": compiler_passes.report(net, proj, fn, source, passes, sched_verbose=bool(request.get("sched_verbose")))}
+        text = compiler_passes.report(net, proj, fn, source, passes, sched_verbose=bool(request.get("sched_verbose")), files=files)
+        return {"text": text, **({"files": files} if files is not None else {})}
     except NetworkError as error:
         return {"error": str(error)}
 
@@ -216,7 +218,10 @@ def allocation_report(net, request: dict) -> dict:
         # The C lines come from a second compile with -g (its line notes). -g changes KMC GCC's code (a 20 became
         # 180), but not the pseudo numbers expansion hands out, so its lines are used only when it allocated the same
         # pseudos; otherwise the report has no lines.
-        lines = _pseudo_lines(*compiler_passes.diagnose(net, proj, fn, source, (), 0, extra_flags=("-g",)))
+        try:
+            lines = _pseudo_lines(*compiler_passes.diagnose(net, proj, fn, source, (), 0, extra_flags=("-g",)))
+        except NetworkError:
+            lines = {}  # a compiler that refuses -g (SN's) still gives the tables, only without the C lines
     except NetworkError as error:
         return {"error": str(error)}
     phases = result.get("phases") or {}
@@ -317,6 +322,14 @@ def preprocess_report(net, request: dict) -> dict:
         return {"error": "this function's compiler isn't a pinned, installed one; nothing is downloaded"}
     cfg = compiler_config(Path(proj["root"]), {"compiler": {"toolchain": tid, "flags": profile.get("flags", [])}})
     header = net._context(proj["id"], fn["unit"])["header"]
+    if toolchains.get(tid).pass_dumps:
+        # A driver-run compiler (SN's, under wibo) has no `-E`: its own preprocessor step leaves the .i the compile
+        # reads, which the diagnostic compile keeps with the pass dumps.
+        from .app import compiler_diagnostics
+        result = compiler_diagnostics.diagnose(profile, header, source, fn["name"], root=proj["root"], keep_files=True)
+        if "files" not in result or "i" not in result["files"]:
+            return {"error": result.get("skipped") or "the compile left no preprocessed file", "log": result.get("error", "")}
+        return {"text": result["files"]["i"], "cc1": compiler_diagnostics.driver_cc1_words(cfg), "log": ""}
     return compiler.preprocess_candidate(cfg, header, source)
 
 
