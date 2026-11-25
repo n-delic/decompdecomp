@@ -1770,6 +1770,7 @@ def test_seeds_the_console_used_are_replayed_in_order_then_the_game_s_own(tmp_pa
 #include <stdlib.h>
 typedef uint32_t u32;
 struct w2c_env { int unused; };
+static unsigned long seed_calls; /* host.c's counter for PORT_SEED_LOG, defined before the function */
 """ + _function(HOST.read_text(), "w2c_env_port_seed_replay") + """
 int main(void) {
     printf("%u %u %u %u\\n", w2c_env_port_seed_replay(0, 7), w2c_env_port_seed_replay(0, 8), w2c_env_port_seed_replay(0, 9),
