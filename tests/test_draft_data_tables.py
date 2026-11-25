@@ -78,3 +78,18 @@ def test_a_table_after_the_last_code_segment_is_read_at_the_functions_own_offset
     assert draft_data.beside_code_reader(bytes(rom), function, lambda *_: b'\x01')(0x1000, 4) == b'\x01'
     assert draft_data.jump_table_extent("jtbl_800E1DE8", read, {0x1}, ">") is None
     assert draft_data.beside_code_reader(bytes(rom), {'vram': None, 'rom_offset': 0}, unbacked)(BASE, 4) is None
+
+
+def test_a_table_stored_without_the_kseg0_bit_still_names_the_functions_instructions():
+    """A game that patches its tables as it loads a segment keeps `0x0025A1D8` in the ROM for `0x8025A1D8`: 79 of
+    a game's 2,465 open functions had no draft because no word looked like one of their instructions."""
+    stripped = tuple(w & 0x7FFFFFFF for w in CASES)
+    assert draft_data.jump_table_extent("jtbl_800E1DE8", _reader((*stripped, 0x3FF00000)), set(CASES), ">") == (BASE, 12)
+    # a stripped word that is not one of the function's instructions, or a word with the bit already set, is as before
+    assert draft_data.case_target(0x00123456, set(CASES)) is None
+    assert draft_data.case_target(CASES[0], set(CASES)) == CASES[0]
+    net = SimpleNamespace(symbols=lambda _: SimpleNamespace(by_name={}), cfg=lambda _: {},
+                          reader=lambda *_: _reader(stripped))
+    fn = {"asm": ASM + "lui $at, %hi(jtbl_800E1DE8)\n"}
+    lines = draft_data.read(net, {"id": 1}, fn)
+    assert lines[1:] == ["dlabel jtbl_800E1DE8", *(".word .L%08X" % w for w in CASES)]
