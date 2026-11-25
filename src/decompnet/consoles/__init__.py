@@ -52,6 +52,7 @@ class Compiler:
     guess: str = ""  # what read_game calls it when a program looks built by it ("KMC", "EEGCC-2.95.2")
     target: str = ""  # processor for compiler versions that differ within one console (PC x86 and x64)
     automatic: bool = True  # routine comparisons; experimental profiles remain available by explicit selection
+    released: int = 0  # the year its build first existed (0: not recorded); a project that names its game's year never uses a newer one
 
 
 @dataclass(frozen=True)
@@ -625,11 +626,18 @@ class Console:
         """Processor target for project compilers, or empty when all compilers apply."""
         return ""
 
-    def project_compilers(self, fp) -> list[Compiler]:
-        """Compilers able to build this project's target."""
+    def project_compilers(self, fp, cfg: dict | None = None) -> list[Compiler]:
+        """Compilers able to build this project's target (and, with its settings, not newer than the game)."""
         target = self.target(fp)
-        return [compiler for compiler in self.compilers
+        return [compiler for compiler in (self.compilers_for(cfg) if cfg is not None else self.compilers)
                 if not target or not compiler.target or compiler.target == target]
+
+    def compilers_for(self, cfg: dict) -> tuple[Compiler, ...]:
+        """The console's compilers a project may use: none released after the year its settings give for the game
+        (`released`, set in the project's Settings). A game built in 1998 was not built with a 2009 compiler, and a
+        6-instruction function that matches both says nothing about which one."""
+        year = released_year(cfg)
+        return tuple(c for c in self.compilers if not year or not c.released or c.released <= year)
 
     def file_compiler(self, fp, source: str) -> str | None:
         """The compiler (one of `compilers`) the project builds a source file with, when its build lets each file have
@@ -931,6 +939,23 @@ def game_in(folder: Path) -> Path:
 def compiler(compiler_id: str) -> tuple[Console, Compiler] | None:
     """The console a compiler belongs to, and its entry there."""
     return next(((c, k) for c in CONSOLES for k in c.compilers if k.id == compiler_id), None)
+
+
+def released_year(cfg: dict) -> int:
+    """The year a project's game came out (its `released` setting), 0 when it hasn't been given."""
+    try:
+        return max(0, int(cfg.get("released") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def too_new(cfg: dict, compiler_id: str) -> str:
+    """Why a project may not use a compiler (released after its game), or "" when it may."""
+    year, found = released_year(cfg), compiler(compiler_id)
+    if year and found and found[1].released > year:
+        return (f"{found[1].name} came out in {found[1].released}, after this game ({year}), so the game was not built "
+                "with it. Change the game's release year in its compiler settings if that is wrong.")
+    return ""
 
 
 def compiler_name(compiler_id: str) -> str:

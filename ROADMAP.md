@@ -1218,6 +1218,13 @@ widened, docs/learnings/finding/untouched-argument-parameter.md). They reach eve
 (N64, PS1, PS2, PSP). Planned: PowerPC (`r3`-`r10` and `r3` for the result, GameCube/Wii) and x86 (the pushes before a
 `call` and `eax`, Windows PC, Xbox) need their processors' call-setup readers, and ARM (DS, GBA) `r0`-`r3`.
 
+### Release years for every console's compilers
+
+A project can name the year its game came out (Settings, "Game release year"), and compilers released after it are
+never offered, tried or accepted (`Compiler.released`, `Console.compilers_for`, `consoles.too_new`). Only the N64's
+compilers have their years so far; every other console's compiler counts as unrestricted ("—") until its entries get
+`released=`. Fill them in per console, and set the year automatically where a public decomp or ROM header says it.
+
 ## Recently done
 
 - **The Deep Permuter detects which compiler built a near-match.** An N64 game built with KMC GCC 2.7.2 had eight

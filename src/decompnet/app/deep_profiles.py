@@ -68,7 +68,7 @@ def tail_dispatch(net, proj, fn):
         return None
     cfg = net.cfg(proj)
     compiler = 'gcc-4.4.0-n64'
-    if not any(option.id == compiler for option in consoles.of(cfg).compilers):
+    if not any(option.id == compiler for option in consoles.of(cfg).compilers_for(cfg)):
         return None
     profile = {'toolchain': compiler, 'flags': consoles.default_flags(cfg, compiler)}
     own = compiler_for(cfg, fn['vram'], fn)

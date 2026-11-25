@@ -144,7 +144,7 @@ def evidence(net, proj, cfg, fn, own) -> tuple[list[dict], dict, Counter, int]:
             # its default flags: SN GCC's own default is -mfp64, and its code the game's was -mfp32: fp_fingerprints)
             big_endian = bool(proj['big_endian']) if 'big_endian' in proj.keys() else True
             others = ({'toolchain': c.id, 'flags': list(consoles.default_flags(cfg, c.id))}
-                      for c in consoles.of(cfg).compilers if c.automatic and c.id != own['toolchain'])
+                      for c in consoles.of(cfg).compilers_for(cfg) if c.automatic and c.id != own['toolchain'])
             # (another compiler only when its default names a floating-point model: the flag is one it knows)
             for base in [own, *(b for b in others if any(f in fp_fingerprints.FP_FLAGS for f in b['flags']))]:
                 if flags := fp_fingerprints.probe(base, bytes(row['target']), (), big_endian):
@@ -249,7 +249,7 @@ def candidates(net, proj, fn, base) -> tuple[list[dict], dict, Counter, int]:
     chosen = ordered + list(base)
     if near_match(fn):
         chosen += [{'toolchain': c.id, 'flags': list(consoles.default_flags(cfg, c.id))}
-                   for c in consoles.of(cfg).compilers if c.automatic]
+                   for c in consoles.of(cfg).compilers_for(cfg) if c.automatic]
     seen, out = {_key(own)}, []
     for profile in chosen:
         if _key(profile) not in seen and _ready(profile['toolchain']):

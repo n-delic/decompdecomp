@@ -807,6 +807,7 @@ def _manifest_from_rows(net, proj, cfg: dict, rows, folder: Path) -> tuple[dict,
         "claim_order": cfg.get("claim_order") or "",
         "priority": cfg.get("priority") or [],
         "auto_compiler": cfg.get("auto_compiler"),
+        "released": cfg.get("released"),
         "knowledge_auto": bool(cfg.get("knowledge_auto")),
         "project_folder": bool(cfg.get("project_layout")),  # set up again by Open a saved project (restore)
         "headers": {u: _header_file(u) for u in sorted(units)},
@@ -1344,6 +1345,8 @@ def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
         cfg["claim_order"] = order if order in CLAIM_ORDERS else ""
         cfg["priority"] = manifest.get("priority") or []
         cfg["auto_compiler"] = manifest.get("auto_compiler")
+        if manifest.get("released"):
+            cfg["released"] = manifest["released"]
         cfg["knowledge_auto"] = bool(manifest.get("knowledge_auto"))
     net._update_cfg(slug, setup)
     if manifest.get("title"):

@@ -351,7 +351,7 @@ def candidates(net, proj, cfg: dict, fn, own: dict) -> list[dict]:
         if key(profile) not in seen:
             seen.add(key(profile))
             out.append(profile)
-    for compiler in consoles.of(cfg).compilers:
+    for compiler in consoles.of(cfg).compilers_for(cfg):
         if not compiler.automatic or not toolchains.installed(compiler.id):
             continue
         profile = {'toolchain': compiler.id, 'flags': list(consoles.default_flags(cfg, compiler.id))}

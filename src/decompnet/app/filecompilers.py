@@ -85,7 +85,7 @@ class FileCompilers:
         own = [own for *_, own in self._files(slug)]
         if said:
             return list(dict.fromkeys([*said, *own]))
-        known = [c.id for c in console.project_compilers(fp)]
+        known = [c.id for c in console.project_compilers(fp, cfg)]
         current = console.file_compiler(fp, "")
         if current not in known:  # (a project whose own compiler isn't one of its build's: a file's may be)
             current = next((c for c in own if c in known), None)
@@ -275,7 +275,7 @@ class FileCompilers:
         user decides (Settings), as the files each keep theirs where their matches need it."""
         proj, fp, cfg = self.net.forks.get(slug)
         console = consoles.get(cfg.get("platform"))
-        ours = console.project_compilers(fp)  # (a 32-bit PC game's: never a 64-bit compiler, which can't match it)
+        ours = console.project_compilers(fp, cfg)  # (a 32-bit PC game's: never a 64-bit compiler, which can't match it)
         tc = next((c.id for c in ours if compiler.strip().lower() in (c.id.lower(), c.name.lower())), None)
         if tc is None:
             raise NetworkError(f"no compiler {compiler!r} for this game; its own: {', '.join(c.id for c in ours)}")

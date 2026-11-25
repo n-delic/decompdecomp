@@ -45,7 +45,7 @@ def profiles(net, proj, fn):
     else:
         # one profile defined: one per compiler family the console offers
         chosen, families = [], {_family(own['toolchain'])}
-        for option in consoles.of(cfg).compilers:
+        for option in consoles.of(cfg).compilers_for(cfg):
             family = _family(option.id)
             if option.automatic and family not in families and _ready(option.id):
                 families.add(family)

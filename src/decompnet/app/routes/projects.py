@@ -254,14 +254,16 @@ def register(app: App) -> None:
         if data.get("function"):
             return net.apply_function_compiler(slug, str(data["function"]), str(data.get("toolchain", "")),
                                                data.get("flags") or [], allow_non_improving=data.get("allow_non_improving") is True)
-        if net.fork_slug(slug) and "auto" not in data:  # its source files each have a compiler (DS)
+        if net.fork_slug(slug) and "auto" not in data and "released" not in data:  # its source files each have a compiler (DS)
             tc = str(data.get("toolchain", ""))
             if not str(data.get("ranges") or "").strip():  # the whole game: every file, one at a time
                 return {"job": jobs.start("compiler", lambda log: net.forks.set_compiler_everywhere(slug, tc, log))}
             said = net.forks.set_compiler_ranges(slug, parse_ranges(str(data["ranges"])), None if data.get("remove") else tc)
             return net.overview(slug) | {"said": said, "reopened": []}
         reopened = []
-        if "auto" in data:  # this project's suggestions apply by themselves once proven, or wait for the user
+        if "released" in data:  # the game's year: compilers newer than it are never used
+            net.set_released(slug, data["released"])
+        elif "auto" in data:  # this project's suggestions apply by themselves once proven, or wait for the user
             net.set_auto_adjust(slug, bool(data["auto"]))
         elif str(data.get("ranges") or "").strip():  # these address ranges only (or back to the project's: remove)
             reopened = net.set_compiler_ranges(slug, parse_ranges(str(data["ranges"])),

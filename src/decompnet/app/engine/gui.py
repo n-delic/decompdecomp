@@ -248,7 +248,7 @@ class GuiMixin:
                        "boundaries": [r for r in cfg.get("boundaries", []) if r["status"] == "open"],
                        # (a fork whose files each have a compiler says its own: DS)
                        "compiler_ranges": base.get("compiler_ranges") or self._range_rows(cfg),
-                       "auto_compiler": self.auto_adjusts(proj)}
+                       "auto_compiler": self.auto_adjusts(proj), "released": consoles.released_year(cfg) or None}
 
     # The live poll's overview, kept between polls (engine.live). It is rebuilt when one of the project's cheap change
     # counters moves (live_overview_key) or after LIVE_OVERVIEW_TTL; what lives only in memory (autopilot, permuter,
@@ -335,7 +335,7 @@ class GuiMixin:
             "donor_layout": self.is_rom(proj) and console.donor_layout,
             "missed_functions": self.is_rom(proj) and type(console).missed_functions is not consoles.Console.missed_functions,
             **console.project_facts(),
-            "compilers": [c.id for c in console.compilers],
+            "compilers": [c.id for c in console.compilers_for(cfg)],
             "rom": {k: cfg["rom"].get(k) for k in ("title", "game_code", "region", "size", "sha1", "byte_order", "compiler_guess")}
                    | {"title": console.display_title(cfg["rom"].get("title", ""), cfg["rom"])},
             "compiler": {"toolchain": compiler_id, "name": consoles.compiler_name(compiler_id),

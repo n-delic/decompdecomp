@@ -12,8 +12,8 @@ def _net(usage, cfg=None):
 def _patch(monkeypatch, families, compilers=()):
     monkeypatch.setattr(sweep, '_ready', lambda tid: True)
     monkeypatch.setattr(sweep, '_family', lambda tid: families.get(tid, tid))
-    monkeypatch.setattr(sweep.consoles, 'of', lambda cfg: SimpleNamespace(
-        compilers=[SimpleNamespace(id=c, automatic=True) for c in compilers]))
+    options = [SimpleNamespace(id=c, automatic=True) for c in compilers]
+    monkeypatch.setattr(sweep.consoles, 'of', lambda cfg: SimpleNamespace(compilers=options, compilers_for=lambda cfg: options))
     monkeypatch.setattr(sweep.consoles, 'default_flags', lambda cfg, tid: ['-O1', tid])
 
 

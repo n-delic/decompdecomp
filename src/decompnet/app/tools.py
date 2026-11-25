@@ -386,7 +386,7 @@ def compact_info_head(net, proj):
         profile = {'toolchain': profile}
     platform=consoles.get(cfg.get('platform'))
     compiler=profile.get('toolchain') or 'set by the project build'
-    known=', '.join(c.id for c in platform.compilers)
+    known=', '.join(c.id for c in platform.compilers_for(cfg))
     return (f"{proj['name']} ({proj['slug']})\ncompiler: {compiler} {' '.join(profile.get('flags',[]))}\n"
             + (f"this platform's compilers (for try_compiler): {known}\n" if known else ''))
 

@@ -199,7 +199,7 @@ class CompilerMixin:
         if all_installed:
             # Only this console's installed, usable compilers: never download tools or call an AI provider.
             candidates = sorted({(c.id, tuple(consoles.default_flags(cfg, c.id)))
-                                 for c in consoles.of(cfg).compilers
+                                 for c in consoles.of(cfg).compilers_for(cfg)
                                  if c.automatic and ready(c.id)} | set(candidates))
             candidates = [(tc, flags) for tc, flags in candidates if ready(tc)]
         # Debug line labels can change old GCC assemblers' delay-slot scheduling even at the same -O level.
@@ -898,11 +898,25 @@ class CompilerMixin:
         counts = self.test_compilers(slug, console.installable_compilers(), log=log) if retest and self.is_rom(proj) else {}
         return {"installed": installed, "left_out": left_out, "test": counts}
 
+    def set_released(self, slug: str, year) -> None:
+        """The year this game came out (0: not known): compilers newer than it are never offered or used (consoles.too_new).
+        A compiler the project already uses stays; it's the user's to change."""
+        try:
+            year = int(year or 0)
+        except (TypeError, ValueError):
+            raise NetworkError("the release year is a number, like 1998") from None
+        if year and not 1970 <= year <= 2100:
+            raise NetworkError("the release year is a number, like 1998")
+        self._update_cfg(slug, lambda cfg: cfg.__setitem__("released", year) if year else cfg.pop("released", None))
+
     def set_auto_adjust(self, slug: str, on: bool) -> None:
         self._update_cfg(slug, lambda cfg: cfg.__setitem__("auto_compiler", bool(on)))
 
     def _toolchain_named(self, cfg: dict, compiler: str) -> str:
-        names = [c.id for c in consoles.of(cfg).compilers]
+        if tc := next((t.id for t in consoles.of(cfg).compilers if compiler.strip().lower() in (t.id, t.name.lower())), None):
+            if why := consoles.too_new(cfg, tc):
+                raise NetworkError(why)
+        names = [c.id for c in consoles.of(cfg).compilers_for(cfg)]
         tc = next((t for t in names if compiler.strip().lower() in (t, consoles.compiler_name(t).lower())), None)
         if tc is None:
             raise NetworkError(f"no compiler {compiler!r} for this game; its platform's: {', '.join(names)}")

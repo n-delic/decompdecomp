@@ -560,7 +560,7 @@ def _reconcile_renames(store, pid, saved, rendered, disk, before, pending, remov
 def _initial_merge(manifest: dict, projected: dict[str, str], disk: dict[str, str]) -> tuple[dict, dict[str, str]]:
     """A first sync has no deletion history, so keep database work while adding saved contributions."""
     local = json.loads(projected[saves.MANIFEST])
-    for key in ("title", "compiler", "compiler_ranges", "instructions", "claim_order", "priority", "auto_compiler",
+    for key in ("title", "compiler", "compiler_ranges", "instructions", "claim_order", "priority", "auto_compiler", "released",
                 "knowledge_auto"):
         manifest[key] = local.get(key)
 

@@ -316,7 +316,7 @@ def run(twins, slug: str, job, *, function_ids=None) -> int:
         return 0
     cfg = net.cfg(proj)
     manual = getattr(job, 'cross_exhaustive', False)
-    supported_compilers = {c.id for c in net.console(proj).compilers} if manual else set()
+    supported_compilers = {c.id for c in net.console(proj).compilers_for(cfg)} if manual else set()
     others = donor_projects(net, proj)
     from . import free_candidates
     free_candidates.budget(job, MAX_SECONDS, MAX_ATTEMPTS)

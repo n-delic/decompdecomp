@@ -150,7 +150,7 @@ def profiles(net, proj, cfg: dict, fn, own: dict, limit: int = 2) -> list[dict]:
         return []
     from .. import consoles, toolchains
     found = []
-    for compiler in consoles.of(cfg).compilers:
+    for compiler in consoles.of(cfg).compilers_for(cfg):
         if not compiler.automatic or compiler.id == own['toolchain'] or not toolchains.installed(compiler.id):
             continue
         flags = list(consoles.default_flags(cfg, compiler.id))

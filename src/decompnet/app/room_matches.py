@@ -158,7 +158,7 @@ def settings(net,proj,profile):
     tid,flags=profile.get('toolchain'),profile.get('flags')
     if not isinstance(tid,str) or not isinstance(flags,list) or len(flags)>100 or not all(isinstance(f,str) and len(f)<160 for f in flags):
         raise NetworkError('Invalid room compiler ID or flags.')
-    if tid not in {c.id for c in net.console(proj).compilers}:
+    if tid not in {c.id for c in net.console(proj).compilers_for(net.cfg(proj))}:
         raise NetworkError('This compiler is not supported by the host project console.')
     if not toolchains.installed(tid):
         raise NetworkError('Host needs compiler '+tid+' installed in Compilers & tools; no download was started.')

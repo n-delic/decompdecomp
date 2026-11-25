@@ -2290,7 +2290,7 @@ class ForkEngine:
         platform = consoles.name(cfg.get("platform")) or "unknown platform"
         console = consoles.get(cfg.get("platform"))
         per_file = (f"each source file can have its own compiler (try_compiler switches it, \"all\" tries each); "
-                    f"this platform's: {', '.join(c.id for c in console.compilers)}\n"
+                    f"this platform's: {', '.join(c.id for c in console.compilers_for(cfg))}\n"
                     if console.file_compiler(fp, "") else "")
         what = ("started from scratch from your copy of the game" if cfg.get("origin") == "scratch"
                 else f"a fork of {cfg['repo_url']}")
@@ -3568,7 +3568,7 @@ class ForkEngine:
             raise NetworkError("this project's flags are its build's own: try_compiler changes only the file's compiler")
         if fn["status"] == "matched":
             raise NetworkError(f"{fn['name']} already matches with {own}")
-        known = [c.id for c in console.project_compilers(fp)]  # (a 32-bit game's 32-bit ones, a 64-bit game's 64-bit)
+        known = [c.id for c in console.project_compilers(fp, cfg)]  # (a 32-bit game's 32-bit ones, a 64-bit game's 64-bit)
         current = compiler.strip().lower() == "current"
         if current:
             compiler = own
@@ -4555,7 +4555,7 @@ class ForkEngine:
         own, parts = found
         return {"compiler": {"toolchain": own, "name": consoles.compiler_name(own), "flags": [], "installed": True,
                              "proprietary": False, "supported": True},
-                "compilers": [c.id for c in consoles.get(cfg.get("platform")).compilers], "compiler_ranges": parts}
+                "compilers": [c.id for c in consoles.get(cfg.get("platform")).compilers_for(cfg)], "compiler_ranges": parts}
 
     def compiler_answer(self, slug: str) -> dict:
         """The Settings panel's answer (engine.compiler_answer's form): the project's compiler and the files built
@@ -4624,8 +4624,8 @@ class ForkEngine:
         console = consoles.get(cfg.get("platform"))
         if console.file_compiler(fp, "") is None:
             raise NetworkError("this project's own build sets its compilers")
-        if compiler not in {c.id for c in console.compilers}:
-            raise NetworkError(f"{compiler!r} isn't one of this platform's compilers")
+        if compiler not in {c.id for c in console.compilers_for(cfg)}:
+            raise NetworkError(consoles.too_new(cfg, compiler) or f"{compiler!r} isn't one of this platform's compilers")
         sources = sorted({u.source for u in fp.units() if u.source})
         stayed = []
         for n, source in enumerate(sources, 1):
@@ -4687,8 +4687,8 @@ class ForkEngine:
         units = fp.units_for(source)
         if own is None or not units:
             raise NetworkError(f"{source} isn't a source file whose compiler this project lets you choose")
-        if compiler not in {c.id for c in console.compilers}:
-            raise NetworkError(f"{compiler!r} isn't one of this platform's compilers")
+        if compiler not in {c.id for c in console.compilers_for(cfg)}:
+            raise NetworkError(consoles.too_new(cfg, compiler) or f"{compiler!r} isn't one of this platform's compilers")
         if compiler == own:
             return
         text = (fp.root / source).read_text(errors="replace", encoding="utf-8")
