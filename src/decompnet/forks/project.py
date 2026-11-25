@@ -425,10 +425,22 @@ class ForkProject:
                 pass
         default = re.search(r"^VERSION\s*[:?]?=\s*([A-Za-z0-9._-]+)\s*$", text, re.M)
         ver = version or (default.group(1) if default else None)
-        found = re.search(r"((?:[\w-]+/)*)baserom(\.\$\((?:VERSION|REGION)\))?\.z64", text)
-        if not found or (found.group(2) and not ver):
+        found = re.search(r"((?:[\w-]+/|\$\(\w+\)/)*)baserom(\.\$\((?:VERSION|REGION)\))?\.z64", text)
+        if not found:
             return self._readme_rom()
         rel = f"{found.group(1)}baserom.{ver}.z64" if found.group(2) else f"{found.group(1)}baserom.z64"
+        for _ in range(4):  # $(BASEROM_DIR)/ and $(VERSION): the Makefile's own plain assignments, or this game's
+            left = re.search(r"\$\((\w+)\)", rel)
+            if not left:
+                break
+            name = left.group(1)
+            value = ver if name in ("VERSION", "REGION") else None
+            if value is None:
+                assigned = re.findall(rf"^{name}\s*[:?]?=\s*([^\s#]+)\s*$", text, re.M)
+                value = assigned[0] if len(set(assigned)) == 1 else None
+            if value is None or (name in ("VERSION", "REGION") and not ver):
+                return self._readme_rom()
+            rel = rel.replace(left.group(0), value)
         rel = self._inside(rel) or rel
         return {"what": f"your original game ROM ({rel})", "path": rel, "sha1": None, "auto": True,
                 "help": "Supply an original cartridge ROM in .z64, .v64 or .n64 byte order; decompdecomp saves a "
@@ -1229,7 +1241,7 @@ class ForkProject:
             steps = [[*(["env", f"UV_PROJECT_ENVIRONMENT={self.root / folder}"] if os.name != "nt" else []),
                       uv, "sync", "--python", sys.executable]]
         elif uv:
-            steps = [[uv, "venv", "--python", sys.executable, str(self.root / folder)],
+            steps = [[uv, "venv", "--seed", "--python", sys.executable, str(self.root / folder)],
                      [uv, "pip", "install", "--python", python, "-r", "requirements.txt"] if requirements.is_file()
                      else [uv, "pip", "install", "--python", python, "."]]
         else:
