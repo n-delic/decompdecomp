@@ -251,6 +251,84 @@ def public(plan):
     return {k:v for k,v in plan.items() if k not in ('pieces','raw')}
 
 
+R_MIPS_26 = 4  # a jump: the raw rebuild reads these from the words again
+
+
+def _data_relocs(pieces):
+    """{absolute instruction address: (type, address, word)} of every relocation but a jump that the pieces' own
+    targets carry (the split's `%hi(D_80008260)`/`%lo(...)` annotations)."""
+    found = {}
+    for p in pieces:
+        code = p['target'] or b''
+        for off, rtype, addr in json.loads(p['relocs'] or '[]'):
+            if rtype != R_MIPS_26 and 0 <= off <= len(code) - 4:
+                found.setdefault(p['vram'] + off, (rtype, addr, bytes(code[off:off + 4])))
+    return found
+
+
+def _carried(found, vram, code, relocs):
+    """`relocs` (offset, type, address) with the data relocations of `found` inside [vram, vram + len(code)) added,
+    where the word there is still the one they were recorded on.
+
+    A decision rebuilds the changed extent from the raw words, and those carry only jumps: every data reference of
+    the split's annotated assembly was lost with it (all 35 boundary-adjusted functions of an N64 game, the ones that
+    still had to match among them). The linker places a candidate's own data (string and float literals in its
+    `.rdata`) only where the target refers to it, so a float literal the target loads with `lui $at; lwc1` could never
+    link, and every `lui`/`addiu` of a named string was a differing row though its bytes matched."""
+    have = {off for off, _, _ in relocs}
+    out = list(relocs)
+    for at, (rtype, addr, word) in found.items():
+        off = at - vram
+        if 0 <= off <= len(code) - 4 and off not in have and bytes(code[off:off + 4]) == word:
+            out.append((off, rtype, addr))
+            have.add(off)
+    return sorted(out)
+
+
+def restore_relocs(net, proj):
+    """Give back the data relocations that decisions saved before `_carried` existed dropped (the targets they rebuilt
+    and the tails they created), from the original rows each decision keeps for undo. Idempotent; the decision's
+    `after` record is updated with the row so undo still recognises it. Returns how many functions changed."""
+    store = net.project_store(proj['id'])
+    histories = []
+    for row in store.all('SELECT key,value FROM settings WHERE key LIKE ?', PREFIX + str(proj['id']) + ':%'):
+        history = json.loads(row['value'])
+        if not history.get('undone'):
+            histories.append((row['key'], history))
+    found = {}
+    for _, history in histories:
+        for saved in history['before'].values():
+            if saved.get('vram') is None or not isinstance(saved.get('target'), dict):
+                continue
+            found.update({k: v for k, v in _data_relocs([{**saved, 'target': base64.b64decode(saved['target']['bytes'])}]).items()
+                          if k not in found})
+    if not found:
+        return 0
+    changed = set()
+    with store.tx() as db:
+        for key, history in histories:
+            dirty = False
+            for fid in {*history['after'], *map(str, history.get('created', ()))}:
+                row = db.execute('SELECT * FROM functions WHERE id=? AND project_id=?', (int(fid), proj['id'])).fetchone()
+                if row is None or row['vram'] is None or not row['target']:
+                    continue
+                relocs = [tuple(r) for r in json.loads(row['relocs'] or '[]')]
+                carried = _carried(found, row['vram'], row['target'], relocs)
+                if carried == sorted(relocs):
+                    continue
+                packed = _pack(row)
+                db.execute('UPDATE functions SET relocs=? WHERE id=?', (json.dumps([list(r) for r in carried]), row['id']))
+                changed.add(row['id'])
+                if history['after'].get(fid) == packed:
+                    history['after'][fid] = {**packed, 'relocs': json.dumps([list(r) for r in carried])}
+                    dirty = True
+            if dirty:
+                db.execute('UPDATE settings SET value=? WHERE key=?', (json.dumps(history), key))
+    if changed:
+        _invalidate(net, proj)
+    return len(changed)
+
+
 def _pack(row):
     return {k:({'bytes':base64.b64encode(row[k]).decode()} if isinstance(row[k],bytes) else row[k]) for k in FIELDS}
 
@@ -343,6 +421,8 @@ def _commit(net, proj, plan, name, action, revision, image_hash, note, automatic
                 lines.append(split.AsmLine(head['rom_offset']+i,head['vram']+i,word,ins.getOpcodeName(),ins.disassemble().split(None,1)[-1]))
             rf=split.RomFunction(head['name'],head['vram'],head['rom_offset'],head['unit'],lines,Path(),set())
             target=net._make_target(proj,rf,net.symbols(proj['id']))
+            carried=_data_relocs(rows)
+            target.relocs=_carried(carried,head['vram'],target.code,target.relocs)
             db.execute("UPDATE functions SET size=?,n_insns=?,target=?,relocs=?,asm=?,status='open',meta=?,best_score=NULL,seed=NULL,seed_key=NULL WHERE id=?",
                        (len(plan['raw']),len(lines),target.code,json.dumps(target.to_json()),net.console(proj).function_asm(rf),json.dumps(meta),head['id']))
             db.execute('UPDATE symbols SET size=? WHERE project_id=? AND name=?',(len(plan['raw']),proj['id'],head['name']))
@@ -367,6 +447,7 @@ def _commit(net, proj, plan, name, action, revision, image_hash, note, automatic
                     taillines.append(split.AsmLine(head['rom_offset']+offset+i,plan['end']+i,word,ins.getOpcodeName(),ins.disassemble().split(None,1)[-1]))
                 tailrf=split.RomFunction(tailname,plan['end'],head['rom_offset']+offset,head['unit'],taillines,Path(),set())
                 tailtarget=net._make_target(proj,tailrf,net.symbols(proj['id']))
+                tailtarget.relocs=_carried(carried,plan['end'],tailtarget.code,tailtarget.relocs)
                 fid=db.execute("INSERT INTO functions(project_id,name,vram,rom_offset,size,n_insns,target,relocs,asm,unit,meta) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                     (proj['id'],tailname,plan['end'],head['rom_offset']+offset,len(tailraw),len(taillines),tailtarget.code,json.dumps(tailtarget.to_json()),net.console(proj).function_asm(tailrf),head['unit'],tailmeta)).lastrowid
                 created.append(fid)

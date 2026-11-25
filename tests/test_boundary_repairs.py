@@ -74,6 +74,33 @@ def test_delay_slot_preview_apply_and_undo_preserve_child_history(game):
     assert dict(net._function('tail','game'))==tail
 
 
+def test_decisions_keep_the_split_data_references(game):
+    """A decision rebuilt the extent from raw words, which carry only jumps: the split's `%hi`/`%lo` data references
+    were lost, so the judge could not place a candidate's own literals and charged every named address."""
+    net,_=game
+    tail=net._function('tail','game')
+    with net.store.tx() as db:db.execute('UPDATE functions SET relocs=? WHERE id=?',(json.dumps([[0,5,0x80008260]]),tail['id']))
+    result=decide(net,'head','delay_slot')
+    assert [4,5,0x80008260] in json.loads(net._function('head','game')['relocs'])
+    repair.undo(net,'game',result['key'])
+    assert json.loads(net._function('head','game')['relocs'])==[]
+
+
+def test_restore_gives_back_references_older_decisions_dropped_and_undo_still_works(game,monkeypatch):
+    net,_=game
+    tail=net._function('tail','game')
+    with net.store.tx() as db:db.execute('UPDATE functions SET relocs=? WHERE id=?',(json.dumps([[0,5,0x80008260]]),tail['id']))
+    with monkeypatch.context() as m:
+        m.setattr(repair,'_carried',lambda found,vram,code,relocs:relocs)  # as decisions were saved before
+        result=decide(net,'head','delay_slot')
+    assert not any(r[1]==5 for r in json.loads(net._function('head','game')['relocs']))
+    assert repair.restore_relocs(net,net.project_row('game'))==1
+    assert [4,5,0x80008260] in json.loads(net._function('head','game')['relocs'])
+    assert repair.restore_relocs(net,net.project_row('game'))==0  # idempotent
+    repair.undo(net,'game',result['key'])
+    assert net._function('head','game')['size']==4
+
+
 def test_join_preserves_ids_and_undo(game):
     net,_=game
     result=decide(net,'tail','join_previous')

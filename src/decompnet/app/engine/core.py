@@ -180,11 +180,22 @@ class Core(Network):
         # saved bests scored under older penalties: rescored first, so none blocks a better source (score_version.py)
         rescored = score_version.refresh(self, row, log)
         rescored_said = f"{rescored} saved best score{'' if rescored == 1 else 's'} updated to this version's scoring"
+        restored = 0
+        if self.is_rom(row) and row['arch'] == 'mips':
+            # Boundary decisions saved before they carried the split's data references dropped them (boundary_repairs
+            # restore_relocs reads them back from the originals each decision keeps); cheap and idempotent, so it runs
+            # on every check, like the score refresh above.
+            from ..boundary_repairs import restore_relocs
+            restored = restore_relocs(self, row)
+        restored_said = (f"{restored} function{'' if restored == 1 else 's'} given back the data references a boundary "
+                         "fix had dropped")
         if only_if_updated and self.cfg(row).get("checked") == __version__:
             # Capability fixes can ship without a package-version change. Only this
             # narrow, self-retiring review runs again; console/range work stays gated.
             reconsidered = assembly_reconsideration.run(self, row, log)
             said = [rescored_said] if rescored else []
+            if restored:
+                said.append(restored_said)
             if reconsidered:
                 said.append(f'{reconsidered} obsolete tooling verdicts reconsidered with supported C')
             return "; ".join(said) or None
@@ -194,6 +205,8 @@ class Core(Network):
         self.console(row).on_start(self, slug, log=log)
         # what the console's work did, it said in the feed ("8 pieces of functions ... joined"): in the answer too
         done = [rescored_said] if rescored else []
+        if restored:
+            done.append(restored_said)
         if self.is_rom(row):
             # A start or end the bytes prove wrong, in a project imported before the importer fixed them.
             from ..boundary_repairs import apply_entry_fixes
