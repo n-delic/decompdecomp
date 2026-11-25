@@ -10,6 +10,18 @@ MAX_TABLES = 64
 MAX_CASES = 256
 
 
+def case_target(word, instruction_addresses):
+    """The function address a jump-table word names, or None. A game that patches its tables when it loads a
+    segment keeps them in the ROM without the KSEG0 bit (`0x0025A1D8` for `0x8025A1D8`): 79 of a 2,465-function
+    N64 game's open functions had no draft because no word of their table looked like one of their own
+    instructions. The bit is added only when that makes a real instruction of this function, so a stray word is
+    still not a case."""
+    if word in instruction_addresses:
+        return word
+    high = word | 0x80000000
+    return high if not word & 0x80000000 and high in instruction_addresses else None
+
+
 def jump_table_extent(name, reader, instruction_addresses, endian):
     """(address, size) of a jump table the symbol list doesn't have: its address is in its name (`jtbl_800E1DE8`)
     and it runs as long as its words are addresses of this function's own instructions. Nothing is invented: a word
@@ -23,7 +35,7 @@ def jump_table_extent(name, reader, instruction_addresses, endian):
     cases = 0
     while cases < MAX_CASES:
         word = reader(address + 4 * cases, 4)
-        if word is None or len(word) != 4 or struct.unpack(endian + 'I', word)[0] not in instruction_addresses:
+        if word is None or len(word) != 4 or case_target(struct.unpack(endian + 'I', word)[0], instruction_addresses) is None:
             break
         cases += 1
     return (address, 4 * cases) if cases >= 2 else None
@@ -104,7 +116,8 @@ def read(net, proj, fn):
             words = [w for (w,) in struct.iter_unpack(endian+'I', data)]
             while len(words) > 2 and words[-1] == 0:
                 words.pop()  # alignment padding the data file counted into the table; m2c rejects it as a case
-            body = ['.word .L%08X' % w if w in instruction_addresses else '.word 0x%08X' % w for w in words]
+            body = ['.word .L%08X' % case_target(w, instruction_addresses) if case_target(w, instruction_addresses) else '.word 0x%08X' % w
+                    for w in words]
         elif string and b'\0' in data:
             value = data.split(b'\0',1)[0]
             if any(b < 32 or b >= 127 for b in value):

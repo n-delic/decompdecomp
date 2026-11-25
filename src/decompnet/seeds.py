@@ -16,7 +16,7 @@ from pathlib import Path
 
 from decompnet.hostenv import NO_WINDOW
 
-from . import compile_timing, limits, scoring, toolchains
+from . import compile_timing, limits, m2c_fp64, scoring, toolchains
 from .elfobj import FunctionObj
 
 # What m2c's --valid-syntax output needs to compile: its unknown types and macros, defined the simplest way that
@@ -623,7 +623,7 @@ def _run_m2c(asm_text: str, name: str, target: str, context_header: str = "", da
         from .arch.mips import abi_register_names
         from .rom.split import draft_asm
 
-        asm_text = abi_register_names(asm_text)
+        asm_text = m2c_fp64.pair_free(abi_register_names(asm_text))
         if data_asm:
             asm_text = draft_asm(_mips_table_aliases(asm_text, data_asm), name, data_asm=data_asm)
     if target.startswith("gba"):  # a public GBA decomp (pret style): function macros, pre-UAL load mnemonics
