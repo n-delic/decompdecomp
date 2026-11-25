@@ -98,7 +98,9 @@ def _scalar_dereferences(source: str) -> str:
         kind = kind if kind and not kind.startswith("M2C") else "s32"
         out.append(f"{source[index:start]}*({kind} *){operand}")
         index = end
-    return "".join(out) + source[index:]
+    source = "".join(out) + source[index:]
+    # `**temp` where temp holds an address of an address: each `*` reads a word
+    return re.sub(r"(?<![\w)\]*])\*\*\(((?:s|u)(?:8|16|32)) \*\)(?=\w)", r"*(\1 *)*(\1 *)", source)
 
 
 def _table_calls(source: str) -> str:
@@ -107,7 +109,7 @@ def _table_calls(source: str) -> str:
     for line in source.split("\n"):
         stripped = line.lstrip()
         if stripped.startswith("*(") and (end := _balanced(stripped, 1)) and stripped[end:end + 1] == "(" \
-                and stripped.rstrip().endswith(");"):
+                and _balanced(stripped, end) == len(stripped.rstrip()) - 1 and stripped.rstrip().endswith(");"):
             indent = line[:len(line) - len(stripped)]
             line = f"{indent}((void (*)()) {stripped[:end]}){stripped[end:]}"
         lines.append(line)
@@ -166,10 +168,88 @@ def _call_prototypes(source: str) -> str:
     return source
 
 
+def _literal_calls(source: str) -> str:
+    """`(M2C_UNK (*)())0x80000400();` calls an address; the cast must be inside the parentheses that are called."""
+    return re.sub(r"(?<![\w)])\((\w[\w ]*) \(\*\)\(\)\)(0x[0-9A-Fa-f]+)\(", r"((\1 (*)())\2)(", source)
+
+
+_LIBC_ARITY = {"memcpy": 3, "memmove": 3, "memset": 3, "memcmp": 3, "strncpy": 3, "strcpy": 2, "strcmp": 2,
+               "strcat": 2, "strlen": 1}
+
+
+def _library_calls(source: str) -> str:
+    """The compiler knows the C library's routines by their prototypes, and m2c passes every argument register it
+    thinks the call set (`memcpy(a, b, n, var_a3)`): the extra argument is a register the code never meant."""
+    out, index = [], 0
+    for call in re.finditer(r"(?<![\w.>])(" + "|".join(_LIBC_ARITY) + r")\(", source):
+        if call.start() < index:
+            continue
+        end = _balanced(source, call.end() - 1)
+        arguments = _split_top_level(source[call.end():end - 1]) if end else []
+        if len(arguments) > _LIBC_ARITY[call[1]]:
+            out.append(source[index:call.end()] + ",".join(arguments[:_LIBC_ARITY[call[1]]]) + ")")
+            index = end
+    return "".join(out) + source[index:]
+
+
+def _pointer_calls(source: str) -> str:
+    """A function pointer declared with parameters (`s32 (*arg1)(void *)`) and called with none (`arg1()`): the code
+    sets no argument register, so the pointer is declared without them, as the call is."""
+    for name in dict.fromkeys(re.findall(r"(?<![\w.>])(\w+)\(\)", source)):
+        source = re.sub(rf"\(\*{re.escape(name)}\)\((?!\))[^()]*\)", f"(*{name})()", source)
+    return re.sub(r"(\(\*+\))\((?!\))[^()]*\)(, (?:0x[0-9A-Fa-f]+|\d+)\)\(\))", r"\1()\2", source)
+
+
+def _unknown_pointer_words(source: str) -> str:
+    """Where m2c stores a float through `M2C_UNK **` (a pointer to a pointer it knows nothing about) the casts to and
+    from float are casts of a pointer, which C refuses: those slots are words."""
+    if not re.search(r"M2C_BITWISE\(M2C_UNK \*{2,},", source):
+        return source
+    source = re.sub(r"M2C_BITWISE\(M2C_UNK \*{2,},", "M2C_BITWISE(s32,", source)
+    source = re.sub(r"M2C_UNK \*+(temp_f\w*;)", r"f32 \1", source)  # (m2c names a float temporary `temp_f…`)
+    return re.sub(r"M2C_UNK \*{2,}", "s32 *", source)
+
+
+def _missing_halves(source: str) -> str:
+    """`(second half of f64)` is where m2c read the odd register of a pair that holds a single (a function that uses
+    every callee-saved register as a single and a double in one of them): no register file can be renamed to give the
+    double room. C has no such operand; a zero stands in, so the draft compiles and the search can start from it."""
+    return re.sub(r"\(second half of f64\)|\bsecond half of f64\b", "0.0", source)
+
+
+def _array_pointers(source: str) -> str:
+    """`u16 (*var)[]` points at arrays of unknown length: a C compiler can neither step nor index it. It is a pointer
+    to the element."""
+    names = set(re.findall(r"\(\*(\w+)\)\[\]", source))
+    source = re.sub(r"(\w+) \(\*(\w*)\)\[\]", lambda m: f"{m[1]} *{m[2]}", source)
+    for name in names:
+        source = re.sub(rf"\b{re.escape(name)}\[0\]\[0\]", f"{name}[0]", source)
+    return source
+
+
+def _stray_labels(source: str) -> str:
+    """`case 5:` and `default:` that m2c left outside any `switch` (a branch target it could not tie to the switch):
+    C only has them inside one. The label goes; the code under it stays."""
+    stack, lines = [], []
+    for line in source.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("}"):
+            if stack:
+                stack.pop()
+        if re.match(r"(?:case\b[^:]*|default):\s*(?:/\*.*\*/)?$", stripped) and "switch" not in stack:
+            continue
+        if stripped.endswith("{"):
+            stack.append("switch" if re.match(r"switch\s*\(", stripped) else "block")
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def repair(source: str) -> str:
     """`source` with the spellings above made compilable; unchanged when it has none."""
     if not source:
         return source
-    for step in (_void_dereferences, _integer_dereferences, _scalar_dereferences, _table_calls, _address_sums, _call_prototypes):
+    for step in (_void_dereferences, _integer_dereferences, _scalar_dereferences, _table_calls, _literal_calls,
+                 _address_sums, _library_calls, _pointer_calls, _unknown_pointer_words, _missing_halves, _array_pointers,
+                 _stray_labels, _call_prototypes):
         source = step(source)
     return source

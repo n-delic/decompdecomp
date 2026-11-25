@@ -70,3 +70,18 @@ def test_two_moves_with_a_conversion_between_them_are_two_values_not_one_double(
             "add.d $f2, $f2, $f0\n")
     out = m2c_fp64.pair_free(code)
     assert out != code and '$f3' not in out
+
+
+def test_stack_saves_of_callee_saved_registers_do_not_count_as_doubles_in_use():
+    code = ("sdc1 $f20, 0x20($sp)\nsdc1 $f21, 0x28($sp)\nldc1 $f3, 0($a0)\nmul.d $f0, $f0, $f3\n"
+            "ldc1 $f20, 0x20($sp)\nldc1 $f21, 0x28($sp)\n")
+    _, doubles, singles, _ = m2c_fp64._scan(code)
+    assert 20 not in doubles and 21 not in doubles and doubles == {0, 3}
+    out = m2c_fp64.pair_free(code)
+    assert '$f3' not in out and out.count('$f20') == 2 and out.count('$f21') == 2
+
+
+def test_a_single_kept_in_a_saved_register_is_never_moved_into_a_temporary():
+    saved = "".join(f"lwc1 $f{n}, {4 * n}($a0)\nadd.s $f{n}, $f{n}, $f{n}\n" for n in range(20, 32))
+    code = saved + "ldc1 $f20, 0($a1)\nadd.d $f0, $f20, $f20\n"
+    assert m2c_fp64.pair_free(code) == code  # no saved register is free: the code stays as it is
