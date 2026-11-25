@@ -1086,3 +1086,9 @@ counter) rather than a fixed step: on the console the time between frames is the
 and the gaps between consecutive reads range from 130 ticks to 1.8 million (a whole retrace), median about 3,000: it is measuring the cycles its own code takes. The port answers each read from its virtual clock (a retrace's worth
 advanced by whole steps and small sub-steps), so any decision the game takes from these measurements (a detail level, a frame skip, a time step) can come out otherwise there. This makes the clock-step hypothesis for held buttons
 (taps exact, holds drifting) a specific one to test: log the port's `osGetTime` at the same call sites and compare the reads that reach a decision with the console's.
+
+**The retrace period is not what makes held buttons drift (tested).** The emulator's PAL retrace is 992,835 ticks of the 46.875 MHz counter (21,180 us; three retraces, one frame of the game, are 2,978,5xx ticks, constant to a few ticks, which is 625 lines of 3,177
+half-ticks), where the port's PAL retrace is 20,000 us: the time a game measures between frames is 6% longer on the console. With `PORT_RETRACE_US=21180` (the port runs 473 retraces in 10 virtual seconds instead of 500) the 50-frame-hold
+START route's race windows (tasks 3100, 3400, 6190) came out the same to the hundredth of a percent (59-60% at 3113, 80.9% at 3413, 80.4% at 6203). So the game's step does not come from `osGetTime` through the retrace period, and the clock-step hypothesis
+for held buttons is refuted; the 6% period difference is still real and `PORT_RETRACE_US` is kept as a knob (a game that did read the time for a step would feel it). Remaining leads for the held button: the controller read itself (what the game does with
+a button held across frames, via the emulator's watch on the `OSContPad` data and the port's `PORT_ORDER_LOG` on the same address) and the pause (what START held does).
