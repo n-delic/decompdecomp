@@ -392,16 +392,21 @@ def run_port(game: Path, rom: Path, points: list[int], inputs: str, folder: Path
 
 
 def run_console(rom: Path, points: list[int], inputs: str, folder: Path, clock: str = "vi", *, stop=lambda: False,
-                extra_env: dict[str, str] | None = None) -> dict[int, Path]:
-    """The ROM in the reversing emulator, its RAM written at each point (retraces, or the game's frames)."""
+                extra_env: dict[str, str] | None = None, seeds_at: int | None = None) -> dict[int, Path]:
+    """The ROM in the reversing emulator, its RAM written at each point (retraces, or the game's frames). With `seeds_at` (the
+    address of the game's seeding function) the first argument of each call is written to `folder/seeds.txt`, one a line in call
+    order, for the port's PORT_SEED_REPLAY (tools/n64_record_seeds.py)."""
     from decompnet.consoles.n64 import emulator
 
     dumps = {n: folder / f"console_{clock}_{n}.bin" for n in points}
     for path in dumps.values():
         path.unlink(missing_ok=True)
     if clock == "frames":
-        emulator.run(rom, max(points) * 6 + 1200, inputs=inputs, frame_dumps=dumps, input_clock="frames", stop=stop,
-                     extra_env=extra_env)
+        seeding = {"breaks": [seeds_at], "max_hits": 1_000_000} if seeds_at else {}
+        run = emulator.run(rom, max(points) * 6 + 1200, inputs=inputs, frame_dumps=dumps, input_clock="frames", stop=stop,
+                           extra_env=extra_env, **seeding)
+        if seeds_at:
+            (folder / "seeds.txt").write_text("".join(f"{int(h.args[0]) & 0xFFFFFFFF}\n" for h in run.hits))
     else:
         emulator.run(rom, max(points) + 1, inputs=inputs, dumps=dumps, stop=stop, extra_env=extra_env)
     return {n: p for n, p in dumps.items() if p.exists()}
@@ -444,7 +449,8 @@ def difference(a: list, b: list) -> list:
 
 
 def compare_run(game: Path, rom: Path, points: list[int], inputs: str, work: Path, out: Path, *, tolerance: int = 3,
-                pace: bool = True, stop=lambda: False, progress=lambda text, done, total: None) -> list[dict]:
+                pace: bool = True, seeds_at: int | None = None, stop=lambda: False,
+                progress=lambda text, done, total: None) -> list[dict]:
     """The port's pictures against the console's at the game's graphics tasks `points` (counted from 1), both run with
     `inputs` (timed in graphics tasks) and drawn by the port's renderer. One entry for each task and picture:
     {"task", "image", "width", "lines", "differ_pct", "beyond_pct", "near_pct", "file"} (the side-by-side PNG in `out`:
@@ -460,7 +466,7 @@ def compare_run(game: Path, rom: Path, points: list[int], inputs: str, work: Pat
     program = build(work)
     progress("Running the original game in the emulator", 1, 4)
     console = run_console(rom, sorted(set(points) | {early}), inputs, work, "frames", stop=stop,
-                          extra_env={"EMU_TASK_LOG": str(pace_log)} if pace else None)
+                          extra_env={"EMU_TASK_LOG": str(pace_log)} if pace else None, seeds_at=seeds_at)
     if stop():
         return []
     progress("Giving the port the console's save", 2, 4)
@@ -472,6 +478,8 @@ def compare_run(game: Path, rom: Path, points: list[int], inputs: str, work: Pat
             save.write_bytes(taken)
     progress("Running the port", 3, 4)
     pacing = {"PORT_VTIME": "1", "PORT_VTIME_TRACE": str(pace_log)} if pace and pace_log.exists() else {}
+    if seeds_at and (work / "seeds.txt").exists():  # a game that seeds from the clock draws the console's numbers
+        pacing["PORT_SEED_REPLAY"] = str(work / "seeds.txt")
     port = run_port(game, rom, sorted(set(points)), inputs, work, "frames", stop=stop, extra_env=pacing)
     results: list[dict] = []
     runs: list[list[int]] = []  # the consecutive tasks taken at each moment

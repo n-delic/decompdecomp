@@ -48,6 +48,19 @@ def points(tasks: int, count: int = POINTS) -> list[int]:
     return sorted(out)
 
 
+def seeding_function(repo: Path) -> str | None:
+    """The name of the game's seeding function, when the port has an override of it that takes its seed through
+    port_seed_replay (port/wasm/src, docs/PORTING.md): `void rand_seed(s32 seed) { ... port_seed_replay(...) }`. A game that
+    seeds its random numbers from the clock draws other numbers in the port, so a demo race or a spawn differs entirely
+    unless the port is given the console's seeds."""
+    import re
+    for source in sorted((Path(repo) / "port" / "wasm" / "src").glob("*.c")):
+        text = source.read_text(encoding="utf-8", errors="replace")
+        for m in re.finditer(r"\b(\w+)\s*\([^)]*\)\s*\{[^{}]*port_seed_replay\s*\(", text):
+            return m.group(1)
+    return None
+
+
 def check(net, slug: str, tasks: int = 6000, inputs: str = "", tolerance: int = TOLERANCE, pace: bool = True,
           log=print) -> dict:
     """Run the comparison (a background job): the summary, saved in results_file."""
@@ -71,6 +84,13 @@ def check(net, slug: str, tasks: int = 6000, inputs: str = "", tolerance: int = 
     repo, cfg, rom = play.game(net, slug)
     program = build.build(repo, console=cfg.get("platform", "n64"), log=log, **play.inputs(net, slug, log))
     chosen = points(tasks)
+    seeds_at = None
+    if (name := seeding_function(repo)) is not None:
+        with net.progress.view():
+            row = net.project_store(proj["id"]).one("SELECT vram FROM functions WHERE project_id=? AND name=?", proj["id"], name)
+        if row is not None and row["vram"]:
+            seeds_at = int(row["vram"]) & 0xFFFFFFFF
+            log(f"the console's seeds for {name} (0x{seeds_at:08X}) are replayed in the port")
     work = out / "work"
 
     def progress(text: str, done: int, total: int) -> None:
@@ -79,7 +99,7 @@ def check(net, slug: str, tasks: int = 6000, inputs: str = "", tolerance: int = 
 
     try:
         results = frame_compare.compare_run(program, rom, chosen, inputs.strip(), work, out, tolerance=int(tolerance),
-                                            pace=pace, stop=stop.is_set, progress=progress)
+                                            pace=pace, seeds_at=seeds_at, stop=stop.is_set, progress=progress)
     finally:
         shutil.rmtree(work, ignore_errors=True)  # the RAM dumps: 8 MB each
     if stop.is_set():

@@ -108,3 +108,13 @@ def test_a_task_that_draws_fewer_lines_leaves_the_rest_of_the_carried_picture(tm
     frame_compare.frames(Path("x"), dump, tmp_path, carry)
     frame_compare.frames(Path("x"), dump, tmp_path, carry)
     assert carry[0x100] == bytes([7]) * 4 + bytes([7]) * 4 + bytes([9]) * 8  # the second task's 4 bytes, then the first's, then the seed
+
+
+def test_a_seeding_override_is_found_by_the_function_that_replays_the_seed(tmp_path):
+    src = tmp_path / "port" / "wasm" / "src"
+    src.mkdir(parents=True)
+    (src / "other.c").write_text("void helper(int x) { x++; }\n")
+    (src / "rand_seed.c").write_text("extern u32 port_seed_replay(u32 fallback);\nvoid rand_seed(s32 seed) {\n"
+                                     "    *(s32 *)0 = (s32)port_seed_replay((u32)seed);\n}\n")
+    assert picture_check.seeding_function(tmp_path) == "rand_seed"
+    assert picture_check.seeding_function(tmp_path / "nothing") is None
