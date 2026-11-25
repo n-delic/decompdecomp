@@ -31,6 +31,8 @@ from .project import STATE, ForkError
 from .splatrefs import inside
 
 MAX_UNITS = 4000
+MIN_UNITS = 5  # fewer (unless they are half the code), or under this share of it, is no usable configuration
+MIN_TEXT_PERCENT = 10
 SOURCE_SUFFIXES = ('.c', '.s', '.S')
 
 R_MIPS_NONE, R_MIPS_16, R_MIPS_32, R_MIPS_26, R_MIPS_HI16, R_MIPS_LO16 = 0, 1, 2, 4, 5, 6
@@ -70,11 +72,80 @@ def parse_map(text: str) -> dict[tuple[str, str], tuple[int, int] | None]:
                 pending = name[1] if name and name[1].startswith('.') else None
                 continue
         section, address, size, owner = entry
-        if not address or not size or not owner.endswith(('.o', ')')):
+        if not address or not size or not owner.endswith(('.o', ')', '.plf')):
             continue
         key = (owner, section)
         sections[key] = None if key in sections else (address, size)
     return sections
+
+
+_OUTPUT = re.compile(r'^(\.\S+)\s+0x([0-9a-fA-F]+)\s+0x([0-9a-fA-F]+)\s*$')
+
+
+def parse_partial_map(text: str) -> list[tuple[str, str, str, int, int]]:
+    """[(object path, input section, output section, offset in the output section, size)] for what a partial link
+    (`ld -r`) placed. The output section's own address is subtracted: such a link's script may start .data where
+    .text ended."""
+    out = []
+    origin: dict[str, int] = {}
+    current = None
+    started = False
+    pending = None
+    for line in text.splitlines():
+        if not started:
+            started = line.startswith('Linker script and memory map')
+            continue
+        header = _OUTPUT.match(line)
+        if header:
+            current = header[1]
+            origin[current] = int(header[2], 16)
+            pending = None
+            continue
+        if line and not line[0].isspace():
+            current = None
+            pending = None
+            continue
+        entry = None
+        if pending:
+            body = _INPUT_SPLIT_BODY.match(line)
+            if body:
+                entry = (pending, int(body[1], 16), int(body[2], 16), body[3])
+            pending = None
+        if entry is None:
+            full = _INPUT.match(line)
+            if full:
+                entry = (full[1], int(full[2], 16), int(full[3], 16), full[4])
+            else:
+                name = _INPUT_SPLIT_NAME.match(line)
+                pending = name[1] if name and name[1].startswith('.') else None
+                continue
+        section, address, size, owner = entry
+        if current is None or not size or not owner.endswith('.o') or address < origin[current]:
+            continue
+        out.append((owner, section, current, address - origin[current], size))
+    return out
+
+
+def expand_partial_links(root: Path, addresses: dict) -> set[str]:
+    """Per-source placements for a link whose final map lists whole partially-linked segments (the Zelda decomps'
+    `code.plf`, `ovl_*.plf`): each segment has a map of its own beside it, saying where every object landed inside the
+    segment's sections, and the final map says where each segment section went. Adds (object, section) -> (address,
+    size) to `addresses` and returns the segment containers it replaced, so they aren't planned as units."""
+    containers = set()
+    for owner in sorted({owner for owner, _section in addresses if owner.endswith('.plf')}):
+        partial = (root / owner).with_suffix('.map')
+        try:
+            entries = parse_partial_map(partial.read_text(errors='replace', encoding='utf-8'))
+        except OSError:
+            continue
+        containers.add(owner)
+        for child, section, output, offset, size in entries:
+            base = addresses.get((owner, output))
+            if not base or offset + size > base[1]:
+                continue
+            key = (child, section)
+            addresses[key] = None if key in addresses else (base[0] + offset, size)
+    return containers
 
 
 def object_sections(elf: ELFFile) -> dict[str, tuple[int, str, int, bytes | None]]:
@@ -342,8 +413,12 @@ def generate(project, version: str | None = None, log=print) -> bool:
         if linked.header['e_machine'] != 'EM_MIPS':
             return False
         ranges, globals_ = load_ranges(linked), global_symbols(linked)
+        image_code = sum(section['sh_size'] for section in linked.iter_sections()
+                         if section['sh_flags'] & 4 and section['sh_type'] != 'SHT_NOBITS')  # (SHF_EXECINSTR)
     addresses = parse_map(map_path.read_text(errors='replace', encoding='utf-8'))
-    objects = sorted({owner for (owner, name) in addresses if name == '.text' and addresses[(owner, name)]})
+    containers = expand_partial_links(root, addresses)
+    objects = sorted({owner for (owner, name) in addresses if name == '.text' and addresses[(owner, name)]
+                      and owner not in containers})
 
     def attempt(image: bytes):
         units, left_out, skipped, outside = [], {}, 0, []
@@ -377,6 +452,15 @@ def generate(project, version: str | None = None, log=print) -> bool:
     if not units or len(units) > MAX_UNITS:
         raise ForkError(f"the build's objects can't be verified against the original game ({len(units)} of "
                         f"{len(objects)}); configure objdiff manually")
+    covered_text = sum(addresses[(owner, '.text')][1] for owner in objects
+                       if (source := source_for(root, build_dir, inside(root, owner))) is not None
+                       and (source, inside(root, owner)) in units)
+    if covered_text * 100 < image_code * MIN_TEXT_PERCENT or (
+            len(units) < MIN_UNITS and covered_text * 100 < image_code * 50):
+        # (a build whose map lists whole segments, not source objects, matched one startup file: not a configuration)
+        raise ForkError(f"only {len(units)} objects ({covered_text:#x} of the image's {image_code:#x} bytes of code) "
+                        "could be proved against the original game, too little to measure progress with; "
+                        "configure objdiff manually")
     by_name = {}
     for source, obj in sorted(units, key=lambda item: (item[0].suffix != '.c', item[0].as_posix())):
         by_name.setdefault(source.relative_to(root).with_suffix('').as_posix(), (source, obj))

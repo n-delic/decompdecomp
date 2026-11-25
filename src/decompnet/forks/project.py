@@ -228,7 +228,7 @@ def _version_var(makefile: str) -> str | None:
 
 def _setup_targets(makefile: str) -> list[str]:
     """The Makefile's own preparation targets, in the order its README runs them. `assets` counts only when its recipe
-    runs Torch (a Makefile whose README says `make -C tools`, `make assets`, `make`): the headers its compile step
+    runs Torch or ZAPD (a Makefile whose README says `make -C tools`, `make assets`, `make`): the headers its compile step
     includes are made there, and a build without them stops at the first #include. Another project's `assets`
     target is its own business."""
     found = [t for t in ("tools", "toolchain", "setup", "extract") if re.search(rf"^{t}\s*:", makefile, re.M)]
@@ -237,8 +237,8 @@ def _setup_targets(makefile: str) -> list[str]:
         found.insert(found.index("extract") if "extract" in found else len(found), "decompress")
     if re.search(r"^prerequisites\s*:[^\n]*(?:tools|extract)", makefile, re.M):
         found.append("prerequisites")  # (one that builds the host tools and extracts assets: rules like the RSP's use them unordered)
-    recipe = re.search(r"^assets\s*:[^\n]*\n((?:[ \t][^\n]*\n?)*)", makefile, re.M)
-    if recipe and re.search(r"(?i)torch", recipe[1]):
+    recipe = re.search(r"^assets\s*:[^\n]*\n((?:(?:[ \t]|ifn?eq|else|endif|#)[^\n]*\n?)*)", makefile, re.M)
+    if recipe and re.search(r"(?i)torch|\bextract_assets\.py|\bzapd\b", recipe[1]):  # (the Zelda decomps: ZAPD's headers)
         found.append("assets")
     return found
 
@@ -1914,7 +1914,21 @@ class ForkProject:
                 from .splatnested import generate
 
                 return generate(self, path, config, console, version=version, log=log)
-            return console.generate_objdiff(self, path, config, log=log)
+            try:
+                return console.generate_objdiff(self, path, config, log=log)
+            except ForkError:
+                # a splat config the independent planner can't use (compressed cartridge segments with no numeric
+                # start or vram) of an N64 project whose own build matches: its linker map plans the units, each
+                # proved against the original cartridge (maprefs.py, which skips any other console's project)
+                from .maprefs import generate as from_map
+
+                try:
+                    done = from_map(self, version, log=log)
+                except ForkError:
+                    done = False
+                if not done:
+                    raise
+                return True
         except (OSError, ValueError, ELFError, yaml.YAMLError, subprocess.TimeoutExpired, toolchains.ToolchainError) as error:
             raise ForkError(f"automatic objdiff setup could not finish: {error}. Check the project's setup manually.") from None
 
