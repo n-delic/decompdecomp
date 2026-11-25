@@ -533,6 +533,28 @@ def test_n64_gets_wibo_and_an_o32_assembler(tmp_path, monkeypatch):
     assert (other[0] / "mips-linux-gnu-as").is_symlink()
 
 
+def test_the_n64_assembler_starts_each_section_at_16_bytes_from_a_file_or_a_pipe(tmp_path, monkeypatch):
+    """A distribution's gas aligns .text/.data/.bss to 16, the pinned one to 4: the next assembly object of an SDK's
+    libultra then starts 8 bytes early and every later address of a ROM layout moves."""
+    import subprocess
+
+    tools, _ = pinned(tmp_path, monkeypatch)
+    fake = tools / "mips-ps2-decompals-as"
+    fake.write_text("#!/bin/sh\nprintf 'args:%s\\n' \"$*\"\nfor a; do case \"$a\" in *.s) cat \"$a\";; esac; done\n")
+    fake.chmod(0o755)
+    monkeypatch.setattr(mips_tools.shutil, "which", lambda name, **kw: None)
+    paths = mips_tools.build_paths(SimpleNamespace(root=tmp_path / "project", platform="n64", manifest=None))
+    assembler = str(paths[0] / "mips-linux-gnu-as")
+    source = tmp_path / "x.s"
+    source.write_text("nop\n")
+    from_file = subprocess.run([assembler, "-EB", "-march=vr4300", "-MD", "build/x.d", "-o", "x.o", str(source)],
+                               capture_output=True, text=True)  # (-MD takes the dependency file as its own argument)
+    assert "args:-mabi=32 -EB -march=vr4300 -MD build/x.d -o x.o" in from_file.stdout
+    assert ".text\n.balign 16\n.data\n.balign 16\n.bss\n.balign 16\n.text\nnop\n" in from_file.stdout
+    piped = subprocess.run([assembler, "-mabi=n32", "-o", "x.o"], input="nop\n", capture_output=True, text=True)
+    assert "args:-mabi=n32 -o x.o" in piped.stdout and ".balign 16" in piped.stdout and "nop" in piped.stdout
+
+
 def test_stale_splat_cache_goes_when_the_project_collects_undefined_symbols(tmp_path):
     root = tmp_path / "project"
     root.mkdir()
