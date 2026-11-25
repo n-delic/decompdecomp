@@ -353,7 +353,7 @@ def export(web: Path, dest: Path) -> Path:
         simd = json.loads((web / "build.json").read_text(encoding="utf-8")).get("simd")
     except (OSError, ValueError, AttributeError):  # no build.json, or not one this writes: no SIMD modules
         simd = False
-    for name in ("index.html", "play.js", "gl.js", "touch.js", "runtime.js", "build.json", "game-web.wasm", "host-web.wasm", ASYNCIFY,
+    for name in ("index.html", "play.js", "gl.js", "touch.js", "settings.js", "runtime.js", "build.json", "game-web.wasm", "host-web.wasm", ASYNCIFY,
                  *(SIMD.values() if simd else ())):  # (an earlier build's SIMD modules stay out unless asked for)
         if (web / name).is_file():
             shutil.copyfile(web / name, dest / name)

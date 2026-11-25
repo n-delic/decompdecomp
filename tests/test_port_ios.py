@@ -18,7 +18,7 @@ from decompnet.port.wasm import export, ios, play, web, workflows
 
 def browser_build(folder):
     folder.mkdir()
-    for name in ("index.html", "play.js", "gl.js", "runtime.js", "touch.js", "touch.css", "build.json",
+    for name in ("index.html", "play.js", "gl.js", "runtime.js", "touch.js", "settings.js", "touch.css", "build.json",
                  "game-web.wasm", "host-web.wasm", "app-asyncify.wasm", "rom.z64", "game.eep"):
         (folder / name).write_text(name)
     return folder
@@ -33,7 +33,7 @@ def test_ios_project_bundles_only_web_files_and_replaces_the_previous_export(tmp
     assert info["CFBundleDisplayName"] == 'A <Game> & "Friends"'
     assert info["NSAppTransportSecurity"] == {"NSAllowsLocalNetworking": True}
     files = {p.name for p in (dest / "Game" / "Web").iterdir()}
-    assert files == {"index.html", "play.js", "gl.js", "runtime.js", "touch.js", "touch.css", "build.json",
+    assert files == {"index.html", "play.js", "gl.js", "runtime.js", "touch.js", "settings.js", "touch.css", "build.json",
                      "game-web.wasm", "host-web.wasm", "app-asyncify.wasm"}
     assert (project / "xcshareddata" / "xcschemes" / "Game.xcscheme").is_file()
     text = (project / "project.pbxproj").read_text()
