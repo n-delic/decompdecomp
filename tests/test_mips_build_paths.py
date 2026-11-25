@@ -563,3 +563,52 @@ def test_dockerfile_splat_pin_and_tools_requirements_make_the_project_environmen
     monkeypatch.setattr(ForkProject, "kind", lambda self: "splat")
     project.ensure_python_env(log=lambda *_: None)
     assert any("tools/requirements.txt" in cmd and "splat64[mips]<0.40.0" in cmd for cmd in steps)
+
+
+def test_a_committed_gcc_272_in_tools_gets_the_installed_one_never_the_hosts_gcc(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools
+
+    installed = tmp_path / "kmc"
+    installed.mkdir()
+    for name in ("gcc", "cc1", "as"):
+        (installed / name).write_text("installed " + name)
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(buildtools.toolchains, "require", lambda tid: installed)
+    monkeypatch.setattr(buildtools.sys, "platform", "darwin")
+    root = tmp_path / "project"
+    (root / "tools").mkdir(parents=True)
+    elf = b"\x7fELF" + b"\0" * 12 + b"GNU C version 2.7.2"
+    for name in ("gcc", "cc1", "as", "ld"):
+        (root / "tools" / name).write_bytes(elf)
+        (root / "tools" / name).chmod(0o755)
+    buildtools._wrap_foreign_ido(SimpleNamespace(root=root))
+    assert str(installed / "gcc") in (root / "tools/gcc").read_text()
+    assert str(installed / "as") in (root / "tools/as").read_text()
+    assert (root / "tools/ld").read_bytes() == elf  # (no installed ld to stand in: left alone, not the host's)
+
+
+def test_a_build_that_races_with_its_clean_step_is_run_once_more_serially(tmp_path, monkeypatch):
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "Makefile").write_text("all: clean build\n")
+    project = ForkProject(root)
+    project.platform = "n64"
+    calls = []
+
+    def fake_run(self, cmd, log=print, **kw):
+        calls.append(cmd)
+        if "-j1" not in cmd:
+            log("gmake: *** [Makefile:71: clean] Error 1")
+            return False, "(only the last lines)"
+        return True, ""
+
+    monkeypatch.setattr(ForkProject, "run", fake_run)
+    monkeypatch.setattr(ForkProject, "kind", lambda self: "custom")
+    monkeypatch.setattr(ForkProject, "setup_commands", lambda self, version=None: [["make", "-j8"]])
+    monkeypatch.setattr(ForkProject, "unpack_disc", lambda self, version, log=print: None)
+    monkeypatch.setattr(ForkProject, "ensure_python_env", lambda self, log=print: None)
+    monkeypatch.setattr(ForkProject, "generate_objdiff", lambda self, version=None, log=print: False)
+    (root / "objdiff.json").write_text("{}")
+    monkeypatch.setattr(ForkProject, "_all_source", lambda self: False)
+    project.setup(None, log=lambda *_: None)
+    assert calls == [["make", "-j8"], ["make", "-j1"]]

@@ -1343,7 +1343,13 @@ class ForkProject:
         self.ensure_python_env(log=log)
         self._drop_stale_splat_cache()
         for cmd in self.setup_commands(version):
-            ok, tail = self.run(cmd, log=log)
+            seen: list[str] = []
+
+            def tee(*parts, _seen=seen):
+                _seen.append(" ".join(str(p) for p in parts))
+                log(*parts)
+
+            ok, tail = self.run(cmd, log=tee)
             if not ok and (missing := re.search(r"No rule to make target [`'‘](baserom[\w.-]*\.z64)['’]", tail)) \
                     and getattr(self, "_rom_placed", None) and not (self.root / missing.group(1)).exists():
                 # the Makefile reads the ROM under a name nothing else said: that name, then, for this game
@@ -1362,6 +1368,12 @@ class ForkProject:
             if not ok and re.search(r"cannot execute binary file|Exec format error|Permission denied", tail):
                 # a program the step itself fetched (a submodule's committed Linux compiler): the console's hook
                 # looks at the tree again before every command, so the step runs once more
+                ok, tail = self.run(cmd, log=log)
+            if not ok and re.search(r"\*\*\* \[[^\]]*: clean\] Error", "\n".join(seen)) and any(a.startswith("-j") for a in cmd):
+                # a default target that lists `clean` beside the build runs both at once under -j (rm fails on the
+                # directory the build is filling): one job at a time it works
+                log("the build raced with its own clean step; running it again one job at a time")
+                cmd = [a for a in cmd if not a.startswith("-j")] + ["-j1"]
                 ok, tail = self.run(cmd, log=log)
             for _ in range(6):  # (each run names the next missing package)
                 if ok or not self._install_missing_tools(tail, log):

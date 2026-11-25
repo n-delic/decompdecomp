@@ -11,6 +11,16 @@ from pathlib import Path
 
 from ... import toolchains
 
+HOST_BUILD_TOOLS = {"gcc", "cc", "as", "ld", "cpp", "c++", "g++", "clang", "ar", "objcopy", "strip", "make"}
+
+
+def _is_gcc_272(driver: Path) -> bool:
+    """Is this program GCC 2.7.2 (the KMC build many N64 projects commit as tools/gcc)?"""
+    try:
+        return b"2.7.2" in driver.read_bytes()
+    except OSError:
+        return False
+
 
 def _crc_tool(root: Path) -> None:
     """Public N64 projects fix the ROM's checksum with tools/n64crc, which their `make dependencies` compiles next to
@@ -172,7 +182,10 @@ def _wrap_foreign_ido(project) -> None:
         driver.chmod(0o755)
     # A project's own copy of the KMC-style GCC 2.7.2 (tools/gcc_2.7.2/{gcc,cc1,as,...}, Linux programs): the
     # installed one stands in for each program it has under that name.
-    for folder in {d.parent for d in tools.glob("*gcc*2.7.2*/gcc")} | {d.parent for d in tools.glob("*/*gcc*2.7.2*/gcc")}:
+    # (or tools/gcc itself, beside its cc1: a project that keeps the compiler's programs directly in tools/)
+    plain = {d.parent for d in (*tools.glob("gcc"), *tools.glob("*/gcc")) if (d.parent / "cc1").is_file()
+             and d.is_file() and not d.is_symlink() and _is_gcc_272(d)}
+    for folder in {d.parent for d in tools.glob("*gcc*2.7.2*/gcc")} | {d.parent for d in tools.glob("*/*gcc*2.7.2*/gcc")} | plain:
         if toolchains.installed("gcc-2.7.2-kmc") is None:
             break
         installed = toolchains.require("gcc-2.7.2-kmc")
@@ -206,7 +219,8 @@ def _wrap_foreign_ido(project) -> None:
         except OSError:
             continue
         host = shutil.which(tool.name, path=path)
-        if host and Path(host).resolve() != tool.resolve():
+        # (never a compiler, assembler or linker: the host's of that name builds for the host, not the game)
+        if host and Path(host).resolve() != tool.resolve() and tool.name not in HOST_BUILD_TOOLS:
             tool.rename(tool.with_name(tool.name + ".linux"))
             tool.write_text(f'#!/bin/sh\nexec "{host}" "$@"\n', encoding="utf-8")
             tool.chmod(0o755)
