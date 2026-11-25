@@ -140,3 +140,13 @@ def test_the_seed_offset_ignores_the_tasks_before_either_side_has_called():
     port = {n: c + (1 if n >= 450 else 0) + (0 if n < 450 else 0) for n, c in console.items()}
     port[400] = 1  # the port called a little before the console did
     assert frame_compare.seed_offset(port, task_vi, seed_vis) == 1
+
+
+def test_a_run_whose_port_never_reached_the_frames_is_an_error_not_a_clean_result():
+    ok = [{"task": n, "image": 1, "differ_pct": 0.0, "near_pct": 0.0, "file": "a.png"} for n in range(4)]
+    assert picture_check.stalled(ok) is None
+    assert picture_check.stalled(ok + [{"task": 9, "missing": "port"}]) is None  # one frame the port didn't write is not a stall
+    most = [{"task": n, "missing": "port"} for n in range(5, 10)] + ok[:1]
+    assert "never reached 5 of the 6 frames" in picture_check.stalled(most)
+    assert picture_check.stalled([{"task": 1, "missing": "port"}]) is not None
+    assert picture_check.stalled([]) is None
