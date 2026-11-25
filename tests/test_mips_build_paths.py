@@ -652,3 +652,53 @@ def test_a_mac_sed_shim_runs_gnu_sed_when_homebrew_has_it(tmp_path, monkeypatch)
     monkeypatch.setattr(mips_tools.shutil, "which", lambda name: "/opt/homebrew/bin/gsed" if name == "gsed" else None)
     folder = mips_tools.build_paths(SimpleNamespace(root=tmp_path / "project"))[0]
     assert '/opt/homebrew/bin/gsed" "$@"' in (folder / "sed").read_text()
+
+
+def test_objcopy_wrapper_renames_the_traditional_mips_formats(tmp_path, monkeypatch):
+    tools = tmp_path / "pinned"
+    tools.mkdir()
+    (tools / "mips-ps2-decompals-objcopy").write_text("#!/bin/sh\n")
+    monkeypatch.setattr(mips_tools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(mips_tools.toolchains, "require", lambda tid: tools)
+    root = tmp_path / "project"
+    root.mkdir()
+    folder = mips_tools.build_paths(SimpleNamespace(root=root))[0]
+    text = (folder / "mips64-elf-objcopy").read_text()
+    assert "elf32-tradbigmips) a=elf32-bigmips" in text and str(tools / "mips-ps2-decompals-objcopy") in text
+
+
+def test_a_project_setup_script_names_the_tool_repositories_its_makefile_reads(tmp_path, monkeypatch):
+    root = tmp_path / "project"
+    (root / "tools").mkdir(parents=True)
+    (root / "Makefile").write_text("ULTRALIB ?= tools/ultralib\nASMPROC := python3 tools/asm-processor/build.py\n")
+    (root / "tools" / "setup.sh").write_text(
+        "for r in matt-kempster/m2c simonlindholm/asm-processor; do\n"
+        '  [ -d "$(basename $r)" ] || git clone -q --depth 1 "https://github.com/$r.git"\n'
+        "done\n[ -d ultralib ] || { git clone -q https://github.com/decompals/ultralib.git && "
+        "git -C ultralib checkout -q " + "a" * 40 + "; }\n")
+    fp = ForkProject(root)
+    monkeypatch.setattr(fp, "kind", lambda: "splat")
+    calls = []
+    monkeypatch.setattr(fp, "run", lambda cmd, log=print, timeout=0, **kw: (calls.append(cmd) or True, ""))
+    monkeypatch.setattr("decompnet.forks.project.shutil.which", lambda name: "/usr/bin/git")
+    fp.fetch_pinned_tool_repos(log=lambda *a: None)
+    assert ["git", "clone", "-q", "https://github.com/decompals/ultralib.git", "tools/ultralib"] in calls
+    assert ["git", "-C", "tools/ultralib", "checkout", "-q", "a" * 40] in calls
+    assert ["git", "clone", "-q", "https://github.com/simonlindholm/asm-processor.git", "tools/asm-processor"] in calls
+    assert not any("m2c" in " ".join(c) for c in calls)  # (the Makefile never reads it)
+
+
+def test_the_target_image_derived_from_a_verified_rom_gets_its_sha1_from_the_build(tmp_path):
+    import hashlib
+
+    from decompnet.forks import splatrefs
+
+    (tmp_path / "build").mkdir()
+    rom = b"finished rom"
+    (tmp_path / "build" / "game.z64").write_bytes(rom)
+    (tmp_path / "build" / "expanded.bin").write_bytes(b"expanded")
+    (tmp_path / "Makefile").write_text(f"SHA1 := {hashlib.sha1(rom).hexdigest()}\n")
+    image = tmp_path / "build" / "expanded.bin"
+    assert splatrefs.built_image_sha1(tmp_path, image) == hashlib.sha1(b"expanded").hexdigest()
+    (tmp_path / "build" / "game.z64").write_bytes(b"another rom")
+    assert splatrefs.built_image_sha1(tmp_path, image) is None
