@@ -161,8 +161,13 @@ def _wrap_foreign_ido(project) -> None:
     _update_old_mac_assembler(project, tools)
     # The same for a project's other committed Linux programs (tools/pigment64, ...) when the host has the tool:
     # `cargo install` and the system's own packages are where those come from.
-    path = os.pathsep.join([os.environ.get("PATH", ""), str(Path.home() / ".cargo" / "bin")])
-    for tool in tools.glob("*"):
+    path = os.pathsep.join(["/opt/homebrew/bin", "/usr/local/bin", os.environ.get("PATH", ""),
+                            str(Path.home() / ".cargo" / "bin")])
+    # (a program in a folder named for it and its version, tools/gzip-1.2.4/gzip, counts too: GNU gzip's output is
+    # what a compressed-overlay build expects, and Homebrew's is first on the path for that)
+    versioned = [t for t in tools.glob("*/*") if re.fullmatch(re.escape(t.parent.name.split("-")[0]) + r"[-_.\d]*",
+                                                              t.parent.name) and t.name == t.parent.name.split("-")[0]]
+    for tool in [*tools.glob("*"), *versioned]:
         if not tool.is_file() or tool.is_symlink() or not tool.stat().st_mode & 0o111 or tool.suffix:
             continue
         try:

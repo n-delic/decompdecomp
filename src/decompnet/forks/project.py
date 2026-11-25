@@ -394,9 +394,13 @@ class ForkProject:
             return {}
         make = makefile.read_text(errors="replace", encoding="utf-8")
         basename = re.search(r"^BASENAME\s*[:?]?=\s*([A-Za-z0-9_-]+)\s*$", make, re.M)
-        if not basename:
-            return {}
         suffix = "$(BASENAME).$(VERSION).yaml"
+        if not basename:
+            # (a Makefile that writes the name out: `splat split blastcorps.$(VERSION).yaml`)
+            basename = re.search(r"(?<![\w$./-])([A-Za-z0-9_-]+)\.\$\(VERSION\)\.yaml", make)
+            if not basename:
+                return {}
+            suffix = basename[0]
         nested = "config/$(VERSION)/" + suffix
         if nested in make:
             paths = self.root.glob("config/*/" + basename[1] + ".*.yaml")
@@ -550,12 +554,14 @@ class ForkProject:
                 if not isinstance(config, dict) or not isinstance(config.get("options"), dict):
                     return {}
                 options = config["options"]
-                digest = config.get("sha1", options.get("sha1"))
+                from .splatrefs import config_sha1
+
+                digest = config_sha1(path, config)
                 base = path.parent / str(options.get("base_path", "."))
                 if not (options.get("target_path") == f"baserom.{version}.z64"
                         and base.resolve() == self.root.resolve()
                         and isinstance(digest, str) and re.fullmatch(r"[0-9a-fA-F]{40}", digest)):
-                    return {}
+                    continue  # (an edition whose split reads a decompressed image has no cartridge hash to offer)
                 originals[version] = digest.lower()
             return originals
         if not (re.search(r"^BASEROM\s*[:?+]?=\s*baserom\.\$\(VERSION\)\.z64\s*$", make, re.M) and

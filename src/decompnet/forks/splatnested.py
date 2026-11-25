@@ -17,7 +17,7 @@ from pathlib import Path
 import yaml
 
 from .project import STATE, ForkError, ForkProject
-from .splatrefs import digest, inside
+from .splatrefs import config_sha1, digest, inside
 
 
 def generate(project, config_path: Path, config: dict, console, *, version=None, log=print) -> bool:
@@ -29,7 +29,7 @@ def generate(project, config_path: Path, config: dict, console, *, version=None,
     if inside(root, str(config_path.parent / options.get('base_path', '.'))) != root:
         raise ForkError('The cartridge Splat base_path must identify this checkout before nested import')
     original = inside(root, options.get('target_path', ''))
-    sha1 = config.get('sha1') or options.get('sha1')
+    sha1 = config_sha1(config_path, config)
     if not isinstance(sha1, str) or not re.fullmatch(r'[0-9a-fA-F]{40}', sha1):
         raise ForkError('Nested reference generation needs the original cartridge SHA-1 in its Splat config')
     if not original.is_file() or digest(original) != sha1.lower():
