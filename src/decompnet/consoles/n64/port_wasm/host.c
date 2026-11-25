@@ -461,9 +461,10 @@ static int block_on(uint32_t mq, uint32_t flag, int (*ready)(uint32_t)) {
    host itself: a retrace, a completed task) and every receive started, to see what a game's threads say to each other
    when none of them draws (a handshake that spins, a queue nobody posts to) */
 static int msg_log(void) { static int on = -1; if (on < 0) on = getenv("PORT_MSGLOG") != NULL; return on; }
+static unsigned long vi_count; /* (defined with the VI below: the message log says which retrace a message was sent at) */
 static int32_t put(uint32_t mq, uint32_t msg, uint32_t flag, int jam) {
     pthread_mutex_lock(&lock);
-    if (msg_log()) fprintf(stderr, "MSG t%d send %08X msg %08X flag %u valid %d/%d\n", self ? self->number : -1, mq, msg, flag, (int)be32(mq + Q_VALID), (int)be32(mq + Q_COUNT));
+    if (msg_log()) fprintf(stderr, "MSG t%d send %08X msg %08X flag %u valid %d/%d vi %lu\n", self ? self->number : -1, mq, msg, flag, (int)be32(mq + Q_VALID), (int)be32(mq + Q_COUNT), vi_count);
     if (block_on(mq, flag, has_room) < 0) { pthread_mutex_unlock(&lock); return -1; }
     uint32_t count = be32(mq + Q_COUNT), first = be32(mq + Q_FIRST), valid = be32(mq + Q_VALID), buf = be32(mq + Q_MSG);
     if (jam) {
@@ -492,7 +493,7 @@ u32 w2c_env_osJamMesg(struct w2c_env *e, u32 mq, u32 msg, u32 flag) { (void)e; r
 u32 w2c_env_osRecvMesg(struct w2c_env *e, u32 mq, u32 msg, u32 flag) {
     (void)e;
     pthread_mutex_lock(&lock);
-    if (msg_log()) fprintf(stderr, "MSG t%d recv %08X flag %u valid %d\n", self ? self->number : -1, mq, flag, (int)be32(mq + Q_VALID));
+    if (msg_log()) fprintf(stderr, "MSG t%d recv %08X flag %u valid %d vi %lu\n", self ? self->number : -1, mq, flag, (int)be32(mq + Q_VALID), vi_count);
     if (block_on(mq, flag, has_mesg) < 0) { pthread_mutex_unlock(&lock); return (u32)-1; }
     uint32_t count = be32(mq + Q_COUNT), first = be32(mq + Q_FIRST), buf = be32(mq + Q_MSG);
     if (msg) wbe32(msg, be32(buf + 4 * first));
