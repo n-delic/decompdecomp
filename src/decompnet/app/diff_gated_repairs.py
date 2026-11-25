@@ -36,6 +36,7 @@ from decomprepair import (
     float_delta_load_order,
     float_intermediate_repairs,
     float_matrix_identity,
+    frame_gap_scaffold,
     global_pointer_local_repairs,
     guard_inversion_repairs,
     guard_load_order,
@@ -599,6 +600,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += measured_saved_pointer_copy.variants(source, name, header, rows)
         result += measured_forward_entry_pointer.variants(source, name, header, rows, asm)
         result += measured_frameless_padding.variants(source, name, header, rows)
+        result += frame_gap_scaffold.from_rows(source, name, rows)
         result += private_record_padding.variants(source, name, rows, header)
         result += measured_packed_quad.variants(source, name, header, rows, flags, big_endian)
         result += measured_indexed_allocations.variants(source, name, header, rows)

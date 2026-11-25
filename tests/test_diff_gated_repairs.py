@@ -2763,3 +2763,13 @@ def test_measured_symbol_halfword_update_route():
     result = dict(proposals(source, 'f', '', 'mips', KMC, rows, asm))
     assert result['symbol_access_width'].count('*(u16 *)(fields + i)') == 2
     assert 'symbol_access_width' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, asm))
+
+
+def test_frame_gap_scaffold_routes_to_kmc_with_stack_only_rows():
+    source = 'void g(char *);\nvoid f(void) {\n    char text[0x10];\n\n    g(text);\n}\n'
+    rows = [('s', 'addiu $sp, $sp, -0x58', 'addiu $sp, $sp, -0x38'), ('s', 'sw $ra, 0x54($sp)', 'sw $ra, 0x34($sp)')]
+    found = [text for family, text in proposals(source, 'f', '', 'mips', KMC, rows, '') if family == 'frame_gap_scaffold']
+    assert any('char frame_pad[32];' in text for text in found)
+    assert 'frame_gap_scaffold' not in dict(proposals(source, 'f', '', 'mips', EGCS, rows, ''))
+    other = rows + [('r', 'move $s0, $a0', 'move $s1, $a0')]
+    assert 'frame_gap_scaffold' not in dict(proposals(source, 'f', '', 'mips', KMC, other, ''))
