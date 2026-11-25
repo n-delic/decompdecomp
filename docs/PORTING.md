@@ -1069,3 +1069,8 @@ every picture 0.00% differing, both buffers. The held route was 43-89% different
 handling of a START held for 50 of the game's frames (10 of its 5-task frames), and A held the same way (the other race route, 2%). A long press that the game measures with a clock (osGetTime, a retrace counter) would take
 the port's virtual time, which is not the console's cycle count, and a pause that begins and ends at another moment leaves the scene at another point, as seen. Where to look: what the game does with a button
 held (a pause toggled, a repeat), via the emulator's watch on the controller data (the `OSContPad` buffer) and the port's `PORT_ORDER_LOG` on the same address.
+
+**The tap route, exact from the race start to frame 9,000.** The START route with every press cut to a 3-frame tap (seeds aligned, the port re-run when it stalls): windows at tasks 3100, 3400, 6190 (24 pictures) and 4200, 5000, 7000, 8000, 8980 (50 pictures,
+the last windows ending at task 9,003): every one of the 74 pictures 0.00% differing, both buffers, every task of every window, across the race grid, the start and the stages after. The runs that compared nothing were the port
+stalling on a loaded computer (a load average of 12-40 while other jobs ran: the port's virtual time waits for its threads to idle in wall-clock time), not seeds or inputs; the same inputs on a quiet one reached task 1,885 in 24 virtual seconds where a loaded one reached 9 to 495.
+So with taps the port matches the console to the pixel over thousands of frames of play; what does not (the held 50-frame presses, the demo race's opponent car at tasks 614-621) is the open part.
