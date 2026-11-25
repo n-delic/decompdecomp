@@ -473,3 +473,50 @@ def test_a_mac_iconv_shim_writes_a_backslash_after_japanese_text_as_one_byte(tmp
     assert made.stdout == b"\xa5\xc8\\n\n"
     other = subprocess.run([str(folder / "iconv"), "-t", "UTF-16", "-f", "UTF-8", str(source)], capture_output=True)
     assert other.stdout == b"system iconv"
+
+
+def test_n64_gets_wibo_and_an_o32_assembler(tmp_path, monkeypatch):
+    """Ninja files call `wibo` by name, and a distribution's mips-linux-gnu-as assembles o32 without being told (the
+    pinned PS2 one doesn't, and ld then refuses a `-b binary` object beside the code)."""
+    tools, _ = pinned(tmp_path, monkeypatch)
+    (tools / "mips-ps2-decompals-as").write_text("#!/bin/sh\nprintf '%s\\n' \"$@\"\n")
+    (tools / "mips-ps2-decompals-as").chmod(0o755)
+    (tools / "wibo").write_text("#!/bin/sh\n")
+    monkeypatch.setattr(mips_tools.shutil, "which", lambda name, **kw: None)
+    root = tmp_path / "project"
+    paths = mips_tools.build_paths(SimpleNamespace(root=root, platform="n64", manifest=None))
+    assert str(tools / "wibo") in (paths[0] / "wibo").read_text()
+    assert "-mabi=32" in (paths[0] / "mips-linux-gnu-as").read_text()
+    assert not (paths[0] / "mips-linux-gnu-as").is_symlink()
+    other = mips_tools.build_paths(SimpleNamespace(root=tmp_path / "other", platform="ps2", manifest=None))
+    assert (other[0] / "mips-linux-gnu-as").is_symlink()
+
+
+def test_stale_splat_cache_goes_when_the_project_collects_undefined_symbols(tmp_path):
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "game.yaml").write_text("options:\n  platform: n64\n  undefined_syms_auto_path: undefined_syms_auto.txt\n"
+                                    "segments: []\n")
+    (root / ".splache").write_bytes(b"cache")
+    ForkProject(root)._drop_stale_splat_cache()
+    assert not (root / ".splache").exists()
+    (root / ".splache").write_bytes(b"cache")
+    (root / "game.yaml").write_text("options:\n  platform: n64\nsegments: []\n")
+    ForkProject(root)._drop_stale_splat_cache()
+    assert (root / ".splache").exists()
+
+
+def test_sn64_compiler_files_are_linked_into_tools_bin(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools
+
+    source = tmp_path / "pinned"
+    source.mkdir()
+    for name in ("cc1n64.exe", "cc1pln64.exe"):
+        (source / name).write_bytes(b"MZ")
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(buildtools.toolchains, "require", lambda tid: source)
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "configure.py").write_text('CC1N64 = "tools/bin/cc1n64.exe"\n')
+    buildtools._provide_sn64(SimpleNamespace(root=root))
+    assert (root / "tools/bin/cc1n64.exe").is_symlink() and (root / "tools/bin/cc1pln64.exe").is_symlink()

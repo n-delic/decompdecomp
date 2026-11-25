@@ -1950,6 +1950,18 @@ sha256 = "277f1db571ab963df68a07af8b128995493208776dd68a69979809e45d912595"
 binary = "cppn64.exe"
 platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
 
+["sn-n64-cxx"]
+name = "SN Systems N64 C++ front end (cc1pln64)"
+kind = "tool"
+license = "proprietary"
+source = "marijnvdwerf/sn64 release 1,0,0,2"
+description = "The C++ compiler from the same SN64 release as sn-n64-281 (cc1pln64.exe), which projects such as Paperboy build their C++ files with through wibo."
+[["sn-n64-cxx".parts]]
+url = "https://github.com/marijnvdwerf/sn64/releases/download/1%2C0%2C0%2C2/cc1pln64.exe"
+sha256 = "85e3e9fa05640af67115279a992a616a1a1fec8cf56b2e58191196fbbc51853a"
+binary = "cc1pln64.exe"
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
+
 ["sn-n64-272-0001"]
 family = "gcc"
 name = "SN Systems N64 GCC 2.7.2 (0001)"

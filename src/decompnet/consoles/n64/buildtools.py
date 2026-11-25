@@ -39,6 +39,29 @@ def _ido_hint(project) -> str:
     return mention[1] if mention else "5.3"
 
 
+def _provide_sn64(project) -> None:
+    """A project whose own setup downloads the SN64 compiler from the sn64 release into tools/bin (cc1n64.exe,
+    cc1pln64.exe) finds the installed, pinned copies of those exact files there instead; setup runs nothing of its own
+    that downloads. Only files that are installed are linked, and an existing tools/bin file is left alone."""
+    texts = ""
+    for name in ("configure.py", "setup", "Makefile"):
+        try:
+            texts += (project.root / name).read_text(errors="replace", encoding="utf-8") + "\n"
+        except OSError:
+            pass
+    if not re.search(r"tools/bin/cc1(?:pl)?n64\.exe", texts):
+        return
+    folder = project.root / "tools" / "bin"
+    for tid in ("sn-n64-281", "sn-n64-cxx"):
+        if toolchains.installed(tid) is None:
+            continue
+        for item in sorted(toolchains.require(tid).glob("*.exe")):
+            link = folder / item.name
+            if not link.exists() and not link.is_symlink():
+                folder.mkdir(parents=True, exist_ok=True)
+                link.symlink_to(item)
+
+
 def _provide_compiler_dirs(project) -> None:
     """A project that expects a compiler folder it doesn't ship for this computer (tools/gcc_2.7.2/macos,
     tools/ido/7.1) gets a link to the installed one, in its own tree: the folder is never in git."""
@@ -68,6 +91,7 @@ def _provide_compiler_dirs(project) -> None:
         if host and not mine.exists() and not mine.is_symlink() and (project.root / "tools").is_dir():
             mine.write_text(f'#!/bin/sh\nexec "{host}" "$@"\n', encoding="utf-8")
             mine.chmod(0o755)
+    _provide_sn64(project)
     for rel, tid in wanted:
         target = project.root / rel
         if toolchains.installed(tid) is None:
