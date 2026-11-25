@@ -1071,7 +1071,7 @@ def register(app: App) -> None:
             raise ValueError('Repeat must be true or false.')
         from ..deep_sweep import DEFAULT_VARIANTS
         return sweeps.start(slug, data.get('minutes', 5), data.get('max_variants', DEFAULT_VARIANTS), data.get('repeat', False),
-                            data.get('threads', 0), data.get('compiler_profiles', 1), data.get('loop', False),
+                            data.get('threads', 0), data.get('compiler_profiles', 1), data.get('loop', True),
                             data.get('threads_per_function', 1), data.get('maximum_throughput', False), data.get('compile_slots', 0),
                             data.get('rank_candidates', False), data.get('function_order', 'smart'))
 

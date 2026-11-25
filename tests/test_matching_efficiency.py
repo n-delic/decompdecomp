@@ -105,3 +105,15 @@ def test_explicit_larger_work_budget_extends_low_gain_minimum(tmp_path):
         net._record(net._function('f','game'),a,1000-i%2,'int f(){return 1;}',1)
         assert not progress_rate.track(net,a,'game',net._function('f','game'))
     assert net.store.one('SELECT 1 FROM claims WHERE agent_id=?',a.id)
+
+
+def test_a_family_measured_as_poor_goes_after_the_rest_and_new_ones_are_still_explored():
+    from decompnet.app import adaptive_repairs
+    ranked = ['a', 'b', 'c', 'd', 'e', 'new1', 'new2', 'ladder']
+    measured = {'a': 2.0, 'b': 1.5, 'c': 1.2, 'd': 1.1, 'e': 1.0, 'ladder': 0.25}
+    order = adaptive_repairs.explore(ranked, set(), measured)
+    assert order[-1] == 'ladder'                       # known poor: after everything else, not back near its old place
+    assert order.index('new1') == 3                    # one unmeasured family among every three proven ones
+    assert set(order) == set(ranked) and len(order) == len(ranked)
+    # a poor family this function has learned a start from stays among the proven ones
+    assert adaptive_repairs.explore(ranked, {'ladder'}, measured).index('ladder') < len(ranked) - 1

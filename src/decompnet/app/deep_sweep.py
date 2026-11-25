@@ -41,7 +41,7 @@ def looking(net):
 SIZE_CLASSES = (20, 60, 200)  # instructions: a function this small is a quick pass, and the small ones are where deep passes match
 
 
-DEFAULT_VARIANTS = 2500  # candidates per function a pass starts with (a function that is going to match usually does within a few thousand)
+DEFAULT_VARIANTS = 750  # candidates per function the first loop starts with; every later loop doubles it. On a 588-function N64 game 63 matched, every one within 717 candidates and 92 s, while the functions that never matched averaged 466 candidates: a wide first loop finds the cheap matches before any function takes a large budget (loops keep growing it, so no function is capped)
 # Which functions a pass searches first (the setting `function_order`): name -> what the form says.
 FUNCTION_ORDERS = {
     'smart': 'Near misses first, then small functions',
@@ -283,7 +283,7 @@ class Sweeps:
         with looking(self.net):  # (its settings row: no saved files needed)
             proj = self.net.project_row(slug)
         row = self._store(slug).one('SELECT value FROM settings WHERE key=?', f'deep-sweep:{proj["id"]}')
-        return {'threads': 0, 'threads_per_function': 1, 'compiler_profiles': 1, 'loop': False, 'rank_candidates': False, 'function_order': 'smart'} | (json.loads(row['value']) if row else {'enabled': False, 'minutes': 5, 'max_variants': DEFAULT_VARIANTS})
+        return {'threads': 0, 'threads_per_function': 1, 'compiler_profiles': 1, 'loop': True, 'rank_candidates': False, 'function_order': 'smart'} | (json.loads(row['value']) if row else {'enabled': False, 'minutes': 5, 'max_variants': DEFAULT_VARIANTS})
 
     def save(self, slug, cfg):
         with looking(self.net):
@@ -485,7 +485,7 @@ class Sweeps:
                                    'completed': completed, 'errors': errors, 'attention': attention, 'state': job.get('state', 'idle'), **current,
                                    'progress': job.get('progress', {}), 'error': job.get('error')}
 
-    def start(self, slug, minutes=5, max_variants=DEFAULT_VARIANTS, repeat=False, threads=0, compiler_profiles=1, loop=False, threads_per_function=1, maximum_throughput=False, compile_slots=0, rank_candidates=False, function_order='smart'):
+    def start(self, slug, minutes=5, max_variants=DEFAULT_VARIANTS, repeat=False, threads=0, compiler_profiles=1, loop=True, threads_per_function=1, maximum_throughput=False, compile_slots=0, rank_candidates=False, function_order='smart'):
         throughput = deep_throughput.options(maximum_throughput, compile_slots)
         from . import deep_profiles
         if not isinstance(loop, bool):

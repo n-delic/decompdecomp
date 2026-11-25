@@ -359,8 +359,9 @@ assert.match(panel, /id="deepSweepCounts"[\s\S]*?id="deepSweepMetricEligible"/);
 assert.doesNotMatch(panel, /deepSweepPreparation|deepSweepRunChecked|deepSweepWaitingGroup/);
 assert.ok(html.indexOf('id="deepActivitySection"') < html.indexOf('id="deepSweepThroughput"'));
 
-// The defaults a new project's form starts with: 2,500 candidates a function, and the order a pass takes functions in.
-assert.match(panel,/id="deepSweepVariants"[^>]*value="2500"/);
+// The defaults a new project's form starts with: 750 candidates a function, looping, and the order a pass takes functions in.
+assert.match(panel,/id="deepSweepVariants"[^>]*value="750"/);
+assert.match(panel,/id="deepSweepLoop" type="checkbox" checked/);
 const orders=[...panel.match(/<select id="deepSweepOrder">([\s\S]*?)<\/select>/)[1].matchAll(/value="([a-z_]+)"/g)].map(m=>m[1]);
 assert.deepEqual(orders,['smart','closest','lowest_score','highest_score','smallest','largest','address','random']);
 // "Functions at a time" left empty means a different number in each mode.
