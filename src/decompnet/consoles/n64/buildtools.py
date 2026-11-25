@@ -248,7 +248,13 @@ def _wrap_foreign_ido(project) -> None:
                     continue
             program.rename(program.with_name(program.name + ".linux"))
             extra = f' -B"{installed}/"' if program.name == "gcc" else ""
-            program.write_text(f'#!/bin/sh\nexec "{mine}"{extra} "$@"\n', encoding="utf-8")
+            if program.name == "as":
+                # (the project's assembler takes the o32 spelling `-mabi32`; the installed one is o32 already and
+                # doesn't know it)
+                program.write_text(f'#!/bin/sh\nfor a; do shift; [ "$a" = -mabi32 ] || set -- "$@" "$a"; done\n'
+                                   f'exec "{mine}" "$@"\n', encoding="utf-8")
+            else:
+                program.write_text(f'#!/bin/sh\nexec "{mine}"{extra} "$@"\n', encoding="utf-8")
             program.chmod(0o755)
     _update_old_mac_assembler(project, tools)
     # The same for a project's other committed Linux programs (tools/pigment64, ...) when the host has the tool:
@@ -284,26 +290,31 @@ def _update_old_mac_assembler(project, tools: Path) -> None:
     The installed KMC `as` knows the option, so it stands in for the old one (the old one is kept as as.old)."""
     if sys.platform != "darwin" or toolchains.installed("gcc-2.7.2-kmc") is None:
         return
-    try:
-        makefile = (project.root / "Makefile").read_text(errors="replace", encoding="utf-8")
-    except OSError:
-        return
-    if "vr4300mul-off" not in makefile:
+    makefile = ""
+    for name in ("Makefile", "Makefile.common"):
+        try:
+            makefile += (project.root / name).read_text(errors="replace", encoding="utf-8") + "\n"
+        except OSError:
+            pass
+    # (`-Wa,--vr4300mul-off`, or `-mabi32` on the compiler's own command line, which it hands to the assembler)
+    markers = [m for m in ("vr4300mul-off", "mabi32") if m in makefile]
+    if not markers:
         return
     mine = toolchains.require("gcc-2.7.2-kmc") / "as"
     if not mine.is_file():
         return
-    for old in tools.glob("*gcc*2.7.2*/macos/as"):
+    for old in {*tools.glob("*gcc*2.7.2*/macos/as"), *tools.glob("*gcc*2.7.2*/as")}:
         if old.is_symlink() or not old.is_file():
             continue
         try:
             data = old.read_bytes()
         except OSError:
             continue
-        if data[:4] not in (b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe") or b"vr4300mul-off" in data:
+        if data[:4] not in (b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe") or any(m.encode() in data for m in markers):
             continue
         old.rename(old.with_name("as.old"))
-        old.write_text(f'#!/bin/sh\nexec "{mine}" "$@"\n', encoding="utf-8")
+        old.write_text(f'#!/bin/sh\nfor a; do shift; [ "$a" = -mabi32 ] || set -- "$@" "$a"; done\n'
+                       f'exec "{mine}" "$@"\n', encoding="utf-8")
         old.chmod(0o755)
 
 
@@ -398,7 +409,7 @@ def _redirect(project, argv: list[str]) -> list[str]:
         alias.symlink_to(source, target_is_directory=True)
     if not alias.is_symlink() or alias.resolve() != source.resolve():
         return argv
-    if name == "CC":
+    if name == "CC" and not Path(path).is_absolute():  # (/opt/ido/cc is the author's: never written to)
         # (a command-line CC would reach the project's sub-makes too, which build their host tools with it: the
         # compiler's own folder is linked where the Makefile looks instead)
         folder = (project.root / path).parent
