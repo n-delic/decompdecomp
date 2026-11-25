@@ -184,7 +184,17 @@ class Readability:
         proj = self.net._project(slug)
         if not self.net.is_rom(proj):
             return ""
-        return "; ".join(dict.fromkeys(self._blocked(proj).values()))
+        blocked = self._blocked(proj)
+        if not blocked:
+            return ""
+        # Only when nothing else can be handed out: one function whose own compiler needs the Linux runner (a Mac
+        # without it) must not park every helper while hundreds of others compile fine.
+        store = self.net.project_store(proj["id"])
+        for row in store.all(f"SELECT * FROM functions WHERE project_id=? AND {TODO} "
+                             "AND id NOT IN (SELECT function_id FROM claims)", proj["id"], proj["id"]):
+            if self._own_compiler(proj, row) not in blocked:
+                return ""
+        return "; ".join(dict.fromkeys(blocked.values()))
 
     def _own_compiler(self, proj, fn) -> str | None:
         from ..project import compiler_for
