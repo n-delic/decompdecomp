@@ -229,9 +229,6 @@ def command(project, argv: list[str]) -> list[str]:
     if (sys.platform == "darwin" and Path(argv[0]).name in ("make", "gmake") and makefile.is_file()
             and not any(a.startswith("CC_CHECK=") for a in argv[1:])
             and re.search(r"^[ \t]*CC_CHECK\s*[:+?]*=\s*(?:(?:gcc|cc|clang)\b(?:[^\n]*-fsyntax-only|[ \t]*$)|\$\(\w*CC\w*\)[^\n]*-fsyntax-only)",
-
-
-            and re.search(r"^[ \t]*CC_CHECK\s*[:+?]*=\s*(?:(?:gcc|cc|clang)\b|\$\((?:HOSTCC|HOST_CC|CC_HOST)\))(?:[^\n]*-fsyntax-only|[ \t]*$)",
                           makefile.read_text(encoding="utf-8", errors="replace"), re.M)):
         # a host-gcc syntax pass before each compile: clang answers `gcc` here and rejects its -m32 headers; the
         # real compile (IDO) is what builds the game
