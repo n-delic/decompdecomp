@@ -37,10 +37,20 @@ def keep(net, proj, fn, source, score, rows, output, path, recovered):
     node = dict(source=source, score=score, rows=rows[:MAX_ROWS], output=output,
                 path=path, recovered=recovered, scope=_scope(net, proj, fn, source))
     store = net.project_store(proj['id'])
+    # Each node's scope is a hash of the function's build inputs (candidate_scope.key): computed once per source,
+    # here, never inside the writer. It held the project's single writer for most of a second per call (322 calls
+    # held it 205 s at 32 s of CPU) while a lane recomputed it for the saved nodes.
+    scopes = {node['source']: node['scope']}
+    for old in _load(store, fn['id']):
+        scopes.setdefault(old['source'], _scope(net, proj, fn, old['source']))
     with store.tx() as db:
-        nodes = [old for old in _load(store, fn['id'])
-                 if old['source'] != source and old['output'] != output
-                 and old['scope'] == _scope(net, proj, fn, old['source'])]
+        def current(old):
+            if old['source'] == source or old['output'] == output:
+                return False
+            if old['source'] not in scopes:  # saved by another lane since the read above: judged here, rarely
+                scopes[old['source']] = _scope(net, proj, fn, old['source'])
+            return old['scope'] == scopes[old['source']]
+        nodes = [old for old in _load(store, fn['id']) if current(old)]
         nodes.append(node)
         # Keep the cheapest root and favor residuals that removed target sites.
         nodes.sort(key=lambda old: old['score'])
