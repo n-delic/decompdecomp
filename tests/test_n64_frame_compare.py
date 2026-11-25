@@ -197,3 +197,11 @@ def test_the_rdp_keeps_its_colour_image_from_one_task_to_the_next(tmp_path):
     finally:
         renderer.close()
     assert carried and FB in carried and carried[FB][2][(H // 2) * W + W // 2] == (248, 0, 0)
+
+
+def test_shift_inputs_moves_each_button_and_its_release():
+    from decompnet.port.frame_compare import shift_inputs
+    text = "150:A,200:-,2870:START,2920:-,3030:A,3080:-"
+    assert shift_inputs(text, {"START": -1, "A": 4}, 2800) == "150:A,200:-,2869:START,2919:-,3034:A,3084:-"
+    assert shift_inputs(text, {}, 0) == text
+    assert shift_inputs("1:START+A,5:-", {"START": -3}) == "0:START+A,2:-"

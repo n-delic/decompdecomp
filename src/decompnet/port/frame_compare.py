@@ -474,6 +474,24 @@ def _shifted(seeds: list[str], shift: int) -> list[str]:
     return ([seeds[0]] * shift + seeds) if shift > 0 and seeds else seeds[-shift:] if shift < 0 else seeds
 
 
+def shift_inputs(text: str, shifts: dict[str, int], after: int = 0) -> str:
+    """An input script ("task:BUTTON,..." ) with each press of a button moved by `shifts[button]` tasks from task `after` on, and
+    the release that follows it moved with it. The console and the port take a controller edge a different number of tasks after
+    it is given (found on a racing game: START 5 tasks on the console and 6 on the port, A 10 on the console and 6 on the port), a
+    difference of the game's own state that no single delay of the script absorbs; the picture window after each edge shows which
+    button needs which shift (docs/PORTING.md)."""
+    out, moved = [], 0
+    for item in text.split(","):
+        frame, button = item.split(":", 1)
+        frame = int(frame)
+        if frame >= after:
+            if button != "-":
+                moved = shifts.get(button.split("+")[0], 0)
+            frame += moved
+        out.append(f"{max(frame, 0)}:{button}")
+    return ",".join(out)
+
+
 def align_seeds(game: Path, rom: Path, inputs: str, work: Path, pace_log: Path, env: dict[str, str], stop=lambda: False) -> int:
     """Shift work/seeds.txt so the port's k-th seeding call gets the console's k-th seed. Short runs of the port in a scratch folder (its
     save is a copy) count its seeding calls at each graphics task for each candidate shift until one keeps going to task 600 (its call counts do not depend on
@@ -526,14 +544,14 @@ def align_seeds(game: Path, rom: Path, inputs: str, work: Path, pace_log: Path, 
 
 
 def compare_run(game: Path, rom: Path, points: list[int], inputs: str, work: Path, out: Path, *, tolerance: int = 3,
-                pace: bool = True, seeds_at: int | None = None, stop=lambda: False,
+                pace: bool = True, seeds_at: int | None = None, port_shifts: dict[str, int] | None = None, after: int = 0, stop=lambda: False,
                 progress=lambda text, done, total: None) -> list[dict]:
     """The port's pictures against the console's at the game's graphics tasks `points` (counted from 1), both run with
     `inputs` (timed in graphics tasks) and drawn by the port's renderer. One entry for each task and picture:
     {"task", "image", "width", "lines", "differ_pct", "beyond_pct", "near_pct", "file"} (the side-by-side PNG in `out`:
     console, port, their difference x4), or {"task", "missing": "console"|"port"|"size"} when a side drew nothing or another size.
     What makes the two runs one (found on a racing game, docs/PORTING.md): the port starts from the console's own save
-    (console_save), and with `pace` its clock replays the retrace the console was at for each task (PORT_VTIME_TRACE)."""
+    (console_save), `port_shifts` (button: tasks, from task `after`) moves the port's presses of a button, and with `pace` its clock replays the retrace the console was at for each task (PORT_VTIME_TRACE)."""
     out.mkdir(parents=True, exist_ok=True)
     work.mkdir(parents=True, exist_ok=True)
     early = min(600, max(points))
@@ -563,7 +581,7 @@ def compare_run(game: Path, rom: Path, points: list[int], inputs: str, work: Pat
     for attempt in range(3):
         # The port's virtual time waits for its threads to idle in wall-clock time, so a loaded computer (a load average of 12 to 40 while other
         # jobs ran) leaves it at a few hundred of a thousand graphics tasks, differently each time: the same run on a quiet one reached all of them.
-        port = run_port(game, rom, wanted, inputs, work, "frames", stop=stop, extra_env=pacing)
+        port = run_port(game, rom, wanted, shift_inputs(inputs, port_shifts, after) if port_shifts else inputs, work, "frames", stop=stop, extra_env=pacing)
         if len(port) * 2 >= len(wanted) or stop():
             break
         progress(f"The port stalled ({len(port)} of {len(wanted)} frames reached): running it again", 3, 4)
