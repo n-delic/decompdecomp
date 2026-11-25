@@ -451,6 +451,25 @@ def reference_symbols(work: Path) -> dict[str, int]:
     return definitions
 
 
+def built_image_sha1(root: Path, image_path: Path) -> str | None:
+    """The SHA-1 of the splat target when the config names none and the target is an image the project derives from
+    the game (an expanded or decompressed copy under build/): the Makefile's own literal `SHA1 := <hash>` of the
+    finished ROM, found as a built file, proves the game is the right one, so the derived image is the original."""
+    try:
+        make = (root / 'Makefile').read_text(encoding='utf-8', errors='replace')
+    except OSError:
+        return None
+    named = re.search(r'^SHA1\s*[:?]?=\s*([0-9a-fA-F]{40})\s*$', make, re.M)
+    if not named or not image_path.is_file() or not image_path.is_relative_to(root / 'build'):
+        return None
+    wanted = named[1].lower()
+    for built in sorted((root / 'build').glob('*')):
+        if built != image_path and built.suffix in ('.z64', '.bin', '.rom', '.n64') and built.is_file() \
+                and digest(built) == wanted:
+            return digest(image_path)
+    return None
+
+
 def generate(project, config_path: Path, config: dict, console, log=print) -> bool:
     """Publish references and objdiff.json only after the complete set passes verification."""
     root = project.root.resolve()
@@ -458,9 +477,11 @@ def generate(project, config_path: Path, config: dict, console, log=print) -> bo
         return False
     options = config.get('options', {})
     sha1 = config_sha1(config_path, config)
+    image_path = inside(root, options.get('target_path', ''))
+    if not sha1:
+        sha1 = built_image_sha1(root, image_path)
     if not isinstance(sha1, str) or not re.fullmatch(r'[0-9a-fA-F]{40}', sha1):
         raise ForkError("automatic objdiff setup needs a SHA-1 in the splat config; check the project's ROM version")
-    image_path = inside(root, options.get('target_path', ''))
     if not image_path.is_file() or digest(image_path) != sha1.lower():
         raise ForkError("automatic objdiff setup needs the exact ROM named by the splat config's SHA-1")
     original_base = inside(root, str(config_path.parent / options.get('base_path', '.')))

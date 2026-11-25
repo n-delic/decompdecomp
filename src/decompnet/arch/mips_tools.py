@@ -189,10 +189,13 @@ def build_paths(project) -> list[Path]:
             tool = binary.name.removeprefix("mips-ps2-decompals-")
             for prefix in _PREFIXES:
                 alias = folder / (prefix + tool)
-                if tool == "ld":
+                if tool in ("ld", "objcopy"):
                     # these binutils know the big-endian emulation as elf32ebmip; Makefiles written for a
-                    # distribution's cross ld ask for elf32btsmip (the same o32 big-endian format)
-                    wrapper = (f'#!/bin/sh\nfor a; do shift; case "$a" in elf32btsmip) a=elf32ebmip;; esac; '
+                    # distribution's cross ld ask for elf32btsmip (the same o32 big-endian format). Likewise objcopy
+                    # (`-O elf32-tradbigmips`, which they call elf32-bigmips)
+                    names = ("elf32btsmip) a=elf32ebmip;;" if tool == "ld" else
+                             "elf32-tradbigmips) a=elf32-bigmips;; elf32-tradlittlemips) a=elf32-littlemips;;")
+                    wrapper = (f'#!/bin/sh\nfor a; do shift; case "$a" in {names} esac; '
                                f'set -- "$@" "$a"; done\nexec "{binary.resolve()}" "$@"\n')
                     if not alias.is_file() or alias.is_symlink() or alias.read_text(errors="replace") != wrapper:
                         alias.unlink(missing_ok=True)

@@ -1277,6 +1277,41 @@ class ForkProject:
                      if (folder / "pyvenv.cfg").is_file()
                      and (folder / ("Scripts/python.exe" if os.name == "nt" else "bin/python3")).is_file()), None)
 
+    def fetch_pinned_tool_repos(self, log=print) -> None:
+        """A project whose own tools/setup.sh clones a public repository under tools/ (an SDK's sources pinned to a
+        commit) that its Makefile then reads: clone that one, at that commit, when the folder is missing. Only
+        `git clone` / `git -C <dir> checkout <commit>` lines of that script are read, never run as a script."""
+        if self.kind() == "manifest" or not shutil.which("git"):
+            return
+        make = (self.root / "Makefile").read_text(errors="replace", encoding="utf-8") if (
+            self.root / "Makefile").is_file() else ""
+        for name in ("tools/setup.sh", "setup.sh"):
+            try:
+                script = (self.root / name).read_text(errors="replace", encoding="utf-8")
+            except OSError:
+                continue
+            base = Path(name).parent
+            clones = re.findall(
+                r"git clone\s+(?:-\S+\s+)*(https://github\.com/[\w.-]+/[\w.-]+?)(?:\.git)?(?:\s+([\w.-]+))?(?=[\s;&|]|$)",
+                script)
+            for variable, owners in re.findall(r"for\s+(\w+)\s+in\s+([\w./ -]+?)\s*;\s*do\b[\s\S]{0,300}?github\.com/\$\{?\1\b", script):
+                clones += [("https://github.com/" + owner, "") for owner in owners.split() if owner.count("/") == 1]
+            for url, folder in clones:
+                folder = folder or url.rsplit("/", 1)[1]
+                target = base / folder
+                if (self.root / target).exists() or folder.startswith(".") or "/" in folder:
+                    continue
+                if not re.search(rf"(?<![\w.-]){re.escape(target.as_posix())}\b|\bULTRALIB\b.*{re.escape(folder)}", make):
+                    continue
+                pinned = re.search(rf"git -C {re.escape(folder)} checkout\s+(?:-\S+\s+)*([0-9a-f]{{40}})", script)
+                log(f"fetching {url} into {target}, as the project's setup script does")
+                ok, tail = self.run(["git", "clone", "-q", url + ".git", target.as_posix()], log=log, timeout=900)
+                if ok and pinned:
+                    ok, tail = self.run(["git", "-C", target.as_posix(), "checkout", "-q", pinned[1]], log=log, timeout=300)
+                if not ok:
+                    shutil.rmtree(self.root / target, ignore_errors=True)
+                    log(f"could not fetch {url}: {tail[-300:]}")
+
     def ensure_python_env(self, log=print) -> None:
         """Give a project its own Python environment when it lists requirements and has none: its configure.py and
         splat run in it (`_execute` puts a `.venv` or `venv` first on PATH), as `pip install -r requirements.txt`
@@ -1343,6 +1378,7 @@ class ForkProject:
         every source once so objdiff can measure each unit."""
         self.unpack_disc(version, log=log)
         self.ensure_python_env(log=log)
+        self.fetch_pinned_tool_repos(log=log)
         self._drop_stale_splat_cache()
         for cmd in self.setup_commands(version):
             seen: list[str] = []
