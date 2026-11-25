@@ -12,6 +12,39 @@ from .. import toolchains
 
 _LOCK = threading.Lock()
 _PREFIXES = ("mips-linux-gnu-", "mips64-linux-gnu-", "mips64-elf-")
+# macOS's iconv writes a backslash after a multi-byte character as JIS X 0208's full-width one (0xA1C0), so a "\\n" in
+# an EUC-JP source (the strings of a racing game's Japanese text) turns into three bytes where glibc's iconv, the one a
+# project's ROM was matched with, writes 0x5C 0x6E. The shim converts what a build asks for in EUC-JP with Python's
+# codec, which passes ASCII through, and leaves every other conversion to the system's iconv.
+_ICONV_SHIM = '''#!{python}
+import os, sys
+args, files, frm, to, i = sys.argv[1:], [], "UTF-8", None, 0
+while i < len(args):
+    a = args[i]
+    if a in ("-f", "-t"):
+        if a == "-f":
+            frm = args[i + 1]
+        else:
+            to = args[i + 1]
+        i += 1
+    elif a.startswith("-f") and len(a) > 2:
+        frm = a[2:]
+    elif a.startswith("-t") and len(a) > 2:
+        to = a[2:]
+    elif a in ("-c", "-s"):
+        pass
+    else:
+        files.append(a)
+    i += 1
+if (to or "").upper().replace("-", "").replace("_", "") in ("EUCJP", "UJIS") and (frm or "").upper().replace("-", "") == "UTF8":
+    data = b"".join(open(f, "rb").read() for f in files) if files else sys.stdin.buffer.read()
+    try:
+        sys.stdout.buffer.write(data.decode("utf-8").encode("euc_jp"))
+    except (UnicodeError, LookupError):
+        os.execv("{iconv}", ["iconv", *sys.argv[1:]])
+    sys.exit(0)
+os.execv("{iconv}", ["iconv", *sys.argv[1:]])
+'''
 _ASSEMBLER_DRIVER = '''#!{python}
 import os, subprocess, sys, tempfile
 args, out, sources, cpp, asm = sys.argv[1:], None, [], [], []
@@ -180,5 +213,10 @@ def build_paths(project) -> list[Path]:
             tool = folder / "sha1sum"
             if not tool.exists():
                 tool.write_text(_SHA1SUM.replace("@PYTHON@", sys.executable).replace("@SHASUM@", shasum), encoding="utf-8")
+                tool.chmod(0o755)
+        if sys.platform == "darwin" and (iconv := shutil.which("iconv")) and Path(iconv).parent != folder:
+            tool = folder / "iconv"
+            if not tool.exists():
+                tool.write_text(_ICONV_SHIM.format(python=sys.executable, iconv=iconv), encoding="utf-8")
                 tool.chmod(0o755)
     return [folder, source]

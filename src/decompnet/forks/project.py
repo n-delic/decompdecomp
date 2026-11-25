@@ -188,6 +188,33 @@ def _tool_dirs() -> list[Path]:
     return [Path(sys.executable).parent, *([bundled] if bundled.is_dir() else [])]
 
 
+def _setup_targets(makefile: str) -> list[str]:
+    """The Makefile's own preparation targets, in the order its README runs them. `assets` counts only when its recipe
+    runs Torch (a Makefile whose README says `make -C tools`, `make assets`, `make`): the headers its compile step
+    includes are made there, and a build without them stops at the first #include. Another project's `assets`
+    target is its own business."""
+    found = [t for t in ("tools", "setup", "extract") if re.search(rf"^{t}\s*:", makefile, re.M)]
+    recipe = re.search(r"^assets\s*:[^\n]*\n((?:[ \t][^\n]*\n?)*)", makefile, re.M)
+    if recipe and re.search(r"(?i)torch", recipe[1]):
+        found.append("assets")
+    return found
+
+
+def _mac_cxx_env(root: Path) -> dict[str, str]:
+    """A project that builds a host tool with CMake and fetches spdlog (Torch, which several N64 projects extract their
+    assets with) fails on the Mac's clang: spdlog's bundled fmt wants a consteval check that clang rejects, and the
+    project sets CMAKE_CXX_FLAGS itself, so neither CXXFLAGS nor a command-line flag reaches it. CMake does read flags
+    that ride in the CXX variable: fmt's own switch for turning that check off goes there. Only a CMake project that
+    names spdlog gets it; any other build is left as it was."""
+    for cmake in (root / "tools").glob("*/CMakeLists.txt"):
+        try:
+            if "spdlog" in cmake.read_text(encoding="utf-8", errors="replace"):
+                return {"CXX": "c++ -DFMT_CONSTEVAL="}
+        except OSError:
+            continue
+    return {}
+
+
 def _tool(name: str) -> str | None:
     """A build tool from PATH or from decompdecomp's own environment (the ninja Python package)."""
     found = shutil.which(name)
@@ -974,21 +1001,21 @@ class ForkProject:
             # no splat config at the root, but a Makefile with the usual targets (setup, extract, then the build)
             text = (self.root / "Makefile").read_text(errors="replace", encoding="utf-8")
             chosen = [f"VERSION={version}"] if version and re.search(r"^VERSION\s*[:?]?=", text, re.M) else []
-            steps = [["make", *chosen, t] for t in ("tools", "setup", "extract") if re.search(rf"^{t}\s*:", text, re.M)]
+            steps = [["make", *chosen, t] for t in _setup_targets(text)]
             if not steps and re.search(r"^split\s*:", text, re.M):  # (splat's output: *_auto.txt the link reads)
                 steps = [["make", *chosen, "split"]]
             return steps + [["make", *chosen, f"-j{os.cpu_count() or 4}"]]
         if kind == "splat":
             make = (self.root / "Makefile").read_text(errors="replace", encoding="utf-8")
             chosen = [f"VERSION={version}"] if version and self.splat_baseroms() else []
-            steps = [["make", *chosen, t] for t in ("tools", "setup", "extract") if re.search(rf"^{t}\s*:", make, re.M)]
+            steps = [["make", *chosen, t] for t in _setup_targets(make)]
             config, splitter = self._splat_yaml(), self.root / "tools" / "splat" / "split.py"
             if (not steps and config and splitter.is_file() and not (self.root / "assets").exists()
                     and re.search(r"\bassets/", make) and not re.search(r"^(?:split|setup|extract)\s*:", make, re.M)):
                 # a project whose README says "run splat" before `make`: its Makefile links assets/*.bin (and the
                 # like) that only the split writes
                 steps = [["python", str(splitter.relative_to(self.root)), config.name]]
-            jobs =min(os.cpu_count() or 4, 4) if self._docker_only_macos() else os.cpu_count() or 4
+            jobs = min(os.cpu_count() or 4, 4) if self._docker_only_macos() else os.cpu_count() or 4
             return steps + [["make", *chosen, f"-j{jobs}"]]
         if kind == "objdiff":
             cfg = self.objdiff_config()
@@ -1047,6 +1074,8 @@ class ForkProject:
                     env["LIBRARY_PATH"] = os.pathsep.join(filter(None, [env.get("LIBRARY_PATH"), f"{prefix}/lib"]))
                     env["CPATH"] = os.pathsep.join(filter(None, [env.get("CPATH"), f"{prefix}/include"]))
                     break
+        if sys.platform == "darwin" and "CXX" not in env and (self.root / "tools").is_dir():
+            env.update(_mac_cxx_env(self.root))
         env["NINJA_STATUS"] = "[%f/%t] "  # (ninja's own: its progress lines are what a run of units is read by)
         # found on that PATH (decompdecomp's own ninja): Linux looks a command up there itself, Windows only in this
         # process's PATH, where decompdecomp's environment isn't when it's installed
