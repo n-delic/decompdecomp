@@ -15,6 +15,10 @@ _PREFIXES = ("mips-linux-gnu-", "mips64-linux-gnu-", "mips64-elf-")
 _ASSEMBLER_DRIVER = '''#!{python}
 import os, subprocess, sys, tempfile
 args, out, sources, cpp, asm = sys.argv[1:], None, [], [], []
+# what the real cross gcc predefines for assembler sources (headers pick register names, endianness and ABI by them)
+cpp += ["-D__ASSEMBLER__", "-D_LANGUAGE_ASSEMBLY", "-D__mips__", "-D_MIPS_SZINT=32", "-D_MIPS_SZPTR=32",
+        "-D_MIPS_SZLONG=32", "-D_ABIO32=1", "-D_MIPS_SIM=_ABIO32", "-D_MIPS_ARCH_MIPS3", "-D__mips=3", "-Dmips=1"]
+big = True
 i = 0
 while i < len(args):
     a = args[i]
@@ -34,6 +38,8 @@ while i < len(args):
             asm.append(a)
     elif a.startswith(("-march=", "-mabi=", "-mtune=", "-mips", "-EB", "-EL")):
         asm.append(a)
+        if a == "-EL":
+            big = False
     elif a.startswith("-"):
         pass
     else:
@@ -41,12 +47,39 @@ while i < len(args):
     i += 1
 if not out or len(sources) != 1:
     sys.exit("mips gcc shim: needs -o and one source")
+cpp = (["-D_MIPSEB", "-D__MIPSEB__", "-D__MIPSEB", "-DMIPSEB"] if big else
+       ["-D_MIPSEL", "-D__MIPSEL__", "-D__MIPSEL", "-DMIPSEL"]) + cpp
 with tempfile.NamedTemporaryFile("w", suffix=".s", delete=False) as t:
     done = subprocess.run(["{cpp}", "-x", "assembler-with-cpp", *cpp, sources[0]], stdout=t)
 if done.returncode:
     sys.exit(done.returncode)
 code = subprocess.run(["{assembler}", *asm, "-o", out, t.name]).returncode
 os.unlink(t.name)
+sys.exit(code)
+'''
+
+
+# GNU sha1sum under shasum's options; its --check also reads a line with one space between the hash and the file name
+# (`echo "$(cat x.sha1) build/x.bin" | sha1sum --check`), which shasum rejects
+_SHA1SUM = '''#!@PYTHON@
+import os, re, subprocess, sys, tempfile
+args = [{"--check": "-c", "--quiet": "-q"}.get(a, a) for a in sys.argv[1:]]
+temporary = None
+fix = lambda text: re.sub(r"(?m)^([0-9a-fA-F]{40}) (?=[^ *])", r"\\1  ", text)
+if "-c" in args:
+    names = [a for a in args if not a.startswith("-")]
+    if names:
+        with open(names[0], errors="replace") as f, tempfile.NamedTemporaryFile("w", delete=False) as t:
+            t.write(fix(f.read()))
+        temporary = t.name
+        args[args.index(names[0])] = temporary
+        code = subprocess.run(["@SHASUM@", "-a", "1", *args]).returncode
+    else:
+        code = subprocess.run(["@SHASUM@", "-a", "1", *args], input=fix(sys.stdin.read()).encode()).returncode
+else:
+    code = subprocess.run(["@SHASUM@", "-a", "1", *args]).returncode
+if temporary:
+    os.unlink(temporary)
 sys.exit(code)
 '''
 
@@ -128,7 +161,6 @@ def build_paths(project) -> list[Path]:
         if (not shutil.which("sha1sum") or sys.platform == "darwin") and (shasum := shutil.which("shasum")):
             tool = folder / "sha1sum"
             if not tool.exists():
-                tool.write_text(f'#!/bin/sh\nfor a; do shift; case "$a" in --check) a=-c;; --quiet) a=-q;; esac; '
-                                f'set -- "$@" "$a"; done\nexec "{shasum}" -a 1 "$@"\n', encoding="utf-8")
+                tool.write_text(_SHA1SUM.replace("@PYTHON@", sys.executable).replace("@SHASUM@", shasum), encoding="utf-8")
                 tool.chmod(0o755)
     return [folder, source]

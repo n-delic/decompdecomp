@@ -48,6 +48,24 @@ def digest(path: Path) -> str:
         return hashlib.file_digest(stream, 'sha1').hexdigest()
 
 
+def config_sha1(config_path: Path, config: dict) -> str | None:
+    """The original ROM's SHA-1 a splat config names: its own `sha1`, else the `<config name>.sha1` file beside it
+    (projects whose Makefile checks the ROM against that file leave it out of the yaml)."""
+    options = config.get('options') if isinstance(config.get('options'), dict) else {}
+    found = config.get('sha1') or options.get('sha1')
+    if found:
+        return found
+    for name in (config_path.stem, options.get('basename')):
+        side = config_path.parent / f'{name}.sha1' if name else None
+        try:
+            words = side.read_text(encoding='utf-8', errors='replace').split() if side and side.is_file() else []
+        except OSError:
+            words = []
+        if words and re.fullmatch(r'[0-9a-fA-F]{40}', words[0]):
+            return words[0]
+    return None
+
+
 def run(command: list[str], root: Path, log) -> None:
     result = subprocess.run(limits.capped(command), cwd=root, capture_output=True, text=True, encoding='utf-8',
                             errors='replace', timeout=TIMEOUT, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW)
@@ -436,7 +454,7 @@ def generate(project, config_path: Path, config: dict, console, log=print) -> bo
     if (root / 'objdiff.json').exists():
         return False
     options = config.get('options', {})
-    sha1 = config.get('sha1') or options.get('sha1')
+    sha1 = config_sha1(config_path, config)
     if not isinstance(sha1, str) or not re.fullmatch(r'[0-9a-fA-F]{40}', sha1):
         raise ForkError("automatic objdiff setup needs a SHA-1 in the splat config; check the project's ROM version")
     image_path = inside(root, options.get('target_path', ''))

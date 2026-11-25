@@ -340,3 +340,75 @@ def test_n64_replaces_a_qemu_irix_compiler_command_with_the_installed_ido(tmp_pa
     (root / "Makefile").write_text("IDO := ~/qemu-irix -L tools/ido_irix tools/ido_irix/usr/bin/cc\nall:\n\ttrue\n")
     prepared = consoles.get("n64").project_build_command(SimpleNamespace(root=root), ["make"])
     assert prepared[-1].startswith("IDO=.decomp-wtf/build-tools/ido-") and prepared[-1].endswith("/cc")
+
+def test_the_assembler_shim_predefines_what_the_cross_gcc_does(tmp_path):
+    """The SGI headers pick register names by `mips` and the byte order by `_MIPSEB`; the real gcc predefines both."""
+    import subprocess
+    import sys
+
+    cpp = tmp_path / "cpp"
+    cpp.write_text('#!/bin/sh\necho "$@" > "$CPP_ARGS"\n')
+    cpp.chmod(0o755)
+    assembler = tmp_path / "as"
+    assembler.write_text("#!/bin/sh\nexit 0\n")
+    assembler.chmod(0o755)
+    driver = tmp_path / "gcc"
+    driver.write_text(mips_tools._ASSEMBLER_DRIVER.format(python=sys.executable, cpp=cpp, assembler=assembler))
+    (tmp_path / "x.s").write_text("nop\n")
+    record = tmp_path / "args"
+    subprocess.run([sys.executable, str(driver), "-EB", "-x", "assembler-with-cpp", "-c", "-o", str(tmp_path / "x.o"),
+                    str(tmp_path / "x.s")], check=True, env={**os.environ, "CPP_ARGS": str(record)})
+    seen = record.read_text().split()
+    assert {"-Dmips=1", "-D_MIPSEB", "-D_LANGUAGE_ASSEMBLY"} <= set(seen)
+    assert "-D_MIPSEL" not in seen
+
+
+def test_the_sha1sum_shim_accepts_one_space_between_hash_and_name(tmp_path):
+    import hashlib
+    import shutil
+    import subprocess
+    import sys
+
+    shasum = shutil.which("shasum")
+    if not shasum:
+        pytest.skip("no shasum")
+    (tmp_path / "x.bin").write_bytes(b"abc")
+    shim = tmp_path / "sha1sum"
+    shim.write_text(mips_tools._SHA1SUM.replace("@PYTHON@", sys.executable).replace("@SHASUM@", shasum))
+    line = f"{hashlib.sha1(b'abc').hexdigest()} x.bin\n"
+    done = subprocess.run([sys.executable, str(shim), "--check"], input=line, text=True, cwd=tmp_path,
+                          capture_output=True)
+    assert done.returncode == 0, done.stderr
+    bad = subprocess.run([sys.executable, str(shim), "--check"], input="0" * 40 + " x.bin\n", text=True, cwd=tmp_path,
+                         capture_output=True)
+    assert bad.returncode != 0
+
+
+def test_n64_swaps_a_committed_linux_tool_in_a_versioned_folder(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools
+
+    hosts = tmp_path / "bin"
+    hosts.mkdir()
+    (hosts / "gzip").write_text("#!/bin/sh\n")
+    (hosts / "gzip").chmod(0o755)
+    monkeypatch.setenv("PATH", str(hosts))
+    monkeypatch.setattr(buildtools.sys, "platform", "darwin")
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: None)
+    root = tmp_path / "project"
+    (root / "tools/gzip-1.2.4").mkdir(parents=True)
+    program = root / "tools/gzip-1.2.4/gzip"
+    program.write_bytes(b"\x7fELF" + b"\0" * 20)
+    program.chmod(0o755)
+    buildtools._wrap_foreign_ido(SimpleNamespace(root=root))
+    assert program.read_text().startswith("#!/bin/sh\nexec ")
+    assert (root / "tools/gzip-1.2.4/gzip.linux").is_file()
+
+
+def test_a_sha1_file_beside_the_splat_config_names_the_original_rom(tmp_path):
+    from decompnet.forks.splatrefs import config_sha1
+
+    config = tmp_path / "game.us.yaml"
+    assert config_sha1(config, {"options": {}}) is None
+    (tmp_path / "game.us.sha1").write_text("a" * 40 + "\n")
+    assert config_sha1(config, {"options": {}}) == "a" * 40
+    assert config_sha1(config, {"sha1": "b" * 40, "options": {}}) == "b" * 40
