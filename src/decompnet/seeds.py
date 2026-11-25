@@ -513,6 +513,30 @@ def drop_saved_register_reads(source: str) -> str:
     return re.sub(r"^[ \t]*\w+ = saved_reg_\w+;[ \t]*\n", "", source, flags=re.M)
 
 
+_UNSET_READ = re.compile(r"\b(?:unk)?sp[0-9A-Fa-f]+\b|\bsaved_reg_\w+\b")
+_NOT_A_TYPE = {"return", "else", "case", "goto", "do", "sizeof"}
+
+
+def declare_unset_reads(source: str, name: str) -> str:
+    """m2c reads a stack slot or a callee-saved register that nothing in the function set (`sp24` passed on as a
+    callee's seventh argument, `saved_reg_s0 != 0`) and names it without declaring it: 36 of one game's 406
+    functions without a draft failed with an undeclared sp24. The original read whatever the caller left there, so the
+    draft declares it as an unset local: it compiles, and the search decides what the slot really holds."""
+    head = re.search(rf"^[^\n;]*\b{re.escape(name)}\s*\([^)]*\)\s*\{{[ \t]*$", source, flags=re.M)
+    if not head:
+        return source
+    body = source[head.end():]
+    missing = []
+    for found in dict.fromkeys(_UNSET_READ.findall(body)):
+        declared = re.compile(rf"^[ \t]*(?:\w+[ \t]+)+\**{re.escape(found)}\b[^(=\n]*[;=,\[]", re.M)
+        if not any(m[0].split()[0] not in _NOT_A_TYPE for m in declared.finditer(body)):
+            missing.append(found)
+    if not missing:
+        return source
+    lines = "".join(f"    s32 {found};\n" for found in missing)
+    return source[:head.end()] + "\n" + lines.rstrip("\n") + source[head.end():]
+
+
 MAX_REASON_CHARS = 600  # of m2c's reason for a failure, passed on to an agent
 
 
@@ -664,4 +688,4 @@ def _run_m2c(asm_text: str, name: str, target: str, context_header: str = "", da
             if strict:
                 raise DraftError(reason or (_failure(res) if out or res.stderr or res.returncode else 'm2c produced no C for this function.'))
             return None
-        return drop_saved_register_reads(out) if valid else out
+        return declare_unset_reads(drop_saved_register_reads(out), name) if valid else out

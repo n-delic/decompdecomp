@@ -52,3 +52,14 @@ def test_adjacent_singles_that_no_double_reads_are_split_so_m2c_does_not_fuse_th
     out = m2c_fp64.pair_free(vector)
     assert out != vector
     assert not ({5, 4} <= {int(n) for n in re.findall(r'\$f(\d+)', out)})
+
+
+def test_unset_stack_and_saved_register_reads_are_declared_locals():
+    from decompnet import seeds
+    src = ("void f(void *arg0) {\n    s32 sp20;\n\n    sp20 = 0;\n    g(arg0, sp20, sp24, unksp28);\n"
+           "    if (saved_reg_s0 != 0) { return; }\n}\n")
+    out = seeds.declare_unset_reads(src, "f")
+    assert "    s32 sp24;\n" in out and "    s32 unksp28;\n" in out and "    s32 saved_reg_s0;\n" in out
+    assert out.count("sp20;") == 2  # the declared slot is not declared again
+    assert seeds.declare_unset_reads(out, "f") == out
+    assert seeds.declare_unset_reads("int x;\n", "f") == "int x;\n"
