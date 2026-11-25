@@ -114,10 +114,54 @@ def _address_sums(source: str) -> str:
     return re.sub(r"\(&(\w+) \+ &(\w+)\)", r"((u32) &\1 + (u32) &\2)", source)
 
 
+_PROTOTYPE = re.compile(r"^(?P<head>[^\n(){};=]*?\b(?P<name>\w+)\()(?P<params>[^;{}\n]*)(?P<tail>\);[ \t]*/\* extern \*/)$", re.M)
+
+
+def _split_top_level(text: str) -> list[str]:
+    parts, depth, current = [], 0, ""
+    for char in text:
+        depth += {"(": 1, ")": -1}.get(char, 0)
+        if char == "," and depth == 0:
+            parts.append(current)
+            current = ""
+        else:
+            current += char
+    return [*parts, current] if current.strip() or parts else []
+
+
+def _argument_counts(source: str, name: str, skip: set[int]) -> set[int]:
+    counts = set()
+    for call in re.finditer(rf"(?<![\w.]){re.escape(name)}\(", source):
+        if call.start() in skip:
+            continue
+        end = _balanced(source, call.end() - 1)
+        if end:
+            counts.add(len(_split_top_level(source[call.end():end - 1])))
+    return counts
+
+
+def _call_prototypes(source: str) -> str:
+    """m2c prints one prototype per callee, from the call it understood best, and the same function is called
+    elsewhere in the draft with fewer arguments (`f(f(x), 1)`, or `f()` for a callee whose argument the code never
+    sets): a C compiler refuses the call. 36 of one game's 406 functions without scored C failed with 'too few
+    arguments'. The code behind the call passes exactly those registers, as a call to a function declared without
+    parameters (`f();`) does, so the prototype becomes that declaration."""
+    skip = {m.start("name") for m in _PROTOTYPE.finditer(source)}
+    for match in reversed(list(_PROTOTYPE.finditer(source))):
+        params = match["params"].strip()
+        if "..." in params or not params or params == "void":
+            continue
+        expected = len(_split_top_level(params))
+        counts = _argument_counts(source, match["name"], skip)
+        if counts and counts != {expected}:
+            source = source[:match.start("params")] + source[match.end("params"):]
+    return source
+
+
 def repair(source: str) -> str:
     """`source` with the spellings above made compilable; unchanged when it has none."""
     if not source:
         return source
-    for step in (_void_dereferences, _integer_dereferences, _scalar_dereferences, _table_calls, _address_sums):
+    for step in (_void_dereferences, _integer_dereferences, _scalar_dereferences, _table_calls, _address_sums, _call_prototypes):
         source = step(source)
     return source

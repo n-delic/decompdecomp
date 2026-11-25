@@ -37,3 +37,17 @@ def test_the_frame_buffer_and_indexed_slots_are_declared():
     src = "void f(void) {\n    g(&sp10[0], sp);\n}\n"
     out = seeds.declare_unset_reads(src, "f")
     assert "    u8 sp[256];\n" in out and "    s32 sp10[16];\n" in out
+
+
+def test_a_prototype_that_disagrees_with_a_call_becomes_a_declaration_without_parameters():
+    """m2c prints one prototype per callee and the draft calls it with another count: `f(f(x), 1)`."""
+    src = ("void *func_1(void *, M2C_UNK);               /* extern */\n"
+           "M2C_UNK func_2(f32 *, M2C_UNK);              /* extern */\n"
+           "s32 func_3(M2C_UNK *);                       /* extern */\n"
+           "s32 func_4(void);                            /* extern */\n"
+           "void g(void *a) {\n    x = func_1(func_1(a), 1);\n    func_2(&y, 3);\n    if (func_3() != 4) {}\n    func_4();\n}\n")
+    out = m2c_types.repair(src)
+    assert "void *func_1();" in out and "s32 func_3();" in out
+    assert "M2C_UNK func_2(f32 *, M2C_UNK);" in out  # the calls agree: untouched
+    assert "s32 func_4(void);" in out
+    assert m2c_types.repair(out) == out
