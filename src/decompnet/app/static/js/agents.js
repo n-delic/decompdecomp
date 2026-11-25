@@ -202,6 +202,8 @@ async function showAgentResults(session, kind) {
 const agentDetailsOpen = new Set();
 const agentMetricResets = new Map();
 const agentMenusOpen = new Set();
+// Helper groups (Decompiling, Polishing, ...) the user folded away; kept across the page's refreshes.
+const agentGroupsCollapsed = new Set();
 function compactAgentNumber(value) {
   const n = Number(value || 0);
   for (const [size, suffix] of [[1e9, 'B'], [1e6, 'M'], [1e3, 'k']]) {
@@ -350,8 +352,11 @@ function renderSessions(sessions, refreshCosts = true) {
   const both=new Set(sorted.map(taskGroup)).size>1;
   const html = sorted.map((s, i) => {
     const group=taskGroup(s);
-    const head = both && (i === 0 || taskGroup(sorted[i-1])!==group)
-      ? `<h3 class="session-group">${group}</h3>` : "";
+    const first = i === 0 || taskGroup(sorted[i-1])!==group;
+    const folded = both && agentGroupsCollapsed.has(group);
+    const head = both && first
+      ? `<h3 class="session-group"><button type="button" class="session-group-toggle" data-group-toggle="${esc(group)}" aria-expanded="${!folded}"><span class="session-group-caret" aria-hidden="true">${folded ? "▸" : "▾"}</span>${group}<span class="session-group-count">${sorted.filter(x => taskGroup(x) === group).length}</span></button></h3>` : "";
+    if (folded) return head;
     const claim = S.claims.find((c) => c.agent === s.agent);
     const dot = s.state === "paused" ? "err" : s.state === "working" ? "on" : s.state === "stopped" ? "" : "work";
     const live = LIVE.includes(s.state), id = esc(s.id), b = s.metrics || board.get(s.agent);
@@ -396,6 +401,13 @@ function renderSessions(sessions, refreshCosts = true) {
       };
     });
   }
+  box.querySelectorAll('[data-group-toggle]').forEach(button => {
+    button.onclick = () => {
+      const group = button.dataset.groupToggle;
+      if (agentGroupsCollapsed.has(group)) agentGroupsCollapsed.delete(group); else agentGroupsCollapsed.add(group);
+      renderSessions(sessions, false);
+    };
+  });
   box.querySelectorAll('.agent-menu button').forEach(button => button.addEventListener('click', () => {
     const menu = button.closest('details'); menu.open = false; agentMenusOpen.delete(menu.dataset.agentMenu);
   }));
