@@ -450,9 +450,9 @@ def difference(a: list, b: list) -> list:
 
 
 def seed_offset(port_calls: dict[int, int], task_vi: dict[int, int], seed_vis: list[int], first: int = 200, last: int = 700) -> int:
-    """How many more seeding calls the port has made than the console's game at the same graphics task, early in the run: the smallest
-    difference over the tasks from `first` to `last` (a call the console makes a hair after a task starts is a one-off difference of one at some
-    tasks, the logic lead's drift grows later; an extra call the port makes at boot is a difference at every task). port_calls: {task: calls
+    """How many more seeding calls the port has made than the console's game at the same graphics task, early in the run: the usual
+    difference over the tasks from `first` to `last` (a call made a hair after a task starts is a gap of zero at an odd task, and the logic lead's
+    drift grows later; an extra call the port makes at boot is the same gap at nearly every task). port_calls: {task: calls
     so far} (PORT_SEED_LOG), task_vi: {task: the console's retrace at its start} (the trace), seed_vis: the retrace of each of the console's calls.
     Replaying the console's seeds in order from the port's call k hands it the console's call k: one call too many in the port hands every later draw the
     previous seed (a race start's opponents were other cars than the console's until a seed was added at the front: 0.00% at every task)."""
@@ -463,7 +463,8 @@ def seed_offset(port_calls: dict[int, int], task_vi: dict[int, int], seed_vis: l
             mine, theirs = port_calls[n], bisect.bisect_right(seed_vis, task_vi[n])
             if mine or theirs:  # before either has called there is nothing to be ahead by
                 gaps.append(mine - theirs)
-    return min(gaps) if gaps else 0
+    import statistics
+    return int(statistics.median_low(gaps)) if gaps else 0  # a call made a hair after a task starts shows as a gap of zero at the odd task: the usual one counts
 
 
 def align_seeds(game: Path, rom: Path, inputs: str, work: Path, pace_log: Path, env: dict[str, str], stop=lambda: False) -> int:
