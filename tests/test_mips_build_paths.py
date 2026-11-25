@@ -1158,3 +1158,14 @@ def test_the_splat_config_of_the_edition_whose_rom_is_in_the_project_is_the_one_
     assert project._splat_yaml_of_placed_rom() == root / "config/us/splat.us.yaml"
     (root / "baserom.us.z64").write_bytes(b"something else")
     assert ForkProject(root)._splat_yaml_of_placed_rom() is None
+
+
+def test_a_makefiles_own_spelling_of_the_version_is_used(tmp_path):
+    from decompnet.forks.project import _makefile_version_word
+
+    make = ("ifeq ($(VERSION), US)\n COUNTRYCODE := u\n OUTCODE := $(COUNTRYCODE)\nendif\n"
+            "ifeq ($(VERSION), DEBUG)\n COUNTRYCODE := u\n OUTCODE := d\nendif\n")
+    assert _makefile_version_word(make, "VERSION", "u") == "US"
+    assert _makefile_version_word(make, "VERSION", "us") == "US"
+    assert _makefile_version_word(make, "VERSION", "DEBUG") == "DEBUG"
+    assert _makefile_version_word("all:\n\ttrue\n", "VERSION", "u") == "u"
