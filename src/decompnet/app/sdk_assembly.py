@@ -418,11 +418,21 @@ def known_identity(console, cfg, code, *, has_relocs=False):
         return found
 
 
+def _linked_relocs(relocs):
+    """The relocations that tie a body to where this game linked it. A reference to a memory-mapped hardware register
+    (physical 0x03F00000 and up, reached through KSEG1: SP_STATUS at 0xA4040010) is the same address in every game, so
+    the instruction words hold it as the SDK's own build did and the exact-bytes digest still proves the routine.
+    A libultra rmon routine that reads SP_STATUS was left open in many games by its `lui/lw` pair of relocations."""
+    return [r for r in relocs
+            if not (isinstance(r, (list, tuple)) and len(r) > 2 and isinstance(r[2], int)
+                    and r[2] & 0xE0000000 == 0xA0000000 and r[2] & 0x1FFFFFFF >= 0x03F00000)]
+
+
 def known_proof(console, proj, fn):
     """Bind a curated SDK identity to the current function and its analysis image."""
     cfg = json.loads(proj['config'])
     code = bytes(fn['target'] or b'')
-    found = known_identity(console, cfg, code, has_relocs=bool(json.loads(fn['relocs'] or '[]')))
+    found = known_identity(console, cfg, code, has_relocs=bool(_linked_relocs(json.loads(fn['relocs'] or '[]'))))
     if not found or fn['size'] != len(code):
         return None
     if found.get('evidence'):
