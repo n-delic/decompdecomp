@@ -948,3 +948,11 @@ line points still change at the port's tasks 604, 609, 614, 619 and the console'
 `osSpTaskStartGo`, `wait_retrace` before each catch-up retrace) stalled the game. host.c is back to the code before them. The logic lead is not a matter of when the host raises
 retraces or the RSP/RDP interrupts; what remains untried is the order of the game's own threads (the message logs: the port's `PORT_MSGLOG`, the emulator's breaks on osSendMesg/osRecvMesg at 0x8008D4A0 and 0x8008D090, compared by
 the static queues at 0x800B4xxx) and whether the console's game does work the port's skips between retraces.
+
+**What the message logs show (retraces 536-551 of a menu-to-race route; `PORT_MSGLOG` with the retrace count against the emulator's breaks on osSendMesg/osRecvMesg/osJamMesg).** Compared on the static
+queues (0x800B4xxx; the dynamically allocated ones sit at other addresses in the two runs, and the interrupt-sent messages, the host's `t-1` sends, are not calls the emulator's breaks see):
+the console's game does work at every retrace (about 43 operations at the retraces a task starts, 11-17 at the ones between), the port's does it at the task retraces only (53-57 operations there,
+0-3 between). The VI queue (0x800B42E4) shows why: the console's consumer receives each retrace's message at that retrace; the port's holds two messages together (`send ... valid 1/12`)
+and receives them back to back at the second, so two of every three retraces' work happens a retrace late, at the next task start. Those pairs are the catch-up retraces fired when a task starts. Pacing the catch-up
+retraces with a wait for the threads to idle (tried, removed) did not change when the line points change, but the message log was not looked at then: whether the pairs disappeared is not known. Checking that
+(the same pacing, then `PORT_MSGLOG`, looking for `valid 1/12` on the VI queue) is the cheap next step, and the result would say whether the lag is the batching or something else.
