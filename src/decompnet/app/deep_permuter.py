@@ -2511,8 +2511,15 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
                 raise NetworkError('This function was claimed meanwhile; try again after it is released.')
             try:
                 from . import deep_profile_sweep
-                if deep_profile_sweep.run(search, agent, proj, fn, _candidate_source(fn, fn['best_score'])):
+                saved = _candidate_source(fn, fn['best_score'])
+                if deep_profile_sweep.run(search, agent, proj, fn, saved):
                     search.best = 0
+                else:
+                    # the few per-function profiles its target points to (SN 2.7.2's builds, KMC for library code,
+                    # -mfp32, -G8): judged once per saved C, an exact pair applied for this function only
+                    from . import profile_probe
+                    if profile_probe.run(search, agent, proj, net._function(name, slug), saved):
+                        search.best = 0
             finally:
                 search._let_go(agent, fn)
             proj, fn = net.project_row(slug), net._function(name, slug)

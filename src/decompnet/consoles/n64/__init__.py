@@ -16,6 +16,7 @@
 - boot_gzip.py, boot_raw_deflate.py, boot_brs.py, boot_refpack.py: compressed programs placed by the boot loader.
 - boot_mapping.py: returning TLB boot stubs separated from code with a strongly supported later load mapping.
 - sdk_assembly.py: exact self-contained libultra body fingerprints, classified before C claims.
+- profile_probes.py: the per-function compiler profiles its open functions are judged under automatically (SN 2.7.2 builds, KMC for libultra).
 - port.py: its port kit, libultraship and Torch: what they replace and which graphics microcode they render.
 - emulator/: the reversing emulator (mupenRE, built from source), its `Console.emulator` part: the user's ROM run
   headless with memory dumps and breakpoints (watch_in_emulator).
@@ -33,7 +34,7 @@ from pathlib import Path
 
 from ...rom import Picked, RomError
 from .. import EXPORT, RECOMMENDED, ROM, Compiler, Console
-from . import emulator, recomp, sdk_assembly, sdk_linked, sdk_shapes
+from . import emulator, profile_probes, recomp, sdk_assembly, sdk_linked, sdk_shapes
 from .port import KIT as PORT_KIT
 
 # Store only a digest of the entire body, including the return delay slot.
@@ -228,6 +229,9 @@ class Nintendo64(Console):
                   str(Path(__file__).with_name("libultra_signatures.tsv")),
                   # libultra code the SDK folder lacks, as games that declare 2.0D link it (2.0D-2.0G have no archive)
                   str(Path(__file__).with_name("libultra_2_0d_signatures.tsv")))
+
+    def profile_probes(self, facts):
+        return profile_probes.probes(facts)
 
     def sdk_assembly_identity(self, code, big_endian=True):
         return sdk_assembly.identify(code, big_endian)
