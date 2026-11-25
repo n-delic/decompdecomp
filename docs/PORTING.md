@@ -611,6 +611,14 @@ that goes full screen so it shows there too, and Scaling applies only once a pla
 its own look until then). The Miyoo build still has none: it needs the menu drawn into its SDL 1.2 surface.
 ROADMAP.md's table says so.
 
+recomp-ui's menu model is used when its library is there. `tools/build_recomp_ui.py` builds it from the pinned commit
+`16e2c867e474648e523e2cd21eca813ebe58c795` (three plain C files, the system C compiler, no ImGui or GPU) into the
+toolchains folder (or `DECOMPNET_RECOMP_UI`); with `PORT_RECOMP_UI=<library>` the window host (`window/recomp_ui.h`) turns
+settings.h's rows into recomp-ui's items and takes navigation, pages (Video, Audio, Game), the shared key names and Quit's
+second press from it, while the panel stays settings.h's own, drawing recomp-ui's rows, so the same picture shows over SDL's
+renderer and over RT64. Without the library, or if it can't open, the built-in menu runs and says so in the log. Not yet:
+recomp-ui's own ImGui look (its `render_imgui` needs a GL or RT64 ImGui frame) and bundling the library in an exported app.
+
 ### 5. Play, and check that it runs
 
 A **Play port** button builds and starts it. A headless check runs N frames: it starts, doesn't crash, and the
