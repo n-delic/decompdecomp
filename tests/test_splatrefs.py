@@ -634,3 +634,25 @@ def test_plan_takes_cpp_units_and_the_build_folder_the_checksum_file_names(tmp_p
     assert prefer == ('build/ntsc',)
     units = splatrefs.plan(tmp_path, cfg, prefer=prefer)
     assert units[0]['base'] == tmp_path / 'build/ntsc/src/demo.o' and units[0]['source'].name == 'demo.cpp'
+
+
+def test_combine_parts_drops_repeated_includes():
+    from decompnet.forks.splatrefs import combine_parts
+    one = '.include "macro.inc"\nglabel a\nnop\n'
+    two = '.include "macro.inc"\n.section .data\n.word 1\n'
+    out = combine_parts([one, two])
+    assert out.count('.include "macro.inc"') == 1 and '.word 1' in out and 'glabel a' in out
+
+
+def test_non_ascii_strings_detected(tmp_path):
+    from decompnet.forks.splatrefs import non_ascii_strings
+    (tmp_path / 'a.s').write_text('.asciz "abc"\n', encoding='utf-8')
+    assert not non_ascii_strings(tmp_path)
+    (tmp_path / 'b.s').write_text('.asciz "渾"\n', encoding='utf-8')
+    assert non_ascii_strings(tmp_path)
+
+
+def test_assemble_skips_zero_size_unit(tmp_path):
+    from decompnet.forks.splatrefs import assemble
+    unit = {'name': 'buffers/empty', 'vram': 0x80000000}
+    assert assemble(tmp_path, tmp_path, unit, {}, b'', 'as', 'ld', (), lambda *a: None) is None
