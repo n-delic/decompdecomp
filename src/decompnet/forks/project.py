@@ -1486,6 +1486,11 @@ class ForkProject:
             path = self._splat_version_configs().get(version) or next(
                 (p for p in self.root.glob("*.yaml") if p.name.endswith(f".{version}.yaml")), path)
         if path is None:
+            if (getattr(self, "platform", None) or self.detect_platform()) == "n64":
+                # a decomp with its own Makefile and linker script and no splat config: its linker map plans the units
+                from .maprefs import generate
+
+                return generate(self, version, log=log)
             return False
         import yaml
         from elftools.common.exceptions import ELFError
