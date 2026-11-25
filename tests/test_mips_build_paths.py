@@ -115,7 +115,8 @@ def test_n64_redirects_a_cc_variable_and_builds_the_crc_tool(tmp_path, monkeypat
             "\telse\n\tCC\t := $(TOOLS_DIR)/ido-static-recomp/build/5.3/out/cc\n\tendif\n")
     (root / "Makefile").write_text(make)
     prepared = consoles.get("n64").project_build_command(SimpleNamespace(root=root), ["make", "-j4"])
-    assert prepared == ["make", "-j4", "CC=.decomp-wtf/build-tools/ido-5.3/cc"]
+    assert prepared == ["make", "-j4"]  # (CC itself stays the project's: its folder links to the installed IDO)
+    assert (root / "tools/ido-static-recomp/build/5.3/out").resolve() == source.resolve()
     assert ran and ran[0][0] == "/usr/bin/cc" and ran[0][-1].endswith("tools/n64crc")
 
 
@@ -236,3 +237,14 @@ def test_rom_path_through_makefile_variables(tmp_path):
     root.mkdir()
     (root / "Makefile").write_text("VERSION ?= us\nBASEROM_DIR := baseroms/$(VERSION)\nBASEROM := $(BASEROM_DIR)/baserom.z64\n")
     assert ForkProject(root).needs(None)["path"] == "baseroms/us/baserom.z64"
+
+
+def test_a_decompressed_splat_target_means_the_cartridge_rom_is_named_elsewhere(tmp_path):
+    from decompnet.forks.project import ForkProject
+
+    root = tmp_path / "p"
+    root.mkdir()
+    (root / "Makefile").write_text("BASEROM := baserom.us.z64\nsetup:\n\ttrue\n")
+    (root / "splat.yaml").write_text("options:\n  platform: n64\n  target_path: decompressed.us.z64\nsegments: []\n")
+    need = ForkProject(root).needs(None)
+    assert need["path"] == "baserom.us.z64" and need["sha1"] is None
