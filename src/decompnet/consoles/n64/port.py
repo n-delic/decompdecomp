@@ -51,7 +51,7 @@ def microcode(image: bytes) -> list[dict]:
 SCHEDULER = re.compile(r"osCreateScheduler$|osSc[A-Z]\w*$|__sc[A-Z]\w*$")
 # libultra's RCP monitor (rmon/: the debugger stub of the debug libraries and the exception path), and the helpers only
 # it calls. A port never runs a debugger over the RCP; the SDK's own names, so never a game's code.
-RMON = re.compile(r"_{0,2}rmon[A-Z]\w*$|(CleanupFromRCPop|SetUpForRCPop|ClearTempBreakpoint|SetTempBreakpoint|MonitorInitBreak)$")
+RMON = re.compile(r"_{0,2}rmon[A-Z]\w*$|(CleanupFromRCPop|SetUpForRCPop|ClearTempBreakpoint|SetTempBreakpoint|MonitorInitBreak|IsJump|LoadStoreSU|LoadStoreVU|NotImplemented|__isExp)$")
 
 
 def _sdk_group(name: str) -> str | None:
@@ -67,7 +67,7 @@ def _sdk_group(name: str) -> str | None:
         return None
     # (before the "other" names: library detection set the monitor aside only when this answered, and a game's
     # __rmonGetGRegisters, named from the SDK's exact signature, stayed open for agents and the deep permuter)
-    if RMON.match(name):
+    if RMON.match(name) or name in _DEBUG_GLUE:
         return "glue"
     if name in _MATH:  # before the C library: libultra's __cosf is its own, not the host's cosf
         return "native"
@@ -76,7 +76,7 @@ def _sdk_group(name: str) -> str | None:
     if name in LIBULTRASHIP or name in GLUE_PROVIDES or bare in _LIBC or name in _OS_INTERNAL or re.match(r"(Printf|Litob|Ldtob|Ldunscale|Genld|Putfld)$", bare):
         return "replaced"
     if (re.match(r"gu[A-Z]", bare) or name in _MATH or re.match(r"(n_)?al[A-Z]|Mus[A-Z]", bare)
-            or name in _SYNTH_INTERNAL):
+            or name in _SYNTH_INTERNAL or name in _LIBRARY_C):
         return "native"
     if re.match(r"os[A-Z]", bare):
         return "glue"
@@ -114,6 +114,34 @@ _LIBC = frozenset({"bcopy", "bzero", "bcmp", "memcpy", "memset", "memmove", "mem
 # libultra's own static helpers, named in its source without its prefixes: the VI manager's thread and the
 # Controller Pak's file system checks (libultraship does both), and the synthesizer's (compiled with it).
 _OS_INTERNAL = frozenset({"viMgrMain", "corrupted", "corrupted_init"})
+# The SDK's debug and development plumbing (the kmc, IS-Viewer and MSP print and debug hosts, the gdb stub's page-table
+# and packet helpers, exception preambles, the assert and error handlers, the RAM ROM loader, the motor and RSP task
+# address helpers): a port has no such hardware, so it stubs them. Read from the exact names of ultralib's src/debug,
+# src/host, src/error, src/io and src/os that library detection finds in a game.
+_DEBUG_GLUE = frozenset({"__assert", "clear_IP6", "kdebugserver", "send", "send_packet", "string_to_u32",
+                         "__commonErrorHandler", "createWaitPtQueue", "getPT", "getPT_wait", "putPT", "kmcErrorHandler",
+                         "_MakeMotorData", "_VirtualToPhysicalTask", "ramromMain", "__checkHardware_isv",
+                         "__checkHardware_kmc", "__checkHardware_msp", "__ptException", "__ptExceptionPreamble",
+                         "handle_CpU", "isPrintfInit", "is_proutSyncPrintf", "msp_proutSyncPrintf", "send_mesg",
+                         "kmc_proutSyncPrintf", "proutSyncPrintf", "proutSprintf"})
+# libultra's remaining own C that compiles as the game's, like the math and the synthesizer: the sequence and sound
+# players and the bank patching (src/audio), the display-list helpers (src/gu: fsin, fcos, get3x3, kernel, tmemLoad,
+# stuffDisplayList), the 64-bit and string helpers of src/libc that the host's C library doesn't have (the compiler's
+# __ll_* and __ull_* runtime, ldiv, lldiv, sprintf, blkclr). The sprite and turbo libraries (sp*, gt*) are listed by
+# name, never by a prefix a game's own functions share. The scheduler (sched.c) stays the game's own code, see SCHEDULER.
+_LIBRARY_C = frozenset({
+    "_DivS32ByF32", "__CSPHandleMIDIMsg", "__CSPHandleMetaMsg", "__CSPHandleNextSeqEvent", "__CSPPostNextSeqEvent",
+    "__CSPRepostEvent", "__CSPVoiceHandler", "__getTrackByte", "__handleMIDIMsg", "__handleMetaMsg",
+    "__handleNextSeqEvent", "__lookupSoundQuick", "__readVarLen", "__seqpVoiceHandler", "__setUsptFromTempo",
+    "_bnkfPatchBank", "_bnkfPatchInst", "_bnkfPatchSound", "_bnkfPatchWaveTable", "_handleEvent", "_removeEvents",
+    "_sndpVoiceHandler", "read16", "read32", "read8", "readVarLen", "__createSpeedParam", "createSpeedParam",
+    "init_lpfilter", "fcos", "fsin", "get3x3", "kernel", "stuffDisplayList", "tmemLoad", "tmemLoad_A", "tmemLoad_B",
+    "__d_to_ll", "__d_to_ull", "__f_to_ll", "__f_to_ull", "__ll_bit_extract", "__ll_bit_insert", "__ll_div",
+    "__ll_lshift", "__ll_mod", "__ll_mul", "__ll_rem", "__ll_rshift", "__ll_to_d", "__ll_to_f", "__ull_bit_extract",
+    "__ull_div", "__ull_divremi", "__ull_rem", "__ull_rshift", "__ull_to_d", "__ull_to_f", "_blkclr", "blkclr",
+    "ldiv", "lldiv", "sprintf", "drawbitmap", "gtDumpTurbo", "gtStateSetOthermode",
+    *(f"sp{x}{f}" for x in ("", "X", "X2") for f in ("Init", "Draw", "Finish", "Move", "Scissor", "SetZ")),
+    "spClearAttribute", "spColor", "spHide", "spScale", "spSetAttribute", "spShow"})
 _SYNTH_INTERNAL = frozenset({"_allocatePVoice", "_freePVoice", "_collectPVoices", "__allocParam", "__freeParam",
                              "_timeToSamples", "_timeToSamplesNoRound", "__nextSampleTime", "_decodeChunk",
                              "_loadOutputBuffer", "_loadBuffer", "_saveBuffer", "_filterBuffer", "_doModFunc",

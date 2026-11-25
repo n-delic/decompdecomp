@@ -147,6 +147,12 @@ def test_the_kit_says_where_each_libultra_function_comes_from():
     # signature, stayed open and the deep permuter searched it
     assert {_sdk_group(n) for n in ("__rmonGetGRegisters", "__rmonSetBreak", "rmonMain", "SetUpForRCPop")} == {"glue"}
     assert _sdk_group("rmonitor_draw") is None
+    # the rest of the SDK's names that detection finds (tools/ultralib_signatures.py): debug plumbing is stubbed, the
+    # sequence players, display-list helpers and 64-bit runtime compile as the game's C, the scheduler stays its own
+    assert {_sdk_group(n) for n in ("__checkHardware_isv", "proutSyncPrintf", "__assert", "IsJump")} == {"glue"}
+    assert {_sdk_group(n) for n in ("__CSPVoiceHandler", "__ll_div", "tmemLoad", "spInit", "spX2Draw", "gtDumpTurbo",
+                                    "sprintf")} == {"native"}
+    assert _sdk_group("__scMain") is None and _sdk_group("spriteCount") is None
     assert _sdk_group("osCreateThread") == "replaced"  # decompdecomp's glue for libultraship has threads
     # libultra's printf is the host's, every helper of its xprintf.c and xldtob.c with it: an N64 game's _Ldunscale,
     # _Genld and _Putfld were left as its own code, so library detection's set-aside never took them
