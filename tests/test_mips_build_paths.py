@@ -1169,3 +1169,12 @@ def test_a_makefiles_own_spelling_of_the_version_is_used(tmp_path):
     assert _makefile_version_word(make, "VERSION", "us") == "US"
     assert _makefile_version_word(make, "VERSION", "DEBUG") == "DEBUG"
     assert _makefile_version_word("all:\n\ttrue\n", "VERSION", "u") == "u"
+
+
+def test_a_zapd_assets_target_behind_a_version_conditional_runs_in_setup():
+    from decompnet.forks import project as forks_project
+
+    make = ("assets:\nifeq ($(VERSION),n64-us)\n\t$(PYTHON) tools/extract_assets.py $(EXTRACTED_DIR)/baserom\n"
+            "else\n\t$(PYTHON) tools/extract_assets.py extracted/n64-us/baserom\nendif\n\nall:\n\ttrue\n")
+    assert forks_project._setup_targets(make) == ["assets"]
+    assert forks_project._setup_targets("assets:\nifeq ($(A),b)\n\techo hi\nendif\n") == []

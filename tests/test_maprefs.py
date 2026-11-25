@@ -188,3 +188,53 @@ def test_the_projects_decompressed_copy_is_offered_as_an_original_image(tmp_path
         (rom.parent / name).write_bytes(b"\0")
     found = maprefs.decompressed_images(SimpleNamespace(root=tmp_path), rom)
     assert [p.name for p in found] == ["baserom-decompressed.z64"]
+
+
+SEGMENT_MAP = """Linker script and memory map
+
+.text           0x00000000       0x20
+ build/us/src/a.o(.text*)
+ .text          0x00000000       0x10 build/us/src/a.o
+ build/us/src/b.o(.text*)
+ .text          0x00000010       0x10 build/us/src/b.o
+.data           0x00000020        0x0
+"""
+SEGMENT_FINAL_MAP = """Linker script and memory map
+
+.main           0x80000000       0x20 load address 0x00001000
+ build/us/segments/seg.plf(.text*)
+ .text          0x80000000       0x20 build/us/segments/seg.plf
+"""
+
+
+def test_a_partial_link_segment_is_planned_from_its_own_map(tmp_path):
+    """The Zelda decomps' final map lists `code.plf`, not the objects inside it: the segment's map has them."""
+    proj = project(tmp_path)
+    (proj.root / "build/us/game.map").write_text(SEGMENT_FINAL_MAP)
+    (proj.root / "build/us/segments").mkdir()
+    (proj.root / "build/us/segments/seg.map").write_text(SEGMENT_MAP)
+    (proj.root / "build/us/segments/seg.plf").write_bytes(b"")
+    maprefs.generate(proj, "us", log=lambda *_: None)
+    config = json.loads((proj.root / "objdiff.json").read_text())
+    assert [u["name"] for u in config["units"]] == ["src/a", "src/b"]  # (the segment itself is no unit)
+
+
+def test_a_partial_map_gives_offsets_inside_each_output_section():
+    text = SEGMENT_MAP.replace(".data           0x00000020        0x0", (
+        ".data           0x00000020       0x10\n build/us/src/a.o(.data*)\n .data          0x00000028        0x8 "
+        "build/us/src/a.o\n"))
+    assert maprefs.parse_partial_map(text) == [
+        ("build/us/src/a.o", ".text", ".text", 0, 0x10), ("build/us/src/b.o", ".text", ".text", 0x10, 0x10),
+        ("build/us/src/a.o", ".data", ".data", 8, 8)]
+
+
+def test_a_map_that_proves_only_a_trivial_share_of_the_code_is_not_published(tmp_path):
+    proj = project(tmp_path)
+    table, strings = symtab([("foo", FOO, 1, 2, 1), ("bar", BAR, 1, 1, 1)])
+    (proj.root / "build/us/game.elf").write_bytes(be_elf(
+        [(".main", SHT_PROGBITS, SHF_ALLOC | SHF_EXEC, 0x80000000, LINKED_TEXT * 2 + bytes(0x400), 0, 0, 0),
+         (".symtab", SHT_SYMTAB, 0, 0, table, 3, 1, 16), (".strtab", SHT_STRTAB, 0, 0, strings, 0, 0, 0)],
+        kind=2, load=(0x80000000, 0x1000, ".main")))
+    with pytest.raises(ForkError, match="too little to measure"):
+        maprefs.generate(proj, "us", log=lambda *_: None)
+    assert not (proj.root / "objdiff.json").exists()

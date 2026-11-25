@@ -228,7 +228,7 @@ def _version_var(makefile: str) -> str | None:
 
 def _setup_targets(makefile: str) -> list[str]:
     """The Makefile's own preparation targets, in the order its README runs them. `assets` counts only when its recipe
-    runs Torch (a Makefile whose README says `make -C tools`, `make assets`, `make`): the headers its compile step
+    runs Torch or ZAPD (a Makefile whose README says `make -C tools`, `make assets`, `make`): the headers its compile step
     includes are made there, and a build without them stops at the first #include. Another project's `assets`
     target is its own business."""
     found = [t for t in ("tools", "toolchain", "setup", "extract") if re.search(rf"^{t}\s*:", makefile, re.M)]
@@ -237,8 +237,8 @@ def _setup_targets(makefile: str) -> list[str]:
         found.insert(found.index("extract") if "extract" in found else len(found), "decompress")
     if re.search(r"^prerequisites\s*:[^\n]*(?:tools|extract)", makefile, re.M):
         found.append("prerequisites")  # (one that builds the host tools and extracts assets: rules like the RSP's use them unordered)
-    recipe = re.search(r"^assets\s*:[^\n]*\n((?:[ \t][^\n]*\n?)*)", makefile, re.M)
-    if recipe and re.search(r"(?i)torch", recipe[1]):
+    recipe = re.search(r"^assets\s*:[^\n]*\n((?:(?:[ \t]|ifn?eq|else|endif|#)[^\n]*\n?)*)", makefile, re.M)
+    if recipe and re.search(r"(?i)torch|\bextract_assets\.py|\bzapd\b", recipe[1]):  # (the Zelda decomps: ZAPD's headers)
         found.append("assets")
     return found
 
