@@ -105,7 +105,7 @@ def _provide_compiler_dirs(project) -> None:
     if os.name == "nt":
         return
     texts = ""
-    for name in ("Makefile", "Makefile.common", "README.md", "setup.py", "setup.sh"):
+    for name in ("Makefile", "Makefile.common", "README.md", "setup.py", "setup.sh", "install_compilers.sh"):
         try:
             texts += (project.root / name).read_text(errors="replace", encoding="utf-8") + "\n"
         except OSError:
@@ -131,6 +131,12 @@ def _provide_compiler_dirs(project) -> None:
         for name in set(re.findall(r"(?:\btools|\$\(TOOLS(?:_DIR)?\))/(gcc[_-]2\.7\.2)/(?!macos|\$\(DETECTED_OS\))",
                                    texts)):
             wanted.append((f"tools/{name}", "gcc-2.7.2-kmc"))
+    # tools/build/cc/<compiler>: where a project's `install_compilers.sh` unpacks the compilers it would download
+    # (Paper Mario's: its own GCC 2.8.1, KMC's 2.7.2, EGCS, IDO 5.3), as empty folders the installed ones fill
+    for name, tid in (("gcc2.7.2", "gcc-2.7.2-kmc"), ("gcc", "gcc-2.8.1-pm"), ("egcs", "gcc-egcs-2.91.66"),
+                      ("ido5.3", "ido-5.3")):
+        if re.search(rf"tools/build/cc/{re.escape(name)}(?![\w.])", texts):
+            wanted.append((f"tools/build/cc/{name}", tid))
     for version in set(re.findall(r"tools/ido/(5\.3|7\.1)(?![\d])", texts)):
         wanted.append((f"tools/ido/{version}", f"ido-{version}"))
     for folder, version in set(re.findall(r"(tools/ido(5\.3|7\.1)[\w.-]*)(?=\s|$|/)", texts, re.M)):
@@ -184,6 +190,8 @@ def _wrap_foreign_ido(project) -> None:
     for tools_root, driver in drivers:
         if len(driver.relative_to(tools_root).parts) > 5 or driver.is_symlink() or not driver.is_file():
             continue
+        if driver.parent.name == "bin" and driver.parent.parent.name == "usr":
+            continue  # (usr/bin/cc of an IRIX tree: the input ido-static-recomp turns into this computer's compiler)
         try:
             with open(driver, "rb") as f:
                 magic = f.read(4)

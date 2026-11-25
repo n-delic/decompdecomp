@@ -301,6 +301,16 @@ def original_rom(project, version: str | None) -> Path:
     raise ForkError("references from the build need the original game file in the project")
 
 
+def decompressed_images(project, rom: Path) -> list[Path]:
+    """The project's own decompressed copy of the user's game (the Zelda decomps' `baserom-decompressed.z64`, made from
+    the cartridge by the project's `make setup`): a build that links its code uncompressed lays it out like that copy,
+    not like the cartridge, whose code and data are stored compressed. It holds exactly the original's bytes."""
+    found = []
+    for folder in (rom.parent, project.root):
+        found += sorted(p for p in folder.glob('*.z64') if re.search(r'(?:un|de)compressed', p.name, re.I))
+    return [p for p in dict.fromkeys(found) if p != rom and p.is_file()]
+
+
 def make_variables(project, version: str | None) -> list[str]:
     """The VAR=value words the project's own setup passes to make (VERSION=us): objdiff rebuilds a unit's object
     with the same ones, so it lands where the unit's base_path says."""
@@ -327,7 +337,6 @@ def generate(project, version: str | None = None, log=print) -> bool:
     except ForkError:
         return False
     build_dir = inside(root, 'build')
-    image = rom.read_bytes()
     with elf_path.open('rb') as stream:
         linked = ELFFile(stream)
         if linked.header['e_machine'] != 'EM_MIPS':
@@ -335,24 +344,36 @@ def generate(project, version: str | None = None, log=print) -> bool:
         ranges, globals_ = load_ranges(linked), global_symbols(linked)
     addresses = parse_map(map_path.read_text(errors='replace', encoding='utf-8'))
     objects = sorted({owner for (owner, name) in addresses if name == '.text' and addresses[(owner, name)]})
-    units, left_out, skipped, outside = [], {}, 0, []
-    for owner in objects:
-        if owner.endswith(')'):
-            skipped += 1  # library members have no source in the project
-            continue
-        obj = inside(root, owner)
-        source = source_for(root, build_dir, obj)
-        if source is None or not obj.is_file():
-            skipped += 1
-            continue
-        try:
-            _covered, external = verify_object(obj, owner, addresses, globals_, ranges, image)
-        except Unverified as reason:
-            left_out[source.relative_to(root).as_posix()] = str(reason)
-            continue
-        units.append((source, obj))
-        if external:
-            outside.append(source.relative_to(root).as_posix())
+
+    def attempt(image: bytes):
+        units, left_out, skipped, outside = [], {}, 0, []
+        for owner in objects:
+            if owner.endswith(')'):
+                skipped += 1  # library members have no source in the project
+                continue
+            obj = inside(root, owner)
+            source = source_for(root, build_dir, obj)
+            if source is None or not obj.is_file():
+                skipped += 1
+                continue
+            try:
+                _covered, external = verify_object(obj, owner, addresses, globals_, ranges, image)
+            except Unverified as reason:
+                left_out[source.relative_to(root).as_posix()] = str(reason)
+                continue
+            units.append((source, obj))
+            if external:
+                outside.append(source.relative_to(root).as_posix())
+        return units, left_out, skipped, outside
+
+    # (the cartridge, and the project's decompressed copy of it, which a build that links uncompressed code matches:
+    # the one that proves more objects is the layout this build has)
+    best = None
+    for candidate in [rom, *decompressed_images(project, rom)]:
+        tried = attempt(candidate.read_bytes())
+        if best is None or len(tried[0]) > len(best[0]):
+            best = tried
+    units, left_out, skipped, outside = best
     if not units or len(units) > MAX_UNITS:
         raise ForkError(f"the build's objects can't be verified against the original game ({len(units)} of "
                         f"{len(objects)}); configure objdiff manually")

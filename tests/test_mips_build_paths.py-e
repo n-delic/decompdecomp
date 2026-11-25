@@ -272,7 +272,6 @@ def test_n64_links_an_os_named_ido_folder_and_wraps_a_missing_host_tool(tmp_path
     assert str(hosts / "armips") in (root / "tools/armips").read_text()
 
 
-<<<<<<< HEAD
 def test_a_make_shim_and_a_broken_mac_ido_and_cc_check_variants(tmp_path, monkeypatch):
     from decompnet.consoles.n64 import buildtools
 
@@ -280,6 +279,8 @@ def test_a_make_shim_and_a_broken_mac_ido_and_cc_check_variants(tmp_path, monkey
     root = tmp_path / "project"
     root.mkdir()
     (root / "Makefile").write_text("CC_CHECK ?= gcc\nall:\n\ttrue\n")
+    assert consoles.get("n64").project_build_command(SimpleNamespace(root=root), ["make"])[-1] == "CC_CHECK=true"
+    (root / "Makefile").write_text("CC_CHECK := $(HOSTCC) $(HOSTCC_CHECK_FLAGS) -fsyntax-only -std=gnu90\n")
     assert consoles.get("n64").project_build_command(SimpleNamespace(root=root), ["make"])[-1] == "CC_CHECK=true"
     tools = tmp_path / "pinned"
     tools.mkdir()
@@ -290,7 +291,8 @@ def test_a_make_shim_and_a_broken_mac_ido_and_cc_check_variants(tmp_path, monkey
     monkeypatch.setattr(mips_tools.shutil, "which", lambda name: f"/opt/{name}" if name == "gmake" else None)
     folder = mips_tools.build_paths(SimpleNamespace(root=root))[0]
     assert "/opt/gmake" in (folder / "make").read_text()
-=======
+
+
 def test_plain_cpp_shim_is_gnu_when_the_host_has_one(tmp_path, monkeypatch):
     """A Mac's /usr/bin/cpp rejects the `-MD -MF x.d src.c -o /dev/null` pass projects run after a compile; a GNU cpp
     (Homebrew's cpp-N) is put first in the build path under the plain name."""
@@ -302,4 +304,662 @@ def test_plain_cpp_shim_is_gnu_when_the_host_has_one(tmp_path, monkeypatch):
     pinned(tmp_path, monkeypatch)
     paths = mips_tools.build_paths(SimpleNamespace(root=tmp_path / "project"))
     assert str(gnu[-1]) in (paths[0] / "cpp").read_text()
->>>>>>> 91058b703 (fix: a GNU cpp under the plain name for project builds on a Mac)
+
+
+def test_n64_replaces_an_old_mac_assembler_that_lacks_the_mul_flag(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools
+
+    installed = tmp_path / "gcc"
+    installed.mkdir()
+    (installed / "as").write_text("assembler")
+    monkeypatch.setattr(buildtools.sys, "platform", "darwin")
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(buildtools.toolchains, "require", lambda tid: installed)
+    root = tmp_path / "project"
+    old = root / "tools" / "gcc_2.7.2" / "macos" / "as"
+    old.parent.mkdir(parents=True)
+    old.write_bytes(b"\xcf\xfa\xed\xfe old assembler")
+    (root / "Makefile").write_text("CFLAGS := -Wa,--vr4300mul-off\n")
+    buildtools._update_old_mac_assembler(SimpleNamespace(root=root), root / "tools")
+    assert str(installed / "as") in old.read_text() and old.with_name("as.old").exists()
+    # an assembler that already knows the option is left alone
+    old.write_bytes(b"\xcf\xfa\xed\xfe vr4300mul-off")
+    buildtools._update_old_mac_assembler(SimpleNamespace(root=root), root / "tools")
+    assert old.read_bytes().endswith(b"vr4300mul-off")
+
+
+def test_n64_replaces_a_qemu_irix_compiler_command_with_the_installed_ido(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools
+
+    ido = tmp_path / "ido"
+    ido.mkdir()
+    (ido / "cc").write_text("compiler")
+    monkeypatch.setattr(buildtools.sys, "platform", "darwin")
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(buildtools.toolchains, "require", lambda tid: ido)
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "Makefile").write_text("IDO := ~/qemu-irix -L tools/ido_irix tools/ido_irix/usr/bin/cc\nall:\n\ttrue\n")
+    prepared = consoles.get("n64").project_build_command(SimpleNamespace(root=root), ["make"])
+    assert prepared[-1].startswith("IDO=.decomp-wtf/build-tools/ido-") and prepared[-1].endswith("/cc")
+
+def test_the_assembler_shim_predefines_what_the_cross_gcc_does(tmp_path):
+    """The SGI headers pick register names by `mips` and the byte order by `_MIPSEB`; the real gcc predefines both."""
+    import subprocess
+    import sys
+
+    cpp = tmp_path / "cpp"
+    cpp.write_text('#!/bin/sh\necho "$@" > "$CPP_ARGS"\n')
+    cpp.chmod(0o755)
+    assembler = tmp_path / "as"
+    assembler.write_text('#!/bin/sh\nwhile [ "$1" != "-o" ]; do shift; done\n: > "$2"\n')
+    assembler.chmod(0o755)
+    driver = tmp_path / "gcc"
+    driver.write_text(mips_tools._ASSEMBLER_DRIVER.format(python=sys.executable, cpp=cpp, assembler=assembler, linker=str(tmp_path / "ld")))
+    (tmp_path / "x.s").write_text("nop\n")
+    record = tmp_path / "args"
+    subprocess.run([sys.executable, str(driver), "-EB", "-x", "assembler-with-cpp", "-c", "-o", str(tmp_path / "x.o"),
+                    str(tmp_path / "x.s")], check=True, env={**os.environ, "CPP_ARGS": str(record)})
+    seen = record.read_text().split()
+    assert {"-Dmips=1", "-D_MIPSEB", "-D_LANGUAGE_ASSEMBLY"} <= set(seen)
+    assert "-D_MIPSEL" not in seen
+
+
+def test_the_cross_cpp_shim_drops_mips_compile_flags_the_host_cpp_rejects(tmp_path, monkeypatch):
+    import subprocess
+
+    tools, _ = pinned(tmp_path, monkeypatch)
+    host = tmp_path / "hostcpp"
+    host.write_text('#!/bin/sh\necho "$@"\n')
+    host.chmod(0o755)
+    monkeypatch.setattr(mips_tools.shutil, "which", lambda name, *a, **k: str(host) if name == "cpp" else None)
+    real_glob = mips_tools.Path.glob
+    monkeypatch.setattr(mips_tools.Path, "glob",
+                        lambda self, pattern: iter(()) if pattern.startswith("cpp-") else real_glob(self, pattern))
+    folder = mips_tools.build_paths(SimpleNamespace(root=tmp_path / "project"))[0]
+    shown = subprocess.run([str(folder / "mips-linux-gnu-cpp"), "-G0", "-mips3", "-mgp32", "-EB", "-I", "inc", "-m32",
+                            "-MD", "-DX=1", "a.c"], capture_output=True, text=True).stdout.split()
+    assert shown[-6:] == ["-I", "inc", "-m32", "-MD", "-DX=1", "a.c"]
+    assert "-D_MIPSEB" in shown and not {"-G0", "-mips3", "-mgp32", "-EB"} & set(shown)
+
+
+def test_a_bare_ar_archives_elf_objects_with_the_pinned_ar_on_a_mac(tmp_path, monkeypatch):
+    import subprocess
+
+    tools, _ = pinned(tmp_path, monkeypatch)
+    gnu = tools / "mips-ps2-decompals-ar"
+    gnu.write_text('#!/bin/sh\necho pinned "$@"\n')
+    gnu.chmod(0o755)
+    monkeypatch.setattr(mips_tools.sys, "platform", "darwin")
+    folder = mips_tools.build_paths(SimpleNamespace(root=tmp_path / "project"))[0]
+    elf, other = tmp_path / "a.o", tmp_path / "b.o"
+    elf.write_bytes(b"\x7fELF" + bytes(8))
+    other.write_bytes(b"\xcf\xfa\xed\xfe" + bytes(8))
+    shown = subprocess.run([str(folder / "ar"), "rcs", "x.a", str(elf)], capture_output=True, text=True).stdout
+    assert shown.startswith("pinned rcs")
+    host = subprocess.run([str(folder / "ar"), "rcs", str(tmp_path / "x.a"), str(other)], capture_output=True, text=True)
+    assert "pinned" not in host.stdout
+
+
+def test_the_sha1sum_shim_accepts_one_space_between_hash_and_name(tmp_path):
+    import hashlib
+    import shutil
+    import subprocess
+    import sys
+
+    shasum = shutil.which("shasum")
+    if not shasum:
+        pytest.skip("no shasum")
+    (tmp_path / "x.bin").write_bytes(b"abc")
+    shim = tmp_path / "sha1sum"
+    shim.write_text(mips_tools._SHA1SUM.replace("@PYTHON@", sys.executable).replace("@SHASUM@", shasum))
+    line = f"{hashlib.sha1(b'abc').hexdigest()} x.bin\n"
+    done = subprocess.run([sys.executable, str(shim), "--check"], input=line, text=True, cwd=tmp_path,
+                          capture_output=True)
+    assert done.returncode == 0, done.stderr
+    bad = subprocess.run([sys.executable, str(shim), "--check"], input="0" * 40 + " x.bin\n", text=True, cwd=tmp_path,
+                         capture_output=True)
+    assert bad.returncode != 0
+
+
+def test_n64_swaps_a_committed_linux_tool_in_a_versioned_folder(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools
+
+    hosts = tmp_path / "bin"
+    hosts.mkdir()
+    (hosts / "gzip").write_text("#!/bin/sh\n")
+    (hosts / "gzip").chmod(0o755)
+    monkeypatch.setenv("PATH", str(hosts))
+    monkeypatch.setattr(buildtools.sys, "platform", "darwin")
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: None)
+    root = tmp_path / "project"
+    (root / "tools/gzip-1.2.4").mkdir(parents=True)
+    program = root / "tools/gzip-1.2.4/gzip"
+    program.write_bytes(b"\x7fELF" + b"\0" * 20)
+    program.chmod(0o755)
+    buildtools._wrap_foreign_ido(SimpleNamespace(root=root))
+    assert program.read_text().startswith("#!/bin/sh\nexec ")
+    assert (root / "tools/gzip-1.2.4/gzip.linux").is_file()
+
+
+def test_a_sha1_file_beside_the_splat_config_names_the_original_rom(tmp_path):
+    from decompnet.forks.splatrefs import config_sha1
+
+    config = tmp_path / "game.us.yaml"
+    assert config_sha1(config, {"options": {}}) is None
+    (tmp_path / "game.us.sha1").write_text("a" * 40 + "\n")
+    assert config_sha1(config, {"options": {}}) == "a" * 40
+    assert config_sha1(config, {"sha1": "b" * 40, "options": {}}) == "b" * 40
+
+
+
+def test_the_cross_gcc_shim_is_only_provided_to_makefiles_that_assemble_through_it(tmp_path, monkeypatch):
+    pinned(tmp_path, monkeypatch)
+    monkeypatch.setattr(mips_tools.shutil, "which", lambda name: "/usr/bin/cpp" if name == "cpp" else None)
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "Makefile").write_text("XGCC = $(CROSS)gcc\n$(O): %.c\n\t$(XGCC) -c $<\n")
+    folder = mips_tools.build_paths(SimpleNamespace(root=root))[0]
+    assert not (folder / "mips-linux-gnu-gcc").exists()
+    (root / "Makefile").write_text("%.o: %.s\n\t$(CROSS)gcc -x assembler-with-cpp -c $<\n")
+    folder = mips_tools.build_paths(SimpleNamespace(root=root))[0]
+    assert (folder / "mips-linux-gnu-gcc").is_file()
+
+
+def test_cc_check_through_a_host_compiler_variable_is_skipped_on_a_mac(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools
+
+    monkeypatch.setattr(buildtools.sys, "platform", "darwin")
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "Makefile").write_text("CC_CHECK = $(HOSTCC) --target=i686-linux-gnu -fsyntax-only -std=gnu90\nall:\n\ttrue\n")
+    assert consoles.get("n64").project_build_command(SimpleNamespace(root=root), ["make"])[-1] == "CC_CHECK=true"
+
+
+def test_a_torch_assets_target_runs_in_setup_and_a_cmake_tool_with_spdlog_gets_clangs_fmt_switch(tmp_path):
+    from decompnet.forks import project as forks_project
+
+    plain = "tools:\n\ttrue\nassets:\n\techo hi\nextract:\n\ttrue\n"
+    assert forks_project._setup_targets(plain) == ["tools", "extract"]  # (an `assets` that isn't Torch's stays alone)
+    torch = "assets:\n\t@echo x\n\t$(V)$(TORCH) code $(BASEROM)\n\nall:\n\ttrue\n"
+    assert forks_project._setup_targets(torch) == ["assets"]
+    (tmp_path / "tools" / "torch").mkdir(parents=True)
+    assert forks_project._mac_cxx_env(tmp_path) == {}
+    (tmp_path / "tools" / "torch" / "CMakeLists.txt").write_text("project(x)\n")
+    assert forks_project._mac_cxx_env(tmp_path) == {"CMAKE_POLICY_VERSION_MINIMUM": "3.5"}
+    (tmp_path / "tools" / "torch" / "CMakeLists.txt").write_text("FetchContent_Declare(spdlog)\n")
+    assert forks_project._mac_cxx_env(tmp_path)["CXX"] == "c++ -DFMT_CONSTEVAL= -Wno-error=parentheses"
+
+
+def test_a_mac_iconv_shim_writes_a_backslash_after_japanese_text_as_one_byte(tmp_path, monkeypatch):
+    import subprocess
+
+    tools = tmp_path / "pinned"
+    tools.mkdir()
+    (tools / "mips-ps2-decompals-ld").write_text("#!/bin/sh\n")
+    monkeypatch.setattr(mips_tools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(mips_tools.toolchains, "require", lambda tid: tools)
+    monkeypatch.setattr(mips_tools.sys, "platform", "darwin")
+    real = tmp_path / "real-iconv"
+    real.write_text("#!/bin/sh\nprintf 'system iconv'\n")
+    real.chmod(0o755)
+    monkeypatch.setattr(mips_tools.shutil, "which", lambda name: str(real) if name == "iconv" else None)
+    folder = mips_tools.build_paths(SimpleNamespace(root=tmp_path / "project"))[0]
+    source = tmp_path / "x.c"
+    source.write_text("ト\\n\n", encoding="utf-8")
+    made = subprocess.run([str(folder / "iconv"), "-t", "EUC-JP", "-f", "UTF-8", str(source)], capture_output=True)
+    assert made.stdout == b"\xa5\xc8\\n\n"
+    other = subprocess.run([str(folder / "iconv"), "-t", "UTF-16", "-f", "UTF-8", str(source)], capture_output=True)
+    assert other.stdout == b"system iconv"
+
+
+def test_n64_gets_wibo_and_an_o32_assembler(tmp_path, monkeypatch):
+    """Ninja files call `wibo` by name, and a distribution's mips-linux-gnu-as assembles o32 without being told (the
+    pinned PS2 one doesn't, and ld then refuses a `-b binary` object beside the code)."""
+    tools, _ = pinned(tmp_path, monkeypatch)
+    (tools / "mips-ps2-decompals-as").write_text("#!/bin/sh\nprintf '%s\\n' \"$@\"\n")
+    (tools / "mips-ps2-decompals-as").chmod(0o755)
+    (tools / "wibo").write_text("#!/bin/sh\n")
+    monkeypatch.setattr(mips_tools.shutil, "which", lambda name, **kw: None)
+    root = tmp_path / "project"
+    paths = mips_tools.build_paths(SimpleNamespace(root=root, platform="n64", manifest=None))
+    assert str(tools / "wibo") in (paths[0] / "wibo").read_text()
+    assert "-mabi=32" in (paths[0] / "mips-linux-gnu-as").read_text()
+    assert not (paths[0] / "mips-linux-gnu-as").is_symlink()
+    other = mips_tools.build_paths(SimpleNamespace(root=tmp_path / "other", platform="ps2", manifest=None))
+    assert (other[0] / "mips-linux-gnu-as").is_symlink()
+
+
+def test_stale_splat_cache_goes_when_the_project_collects_undefined_symbols(tmp_path):
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "game.yaml").write_text("options:\n  platform: n64\n  undefined_syms_auto_path: undefined_syms_auto.txt\n"
+                                    "segments: []\n")
+    (root / ".splache").write_bytes(b"cache")
+    ForkProject(root)._drop_stale_splat_cache()
+    assert not (root / ".splache").exists()
+    (root / ".splache").write_bytes(b"cache")
+    (root / "game.yaml").write_text("options:\n  platform: n64\nsegments: []\n")
+    ForkProject(root)._drop_stale_splat_cache()
+    assert (root / ".splache").exists()
+
+
+def test_sn64_compiler_files_are_linked_into_tools_bin(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools
+
+    source = tmp_path / "pinned"
+    source.mkdir()
+    for name in ("cc1n64.exe", "cc1pln64.exe"):
+        (source / name).write_bytes(b"MZ")
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(buildtools.toolchains, "require", lambda tid: source)
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "configure.py").write_text('CC1N64 = "tools/bin/cc1n64.exe"\n')
+    buildtools._provide_sn64(SimpleNamespace(root=root))
+    assert (root / "tools/bin/cc1n64.exe").is_symlink() and (root / "tools/bin/cc1pln64.exe").is_symlink()
+
+
+def test_gcc_272_folder_a_linux_only_project_names_is_linked_on_a_mac(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools
+
+    source = tmp_path / "kmc"
+    source.mkdir()
+    (source / "gcc").write_text("compiler")
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(buildtools.toolchains, "require", lambda tid: source)
+    monkeypatch.setattr(buildtools.sys, "platform", "darwin")
+    root = tmp_path / "project"
+    (root / "tools").mkdir(parents=True)
+    (root / "Makefile.common").write_text("TOOLS_DIR := tools\nKMC_PATH := $(TOOLS_DIR)/gcc-2.7.2/\n")
+    buildtools._provide_compiler_dirs(SimpleNamespace(root=root))
+    assert (root / "tools/gcc-2.7.2").resolve() == source.resolve()
+
+
+def test_objcopy_accepts_the_distribution_names_of_the_o32_formats(tmp_path, monkeypatch):
+    tools, _ = pinned(tmp_path, monkeypatch)
+    (tools / "mips-ps2-decompals-objcopy").write_text("#!/bin/sh\nprintf '%s\\n' \"$@\"\n")
+    (tools / "mips-ps2-decompals-objcopy").chmod(0o755)
+    paths = mips_tools.build_paths(SimpleNamespace(root=tmp_path / "project"))
+    import subprocess
+
+    said = subprocess.run([str(paths[0] / "mips-linux-gnu-objcopy"), "-O", "elf32-tradbigmips", "-B", "mips"],
+                          capture_output=True, text=True).stdout.split()
+    assert said == ["-O", "elf32-bigmips", "-B", "mips"]
+
+
+def test_dockerfile_splat_pin_and_tools_requirements_make_the_project_environment(tmp_path, monkeypatch):
+    root = tmp_path / "project"
+    (root / "tools").mkdir(parents=True)
+    (root / "tools/requirements.txt").write_text("splat64[mips]>=0.36.3,<1.0.0\n")
+    (root / "Dockerfile").write_text('RUN pip install -U \\\n  "splat64[mips]<0.40.0"\n')
+    (root / "Makefile").write_text("all:\n")
+    project = ForkProject(root)
+    project.platform = "n64"
+    steps = []
+    monkeypatch.setattr(ForkProject, "run", lambda self, cmd, **kw: (steps.append(cmd) or (True, "")))
+    monkeypatch.setattr(ForkProject, "kind", lambda self: "splat")
+    project.ensure_python_env(log=lambda *_: None)
+    assert any("tools/requirements.txt" in cmd and "splat64[mips]<0.40.0" in cmd for cmd in steps)
+
+
+def test_a_committed_gcc_272_in_tools_gets_the_installed_one_never_the_hosts_gcc(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools
+
+    installed = tmp_path / "kmc"
+    installed.mkdir()
+    for name in ("gcc", "cc1", "as"):
+        (installed / name).write_text("installed " + name)
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(buildtools.toolchains, "require", lambda tid: installed)
+    monkeypatch.setattr(buildtools.sys, "platform", "darwin")
+    root = tmp_path / "project"
+    (root / "tools").mkdir(parents=True)
+    elf = b"\x7fELF" + b"\0" * 12 + b"GNU C version 2.7.2"
+    for name in ("gcc", "cc1", "as", "ld"):
+        (root / "tools" / name).write_bytes(elf)
+        (root / "tools" / name).chmod(0o755)
+    buildtools._wrap_foreign_ido(SimpleNamespace(root=root))
+    assert str(installed / "gcc") in (root / "tools/gcc").read_text()
+    assert str(installed / "as") in (root / "tools/as").read_text()
+    assert (root / "tools/ld").read_bytes() == elf  # (no installed ld to stand in: left alone, not the host's)
+
+
+def test_a_build_that_races_with_its_clean_step_is_run_once_more_serially(tmp_path, monkeypatch):
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "Makefile").write_text("all: clean build\n")
+    project = ForkProject(root)
+    project.platform = "n64"
+    calls = []
+
+    def fake_run(self, cmd, log=print, **kw):
+        calls.append(cmd)
+        if "-j1" not in cmd:
+            log("gmake: *** [Makefile:71: clean] Error 1")
+            return False, "(only the last lines)"
+        return True, ""
+
+    monkeypatch.setattr(ForkProject, "run", fake_run)
+    monkeypatch.setattr(ForkProject, "kind", lambda self: "custom")
+    monkeypatch.setattr(ForkProject, "setup_commands", lambda self, version=None: [["make", "-j8"]])
+    monkeypatch.setattr(ForkProject, "unpack_disc", lambda self, version, log=print: None)
+    monkeypatch.setattr(ForkProject, "ensure_python_env", lambda self, log=print: None)
+    monkeypatch.setattr(ForkProject, "generate_objdiff", lambda self, version=None, log=print: False)
+    (root / "objdiff.json").write_text("{}")
+    monkeypatch.setattr(ForkProject, "_all_source", lambda self: False)
+    project.setup(None, log=lambda *_: None)
+    assert calls == [["make", "-j8"], ["make", "-j1"]]
+
+
+def test_a_mac_head_tail_shim_reads_gnus_long_spellings_and_negative_counts(tmp_path, monkeypatch):
+    import subprocess
+
+    tools = tmp_path / "pinned"
+    tools.mkdir()
+    (tools / "mips-ps2-decompals-ld").write_text("#!/bin/sh\n")
+    monkeypatch.setattr(mips_tools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(mips_tools.toolchains, "require", lambda tid: tools)
+    monkeypatch.setattr(mips_tools.sys, "platform", "darwin")
+    monkeypatch.setattr(mips_tools.shutil, "which", lambda name: f"/usr/bin/{name}" if name in ("head", "tail") else None)
+    folder = mips_tools.build_paths(SimpleNamespace(root=tmp_path / "project"))[0]
+    cut = subprocess.run(f'printf "0123456789ABCDEFGHIJ" | "{folder}/tail" --bytes=+11 | "{folder}/head" --bytes=-8',
+                         shell=True, capture_output=True)
+    assert cut.stdout == b"AB"
+    lines = subprocess.run(f'printf "a\\nb\\nc\\n" | "{folder}/head" -n -1', shell=True, capture_output=True)
+    assert lines.stdout == b"a\nb\n"
+    first = subprocess.run(f'printf "a\\nb\\nc\\n" | "{folder}/head" -2', shell=True, capture_output=True)
+    assert first.stdout == b"a\nb\n"
+
+
+def test_a_prerequisites_target_that_builds_tools_and_assets_runs_before_the_build():
+    from decompnet.forks import project as forks_project
+
+    make = "prerequisites: print_info create_directories build_tools extractassets\n\nall: x\n"
+    assert forks_project._setup_targets(make) == ["prerequisites"]
+    assert forks_project._setup_targets("prerequisites:\n\ttrue\n") == []
+
+
+def test_a_mac_sed_shim_runs_gnu_sed_when_homebrew_has_it(tmp_path, monkeypatch):
+    tools = tmp_path / "pinned"
+    tools.mkdir()
+    (tools / "mips-ps2-decompals-ld").write_text("#!/bin/sh\n")
+    monkeypatch.setattr(mips_tools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(mips_tools.toolchains, "require", lambda tid: tools)
+    monkeypatch.setattr(mips_tools.sys, "platform", "darwin")
+    monkeypatch.setattr(mips_tools.shutil, "which", lambda name: "/opt/homebrew/bin/gsed" if name == "gsed" else None)
+    folder = mips_tools.build_paths(SimpleNamespace(root=tmp_path / "project"))[0]
+    assert '/opt/homebrew/bin/gsed" "$@"' in (folder / "sed").read_text()
+
+
+def test_objcopy_wrapper_renames_the_traditional_mips_formats(tmp_path, monkeypatch):
+    tools = tmp_path / "pinned"
+    tools.mkdir()
+    (tools / "mips-ps2-decompals-objcopy").write_text("#!/bin/sh\n")
+    monkeypatch.setattr(mips_tools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(mips_tools.toolchains, "require", lambda tid: tools)
+    root = tmp_path / "project"
+    root.mkdir()
+    folder = mips_tools.build_paths(SimpleNamespace(root=root))[0]
+    text = (folder / "mips64-elf-objcopy").read_text()
+    assert "elf32-tradbigmips) a=elf32-bigmips" in text and str(tools / "mips-ps2-decompals-objcopy") in text
+
+
+def test_a_project_setup_script_names_the_tool_repositories_its_makefile_reads(tmp_path, monkeypatch):
+    root = tmp_path / "project"
+    (root / "tools").mkdir(parents=True)
+    (root / "Makefile").write_text("ULTRALIB ?= tools/ultralib\nASMPROC := python3 tools/asm-processor/build.py\n")
+    (root / "tools" / "setup.sh").write_text(
+        "for r in matt-kempster/m2c simonlindholm/asm-processor; do\n"
+        '  [ -d "$(basename $r)" ] || git clone -q --depth 1 "https://github.com/$r.git"\n'
+        "done\n[ -d ultralib ] || { git clone -q https://github.com/decompals/ultralib.git && "
+        "git -C ultralib checkout -q " + "a" * 40 + "; }\n")
+    fp = ForkProject(root)
+    monkeypatch.setattr(fp, "kind", lambda: "splat")
+    calls = []
+    monkeypatch.setattr(fp, "run", lambda cmd, log=print, timeout=0, **kw: (calls.append(cmd) or True, ""))
+    monkeypatch.setattr("decompnet.forks.project.shutil.which", lambda name: "/usr/bin/git")
+    fp.fetch_pinned_tool_repos(log=lambda *a: None)
+    assert ["git", "clone", "-q", "https://github.com/decompals/ultralib.git", "tools/ultralib"] in calls
+    assert ["git", "-C", "tools/ultralib", "checkout", "-q", "a" * 40] in calls
+    assert ["git", "clone", "-q", "https://github.com/simonlindholm/asm-processor.git", "tools/asm-processor"] in calls
+    assert not any("m2c" in " ".join(c) for c in calls)  # (the Makefile never reads it)
+
+
+def test_the_target_image_derived_from_a_verified_rom_gets_its_sha1_from_the_build(tmp_path):
+    import hashlib
+
+    from decompnet.forks import splatrefs
+
+    (tmp_path / "build").mkdir()
+    rom = b"finished rom"
+    (tmp_path / "build" / "game.z64").write_bytes(rom)
+    (tmp_path / "build" / "expanded.bin").write_bytes(b"expanded")
+    (tmp_path / "Makefile").write_text(f"SHA1 := {hashlib.sha1(rom).hexdigest()}\n")
+    image = tmp_path / "build" / "expanded.bin"
+    assert splatrefs.built_image_sha1(tmp_path, image) == hashlib.sha1(b"expanded").hexdigest()
+    (tmp_path / "build" / "game.z64").write_bytes(b"another rom")
+    assert splatrefs.built_image_sha1(tmp_path, image) is None
+
+
+def test_gcc_shim_for_a_makefile_whose_assembler_is_the_cross_gcc(tmp_path):
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "Makefile").write_text("CROSS := mips-linux-gnu-\nAS      := $(CROSS)gcc\nLD := $(CROSS)ld\n")
+    assert mips_tools._assembles_through_gcc(SimpleNamespace(root=root))
+    (root / "Makefile").write_text("CC := $(CROSS)gcc\nAS := $(CROSS)as\n")
+    assert not mips_tools._assembles_through_gcc(SimpleNamespace(root=root))
+
+
+def test_plain_ar_is_the_pinned_one_for_elf_objects_on_a_mac(tmp_path, monkeypatch):
+    """Apple's ar answers "not a mach-o file" to ELF members and leaves an empty archive; a project that hands
+    AR=ar to a library's build needs the pinned ar for those, and Apple's for anything else."""
+    import subprocess
+
+    tools, _ = pinned(tmp_path, monkeypatch)
+    for name in ("ar", "ranlib"):
+        (tools / f"mips-ps2-decompals-{name}").write_text(f"#!/bin/sh\necho pinned-{name}\n")
+        (tools / f"mips-ps2-decompals-{name}").chmod(0o755)
+    monkeypatch.setattr(mips_tools.sys, "platform", "darwin")
+    paths = mips_tools.build_paths(SimpleNamespace(root=tmp_path / "project"))
+    elf = tmp_path / "x.o"
+    elf.write_bytes(b"\x7fELF" + b"\0" * 60)
+    done = subprocess.run([str(paths[0] / "ar"), "rcs", str(tmp_path / "x.a"), str(elf)], capture_output=True, text=True)
+    assert done.stdout.strip() == "pinned-ar"
+    assert "pinned-ranlib" in subprocess.run([str(paths[0] / "ranlib"), "x.a"], capture_output=True, text=True).stdout
+
+
+def test_a_tools_requirements_python_file_is_where_the_project_environment_installs_from(tmp_path):
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "tools" / "requirements-python.txt").write_text("spimdisasm==1.25.1\n")
+    (tmp_path / "Makefile").write_text("all:\n\ttrue\n")
+    installed = []
+    project = ForkProject(tmp_path)
+    project.kind = lambda: "custom"
+    project.run = lambda cmd, log=print, **kw: (installed.append(cmd) or (True, ""))
+    project.ensure_python_env(log=lambda *a: None)
+    assert any("tools/requirements-python.txt" in cmd for cmd in installed)
+
+
+def test_a_clang_cpp_that_a_recipe_pipes_into_is_replaced_by_the_build_paths_cpp_on_a_mac(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools
+
+    monkeypatch.setattr(buildtools.sys, "platform", "darwin")
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "Makefile").write_text("ifeq ($(HOST_OS),macos)\n  CPP := clang -E -P -x c\nelse\n  CPP := cpp\nendif\n"
+                                   "%.o: %.s\n\ticonv $< | $(CPP) -E -P -Iinclude | $(AS) -o $@\n")
+    assert consoles.get("n64").project_build_command(SimpleNamespace(root=root), ["make"])[-1] == "CPP=cpp"
+    (root / "Makefile").write_text("CPP := clang -E -P -x c\nx:\n\t$(CPP) -o $@ $<\n")  # (a file argument: fine)
+    assert consoles.get("n64").project_build_command(SimpleNamespace(root=root), ["make"]) == ["make"]
+
+
+def test_gcc_kmc_and_egcs_folders_named_by_detected_os_are_linked_on_a_mac(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools
+
+    kmc, egcs = tmp_path / "kmc", tmp_path / "egcs"
+    kmc.mkdir()
+    egcs.mkdir()
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(buildtools.toolchains, "require", lambda tid: kmc if tid == "gcc-2.7.2-kmc" else egcs)
+    monkeypatch.setattr(buildtools.sys, "platform", "darwin")
+    root = tmp_path / "project"
+    (root / "lib").mkdir(parents=True)
+    (root / "tools").mkdir()
+    (root / "Makefile").write_text("ifeq ($(UNAME_S),Darwin)\n    DETECTED_OS := mac\nendif\n"
+                                   "COMPILER_DIR := tools/gcc_kmc/$(DETECTED_OS)/2.7.2\n"
+                                   "COMPILER_DIR := tools/gcc_egcs/$(DETECTED_OS)/1.1.2-4\n")
+    (root / "lib/Makefile").write_text("ifeq ($(UNAME_S),Darwin)\n\tDETECTED_OS := macos\nendif\n"
+                                       "COMPILER_DIR := ../tools/gcc_kmc/$(DETECTED_OS)/2.7.2\n")
+    buildtools._provide_compiler_dirs(SimpleNamespace(root=root))
+    assert (root / "tools/gcc_kmc/mac/2.7.2").resolve() == kmc.resolve()
+    assert (root / "tools/gcc_egcs/mac/1.1.2-4").resolve() == egcs.resolve()
+    assert (root / "tools/gcc_kmc/macos/2.7.2").resolve() == kmc.resolve()
+
+
+def test_objcopy_is_wrapped_for_the_traditional_o32_format_names(tmp_path, monkeypatch):
+    tools, _ = pinned(tmp_path, monkeypatch)
+    objcopy = tools / "mips-ps2-decompals-objcopy"
+    objcopy.write_text('#!/bin/sh\necho "$@"\n')
+    objcopy.chmod(0o755)
+    folder = mips_tools.build_paths(SimpleNamespace(root=tmp_path / "project"))[0]
+    import subprocess
+
+    shown = subprocess.run([str(folder / "mips-linux-gnu-objcopy"), "-I", "binary", "-O", "elf32-tradbigmips", "a", "b"],
+                           capture_output=True, text=True).stdout
+    assert shown.split() == ["-I", "binary", "-O", "elf32-bigmips", "a", "b"]
+
+
+def test_the_assembler_shim_leaves_section_symbols_unnamed(tmp_path):
+    """asm-processor merges symbols by name: a named `.text` in the assembled object clashes with the compiler's."""
+    import struct
+    import subprocess
+    import sys
+
+    def elf_with_named_section_symbol() -> bytes:
+        strtab = b"\0.text\0"
+        symtab = struct.pack(">IIIBBH", 0, 0, 0, 0, 0, 0) + struct.pack(">IIIBBH", 1, 0, 0, 3, 0, 1)
+        header = bytearray(52)
+        header[:7] = b"\x7fELF\x01\x02\x01"
+        body = strtab + symtab
+        shoff = 52 + len(body)
+        struct.pack_into(">IHH", header, 32, shoff, 0, 0)
+        struct.pack_into(">HH", header, 46, 40, 3)
+        sections = bytes(40) + struct.pack(">10I", 0, 2, 0, 0, 52 + len(strtab), len(symtab), 0, 0, 4, 16) + bytes(40)
+        return bytes(header) + body + sections
+
+    cpp = tmp_path / "cpp"
+    cpp.write_text('#!/bin/sh\nfor a; do f=$a; done\ncat "$f"\n')
+    cpp.chmod(0o755)
+    assembler = tmp_path / "as"
+    assembler.write_text(f'#!/bin/sh\nwhile [ "$1" != "-o" ]; do shift; done\ncat "{tmp_path}/model.o" > "$2"\n')
+    assembler.chmod(0o755)
+    (tmp_path / "model.o").write_bytes(elf_with_named_section_symbol())
+    (tmp_path / "x.s").write_text("nop\n")
+    driver = tmp_path / "gcc"
+    driver.write_text(mips_tools._ASSEMBLER_DRIVER.format(python=sys.executable, cpp=cpp, assembler=assembler, linker=str(tmp_path / "ld")))
+    subprocess.run([sys.executable, str(driver), "-c", "-o", str(tmp_path / "x.o"), str(tmp_path / "x.s")], check=True)
+    made = (tmp_path / "x.o").read_bytes()
+    first_symbol = 52 + len(b"\0.text\0") + 16
+    assert struct.unpack_from(">I", made, first_symbol)[0] == 0
+
+
+<<<<<<< HEAD
+def test_a_compiler_folder_an_install_script_unpacks_into_gets_the_installed_compilers(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools
+
+    (tmp_path / "install_compilers.sh").write_text("tar zx -C tools/build/cc/gcc2.7.2\ntar zx -C tools/build/cc/ido5.3\n")
+    for name in ("gcc2.7.2", "ido5.3"):
+        (tmp_path / "tools/build/cc" / name).mkdir(parents=True)
+    installed = tmp_path / "installed"
+    installed.mkdir()
+    (installed / "gcc").write_text("x")
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(buildtools.toolchains, "require", lambda tid: installed)
+    buildtools._provide_compiler_dirs(SimpleNamespace(root=tmp_path))
+    assert (tmp_path / "tools/build/cc/gcc2.7.2/gcc").is_symlink()
+    assert (tmp_path / "tools/build/cc/ido5.3/gcc").is_symlink()
+
+
+def test_an_irix_compiler_tree_that_the_project_recompiles_is_not_replaced_by_a_wrapper(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools
+
+    cc = tmp_path / "tools" / "ido5.3_compiler" / "usr" / "bin" / "cc"
+    cc.parent.mkdir(parents=True)
+    cc.write_bytes(b"\x7fELF" + b"\0" * 12)
+    monkeypatch.setattr(buildtools.sys, "platform", "darwin")
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(buildtools.toolchains, "require", lambda tid: tmp_path)
+    buildtools._wrap_foreign_ido(SimpleNamespace(root=tmp_path))
+    assert cc.read_bytes().startswith(b"\x7fELF") and not cc.with_name("cc.linux").exists()
+=======
+def test_a_bundled_splat_gets_the_packages_of_its_own_era(tmp_path, monkeypatch):
+    root = tmp_path / "project"
+    (root / "tools/splat").mkdir(parents=True)
+    (root / "tools/splat/requirements.txt").write_text("spimdisasm>=1.9.0\n")
+    (root / "Makefile").write_text("all:\n")
+    project = ForkProject(root)
+    project.platform = "n64"
+    steps = []
+
+    def fake_run(self, cmd, **kw):
+        steps.append(cmd)
+        return ("2023-01-16" not in cmd, "")  # (that day's rabbitizer has no wheel for this Python)
+
+    monkeypatch.setattr(ForkProject, "run", fake_run)
+    monkeypatch.setattr(ForkProject, "kind", lambda self: "splat")
+    monkeypatch.setattr(ForkProject, "git", lambda self, *a: (True, "2023-01-15"))
+    monkeypatch.setattr("decompnet.forks.project._tool", lambda name: "uv")
+    project.ensure_python_env(log=lambda *_: None)
+    installs = [cmd for cmd in steps if "install" in cmd]
+    assert "2023-01-16" in installs[0] and "tools/splat/requirements.txt" in installs[0]
+    assert "2023-05-15" in installs[1] and "--exclude-newer" in installs[1]
+
+
+def test_the_sn64_gcc_a_project_downloads_is_not_taken_for_the_kmc_one_and_runs_through_the_native_driver(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools, sn64_gcc
+
+    kmc, sn = tmp_path / "kmc", tmp_path / "sn"
+    for folder, names in ((kmc, ("gcc", "cc1", "as")), (sn, ("cc1", "cpp"))):
+        folder.mkdir()
+        for name in names:
+            (folder / name).write_text("installed " + name)
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(buildtools.toolchains, "require", lambda tid: sn if "sn-n64" in tid else kmc)
+    monkeypatch.setattr(buildtools.sys, "platform", "darwin")
+    root = tmp_path / "project"
+    elf = b"\x7fELF" + b"\0" * 12 + b"GNU C version 2.7.2"
+    for folder in ("gcc-2.7.2", "modern-sn64"):
+        (root / "tools" / folder).mkdir(parents=True)
+        for name in ("gcc", "cc1"):
+            (root / "tools" / folder / name).write_bytes(elf)
+            (root / "tools" / folder / name).chmod(0o755)
+    (root / "tools/modern-sn64/modern-asn64.py").write_text("#!/usr/bin/env python3\n")
+    (root / "tools/modern-sn64/as").write_text("#!/bin/bash\n")
+    buildtools._wrap_foreign_ido(SimpleNamespace(root=root))
+    assert str(kmc / "gcc") in (root / "tools/gcc-2.7.2/gcc").read_text()
+    wrapper = (root / "tools/modern-sn64/gcc").read_text()
+    assert "sn64_gcc.py" in wrapper and str(sn) in wrapper
+    assert (root / "tools/modern-sn64/gcc.linux").read_bytes() == elf
+    assert (root / "tools/modern-sn64/cc1").read_bytes() == elf  # (the project's own cc1 is not replaced by KMC's)
+    source, output, cpp, cc1, asm = sn64_gcc.split(
+        ["-G0", "-mcpu=vr4300", "-Wa,-G0,-EB,-mips3", "-O2", "-Iinclude", "-D", "X=1", "a.c", "-c", "-o", "a.o"])
+    assert (source, output, cpp, cc1, asm) == ("a.c", "a.o", ["-Iinclude", "-DX=1"], ["-G0", "-mcpu=vr4300", "-O2"],
+                                               ["-G0", "-EB", "-mips3"])
+
+
+def test_the_gcc_shim_links_when_the_makefile_uses_the_driver_as_its_linker(tmp_path):
+    import subprocess
+    import sys
+
+    linker = tmp_path / "ld"
+    linker.write_text('#!/bin/sh\necho "$@" > "$LD_ARGS"\n')
+    linker.chmod(0o755)
+    driver = tmp_path / "gcc"
+    driver.write_text(mips_tools._ASSEMBLER_DRIVER.format(python=sys.executable, cpp="false", assembler="false",
+                                                          linker=str(linker)))
+    record = tmp_path / "args"
+    subprocess.run([sys.executable, str(driver), "-march=vr4300", "-nostartfiles", "-Wl,-T,game.ld", "-Wl,-Map,game.map",
+                    "-o", "game.elf"], check=True, env={**os.environ, "LD_ARGS": str(record)})
+    assert record.read_text().split() == ["-T", "game.ld", "-Map", "game.map", "-o", "game.elf"]
+>>>>>>> origin/main
